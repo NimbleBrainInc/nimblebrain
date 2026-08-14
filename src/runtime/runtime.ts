@@ -1484,8 +1484,11 @@ export class Runtime {
     // `selectRequestLayer3` below, so discovery still happens once per turn.
     const bundlePool = await this.discoverBundleSkillsByRole(convWsId, {
       // Exclude only the ONE skill `<app-guide>` carries, resolved above — not
-      // the entered server, whose other skills must still route by strategy.
-      ...(focusedSkillUri ? { excludeSkillUri: focusedSkillUri } : {}),
+      // the entered server (its other skills must still route by strategy), and
+      // not a same-pathed skill published by any other server.
+      ...(focusedServerName && focusedSkillUri
+        ? { excludeSkill: { serverName: focusedServerName, uri: focusedSkillUri } }
+        : {}),
     });
 
     // Per-request trigger match, over the conversation pool AND the workspace's
@@ -1553,7 +1556,7 @@ export class Runtime {
       userId,
       activeToolNames: tools.map((t) => t.name),
       capabilityPool: poolCapability,
-      // No `excludeSkillUri` here: it only steers discovery, and discovery
+      // No `excludeSkill` here: it only steers discovery, and discovery
       // already ran with it above. The entered app's exclusion is inherited from
       // `bundlePool` rather than restated as a second argument that has to agree
       // with the first — the same reason `toBundleSkillCandidates` takes a pool.
@@ -1985,8 +1988,8 @@ export class Runtime {
     const workspaceContext = buildWorkspaceContext(focusedWsId, activeWorkspace);
 
     // Layer 3 selection — bundle workflow guidance still applies based on
-    // the active tool set. No `excludeSkillUri` (tasks don't have appContext,
-    // so no skill is composed through a second channel).
+    // the active tool set. No `excludeSkill` (tasks don't have appContext, so
+    // no skill is composed through a second channel).
     //
     // Workspace-tier skills follow the FOCUSED workspace, falling back
     // to the session (personal) workspace only when the task has no
@@ -3046,11 +3049,18 @@ export class Runtime {
    * skill lived only on the `appContext`-scoped `<app-guide>` path and was
    * invisible to cross-server chats.
    *
-   * `excludeSkillUri` drops a single skill the caller has already composed
-   * through another channel — the entered app's primary, which rides
-   * `<app-guide>`. It is deliberately a skill URI and not a server name: a
-   * server publishes 0..N skills and only ONE of them reaches `<app-guide>`,
-   * so excluding the server would take the other N-1 with it.
+   * `excludeSkill` drops a single skill the caller has already composed through
+   * another channel — the entered app's primary, which rides `<app-guide>`.
+   *
+   * It is keyed by the PAIR `(serverName, uri)`, and both halves are load-
+   * bearing. The uri alone is not unique: a `skill://<path>/SKILL.md` carries
+   * no publisher, deliberately (guessing `skill://<serverName>/usage` is what
+   * missed every reverse-DNS fleet connector), so two servers publishing the
+   * same path would collide and entering one would silently drop the other's
+   * skill. The server alone is not enough either: a server publishes 0..N
+   * skills and only ONE reaches `<app-guide>`, so excluding the source would
+   * take the other N-1 with it. Passing them together is what makes the pair
+   * impossible to disagree with itself.
    *
    * Discovery reuses `discoverServerSkills`'s 5-minute cache, so this stays
    * cheap on warm requests — including for the entered app's own source, whose
@@ -3059,7 +3069,7 @@ export class Runtime {
    */
   private async loadBundleSkills(
     wsId: string,
-    options: { excludeSkillUri?: string } = {},
+    options: { excludeSkill?: { serverName: string; uri: string } } = {},
   ): Promise<Skill[]> {
     const registry = this._workspaceRegistries.get(wsId);
     if (!registry) return [];
@@ -3100,13 +3110,16 @@ export class Runtime {
           const discovered = await this.discoverServerSkills(wsId, name);
           // Drop ONLY the one skill already composed elsewhere this turn (the
           // entered app's primary, carried by `<app-guide>`) — never its whole
-          // server. Dedup is a property of a SKILL, not of the server that
-          // published it: excluding the source assumed one skill per server,
-          // so every additional skill a server published silently vanished
-          // from an `appContext` turn, `always` ones included.
-          const skills = options.excludeSkillUri
-            ? discovered.filter((s) => s.uri !== options.excludeSkillUri)
-            : discovered;
+          // server, and never a same-pathed skill on a DIFFERENT server. Dedup
+          // is a property of a skill, and a skill is `(publisher, path)`:
+          // excluding the source assumed one skill per server, and excluding
+          // the bare uri assumes one publisher per path. Both assumptions drop
+          // an `always` skill from a turn that needs it.
+          const exclude = options.excludeSkill;
+          const skills =
+            exclude && name === exclude.serverName
+              ? discovered.filter((s) => s.uri !== exclude.uri)
+              : discovered;
           return skills.map((s) =>
             synthesizeBundleSkill({
               serverName: name,
@@ -4497,7 +4510,7 @@ export class Runtime {
    *  discovering again: one discovery per turn, and the entered app's exclusion
    *  (its PRIMARY skill rides <app-guide>, not this channel — the server's other
    *  skills do ride it) is inherited from that call instead of being a second
-   *  `excludeSkillUri` argument that has to agree with the first.
+   *  `excludeSkill` argument that has to agree with the first.
    *
    *  Only skills this turn has NOT already composed ride this channel. Two
    *  exclusions, one rule — a body already in the prompt must not be delivered
@@ -4573,7 +4586,7 @@ export class Runtime {
    * request path composes with — a skill in another workspace can neither
    * appear nor be activated here.
    *
-   * No `excludeSkillUri` exclusion: the tool validates against the ACTIVATABLE
+   * No `excludeSkill` exclusion: the tool validates against the ACTIVATABLE
    * union, which is a superset of any one turn's rendered catalog (an entered
    * app's primary skill is omitted from that turn's catalog because its body
    * already rides `<app-guide>`, but activating it by name is harmless).
@@ -4621,7 +4634,7 @@ export class Runtime {
    */
   private async discoverBundleSkillsByRole(
     wsId: string,
-    options: { excludeSkillUri?: string } = {},
+    options: { excludeSkill?: { serverName: string; uri: string } } = {},
   ): Promise<{ context: Skill[]; capability: Skill[] }> {
     return partitionSkillsByRole(await this.loadBundleSkills(wsId, options));
   }
@@ -4667,8 +4680,8 @@ export class Runtime {
     userId: string | null;
     /** Names of tools in the set tool-affinity is evaluated against. */
     activeToolNames: string[];
-    /** Skip the ONE skill already injected via `<app-guide>`, by its URI. */
-    excludeSkillUri?: string;
+    /** Skip the ONE skill already injected via `<app-guide>`, by publisher + URI. */
+    excludeSkill?: { serverName: string; uri: string };
     /**
      * Precomputed CAPABILITY skills (`type: skill`) from the conversation pool —
      * the output of `partitionSkillsByRole(...).capability`. When the caller
@@ -4698,7 +4711,7 @@ export class Runtime {
     const { context: bundleContext, capability: bundleCapability } =
       params.bundlePool ??
       (await this.discoverBundleSkillsByRole(params.wsId, {
-        ...(params.excludeSkillUri ? { excludeSkillUri: params.excludeSkillUri } : {}),
+        ...(params.excludeSkill ? { excludeSkill: params.excludeSkill } : {}),
       }));
     const layer3 = selectLayer3Skills({
       skills: [...capabilityPool, ...bundleCapability],

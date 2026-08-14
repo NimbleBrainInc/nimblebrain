@@ -114,6 +114,62 @@ main();
   return dir;
 }
 
+
+/**
+ * A second server publishing a skill at the SAME `skill://` path as the first
+ * server's primary. Skill URIs carry no publisher, so the path alone cannot
+ * identify a skill — this fixture is what proves the exclusion is keyed by the
+ * publisher too.
+ */
+const NEIGHBOUR_NAME = "ai-nimblebrain-neighbour-mcp";
+const NEIGHBOUR_PHRASE = "NEIGHBOUR-MARKER-GOLF";
+
+function createNeighbourBundle(dir: string): string {
+  mkdirSync(dir, { recursive: true });
+  const nodeModulesPath = join(import.meta.dir, "../..", "node_modules");
+  // Same path as SKILLS[0] — `skill://orientation/SKILL.md`.
+  const uri = `skill://${SKILLS[0]?.slug}/SKILL.md`;
+  writeFileSync(
+    join(dir, "server.cjs"),
+    `
+const { Server } = require("${nodeModulesPath}/@modelcontextprotocol/sdk/dist/cjs/server/index.js");
+const { StdioServerTransport } = require("${nodeModulesPath}/@modelcontextprotocol/sdk/dist/cjs/server/stdio.js");
+const {
+  ListToolsRequestSchema,
+  CallToolRequestSchema,
+  ListResourcesRequestSchema,
+  ReadResourceRequestSchema,
+} = require("${nodeModulesPath}/@modelcontextprotocol/sdk/dist/cjs/types.js");
+
+async function main() {
+  const server = new Server(
+    { name: "neighbour", version: "0.1.0" },
+    { capabilities: { tools: {}, resources: {} } },
+  );
+  server.setRequestHandler(ListToolsRequestSchema, async () => ({
+    tools: [{ name: "ping", description: "Ping", inputSchema: { type: "object", properties: {} } }],
+  }));
+  server.setRequestHandler(CallToolRequestSchema, async () => ({
+    content: [{ type: "text", text: "done" }],
+  }));
+  server.setRequestHandler(ListResourcesRequestSchema, async () => ({
+    resources: [{ uri: ${JSON.stringify(uri)}, name: "orientation", mimeType: "text/markdown" }],
+  }));
+  server.setRequestHandler(ReadResourceRequestSchema, async () => ({
+    contents: [{
+      uri: ${JSON.stringify(uri)},
+      mimeType: "text/markdown",
+      text: ${JSON.stringify("---\nname: orientation\ndescription: Neighbour guidance.\nmetadata:\n  nimblebrain:\n    loading-strategy: always\n---\n\n# orientation\n\nNEIGHBOUR-MARKER-GOLF — this rule must be in context on every turn.")},
+    }],
+  }));
+  await server.connect(new StdioServerTransport());
+}
+main();
+`,
+  );
+  return dir;
+}
+
 let lastPrompt: LanguageModelV3CallOptions["prompt"] | undefined;
 let lastToolCount = 0;
 
@@ -149,6 +205,7 @@ function lastPromptText(): string {
 const testDir = join(tmpdir(), `nimblebrain-multiskill-appcontext-${Date.now()}`);
 let runtime: Runtime;
 let source: McpSource;
+let neighbour: McpSource;
 
 beforeAll(async () => {
   mkdirSync(testDir, { recursive: true });
@@ -176,13 +233,31 @@ beforeAll(async () => {
   );
   await source.start();
   runtime.getRegistryForWorkspace(TEST_WORKSPACE_ID).addSource(source);
+
+  const neighbourDir = createNeighbourBundle(join(testDir, "neighbour"));
+  neighbour = new McpSource(
+    NEIGHBOUR_NAME,
+    {
+      type: "stdio",
+      spawn: {
+        command: "node",
+        args: [join(neighbourDir, "server.cjs")],
+        env: process.env as Record<string, string>,
+      },
+    },
+    new NoopEventSink(),
+  );
+  await neighbour.start();
+  runtime.getRegistryForWorkspace(TEST_WORKSPACE_ID).addSource(neighbour);
 });
 
 afterAll(async () => {
-  try {
-    await source.stop();
-  } catch {
-    // already stopped
+  for (const s of [source, neighbour]) {
+    try {
+      await s?.stop();
+    } catch {
+      // already stopped
+    }
   }
   await runtime.shutdown();
   if (existsSync(testDir)) rmSync(testDir, { recursive: true, force: true });
@@ -239,5 +314,28 @@ describe("multi-skill server + appContext", () => {
     const withApp = lastToolCount;
 
     expect(withApp - withoutApp).toBe(TOOL_NAMES.length);
+  });
+});
+
+describe("same skill path on two servers", () => {
+  it("entering one server keeps the other's identically-pathed `always` skill", async () => {
+    // Both publish `skill://orientation/SKILL.md`. Keying the exclusion on the
+    // uri alone would drop the neighbour's copy the moment the first is entered
+    // — the same silent drop this PR closes, one scope out.
+    await runtime.chat({
+      workspaceId: TEST_WORKSPACE_ID,
+      message: "Draft an email to a prospect.",
+    });
+    expect(lastPromptText()).toContain(NEIGHBOUR_PHRASE);
+
+    await runtime.chat({
+      workspaceId: TEST_WORKSPACE_ID,
+      message: "Draft an email to a prospect.",
+      appContext: { appName: "Multi Skill", serverName: SERVER_NAME },
+    });
+    const prompt = lastPromptText();
+    expect(prompt).toContain(NEIGHBOUR_PHRASE);
+    // And the entered server's own primary still rides <app-guide> exactly once.
+    expect(prompt.split(SKILLS[0]?.phrase ?? "").length - 1).toBe(1);
   });
 });
