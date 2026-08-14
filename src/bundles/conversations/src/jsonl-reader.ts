@@ -1188,6 +1188,28 @@ function countEventMessages(dataLines: string[]): number {
   return userMessages + runStarts.filter((runId) => runsWithResponse.has(runId)).length;
 }
 
+/**
+ * The conversation's preview: the first user line's text, in either format.
+ *
+ * The scan stops at that line rather than reading on — nothing after it can
+ * change the answer. An empty user message is not an answer, so the search
+ * continues past one (a picture with no caption still needs a preview).
+ */
+function findPreview(dataLines: string[]): string {
+  for (const line of dataLines) {
+    const parsed = parseJsonLine(line);
+    if (!parsed) continue;
+    if (parsed.type === "user.message" && Array.isArray(parsed.content)) {
+      const text = extractText(parsed.content as ContentPart[]);
+      if (text) return text;
+    }
+    if (parsed.role === "user" && typeof parsed.content === "string" && parsed.content) {
+      return parsed.content;
+    }
+  }
+  return "";
+}
+
 function parseJsonLine(line: string): Record<string, unknown> | null {
   try {
     return JSON.parse(line) as Record<string, unknown>;
@@ -1221,21 +1243,13 @@ export async function readConversationHeader(
   if (!meta) return null;
 
   const dataLines = lines.slice(1);
-  // Same predicate as `readConversation`, so the two never disagree about
-  // which parser a file wants — and therefore never about its message count.
+  // Same predicate as `readConversation`, so the two never disagree about which
+  // parser a file wants. Agreeing on the parser is not the same as agreeing on
+  // the count — that is what `countHeaderMessages` is for, and what the header/
+  // full-reader parity tests pin.
   const isEventFormat = raw.format === "events" || dataLines.some(looksLikeEventLine);
 
-  let preview = "";
-  for (const line of dataLines) {
-    const parsed = parseJsonLine(line);
-    if (!parsed) continue;
-    if (!preview && parsed.type === "user.message" && Array.isArray(parsed.content)) {
-      preview = extractText(parsed.content as ContentPart[]);
-    }
-    if (!preview && parsed.role === "user" && typeof parsed.content === "string") {
-      preview = parsed.content;
-    }
-  }
+  const preview = findPreview(dataLines);
   const messageCount = countHeaderMessages(dataLines, isEventFormat);
 
   deriveTitleFromEvents(meta, dataLines);

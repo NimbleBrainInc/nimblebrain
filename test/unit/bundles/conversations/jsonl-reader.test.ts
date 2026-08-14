@@ -795,6 +795,22 @@ describe("readConversationHeader", () => {
 		expect(result!.preview).toBe("Valid");
 	});
 
+	test("an empty first user message does not end the preview search", async () => {
+		// The scan stops at the first user line that HAS text, not at the first
+		// user line — an uploaded picture with no caption carries no preview.
+		const meta = { id: "conv_hdrnocap", createdAt: "2025-01-01T00:00:00.000Z", format: "events" };
+		const path = writeTmpFile("conv_hdrnocap.jsonl", [
+			JSON.stringify(meta),
+			JSON.stringify({ ts: "2025-01-01T00:00:00.000Z", type: "user.message", content: [{ type: "image" }] }),
+			JSON.stringify({ ts: "2025-01-01T00:00:01.000Z", type: "user.message", content: [{ type: "text", text: "captioned" }] }),
+		]);
+
+		const result = await readConversationHeader(path);
+		expect(result).not.toBeNull();
+		expect(result!.preview).toBe("captioned");
+		expect(result!.messageCount).toBe(2);
+	});
+
 	// -------------------------------------------------------------------------
 	// Event format: the count is messages, not lines
 	//
