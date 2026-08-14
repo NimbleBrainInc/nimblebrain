@@ -65,6 +65,57 @@ function writeConversation(id: string, title: string, message: string): void {
   writeFileSync(join(dir, `${id}.jsonl`), `${lines.join("\n")}\n`);
 }
 
+/**
+ * An auto-titled, event-sourced conversation — the shape every conversation
+ * takes from its first turn on, once the auto-titler has appended its
+ * `metadata.title` event.
+ */
+function writeAutoTitledConversation(id: string, autoTitle: string, message: string): void {
+  const dir = join(workDir, "workspaces", WS_ID, "conversations", OWNER_ID);
+  mkdirSync(dir, { recursive: true });
+  const meta = {
+    id,
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+    // Line 1 stays null exactly as the store leaves it — the title lives in
+    // the event below, which is the whole point of this fixture.
+    title: null,
+    totalInputTokens: 0,
+    totalOutputTokens: 0,
+    totalCostUsd: 0,
+    lastModel: null,
+    ownerId: OWNER_ID,
+    workspaceId: WS_ID,
+    format: "events",
+  };
+  const lines = [
+    JSON.stringify(meta),
+    JSON.stringify({
+      ts: "2026-01-01T00:01:00.000Z",
+      type: "user.message",
+      content: [{ type: "text", text: message }],
+      userId: OWNER_ID,
+    }),
+    JSON.stringify({
+      ts: "2026-01-01T00:01:30.000Z",
+      type: "metadata.title",
+      title: autoTitle,
+    }),
+  ];
+  writeFileSync(join(dir, `${id}.jsonl`), `${lines.join("\n")}\n`);
+}
+
+/**
+ * The title a READER projects, which is the only one that reaches a user.
+ * `storedTitle` reads line 1 — the one place a shadowed write does land — so
+ * it cannot tell a real rename from one every reader ignores.
+ */
+async function projectedTitle(id: string): Promise<string | null> {
+  const result = await inChat("get", { id, expand: "metadata" });
+  const { metadata } = parseFirst(result) as { metadata: { title: string | null } };
+  return metadata.title;
+}
+
 function storedTitle(id: string): string {
   const path = join(workDir, "workspaces", WS_ID, "conversations", OWNER_ID, `${id}.jsonl`);
   const line = readFileSync(path, "utf-8").split("\n")[0]!;
@@ -208,6 +259,57 @@ describe("the other conversation-addressing tools resolve the same way", () => {
     expect(result.isError).toBe(true);
     const { error } = parseFirst(result) as { error: string };
     expect(error).toContain("No conversation in scope");
+  });
+});
+
+describe("a rename reaches the channel readers project from", () => {
+  // Every reader takes the title from the last `metadata.title` event and only
+  // falls back to line 1 when there is none. The auto-titler appends that event
+  // on turn 1, so a line-1 rewrite is shadowed from then on: the write lands,
+  // every reader keeps the old title, and the caller is told it worked.
+  const AUTO_ID = "conv_cccccccccccccccc";
+
+  test("renaming an auto-titled conversation is visible to every reader", async () => {
+    writeAutoTitledConversation(AUTO_ID, "Auto Generated Title", "hello");
+
+    const result = await inChat("update", { id: AUTO_ID, title: "Agent Set This" });
+    expect(result.isError).toBe(false);
+
+    expect(await projectedTitle(AUTO_ID)).toBe("Agent Set This");
+
+    const listed = parseFirst(await inChat("list", {})) as {
+      conversations: Array<{ id: string; title: string | null }>;
+    };
+    expect(listed.conversations.find((c) => c.id === AUTO_ID)?.title).toBe("Agent Set This");
+  });
+
+  test("the response reports what a reader projects, not what was requested", async () => {
+    // The failure mode this pins: the handler built its reply from its own
+    // local mutation, so a write no reader honoured still echoed back as
+    // success. Asserting the reply equals the projection makes the two
+    // inseparable.
+    writeAutoTitledConversation(AUTO_ID, "Auto Generated Title", "hello");
+
+    const echoed = parseFirst(await inChat("update", { id: AUTO_ID, title: "Agent Set This" })) as {
+      title: string;
+    };
+    expect(echoed.title).toBe(await projectedTitle(AUTO_ID));
+  });
+
+  test("renaming a legacy conversation keeps its messages", async () => {
+    // A legacy file has no events, and the reader picks its parser by asking
+    // whether any line looks like one. Appending a `metadata.title` event to
+    // one flips it onto the event reducer, which finds no messages — so the
+    // rename would empty the conversation. Line 1 is its only title channel.
+    const result = await inChat("update", { id: OTHER_ID, title: "Renamed Legacy" });
+    expect(result.isError).toBe(false);
+
+    expect(await projectedTitle(OTHER_ID)).toBe("Renamed Legacy");
+
+    const full = parseFirst(await inChat("get", { id: OTHER_ID, expand: "full" })) as {
+      messages: unknown[];
+    };
+    expect(full.messages.length).toBeGreaterThan(0);
   });
 });
 
