@@ -56,13 +56,54 @@ describe("originOf", () => {
     });
   });
 
-  test("unattended is `task` even though the context also carries a conversationId", () => {
-    // `executeTask` stamps the run id into `conversationId` for traceability, so
-    // a conversation-first test would file every automation call under `chat`.
-    // This is the precedence that makes the automation total correct.
-    runWithRequestContext({ identity: null, conversationId: "run-1", unattended: true }, () => {
+  test("unattended is `task`, and a run carries no conversation to confuse it", () => {
+    // A run stamps `runId`, not `conversationId` — the two are different
+    // questions. `unattended` is still checked first, so the answer does not
+    // depend on that: a context that somehow carried both would still be a task.
+    runWithRequestContext({ identity: null, runId: "run-1", unattended: true }, () => {
       expect(originOf()).toBe("task");
     });
+    runWithRequestContext(
+      { identity: null, conversationId: "conv-1", unattended: true },
+      () => {
+        expect(originOf()).toBe("task");
+      },
+    );
+  });
+});
+
+describe("the ledger's sessionId correlates a run as well as a chat", () => {
+  // One ledger column, two kinds of id, separated downstream by `origin`
+  // (`aggregate.ts` counts a task's as a run and everything else as a
+  // conversation). Every historical record was written under that contract, so
+  // the run id has to keep landing here now that the context fields have split.
+  function sessionIdFor(ctx: Parameters<typeof runWithRequestContext>[0]): unknown {
+    const dir = mkdtempSync(join(tmpdir(), "nb-session-"));
+    const month = usageMonthOf(new Date().toISOString());
+    const ledger = new UsageLedger(dir, "inst", { retentionMonths: 0 });
+    setUsageLedger(ledger);
+    try {
+      runWithRequestContext(ctx, () => {
+        recordLlmCall({ source: "main", model: "test-model-session", usage: USAGE });
+      });
+    } finally {
+      clearUsageLedger(ledger);
+    }
+    const path = usageShardPath(dir, month, "inst");
+    const line = readFileSync(path, "utf-8").split("\n").filter(Boolean)[0]!;
+    return (JSON.parse(line) as Record<string, unknown>).sessionId;
+  }
+
+  test("a run's id reaches sessionId", () => {
+    expect(sessionIdFor({ identity: null, runId: "run-42", unattended: true })).toBe("run-42");
+  });
+
+  test("a chat's conversation id reaches sessionId", () => {
+    expect(sessionIdFor({ identity: null, conversationId: "conv-42" })).toBe("conv-42");
+  });
+
+  test("neither in scope leaves it unset", () => {
+    expect(sessionIdFor({ identity: null })).toBeUndefined();
   });
 });
 
@@ -85,7 +126,7 @@ describe("isDelegated", () => {
 
 describe("recordLlmCall", () => {
   test("a delegated call inside an automation is task + delegated, not one or the other", async () => {
-    runWithRequestContext({ identity: null, conversationId: "run-7", unattended: true }, () => {
+    runWithRequestContext({ identity: null, runId: "run-7", unattended: true }, () => {
       recordLlmCall({
         source: "main",
         model: "test-model-a",
@@ -154,7 +195,7 @@ describe("origin follows the scope, whatever the source", () => {
   });
 
   test("the same call inside an automation records task", async () => {
-    runWithRequestContext({ identity: null, conversationId: "run-mid", unattended: true }, () => {
+    runWithRequestContext({ identity: null, runId: "run-mid", unattended: true }, () => {
       recordLlmCall({ source: "compaction", model: "test-model-f", usage: USAGE });
     });
 

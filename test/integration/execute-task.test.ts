@@ -33,6 +33,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { textContent } from "../../src/engine/content-helpers.ts";
 import type { EngineEvent, EventSink } from "../../src/engine/types.ts";
+import { getRequestContext } from "../../src/runtime/request-context.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { defineInProcessApp, type InProcessTool } from "../../src/tools/in-process-app.ts";
 import { personalWorkspaceIdFor } from "../../src/workspace/workspace-store.ts";
@@ -97,6 +98,59 @@ describe("runtime.executeTask", () => {
     await wsStore.addMember(SHARED_WS_ID, TEST_USER_ID, "admin");
     return { personalWsId, sharedWsId: SHARED_WS_ID };
   }
+
+  it("stamps the run id as runId, and leaves conversationId unset", async () => {
+    // The writer half of the contract. Every reader asking "what conversation
+    // am I in" reads `conversationId`; a run has none, and putting the run id
+    // there made five of them look it up as a conversation and miss. The unit
+    // tests build a context by hand, so only this one can catch the stamp
+    // being moved back.
+    const seen: Array<{ conversationId?: string; runId?: string }> = [];
+    const source = defineInProcessApp(
+      {
+        name: "ctxprobe",
+        version: "1.0.0",
+        tools: [
+          {
+            name: "peek",
+            description: "Records the ambient request context.",
+            inputSchema: { type: "object", properties: {} },
+            handler: async () => {
+              const ctx = getRequestContext();
+              seen.push({ conversationId: ctx?.conversationId, runId: ctx?.runId });
+              return { content: textContent("ok"), isError: false };
+            },
+          },
+        ],
+      },
+      { emit() {} },
+    );
+    await source.start();
+
+    runtime = await bootRuntime({
+      responses: [
+        {
+          toolCalls: [
+            { toolCallId: "call_peek", toolName: "ctxprobe__peek", input: JSON.stringify({}) },
+          ],
+        },
+        { text: "done" },
+      ],
+    });
+    await provisionWorkspaces(runtime);
+    const reg = await runtime.ensureWorkspaceRegistry(SHARED_WS_ID);
+    reg.addSource(source);
+
+    const result = await runtime.executeTask({
+      prompt: "peek at the context",
+      identity: { id: TEST_USER_ID, displayName: TEST_USER_DISPLAY },
+      workspaceId: SHARED_WS_ID,
+    });
+
+    expect(seen).toHaveLength(1);
+    expect(seen[0]?.runId).toBe(result.runId);
+    expect(seen[0]?.conversationId).toBeUndefined();
+  });
 
   it("returns a deliverable and a runId on the happy path", async () => {
     // Echo model: no scripted responses → falls back to echoing the

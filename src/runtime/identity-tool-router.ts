@@ -110,6 +110,12 @@ function buildPerCallContext(
       ? { workspaceModelOverride: outer.workspaceModelOverride }
       : {}),
     ...(outer?.conversationId !== undefined ? { conversationId: outer.conversationId } : {}),
+    // `runId` rides the restamp for the same reason `conversationId` does: it
+    // is what correlates a task run's work, and the usage ledger and telemetry
+    // read it at tool-dispatch depth. This list is an allowlist — a field not
+    // named here is silently absent below the top level, which is how a run's
+    // correlation id disappears from everything a tool call records.
+    ...(outer?.runId !== undefined ? { runId: outer.runId } : {}),
     // The model the turn runs on rides the restamp so a tool asked what it is
     // running on answers from the run rather than from config. A delegated
     // sub-agent runs on its own model and overwrites this before its tools

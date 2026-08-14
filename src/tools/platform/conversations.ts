@@ -154,13 +154,14 @@ export async function createConversationsSource(
    * Outside a chat — a REST tool call, an `/mcp` request, an automation run —
    * there is no ambient conversation, so this errors rather than guessing.
    *
-   * The ambient value is shape-checked rather than merely present-checked,
-   * because "a conversation is in scope" and "`conversationId` is set" are not
-   * the same question. An unattended run sets the field to its RUN id — a
-   * correlation id for stamping audit and file records, with no conversation
-   * behind it — so a presence check resolves `run_…` and reports
-   * `Conversation not found: run_…`, which is the failure this helper exists
-   * to remove. Only a store-minted id answers the question being asked.
+   * The ambient value is shape-checked rather than merely present-checked.
+   * `RequestContext.conversationId` holds only store-minted conversation ids —
+   * an unattended run carries its correlation id in `runId` — so this check
+   * should never fire. It stays as a forward guard: the cost of a caller
+   * putting something else in that field is a lookup miss reported as
+   * `Conversation not found: <whatever it was>`, naming an id the agent never
+   * supplied and cannot act on. Refusing anything that is not a conversation
+   * id keeps that failure impossible to reintroduce from the reader's side.
    */
   function resolveConversationId(id: string | undefined): string {
     if (id && id !== "current") return id;
