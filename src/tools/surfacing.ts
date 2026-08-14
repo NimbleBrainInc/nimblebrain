@@ -74,7 +74,7 @@ function toolSource(t: ToolSchema): string {
  * something — so the ask reads as unsupported and the agent answers that the
  * platform has no memory. One tool, and it buys the whole persistence verb.
  *
- * The rest of the persistence surface (`skills__*`, ten tools) stays proxied
+ * The rest of the persistence surface (`skills__*`, nine tools) stays proxied
  * and is named in `bootstrap.md` instead: it is the authoring surface for a
  * capability, reached deliberately, not the reflex a bare workspace needs.
  *

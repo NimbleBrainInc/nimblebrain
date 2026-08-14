@@ -535,7 +535,7 @@ describe("surfaceTools — instructions is kernel-direct", () => {
 	});
 
 	it("the skills authoring surface stays proxied", () => {
-		// Ten tools for a surface reached deliberately, not reflexively — it is
+		// Nine tools for a surface reached deliberately, not reflexively — it is
 		// named in the bootstrap briefing instead of spent from the direct tier.
 		const system = makeSystemTools(4);
 		const skills = makeAppTools("skills", 10);
