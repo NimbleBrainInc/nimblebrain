@@ -23,7 +23,7 @@
  * next implementer registers them in the right place.
  */
 
-import { copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { collectDeliveredSkillNames } from "../../conversation/event-reconstructor.ts";
 import type { ConversationEvent, SkillsLoadedEvent } from "../../conversation/types.ts";
@@ -39,7 +39,7 @@ import {
   type SkillLoadedBy,
   type SkillLoadRow,
 } from "../../skills/load-ledger.ts";
-import { parseSkillFile, readSkillMtime } from "../../skills/loader.ts";
+import { parseSkillContent, parseSkillFile, readSkillMtime } from "../../skills/loader.ts";
 import { resolveLoadingMechanism } from "../../skills/loading.ts";
 import { SKILL_NAME_PATTERN } from "../../skills/schemas/skill-manifest.ts";
 import { toolMatches } from "../../skills/select.ts";
@@ -47,6 +47,12 @@ import { approxTokens } from "../../skills/tokens.ts";
 import { MAX_SKILL_BODY_CHARS, truncateMarkdownToBudget } from "../../skills/truncate.ts";
 import type { Skill, SkillManifest } from "../../skills/types.ts";
 import { validateSkill } from "../../skills/validator.ts";
+import {
+  isSnapshotPath,
+  listSkillVersions,
+  readSkillVersionRaw,
+  snapshotSkillVersion,
+} from "../../skills/versions.ts";
 import { deleteSkill, updateSkill, writeSkill } from "../../skills/writer.ts";
 import { canWriteWorkspaceScoped } from "../../workspace/authz.ts";
 import { defineInProcessApp, type InProcessTool } from "../in-process-app.ts";
@@ -66,9 +72,11 @@ import {
   SkillsCreateInput,
   SkillsDeactivateInput,
   SkillsDeleteInput,
+  SkillsHistoryInput,
   SkillsListInput,
   SkillsLoadingLogInput,
   SkillsReadInput,
+  SkillsRestoreInput,
   SkillsUpdateInput,
   UseSkillInput,
 } from "./schemas/skills.ts";
@@ -128,8 +136,11 @@ const SKILLS_CREATE_DESCRIPTION =
 const SKILLS_UPDATE_DESCRIPTION =
   "Update an existing Layer 3 skill. The `id` is the filesystem path returned by `skills__list` " +
   "(call that first — bare names and scope-prefixed forms are NOT valid). Provide a partial " +
-  "`manifest` patch (any subset of the create-shape fields) and/or a new `body`. Snapshots the " +
-  "current version to `_versions/` before writing. Bundle (Layer 1) skills are not editable.";
+  "`manifest` patch (any subset of the create-shape fields) and/or a `body`. When you pass a " +
+  "`body` you MUST also pass `body_mode`: `append` adds it to the skill (use this to add a " +
+  "rule — it keeps everything already there), `replace` overwrites the whole body. Snapshots " +
+  "the current version to `_versions/` first; `skills__history` lists those snapshots and " +
+  "`skills__restore` puts one back. Bundle (Layer 1) skills are not editable.";
 
 // Tool input schemas live in `./schemas/skills.ts` — see the catalog at
 // `./schemas/catalog.ts`. The LLM-facing create/update input is a `Pick` of
@@ -138,6 +149,16 @@ const SKILLS_UPDATE_DESCRIPTION =
 // `tool-affinity`, `triggers`). `provenance` and `scope` are NOT authorable —
 // the writer stamps `provenance` and the loader stamps `scope` from the
 // directory tier.
+
+const SKILLS_HISTORY_DESCRIPTION =
+  "List the saved snapshots of a skill, newest first. Every `update`, `delete`, and `restore` " +
+  "snapshots the file first, so this is the undo history. Returns version ids to pass to " +
+  "`skills__read` (`version`) to inspect one, or `skills__restore` to put one back.";
+
+const SKILLS_RESTORE_DESCRIPTION =
+  "Restore a skill's body and manifest from a snapshot listed by `skills__history`. The current " +
+  "version is snapshotted first, so a restore is itself undoable. Use this to recover content " +
+  'an over-broad `body_mode: "replace"` discarded.';
 
 const SKILLS_DELETE_DESCRIPTION =
   "Delete a Layer 3 skill. The `id` is the filesystem path returned by `skills__list`. " +
@@ -298,6 +319,30 @@ export function createSkillsSource(runtime: Runtime, eventSink: EventSink): McpS
       handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
         try {
           return await updateSkillHandler(runtime, input, eventSink, authoringGuidePath);
+        } catch (err) {
+          return errorResult(err);
+        }
+      },
+    },
+    {
+      name: "history",
+      description: SKILLS_HISTORY_DESCRIPTION,
+      inputSchema: SkillsHistoryInput,
+      handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
+        try {
+          return await historySkillHandler(runtime, input, authoringGuidePath);
+        } catch (err) {
+          return errorResult(err);
+        }
+      },
+    },
+    {
+      name: "restore",
+      description: SKILLS_RESTORE_DESCRIPTION,
+      inputSchema: SkillsRestoreInput,
+      handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
+        try {
+          return await restoreSkillHandler(runtime, input, eventSink, authoringGuidePath);
         } catch (err) {
           return errorResult(err);
         }
@@ -606,7 +651,7 @@ function realPathUnderAnyRootOrThrow(target: string, roots: string[]): string {
  * inside the platform's roots — e.g. a symlink at
  * `{workDir}/workspaces/wsA/skills/evil.md` pointing to
  * `{workDir}/workspaces/wsB/skills/secret.md` passes the under-root
- * check, but `snapshotVersion`'s `copyFileSync` (and `readSkillById`'s
+ * check, but `snapshotSkillVersion`'s copy (and `readSkillById`'s
  * `parseSkillFile`) then follow the link and read wsB's content from a
  * caller authorised only for wsA.
  *
@@ -735,6 +780,42 @@ async function readSkillById(
  * before reading. Throws on unexpected errors; the tool wrapper turns those
  * into an `isError` result.
  */
+/**
+ * Render one `_versions/` snapshot as a read result. Split out of
+ * `readSkillHandler` so the live-read path keeps its shape; the caller has
+ * already run every scope/permission/symlink gate.
+ */
+function renderSkillVersion(id: string, version: string, isUri: boolean): ToolResult {
+  if (isUri) {
+    return errorResult(
+      new Error("`version` is not supported for `skill://` ids — bundle skills have no history."),
+    );
+  }
+  const raw = readSkillVersionRaw(id, version);
+  if (raw === null) {
+    return {
+      content: textContent(
+        `No version "${version}" for "${id}". Call skills__history to list available versions.`,
+      ),
+      isError: true,
+    };
+  }
+  const parsed = parseSkillContent(raw, id, { cap: false });
+  if (!parsed) {
+    return errorResult(new Error(`Snapshot "${version}" of "${id}" could not be parsed.`));
+  }
+  return {
+    content: textContent(`Version ${version} of ${id}\n\n${parsed.body}`),
+    structuredContent: {
+      id,
+      version,
+      body: parsed.body,
+      manifest: parsed.manifest as unknown as Record<string, unknown>,
+    },
+    isError: false,
+  };
+}
+
 async function readSkillHandler(
   runtime: Runtime,
   authoringGuidePath: string,
@@ -799,6 +880,11 @@ async function readSkillHandler(
       return errorResult(err);
     }
   }
+  // A snapshot read runs the SAME scope/permission/symlink gates above and
+  // only then swaps which file is parsed — history must never be a side door
+  // to content the live path would refuse.
+  const version = typeof input.version === "string" ? input.version : undefined;
+  if (version) return renderSkillVersion(id, version, isUri);
   const result = await readSkillById(runtime, authoringGuidePath, id);
   if (!result) {
     return {
@@ -1487,22 +1573,6 @@ function scopeOfPath(
 }
 
 /**
- * Write the existing live file (if any) to `{dir}/_versions/{name}.{iso}.md`
- * before a destructive operation. The loader's `_versions/` skip means
- * snapshots never accidentally re-load as live skills.
- */
-function snapshotVersion(filePath: string): void {
-  if (!existsSync(filePath)) return;
-  const dir = dirname(filePath);
-  const base = filePath.split("/").pop() ?? "skill.md";
-  const name = base.replace(/\.md$/, "");
-  const versionsDir = join(dir, "_versions");
-  mkdirSync(versionsDir, { recursive: true });
-  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-  copyFileSync(filePath, join(versionsDir, `${name}.${stamp}.md`));
-}
-
-/**
  * Trigger a runtime reload of the boot-time skill pool after a mutation.
  *
  * `loadConversationSkills` reads workspace + user + org dirs fresh per
@@ -1786,68 +1856,73 @@ function buildUpdatePatch(
 // Input shape for `skills__update`. `manifest` is a partial of the
 // create-shape — every field optional. Derived from the TypeBox schema
 // in `./schemas/skills.ts`; the validator has already enforced shape.
+/**
+ * Refuse a body whose intent isn't stated. Defaulting either way is a silent
+ * data hazard: `replace` destroys the rest of the skill when the caller meant
+ * to add a rule (the incident this guard exists for), and `append` duplicates
+ * the whole body when the caller sent a full rewrite. An error costs one
+ * retry; both defaults cost content.
+ */
+function bodyModeError(body: string | undefined, bodyMode: unknown): ToolResult | null {
+  if (body === undefined) return null;
+  if (bodyMode === "append" || bodyMode === "replace") return null;
+  return errorResult(
+    new Error(
+      "`body_mode` is required when `body` is given: " +
+        '"append" to add this text to the skill, "replace" to overwrite the whole body. ' +
+        "Use `append` when adding a rule — `replace` discards everything not in `body`.",
+    ),
+  );
+}
+
+/**
+ * Refuse a path that points into `_versions/` rather than at a live skill.
+ * Mutating a snapshot would snapshot a snapshot, and the loader skips that
+ * subtree, so the result would be unreachable by every reader.
+ */
+function snapshotPathError(id: string): ToolResult | null {
+  if (!isSnapshotPath(id)) return null;
+  return errorResult(
+    new Error(
+      `"${id}" is a stored snapshot, not a live skill. Pass the live path and use ` +
+        "`version` (skills__read) or skills__restore to work with history.",
+    ),
+  );
+}
+
 async function updateSkillHandler(
   runtime: Runtime,
   input: Record<string, unknown>,
   eventSink: EventSink,
   authoringGuidePath: string,
 ): Promise<ToolResult> {
-  const { id, manifest: patch, body } = input as unknown as SkillsUpdateInput;
-  if (!id) return errorResult(new Error("`id` is required"));
+  const { id, manifest: patch, body, body_mode: bodyMode } = input as unknown as SkillsUpdateInput;
 
-  // skill:// URIs are bundle-served by design — return the structured
-  // not-mutable error so calling agents can branch on suggested_action
-  // without parsing prose. (Filesystem path → scope is determined below.)
-  if (id.startsWith(SKILL_URI_PREFIX)) return bundleNotMutable();
-  const scope = scopeOfPath(runtime, id, authoringGuidePath);
-  if (scope === "bundle") return bundleNotMutable();
-  if (!scope) return errorResult(new Error(unrecognizedIdMessage(id)));
-
-  // Existence before permission — a stale `id` should report "not found",
-  // not "permission denied". See read handler for full rationale.
-  if (!existsSync(id)) {
-    return errorResult(
-      new Error(
-        `Skill not found at "${id}". The file may have been moved or deleted — ` +
-          `call skills__list to get current paths.`,
-      ),
-    );
-  }
-
-  const permission = await checkPathAccess(runtime, id, scope, "write");
-  if (!permission.allowed) {
-    return permissionDenied(permission.reason ?? "Permission denied", {
-      path: id,
-      scope,
-      role: currentRoleHint(runtime, scope),
-    });
-  }
-
-  // Defense-in-depth: realpath the target and verify the link doesn't
-  // escape the declared scope/tenant. Catches three classes of attack:
-  //   - symlink to /etc/passwd (or anywhere outside workDir) — leaks
-  //     contents via snapshotVersion's copyFileSync
-  //   - symlink within {workDir}/workspaces/ but to a different
-  //     workspace — cross-workspace exfiltration
-  //   - symlink across scope tiers (workspace skill → user dir) —
-  //     tier-jumping
-  try {
-    assertSymlinkBoundaryOrThrow(runtime, id, scope);
-  } catch (err) {
-    return errorResult(err);
-  }
+  // Same gate the history/restore pair runs: scope, existence-before-permission,
+  // write authority, and the symlink-boundary check that stops a link from
+  // making `snapshotSkillVersion`'s copy read outside the tier.
+  const gate = await gateSkillPath(runtime, id ?? "", authoringGuidePath, "write");
+  if ("error" in gate) return gate.error;
+  const scope = gate.scope;
 
   const dir = dirname(id);
   const name = (id.split("/").pop() ?? "").replace(/\.md$/, "");
   if (!name) return errorResult(new Error(`Cannot derive skill name from path "${id}"`));
 
-  snapshotVersion(id);
+  // Checked HERE, after the gate and immediately before the first destructive
+  // act. Validating it earlier would answer "body_mode is required" to a caller
+  // who is not allowed to write at all — a fix that gets them nowhere, hiding
+  // the denial that actually applies.
+  const modeError = bodyModeError(body, bodyMode);
+  if (modeError) return modeError;
+
+  snapshotSkillVersion(id);
 
   const partial = buildUpdatePatch(patch);
   // Merged result is canonically validated by the writer before write; a patch
   // that would make the skill unloadable fails cleanly, leaving the file as-is.
   try {
-    updateSkill(dir, name, partial, body);
+    updateSkill(dir, name, partial, body, bodyMode ?? "replace");
   } catch (err) {
     return errorResult(err instanceof Error ? err : new Error(String(err)));
   }
@@ -1861,6 +1936,122 @@ async function updateSkillHandler(
   };
 }
 
+/**
+ * Shared gate for the history/restore pair: resolve scope, prove the file
+ * exists, check permission, and refuse a symlink that escapes the tier.
+ * Identical to the front half of `updateSkillHandler` — snapshots are the
+ * skill's own content, so reaching them must cost exactly what reaching the
+ * live file costs.
+ */
+async function gateSkillPath(
+  runtime: Runtime,
+  id: string,
+  authoringGuidePath: string,
+  access: "read" | "write",
+): Promise<{ scope: WritableScope } | { error: ToolResult }> {
+  if (!id) return { error: errorResult(new Error("`id` is required")) };
+  const snapErr = snapshotPathError(id);
+  if (snapErr) return { error: snapErr };
+  if (id.startsWith(SKILL_URI_PREFIX)) return { error: bundleNotMutable() };
+  const scope = scopeOfPath(runtime, id, authoringGuidePath);
+  if (scope === "bundle") return { error: bundleNotMutable() };
+  if (!scope) return { error: errorResult(new Error(unrecognizedIdMessage(id))) };
+  if (!existsSync(id)) {
+    return {
+      error: errorResult(
+        new Error(
+          `Skill not found at "${id}". The file may have been moved or deleted — ` +
+            `call skills__list to get current paths.`,
+        ),
+      ),
+    };
+  }
+  const permission = await checkPathAccess(runtime, id, scope, access);
+  if (!permission.allowed) {
+    return {
+      error: permissionDenied(permission.reason ?? "Permission denied", {
+        path: id,
+        scope,
+        role: currentRoleHint(runtime, scope),
+      }),
+    };
+  }
+  try {
+    assertSymlinkBoundaryOrThrow(runtime, id, scope);
+  } catch (err) {
+    return { error: errorResult(err) };
+  }
+  return { scope };
+}
+
+async function historySkillHandler(
+  runtime: Runtime,
+  input: Record<string, unknown>,
+  authoringGuidePath: string,
+): Promise<ToolResult> {
+  const { id } = input as { id?: string };
+  const gate = await gateSkillPath(runtime, id ?? "", authoringGuidePath, "read");
+  if ("error" in gate) return gate.error;
+
+  const versions = listSkillVersions(id as string);
+  const summary = versions.length
+    ? `${versions.length} saved version(s) of "${id}":\n` +
+      versions.map((v) => `  ${v.version}  (${v.savedAt}, ${v.bytes} bytes)`).join("\n")
+    : `No saved versions of "${id}" yet — snapshots start at the first update or delete.`;
+  return {
+    content: textContent(summary),
+    structuredContent: { id, versions },
+    isError: false,
+  };
+}
+
+async function restoreSkillHandler(
+  runtime: Runtime,
+  input: Record<string, unknown>,
+  eventSink: EventSink,
+  authoringGuidePath: string,
+): Promise<ToolResult> {
+  const { id, version } = input as { id?: string; version?: string };
+  if (!version) return errorResult(new Error("`version` is required"));
+  const gate = await gateSkillPath(runtime, id ?? "", authoringGuidePath, "write");
+  if ("error" in gate) return gate.error;
+  const path = id as string;
+
+  const raw = readSkillVersionRaw(path, version);
+  if (raw === null) {
+    return errorResult(
+      new Error(
+        `No version "${version}" for "${path}". Call skills__history to list available versions.`,
+      ),
+    );
+  }
+  const parsed = parseSkillContent(raw, path, { cap: false });
+  if (!parsed) {
+    return errorResult(new Error(`Snapshot "${version}" of "${path}" could not be parsed.`));
+  }
+
+  // Snapshot the CURRENT file before overwriting it, so restoring to the
+  // wrong version is itself recoverable — the property whose absence made
+  // the original loss permanent.
+  snapshotSkillVersion(path);
+
+  const dir = dirname(path);
+  const name = (path.split("/").pop() ?? "").replace(/\.md$/, "");
+  try {
+    writeSkill(dir, name, parsed.manifest, parsed.body);
+  } catch (err) {
+    return errorResult(err instanceof Error ? err : new Error(String(err)));
+  }
+  await reloadBootSkills(runtime);
+
+  eventSink.emit({ type: "skill.updated", data: { id: path, name, scope: gate.scope } });
+  return {
+    content: textContent(`Restored ${gate.scope} skill "${name}" from version ${version}`),
+    structuredContent: { id: path, name, scope: gate.scope, version },
+    isError: false,
+  };
+}
+
 async function deleteSkillHandler(
   runtime: Runtime,
   input: Record<string, unknown>,
@@ -1868,44 +2059,20 @@ async function deleteSkillHandler(
   authoringGuidePath: string,
 ): Promise<ToolResult> {
   const { id } = input as { id?: string };
-  if (!id) return errorResult(new Error("`id` is required"));
 
-  if (id.startsWith(SKILL_URI_PREFIX)) return bundleNotMutable();
-  const scope = scopeOfPath(runtime, id, authoringGuidePath);
-  if (scope === "bundle") return bundleNotMutable();
-  if (!scope) return errorResult(new Error(unrecognizedIdMessage(id)));
+  // The same gate update / history / restore run. Delete is the last
+  // destructive path that carried its own copy, which is why it was also the
+  // last one that would accept a `_versions/` path — deleting a snapshot and
+  // leaving a nested `_versions/_versions/` no reader can see.
+  const gate = await gateSkillPath(runtime, id ?? "", authoringGuidePath, "write");
+  if ("error" in gate) return gate.error;
+  const scope = gate.scope;
 
-  // Existence before permission — see updateSkillHandler for rationale.
-  if (!existsSync(id)) {
-    return errorResult(
-      new Error(
-        `Skill not found at "${id}". The file may have been moved or deleted — ` +
-          `call skills__list to get current paths.`,
-      ),
-    );
-  }
-
-  const permission = await checkPathAccess(runtime, id, scope, "write");
-  if (!permission.allowed) {
-    return permissionDenied(permission.reason ?? "Permission denied", {
-      path: id,
-      scope,
-      role: currentRoleHint(runtime, scope),
-    });
-  }
-
-  // Symlink-boundary defense — see updateSkillHandler for rationale.
-  try {
-    assertSymlinkBoundaryOrThrow(runtime, id, scope);
-  } catch (err) {
-    return errorResult(err);
-  }
-
-  const dir = dirname(id);
-  const name = (id.split("/").pop() ?? "").replace(/\.md$/, "");
+  const dir = dirname(id as string);
+  const name = ((id as string).split("/").pop() ?? "").replace(/\.md$/, "");
   if (!name) return errorResult(new Error(`Cannot derive skill name from path "${id}"`));
 
-  snapshotVersion(id);
+  snapshotSkillVersion(id as string);
   deleteSkill(dir, name);
   await reloadBootSkills(runtime);
 

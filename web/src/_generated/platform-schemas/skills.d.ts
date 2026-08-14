@@ -14,6 +14,7 @@ export declare const SkillsListInput: import("@sinclair/typebox").TObject<{
 export type SkillsListInput = Static<typeof SkillsListInput>;
 export declare const SkillsReadInput: import("@sinclair/typebox").TObject<{
     id: import("@sinclair/typebox").TString;
+    version: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
 }>;
 export type SkillsReadInput = Static<typeof SkillsReadInput>;
 export declare const SkillsActiveForInput: import("@sinclair/typebox").TObject<{
@@ -55,8 +56,18 @@ export declare const SkillsUpdateInput: import("@sinclair/typebox").TObject<{
         allowedTools: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
     }>>;
     body: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+    body_mode: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TLiteral<"append">, import("@sinclair/typebox").TLiteral<"replace">]>>;
 }>;
 export type SkillsUpdateInput = Static<typeof SkillsUpdateInput>;
+export declare const SkillsHistoryInput: import("@sinclair/typebox").TObject<{
+    id: import("@sinclair/typebox").TString;
+}>;
+export type SkillsHistoryInput = Static<typeof SkillsHistoryInput>;
+export declare const SkillsRestoreInput: import("@sinclair/typebox").TObject<{
+    id: import("@sinclair/typebox").TString;
+    version: import("@sinclair/typebox").TString;
+}>;
+export type SkillsRestoreInput = Static<typeof SkillsRestoreInput>;
 export declare const SkillsDeleteInput: import("@sinclair/typebox").TObject<{
     id: import("@sinclair/typebox").TString;
 }>;

@@ -326,7 +326,10 @@ export function SkillsBrowser(props: SkillsBrowserProps) {
       if (editingId) {
         await runMutation(
           "update",
-          { id: editingId, manifest: advancedOverrides, body: patch.body },
+          // `replace`: this editor is a full-document textarea, so what it
+          // holds IS the intended body. `append` would double the skill on
+          // every save. An agent adding a single rule wants the other mode.
+          { id: editingId, manifest: advancedOverrides, body: patch.body, body_mode: "replace" },
           () => {
             setView("list");
             setEditingId(null);
