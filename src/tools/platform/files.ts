@@ -321,12 +321,21 @@ interface CreateInput {
   encoding?: "base64" | "text";
 }
 
-/**
- * Canonical base64, allowing the whitespace a wrapped encoder emits.
- * Padding is required, because the check's whole job is to separate real
- * base64 from a caller that never encoded at all.
- */
+/** The standard base64 alphabet with padding. Not base64url — see below. */
 const BASE64_BODY = /^[A-Za-z0-9+/]*={0,2}$/;
+
+/**
+ * The only whitespace a base64 body may contain: the line breaks a wrapped
+ * encoder emits (MIME wraps at 76 columns with CRLF).
+ *
+ * Deliberately NOT `\s+`. A space never occurs inside base64, and stripping
+ * spaces is what turns prose into a candidate: with them gone,
+ * `"the quick brown fox"` is sixteen alphabet characters and passes every
+ * check below — which is the exact silent corruption this validation exists
+ * to stop. Rejecting space-indented base64 is the price, and the error names
+ * the fix.
+ */
+const BASE64_LINE_BREAKS = /[\r\n]+/g;
 
 /**
  * Decode a `files__create` body under its declared encoding.
@@ -338,15 +347,29 @@ const BASE64_BODY = /^[A-Za-z0-9+/]*={0,2}$/;
  * encoding exists so a caller composing prose has somewhere to go: encoding
  * a document by hand is not something a language model can do reliably, so
  * "base64 or nothing" is not a contract it can hold to.
+ *
+ * The check is a filter, not a proof. Prose that happens to be a single
+ * punctuation-free token of length divisible by four — `"TODO"`, `"done"` —
+ * is indistinguishable from base64 by inspection and still decodes to
+ * garbage. Nothing short of the caller declaring its encoding separates
+ * those, which is what `encoding: "text"` is for.
+ *
+ * Stricter than `Buffer.from` on two shapes it would otherwise accept:
+ * unpadded base64 and base64url (`-`/`_`). Both are rejected so that padding
+ * and alphabet carry discrimination against prose; the error names them so a
+ * caller holding either knows to re-encode rather than reach for `text`.
  */
 function decodeCreateBody(body: string, encoding: "base64" | "text"): Buffer {
   if (encoding === "text") return Buffer.from(body, "utf8");
-  const compact = body.replace(/\s+/g, "");
+  const compact = body.replace(BASE64_LINE_BREAKS, "");
   if (!BASE64_BODY.test(compact) || compact.length % 4 !== 0) {
     throw new Error(
       '`body` is not valid base64, and `encoding` defaults to "base64". ' +
-        'To store text as written — markdown, code, CSV, JSON — pass encoding: "text" and put the ' +
-        "raw content in `body`. To store binary, base64-encode it first.",
+        "Expected the standard alphabet (A-Z a-z 0-9 + /) with `=` padding to a multiple of 4; " +
+        "line breaks are allowed, other whitespace is not, and base64url (-, _) is not accepted. " +
+        'If `body` is content you wrote yourself — markdown, code, CSV, JSON — pass encoding: "text" ' +
+        "and leave it unencoded. If it is already base64, re-encode it in that form rather than " +
+        'passing encoding: "text", which would store the encoded string instead of the bytes.',
     );
   }
   return Buffer.from(compact, "base64");
