@@ -197,6 +197,55 @@ const SKILLS_DEACTIVATE_DESCRIPTION =
  * mutation tools, which will emit `skill.created` / `skill.updated` /
  * `skill.deleted` engine events.
  */
+/**
+ * Skills tools that stay reachable inside an unattended run: the read-only
+ * half. Everything else in the namespace — the authoring tools, and any tool
+ * added to it later — is barred, so the boundary fails CLOSED as the surface
+ * grows (an allowlist, not a denylist), matching
+ * {@link AUTOMATIONS_TASK_SAFE_TOOLS}.
+ *
+ * A skill is durable, cross-conversation guidance the runtime composes into a
+ * prompt on its own: `loading_strategy: always` reaches every later turn, and
+ * tool affinity reaches every turn that touches the matching tools. A task run
+ * fires as its owner with no human present to confirm, and routinely ingests
+ * untrusted content (email, web pages, tickets). A write from inside one would
+ * put attacker-authored text into future interactive sessions with nothing
+ * standing between them — a foothold that outlives the run and then loads
+ * itself. That is the argument `createInstructionsSource` makes for the same
+ * wall, and it is stronger here: instructions are one document a scope opts
+ * into, while a skill can auto-load on a tool match and there can be many.
+ *
+ * Reads stay open deliberately. An automation that audits the catalog and
+ * reports what it found — stale skills, overlapping guidance, a recommendation
+ * to retire one — is useful and changes nothing; it hands its conclusions to a
+ * human who makes the change from an interactive session.
+ */
+const SKILLS_TASK_SAFE_TOOLS: ReadonlySet<string> = new Set([
+  "list",
+  "read",
+  "history",
+  "loading_log",
+  "active_for",
+]);
+
+/**
+ * Whether a `skills__*` wire name is barred from an unattended run.
+ *
+ * Two layers read this one predicate, the same split
+ * {@link isTaskForbiddenIdentityTool} uses: `executeTask` subtracts these from
+ * the surfaced set so the model never sees a tool it cannot call, and
+ * {@link createSkillsSource} refuses them at dispatch so the wall holds for a
+ * delegated sub-agent at any depth and regardless of what was surfaced.
+ * Surfacing is the courtesy; the source is the boundary.
+ *
+ * Names outside the namespace are not this policy's business and return false.
+ */
+export function isTaskForbiddenSkillTool(wireName: string): boolean {
+  const prefix = `${SKILLS_SOURCE_NAME}__`;
+  if (!wireName.startsWith(prefix)) return false;
+  return !SKILLS_TASK_SAFE_TOOLS.has(wireName.slice(prefix.length));
+}
+
 export function createSkillsSource(runtime: Runtime, eventSink: EventSink): McpSource {
   // Layer 1 vendored guide lives next to the loader's `builtin/` directory.
   // Read at handler time (not module init) so the file can be replaced
@@ -402,6 +451,36 @@ export function createSkillsSource(runtime: Runtime, eventSink: EventSink): McpS
     },
   ];
 
+  // Unattended-run wall. Enforced HERE, wrapping the assembled tool list,
+  // because this is the single dispatch point every caller funnels through —
+  // the top-level run AND a delegated sub-agent at any depth. `unattended`
+  // rides the ambient request context (set by `executeTask`, preserved across
+  // the per-call restamp), so the wall does not depend on which engine or
+  // router dispatched the call, or on the tool ever having been surfaced to
+  // the model. Same placement and reasoning as `createAutomationsSource` and
+  // `createInstructionsSource`.
+  const walled: InProcessTool[] = tools.map((tool) =>
+    SKILLS_TASK_SAFE_TOOLS.has(tool.name)
+      ? tool
+      : {
+          ...tool,
+          handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
+            if (getRequestContext()?.unattended) {
+              return errorResult(
+                new Error(
+                  `Tool "${SKILLS_SOURCE_NAME}__${tool.name}" is not available inside an ` +
+                    "unattended automation run. A skill is durable guidance that loads " +
+                    "itself into later conversations, and there is no one present to " +
+                    "confirm the change. Read and report from the run; write the skill " +
+                    "from an interactive session.",
+                ),
+              );
+            }
+            return tool.handler(input);
+          },
+        },
+  );
+
   // Layer 1 vendored authoring guide. Callback-form `text` so the file is
   // re-read on every `resources/read`.
   const resources = new Map<string, { text: () => Promise<string>; mimeType: string }>([
@@ -423,7 +502,7 @@ export function createSkillsSource(runtime: Runtime, eventSink: EventSink): McpS
     {
       name: SKILLS_SOURCE_NAME,
       version: "1.0.0",
-      tools,
+      tools: walled,
       resources,
     },
     eventSink,

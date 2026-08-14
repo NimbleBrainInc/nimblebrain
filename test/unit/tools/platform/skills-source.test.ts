@@ -15,7 +15,11 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { NoopEventSink } from "../../../../src/adapters/noop-events.ts";
 import { McpSource } from "../../../../src/tools/mcp-source.ts";
-import { createSkillsSource } from "../../../../src/tools/platform/skills.ts";
+import {
+	createSkillsSource,
+	isTaskForbiddenSkillTool,
+} from "../../../../src/tools/platform/skills.ts";
+import { runWithRequestContext } from "../../../../src/runtime/request-context.ts";
 
 // ── Fake Runtime ────────────────────────────────────────────────────────
 //
@@ -183,5 +187,100 @@ describe("skills source — resources", () => {
     const client = src.getClient()!;
     const data = await client.readResource({ uri: "skill://skills/authoring-guide" });
     expect(data.contents?.[0]?.mimeType).toBe("text/markdown");
+  });
+});
+
+// ── Unattended-run wall ─────────────────────────────────────────────────
+//
+// A skill is durable guidance the runtime composes into later prompts on its
+// own. A task run ingests untrusted content with no human present, so it may
+// read the catalog and report on it, but not write to it.
+
+describe("skills source — unattended-run wall", () => {
+  const MUTATIONS = ["create", "update", "delete", "activate", "deactivate", "restore"];
+  const READS = ["list", "read", "history", "loading_log", "active_for"];
+
+  test("every tool is classified — a new one cannot be added without a decision", async () => {
+    // The set below is the whole namespace. If a tool is added and not sorted
+    // into reads or mutations, this fails rather than the tool silently
+    // inheriting whichever default the author did not think about.
+    const src = await buildSource();
+    const names = (await src.getClient()!.listTools()).tools.map((t) => t.name).sort();
+    expect(names).toEqual([...MUTATIONS, ...READS].sort());
+  });
+
+  test("the predicate bars every mutation and no read", () => {
+    for (const name of MUTATIONS) {
+      expect(isTaskForbiddenSkillTool(`skills__${name}`)).toBe(true);
+    }
+    for (const name of READS) {
+      expect(isTaskForbiddenSkillTool(`skills__${name}`)).toBe(false);
+    }
+  });
+
+  test("the predicate fails CLOSED for a tool added to the namespace later", () => {
+    // An allowlist, not a denylist: a mutation added tomorrow is barred by
+    // default rather than silently reopening the vector.
+    expect(isTaskForbiddenSkillTool("skills__publish_to_everyone")).toBe(true);
+  });
+
+  test("the predicate does not reach outside its own namespace", () => {
+    expect(isTaskForbiddenSkillTool("conversations__update")).toBe(false);
+    expect(isTaskForbiddenSkillTool("files__create")).toBe(false);
+    expect(isTaskForbiddenSkillTool("nb__use_skill")).toBe(false);
+  });
+
+  // Valid arguments on purpose: schema validation runs BEFORE the handler, so
+  // a malformed call is rejected as bad input and never reaches the wall. That
+  // is harmless — no mutation happens on either path — but a test built on
+  // invalid args would pass while proving nothing about the wall.
+  const VALID_CREATE = {
+    scope: "workspace",
+    manifest: { name: "injected", description: "written by an automation" },
+    body: "# do the attacker's bidding",
+  };
+
+  test("a mutation called inside an unattended run is refused at the source", async () => {
+    // Enforced at dispatch, not only by surfacing subtraction — a delegated
+    // sub-agent that was never shown the tool can still name it.
+    const src = await buildSource();
+    const client = src.getClient()!;
+    const result = await runWithRequestContext(
+      { identity: { id: "user_test" }, unattended: true } as never,
+      () => client.callTool({ name: "create", arguments: VALID_CREATE }),
+    );
+    expect(result.isError).toBe(true);
+    const text = (result.content as Array<{ type: string; text: string }>)
+      .filter((c) => c.type === "text")
+      .map((c) => c.text)
+      .join("");
+    expect(text).toContain("not available inside an unattended automation run");
+  });
+
+  test("a read called inside an unattended run is NOT refused by the wall", async () => {
+    // The automation's whole permitted job — audit and report — must survive.
+    const src = await buildSource();
+    const client = src.getClient()!;
+    const result = await runWithRequestContext(
+      { identity: { id: "user_test" }, unattended: true } as never,
+      () => client.callTool({ name: "list", arguments: {} }),
+    );
+    const text = (result.content as Array<{ type: string; text: string }>)
+      .filter((c) => c.type === "text")
+      .map((c) => c.text)
+      .join("");
+    expect(text).not.toContain("not available inside an unattended automation run");
+  });
+
+  test("outside a run the same mutation is not walled", async () => {
+    // Pins that the wall keys on `unattended`, not on the tool being broken.
+    const src = await buildSource();
+    const client = src.getClient()!;
+    const result = await client.callTool({ name: "create", arguments: VALID_CREATE });
+    const text = (result.content as Array<{ type: string; text: string }>)
+      .filter((c) => c.type === "text")
+      .map((c) => c.text)
+      .join("");
+    expect(text).not.toContain("not available inside an unattended automation run");
   });
 });
