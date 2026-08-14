@@ -166,15 +166,42 @@ export function readSkill(dir: string, name: string): Skill | null {
 }
 
 /**
+ * How `newBody` combines with the body already on disk.
+ *
+ * `replace` is the primitive's default because that is what a function taking
+ * a `newBody` has always meant here, and the safety this file used to lack
+ * belongs at the tool boundary rather than in a silent change of meaning:
+ * `skills__update` refuses a body that doesn't say which of these it wants.
+ */
+export type SkillBodyMode = "append" | "replace";
+
+/**
+ * Join an addition onto an existing body with exactly one blank line between.
+ *
+ * Trailing/leading whitespace is trimmed at the seam only — never inside
+ * either part — so appending twice doesn't accumulate blank lines and a body
+ * whose own formatting is meaningful (fenced blocks, tables) survives intact.
+ * Appending to an empty body yields just the addition.
+ */
+export function joinSkillBody(existing: string, addition: string): string {
+  const head = existing.replace(/\s+$/, "");
+  const tail = addition.replace(/^\s+/, "");
+  if (!head) return tail;
+  if (!tail) return head;
+  return `${head}\n\n${tail}`;
+}
+
+/**
  * Update an existing skill file. Reads the current file, merges any
- * provided partial manifest fields, optionally replaces the body, and
- * writes back atomically. Throws if the file doesn't exist.
+ * provided partial manifest fields, optionally appends to or replaces the
+ * body, and writes back atomically. Throws if the file doesn't exist.
  */
 export function updateSkill(
   dir: string,
   name: string,
   partialManifest?: Partial<SkillManifest>,
   newBody?: string,
+  bodyMode: SkillBodyMode = "replace",
 ): void {
   const existing = readSkill(dir, name);
   if (!existing) {
@@ -191,7 +218,12 @@ export function updateSkill(
     merged.provenance = { ...merged.provenance, updatedAt: new Date().toISOString() };
   }
 
-  const body = newBody !== undefined ? newBody : existing.body;
+  const body =
+    newBody === undefined
+      ? existing.body
+      : bodyMode === "append"
+        ? joinSkillBody(existing.body, newBody)
+        : newBody;
   writeSkill(dir, name, merged, body);
 }
 

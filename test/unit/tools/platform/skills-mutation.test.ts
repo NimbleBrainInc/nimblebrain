@@ -502,6 +502,7 @@ describe("skills__update", () => {
         id,
         manifest: { description: "v2", priority: 30 },
         body: "Body v2",
+        body_mode: "replace",
       },
     });
     expect(result.isError).toBeFalsy();

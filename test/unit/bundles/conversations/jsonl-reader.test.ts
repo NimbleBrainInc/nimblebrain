@@ -794,6 +794,140 @@ describe("readConversationHeader", () => {
 		expect(result!.messageCount).toBe(1);
 		expect(result!.preview).toBe("Valid");
 	});
+
+	test("an empty first user message does not end the preview search", async () => {
+		// The scan stops at the first user line that HAS text, not at the first
+		// user line — an uploaded picture with no caption carries no preview.
+		const meta = { id: "conv_hdrnocap", createdAt: "2025-01-01T00:00:00.000Z", format: "events" };
+		const path = writeTmpFile("conv_hdrnocap.jsonl", [
+			JSON.stringify(meta),
+			JSON.stringify({ ts: "2025-01-01T00:00:00.000Z", type: "user.message", content: [{ type: "image" }] }),
+			JSON.stringify({ ts: "2025-01-01T00:00:01.000Z", type: "user.message", content: [{ type: "text", text: "captioned" }] }),
+		]);
+
+		const result = await readConversationHeader(path);
+		expect(result).not.toBeNull();
+		expect(result!.preview).toBe("captioned");
+		expect(result!.messageCount).toBe(2);
+	});
+
+	// -------------------------------------------------------------------------
+	// Event format: the count is messages, not lines
+	//
+	// `conversations__list` reports this number and opening the conversation
+	// shows `readConversation`'s. They describe the same file to the same user,
+	// so every case here asserts the two agree — the literal is there to say
+	// which value they agree ON.
+	// -------------------------------------------------------------------------
+
+	function hdrEventMeta(id: string) {
+		return {
+			id,
+			createdAt: "2025-06-01T00:00:00.000Z",
+			updatedAt: "2025-06-01T00:00:00.000Z",
+			title: null,
+			totalInputTokens: 0,
+			totalOutputTokens: 0,
+			totalCostUsd: 0,
+			lastModel: null,
+			format: "events",
+		};
+	}
+
+	async function bothCounts(path: string): Promise<{ header: number; full: number }> {
+		const header = await readConversationHeader(path);
+		const full = await readConversation(path);
+		expect(header).not.toBeNull();
+		expect(full).not.toBeNull();
+		return { header: header!.messageCount, full: full!.messageCount };
+	}
+
+	test("a turn counts as its messages, not as its events", async () => {
+		// One exchange is five lines: the user's message, the run's start, the
+		// response, the run's end, and the auto-titler's event. Counting lines
+		// reported this conversation as 5 messages.
+		const runId = "run_hdr1";
+		const path = writeTmpFile("conv_hdrevt.jsonl", [
+			JSON.stringify(hdrEventMeta("conv_hdrevt")),
+			JSON.stringify({ ts: "2025-06-01T00:00:00.000Z", type: "user.message", content: [{ type: "text", text: "hi" }] }),
+			JSON.stringify({ ts: "2025-06-01T00:00:01.000Z", type: "run.start", runId }),
+			JSON.stringify({ ts: "2025-06-01T00:00:02.000Z", type: "llm.response", runId, model: "m1", content: [{ type: "text", text: "answer" }], usage: { inputTokens: 10, outputTokens: 5 }, llmMs: 100 }),
+			JSON.stringify({ ts: "2025-06-01T00:00:03.000Z", type: "run.done", runId, stopReason: "complete" }),
+			JSON.stringify({ ts: "2025-06-01T00:00:04.000Z", type: "metadata.title", title: "Auto Generated Title" }),
+		]);
+
+		const { header, full } = await bothCounts(path);
+		expect(header).toBe(full);
+		expect(header).toBe(2);
+	});
+
+	test("tool calls inside a turn do not each become a message", async () => {
+		const runId = "run_hdr2";
+		const path = writeTmpFile("conv_hdrtool.jsonl", [
+			JSON.stringify(hdrEventMeta("conv_hdrtool")),
+			JSON.stringify({ ts: "2025-06-01T00:00:00.000Z", type: "user.message", content: [{ type: "text", text: "search" }] }),
+			JSON.stringify({ ts: "2025-06-01T00:00:01.000Z", type: "run.start", runId }),
+			JSON.stringify({ ts: "2025-06-01T00:00:02.000Z", type: "tool.start", runId, id: "t1", name: "nb__search", input: {} }),
+			JSON.stringify({ ts: "2025-06-01T00:00:03.000Z", type: "tool.done", runId, id: "t1", ok: true }),
+			JSON.stringify({ ts: "2025-06-01T00:00:04.000Z", type: "llm.response", runId, model: "m1", content: [{ type: "text", text: "found it" }], usage: { inputTokens: 10, outputTokens: 5 }, llmMs: 100 }),
+			JSON.stringify({ ts: "2025-06-01T00:00:05.000Z", type: "run.done", runId, stopReason: "complete" }),
+		]);
+
+		const { header, full } = await bothCounts(path);
+		expect(header).toBe(full);
+		expect(header).toBe(2);
+	});
+
+	test("a run that produced no response is not a message", async () => {
+		// `collectRun` yields nothing for a run with no `llm.response`, so the
+		// header must not count one either — this is why the rule is
+		// runs-with-a-response rather than run.start or run.done.
+		const path = writeTmpFile("conv_hdrempty.jsonl", [
+			JSON.stringify(hdrEventMeta("conv_hdrempty")),
+			JSON.stringify({ ts: "2025-06-01T00:00:00.000Z", type: "user.message", content: [{ type: "text", text: "hi" }] }),
+			JSON.stringify({ ts: "2025-06-01T00:00:01.000Z", type: "run.start", runId: "run_empty" }),
+			JSON.stringify({ ts: "2025-06-01T00:00:02.000Z", type: "run.done", runId: "run_empty", stopReason: "error" }),
+		]);
+
+		const { header, full } = await bothCounts(path);
+		expect(header).toBe(full);
+		expect(header).toBe(1);
+	});
+
+	test("a run still in flight counts, as it does for the full reader", async () => {
+		// No `run.done` — the turn was still generating (or the writer was cut
+		// off). The full reader emits it as a pending message, so the header
+		// counts it too; a rule keyed on run.done would disagree here.
+		const runId = "run_hdrlive";
+		const path = writeTmpFile("conv_hdrlive.jsonl", [
+			JSON.stringify(hdrEventMeta("conv_hdrlive")),
+			JSON.stringify({ ts: "2025-06-01T00:00:00.000Z", type: "user.message", content: [{ type: "text", text: "hi" }] }),
+			JSON.stringify({ ts: "2025-06-01T00:00:01.000Z", type: "run.start", runId }),
+			JSON.stringify({ ts: "2025-06-01T00:00:02.000Z", type: "llm.response", runId, model: "m1", content: [{ type: "text", text: "partial" }], usage: { inputTokens: 5, outputTokens: 2 }, llmMs: 30 }),
+		]);
+
+		const { header, full } = await bothCounts(path);
+		expect(header).toBe(full);
+		expect(header).toBe(2);
+	});
+
+	test("an event-sourced file with no explicit format marker is still counted as one", async () => {
+		// Line 1 predates the `format` stamp, so the format is inferred from the
+		// lines — the same fallback `readConversation` uses.
+		const runId = "run_hdrnofmt";
+		const { format: _dropped, ...noFormat } = hdrEventMeta("conv_hdrnofmt");
+		const path = writeTmpFile("conv_hdrnofmt.jsonl", [
+			JSON.stringify(noFormat),
+			JSON.stringify({ ts: "2025-06-01T00:00:00.000Z", type: "user.message", content: [{ type: "text", text: "hi" }] }),
+			JSON.stringify({ ts: "2025-06-01T00:00:01.000Z", type: "run.start", runId }),
+			JSON.stringify({ ts: "2025-06-01T00:00:02.000Z", type: "llm.response", runId, model: "m1", content: [{ type: "text", text: "answer" }], usage: { inputTokens: 10, outputTokens: 5 }, llmMs: 100 }),
+			JSON.stringify({ ts: "2025-06-01T00:00:03.000Z", type: "run.done", runId, stopReason: "complete" }),
+		]);
+
+		const { header, full } = await bothCounts(path);
+		expect(header).toBe(full);
+		expect(header).toBe(2);
+	});
 });
 
 // ---------------------------------------------------------------------------

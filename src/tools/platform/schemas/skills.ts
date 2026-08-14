@@ -96,6 +96,13 @@ export const SkillsReadInput = Type.Object(
     id: Type.String({
       description: "Skill identifier — filesystem path or `skill://` URI.",
     }),
+    version: Type.Optional(
+      Type.String({
+        description:
+          "Read a historical snapshot instead of the live file. Version ids come " +
+          "from `skills__history`. Omit for the current body.",
+      }),
+    ),
   },
   { required: ["id"] },
 );
@@ -175,12 +182,43 @@ export const SkillsUpdateInput = Type.Object(
       }),
     ),
     body: Type.Optional(
-      Type.String({ description: "New markdown body. Omit to keep the current body." }),
+      Type.String({
+        description:
+          "Markdown to add or write. Omit to keep the current body. " +
+          "When present, `body_mode` is REQUIRED — this tool will not guess " +
+          "between adding to the skill and overwriting it.",
+      }),
+    ),
+    body_mode: Type.Optional(
+      Type.Union([Type.Literal("append"), Type.Literal("replace")], {
+        description:
+          "`append` adds `body` after the current content (use this to add a rule). " +
+          "`replace` overwrites the whole body. Required whenever `body` is given.",
+      }),
     ),
   },
   { required: ["id"] },
 );
 export type SkillsUpdateInput = Static<typeof SkillsUpdateInput>;
+
+export const SkillsHistoryInput = Type.Object(
+  {
+    id: Type.String({ description: "Filesystem path returned by `skills__list`." }),
+  },
+  { required: ["id"] },
+);
+export type SkillsHistoryInput = Static<typeof SkillsHistoryInput>;
+
+export const SkillsRestoreInput = Type.Object(
+  {
+    id: Type.String({ description: "Filesystem path returned by `skills__list`." }),
+    version: Type.String({
+      description: "Version id from `skills__history`. Its body becomes the live body.",
+    }),
+  },
+  { required: ["id", "version"] },
+);
+export type SkillsRestoreInput = Static<typeof SkillsRestoreInput>;
 
 const IdOnlyInput = Type.Object(
   {
