@@ -101,11 +101,12 @@ Connections carry an owner key built from `NB_TENANT_ID` and the workspace id. T
 
 ## What a user sees
 
-A Smithery connector has no sign-in step inside NimbleBrain. Installing it mints a connection, and one of three things happens:
+A Smithery connector has no sign-in step inside NimbleBrain. Installing it mints a connection, and one of four things happens:
 
 - The connection comes back ready, and the connector reaches **Connected** with no further action.
 - Smithery needs the user to authorize the upstream service, and the install fails with a message carrying a Smithery setup link.
 - Smithery needs configuration values, and the install fails the same way with a link to supply them.
+- Smithery reports the connection in an error state, and the install fails carrying whatever detail Smithery gave. This one is Smithery's to resolve, not the user's.
 
 In the second and third cases the user completes setup at Smithery, then installs again. Connection ids are derived from the owner and the server name, so the retry adopts the connection that setup just finished rather than creating a second one.
 
