@@ -980,6 +980,25 @@ describe("skills__active_for", () => {
     expect(text).not.toContain("Conversation not found");
   });
 
+  test("a run id arriving in the conversation field is still refused", async () => {
+    // The reader-side forward guard, matching `conversations__*`. No caller
+    // builds this shape now — `executeTask` stamps `runId` — so this is not a
+    // run reproduction; it is the shape-check's only exercise, and it pins
+    // that a non-conversation id in the ambient field is refused rather than
+    // looked up and echoed back as `Conversation not found: run_...`.
+    const src = await buildSource();
+    const client = src.getClient()!;
+    const result = await runWithRequestContext(
+      { identity: null, conversationId: "run_a8f15601-0dd", unattended: true },
+      () => client.callTool({ name: "active_for", arguments: {} }),
+    );
+    expect(result.isError).toBe(true);
+    const text = ((result as { content: Array<{ text: string }> }).content[0]?.text ?? "") as string;
+    expect(text).toContain("conversation_id is required");
+    expect(text).not.toContain("run_a8f15601-0dd");
+    expect(text).not.toContain("Conversation not found");
+  });
+
   test("explicit conversation_id wins over request context", async () => {
     // If the agent passes an explicit id, honor it — even if a different
     // conv is in the request context. Lets the agent inspect a sibling

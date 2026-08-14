@@ -64,7 +64,7 @@ export interface RequestContext {
    * Separate from {@link conversationId} because a run has no conversation:
    * `executeTask` persists a run result, not a chat. Carrying the run id in
    * `conversationId` made one field answer two questions, and every consumer
-   * had to know which caller populated it — which five of the seven readers
+   * had to know which caller populated it — which five of the nine readers
    * did not. They looked the id up as a conversation and got a miss: a tool
    * reporting `Conversation not found: run_…`, a dedupe check reading a
    * conversation that does not exist, and a skill an automation created

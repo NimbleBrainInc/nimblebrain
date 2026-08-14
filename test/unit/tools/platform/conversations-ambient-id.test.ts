@@ -333,11 +333,13 @@ describe("a rename reaches the channel readers project from", () => {
   });
 });
 
-describe("an automation run has no conversation, even though the field is set", () => {
-  // `executeTask` populates `conversationId` with the run id, so "is the field
-  // set" and "is a conversation in scope" are different questions. Answering
-  // the first resolves `run_...` and reports `Conversation not found: run_...`
-  // — the exact failure the ambient fallback exists to remove.
+describe("an automation run has no conversation", () => {
+  // A run carries its correlation id in `runId`, so `conversationId` is simply
+  // absent and the ambient fallback finds nothing to resolve. The last test
+  // here covers the reader-side guard for the retired shape, where the run id
+  // sat in `conversationId` and a presence check resolved it — reporting
+  // `Conversation not found: run_...`, the failure this fallback exists to
+  // remove.
 
   for (const [tool, args] of [
     ["update", { title: "Doctrine" }],
