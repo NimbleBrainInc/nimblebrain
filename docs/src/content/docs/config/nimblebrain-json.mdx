@@ -498,7 +498,7 @@ The probe's **sweep cadence is not here.** One revalidator serves every provider
 
 #### Per-toolkit auth configs
 
-Every `auth: composio` connector needs an auth config created in the Composio dashboard ([how](/deploy/composio/#3-create-one-auth-config-per-toolkit-in-composio)). Its `ac_…` id varies per Composio account, so it cannot live in the catalog, which is shared across deployments.
+Every `auth: composio` connector needs an auth config created in the Composio dashboard ([how](/gateways/composio/#3-create-one-auth-config-per-toolkit-in-composio)). Its `ac_…` id varies per Composio account, so it cannot live in the catalog, which is shared across deployments.
 
 ```jsonc
 "authConfigs": { "gmail": "ac_xxxxxxxx", "posthog": "ac_yyyyyyyy" }

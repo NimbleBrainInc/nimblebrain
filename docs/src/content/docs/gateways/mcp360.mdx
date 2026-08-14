@@ -1,0 +1,124 @@
+---
+title: MCP360 Gateway Setup
+description: Publish MCP360's hosted tool endpoints as installable connectors using one account API key.
+---
+
+import { Steps, Aside } from '@astrojs/starlight/components';
+
+[MCP360](https://mcp360.ai) hosts a set of MCP endpoints — search, SEO, WHOIS, DNS, scraping, and more — behind one account API key. Unlike [Composio](/gateways/composio/) and [Smithery](/gateways/smithery/), it brokers nothing: there is no per-connection API to call, so an endpoint is reached directly and the key authenticates every caller.
+
+That makes it a **gateway**. You declare the key once, publish the endpoints you want as catalog entries, and workspace admins install them from Browse like any other connector.
+
+## One-time setup
+
+<Steps>
+1. **Get an API key.**
+
+   Generate one from the MCP360 dashboard. It covers every service on your account.
+
+2. **Declare the gateway in `nimblebrain.json`.**
+
+   ```jsonc
+   {
+     "connectors": {
+       "gateways": {
+         "mcp360": {}
+       }
+     }
+   }
+   ```
+
+   The name you choose here is what catalog entries reference. Leaving the block empty reads the key from `MCP360_API_KEY`; set `apiKey` to declare it inline instead.
+
+3. **Add catalog entries for the endpoints you want to offer.**
+
+   Each MCP360 service is its own endpoint, so each is its own entry. Name the gateway in `providerAuth.provider`.
+
+   ```yaml
+   servers:
+     - name: ai.mcp360/whois
+       title: MCP360 — WHOIS
+       description: Domain registration, ownership, and availability lookups
+       version: "1.0.0"
+       remotes:
+         - type: streamable-http
+           url: https://connect.mcp360.ai/v1/whois/mcp
+       _meta:
+         ai.nimblebrain/connector:
+           auth: provider
+           providerAuth:
+             provider: mcp360
+             config: {}
+           tags: [domains, research]
+   ```
+
+   Catalog entries are deployment configuration. See [Connectors Catalog](/config/connectors-catalog/) for where the file lives and how to mount it.
+
+4. **Verify the gateway registered.**
+
+   Start the platform and look for this line, one per declared gateway:
+
+   ```
+   [gateway:mcp360] credential provider registered
+   ```
+
+   The entries now appear in **Settings → Connectors → Browse**, and installing one connects with no sign-in step.
+</Steps>
+
+## Configuration reference
+
+| Field | Default | Notes |
+|---|---|---|
+| `apiKey` | none | Falls back to `<NAME>_API_KEY`, so a gateway named `mcp360` reads `MCP360_API_KEY`. A blank declared value counts as absent and falls through to the environment. |
+
+The gateway name is yours to pick, and it must match `providerAuth.provider` in every entry that uses it. `minted`, `composio`, and `smithery` are reserved by built-in credential providers; declaring one of those logs a warning and skips it rather than displacing the built-in.
+
+<Aside type="caution" title="Send the key as a header, never in the URL">
+MCP360 accepts the key three ways: a `token` query parameter, `Authorization: Bearer`, and `X-API-Key`. Their own client snippets use the query form. Do not copy that shape into a catalog entry — a URL is persisted into workspace state and appears in logs and error messages, so the key would travel with it. Leave the key out of the `url` entirely and let the gateway credential provider attach the header.
+</Aside>
+
+## Choosing which endpoints to publish
+
+MCP360 exposes 40+ services. Publish the ones your teams need rather than all of them:
+
+- Every entry a workspace installs adds its tools to that workspace's agent, and a large tool surface makes the model's selection harder.
+- MCP360's tool descriptions restate the tool name (`lookup_domain tool`). The input schemas are good, but the descriptions give the model little to choose on, so a curated set works better than a broad one.
+
+## What this shape costs you
+
+One key serves the whole instance, so MCP360 sees a single caller no matter which workspace made the request. You get no per-workspace attribution, and no way to revoke one workspace's access without revoking everyone's. A workspace that exhausts the account's rate limit exhausts it for all of them.
+
+That is inherent to a gateway rather than a gap in the integration. Where a vendor offers a brokered path as well, prefer it — see [Connector Providers](/config/connector-providers/).
+
+## Adding another gateway
+
+A second gateway is configuration, not code. Declare it beside the first and publish its entries:
+
+```jsonc
+{
+  "connectors": {
+    "gateways": {
+      "mcp360": {},
+      "glama": {}
+    }
+  }
+}
+```
+
+`glama` then reads `GLAMA_API_KEY`, and entries naming `providerAuth.provider: glama` authenticate with it.
+
+## Troubleshooting
+
+**Boot logs no `credential provider registered` line.** No `connectors.gateways` block is declared. The block is what creates the provider.
+
+**Installing succeeds but reports a failed start naming a missing API key.** The gateway is declared and no key resolved. The install itself still commits — the connector appears in the workspace and stays disconnected — and the message carries the error, which names both places to set the key. **Connect** keeps failing until one resolves.
+
+**A connector installs and its first tool call returns 401.** The key resolved but MCP360 rejected it. Check that it has not been rotated, and that the entry's `url` points at a service your plan covers.
+
+**Boot warns that a name is reserved.** Rename the gateway. A gateway may not take a name a built-in credential provider already holds.
+
+## Related
+
+- [Connector Providers](/config/connector-providers/) — how gateways differ from brokered providers
+- [Connectors Catalog](/config/connectors-catalog/) — authoring catalog entries
+- [Smithery](/gateways/smithery/) — a brokered gateway, for contrast
