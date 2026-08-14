@@ -923,6 +923,82 @@ describe("skills__active_for", () => {
     expect(active[0]!.id).toBe("/skills/from-ctx.md");
   });
 
+  test('conversation_id "current" resolves the ambient conversation', async () => {
+    // Same vocabulary as `conversations__update` / `get` / `fork` / `export`.
+    // Two tools answering "the conversation I am in" differently is a
+    // coin-flip the model has to win on every call.
+    const conv = await runtime.store().create({ ownerId: "user_test" });
+    runtime.store().setActiveConversation(conv.id);
+    runtime.store().emit({
+      type: "skills.loaded",
+      data: {
+        runId: "run_alias",
+        skills: [
+          {
+            id: "/skills/from-alias.md",
+            layer: 3,
+            scope: "org",
+            version: "",
+            tokens: 7,
+            loadedBy: "always",
+            reason: "loading_strategy: always",
+          },
+        ],
+        totalTokens: 7,
+      },
+    });
+
+    const src = await buildSource();
+    const client = src.getClient()!;
+    const result = await runWithRequestContext(
+      { identity: null, conversationId: conv.id },
+      () => client.callTool({ name: "active_for", arguments: { conversation_id: "current" } }),
+    );
+    expect(result.isError).toBeFalsy();
+    const sc = (
+      result as { structuredContent?: { active?: unknown[]; conversationId?: string } }
+    ).structuredContent;
+    expect(sc?.conversationId).toBe(conv.id);
+    expect((sc?.active as Array<{ id: string }>)[0]!.id).toBe("/skills/from-alias.md");
+  });
+
+  test("inside an automation run it says no conversation, not `not found`", async () => {
+    // A run carries `runId`, never `conversationId`. While the run id lived in
+    // the conversation field this resolved it and reported
+    // `Conversation not found: run_...` — an id the agent never supplied and
+    // cannot act on.
+    const src = await buildSource();
+    const client = src.getClient()!;
+    const result = await runWithRequestContext(
+      { identity: null, runId: "run_a8f15601-0dd", unattended: true },
+      () => client.callTool({ name: "active_for", arguments: {} }),
+    );
+    expect(result.isError).toBe(true);
+    const text = ((result as { content: Array<{ text: string }> }).content[0]?.text ?? "") as string;
+    expect(text).toContain("conversation_id is required");
+    expect(text).not.toContain("run_a8f15601-0dd");
+    expect(text).not.toContain("Conversation not found");
+  });
+
+  test("a run id arriving in the conversation field is still refused", async () => {
+    // The reader-side forward guard, matching `conversations__*`. No caller
+    // builds this shape now — `executeTask` stamps `runId` — so this is not a
+    // run reproduction; it is the shape-check's only exercise, and it pins
+    // that a non-conversation id in the ambient field is refused rather than
+    // looked up and echoed back as `Conversation not found: run_...`.
+    const src = await buildSource();
+    const client = src.getClient()!;
+    const result = await runWithRequestContext(
+      { identity: null, conversationId: "run_a8f15601-0dd", unattended: true },
+      () => client.callTool({ name: "active_for", arguments: {} }),
+    );
+    expect(result.isError).toBe(true);
+    const text = ((result as { content: Array<{ text: string }> }).content[0]?.text ?? "") as string;
+    expect(text).toContain("conversation_id is required");
+    expect(text).not.toContain("run_a8f15601-0dd");
+    expect(text).not.toContain("Conversation not found");
+  });
+
   test("explicit conversation_id wins over request context", async () => {
     // If the agent passes an explicit id, honor it — even if a different
     // conv is in the request context. Lets the agent inspect a sibling

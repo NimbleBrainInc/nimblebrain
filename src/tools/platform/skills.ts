@@ -26,7 +26,11 @@
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { collectDeliveredSkillNames } from "../../conversation/event-reconstructor.ts";
-import type { ConversationEvent, SkillsLoadedEvent } from "../../conversation/types.ts";
+import {
+  CONVERSATION_ID_RE,
+  type ConversationEvent,
+  type SkillsLoadedEvent,
+} from "../../conversation/types.ts";
 import { textContent } from "../../engine/content-helpers.ts";
 import { type EventSink, SKILL_ACTIVATED_META_KEY, type ToolResult } from "../../engine/types.ts";
 import { ORG_ADMIN_ROLES } from "../../identity/types.ts";
@@ -110,8 +114,8 @@ const SKILLS_READ_DESCRIPTION =
 
 const SKILLS_ACTIVE_FOR_DESCRIPTION =
   "Show which Layer 3 skills are currently loaded for a conversation. " +
-  "`conversation_id` is optional inside a chat — when omitted, defaults to the " +
-  "current conversation (the one this tool call belongs to). Returns one entry per " +
+  "`conversation_id` is optional inside a chat — when omitted (or passed as " +
+  '"current"), defaults to the conversation this tool call belongs to. Returns one entry per ' +
   "loaded skill with id, layer, scope, token count, `loadedBy` (`always` or " +
   "`tool_affinity`), and a human-readable `reason`. Use this to answer 'what's " +
   "active for this conversation right now?' — distinct from `skills__list` which " +
@@ -249,12 +253,24 @@ export function createSkillsSource(runtime: Runtime, eventSink: EventSink): McpS
           // request context. The agent making this call from inside a chat
           // doesn't know its own conv id, so requiring it forced agents to
           // either guess or skip the tool entirely.
-          const argConvId =
+          //
+          // `"current"` is accepted as a spelling of the ambient conversation,
+          // matching `conversations__update` / `get` / `fork` / `export`. Two
+          // tools answering "the conversation I am in" with different
+          // vocabularies is a coin-flip the model has to win on every call.
+          const rawArg =
             typeof input.conversation_id === "string" && input.conversation_id.length > 0
               ? input.conversation_id
               : undefined;
-          const ctxConvId = getRequestContext()?.conversationId;
-          const convId = argConvId ?? ctxConvId;
+          const argConvId = rawArg === "current" ? undefined : rawArg;
+          // The ambient value is shape-checked, matching `conversations__*`.
+          // `conversationId` holds only store-minted ids now, so this should
+          // never fire; it stays so that a non-conversation id arriving there
+          // is refused rather than looked up and reported as
+          // `Conversation not found: <that id>`.
+          const ambient = getRequestContext()?.conversationId;
+          const convId =
+            argConvId ?? (ambient && CONVERSATION_ID_RE.test(ambient) ? ambient : undefined);
           if (!convId) {
             return {
               content: textContent(
