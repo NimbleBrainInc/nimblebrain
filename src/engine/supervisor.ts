@@ -29,7 +29,7 @@ import {
  *    working through so many rephrasings that the surface plainly does not
  *    hold what is being looked for.
  *
- * Fingerprint composition (three shapes of "stuck"):
+ * How "stuck" is measured — three fingerprints and one counter:
  *
  *  - NON-ADVANCING: (toolName, NONADVANCING, normalized(input)). When
  *    `result._meta` carries `NON_ADVANCING_META_KEY`, the fingerprint ignores
@@ -177,24 +177,17 @@ interface ToolState {
    *  differ from THIS to count as progress — see RECOVERY in the file header.
    *  Null whenever `tripped` is false. */
   trippedContent: string | null;
+  /** The count that fired the trip — a repeat streak or a spent budget. Held
+   *  because the live counters keep moving after the trip, so reading them
+   *  later reports a number the model's own history contradicts. Null
+   *  whenever `tripped` is false. */
+  trippedRepeats: number | null;
 }
 
 const DEFAULT_MAX_REPEATS = 3;
 const DEFAULT_FINGERPRINT_CAP = 512;
 const DEFAULT_MAX_NON_ADVANCING = 6;
 
-/**
- * Canonical (stable) JSON encoding for the supervisor's input-aware
- * success fingerprint. Object keys are sorted so that two semantically
- * identical inputs that arrived with different key orderings hash to
- * the same value; arrays preserve order (positional). Bypasses
- * `JSON.stringify`'s implementation-defined key order.
- *
- * Not a public utility — the supervisor only needs this for repeat
- * detection. Inputs are bounded upstream by the model's output limit,
- * so we don't cap here; if that ever changes, cap to `textCap` to
- * match the result-text policy.
- */
 /**
  * Fold away the differences between two spellings of the same question:
  * case and whitespace on every string leaf, at any depth.
@@ -215,6 +208,18 @@ function normalizeForRepeat(value: unknown): unknown {
   return value;
 }
 
+/**
+ * Canonical (stable) JSON encoding for the supervisor's input-aware
+ * success fingerprint. Object keys are sorted so that two semantically
+ * identical inputs that arrived with different key orderings hash to
+ * the same value; arrays preserve order (positional). Bypasses
+ * `JSON.stringify`'s implementation-defined key order.
+ *
+ * Not a public utility — the supervisor only needs this for repeat
+ * detection. Inputs are bounded upstream by the model's output limit,
+ * so we don't cap here; if that ever changes, cap to `textCap` to
+ * match the result-text policy.
+ */
 function canonicalJson(value: unknown): string {
   if (value === undefined) return "null";
   if (value === null || typeof value !== "object") return JSON.stringify(value);
@@ -257,6 +262,7 @@ export function createRunSupervisor(config: SupervisorConfig = {}): RunSuperviso
         nonAdvancingCalls: 0,
         tripped: false,
         trippedContent: null,
+        trippedRepeats: null,
       };
       states.set(toolName, s);
     }
@@ -367,6 +373,7 @@ export function createRunSupervisor(config: SupervisorConfig = {}): RunSuperviso
       if (isAdvancingSuccess(result) && contentHash(result) !== state.trippedContent) {
         state.tripped = false;
         state.trippedContent = null;
+        state.trippedRepeats = null;
         state.consecutiveRepeats = 1;
         state.nonAdvancingCalls = 0;
         state.lastFingerprint = fingerprint(call, result);
@@ -377,11 +384,12 @@ export function createRunSupervisor(config: SupervisorConfig = {}): RunSuperviso
       // is no longer offered this one — but dispatch does not check that list,
       // so a model that names it anyway still reaches here.
       const originalText = extractTextForModel(result.content).trim();
+      const repeats = state.trippedRepeats ?? state.consecutiveRepeats;
       return {
         type: "synth",
-        replacement: synthReplacement(call.name, originalText, state.consecutiveRepeats),
+        replacement: synthReplacement(call.name, originalText, repeats),
         trippedTool: call.name,
-        consecutiveRepeats: state.consecutiveRepeats,
+        consecutiveRepeats: repeats,
       };
     }
 
@@ -409,6 +417,7 @@ export function createRunSupervisor(config: SupervisorConfig = {}): RunSuperviso
 
     state.tripped = true;
     state.trippedContent = contentHash(result);
+    state.trippedRepeats = repeats;
     const originalText = extractTextForModel(result.content).trim();
     return {
       type: "synth",
@@ -434,13 +443,21 @@ export function createRunSupervisor(config: SupervisorConfig = {}): RunSuperviso
 
   /**
    * Fold one observation into the tool's counters: the non-advancing budget
-   * (cleared by any advancing result — a tool that found something is not what
-   * it bounds) and the consecutive-fingerprint streak.
+   * and the consecutive-fingerprint streak.
+   *
+   * Only an ADVANCING SUCCESS clears the budget. An error is not evidence
+   * that the tool found anything, so it leaves the count alone — the same
+   * treatment, for the same reason, that the infrastructure-error branch
+   * above gives `consecutiveRepeats`: a counter an error can reset hands a
+   * flailing tool a way to never trip. A tool interleaving flagged misses
+   * with errors whose text keeps changing escapes the streak too (the ERROR
+   * fingerprint only collapses on repeated text), so a reset here would
+   * leave that shape with no guard at all.
    */
   function recordObservation(state: ToolState, call: ToolCall, result: ToolResult): void {
     if (result._meta?.[NON_ADVANCING_META_KEY] === true) {
       state.nonAdvancingCalls += 1;
-    } else {
+    } else if (isAdvancingSuccess(result)) {
       state.nonAdvancingCalls = 0;
     }
 

@@ -18,6 +18,11 @@ function textResult(text: string, isError = false): ToolResult {
   };
 }
 
+/** The model-facing text of a result — what the synth directive actually says. */
+function textOf(result: ToolResult): string {
+  return (result.content[0] as { text: string }).text;
+}
+
 describe("supervisor — pass-through behavior", () => {
   it("passes through 5 distinct successful results without tripping", () => {
     const sup = createRunSupervisor();
@@ -489,10 +494,57 @@ describe("supervisor — non-advancing results", () => {
     expect(miss(sup, "l").type).toBe("synth");
   });
 
+  it("an error between misses does NOT clear the budget", () => {
+    // Only an advancing success is evidence the tool found something. If an
+    // error reset the count, a tool interleaving fruitless searches with
+    // errors whose text keeps changing would escape both guards — the ERROR
+    // fingerprint only collapses on repeated text — and spend the run's whole
+    // iteration budget flailing.
+    const sup = createRunSupervisor();
+    for (let i = 0; i < 5; i++) {
+      expect(miss(sup, `q${i}`).type).toBe("pass");
+      expect(
+        sup.observe(call("nb__search", { query: `e${i}` }), textResult(`upstream error ${i}`, true))
+          .type,
+      ).toBe("pass");
+    }
+    // Six misses' worth of evidence has accumulated across the errors.
+    expect(miss(sup, "q5").type).toBe("synth");
+  });
+
+  it("an infrastructure failure does not clear the budget either", () => {
+    const sup = createRunSupervisor();
+    for (let i = 0; i < 5; i++) {
+      expect(miss(sup, `q${i}`).type).toBe("pass");
+      expect(
+        sup.observe(call("nb__search", { query: `e${i}` }), infraError("connection reset")).type,
+      ).toBe("pass");
+    }
+    expect(miss(sup, "q5").type).toBe("synth");
+  });
+
   it("the budget is configurable", () => {
     const sup = createRunSupervisor({ maxNonAdvancingCalls: 2 });
     expect(miss(sup, "a").type).toBe("pass");
     expect(miss(sup, "b").type).toBe("synth");
+  });
+
+  it("a tripped tool keeps reporting the count that tripped it", () => {
+    // The live counters keep moving after a trip, so reading them on a later
+    // call reported "made no progress 1 times in a row" for a tool disabled
+    // at 6 — a number the model's own history contradicts. The count lands in
+    // the directive text and in the recorded verdict.
+    const sup = createRunSupervisor();
+    for (const q of ["a", "b", "c", "d", "e"]) expect(miss(sup, q).type).toBe("pass");
+    expect(miss(sup, "f").type).toBe("synth");
+
+    const after = miss(sup, "g");
+    expect(after.type).toBe("synth");
+    if (after.type === "synth") {
+      expect(after.consecutiveRepeats).toBe(6);
+      expect(textOf(after.replacement)).toContain("6 times in a row");
+      expect(textOf(after.replacement)).not.toContain("1 times in a row");
+    }
   });
 
   it("preserves the input-aware success path: varied-input real work never trips", () => {
