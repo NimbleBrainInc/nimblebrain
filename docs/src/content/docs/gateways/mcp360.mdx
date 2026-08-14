@@ -111,7 +111,7 @@ A second gateway is configuration, not code. Declare it beside the first and pub
 
 **Boot logs no `credential provider registered` line.** No `connectors.gateways` block is declared. The block is what creates the provider.
 
-**Installing fails naming a missing API key.** The gateway is declared and no key resolved. The error names both places to set it.
+**Installing succeeds but reports a failed start naming a missing API key.** The gateway is declared and no key resolved. The install itself still commits — the connector appears in the workspace and stays disconnected — and the message carries the error, which names both places to set the key. **Connect** keeps failing until one resolves.
 
 **A connector installs and its first tool call returns 401.** The key resolved but MCP360 rejected it. Check that it has not been rotated, and that the entry's `url` points at a service your plan covers.
 

@@ -40,9 +40,11 @@ describe("reserved names cover every built-in credential provider", () => {
   // Gateways register LAST at the composition root, so last-writer-wins means a
   // declared gateway named after a built-in would replace it. The reserved-name
   // list is the only thing stopping that — ordering is what creates the exposure,
-  // not what closes it. So the list has to track the built-ins, and this pins it:
-  // register a new built-in without reserving its name and this fails here rather
-  // than silently shipping a config that can hijack it.
+  // not what closes it. So the list has to track the built-ins. Each case takes
+  // its name from the constant the built-in exports, so renaming one there and
+  // not in `RESERVED_NAMES` fails here. A *fourth* built-in does not: the cases
+  // are written out one per name, and nothing enumerates the built-ins to check
+  // against. Registering one means adding a case here and a name to the set.
   test.each([
     ["minted", MINTED_PROVIDER],
     ["composio", COMPOSIO_CREDENTIAL_PROVIDER],

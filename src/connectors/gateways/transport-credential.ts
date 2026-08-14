@@ -45,9 +45,15 @@ import { declaredGatewayConfigs, type GatewayConfig } from "../providers/config.
  *
  * **This set is the only thing preventing that.** Ordering does not help — it is
  * what creates the exposure — so a new built-in credential provider must be
- * added here in the same change that registers it. `gateway-credential.test.ts`
- * pins this list against the names the built-ins export, so adding one without
- * listing it here fails that test rather than shipping.
+ * added here in the same change that registers it.
+ *
+ * That step is manual. The built-ins self-register from their own modules
+ * (`minted` from the OAuth side, `composio` and `smithery` from theirs), so
+ * there is no canonical list of them to derive this one from.
+ * `gateway-credential.test.ts` asserts each name below against the constant its
+ * built-in exports, which catches a rename — it cannot catch a fourth built-in,
+ * because its cases are written out one per name. Add a built-in and you add a
+ * row there as well as an entry here.
  */
 const RESERVED_NAMES = new Set(["minted", "composio", "smithery"]);
 

@@ -124,7 +124,7 @@ The namespace and host recorded when the connector was installed drive that dele
 
 **An install fails asking for authorization.** Open the setup link in the error, finish at Smithery, then install again.
 
-**A connector flips to `reauth_required` on its own.** The revalidator found the connection **gone at Smithery** — a 404 is the only answer that flips a Smithery connector. Someone deleted it at the broker, or the platform's `namespace` was repointed away from where it was created. Reinstall the connector to mint a fresh one; a Smithery setup page will not help, because there is no connection left to set up. To stop the polling without removing the provider, set `monitorEnabled: false`.
+**A connector flips to `reauth_required` on its own.** The revalidator found the connection **gone at Smithery** — a 404 is the only answer that flips a Smithery connector. Someone deleted it at the broker. Repointing `namespace` or `baseUrl` is not a cause: the probe reads both from the connector's own install record, so an existing connection keeps being checked where it was created. Reinstall the connector to mint a fresh one; a Smithery setup page will not help, because there is no connection left to set up. To stop the polling without removing the provider, set `monitorEnabled: false`.
 
 **A user's upstream authorization lapsed and nothing flipped.** Expected. `auth_required` and `input_required` both report `indeterminate`, so the connector stays `running`. A liveness verdict cannot carry Smithery's setup URL, and flipping without one would strand the user with no route back. The symptom is tool calls failing against the upstream service while the connector reads healthy; the remedy is the same setup page the install path links.
 
