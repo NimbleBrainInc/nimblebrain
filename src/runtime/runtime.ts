@@ -2353,20 +2353,16 @@ export class Runtime {
   }
 
   /**
-   * The workspace briefing surfaces (apps + org/workspace overlays) for a turn.
+   * The workspace briefing surfaces (apps + the workspace overlay) for a turn.
    * `wsId` is the conversation's own (chat) or focused (task) workspace;
-   * `undefined` (personal/session) yields empty apps and org-only overlays.
+   * `undefined` (personal/session) yields empty apps and an empty overlay.
    */
   private async buildWorkspaceBriefing(wsId: string | undefined): Promise<{
     apps: PromptAppInfo[];
-    liveOverlays: { org: string; workspace: string };
+    liveOverlays: { workspace: string };
   }> {
     const apps = wsId ? await this.buildAppsList(wsId) : [];
-    // Org overlay always applies (org-level, not workspace-specific); the
-    // workspace overlay only for a real (non-personal) workspace.
-    const liveOverlays = wsId
-      ? await this.readPromptOverlays(wsId)
-      : { org: await this.getInstructionsStore().read({ scope: "org" }), workspace: "" };
+    const liveOverlays = wsId ? await this.readPromptOverlays(wsId) : { workspace: "" };
     return { apps, liveOverlays };
   }
 
@@ -3243,13 +3239,8 @@ export class Runtime {
    */
   /** Public so the compose-effective-context debug tool can re-read overlays
    *  in live mode. Workspace-scoped; no caller-controlled escalation. */
-  async readPromptOverlays(wsId: string): Promise<{ org: string; workspace: string }> {
-    const store = this.getInstructionsStore();
-    const [org, workspaceOverlay] = await Promise.all([
-      store.read({ scope: "org" }),
-      store.read({ scope: "workspace", wsId }),
-    ]);
-    return { org, workspace: workspaceOverlay };
+  async readPromptOverlays(wsId: string): Promise<{ workspace: string }> {
+    return { workspace: await this.getInstructionsStore().read({ wsId }) };
   }
 
   /** Get the ToolRegistry for a specific workspace. Throws if workspace registry not found. */

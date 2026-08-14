@@ -107,7 +107,6 @@ export type TracedLayerKind =
   | "user_prefs"
   | "current_date"
   | "workspace_context"
-  | "org_overlay"
   | "workspace_overlay"
   | "layer3_skills"
   | "skill_catalog"
@@ -241,9 +240,7 @@ export interface PromptAppInfo {
  * leaving no marker tag in the assembled prompt.
  */
 export interface OverlayLayers {
-  /** Org-level overlay (Phase 3 — slot reserved; Phase 1 callers pass `""`). */
-  org?: string;
-  /** Workspace-level overlay (Phase 2 — slot reserved; Phase 1 callers pass `""`). */
+  /** Workspace-level overlay. Empty or absent skips the layer entirely. */
   workspace?: string;
 }
 
@@ -388,7 +385,7 @@ export function composeSystemPromptTraced(
   // Layer 1.6: Participants section — removed in Stage 1 (single-owner
   // conversations). Returns in Stage 4 with policy-gated sharing.
 
-  // Layers 1.7 → 4, in prompt order: workspace context, org/workspace overlays,
+  // Layers 1.7 → 4, in prompt order: workspace context, workspace overlay,
   // Layer 3 skills, installed apps, app state, focused app, matched skill.
   layers.push(...workspaceContextLayers(workspaceContext));
   layers.push(...overlayLayers(overlays));
@@ -593,19 +590,14 @@ function workspaceContextLayers(workspaceContext?: WorkspaceContext): PendingLay
   ];
 }
 
-/** Layer 1.8: org- and workspace-tier instruction overlays, each skipped when blank. */
+/**
+ * Layer 1.8: the workspace instruction overlay, skipped when blank.
+ *
+ * Workspace-tier only. Org-wide standing guidance is an org-tier skill, which
+ * reaches every workspace through the layer-3 channel below.
+ */
 function overlayLayers(overlays?: OverlayLayers): PendingLayer[] {
   const layers: PendingLayer[] = [];
-  if (overlays?.org && overlays.org.trim().length > 0) {
-    const text = formatScopeOverlay("Organization Instructions", overlays.org);
-    layers.push({
-      kind: "org_overlay",
-      id: "instructions://org",
-      source: "org-tier instruction overlay",
-      text,
-      tokens: approxTokens(text),
-    });
-  }
   if (overlays?.workspace && overlays.workspace.trim().length > 0) {
     const text = formatScopeOverlay("Workspace Instructions", overlays.workspace);
     layers.push({

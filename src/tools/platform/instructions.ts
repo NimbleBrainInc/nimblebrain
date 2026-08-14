@@ -1,13 +1,17 @@
 /**
  * Instructions platform source — in-process MCP server.
  *
- * Owns the cross-cutting overlays:
- *   instructions://org         (slot reserved — no UI yet, agent-set only)
- *   instructions://workspace   (live — set via workspace detail page or agent)
+ * Owns one cross-cutting overlay:
+ *   instructions://workspace   (set via workspace detail page or agent)
  *
- * Plus a single write tool, `write_instructions(scope, text)`, with role
- * gates (a workspace admin member can write workspace scope — org role
- * grants no bypass; only org admin/owner can write org).
+ * Plus a single write tool, `write_instructions(body)`, gated so that only a
+ * workspace admin member may write — an org role grants no bypass.
+ *
+ * There is no org-wide overlay. Org-scope standing guidance is an org-tier
+ * **skill** (`{workDir}/skills/`, authored at `/org/skills`), which is
+ * file-backed and org-admin-gated like this overlay was, and additionally
+ * carries per-topic granularity, dynamic loading, and triggers — so org-wide
+ * content that is only sometimes relevant costs nothing when it isn't.
  *
  * Per-bundle custom instructions are NOT in this module's scope. Bundles
  * publish a `app://instructions` resource if and only if they
@@ -19,8 +23,6 @@
 
 import { textContent } from "../../engine/content-helpers.ts";
 import type { EventSink, ToolResult } from "../../engine/types.ts";
-import { ORG_ADMIN_ROLES } from "../../identity/types.ts";
-import type { Scope } from "../../instructions/index.ts";
 import { getRequestContext } from "../../runtime/request-context.ts";
 import type { Runtime } from "../../runtime/runtime.ts";
 import { canWriteWorkspaceScoped } from "../../workspace/authz.ts";
@@ -31,10 +33,10 @@ import { InstructionsWriteInput } from "./schemas/instructions.ts";
 // ── Tool description (description-as-policy) ─────────────────────────────
 
 const WRITE_INSTRUCTIONS_DESCRIPTION =
-  "Save org-wide or workspace-wide custom instructions. " +
+  "Save workspace-wide custom instructions, applied to every conversation in this workspace. " +
   "**Use this only when the user explicitly asks to save a convention, or when you've identified a strongly recurring pattern that the user would benefit from persisting.** " +
-  "Always confirm with the user before writing org-scope or workspace-scope instructions. " +
-  "Scope must be `org` or `workspace`. Empty text clears the instruction.";
+  "Always confirm with the user before writing. " +
+  "Empty text clears the instruction.";
 
 // ── Permission helpers ───────────────────────────────────────────────────
 
@@ -44,15 +46,14 @@ interface PermissionDecision {
   reason?: string;
 }
 
-async function checkScopePermission(
+async function checkWritePermission(
   runtime: Runtime,
-  scope: Scope,
   wsId: string | null,
 ): Promise<PermissionDecision> {
   // Unattended-run wall, checked before every other gate including dev mode.
   //
   // This tool's whole posture is "confirm with the user before writing" — the
-  // write persists into every later conversation in the scope, for every
+  // write persists into every later conversation in the workspace, for every
   // member. An unattended run has no user to confirm with, and is told so
   // ("there is nobody available to confirm choices — decide and proceed"),
   // while routinely ingesting untrusted content: email, web pages, tickets.
@@ -70,7 +71,7 @@ async function checkScopePermission(
       allowed: false,
       reason:
         "Instructions cannot be written from inside an unattended automation run — " +
-        "they persist across every later conversation in the scope and there is no one " +
+        "they persist across every later conversation in the workspace and there is no one " +
         "present to confirm the change. Write them from an interactive session.",
     };
   }
@@ -87,16 +88,10 @@ async function checkScopePermission(
     return { allowed: false, reason: "No authenticated identity" };
   }
 
-  if (scope === "org") {
-    return ORG_ADMIN_ROLES.has(identity.orgRole)
-      ? { allowed: true }
-      : { allowed: false, reason: "Org-scope writes require org admin or owner" };
-  }
-
-  // Workspace scope — STRICT: only a workspace admin member may write.
-  // Org role grants NO bypass (see `canWriteWorkspaceScoped`).
+  // STRICT: only a workspace admin member may write. Org role grants NO
+  // bypass (see `canWriteWorkspaceScoped`).
   if (!wsId) {
-    return { allowed: false, reason: "Workspace-scope writes require a workspace context" };
+    return { allowed: false, reason: "Writing instructions requires a workspace context" };
   }
   const ws = await runtime.getWorkspaceStore().get(wsId);
   const decision = canWriteWorkspaceScoped(identity, ws);
@@ -111,9 +106,9 @@ export const INSTRUCTIONS_SOURCE_NAME = "instructions";
 /**
  * Create the instructions platform source.
  *
- * The two static resources read live from `InstructionsStore` via the
- * callback form of `text` so reads always reflect the latest disk state.
- * No caching, per the locked decision: edits should apply mid-conversation.
+ * The static resource reads live from `InstructionsStore` via the callback
+ * form of `text` so reads always reflect the latest disk state. No caching,
+ * per the locked decision: edits should apply mid-conversation.
  */
 export function createInstructionsSource(runtime: Runtime, eventSink: EventSink): McpSource {
   // Holder so the write-tool handler can call `notifyResourceUpdated` on
@@ -127,11 +122,10 @@ export function createInstructionsSource(runtime: Runtime, eventSink: EventSink)
       description: WRITE_INSTRUCTIONS_DESCRIPTION,
       inputSchema: InstructionsWriteInput,
       handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
-        const scope = input.scope as Scope;
         const body = String(input.body ?? "");
-        const wsId = scope === "workspace" ? safeRequireWorkspace(runtime) : null;
+        const wsId = safeRequireWorkspace(runtime);
 
-        const permission = await checkScopePermission(runtime, scope, wsId);
+        const permission = await checkWritePermission(runtime, wsId);
         if (!permission.allowed) {
           return {
             content: textContent(
@@ -143,24 +137,19 @@ export function createInstructionsSource(runtime: Runtime, eventSink: EventSink)
 
         const store = runtime.getInstructionsStore();
         try {
-          const result =
-            scope === "org"
-              ? await store.write({ scope: "org", text: body, updatedBy: "agent" })
-              : await store.write({
-                  scope: "workspace",
-                  wsId: wsId!,
-                  text: body,
-                  updatedBy: "agent",
-                });
+          const result = await store.write({
+            wsId: wsId!,
+            text: body,
+            updatedBy: "agent",
+          });
 
           // Best-effort live notification — drops silently when no client is
           // subscribed (between restarts). Same wire as any MCP server's
           // `notifications/resources/updated`.
-          const uri = scope === "org" ? "instructions://org" : "instructions://workspace";
-          sourceHolder.current?.notifyResourceUpdated(uri);
+          sourceHolder.current?.notifyResourceUpdated("instructions://workspace");
 
           return {
-            content: textContent(`Saved ${scope} instructions.`),
+            content: textContent("Saved workspace instructions."),
             structuredContent: { ok: true, updated_at: result.updated_at },
             isError: false,
           };
@@ -178,22 +167,14 @@ export function createInstructionsSource(runtime: Runtime, eventSink: EventSink)
     },
   ];
 
-  // Static resource map — both bodies are dynamic (callback form).
+  // Static resource map — the body is dynamic (callback form).
   const resources = new Map<string, { text: () => Promise<string>; mimeType: string }>([
-    [
-      "instructions://org",
-      {
-        mimeType: "text/markdown",
-        text: () => runtime.getInstructionsStore().read({ scope: "org" }),
-      },
-    ],
     [
       "instructions://workspace",
       {
         mimeType: "text/markdown",
         text: () =>
           runtime.getInstructionsStore().read({
-            scope: "workspace",
             wsId: runtime.requireWorkspaceId(),
           }),
       },
