@@ -459,7 +459,7 @@ function deriveTitleFromEvents(meta: ConversationMeta, eventLines: string[]): vo
  * Using the type prefix alone is too loose — `"type":"text"` appears inside
  * DisplayMessage blocks too, which tripped this before.
  */
-function looksLikeEventLine(line: string): boolean {
+export function looksLikeEventLine(line: string): boolean {
   if (!line.includes('"ts":"')) return false;
   return (
     line.includes('"type":"user.message"') ||

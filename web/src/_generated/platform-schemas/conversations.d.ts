@@ -13,7 +13,7 @@ export declare const ConversationsListInput: import("@sinclair/typebox").TObject
 }>;
 export type ConversationsListInput = Static<typeof ConversationsListInput>;
 export declare const ConversationsGetInput: import("@sinclair/typebox").TObject<{
-    id: import("@sinclair/typebox").TString;
+    id: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     expand: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"metadata" | "messages" | "full">>;
     limit: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
 }>;
@@ -24,12 +24,12 @@ export declare const ConversationsSearchInput: import("@sinclair/typebox").TObje
 }>;
 export type ConversationsSearchInput = Static<typeof ConversationsSearchInput>;
 export declare const ConversationsUpdateInput: import("@sinclair/typebox").TObject<{
-    id: import("@sinclair/typebox").TString;
+    id: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     title: import("@sinclair/typebox").TString;
 }>;
 export type ConversationsUpdateInput = Static<typeof ConversationsUpdateInput>;
 export declare const ConversationsForkInput: import("@sinclair/typebox").TObject<{
-    id: import("@sinclair/typebox").TString;
+    id: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     atMessage: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
 }>;
 export type ConversationsForkInput = Static<typeof ConversationsForkInput>;
@@ -38,7 +38,7 @@ export declare const ConversationsStatsInput: import("@sinclair/typebox").TObjec
 }>;
 export type ConversationsStatsInput = Static<typeof ConversationsStatsInput>;
 export declare const ConversationsExportInput: import("@sinclair/typebox").TObject<{
-    id: import("@sinclair/typebox").TString;
+    id: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     format: import("@sinclair/typebox").TUnsafe<"markdown" | "json">;
 }>;
 export type ConversationsExportInput = Static<typeof ConversationsExportInput>;
