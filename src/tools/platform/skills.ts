@@ -26,7 +26,11 @@
 import { copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { collectDeliveredSkillNames } from "../../conversation/event-reconstructor.ts";
-import type { ConversationEvent, SkillsLoadedEvent } from "../../conversation/types.ts";
+import {
+  CONVERSATION_ID_RE,
+  type ConversationEvent,
+  type SkillsLoadedEvent,
+} from "../../conversation/types.ts";
 import { textContent } from "../../engine/content-helpers.ts";
 import { type EventSink, SKILL_ACTIVATED_META_KEY, type ToolResult } from "../../engine/types.ts";
 import { ORG_ADMIN_ROLES } from "../../identity/types.ts";
@@ -238,7 +242,14 @@ export function createSkillsSource(runtime: Runtime, eventSink: EventSink): McpS
               ? input.conversation_id
               : undefined;
           const argConvId = rawArg === "current" ? undefined : rawArg;
-          const convId = argConvId ?? getRequestContext()?.conversationId;
+          // The ambient value is shape-checked, matching `conversations__*`.
+          // `conversationId` holds only store-minted ids now, so this should
+          // never fire; it stays so that a non-conversation id arriving there
+          // is refused rather than looked up and reported as
+          // `Conversation not found: <that id>`.
+          const ambient = getRequestContext()?.conversationId;
+          const convId =
+            argConvId ?? (ambient && CONVERSATION_ID_RE.test(ambient) ? ambient : undefined);
           if (!convId) {
             return {
               content: textContent(

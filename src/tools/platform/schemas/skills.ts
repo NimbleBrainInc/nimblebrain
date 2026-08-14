@@ -106,7 +106,8 @@ export const SkillsActiveForInput = Type.Object({
     Type.String({
       description:
         "Conversation id whose loaded-skill state is being inspected. " +
-        "Optional inside a chat — defaults to the current conversation.",
+        'Omit it (or pass "current") to inspect the conversation this call is ' +
+        "happening inside; required from outside a chat.",
     }),
   ),
 });

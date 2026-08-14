@@ -21,6 +21,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { NoopEventSink } from "../../../../src/adapters/noop-events.ts";
+import { runWithRequestContext } from "../../../../src/runtime/request-context.ts";
 import { EventSourcedConversationStore } from "../../../../src/conversation/event-sourced-store.ts";
 import type { EngineEvent, EventSink } from "../../../../src/engine/types.ts";
 import { parseSkillContent } from "../../../../src/skills/loader.ts";
@@ -166,6 +167,59 @@ describe("skills__create", () => {
     expect(existsSync(path)).toBe(true);
     expect(readFileSync(path, "utf-8")).toContain("Be concise.");
     expect(sink.events.some((e) => e.type === "skill.created")).toBe(true);
+  });
+
+  test("a skill created inside an automation run is not stamped as chat-authored", async () => {
+    // Provenance is derived from whether a conversation is in scope. While a
+    // run's correlation id lived in `conversationId`, an automation-created
+    // skill was persisted as `origin: "chat"` with a run id recorded as its
+    // conversation — wrong data on disk, and the only persisted behaviour this
+    // change alters. `skills__create` is not behind the unattended wall, so
+    // the path is reachable.
+    const src = await buildSource();
+    const client = src.getClient()!;
+    const result = await runWithRequestContext(
+      { identity: null, workspaceId: "ws_any", runId: "run_a8f15601-0dd", unattended: true },
+      () =>
+        client.callTool({
+          name: "create",
+          arguments: {
+            scope: "org",
+            manifest: { name: "run-authored", description: "made by a run", type: "skill" },
+            body: "From an automation.",
+          },
+        }),
+    );
+    expect(result.isError).toBeFalsy();
+
+    const written = readFileSync(join(workDir, "skills", "run-authored.md"), "utf-8");
+    expect(written).toContain("origin: admin");
+    expect(written).not.toContain("origin: chat");
+    expect(written).not.toContain("run_a8f15601-0dd");
+  });
+
+  test("a skill created inside a chat still records the conversation", async () => {
+    // The other arm — so the test above pins the run case, not just the
+    // absence of a stamp everywhere.
+    const src = await buildSource();
+    const client = src.getClient()!;
+    const result = await runWithRequestContext(
+      { identity: null, workspaceId: "ws_any", conversationId: "conv_aaaaaaaaaaaaaaaa" },
+      () =>
+        client.callTool({
+          name: "create",
+          arguments: {
+            scope: "org",
+            manifest: { name: "chat-authored", description: "made in a chat", type: "skill" },
+            body: "From a chat.",
+          },
+        }),
+    );
+    expect(result.isError).toBeFalsy();
+
+    const written = readFileSync(join(workDir, "skills", "chat-authored.md"), "utf-8");
+    expect(written).toContain("origin: chat");
+    expect(written).toContain("conv_aaaaaaaaaaaaaaaa");
   });
 
   test("rejects duplicate name within scope", async () => {

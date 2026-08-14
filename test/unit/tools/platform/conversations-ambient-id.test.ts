@@ -149,12 +149,32 @@ function outsideChat(tool: string, args: Record<string, unknown>): Promise<ToolR
 }
 
 /**
- * Run a tool the way an unattended automation does. `executeTask` sets
- * `conversationId` to the RUN id — a correlation id for stamping audit and
- * file records — so the field is populated with something that is not a
- * conversation.
+ * Run a tool the way an unattended automation does: `executeTask` stamps
+ * `runId` and no `conversationId`, because a run persists a run result rather
+ * than a conversation.
  */
 function inAutomationRun(tool: string, args: Record<string, unknown>): Promise<ToolResult> {
+  return runWithRequestContext(
+    {
+      identity: { id: OWNER_ID } as never,
+      workspaceId: WS_ID,
+      runId: RUN_ID,
+      unattended: true,
+    },
+    () => source.execute(tool, args),
+  );
+}
+
+/**
+ * The retired context shape, kept deliberately: a run id sitting in
+ * `conversationId`. No caller builds this now, so this is not a run
+ * reproduction — it is the reader-side guard's only exercise, and it pins that
+ * the guard still refuses a non-conversation id if one ever arrives again.
+ */
+function withRunIdInConversationField(
+  tool: string,
+  args: Record<string, unknown>,
+): Promise<ToolResult> {
   return runWithRequestContext(
     {
       identity: { id: OWNER_ID } as never,
@@ -335,6 +355,18 @@ describe("an automation run has no conversation, even though the field is set", 
       expect(error).not.toContain("Conversation not found");
     });
   }
+
+  test("a run id arriving in the conversation field is still refused", async () => {
+    // The reader-side forward guard. `executeTask` no longer produces this
+    // shape, so nothing else on this branch exercises the shape-check.
+    const result = await withRunIdInConversationField("update", { title: "Doctrine" });
+
+    expect(result.isError).toBe(true);
+    const { error } = parseFirst(result) as { error: string };
+    expect(error).toContain("No conversation in scope");
+    expect(error).not.toContain(RUN_ID);
+    expect(storedTitle(CURRENT_ID)).toBe("Untitled");
+  });
 
   test("an explicit id still works inside a run", async () => {
     // The guard rejects the ambient value, not the caller's — a run that names
