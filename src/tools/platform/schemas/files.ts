@@ -90,7 +90,7 @@ export const FilesCreateInput = Type.Object(
     encoding: Type.Optional(
       StringEnum(["base64", "text"] as const, {
         description:
-          'How to read `body`. "base64" (the default) decodes it as base64 and rejects anything that is not. "text" writes `body` verbatim as UTF-8 — use it for markdown, code, CSV, or any content you are composing yourself.',
+          'How to read `body`. "base64" (the default) decodes it as standard-alphabet base64 (A-Z a-z 0-9 + /) padded with `=` to a multiple of 4; line breaks are allowed, other whitespace is not, and unpadded or base64url (-, _) bodies are rejected. "text" writes `body` verbatim as UTF-8 — use it for markdown, code, CSV, or any content you are composing yourself.',
       }),
     ),
   },
