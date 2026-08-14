@@ -223,6 +223,7 @@
 
 ### Removed
 
+- **`skills__active_for`.** It reported which Layer 3 skills were loaded for a conversation, but the model — its only possible caller — received one line (`"3 skills loaded · 4200 tokens"`) about skills whose full text was already in its context; the per-skill detail went to `structuredContent`, which never reaches the in-process agent loop. Nothing else called it: the Context Ledger reads `skillsLoaded` off the chat stream, and there is no REST route. `skills__loading_log` covers the same ground and more — every channel a skill can reach the model through, across conversations, with a channel breakdown. **Breaking for `/mcp` clients** that call `skills__active_for`; use `skills__loading_log` with `conversation_id`.
 - **Removed the one-time workspace-as-wall migration scripts** (`migrate:{conversations,files,automations}-to-workspace`). The migration completed across all environments in v0.10.0; the scripts remain in the v0.10.0 release artifact (tag + image) for any tenant not yet migrated.
 - Standalone stdio automations MCP server (`src/bundles/automations/src/server.ts` `main()` + the HTTP executor `executeHttp`). Superseded by the in-process `automations` platform source; importing the module had been starting a phantom second scheduler and grabbing stdio. The file is now tool handlers only.
 - `InlineSource`, `ResourceReader`, `isResourceReader`. External callers should switch to `defineInProcessApp` (returns an `McpSource`); `InlineToolDef` becomes `InProcessTool` with the same shape.

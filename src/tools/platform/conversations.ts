@@ -144,8 +144,7 @@ export async function createConversationsSource(
    * it is not in the prompt and no tool reports it — so a required `id` on
    * `update`/`get`/`fork`/`export` makes the current conversation the one
    * conversation these tools cannot reach. The observed failure is an agent
-   * inventing a placeholder and getting `Conversation not found`. The ambient
-   * fallback mirrors `skills__active_for`, which already resolves the same way.
+   * inventing a placeholder and getting `Conversation not found`.
    *
    * `"current"` is accepted as a spelling of the same thing. It is the string
    * agents actually reach for, it cannot collide with a real id (those are

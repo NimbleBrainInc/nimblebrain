@@ -8,7 +8,6 @@
  * Tools surfaced (read-only):
  *   skills__list           — enumerate skills with scope/layer/status filters
  *   skills__read           — fetch one skill's body + manifest by id
- *   skills__active_for     — show which skills loaded for a conversation
  *   skills__loading_log    — replay the skill-load ledger (every channel)
  *
  * Catalog activation (`nb__use_skill`) is defined here too — it shares this
@@ -26,7 +25,7 @@
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { collectDeliveredSkillNames } from "../../conversation/event-reconstructor.ts";
-import type { ConversationEvent, SkillsLoadedEvent } from "../../conversation/types.ts";
+import type { ConversationEvent } from "../../conversation/types.ts";
 import { textContent } from "../../engine/content-helpers.ts";
 import { type EventSink, SKILL_ACTIVATED_META_KEY, type ToolResult } from "../../engine/types.ts";
 import { ORG_ADMIN_ROLES } from "../../identity/types.ts";
@@ -58,17 +57,14 @@ import { canWriteWorkspaceScoped } from "../../workspace/authz.ts";
 import { defineInProcessApp, type InProcessTool } from "../in-process-app.ts";
 import type { McpSource } from "../mcp-source.ts";
 import type {
-  ActiveSkillEntry,
   SkillDetail,
   SkillSummary,
-  SkillsActiveForOutput,
   SkillsListOutput,
   SkillsReadOutput,
   SkillsUseOutput,
 } from "./schemas/skills.ts";
 import {
   SkillsActivateInput,
-  SkillsActiveForInput,
   SkillsCreateInput,
   SkillsDeactivateInput,
   SkillsDeleteInput,
@@ -107,15 +103,6 @@ const SKILLS_READ_DESCRIPTION =
   "description, loading_strategy, priority, scope, layer, tool_affinity, triggers, status). " +
   "Always call `skills__list` first to discover ids — bare names and scope-prefixed forms " +
   "(e.g. `org/foo`) are NOT valid input.";
-
-const SKILLS_ACTIVE_FOR_DESCRIPTION =
-  "Show which Layer 3 skills are currently loaded for a conversation. " +
-  "`conversation_id` is optional inside a chat — when omitted, defaults to the " +
-  "current conversation (the one this tool call belongs to). Returns one entry per " +
-  "loaded skill with id, layer, scope, token count, `loadedBy` (`always` or " +
-  "`tool_affinity`), and a human-readable `reason`. Use this to answer 'what's " +
-  "active for this conversation right now?' — distinct from `skills__list` which " +
-  "enumerates the catalog regardless of load state.";
 
 const SKILLS_LOADING_LOG_DESCRIPTION =
   "Replay the skill-load ledger from conversation logs — every channel a skill can reach the " +
@@ -234,49 +221,6 @@ export function createSkillsSource(runtime: Runtime, eventSink: EventSink): McpS
       handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
         try {
           return await readSkillHandler(runtime, authoringGuidePath, input);
-        } catch (err) {
-          return errorResult(err);
-        }
-      },
-    },
-    {
-      name: "active_for",
-      description: SKILLS_ACTIVE_FOR_DESCRIPTION,
-      inputSchema: SkillsActiveForInput,
-      handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
-        try {
-          // Explicit arg wins; otherwise use the current conversation from
-          // request context. The agent making this call from inside a chat
-          // doesn't know its own conv id, so requiring it forced agents to
-          // either guess or skip the tool entirely.
-          const argConvId =
-            typeof input.conversation_id === "string" && input.conversation_id.length > 0
-              ? input.conversation_id
-              : undefined;
-          const ctxConvId = getRequestContext()?.conversationId;
-          const convId = argConvId ?? ctxConvId;
-          if (!convId) {
-            return {
-              content: textContent(
-                "conversation_id is required when called outside a chat — " +
-                  "no current conversation is in scope. Pass conversation_id explicitly.",
-              ),
-              isError: true,
-            };
-          }
-          const result = await activeForConversation(runtime, convId);
-          if (result === null) {
-            return {
-              content: textContent(`Conversation not found: ${convId}`),
-              isError: true,
-            };
-          }
-          const out: SkillsActiveForOutput = { active: result, conversationId: convId };
-          return {
-            content: textContent(summarizeActive(result)),
-            structuredContent: out as unknown as Record<string, unknown>,
-            isError: false,
-          };
         } catch (err) {
           return errorResult(err);
         }
@@ -1077,50 +1021,6 @@ function inferScopeFromPath(
   return "bundle";
 }
 
-// Local alias for the canonical shape from `schemas/skills.ts`.
-type ActiveForEntry = ActiveSkillEntry;
-
-/**
- * Find the most recent `skills.loaded` event for the conversation and
- * return its `skills[]` projected to the active-for output shape. Returns
- * `null` if the conversation cannot be found, `[]` if no `skills.loaded`
- * has fired yet for that conversation.
- */
-async function activeForConversation(
-  runtime: Runtime,
-  convId: string,
-): Promise<ActiveForEntry[] | null> {
-  // Stage 1 single-owner: verify the caller owns the requested
-  // conversation before reading its events. `findConversation(id,
-  // access)` returns null for both not-found and foreign-owner —
-  // same shape as the unauthenticated branch, no existence leak.
-  const identity = runtime.getCurrentIdentity();
-  if (!identity) return null;
-  const owned = await runtime.findConversation(convId, { userId: identity.id });
-  if (!owned) return null;
-
-  const events = await readConvEvents(runtime, convId);
-  if (events === null) return null;
-
-  // Walk from the end to find the most recent skills.loaded.
-  for (let i = events.length - 1; i >= 0; i--) {
-    const ev = events[i];
-    if (ev?.type === "skills.loaded") {
-      return (ev as SkillsLoadedEvent).skills.map((s) => ({
-        id: s.id,
-        // Pass the recorded mechanism layer through (0/3/4). Historical events
-        // only ever carried 3; default to it so old logs still project.
-        layer: s.layer ?? (3 as const),
-        scope: (s.scope ?? "org") as ActiveForEntry["scope"],
-        tokens: s.tokens,
-        loadedBy: s.loadedBy,
-        reason: s.reason,
-      }));
-    }
-  }
-  return [];
-}
-
 interface LoadingLogInput {
   conversation_id?: string;
   skill?: string;
@@ -1268,8 +1168,8 @@ function errorResult(err: unknown): ToolResult {
 // reaches `/mcp` clients and the UI but never the in-process agent loop.
 // So `content` must carry everything the model needs to act:
 //
-//   - For *status/enumeration* tools (`active_for`, `loading_log`) a short
-//     summary line is sufficient; the model only needs the gist.
+//   - For *status/enumeration* tools (`loading_log`) a short summary line
+//     is sufficient; the model only needs the gist.
 //   - For *enumeration the model must read* (`list`) and *document fetch*
 //     (`read`) the payload itself goes in `content` — IDs for `list`, the
 //     full body + manifest for `read` — because the structured copy is
@@ -1344,12 +1244,6 @@ function renderRead(skill: ReadResult): string {
   if (m.triggers?.length) fields.push(`triggers: ${m.triggers.join(", ")}`);
   if (skill.modifiedAt) fields.push(`modified: ${skill.modifiedAt}`);
   return `${fields.join("\n")}\n\n---\n\n${skill.content}`;
-}
-
-function summarizeActive(active: ActiveForEntry[]): string {
-  if (active.length === 0) return "No skills loaded for this conversation yet.";
-  const totalTokens = active.reduce((sum, a) => sum + a.tokens, 0);
-  return `${active.length} skill${active.length === 1 ? "" : "s"} loaded · ${totalTokens} tokens`;
 }
 
 function summarizeLog(rows: SkillLoadRow[]): string {

@@ -108,17 +108,6 @@ export const SkillsReadInput = Type.Object(
 );
 export type SkillsReadInput = Static<typeof SkillsReadInput>;
 
-export const SkillsActiveForInput = Type.Object({
-  conversation_id: Type.Optional(
-    Type.String({
-      description:
-        "Conversation id whose loaded-skill state is being inspected. " +
-        "Optional inside a chat — defaults to the current conversation.",
-    }),
-  ),
-});
-export type SkillsActiveForInput = Static<typeof SkillsActiveForInput>;
-
 export const SkillsLoadingLogInput = Type.Object({
   conversation_id: Type.Optional(
     Type.String({ description: "Filter to a single conversation id." }),
@@ -338,30 +327,6 @@ export interface SkillDetail {
 
 /** `SkillsReadOutput` is the detail itself — no wrapper envelope. */
 export type SkillsReadOutput = SkillDetail;
-
-/**
- * Single entry in the `skills__active_for` response — one currently-
- * active layer-3 skill for the named conversation, with provenance for
- * why it loaded.
- */
-export interface ActiveSkillEntry {
-  id: string;
-  /**
-   * The loading mechanism's layer: `0` = always-on context, `3` = tool-affinity,
-   * `4` = trigger match. Historical events only carried `3`.
-   */
-  layer: 0 | 3 | 4;
-  scope: SkillScope;
-  tokens: number;
-  /** The loading mechanism: always-on context, tool-affinity, or trigger match. */
-  loadedBy: "always" | "tool_affinity" | "trigger";
-  reason: string;
-}
-
-export interface SkillsActiveForOutput {
-  active: ActiveSkillEntry[];
-  conversationId: string;
-}
 
 /**
  * `nb__use_skill` result. `loaded` delivers the skill (body rides the result's
