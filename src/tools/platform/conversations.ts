@@ -11,6 +11,7 @@ import { handleSearch, type SearchInput } from "../../bundles/conversations/src/
 import { handleStats, type StatsInput } from "../../bundles/conversations/src/tools/stats.ts";
 import { handleUpdate } from "../../bundles/conversations/src/tools/update.ts";
 import { capPreview } from "../../conversation/preview.ts";
+import { CONVERSATION_ID_RE } from "../../conversation/types.ts";
 import { textContent } from "../../engine/content-helpers.ts";
 import type { EventSink } from "../../engine/types.ts";
 import { getRequestContext } from "../../runtime/request-context.ts";
@@ -153,11 +154,19 @@ export async function createConversationsSource(
    *
    * Outside a chat — a REST tool call, an `/mcp` request, an automation run —
    * there is no ambient conversation, so this errors rather than guessing.
+   *
+   * The ambient value is shape-checked rather than merely present-checked,
+   * because "a conversation is in scope" and "`conversationId` is set" are not
+   * the same question. An unattended run sets the field to its RUN id — a
+   * correlation id for stamping audit and file records, with no conversation
+   * behind it — so a presence check resolves `run_…` and reports
+   * `Conversation not found: run_…`, which is the failure this helper exists
+   * to remove. Only a store-minted id answers the question being asked.
    */
   function resolveConversationId(id: string | undefined): string {
     if (id && id !== "current") return id;
     const ambient = getRequestContext()?.conversationId;
-    if (!ambient) {
+    if (!ambient || !CONVERSATION_ID_RE.test(ambient)) {
       throw new Error(
         "No conversation in scope. `id` may be omitted only inside a chat, where it " +
           "defaults to the current conversation; from anywhere else, pass the id " +

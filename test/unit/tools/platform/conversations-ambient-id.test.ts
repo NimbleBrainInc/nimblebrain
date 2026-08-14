@@ -30,6 +30,8 @@ const CURRENT_ID = "conv_aaaaaaaaaaaaaaaa";
 const OTHER_ID = "conv_bbbbbbbbbbbbbbbb";
 /** The current conversation's only message — what identifies it in a payload. */
 const CURRENT_MESSAGE = "save this into your memory";
+/** An automation run's correlation id, in the shape `executeTask` mints. */
+const RUN_ID = "run_0123456789ab";
 
 let workDir: string;
 let source: McpSource;
@@ -88,6 +90,24 @@ function inChat(tool: string, args: Record<string, unknown>): Promise<ToolResult
 function outsideChat(tool: string, args: Record<string, unknown>): Promise<ToolResult> {
   return runWithRequestContext(
     { identity: { id: OWNER_ID } as never, workspaceId: WS_ID },
+    () => source.execute(tool, args),
+  );
+}
+
+/**
+ * Run a tool the way an unattended automation does. `executeTask` sets
+ * `conversationId` to the RUN id — a correlation id for stamping audit and
+ * file records — so the field is populated with something that is not a
+ * conversation.
+ */
+function inAutomationRun(tool: string, args: Record<string, unknown>): Promise<ToolResult> {
+  return runWithRequestContext(
+    {
+      identity: { id: OWNER_ID } as never,
+      workspaceId: WS_ID,
+      conversationId: RUN_ID,
+      unattended: true,
+    },
     () => source.execute(tool, args),
   );
 }
@@ -185,5 +205,38 @@ describe("the other conversation-addressing tools resolve the same way", () => {
     expect(result.isError).toBe(true);
     const { error } = parseFirst(result) as { error: string };
     expect(error).toContain("No conversation in scope");
+  });
+});
+
+describe("an automation run has no conversation, even though the field is set", () => {
+  // `executeTask` populates `conversationId` with the run id, so "is the field
+  // set" and "is a conversation in scope" are different questions. Answering
+  // the first resolves `run_...` and reports `Conversation not found: run_...`
+  // — the exact failure the ambient fallback exists to remove.
+
+  for (const [tool, args] of [
+    ["update", { title: "Doctrine" }],
+    ["get", { expand: "metadata" }],
+    ["export", { format: "json" }],
+    ["fork", {}],
+  ] as const) {
+    test(`${tool} with no id errors, and does not name the run id`, async () => {
+      const result = await inAutomationRun(tool, args);
+
+      expect(result.isError).toBe(true);
+      const { error } = parseFirst(result) as { error: string };
+      expect(error).toContain("No conversation in scope");
+      expect(error).not.toContain(RUN_ID);
+      expect(error).not.toContain("Conversation not found");
+    });
+  }
+
+  test("an explicit id still works inside a run", async () => {
+    // The guard rejects the ambient value, not the caller's — a run that names
+    // a real conversation still reaches it.
+    const result = await inAutomationRun("update", { id: OTHER_ID, title: "Named" });
+
+    expect(result.isError).toBe(false);
+    expect(storedTitle(OTHER_ID)).toBe("Named");
   });
 });
