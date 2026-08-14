@@ -30,8 +30,11 @@ const CURRENT_ID = "conv_aaaaaaaaaaaaaaaa";
 const OTHER_ID = "conv_bbbbbbbbbbbbbbbb";
 /** The current conversation's only message — what identifies it in a payload. */
 const CURRENT_MESSAGE = "save this into your memory";
-/** An automation run's correlation id, in the shape `executeTask` mints. */
-const RUN_ID = "run_0123456789ab";
+/**
+ * An automation run's correlation id, in the shape `executeTask` mints —
+ * `run_` plus the first 12 characters of a UUID, so it carries a hyphen.
+ */
+const RUN_ID = "run_a8f15601-0dd";
 
 let workDir: string;
 let source: McpSource;
