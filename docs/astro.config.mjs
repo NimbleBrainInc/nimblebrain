@@ -19,7 +19,6 @@ export default defineConfig({
     '/api/events': '/connect/mcp-endpoint/',
     '/api/health': '/deploy/observability/',
     '/deploy/composio': '/gateways/composio/',
-    '/deploy/smithery': '/gateways/smithery/',
     '/guide/chat': '/using/chat/',
     '/guide/conversations': '/using/conversations/',
     '/guide/apps': '/using/installing-apps/',

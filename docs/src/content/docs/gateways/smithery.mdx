@@ -48,7 +48,7 @@ It does not send users back to NimbleBrain after a sign-in. A Smithery connectio
 
 4. **Add catalog entries for the servers you want to offer.**
 
-   A Smithery connector names its target by Smithery registry qualified name. The catalog never holds an MCP URL, because Smithery resolves the qualified name to whichever endpoint it currently runs.
+   A Smithery connector names its target by Smithery registry qualified name, and Smithery resolves that name to whichever endpoint it currently runs. The entry still needs a `remotes` block: the projection that builds the Browse list drops any entry without one, and the install overwrites the URL with the brokered session URL. So the value is a placeholder, but a required one.
 
    ```yaml
    servers:
@@ -56,6 +56,9 @@ It does not send users back to NimbleBrain after a sign-in. A Smithery connectio
        title: Example Server
        description: What this server does for the user
        version: "1.0.0"
+       remotes:
+         - type: streamable-http
+           url: https://server.smithery.ai/your-namespace/example-server/mcp
        _meta:
          ai.nimblebrain/connector:
            auth: smithery
@@ -120,7 +123,9 @@ The namespace and host recorded when the connector was installed drive that dele
 
 **An install fails asking for authorization.** Open the setup link in the error, finish at Smithery, then install again.
 
-**A connector flips to `reauth_required` on its own.** The connection revalidator polls Smithery and found the upstream credential gone. The user reconnects through Smithery's setup page. To stop the polling without removing the provider, set `monitorEnabled: false`.
+**A connector flips to `reauth_required` on its own.** The revalidator found the connection **gone at Smithery** — a 404 is the only answer that flips a Smithery connector. Someone deleted it at the broker, or the platform's `namespace` was repointed away from where it was created. Reinstall the connector to mint a fresh one; a Smithery setup page will not help, because there is no connection left to set up. To stop the polling without removing the provider, set `monitorEnabled: false`.
+
+**A user's upstream authorization lapsed and nothing flipped.** Expected. `auth_required` and `input_required` both report `indeterminate`, so the connector stays `running`. A liveness verdict cannot carry Smithery's setup URL, and flipping without one would strand the user with no route back. The symptom is tool calls failing against the upstream service while the connector reads healthy; the remedy is the same setup page the install path links.
 
 **A connection exists at Smithery for a connector that is not installed.** Installing mints the connection before its status is known, so a user who abandons setup leaves one behind. Completing setup and retrying adopts it. Nothing else reclaims it, so delete abandoned connections at Smithery directly.
 
