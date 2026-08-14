@@ -105,7 +105,7 @@ See the [Manifest reference](/apps/manifest/#settings-sections) for the `"settin
 
 - **Discoverability.** Every bundle that wants instructions support uses the same URI. Users don't have to learn per-app conventions; agents don't have to discover per-bundle write tools to know "where do my instructions live for this app."
 - **Security.** Containment escape happens platform-side, uniformly. Bundle authors writing the prompt-injection mitigation is something that *will* be gotten wrong over time.
-- **Composability.** The pattern stacks with `<app-instructions>` (your bundle author's static guidance) and the host's org/workspace overlays. The system prompt layers cleanly: org-wide policy → workspace policy → per-app author guidance → per-app user instructions.
+- **Composability.** The pattern stacks with `<app-instructions>` (your bundle author's static guidance) and the host's workspace overlay. The system prompt layers cleanly: workspace policy → per-app author guidance → per-app user instructions.
 - **Bottom-up.** Your bundle decides if it supports custom instructions and how rich the UX is. The platform doesn't synthesize anything you don't opt into.
 
 ## Related

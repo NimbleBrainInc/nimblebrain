@@ -14,7 +14,7 @@ import {
  *
  * Route: /w/:slug/settings/general (the workspace is the URL slug).
  * Permission: any workspace member can read; only a workspace **admin member**
- * can edit. Org admins get no bypass — `write_instructions` at workspace scope
+ * can edit. Org admins get no bypass — `write_instructions`
  * routes through `canWriteWorkspaceScoped`, which never consults `orgRole`. The
  * `WorkspaceInstructions` editor disables itself when `canEdit` is false; the
  * backend independently enforces.

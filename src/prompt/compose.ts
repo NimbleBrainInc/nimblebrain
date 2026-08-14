@@ -21,7 +21,6 @@ export type ContainmentTag =
   | "app-description"
   | "app-guide"
   | "app-state"
-  | "org-instructions"
   | "workspace-instructions"
   | "layer3-skill"
   | "connector-skill"
@@ -993,9 +992,7 @@ function formatAppStateSection(appState: AppStateInfo): string | null {
  * injection from a writer who tries to break out of containment.
  */
 function formatScopeOverlay(heading: string, body: string): string {
-  const tag: ContainmentTag =
-    heading === "Organization Instructions" ? "org-instructions" : "workspace-instructions";
-  return `## ${heading}\n\n${wrapContained(tag, body)}`;
+  return `## ${heading}\n\n${wrapContained("workspace-instructions", body)}`;
 }
 
 /**

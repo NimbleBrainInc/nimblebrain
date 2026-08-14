@@ -26,7 +26,7 @@ afterEach(async () => {
   await rm(workDir, { recursive: true, force: true });
 });
 
-describe("InstructionsStore — round-trip per scope", () => {
+describe("InstructionsStore — round-trip", () => {
   test("workspace scope: write, read, meta records timestamp + author", async () => {
     const result = await store.write({
       wsId: "ws_demo",

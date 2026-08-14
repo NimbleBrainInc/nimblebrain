@@ -40,11 +40,12 @@ const WRITE_INSTRUCTIONS_DESCRIPTION =
 
 // ── Permission helpers ───────────────────────────────────────────────────
 
-interface PermissionDecision {
-  allowed: boolean;
-  /** When `allowed: false`, a one-line reason for the agent + UI. */
-  reason?: string;
-}
+/**
+ * Allowed carries the validated workspace id, so the write site narrows from
+ * the decision instead of asserting past it — the gate and the id it validated
+ * travel together.
+ */
+type PermissionDecision = { allowed: true; wsId: string } | { allowed: false; reason: string };
 
 async function checkWritePermission(
   runtime: Runtime,
@@ -76,11 +77,19 @@ async function checkWritePermission(
     };
   }
 
+  // No workspace, no overlay to write — checked ahead of the dev-mode
+  // allow-through, which would otherwise return `allowed` with no wsId and
+  // leave the write site's non-null assertion false (rescued only by
+  // `resolveDir` throwing into the handler's catch).
+  if (!wsId) {
+    return { allowed: false, reason: "Writing instructions requires a workspace context" };
+  }
+
   // Dev mode (no identity provider configured) — allow writes through.
   // Matches the existing convention for dev-mode tool dispatch (see
   // `src/runtime/runtime.ts:getCurrentIdentity` — null in dev).
   if (runtime.getIdentityProvider() === null) {
-    return { allowed: true };
+    return { allowed: true, wsId };
   }
 
   const identity = runtime.getCurrentIdentity();
@@ -90,12 +99,11 @@ async function checkWritePermission(
 
   // STRICT: only a workspace admin member may write. Org role grants NO
   // bypass (see `canWriteWorkspaceScoped`).
-  if (!wsId) {
-    return { allowed: false, reason: "Writing instructions requires a workspace context" };
-  }
   const ws = await runtime.getWorkspaceStore().get(wsId);
   const decision = canWriteWorkspaceScoped(identity, ws);
-  return decision.allowed ? { allowed: true } : { allowed: false, reason: decision.reason };
+  return decision.allowed
+    ? { allowed: true, wsId }
+    : { allowed: false, reason: decision.reason ?? "Permission denied" };
 }
 
 // ── Source factory ───────────────────────────────────────────────────────
@@ -122,15 +130,32 @@ export function createInstructionsSource(runtime: Runtime, eventSink: EventSink)
       description: WRITE_INSTRUCTIONS_DESCRIPTION,
       inputSchema: InstructionsWriteInput,
       handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
+        // A stale `scope` used to choose the file. The schema no longer declares
+        // it and AJV lets unknown keys through, so ignoring it would silently
+        // redirect an org-intended write onto the workspace overlay — which is
+        // overwrite-only with no history, so the displaced body is gone. Refuse
+        // instead, and say where org-wide guidance lives now. Removable once no
+        // caller emits it.
+        if ("scope" in input) {
+          return {
+            content: textContent(
+              JSON.stringify({
+                error:
+                  "`scope` is removed — this tool writes the workspace overlay only. " +
+                  "For guidance that should reach every workspace, author an org-tier " +
+                  "skill (Organization → Skills) instead. Re-send with `body` alone.",
+              }),
+            ),
+            isError: true,
+          };
+        }
         const body = String(input.body ?? "");
         const wsId = safeRequireWorkspace(runtime);
 
         const permission = await checkWritePermission(runtime, wsId);
         if (!permission.allowed) {
           return {
-            content: textContent(
-              JSON.stringify({ error: permission.reason ?? "Permission denied" }),
-            ),
+            content: textContent(JSON.stringify({ error: permission.reason })),
             isError: true,
           };
         }
@@ -138,7 +163,7 @@ export function createInstructionsSource(runtime: Runtime, eventSink: EventSink)
         const store = runtime.getInstructionsStore();
         try {
           const result = await store.write({
-            wsId: wsId!,
+            wsId: permission.wsId,
             text: body,
             updatedBy: "agent",
           });

@@ -223,14 +223,32 @@ describe("instructions source — write_instructions", () => {
     expect(JSON.stringify(parsed)).toContain("8192");
   });
 
-  test("schema rejects unknown scopes (e.g. 'bundles/whatever')", async () => {
+  // A stale `scope` must not be ignored. The schema no longer declares it and
+  // unknown keys pass validation, so ignoring it would redirect an org-intended
+  // write onto the workspace overlay — overwrite-only, no history, previous body
+  // gone, with a success string as the only signal.
+  test("a stale `scope` is refused, and nothing is written", async () => {
     const src = await buildSource();
+    runtime.wsId = "ws_demo";
+    await runtime
+      .getInstructionsStore()
+      .write({ wsId: "ws_demo", text: "existing workspace body", updatedBy: "ui" });
     const client = src.getClient()!;
-    const result = await client.callTool({
-      name: "write_instructions",
-      arguments: { scope: "bundles/foo", body: "x" },
-    });
-    expect(result.isError).toBe(true);
+
+    for (const scope of ["org", "bundles/foo"]) {
+      const result = await client.callTool({
+        name: "write_instructions",
+        arguments: { scope, body: "org-intended text" },
+      });
+      expect(result.isError).toBe(true);
+      const { error } = parseStructured(result as never) as { error: string };
+      expect(error).toContain("org-tier");
+    }
+
+    // The refusal precedes the store, so the displaced body is still there.
+    expect(await runtime.getInstructionsStore().read({ wsId: "ws_demo" })).toBe(
+      "existing workspace body",
+    );
   });
 });
 
