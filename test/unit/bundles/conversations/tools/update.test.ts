@@ -189,4 +189,43 @@ describe("handleUpdate", () => {
 		expect(result.messageCount).toBe(0);
 		expect(result.preview).toBe("");
 	});
+
+	// ---------------------------------------------------------------------------
+	// Edge case: a file whose last write was cut short (no trailing newline)
+	// ---------------------------------------------------------------------------
+
+	test("appending to a file with no trailing newline does not splice onto the last line", async () => {
+		// A truncated write leaves the last event without its newline. Appending
+		// straight onto that would join the two into one unparseable line and lose
+		// both the last event and the rename.
+		const meta = makeMeta({ id: "conv_trunc", title: null, format: "events" });
+		const events = [
+			{
+				ts: "2025-01-01T00:01:00.000Z",
+				type: "user.message",
+				content: [{ type: "text", text: "Hello there" }],
+			},
+			{ ts: "2025-01-01T00:01:30.000Z", type: "metadata.title", title: "Auto Generated Title" },
+		];
+		const path = join(TMP_DIR, "conv_trunc.jsonl");
+		writeFileSync(path, [JSON.stringify(meta), ...events.map((e) => JSON.stringify(e))].join("\n"));
+		expect(readFileSync(path, "utf-8").endsWith("\n")).toBe(false);
+
+		await index.build(TMP_DIR);
+
+		await handleUpdate({ id: "conv_trunc", title: "Agent Set This" }, index);
+
+		const fileLines = readFileSync(path, "utf-8").split("\n").filter(Boolean);
+		expect(fileLines).toHaveLength(4);
+		for (const line of fileLines) {
+			expect(() => JSON.parse(line)).not.toThrow();
+		}
+
+		// The event that had been left unterminated is still its own record...
+		expect(JSON.parse(fileLines[2]!)).toMatchObject({ type: "metadata.title", title: "Auto Generated Title" });
+		// ...and the rename is the one every reader now projects.
+		const conv = await readConversation(path);
+		expect(conv!.meta.title).toBe("Agent Set This");
+		expect(conv!.messages).toHaveLength(1);
+	});
 });
