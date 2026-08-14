@@ -128,6 +128,27 @@ describe("requestIdentityAttrs — trust + PII boundary", () => {
     });
   });
 
+  it("labels a task run with run_id, not conversation_id", () => {
+    // A run has no conversation. Emitting its run id as `conversation_id` put a
+    // value in that attribute that no conversation query can join against.
+    runWithRequestContext(
+      { identity: null, workspaceId: "ws_abc123", runId: "run_a8f15601-0dd", unattended: true },
+      () => {
+        const attrs = requestIdentityAttrs();
+        expect(attrs.run_id).toBe("run_a8f15601-0dd");
+        expect(attrs.conversation_id).toBeUndefined();
+      },
+    );
+  });
+
+  it("a chat span carries conversation_id and no run_id", () => {
+    runWithRequestContext(identityCtx(), () => {
+      const attrs = requestIdentityAttrs();
+      expect(attrs.conversation_id).toBe("conv_9");
+      expect(attrs.run_id).toBeUndefined();
+    });
+  });
+
   it("keeps PII off the span attributes", async () => {
     await runWithRequestContext(identityCtx(), () =>
       withSpan("agent.turn", requestIdentityAttrs(), async () => {}),
