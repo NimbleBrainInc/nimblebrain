@@ -21,6 +21,7 @@ import { textContent } from "../../engine/content-helpers.ts";
 import type { EventSink, ToolResult } from "../../engine/types.ts";
 import { ORG_ADMIN_ROLES } from "../../identity/types.ts";
 import type { Scope } from "../../instructions/index.ts";
+import { getRequestContext } from "../../runtime/request-context.ts";
 import type { Runtime } from "../../runtime/runtime.ts";
 import { canWriteWorkspaceScoped } from "../../workspace/authz.ts";
 import { defineInProcessApp, type InProcessTool } from "../in-process-app.ts";
@@ -48,6 +49,32 @@ async function checkScopePermission(
   scope: Scope,
   wsId: string | null,
 ): Promise<PermissionDecision> {
+  // Unattended-run wall, checked before every other gate including dev mode.
+  //
+  // This tool's whole posture is "confirm with the user before writing" — the
+  // write persists into every later conversation in the scope, for every
+  // member. An unattended run has no user to confirm with, and is told so
+  // ("there is nobody available to confirm choices — decide and proceed"),
+  // while routinely ingesting untrusted content: email, web pages, tickets.
+  // A "from now on…" line in any of that would otherwise reach a durable
+  // cross-conversation write with nothing standing between them.
+  //
+  // Enforced HERE, at the source, for the reason `createAutomationsSource`
+  // gives for the same wall: this is the single dispatch point every caller
+  // funnels through, so it holds for the top-level run AND a delegated
+  // sub-agent at any depth, regardless of whether the tool was ever surfaced
+  // to the model. `unattended` rides the ambient request context and survives
+  // the per-call restamp.
+  if (getRequestContext()?.unattended) {
+    return {
+      allowed: false,
+      reason:
+        "Instructions cannot be written from inside an unattended automation run — " +
+        "they persist across every later conversation in the scope and there is no one " +
+        "present to confirm the change. Write them from an interactive session.",
+    };
+  }
+
   // Dev mode (no identity provider configured) — allow writes through.
   // Matches the existing convention for dev-mode tool dispatch (see
   // `src/runtime/runtime.ts:getCurrentIdentity` — null in dev).

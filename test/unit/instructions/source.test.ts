@@ -22,6 +22,7 @@ import {
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { NoopEventSink } from "../../../src/adapters/noop-events.ts";
 import { InstructionsStore } from "../../../src/instructions/index.ts";
+import { runWithRequestContext } from "../../../src/runtime/request-context.ts";
 import { McpSource } from "../../../src/tools/mcp-source.ts";
 import { createInstructionsSource } from "../../../src/tools/platform/instructions.ts";
 import type { Workspace } from "../../../src/workspace/types.ts";
@@ -360,6 +361,72 @@ describe("instructions source — role gates", () => {
       arguments: { scope: "org", body: "org-policy" },
     });
     expect(allowed.isError).toBeFalsy();
+  });
+});
+
+// ── Unattended-run wall ─────────────────────────────────────────────────
+
+describe("instructions source — unattended runs", () => {
+  // An instruction write persists into every later conversation in its scope,
+  // for every member. An automation run has no user to confirm that with, is
+  // told to proceed without confirming, and routinely ingests untrusted
+  // content — so the confirm-before-writing posture the tool relies on cannot
+  // hold there. Enforced at the source, which is the single dispatch point,
+  // so a delegated sub-agent at any depth is covered too.
+
+  async function writeUnattended(scope: "workspace" | "org") {
+    const src = await buildSource();
+    runtime.wsId = "ws_demo";
+    const client = src.getClient()!;
+    return runWithRequestContext({ identity: null, unattended: true }, () =>
+      client.callTool({ name: "write_instructions", arguments: { scope, body: "x" } }),
+    );
+  }
+
+  test("workspace-scope write is refused inside an unattended run", async () => {
+    const result = await writeUnattended("workspace");
+
+    expect(result.isError).toBe(true);
+    const { error } = parseStructured(result as never) as { error: string };
+    expect(error).toContain("unattended automation run");
+
+    // Nothing landed — the refusal is before the store, not after it.
+    expect(await runtime.getInstructionsStore().read({ scope: "workspace", wsId: "ws_demo" })).toBe(
+      "",
+    );
+  });
+
+  test("org-scope write is refused too", async () => {
+    const result = await writeUnattended("org");
+
+    expect(result.isError).toBe(true);
+    expect(await runtime.getInstructionsStore().read({ scope: "org" })).toBe("");
+  });
+
+  test("the wall outranks dev mode, which otherwise allows every write", async () => {
+    // `hasIdentityProvider` stays false here — the dev-mode allow-through is
+    // the widest gate in this function, and the wall is checked before it.
+    expect(runtime.hasIdentityProvider).toBe(false);
+    expect((await writeUnattended("workspace")).isError).toBe(true);
+  });
+
+  test("an interactive run with the same setup writes normally", async () => {
+    // Pins that the refusals above are the `unattended` flag and nothing else.
+    const src = await buildSource();
+    runtime.wsId = "ws_demo";
+    const client = src.getClient()!;
+
+    const result = await runWithRequestContext({ identity: null }, () =>
+      client.callTool({
+        name: "write_instructions",
+        arguments: { scope: "workspace", body: "ws body" },
+      }),
+    );
+
+    expect(result.isError).toBeFalsy();
+    expect(await runtime.getInstructionsStore().read({ scope: "workspace", wsId: "ws_demo" })).toBe(
+      "ws body",
+    );
   });
 });
 

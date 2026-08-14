@@ -350,6 +350,19 @@ describe("loadCoreSkills", () => {
     expect(bs.body).toContain("nb__manage_tools");
   });
 
+  it("capabilities names both persistence surfaces", () => {
+    // Nothing else in the always-on prompt says the runtime can persist
+    // anything, so a workspace with no bundles installed reads as having no
+    // memory at all unless the briefing names these two.
+    const skills = loadCoreSkills();
+    const bs = skills.find((s) => s.manifest.name === "capabilities")!;
+    expect(bs.body).toContain("instructions__write_instructions");
+    expect(bs.body).toContain("Skills");
+    // Both scopes, so the agent can pick one and say which it wrote.
+    expect(bs.body).toContain('scope: "workspace"');
+    expect(bs.body).toContain('scope: "org"');
+  });
+
   it("soul is always-on with priority 0", () => {
     const skills = loadCoreSkills();
     const soul = skills.find((s) => s.manifest.name === "soul")!;
