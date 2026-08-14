@@ -18,6 +18,11 @@ function textResult(text: string, isError = false): ToolResult {
   };
 }
 
+/** The model-facing text of a result — what the synth directive actually says. */
+function textOf(result: ToolResult): string {
+  return (result.content[0] as { text: string }).text;
+}
+
 describe("supervisor — pass-through behavior", () => {
   it("passes through 5 distinct successful results without tripping", () => {
     const sup = createRunSupervisor();
@@ -420,26 +425,27 @@ describe("supervisor — non-advancing results", () => {
     _meta: { [NON_ADVANCING_META_KEY]: true },
   });
 
-  it("trips after 3 non-advancing results even when input AND output both vary", () => {
+  /** One fruitless discovery search for `query`. */
+  const miss = (sup: ReturnType<typeof createRunSupervisor>, query: string) =>
+    sup.observe(call("nb__search", { query }), nonAdvancing(`No tools matched "${query}".`));
+
+  it("three materially different queries leave the tool armed", () => {
+    // The failure this prevents: `nb__search` is the only door to every
+    // proxied tool, so disabling it three questions into a session where the
+    // model does not yet know what exists answers "can this platform do X"
+    // with "no" for the rest of the run.
     const sup = createRunSupervisor();
-    // Mirrors the nb__search discovery loop: a fresh query each call and a
-    // distinct "no match" string each time. The input-aware success and
-    // content fingerprints would never collapse these — the `_meta`
-    // non-advancing flag is what does.
-    expect(
-      sup.observe(call("nb__search", { query: "preview" }), nonAdvancing('No tools matched "preview".'))
-        .type,
-    ).toBe("pass");
-    expect(
-      sup.observe(
-        call("nb__search", { query: "collateral" }),
-        nonAdvancing('No tools matched "collateral".'),
-      ).type,
-    ).toBe("pass");
-    const v3 = sup.observe(
-      call("nb__search", { query: "document" }),
-      nonAdvancing('No tools matched "document".'),
-    );
+    expect(miss(sup, "memory").type).toBe("pass");
+    expect(miss(sup, "notes").type).toBe("pass");
+    expect(miss(sup, "instructions").type).toBe("pass");
+    expect(sup.snapshot().trippedTools).toEqual([]);
+  });
+
+  it("trips on the 3rd identical query", () => {
+    const sup = createRunSupervisor();
+    expect(miss(sup, "memory").type).toBe("pass");
+    expect(miss(sup, "memory").type).toBe("pass");
+    const v3 = miss(sup, "memory");
     expect(v3.type).toBe("synth");
     if (v3.type === "synth") {
       expect(v3.trippedTool).toBe("nb__search");
@@ -447,28 +453,98 @@ describe("supervisor — non-advancing results", () => {
     }
   });
 
-  it("an advancing result between non-advancing ones resets the counter", () => {
+  it("re-asking one question in different clothes is still a repeat", () => {
+    // Case and whitespace are not a different question, and a model that
+    // retries a dead end usually retries it lightly reworded.
     const sup = createRunSupervisor();
+    expect(miss(sup, "memory").type).toBe("pass");
+    expect(miss(sup, "Memory").type).toBe("pass");
+    expect(miss(sup, "  memory  ").type).toBe("synth");
+  });
+
+  it("trips on the non-advancing budget once every question comes back empty", () => {
+    // Varied queries no longer accumulate a streak, so the budget is what
+    // bounds the flail: six fruitless calls is enough evidence that the
+    // surface does not hold what is being looked for.
+    const sup = createRunSupervisor();
+    for (const q of ["a", "b", "c", "d", "e"]) {
+      expect(miss(sup, q).type).toBe("pass");
+    }
+    const v6 = miss(sup, "f");
+    expect(v6.type).toBe("synth");
+    if (v6.type === "synth") {
+      expect(v6.consecutiveRepeats).toBe(6);
+    }
+  });
+
+  it("an advancing result clears the non-advancing budget", () => {
+    const sup = createRunSupervisor();
+    for (const q of ["a", "b", "c", "d", "e"]) {
+      expect(miss(sup, q).type).toBe("pass");
+    }
+    // A real match advances — the tool demonstrably works, so the evidence
+    // against it is spent.
     expect(
-      sup.observe(call("nb__search", { query: "a" }), nonAdvancing('No tools matched "a".')).type,
+      sup.observe(call("nb__search", { query: "crm" }), textResult('Found 2 tool(s) for "crm"'))
+        .type,
     ).toBe("pass");
-    expect(
-      sup.observe(call("nb__search", { query: "b" }), nonAdvancing('No tools matched "b".')).type,
-    ).toBe("pass");
-    // A real match advances — different fingerprint, resets the streak.
-    expect(
-      sup.observe(call("nb__search", { query: "crm" }), textResult('Found 2 tool(s) for "crm"')).type,
-    ).toBe("pass");
-    expect(
-      sup.observe(call("nb__search", { query: "c" }), nonAdvancing('No tools matched "c".')).type,
-    ).toBe("pass");
-    expect(
-      sup.observe(call("nb__search", { query: "d" }), nonAdvancing('No tools matched "d".')).type,
-    ).toBe("pass");
-    // Only the 3rd CONSECUTIVE non-advancing result trips.
-    expect(
-      sup.observe(call("nb__search", { query: "e" }), nonAdvancing('No tools matched "e".')).type,
-    ).toBe("synth");
+    for (const q of ["g", "h", "i", "j", "k"]) {
+      expect(miss(sup, q).type).toBe("pass");
+    }
+    expect(miss(sup, "l").type).toBe("synth");
+  });
+
+  it("an error between misses does NOT clear the budget", () => {
+    // Only an advancing success is evidence the tool found something. If an
+    // error reset the count, a tool interleaving fruitless searches with
+    // errors whose text keeps changing would escape both guards — the ERROR
+    // fingerprint only collapses on repeated text — and spend the run's whole
+    // iteration budget flailing.
+    const sup = createRunSupervisor();
+    for (let i = 0; i < 5; i++) {
+      expect(miss(sup, `q${i}`).type).toBe("pass");
+      expect(
+        sup.observe(call("nb__search", { query: `e${i}` }), textResult(`upstream error ${i}`, true))
+          .type,
+      ).toBe("pass");
+    }
+    // Six misses' worth of evidence has accumulated across the errors.
+    expect(miss(sup, "q5").type).toBe("synth");
+  });
+
+  it("an infrastructure failure does not clear the budget either", () => {
+    const sup = createRunSupervisor();
+    for (let i = 0; i < 5; i++) {
+      expect(miss(sup, `q${i}`).type).toBe("pass");
+      expect(
+        sup.observe(call("nb__search", { query: `e${i}` }), infraError("connection reset")).type,
+      ).toBe("pass");
+    }
+    expect(miss(sup, "q5").type).toBe("synth");
+  });
+
+  it("the budget is configurable", () => {
+    const sup = createRunSupervisor({ maxNonAdvancingCalls: 2 });
+    expect(miss(sup, "a").type).toBe("pass");
+    expect(miss(sup, "b").type).toBe("synth");
+  });
+
+  it("a tripped tool keeps reporting the count that tripped it", () => {
+    // A later call cannot tell which counter fired: the streak stands at 1
+    // when the budget is what tripped, so reading it reported "made no
+    // progress 1 times in a row" for a tool disabled at 6. The count lands in
+    // the directive text and in the recorded verdict.
+    const sup = createRunSupervisor();
+    for (const q of ["a", "b", "c", "d", "e"]) expect(miss(sup, q).type).toBe("pass");
+    expect(miss(sup, "f").type).toBe("synth");
+
+    const after = miss(sup, "g");
+    expect(after.type).toBe("synth");
+    if (after.type === "synth") {
+      expect(after.consecutiveRepeats).toBe(6);
+      expect(textOf(after.replacement)).toContain("6 times in a row");
+      expect(textOf(after.replacement)).not.toContain("1 times in a row");
+    }
   });
 
   it("preserves the input-aware success path: varied-input real work never trips", () => {
