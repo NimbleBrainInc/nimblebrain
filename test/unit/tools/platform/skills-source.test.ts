@@ -94,9 +94,11 @@ describe("skills source — tools list", () => {
       "create",
       "deactivate",
       "delete",
+      "history",
       "list",
       "loading_log",
       "read",
+      "restore",
       "update",
     ]);
   });

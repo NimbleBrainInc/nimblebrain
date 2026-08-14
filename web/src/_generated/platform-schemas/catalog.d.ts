@@ -31,6 +31,7 @@ export declare const PlatformToolCatalog: {
         readonly read: {
             readonly input: import("@sinclair/typebox").TObject<{
                 id: import("@sinclair/typebox").TString;
+                version: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
             }>;
         };
         readonly active_for: {
@@ -76,6 +77,7 @@ export declare const PlatformToolCatalog: {
                     allowedTools: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
                 }>>;
                 body: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+                body_mode: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TLiteral<"append">, import("@sinclair/typebox").TLiteral<"replace">]>>;
             }>;
         };
         readonly delete: {
