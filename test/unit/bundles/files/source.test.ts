@@ -231,6 +231,119 @@ describe("files bundle", () => {
     expect(serialized).not.toContain(pngBase64);
   });
 
+  test("create rejects a plain-text body under the base64 default", async () => {
+    // `Buffer.from(s, "base64")` drops every character outside the alphabet, so
+    // an un-encoded body used to decode to garbage and save successfully. The
+    // caller only found out by opening the file.
+    const result = await exec("create", {
+      manifest: { filename: "notes.md", mimeType: "text/markdown" },
+      body: "# Conventions\n\nAlways cite the source.",
+    });
+
+    expect(result.isError).toBe(true);
+    const { error } = parseFirst(result) as { error: string };
+    expect(error).toContain("base64");
+    // The error has to carry the way out, not just the diagnosis.
+    expect(error).toContain('encoding: "text"');
+  });
+
+  test('create with encoding "text" round-trips the body verbatim', async () => {
+    const payload = "# Conventions\n\nAlways cite the source.";
+
+    const created = await exec("create", {
+      manifest: { filename: "notes.md", mimeType: "text/markdown" },
+      body: payload,
+      encoding: "text",
+    });
+    expect(created.isError).toBe(false);
+    const { id, size } = parseFirst(created) as { id: string; size: number };
+    expect(size).toBe(Buffer.byteLength(payload, "utf8"));
+
+    const read = await exec("read", { id });
+    expect(read.structuredContent).toMatchObject({ extractedText: payload });
+  });
+
+  test('create with an explicit encoding "base64" still decodes base64', async () => {
+    const payload = "the quick brown fox";
+
+    const created = await exec("create", {
+      manifest: { filename: "fox.txt", mimeType: "text/plain" },
+      body: Buffer.from(payload).toString("base64"),
+      encoding: "base64",
+    });
+    expect(created.isError).toBe(false);
+
+    const { id } = parseFirst(created) as { id: string };
+    const read = await exec("read", { id });
+    expect(read.structuredContent).toMatchObject({ extractedText: payload });
+  });
+
+  test("create rejects punctuation-free prose that spaces would have hidden", async () => {
+    // The case a `\s+` strip lets through: remove the spaces and this is
+    // sixteen characters of the base64 alphabet, so every remaining check
+    // passes and the file saves as garbage. Only line breaks may be stripped.
+    const body = "the quick brown fox";
+    expect(body.replace(/\s+/g, "").length % 4).toBe(0);
+
+    const result = await exec("create", {
+      manifest: { filename: "fox.txt", mimeType: "text/plain" },
+      body,
+    });
+
+    expect(result.isError).toBe(true);
+    const { error } = parseFirst(result) as { error: string };
+    expect(error).toContain('encoding: "text"');
+  });
+
+  test("create accepts base64 wrapped across lines (LF and CRLF)", async () => {
+    // MIME-style encoders wrap at 76 columns; the line breaks are not content.
+    const payload = "x".repeat(200);
+    const b64 = Buffer.from(payload).toString("base64");
+
+    for (const [name, sep] of [
+      ["lf", "\n"],
+      ["crlf", "\r\n"],
+    ] as const) {
+      const created = await exec("create", {
+        manifest: { filename: `wrapped-${name}.txt`, mimeType: "text/plain" },
+        body: (b64.match(/.{1,76}/g) ?? []).join(sep),
+      });
+      expect(created.isError).toBe(false);
+
+      const { id } = parseFirst(created) as { id: string };
+      const read = await exec("read", { id });
+      expect(read.structuredContent).toMatchObject({ extractedText: payload });
+    }
+  });
+
+  test("create rejects unpadded base64 and base64url, naming both", async () => {
+    // `Buffer.from` decodes both of these today. They are refused so that
+    // padding and alphabet carry discrimination against prose — and the error
+    // has to steer a caller holding one of them to re-encode, NOT to
+    // encoding:"text", which would store the encoded string.
+    for (const body of ["aGVsbG8", "aGVsbG8-_w"]) {
+      const result = await exec("create", {
+        manifest: { filename: "hello.txt", mimeType: "text/plain" },
+        body,
+      });
+
+      expect(result.isError).toBe(true);
+      const { error } = parseFirst(result) as { error: string };
+      expect(error).toContain("padding");
+      expect(error).toContain("base64url");
+      expect(error).toContain("re-encode");
+    }
+  });
+
+  test("create accepts an empty base64 body", async () => {
+    const created = await exec("create", {
+      manifest: { filename: "empty.txt", mimeType: "text/plain" },
+      body: "",
+    });
+    expect(created.isError).toBe(false);
+    expect(parseFirst(created)).toMatchObject({ size: 0 });
+  });
+
   test("read of nonexistent id surfaces a clean message (not a raw fs error)", async () => {
     const result = await exec("read", { id: "fl_doesnotexist" });
     expect(result.isError).toBe(true);
