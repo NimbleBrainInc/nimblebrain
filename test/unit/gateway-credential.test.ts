@@ -8,6 +8,9 @@ import {
   _resetConnectorsConfigForTest,
   setConnectorsConfig,
 } from "../../src/connectors/providers/config.ts";
+import { MINTED_PROVIDER } from "../../src/oauth/minted-credential-provider.ts";
+import { COMPOSIO_CREDENTIAL_PROVIDER } from "../../src/connectors/providers/composio/transport-credential.ts";
+import { SMITHERY_CREDENTIAL_PROVIDER } from "../../src/connectors/providers/smithery/transport-credential.ts";
 import {
   _resetCredentialProvidersForTest,
   getCredentialProvider,
@@ -31,6 +34,29 @@ afterEach(() => {
   }
   _resetConnectorsConfigForTest();
   _resetCredentialProvidersForTest();
+});
+
+describe("reserved names cover every built-in credential provider", () => {
+  // Gateways register LAST at the composition root, so last-writer-wins means a
+  // declared gateway named after a built-in would replace it. The reserved-name
+  // list is the only thing stopping that — ordering is what creates the exposure,
+  // not what closes it. So the list has to track the built-ins, and this pins it:
+  // register a new built-in without reserving its name and this fails here rather
+  // than silently shipping a config that can hijack it.
+  test.each([
+    ["minted", MINTED_PROVIDER],
+    ["composio", COMPOSIO_CREDENTIAL_PROVIDER],
+    ["smithery", SMITHERY_CREDENTIAL_PROVIDER],
+  ])("a gateway may not claim %s", (_label, builtinName) => {
+    const sentinel = { credentialFor: () => ({ headers: { Authorization: "Bearer builtin" } }) };
+    registerCredentialProvider(builtinName, sentinel);
+    setConnectorsConfig({ gateways: { [builtinName]: { apiKey: "sk-gateway" } } });
+    registerGatewayCredentialProviders();
+
+    expect(getCredentialProvider(builtinName)?.credentialFor(undefined, {})).toEqual({
+      headers: { Authorization: "Bearer builtin" },
+    });
+  });
 });
 
 describe("gatewayApiKeyEnvVar", () => {

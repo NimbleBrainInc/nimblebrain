@@ -37,12 +37,17 @@ import { declaredGatewayConfigs, type GatewayConfig } from "../providers/config.
 /**
  * Credential-provider names a gateway may not claim.
  *
- * Registration is last-writer-wins and the name space is shared with the
- * built-ins, so an operator who declares `connectors.gateways.composio` would
- * otherwise silently replace the Composio broker's credential with a static
- * bearer, and every Composio connector would start failing at its first tool
- * call with a 401 that names nothing. Refusing the name is the cheap half of
- * that; ordering (below) is the other half.
+ * Registration is last-writer-wins over a name space shared with the built-ins,
+ * and gateways register **last** (see `registerGatewayCredentialProviders`), so
+ * a declared `connectors.gateways.composio` would otherwise replace the Composio
+ * broker's credential with a static bearer and every Composio connector would
+ * fail at its first tool call with a 401 that names nothing.
+ *
+ * **This set is the only thing preventing that.** Ordering does not help — it is
+ * what creates the exposure — so a new built-in credential provider must be
+ * added here in the same change that registers it. `gateway-credential.test.ts`
+ * pins this list against the names the built-ins export, so adding one without
+ * listing it here fails that test rather than shipping.
  */
 const RESERVED_NAMES = new Set(["minted", "composio", "smithery"]);
 
@@ -97,10 +102,12 @@ export function gatewayCredentialProvider(name: string): TransportCredentialProv
 /**
  * Register a credential provider for every declared gateway.
  *
- * Runs at the composition root **after** the built-ins and the brokered
- * providers, so a reserved name that slipped past `RESERVED_NAMES` could still
- * only be overwritten in the safe direction. It must also run after
- * `setConnectorsConfig`, which installs the block this reads.
+ * Runs at the composition root after `setConnectorsConfig`, which installs the
+ * block this reads. That is the whole ordering constraint. Registering after the
+ * built-ins and brokers is a consequence of it rather than a safety property:
+ * last-writer-wins means this position is precisely the one where a gateway
+ * could displace a built-in, which is why `RESERVED_NAMES` is a guard and not a
+ * belt-and-braces second check.
  *
  * Registration is unconditional on the key resolving, matching the Smithery
  * arrangement: a gateway declared with no key still fails, and

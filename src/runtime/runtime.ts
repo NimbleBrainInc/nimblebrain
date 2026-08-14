@@ -492,9 +492,10 @@ export class Runtime {
     setConnectorsConfig(config.connectors);
 
     // Gateways are declared rather than named in code, so their credential
-    // providers can only be registered once the block above is installed. Last
-    // in the sequence deliberately: registration overwrites by name, so a
-    // gateway can never displace a built-in or a broker registered above it.
+    // providers can only be registered once the block above is installed. That
+    // puts them last, which is the position where a declared name COULD displace
+    // a built-in registered above — registration overwrites by name. The guard
+    // is the reserved-name list in the gateway module, not this ordering.
     registerGatewayCredentialProviders();
 
     // Derive the override-file path when the caller supplied a configPath

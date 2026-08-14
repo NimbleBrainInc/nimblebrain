@@ -39,18 +39,11 @@
         "anthropic": {
           "type": "object",
           "properties": {
-            "apiKey": {
-              "type": "string"
-            },
-            "promptCaching": {
-              "type": "boolean",
-              "default": true
-            },
+            "apiKey": { "type": "string" },
+            "promptCaching": { "type": "boolean", "default": true },
             "models": {
               "type": "array",
-              "items": {
-                "type": "string"
-              },
+              "items": { "type": "string" },
               "description": "Allowlist of model IDs. Omit to allow all."
             }
           },
@@ -59,20 +52,12 @@
         "openai": {
           "type": "object",
           "properties": {
-            "apiKey": {
-              "type": "string"
-            },
-            "baseURL": {
-              "type": "string"
-            },
-            "organization": {
-              "type": "string"
-            },
+            "apiKey": { "type": "string" },
+            "baseURL": { "type": "string" },
+            "organization": { "type": "string" },
             "models": {
               "type": "array",
-              "items": {
-                "type": "string"
-              },
+              "items": { "type": "string" },
               "description": "Allowlist of model IDs. Omit to allow all."
             }
           },
@@ -81,14 +66,10 @@
         "google": {
           "type": "object",
           "properties": {
-            "apiKey": {
-              "type": "string"
-            },
+            "apiKey": { "type": "string" },
             "models": {
               "type": "array",
-              "items": {
-                "type": "string"
-              },
+              "items": { "type": "string" },
               "description": "Allowlist of model IDs. Omit to allow all."
             }
           },
@@ -96,7 +77,7 @@
         },
         "nebius": {
           "type": "object",
-          "description": "Nebius Token Factory \u2014 OpenAI-compatible gateway for open-weight models. Reference models as nebius:<model-id>.",
+          "description": "Nebius Token Factory — OpenAI-compatible gateway for open-weight models. Reference models as nebius:<model-id>.",
           "properties": {
             "apiKey": {
               "type": "string",
@@ -108,9 +89,7 @@
             },
             "models": {
               "type": "array",
-              "items": {
-                "type": "string"
-              },
+              "items": { "type": "string" },
               "description": "Allowlist of model IDs. Omit to allow all."
             }
           },
@@ -130,9 +109,7 @@
             },
             "models": {
               "type": "array",
-              "items": {
-                "type": "string"
-              },
+              "items": { "type": "string" },
               "description": "Allowlist of model IDs. Omit to allow all."
             }
           },
@@ -151,60 +128,35 @@
             "type": "string",
             "description": "Bundle name from mpak registry (e.g., @nimblebraininc/echo)."
           },
-          "path": {
-            "type": "string",
-            "description": "Local filesystem path to bundle directory."
-          },
-          "url": {
-            "type": "string",
-            "description": "Remote MCP server URL."
-          },
+          "path": { "type": "string", "description": "Local filesystem path to bundle directory." },
+          "url": { "type": "string", "description": "Remote MCP server URL." },
           "serverName": {
             "type": "string",
             "description": "Override server name for remote bundles."
           },
           "env": {
             "type": "object",
-            "additionalProperties": {
-              "type": "string"
-            },
+            "additionalProperties": { "type": "string" },
             "description": "Environment variables passed to the bundle process."
           },
           "allowedEnv": {
             "type": "array",
-            "items": {
-              "type": "string"
-            },
+            "items": { "type": "string" },
             "description": "Host env vars this bundle may access."
           },
-          "trustScore": {
-            "type": ["number", "null"],
-            "description": "MTF trust score (0-100)."
-          },
+          "trustScore": { "type": ["number", "null"], "description": "MTF trust score (0-100)." },
           "transport": {
             "type": "object",
             "description": "Remote transport configuration.",
             "properties": {
-              "type": {
-                "type": "string",
-                "enum": ["streamable-http", "sse"]
-              },
+              "type": { "type": "string", "enum": ["streamable-http", "sse"] },
               "auth": {
                 "type": "object",
                 "properties": {
-                  "type": {
-                    "type": "string",
-                    "enum": ["bearer", "header", "none", "provider"]
-                  },
-                  "token": {
-                    "type": "string"
-                  },
-                  "name": {
-                    "type": "string"
-                  },
-                  "value": {
-                    "type": "string"
-                  },
+                  "type": { "type": "string", "enum": ["bearer", "header", "none", "provider"] },
+                  "token": { "type": "string" },
+                  "name": { "type": "string" },
+                  "value": { "type": "string" },
                   "provider": {
                     "type": "string",
                     "description": "Credential provider name (auth.type=provider), e.g. \"minted\"."
@@ -216,29 +168,16 @@
                 },
                 "required": ["type"]
               },
-              "headers": {
-                "type": "object",
-                "additionalProperties": {
-                  "type": "string"
-                }
-              },
+              "headers": { "type": "object", "additionalProperties": { "type": "string" } },
               "reconnection": {
                 "type": "object",
                 "properties": {
-                  "maxReconnectionDelay": {
-                    "type": "number"
-                  },
-                  "initialReconnectionDelay": {
-                    "type": "number"
-                  },
-                  "maxRetries": {
-                    "type": "number"
-                  }
+                  "maxReconnectionDelay": { "type": "number" },
+                  "initialReconnectionDelay": { "type": "number" },
+                  "maxRetries": { "type": "number" }
                 }
               },
-              "sessionId": {
-                "type": "string"
-              }
+              "sessionId": { "type": "string" }
             }
           },
           "ui": {
@@ -257,14 +196,8 @@
       "type": "object",
       "description": "Role-based model slots.",
       "properties": {
-        "default": {
-          "type": "string",
-          "description": "Primary model for chat."
-        },
-        "fast": {
-          "type": "string",
-          "description": "Cheap/fast model for auxiliary tasks."
-        }
+        "default": { "type": "string", "description": "Primary model for chat." },
+        "fast": { "type": "string", "description": "Cheap/fast model for auxiliary tasks." }
       },
       "additionalProperties": false
     },
@@ -274,16 +207,14 @@
       "properties": {
         "allowed": {
           "type": "array",
-          "items": {
-            "type": "string"
-          },
+          "items": { "type": "string" },
           "description": "Qualified provider:model-id strings. Can only subtract from what the configured providers can reach."
         }
       },
       "additionalProperties": false
     },
     "defaultModel": {
-      "description": "Default model ID (e.g., \"claude-sonnet-4-5-20250929\"). Deprecated \u2014 use models.default instead.",
+      "description": "Default model ID (e.g., \"claude-sonnet-4-5-20250929\"). Deprecated — use models.default instead.",
       "type": "string"
     },
     "maxIterations": {
@@ -308,7 +239,7 @@
       "enum": ["off", "adaptive", "enabled"]
     },
     "thinkingEffort": {
-      "description": "How hard to think when reasoning is on. The portable control \u2014 every reasoning-capable provider can express a depth. Default: medium.",
+      "description": "How hard to think when reasoning is on. The portable control — every reasoning-capable provider can express a depth. Default: medium.",
       "type": "string",
       "enum": ["low", "medium", "high", "xhigh", "max"]
     },
@@ -404,7 +335,7 @@
           "default": "memory"
         },
         "ttlSeconds": {
-          "description": "Idle TTL for sessions in seconds. Each request resets the clock \u2014 actively-used sessions never expire. Default: 28800 (8 h).",
+          "description": "Idle TTL for sessions in seconds. Each request resets the clock — actively-used sessions never expire. Default: 28800 (8 h).",
           "type": "integer",
           "minimum": 1,
           "default": 28800
@@ -493,11 +424,11 @@
       "additionalProperties": false
     },
     "connectors": {
-      "description": "Connector integration config. `providers` declares managed-connector providers, which broker auth and host MCP sessions on the tenant's behalf. `gateways` declares hosted-MCP vendors that broker nothing and authenticate with one account-wide API key.",
+      "description": "Connector integration configuration. `providers` declares managed-connector providers, which broker auth and host MCP sessions on the tenant's behalf. `gateways` declares hosted-MCP vendors that broker nothing and authenticate with one account-wide API key.",
       "type": "object",
       "properties": {
         "providers": {
-          "description": "Declared providers, keyed by the connector auth-kind each owns. A provider is registered \u2014 and its routes, liveness probe, and vendor SDK reached \u2014 only when its broker credential is present. Settings resolve from the block only; the broker credential also reads its <VENDOR>_API_KEY env var.",
+          "description": "Declared providers, keyed by the connector auth-kind each owns. A provider is registered — and its routes, liveness probe, and vendor SDK reached — only when its broker credential is present. Settings resolve from the block only; the broker credential also reads its <VENDOR>_API_KEY env var.",
           "type": "object",
           "properties": {
             "composio": {
@@ -506,14 +437,12 @@
               "properties": {
                 "apiKey": {
                   "type": "string",
-                  "description": "Platform-wide Composio API key \u2014 the broker credential, and the gate on registering the provider at all. Falls back to COMPOSIO_API_KEY. A secret in a mounted config file is the operator's call; the env fallback remains the better posture for most deployments."
+                  "description": "Platform-wide Composio API key — the broker credential, and the gate on registering the provider at all. Falls back to COMPOSIO_API_KEY. A secret in a mounted config file is the operator's call; the env fallback remains the better posture for most deployments."
                 },
                 "authConfigs": {
                   "type": "object",
-                  "description": "Per-toolkit Composio auth-config ids (`ac_\u2026`), keyed by the toolkit slug the catalog entry already names \u2014 {\"gmail\": \"ac_xyz\"}. Non-secret identifiers (inert without apiKey) that vary per Composio account, which is why they are declared per deployment rather than carried in the shared catalog.",
-                  "additionalProperties": {
-                    "type": "string"
-                  }
+                  "description": "Per-toolkit Composio auth-config ids (`ac_…`), keyed by the toolkit slug the catalog entry already names — {\"gmail\": \"ac_xyz\"}. Non-secret identifiers (inert without apiKey) that vary per Composio account, which is why they are declared per deployment rather than carried in the shared catalog.",
+                  "additionalProperties": { "type": "string" }
                 },
                 "baseUrl": {
                   "type": "string",
@@ -537,11 +466,11 @@
                 },
                 "namespace": {
                   "type": "string",
-                  "description": "Smithery namespace brokered connections are created under. Globally unique and account-owned, so there is no default \u2014 without it the provider stays unregistered even with a credential present."
+                  "description": "Smithery namespace brokered connections are created under. Globally unique and account-owned, so there is no default — without it the provider stays unregistered even with a credential present."
                 },
                 "baseUrl": {
                   "type": "string",
-                  "description": "Connect API base URL override. Must be http(s) \u2014 the session URL derived from it becomes an installed connector's remote MCP target. Default: https://api.smithery.ai"
+                  "description": "Connect API base URL override. Must be http(s) — the session URL derived from it becomes an installed connector's remote MCP target. Default: https://api.smithery.ai"
                 },
                 "monitorEnabled": {
                   "type": "boolean",
