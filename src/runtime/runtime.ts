@@ -148,6 +148,7 @@ import {
   personalConnectorWireName,
 } from "../tools/identity-sources.ts";
 import { McpSource } from "../tools/mcp-source.ts";
+import { isTaskForbiddenSkillTool } from "../tools/platform/skills.ts";
 import { SharedSourceRef, type ToolRegistry } from "../tools/registry.ts";
 import { surfaceTools } from "../tools/surfacing.ts";
 import { createSystemTools } from "../tools/system-tools.ts";
@@ -1952,7 +1953,11 @@ export class Runtime {
     ]);
     const allTools: ToolSchema[] = [
       ...focusedTools
-        .filter((t) => isToolVisibleToRole(t.name, requestIdentity.orgRole))
+        .filter(
+          (t) =>
+            isToolVisibleToRole(t.name, requestIdentity.orgRole) &&
+            !isTaskForbiddenSkillTool(t.name),
+        )
         .map((t) => ({
           name: t.name,
           description: t.description,

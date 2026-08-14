@@ -169,13 +169,15 @@ describe("skills__create", () => {
     expect(sink.events.some((e) => e.type === "skill.created")).toBe(true);
   });
 
-  test("a skill created inside an automation run is not stamped as chat-authored", async () => {
-    // Provenance is derived from whether a conversation is in scope. While a
-    // run's correlation id lived in `conversationId`, an automation-created
-    // skill was persisted as `origin: "chat"` with a run id recorded as its
-    // conversation — wrong data on disk, and the only persisted behaviour this
-    // change alters. `skills__create` is not behind the unattended wall, so
-    // the path is reachable.
+  test("a skill cannot be created inside an automation run at all", async () => {
+    // This began as a provenance test. While a run's correlation id lived in
+    // `conversationId`, an automation-created skill was persisted as
+    // `origin: "chat"` with a run id recorded as its conversation — wrong data
+    // on disk. #1033 corrected the stamp; the unattended wall then removed the
+    // path, which is the stronger guarantee: a skill is durable guidance that
+    // loads itself into later conversations, and a run ingesting untrusted
+    // content must not be able to author one. So the assertion is no longer
+    // "the provenance is right" but "nothing was written".
     const src = await buildSource();
     const client = src.getClient()!;
     const result = await runWithRequestContext(
@@ -190,12 +192,17 @@ describe("skills__create", () => {
           },
         }),
     );
-    expect(result.isError).toBeFalsy();
 
-    const written = readFileSync(join(workDir, "skills", "run-authored.md"), "utf-8");
-    expect(written).toContain("origin: admin");
-    expect(written).not.toContain("origin: chat");
-    expect(written).not.toContain("run_a8f15601-0dd");
+    expect(result.isError).toBe(true);
+    const text = (result.content as Array<{ type: string; text: string }>)
+      .filter((c) => c.type === "text")
+      .map((c) => c.text)
+      .join("");
+    expect(text).toContain("not available inside an unattended automation run");
+
+    // Refused before the writer, not after it.
+    expect(existsSync(join(workDir, "skills", "run-authored.md"))).toBe(false);
+    expect(sink.events.some((e) => e.type === "skill.created")).toBe(false);
   });
 
   test("a skill created inside a chat still records the conversation", async () => {
