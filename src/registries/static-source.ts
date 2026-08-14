@@ -140,7 +140,10 @@ export function readStaticServers(path: string): ServerDetail[] {
  * Two stages are deliberately not covered. The scope filter
  * (`applyScopeFilter`) is registry configuration, not a property of the
  * catalog file, so it is not this gate's business. `catalogEntries`'
- * own null-projection is subsumed by stage 3, which is strictly broader.
+ * own null-projection drops an entry with no `remotes`, which is the
+ * shape of that record rather than a fault in the entry: it carries the
+ * remote connection's `url`, so a packages-only entry has none to build
+ * and joins the installed-bundle views through `iconByPackage` instead.
  *
  * `scripts/check-catalog-schema.ts` is the CLI over this. A path that
  * does not exist is itself a diagnostic: a gate pointed at the wrong
