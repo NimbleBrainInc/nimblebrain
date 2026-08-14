@@ -31,7 +31,11 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { extname, join } from "node:path";
 import { type ServerDetail, validateServerDetail } from "../connectors/server-detail.ts";
 import { log } from "../observability/log.ts";
-import { validateServerDetailSafety } from "./projection.ts";
+import {
+  type ProjectionContext,
+  projectServerDetailToDirectoryEntry,
+  validateServerDetailSafety,
+} from "./projection.ts";
 import type { ConnectorSource } from "./types.ts";
 
 export class StaticSource implements ConnectorSource {
@@ -108,24 +112,35 @@ export function readStaticServers(path: string): ServerDetail[] {
 }
 
 /**
- * Report everything wrong with a catalog path, without loading it into
- * a registry and without logging. An empty result means every entry at
- * `path` reaches the catalog: it survives this source's schema and
- * dedup checks, and then the safety scrub at the directory boundary.
+ * Report the entries at `path` that would not reach Browse, without
+ * loading them into a registry and without logging.
  *
- * Covering both stages is the point. An entry can pass `ServerDetail`
- * and still be dropped later by `validateServerDetailSafety` — a
- * `javascript:` icon src, a reserved OAuth param — with the same
- * symptom either way: the connector never appears, and nothing fails.
- * A gate that reported only this file's own drops would certify a
- * catalog the runtime still guts, which is worse than no gate, because
- * a green run reads as proof.
+ * An entry is removed silently at three points, and all three show the
+ * operator the same nothing — the connector is absent, no error anywhere:
  *
- * Safety runs over survivors only, and reports without dropping them:
- * `readStaticServers` returns what it always did, and the directory
- * boundary stays the one place that actually removes an unsafe entry.
- * This function is the *report* of that decision, never a second copy
- * of it.
+ *   1. this source's `ServerDetail` schema + name-dedup checks;
+ *   2. `validateServerDetailSafety` at the directory boundary — unsafe
+ *      icon/docs/portal URL, reserved OAuth param;
+ *   3. the directory's projection returning null — `packages` and
+ *      `remotes` are both optional in `ServerDetail`, so an entry with
+ *      neither is schema-valid, safety-clean, and still not installable.
+ *
+ * Stages 2 and 3 delegate to the functions the directory itself calls,
+ * so this reports the runtime's decisions rather than restating its
+ * rules. They run over survivors and never drop: `readStaticServers`
+ * returns what it always did, and the directory boundary stays the one
+ * place an entry is actually removed.
+ *
+ * This is a hand-composed pipeline, and it has already been short by a
+ * stage twice. The drift-proof form diffs a real `ConnectorDirectory`
+ * list against its input, which cannot live here — `directory.ts`
+ * imports this module, so the edge would be a cycle. Tracked as a
+ * follow-up.
+ *
+ * Two stages are deliberately not covered. The scope filter
+ * (`applyScopeFilter`) is registry configuration, not a property of the
+ * catalog file, so it is not this gate's business. `catalogEntries`'
+ * own null-projection is subsumed by stage 3, which is strictly broader.
  *
  * `scripts/check-catalog-schema.ts` is the CLI over this. A path that
  * does not exist is itself a diagnostic: a gate pointed at the wrong
@@ -134,18 +149,37 @@ export function readStaticServers(path: string): ServerDetail[] {
 export function validateStaticCatalog(path: string): CatalogDiagnostic[] {
   const { entries, diagnostics } = readCatalog(path);
   for (const { detail, source, index } of entries) {
+    const tag = `${source}[${index}:${detail.name}]`;
     const safetyError = validateServerDetailSafety(detail);
     if (safetyError) {
       diagnostics.push({
         source,
         index,
         name: detail.name,
-        message: `${source}[${index}:${detail.name}] dropped at the directory boundary — ${safetyError}`,
+        message: `${tag} dropped at the directory boundary — ${safetyError}`,
+      });
+      continue;
+    }
+    // The registry coordinates only label the projected entry; nothing
+    // the projection can reject depends on them, so a placeholder here
+    // gives the same verdict every real registry would.
+    if (projectServerDetailToDirectoryEntry(detail, PROBE_CONTEXT) === null) {
+      diagnostics.push({
+        source,
+        index,
+        name: detail.name,
+        message: `${tag} dropped at the directory boundary — not installable: needs \`packages\` or \`remotes\``,
       });
     }
   }
   return diagnostics;
 }
+
+/**
+ * Registry coordinates for the projection probe above. `validateStaticCatalog`
+ * checks a file, not a configured registry, so there are no real ones to pass.
+ */
+const PROBE_CONTEXT: ProjectionContext = { registryId: "catalog-check", registryType: "static" };
 
 /**
  * The single read both entry points share. Collects rather than logs,

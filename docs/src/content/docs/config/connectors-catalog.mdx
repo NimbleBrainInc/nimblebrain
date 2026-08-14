@@ -423,7 +423,7 @@ A rejected entry is dropped, not fatal — its siblings load normally, so the on
 bun run scripts/check-catalog-schema.ts <catalog-file-or-dir>
 ```
 
-It reports every entry that would be dropped — at either stage, source or directory boundary — and exits non-zero if there are any. Output is the same wording the runtime logs, so it doubles as the string to grep for when confirming a fix landed:
+It reports every entry that would be dropped — by the source's schema and dedup checks, by the directory boundary's safety scrub, or by being unresolvable to anything installable — and exits non-zero if there are any. A source-stage diagnostic is worded exactly as the runtime logs it, so it doubles as the string to grep for when confirming a fix landed; the directory-boundary ones name the entry and the reason but are not log-line copies.
 
 ```
 ✗ connectors/: 1 problem(s) — these entries would be dropped

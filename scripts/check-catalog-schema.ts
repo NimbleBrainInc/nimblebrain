@@ -6,9 +6,9 @@
  * and reports every entry the runtime would silently drop: one that
  * fails the upstream `ServerDetail` schema, duplicates a name already
  * claimed by an earlier file, sits in a file that cannot be read or
- * parsed, or is scrubbed at the directory boundary for an unsafe URL or
- * a reserved OAuth param. Exit 1 if anything would be dropped, 0 if the
- * whole catalog reaches the catalog intact.
+ * parsed, is scrubbed at the directory boundary for an unsafe URL or a
+ * reserved OAuth param, or resolves to nothing installable. Exit 1 if
+ * anything would be dropped, 0 if every entry reaches Browse.
  *
  * **Why this exists.** A catalog entry is validated at load, and an
  * invalid one is dropped with a warn log while its siblings load fine
@@ -42,15 +42,17 @@ function main(): void {
 
   const diagnostics = validateStaticCatalog(path);
   if (diagnostics.length === 0) {
-    console.log(`✓ ${path}: every entry reaches the catalog (schema + safety)`);
+    console.log(`✓ ${path}: every entry reaches Browse (schema, safety, installable)`);
     return;
   }
 
   console.error(`✗ ${path}: ${diagnostics.length} problem(s) — these entries would be dropped\n`);
-  // Print the diagnostic verbatim. It is already file-and-entry
-  // qualified, and it is the same sentence the runtime logs — so this
-  // output is the string to grep for when confirming the fix landed in
-  // a running tenant.
+  // Print the diagnostic verbatim — it is already file-and-entry
+  // qualified. A source-stage line is worded exactly as the runtime logs
+  // it, so it is the string to grep for when confirming a fix landed in a
+  // running deployment; the directory-boundary lines name the entry and
+  // the reason, but the runtime logs those from a different site with its
+  // own registry-tagged wording.
   for (const d of diagnostics) console.error(`  ${d.message}`);
   // Only entry-level problems have an entry to go fix. A missing path or
   // an unparseable file has no `index`, and telling that operator about
@@ -60,7 +62,8 @@ function main(): void {
       "\nA dropped entry does not fail at runtime — the connector just never appears.\n" +
         "Field rules: `description` is capped at 100 characters by the upstream MCP\n" +
         "registry schema (src/connectors/schemas/server.schema.json); icon, docs, and\n" +
-        "portal URLs must be http(s), and OAuth params may not use reserved keys.",
+        "portal URLs must be http(s); OAuth params may not use reserved keys; and an\n" +
+        "entry needs `packages` or a `remotes` entry the installer supports.",
     );
   }
   process.exit(1);

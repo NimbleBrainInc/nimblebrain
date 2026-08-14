@@ -158,6 +158,65 @@ describe("validateStaticCatalog", () => {
     expect(diagnostics[0]?.message).toContain("must NOT have more than 100 characters");
   });
 
+  test("an entry with neither packages nor remotes is reported as not installable", () => {
+    // `packages` and `remotes` are both optional in ServerDetail, so this
+    // is schema-valid and safety-clean, and the directory's projection
+    // still returns null — invisible in Browse, nothing failed.
+    const { remotes, ...noInstall } = VALID_ENTRY;
+    writeCatalog("catalog.json", [noInstall]);
+
+    expect(readStaticServers(dir)).toHaveLength(1);
+
+    const diagnostics = validateStaticCatalog(dir);
+    expect(diagnostics).toHaveLength(1);
+    expect(diagnostics[0]?.name).toBe("com.example/mcp");
+    expect(diagnostics[0]?.message).toContain("not installable");
+  });
+
+  test("a packages-only entry is installable — no remote required", () => {
+    const { remotes, ...pkgOnly } = VALID_ENTRY;
+    writeCatalog("catalog.json", [
+      {
+        ...pkgOnly,
+        packages: [
+          {
+            registryType: "npm",
+            identifier: "@example/mcp",
+            version: "1.0.0",
+            transport: { type: "stdio" },
+          },
+        ],
+      },
+    ]);
+    expect(validateStaticCatalog(dir)).toEqual([]);
+  });
+
+  test("a bad remote transport is caught by the schema, before installability", () => {
+    // The schema admits only streamable-http and sse under `remotes`, and
+    // those are exactly the two the installer supports — so the
+    // projection's unsupported-transport arm is unreachable from a
+    // schema-valid entry, and the not-installable message does not claim
+    // to cover it.
+    writeCatalog("catalog.json", [{ ...VALID_ENTRY, remotes: [{ type: "stdio" }] }]);
+
+    const diagnostics = validateStaticCatalog(dir);
+    expect(diagnostics).toHaveLength(1);
+    expect(diagnostics[0]?.message).toContain("invalid ServerDetail");
+  });
+
+  test("an unsafe entry is reported once, by its safety failure, not twice", () => {
+    // Safety and installability are checked in order; a single entry
+    // failing the first must not also be reported by the second.
+    const { remotes, ...noInstall } = VALID_ENTRY;
+    writeCatalog("catalog.json", [
+      { ...noInstall, icons: [{ src: "javascript:alert(1)", sizes: ["any"] }] },
+    ]);
+
+    const diagnostics = validateStaticCatalog(dir);
+    expect(diagnostics).toHaveLength(1);
+    expect(diagnostics[0]?.message).toContain("icon src must be http(s)");
+  });
+
   test("the shipped example catalog and the test fixtures both pass the gate", () => {
     // `check:catalog-schema` runs the gate over src/connectors/curated in
     // `verify:static`; this keeps the fixture catalog honest too, so a
