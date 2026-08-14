@@ -6,8 +6,9 @@
  * premise that its guidance was recovered via `<app-guide>` — but `<app-guide>`
  * carries only the primary skill (the first `resources/list` entry). One skill
  * per server made that equivalent; six made it a five-sixths loss, silently, on
- * every turn sent from the app panel. Dedup is now per-SKILL (`excludeSkillUri`),
- * so only the body actually composed elsewhere is withheld.
+ * every turn sent from the app panel. Dedup is per-SKILL (`excludeSkill`), keyed
+ * by publisher AND path, so only the body actually composed elsewhere is
+ * withheld — and only on the server that published it.
  *
  * The paired signature is asserted too: entering an app promotes that server's
  * tools to direct (`surfaceTools`'s `focusedServerName`). That is intended, and
@@ -113,7 +114,6 @@ main();
   );
   return dir;
 }
-
 
 /**
  * A second server publishing a skill at the SAME `skill://` path as the first
