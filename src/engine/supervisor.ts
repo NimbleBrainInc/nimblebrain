@@ -25,16 +25,33 @@ import {
  *    call (pagination dead-ends; idempotent lookups against an
  *    unchanged state).
  *  - A tool reports it made no progress (a discovery search matching
- *    nothing) while the model keeps varying the query — so input AND
- *    content differ every call, defeating the two fingerprints below.
+ *    nothing) call after call — either re-asking the same question, or
+ *    working through so many rephrasings that the surface plainly does not
+ *    hold what is being looked for.
  *
- * Fingerprint composition (three shapes of "stuck"):
+ * How "stuck" is measured — three fingerprints and one counter:
  *
- *  - NON-ADVANCING: (toolName, NONADVANCING). When `result._meta` carries
- *    `NON_ADVANCING_META_KEY`, the fingerprint ignores input and content,
- *    so a tool that keeps reporting no progress trips at N regardless of how
- *    the model varied the call. Catches the flailing-discovery loop the
- *    input-aware SUCCESS path deliberately lets through.
+ *  - NON-ADVANCING: (toolName, NONADVANCING, normalized(input)). When
+ *    `result._meta` carries `NON_ADVANCING_META_KEY`, the fingerprint ignores
+ *    content — the "no match" string varies with the query and says nothing
+ *    about whether the caller is stuck — and normalizes the input (strings
+ *    lowercased, whitespace collapsed) so that re-asking the same question in
+ *    different clothes still trips at N.
+ *
+ *    A MATERIALLY different query is a different question, and asking a
+ *    different question is what discovery is. Collapsing those to one
+ *    fingerprint disarms the search tool three calls into exactly the session
+ *    where the model does not yet know what exists — and, `nb__search` being
+ *    the only door to every proxied tool, that answers "can this platform do
+ *    X" with "no" for the rest of the run. So varied queries do not accumulate
+ *    a streak; they spend the separate NON-ADVANCING BUDGET below instead.
+ *
+ *  - NON-ADVANCING BUDGET: a per-tool count of non-advancing results in the
+ *    run, tripping at `maxNonAdvancingCalls` (default 6) however much the
+ *    input varied. This bounds the flail the streak no longer catches: room to
+ *    ask a handful of genuinely different questions, and a ceiling once the
+ *    answer is consistently nothing. Any advancing result clears it — a tool
+ *    that found something is not the tool this guard is about.
  *
  *  - SUCCESS: (toolName, S, content, canonical(input)).
  *    A successful call advances state; "stuck" means the model invoked
@@ -116,6 +133,13 @@ export interface SupervisorConfig {
    * that would otherwise be hashed in full on every call.
    */
   fingerprintTextCap?: number;
+  /**
+   * Number of non-advancing results a single tool may return in one run
+   * before it trips regardless of how the calls varied. Default 6 — twice
+   * the identical-repeat count, so a caller gets room to ask a handful of
+   * genuinely different questions before the surface is declared empty.
+   */
+  maxNonAdvancingCalls?: number;
 }
 
 export type SupervisorVerdict =
@@ -146,15 +170,46 @@ interface ToolState {
   lastFingerprint: string | null;
   consecutiveRepeats: number;
   totalCalls: number;
+  /** Non-advancing results since the last advancing success, however the input
+   *  varied. An error neither increments nor clears this — see
+   *  `recordObservation`. */
+  nonAdvancingCalls: number;
   tripped: boolean;
   /** Content hash of the result that tripped this tool. A later success must
    *  differ from THIS to count as progress — see RECOVERY in the file header.
    *  Null whenever `tripped` is false. */
   trippedContent: string | null;
+  /** The count that fired the trip — a repeat streak or a spent budget. Held
+   *  because a later call cannot tell which of the two fired: the streak
+   *  stands at 1 when the budget is what tripped, so reporting it would give
+   *  the model a number its own history contradicts. Null whenever `tripped`
+   *  is false. */
+  trippedRepeats: number | null;
 }
 
 const DEFAULT_MAX_REPEATS = 3;
 const DEFAULT_FINGERPRINT_CAP = 512;
+const DEFAULT_MAX_NON_ADVANCING = 6;
+
+/**
+ * Fold away the differences between two spellings of the same question:
+ * case and whitespace on every string leaf, at any depth.
+ *
+ * Used only on the NON-ADVANCING path, where the question is whether the
+ * caller is re-asking. The SUCCESS path canonicalizes the input verbatim —
+ * there, two inputs differing only in case may address genuinely different
+ * records, and folding them would collapse real work into a false loop.
+ */
+function normalizeForRepeat(value: unknown): unknown {
+  if (typeof value === "string") return value.toLowerCase().replace(/\s+/g, " ").trim();
+  if (Array.isArray(value)) return value.map(normalizeForRepeat);
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(([k, v]) => [k, normalizeForRepeat(v)]),
+    );
+  }
+  return value;
+}
 
 /**
  * Canonical (stable) JSON encoding for the supervisor's input-aware
@@ -196,6 +251,7 @@ function isAdvancingSuccess(result: ToolResult): boolean {
 export function createRunSupervisor(config: SupervisorConfig = {}): RunSupervisor {
   const maxRepeats = config.maxConsecutiveRepeats ?? DEFAULT_MAX_REPEATS;
   const textCap = config.fingerprintTextCap ?? DEFAULT_FINGERPRINT_CAP;
+  const maxNonAdvancing = config.maxNonAdvancingCalls ?? DEFAULT_MAX_NON_ADVANCING;
 
   const states = new Map<string, ToolState>();
 
@@ -206,8 +262,10 @@ export function createRunSupervisor(config: SupervisorConfig = {}): RunSuperviso
         lastFingerprint: null,
         consecutiveRepeats: 0,
         totalCalls: 0,
+        nonAdvancingCalls: 0,
         tripped: false,
         trippedContent: null,
+        trippedRepeats: null,
       };
       states.set(toolName, s);
     }
@@ -225,20 +283,23 @@ export function createRunSupervisor(config: SupervisorConfig = {}): RunSuperviso
 
   function fingerprint(call: ToolCall, result: ToolResult): string {
     // A result a tool explicitly flags as non-advancing (a search that
-    // matched nothing, a lookup against unchanged state) collapses to ONE
-    // canonical fingerprint per tool — input- AND content-agnostic. This is
-    // the counterpart to the input-aware success path below: that path treats
-    // a varied input as progress and never trips, which is right for a tool
-    // doing real work but wrong for a discovery loop where the model varies
-    // the query every call and keeps hitting the same dead end. Flagged
-    // results trip after `maxRepeats` no matter how input/content varied.
+    // matched nothing, a lookup against unchanged state) is fingerprinted on
+    // its NORMALIZED input and nothing else. Content is dropped because the
+    // "no match" text echoes the query and so varies on every call while
+    // saying nothing about whether the caller is stuck; the input is kept
+    // because a materially different question is a different call, and
+    // re-asking one question in different clothes is the loop worth catching.
     //
     // The flag is a single explicit opt-in boolean read by key from `_meta`
     // (the MCP-blessed metadata channel that survives the tool boundary) —
     // NOT a fold of the whole result into the hash, which would regress the
     // guard the way the SUCCESS comment below warns against.
+    //
+    // Varied questions are bounded by the non-advancing budget in `observe`,
+    // not by this streak. See the file header.
     if (result._meta?.[NON_ADVANCING_META_KEY] === true) {
-      return createHash("sha1").update(`${call.name}\0NONADVANCING`).digest("hex");
+      const normalized = canonicalJson(normalizeForRepeat(call.input));
+      return createHash("sha1").update(`${call.name}\0NONADVANCING\0${normalized}`).digest("hex");
     }
     // Known limitation: hashing only the first `textCap` chars can
     // false-positive on tools that return a long stable preamble (e.g. a
@@ -315,7 +376,9 @@ export function createRunSupervisor(config: SupervisorConfig = {}): RunSuperviso
       if (isAdvancingSuccess(result) && contentHash(result) !== state.trippedContent) {
         state.tripped = false;
         state.trippedContent = null;
+        state.trippedRepeats = null;
         state.consecutiveRepeats = 1;
+        state.nonAdvancingCalls = 0;
         state.lastFingerprint = fingerprint(call, result);
         return { type: "pass" };
       }
@@ -324,11 +387,12 @@ export function createRunSupervisor(config: SupervisorConfig = {}): RunSuperviso
       // is no longer offered this one — but dispatch does not check that list,
       // so a model that names it anyway still reaches here.
       const originalText = extractTextForModel(result.content).trim();
+      const repeats = state.trippedRepeats ?? state.consecutiveRepeats;
       return {
         type: "synth",
-        replacement: synthReplacement(call.name, originalText, state.consecutiveRepeats),
+        replacement: synthReplacement(call.name, originalText, repeats),
         trippedTool: call.name,
-        consecutiveRepeats: state.consecutiveRepeats,
+        consecutiveRepeats: repeats,
       };
     }
 
@@ -349,6 +413,57 @@ export function createRunSupervisor(config: SupervisorConfig = {}): RunSuperviso
       return { type: "pass" };
     }
 
+    recordObservation(state, call, result);
+
+    const repeats = trippedAt(state);
+    if (repeats === null) return { type: "pass" };
+
+    state.tripped = true;
+    state.trippedContent = contentHash(result);
+    state.trippedRepeats = repeats;
+    const originalText = extractTextForModel(result.content).trim();
+    return {
+      type: "synth",
+      replacement: synthReplacement(call.name, originalText, repeats),
+      trippedTool: call.name,
+      consecutiveRepeats: repeats,
+    };
+  }
+
+  /**
+   * The count that trips this tool, or null if neither has.
+   *
+   * Two counts, two shapes of stuck: the streak catches one question
+   * re-asked, the budget catches many questions all answered with nothing.
+   * Returning the count that fired — rather than a boolean — is what lets the
+   * directive state a number matching the evidence in the model's own history.
+   */
+  function trippedAt(state: ToolState): number | null {
+    if (state.consecutiveRepeats >= maxRepeats) return state.consecutiveRepeats;
+    if (state.nonAdvancingCalls >= maxNonAdvancing) return state.nonAdvancingCalls;
+    return null;
+  }
+
+  /**
+   * Fold one observation into the tool's counters: the non-advancing budget
+   * and the consecutive-fingerprint streak.
+   *
+   * Only an ADVANCING SUCCESS clears the budget. An error is not evidence
+   * that the tool found anything, so it leaves the count alone — the same
+   * treatment, for the same reason, that the infrastructure-error branch
+   * above gives `consecutiveRepeats`: a counter an error can reset hands a
+   * flailing tool a way to never trip. A tool interleaving flagged misses
+   * with errors whose text keeps changing escapes the streak too (the ERROR
+   * fingerprint only collapses on repeated text), so a reset here would
+   * leave that shape with no guard at all.
+   */
+  function recordObservation(state: ToolState, call: ToolCall, result: ToolResult): void {
+    if (result._meta?.[NON_ADVANCING_META_KEY] === true) {
+      state.nonAdvancingCalls += 1;
+    } else if (isAdvancingSuccess(result)) {
+      state.nonAdvancingCalls = 0;
+    }
+
     const fp = fingerprint(call, result);
     if (fp === state.lastFingerprint) {
       state.consecutiveRepeats += 1;
@@ -356,20 +471,6 @@ export function createRunSupervisor(config: SupervisorConfig = {}): RunSuperviso
       state.consecutiveRepeats = 1;
       state.lastFingerprint = fp;
     }
-
-    if (state.consecutiveRepeats >= maxRepeats) {
-      state.tripped = true;
-      state.trippedContent = contentHash(result);
-      const originalText = extractTextForModel(result.content).trim();
-      return {
-        type: "synth",
-        replacement: synthReplacement(call.name, originalText, state.consecutiveRepeats),
-        trippedTool: call.name,
-        consecutiveRepeats: state.consecutiveRepeats,
-      };
-    }
-
-    return { type: "pass" };
   }
 
   return {
