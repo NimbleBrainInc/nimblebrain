@@ -94,9 +94,16 @@ export async function handleUpdate(
     // Append-only, matching what the store's own `update` writes — so the
     // agent's rename and the auto-titler's are the same kind of record and the
     // last one written is the one every reader sees.
+    //
+    // A file whose last write was cut short has no trailing newline, and an
+    // append onto it would splice the event onto that line and lose both. The
+    // store's own `appendEventSync` cannot afford to check — it appends on the
+    // hot path without reading the file — but this handler has already read it
+    // to pick a branch, so the check is free here.
+    const separator = content.endsWith("\n") ? "" : "\n";
     await appendFile(
       filePath,
-      `${JSON.stringify({
+      `${separator}${JSON.stringify({
         ts: new Date().toISOString(),
         type: "metadata.title",
         title: input.title,
