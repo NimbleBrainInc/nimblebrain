@@ -2967,21 +2967,43 @@ export class Runtime {
       .find((s) => s.name === serverName);
     const unwrapped = source instanceof SharedSourceRef ? source.unwrap() : source;
     if (!(unwrapped instanceof McpSource)) {
+      // An INSTALLED bundle that is missing from the registry is not the same
+      // as a workspace that never had it: the skills it publishes are expected
+      // in this turn and are not going to be there. Say so before caching the
+      // empty result, which otherwise pins "no skills" for the whole TTL.
+      if (this.lifecycle?.getInstance(serverName, wsId)) {
+        reportSkillDiscoveryDegraded({
+          wsId,
+          serverName,
+          reason: "source_unavailable",
+          recovered: 0,
+        });
+      }
       this.skillResourceCache.set(cacheKey, { skills: [], fetchedAt: Date.now() });
       return [];
     }
 
     const skills: DiscoveredSkill[] = [];
-    const { resources, ok } = await unwrapped.listResources();
+    const { resources, ok, truncated } = await unwrapped.listResources();
     for (const resource of resources) {
       const skill = await this.readSkillResource(unwrapped, resource.uri);
       if (skill) skills.push(skill);
     }
-    // Cache only a COMPLETE enumeration: a transport error mid-`resources/list`
-    // (`ok: false`) leaves a partial result, and pinning it empty for the 5-minute
-    // TTL would keep the skill dark after the transport recovers. Retry next turn.
-    if (ok) {
+    // Cache only a COMPLETE enumeration. Two ways it isn't: a transport error
+    // cut `resources/list` short (`ok: false`), or the page ceiling stopped it
+    // with a cursor outstanding (`truncated`). Pinning either as a stable "this
+    // is everything" keeps a real skill dark for the whole TTL — and the
+    // truncated case reads as success, so it would cache without this.
+    if (ok && !truncated) {
       this.skillResourceCache.set(cacheKey, { skills, fetchedAt: Date.now() });
+    }
+    if (!ok || truncated) {
+      reportSkillDiscoveryDegraded({
+        wsId,
+        serverName,
+        reason: ok ? "enumeration_truncated" : "enumeration_failed",
+        recovered: skills.length,
+      });
     }
     return skills;
   }
@@ -5395,6 +5417,46 @@ function buildWorkspaceContext(
 }
 
 /** Compose the present-only `surfaceTools` options (focused server + request-allowed tools). */
+/**
+ * Report a skill enumeration the runtime KNOWS came back short.
+ *
+ * The product defect the composition-flap incident exposed was not the flap —
+ * it was that a workspace whose bundles publish `always` skills composed none
+ * of them and nothing anywhere said so. `skills: 0` in the context event is
+ * indistinguishable from "this workspace has no skills", so the absence read as
+ * normal for two weeks.
+ *
+ * This fires at DISCOVERY rather than at compose deliberately. By compose time
+ * the only observable fact is a smaller number; here the reason still exists,
+ * and the reason is the part an operator can act on. A compose-time comparison
+ * would also be tautological: the pool that composes IS the pool discovery
+ * returned, so it can only ever agree with itself.
+ *
+ * It is a `warn` on the structured logger rather than a new event type because
+ * that is the channel alerts already read (JSON to Loki, auto-enriched with
+ * tenant and trace id) — no new surface to wire, alertable the moment it ships.
+ *
+ * What it does NOT catch, deliberately: a server that enumerates cleanly and
+ * returns nothing. Distinguishing "stopped publishing" from "never published"
+ * needs a remembered per-server baseline, and a wrong baseline would page an
+ * operator every time a bundle is legitimately uninstalled — the exact false
+ * positive that inflated the incident's own blast-radius count.
+ */
+function reportSkillDiscoveryDegraded(input: {
+  wsId: string;
+  serverName: string;
+  reason: "enumeration_failed" | "enumeration_truncated" | "source_unavailable";
+  recovered: number;
+}): void {
+  log.warn("[skill] composition degraded — skills this workspace publishes were not discovered", {
+    event: "skills.composition.degraded",
+    workspace_id: input.wsId,
+    server: input.serverName,
+    reason: input.reason,
+    recovered: input.recovered,
+  });
+}
+
 function buildSurfaceOptions(
   focusedServerName: string | undefined,
   requestAllowedTools: string[] | undefined,
