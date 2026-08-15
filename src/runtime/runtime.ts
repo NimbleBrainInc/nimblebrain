@@ -2239,9 +2239,10 @@ export class Runtime {
       workspaceId: workWsId,
       workspaceAgents: (activeWorkspace ?? sessionWorkspace)?.agents ?? null,
       workspaceModelOverride: (activeWorkspace ?? sessionWorkspace)?.models ?? null,
-      // The run's correlation id (no conversation exists) — stamps audit/file
-      // records so a file the run creates is traceable back to it.
-      conversationId: runId,
+      // The run's correlation id, carried as itself. A run persists a run
+      // result, not a conversation, so `conversationId` stays unset and every
+      // reader asking for the current conversation correctly gets nothing.
+      runId,
       model: resolvedModelString,
       // Unattended run: bars the automation-authoring surface. Rides the ALS
       // context (preserved across the per-call restamp), so a delegated sub-agent

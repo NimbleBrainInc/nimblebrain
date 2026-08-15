@@ -1149,6 +1149,75 @@ export async function readConversation(
   return { meta, messages, messageCount, preview };
 }
 
+/**
+ * How many messages the header should report, without reconstructing any.
+ *
+ * A legacy file stores one message per line, so its lines are its count. An
+ * event-sourced file does not: one turn is a `run.start`, an `llm.response`,
+ * any number of `tool.*` pairs and a `run.done`, so counting lines counts
+ * events and reports a 1-turn conversation as 5.
+ *
+ * The number has to agree with {@link readConversation}, because the two
+ * describe the same file to the same user — `conversations__list` says how
+ * many messages a conversation has and opening it shows them. So this mirrors
+ * `reconstructFromEvents`' rule exactly: every `user.message`, plus every run
+ * that produced at least one `llm.response` (a run that produced none yields
+ * no message there, and must yield none here).
+ *
+ * One pass, two sets, no message building — this stays the fast path.
+ */
+function countHeaderMessages(dataLines: string[], isEventFormat: boolean): number {
+  return isEventFormat
+    ? countEventMessages(dataLines)
+    : dataLines.filter((line) => parseJsonLine(line) !== null).length;
+}
+
+function countEventMessages(dataLines: string[]): number {
+  let userMessages = 0;
+  const runStarts: string[] = [];
+  const runsWithResponse = new Set<string>();
+
+  for (const line of dataLines) {
+    const parsed = parseJsonLine(line);
+    const runId = typeof parsed?.runId === "string" ? parsed.runId : null;
+    if (parsed?.type === "user.message") userMessages++;
+    else if (parsed?.type === "run.start" && runId) runStarts.push(runId);
+    else if (parsed?.type === "llm.response" && runId) runsWithResponse.add(runId);
+  }
+
+  return userMessages + runStarts.filter((runId) => runsWithResponse.has(runId)).length;
+}
+
+/**
+ * The conversation's preview: the first user line's text, in either format.
+ *
+ * The scan stops at that line rather than reading on — nothing after it can
+ * change the answer. An empty user message is not an answer, so the search
+ * continues past one (a picture with no caption still needs a preview).
+ */
+function findPreview(dataLines: string[]): string {
+  for (const line of dataLines) {
+    const parsed = parseJsonLine(line);
+    if (!parsed) continue;
+    if (parsed.type === "user.message" && Array.isArray(parsed.content)) {
+      const text = extractText(parsed.content as ContentPart[]);
+      if (text) return text;
+    }
+    if (parsed.role === "user" && typeof parsed.content === "string" && parsed.content) {
+      return parsed.content;
+    }
+  }
+  return "";
+}
+
+function parseJsonLine(line: string): Record<string, unknown> | null {
+  try {
+    return JSON.parse(line) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
 /** Fast header read — metadata + preview + count, no message reconstruction. */
 export async function readConversationHeader(
   filePath: string,
@@ -1174,22 +1243,14 @@ export async function readConversationHeader(
   if (!meta) return null;
 
   const dataLines = lines.slice(1);
-  let preview = "";
-  let messageCount = 0;
-  for (const line of dataLines) {
-    try {
-      const parsed = JSON.parse(line) as Record<string, unknown>;
-      messageCount++;
-      if (!preview && parsed.type === "user.message" && Array.isArray(parsed.content)) {
-        preview = extractText(parsed.content as ContentPart[]);
-      }
-      if (!preview && parsed.role === "user" && typeof parsed.content === "string") {
-        preview = parsed.content;
-      }
-    } catch {
-      // skip malformed
-    }
-  }
+  // Same predicate as `readConversation`, so the two never disagree about which
+  // parser a file wants. Agreeing on the parser is not the same as agreeing on
+  // the count — that is what `countHeaderMessages` is for, and what the header/
+  // full-reader parity tests pin.
+  const isEventFormat = raw.format === "events" || dataLines.some(looksLikeEventLine);
+
+  const preview = findPreview(dataLines);
+  const messageCount = countHeaderMessages(dataLines, isEventFormat);
 
   deriveTitleFromEvents(meta, dataLines);
   applyDerivedMetrics(meta, deriveMetricsFromLines(dataLines));
