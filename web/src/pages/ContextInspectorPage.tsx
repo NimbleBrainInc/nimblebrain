@@ -321,7 +321,6 @@ const LAYER_LABEL: Record<string, string> = {
   user_prefs: "User preferences",
   current_date: "Current date",
   workspace_context: "Workspace",
-  org_overlay: "Org instructions",
   workspace_overlay: "Workspace instructions",
   layer3_skills: "Layer-3 skills",
   apps: "Apps",

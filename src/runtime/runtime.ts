@@ -2358,20 +2358,16 @@ export class Runtime {
   }
 
   /**
-   * The workspace briefing surfaces (apps + org/workspace overlays) for a turn.
+   * The workspace briefing surfaces (apps + the workspace overlay) for a turn.
    * `wsId` is the conversation's own (chat) or focused (task) workspace;
-   * `undefined` (personal/session) yields empty apps and org-only overlays.
+   * `undefined` (personal/session) yields empty apps and an empty overlay.
    */
   private async buildWorkspaceBriefing(wsId: string | undefined): Promise<{
     apps: PromptAppInfo[];
-    liveOverlays: { org: string; workspace: string };
+    liveOverlays: { workspace: string };
   }> {
     const apps = wsId ? await this.buildAppsList(wsId) : [];
-    // Org overlay always applies (org-level, not workspace-specific); the
-    // workspace overlay only for a real (non-personal) workspace.
-    const liveOverlays = wsId
-      ? await this.readPromptOverlays(wsId)
-      : { org: await this.getInstructionsStore().read({ scope: "org" }), workspace: "" };
+    const liveOverlays = wsId ? await this.readPromptOverlays(wsId) : { workspace: "" };
     return { apps, liveOverlays };
   }
 
@@ -3267,7 +3263,7 @@ export class Runtime {
   }
 
   /**
-   * Get a per-workdir `InstructionsStore` for the org / workspace overlays.
+   * Get a per-workdir `InstructionsStore` for the workspace overlay.
    * Per-bundle instructions are NOT stored here — bundles own their storage
    * and publish a `app://instructions` resource if and only if they
    * support the convention. The store is stateless aside from the rooted
@@ -3278,22 +3274,17 @@ export class Runtime {
   }
 
   /**
-   * Read the org and workspace instruction overlays for a system-prompt
+   * Read the workspace instruction overlay for a system-prompt
    * assembly. Per-bundle overlays are NOT read here — they're populated on
    * `PromptAppInfo.customInstructions` directly in `buildAppsList`.
    *
    * Reads happen on every call (no caching) per the locked decision: edits
    * must apply mid-conversation.
    */
-  /** Public so the compose-effective-context debug tool can re-read overlays
+  /** Public so the compose-effective-context debug tool can re-read the overlay
    *  in live mode. Workspace-scoped; no caller-controlled escalation. */
-  async readPromptOverlays(wsId: string): Promise<{ org: string; workspace: string }> {
-    const store = this.getInstructionsStore();
-    const [org, workspaceOverlay] = await Promise.all([
-      store.read({ scope: "org" }),
-      store.read({ scope: "workspace", wsId }),
-    ]);
-    return { org, workspace: workspaceOverlay };
+  async readPromptOverlays(wsId: string): Promise<{ workspace: string }> {
+    return { workspace: await this.getInstructionsStore().read({ wsId }) };
   }
 
   /** Get the ToolRegistry for a specific workspace. Throws if workspace registry not found. */
