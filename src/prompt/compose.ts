@@ -983,13 +983,13 @@ function formatAppStateSection(appState: AppStateInfo): string | null {
 }
 
 /**
- * Format a top-level instruction overlay (org- or workspace-scope).
+ * Format the top-level workspace instruction overlay.
  *
- * Each overlay sits in a containment tag whose name matches its scope, so
- * a debug reader can attribute the body to its source. The escape pattern
- * matches `<app-instructions>` — any literal closing tag inside the body
- * is rewritten to `&lt;/...>` before wrapping, defending against prompt
- * injection from a writer who tries to break out of containment.
+ * The body sits in a containment tag, so a debug reader can attribute it to
+ * its source. The escape pattern matches `<app-instructions>` — any literal
+ * closing tag inside the body is rewritten to `&lt;/...>` before wrapping,
+ * defending against prompt injection from a writer who tries to break out of
+ * containment.
  */
 function formatScopeOverlay(heading: string, body: string): string {
   return `## ${heading}\n\n${wrapContained("workspace-instructions", body)}`;
