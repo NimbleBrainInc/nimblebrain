@@ -193,6 +193,12 @@ function shortCallProviderOptions(modelString: string | null): SharedV3ProviderO
       return openaiAcceptsMinimalEffort(modelString)
         ? { openai: { reasoningEffort: "minimal" } }
         : {};
+    case "greenpt":
+      // Deliberately no suppression, and NOT a silent fallthrough. GreenPT gets
+      // no effort tier on any call (see `buildGreenptThinkingOptions`), so
+      // there is nothing here to step down from — and no documented value
+      // meaning "don't reason" to send in its place.
+      return {};
     case "nebius":
       // Deliberately no suppression, and NOT a silent fallthrough. Nebius has
       // no knob that suppresses reasoning: `reasoning_effort` is accepted on

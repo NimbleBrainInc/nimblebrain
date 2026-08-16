@@ -1807,6 +1807,22 @@ describe("AgentEngine", () => {
         }
       });
 
+      it("sends no effort tier to GreenPT, whose ladders are unmeasured", async () => {
+        // GreenPT documents `low | high | max` for kimi-k3 only and nothing at
+        // all for the other two catalog models, so no tier is known-accepted
+        // across them — including `medium`, the platform default. The arm fails
+        // closed until the tiers are probed; the model applies its own default.
+        const po = await providerOptionsFor("greenpt:kimi-k3", {
+          mode: "effort",
+          effort: "max",
+          source: "operator",
+        });
+        expect(po.greenpt).toBeUndefined();
+        // Whatever this arm sends must never land under `openai`: an
+        // `createOpenAICompatible` instance reads `providerOptions.<name>`.
+        expect(po.openai).toBeUndefined();
+      });
+
       it("routes Nebius through the nebius options key, NOT openai", async () => {
         // `createOpenAICompatible` reads `providerOptions.<name>`, and the
         // registry names this instance `nebius`. Same wire parameter as OpenAI,
