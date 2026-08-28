@@ -18,20 +18,24 @@ import { toolNameMatchesPattern } from "./tool-pattern.ts";
  * By how the agent relates to a tool, it belongs in exactly one of:
  *   1. KERNEL-DIRECT — hot; the agent reaches for it unprompted (`nb__search`,
  *      `nb__manage_tools`, `nb__status`, `nb__delegate`, the files/conversations
- *      basics, `instructions__write_instructions`). Full schema in the
- *      always-cached prefix. `isKernelTool` below.
+ *      basics). Full schema in the always-cached prefix. `isKernelTool` below.
  *   2. PROXIED — the agent needs it only occasionally. Discovered via
  *      `nb__search` and promoted on demand, so it stays OUT of the default
  *      prefix (Tier 2/3 here). Costs one prefix-bust per promote — worth it for
  *      cold tools, not for hot ones.
  *   3. INTERNAL — the agent NEVER legitimately calls it; it's a UI-driven
  *      affordance the web shell invokes by name over REST (settings/admin ops:
- *      `manage_*`, `set_model_config`, `briefing`). Annotate
- *      `ai.nimblebrain/internal` — stripped from the chat tool list by the
- *      `visibleTools` filter at the top of `surfaceTools` below, and refused
- *      for promotion in the engine; still callable by name. NOTE: this flag
- *      governs the chat/runtime surface only — the `/mcp` `tools/list` is
- *      gated by feature/role (`isToolVisibleToRole`), not by this annotation.
+ *      `manage_*`, `set_model_config`, `briefing`,
+ *      `instructions__write_instructions`). Annotate
+ *      `ai.nimblebrain/internal` — stripped from EVERY listing that reaches a
+ *      model: the chat tool list (`visibleTools` at the top of `surfaceTools`
+ *      below), `nb__search`, the `/mcp` `tools/list`, and the invalid-name
+ *      recovery hint (`ToolRegistry.searchTools`); the engine also refuses to
+ *      promote it. Only the CALL paths stay open — `/v1/tools/call` and `/mcp`
+ *      `tools/call` still dispatch by name, which is how the web shell reaches
+ *      it. Feature gating (`isToolEnabled`) and role visibility
+ *      (`isToolVisibleToRole`) are independent filters layered on top, not
+ *      substitutes for this one.
  *
  * Two rules keep this honest:
  *   - A new `nb__*`/identity tool DEFAULTS to kernel-direct (it's a kernel tool
@@ -64,41 +68,23 @@ function toolSource(t: ToolSchema): string {
 }
 
 /**
- * Platform sources that are kernel-direct without being identity sources.
- *
- * `instructions` is the runtime's only durable "remember this from now on"
- * verb: `instructions__write_instructions` persists standing guidance at
- * workspace or org scope. A user asking the agent to remember a convention is
- * a first-turn request in a workspace with nothing installed, and a proxied
- * tool is reachable only by guessing that a search for it would find
- * something — so the ask reads as unsupported and the agent answers that the
- * platform has no memory. One tool, and it buys the whole persistence verb.
- *
- * The rest of the persistence surface (`skills__*`, nine tools) stays proxied
- * and is named in `bootstrap.md` instead: it is the authoring surface for a
- * capability, reached deliberately, not the reflex a bare workspace needs.
- *
- * Distinct from {@link isIdentitySource} on purpose. That set answers "which
- * door does this route through" — identity sources live outside any workspace.
- * Instructions are workspace- and org-scoped, so they take the workspace door;
- * only their *surfacing* is kernel.
- */
-const KERNEL_PLATFORM_SOURCES: ReadonlySet<string> = new Set(["instructions"]);
-
-/**
- * A tool is a KERNEL tool if it's the `nb__` system core, belongs to a kernel
- * identity source (`files`/`conversations`/`automations`, per
- * {@link isIdentitySource}), or to a kernel platform source (per
- * {@link KERNEL_PLATFORM_SOURCES}). Kernel tools are always surfaced DIRECT:
+ * A tool is a KERNEL tool if it's the `nb__` system core or belongs to a
+ * kernel identity source (`files`/`conversations`/`automations`, per
+ * {@link isIdentitySource}). Kernel tools are always surfaced DIRECT:
  * they are the substrate the model reaches for unprompted, so they belong in
  * the stable, cached tool prefix rather than being proxied and promoted on
  * demand. Promotion mutates the tools block — which precedes the messages in
  * the request — so proxying a hot kernel tool busts the conversation's cached
  * prefix on every promote. Keeping kernel tools direct keeps that prefix stable.
+ *
+ * `instructions__write_instructions` is deliberately NOT here: the workspace
+ * overlay is human-authored through the settings UI, and the tool that backs
+ * that UI is internal (tier 3) — the model persists standing guidance by
+ * drafting it and pointing the user at settings, not by writing the overlay
+ * itself. See `src/tools/platform/instructions.ts`.
  */
 function isKernelTool(t: ToolSchema): boolean {
-  const source = toolSource(t);
-  return isSystemTool(t) || isIdentitySource(source) || KERNEL_PLATFORM_SOURCES.has(source);
+  return isSystemTool(t) || isIdentitySource(toolSource(t));
 }
 
 /**
@@ -115,8 +101,8 @@ export function filterTools(tools: ToolSchema[], patterns: string[]): ToolSchema
  *
  * - Tier 1 (≤maxDirectTools total): all tools direct, nothing proxied.
  * - Tier 2 (>maxDirectTools, no skill or skill has no allowedTools): only KERNEL tools
- *   direct (nb__* system core + identity sources — files/conversations/automations — plus the
- *   kernel platform sources, `instructions`), rest proxied.
+ *   direct (nb__* system core + identity sources — files/conversations/automations),
+ *   rest proxied.
  * - Tier 3 (skill matched with allowedTools): tools matching skill globs + kernel tools direct, rest proxied.
  *
  * Kernel tools stay direct because they're the substrate the model reaches for unprompted;

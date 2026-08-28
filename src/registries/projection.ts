@@ -26,6 +26,8 @@ import {
   type ServerDetail,
   type SmitheryConnectorConfig,
 } from "../connectors/server-detail.ts";
+import { parseHookDeclarations } from "../hooks/declaration.ts";
+import type { HookDeclaration } from "../hooks/types.ts";
 import { validateAdditionalAuthorizationParams } from "../util/oauth-params.ts";
 import { isHttpUrl } from "../util/url.ts";
 import type { DirectoryEntry, RegistryType } from "./types.ts";
@@ -191,6 +193,16 @@ export interface ConnectorCatalogEntry {
    * for connectors that declare no UI.
    */
   ui?: BundleUiMeta;
+  /**
+   * Inbound event streams the server declares in
+   * `ServerDetail._meta["ai.nimblebrain/host"].hooks`. Carried here from the
+   * operator-trusted catalog for the same reason `ui` is: the install path must
+   * read a route and a registration tool from metadata the OPERATOR published,
+   * never from the caller-supplied entry — a forged route would choose where
+   * this runtime sends a delivery, with a freshly minted platform token
+   * attached. Absent for connectors that declare no hooks.
+   */
+  hooks?: HookDeclaration[];
 }
 
 /**
@@ -206,6 +218,7 @@ export function serverDetailToCatalogEntry(s: ServerDetail): ConnectorCatalogEnt
   const iconUrl = s.icons?.[0]?.src;
   const meta = getNimbleBrainConnectorMeta(s);
   const ui = hostMetaToUiMeta(getNimbleBrainHostMeta(s));
+  const hooks = parseHookDeclarations(getNimbleBrainHostMeta(s));
   // The "interactive" chip is cosmetic catalog metadata (no runtime behavior). Derive
   // it from whether the connector renders a VALID UI: an explicit connector flag OR a
   // placement that survives `sanitizePlacements` (the same check registration uses).
@@ -226,6 +239,7 @@ export function serverDetailToCatalogEntry(s: ServerDetail): ConnectorCatalogEnt
     ...(meta?.docsUrl ? { docsUrl: meta.docsUrl } : {}),
     ...(meta?.personal === true ? { personal: true } : {}),
     ...(ui ? { ui } : {}),
+    ...(hooks.length > 0 ? { hooks } : {}),
   };
 }
 

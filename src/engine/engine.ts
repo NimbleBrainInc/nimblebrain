@@ -28,11 +28,12 @@ import { log } from "../observability/log.ts";
 import { formatConnectorSkillBlock } from "../prompt/compose.ts";
 import { toolMatches } from "../skills/select.ts";
 import { coerceInputForSchema } from "../tools/coerce-input.ts";
-import { bareToolName, splitInnerToolName } from "../tools/namespace.ts";
+import { bareToolName } from "../tools/namespace.ts";
 import { validateToolInput } from "../tools/validate-input.ts";
 import type { TokenUsage } from "../usage/types.ts";
 import { addUsage, emptyUsage, tokenUsageFromV3 } from "../usage/types.ts";
 import { mapWithConcurrency } from "../util/concurrency.ts";
+import { splitInnerToolName } from "../util/tool-name.ts";
 import {
   boundToolResultForModel,
   estimateContentSize,

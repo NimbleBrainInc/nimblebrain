@@ -243,6 +243,7 @@ The session's reachable set comes from `runtime.listToolsForWorkspace(wsId)` (th
 **Skills are walled the same way.** Layer-3 skill selection (`selectRequestLayer3`) loads org-tier (`workDir/skills/`, org-wide), workspace-tier (the conversation's own `wsId` only), and user-tier (`users/<userId>/skills/`) skills — plus **bundle skills** (a connector/app's own `skill://<name>/usage` guidance, synthesized and tool-affinity-matched) from the **conversation's own workspace only**. A bundle installed in another workspace never injects its skill here. No skill crosses a workspace boundary. The **app-aware briefing** is walled the same way: `focusedApp` / `<app-guide>` / `<app-state>` resolve `appContext.serverName` only in the session's bound workspace (`convWsId`), never by scanning the identity's other workspaces — so the prompt never describes an app whose tools the wall would refuse to call.
 
 - **Parse** only via `parseNamespacedToolName(s)` from `src/tools/namespace.ts` (a name with no `ws_<id>-` prefix is `scope: { kind: "identity" }`). `namespacedToolName(wsId, name)` still exists for the legacy form but nothing in `src/` or `web/` emits it — only test fixtures that must construct a cross-workspace call. `check:tool-namespace` enforces the parse site.
+- **Decompose** a `<source>__<tool>` name only via `splitInnerToolName(s)` from `src/util/tool-name.ts` — the one grammar every dispatch door shares. It lives in `src/util/` because both `src/tools/` and `src/runtime/` need it and `check:cycles` forbids the latter importing the former — a home under `src/tools/` forces a copy. The returned `hasSeparator` reports the separator and nothing more — never infer it by comparing the two segments (`x__x` has equal segments *and* a separator), and never substitute it for a usability check: both segments can be empty with a separator present (`__leading`, `trailing__`). A usable **source** segment is `hasSeparator && sourcePrefix.length > 0`; a usable **tool** segment is `hasSeparator && bareToolName.length > 0`. Write the one the site needs. Two doors that split a name differently is a misroute, not a wrong label. `test/unit/tools/tool-name-grammar.test.ts` pins the doors against one table.
 - **Web tier** mirrors the parser at `web/src/lib/namespaced-tool.ts` (regex from `web/src/_generated/workspace-id-pattern.ts`, emitted by `bun run codegen`; `check:codegen` catches drift).
 - **Per-call routing** lives in `src/orchestrator/route.ts`. Errors: `UnknownNamespacedToolName` (which the retired `ws_<id>-` form now raises) / `WorkspaceToolUnavailable` / `UnknownToolSource` / `UnknownIdentitySource` (`WorkspaceAccessDenied` is the base class of the wall's denial). Both `POST /v1/chat` and `/mcp` map them to identical structured `data.reason` discriminators.
 - `BundleRef.oauthScope: "user"` is **deleted from the type union**. Every install binds workspace explicitly via `wsId`; legacy disk records throw `LegacyOAuthScopeError` on load.
@@ -385,6 +386,92 @@ Long-running entities can get orphaned if the bundle subprocess dies mid-run. Th
 `sanitizeLineField()` and XML containment tags in `compose.ts` are prompt injection mitigations. Do not remove without reviewing `test/unit/prompt-injection.test.ts`. The `DELEGATE_PREAMBLE` in `delegate.ts` prevents task-as-system-prompt injection.
 
 **Bundle trust is install-time, not per-prompt.** Do not add `trustScore >= N` gates on any path that injects bundle-authored content into the prompt (skills, app guides, app state, custom instructions). Once a bundle is active in the workspace its tools are already callable, so suppressing the workflow guidance that teaches the model how to use them safely makes the model less safe, not more — and tool descriptions, tool outputs, and `app://instructions` flow through ungated already. The defense is XML containment with `</tag>` escape in the body, the pattern used by `<app-state>`, `<app-guide>`, `<app-instructions>`, `<app-custom-instructions>`, and `<layer3-skill>`. Any new bundle-authored containment tag must escape its own closing form in the body the same way. `trustScore` fields on `FocusedAppInfo` / `AppStateInfo` / `PromptAppInfo` remain for display only.
+
+## Inbound Webhooks — the hooks door
+
+`POST /v1/hooks/:connector/:vendor/:token` (`src/api/routes/hooks.ts`, backed by
+`src/hooks/`). One generic door for vendor deliveries that cannot carry a platform
+token. The runtime opens the capability in the path, mints its ordinary
+workspace-scoped platform token, and forwards the bytes to a route the connector
+declared. Servers opt in with `_meta["ai.nimblebrain/host"].hooks` (`host_version: "1.2"`).
+
+**The invariant: the runtime never parses a hook body.** It holds no vendor list
+and no envelope knowledge. If you find yourself reading a field out of a
+delivery, stop — that logic belongs in the receiving server's adapter, and the
+split this door exists to maintain has failed.
+
+Three more rules that are load-bearing, not stylistic:
+
+- **The handler stays thin.** Open, check, mint, forward. No queue, no
+  persistence, no retry. A tenant runtime is one pod, so a delivery arriving
+  while it is busy costs the vendor a retry — the door must never be the reason
+  it is busy. Durability belongs to the vendor's retry and the receiving
+  bundle's raw capture, both of which can provide it.
+- **Every rejection is the same bare 404.** Bad token, wrong tenant's key, path
+  segments disagreeing with the sealed ones, a retired `kid`, an uninstalled
+  connector — one path, one answer, no body. Anything that distinguishes them
+  is an oracle a prober walks. `admitDelivery` returns `undefined` for all of
+  them precisely so the caller has nothing to branch on.
+- **No agent-facing surface.** Nothing mints or rotates a hook from a tool the
+  model can reach, and no path leads from a delivery to an agent run.
+  `rotate_hook` / `list_hooks` ride `manage_connectors`, which carries
+  `INTERNAL_TOOL_ANNOTATION` — stripped from the chat tool list, refused for
+  promotion, reached by the web shell.
+
+**The token** is the same MAC envelope the login assertion and the tenant-key
+mint use (`signMacEnvelope` / `verifyMacEnvelope` — one construction, three
+payload schemas). It is **MAC'd, not encrypted**: the tenant is in the host and
+the connector and vendor are in the path, so sealing would hide only `wid`, and
+a URL holder can read the payload. It carries **no expiry** — a vendor holds the
+URL for months, so retirement is the `kid` lookup, which runs on every delivery
+and is effective immediately, rather than a clock that can only fire late.
+
+**The key** is `NB_HOOK_TOKEN_KEY`, a per-tenant secret provisioned like its
+sibling `NB_MCP_AUTHORIZER_TENANT_KEY` and never derived from it: the tenant key
+is cheap to rotate, this one is not (third parties hold URLs minted under it),
+and deriving one from the other would make a routine tenant-key rotation take
+every registered webhook down with no error anywhere. **Absent key ⇒ the door is
+not mounted at all** and the whole prefix 404s at the router, so a local
+checkout gains no surface.
+
+**Registrations** live on the workspace record (`Workspace.hooks`), beside
+`oauthOperatorApps`. They hold the current and previous `kid` and the route —
+**never a token**. The runtime could reconstruct one and must not: a hook URL is
+a live bearer capability and a tool result lands in a transcript.
+
+**Rotation** (`manage_connectors { action: "rotate_hook", serverName, vendor }`,
+workspace admin): mints a fresh `kid`, keeps the outgoing one admissible for 24 h
+so in-flight redeliveries land, and calls the server's `register_tool` with the
+new URL. Cheap and routine — it is the control for a URL that may have leaked
+into an access log or a screenshot, and a control nobody reaches for because it
+loses data is not a control. `list_hooks` shows what exists and when it last
+rotated; it never returns a URL.
+
+**Provisioning is a reconcile, not an install step.** `ensureHooks` runs when a
+connection reaches `running` (`setConnectionRunningObserver`), which covers a
+fresh install, a boot, and an interactive OAuth flow completing long after the
+install returned — one path instead of three that drift. A declared
+`register_tool` that is missing or does not accept `{vendor, url}` **fails the
+install**; a `register_tool` call that merely errors does not (the connector is
+useful without its webhook, and the `kid` is recorded so a rotation retries).
+
+**The forward adds no header, and the `kid` does not travel.** The fleet edge
+strips the reserved `x-nb-*` namespace by RULE (it cannot tell a runtime-stamped
+member from a caller-forged one — this forward arrives under an ordinary
+`aud=mcp-fleet` token like any other call), so a stamped `X-NB-Hook-Kid` would
+be dropped one hop later, reach nothing, and read as a broken pipeline whose
+obvious repair is a hole in that rule. Kid correlation lives in the runtime's
+delivery log line, which is the only place it appears — do not "restore" the
+header. `isStrippedRequestHeader` mirrors the edge's rule (`x-user-id` plus the
+`x-nb-*` prefix) rather than listing names, because the runtime sits AHEAD of
+the edge and the namespace invariant only holds if every hop ahead of it also
+refuses to pass one through. The general path stays a denylist: vendor signature
+headers the runtime cannot enumerate have to reach the receiving verifier.
+
+**`clientAddressFor`** (`src/api/client-address.ts`) is the runtime's only
+load-bearing `X-Forwarded-For` reader — right-most back `NB_TRUSTED_PROXY_HOPS`
+(default 1), never left-most. The two other readers (`auth-middleware.ts`,
+`mcp-server.ts`) feed log lines and decide nothing; do not add a third that does.
 
 ## API Surfaces — Three Audiences
 

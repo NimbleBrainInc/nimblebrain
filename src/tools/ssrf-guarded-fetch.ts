@@ -80,14 +80,23 @@ type RedirectOutcome =
   | { follow: false; response: Response }
   | { follow: true; url: URL; init: RequestInit };
 
-/** Buffer a non-string request body to a string so it survives replay across 307/308 redirect hops. */
+/** Buffer a non-string request body to BYTES so it survives replay across 307/308 redirect hops. */
 async function bufferReplayableBody(init: RequestInit): Promise<RequestInit> {
   // Buffer a non-string body once so it can be replayed across redirect hops
   // (a 307/308 re-sends the same body). JSON-RPC bodies are already strings,
   // so this is a no-op on the hot path.
+  //
+  // Buffered as bytes, not text. Decoding to a string round-trips the body
+  // through UTF-8, which is lossless only for input that was valid UTF-8 to
+  // begin with: anything else — a binary payload, a latin-1 body, a truncated
+  // multi-byte sequence — comes back with replacement characters, and the
+  // request that goes upstream is no longer the one that came in. That is
+  // invisible on the JSON-RPC path this originally served and fatal on the
+  // hooks door, which forwards a vendor's bytes verbatim so the receiving
+  // server can verify a signature computed over them.
   const rawBody = init.body;
   if (rawBody == null || typeof rawBody === "string") return init;
-  return { ...init, body: await new Response(rawBody).text() };
+  return { ...init, body: new Uint8Array(await new Response(rawBody).arrayBuffer()) };
 }
 
 /** Classify a manual-redirect response as terminal or a same-origin hop to follow; throw on a cross-origin bounce. */

@@ -21,7 +21,6 @@ export type ContainmentTag =
   | "app-description"
   | "app-guide"
   | "app-state"
-  | "org-instructions"
   | "workspace-instructions"
   | "layer3-skill"
   | "connector-skill"
@@ -107,7 +106,6 @@ export type TracedLayerKind =
   | "user_prefs"
   | "current_date"
   | "workspace_context"
-  | "org_overlay"
   | "workspace_overlay"
   | "layer3_skills"
   | "skill_catalog"
@@ -241,9 +239,7 @@ export interface PromptAppInfo {
  * leaving no marker tag in the assembled prompt.
  */
 export interface OverlayLayers {
-  /** Org-level overlay (Phase 3 — slot reserved; Phase 1 callers pass `""`). */
-  org?: string;
-  /** Workspace-level overlay (Phase 2 — slot reserved; Phase 1 callers pass `""`). */
+  /** Workspace-level overlay. Empty or absent skips the layer entirely. */
   workspace?: string;
 }
 
@@ -388,7 +384,7 @@ export function composeSystemPromptTraced(
   // Layer 1.6: Participants section — removed in Stage 1 (single-owner
   // conversations). Returns in Stage 4 with policy-gated sharing.
 
-  // Layers 1.7 → 4, in prompt order: workspace context, org/workspace overlays,
+  // Layers 1.7 → 4, in prompt order: workspace context, workspace overlay,
   // Layer 3 skills, installed apps, app state, focused app, matched skill.
   layers.push(...workspaceContextLayers(workspaceContext));
   layers.push(...overlayLayers(overlays));
@@ -593,19 +589,14 @@ function workspaceContextLayers(workspaceContext?: WorkspaceContext): PendingLay
   ];
 }
 
-/** Layer 1.8: org- and workspace-tier instruction overlays, each skipped when blank. */
+/**
+ * Layer 1.8: the workspace instruction overlay, skipped when blank.
+ *
+ * Workspace-tier only. Org-wide standing guidance is an org-tier skill, which
+ * reaches every workspace through the layer-3 channel below.
+ */
 function overlayLayers(overlays?: OverlayLayers): PendingLayer[] {
   const layers: PendingLayer[] = [];
-  if (overlays?.org && overlays.org.trim().length > 0) {
-    const text = formatScopeOverlay("Organization Instructions", overlays.org);
-    layers.push({
-      kind: "org_overlay",
-      id: "instructions://org",
-      source: "org-tier instruction overlay",
-      text,
-      tokens: approxTokens(text),
-    });
-  }
   if (overlays?.workspace && overlays.workspace.trim().length > 0) {
     const text = formatScopeOverlay("Workspace Instructions", overlays.workspace);
     layers.push({
@@ -992,18 +983,16 @@ function formatAppStateSection(appState: AppStateInfo): string | null {
 }
 
 /**
- * Format a top-level instruction overlay (org- or workspace-scope).
+ * Format the top-level workspace instruction overlay.
  *
- * Each overlay sits in a containment tag whose name matches its scope, so
- * a debug reader can attribute the body to its source. The escape pattern
- * matches `<app-instructions>` — any literal closing tag inside the body
- * is rewritten to `&lt;/...>` before wrapping, defending against prompt
- * injection from a writer who tries to break out of containment.
+ * The body sits in a containment tag, so a debug reader can attribute it to
+ * its source. The escape pattern matches `<app-instructions>` — any literal
+ * closing tag inside the body is rewritten to `&lt;/...>` before wrapping,
+ * defending against prompt injection from a writer who tries to break out of
+ * containment.
  */
 function formatScopeOverlay(heading: string, body: string): string {
-  const tag: ContainmentTag =
-    heading === "Organization Instructions" ? "org-instructions" : "workspace-instructions";
-  return `## ${heading}\n\n${wrapContained(tag, body)}`;
+  return `## ${heading}\n\n${wrapContained("workspace-instructions", body)}`;
 }
 
 /**

@@ -115,7 +115,6 @@ export declare const PlatformToolCatalog: {
     readonly instructions: {
         readonly write_instructions: {
             readonly input: import("@sinclair/typebox").TObject<{
-                scope: import("@sinclair/typebox").TUnsafe<"org" | "workspace">;
                 body: import("@sinclair/typebox").TString;
             }>;
         };

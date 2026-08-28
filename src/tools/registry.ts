@@ -1,8 +1,15 @@
 import { textContent } from "../engine/content-helpers.ts";
-import type { ToolCall, ToolResult, ToolRouter, ToolSchema } from "../engine/types.ts";
+import {
+  isInternalTool,
+  type ToolCall,
+  type ToolResult,
+  type ToolRouter,
+  type ToolSchema,
+} from "../engine/types.ts";
 import { log } from "../observability/log.ts";
 import { assertToolAllowed } from "../permissions/assert-tool-allowed.ts";
 import type { PermissionStore } from "../permissions/permission-store.ts";
+import { splitInnerToolName } from "../util/tool-name.ts";
 import type { McpSource } from "./mcp-source.ts";
 import { rankToolSearchResults } from "./search-ranking.ts";
 import type { Tool, ToolSource } from "./types.ts";
@@ -180,8 +187,12 @@ export class ToolRegistry implements ToolRouter {
   }
 
   async execute(call: ToolCall, signal?: AbortSignal): Promise<ToolResult> {
-    const sepIndex = call.name.indexOf("__");
-    if (sepIndex === -1) {
+    const {
+      sourcePrefix: prefix,
+      bareToolName: localName,
+      hasSeparator,
+    } = splitInnerToolName(call.name);
+    if (!hasSeparator) {
       // Auto-search for matching tools to help the LLM recover
       const suggestions = await this.searchTools(call.name);
       const hint =
@@ -195,9 +206,6 @@ export class ToolRegistry implements ToolRouter {
         isError: true,
       };
     }
-
-    const prefix = call.name.slice(0, sepIndex);
-    const localName = call.name.slice(sepIndex + 2);
 
     const source = this.sources.get(prefix);
     if (!source) {
@@ -226,9 +234,17 @@ export class ToolRegistry implements ToolRouter {
     return source.execute(localName, call.input, signal);
   }
 
-  /** Search all tools by natural-language terms over name + description. */
+  /**
+   * Search all tools by natural-language terms over name + description.
+   *
+   * Internal tools are excluded. This feeds the invalid-name recovery hint,
+   * which writes matched names and descriptions straight into the model's
+   * context — and an `ai.nimblebrain/internal` tool is a UI-driven affordance
+   * the model must never be handed, on any surface. Same exclusion `nb__search`
+   * applies to its own results.
+   */
   private async searchTools(query: string): Promise<Array<{ name: string; description: string }>> {
-    const all = await this.availableTools();
+    const all = (await this.availableTools()).filter((t) => !isInternalTool(t));
     return rankToolSearchResults(all, query)
       .slice(0, 5)
       .map((t) => ({ name: t.name, description: t.description }));

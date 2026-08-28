@@ -1861,11 +1861,15 @@ export class McpSource implements ToolSource {
    *
    * Used for skill discovery (SEP-2640, `io.modelcontextprotocol/skills`): the
    * runtime lists a source's resources and reads the `skill://<name>/SKILL.md`
-   * entrypoints. Returns `{ resources, ok }`: `ok: false` means the enumeration
-   * couldn't complete cleanly — a transport error mid-list (partial `resources`) or
-   * a torn-down client — so the caller declines to cache it as a stable "no skills"
-   * and retries next turn. Only a genuine successful response — a clean empty page
-   * (no skills / no `resources` capability) or a cap-bounded read — is `ok: true`.
+   * entrypoints. Returns `{ resources, ok, truncated }`: `ok: false` means the
+   * enumeration couldn't complete cleanly — a transport error mid-list (partial
+   * `resources`) or a torn-down client — so the caller declines to cache it as a
+   * stable "no skills" and retries next turn. Only a genuine successful response —
+   * a clean empty page (no skills / no `resources` capability) or a cap-bounded
+   * read — is `ok: true`. A caller treating `ok: true` as a complete enumeration
+   * must ALSO check `truncated`: a cap-bounded read succeeds with resources still
+   * unenumerated, and caching it as "this is everything" is the silent-skip this
+   * field exists to prevent.
    * Unlike `readResource`, this probe does NOT route failures through
    * session recovery — a server that simply doesn't list resources must not
    * restart-storm the source. Pagination is followed up to a small page cap so a
@@ -1874,8 +1878,38 @@ export class McpSource implements ToolSource {
   async listResources(): Promise<{
     resources: Array<{ uri: string; name?: string; mimeType?: string }>;
     ok: boolean;
+    /**
+     * The 10-page ceiling was hit with a cursor still outstanding, so later
+     * resources exist and were not enumerated. Distinct from `ok: false`: the
+     * calls all SUCCEEDED, the result is just short. Callers that treat a
+     * successful enumeration as complete — caching it, or reporting "this
+     * server publishes no skills" — must consult this too.
+     */
+    truncated: boolean;
   }> {
-    if (!this.client) return { resources: [], ok: false }; // torn-down client is transient — retry (cheap no-op)
+    if (!this.client) return { resources: [], ok: false, truncated: false }; // torn-down client is transient — retry (cheap no-op)
+    // A server that advertised NO `resources` capability has none — that is a
+    // COMPLETE enumeration of nothing, not a failure. Without this the call
+    // throws `Method not found` and reports as a transport failure, which is
+    // both a wasted round trip per source and a permanent false positive for
+    // every tools-only server (among the in-process platform sources, `usage`
+    // and `compose`; the rest advertise `resources` and are probed).
+    //
+    // Only a POSITIVE "no resources" short-circuits. Absent capabilities means
+    // we do not know yet, and answering "complete, nothing here" on a guess is
+    // the same silent skip this signal exists to make impossible — so an
+    // unknown server is probed exactly as before.
+    //
+    // The trade this buys: a server that DOES implement `resources/list` but
+    // omits `resources` from its declared capabilities now reads as a clean
+    // empty and caches as complete, with no degraded signal. Declared
+    // capabilities are authoritative per spec, and probing past them would
+    // restore the always-firing false positive above — but it is the one new
+    // way this change can make a skill go dark.
+    const caps = this.client.getServerCapabilities();
+    if (caps && !caps.resources) {
+      return { resources: [], ok: true, truncated: false };
+    }
     const resources: Array<{ uri: string; name?: string; mimeType?: string }> = [];
     let cursor: string | undefined;
     try {
@@ -1893,14 +1927,15 @@ export class McpSource implements ToolSource {
         log.warn("[mcp] listResources hit the 10-page cap; later resources not enumerated", {
           source: this.name,
         });
+        return { resources, ok: true, truncated: true };
       }
     } catch {
       // A transport error cut the enumeration short: report `ok: false` so the caller
       // declines to cache this partial as a stable "no skills" (never recover/restart
       // the source — this is a probe, not the app-surface readResource path).
-      return { resources, ok: false };
+      return { resources, ok: false, truncated: false };
     }
-    return { resources, ok: true };
+    return { resources, ok: true, truncated: false };
   }
 
   /** Expose the underlying MCP client (kept for tests and rare introspection). */

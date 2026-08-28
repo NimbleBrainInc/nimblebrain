@@ -489,48 +489,54 @@ describe("surfaceTools — kernel identity tools always direct", () => {
 	});
 });
 
-// --- The persistence verb is reachable without a promote ---
+// --- The overlay write stays off the model's surface ---
 //
-// `instructions__write_instructions` is the runtime's durable "remember this"
-// verb. A user asks for it on a first turn in a workspace with nothing
-// installed, so it has to be in the tool list already — proxied, it is
-// reachable only by guessing that a search would find it, and the ask reads as
-// unsupported.
+// The workspace overlay is human-authored: the settings UI invokes
+// `instructions__write_instructions` by name over REST, and the tool carries
+// the internal annotation so the model never sees it — not direct, not
+// proxied. The agent's job on "remember this" is to draft the text and point
+// the user at settings (see bootstrap.md), never to write the overlay itself.
 
-describe("surfaceTools — instructions is kernel-direct", () => {
-	it("Tier 2: write_instructions surfaces direct while bundle tools proxy", () => {
+describe("surfaceTools — instructions write is internal", () => {
+	const internalWrite: ToolSchema = {
+		name: "instructions__write_instructions",
+		description: "Save workspace-wide custom instructions",
+		inputSchema: { type: "object", properties: {} },
+		annotations: { "ai.nimblebrain/internal": true },
+	};
+
+	it("never surfaces direct or proxied, even in a bare workspace", () => {
 		const system = makeSystemTools(4);
-		const instructions = makeTool("instructions__write_instructions");
-		const app = makeAppTools("tasks", 40);
 
-		const result = surfaceTools([...system, instructions, ...app], null);
+		const result = surfaceTools([...system, internalWrite], null);
 
-		const directNames = new Set(result.direct.map((t) => t.name));
-		expect(directNames.has("instructions__write_instructions")).toBe(true);
-		expect(result.direct).toHaveLength(system.length + 1);
+		expect(result.direct.map((t) => t.name)).not.toContain("instructions__write_instructions");
+		expect(result.proxied.map((t) => t.name)).not.toContain("instructions__write_instructions");
+		expect(result.direct).toHaveLength(4); // only nb__*
 	});
 
-	it("Tier 3: write_instructions stays direct under a skill glob that omits it", () => {
+	it("stays invisible under a skill glob that names it", () => {
 		const system = makeSystemTools(4);
-		const instructions = makeTool("instructions__write_instructions");
 		const tasks = makeAppTools("tasks", 10);
-		const skill = makeSkill({ allowedTools: ["tasks__*"] });
+		const skill = makeSkill({ allowedTools: ["instructions__*", "tasks__*"] });
 
-		const result = surfaceTools([...system, instructions, ...tasks], skill);
+		const result = surfaceTools([...system, internalWrite, ...tasks], skill);
 
-		const directNames = new Set(result.direct.map((t) => t.name));
-		expect(directNames.has("instructions__write_instructions")).toBe(true);
+		expect(result.direct.map((t) => t.name)).not.toContain("instructions__write_instructions");
+		expect(result.proxied.map((t) => t.name)).not.toContain("instructions__write_instructions");
 	});
 
-	it("a source that only resembles `instructions` is still proxied", () => {
+	it("an instructions source without the annotation gets no special tier", () => {
+		// No kernel special-case remains for the source name: an un-annotated
+		// instructions tool proxies like any other platform tool.
 		const system = makeSystemTools(4);
-		const lookalike = makeTool("instructions_archive__read");
+		const plain = makeTool("instructions__write_instructions");
 		const app = makeAppTools("tasks", 40);
 
-		const result = surfaceTools([...system, lookalike, ...app], null);
+		const result = surfaceTools([...system, plain, ...app], null);
 
 		const directNames = new Set(result.direct.map((t) => t.name));
-		expect(directNames.has("instructions_archive__read")).toBe(false);
+		expect(directNames.has("instructions__write_instructions")).toBe(false);
 		expect(result.direct).toHaveLength(4); // only nb__*
 	});
 

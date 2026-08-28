@@ -255,6 +255,21 @@ export class BundleLifecycleManager {
   private getBundleMcpDeps: ((wsId: string) => BundleMcpDeps) | null = null;
 
   /**
+   * Notified when a workspace connection reaches `running`.
+   *
+   * Wired by the runtime at construction ({@link setConnectionRunningObserver})
+   * so the hooks reconcile can run at the one moment both halves it needs are
+   * true: a live source to hand a URL to, and a connector whose declarations
+   * can be read. It exists as a settable observer rather than a direct call so
+   * the lifecycle keeps knowing nothing about hooks, the workspace store, or
+   * the connector catalog — the same shape as `setBundleMcpDepsFactory` above.
+   *
+   * Must not throw and must not block: it is called synchronously from a state
+   * transition on the hot connection path.
+   */
+  private onConnectionRunning: ((wsId: string, serverName: string) => void) | null = null;
+
+  /**
    * Fetch used to resolve curated connector-skill overlays. Defaults to
    * global `fetch`; tests inject a fixture via {@link setConnectorSkillFetch}
    * so overlay binding stays hermetic (no network).
@@ -317,6 +332,38 @@ export class BundleLifecycleManager {
    */
   setBundleMcpDepsFactory(factory: (wsId: string) => BundleMcpDeps): void {
     this.getBundleMcpDeps = factory;
+  }
+
+  /**
+   * Fire the connection-reached-running observer, for workspace connections only.
+   *
+   * A per-user (identity-plane) connection has no workspace-scoped hook to
+   * provision, so it is not a transition anyone here is waiting for. Guarded
+   * because this runs synchronously inside a state transition: an observer that
+   * throws must not be able to take one down.
+   */
+  private notifyConnectionRunning(
+    serverName: string,
+    wsId: string,
+    principalId: string,
+    newState: ConnectionState,
+  ): void {
+    if (newState !== "running" || principalId !== WORKSPACE_PRINCIPAL_ID) return;
+    if (!this.onConnectionRunning) return;
+    try {
+      this.onConnectionRunning(wsId, serverName);
+    } catch (err) {
+      log.warn("[lifecycle] connection-running observer threw", {
+        serverName,
+        wsId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  /** Register the connection-reached-running observer. See the field doc. */
+  setConnectionRunningObserver(observer: (wsId: string, serverName: string) => void): void {
+    this.onConnectionRunning = observer;
   }
 
   /** Internal: resolve the workspace's host-resources deps, or undefined when unwired. */
@@ -1252,6 +1299,8 @@ export class BundleLifecycleManager {
     // Recompute summary state so legacy consumers (HealthMonitor,
     // briefing-collector, runtime status API) see the right surface.
     instance.state = summarizeConnectionState(instance.connections);
+
+    this.notifyConnectionRunning(serverName, wsId, principalId, newState);
 
     this.eventSink.emit({
       type: "connection.state_changed",
