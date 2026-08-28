@@ -465,10 +465,14 @@ async function routeIdentityCall(
   // store's documented default is "not present ⇒ allow" — so it would fail
   // OPEN, silently re-enabling a tool the owner disabled. `data.changed`
   // matching against the iframe's `data-app` has the same requirement.
-  // A marker with nothing after it (`my_granola`, no `__`) is malformed. Left
-  // alone it would strip to `granola`, find the connector, and dispatch a
-  // synthesized `granola__` with an empty tool segment. Reject by name instead.
-  if (isPersonalConnectorName(wireSource) && !hasSeparator) {
+  // A marker with no tool segment after it is malformed, in both of its shapes:
+  // no separator at all (`my_granola`) and a separator with nothing behind it
+  // (`my_granola__`). Left alone either would strip to `granola`, find the
+  // connector, and dispatch a synthesized `granola__` with an empty tool
+  // segment — booting the caller's own connector for a tool that cannot exist.
+  // `hasSeparator` alone does not say this: a usable tool segment is a
+  // separator AND a non-empty remainder. Reject by name instead.
+  if (isPersonalConnectorName(wireSource) && !(hasSeparator && bareToolName.length > 0)) {
     throw new UnknownIdentitySource(toolName, wireSource);
   }
   const sourceName = isPersonalConnectorName(wireSource)

@@ -28,15 +28,25 @@
  * Decompose `<source>__<tool>` into its parts.
  *
  * `hasSeparator` is the third fact, and it is why this returns a record rather
- * than two strings: "this name has no source segment" is a distinct answer, and
- * a caller that re-derives it from a segment's value gets it wrong — `x__x` has
- * equal segments AND a separator, `plain` has equal segments and none. Read the
- * flag. Leaving it out is what makes each call site invent its own sentinel for
- * absence, and two sentinels that disagree are two doors that route differently.
+ * than two strings: a caller cannot re-derive it from the segments — `x__x` has
+ * equal segments AND a separator, `plain` has equal segments and none. Leaving
+ * it out is what makes each call site invent its own sentinel for absence, and
+ * two sentinels that disagree are two doors that route differently.
+ *
+ * **The flag alone settles nothing.** It reports the separator, not whether
+ * either segment is usable, and both can be empty with a separator present
+ * (`__leading`, `trailing__`). The two predicates a dispatch site actually
+ * wants are:
+ *
+ *   - a usable **source** segment — `hasSeparator && sourcePrefix.length > 0`
+ *   - a usable **tool** segment — `hasSeparator && bareToolName.length > 0`
+ *
+ * Write whichever one the site needs. Substituting the bare flag for either is
+ * a silently narrower guard, not a shorter one.
  *
  * With no separator both segments are the whole input, so a caller that only
- * needs a best-effort source label can ignore the flag and still get a usable
- * one.
+ * needs a best-effort source label can ignore all of this and still get a
+ * usable one.
  */
 export function splitInnerToolName(innerName: string): {
   sourcePrefix: string;

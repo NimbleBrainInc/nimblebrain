@@ -335,27 +335,38 @@ describe("the orchestrator door agrees with the grammar", () => {
     expect(source.executed).toEqual(["send"]);
   });
 
-  test("the marker with no tool segment is refused, not synthesized", async () => {
-    // `my_granola` has no `__`. Inferring the tool segment as `""` would
-    // dispatch a synthesized `granola__` at the caller's own credentials.
-    const source = makeRecordingSource("granola");
-    const runtime: OrchestratorRuntime = {
-      ...makeStubRuntime(workDir, [], []),
-      getPermissionStore: () => new PermissionStore(workDir),
-      async getIdentityConnectorSource() {
-        return source;
-      },
-    };
-    const router = new IdentityToolRouter({
-      identityId: USER_ID,
-      workspaceId: WS_ID,
-      runtime,
+  // A usable tool segment is a separator AND a non-empty remainder, and the
+  // marker has both shapes that fail it. `hasSeparator` alone answers only the
+  // first: `my_granola__` has a separator and no tool. Either one, waved
+  // through, strips to `granola`, resolves the caller's own connector, starts
+  // it, and dispatches a synthesized `granola__` with an empty tool name — so
+  // both are named here rather than one standing in for the pair.
+  for (const wire of ["my_granola", "my_granola__"]) {
+    test(`${JSON.stringify(wire)} — the marker with no tool segment is refused, not synthesized`, async () => {
+      const source = makeRecordingSource("granola");
+      const resolved: string[] = [];
+      const runtime: OrchestratorRuntime = {
+        ...makeStubRuntime(workDir, [], []),
+        getPermissionStore: () => new PermissionStore(workDir),
+        async getIdentityConnectorSource(_userId: string, name: string) {
+          resolved.push(name);
+          return source;
+        },
+      };
+      const router = new IdentityToolRouter({
+        identityId: USER_ID,
+        workspaceId: WS_ID,
+        runtime,
+      });
+
+      const result = await router.execute({ id: "t1", name: wire, input: {} });
+
+      expect(result.isError).toBe(true);
+      // The connector is never even resolved — refusal happens on the name,
+      // before anything of the caller's is started.
+      expect(resolved).toEqual([]);
+      expect(source.executed).toEqual([]);
+      expect(result.structuredContent).toMatchObject({ reason: "unknown_identity_source" });
     });
-
-    const result = await router.execute({ id: "t1", name: "my_granola", input: {} });
-
-    expect(result.isError).toBe(true);
-    expect(source.executed).toEqual([]);
-    expect(result.structuredContent).toMatchObject({ reason: "unknown_identity_source" });
-  });
+  }
 });
