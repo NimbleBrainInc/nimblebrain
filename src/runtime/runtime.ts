@@ -3089,39 +3089,6 @@ export class Runtime {
   }
 
   /**
-   * Discover every MCP source in `wsId`'s registry that exposes SEP-2640
-   * `skill://<name>/SKILL.md` resources and synthesize a `Skill` for each,
-   * honoring the loading strategy the skill declares in its frontmatter. A
-   * `dynamic` skill (the default when none is declared) tool-affines to
-   * `<serverName>__*` and loads via `selectLayer3Skills` whenever the server's
-   * tools are in the active toolset; an `always` skill routes to the context
-   * channel. Callers partition the returned pool by role (see
-   * `selectRequestLayer3`) — no `appContext` required.
-   *
-   * Use case: a workspace-level chat where the model needs the server's
-   * workflow guidance but isn't "entered" into the app. Without this, the
-   * skill lived only on the `appContext`-scoped `<app-guide>` path and was
-   * invisible to cross-server chats.
-   *
-   * `excludeSkill` drops a single skill the caller has already composed through
-   * another channel — the entered app's primary, which rides `<app-guide>`.
-   *
-   * It is keyed by the PAIR `(serverName, uri)`, and both halves are load-
-   * bearing. The uri alone is not unique: a `skill://<path>/SKILL.md` carries
-   * no publisher, deliberately (guessing `skill://<serverName>/usage` is what
-   * missed every reverse-DNS fleet connector), so two servers publishing the
-   * same path would collide and entering one would silently drop the other's
-   * skill. The server alone is not enough either: a server publishes 0..N
-   * skills and only ONE reaches `<app-guide>`, so excluding the source would
-   * take the other N-1 with it. Passing them together is what makes the pair
-   * impossible to disagree with itself.
-   *
-   * Discovery reuses `discoverServerSkills`'s 5-minute cache, so this stays
-   * cheap on warm requests — including for the entered app's own source, whose
-   * cache entry `resolveFocusedApp` just warmed. Per-source errors are
-   * swallowed (no skill resource is the normal not-published case).
-   */
-  /**
    * Report every bundle the lifecycle believes is RUNNING in this workspace
    * whose source is absent from the workspace registry.
    *
@@ -3158,6 +3125,39 @@ export class Runtime {
     }
   }
 
+  /**
+   * Discover every MCP source in `wsId`'s registry that exposes SEP-2640
+   * `skill://<name>/SKILL.md` resources and synthesize a `Skill` for each,
+   * honoring the loading strategy the skill declares in its frontmatter. A
+   * `dynamic` skill (the default when none is declared) tool-affines to
+   * `<serverName>__*` and loads via `selectLayer3Skills` whenever the server's
+   * tools are in the active toolset; an `always` skill routes to the context
+   * channel. Callers partition the returned pool by role (see
+   * `selectRequestLayer3`) — no `appContext` required.
+   *
+   * Use case: a workspace-level chat where the model needs the server's
+   * workflow guidance but isn't "entered" into the app. Without this, the
+   * skill lived only on the `appContext`-scoped `<app-guide>` path and was
+   * invisible to cross-server chats.
+   *
+   * `excludeSkill` drops a single skill the caller has already composed through
+   * another channel — the entered app's primary, which rides `<app-guide>`.
+   *
+   * It is keyed by the PAIR `(serverName, uri)`, and both halves are load-
+   * bearing. The uri alone is not unique: a `skill://<path>/SKILL.md` carries
+   * no publisher, deliberately (guessing `skill://<serverName>/usage` is what
+   * missed every reverse-DNS fleet connector), so two servers publishing the
+   * same path would collide and entering one would silently drop the other's
+   * skill. The server alone is not enough either: a server publishes 0..N
+   * skills and only ONE reaches `<app-guide>`, so excluding the source would
+   * take the other N-1 with it. Passing them together is what makes the pair
+   * impossible to disagree with itself.
+   *
+   * Discovery reuses `discoverServerSkills`'s 5-minute cache, so this stays
+   * cheap on warm requests — including for the entered app's own source, whose
+   * cache entry `resolveFocusedApp` just warmed. Per-source errors are
+   * swallowed (no skill resource is the normal not-published case).
+   */
   private async loadBundleSkills(
     wsId: string,
     options: { excludeSkill?: { serverName: string; uri: string } } = {},
