@@ -2961,10 +2961,12 @@ export class Runtime {
    * `skill://<serverName>/usage`, missed every fleet connector whose name is a
    * reverse-DNS slug).
    *
-   * Empty results (no skill resources, source not MCP, transport error) are
-   * cached — the common case is "this server has no skills," and re-listing on
-   * every chat over a stable source set would N×-multiply the request-path
-   * latency.
+   * Only a COMPLETE enumeration is cached — including the common "this server
+   * has no skills" empty, which would otherwise re-list on every chat and
+   * N×-multiply the request-path latency over a stable source set. Three short
+   * results are NOT cached, so they retry next turn: a transport error
+   * (`ok: false`), a page-cap truncation (`truncated`), and a listed skill
+   * entrypoint whose read failed (the shortfall counted below).
    *
    * `SharedSourceRef`-wrapped sources are unwrapped before the `McpSource`
    * check; shared sources arrive wrapped and would otherwise be silently
@@ -2987,23 +2989,70 @@ export class Runtime {
       .find((s) => s.name === serverName);
     const unwrapped = source instanceof SharedSourceRef ? source.unwrap() : source;
     if (!(unwrapped instanceof McpSource)) {
+      // Race backstop only: both callers resolve the source from this same
+      // registry before asking, so this branch is reachable when the source
+      // was removed between that resolution and this lookup. The steady-state
+      // installed-but-absent case never gets here — no caller names a server
+      // the registry does not hold — and is reported in `loadBundleSkills`,
+      // where the installed set and the registry are both visible.
+      if (this.lifecycle?.getInstance(serverName, wsId)) {
+        reportSkillDiscoveryDegraded({
+          wsId,
+          serverName,
+          reason: "source_unavailable",
+          recovered: 0,
+        });
+      }
       this.skillResourceCache.set(cacheKey, { skills: [], fetchedAt: Date.now() });
       return [];
     }
 
-    const skills: DiscoveredSkill[] = [];
-    const { resources, ok } = await unwrapped.listResources();
-    for (const resource of resources) {
-      const skill = await this.readSkillResource(unwrapped, resource.uri);
-      if (skill) skills.push(skill);
-    }
-    // Cache only a COMPLETE enumeration: a transport error mid-`resources/list`
-    // (`ok: false`) leaves a partial result, and pinning it empty for the 5-minute
-    // TTL would keep the skill dark after the transport recovers. Retry next turn.
-    if (ok) {
+    const { skills, shortfall } = await this.enumerateServerSkills(unwrapped);
+    // Cache only a COMPLETE enumeration. Pinning a short one as a stable
+    // "this is everything" keeps a real skill dark for the whole TTL — and
+    // the truncated and unreadable shortfalls read as success, so they would
+    // cache without this.
+    if (shortfall) {
+      reportSkillDiscoveryDegraded({
+        wsId,
+        serverName,
+        reason: shortfall,
+        recovered: skills.length,
+      });
+    } else {
       this.skillResourceCache.set(cacheKey, { skills, fetchedAt: Date.now() });
     }
     return skills;
+  }
+
+  /**
+   * List a source's resources and read every skill entrypoint among them.
+   *
+   * `shortfall` names the first way the result is knowingly incomplete, in
+   * check order: a transport error cut `resources/list` short
+   * (`enumeration_failed`), the page ceiling stopped it with a cursor
+   * outstanding (`enumeration_truncated`), or a LISTED entrypoint failed to
+   * read (`skill_unreadable`). The entrypoint count exists because
+   * `readSkillResource` swallows a failed/empty read (one bad skill must not
+   * sink the discovery) — without it, a list-then-fail-to-read server returns
+   * a reduced set that looks complete.
+   */
+  private async enumerateServerSkills(source: McpSource): Promise<{
+    skills: DiscoveredSkill[];
+    shortfall?: "enumeration_failed" | "enumeration_truncated" | "skill_unreadable";
+  }> {
+    const skills: DiscoveredSkill[] = [];
+    const { resources, ok, truncated } = await source.listResources();
+    let entrypoints = 0;
+    for (const resource of resources) {
+      if (isSkillEntrypointUri(resource.uri)) entrypoints++;
+      const skill = await this.readSkillResource(source, resource.uri);
+      if (skill) skills.push(skill);
+    }
+    if (!ok) return { skills, shortfall: "enumeration_failed" };
+    if (truncated) return { skills, shortfall: "enumeration_truncated" };
+    if (skills.length < entrypoints) return { skills, shortfall: "skill_unreadable" };
+    return { skills };
   }
 
   /** Read one skill entrypoint resource into a parsed, budget-capped `DiscoveredSkill`, or `undefined` when the URI isn't a skill entrypoint or the resource is unreadable/empty. */
@@ -3051,6 +3100,43 @@ export class Runtime {
       return data !== null;
     } catch {
       return false;
+    }
+  }
+
+  /**
+   * Report every bundle the lifecycle believes is RUNNING in this workspace
+   * whose source is absent from the workspace registry.
+   *
+   * Such a bundle can't be probed at all: it never becomes a discovery
+   * candidate, so its skills silently vanish from every turn. The caller's
+   * candidate loop is the one place the installed set and the registry are
+   * both in hand — `discoverServerSkills` only ever hears names the registry
+   * already holds. This reads the RAW lifecycle list, because
+   * `getBundleInstancesForWorkspace` filters by registry visibility, which
+   * would hide exactly the absent instance this is looking for.
+   *
+   * The `running` gate carries the signal's meaning. Every other state has a
+   * registry-absent form that is EXPECTED, not degraded: the auth states
+   * (`not_authenticated` is the resting state of every never-connected and
+   * every disconnected URL connector — seeded with no source by design),
+   * `starting` (the source arrives when startup finishes), and
+   * `crashed`/`dead`/`stopped` (already loud through their own lifecycle
+   * channels). Reporting those would fire on every turn of every workspace
+   * with an unconnected connector, forever — and an alert that always fires
+   * is not an alert.
+   */
+  private reportAbsentRunningBundles(wsId: string, registeredNames: ReadonlySet<string>): void {
+    for (const instance of this.lifecycle?.getInstances() ?? []) {
+      if (instance.wsId !== wsId) continue;
+      if (instance.state !== "running") continue;
+      if (!registeredNames.has(instance.serverName)) {
+        reportSkillDiscoveryDegraded({
+          wsId,
+          serverName: instance.serverName,
+          reason: "source_unavailable",
+          recovered: 0,
+        });
+      }
     }
   }
 
@@ -3113,12 +3199,16 @@ export class Runtime {
     );
 
     const candidates: string[] = [];
+    const registeredNames = new Set<string>();
     for (const source of registry.getSources()) {
+      registeredNames.add(source.name);
       if (overlaidServers.has(source.name)) continue;
       const inner = source instanceof SharedSourceRef ? source.unwrap() : source;
       if (!(inner instanceof McpSource)) continue;
       candidates.push(source.name);
     }
+
+    this.reportAbsentRunningBundles(wsId, registeredNames);
 
     // Parallel discovery: serial probing N-times-multiplied the chat hot-path
     // latency on workspaces with many non-skill servers. `discoverServerSkills`
@@ -5453,6 +5543,50 @@ function buildWorkspaceContext(
 ): { id: string; name: string } | { id: string } | undefined {
   if (!wsId) return undefined;
   return workspace ? { id: workspace.id, name: workspace.name } : { id: wsId };
+}
+
+/**
+ * Report a skill enumeration the runtime KNOWS came back short.
+ *
+ * The product defect the composition-flap incident exposed was not the flap —
+ * it was that a workspace whose bundles publish `always` skills composed none
+ * of them and nothing anywhere said so. `skills: 0` in the context event is
+ * indistinguishable from "this workspace has no skills", so the absence read as
+ * normal for two weeks.
+ *
+ * This fires at DISCOVERY rather than at compose deliberately. By compose time
+ * the only observable fact is a smaller number; here the reason still exists,
+ * and the reason is the part an operator can act on. A compose-time comparison
+ * would also be tautological: the pool that composes IS the pool discovery
+ * returned, so it can only ever agree with itself.
+ *
+ * It is a `warn` on the structured logger rather than a new event type because
+ * that is the channel alerts already read (JSON to Loki, auto-enriched with
+ * tenant and trace id) — no new surface to wire, alertable the moment it ships.
+ *
+ * What it does NOT catch, deliberately: a server that enumerates cleanly and
+ * returns nothing. Distinguishing "stopped publishing" from "never published"
+ * needs a remembered per-server baseline, and a wrong baseline would page an
+ * operator every time a bundle is legitimately uninstalled — the exact false
+ * positive that inflated the incident's own blast-radius count.
+ */
+function reportSkillDiscoveryDegraded(input: {
+  wsId: string;
+  serverName: string;
+  reason:
+    | "enumeration_failed"
+    | "enumeration_truncated"
+    | "skill_unreadable"
+    | "source_unavailable";
+  recovered: number;
+}): void {
+  log.warn("[skill] composition degraded — skills this workspace publishes were not discovered", {
+    event: "skills.composition.degraded",
+    workspace_id: input.wsId,
+    server: input.serverName,
+    reason: input.reason,
+    recovered: input.recovered,
+  });
 }
 
 /** Compose the present-only `surfaceTools` options (focused server + request-allowed tools). */
