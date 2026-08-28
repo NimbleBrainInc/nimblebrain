@@ -63,7 +63,7 @@ The kinds and what each asks of a *user* are documented once, in [Connectors →
 - **Prefer `dcr`.** If the vendor exposes `/.well-known/oauth-authorization-server` with `registration_endpoint` set, use it — zero operator setup, no third party in the trust path. (Granola, Notion, Linear, Stripe.) Verify the claim before shipping the entry with the [rot detector](#catalog-rot-detection).
 - **Use `static`** when the vendor requires a pre-registered OAuth app. Costs a workspace-admin setup step, per workspace. (Asana, HubSpot, Zoom.)
 - **Use a brokered kind** when the vendor's API needs app verification you don't hold — `composio` for OAuth aggregation (Gmail, Outlook), `smithery` for a server already published to the Smithery registry, which brokers the connection *and* hosts the session. Either costs a platform-wide [provider configuration](/config/connector-providers/).
-- **`provider`** is for platform-managed connectors whose credential the runtime mints itself against the fleet authorizer. Not something you author for a third-party service.
+- **`provider`** names a credential provider that supplies the transport credential server-side, with no user or operator OAuth. Two things use it: the platform's own connectors, whose credential the runtime mints against the fleet authorizer, and a **gateway** you hold one account key for — see [gateway endpoints](#auth-provider-for-a-gateway-endpoint) below.
 
 <Aside type="caution">
   The in-image catalog (`src/connectors/curated/`) ships **DCR entries only** — it exists so a fresh install has a non-empty Browse with nothing to configure. Everything else, including `auth: static` and brokered entries, belongs in the directory `NB_CURATED_CATALOG_DIR` points at.
@@ -189,10 +189,42 @@ NimbleBrain-specific fields under `_meta["ai.nimblebrain/connector"]`:
 | `requiredScopes` | no | List of OAuth scope strings. |
 | `additionalAuthorizationParams` | no | Extra authorize-URL params (e.g. Google's `access_type: offline`). Reserved keys (`client_id`, `state`, `redirect_uri`, `response_type`, `code_challenge`, `code_challenge_method`, `scope`, etc.) are rejected. |
 | `operatorSetup` | required when `auth: static` | `{ portalUrl, hint, clientSecretKey }`. |
-| `composio` | required when `auth: composio` | `{ toolkit, tools?, authScheme?, fields? }`. `toolkit` is Composio's slug for the upstream, and doubles as the key your deployment's [`connectors.providers.composio.authConfigs`](/deploy/composio/#3-create-one-auth-config-per-toolkit-in-composio) is looked up under — the catalog itself carries no deployment-specific ids. `tools` is an optional allowlist of upstream tool names — strongly recommended to keep agent context bounded. `authScheme` defaults to `OAUTH2` (the redirect flow); set it to `API_KEY` for toolkits that authenticate by key (see below). `fields` is required for `API_KEY` — the inputs collected from the user at connect. |
+| `composio` | required when `auth: composio` | `{ toolkit, tools?, authScheme?, fields? }`. `toolkit` is Composio's slug for the upstream, and doubles as the key your deployment's [`connectors.providers.composio.authConfigs`](/gateways/composio/#3-create-one-auth-config-per-toolkit-in-composio) is looked up under — the catalog itself carries no deployment-specific ids. `tools` is an optional allowlist of upstream tool names — strongly recommended to keep agent context bounded. `authScheme` defaults to `OAUTH2` (the redirect flow); set it to `API_KEY` for toolkits that authenticate by key (see below). `fields` is required for `API_KEY` — the inputs collected from the user at connect. |
 | `tags` | no | Strings used for filter / search in the Browse page. |
 | `interactive` | no | Sets the "Interactive" badge. |
 | `docsUrl` | no | Connector-specific docs link surfaced on the Configure page. Must be http(s). |
+
+### auth: provider for a gateway endpoint
+
+A **gateway** such as MCP360 publishes MCP endpoints and issues one account-wide API key. There is no per-connection API to call, so nothing is brokered: the entry names the endpoint, and a credential provider attaches the key.
+
+```yaml
+servers:
+  - name: ai.example-gateway/search
+    title: Example Gateway — Search
+    description: What this endpoint gives the agent
+    version: "1.0.0"
+    remotes:
+      - type: streamable-http
+        url: https://gateway.example.com/v1/search/mcp
+    _meta:
+      ai.nimblebrain/connector:
+        auth: provider
+        providerAuth:
+          provider: example-gateway
+          config: {}
+        tags: [search]
+```
+
+`providerAuth` is copied verbatim into the connector's transport at install. The install path re-reads the entry from the operator-published catalog first and refuses a `provider`-auth install it cannot verify there, so a workspace admin cannot forge an entry that spends your account key against an endpoint of their choosing.
+
+The provider name must match one registered on the platform. Registering one is a small addition beside the built-in credential providers; `src/connectors/providers/smithery/transport-credential.ts` is the closest model.
+
+<Aside type="caution">
+  The platform's own `minted` connectors may reach in-cluster `http://` endpoints. A gateway does not inherit that exception — its URL takes the full SSRF check, so the endpoint must be a public `https` host.
+</Aside>
+
+Every workspace installing such an entry shares the one key, so the gateway sees a single caller. You get no per-workspace attribution and no independent revocation. Where a vendor offers a brokered path as well, prefer it.
 
 ### auth: composio with API keys
 
@@ -220,7 +252,7 @@ Set `authScheme: API_KEY` and declare the `fields` to collect:
             # ...curated allowlist
 ```
 
-Each `fields[].key` is sent to Composio verbatim, so it **must** match the toolkit's connection-initiation field name — which is often **not** what the REST tool catalog suggests (e.g. PostHog's key field is `generic_api_key`, not `api_key`). The same namespace caveat applies to `tools` slugs. The operator runbook for creating the `API_KEY` auth config and verifying field keys + tool slugs is in [Composio Aggregator Setup → API-key toolkits](/deploy/composio/#api-key-toolkits-no-oauth).
+Each `fields[].key` is sent to Composio verbatim, so it **must** match the toolkit's connection-initiation field name — which is often **not** what the REST tool catalog suggests (e.g. PostHog's key field is `generic_api_key`, not `api_key`). The same namespace caveat applies to `tools` slugs. The operator runbook for creating the `API_KEY` auth config and verifying field keys + tool slugs is in [Composio Aggregator Setup → API-key toolkits](/gateways/composio/#api-key-toolkits-no-oauth).
 
 ### Offline access & refresh tokens
 

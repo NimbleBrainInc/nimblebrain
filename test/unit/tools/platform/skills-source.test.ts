@@ -230,6 +230,19 @@ describe("skills source — unattended-run wall", () => {
     expect(isTaskForbiddenSkillTool("nb__use_skill")).toBe(false);
   });
 
+  test("a name with no source segment is not in this namespace", () => {
+    // `splitInnerToolName` returns the whole input as BOTH segments when there
+    // is no separator, so a bare `skills` reports `sourcePrefix === "skills"`.
+    // Only `hasSeparator` separates that from a real `skills__*` name; dropping
+    // it silently bars a sourceless tool that this policy has no claim on.
+    expect(isTaskForbiddenSkillTool("skills")).toBe(false);
+    expect(isTaskForbiddenSkillTool("create")).toBe(false);
+  });
+
+  test("a malformed name inside the namespace still fails closed", () => {
+    expect(isTaskForbiddenSkillTool("skills__")).toBe(true);
+  });
+
   // Valid arguments on purpose: schema validation runs BEFORE the handler, so
   // a malformed call is rejected as bad input and never reaches the wall. That
   // is harmless — no mutation happens on either path — but a test built on

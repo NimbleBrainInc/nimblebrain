@@ -1,4 +1,5 @@
 import type { UserConfigFieldDef } from "../config/workspace-credentials.ts";
+import type { HookDeclaration } from "../hooks/types.ts";
 import type { Connection } from "./connection.ts";
 
 /**
@@ -314,7 +315,7 @@ export interface BundleManifest {
 
 /** Host manifest metadata at _meta["ai.nimblebrain/host"]. */
 export interface HostManifestMeta {
-  host_version: "1.0" | "1.1";
+  host_version: "1.0" | "1.1" | "1.2";
   name?: string;
   icon?: string;
   /**
@@ -342,6 +343,19 @@ export interface HostManifestMeta {
    * nothing in the JSON Schema binds the two.
    */
   host_capabilities?: Record<string, HostCapabilityRequirement>;
+  /**
+   * Inbound event streams this server accepts, one per vendor. The runtime
+   * mints a capability URL per `(workspace, connector, vendor)` at install and
+   * hands it to the declared `register_tool`; deliveries to that URL are
+   * forwarded verbatim to the declared `route` on this same server.
+   *
+   * This is the ENTIRE vendor-specific configuration the runtime ever holds —
+   * a name, a route, a tool, and prose. Nothing here describes a payload shape
+   * or an event taxonomy, and nothing ever should: the moment it does, the
+   * runtime has started knowing what a vendor body means, which is the one
+   * thing this door exists not to do. See `src/hooks/types.ts`.
+   */
+  hooks?: HookDeclaration[];
 }
 
 /** Bundle's requirement against one NimbleBrain host capability. */

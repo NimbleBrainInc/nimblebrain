@@ -68,7 +68,6 @@ export function WorkspaceInstructions({ wsId, canEdit }: { wsId: string; canEdit
     setSaveError(null);
     try {
       const res = await callTool("instructions", "write_instructions", {
-        scope: "workspace",
         body: text,
       });
       if (res.isError) {

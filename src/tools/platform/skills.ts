@@ -58,6 +58,7 @@ import {
   snapshotSkillVersion,
 } from "../../skills/versions.ts";
 import { deleteSkill, updateSkill, writeSkill } from "../../skills/writer.ts";
+import { splitInnerToolName } from "../../util/tool-name.ts";
 import { canWriteWorkspaceScoped } from "../../workspace/authz.ts";
 import { defineInProcessApp, type InProcessTool } from "../in-process-app.ts";
 import type { McpSource } from "../mcp-source.ts";
@@ -241,9 +242,17 @@ const SKILLS_TASK_SAFE_TOOLS: ReadonlySet<string> = new Set([
  * Names outside the namespace are not this policy's business and return false.
  */
 export function isTaskForbiddenSkillTool(wireName: string): boolean {
-  const prefix = `${SKILLS_SOURCE_NAME}__`;
-  if (!wireName.startsWith(prefix)) return false;
-  return !SKILLS_TASK_SAFE_TOOLS.has(wireName.slice(prefix.length));
+  const { sourcePrefix, bareToolName, hasSeparator } = splitInnerToolName(wireName);
+  // `hasSeparator` is load-bearing, not decoration: without it a bare `skills`
+  // (no source segment) reports `sourcePrefix === "skills"` with the whole name
+  // as the tool, and would be barred as an unrecognised mutation. A name with
+  // no source segment is not in this namespace and is not this policy's
+  // business.
+  if (!hasSeparator || sourcePrefix !== SKILLS_SOURCE_NAME) return false;
+  // Anything else in the namespace is forbidden, including a malformed
+  // `skills__` whose tool segment is empty — the allowlist fails closed on a
+  // name it does not recognise, which is the point of spelling it this way.
+  return !SKILLS_TASK_SAFE_TOOLS.has(bareToolName);
 }
 
 export function createSkillsSource(runtime: Runtime, eventSink: EventSink): McpSource {
