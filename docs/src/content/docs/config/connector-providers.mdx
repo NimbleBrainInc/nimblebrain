@@ -22,7 +22,7 @@ They are different layers. A connector *declares which auth kind it uses*, and t
 </Aside>
 
 <Aside type="note">
-**The auth kind is a deployment choice, not a property of the server.** Gmail is typically catalogued as `auth: composio` because Google requires app verification (`gmail.*`) most operators don't hold on day one — but the same server becomes `auth: static` or `auth: dcr` once you have your own verified OAuth app — see [migrating off the broker](/deploy/composio/#migrating-off-composio-per-toolkit). Nothing about Gmail forces the broker; your verification status does.
+**The auth kind is a deployment choice, not a property of the server.** Gmail is typically catalogued as `auth: composio` because Google requires app verification (`gmail.*`) most operators don't hold on day one — but the same server becomes `auth: static` or `auth: dcr` once you have your own verified OAuth app — see [migrating off the broker](/gateways/composio/#migrating-off-composio-per-toolkit). Nothing about Gmail forces the broker; your verification status does.
 </Aside>
 
 ## Why a provider at all
@@ -35,17 +35,29 @@ A broker earns its place when the platform can't hold the vendor relationship it
 
 If none of those apply, prefer a runtime-native kind. `auth: dcr` needs zero operator setup and puts no third party in the trust path.
 
-## Shipped providers
+## Hosted MCP gateways
 
-| Provider | Brokers auth | Hosts the session | Setup |
+Composio, Smithery, MCP360, and Glama all describe themselves with overlapping words: gateway, aggregator, registry, hub. The words do not tell you which mechanism to reach for.
+
+| Vendor | Brokers auth | Hosts the session | Configure it as |
 |---|---|---|---|
-| [Composio](https://composio.dev) | OAuth, API key | Yes | [Composio operator guide](/deploy/composio/) |
-| [Smithery](https://smithery.ai) | OAuth, config — completed on Smithery's own hosted setup page rather than a callback to us | Yes | [`connectors.providers.smithery`](/config/nimblebrain-json/#connectorsproviderssmithery) — no end-to-end guide yet |
+| [Composio](https://composio.dev) | OAuth, API key | Per connection | A provider — [Composio guide](/gateways/composio/) |
+| [Smithery](https://smithery.ai) | OAuth, config, completed on Smithery's own hosted setup page rather than a callback to us | Per connection | A provider — [Smithery guide](/gateways/smithery/) |
+| [MCP360](https://mcp360.ai) | No, one account key | Fixed endpoints | A catalog entry — [gateway endpoints](/config/connectors-catalog/#auth-provider-for-a-gateway-endpoint) |
+| [Glama](https://glama.ai) | Manages OAuth for the servers it fronts | Per connection profile | Not yet evaluated — see below |
 
-Configuration — the block, its fields, the broker credential's environment fallback, and why it names a credential provider rather than an env var — is documented once, under [`connectors.providers`](/config/nimblebrain-json/#connectors).
+The top two are providers, and this page describes their machinery. Configuration — the block, its fields, the broker credential's environment fallback, and why it names a credential provider rather than an env var — is documented once, under [`connectors.providers`](/config/nimblebrain-json/#connectors).
+
+MCP360 publishes fixed endpoints and one account-wide API key. It holds no per-connection state for you to configure, so it never reaches this page's machinery and belongs in the catalog instead — see [gateway endpoints](/config/connectors-catalog/#auth-provider-for-a-gateway-endpoint).
+
+Glama sits between the two shapes and has not been tested against the platform. Its gateway issues an endpoint per **connection profile** (`https://glama.ai/endpoints/<profile>/mcp`) and manages OAuth for the upstream servers it fronts, which is broker behavior; but a profile is created in Glama's own UI rather than through an API the platform could call, so there is nothing for a `ManagedConnectorProvider` to drive. Which credential a client presents to that endpoint is the open question, and it decides everything: a bearer API key makes it a catalog entry like MCP360, while an OAuth-protected endpoint makes it plain `auth: dcr` with no gateway machinery at all. Confirm against a real profile before publishing entries for it.
+
+<Aside type="note">
+Glama also runs an **LLM** gateway at `gateway.glama.ai`, an OpenAI-compatible chat-completions API. It is a separate product from the MCP gateway and has nothing to do with connectors. Their shared "gateway" name makes the two easy to confuse when reading Glama's docs.
+</Aside>
 
 <Aside type="caution">
-Don't confuse this with **`auth: provider`**, which is a different mechanism despite the name. That kind is for platform-managed connectors whose credential the runtime mints itself against the fleet authorizer — it reads no `connectors.providers` block, and it needs an operator-authored catalog entry plus fleet-authorizer environment. The `"type": "provider"` you'll see inside an installed connector's persisted transport is the layer underneath both: the credential-provider seam. An `auth: provider` entry names the platform's `minted` provider there; a brokered connector names its broker. Same mechanism, different credential.
+**`auth: provider` is a different mechanism despite the name.** It reads no `connectors.providers` block. It names a **credential provider** that supplies the transport credential server-side, and the entry that names it must be operator-authored. Two things use it: the platform's own connectors, whose credential the runtime mints against the fleet authorizer, and a one-key gateway. The `"type": "provider"` inside an installed connector's persisted transport is the layer underneath all of this: the credential-provider seam. A brokered connector names its broker there; an `auth: provider` entry names whichever provider its catalog entry declared.
 </Aside>
 
 ## Related
@@ -53,5 +65,5 @@ Don't confuse this with **`auth: provider`**, which is a different mechanism des
 - [Connectors](/using/connectors/) — the auth kinds, from a user's point of view
 - [Connectors Catalog](/config/connectors-catalog/) — authoring catalog entries
 - [`nimblebrain.json`](/config/nimblebrain-json/#connectors) — the full `connectors` reference
-- [Composio operator guide](/deploy/composio/) — a shipped provider, end to end
+- [Composio operator guide](/gateways/composio/) — a shipped provider, end to end
 - `src/connectors/providers/managed-provider.ts` — the interface a new provider implements, for contributors
