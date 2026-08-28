@@ -3121,6 +3121,43 @@ export class Runtime {
    * cache entry `resolveFocusedApp` just warmed. Per-source errors are
    * swallowed (no skill resource is the normal not-published case).
    */
+  /**
+   * Report every bundle the lifecycle believes is RUNNING in this workspace
+   * whose source is absent from the workspace registry.
+   *
+   * Such a bundle can't be probed at all: it never becomes a discovery
+   * candidate, so its skills silently vanish from every turn. The caller's
+   * candidate loop is the one place the installed set and the registry are
+   * both in hand — `discoverServerSkills` only ever hears names the registry
+   * already holds. This reads the RAW lifecycle list, because
+   * `getBundleInstancesForWorkspace` filters by registry visibility, which
+   * would hide exactly the absent instance this is looking for.
+   *
+   * The `running` gate carries the signal's meaning. Every other state has a
+   * registry-absent form that is EXPECTED, not degraded: the auth states
+   * (`not_authenticated` is the resting state of every never-connected and
+   * every disconnected URL connector — seeded with no source by design),
+   * `starting` (the source arrives when startup finishes), and
+   * `crashed`/`dead`/`stopped` (already loud through their own lifecycle
+   * channels). Reporting those would fire on every turn of every workspace
+   * with an unconnected connector, forever — and an alert that always fires
+   * is not an alert.
+   */
+  private reportAbsentRunningBundles(wsId: string, registeredNames: ReadonlySet<string>): void {
+    for (const instance of this.lifecycle?.getInstances() ?? []) {
+      if (instance.wsId !== wsId) continue;
+      if (instance.state !== "running") continue;
+      if (!registeredNames.has(instance.serverName)) {
+        reportSkillDiscoveryDegraded({
+          wsId,
+          serverName: instance.serverName,
+          reason: "source_unavailable",
+          recovered: 0,
+        });
+      }
+    }
+  }
+
   private async loadBundleSkills(
     wsId: string,
     options: { excludeSkill?: { serverName: string; uri: string } } = {},
@@ -3156,25 +3193,7 @@ export class Runtime {
       candidates.push(source.name);
     }
 
-    // An installed bundle with NO source in this workspace's registry can't be
-    // probed at all: it never becomes a candidate, so discovery is never asked
-    // about it and its skills silently vanish from every turn. This is the one
-    // place the installed set and the registry are both in hand, so the
-    // comparison happens here rather than inside `discoverServerSkills`, which
-    // only ever hears names the registry already holds. Read the RAW lifecycle
-    // list — `getBundleInstancesForWorkspace` filters by registry visibility,
-    // which would hide exactly the absent instance this is looking for.
-    for (const instance of this.lifecycle?.getInstances() ?? []) {
-      if (instance.wsId !== wsId) continue;
-      if (!registeredNames.has(instance.serverName)) {
-        reportSkillDiscoveryDegraded({
-          wsId,
-          serverName: instance.serverName,
-          reason: "source_unavailable",
-          recovered: 0,
-        });
-      }
-    }
+    this.reportAbsentRunningBundles(wsId, registeredNames);
 
     // Parallel discovery: serial probing N-times-multiplied the chat hot-path
     // latency on workspaces with many non-skill servers. `discoverServerSkills`

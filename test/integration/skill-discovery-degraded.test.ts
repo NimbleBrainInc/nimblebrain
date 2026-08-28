@@ -9,10 +9,12 @@
  * carries a machine-readable reason, and a short result never becomes the
  * cached answer for the TTL.
  *
- * Both fixtures fail `resources/list` rather than returning zero resources.
- * A clean enumeration that returns nothing is NOT degraded — telling that from
- * "never published" needs a remembered baseline, which would page an operator
- * on every legitimate uninstall.
+ * The degraded fixtures each break a different leg — a throwing
+ * `resources/list`, an endless cursor, a listed skill that cannot be read —
+ * rather than returning zero resources. A clean enumeration that returns
+ * nothing is NOT degraded — telling that from "never published" needs a
+ * remembered baseline, which would page an operator on every legitimate
+ * uninstall.
  */
 
 import { afterAll, beforeAll, describe, expect, it, spyOn } from "bun:test";
@@ -20,6 +22,7 @@ import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
+import type { BundleRef } from "../../src/bundles/types.ts";
 import { log } from "../../src/observability/log.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { McpSource } from "../../src/tools/mcp-source.ts";
@@ -367,5 +370,41 @@ describe("degraded skill discovery", () => {
     ).loadBundleSkills(TEST_WORKSPACE_ID);
     const healthySkill = pool.find((s) => s.body.includes("HEALTHY-MARKER"));
     expect(healthySkill).toBeDefined();
+  });
+
+  it("reports source_unavailable only for a bundle believed running — an auth-resting connector stays silent", async () => {
+    // A URL connector nobody has connected seeds `not_authenticated` with no
+    // registry source BY DESIGN — the ordinary state of every never-connected
+    // and every disconnected connector. Reporting it would fire on every turn
+    // of every workspace with an unconnected connector, forever. Only an
+    // instance the lifecycle believes is `running` while the registry lacks
+    // its source is the anomaly the reason exists for.
+    const GHOST_NAME = "ai-nimblebrain-ghost-mcp";
+    const lifecycle = runtime.getLifecycle();
+    const ref = {
+      url: "http://127.0.0.1:9/mcp",
+      serverName: GHOST_NAME,
+      transport: { type: "streamable-http" },
+      oauthScope: "workspace",
+    } as unknown as BundleRef;
+    lifecycle.seedInstance(GHOST_NAME, "@nimblebraininc/ghost", ref, undefined, TEST_WORKSPACE_ID);
+    const warn = spyOn(log, "warn").mockImplementation(() => {});
+    try {
+      const seeded = lifecycle.getInstances().find((i) => i.serverName === GHOST_NAME);
+      expect(seeded?.state).toBe("not_authenticated");
+
+      await runtime.chat({ workspaceId: TEST_WORKSPACE_ID, message: "ghost quiet" });
+      expect(degradedCalls(warn).some((f) => f.server === GHOST_NAME)).toBe(false);
+
+      if (seeded) seeded.state = "running";
+      warn.mockClear();
+      await runtime.chat({ workspaceId: TEST_WORKSPACE_ID, message: "ghost loud" });
+      const ghost = degradedCalls(warn).find((f) => f.server === GHOST_NAME);
+      expect(ghost?.reason).toBe("source_unavailable");
+      expect(ghost?.recovered).toBe(0);
+    } finally {
+      warn.mockRestore();
+      lifecycle.removeInstance(GHOST_NAME, TEST_WORKSPACE_ID);
+    }
   });
 });
