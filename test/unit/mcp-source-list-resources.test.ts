@@ -136,6 +136,7 @@ describe("McpSource.listResources", () => {
     try {
       const out = await source.listResources();
       expect(out.ok).toBe(true); // bounded success, not an error
+      expect(out.truncated).toBe(true); // ...but flagged short: callers must not cache it as complete
       expect(out.resources).toHaveLength(10); // one per capped page
       expect(spy.mock.calls.some((c) => String(c[0]).includes("page cap"))).toBe(true);
     } finally {

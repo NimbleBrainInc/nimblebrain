@@ -28,6 +28,10 @@ import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-works
 
 const FAILING_NAME = "ai-nimblebrain-failing-mcp";
 const HEALTHY_NAME = "ai-nimblebrain-healthy-mcp";
+const TRUNCATED_NAME = "ai-nimblebrain-truncated-mcp";
+const UNREADABLE_NAME = "ai-nimblebrain-unreadable-mcp";
+/** Every fixture that must produce a degraded signal; nothing else may. */
+const DEGRADED_FIXTURES = [FAILING_NAME, TRUNCATED_NAME, UNREADABLE_NAME];
 
 const SKILL_BODY = `---
 name: guide
@@ -66,6 +70,84 @@ async function main() {
   }));
   server.setRequestHandler(ListResourcesRequestSchema, async () => {
     throw new Error("resources/list is unavailable");
+  });
+  await server.connect(new StdioServerTransport());
+}
+main();
+`,
+  );
+  return dir;
+}
+
+/** Server whose `resources/list` always returns a cursor — never finishes. */
+function createTruncatedBundle(dir: string): string {
+  mkdirSync(dir, { recursive: true });
+  const nm = join(import.meta.dir, "../..", "node_modules");
+  writeFileSync(
+    join(dir, "server.cjs"),
+    `
+const { Server } = require("${nm}/@modelcontextprotocol/sdk/dist/cjs/server/index.js");
+const { StdioServerTransport } = require("${nm}/@modelcontextprotocol/sdk/dist/cjs/server/stdio.js");
+const { ListToolsRequestSchema, CallToolRequestSchema, ListResourcesRequestSchema } =
+  require("${nm}/@modelcontextprotocol/sdk/dist/cjs/types.js");
+
+async function main() {
+  const server = new Server(
+    { name: "truncated", version: "0.1.0" },
+    { capabilities: { tools: {}, resources: {} } },
+  );
+  server.setRequestHandler(ListToolsRequestSchema, async () => ({
+    tools: [{ name: "ping", description: "Ping", inputSchema: { type: "object", properties: {} } }],
+  }));
+  server.setRequestHandler(CallToolRequestSchema, async () => ({
+    content: [{ type: "text", text: "done" }],
+  }));
+  let page = 0;
+  server.setRequestHandler(ListResourcesRequestSchema, async () => {
+    page++;
+    return {
+      resources: [{ uri: "res://filler/" + page, name: "filler-" + page }],
+      nextCursor: "page-" + page,
+    };
+  });
+  await server.connect(new StdioServerTransport());
+}
+main();
+`,
+  );
+  return dir;
+}
+
+/** Server that LISTS one skill entrypoint but throws on every read. */
+function createUnreadableBundle(dir: string): string {
+  mkdirSync(dir, { recursive: true });
+  const nm = join(import.meta.dir, "../..", "node_modules");
+  writeFileSync(
+    join(dir, "server.cjs"),
+    `
+const { Server } = require("${nm}/@modelcontextprotocol/sdk/dist/cjs/server/index.js");
+const { StdioServerTransport } = require("${nm}/@modelcontextprotocol/sdk/dist/cjs/server/stdio.js");
+const {
+  ListToolsRequestSchema, CallToolRequestSchema,
+  ListResourcesRequestSchema, ReadResourceRequestSchema,
+} = require("${nm}/@modelcontextprotocol/sdk/dist/cjs/types.js");
+
+async function main() {
+  const server = new Server(
+    { name: "unreadable", version: "0.1.0" },
+    { capabilities: { tools: {}, resources: {} } },
+  );
+  server.setRequestHandler(ListToolsRequestSchema, async () => ({
+    tools: [{ name: "ping", description: "Ping", inputSchema: { type: "object", properties: {} } }],
+  }));
+  server.setRequestHandler(CallToolRequestSchema, async () => ({
+    content: [{ type: "text", text: "done" }],
+  }));
+  server.setRequestHandler(ListResourcesRequestSchema, async () => ({
+    resources: [{ uri: "skill://broken/SKILL.md", name: "broken", mimeType: "text/markdown" }],
+  }));
+  server.setRequestHandler(ReadResourceRequestSchema, async () => {
+    throw new Error("resources/read is unavailable");
   });
   await server.connect(new StdioServerTransport());
 }
@@ -118,6 +200,8 @@ const testDir = join(tmpdir(), `nimblebrain-skill-degraded-${Date.now()}`);
 let runtime: Runtime;
 let failing: McpSource;
 let healthy: McpSource;
+let truncated: McpSource;
+let unreadable: McpSource;
 
 /** Fields of every `skills.composition.degraded` warn recorded by a spy. */
 function degradedCalls(spy: ReturnType<typeof spyOn>): Array<Record<string, unknown>> {
@@ -152,10 +236,12 @@ beforeAll(async () => {
   await provisionTestWorkspace(runtime);
   failing = await startSource(FAILING_NAME, createFailingBundle(join(testDir, "failing")));
   healthy = await startSource(HEALTHY_NAME, createHealthyBundle(join(testDir, "healthy")));
+  truncated = await startSource(TRUNCATED_NAME, createTruncatedBundle(join(testDir, "truncated")));
+  unreadable = await startSource(UNREADABLE_NAME, createUnreadableBundle(join(testDir, "unreadable")));
 });
 
 afterAll(async () => {
-  for (const s of [failing, healthy]) {
+  for (const s of [failing, healthy, truncated, unreadable]) {
     try {
       await s?.stop();
     } catch {
@@ -203,31 +289,83 @@ describe("degraded skill discovery", () => {
     }
   });
 
-  it("says nothing about a tools-only server — the signal must be rare to be worth reading", async () => {
-    // The platform's own in-process sources advertise no `resources`
-    // capability. Calling `resources/list` on one throws `Method not found`,
-    // which reads as a transport failure — so an ungated signal fires for every
-    // built-in source on every turn, in every workspace, forever. An alert that
-    // is always firing is not an alert. Only the deliberately broken fixture
-    // may appear here.
+  it("reports a page-cap truncation, and stays loud next turn — a capped walk is not cached as complete", async () => {
+    // The truncated fixture answers every page with another cursor, so the
+    // 10-page ceiling stops the walk with resources outstanding. That result
+    // reads as success (`ok: true`) — without the `truncated` flag it would
+    // cache as "this is everything" and any skill past the cap stays dark for
+    // the TTL. The second turn proves the short set was not cached.
+    const warn = spyOn(log, "warn").mockImplementation(() => {});
+    try {
+      await runtime.chat({ workspaceId: TEST_WORKSPACE_ID, message: "capped" });
+      const first = degradedCalls(warn).find((f) => f.server === TRUNCATED_NAME);
+      expect(first?.reason).toBe("enumeration_truncated");
+      warn.mockClear();
+      await runtime.chat({ workspaceId: TEST_WORKSPACE_ID, message: "capped again" });
+      const second = degradedCalls(warn).find((f) => f.server === TRUNCATED_NAME);
+      expect(second?.reason).toBe("enumeration_truncated");
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("reports a listed skill that cannot be read, and stays loud next turn", async () => {
+    // `resources/list` succeeds and names one skill entrypoint; every read
+    // throws. The read swallow is deliberate (one bad skill must not sink the
+    // discovery), so without the entrypoint count this caches zero skills as
+    // the complete answer — the same silent shortfall the PR exists to close.
+    const warn = spyOn(log, "warn").mockImplementation(() => {});
+    try {
+      await runtime.chat({ workspaceId: TEST_WORKSPACE_ID, message: "unreadable" });
+      const first = degradedCalls(warn).find((f) => f.server === UNREADABLE_NAME);
+      expect(first?.reason).toBe("skill_unreadable");
+      expect(first?.recovered).toBe(0);
+      warn.mockClear();
+      await runtime.chat({ workspaceId: TEST_WORKSPACE_ID, message: "unreadable again" });
+      expect(degradedCalls(warn).some((f) => f.server === UNREADABLE_NAME)).toBe(true);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("says nothing about any other server — the signal must be rare to be worth reading", async () => {
+    // The tools-only in-process platform sources (`usage`, `compose`) advertise
+    // no `resources` capability; calling `resources/list` on one throws
+    // `Method not found`, which reads as a transport failure — so an ungated
+    // signal fires for them on every turn, in every workspace, forever. An
+    // alert that is always firing is not an alert. The healthy fixture and the
+    // resource-advertising platform sources must stay silent too: only the
+    // deliberately degraded fixtures may appear.
     const warn = spyOn(log, "warn").mockImplementation(() => {});
     try {
       await runtime.chat({ workspaceId: TEST_WORKSPACE_ID, message: "fifth" });
-      const servers = new Set(degradedCalls(warn).map((f) => f.server));
-      expect([...servers]).toEqual([FAILING_NAME]);
+      const servers = new Set(degradedCalls(warn).map((f) => f.server as string));
+      expect(servers.size).toBeGreaterThan(0);
+      for (const server of servers) {
+        expect(DEGRADED_FIXTURES).toContain(server);
+      }
     } finally {
       warn.mockRestore();
     }
   });
 
   it("still composes the skills it could reach", async () => {
-    // A degraded neighbour must not take the healthy server's guidance with it.
+    // Three degraded neighbours must not take the healthy server's guidance
+    // with them. Assert on the discovered pool's CONTENT: the healthy `always`
+    // skill, marker and all, survives discovery next to the degraded fixtures.
+    // (An empty pool or a dropped body fails this — asserting only on types
+    // could not.)
     const { response } = await runtime.chat({
       workspaceId: TEST_WORKSPACE_ID,
       message: "fourth",
     });
     expect(typeof response).toBe("string");
-    const skills = await runtime.listActivatableSkills(TEST_WORKSPACE_ID, null);
-    expect(Array.isArray(skills)).toBe(true);
+    const pool = await (
+      runtime as unknown as {
+        loadBundleSkills: (wsId: string) => Promise<Array<{ body: string; manifest: unknown }>>;
+      }
+    ).loadBundleSkills(TEST_WORKSPACE_ID);
+    const healthySkill = pool.find((s) => s.body.includes("HEALTHY-MARKER"));
+    expect(healthySkill).toBeDefined();
   });
 });

@@ -2946,10 +2946,12 @@ export class Runtime {
    * `skill://<serverName>/usage`, missed every fleet connector whose name is a
    * reverse-DNS slug).
    *
-   * Empty results (no skill resources, source not MCP, transport error) are
-   * cached — the common case is "this server has no skills," and re-listing on
-   * every chat over a stable source set would N×-multiply the request-path
-   * latency.
+   * Only a COMPLETE enumeration is cached — including the common "this server
+   * has no skills" empty, which would otherwise re-list on every chat and
+   * N×-multiply the request-path latency over a stable source set. Three short
+   * results are NOT cached, so they retry next turn: a transport error
+   * (`ok: false`), a page-cap truncation (`truncated`), and a listed skill
+   * entrypoint whose read failed (the shortfall counted below).
    *
    * `SharedSourceRef`-wrapped sources are unwrapped before the `McpSource`
    * check; shared sources arrive wrapped and would otherwise be silently
@@ -2972,10 +2974,12 @@ export class Runtime {
       .find((s) => s.name === serverName);
     const unwrapped = source instanceof SharedSourceRef ? source.unwrap() : source;
     if (!(unwrapped instanceof McpSource)) {
-      // An INSTALLED bundle that is missing from the registry is not the same
-      // as a workspace that never had it: the skills it publishes are expected
-      // in this turn and are not going to be there. Say so before caching the
-      // empty result, which otherwise pins "no skills" for the whole TTL.
+      // Race backstop only: both callers resolve the source from this same
+      // registry before asking, so this branch is reachable when the source
+      // was removed between that resolution and this lookup. The steady-state
+      // installed-but-absent case never gets here — no caller names a server
+      // the registry does not hold — and is reported in `loadBundleSkills`,
+      // where the installed set and the registry are both visible.
       if (this.lifecycle?.getInstance(serverName, wsId)) {
         reportSkillDiscoveryDegraded({
           wsId,
@@ -2990,23 +2994,36 @@ export class Runtime {
 
     const skills: DiscoveredSkill[] = [];
     const { resources, ok, truncated } = await unwrapped.listResources();
+    // Count the skill entrypoints the server LISTED, independent of whether
+    // they could be read: `readSkillResource` swallows a failed/empty read
+    // (one bad skill must not sink the discovery), so without this count a
+    // list-then-fail-to-read server returns a reduced set that looks complete.
+    let entrypoints = 0;
     for (const resource of resources) {
+      if (isSkillEntrypointUri(resource.uri)) entrypoints++;
       const skill = await this.readSkillResource(unwrapped, resource.uri);
       if (skill) skills.push(skill);
     }
-    // Cache only a COMPLETE enumeration. Two ways it isn't: a transport error
-    // cut `resources/list` short (`ok: false`), or the page ceiling stopped it
-    // with a cursor outstanding (`truncated`). Pinning either as a stable "this
-    // is everything" keeps a real skill dark for the whole TTL — and the
-    // truncated case reads as success, so it would cache without this.
-    if (ok && !truncated) {
+    const unreadable = entrypoints - skills.length;
+    // Cache only a COMPLETE enumeration. Three ways it isn't: a transport
+    // error cut `resources/list` short (`ok: false`), the page ceiling stopped
+    // it with a cursor outstanding (`truncated`), or a listed entrypoint
+    // failed to read (`unreadable`). Pinning any of them as a stable "this is
+    // everything" keeps a real skill dark for the whole TTL — and the
+    // truncated and unreadable cases read as success, so they would cache
+    // without this.
+    if (ok && !truncated && unreadable === 0) {
       this.skillResourceCache.set(cacheKey, { skills, fetchedAt: Date.now() });
     }
-    if (!ok || truncated) {
+    if (!ok || truncated || unreadable > 0) {
       reportSkillDiscoveryDegraded({
         wsId,
         serverName,
-        reason: ok ? "enumeration_truncated" : "enumeration_failed",
+        reason: !ok
+          ? "enumeration_failed"
+          : truncated
+            ? "enumeration_truncated"
+            : "skill_unreadable",
         recovered: skills.length,
       });
     }
@@ -3120,11 +3137,33 @@ export class Runtime {
     );
 
     const candidates: string[] = [];
+    const registeredNames = new Set<string>();
     for (const source of registry.getSources()) {
+      registeredNames.add(source.name);
       if (overlaidServers.has(source.name)) continue;
       const inner = source instanceof SharedSourceRef ? source.unwrap() : source;
       if (!(inner instanceof McpSource)) continue;
       candidates.push(source.name);
+    }
+
+    // An installed bundle with NO source in this workspace's registry can't be
+    // probed at all: it never becomes a candidate, so discovery is never asked
+    // about it and its skills silently vanish from every turn. This is the one
+    // place the installed set and the registry are both in hand, so the
+    // comparison happens here rather than inside `discoverServerSkills`, which
+    // only ever hears names the registry already holds. Read the RAW lifecycle
+    // list — `getBundleInstancesForWorkspace` filters by registry visibility,
+    // which would hide exactly the absent instance this is looking for.
+    for (const instance of this.lifecycle?.getInstances() ?? []) {
+      if (instance.wsId !== wsId) continue;
+      if (!registeredNames.has(instance.serverName)) {
+        reportSkillDiscoveryDegraded({
+          wsId,
+          serverName: instance.serverName,
+          reason: "source_unavailable",
+          recovered: 0,
+        });
+      }
     }
 
     // Parallel discovery: serial probing N-times-multiplied the chat hot-path
@@ -5416,7 +5455,6 @@ function buildWorkspaceContext(
   return workspace ? { id: workspace.id, name: workspace.name } : { id: wsId };
 }
 
-/** Compose the present-only `surfaceTools` options (focused server + request-allowed tools). */
 /**
  * Report a skill enumeration the runtime KNOWS came back short.
  *
@@ -5445,7 +5483,11 @@ function buildWorkspaceContext(
 function reportSkillDiscoveryDegraded(input: {
   wsId: string;
   serverName: string;
-  reason: "enumeration_failed" | "enumeration_truncated" | "source_unavailable";
+  reason:
+    | "enumeration_failed"
+    | "enumeration_truncated"
+    | "skill_unreadable"
+    | "source_unavailable";
   recovered: number;
 }): void {
   log.warn("[skill] composition degraded — skills this workspace publishes were not discovered", {
@@ -5457,6 +5499,7 @@ function reportSkillDiscoveryDegraded(input: {
   });
 }
 
+/** Compose the present-only `surfaceTools` options (focused server + request-allowed tools). */
 function buildSurfaceOptions(
   focusedServerName: string | undefined,
   requestAllowedTools: string[] | undefined,
