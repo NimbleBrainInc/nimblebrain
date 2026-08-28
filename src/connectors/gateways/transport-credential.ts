@@ -2,7 +2,7 @@
  * Gateway transport credentials — the bearer token an `auth: provider` catalog
  * entry authenticates a hosted-MCP gateway with.
  *
- * A **gateway** (MCP360, Glama) publishes fixed MCP endpoints and issues one
+ * A **gateway** in this sense (MCP360) publishes fixed MCP endpoints and issues one
  * account-wide API key. It brokers nothing, so it implements no
  * `ManagedConnectorProvider`: there is no session to mint, no auth to broker, no
  * callback surface, and no per-connection state to probe. The only thing it
