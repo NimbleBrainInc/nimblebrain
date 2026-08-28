@@ -27,11 +27,15 @@ import { toolNameMatchesPattern } from "./tool-pattern.ts";
  *      affordance the web shell invokes by name over REST (settings/admin ops:
  *      `manage_*`, `set_model_config`, `briefing`,
  *      `instructions__write_instructions`). Annotate
- *      `ai.nimblebrain/internal` — stripped from the chat tool list by the
- *      `visibleTools` filter at the top of `surfaceTools` below, and refused
- *      for promotion in the engine; still callable by name. NOTE: this flag
- *      governs the chat/runtime surface only — the `/mcp` `tools/list` is
- *      gated by feature/role (`isToolVisibleToRole`), not by this annotation.
+ *      `ai.nimblebrain/internal` — stripped from EVERY listing that reaches a
+ *      model: the chat tool list (`visibleTools` at the top of `surfaceTools`
+ *      below), `nb__search`, the `/mcp` `tools/list`, and the invalid-name
+ *      recovery hint (`ToolRegistry.searchTools`); the engine also refuses to
+ *      promote it. Only the CALL paths stay open — `/v1/tools/call` and `/mcp`
+ *      `tools/call` still dispatch by name, which is how the web shell reaches
+ *      it. Feature gating (`isToolEnabled`) and role visibility
+ *      (`isToolVisibleToRole`) are independent filters layered on top, not
+ *      substitutes for this one.
  *
  * Two rules keep this honest:
  *   - A new `nb__*`/identity tool DEFAULTS to kernel-direct (it's a kernel tool
@@ -97,8 +101,8 @@ export function filterTools(tools: ToolSchema[], patterns: string[]): ToolSchema
  *
  * - Tier 1 (≤maxDirectTools total): all tools direct, nothing proxied.
  * - Tier 2 (>maxDirectTools, no skill or skill has no allowedTools): only KERNEL tools
- *   direct (nb__* system core + identity sources — files/conversations/automations — plus the
- *   kernel platform sources, `instructions`), rest proxied.
+ *   direct (nb__* system core + identity sources — files/conversations/automations),
+ *   rest proxied.
  * - Tier 3 (skill matched with allowedTools): tools matching skill globs + kernel tools direct, rest proxied.
  *
  * Kernel tools stay direct because they're the substrate the model reaches for unprompted;
