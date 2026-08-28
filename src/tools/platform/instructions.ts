@@ -2,10 +2,19 @@
  * Instructions platform source — in-process MCP server.
  *
  * Owns one cross-cutting overlay:
- *   instructions://workspace   (set via workspace detail page or agent)
+ *   instructions://workspace   (set via the workspace settings page)
  *
  * Plus a single write tool, `write_instructions(body)`, gated so that only a
  * workspace admin member may write — an org role grants no bypass.
+ *
+ * The write tool is INTERNAL (`ai.nimblebrain/internal`): the settings UI
+ * invokes it by name over `/v1/tools/call`; the model never sees it. The
+ * overlay is injected into every conversation's prompt, so its author is the
+ * human, on a surface where they see the whole text they are replacing —
+ * never the agent overwriting an 8 KiB prose blob to add one line. An agent
+ * asked to persist standing guidance drafts the text and points the user at
+ * workspace settings (see `bootstrap.md`); facts and state go to a memory
+ * app where one is installed.
  *
  * There is no org-wide overlay. Org-scope standing guidance is an org-tier
  * **skill** (`{workDir}/skills/`, authored at `/org/skills`), which is
@@ -22,7 +31,7 @@
  */
 
 import { textContent } from "../../engine/content-helpers.ts";
-import type { EventSink, ToolResult } from "../../engine/types.ts";
+import { type EventSink, INTERNAL_TOOL_ANNOTATION, type ToolResult } from "../../engine/types.ts";
 import { getRequestContext } from "../../runtime/request-context.ts";
 import type { Runtime } from "../../runtime/runtime.ts";
 import { canWriteWorkspaceScoped } from "../../workspace/authz.ts";
@@ -30,12 +39,13 @@ import { defineInProcessApp, type InProcessTool } from "../in-process-app.ts";
 import type { McpSource } from "../mcp-source.ts";
 import { InstructionsWriteInput } from "./schemas/instructions.ts";
 
-// ── Tool description (description-as-policy) ─────────────────────────────
+// ── Tool description ─────────────────────────────────────────────────────
+// UI-facing only: the tool is internal, so no model reads this. Kept accurate
+// for the settings UI and for operators reading the wire.
 
 const WRITE_INSTRUCTIONS_DESCRIPTION =
   "Save workspace-wide custom instructions, applied to every conversation in this workspace. " +
-  "**Use this only when the user explicitly asks to save a convention, or when you've identified a strongly recurring pattern that the user would benefit from persisting.** " +
-  "Always confirm with the user before writing. " +
+  "Internal: invoked by the workspace settings UI; not part of the agent's tool surface. " +
   "Empty text clears the instruction.";
 
 // ── Permission helpers ───────────────────────────────────────────────────
@@ -128,6 +138,7 @@ export function createInstructionsSource(runtime: Runtime, eventSink: EventSink)
     {
       name: "write_instructions",
       description: WRITE_INSTRUCTIONS_DESCRIPTION,
+      annotations: { [INTERNAL_TOOL_ANNOTATION]: true },
       inputSchema: InstructionsWriteInput,
       handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
         // A stale `scope` used to choose the file. The schema no longer declares

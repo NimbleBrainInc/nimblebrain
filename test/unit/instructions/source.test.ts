@@ -417,13 +417,16 @@ describe("instructions source — tool list", () => {
     expect(names).toEqual(["write_instructions"]);
   });
 
-  test("write_instructions description preserves the description-as-policy framing", async () => {
+  test("write_instructions is internal — the settings UI's tool, not the model's", async () => {
+    // The overlay is injected into every conversation, so its author is the
+    // human in the settings UI. The annotation is what keeps the tool out of
+    // the model's surface (surfacing filter, search, promotion) while the UI
+    // still calls it by name over /v1/tools/call.
     const src = await buildSource();
     const client = src.getClient()!;
     const tools = await client.listTools();
     const writeTool = tools.tools.find((t) => t.name === "write_instructions");
-    expect(writeTool?.description).toContain("Use this only when the user explicitly asks");
-    expect(writeTool?.description).toContain("strongly recurring pattern");
+    expect((writeTool?._meta as Record<string, unknown>)?.["ai.nimblebrain/internal"]).toBe(true);
     expect(writeTool?.description).toContain("Empty text clears");
   });
 
