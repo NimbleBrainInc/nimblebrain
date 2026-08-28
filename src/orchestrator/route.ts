@@ -44,6 +44,7 @@ import {
 } from "../tools/identity-sources.ts";
 import { parseNamespacedToolName, UnknownNamespacedToolName } from "../tools/namespace.ts";
 import type { ToolSource } from "../tools/types.ts";
+import { splitInnerToolName } from "../util/tool-name.ts";
 import type { WorkspaceContext } from "../workspace/context.ts";
 
 // ── Errors ─────────────────────────────────────────────────────────
@@ -363,7 +364,7 @@ export async function routeToolCall(opts: {
   // the same value, so it could never detect a mis-bound session. Removing the
   // field makes fabrication unexpressible, which is strictly stronger than
   // catching it after the fact.
-  const sourceName = sourceSegmentOf(toolName);
+  const { sourcePrefix: sourceName } = splitInnerToolName(toolName);
   if (isIdentitySource(sourceName) || isPersonalConnectorName(sourceName)) {
     return routeIdentityCall(identityId, toolName, workspaceId, runtime);
   }
@@ -439,7 +440,7 @@ async function routeIdentityCall(
   workspaceId: string | undefined,
   runtime: OrchestratorRuntime,
 ): Promise<RoutedToolCall> {
-  const wireSource = sourceSegmentOf(toolName);
+  const { sourcePrefix: wireSource, bareToolName, hasSeparator } = splitInnerToolName(toolName);
 
   const kernelSource = runtime.getIdentitySource(wireSource);
   if (kernelSource) {
@@ -467,14 +468,13 @@ async function routeIdentityCall(
   // A marker with nothing after it (`my_granola`, no `__`) is malformed. Left
   // alone it would strip to `granola`, find the connector, and dispatch a
   // synthesized `granola__` with an empty tool segment. Reject by name instead.
-  if (isPersonalConnectorName(wireSource) && bareSegmentOf(toolName).length === 0) {
+  if (isPersonalConnectorName(wireSource) && !hasSeparator) {
     throw new UnknownIdentitySource(toolName, wireSource);
   }
   const sourceName = isPersonalConnectorName(wireSource)
     ? personalConnectorServerName(wireSource)
     : wireSource;
-  const canonicalToolName =
-    sourceName === wireSource ? toolName : `${sourceName}__${bareSegmentOf(toolName)}`;
+  const canonicalToolName = sourceName === wireSource ? toolName : `${sourceName}__${bareToolName}`;
 
   const connector = await runtime.getIdentityConnectorSource?.(identityId, sourceName);
   if (connector) {
@@ -508,40 +508,21 @@ async function routeIdentityCall(
   throw new UnknownIdentitySource(toolName, wireSource);
 }
 
-/**
- * The `<source>` segment of a bare `<source>__<tool>` name; the whole name when
- * there is no separator (a malformed call the resolvers then reject by name).
- *
- * Split on the FIRST `__`, mirroring `ToolRegistry.execute` and
- * `splitInnerToolName`. Safe because `slugifyServerName` emits `[a-z0-9-]` and
- * never `_`, so a source segment cannot itself contain `__`.
- */
-function sourceSegmentOf(toolName: string): string {
-  const sep = toolName.indexOf("__");
-  return sep > 0 ? toolName.slice(0, sep) : toolName;
-}
-
-/** The `<tool>` segment of a bare `<source>__<tool>` name; `""` when absent. */
-function bareSegmentOf(toolName: string): string {
-  const sep = toolName.indexOf("__");
-  return sep > 0 ? toolName.slice(sep + 2) : "";
-}
-
 /** Resolve a workspace tool name's `<source>__` prefix to its registered `ToolSource`, self-healing a transiently absent source once. */
 async function resolveWorkspaceSource(
   wsId: string,
   toolName: string,
   runtime: OrchestratorRuntime,
 ): Promise<ToolSource> {
-  // The inner toolName carries the `<source>__<tool>` form the existing
-  // registry routes on (see `ToolRegistry.execute` in `src/tools/registry.ts`).
-  // We split on the FIRST `__` to mirror that convention.
-  const sepIndex = toolName.indexOf("__");
-  if (sepIndex < 0) {
-    throw new UnknownToolSource(wsId, toolName, toolName);
-  }
-  const sourceName = toolName.slice(0, sepIndex);
-  if (sourceName.length === 0) {
+  // The inner toolName carries the `<source>__<tool>` form the registry is keyed
+  // on, decomposed through the one grammar every door shares.
+  //
+  // Two shapes name no source: no `__` at all (`sourcePrefix` is then the whole
+  // name, which is the right thing to report as the source we failed to find),
+  // and a leading `__` (an empty prefix, which no registry key can be). Both are
+  // the same answer to the caller.
+  const { sourcePrefix: sourceName, hasSeparator } = splitInnerToolName(toolName);
+  if (!hasSeparator || sourceName.length === 0) {
     throw new UnknownToolSource(wsId, toolName, sourceName);
   }
   const registry = runtime.getRegistryForWorkspace(wsId);
