@@ -44,17 +44,29 @@ Composio, Smithery, MCP360, and Glama all describe themselves with overlapping w
 | [Composio](https://composio.dev) | OAuth, API key | Per connection | A provider — [Composio guide](/gateways/composio/) |
 | [Smithery](https://smithery.ai) | OAuth, config, completed on Smithery's own hosted setup page rather than a callback to us | Per connection | A provider — [Smithery guide](/gateways/smithery/) |
 | [MCP360](https://mcp360.ai) | No, one account key | Fixed endpoints | A catalog entry — [gateway endpoints](/config/connectors-catalog/#auth-provider-for-a-gateway-endpoint) |
-| [Glama](https://glama.ai) | Manages OAuth for the servers it fronts | Per connection profile | Not yet evaluated — see below |
+| [Glama](https://glama.ai) | Manages OAuth for the servers it fronts | Per connection profile | A remote MCP URL — see below |
 
 The top two are providers, and this page describes their machinery. Configuration — the block, its fields, the broker credential's environment fallback, and why it names a credential provider rather than an env var — is documented once, under [`connectors.providers`](/config/nimblebrain-json/#connectors).
 
 MCP360 publishes fixed endpoints and one account-wide API key. It holds no per-connection state for you to configure, so it never reaches this page's machinery and belongs in the catalog instead — see [gateway endpoints](/config/connectors-catalog/#auth-provider-for-a-gateway-endpoint).
 
-Glama sits between the two shapes and has not been tested against the platform. Its gateway issues an endpoint per **connection profile** (`https://glama.ai/endpoints/<profile>/mcp`) and manages OAuth for the upstream servers it fronts, which is broker behavior; but a profile is created in Glama's own UI rather than through an API the platform could call, so there is nothing for a `ManagedConnectorProvider` to drive. Which credential a client presents to that endpoint is the open question, and it decides everything: a bearer API key makes it a catalog entry like MCP360, while an OAuth-protected endpoint makes it plain `auth: dcr` with no gateway machinery at all. Confirm against a real profile before publishing entries for it.
+Glama's gateway is a source-agnostic reverse proxy: it fronts servers Glama hosts for you, its own pre-indexed connectors, and any remote MCP endpoint you point it at. You create a **connection profile** in Glama's UI and get a dedicated endpoint back:
 
-<Aside type="note">
-Glama also runs an **LLM** gateway at `gateway.glama.ai`, an OpenAI-compatible chat-completions API. It is a separate product from the MCP gateway and has nothing to do with connectors. Their shared "gateway" name makes the two easy to confuse when reading Glama's docs.
+```
+https://glama.ai/endpoints/<your-connection-profile>/mcp
+```
+
+That endpoint is a remote MCP URL, so it installs through the ordinary remote-connector path rather than anything on this page. There is no `connectors.gateways` block and no credential provider, because the profile URL *is* the connection — the OAuth Glama manages sits between the gateway and the servers upstream of it, not between the gateway and us. Glama documents pasting the URL straight into any MCP-compatible client.
+
+<Aside type="caution">
+The profile endpoint has not been tested against NimbleBrain, so which credential it expects is unconfirmed. Verify against a real profile before publishing catalog entries for one.
 </Aside>
+
+### A registry is not a gateway
+
+Several vendors here are also **directories you publish a server into**, which is a different relationship from connecting to one. Glama and [PulseMCP](https://pulsemcp.com) both ingest the [official MCP Registry](https://registry.modelcontextprotocol.io), so a server published there appears in them with no configuration on this side at all.
+
+Two vendors do both jobs, which is where the vocabulary gets slippery: Smithery is a registry *and* a broker, and Glama is a registry *and* a gateway. This page covers only the halves you configure.
 
 <Aside type="caution">
 **`auth: provider` is a different mechanism despite the name.** It reads no `connectors.providers` block. It names a **credential provider** that supplies the transport credential server-side, and the entry that names it must be operator-authored. Two things use it: the platform's own connectors, whose credential the runtime mints against the fleet authorizer, and a one-key gateway. The `"type": "provider"` inside an installed connector's persisted transport is the layer underneath all of this: the credential-provider seam. A brokered connector names its broker there; an `auth: provider` entry names whichever provider its catalog entry declared.
