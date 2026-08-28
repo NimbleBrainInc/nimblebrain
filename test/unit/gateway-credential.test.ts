@@ -17,7 +17,7 @@ import {
   registerCredentialProvider,
 } from "../../src/tools/credential-provider.ts";
 
-const ENV_KEYS = ["MCP360_API_KEY", "GLAMA_API_KEY", "MY_GATEWAY_API_KEY"];
+const ENV_KEYS = ["MCP360_API_KEY", "ACME_API_KEY", "MY_GATEWAY_API_KEY"];
 let saved: Record<string, string | undefined>;
 
 beforeEach(() => {
@@ -64,7 +64,7 @@ describe("reserved names cover every built-in credential provider", () => {
 describe("gatewayApiKeyEnvVar", () => {
   test("upper-cases the name and appends _API_KEY", () => {
     expect(gatewayApiKeyEnvVar("mcp360")).toBe("MCP360_API_KEY");
-    expect(gatewayApiKeyEnvVar("glama")).toBe("GLAMA_API_KEY");
+    expect(gatewayApiKeyEnvVar("acme")).toBe("ACME_API_KEY");
   });
 
   test("collapses non-alphanumeric runs to a single underscore", () => {
@@ -112,10 +112,10 @@ describe("gatewayCredentialProvider", () => {
   });
 
   test("resolves per call, so one gateway's missing key never surfaces another's", () => {
-    process.env.GLAMA_API_KEY = "sk-glama";
-    setConnectorsConfig({ gateways: { mcp360: {}, glama: {} } });
-    expect(gatewayCredentialProvider("glama").credentialFor(undefined, {})).toEqual({
-      headers: { Authorization: "Bearer sk-glama" },
+    process.env.ACME_API_KEY = "sk-acme";
+    setConnectorsConfig({ gateways: { mcp360: {}, acme: {} } });
+    expect(gatewayCredentialProvider("acme").credentialFor(undefined, {})).toEqual({
+      headers: { Authorization: "Bearer sk-acme" },
     });
     expect(() => gatewayCredentialProvider("mcp360").credentialFor(undefined, {})).toThrow();
   });
@@ -124,14 +124,14 @@ describe("gatewayCredentialProvider", () => {
 describe("registerGatewayCredentialProviders", () => {
   test("registers one provider per declared gateway, under its own name", () => {
     setConnectorsConfig({
-      gateways: { mcp360: { apiKey: "sk-a" }, glama: { apiKey: "sk-b" } },
+      gateways: { mcp360: { apiKey: "sk-a" }, acme: { apiKey: "sk-b" } },
     });
     registerGatewayCredentialProviders();
 
     expect(getCredentialProvider("mcp360")?.credentialFor(undefined, {})).toEqual({
       headers: { Authorization: "Bearer sk-a" },
     });
-    expect(getCredentialProvider("glama")?.credentialFor(undefined, {})).toEqual({
+    expect(getCredentialProvider("acme")?.credentialFor(undefined, {})).toEqual({
       headers: { Authorization: "Bearer sk-b" },
     });
   });

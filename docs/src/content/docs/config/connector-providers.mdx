@@ -58,14 +58,14 @@ https://glama.ai/endpoints/<your-connection-profile>/mcp
 
 Glama documents that endpoint as gated by an access token issued per connection profile. The OAuth it manages is a separate thing, sitting between the gateway and the servers upstream of it rather than between the gateway and you.
 
-<Aside type="note">
-`gateway.glama.ai` is a **different Glama product** — an OpenAI-compatible chat-completions API for LLM calls, unrelated to MCP and to connectors. Their shared "gateway" name makes the two easy to conflate when reading Glama's docs.
+<Aside type="caution">
+**How the token reaches the endpoint is unconfirmed, and Glama's own docs read two ways.** The hosting page says requests are gated by per-profile access tokens; its client FAQ says to paste the URL in with "no special client setup", which would put the token in the profile segment. Whether you configure a bare URL or a URL plus a bearer credential follows from which is true, so check a real profile before writing an entry. Untested against NimbleBrain.
 </Aside>
 
 Either way it installs as a [remote bundle](/config/bundles/#remote-bundles-url) — a URL plus, where one is needed, a transport credential. It reaches none of the machinery on this page: no `connectors.providers` block, because nothing is brokered on your behalf, and no `connectors.gateways` entry, because the token is per profile rather than one key for the account.
 
-<Aside type="caution">
-**How the token reaches the endpoint is unconfirmed, and Glama's own docs read two ways.** The hosting page says requests are gated by per-profile access tokens; its client FAQ says to paste the URL in with "no special client setup", which would put the token in the profile segment. Whether you configure a bare URL or a URL plus a bearer credential follows from which is true, so check a real profile before writing an entry. Untested against NimbleBrain.
+<Aside type="note">
+`gateway.glama.ai` is a **different Glama product** — an OpenAI-compatible chat-completions API for LLM calls, unrelated to MCP and to connectors. Their shared "gateway" name makes the two easy to conflate when reading Glama's docs.
 </Aside>
 
 <Aside type="caution">
