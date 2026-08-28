@@ -387,6 +387,92 @@ Long-running entities can get orphaned if the bundle subprocess dies mid-run. Th
 
 **Bundle trust is install-time, not per-prompt.** Do not add `trustScore >= N` gates on any path that injects bundle-authored content into the prompt (skills, app guides, app state, custom instructions). Once a bundle is active in the workspace its tools are already callable, so suppressing the workflow guidance that teaches the model how to use them safely makes the model less safe, not more — and tool descriptions, tool outputs, and `app://instructions` flow through ungated already. The defense is XML containment with `</tag>` escape in the body, the pattern used by `<app-state>`, `<app-guide>`, `<app-instructions>`, `<app-custom-instructions>`, and `<layer3-skill>`. Any new bundle-authored containment tag must escape its own closing form in the body the same way. `trustScore` fields on `FocusedAppInfo` / `AppStateInfo` / `PromptAppInfo` remain for display only.
 
+## Inbound Webhooks — the hooks door
+
+`POST /v1/hooks/:connector/:vendor/:token` (`src/api/routes/hooks.ts`, backed by
+`src/hooks/`). One generic door for vendor deliveries that cannot carry a platform
+token. The runtime opens the capability in the path, mints its ordinary
+workspace-scoped platform token, and forwards the bytes to a route the connector
+declared. Servers opt in with `_meta["ai.nimblebrain/host"].hooks` (`host_version: "1.2"`).
+
+**The invariant: the runtime never parses a hook body.** It holds no vendor list
+and no envelope knowledge. If you find yourself reading a field out of a
+delivery, stop — that logic belongs in the receiving server's adapter, and the
+split this door exists to maintain has failed.
+
+Three more rules that are load-bearing, not stylistic:
+
+- **The handler stays thin.** Open, check, mint, forward. No queue, no
+  persistence, no retry. A tenant runtime is one pod, so a delivery arriving
+  while it is busy costs the vendor a retry — the door must never be the reason
+  it is busy. Durability belongs to the vendor's retry and the receiving
+  bundle's raw capture, both of which can provide it.
+- **Every rejection is the same bare 404.** Bad token, wrong tenant's key, path
+  segments disagreeing with the sealed ones, a retired `kid`, an uninstalled
+  connector — one path, one answer, no body. Anything that distinguishes them
+  is an oracle a prober walks. `admitDelivery` returns `undefined` for all of
+  them precisely so the caller has nothing to branch on.
+- **No agent-facing surface.** Nothing mints or rotates a hook from a tool the
+  model can reach, and no path leads from a delivery to an agent run.
+  `rotate_hook` / `list_hooks` ride `manage_connectors`, which carries
+  `INTERNAL_TOOL_ANNOTATION` — stripped from the chat tool list, refused for
+  promotion, reached by the web shell.
+
+**The token** is the same MAC envelope the login assertion and the tenant-key
+mint use (`signMacEnvelope` / `verifyMacEnvelope` — one construction, three
+payload schemas). It is **MAC'd, not encrypted**: the tenant is in the host and
+the connector and vendor are in the path, so sealing would hide only `wid`, and
+a URL holder can read the payload. It carries **no expiry** — a vendor holds the
+URL for months, so retirement is the `kid` lookup, which runs on every delivery
+and is effective immediately, rather than a clock that can only fire late.
+
+**The key** is `NB_HOOK_TOKEN_KEY`, a per-tenant secret provisioned like its
+sibling `NB_MCP_AUTHORIZER_TENANT_KEY` and never derived from it: the tenant key
+is cheap to rotate, this one is not (third parties hold URLs minted under it),
+and deriving one from the other would make a routine tenant-key rotation take
+every registered webhook down with no error anywhere. **Absent key ⇒ the door is
+not mounted at all** and the whole prefix 404s at the router, so a local
+checkout gains no surface.
+
+**Registrations** live on the workspace record (`Workspace.hooks`), beside
+`oauthOperatorApps`. They hold the current and previous `kid` and the route —
+**never a token**. The runtime could reconstruct one and must not: a hook URL is
+a live bearer capability and a tool result lands in a transcript.
+
+**Rotation** (`manage_connectors { action: "rotate_hook", serverName, vendor }`,
+workspace admin): mints a fresh `kid`, keeps the outgoing one admissible for 24 h
+so in-flight redeliveries land, and calls the server's `register_tool` with the
+new URL. Cheap and routine — it is the control for a URL that may have leaked
+into an access log or a screenshot, and a control nobody reaches for because it
+loses data is not a control. `list_hooks` shows what exists and when it last
+rotated; it never returns a URL.
+
+**Provisioning is a reconcile, not an install step.** `ensureHooks` runs when a
+connection reaches `running` (`setConnectionRunningObserver`), which covers a
+fresh install, a boot, and an interactive OAuth flow completing long after the
+install returned — one path instead of three that drift. A declared
+`register_tool` that is missing or does not accept `{vendor, url}` **fails the
+install**; a `register_tool` call that merely errors does not (the connector is
+useful without its webhook, and the `kid` is recorded so a rotation retries).
+
+**The forward adds no header, and the `kid` does not travel.** The fleet edge
+strips the reserved `x-nb-*` namespace by RULE (it cannot tell a runtime-stamped
+member from a caller-forged one — this forward arrives under an ordinary
+`aud=mcp-fleet` token like any other call), so a stamped `X-NB-Hook-Kid` would
+be dropped one hop later, reach nothing, and read as a broken pipeline whose
+obvious repair is a hole in that rule. Kid correlation lives in the runtime's
+delivery log line, which is the only place it appears — do not "restore" the
+header. `isStrippedRequestHeader` mirrors the edge's rule (`x-user-id` plus the
+`x-nb-*` prefix) rather than listing names, because the runtime sits AHEAD of
+the edge and the namespace invariant only holds if every hop ahead of it also
+refuses to pass one through. The general path stays a denylist: vendor signature
+headers the runtime cannot enumerate have to reach the receiving verifier.
+
+**`clientAddressFor`** (`src/api/client-address.ts`) is the runtime's only
+load-bearing `X-Forwarded-For` reader — right-most back `NB_TRUSTED_PROXY_HOPS`
+(default 1), never left-most. The two other readers (`auth-middleware.ts`,
+`mcp-server.ts`) feed log lines and decide nothing; do not add a third that does.
+
 ## API Surfaces — Three Audiences
 
 The platform serves three audiences with three protocol surfaces. They are not tiers; they are distinct contracts for distinct callers, intentionally split.

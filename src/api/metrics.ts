@@ -239,6 +239,47 @@ export const toolPromotionsTotal = new Counter({
 });
 
 /**
+ * Inbound vendor deliveries reaching the hooks door, by outcome.
+ *
+ * `outcome` is a closed set and carries NO identity: no tenant, no workspace,
+ * no connector, no vendor, no key id. One pod per tenant means the scrape
+ * namespace already attributes these, and every other dimension a label could
+ * add is either client-controlled (an attacker picks the path segments) or
+ * discloses which tenant integrates with which vendor. What a delivery was for
+ * belongs in the log line, which is access-controlled; what happened to it
+ * belongs here.
+ *
+ *   `forwarded`      — opened, checked, and handed to the connector.
+ *   `rejected`       — 404 (unknown/retired/mismatched) or 413 or 405. All
+ *                      three collapse deliberately: splitting them would put a
+ *                      prober's oracle in the metric that the response body is
+ *                      careful not to be.
+ *   `rate_limited`   — 429, from either bucket.
+ *   `upstream_error` — the connector could not be reached, or refused the
+ *                      forward at the transport level (502/504 to the vendor,
+ *                      which is the case a vendor retry can actually fix).
+ *
+ * A sustained `rejected` rate on one runtime is the alert: nobody guesses a
+ * hook path by accident, so it means someone is probing.
+ */
+export const hooksReceivedTotal = new Counter({
+  name: "nb_hooks_received_total",
+  help: "Inbound webhook deliveries handled by the hooks door, by outcome.",
+  labelNames: ["outcome"] as const,
+  registers: [metricsRegistry],
+});
+
+/** Wall-clock of the forward hop alone — the connector's own latency plus the
+ *  edge, excluding token work. The door is thin by contract, so this is where a
+ *  slow delivery path shows up. */
+export const hooksForwardSeconds = new Histogram({
+  name: "nb_hooks_forward_seconds",
+  help: "Duration of the hooks door's forward hop to the connector, in seconds.",
+  buckets: [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10],
+  registers: [metricsRegistry],
+});
+
+/**
  * Host resolutions of `artifact://` resource links, by outcome. `result` is a
  * closed set: `ok` | `not_found` | `too_large` | `malformed` | `error`.
  *

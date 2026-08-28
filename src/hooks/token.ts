@@ -1,0 +1,248 @@
+import { randomUUID } from "node:crypto";
+import {
+  ALLOWED_TID_PATTERN,
+  EnvelopeError,
+  isUniformByte,
+  signMacEnvelope,
+  verifyMacEnvelope,
+} from "../oauth/envelope.ts";
+import { publicOrigin } from "../oauth/public-origin.ts";
+import { WORKSPACE_ID_RE } from "../workspace/workspace-id-pattern.ts";
+
+/**
+ * The hook token — a capability the runtime mints, hands to a server, and can
+ * retire.
+ *
+ * It rides the SAME MAC envelope construction as the login assertion and the
+ * tenant-key mint request (`signMacEnvelope` / `verifyMacEnvelope`), with its
+ * own payload schema. One crypto construction, three schemas — not three
+ * constructions.
+ *
+ * **It is MAC'd, not encrypted, and that is deliberate.** Confidentiality would
+ * buy almost nothing here: the URL is
+ * `https://<tenant-host>/v1/hooks/<connector>/<vendor>/<token>`, so the tenant,
+ * the connector and the vendor are already in clear before the token begins.
+ * Encryption's entire marginal gain is hiding `wid` and `kid`, and neither is a
+ * credential — `wid` is an identifier (the workspace binding a delivery gets
+ * comes from the identity headers the runtime mints AFTER verification, never
+ * from this payload), and a `kid` admits nothing on its own, since admission
+ * needs the MAC over the whole payload. Against that sits a second
+ * security-critical codec to maintain forever. The honest cost of the trade,
+ * and the reason it is written down in the platform's trust catalog rather than
+ * left implicit: **a URL holder can read the payload**, so a leaked token also
+ * discloses the workspace id and the wire format to whoever holds it.
+ *
+ * **It carries no expiry, also deliberately.** A vendor holds this URL for
+ * months, and an `exp` could only ever fire late, silently, at a vendor nobody
+ * is watching. Retirement is the `kid` lookup in
+ * `HookRegistration` instead — checked on every single delivery, effective on
+ * the next request after a write, and auditable. A revocation that runs every
+ * time is strictly stronger than an expiry that runs once.
+ */
+
+/** Env var holding this tenant's hook-token key, base64, >= 32 bytes. */
+export const HOOK_TOKEN_KEY_ENV = "NB_HOOK_TOKEN_KEY";
+
+const MIN_HOOK_KEY_BYTES = 32;
+
+/**
+ * Grammar for the `connector` and `vendor` path segments.
+ *
+ * Both are single URL path segments and both are sealed into the token and
+ * cross-checked against the path, so the grammar has to be narrow enough that
+ * "the segment the caller typed" and "the string we sealed" can never differ by
+ * encoding. Lowercase alphanumeric with internal hyphens is what
+ * `slugifyServerName` already produces for a connector; vendors are held to the
+ * same shape so one rule covers both.
+ */
+export const HOOK_SLUG_RE = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/;
+
+/** Payload sealed into a hook token. */
+export interface HookTokenPayload {
+  /**
+   * Payload schema version, distinct from the envelope's own `v1.` wire prefix.
+   * The wire prefix versions the MAC construction shared by all three payload
+   * schemas; this versions THIS schema alone. They are separable on purpose,
+   * and it matters more here than anywhere else that rides the envelope: a
+   * login assertion lives fifteen minutes, but a vendor holds a hook URL
+   * indefinitely, so a future runtime has to be able to open tokens minted by
+   * a much older one.
+   */
+  v: 1;
+  tid: string;
+  wid: string;
+  connector: string;
+  vendor: string;
+  kid: string;
+}
+
+/** Mint a fresh key id. Opaque and unique is the whole requirement — ordering
+ *  comes from the record's own `createdAt` / `rotatedAt`, so a sortable id
+ *  would add a dependency to duplicate a field we already store. */
+export function newKid(): string {
+  return `hk_${randomUUID().replace(/-/g, "").slice(0, 16)}`;
+}
+
+/**
+ * Read this tenant's hook key, or `undefined` when the deployment has none.
+ *
+ * Absent is a legitimate state, not an error: a local checkout and any
+ * deployment that has not provisioned the key simply do not have a hooks door.
+ * The caller's contract is to mount nothing in that case — an honest 404 at the
+ * router — rather than mount a route that fails internally. Same posture as the
+ * managed-connector provider routes in `app.ts`.
+ *
+ * Provisioned as a SIBLING of `NB_MCP_AUTHORIZER_TENANT_KEY`, never derived
+ * from it, because the two have different lifecycles. The tenant key is cheap
+ * to rotate — nothing outside the platform holds anything derived from it. This
+ * key is expensive to rotate: third parties hold URLs minted under it, so
+ * rotating it is a fleet-wide re-registration whose failure mode is deliveries
+ * quietly stopping. Deriving one from the other would weld the cheap operation
+ * to the expensive one, and the first routine tenant-key rotation after that
+ * would take every registered webhook down with no error anywhere.
+ */
+export function readHookTokenKey(env: NodeJS.ProcessEnv = process.env): Buffer | undefined {
+  const raw = env[HOOK_TOKEN_KEY_ENV]?.trim();
+  if (!raw) return undefined;
+  const key = Buffer.from(raw, "base64");
+  if (key.length < MIN_HOOK_KEY_BYTES) {
+    throw new Error(
+      `[hooks] ${HOOK_TOKEN_KEY_ENV} must decode to >= ${MIN_HOOK_KEY_BYTES} bytes (got ${key.length})`,
+    );
+  }
+  // Same placeholder guard the OAuth master key gets. A configured-but-useless
+  // key must fail at boot, not mint forgeable capabilities that look fine.
+  if (isUniformByte(key, 0) || isUniformByte(key, 0xff)) {
+    throw new Error(
+      `[hooks] ${HOOK_TOKEN_KEY_ENV} is a placeholder pattern (all 0x00 or all 0xff); generate with a CSPRNG`,
+    );
+  }
+  return key;
+}
+
+/** Seal a hook token. Pure — no env, no I/O. */
+export function sealHookToken(fields: Omit<HookTokenPayload, "v">, key: Buffer): string {
+  if (!ALLOWED_TID_PATTERN.test(fields.tid)) {
+    throw new EnvelopeError("invalid_tid");
+  }
+  if (!WORKSPACE_ID_RE.test(fields.wid)) {
+    throw new EnvelopeError("invalid_payload");
+  }
+  if (!HOOK_SLUG_RE.test(fields.connector) || !HOOK_SLUG_RE.test(fields.vendor)) {
+    throw new EnvelopeError("invalid_payload");
+  }
+  if (typeof fields.kid !== "string" || fields.kid.length === 0 || fields.kid.length > 64) {
+    throw new EnvelopeError("invalid_payload");
+  }
+  const payload: HookTokenPayload = { v: 1, ...fields };
+  return signMacEnvelope(payload, key);
+}
+
+/**
+ * Open a hook token, or throw `EnvelopeError`.
+ *
+ * Every rejection reason — malformed wire, wrong key, wrong tenant, a field
+ * that fails its grammar — is a throw, and the door collapses all of them into
+ * one indistinguishable 404. Distinguishing them at the boundary would hand a
+ * prober an oracle for which half of a guess was right.
+ *
+ * `expectedTid` is checked here rather than left to the caller because a token
+ * sealed under another tenant's key cannot reach this point anyway (the MAC
+ * fails first) — so this check is what catches the residual case of one
+ * tenant's key being provisioned onto another tenant's pod, where the MAC
+ * would pass and the routing would be wrong.
+ */
+export function openHookToken(wire: string, key: Buffer, expectedTid: string): HookTokenPayload {
+  const raw = verifyMacEnvelope(wire, key);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw.toString("utf8"));
+  } catch {
+    throw new EnvelopeError("invalid_payload");
+  }
+  if (!parsed || typeof parsed !== "object") {
+    throw new EnvelopeError("invalid_payload");
+  }
+  const p = parsed as Record<string, unknown>;
+  if (p.v !== 1) {
+    throw new EnvelopeError("invalid_payload");
+  }
+  if (typeof p.tid !== "string" || !ALLOWED_TID_PATTERN.test(p.tid)) {
+    throw new EnvelopeError("invalid_tid");
+  }
+  if (p.tid !== expectedTid) {
+    throw new EnvelopeError("tid_mismatch");
+  }
+  if (typeof p.wid !== "string" || !WORKSPACE_ID_RE.test(p.wid)) {
+    throw new EnvelopeError("invalid_payload");
+  }
+  if (typeof p.connector !== "string" || !HOOK_SLUG_RE.test(p.connector)) {
+    throw new EnvelopeError("invalid_payload");
+  }
+  if (typeof p.vendor !== "string" || !HOOK_SLUG_RE.test(p.vendor)) {
+    throw new EnvelopeError("invalid_payload");
+  }
+  if (typeof p.kid !== "string" || p.kid.length === 0 || p.kid.length > 64) {
+    throw new EnvelopeError("invalid_payload");
+  }
+  return {
+    v: 1,
+    tid: p.tid,
+    wid: p.wid,
+    connector: p.connector,
+    vendor: p.vendor,
+    kid: p.kid,
+  };
+}
+
+/** Path prefix the door is mounted at. Everything else beneath it 404s. */
+export const HOOKS_PATH_PREFIX = "/v1/hooks";
+
+/**
+ * Build the URL handed to a server's `register_tool`.
+ *
+ * Origin comes from `publicOrigin()` — config-derived, never request-derived —
+ * for the same reason every other outward-facing URL does: a host-header-derived
+ * callback is an open redirect, and here it would additionally point a vendor's
+ * deliveries at an attacker's origin for as long as the registration lasts.
+ */
+export function buildHookUrl(connector: string, vendor: string, token: string): string {
+  return `${publicOrigin()}${HOOKS_PATH_PREFIX}/${connector}/${vendor}/${token}`;
+}
+
+/**
+ * The tenant identity a hook token is minted and opened under: this tenant's id
+ * and its hook key.
+ *
+ * Both halves are required and both come from deploy-provisioned env. `tid` is
+ * sealed into every token and re-checked on every open, which is what makes one
+ * tenant's key useless against another's door even if it were somehow
+ * provisioned onto the wrong pod.
+ */
+export interface HookIdentity {
+  tid: string;
+  key: Buffer;
+}
+
+/**
+ * Resolve this runtime's hook identity, or `undefined` when the deployment has
+ * no hooks door.
+ *
+ * Returning `undefined` rather than throwing is the whole posture: a local
+ * checkout, an OSS run, and any tenant whose operator has not provisioned the
+ * key all have no hooks door, and that is a legitimate configuration rather
+ * than a misconfiguration. The caller mounts nothing, so `/v1/hooks/...` 404s
+ * at the router — the honest "not installed" answer, and the same shape
+ * `app.ts` already uses for managed-connector provider routes.
+ *
+ * A key that IS set but malformed still throws, from `readHookTokenKey`. That
+ * distinction matters: absent means "not configured", present-and-wrong means
+ * "configured incorrectly", and only the second is a deploy that should fail.
+ */
+export function readHookIdentity(env: NodeJS.ProcessEnv = process.env): HookIdentity | undefined {
+  const key = readHookTokenKey(env);
+  if (!key) return undefined;
+  const tid = env.NB_TENANT_ID?.trim();
+  if (!tid || !ALLOWED_TID_PATTERN.test(tid)) return undefined;
+  return { tid, key };
+}

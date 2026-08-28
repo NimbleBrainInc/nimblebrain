@@ -76,6 +76,18 @@ export interface AppContext {
   /** Per-identity limiter for the remote `/mcp` surface (external clients + bundle iframes). */
   mcpLimiter: RequestRateLimiter;
   /**
+   * The hooks door's two buckets — pre-token (keyed on the client address) and
+   * post-token (keyed on `(workspace, connector)`).
+   *
+   * Owned here rather than inside `hooksRoutes` so `startServer`'s `stop()`
+   * clears their sweep timers with every other limiter's; a limiter constructed
+   * inside the route factory would outlive the server it belongs to. Present
+   * whether or not the door mounts — two idle maps cost nothing, and the
+   * alternative is a conditional field every reader has to reason about.
+   */
+  hookAnonLimiter: RequestRateLimiter;
+  hookWorkspaceLimiter: RequestRateLimiter;
+  /**
    * True when no real identity provider is configured (local dev — a
    * `DevIdentityProvider` is substituted). Request rate limiting is bypassed
    * in this mode; see `requestRateLimit`.
