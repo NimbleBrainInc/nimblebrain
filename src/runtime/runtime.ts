@@ -2992,42 +2992,52 @@ export class Runtime {
       return [];
     }
 
-    const skills: DiscoveredSkill[] = [];
-    const { resources, ok, truncated } = await unwrapped.listResources();
-    // Count the skill entrypoints the server LISTED, independent of whether
-    // they could be read: `readSkillResource` swallows a failed/empty read
-    // (one bad skill must not sink the discovery), so without this count a
-    // list-then-fail-to-read server returns a reduced set that looks complete.
-    let entrypoints = 0;
-    for (const resource of resources) {
-      if (isSkillEntrypointUri(resource.uri)) entrypoints++;
-      const skill = await this.readSkillResource(unwrapped, resource.uri);
-      if (skill) skills.push(skill);
-    }
-    const unreadable = entrypoints - skills.length;
-    // Cache only a COMPLETE enumeration. Three ways it isn't: a transport
-    // error cut `resources/list` short (`ok: false`), the page ceiling stopped
-    // it with a cursor outstanding (`truncated`), or a listed entrypoint
-    // failed to read (`unreadable`). Pinning any of them as a stable "this is
-    // everything" keeps a real skill dark for the whole TTL — and the
-    // truncated and unreadable cases read as success, so they would cache
-    // without this.
-    if (ok && !truncated && unreadable === 0) {
-      this.skillResourceCache.set(cacheKey, { skills, fetchedAt: Date.now() });
-    }
-    if (!ok || truncated || unreadable > 0) {
+    const { skills, shortfall } = await this.enumerateServerSkills(unwrapped);
+    // Cache only a COMPLETE enumeration. Pinning a short one as a stable
+    // "this is everything" keeps a real skill dark for the whole TTL — and
+    // the truncated and unreadable shortfalls read as success, so they would
+    // cache without this.
+    if (shortfall) {
       reportSkillDiscoveryDegraded({
         wsId,
         serverName,
-        reason: !ok
-          ? "enumeration_failed"
-          : truncated
-            ? "enumeration_truncated"
-            : "skill_unreadable",
+        reason: shortfall,
         recovered: skills.length,
       });
+    } else {
+      this.skillResourceCache.set(cacheKey, { skills, fetchedAt: Date.now() });
     }
     return skills;
+  }
+
+  /**
+   * List a source's resources and read every skill entrypoint among them.
+   *
+   * `shortfall` names the first way the result is knowingly incomplete, in
+   * check order: a transport error cut `resources/list` short
+   * (`enumeration_failed`), the page ceiling stopped it with a cursor
+   * outstanding (`enumeration_truncated`), or a LISTED entrypoint failed to
+   * read (`skill_unreadable`). The entrypoint count exists because
+   * `readSkillResource` swallows a failed/empty read (one bad skill must not
+   * sink the discovery) — without it, a list-then-fail-to-read server returns
+   * a reduced set that looks complete.
+   */
+  private async enumerateServerSkills(source: McpSource): Promise<{
+    skills: DiscoveredSkill[];
+    shortfall?: "enumeration_failed" | "enumeration_truncated" | "skill_unreadable";
+  }> {
+    const skills: DiscoveredSkill[] = [];
+    const { resources, ok, truncated } = await source.listResources();
+    let entrypoints = 0;
+    for (const resource of resources) {
+      if (isSkillEntrypointUri(resource.uri)) entrypoints++;
+      const skill = await this.readSkillResource(source, resource.uri);
+      if (skill) skills.push(skill);
+    }
+    if (!ok) return { skills, shortfall: "enumeration_failed" };
+    if (truncated) return { skills, shortfall: "enumeration_truncated" };
+    if (skills.length < entrypoints) return { skills, shortfall: "skill_unreadable" };
+    return { skills };
   }
 
   /** Read one skill entrypoint resource into a parsed, budget-capped `DiscoveredSkill`, or `undefined` when the URI isn't a skill entrypoint or the resource is unreadable/empty. */
