@@ -191,6 +191,24 @@ describe("instructions source — write_instructions", () => {
     expect(updates).toEqual([{ uri: "instructions://workspace" }]);
   });
 
+  test("a write records `ui` provenance — the settings UI is the only caller", async () => {
+    // The tool is internal, so no agent reaches it; every write through it is a
+    // human editing the overlay in workspace settings. `UpdatedBy` keeps its
+    // `"agent"` arm so meta files written before that was true still parse.
+    const src = await buildSource();
+    runtime.wsId = "ws_demo";
+
+    const client = src.getClient()!;
+    const result = await client.callTool({
+      name: "write_instructions",
+      arguments: { body: "ws body" },
+    });
+    expect(result.isError).toBeFalsy();
+
+    const meta = await runtime.getInstructionsStore().readMeta({ wsId: "ws_demo" });
+    expect(meta?.updated_by).toBe("ui");
+  });
+
   test("empty text clears the overlay", async () => {
     const src = await buildSource();
     runtime.wsId = "ws_demo";
