@@ -3,14 +3,15 @@ import {
   ConversationIndex,
   type WorkspaceScope,
 } from "../../bundles/conversations/src/index-cache.ts";
-import { type ExportInput, handleExport } from "../../bundles/conversations/src/tools/export.ts";
-import { type ForkInput, handleFork } from "../../bundles/conversations/src/tools/fork.ts";
-import { type GetInput, handleGet } from "../../bundles/conversations/src/tools/get.ts";
+import { handleExport } from "../../bundles/conversations/src/tools/export.ts";
+import { handleFork } from "../../bundles/conversations/src/tools/fork.ts";
+import { handleGet } from "../../bundles/conversations/src/tools/get.ts";
 import { handleList, type ListInput } from "../../bundles/conversations/src/tools/list.ts";
 import { handleSearch, type SearchInput } from "../../bundles/conversations/src/tools/search.ts";
 import { handleStats, type StatsInput } from "../../bundles/conversations/src/tools/stats.ts";
-import { handleUpdate, type UpdateInput } from "../../bundles/conversations/src/tools/update.ts";
+import { handleUpdate } from "../../bundles/conversations/src/tools/update.ts";
 import { capPreview } from "../../conversation/preview.ts";
+import { CONVERSATION_ID_RE } from "../../conversation/types.ts";
 import { textContent } from "../../engine/content-helpers.ts";
 import type { EventSink } from "../../engine/types.ts";
 import { getRequestContext } from "../../runtime/request-context.ts";
@@ -136,6 +137,47 @@ export async function createConversationsSource(
   }
 
   /**
+   * Resolve the conversation a call addresses: the explicit `id`, else the one
+   * this call is happening inside.
+   *
+   * An agent running in a chat has no way to learn its own conversation id —
+   * it is not in the prompt and no tool reports it — so a required `id` on
+   * `update`/`get`/`fork`/`export` makes the current conversation the one
+   * conversation these tools cannot reach. The observed failure is an agent
+   * inventing a placeholder and getting `Conversation not found`. The ambient
+   * fallback mirrors `skills__active_for`, which already resolves the same way.
+   *
+   * `"current"` is accepted as a spelling of the same thing. It is the string
+   * agents actually reach for, it cannot collide with a real id (those are
+   * `conv_<hex>`, minted by the store), and refusing it would buy a round-trip
+   * to teach a distinction with no consequence.
+   *
+   * Outside a chat — a REST tool call, an `/mcp` request, an automation run —
+   * there is no ambient conversation, so this errors rather than guessing.
+   *
+   * The ambient value is shape-checked rather than merely present-checked.
+   * `RequestContext.conversationId` holds only store-minted conversation ids —
+   * an unattended run carries its correlation id in `runId` — so this check
+   * should never fire. It stays as a forward guard: the cost of a caller
+   * putting something else in that field is a lookup miss reported as
+   * `Conversation not found: <whatever it was>`, naming an id the agent never
+   * supplied and cannot act on. Refusing anything that is not a conversation
+   * id keeps that failure impossible to reintroduce from the reader's side.
+   */
+  function resolveConversationId(id: string | undefined): string {
+    if (id && id !== "current") return id;
+    const ambient = getRequestContext()?.conversationId;
+    if (!ambient || !CONVERSATION_ID_RE.test(ambient)) {
+      throw new Error(
+        "No conversation in scope. `id` may be omitted only inside a chat, where it " +
+          "defaults to the current conversation; from anywhere else, pass the id " +
+          "returned by conversations__list or conversations__search.",
+      );
+    }
+    return ambient;
+  }
+
+  /**
    * Cap a summary's `preview` on the way out.
    *
    * `preview` is the conversation's first user message and these are tool
@@ -194,12 +236,13 @@ export async function createConversationsSource(
     {
       name: "get",
       description:
-        'Load a conversation by ID. Returns metadata plus, by default, the most recent ~20 messages (with the message payload capped to ~30 KB; the full pretty-printed response stays under ~50 KB). Use expand:"metadata" for just the metadata or expand:"full" when you actually need the entire transcript — long conversations can run hundreds of thousands of tokens and full reads are recorded in tool history.',
+        'Load a conversation by ID — omit `id` for the conversation you are in. Returns metadata plus, by default, the most recent ~20 messages (with the message payload capped to ~30 KB; the full pretty-printed response stays under ~50 KB). Use expand:"metadata" for just the metadata or expand:"full" when you actually need the entire transcript — long conversations can run hundreds of thousands of tokens and full reads are recorded in tool history.',
       inputSchema: ConversationsGetInput,
       handler: withErrorHandling(async (input) => {
         const { index } = await getIndex();
-        const get = input as unknown as GetInput;
-        return handleGet(get, index, currentAccess(), runtime.isTurnActive(get.id));
+        const get = input as unknown as ConversationsGetInput;
+        const id = resolveConversationId(get.id);
+        return handleGet({ ...get, id }, index, currentAccess(), runtime.isTurnActive(id));
       }),
     },
     {
@@ -215,23 +258,32 @@ export async function createConversationsSource(
     },
     {
       name: "update",
-      description: "Update a conversation's title.",
+      description:
+        "Update a conversation's title. Omit `id` to retitle the conversation you are in.",
       inputSchema: ConversationsUpdateInput,
       handler: withErrorHandling(async (input) => {
         const { index } = await getIndex();
+        const update = input as unknown as ConversationsUpdateInput;
         return capSummary(
-          await handleUpdate(input as unknown as UpdateInput, index, currentAccess()),
+          await handleUpdate(
+            { ...update, id: resolveConversationId(update.id) },
+            index,
+            currentAccess(),
+          ),
         );
       }),
     },
     {
       name: "fork",
       description:
-        "Fork a conversation at a specific message index, creating a new conversation with messages up to that point.",
+        "Fork a conversation at a specific message index, creating a new conversation with messages up to that point. Omit `id` to fork the conversation you are in.",
       inputSchema: ConversationsForkInput,
       handler: withErrorHandling(async (input) => {
         const { index } = await getIndex();
-        return capSummary(await handleFork(input as unknown as ForkInput, index, currentAccess()));
+        const fork = input as unknown as ConversationsForkInput;
+        return capSummary(
+          await handleFork({ ...fork, id: resolveConversationId(fork.id) }, index, currentAccess()),
+        );
       }),
     },
     {
@@ -248,11 +300,12 @@ export async function createConversationsSource(
     {
       name: "export",
       description:
-        "Export a conversation as markdown or JSON. Markdown renders messages as a readable document; JSON returns raw JSONL content as a JSON array.",
+        "Export a conversation as markdown or JSON — omit `id` for the conversation you are in. Markdown renders messages as a readable document; JSON returns raw JSONL content as a JSON array.",
       inputSchema: ConversationsExportInput,
       handler: withErrorHandling(async (input) => {
         const { index } = await getIndex();
-        return handleExport(input as unknown as ExportInput, index, currentAccess());
+        const exp = input as unknown as ConversationsExportInput;
+        return handleExport({ ...exp, id: resolveConversationId(exp.id) }, index, currentAccess());
       }),
     },
   ];

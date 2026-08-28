@@ -23,6 +23,25 @@ describe("resolveFeatures", () => {
 });
 
 describe("isToolEnabled", () => {
+	it("gates the whole skill surface, reads and writes alike, on skillManagement", () => {
+		const features = resolveFeatures({ skillManagement: false });
+		// `restore` writes and `history` reads the mutation surface's audit
+		// trail; either one live in a deployment that turned skill management
+		// off is the operator kill switch failing to switch something off.
+		for (const tool of [
+			"skills__create",
+			"skills__update",
+			"skills__delete",
+			"skills__activate",
+			"skills__deactivate",
+			"skills__history",
+			"skills__restore",
+		]) {
+			expect(isToolEnabled(tool, features)).toBe(false);
+		}
+	});
+
+
 	it("returns false for nb__delegate when delegation is disabled", () => {
 		const features = resolveFeatures({ delegation: false });
 		expect(isToolEnabled("nb__delegate", features)).toBe(false);

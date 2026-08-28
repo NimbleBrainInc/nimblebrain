@@ -245,8 +245,8 @@ export function createComposeSource(runtime: Runtime, eventSink: EventSink): Mcp
  *     custom identity.
  *   - `apps` = `runtime.buildAppsList(wsId)` — workspace-scoped, includes
  *     each bundle's `app://instructions` overlay.
- *   - `overlays` = `runtime.readPromptOverlays(wsId)` — org + workspace
- *     instruction overlays.
+ *   - `overlays` = `runtime.readPromptOverlays(wsId)` — the workspace
+ *     instruction overlay.
  *   - `layer3Skills` = `loadConversationSkills` ∩ `selectLayer3Skills`
  *     against the role-filtered active tool set.
  *   - `prefs` = identity preferences.

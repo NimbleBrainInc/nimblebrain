@@ -64,10 +64,10 @@ export function clearUsageLedger(owned: UsageLedger): void {
 /**
  * Who this call was for, from the ambient request context alone.
  *
- * `unattended` is checked first and wins outright: an automation's context also
- * carries a `conversationId` (`executeTask` stamps the run id there so files the
- * run creates stay traceable), so testing for a conversation first would file
- * every automation call under `chat`.
+ * `unattended` is checked first and wins outright. A run carries `runId` and no
+ * `conversationId`, so the conversation test alone would already answer
+ * `system` rather than `chat` — but the flag is the direct question and does not
+ * depend on which other fields a context happens to hold.
  *
  * `system` is the honest answer for a call with no request scope — a detached
  * fast-slot call, or a background job. It is not a fallback for "we could not
@@ -145,7 +145,12 @@ export function recordLlmCall(args: {
     ...(delegated && typeof parentRunId === "string" ? { parentRunId } : {}),
     ...(ctx?.identity?.id ? { userId: ctx.identity.id } : {}),
     ...(ctx?.workspaceId ? { workspaceId: ctx.workspaceId } : {}),
-    ...(ctx?.conversationId ? { sessionId: ctx.conversationId } : {}),
+    // `sessionId` is whichever id correlates this work: a chat's conversation,
+    // a run's id. Deliberately one ledger field — `aggregate.ts` separates the
+    // two by `origin` ("task" counts a run, everything else a conversation),
+    // and every historical record was written under that contract, so splitting
+    // the column here would strand them.
+    ...(ctx?.conversationId || ctx?.runId ? { sessionId: ctx.conversationId ?? ctx.runId } : {}),
     ...(rates ? { rates } : {}),
   };
   ledger.append(entry);
