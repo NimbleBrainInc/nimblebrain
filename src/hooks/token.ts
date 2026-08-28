@@ -21,15 +21,16 @@ import { WORKSPACE_ID_RE } from "../workspace/workspace-id-pattern.ts";
  * **It is MAC'd, not encrypted, and that is deliberate.** Confidentiality would
  * buy almost nothing here: the URL is
  * `https://<tenant-host>/v1/hooks/<connector>/<vendor>/<token>`, so the tenant,
- * the connector and the vendor are already in clear before the token begins,
- * and `kid` is handed to the receiving server as a header anyway. Encryption's
- * entire marginal gain is hiding `wid` — an identifier, not a credential; the
- * workspace binding a delivery actually gets comes from the identity headers
- * the runtime mints AFTER verification, never from this payload. Against that
- * sits a second security-critical codec to maintain forever. The honest cost of
- * the trade, and the reason it is written down in the platform's trust catalog
- * rather than left implicit: **a URL holder can read the payload**, so a leaked
- * token also discloses the workspace id and the wire format to whoever holds it.
+ * the connector and the vendor are already in clear before the token begins.
+ * Encryption's entire marginal gain is hiding `wid` and `kid`, and neither is a
+ * credential — `wid` is an identifier (the workspace binding a delivery gets
+ * comes from the identity headers the runtime mints AFTER verification, never
+ * from this payload), and a `kid` admits nothing on its own, since admission
+ * needs the MAC over the whole payload. Against that sits a second
+ * security-critical codec to maintain forever. The honest cost of the trade,
+ * and the reason it is written down in the platform's trust catalog rather than
+ * left implicit: **a URL holder can read the payload**, so a leaked token also
+ * discloses the workspace id and the wire format to whoever holds it.
  *
  * **It carries no expiry, also deliberately.** A vendor holds this URL for
  * months, and an `exp` could only ever fire late, silently, at a vendor nobody

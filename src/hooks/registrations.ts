@@ -12,9 +12,19 @@ import { HOOK_ROTATION_GRACE_MS, type HookRegistration } from "./types.ts";
  * load the workspace to resolve `bundles[]` into a forward target, and a
  * separate store would make it two on the one path the spec insists stays thin.
  *
- * The read-modify-write in `WorkspaceStore.update` races a concurrent install,
- * which is the race `oauthOperatorApps` already runs. It is not new here and
- * does not on its own justify a persistence layer.
+ * Writes are SERIALIZED PER WORKSPACE (`updateRegistrations`), and that is not
+ * optional. `oauthOperatorApps` shares the read-modify-write shape and does not
+ * serialize, so the comparison invites dropping the lock — it does not hold,
+ * because the two lose different things. A lost `oauthOperatorApps` write costs
+ * an operator a repeated action they can see failed. A lost hooks write costs a
+ * dead inbound stream: the server has already been handed a URL whose `kid`
+ * exists nowhere, so every delivery on it 404s silently, with a healthy-looking
+ * registration on the far side and no error anywhere.
+ *
+ * The race is on the ordinary path, not an exotic one — boot seeds every
+ * workspace bundle in a synchronous loop with the connection observer armed, so
+ * N hooks-declaring connectors fan out N reconciles that all read this map
+ * before any of them writes.
  */
 
 /** Composite key for a registration within a workspace. */
@@ -72,11 +82,53 @@ export async function updateRegistrations(
   wsId: string,
   mutate: (current: Record<string, HookRegistration>) => Record<string, HookRegistration> | null,
 ): Promise<Record<string, HookRegistration> | null> {
-  const ws = await store.get(wsId);
-  if (!ws) return null;
-  const next = mutate({ ...(ws.hooks ?? {}) });
-  if (next === null) return null;
-  await store.update(wsId, { hooks: next });
+  return serializePerWorkspace(wsId, async () => {
+    const ws = await store.get(wsId);
+    if (!ws) return null;
+    const next = mutate({ ...(ws.hooks ?? {}) });
+    if (next === null) return null;
+    await store.update(wsId, { hooks: next });
+    return next;
+  });
+}
+
+/**
+ * One write at a time per workspace.
+ *
+ * The critical section is the whole read-through-write, not the write alone:
+ * `WorkspaceStore.update` re-reads the record and replaces `hooks` wholesale,
+ * so two callers that both read an empty map each write a map containing only
+ * their own entry, and the second erases the first. Holding the section across
+ * the read is what makes a concurrent mutation see the previous one's result.
+ *
+ * In-process only, which is the same assumption `singleFlight` in `reconcile.ts`
+ * already makes and is sufficient while a tenant runs one runtime pod — the
+ * `replicas > 1` prerequisites in `AGENTS.md` are unmet, and clustering this
+ * state belongs to that project rather than to a lock.
+ *
+ * It also closes the `rotate_hook`-vs-reconcile window that `ensureHooks`
+ * leaves open by bypassing the flight for a rotation: the two can still run
+ * concurrently, but they can no longer interleave inside the write.
+ */
+const writeChains = new Map<string, Promise<unknown>>();
+
+function serializePerWorkspace<T>(wsId: string, task: () => Promise<T>): Promise<T> {
+  const prior = writeChains.get(wsId) ?? Promise.resolve();
+  // `then(task, task)` so a failed predecessor does not cancel the queue — one
+  // caller's error must not strand every writer behind it.
+  const next = prior.then(task, task);
+  // The stored tail swallows settlement so a rejection here is never unhandled;
+  // the real outcome reaches the caller through `next`.
+  const tail = next.then(
+    () => undefined,
+    () => undefined,
+  );
+  writeChains.set(wsId, tail);
+  void tail.then(() => {
+    // Drop the entry only when nobody queued behind us, so the map does not
+    // grow one permanent promise per workspace for the life of the process.
+    if (writeChains.get(wsId) === tail) writeChains.delete(wsId);
+  });
   return next;
 }
 

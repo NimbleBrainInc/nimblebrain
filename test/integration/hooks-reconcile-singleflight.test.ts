@@ -116,13 +116,21 @@ describe("concurrent provisioning of one stream", () => {
   test("a later call re-runs rather than joining the finished one", async () => {
     const deps = makeDeps();
     await ensureHooks(deps, wsId, CONNECTOR);
+    const firstKid = listRegistrations((await store.get(wsId)) ?? {})[0]?.kid;
+    expect(firstKid).toBeDefined();
     const before = registered.length;
     // The install path deliberately re-registers: the operator asked for it,
     // and it repairs a registration the server lost.
     await ensureHooks(deps, wsId, CONNECTOR);
     expect(registered.length).toBe(before + 1);
-    // Re-registering must not mint a second kid.
-    expect(listRegistrations((await store.get(wsId)) ?? {})).toHaveLength(1);
+
+    // Re-registering must not mint a second kid. Asserting the map has one
+    // entry cannot catch that — it is keyed `connector/vendor`, so it stays
+    // length 1 however many times a kid is replaced. The kid itself is the
+    // assertion: a silent re-mint would retire the URL the vendor already holds.
+    const after = listRegistrations((await store.get(wsId)) ?? {})[0];
+    expect(after?.kid).toBe(firstKid);
+    expect(after?.prevKid).toBeUndefined();
   });
 
   test("a rotation never coalesces into somebody else's run", async () => {
@@ -141,8 +149,19 @@ describe("concurrent provisioning of one stream", () => {
     expect(b).toHaveLength(1);
   });
 
-  test("two different connectors do not block each other", async () => {
-    const deps = makeDeps();
+  test("two different connectors do not block each other, and both survive the write", async () => {
+    // The single-flight is keyed per connector, so two different connectors
+    // legitimately provision in parallel — and then both write the SAME
+    // workspace record. Asserting only the returned values would lock that
+    // concurrency in while missing the lost write: each server is handed a URL,
+    // but only the last writer's map survives, so the loser holds a URL whose
+    // kid exists nowhere and every delivery on it 404s silently.
+    //
+    // This is boot's ordinary shape, not an exotic one: `seedWorkspaceBundleInstances`
+    // walks every workspace bundle in a synchronous loop with the observer
+    // already armed, so N hooks-declaring connectors fan out N reconciles that
+    // all read before any of them writes.
+    const deps = makeDeps({ declarationsFor: async () => [DECL] });
     const [a, b] = await Promise.all([
       ensureHooks(deps, wsId, CONNECTOR),
       ensureHooks(deps, wsId, "other-mcp"),
@@ -150,6 +169,19 @@ describe("concurrent provisioning of one stream", () => {
     expect(a).toHaveLength(1);
     expect(b).toHaveLength(1);
     expect(registered).toHaveLength(2);
+
+    // Every URL handed to a server must open to a kid the store actually holds.
+    const persisted = listRegistrations((await store.get(wsId)) ?? {});
+    expect(persisted).toHaveLength(2);
+    const persistedKids = new Set(persisted.map((r) => r.kid));
+    for (const call of registered) {
+      const handed = openHookToken(
+        call.url.split("/").pop() ?? "",
+        IDENTITY.key,
+        IDENTITY.tid,
+      ).kid;
+      expect(persistedKids.has(handed)).toBe(true);
+    }
   });
 
   test("a failed run does not pin later callers to the rejection", async () => {

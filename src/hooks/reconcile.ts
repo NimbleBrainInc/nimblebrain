@@ -71,10 +71,13 @@ export interface EnsureHooksOptions {
  * ordinary states rather than failures, and a connector must install and work
  * normally in every one of them.
  *
- * A {@link HookContractError} propagates: a declared `register_tool` that does
- * not exist or does not accept `{vendor, url}` is a manifest bug, and the
- * install that surfaces it should fail loudly rather than leave a stream that
- * can never be handed its URL.
+ * A {@link HookContractError} propagates rather than being swallowed: a declared
+ * `register_tool` that does not exist or does not accept `{vendor, url}` is a
+ * manifest bug, and provisioning nothing is better than leaving a stream that
+ * can never be handed its URL. The caller decides how loud that is — the
+ * install path reports it as a warning on a successful install (it cannot
+ * refuse an install that has already committed), and the connection-running
+ * path logs it.
  */
 export async function ensureHooks(
   deps: HookReconcileDeps,

@@ -253,10 +253,23 @@ describe("the response the vendor gets", () => {
     expect(await res.text()).toBe('{"ok":true}');
   });
 
-  test("still drops the hop headers", async () => {
+  test("drops the hop headers but keeps the connector's own", async () => {
     upstreamResponse = () =>
-      new Response("ok", { status: 202, headers: { "x-connector-note": "kept" } });
+      new Response("ok", {
+        status: 202,
+        headers: {
+          "x-connector-note": "kept",
+          connection: "close",
+          "keep-alive": "timeout=5",
+        },
+      });
     const res = await deliver(makeApp(), `/v1/hooks/${CONNECTOR}/${VENDOR}/${token()}`);
+    // These describe the hop the runtime made, not the one it is answering on.
+    expect(res.headers.get("connection")).toBeNull();
+    expect(res.headers.get("keep-alive")).toBeNull();
+    // `transfer-encoding` is stripped by the fetch layer before it reaches the
+    // header copy, so asserting its absence here would pass without the delete;
+    // `hooks-forward.test.ts` covers the strip list itself.
     expect(res.headers.get("x-connector-note")).toBe("kept");
   });
 });

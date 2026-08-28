@@ -91,7 +91,7 @@
         "register_tool": {
           "type": "string",
           "minLength": 1,
-          "description": "Name of a tool on THIS server that the host calls with { vendor, url } — both strings — to hand over the minted URL. The tool must exist on the server's tools/list at install time AND accept those two arguments, or the install is refused: a stream whose registration tool is missing or mis-shaped would otherwise fail silently at first delivery. Typically the server stores the URL in its own operator-writable config and registers it with the vendor."
+          "description": "Name of a tool on THIS server that the host calls with { vendor, url } — both strings — to hand over the minted URL. The tool must exist on the server's tools/list at install time AND accept those two arguments. If it does not, no URL is minted for any of this server's streams and the operator is shown a warning naming the declaration — the connector still installs and its tools still work. The check re-runs whenever the connection is re-established, so fixing the manifest and reconnecting provisions the streams without a reinstall. Typically the server stores the URL in its own operator-writable config and registers it with the vendor."
         },
         "description": {
           "type": "string",
