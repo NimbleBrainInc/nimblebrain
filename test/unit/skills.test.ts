@@ -350,17 +350,22 @@ describe("loadCoreSkills", () => {
     expect(bs.body).toContain("nb__manage_tools");
   });
 
-  it("capabilities names both persistence surfaces", () => {
+  it("capabilities names both persistence surfaces, and neither as an agent write", () => {
     // Nothing else in the always-on prompt says the runtime can persist
     // anything, so a workspace with no bundles installed reads as having no
-    // memory at all unless the briefing names these two.
+    // memory at all unless the briefing names these surfaces. The overlay is
+    // human-authored: the briefing must teach draft-and-point, never name the
+    // internal write tool — a named tool reads as callable.
     const skills = loadCoreSkills();
     const bs = skills.find((s) => s.manifest.name === "capabilities")!;
-    expect(bs.body).toContain("instructions__write_instructions");
+    expect(bs.body).toContain("Instructions");
+    expect(bs.body).toContain("workspace settings");
+    expect(bs.body).not.toContain("instructions__write_instructions");
     expect(bs.body).toContain("Skills");
-    // Both scopes, so the agent can pick one and say which it wrote.
-    expect(bs.body).toContain('scope: "workspace"');
-    expect(bs.body).toContain('scope: "org"');
+    // The overlay is workspace-only; org-wide guidance is an org-tier skill,
+    // and the briefing has to say so or the agent reaches for a scope that
+    // no longer exists.
+    expect(bs.body).toContain("org-tier skill");
   });
 
   it("soul is always-on with priority 0", () => {

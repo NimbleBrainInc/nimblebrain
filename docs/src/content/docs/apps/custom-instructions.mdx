@@ -105,11 +105,11 @@ See the [Manifest reference](/apps/manifest/#settings-sections) for the `"settin
 
 - **Discoverability.** Every bundle that wants instructions support uses the same URI. Users don't have to learn per-app conventions; agents don't have to discover per-bundle write tools to know "where do my instructions live for this app."
 - **Security.** Containment escape happens platform-side, uniformly. Bundle authors writing the prompt-injection mitigation is something that *will* be gotten wrong over time.
-- **Composability.** The pattern stacks with `<app-instructions>` (your bundle author's static guidance) and the host's org/workspace overlays. The system prompt layers cleanly: org-wide policy → workspace policy → per-app author guidance → per-app user instructions.
+- **Composability.** The pattern stacks with `<app-instructions>` (your bundle author's static guidance) and the host's workspace overlay. The system prompt layers cleanly: workspace policy → per-app author guidance → per-app user instructions.
 - **Bottom-up.** Your bundle decides if it supports custom instructions and how rich the UX is. The platform doesn't synthesize anything you don't opt into.
 
 ## Related
 
-- [Workspace and org-level overlays](/guide/settings/) — managed by the host, not by your bundle. Set via the `instructions__write_instructions` system tool or the workspace/org settings UI.
+- [The workspace overlay](/guide/settings/) — managed by the host, not by your bundle. Written by workspace admins in the workspace settings UI; the agent drafts suggested text but does not write the overlay itself. Guidance that should reach every workspace in the organization is an org-tier skill instead.
 - [Manifest reference](/apps/manifest/) — full `_meta["ai.nimblebrain/host"]` schema, including the `"settings"` placement slot.
 - [Placements & Navigation](/apps/placements/) — sidebar and main slots for your app's views.

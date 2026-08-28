@@ -5,17 +5,15 @@ import {
   type InstructionsMeta,
   MAX_INSTRUCTIONS_BYTES,
   type ReadOptions,
-  type Scope,
   type WriteOptions,
   type WriteResult,
 } from "./types.ts";
 
 /**
- * File-backed storage for platform-owned overlay instructions.
+ * File-backed storage for the platform-owned workspace instruction overlay.
  *
  * Layout, rooted at the runtime's `workDir`:
- *   {workDir}/org/instructions.md                       (Phase 3 — slot reserved)
- *   {workDir}/workspaces/{wsId}/instructions.md         (workspace overlay)
+ *   {workDir}/workspaces/{wsId}/instructions.md
  *
  * Each file has a sibling `instructions.meta.json` with `{ updated_at, updated_by }`.
  * Reading a missing file returns `""`. Writing empty text deletes the pair.
@@ -92,38 +90,17 @@ export class InstructionsStore {
   }
 
   private resolveDir(opts: ReadOptions): string {
-    validateScopeArgs(opts);
-    if (opts.scope === "org") {
-      return join(this.workDir, "org");
+    // Defense in depth: callers pass an already-validated workspace id, but
+    // this is a path component, so re-check it here too.
+    if (!opts.wsId) {
+      throw new Error("An instructions overlay requires a workspace id");
     }
-    // Workspace overlay lives at the workspace root. Routed through the
-    // typed context so the layout has one definition site
-    // (`src/workspace/context.ts`). `validateScopeArgs` above already
-    // re-checked the wsId; the context constructor re-validates (cheap).
-    return new WorkspaceContext({ wsId: opts.wsId!, workDir: this.workDir }).getRoot();
+    assertSafePathComponent("workspace id", opts.wsId);
+    // The overlay lives at the workspace root. Routed through the typed
+    // context so the layout has one definition site
+    // (`src/workspace/context.ts`); the constructor re-validates (cheap).
+    return new WorkspaceContext({ wsId: opts.wsId, workDir: this.workDir }).getRoot();
   }
-}
-
-/**
- * Defense-in-depth path-component validation. Callers should pass
- * already-validated identifiers; this catches the cases where they don't.
- */
-function validateScopeArgs(opts: ReadOptions): void {
-  const { scope } = opts;
-  if (scope === "org") return;
-
-  if (scope === "workspace") {
-    const wsId = opts.wsId;
-    if (!wsId) {
-      throw new Error("Scope 'workspace' requires a workspace id");
-    }
-    assertSafePathComponent("workspace id", wsId);
-    return;
-  }
-
-  // Exhaustive check — surface unhandled scopes loudly.
-  const _exhaustive: never = scope;
-  throw new Error(`Unknown scope: ${_exhaustive as Scope}`);
 }
 
 function assertSafePathComponent(label: string, value: string): void {

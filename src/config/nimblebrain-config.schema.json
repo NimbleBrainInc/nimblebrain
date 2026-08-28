@@ -424,7 +424,7 @@
       "additionalProperties": false
     },
     "connectors": {
-      "description": "Managed-connector provider configuration. A managed-connector provider brokers auth and hosts MCP sessions on the tenant's behalf.",
+      "description": "Connector integration configuration. `providers` declares managed-connector providers, which broker auth and host MCP sessions on the tenant's behalf. `gateways` declares hosted-MCP vendors that broker nothing and authenticate with one account-wide API key.",
       "type": "object",
       "properties": {
         "providers": {
@@ -482,6 +482,20 @@
             }
           },
           "additionalProperties": false
+        },
+        "gateways": {
+          "description": "Hosted-MCP gateways, keyed by the operator-chosen name an `auth: provider` catalog entry names in providerAuth.provider. Declaring one registers a credential provider under that name which attaches the key as `Authorization: Bearer`. Names reserved by built-in credential providers (minted, composio, smithery) are refused.",
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "apiKey": {
+                "type": "string",
+                "description": "The gateway's account-wide API key. Falls back to <NAME>_API_KEY (name upper-cased, non-alphanumerics to underscore), so `mcp360` reads MCP360_API_KEY."
+              }
+            },
+            "additionalProperties": false
+          }
         }
       },
       "additionalProperties": false

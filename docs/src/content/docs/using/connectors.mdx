@@ -42,11 +42,11 @@ Every connector declares how it authenticates. As a user you rarely need to care
 | **static** | The vendor requires a pre-registered OAuth app. | An admin clicks **Set up** once; after that everyone connects with **Install**. | Workspace admin, per workspace |
 | **composio** | Brokered through Composio, a [managed-connector provider](/config/connector-providers/). | Click **Install**. OAuth toolkits send you through the vendor's sign-in; API-key toolkits open a short form for the service's API key. | Operator, platform-wide |
 | **smithery** | Brokered through Smithery, a [managed-connector provider](/config/connector-providers/) that also hosts the MCP session. | Click **Install**. A server needing no account connects immediately; one needing sign-in or configuration reports that on the install attempt, with a link to a Smithery-hosted setup page to complete first. | Operator, platform-wide |
-| **provider** | A platform-managed connector whose credential the runtime mints server-side — no vendor sign-in, no operator OAuth app, no per-user secret. | Click **Install**. There is nothing to enter. | Operator — the catalog entry and fleet-authorizer environment |
+| **provider** | A connector whose credential is supplied server-side by a named credential provider — no vendor sign-in, no operator OAuth app, no per-user secret. Covers both the platform's own connectors, whose credential the runtime mints against the fleet authorizer, and a [hosted gateway](/config/connector-providers/#hosted-mcp-gateways) you hold one account key for. | Click **Install**. There is nothing to enter. | Operator — the catalog entry, plus the fleet-authorizer environment or the gateway's declared key |
 
 For a **static** connector that hasn't been set up yet, non-admins see "Operator setup required" until an admin completes the one-time **Set up** step.
 
-The last three rows depend on something configured once for the whole platform rather than anything in this workspace — but on *different* platform machinery: **composio** and **smithery** on a configured [connector provider](/config/connector-providers/), **provider** on the fleet authorizer. None of them is something a workspace admin can turn on.
+The last three rows depend on something configured once for the whole platform rather than anything in this workspace — but on *different* platform machinery: **composio** and **smithery** on a configured [connector provider](/config/connector-providers/), **provider** on the fleet authorizer or a declared gateway. None of them is something a workspace admin can turn on.
 
 ## Where your secrets live
 

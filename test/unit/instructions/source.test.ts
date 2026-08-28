@@ -1,12 +1,12 @@
 /**
  * Platform `instructions` source contract tests.
  *
- * Verifies the two-scope model after the bundle-side rework:
- *   - Resources `instructions://org` and `instructions://workspace` round-trip
- *     through `InstructionsStore` (callback-form `text` reads on every call).
- *   - The single tool `write_instructions(scope, text)` writes via storage,
- *     fires `notifications/resources/updated` for the matching URI, and
- *     enforces role gates per scope.
+ * Verifies the workspace-only overlay model:
+ *   - Resource `instructions://workspace` round-trips through
+ *     `InstructionsStore` (callback-form `text` reads on every call).
+ *   - The single tool `write_instructions(body)` writes via storage,
+ *     fires `notifications/resources/updated`, and enforces the
+ *     workspace-admin gate (no org-role bypass).
  *   - Per-bundle instructions are NOT in this source's surface area —
  *     bundles publish their own `<sourceName>://instructions` resource;
  *     the runtime reads it. Verified at integration tier.
@@ -117,19 +117,12 @@ function parseStructured(result: { content?: Array<{ type: string; text?: string
 // ── Resources ───────────────────────────────────────────────────────────
 
 describe("instructions source — resources", () => {
-  test("resources/list exposes exactly instructions://org and instructions://workspace", async () => {
+  test("resources/list exposes exactly instructions://workspace", async () => {
     const src = await buildSource();
     const client = src.getClient()!;
     const result = await client.listResources();
     const uris = result.resources.map((r) => r.uri).sort();
-    expect(uris).toEqual(["instructions://org", "instructions://workspace"]);
-  });
-
-  test("instructions://org returns empty body when nothing written", async () => {
-    const src = await buildSource();
-    const client = src.getClient()!;
-    const data = await client.readResource({ uri: "instructions://org" });
-    expect(data.contents?.[0]?.text).toBe("");
+    expect(uris).toEqual(["instructions://workspace"]);
   });
 
   test("instructions://workspace requires a workspace context (throws via callback)", async () => {
@@ -144,7 +137,7 @@ describe("instructions source — resources", () => {
     runtime.wsId = "ws_demo";
     await runtime
       .getInstructionsStore()
-      .write({ scope: "workspace", wsId: "ws_demo", text: "ws-body", updatedBy: "ui" });
+      .write({ wsId: "ws_demo", text: "ws-body", updatedBy: "ui" });
     const client = src.getClient()!;
     const data = await client.readResource({ uri: "instructions://workspace" });
     expect(data.contents?.[0]?.text).toBe("ws-body");
@@ -157,14 +150,14 @@ describe("instructions source — resources", () => {
 
     await runtime
       .getInstructionsStore()
-      .write({ scope: "workspace", wsId: "ws_demo", text: "v1", updatedBy: "ui" });
+      .write({ wsId: "ws_demo", text: "v1", updatedBy: "ui" });
     expect(
       (await client.readResource({ uri: "instructions://workspace" })).contents?.[0]?.text,
     ).toBe("v1");
 
     await runtime
       .getInstructionsStore()
-      .write({ scope: "workspace", wsId: "ws_demo", text: "v2", updatedBy: "agent" });
+      .write({ wsId: "ws_demo", text: "v2", updatedBy: "agent" });
     expect(
       (await client.readResource({ uri: "instructions://workspace" })).contents?.[0]?.text,
     ).toBe("v2");
@@ -186,12 +179,12 @@ describe("instructions source — write_instructions", () => {
 
     const result = await client.callTool({
       name: "write_instructions",
-      arguments: { scope: "workspace", body: "ws body" },
+      arguments: { body: "ws body" },
     });
     expect(result.isError).toBeFalsy();
     expect((result as { structuredContent?: { ok?: boolean } }).structuredContent?.ok).toBe(true);
 
-    const body = await runtime.getInstructionsStore().read({ scope: "workspace", wsId: "ws_demo" });
+    const body = await runtime.getInstructionsStore().read({ wsId: "ws_demo" });
     expect(body).toBe("ws body");
 
     await new Promise((r) => setTimeout(r, 0));
@@ -203,16 +196,16 @@ describe("instructions source — write_instructions", () => {
     runtime.wsId = "ws_demo";
     await runtime
       .getInstructionsStore()
-      .write({ scope: "workspace", wsId: "ws_demo", text: "first", updatedBy: "ui" });
+      .write({ wsId: "ws_demo", text: "first", updatedBy: "ui" });
 
     const client = src.getClient()!;
     const result = await client.callTool({
       name: "write_instructions",
-      arguments: { scope: "workspace", body: "" },
+      arguments: { body: "" },
     });
     expect(result.isError).toBeFalsy();
     expect(
-      await runtime.getInstructionsStore().read({ scope: "workspace", wsId: "ws_demo" }),
+      await runtime.getInstructionsStore().read({ wsId: "ws_demo" }),
     ).toBe("");
   });
 
@@ -223,21 +216,39 @@ describe("instructions source — write_instructions", () => {
     const huge = "x".repeat(8 * 1024 + 1);
     const result = await client.callTool({
       name: "write_instructions",
-      arguments: { scope: "workspace", body: huge },
+      arguments: { body: huge },
     });
     expect(result.isError).toBe(true);
     const parsed = parseStructured(result as { content?: Array<{ type: string; text?: string }> });
     expect(JSON.stringify(parsed)).toContain("8192");
   });
 
-  test("schema rejects unknown scopes (e.g. 'bundles/whatever')", async () => {
+  // A stale `scope` must not be ignored. The schema no longer declares it and
+  // unknown keys pass validation, so ignoring it would redirect an org-intended
+  // write onto the workspace overlay — overwrite-only, no history, previous body
+  // gone, with a success string as the only signal.
+  test("a stale `scope` is refused, and nothing is written", async () => {
     const src = await buildSource();
+    runtime.wsId = "ws_demo";
+    await runtime
+      .getInstructionsStore()
+      .write({ wsId: "ws_demo", text: "existing workspace body", updatedBy: "ui" });
     const client = src.getClient()!;
-    const result = await client.callTool({
-      name: "write_instructions",
-      arguments: { scope: "bundles/foo", body: "x" },
-    });
-    expect(result.isError).toBe(true);
+
+    for (const scope of ["org", "bundles/foo"]) {
+      const result = await client.callTool({
+        name: "write_instructions",
+        arguments: { scope, body: "org-intended text" },
+      });
+      expect(result.isError).toBe(true);
+      const { error } = parseStructured(result as never) as { error: string };
+      expect(error).toContain("org-tier");
+    }
+
+    // The refusal precedes the store, so the displaced body is still there.
+    expect(await runtime.getInstructionsStore().read({ wsId: "ws_demo" })).toBe(
+      "existing workspace body",
+    );
   });
 });
 
@@ -260,7 +271,7 @@ describe("instructions source — role gates", () => {
     const client = src.getClient()!;
     const result = await client.callTool({
       name: "write_instructions",
-      arguments: { scope: "workspace", body: "x" },
+      arguments: { body: "x" },
     });
     expect(result.isError).toBe(true);
   });
@@ -282,7 +293,7 @@ describe("instructions source — role gates", () => {
     const client = src.getClient()!;
     const result = await client.callTool({
       name: "write_instructions",
-      arguments: { scope: "workspace", body: "x" },
+      arguments: { body: "x" },
     });
     expect(result.isError).toBe(true);
     const parsed = parseStructured(
@@ -308,7 +319,7 @@ describe("instructions source — role gates", () => {
     const client = src.getClient()!;
     const result = await client.callTool({
       name: "write_instructions",
-      arguments: { scope: "workspace", body: "x" },
+      arguments: { body: "x" },
     });
     expect(result.isError).toBe(true);
   });
@@ -329,39 +340,11 @@ describe("instructions source — role gates", () => {
     const client = src.getClient()!;
     const result = await client.callTool({
       name: "write_instructions",
-      arguments: { scope: "workspace", body: "ws-body" },
+      arguments: { body: "ws-body" },
     });
     expect(result.isError).toBeFalsy();
   });
 
-  test("non-admin identity denied for org scope; org owner allowed", async () => {
-    const src = await buildSource();
-    runtime.hasIdentityProvider = true;
-    const client = src.getClient()!;
-
-    runtime.identity = {
-      id: "u1",
-      email: "u@ex.com",
-      displayName: "U",
-      orgRole: "member",
-      preferences: { timezone: "UTC", locale: "en-US", theme: "system" },
-    };
-    const denied = await client.callTool({
-      name: "write_instructions",
-      arguments: { scope: "org", body: "x" },
-    });
-    expect(denied.isError).toBe(true);
-
-    runtime.identity = {
-      ...runtime.identity,
-      orgRole: "owner",
-    };
-    const allowed = await client.callTool({
-      name: "write_instructions",
-      arguments: { scope: "org", body: "org-policy" },
-    });
-    expect(allowed.isError).toBeFalsy();
-  });
 });
 
 // ── Unattended-run wall ─────────────────────────────────────────────────
@@ -374,40 +357,33 @@ describe("instructions source — unattended runs", () => {
   // hold there. Enforced at the source, which is the single dispatch point,
   // so a delegated sub-agent at any depth is covered too.
 
-  async function writeUnattended(scope: "workspace" | "org") {
+  async function writeUnattended() {
     const src = await buildSource();
     runtime.wsId = "ws_demo";
     const client = src.getClient()!;
     return runWithRequestContext({ identity: null, unattended: true }, () =>
-      client.callTool({ name: "write_instructions", arguments: { scope, body: "x" } }),
+      client.callTool({ name: "write_instructions", arguments: { body: "x" } }),
     );
   }
 
-  test("workspace-scope write is refused inside an unattended run", async () => {
-    const result = await writeUnattended("workspace");
+  test("a write is refused inside an unattended run", async () => {
+    const result = await writeUnattended();
 
     expect(result.isError).toBe(true);
     const { error } = parseStructured(result as never) as { error: string };
     expect(error).toContain("unattended automation run");
 
     // Nothing landed — the refusal is before the store, not after it.
-    expect(await runtime.getInstructionsStore().read({ scope: "workspace", wsId: "ws_demo" })).toBe(
+    expect(await runtime.getInstructionsStore().read({ wsId: "ws_demo" })).toBe(
       "",
     );
-  });
-
-  test("org-scope write is refused too", async () => {
-    const result = await writeUnattended("org");
-
-    expect(result.isError).toBe(true);
-    expect(await runtime.getInstructionsStore().read({ scope: "org" })).toBe("");
   });
 
   test("the wall outranks dev mode, which otherwise allows every write", async () => {
     // `hasIdentityProvider` stays false here — the dev-mode allow-through is
     // the widest gate in this function, and the wall is checked before it.
     expect(runtime.hasIdentityProvider).toBe(false);
-    expect((await writeUnattended("workspace")).isError).toBe(true);
+    expect((await writeUnattended()).isError).toBe(true);
   });
 
   test("an interactive run with the same setup writes normally", async () => {
@@ -419,12 +395,12 @@ describe("instructions source — unattended runs", () => {
     const result = await runWithRequestContext({ identity: null }, () =>
       client.callTool({
         name: "write_instructions",
-        arguments: { scope: "workspace", body: "ws body" },
+        arguments: { body: "ws body" },
       }),
     );
 
     expect(result.isError).toBeFalsy();
-    expect(await runtime.getInstructionsStore().read({ scope: "workspace", wsId: "ws_demo" })).toBe(
+    expect(await runtime.getInstructionsStore().read({ wsId: "ws_demo" })).toBe(
       "ws body",
     );
   });
@@ -441,13 +417,16 @@ describe("instructions source — tool list", () => {
     expect(names).toEqual(["write_instructions"]);
   });
 
-  test("write_instructions description preserves the description-as-policy framing", async () => {
+  test("write_instructions is internal — the settings UI's tool, not the model's", async () => {
+    // The overlay is injected into every conversation, so its author is the
+    // human in the settings UI. The annotation is what keeps the tool out of
+    // the model's surface (surfacing filter, search, promotion) while the UI
+    // still calls it by name over /v1/tools/call.
     const src = await buildSource();
     const client = src.getClient()!;
     const tools = await client.listTools();
     const writeTool = tools.tools.find((t) => t.name === "write_instructions");
-    expect(writeTool?.description).toContain("Use this only when the user explicitly asks");
-    expect(writeTool?.description).toContain("strongly recurring pattern");
+    expect((writeTool?._meta as Record<string, unknown>)?.["ai.nimblebrain/internal"]).toBe(true);
     expect(writeTool?.description).toContain("Empty text clears");
   });
 

@@ -49,10 +49,32 @@ export interface RequestContext {
    * Tools that ask "what's happening in the current conversation" (e.g.
    * `skills__active_for`) read this when their input omits an explicit id.
    * Optional / undefined when the context is created outside a chat (REST tool
-   * calls, MCP server requests, background jobs); tools must error explicitly
-   * rather than silently falling back to the wrong conversation.
+   * calls, MCP server requests, background jobs, task runs); tools must error
+   * explicitly rather than silently falling back to the wrong conversation.
+   *
+   * **A value here is always a real, loadable conversation id.** An unattended
+   * run carries {@link runId} instead — see there for why the two are separate
+   * fields rather than one correlation id wearing whichever name fits.
    */
   conversationId?: string;
+  /**
+   * Correlation id of the unattended run this context belongs to
+   * (`executeTask`). Undefined in a chat.
+   *
+   * Separate from {@link conversationId} because a run has no conversation:
+   * `executeTask` persists a run result, not a chat. Carrying the run id in
+   * `conversationId` made one field answer two questions, and every consumer
+   * had to know which caller populated it — which five of the nine readers
+   * did not. They looked the id up as a conversation and got a miss: a tool
+   * reporting `Conversation not found: run_…`, a dedupe check reading a
+   * conversation that does not exist, and a skill an automation created
+   * persisting `origin: "chat"` with a run id attached.
+   *
+   * A reader wanting "the conversation" reads `conversationId` and correctly
+   * gets nothing in a run. A reader wanting "what correlates this work" —
+   * the usage ledger, telemetry — reads this.
+   */
+  runId?: string;
   /**
    * The model this turn is actually running on, already resolved and
    * provider-qualified.

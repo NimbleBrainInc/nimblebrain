@@ -22,7 +22,7 @@ The runtime produces these spans today:
 | `tool.dispatch` | An MCP tool dispatch |
 | HTTP server span | The inbound request; continues an upstream `traceparent` if present |
 
-Spans nest automatically and carry the verified request identity (`user_id`, `workspace_id`, `conversation_id`) plus the boot-time `tenant_id`. They **never** carry the user's display name, email, secrets, prompts, tool arguments or results, or file contents.
+Spans nest automatically and carry the verified request identity (`user_id`, `workspace_id`, and either `conversation_id` for a chat or `run_id` for a scheduled run) plus the boot-time `tenant_id`. They **never** carry the user's display name, email, secrets, prompts, tool arguments or results, or file contents.
 
 ### Enabling export
 
@@ -65,7 +65,8 @@ Each JSON line is auto-enriched with:
 | `service` | `NB_SERVICE_NAME` |
 | `tenant_id` | `NB_TENANT_ID` (boot-time, omitted in dev) |
 | `correlation_id` | The active trace id — pivot a log straight to its trace |
-| `user_id` / `workspace_id` / `conversation_id` | The verified request identity (omitted when not in a request) |
+| `user_id` / `workspace_id` | The verified request identity (omitted when not in a request) |
+| `conversation_id` / `run_id` | What the work belongs to — a chat carries the first, a scheduled run the second, never both |
 
 Identity comes only from the verified request context, never the wire, and never includes the human display name. Logs stay on stderr, so Kubernetes captures them alongside stdout and stdout stays clean for JSON-RPC and piped output.
 

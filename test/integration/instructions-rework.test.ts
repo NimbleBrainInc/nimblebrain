@@ -10,7 +10,7 @@
  *     excluded with no negotiation. (Plain MCP servers like ipinfo end up
  *     here.)
  *   - Org and workspace overlays remain platform-owned, written via
- *     `instructions__write_instructions(scope, text)`.
+ *     `instructions__write_instructions(body)`.
  *
  * This test verifies the contract end-to-end by:
  *   (a) seeding a synthetic local bundle that publishes
@@ -350,7 +350,7 @@ suiteFn("bundle instructions — bundle-side convention", () => {
   );
 
   test(
-    "instructions__write_instructions(scope=workspace) body reaches the live system prompt",
+    "instructions__write_instructions body reaches the live system prompt",
     async () => {
       const wsRegistry = runtime.getRegistryForWorkspace(TEST_WORKSPACE_ID);
       const overlayText = "Workspace policy: prefer plaintext outputs over Markdown.";
@@ -362,7 +362,7 @@ suiteFn("bundle instructions — bundle-side convention", () => {
           const writeResult = await wsRegistry.execute({
             id: "test-write-ws",
             name: "instructions__write_instructions",
-            input: { scope: "workspace", body: overlayText },
+            input: { body: overlayText },
           });
           expect(writeResult.isError).toBe(false);
         },
@@ -400,7 +400,7 @@ suiteFn("bundle instructions — bundle-side convention", () => {
           const clearResult = await wsRegistry.execute({
             id: "test-clear-ws",
             name: "instructions__write_instructions",
-            input: { scope: "workspace", body: "" },
+            input: { body: "" },
           });
           expect(clearResult.isError).toBe(false);
         },

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { textContent } from "../../../src/engine/content-helpers.ts";
+import { INTERNAL_TOOL_ANNOTATION } from "../../../src/engine/types.ts";
 import { ToolRegistry } from "../../../src/tools/registry.ts";
 import { rankToolSearchResults } from "../../../src/tools/search-ranking.ts";
 import { makeInProcessSource } from "../../helpers/in-process-source.ts";
@@ -74,5 +75,39 @@ describe("ToolRegistry invalid-tool-name suggestions", () => {
 		const text = result.content[0]?.type === "text" ? result.content[0].text : "";
 		expect(text).toContain("Did you mean");
 		expect(text).toContain("synapse-todo-board__create_board_task");
+	});
+
+	it("never suggests an internal tool", async () => {
+		// The hint writes matched names AND descriptions into the model's
+		// context, so it is a tool-listing surface like any other. An
+		// `ai.nimblebrain/internal` tool is a UI-driven affordance the model
+		// must never be handed — it is stripped from chat surfacing,
+		// `nb__search`, promotion, and `/mcp` tools/list, and this is the
+		// remaining path that could name one back. The bare query below is an
+		// exact token match for the internal tool, so a missing filter surfaces
+		// it at rank 1.
+		const registry = new ToolRegistry();
+		registry.addSource(
+			await makeInProcessSource("instructions", [
+				{
+					name: "write_instructions",
+					description: "Save workspace-wide custom instructions",
+					annotations: { [INTERNAL_TOOL_ANNOTATION]: true },
+					inputSchema: { type: "object", properties: {} },
+					handler: async () => ({ content: textContent("ok"), isError: false }),
+				},
+			]),
+		);
+
+		const result = await registry.execute({
+			id: "t2",
+			name: "write_instructions",
+			input: {},
+		});
+
+		expect(result.isError).toBe(true);
+		const text = result.content[0]?.type === "text" ? result.content[0].text : "";
+		expect(text).not.toContain("instructions__write_instructions");
+		expect(text).not.toContain("Did you mean");
 	});
 });

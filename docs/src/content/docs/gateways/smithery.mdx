@@ -1,0 +1,137 @@
+---
+title: Smithery Gateway Setup
+description: Configure Smithery as a managed-connector provider so workspaces can install Smithery-hosted MCP servers without handling credentials.
+---
+
+import { Steps, Aside } from '@astrojs/starlight/components';
+
+[Smithery](https://smithery.ai) hosts MCP servers and brokers the credentials they need. Configure it once for the whole platform, and a workspace admin installs a Smithery-backed connector the same way they install any other: click **Install** and stop thinking about it.
+
+This guide covers the operator half. For what a provider *is*, how it differs from a connector, and which hosted-MCP vendors broker anything, read [Connector Providers](/config/connector-providers/).
+
+## What Smithery does here
+
+Smithery holds two roles the platform would otherwise hold itself:
+
+- It stores the upstream credential for each connection, write-only, on its side.
+- It hosts an MCP endpoint per connection, so the platform connects to Smithery rather than to the upstream server.
+
+It does not send users back to NimbleBrain after a sign-in. A Smithery connection that needs authorization exposes a Smithery-hosted setup page, and the round trip finishes there. The platform mounts no callback routes for Smithery as a result, which is the visible difference from [Composio](/gateways/composio/).
+
+## One-time setup
+
+<Steps>
+1. **Create a Smithery account and claim a namespace.**
+
+   Connections live under a namespace that Smithery scopes to your account. Note the exact name. You declare it below and the platform will not guess it.
+
+2. **Generate an API key.**
+
+   This one key serves every workspace on the instance. Treat it as a platform credential, not a per-team secret.
+
+3. **Declare the provider in `nimblebrain.json`.**
+
+   ```jsonc
+   {
+     "connectors": {
+       "providers": {
+         "smithery": {
+           "apiKey": "${SMITHERY_API_KEY}",
+           "namespace": "your-namespace"
+         }
+       }
+     }
+   }
+   ```
+
+   The platform registers Smithery only when both the key and the namespace resolve. Set one without the other and the integration stays off.
+
+4. **Add catalog entries for the servers you want to offer.**
+
+   A Smithery connector names its target by Smithery registry qualified name, and Smithery resolves that name to whichever endpoint it currently runs. The entry still needs a `remotes` block: the projection that builds the Browse list drops any entry without one, and the install overwrites the URL with the brokered session URL. So the value is a placeholder, but a required one.
+
+   ```yaml
+   servers:
+     - name: ai.smithery/example-server
+       title: Example Server
+       description: What this server does for the user
+       version: "1.0.0"
+       remotes:
+         - type: streamable-http
+           url: https://server.smithery.ai/your-namespace/example-server/mcp
+       _meta:
+         ai.nimblebrain/connector:
+           auth: smithery
+           smithery:
+             server: your-namespace/example-server
+           tags: [research]
+   ```
+
+   Catalog entries are deployment configuration. See [Connectors Catalog](/config/connectors-catalog/) for where the file lives and how to mount it.
+
+5. **Verify the provider came up.**
+
+   Start the platform and look for this line:
+
+   ```
+   [smithery] integration: configured (namespace=your-namespace, base=https://api.smithery.ai)
+   ```
+
+   A workspace admin can now install the connector from **Settings → Connectors → Browse**.
+</Steps>
+
+## Configuration reference
+
+| Field | Default | Notes |
+|---|---|---|
+| `apiKey` | none | Falls back to the `SMITHERY_API_KEY` environment variable. |
+| `namespace` | none | Declared only. There is no environment fallback, and no default is invented. |
+| `baseUrl` | `https://api.smithery.ai` | Must be `http` or `https`. The session URL derives from it and lands in workspace state. |
+| `monitorEnabled` | `true` | Turns off Smithery's arm of the connection revalidator without disabling the provider. |
+
+The full block, including how the credential resolves, lives in the [`nimblebrain.json` reference](/config/nimblebrain-json/#connectorsproviderssmithery).
+
+<Aside type="caution" title="A blank declared namespace counts as absent">
+A templated deployment that renders `"namespace": "{{ .Values.smithery.namespace }}"` with the value unset produces an empty string, and the platform reads that as undeclared. Smithery then stays off with a warning rather than starting half-configured. Check the boot log after any templating change.
+</Aside>
+
+## Multi-tenant deployments
+
+Connections carry an owner key built from `NB_TENANT_ID` and the workspace id. Two tenants running the same workspace id would otherwise share one Smithery connection and the upstream grant behind it. Bouncer mode already refuses to start without `NB_TENANT_ID`, so a multi-tenant deployment cannot reach that collision, but single-tenant deployments that later grow into multi-tenant should set the variable before they do.
+
+## What a user sees
+
+A Smithery connector has no sign-in step inside NimbleBrain. Installing it mints a connection, and one of four things happens:
+
+- The connection comes back ready, and the connector reaches **Connected** with no further action.
+- Smithery needs the user to authorize the upstream service, and the install fails with a message carrying a Smithery setup link.
+- Smithery needs configuration values, and the install fails the same way with a link to supply them.
+- Smithery reports the connection in an error state, and the install fails carrying whatever detail Smithery gave. This one is Smithery's to resolve, not the user's.
+
+In the second and third cases the user completes setup at Smithery, then installs again. Connection ids are derived from the owner and the server name, so the retry adopts the connection that setup just finished rather than creating a second one.
+
+## Uninstalling
+
+Removing the connector deletes the connection at Smithery, which also drops the upstream grant Smithery held. There is no local credential directory to clear, because Smithery stored the credential and the platform never had a copy.
+
+The namespace and host recorded when the connector was installed drive that delete, not the current config. Repointing `baseUrl` or `namespace` therefore cannot send a delete to the wrong place and report success while the real connection survives.
+
+## Troubleshooting
+
+**The boot log says `not configured`.** Neither `connectors.providers.smithery.apiKey` nor `SMITHERY_API_KEY` resolved.
+
+**The boot log warns about a missing namespace.** The key resolved and the namespace did not. Declare `namespace` in the block.
+
+**An install fails asking for authorization.** Open the setup link in the error, finish at Smithery, then install again.
+
+**A connector flips to `reauth_required` on its own.** The revalidator found the connection **gone at Smithery** — a 404 is the only answer that flips a Smithery connector. Someone deleted it at the broker. Repointing `namespace` or `baseUrl` is not a cause: the probe reads both from the connector's own install record, so an existing connection keeps being checked where it was created. Reinstall the connector to mint a fresh one; a Smithery setup page will not help, because there is no connection left to set up. To stop the polling without removing the provider, set `monitorEnabled: false`.
+
+**A user's upstream authorization lapsed and nothing flipped.** Expected. `auth_required` and `input_required` both report `indeterminate`, so the connector stays `running`. A liveness verdict cannot carry Smithery's setup URL, and flipping without one would strand the user with no route back. The symptom is tool calls failing against the upstream service while the connector reads healthy; the remedy is the same setup page the install path links.
+
+**A connection exists at Smithery for a connector that is not installed.** Installing mints the connection before its status is known, so a user who abandons setup leaves one behind. Completing setup and retrying adopts it. Nothing else reclaims it, so delete abandoned connections at Smithery directly.
+
+## Related
+
+- [Connector Providers](/config/connector-providers/) — provider versus connector
+- [Connectors Catalog](/config/connectors-catalog/) — authoring catalog entries
+- [Composio Aggregator](/gateways/composio/) — the other shipped provider
