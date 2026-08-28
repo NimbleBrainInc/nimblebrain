@@ -332,12 +332,23 @@ async function forwardAdmitted(
 /**
  * Response headers passed back to the vendor.
  *
- * The status is the connector's, and so is the content type — but hop headers
- * describing the connection the runtime opened must not describe the one it is
- * answering on.
+ * The status is the connector's, and so is the content type — but three classes
+ * of header describe the hop the runtime made rather than the one it is
+ * answering on, and re-emitting any of them describes the wrong response.
+ *
+ * `content-encoding` and `content-length` are the ones that bite. `fetch`
+ * transparently decodes a compressed response body but leaves both headers on
+ * `upstream.headers`, so copying them tells the vendor `gzip` while handing it
+ * plaintext, at a length that was the compressed one. A vendor's client then
+ * fails to decode, scores the delivery failed, and redelivers — which quietly
+ * inverts the contract this door gives a bundle author, that a `2xx` means the
+ * delivery is durably recorded and will not be retried. The body being returned
+ * here is the decoded one; neither header describes it, so neither travels.
  */
 function passthroughResponseHeaders(upstream: Headers): Headers {
   const out = new Headers(upstream);
+  out.delete("content-encoding");
+  out.delete("content-length");
   out.delete("transfer-encoding");
   out.delete("connection");
   out.delete("keep-alive");

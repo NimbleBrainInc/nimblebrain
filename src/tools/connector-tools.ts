@@ -1961,22 +1961,30 @@ async function handleInstallRemoteOAuth(
   // Inbound hooks the connector declares. Runs after the eager start because it
   // has to call a tool on the server; for a connector whose source starts later
   // (interactive OAuth) this is a no-op and the same reconcile runs when the
-  // connection reaches `running`. A contract error — a declared registration
-  // tool that is missing or does not accept `{vendor, url}` — is fatal to the
-  // install by design: a stream the runtime mints a URL for but can never hand
-  // that URL to would fail silently at first delivery instead.
+  // connection reaches `running`. It joins that reconcile's run rather than
+  // racing it — see `singleFlight` in `hooks/reconcile.ts`.
+  //
+  // A contract violation is a WARNING, not an error, for the same reason the
+  // eager start above returns one: by this line the ref is persisted, the
+  // instance is seeded and the source is running, so the install has succeeded
+  // and saying otherwise describes state we kept. The check cannot move ahead
+  // of that commit — it needs the server's tool list, and the source is not
+  // started until after the ref is written — and reporting a failed install for
+  // a connector that is installed sends the operator to a retry that
+  // `handleDuplicateInstall` short-circuits, which is how the check would end up
+  // firing exactly once and then never again.
   const hookWarning = await provisionDeclaredHooks(ctx, wsId, serverName);
-  if (hookWarning) return errResult(hookWarning);
 
+  const warning = [startWarning, hookWarning].filter(Boolean).join(" ") || undefined;
   return {
-    content: textContent(remoteInstallMessage(entry.name, isPersonalTarget, startWarning)),
+    content: textContent(remoteInstallMessage(entry.name, isPersonalTarget, warning)),
     structuredContent: {
       ok: true,
       alreadyInstalled: false,
       serverName,
       scope: "workspace",
       wsId,
-      ...(startWarning ? { warning: startWarning } : {}),
+      ...(warning ? { warning } : {}),
     },
     isError: false,
   };
@@ -1985,21 +1993,25 @@ async function handleInstallRemoteOAuth(
 /**
  * Provision a freshly-installed connector's declared hooks.
  *
- * Returns an error message when the connector's manifest breaks the hook
- * contract, so the install fails and names the offending declaration; returns
- * `null` on success, on a connector with no hooks, and on a runtime with no
- * hooks door. A `register_tool` call that merely FAILS is not an error here —
- * it is logged and the recorded registration lets a later `rotate_hook` retry
- * (see `provisionHooks`).
+ * Returns a WARNING string naming the offending declaration when the
+ * connector's manifest breaks the hook contract, or `undefined` on success, on
+ * a connector with no hooks, and on a runtime with no hooks door. Never an
+ * error: by the time this runs the install has committed, so the caller
+ * surfaces it beside the eager-start warning rather than reporting a failure
+ * for a connector that is installed and running.
+ *
+ * The violation stays visible after the install returns — the same reconcile
+ * re-runs (and re-logs) on every transition to `running`, so a restart or a
+ * reconnect re-reports it rather than the check firing once and going quiet.
  */
 async function provisionDeclaredHooks(
   ctx: ManageConnectorsContext,
   wsId: string,
   serverName: string,
-): Promise<string | null> {
+): Promise<string | undefined> {
   try {
     await ensureHooks(ctx.runtime.getHookReconcileDeps(), wsId, serverName);
-    return null;
+    return undefined;
   } catch (err) {
     if (err instanceof HookContractError) return err.message;
     // Anything else (the source went away mid-install, a transient store
@@ -2010,7 +2022,7 @@ async function provisionDeclaredHooks(
       workspace_id: wsId,
       reason: err instanceof Error ? err.message : String(err),
     });
-    return null;
+    return undefined;
   }
 }
 

@@ -82,7 +82,8 @@ export async function ensureHooks(
   connector: string,
   opts: EnsureHooksOptions = {},
 ): Promise<ProvisionedHook[]> {
-  if (!deps.identity) return [];
+  const identity = deps.identity;
+  if (!identity) return [];
 
   let declarations = await deps.declarationsFor(connector);
   if (declarations.length === 0) return [];
@@ -103,15 +104,65 @@ export async function ensureHooks(
     return [];
   }
 
-  return provisionHooks({
-    identity: deps.identity,
-    store: deps.workspaceStore,
-    wsId,
-    connector,
-    declarations,
-    port,
-    rotate: opts.rotate,
-    onlyVendor: opts.onlyVendor,
+  const run = () =>
+    provisionHooks({
+      identity,
+      store: deps.workspaceStore,
+      wsId,
+      connector,
+      declarations,
+      port,
+      rotate: opts.rotate,
+      onlyVendor: opts.onlyVendor,
+    });
+
+  // A rotation always mints, so it must never be deduped into somebody else's
+  // in-flight ensure — an operator who asked for a fresh URL has to get one.
+  if (opts.rotate) return run();
+  return singleFlight(flightKey(wsId, connector), run);
+}
+
+/**
+ * Coalesce concurrent provisioning for one `(workspace, connector)`.
+ *
+ * A fresh install reaches `provisionHooks` from TWO directions at once: the
+ * connection-reached-running observer, fired from inside the awaited
+ * `startBundleSource`, and the install handler on the line after the eager
+ * start returns. Both read the workspace before either writes, so both see no
+ * registration and both mint — two divergent `kid`s, one persisted, neither
+ * recorded as the other's `prevKid`, and `register_tool` called twice with two
+ * different URLs. Because which URL the server keeps is independent of which
+ * write landed, the connector can be left registered on a `kid` the door will
+ * never admit: every delivery 404s, permanently and silently, while the
+ * registration looks healthy.
+ *
+ * The flight is entered AFTER the `onlyMissing` filter and the not-running
+ * return, deliberately. That is what keeps the two callers from coalescing on
+ * divergent intent: the only path where both have work to do is the fresh
+ * install, where their declaration sets are identical because neither has a
+ * registration to filter. On a reinstall the observer's set is already empty
+ * and it returns before the flight, leaving the install to re-register alone.
+ */
+const flights = new Map<string, Promise<ProvisionedHook[]>>();
+
+function flightKey(wsId: string, connector: string): string {
+  return `${wsId}|${connector}`;
+}
+
+function singleFlight(
+  key: string,
+  run: () => Promise<ProvisionedHook[]>,
+): Promise<ProvisionedHook[]> {
+  const inflight = flights.get(key);
+  if (inflight) return inflight;
+  // Started before the map write so a synchronous throw inside `run` cannot
+  // leave a rejected promise parked under the key.
+  const started = run();
+  flights.set(key, started);
+  // Cleared whether it resolved or threw, so a failed provision does not pin
+  // every later caller to the rejection.
+  return started.finally(() => {
+    if (flights.get(key) === started) flights.delete(key);
   });
 }
 

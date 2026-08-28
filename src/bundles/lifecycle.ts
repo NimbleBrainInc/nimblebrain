@@ -348,7 +348,7 @@ export class BundleLifecycleManager {
     principalId: string,
     newState: ConnectionState,
   ): void {
-    if (newState !== "running" || principalId !== "_workspace") return;
+    if (newState !== "running" || principalId !== WORKSPACE_PRINCIPAL_ID) return;
     if (!this.onConnectionRunning) return;
     try {
       this.onConnectionRunning(wsId, serverName);

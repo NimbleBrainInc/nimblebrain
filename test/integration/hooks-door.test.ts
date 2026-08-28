@@ -228,6 +228,39 @@ describe("a legitimate delivery", () => {
   });
 });
 
+describe("the response the vendor gets", () => {
+  test("carries no content-encoding — fetch decoded the body, the header would lie", async () => {
+    // `fetch` decompresses transparently but leaves `content-encoding` and the
+    // COMPRESSED `content-length` on the response. Copying either tells the
+    // vendor gzip and hands it plaintext: its client fails to decode, scores the
+    // delivery failed, and redelivers — inverting the "a 2xx means durably
+    // recorded" contract the docs give a bundle author.
+    upstreamResponse = () =>
+      new Response('{"ok":true}', {
+        status: 202,
+        headers: {
+          "content-type": "application/json",
+          "content-encoding": "gzip",
+          "content-length": "45",
+        },
+      });
+    const res = await deliver(makeApp(), `/v1/hooks/${CONNECTOR}/${VENDOR}/${token()}`);
+    expect(res.status).toBe(202);
+    expect(res.headers.get("content-encoding")).toBeNull();
+    expect(res.headers.get("content-length")).toBeNull();
+    // The parts that DO describe the returned body still travel.
+    expect(res.headers.get("content-type")).toBe("application/json");
+    expect(await res.text()).toBe('{"ok":true}');
+  });
+
+  test("still drops the hop headers", async () => {
+    upstreamResponse = () =>
+      new Response("ok", { status: 202, headers: { "x-connector-note": "kept" } });
+    const res = await deliver(makeApp(), `/v1/hooks/${CONNECTOR}/${VENDOR}/${token()}`);
+    expect(res.headers.get("x-connector-note")).toBe("kept");
+  });
+});
+
 describe("every way a delivery is refused looks the same", () => {
   test("a token that does not open", async () => {
     await expectIndistinguishable404(

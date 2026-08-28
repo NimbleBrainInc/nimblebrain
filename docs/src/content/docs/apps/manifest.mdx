@@ -192,6 +192,14 @@ platform, a CRM — cannot carry a NimbleBrain token, so it cannot call your ser
 directly. Declaring a `hooks` entry asks the host for a URL that it will accept
 those deliveries on and forward to you.
 
+:::note[Catalog connectors only]
+Unlike the rest of this page, `hooks` is read **only** from a connector's entry
+in the operator-published catalog — not from an MCPB bundle manifest. The `route`
+and `register_tool` decide where the host sends a delivery, with a platform token
+attached, so they have to come from metadata an operator published rather than
+from a bundle. Declaring `hooks` in an MCPB manifest has no effect today.
+:::
+
 ```json
 "_meta": {
   "ai.nimblebrain/host": {
@@ -226,10 +234,15 @@ The host never parses a delivery body. Signature verification, parsing, idempote
 
 ### Your `register_tool` must accept `{ vendor, url }`
 
-The host checks this against your advertised `tools/list` **at install time** and
-refuses the install if the tool is missing or does not accept both arguments. A
-stream whose registration tool is wrong would otherwise fail silently, months
-later, at a vendor nobody is watching.
+The host checks this against your advertised `tools/list` **at install time**. If
+the tool is missing or does not accept both arguments, **no URL is minted for any
+of your streams** and the operator is shown a warning naming the offending
+declaration — the connector still installs, and its tools still work. A stream
+whose registration tool is wrong would otherwise fail silently, months later, at
+a vendor nobody is watching.
+
+The check re-runs every time the connection is (re)established, so fixing the
+manifest and reconnecting provisions the streams without a reinstall.
 
 ```python
 @mcp.tool()

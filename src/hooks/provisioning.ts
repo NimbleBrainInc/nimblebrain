@@ -14,20 +14,27 @@ import type { HookDeclaration, HookRegistration } from "./types.ts";
  * refactored:
  *
  *   - A **contract violation** — a declared `register_tool` that does not exist
- *     on the server, or does not accept `{vendor, url}` — REFUSES the install,
- *     before any state is written. The runtime would otherwise mint a capability
- *     it has no way to deliver, and the symptom would be "the vendor never sends
- *     anything", surfacing months later at a vendor nobody is watching. Catching
- *     it at install turns an invisible failure into a legible one.
+ *     on the server, or does not accept `{vendor, url}` — throws
+ *     {@link HookContractError} and provisions nothing. The runtime would
+ *     otherwise mint a capability it has no way to deliver, and the symptom
+ *     would be "the vendor never sends anything", surfacing months later at a
+ *     vendor nobody is watching. Naming it at install turns an invisible
+ *     failure into a legible one.
+ *
+ *     It does NOT refuse the install. The check needs the server's tool list,
+ *     which needs a started source, which the install pipeline does not reach
+ *     until after the bundle ref is committed — so by the time this can run,
+ *     the install has succeeded and reporting otherwise would describe state
+ *     the runtime kept. The caller surfaces it as a warning on a successful
+ *     install instead, and the reconcile re-runs it on every transition to
+ *     `running` so it stays visible rather than firing once.
  *
  *   - A **transient failure** — the registration tool exists but the call fails
  *     (the server is starting, the operator has denied that tool by permission,
- *     the vendor's API is down) — records the `kid` and logs, and does not fail
- *     the install. A connector is useful without its webhook; the receiving
- *     bundle's own reconcile poll is the designed backstop for a stream that
- *     never arrives. Failing the whole install over a hiccup in one stream is
- *     the wrong blast radius, and the recorded registration means a later
- *     `rotate_hook` or re-install retries it.
+ *     the vendor's API is down) — records the `kid` and logs. A connector is
+ *     useful without its webhook; the receiving bundle's own reconcile poll is
+ *     the designed backstop for a stream that never arrives, and the recorded
+ *     registration means a later `rotate_hook` or re-install retries it.
  */
 
 /** What a server must accept on its declared registration tool. */
@@ -177,9 +184,9 @@ function mintUrl(opts: ProvisionHooksOptions, decl: HookDeclaration, kid: string
  * Mint (or rotate) every declared hook for one connector in one workspace, and
  * hand each URL to the server that declared it.
  *
- * Verification of the whole declaration set happens FIRST, before any state is
- * written, so a manifest with one bad declaration refuses the install cleanly
- * rather than half-provisioning it.
+ * Verification of the whole declaration set happens FIRST, before any hook state
+ * is written, so a manifest with one bad declaration provisions nothing at all
+ * rather than half of its streams.
  */
 export async function provisionHooks(opts: ProvisionHooksOptions): Promise<ProvisionedHook[]> {
   const declarations = opts.onlyVendor
