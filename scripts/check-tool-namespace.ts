@@ -45,10 +45,15 @@
  *
  * Known gap: this catches `ws_<id>-` *construction* and `.split("-")`
  * *parsing*. It does NOT catch slicing the bare source out of a wire
- * name via `indexOf("__")` / `slice(0, …)` — the canonical fix for
- * that is the `appNameFromToolName` / `parseNamespacedToolName` helper,
- * not a linter predicate (a `__`-slice predicate false-positives on
- * legitimate display-only suffix extraction like `stripServerPrefix`).
+ * name via `indexOf("__")` / `slice(0, …)`, and the fix for that is a
+ * helper rather than a linter predicate (a `__`-slice predicate
+ * false-positives on legitimate display-only suffix extraction like
+ * `stripServerPrefix`). Which helper depends on the grammar being
+ * decomposed: `splitInnerToolName` (`src/util/tool-name.ts`) for the
+ * `<source>__<tool>` split every dispatch door shares,
+ * `parseNamespacedToolName` for the `ws_<id>-` prefix this lint owns,
+ * and `appNameFromToolName` (`web/src/lib/namespaced-tool.ts`) for the
+ * web tier, which can import neither.
  */
 
 import { readFileSync } from "node:fs";

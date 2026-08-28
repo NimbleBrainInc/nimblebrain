@@ -39,6 +39,7 @@ import {
 } from "../orchestrator/index.ts";
 import { assertToolAllowed } from "../permissions/assert-tool-allowed.ts";
 import type { PermissionOwner } from "../permissions/permission-store.ts";
+import { splitInnerToolName } from "../util/tool-name.ts";
 import {
   getRequestContext,
   type RequestContext,
@@ -131,25 +132,6 @@ function buildPerCallContext(
   };
 }
 
-/**
- * Split `<source>__<tool>` into its source prefix and bare tool name, on the
- * FIRST `__`. A local mirror of `tools/namespace.ts::splitInnerToolName`
- * (byte-identical logic) — a `src/runtime/` module may not import `src/tools/`
- * (the `check:cycles` layering rule), so the canonical helper can't be shared
- * here. Keep the two in sync.
- */
-function splitInnerToolName(innerName: string): {
-  sourcePrefix: string;
-  bareToolName: string;
-} {
-  const sepIndex = innerName.indexOf("__");
-  if (sepIndex < 0) return { sourcePrefix: innerName, bareToolName: innerName };
-  return {
-    sourcePrefix: innerName.slice(0, sepIndex),
-    bareToolName: innerName.slice(sepIndex + 2),
-  };
-}
-
 export class IdentityToolRouter implements ToolRouter {
   private readonly identityId: string;
   private readonly workspaceId: string;
@@ -214,8 +196,8 @@ export class IdentityToolRouter implements ToolRouter {
 
     // `routed.toolName` is the inner `<source>__<tool>` form (the namespace
     // primitive only strips the `ws_<id>-` prefix). `ToolSource.execute` takes
-    // the bare local tool name (no source prefix) — mirroring
-    // `ToolRegistry.execute`'s contract.
+    // the bare local tool name (no source prefix), decomposed through the one
+    // grammar every door shares (`src/util/tool-name.ts`).
     const { sourcePrefix, bareToolName } = splitInnerToolName(routed.toolName);
 
     const denied = await this.connectorPermissionDenial(routed, sourcePrefix, bareToolName);

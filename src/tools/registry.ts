@@ -9,6 +9,7 @@ import {
 import { log } from "../observability/log.ts";
 import { assertToolAllowed } from "../permissions/assert-tool-allowed.ts";
 import type { PermissionStore } from "../permissions/permission-store.ts";
+import { splitInnerToolName } from "../util/tool-name.ts";
 import type { McpSource } from "./mcp-source.ts";
 import { rankToolSearchResults } from "./search-ranking.ts";
 import type { Tool, ToolSource } from "./types.ts";
@@ -186,8 +187,12 @@ export class ToolRegistry implements ToolRouter {
   }
 
   async execute(call: ToolCall, signal?: AbortSignal): Promise<ToolResult> {
-    const sepIndex = call.name.indexOf("__");
-    if (sepIndex === -1) {
+    const {
+      sourcePrefix: prefix,
+      bareToolName: localName,
+      hasSeparator,
+    } = splitInnerToolName(call.name);
+    if (!hasSeparator) {
       // Auto-search for matching tools to help the LLM recover
       const suggestions = await this.searchTools(call.name);
       const hint =
@@ -201,9 +206,6 @@ export class ToolRegistry implements ToolRouter {
         isError: true,
       };
     }
-
-    const prefix = call.name.slice(0, sepIndex);
-    const localName = call.name.slice(sepIndex + 2);
 
     const source = this.sources.get(prefix);
     if (!source) {
