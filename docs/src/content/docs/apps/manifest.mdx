@@ -82,13 +82,14 @@ These fields are defined by the [MCPB specification](https://github.com/modelcon
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `host_version` | `string` | Yes | Host extension contract version: `"1.0"` or `"1.1"`. `1.1` is the version that adds the `host_capabilities` block — set it when you declare that block. |
+| `host_version` | `string` | Yes | Host extension contract version: `"1.0"`, `"1.1"`, or `"1.2"`. `1.1` adds the `host_capabilities` block and `1.2` adds `hooks` — set the version that matches the newest block you declare. |
 | `name` | `string` | Recommended | Display name shown in the sidebar and app list. Without a `name` the host surfaces no UI for the bundle, so it's required in practice for any app with a presence in the shell. |
 | `icon` | `string` | No | [Lucide icon](https://lucide.dev/icons) name in kebab-case (e.g., `"database"`, `"message-square"`, `"hand"`). Defaults to `""`. |
 | `category` | `string` | No | Reserved, free-form string. Not currently consumed by the host — declare it only as forward-looking metadata. |
 | `placements` | `PlacementDeclaration[]` | No | Shell layout placement declarations — sidebar items, main views, and settings sections. See [Placements](/apps/placements). |
 | `briefing` | `object` | No | Daily briefing contribution. See [briefing](#briefing-object) below. |
 | `host_capabilities` | `object` | No | NimbleBrain host capabilities this bundle requires or prefers. Declare `host_version: "1.1"` alongside it. See [Host Capabilities](/apps/host-capabilities). |
+| `hooks` | `HookDeclaration[]` | No | Inbound event streams your server accepts from a vendor over plain HTTPS. Declare `host_version: "1.2"` alongside it. See [hooks](#hooks-inbound-webhooks) below. |
 
 ### Settings sections
 
@@ -182,6 +183,87 @@ Each entry in the `placements` array:
 | `icon` | `string` | No | — | Lucide icon name (kebab-case). Falls back to `CircleDot` if unset or unrecognized. |
 | `route` | `string` | No | — | Route path for `"main"` slot placements. Registers as `/app/<route>`. |
 | `size` | `"compact" \| "full" \| "auto"` | No | — | Size hint for the slot renderer. |
+
+
+## `hooks`: inbound webhooks
+
+A vendor that delivers events to a webhook URL — a payment processor, a campaign
+platform, a CRM — cannot carry a NimbleBrain token, so it cannot call your server
+directly. Declaring a `hooks` entry asks the host for a URL that it will accept
+those deliveries on and forward to you.
+
+```json
+"_meta": {
+  "ai.nimblebrain/host": {
+    "host_version": "1.2",
+    "hooks": [
+      {
+        "vendor": "acme",
+        "route": "/ingest/acme",
+        "register_tool": "set_webhook_url",
+        "description": "Order events: created, paid, refunded"
+      }
+    ]
+  }
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `vendor` | `string` | Yes | Slug for the vendor, lowercase alphanumeric with internal hyphens. Appears in the minted URL. One entry per vendor. |
+| `route` | `string` | Yes | Absolute path **on your own server** that deliveries are forwarded to. Must stay on your origin: no `//host`, no `..`, no scheme. |
+| `register_tool` | `string` | Yes | A tool on your server that the host calls with `{ vendor, url }` — both strings — to hand you the minted URL. |
+| `description` | `string` | No | What the stream carries. Shown to operators; the host never acts on it. |
+| `header_renames` | `object` | No | `{ from: to }` header renames applied before the forward. See [signature headers](#signature-headers) below. |
+
+### What happens
+
+1. **At install**, the host mints a URL for exactly one `(workspace, connector, vendor)` and calls your `register_tool` with it. Store it, and register it with the vendor.
+2. **On delivery**, the host verifies the URL, then forwards the request to your `route` — **body bytes unchanged**, the vendor's own headers passed through — arriving with the same `x-tenant-id` / `x-workspace-id` identity headers a tool call gets.
+3. **Your server answers**, and the host returns your status code to the vendor unchanged. Answer `2xx` once you have durably recorded the delivery; answer `5xx` only when you want the vendor to retry.
+
+The host never parses a delivery body. Signature verification, parsing, idempotency, and state are entirely yours.
+
+### Your `register_tool` must accept `{ vendor, url }`
+
+The host checks this against your advertised `tools/list` **at install time** and
+refuses the install if the tool is missing or does not accept both arguments. A
+stream whose registration tool is wrong would otherwise fail silently, months
+later, at a vendor nobody is watching.
+
+```python
+@mcp.tool()
+def set_webhook_url(vendor: str, url: str) -> dict:
+    ...
+```
+
+### Signature headers
+
+Your vendor's own headers reach you — `Stripe-Signature`, `X-Acme-Signature`,
+whatever it uses — so you can verify the delivery came from the vendor and not
+merely from someone holding the URL. **Verify them.** Possession of the URL
+proves only that the host should forward the request to you for this workspace;
+it does not prove who sent it.
+
+One class of header does **not** reach you: anything a caller could use to assert
+identity (`Authorization`, `X-Api-Key`, `X-Tenant-Id`, `X-Workspace-Id`,
+`X-User-Id`). These are stripped, because the only identity on a forwarded
+delivery must be the one the platform verified. If your vendor signs on one of
+those headers, declare a rename:
+
+```json
+{ "vendor": "acme", "route": "/ingest/acme", "register_tool": "set_webhook_url",
+  "header_renames": { "authorization": "x-acme-signature" } }
+```
+
+### Limits
+
+| | |
+|---|---|
+| Body size | 256 KiB; larger deliveries are refused with `413` before reaching you |
+| Method | `POST` only |
+| Retries | None from the host — a single forward attempt. Your vendor's own retry, plus whatever reconciliation you poll for, is the durability story |
+| Rotation | An operator can rotate a URL at any time; the previous one keeps working for 24 hours so in-flight redeliveries land. Your `register_tool` is called again with the new URL |
 
 ## Registering your main view
 

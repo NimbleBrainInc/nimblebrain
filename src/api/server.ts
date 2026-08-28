@@ -19,6 +19,11 @@ import { deriveDataChangedTarget, SseEventManager } from "./events.ts";
 import { McpServerHost } from "./mcp-server.ts";
 import { registerBundleHealthGauge } from "./metrics.ts";
 import { LoginRateLimiter, RequestRateLimiter } from "./rate-limiter.ts";
+import {
+  HOOK_ANON_BUCKET_MAX,
+  HOOK_BUCKET_WINDOW_MS,
+  HOOK_WORKSPACE_BUCKET_MAX,
+} from "./routes/hooks.ts";
 import { InMemorySessionRegistry, type SessionRegistry } from "./session-store/index.ts";
 import type { AppContext } from "./types.ts";
 
@@ -153,6 +158,15 @@ export function startServer(options: ServerOptions): ServerHandle {
   toolCallLimiter.start();
   const mcpLimiter = new RequestRateLimiter(mcpRateLimit, 60_000);
   mcpLimiter.start();
+  // The hooks door's buckets. See `AppContext.hookAnonLimiter` for why they are
+  // owned here: `stop()` below has to be able to clear their sweep timers.
+  const hookAnonLimiter = new RequestRateLimiter(HOOK_ANON_BUCKET_MAX, HOOK_BUCKET_WINDOW_MS);
+  hookAnonLimiter.start();
+  const hookWorkspaceLimiter = new RequestRateLimiter(
+    HOOK_WORKSPACE_BUCKET_MAX,
+    HOOK_BUCKET_WINDOW_MS,
+  );
+  hookWorkspaceLimiter.start();
 
   // Wire runtime events to the SSE manager by subscribing to the event sink.
   const runtimeSink = runtime.getEventSink();
@@ -252,6 +266,8 @@ export function startServer(options: ServerOptions): ServerHandle {
     conversationEventManager,
     rateLimiter,
     chatLimiter,
+    hookAnonLimiter,
+    hookWorkspaceLimiter,
     toolCallLimiter,
     mcpLimiter,
     isDevMode,
@@ -292,6 +308,8 @@ export function startServer(options: ServerOptions): ServerHandle {
       chatLimiter.stop();
       toolCallLimiter.stop();
       mcpLimiter.stop();
+      hookAnonLimiter.stop();
+      hookWorkspaceLimiter.stop();
       sseManager.stop();
       conversationEventManager.stop();
       healthMonitor.stop();

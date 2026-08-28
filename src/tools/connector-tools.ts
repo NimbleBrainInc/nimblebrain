@@ -42,6 +42,9 @@ import {
 } from "../connectors/server-detail.ts";
 import { textContent } from "../engine/content-helpers.ts";
 import { INTERNAL_TOOL_ANNOTATION, type ToolResult } from "../engine/types.ts";
+import { HookContractError, revokeHooksForConnector } from "../hooks/provisioning.ts";
+import { ensureHooks } from "../hooks/reconcile.ts";
+import { listRegistrations } from "../hooks/registrations.ts";
 import type { ConnectorOwner } from "../identity/connector-owner.ts";
 import { IdentityConnectorStore } from "../identity/connector-store.ts";
 import type { UserIdentity } from "../identity/provider.ts";
@@ -290,6 +293,8 @@ export function createManageConnectorsTool(ctx: ManageConnectorsContext): InProc
             "list_personal_catalog",
             "grant_connector",
             "revoke_connector",
+            "list_hooks",
+            "rotate_hook",
           ],
           description: "Action to perform.",
         },
@@ -297,6 +302,11 @@ export function createManageConnectorsTool(ctx: ManageConnectorsContext): InProc
           type: "string",
           description:
             "Catalog entry id (required for setup_operator, remove_operator_setup, connect_api_key).",
+        },
+        vendor: {
+          type: "string",
+          description:
+            'Vendor slug of one declared inbound hook (required for rotate_hook). Matches the `vendor` in the connector\'s `_meta["ai.nimblebrain/host"].hooks` entry.',
         },
         entry: {
           type: "object",
@@ -403,6 +413,10 @@ export function createManageConnectorsTool(ctx: ManageConnectorsContext): InProc
           return handleGrantConnector(ctx, args.callerId, args.serverName, args.grantTargetWsId);
         case "revoke_connector":
           return handleRevokeConnector(ctx, args.callerId, args.serverName, args.grantTargetWsId);
+        case "list_hooks":
+          return handleListHooks(ctx, args.wsId, args.identity, args.serverName);
+        case "rotate_hook":
+          return handleRotateHook(ctx, args.wsId, args.identity, args.serverName, args.vendor);
         default:
           return errResult(`Unknown action "${args.action}".`);
       }
@@ -425,6 +439,8 @@ interface DispatchArgs {
   identity: UserIdentity | null;
   callerId: string | null;
   serverName: string;
+  /** Vendor slug of one declared inbound hook (`rotate_hook`). */
+  vendor: string;
   scope: string | undefined;
   listInstalledScope: string;
   catalogId: string;
@@ -451,6 +467,7 @@ function resolveDispatchArgs(
     identity,
     callerId: identity?.id ?? null,
     serverName: str(input.serverName),
+    vendor: str(input.vendor),
     scope: input.scope ? String(input.scope) : undefined,
     listInstalledScope: String(input.scope ?? "all"),
     catalogId: str(input.catalogId),
@@ -1940,6 +1957,17 @@ async function handleInstallRemoteOAuth(
   if (action.auth === "composio" || action.auth === "smithery" || action.auth === "provider") {
     startWarning = await eagerStartRemoteSource(ctx, ref, wsRegistry, wsId, entry, action);
   }
+
+  // Inbound hooks the connector declares. Runs after the eager start because it
+  // has to call a tool on the server; for a connector whose source starts later
+  // (interactive OAuth) this is a no-op and the same reconcile runs when the
+  // connection reaches `running`. A contract error — a declared registration
+  // tool that is missing or does not accept `{vendor, url}` — is fatal to the
+  // install by design: a stream the runtime mints a URL for but can never hand
+  // that URL to would fail silently at first delivery instead.
+  const hookWarning = await provisionDeclaredHooks(ctx, wsId, serverName);
+  if (hookWarning) return errResult(hookWarning);
+
   return {
     content: textContent(remoteInstallMessage(entry.name, isPersonalTarget, startWarning)),
     structuredContent: {
@@ -1952,6 +1980,159 @@ async function handleInstallRemoteOAuth(
     },
     isError: false,
   };
+}
+
+/**
+ * Provision a freshly-installed connector's declared hooks.
+ *
+ * Returns an error message when the connector's manifest breaks the hook
+ * contract, so the install fails and names the offending declaration; returns
+ * `null` on success, on a connector with no hooks, and on a runtime with no
+ * hooks door. A `register_tool` call that merely FAILS is not an error here —
+ * it is logged and the recorded registration lets a later `rotate_hook` retry
+ * (see `provisionHooks`).
+ */
+async function provisionDeclaredHooks(
+  ctx: ManageConnectorsContext,
+  wsId: string,
+  serverName: string,
+): Promise<string | null> {
+  try {
+    await ensureHooks(ctx.runtime.getHookReconcileDeps(), wsId, serverName);
+    return null;
+  } catch (err) {
+    if (err instanceof HookContractError) return err.message;
+    // Anything else (the source went away mid-install, a transient store
+    // error) leaves the connector installed and the stream unprovisioned —
+    // recoverable with `rotate_hook`, and not worth failing an install over.
+    log.warn("[hooks] install-time provisioning failed", {
+      connector: serverName,
+      workspace_id: wsId,
+      reason: err instanceof Error ? err.message : String(err),
+    });
+    return null;
+  }
+}
+
+// ── Inbound hooks (operator plane) ───────────────────────────────────
+//
+// Rotation and inspection ride `manage_connectors` because install and
+// uninstall — the operations that mint and revoke a hook — already do, and
+// splitting one lifecycle across two surfaces is how the halves drift. This
+// tool is `INTERNAL_TOOL_ANNOTATION`, so it is stripped from the chat tool list
+// and refused for promotion: it is a UI-driven operator affordance, not
+// something the agent reasons its way to. Nothing here is reachable from a
+// delivery, and no path leads from a delivery to an agent run.
+
+/**
+ * `list_hooks` — what streams this workspace has minted, and when.
+ *
+ * **Never returns a URL.** The runtime could reconstruct one (it holds the key),
+ * and must not: a hook URL is a live bearer capability, and a tool result lands
+ * in a transcript. The `kid` is the safe handle — it identifies which minted URL
+ * is current without being usable as one, which is what an operator needs to
+ * line a runtime log up against a vendor's delivery log. To re-obtain a URL, the
+ * operator rotates: that is the only path, and it is the correct one, because
+ * the party that needs the URL is the server, not the reader.
+ */
+async function handleListHooks(
+  ctx: ManageConnectorsContext,
+  wsId: string | null,
+  identity: UserIdentity | null,
+  serverName: string,
+): Promise<ToolResult> {
+  if (!wsId) return errResult("Workspace context required.");
+  if (!identity) return errResult("Authentication required.");
+  const ws = await ctx.runtime.getWorkspaceStore().get(wsId);
+  if (!ws) return errResult(`Workspace "${wsId}" not found.`);
+  if (!isWorkspaceAdmin(ws, identity)) {
+    return {
+      content: textContent("Workspace admin role required to inspect inbound hooks."),
+      structuredContent: { error: "permission_denied" },
+      isError: true,
+    };
+  }
+  const all = listRegistrations(ws);
+  const hooks = (serverName ? all.filter((r) => r.connector === serverName) : all).map((r) => ({
+    connector: r.connector,
+    vendor: r.vendor,
+    kid: r.kid,
+    route: r.route,
+    createdAt: r.createdAt,
+    ...(r.prevKid ? { prevKid: r.prevKid } : {}),
+    ...(r.rotatedAt ? { rotatedAt: r.rotatedAt } : {}),
+  }));
+  return {
+    content: textContent(`${hooks.length} inbound hook registration(s).`),
+    structuredContent: { hooks },
+    isError: false,
+  };
+}
+
+/**
+ * `rotate_hook` — mint a fresh URL for one stream and hand it to the server.
+ *
+ * Cheap and routine, not an incident procedure: it is the control for a URL
+ * that may have leaked (into an access log, a vendor's support ticket, a
+ * screenshot), and a control nobody reaches for because it loses data is not a
+ * control. The retired key id stays admissible for the vendor's retry window,
+ * so redeliveries queued against the old URL still land while the server
+ * re-registers the new one.
+ */
+async function handleRotateHook(
+  ctx: ManageConnectorsContext,
+  wsId: string | null,
+  identity: UserIdentity | null,
+  serverName: string,
+  vendor: string,
+): Promise<ToolResult> {
+  if (!wsId) return errResult("Workspace context required.");
+  if (!identity) return errResult("Authentication required.");
+  if (!serverName) return errResult("serverName is required.");
+  if (!vendor) return errResult("vendor is required.");
+  const ws = await ctx.runtime.getWorkspaceStore().get(wsId);
+  if (!ws) return errResult(`Workspace "${wsId}" not found.`);
+  if (!isWorkspaceAdmin(ws, identity)) {
+    return {
+      content: textContent("Workspace admin role required to rotate an inbound hook."),
+      structuredContent: { error: "permission_denied" },
+      isError: true,
+    };
+  }
+  try {
+    const provisioned = await ensureHooks(ctx.runtime.getHookReconcileDeps(), wsId, serverName, {
+      rotate: true,
+      onlyVendor: vendor,
+    });
+    const result = provisioned[0];
+    if (!result) {
+      return errResult(
+        `"${serverName}" declares no inbound hook for vendor "${vendor}", or its connection is ` +
+          `not running. A hook can only be rotated while the server is reachable — it has to be ` +
+          `handed the new URL.`,
+      );
+    }
+    return {
+      content: textContent(
+        result.registered
+          ? `Rotated the "${vendor}" hook on "${serverName}"; the server accepted the new URL.`
+          : `Rotated the "${vendor}" hook on "${serverName}", but the server did not accept the ` +
+              `new URL (${result.error ?? "unknown error"}). The old URL stays valid for the ` +
+              `vendor's retry window; rotate again once the server is healthy.`,
+      ),
+      structuredContent: {
+        ok: true,
+        connector: serverName,
+        vendor: result.vendor,
+        kid: result.kid,
+        registered: result.registered,
+        ...(result.error ? { error: result.error } : {}),
+      },
+      isError: false,
+    };
+  } catch (err) {
+    return errResult(err instanceof Error ? err.message : String(err));
+  }
 }
 
 /**
@@ -2669,6 +2850,12 @@ async function handleUninstall(
     const installedBundleName = instance?.bundleName;
     await lifecycle.uninstall(serverName, registry, wsId);
     await stripUninstalledBundleEntry(ctx, wsId, serverName, installedBundleName);
+    // Retire every hook this connector held. The door independently refuses a
+    // delivery for an uninstalled connector — it needs the connector's base URL
+    // to have anywhere to forward to — so this is not the only thing that stops
+    // one. It is what keeps a later reinstall from resurrecting a key id whose
+    // URL has been in the wild the whole time.
+    await revokeHooksForConnector(ctx.runtime.getWorkspaceStore(), wsId, serverName);
     // Drop tool permissions for this connector — they have no meaning
     // once the bundle is gone.
     await ctx.runtime
