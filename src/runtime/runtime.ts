@@ -14,6 +14,7 @@ import type { AutomationDomainContext } from "../bundles/automations/src/domain.
 import { bootReconcileConnectorSkills } from "../bundles/connector-skill-reconcile.ts";
 import { sanitizePlacements } from "../bundles/defaults.ts";
 import { BundleLifecycleManager } from "../bundles/lifecycle.ts";
+import { slugifyServerName } from "../bundles/paths.ts";
 import { setConnectionRunningHandler } from "../bundles/pending-auth-buffer.ts";
 import type { BundleMcpDeps } from "../bundles/startup.ts";
 import type { AppInfo, BundleInstance, PlacementDeclaration } from "../bundles/types.ts";
@@ -74,6 +75,9 @@ import { workspaceFilesDir } from "../files/paths.ts";
 import { rehydrateUserResources } from "../files/rehydrate.ts";
 import { createFileStore, type FileStore } from "../files/store.ts";
 import { DEFAULT_FILE_CONFIG, type FileConfig } from "../files/types.ts";
+import type { HookReconcileDeps } from "../hooks/reconcile.ts";
+import { ensureHooksOnRunning } from "../hooks/reconcile.ts";
+import { readHookIdentity } from "../hooks/token.ts";
 import { FileBackedHostResourcesResolver, TokenBucketRateLimit } from "../host-resources/index.ts";
 import { IdentityContext } from "../identity/context.ts";
 import type { InstanceConfig } from "../identity/instance.ts";
@@ -862,6 +866,17 @@ export class Runtime {
       getWorkspaceId,
     );
     rtHolder.rt = rt;
+
+    // Hooks reconcile. A connection reaching `running` is the one moment both
+    // halves are available — a live source to hand a minted URL to, and a
+    // connector whose declarations can be read — so it covers a fresh install,
+    // a boot, and an interactive OAuth flow completing long after the install
+    // returned, without that logic appearing on three paths. The reconcile
+    // provisions only what is MISSING, so an already-registered stream costs
+    // nothing on a boot or a source self-heal.
+    lifecycle.setConnectionRunningObserver((wsId, serverName) => {
+      ensureHooksOnRunning(rt.getHookReconcileDeps(), wsId, serverName);
+    });
     rt._getIdentity = getIdentity;
     rt._getWorkspaceId = getWorkspaceId;
     rt.usageLedger = usageLedger;
@@ -3924,6 +3939,52 @@ export class Runtime {
   /** Get the WorkspaceStore instance. */
   getWorkspaceStore(): WorkspaceStore {
     return this._workspaceStore;
+  }
+
+  /**
+   * Dependencies the hooks reconcile needs, assembled from the runtime's own
+   * stores.
+   *
+   * The runtime is where these three meet — the workspace store holds the
+   * registrations, the connector directory holds the operator-trusted
+   * declarations, and the per-workspace registry holds the live source — so
+   * assembling them here keeps every consumer (the install path, the
+   * connection-running observer, the operator rotate action) working from one
+   * definition instead of three.
+   *
+   * `identity` resolves per call rather than at construction: `undefined` means
+   * this deployment has no hooks door, which every consumer treats as a no-op.
+   */
+  getHookReconcileDeps(): HookReconcileDeps {
+    return {
+      workspaceStore: this._workspaceStore,
+      identity: readHookIdentity(),
+      declarationsFor: async (serverName: string) => {
+        // The installed ref does not persist the catalog id it came from, so
+        // the trusted entry is found by the same slug rule the install used
+        // (`slugifyServerName(entry.id) === serverName`). Deriving it rather
+        // than storing a second copy is what keeps the two from disagreeing
+        // after a catalog edit.
+        const entries = await this.getConnectorDirectory().catalogEntries();
+        const entry = entries.find((e) => slugifyServerName(e.id) === serverName);
+        return entry?.hooks ?? [];
+      },
+      portFor: (wsId: string, serverName: string) => {
+        let registry: ToolRegistry;
+        try {
+          registry = this.getRegistryForWorkspace(wsId);
+        } catch {
+          return undefined;
+        }
+        const source = registry.getSources().find((src) => src.name === serverName);
+        if (!source) return undefined;
+        return {
+          tools: () => source.tools(),
+          execute: (toolName: string, input: Record<string, unknown>) =>
+            source.execute(toolName, input),
+        };
+      },
+    };
   }
 
   /**

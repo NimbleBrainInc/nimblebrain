@@ -104,8 +104,9 @@ import { type RequestContext, runWithRequestContext } from "../runtime/request-c
 import type { Runtime } from "../runtime/runtime.ts";
 import { IDENTITY_SOURCES } from "../tools/identity-sources.ts";
 import { McpSource } from "../tools/mcp-source.ts";
-import { bareToolName, splitInnerToolName } from "../tools/namespace.ts";
+import { bareToolName } from "../tools/namespace.ts";
 import type { ToolRegistry } from "../tools/registry.ts";
+import { splitInnerToolName } from "../util/tool-name.ts";
 import {
   createMcpTaskStore,
   type McpTaskStore,
@@ -1093,11 +1094,14 @@ async function executeWorkspaceToolCall(
     };
   }
 
-  // The orchestrator's parse already split `innerToolName` into
-  // `<source>__<tool>`; reuse that split here.
-  const sepIndex = innerToolName.indexOf("__");
-  const sourceName = sepIndex >= 0 ? innerToolName.slice(0, sepIndex) : null;
-  const localName = sepIndex >= 0 ? innerToolName.slice(sepIndex + 2) : innerToolName;
+  // Decompose `<source>__<tool>` through the one grammar every door shares.
+  //
+  // A name with no separator names no source. It cannot arrive here — the
+  // orchestrator refuses one with `UnknownToolSource` before this function is
+  // reached — so `null` is the honest value for "no source to gate or negotiate
+  // tasks against" rather than a case with behavior to describe.
+  const { sourcePrefix, bareToolName: localName, hasSeparator } = splitInnerToolName(innerToolName);
+  const sourceName = hasSeparator ? sourcePrefix : null;
   const wsId = workspaceContext.workspaceId;
 
   // Connector permission gate. Runs BEFORE the task-vs-inline negotiation below

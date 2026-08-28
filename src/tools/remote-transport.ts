@@ -77,6 +77,32 @@ function applyProviderAuth(
   return credential.fetch;
 }
 
+/**
+ * The credential one connection presents, resolved from its transport config:
+ * static headers plus, for `provider` auth, the fetch wrapper that mints and
+ * re-mints a token per request.
+ *
+ * Exported because the MCP transport is no longer the only thing that calls a
+ * connector's server. The hooks door forwards an inbound vendor delivery to a
+ * route the SAME connector declared, and it must present the SAME credential —
+ * resolving it a second way is how the two drift into disagreeing about how a
+ * connection authenticates.
+ *
+ * `authProvider` (interactive OAuth) is deliberately NOT part of this: it lives
+ * inside the SDK transport and is user-bound, so there is nothing here to hand
+ * a non-MCP caller. A caller that needs a credential and gets neither `headers`
+ * nor `fetch` back is looking at an interactive-OAuth connection and must
+ * refuse rather than send an unauthenticated request.
+ */
+export function resolveTransportCredential(
+  config: RemoteTransportConfig | undefined,
+  workspaceId?: string,
+): { headers: Record<string, string>; fetch?: FetchLike } {
+  const headers = buildRequestHeaders(config);
+  const fetch = applyProviderAuth(config, headers, workspaceId);
+  return fetch ? { headers, fetch } : { headers };
+}
+
 /** OAuth provider applies only when no static auth is configured — static auth is the explicit contract. */
 function selectAuthProvider(
   config: RemoteTransportConfig | undefined,
