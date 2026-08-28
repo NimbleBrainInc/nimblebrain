@@ -63,20 +63,22 @@ async function checkWritePermission(
 ): Promise<PermissionDecision> {
   // Unattended-run wall, checked before every other gate including dev mode.
   //
-  // This tool's whole posture is "confirm with the user before writing" — the
-  // write persists into every later conversation in the workspace, for every
-  // member. An unattended run has no user to confirm with, and is told so
-  // ("there is nobody available to confirm choices — decide and proceed"),
-  // while routinely ingesting untrusted content: email, web pages, tickets.
-  // A "from now on…" line in any of that would otherwise reach a durable
-  // cross-conversation write with nothing standing between them.
+  // The write persists into every later conversation in the workspace, for
+  // every member, so it belongs to a present human. An unattended run has no
+  // human present, and is told so ("there is nobody available to confirm
+  // choices — decide and proceed"), while routinely ingesting untrusted
+  // content: email, web pages, tickets. A "from now on…" line in any of that
+  // would otherwise reach a durable cross-conversation write with nothing
+  // standing between them.
   //
   // Enforced HERE, at the source, for the reason `createAutomationsSource`
   // gives for the same wall: this is the single dispatch point every caller
   // funnels through, so it holds for the top-level run AND a delegated
-  // sub-agent at any depth, regardless of whether the tool was ever surfaced
-  // to the model. `unattended` rides the ambient request context and survives
-  // the per-call restamp.
+  // sub-agent at any depth. The tool is internal and never reaches the model's
+  // surface, so this is belt-and-braces rather than the primary barrier — it
+  // costs one context read and closes the gap if the annotation is ever
+  // dropped. `unattended` rides the ambient request context and survives the
+  // per-call restamp.
   if (getRequestContext()?.unattended) {
     return {
       allowed: false,
@@ -176,7 +178,11 @@ export function createInstructionsSource(runtime: Runtime, eventSink: EventSink)
           const result = await store.write({
             wsId: permission.wsId,
             text: body,
-            updatedBy: "agent",
+            // The settings UI is the only caller — the tool is internal, so no
+            // agent reaches it. `UpdatedBy` keeps its `"agent"` arm for reading
+            // meta files written before that was true (`readMeta` validates
+            // against both).
+            updatedBy: "ui",
           });
 
           // Best-effort live notification — drops silently when no client is
