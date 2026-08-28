@@ -2,9 +2,9 @@ import { describe, expect, test } from "bun:test";
 import type { HostManifestMeta } from "../../src/bundles/types.ts";
 import {
   isForwardablePath,
+  isStrippedRequestHeader,
   parseHookDeclarations,
   resolveForwardUrl,
-  STRIPPED_REQUEST_HEADERS,
 } from "../../src/hooks/declaration.ts";
 
 function meta(hooks: unknown): HostManifestMeta {
@@ -128,14 +128,25 @@ describe("the stripped header class", () => {
       "x-subject-token",
       "x-user-id",
     ]) {
-      expect(STRIPPED_REQUEST_HEADERS.has(name)).toBe(true);
+      expect(isStrippedRequestHeader(name)).toBe(true);
     }
   });
 
-  test("includes the runtime's own kid header", () => {
-    // It is set from the token after the strip. Leaving it forwardable would
-    // let a caller supply one, which is how an informational header becomes an
-    // identity header by accident.
-    expect(STRIPPED_REQUEST_HEADERS.has("x-nb-hook-kid")).toBe(true);
+  test.each(["x-nb-hook-kid", "x-nb-something-nobody-has-invented-yet", "x-nb-"])(
+    "strips %s by namespace rule, not by name",
+    (name) => {
+      // The point of the rule: the NEXT member inherits the property instead of
+      // a hole. A name list admits every header nobody remembered to add.
+      expect(isStrippedRequestHeader(name)).toBe(true);
+    },
+  );
+
+  test("leaves the general path a denylist so vendor signatures pass", () => {
+    // The runtime cannot enumerate the headers a vendor signs, and those must
+    // reach the receiving server's verifier or origin verification is
+    // impossible by construction.
+    for (const name of ["stripe-signature", "x-acme-signature", "content-type", "user-agent"]) {
+      expect(isStrippedRequestHeader(name)).toBe(false);
+    }
   });
 });

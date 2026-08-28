@@ -454,11 +454,18 @@ install returned — one path instead of three that drift. A declared
 install**; a `register_tool` call that merely errors does not (the connector is
 useful without its webhook, and the `kid` is recorded so a rotation retries).
 
-**`X-NB-Hook-Kid`** is stamped from the token and is informational only. It is
-on this runtime's own strip list and must be on `mcp-edge`'s
-`STRIP_REQUEST_HEADERS` — otherwise a caller with a valid fleet token could set
-it, which is the `x-user-id` hole one header over. **That edge change ships
-before this reaches staging.**
+**The forward adds no header, and the `kid` does not travel.** The fleet edge
+strips the reserved `x-nb-*` namespace by RULE (it cannot tell a runtime-stamped
+member from a caller-forged one — this forward arrives under an ordinary
+`aud=mcp-fleet` token like any other call), so a stamped `X-NB-Hook-Kid` would
+be dropped one hop later, reach nothing, and read as a broken pipeline whose
+obvious repair is a hole in that rule. Kid correlation lives in the runtime's
+delivery log line, which is the only place it appears — do not "restore" the
+header. `isStrippedRequestHeader` mirrors the edge's rule (`x-user-id` plus the
+`x-nb-*` prefix) rather than listing names, because the runtime sits AHEAD of
+the edge and the namespace invariant only holds if every hop ahead of it also
+refuses to pass one through. The general path stays a denylist: vendor signature
+headers the runtime cannot enumerate have to reach the receiving verifier.
 
 **`clientAddressFor`** (`src/api/client-address.ts`) is the runtime's only
 load-bearing `X-Forwarded-For` reader — right-most back `NB_TRUSTED_PROXY_HOPS`

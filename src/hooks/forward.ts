@@ -4,7 +4,7 @@ import { isMintedFleetSource } from "../oauth/minted-credential-provider.ts";
 import { injectTraceparent } from "../observability/index.ts";
 import { resolveTransportCredential } from "../tools/remote-transport.ts";
 import { createSsrfGuardedFetch } from "../tools/ssrf-guarded-fetch.ts";
-import { resolveForwardUrl, STRIPPED_REQUEST_HEADERS } from "./declaration.ts";
+import { isStrippedRequestHeader, resolveForwardUrl } from "./declaration.ts";
 
 /**
  * The forward hop: the same call the runtime already makes to a connector, with
@@ -25,16 +25,25 @@ import { resolveForwardUrl, STRIPPED_REQUEST_HEADERS } from "./declaration.ts";
  * logic belongs in the receiving server's adapter.
  */
 
-/** Header carrying the key id the delivery's token was minted under.
+/**
+ * The forward adds NO header of its own, and in particular carries no `kid`.
  *
- *  Informational, and the receiving server must treat it that way: it names
- *  which minted URL was used, for log correlation and a raw-capture column.
- *  Nothing selects on it, because the vendor is the ROUTE the runtime forwards
- *  to, not a header — a header the caller could reach would be a second,
- *  weaker identity channel beside the one the edge injects. It is on this
- *  runtime's own strip list for the same reason, and must be on the fleet
- *  edge's, or a caller holding a valid fleet token could set it directly. */
-export const HOOK_KID_HEADER = "x-nb-hook-kid";
+ * An earlier draft stamped `X-NB-Hook-Kid` from the token so the receiving
+ * server could correlate a delivery to the minted URL it arrived on. It cannot:
+ * the fleet edge strips the whole reserved `x-nb-*` namespace by rule, because
+ * it has no way to tell a runtime-stamped member from a caller-forged one —
+ * this forward reaches it under an ordinary `aud=mcp-fleet` token like any other
+ * call, carrying nothing that distinguishes it. So a stamped header would be
+ * dropped one hop later, reach nothing, and be logged by nothing: a pipeline
+ * that reads as broken, whose obvious repair is a hole in exactly the rule that
+ * makes the namespace safe.
+ *
+ * The `kid` is not lost — it stays where the runtime already holds it, in the
+ * delivery log line. Correlating a vendor's delivery to a minted URL is an
+ * operator question answered from the runtime's own logs, not a value the
+ * bundle needs in order to do its job: the bundle selects its adapter by the
+ * ROUTE, and nothing downstream ever selected on the kid.
+ */
 
 export interface ForwardOptions {
   /** The connector's base URL, from its installed ref. */
@@ -45,8 +54,6 @@ export interface ForwardOptions {
   route: string;
   /** Workspace the delivery belongs to — the dimension the credential is scoped to. */
   workspaceId: string;
-  /** Key id from the opened token. */
-  kid: string;
   /** Inbound request headers, as received. */
   inboundHeaders: Headers;
   /** Header renames declared for this stream, `{from: to}`, both lowercase. */
@@ -93,7 +100,6 @@ export class HookForwardUnauthenticatedError extends Error {
  */
 export function buildForwardHeaders(opts: {
   inbound: Headers;
-  kid: string;
   renames?: Record<string, string>;
   credentialHeaders: Record<string, string>;
 }): Headers {
@@ -105,7 +111,7 @@ export function buildForwardHeaders(opts: {
       headers.set(renamed, value);
       continue;
     }
-    if (STRIPPED_REQUEST_HEADERS.has(lower)) continue;
+    if (isStrippedRequestHeader(lower)) continue;
     headers.set(name, value);
   }
   // The connection's own credential, applied after the inbound headers so a
@@ -113,7 +119,6 @@ export function buildForwardHeaders(opts: {
   for (const [name, value] of Object.entries(opts.credentialHeaders)) {
     headers.set(name, value);
   }
-  headers.set(HOOK_KID_HEADER, opts.kid);
   return headers;
 }
 
@@ -141,7 +146,6 @@ export async function forwardDelivery(opts: ForwardOptions): Promise<Response> {
 
   const headers = buildForwardHeaders({
     inbound: opts.inboundHeaders,
-    kid: opts.kid,
     renames: opts.headerRenames,
     credentialHeaders: credential.headers,
   });

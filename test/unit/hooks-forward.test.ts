@@ -1,10 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { buildForwardHeaders, HOOK_KID_HEADER } from "../../src/hooks/forward.ts";
+import { buildForwardHeaders } from "../../src/hooks/forward.ts";
 
 function build(inbound: Record<string, string>, extra: { renames?: Record<string, string> } = {}) {
   return buildForwardHeaders({
     inbound: new Headers(inbound),
-    kid: "hk_abc",
     renames: extra.renames,
     credentialHeaders: {},
   });
@@ -47,15 +46,27 @@ describe("what survives the forward", () => {
     },
   );
 
-  test("a caller-supplied kid header cannot survive to be mistaken for ours", () => {
-    const headers = build({ [HOOK_KID_HEADER]: "hk_someone_elses" });
-    expect(headers.get(HOOK_KID_HEADER)).toBe("hk_abc");
-  });
+  test.each(["x-nb-hook-kid", "x-nb-anything", "x-nb-", "X-NB-Upper"])(
+    "an inbound %s is stripped by the reserved-namespace rule",
+    (name) => {
+      // `x-nb-*` is reserved: only the edge may place a header there, and it
+      // strips the whole prefix because it cannot tell a stamped member from a
+      // forged one. The runtime sits AHEAD of the edge, so the rule is only
+      // true if this hop refuses to pass one through too.
+      expect(build({ [name]: "forged" }).get(name)).toBeNull();
+    },
+  );
 });
 
-describe("the kid header", () => {
-  test("is stamped from the token", () => {
-    expect(build({}).get(HOOK_KID_HEADER)).toBe("hk_abc");
+describe("the kid does not travel", () => {
+  test("no header is added to the forward at all", () => {
+    // The forward carries exactly what came in, minus the stripped classes,
+    // plus the connection's own credential — and nothing else. A stamped
+    // `x-nb-hook-kid` would be dropped one hop later by the edge's namespace
+    // rule, reaching nothing; kid correlation lives in the runtime's log.
+    const inbound = { "content-type": "application/json", "x-acme-id": "d_1" };
+    const headers = build(inbound);
+    expect([...headers.keys()].sort()).toEqual(["content-type", "x-acme-id"]);
   });
 });
 

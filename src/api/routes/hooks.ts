@@ -300,7 +300,6 @@ async function forwardAdmitted(
       transport: ref.transport,
       route: registration.route,
       workspaceId: payload.wid,
-      kid: payload.kid,
       inboundHeaders: req.headers,
       headerRenames: registration.headerRenames,
       body,
@@ -348,11 +347,17 @@ function passthroughResponseHeaders(upstream: Headers): Headers {
 /**
  * One log line per delivery: what it was for, what happened, how long it took.
  *
- * **Never the token and never the body.** The `kid` identifies which minted URL
- * was used without being usable as one, which is exactly what an operator
- * needs to correlate a runtime line with a vendor's delivery log and with the
- * receiving bundle's raw-capture row. The token is a live bearer capability;
- * the body is the tenant's data and the runtime has no business having read it.
+ * **This is the only place the `kid` appears.** The forward carries no header
+ * for it — the edge strips the reserved `x-nb-*` namespace by rule, so one
+ * would reach nothing — which makes this line the whole of kid correlation. An
+ * operator matching a vendor's delivery log against a minted URL reads it here,
+ * so the field is load-bearing rather than decorative: dropping it would leave
+ * no way to tell which URL a delivery arrived on.
+ *
+ * **Never the token and never the body.** The `kid` names which minted URL was
+ * used without being usable as one; the token IS one, and a live bearer
+ * capability does not belong in a log. The body is the tenant's data, and the
+ * runtime has no business having read it.
  */
 function logDelivery(
   payload: { wid: string; connector: string; vendor: string; kid: string },

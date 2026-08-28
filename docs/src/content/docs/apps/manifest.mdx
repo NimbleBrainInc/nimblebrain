@@ -246,10 +246,11 @@ proves only that the host should forward the request to you for this workspace;
 it does not prove who sent it.
 
 One class of header does **not** reach you: anything a caller could use to assert
-identity (`Authorization`, `X-Api-Key`, `X-Tenant-Id`, `X-Workspace-Id`,
-`X-User-Id`). These are stripped, because the only identity on a forwarded
-delivery must be the one the platform verified. If your vendor signs on one of
-those headers, declare a rename:
+identity — `Authorization`, `X-Api-Key`, `X-Tenant-Id`, `X-Workspace-Id`,
+`X-User-Id`, and **everything under the reserved `X-NB-*` prefix**. These are
+stripped, because the only identity on a forwarded delivery must be the one the
+platform verified. If your vendor signs on one of those headers, declare a
+rename:
 
 ```json
 { "vendor": "acme", "route": "/ingest/acme", "register_tool": "set_webhook_url",
@@ -264,6 +265,7 @@ those headers, declare a rename:
 | Method | `POST` only |
 | Retries | None from the host — a single forward attempt. Your vendor's own retry, plus whatever reconciliation you poll for, is the durability story |
 | Rotation | An operator can rotate a URL at any time; the previous one keeps working for 24 hours so in-flight redeliveries land. Your `register_tool` is called again with the new URL |
+| Correlation | No key id reaches you — the platform adds no header of its own. An operator correlates a delivery to the URL it arrived on through the platform's own logs, so you do not need to record one |
 
 ## Registering your main view
 

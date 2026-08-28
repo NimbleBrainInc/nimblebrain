@@ -79,25 +79,23 @@ function parseHeaderRenames(raw: unknown): Record<string, string> | undefined {
     if (typeof to !== "string" || !HEADER_NAME_RE.test(to)) continue;
     // A rename INTO the stripped class would re-open the hole the strip exists
     // to close, letting a caller land a value on an identity header name.
-    if (STRIPPED_REQUEST_HEADERS.has(to.toLowerCase())) continue;
+    if (isStrippedRequestHeader(to.toLowerCase())) continue;
     out[from.toLowerCase()] = to.toLowerCase();
   }
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
 /**
- * Headers never forwarded from an inbound delivery.
+ * Named headers never forwarded from an inbound delivery.
  *
- * The identity half mirrors the fleet edge's own request-header strip list: a
- * delivery is an anonymous request and must not be able to assert who it is, on
- * this hop any more than on the edge's. The hop half (`host`, `connection`,
- * `transfer-encoding`, ...) is dropped because it describes the connection the
- * runtime terminated, not the one it is opening.
+ * The hop half (`host`, `connection`, `transfer-encoding`, ...) is dropped
+ * because it describes the connection the runtime terminated, not the one it is
+ * opening. The identity half mirrors the fleet edge's own named set: a delivery
+ * is an anonymous request and must not be able to assert who it is, on this hop
+ * any more than on the edge's.
  *
- * `x-nb-hook-kid` is on the list even though the runtime is about to set it
- * from the token: an informational header that is not stripped is an identity
- * header waiting to happen, which is the hole the edge's `x-user-id` entry
- * already documents.
+ * The identity NAMESPACE rule lives in {@link isStrippedRequestHeader}, not
+ * here — see there for why a name list is the wrong shape for that half.
  */
 export const STRIPPED_REQUEST_HEADERS: ReadonlySet<string> = new Set([
   "authorization",
@@ -105,8 +103,6 @@ export const STRIPPED_REQUEST_HEADERS: ReadonlySet<string> = new Set([
   "x-tenant-id",
   "x-workspace-id",
   "x-subject-token",
-  "x-user-id",
-  "x-nb-hook-kid",
   "traceparent",
   "tracestate",
   "host",
@@ -118,6 +114,34 @@ export const STRIPPED_REQUEST_HEADERS: ReadonlySet<string> = new Set([
   "content-length",
   "expect",
 ]);
+
+/**
+ * Whether an inbound header is dropped before the forward.
+ *
+ * The identity namespace — `x-user-id` and the reserved `x-nb-*` prefix — is
+ * stripped by RULE rather than by name, matching the fleet edge exactly. A name
+ * list admits every header nobody remembered to add, so the next identity or
+ * capability header would ride through by default; a namespace rule has no such
+ * default, and that is the whole reason `x-nb-*` was made reserved.
+ *
+ * Mirroring the edge here is not redundancy. The runtime sits AHEAD of the edge
+ * on this path, and the invariant the namespace buys — that nothing but the edge
+ * can place a header there — is only true if every hop ahead of it also refuses
+ * to pass one through. Doing it in one place and not the other would leave a
+ * caller's `x-nb-*` header travelling one hop further than the rule claims.
+ *
+ * The general path stays a denylist, deliberately: a vendor signs headers the
+ * runtime cannot enumerate (`Stripe-Signature`, and whatever the next vendor
+ * invents), and those have to reach the receiving server's verifier or origin
+ * verification is impossible by construction.
+ */
+export function isStrippedRequestHeader(lowerName: string): boolean {
+  return (
+    STRIPPED_REQUEST_HEADERS.has(lowerName) ||
+    lowerName === "x-user-id" ||
+    lowerName.startsWith("x-nb-")
+  );
+}
 
 /**
  * Whether a path contains a character that has no business in one: any control

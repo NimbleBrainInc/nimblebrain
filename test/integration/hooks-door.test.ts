@@ -181,10 +181,25 @@ describe("a legitimate delivery", () => {
     expect(res.status).toBe(503);
   });
 
-  test("carries the key id as an informational header", async () => {
+  test("carries no kid header — the edge would strip it, so nothing stamps one", async () => {
+    // The reserved `x-nb-*` namespace is stripped at the edge by rule, because
+    // it cannot tell a runtime-stamped member from a caller-forged one. A
+    // stamped kid would reach nothing and read as a broken pipeline whose
+    // obvious repair is a hole in that rule. Correlation lives in the log line
+    // asserted further down instead.
     await deliver(makeApp(), `/v1/hooks/${CONNECTOR}/${VENDOR}/${token()}`);
     const headers = forwarded[0]?.init.headers as Headers;
-    expect(headers.get("x-nb-hook-kid")).toBe(KID);
+    expect(headers.get("x-nb-hook-kid")).toBeNull();
+    expect([...headers.keys()].filter((k) => k.startsWith("x-nb-"))).toEqual([]);
+  });
+
+  test("strips an inbound x-nb-* header the caller invented", async () => {
+    await deliver(makeApp(), `/v1/hooks/${CONNECTOR}/${VENDOR}/${token()}`, {
+      headers: { "x-nb-hook-kid": "hk_forged", "x-nb-future-thing": "v" },
+    });
+    const headers = forwarded[0]?.init.headers as Headers;
+    expect(headers.get("x-nb-hook-kid")).toBeNull();
+    expect(headers.get("x-nb-future-thing")).toBeNull();
   });
 
   test("reaches the connector byte-identical, for a binary body", async () => {
@@ -356,7 +371,8 @@ describe("what the door writes down", () => {
     // leak, because the payload half is derivable.
     expect(everything).not.toContain(wire);
     expect(everything).not.toContain(wire.split(".")[2] ?? "impossible");
-    // The kid IS expected: it identifies the minted URL without being one.
+    // The kid IS expected, and this line is the ONLY place it appears now that
+    // the forward stamps no header — it is the whole of kid correlation.
     expect(logLines.join("\n")).toContain(KID);
   });
 
