@@ -313,6 +313,19 @@ describe("bundle unhealthy gauge", () => {
 });
 
 describe("LLM latency + error metrics", () => {
+  it("test_llm_latency_histogram_resolves_calls_beyond_two_minutes", async () => {
+    llmRequestDurationSeconds.labels("main", "tm-long-tail", "chat").observe(240);
+    const metric = await llmRequestDurationSeconds.get();
+    const buckets = metric.values.filter(
+      (sample) =>
+        sample.metricName === "nb_llm_request_duration_seconds_bucket" &&
+        sample.labels.model === "tm-long-tail",
+    );
+
+    expect(buckets.find((sample) => sample.labels.le === 180)?.value).toBe(0);
+    expect(buckets.find((sample) => sample.labels.le === 300)?.value).toBe(1);
+  });
+
   // Read a histogram's _sum / _count for a label-series. prom-client emits the
   // aggregate as sibling series named `<name>_sum` / `<name>_count`.
   async function readHistogram(
