@@ -153,6 +153,7 @@ import {
   personalConnectorWireName,
 } from "../tools/identity-sources.ts";
 import { McpSource } from "../tools/mcp-source.ts";
+import { isTaskForbiddenSkillTool } from "../tools/platform/skills.ts";
 import { SharedSourceRef, type ToolRegistry } from "../tools/registry.ts";
 import { surfaceTools } from "../tools/surfacing.ts";
 import { createSystemTools } from "../tools/system-tools.ts";
@@ -694,12 +695,22 @@ export class Runtime {
         const rt = rtHolder.rt;
         const wsId = rt._currentWorkspaceId?.();
         const orgRole = getRequestContext()?.identity?.orgRole;
-        // In an unattended run the automations source denies the authoring
-        // surface at any delegation depth; keep it out of the child's default
-        // active set too, so the sub-agent isn't shown a tool it can't call.
+        // In an unattended run the automations and skills sources deny their
+        // authoring surfaces at any delegation depth; keep both out of the
+        // child's default active set too, so the sub-agent isn't shown a tool
+        // it can't call. Two predicates because the surfaces arrive through
+        // different doors: automations is an identity source, skills is a
+        // workspace one.
+        //
+        // Gated on `unattended` on purpose. This path also builds the default
+        // set for a sub-agent delegated from ordinary chat, where both
+        // surfaces are legitimately available — an ungated filter would strip
+        // them from every delegation.
         const unattended = getRequestContext()?.unattended === true;
         const identityToolVisible = (name: string): boolean =>
           isToolVisibleToRole(name, orgRole) && !(unattended && isTaskForbiddenIdentityTool(name));
+        const workspaceToolVisible = (name: string): boolean =>
+          isToolVisibleToRole(name, orgRole) && !(unattended && isTaskForbiddenSkillTool(name));
         if (!wsId) {
           // Dev / CLI path without a workspace in scope — return identity
           // tools only. Hard-failing here would break the existing CLI
@@ -722,7 +733,7 @@ export class Runtime {
         ]);
         return [
           ...focusedTools
-            .filter((t) => isToolVisibleToRole(t.name, orgRole))
+            .filter((t) => workspaceToolVisible(t.name))
             .map((t) => ({
               name: t.name,
               description: t.description,
@@ -1963,11 +1974,13 @@ export class Runtime {
     // + identity tools. `nb__search`'s corpus is that same workspace — no
     // cross-workspace reach.
     //
-    // A task run is unattended and can ingest untrusted content, so the
-    // automation-authoring surface is subtracted from its identity tools: it
-    // must not be able to rewrite/spawn/fire automations from inside a run
-    // (`isTaskForbiddenIdentityTool`). Chat keeps those tools — that path has a
-    // human in the loop.
+    // A task run is unattended and can ingest untrusted content, so both
+    // authoring surfaces are subtracted: it must not rewrite/spawn/fire
+    // automations (`isTaskForbiddenIdentityTool`, on the identity tools), nor
+    // author a skill (`isTaskForbiddenSkillTool`, on the workspace tools — a
+    // skill is durable guidance that loads itself into later conversations).
+    // Chat keeps both — that path has a human in the loop. Neither filter needs
+    // an `unattended` check here; this method IS the unattended path.
     const toolsRegistry = await this.ensureWorkspaceRegistry(workWsId);
     const [focusedTools, identityTools] = await Promise.all([
       toolsRegistry.availableTools(),
@@ -1975,7 +1988,11 @@ export class Runtime {
     ]);
     const allTools: ToolSchema[] = [
       ...focusedTools
-        .filter((t) => isToolVisibleToRole(t.name, requestIdentity.orgRole))
+        .filter(
+          (t) =>
+            isToolVisibleToRole(t.name, requestIdentity.orgRole) &&
+            !isTaskForbiddenSkillTool(t.name),
+        )
         .map((t) => ({
           name: t.name,
           description: t.description,
