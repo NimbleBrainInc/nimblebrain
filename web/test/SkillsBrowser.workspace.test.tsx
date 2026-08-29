@@ -618,7 +618,9 @@ describe("SkillsBrowser with surface='workspace' — composition list", () => {
 
     // The toggle fired...
     const toggleCall = callToolCalls.find(
-      (c) => c.server === "skills" && (c.tool === "activate" || c.tool === "deactivate"),
+      // The durable toggle: `set_status`, not the agent's conversation-scoped
+              // `activate`/`deactivate`.
+              (c) => c.server === "skills" && c.tool === "set_status",
     );
     expect(toggleCall).toBeDefined();
     // ...and the row stayed collapsed.
@@ -647,7 +649,7 @@ describe("SkillsBrowser with surface='workspace' — composition list", () => {
       await Promise.resolve();
     });
 
-    expect(callToolCalls.some((c) => c.tool === "activate" || c.tool === "deactivate")).toBe(false);
+    expect(callToolCalls.some((c) => c.tool === "set_status")).toBe(false);
   });
 
   test("the segment filter narrows the list to a single tier", async () => {

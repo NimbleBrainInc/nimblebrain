@@ -230,6 +230,17 @@ const IdOnlyInput = Type.Object(
 export const SkillsDeleteInput = IdOnlyInput;
 export type SkillsDeleteInput = Static<typeof SkillsDeleteInput>;
 
+export const SkillsSetStatusInput = Type.Object(
+  {
+    id: Type.String({ description: "Filesystem path returned by `skills__list`." }),
+    status: Type.Union([Type.Literal("active"), Type.Literal("disabled")], {
+      description: "Durable status written to the skill's frontmatter.",
+    }),
+  },
+  { required: ["id", "status"] },
+);
+export type SkillsSetStatusInput = Static<typeof SkillsSetStatusInput>;
+
 export const SkillsActivateInput = IdOnlyInput;
 export type SkillsActivateInput = Static<typeof SkillsActivateInput>;
 

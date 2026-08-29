@@ -36,7 +36,10 @@ import {
   planCompaction,
   summarizeMessages,
 } from "../conversation/compaction.ts";
-import { extractOperatorTurns } from "../conversation/event-reconstructor.ts";
+import {
+  collectSuppressedSkillNames,
+  extractOperatorTurns,
+} from "../conversation/event-reconstructor.ts";
 import {
   type ConversationMutation,
   EventSourcedConversationStore,
@@ -1436,8 +1439,20 @@ export class Runtime {
     // conditional channels (keyword matcher + tool-affinity Layer 3). Disjoint by
     // `type`, so nothing is injected twice — no downstream de-dup.
     const conversationPool = this.loadConversationSkills(convWsId, userId);
-    const { context: poolContext, capability: poolCapability } =
-      partitionSkillsByRole(conversationPool);
+    // Conversation-scoped suppression, applied to the POOL rather than to the
+    // channel routers. `partitionSkillsByRole` and `selectLayer3Skills` read
+    // the durable `manifest.status` and that logic is correct — a skill the
+    // operator retired stays off everywhere. This is the other axis: "not for
+    // this task", held in this conversation's own event log, so it steers one
+    // conversation without editing a file every other conversation reads.
+    // Filtering upstream of the routers means both channels inherit it and
+    // neither had to learn a second concept.
+    const suppressed = collectSuppressedSkillNames(await store.readEvents(conversation.id));
+    const { context: poolContext, capability: poolCapability } = partitionSkillsByRole(
+      suppressed.size > 0
+        ? conversationPool.filter((sk) => !suppressed.has(sk.manifest.name))
+        : conversationPool,
+    );
 
     // The workspace BRIEFING (apps + workspace overlay + "## Workspace" block
     // + workspace persona) reflects the conversation's own workspace

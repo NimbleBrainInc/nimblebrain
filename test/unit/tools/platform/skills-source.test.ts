@@ -99,6 +99,7 @@ describe("skills source — tools list", () => {
       "loading_log",
       "read",
       "restore",
+      "set_status",
       "update",
     ]);
   });

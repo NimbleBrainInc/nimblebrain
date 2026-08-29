@@ -32,7 +32,11 @@ Skills are created and managed through the `nb__skills` tools:
 - `skills__create` — write a new skill at org / workspace / user scope
 - `skills__update` — patch manifest fields and/or change the body
 - `skills__delete` — remove a skill (snapshots to `_versions/` first)
-- `skills__activate` / `skills__deactivate` — flip `status` without deleting
+- `skills__activate` / `skills__deactivate` — mute or un-mute a skill for THIS
+  conversation. Nothing is written; other conversations and workspaces are
+  unaffected. You cannot turn a skill off permanently — that is the user's call,
+  in Skills settings. If they ask for it, say so rather than muting and
+  reporting it done.
 - `skills__list` / `skills__read` — inspect what exists before changing anything
 - `skills__history` / `skills__restore` — list past versions and put one back
 

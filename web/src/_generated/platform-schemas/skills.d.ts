@@ -72,6 +72,11 @@ export declare const SkillsDeleteInput: import("@sinclair/typebox").TObject<{
     id: import("@sinclair/typebox").TString;
 }>;
 export type SkillsDeleteInput = Static<typeof SkillsDeleteInput>;
+export declare const SkillsSetStatusInput: import("@sinclair/typebox").TObject<{
+    id: import("@sinclair/typebox").TString;
+    status: import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TLiteral<"active">, import("@sinclair/typebox").TLiteral<"disabled">]>;
+}>;
+export type SkillsSetStatusInput = Static<typeof SkillsSetStatusInput>;
 export declare const SkillsActivateInput: import("@sinclair/typebox").TObject<{
     id: import("@sinclair/typebox").TString;
 }>;

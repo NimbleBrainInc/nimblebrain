@@ -32,7 +32,13 @@ import {
   type SkillsLoadedEvent,
 } from "../../conversation/types.ts";
 import { textContent } from "../../engine/content-helpers.ts";
-import { type EventSink, SKILL_ACTIVATED_META_KEY, type ToolResult } from "../../engine/types.ts";
+import {
+  type EventSink,
+  INTERNAL_TOOL_ANNOTATION,
+  SKILL_ACTIVATED_META_KEY,
+  SKILL_SUPPRESSION_META_KEY,
+  type ToolResult,
+} from "../../engine/types.ts";
 import { ORG_ADMIN_ROLES } from "../../identity/types.ts";
 import { log } from "../../observability/log.ts";
 import { formatActivatedSkillBlock } from "../../prompt/compose.ts";
@@ -81,6 +87,7 @@ import {
   SkillsLoadingLogInput,
   SkillsReadInput,
   SkillsRestoreInput,
+  SkillsSetStatusInput,
   SkillsUpdateInput,
   UseSkillInput,
 } from "./schemas/skills.ts";
@@ -170,9 +177,17 @@ const SKILLS_DELETE_DESCRIPTION =
   "deleting org- or workspace-scope skills. Bundle (Layer 1) skills cannot be deleted via " +
   "the platform — those ship with the bundle.";
 
+const SKILLS_SET_STATUS_DESCRIPTION =
+  "Durably enable or disable a skill by writing `status` to its frontmatter. INTERNAL: the Skills " +
+  "settings page invokes this by name; the model never sees it. The blast radius is why — a " +
+  "user-scope skill's file is read by every conversation that user has, in every workspace, so " +
+  "flipping it is a decision for a human looking at the surface that shows what they are changing. " +
+  "The agent's `activate`/`deactivate` mute for one conversation instead.";
+
 const SKILLS_ACTIVATE_DESCRIPTION =
-  "Activate a skill (set status=active). Sugar over `update`; cleaner permission/audit shape. " +
-  "Active skills are eligible for Layer 3 selection on subsequent turns.";
+  "Un-mute a skill previously muted with `deactivate` in this conversation, so it composes again " +
+  "from the next turn. Scope is this conversation only. This does NOT load a skill on demand — for " +
+  "that use `nb__use_skill`, which delivers the body immediately.";
 
 const USE_SKILL_DESCRIPTION =
   "Load a skill from the Skill Catalog into this conversation. Pass `name` exactly as listed " +
@@ -184,8 +199,11 @@ const USE_SKILL_DESCRIPTION =
   "does NOT change the skill's stored status (that is `activate`/`deactivate`).";
 
 const SKILLS_DEACTIVATE_DESCRIPTION =
-  "Deactivate a skill (set status=disabled). The skill stays on disk but is skipped during Layer 3 " +
-  "selection. Reactivate with `activate`. Use to mute a skill mid-incident without deleting it.";
+  "Mute a skill for THIS CONVERSATION — it stops composing into your context from the next turn. " +
+  "Scope is this conversation only: nothing is written to the skill, and the user's other chats and " +
+  "workspaces are unaffected. Undo with `activate`. Use when a skill is not relevant to the task at " +
+  "hand. To turn a skill off permanently the user does it in Skills settings — you cannot, and " +
+  "should say so rather than muting and calling it done.";
 
 // ── Source factory ───────────────────────────────────────────────────────
 
@@ -377,12 +395,31 @@ export function createSkillsSource(runtime: Runtime, eventSink: EventSink): McpS
       },
     },
     {
+      name: "set_status",
+      description: SKILLS_SET_STATUS_DESCRIPTION,
+      annotations: { [INTERNAL_TOOL_ANNOTATION]: true },
+      inputSchema: SkillsSetStatusInput,
+      handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
+        try {
+          const status = input.status === "disabled" ? "disabled" : "active";
+          return await updateSkillHandler(
+            runtime,
+            { id: input.id, manifest: { status } },
+            eventSink,
+            authoringGuidePath,
+          );
+        } catch (err) {
+          return errorResult(err);
+        }
+      },
+    },
+    {
       name: "activate",
       description: SKILLS_ACTIVATE_DESCRIPTION,
       inputSchema: SkillsActivateInput,
       handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
         try {
-          return await setStatusHandler(runtime, input, "active", eventSink, authoringGuidePath);
+          return await setStatusHandler(runtime, input, "active");
         } catch (err) {
           return errorResult(err);
         }
@@ -394,7 +431,7 @@ export function createSkillsSource(runtime: Runtime, eventSink: EventSink): McpS
       inputSchema: SkillsDeactivateInput,
       handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
         try {
-          return await setStatusHandler(runtime, input, "disabled", eventSink, authoringGuidePath);
+          return await setStatusHandler(runtime, input, "disabled");
         } catch (err) {
           return errorResult(err);
         }
@@ -2100,19 +2137,85 @@ async function deleteSkillHandler(
   };
 }
 
+/**
+ * Mute or un-mute a skill FOR THE CURRENT CONVERSATION.
+ *
+ * This used to write `status:` to the skill file, which is shared by every
+ * conversation that loads it — for a user-scope skill, across every workspace
+ * that user touches. So one chat's "not right now" silently reconfigured all
+ * the others, with no signal to any of them, and an operator ended up policing
+ * skill state by hand.
+ *
+ * The two intents behind that one write are genuinely different, and only one
+ * of them is the agent's: "don't use this for the task at hand" is per
+ * conversation, while "retire this skill" is a durable decision a human makes
+ * in settings, where they can see the blast radius. Turning a skill off
+ * permanently is no longer reachable from here at all.
+ *
+ * Resolution is by NAME, not path: a mute is conversation state, so it never
+ * touches the file and needs none of the path gates `update` runs. The name is
+ * validated against what this workspace can actually activate, so a typo is an
+ * error rather than a silent no-op the model reads as success.
+ */
 async function setStatusHandler(
   runtime: Runtime,
   input: Record<string, unknown>,
   status: "active" | "disabled",
-  eventSink: EventSink,
-  authoringGuidePath: string,
 ): Promise<ToolResult> {
-  return updateSkillHandler(
-    runtime,
-    { id: input.id, manifest: { status } },
-    eventSink,
-    authoringGuidePath,
-  );
+  const name = typeof input.id === "string" ? input.id : "";
+  if (!name) return errorResult(new Error("`id` is required — the skill name from `skills__list`"));
+
+  const { wsId, userId } = resolveCallContext(runtime);
+  // A mute takes effect through a `_meta` marker the ENGINE turns into a
+  // conversation event. Called outside a run — over REST, say — the marker is
+  // dropped and the call would report success while changing nothing. Refuse
+  // instead: a steering control that silently does nothing is how the bug this
+  // replaces stayed invisible for so long.
+  if (!wsId || !getRequestContext()?.conversationId) {
+    return errorResult(
+      new Error(
+        "Muting a skill is conversation state, so it only works inside a chat. " +
+          "To change a skill's stored status, use Skills settings.",
+      ),
+    );
+  }
+  // The mutable set is everything that can COMPOSE into this conversation, not
+  // just what can be activated on demand. `listActivatableSkills` is the
+  // catalog — `dynamic` skills plus bundle/connector guidance — and excludes
+  // `always` skills by construction, since you never activate one. Those are
+  // exactly the skills a user most wants muted (the always-on voice skill is
+  // the motivating case), so validating against the catalog alone rejected the
+  // main use with a confusing "unknown skill".
+  const known = new Set<string>([
+    ...runtime.loadConversationSkills(wsId, userId).map((sk) => sk.manifest.name),
+    ...(await runtime.listActivatableSkills(wsId, userId)).map((sk) => sk.name),
+  ]);
+  // A path is what `update`/`delete` take, so the model will reach for one
+  // here too. Accept its basename rather than failing on a well-meant call.
+  const resolved = known.has(name)
+    ? name
+    : ((name.split("/").pop() ?? "").replace(/\.md$/, "") ?? "");
+  if (!known.has(resolved)) {
+    return errorResult(
+      new Error(
+        `Unknown skill "${name}". Valid names in this workspace: ${[...known].sort().join(", ") || "(none)"}.`,
+      ),
+    );
+  }
+
+  const suppressed = status === "disabled";
+  return {
+    content: textContent(
+      suppressed
+        ? `Muted "${resolved}" for this conversation. It stops composing from the next turn. ` +
+            `Other conversations and workspaces are unaffected; to turn it off everywhere, the user ` +
+            `does that in Skills settings.`
+        : `Un-muted "${resolved}" for this conversation. It composes again from the next turn.`,
+    ),
+    structuredContent: { name: resolved, suppressed, scope: "conversation" },
+    _meta: { [SKILL_SUPPRESSION_META_KEY]: { skillName: resolved, suppressed } },
+    isError: false,
+  };
 }
 
 function extractUserIdFromPath(path: string, workDir: string): string | null {

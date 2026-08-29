@@ -19,6 +19,8 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { isInternalTool } from "../../../../src/engine/types.ts";
+import { surfaceTools } from "../../../../src/tools/surfacing.ts";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { NoopEventSink } from "../../../../src/adapters/noop-events.ts";
 import { runWithRequestContext } from "../../../../src/runtime/request-context.ts";
@@ -715,8 +717,8 @@ describe("skills__delete", () => {
 
 // ── activate / deactivate ────────────────────────────────────────────────
 
-describe("skills__activate / skills__deactivate", () => {
-  test("activate sets status=active; deactivate sets status=disabled", async () => {
+describe("durable status is set_status only", () => {
+  test("set_status writes the durable status to the file", async () => {
     const src = await buildSource();
     const client = src.getClient()!;
     await client.callTool({
@@ -729,14 +731,52 @@ describe("skills__activate / skills__deactivate", () => {
     });
     const id = join(workDir, "skills", "togglable.md");
 
-    const off = await client.callTool({ name: "deactivate", arguments: { id } });
+    const off = await client.callTool({ name: "set_status", arguments: { id, status: "disabled" } });
     expect(off.isError).toBeFalsy();
     expect(readManifestField(id, "status")).toBe("disabled");
 
-    const on = await client.callTool({ name: "activate", arguments: { id } });
+    const on = await client.callTool({ name: "set_status", arguments: { id, status: "active" } });
     expect(on.isError).toBeFalsy();
     // The writer emits status explicitly under metadata.nimblebrain.
     expect(readManifestField(id, "status")).toBe("active");
+  });
+
+  test("activate / deactivate write nothing to the file", async () => {
+    // They mute for one conversation now. The durable field is shared by every
+    // conversation that loads the skill — in every workspace for a user-scope
+    // one — so an agent reaching for "not right now" must not land there.
+    const src = await buildSource();
+    const client = src.getClient()!;
+    await client.callTool({
+      name: "create",
+      arguments: {
+        scope: "org",
+        manifest: { name: "untouched", description: "test", type: "skill" },
+        body: "x",
+      },
+    });
+    const id = join(workDir, "skills", "untouched.md");
+
+    await client.callTool({ name: "deactivate", arguments: { id } });
+    expect(readManifestField(id, "status")).toBe("active");
+  });
+
+  test("set_status is internal — surfaceTools keeps it out of the model's list", async () => {
+    // The wire's `annotations` is a typed MCP object, so asserting the custom
+    // key survives `listTools()` tests the SDK, not us. What matters is the
+    // behaviour: the filter at the top of `surfaceTools` drops internal tools
+    // from what the model is offered, while the tool stays callable by name
+    // for the settings UI over REST.
+    const src = await buildSource();
+    const tools = await src.tools();
+    const setStatus = tools.find((t) => t.name.endsWith("set_status"));
+    expect(setStatus).toBeDefined();
+    expect(isInternalTool(setStatus as { annotations?: Record<string, unknown> })).toBe(true);
+
+    const { direct, proxied } = surfaceTools(tools, null, { maxDirectTools: 1000 });
+    expect([...direct, ...proxied].some((t) => t.name.endsWith("set_status"))).toBe(false);
+    // The conversation-scoped pair stays visible.
+    expect([...direct, ...proxied].some((t) => t.name.endsWith("deactivate"))).toBe(true);
   });
 });
 
