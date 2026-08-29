@@ -233,11 +233,16 @@ const SKILLS_TASK_SAFE_TOOLS: ReadonlySet<string> = new Set([
  * Whether a `skills__*` wire name is barred from an unattended run.
  *
  * Two layers read this one predicate, the same split
- * {@link isTaskForbiddenIdentityTool} uses: `executeTask` subtracts these from
- * the surfaced set so the model never sees a tool it cannot call, and
- * {@link createSkillsSource} refuses them at dispatch so the wall holds for a
- * delegated sub-agent at any depth and regardless of what was surfaced.
+ * {@link isTaskForbiddenIdentityTool} uses. Surfacing subtraction — in
+ * `executeTask` for the run itself, and in the delegate default active set for
+ * a sub-agent spawned inside one — keeps the model from being shown a tool it
+ * cannot call. {@link createSkillsSource} refuses them at dispatch, so the
+ * wall holds at any delegation depth and regardless of what was surfaced.
  * Surfacing is the courtesy; the source is the boundary.
+ *
+ * Both surfacing sites gate on `RequestContext.unattended` themselves; this
+ * predicate answers only "is this name in the barred half", so a caller on a
+ * path that also serves interactive chat must gate it.
  *
  * Names outside the namespace are not this policy's business and return false.
  */

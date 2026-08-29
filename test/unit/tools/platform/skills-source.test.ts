@@ -16,8 +16,8 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { NoopEventSink } from "../../../../src/adapters/noop-events.ts";
 import { McpSource } from "../../../../src/tools/mcp-source.ts";
 import {
-	createSkillsSource,
-	isTaskForbiddenSkillTool,
+  createSkillsSource,
+  isTaskForbiddenSkillTool,
 } from "../../../../src/tools/platform/skills.ts";
 import { runWithRequestContext } from "../../../../src/runtime/request-context.ts";
 
