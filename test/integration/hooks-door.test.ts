@@ -470,7 +470,9 @@ describe("the two rate-limit buckets", () => {
    */
   async function expectRateLimited(res: Response): Promise<void> {
     expect(res.status).toBe(429);
-    expect(res.headers.get("Retry-After")).toBe("60");
+    // Derived, not the literal: a deliberate window resize must move this with
+    // it, or the header goes on claiming a minute for a window that is not one.
+    expect(res.headers.get("Retry-After")).toBe(String(HOOK_BUCKET_WINDOW_MS / 1_000));
     expect(await res.text()).toBe("");
   }
 
@@ -578,23 +580,29 @@ describe("the two rate-limit buckets", () => {
   test("are the ones the server owns, when the route is built without overrides", async () => {
     // `startServer` constructs both so its `stop()` can clear their sweep
     // timers; a route that built its own would leave an interval alive past the
-    // server and meter traffic on a bucket nothing else can see. Sized to one
-    // here so the fallback is unmistakable.
-    const routes = hooksRoutes(
-      makeCtx({
-        hookAnonLimiter: new RequestRateLimiter(1, HOOK_BUCKET_WINDOW_MS),
-        hookWorkspaceLimiter: new RequestRateLimiter(
-          HOOK_WORKSPACE_BUCKET_MAX,
-          HOOK_BUCKET_WINDOW_MS,
-        ),
-      }),
-      { identity: IDENTITY, fetchImpl: captureFetch },
-    );
-    if (!routes) throw new Error("hooks routes should mount when an identity is supplied");
-    const app = new Hono().route("/", routes);
+    // server and meter traffic on a bucket nothing else can see. Each bucket is
+    // sized to one IN TURN, with the other left at full size: a single fixture
+    // sized to one on only one of them pins that one and leaves the other free
+    // to be self-constructed unnoticed.
+    const appWithout = (over: Partial<AppContext>): Hono => {
+      const routes = hooksRoutes(makeCtx(over), { identity: IDENTITY, fetchImpl: captureFetch });
+      if (!routes) throw new Error("hooks routes should mount when an identity is supplied");
+      return new Hono().route("/", routes);
+    };
 
-    expect((await deliverFrom(app, SOURCE_A, goodPath())).status).toBe(202);
-    await expectRateLimited(await deliverFrom(app, SOURCE_A, goodPath()));
+    const anon = appWithout({
+      hookAnonLimiter: new RequestRateLimiter(1, HOOK_BUCKET_WINDOW_MS),
+      hookWorkspaceLimiter: new RequestRateLimiter(HOOK_WORKSPACE_BUCKET_MAX, HOOK_BUCKET_WINDOW_MS),
+    });
+    expect((await deliverFrom(anon, SOURCE_A, goodPath())).status).toBe(202);
+    await expectRateLimited(await deliverFrom(anon, SOURCE_A, goodPath()));
+
+    const workspace = appWithout({
+      hookAnonLimiter: new RequestRateLimiter(HOOK_ANON_BUCKET_MAX, HOOK_BUCKET_WINDOW_MS),
+      hookWorkspaceLimiter: new RequestRateLimiter(1, HOOK_BUCKET_WINDOW_MS),
+    });
+    expect((await deliverFrom(workspace, SOURCE_B, goodPath())).status).toBe(202);
+    await expectRateLimited(await deliverFrom(workspace, SOURCE_B, goodPath()));
   });
 });
 
