@@ -63,8 +63,16 @@ const PRIVILEGE_CANDIDATES: PrivilegeEntry[] = [
 
 /**
  * Build the set of privileged tool entries, only including those whose
- * feature is enabled. Disabled features mean the tool doesn't exist —
- * no need to gate it.
+ * feature is enabled. A disabled feature means the tool does not exist, so
+ * there is nothing left to confirm.
+ *
+ * That premise is enforced elsewhere and is load-bearing HERE: skipping the
+ * confirmation for a tool that is still callable would drop the prompt and
+ * leave the call. It holds because a feature-disabled tool is never built into
+ * its source — `createSkillsSource` (`src/tools/platform/skills.ts`) and
+ * `createSystemTools` (`src/tools/system-tools.ts`) both filter on
+ * `isToolEnabled` at construction. Anything that starts constructing a
+ * feature-gated tool unconditionally has to gate it here too.
  */
 function buildPrivilegedTools(features?: ResolvedFeatures): Map<string, PrivilegeEntry> {
   const candidates = features

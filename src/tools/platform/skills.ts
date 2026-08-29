@@ -25,6 +25,7 @@
 
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import { isToolEnabled, type ResolvedFeatures } from "../../config/features.ts";
 import { collectDeliveredSkillNames } from "../../conversation/event-reconstructor.ts";
 import {
   CONVERSATION_ID_RE,
@@ -197,7 +198,11 @@ const SKILLS_DEACTIVATE_DESCRIPTION =
  * mutation tools, which will emit `skill.created` / `skill.updated` /
  * `skill.deleted` engine events.
  */
-export function createSkillsSource(runtime: Runtime, eventSink: EventSink): McpSource {
+export function createSkillsSource(
+  runtime: Runtime,
+  eventSink: EventSink,
+  features?: ResolvedFeatures,
+): McpSource {
   // Layer 1 vendored guide lives next to the loader's `builtin/` directory.
   // Read at handler time (not module init) so the file can be replaced
   // without a process restart.
@@ -423,7 +428,22 @@ export function createSkillsSource(runtime: Runtime, eventSink: EventSink): McpS
     {
       name: SKILLS_SOURCE_NAME,
       version: "1.0.0",
-      tools,
+      // A feature-disabled tool is never BUILT. That is the enforcement — no
+      // listing has to hide it and no door has to refuse it, which is what
+      // `src/config/privilege.ts` relies on when it skips confirmation for a
+      // disabled tool. `createSystemTools` gates `nb__*` at the same point.
+      //
+      // `FEATURE_TOOL_MAP` keys on the WIRE name and these defs carry the bare
+      // one, so qualify before asking. Bare `create` / `delete` are deliberately
+      // absent from that map: they are too generic to gate globally, since any
+      // bundle may name a tool `create`.
+      //
+      // No `features` means no filtering, matching `createSystemTools`. The
+      // production path always passes them; the parameter is optional for unit
+      // fixtures that build this source against a stub runtime.
+      tools: features
+        ? tools.filter((t) => isToolEnabled(`${SKILLS_SOURCE_NAME}__${t.name}`, features))
+        : tools,
       resources,
     },
     eventSink,
