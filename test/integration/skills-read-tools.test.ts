@@ -40,7 +40,7 @@ async function callTool(
     {
       // Match the dev-fallback ownerId minted by `runtime.chat()`
       // when no identity is passed. Stage 1's per-conversation
-      // ownership gate on skills__active_for / loading_log requires
+      // ownership gate on skills__loading_log requires
       // a real identity in the request context.
       identity: DEV_IDENTITY,
       workspaceId: wsId,
@@ -60,7 +60,7 @@ async function callTool(
 }
 
 describe("skills read tools — end-to-end", () => {
-  it("list / read / active_for / loading_log all report a workspace skill loaded by always", async () => {
+  it("list / read / loading_log all report a workspace skill loaded by always", async () => {
     const workDir = join(testDir, "e2e");
     mkdirSync(workDir, { recursive: true });
 
@@ -80,7 +80,7 @@ describe("skills read tools — end-to-end", () => {
         'name: voice-rules',
         'description: Voice rules',
         // dynamic + tool-affinity (nb__* is always surfaced) → loads into Layer 3
-        // (skills.loaded / loading_log / active_for), where this test asserts.
+        // (skills.loaded / loading_log), where this test asserts.
         "metadata:",
         "  nimblebrain:",
         "    loading-strategy: dynamic",
@@ -167,26 +167,6 @@ describe("skills read tools — end-to-end", () => {
       expect(read.content).toContain("Speak plainly");
       expect(read.content).toContain("voice-rules");
       expect(read.content).toContain("loads: tool_affinity");
-
-      // skills__active_for — the most recent skills.loaded for the conv must
-      // include voice-rules (loading_strategy: always).
-      const active = await callTool(
-        runtime,
-        "skills__active_for",
-        { conversation_id: convId },
-        personalWsId,
-      );
-      expect(active.isError).toBe(false);
-      const activeList = (active.structured as { active?: unknown[] }).active as Array<{
-        id: string;
-        loadedBy: string;
-        scope: string;
-      }>;
-      const activeIds = activeList.map((s) => s.id);
-      expect(activeIds.some((id) => id.endsWith("voice.md"))).toBe(true);
-      const voiceLoaded = activeList.find((s) => s.id.endsWith("voice.md"))!;
-      expect(voiceLoaded.loadedBy).toBe("tool_affinity");
-      expect(voiceLoaded.scope).toBe("workspace");
 
       // skills__loading_log — at least one entry for this conversation.
       const log = await callTool(
