@@ -34,7 +34,7 @@ export type ConversationsListInput = Static<typeof ConversationsListInput>;
  * `id` is optional on all of them: an agent inside a chat has no way to learn
  * its own conversation id, so requiring one made the current conversation the
  * only one these tools could not reach. Omitted, it resolves from the request
- * context — the same ambient fallback `skills__active_for` uses.
+ * context.
  */
 const CONVERSATION_ID_DESCRIPTION =
   'Conversation ID. Omit it (or pass "current") to address the conversation this call is happening inside; required from outside a chat.';
