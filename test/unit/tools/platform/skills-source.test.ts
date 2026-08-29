@@ -179,7 +179,7 @@ describe("skills source — resources", () => {
 
 describe("skills source — unattended-run wall", () => {
   const MUTATIONS = ["create", "update", "delete", "activate", "deactivate", "restore"];
-  const READS = ["list", "read", "history", "loading_log", "active_for"];
+  const READS = ["list", "read", "history", "loading_log"];
 
   test("every tool is classified — a new one cannot be added without a decision", async () => {
     // The set below is the whole namespace. If a tool is added and not sorted

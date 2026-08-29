@@ -209,7 +209,6 @@ const SKILLS_TASK_SAFE_TOOLS: ReadonlySet<string> = new Set([
   "read",
   "history",
   "loading_log",
-  "active_for",
 ]);
 
 /**
