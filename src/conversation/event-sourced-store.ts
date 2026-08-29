@@ -604,8 +604,8 @@ export class EventSourcedConversationStore implements ConversationStore, EventSi
 
   /**
    * Read raw conversation events for a single conversation. Returns []
-   * for missing files or legacy (message-format) conversations. Phase 2
-   * read tools (`skills__active_for`, `skills__loading_log`) consume this.
+   * for missing files or legacy (message-format) conversations. The
+   * event-log read tools (`skills__loading_log`) consume this.
    */
   async readEvents(id: string): Promise<ConversationEvent[]> {
     const path = this.path(id);
