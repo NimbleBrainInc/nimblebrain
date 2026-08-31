@@ -21,7 +21,6 @@ export const PlatformToolCatalog = {
   skills: {
     list: { input: Skills.SkillsListInput },
     read: { input: Skills.SkillsReadInput },
-    active_for: { input: Skills.SkillsActiveForInput },
     loading_log: { input: Skills.SkillsLoadingLogInput },
     create: { input: Skills.SkillsCreateInput },
     update: { input: Skills.SkillsUpdateInput },

@@ -706,7 +706,7 @@ function scanRunEvents(events: KnownEvent[], start: number, runId: string): RunS
       break;
     }
     // `skills.loaded` rides inside the run span (emitted after run.start); the
-    // last one for the run wins, matching `active_for`'s newest-event rule.
+    // last one for the run wins.
     if (isSkillsLoaded(inner) && inner.runId === runId) {
       skillsLoaded = projectSkillsLoaded(inner);
     }

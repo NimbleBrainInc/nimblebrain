@@ -8,7 +8,6 @@
  * Tools surfaced (read-only):
  *   skills__list           — enumerate skills with scope/layer/status filters
  *   skills__read           — fetch one skill's body + manifest by id
- *   skills__active_for     — show which skills loaded for a conversation
  *   skills__loading_log    — replay the skill-load ledger (every channel)
  *
  * Catalog activation (`nb__use_skill`) is defined here too — it shares this
@@ -27,11 +26,7 @@ import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { isToolEnabled, type ResolvedFeatures } from "../../config/features.ts";
 import { collectDeliveredSkillNames } from "../../conversation/event-reconstructor.ts";
-import {
-  CONVERSATION_ID_RE,
-  type ConversationEvent,
-  type SkillsLoadedEvent,
-} from "../../conversation/types.ts";
+import type { ConversationEvent } from "../../conversation/types.ts";
 import { textContent } from "../../engine/content-helpers.ts";
 import { type EventSink, SKILL_ACTIVATED_META_KEY, type ToolResult } from "../../engine/types.ts";
 import { ORG_ADMIN_ROLES } from "../../identity/types.ts";
@@ -59,21 +54,19 @@ import {
   snapshotSkillVersion,
 } from "../../skills/versions.ts";
 import { deleteSkill, updateSkill, writeSkill } from "../../skills/writer.ts";
+import { splitInnerToolName } from "../../util/tool-name.ts";
 import { canWriteWorkspaceScoped } from "../../workspace/authz.ts";
 import { defineInProcessApp, type InProcessTool } from "../in-process-app.ts";
 import type { McpSource } from "../mcp-source.ts";
 import type {
-  ActiveSkillEntry,
   SkillDetail,
   SkillSummary,
-  SkillsActiveForOutput,
   SkillsListOutput,
   SkillsReadOutput,
   SkillsUseOutput,
 } from "./schemas/skills.ts";
 import {
   SkillsActivateInput,
-  SkillsActiveForInput,
   SkillsCreateInput,
   SkillsDeactivateInput,
   SkillsDeleteInput,
@@ -112,15 +105,6 @@ const SKILLS_READ_DESCRIPTION =
   "description, loading_strategy, priority, scope, layer, tool_affinity, triggers, status). " +
   "Always call `skills__list` first to discover ids — bare names and scope-prefixed forms " +
   "(e.g. `org/foo`) are NOT valid input.";
-
-const SKILLS_ACTIVE_FOR_DESCRIPTION =
-  "Show which Layer 3 skills are currently loaded for a conversation. " +
-  "`conversation_id` is optional inside a chat — when omitted (or passed as " +
-  '"current"), defaults to the conversation this tool call belongs to. Returns one entry per ' +
-  "loaded skill with id, layer, scope, token count, `loadedBy` (`always` or " +
-  "`tool_affinity`), and a human-readable `reason`. Use this to answer 'what's " +
-  "active for this conversation right now?' — distinct from `skills__list` which " +
-  "enumerates the catalog regardless of load state.";
 
 const SKILLS_LOADING_LOG_DESCRIPTION =
   "Replay the skill-load ledger from conversation logs — every channel a skill can reach the " +
@@ -198,6 +182,67 @@ const SKILLS_DEACTIVATE_DESCRIPTION =
  * mutation tools, which will emit `skill.created` / `skill.updated` /
  * `skill.deleted` engine events.
  */
+/**
+ * Skills tools that stay reachable inside an unattended run: the read-only
+ * half. Everything else in the namespace — the authoring tools, and any tool
+ * added to it later — is barred, so the boundary fails CLOSED as the surface
+ * grows (an allowlist, not a denylist), matching
+ * {@link AUTOMATIONS_TASK_SAFE_TOOLS}.
+ *
+ * A skill is durable, cross-conversation guidance the runtime composes into a
+ * prompt on its own: `loading_strategy: always` reaches every later turn, and
+ * tool affinity reaches every turn that touches the matching tools. A task run
+ * fires as its owner with no human present to confirm, and routinely ingests
+ * untrusted content (email, web pages, tickets). A write from inside one would
+ * put attacker-authored text into future interactive sessions with nothing
+ * standing between them — a foothold that outlives the run and then loads
+ * itself. That is the argument `createInstructionsSource` makes for the same
+ * wall, and it is stronger here: instructions are one document a scope opts
+ * into, while a skill can auto-load on a tool match and there can be many.
+ *
+ * Reads stay open deliberately. An automation that audits the catalog and
+ * reports what it found — stale skills, overlapping guidance, a recommendation
+ * to retire one — is useful and changes nothing; it hands its conclusions to a
+ * human who makes the change from an interactive session.
+ */
+const SKILLS_TASK_SAFE_TOOLS: ReadonlySet<string> = new Set([
+  "list",
+  "read",
+  "history",
+  "loading_log",
+]);
+
+/**
+ * Whether a `skills__*` wire name is barred from an unattended run.
+ *
+ * Two layers read this one predicate, the same split
+ * {@link isTaskForbiddenIdentityTool} uses. Surfacing subtraction — in
+ * `executeTask` for the run itself, and in the delegate default active set for
+ * a sub-agent spawned inside one — keeps the model from being shown a tool it
+ * cannot call. {@link createSkillsSource} refuses them at dispatch, so the
+ * wall holds at any delegation depth and regardless of what was surfaced.
+ * Surfacing is the courtesy; the source is the boundary.
+ *
+ * Both surfacing sites gate on `RequestContext.unattended` themselves; this
+ * predicate answers only "is this name in the barred half", so a caller on a
+ * path that also serves interactive chat must gate it.
+ *
+ * Names outside the namespace are not this policy's business and return false.
+ */
+export function isTaskForbiddenSkillTool(wireName: string): boolean {
+  const { sourcePrefix, bareToolName, hasSeparator } = splitInnerToolName(wireName);
+  // `hasSeparator` is load-bearing, not decoration: without it a bare `skills`
+  // (no source segment) reports `sourcePrefix === "skills"` with the whole name
+  // as the tool, and would be barred as an unrecognised mutation. A name with
+  // no source segment is not in this namespace and is not this policy's
+  // business.
+  if (!hasSeparator || sourcePrefix !== SKILLS_SOURCE_NAME) return false;
+  // Anything else in the namespace is forbidden, including a malformed
+  // `skills__` whose tool segment is empty — the allowlist fails closed on a
+  // name it does not recognise, which is the point of spelling it this way.
+  return !SKILLS_TASK_SAFE_TOOLS.has(bareToolName);
+}
+
 export function createSkillsSource(
   runtime: Runtime,
   eventSink: EventSink,
@@ -243,61 +288,6 @@ export function createSkillsSource(
       handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
         try {
           return await readSkillHandler(runtime, authoringGuidePath, input);
-        } catch (err) {
-          return errorResult(err);
-        }
-      },
-    },
-    {
-      name: "active_for",
-      description: SKILLS_ACTIVE_FOR_DESCRIPTION,
-      inputSchema: SkillsActiveForInput,
-      handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
-        try {
-          // Explicit arg wins; otherwise use the current conversation from
-          // request context. The agent making this call from inside a chat
-          // doesn't know its own conv id, so requiring it forced agents to
-          // either guess or skip the tool entirely.
-          //
-          // `"current"` is accepted as a spelling of the ambient conversation,
-          // matching `conversations__update` / `get` / `fork` / `export`. Two
-          // tools answering "the conversation I am in" with different
-          // vocabularies is a coin-flip the model has to win on every call.
-          const rawArg =
-            typeof input.conversation_id === "string" && input.conversation_id.length > 0
-              ? input.conversation_id
-              : undefined;
-          const argConvId = rawArg === "current" ? undefined : rawArg;
-          // The ambient value is shape-checked, matching `conversations__*`.
-          // `conversationId` holds only store-minted ids now, so this should
-          // never fire; it stays so that a non-conversation id arriving there
-          // is refused rather than looked up and reported as
-          // `Conversation not found: <that id>`.
-          const ambient = getRequestContext()?.conversationId;
-          const convId =
-            argConvId ?? (ambient && CONVERSATION_ID_RE.test(ambient) ? ambient : undefined);
-          if (!convId) {
-            return {
-              content: textContent(
-                "conversation_id is required when called outside a chat — " +
-                  "no current conversation is in scope. Pass conversation_id explicitly.",
-              ),
-              isError: true,
-            };
-          }
-          const result = await activeForConversation(runtime, convId);
-          if (result === null) {
-            return {
-              content: textContent(`Conversation not found: ${convId}`),
-              isError: true,
-            };
-          }
-          const out: SkillsActiveForOutput = { active: result, conversationId: convId };
-          return {
-            content: textContent(summarizeActive(result)),
-            structuredContent: out as unknown as Record<string, unknown>,
-            isError: false,
-          };
         } catch (err) {
           return errorResult(err);
         }
@@ -407,6 +397,61 @@ export function createSkillsSource(
     },
   ];
 
+  // A feature-disabled tool is never BUILT. That is the enforcement — no
+  // listing has to hide it and no door has to refuse it, which is what
+  // `src/config/privilege.ts` relies on when it skips confirmation for a
+  // disabled tool. `createSystemTools` gates `nb__*` at the same point.
+  //
+  // `FEATURE_TOOL_MAP` keys on the WIRE name and these defs carry the bare one,
+  // so qualify before asking. Bare `create` / `delete` are deliberately absent
+  // from that map: they are too generic to gate globally, since any bundle may
+  // name a tool `create`.
+  //
+  // No `features` means no filtering, matching `createSystemTools`. The
+  // production path always passes them; the parameter is optional for unit
+  // fixtures that build this source against a stub runtime.
+  //
+  // Ordered BEFORE the wall on purpose, and the two must stay composed: these
+  // are independent controls answering different questions (does the operator
+  // allow this tool to exist / may an unattended run call it), so the wall
+  // wraps whatever survives this filter. Applying either one INSTEAD of the
+  // other at the `tools:` argument below is the failure mode this ordering
+  // removes — and it is not one the suite would catch, because a `features`
+  // branch is only taken in production (unit fixtures omit the parameter).
+  const enabled: InProcessTool[] = features
+    ? tools.filter((t) => isToolEnabled(`${SKILLS_SOURCE_NAME}__${t.name}`, features))
+    : tools;
+
+  // Unattended-run wall. Enforced HERE, wrapping the assembled tool list,
+  // because this is the single dispatch point every caller funnels through —
+  // the top-level run AND a delegated sub-agent at any depth. `unattended`
+  // rides the ambient request context (set by `executeTask`, preserved across
+  // the per-call restamp), so the wall does not depend on which engine or
+  // router dispatched the call, or on the tool ever having been surfaced to
+  // the model. Same placement and reasoning as `createAutomationsSource` and
+  // `createInstructionsSource`.
+  const walled: InProcessTool[] = enabled.map((tool) =>
+    SKILLS_TASK_SAFE_TOOLS.has(tool.name)
+      ? tool
+      : {
+          ...tool,
+          handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
+            if (getRequestContext()?.unattended) {
+              return errorResult(
+                new Error(
+                  `Tool "${SKILLS_SOURCE_NAME}__${tool.name}" is not available inside an ` +
+                    "unattended automation run. A skill is durable guidance that loads " +
+                    "itself into later conversations, and there is no one present to " +
+                    "confirm the change. Read and report from the run; write the skill " +
+                    "from an interactive session.",
+                ),
+              );
+            }
+            return tool.handler(input);
+          },
+        },
+  );
+
   // Layer 1 vendored authoring guide. Callback-form `text` so the file is
   // re-read on every `resources/read`.
   const resources = new Map<string, { text: () => Promise<string>; mimeType: string }>([
@@ -428,22 +473,7 @@ export function createSkillsSource(
     {
       name: SKILLS_SOURCE_NAME,
       version: "1.0.0",
-      // A feature-disabled tool is never BUILT. That is the enforcement — no
-      // listing has to hide it and no door has to refuse it, which is what
-      // `src/config/privilege.ts` relies on when it skips confirmation for a
-      // disabled tool. `createSystemTools` gates `nb__*` at the same point.
-      //
-      // `FEATURE_TOOL_MAP` keys on the WIRE name and these defs carry the bare
-      // one, so qualify before asking. Bare `create` / `delete` are deliberately
-      // absent from that map: they are too generic to gate globally, since any
-      // bundle may name a tool `create`.
-      //
-      // No `features` means no filtering, matching `createSystemTools`. The
-      // production path always passes them; the parameter is optional for unit
-      // fixtures that build this source against a stub runtime.
-      tools: features
-        ? tools.filter((t) => isToolEnabled(`${SKILLS_SOURCE_NAME}__${t.name}`, features))
-        : tools,
+      tools: walled,
       resources,
     },
     eventSink,
@@ -1113,50 +1143,6 @@ function inferScopeFromPath(
   return "bundle";
 }
 
-// Local alias for the canonical shape from `schemas/skills.ts`.
-type ActiveForEntry = ActiveSkillEntry;
-
-/**
- * Find the most recent `skills.loaded` event for the conversation and
- * return its `skills[]` projected to the active-for output shape. Returns
- * `null` if the conversation cannot be found, `[]` if no `skills.loaded`
- * has fired yet for that conversation.
- */
-async function activeForConversation(
-  runtime: Runtime,
-  convId: string,
-): Promise<ActiveForEntry[] | null> {
-  // Stage 1 single-owner: verify the caller owns the requested
-  // conversation before reading its events. `findConversation(id,
-  // access)` returns null for both not-found and foreign-owner —
-  // same shape as the unauthenticated branch, no existence leak.
-  const identity = runtime.getCurrentIdentity();
-  if (!identity) return null;
-  const owned = await runtime.findConversation(convId, { userId: identity.id });
-  if (!owned) return null;
-
-  const events = await readConvEvents(runtime, convId);
-  if (events === null) return null;
-
-  // Walk from the end to find the most recent skills.loaded.
-  for (let i = events.length - 1; i >= 0; i--) {
-    const ev = events[i];
-    if (ev?.type === "skills.loaded") {
-      return (ev as SkillsLoadedEvent).skills.map((s) => ({
-        id: s.id,
-        // Pass the recorded mechanism layer through (0/3/4). Historical events
-        // only ever carried 3; default to it so old logs still project.
-        layer: s.layer ?? (3 as const),
-        scope: (s.scope ?? "org") as ActiveForEntry["scope"],
-        tokens: s.tokens,
-        loadedBy: s.loadedBy,
-        reason: s.reason,
-      }));
-    }
-  }
-  return [];
-}
-
 interface LoadingLogInput {
   conversation_id?: string;
   skill?: string;
@@ -1304,8 +1290,8 @@ function errorResult(err: unknown): ToolResult {
 // reaches `/mcp` clients and the UI but never the in-process agent loop.
 // So `content` must carry everything the model needs to act:
 //
-//   - For *status/enumeration* tools (`active_for`, `loading_log`) a short
-//     summary line is sufficient; the model only needs the gist.
+//   - For *status/enumeration* tools (`loading_log`) a short summary line
+//     is sufficient; the model only needs the gist.
 //   - For *enumeration the model must read* (`list`) and *document fetch*
 //     (`read`) the payload itself goes in `content` — IDs for `list`, the
 //     full body + manifest for `read` — because the structured copy is
@@ -1380,12 +1366,6 @@ function renderRead(skill: ReadResult): string {
   if (m.triggers?.length) fields.push(`triggers: ${m.triggers.join(", ")}`);
   if (skill.modifiedAt) fields.push(`modified: ${skill.modifiedAt}`);
   return `${fields.join("\n")}\n\n---\n\n${skill.content}`;
-}
-
-function summarizeActive(active: ActiveForEntry[]): string {
-  if (active.length === 0) return "No skills loaded for this conversation yet.";
-  const totalTokens = active.reduce((sum, a) => sum + a.tokens, 0);
-  return `${active.length} skill${active.length === 1 ? "" : "s"} loaded · ${totalTokens} tokens`;
 }
 
 function summarizeLog(rows: SkillLoadRow[]): string {

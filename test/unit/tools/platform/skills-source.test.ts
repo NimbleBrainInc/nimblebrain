@@ -15,7 +15,15 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { NoopEventSink } from "../../../../src/adapters/noop-events.ts";
 import { McpSource } from "../../../../src/tools/mcp-source.ts";
-import { createSkillsSource } from "../../../../src/tools/platform/skills.ts";
+import {
+  createSkillsSource,
+  isTaskForbiddenSkillTool,
+} from "../../../../src/tools/platform/skills.ts";
+import {
+  resolveFeatures,
+  type ResolvedFeatures,
+} from "../../../../src/config/features.ts";
+import { runWithRequestContext } from "../../../../src/runtime/request-context.ts";
 
 // ── Fake Runtime ────────────────────────────────────────────────────────
 //
@@ -67,6 +75,29 @@ async function buildSource(): Promise<McpSource> {
   return source;
 }
 
+/**
+ * Build the source the way PRODUCTION does — with `features` passed.
+ *
+ * `createSkillsSource` branches on whether `features` is present, and every
+ * other fixture in this file omits it. That left the branch the real runtime
+ * actually takes (`createPlatformSources` passes `runtime.getFeatures()`)
+ * untested, so a change that dropped the unattended wall on the feature-gated
+ * path only would have shipped with the suite green. Assert the wall through
+ * this door too.
+ */
+async function buildSourceWithFeatures(
+  overrides: Partial<ResolvedFeatures> = {},
+): Promise<McpSource> {
+  const runtime = new FakeRuntime(workDir);
+  source = createSkillsSource(
+    runtime as unknown as never,
+    new NoopEventSink(),
+    resolveFeatures({ skillManagement: true, ...overrides }),
+  );
+  await source.start();
+  return source;
+}
+
 // ── Source factory ──────────────────────────────────────────────────────
 
 describe("skills source — factory", () => {
@@ -90,7 +121,6 @@ describe("skills source — tools list", () => {
     const names = tools.tools.map((t) => t.name).sort();
     expect(names).toEqual([
       "activate",
-      "active_for",
       "create",
       "deactivate",
       "delete",
@@ -135,24 +165,6 @@ describe("skills source — schema rejection", () => {
     const result = await client.callTool({ name: "read", arguments: {} });
     expect(result.isError).toBe(true);
   });
-
-  test("active_for without conversation_id errors when no current conversation is in scope", async () => {
-    // The schema no longer requires `conversation_id` — inside a chat the
-    // handler defaults to the current conversation via request context. But
-    // when called outside a chat (no request context, as in this test), the
-    // handler must error explicitly rather than silently falling back to a
-    // wrong conversation. This case verifies the explicit error path.
-    const src = await buildSource();
-    const client = src.getClient()!;
-    const result = await client.callTool({ name: "active_for", arguments: {} });
-    expect(result.isError).toBe(true);
-    const text = (result.content as Array<{ type: string; text: string }>)
-      .filter((c) => c.type === "text")
-      .map((c) => c.text)
-      .join("");
-    expect(text).toContain("conversation_id is required");
-    expect(text).toContain("outside a chat");
-  });
 });
 
 // ── Resources ───────────────────────────────────────────────────────────
@@ -183,5 +195,147 @@ describe("skills source — resources", () => {
     const client = src.getClient()!;
     const data = await client.readResource({ uri: "skill://skills/authoring-guide" });
     expect(data.contents?.[0]?.mimeType).toBe("text/markdown");
+  });
+});
+
+// ── Unattended-run wall ─────────────────────────────────────────────────
+//
+// A skill is durable guidance the runtime composes into later prompts on its
+// own. A task run ingests untrusted content with no human present, so it may
+// read the catalog and report on it, but not write to it.
+
+describe("skills source — unattended-run wall", () => {
+  const MUTATIONS = ["create", "update", "delete", "activate", "deactivate", "restore"];
+  const READS = ["list", "read", "history", "loading_log"];
+
+  test("every tool is classified — a new one cannot be added without a decision", async () => {
+    // The set below is the whole namespace. If a tool is added and not sorted
+    // into reads or mutations, this fails rather than the tool silently
+    // inheriting whichever default the author did not think about.
+    const src = await buildSource();
+    const names = (await src.getClient()!.listTools()).tools.map((t) => t.name).sort();
+    expect(names).toEqual([...MUTATIONS, ...READS].sort());
+  });
+
+  test("the predicate bars every mutation and no read", () => {
+    for (const name of MUTATIONS) {
+      expect(isTaskForbiddenSkillTool(`skills__${name}`)).toBe(true);
+    }
+    for (const name of READS) {
+      expect(isTaskForbiddenSkillTool(`skills__${name}`)).toBe(false);
+    }
+  });
+
+  test("the predicate fails CLOSED for a tool added to the namespace later", () => {
+    // An allowlist, not a denylist: a mutation added tomorrow is barred by
+    // default rather than silently reopening the vector.
+    expect(isTaskForbiddenSkillTool("skills__publish_to_everyone")).toBe(true);
+  });
+
+  test("the predicate does not reach outside its own namespace", () => {
+    expect(isTaskForbiddenSkillTool("conversations__update")).toBe(false);
+    expect(isTaskForbiddenSkillTool("files__create")).toBe(false);
+    expect(isTaskForbiddenSkillTool("nb__use_skill")).toBe(false);
+  });
+
+  test("a name with no source segment is not in this namespace", () => {
+    // `splitInnerToolName` returns the whole input as BOTH segments when there
+    // is no separator, so a bare `skills` reports `sourcePrefix === "skills"`.
+    // Only `hasSeparator` separates that from a real `skills__*` name; dropping
+    // it silently bars a sourceless tool that this policy has no claim on.
+    expect(isTaskForbiddenSkillTool("skills")).toBe(false);
+    expect(isTaskForbiddenSkillTool("create")).toBe(false);
+  });
+
+  test("a malformed name inside the namespace still fails closed", () => {
+    expect(isTaskForbiddenSkillTool("skills__")).toBe(true);
+  });
+
+  // Valid arguments on purpose: schema validation runs BEFORE the handler, so
+  // a malformed call is rejected as bad input and never reaches the wall. That
+  // is harmless — no mutation happens on either path — but a test built on
+  // invalid args would pass while proving nothing about the wall.
+  const VALID_CREATE = {
+    scope: "workspace",
+    manifest: { name: "injected", description: "written by an automation" },
+    body: "# do the attacker's bidding",
+  };
+
+  test("a mutation called inside an unattended run is refused at the source", async () => {
+    // Enforced at dispatch, not only by surfacing subtraction — a delegated
+    // sub-agent that was never shown the tool can still name it.
+    const src = await buildSource();
+    const client = src.getClient()!;
+    const result = await runWithRequestContext(
+      { identity: { id: "user_test" }, unattended: true } as never,
+      () => client.callTool({ name: "create", arguments: VALID_CREATE }),
+    );
+    expect(result.isError).toBe(true);
+    const text = (result.content as Array<{ type: string; text: string }>)
+      .filter((c) => c.type === "text")
+      .map((c) => c.text)
+      .join("");
+    expect(text).toContain("not available inside an unattended automation run");
+  });
+
+  test("a read called inside an unattended run is NOT refused by the wall", async () => {
+    // The automation's whole permitted job — audit and report — must survive.
+    const src = await buildSource();
+    const client = src.getClient()!;
+    const result = await runWithRequestContext(
+      { identity: { id: "user_test" }, unattended: true } as never,
+      () => client.callTool({ name: "list", arguments: {} }),
+    );
+    const text = (result.content as Array<{ type: string; text: string }>)
+      .filter((c) => c.type === "text")
+      .map((c) => c.text)
+      .join("");
+    expect(text).not.toContain("not available inside an unattended automation run");
+  });
+
+  test("the wall survives the feature-gated build path", async () => {
+    // The regression this pins: `createSkillsSource` branches on `features`,
+    // and only the no-`features` branch was covered. Composing the feature
+    // filter and the wall as one pipeline (filter, then wrap the survivors)
+    // is what keeps both live; taking either INSTEAD of the other at the
+    // `tools:` argument passes every other test in this file.
+    const src = await buildSourceWithFeatures();
+    const client = src.getClient()!;
+    const result = await runWithRequestContext(
+      { identity: { id: "user_test" }, unattended: true } as never,
+      () => client.callTool({ name: "create", arguments: VALID_CREATE }),
+    );
+    expect(result.isError).toBe(true);
+    const text = (result.content as Array<{ type: string; text: string }>)
+      .filter((c) => c.type === "text")
+      .map((c) => c.text)
+      .join("");
+    expect(text).toContain("not available inside an unattended automation run");
+  });
+
+  test("the feature gate survives alongside the wall", async () => {
+    // The other half of the same composition: with skill management off the
+    // mutations are never BUILT, so they are absent rather than refused. Pins
+    // that walling the list did not swallow the filter.
+    const src = await buildSourceWithFeatures({ skillManagement: false });
+    const names = (await src.getClient()!.listTools()).tools.map((t) => t.name).sort();
+    for (const m of MUTATIONS) expect(names).not.toContain(m);
+    // `history` is feature-gated but task-safe — the two axes are independent,
+    // and this is the case that proves it: gated off here, allowed in a run.
+    expect(names).not.toContain("history");
+    expect(names).toContain("list");
+    expect(names).toContain("read");
+  });
+
+  test("outside a run the same mutation is not walled", async () => {
+    // Pins that the wall keys on `unattended`, not on the tool being broken.
+    const src = await buildSource();
+    const client = src.getClient()!;
+    const result = await client.callTool({ name: "create", arguments: VALID_CREATE });
+    const text = (result.content as Array<{ type: string; text: string }>)
+      .filter((c) => c.type === "text")
+      .map((c) => c.text)
+      .join("");
+    expect(text).not.toContain("not available inside an unattended automation run");
   });
 });
