@@ -332,8 +332,13 @@ export function readHookIdentity(env: NodeJS.ProcessEnv = process.env): HookIden
  *
  * Order is for the common case, not for correctness: almost every delivery
  * opens on the first key, and a token that opens under none is the same 404 as
- * one that never verified. Which key opened it is deliberately not returned —
- * nothing downstream may branch on it, because a delivery's authority comes
+ * one that never verified.
+ *
+ * `slot` is which ring position opened it, and it is OBSERVABLE ONLY — it exists
+ * so a delivery arriving on a superseded key can be logged, because that is the
+ * ring's exit condition and nothing else can see it: an operator dropping the
+ * outgoing key blind causes the fleet-wide silent 404 the ring exists to
+ * prevent. Nothing downstream may branch on it. A delivery's authority comes
  * from the registration lookup that follows, not from which key was current
  * when the URL was minted.
  */
@@ -345,12 +350,6 @@ export function openHookTokenForIdentity(
   let firstError: unknown;
   for (let slot = 0; slot < ring.length; slot++) {
     try {
-      // `slot` rides out for the delivery log ONLY. Nothing downstream may branch
-      // on it: a delivery's authority comes from the registration lookup that
-      // follows, not from which key happened to be current when the URL was
-      // minted. What it buys is the ring's exit condition — without it an
-      // operator cannot see whether any traffic still rides the outgoing key,
-      // and dropping that key blind is the outage the ring exists to prevent.
       return { payload: openHookToken(wire, ring[slot] as Buffer, identity.tid), slot };
     } catch (err) {
       firstError ??= err;
