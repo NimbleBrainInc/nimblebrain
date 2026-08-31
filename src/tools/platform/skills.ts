@@ -402,6 +402,7 @@ export function createSkillsSource(
             { id: input.id, manifest: { status } },
             eventSink,
             authoringGuidePath,
+            { allowStatus: true },
           );
         } catch (err) {
           return errorResult(err);
@@ -1899,7 +1900,6 @@ function buildUpdatePatch(
     ...(patch.description !== undefined ? { description: patch.description } : {}),
     ...(patch.loadingStrategy !== undefined ? { loadingStrategy: patch.loadingStrategy } : {}),
     ...(patch.priority !== undefined ? { priority: patch.priority } : {}),
-    ...(patch.status !== undefined ? { status: patch.status } : {}),
     ...(patch.toolAffinity !== undefined ? { toolAffinity: patch.toolAffinity } : {}),
     ...(patch.triggers !== undefined ? { triggers: patch.triggers } : {}),
     ...(patch.allowedTools !== undefined ? { allowedTools: patch.allowedTools } : {}),
@@ -1948,6 +1948,14 @@ async function updateSkillHandler(
   input: Record<string, unknown>,
   eventSink: EventSink,
   authoringGuidePath: string,
+  /**
+   * Let this call write `manifest.status`. ONLY `set_status` passes it — that
+   * tool is internal, so the door stays shut to the model. Without the flag a
+   * `status` in the patch is refused rather than dropped: the schema no longer
+   * declares the field, but the validator lets unknown keys through, so
+   * ignoring it would report a successful disable that never happened.
+   */
+  opts: { allowStatus?: boolean } = {},
 ): Promise<ToolResult> {
   const { id, manifest: patch, body, body_mode: bodyMode } = input as unknown as SkillsUpdateInput;
 
@@ -1971,7 +1979,22 @@ async function updateSkillHandler(
 
   snapshotSkillVersion(id);
 
-  const partial = buildUpdatePatch(patch);
+  if (!opts.allowStatus && (patch as { status?: unknown } | undefined)?.status !== undefined) {
+    return errorResult(
+      new Error(
+        "`manifest.status` is not editable here. Turning a skill off durably affects every " +
+          "conversation in every workspace, so the user does it in Skills settings. To stop " +
+          "using a skill for this conversation, call `skills__deactivate`.",
+      ),
+    );
+  }
+  // `buildUpdatePatch` drops `status` by construction, so the only way it
+  // reaches the writer is this explicit re-add on the allowed path.
+  const status = (patch as { status?: "active" | "disabled" } | undefined)?.status;
+  const partial = {
+    ...buildUpdatePatch(patch),
+    ...(opts.allowStatus && status !== undefined ? { status } : {}),
+  };
   // Merged result is canonically validated by the writer before write; a patch
   // that would make the skill unloadable fails cleanly, leaving the file as-is.
   try {

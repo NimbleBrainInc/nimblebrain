@@ -30,7 +30,8 @@ competes for context window space, and so does this guide.
 Skills are created and managed through the `nb__skills` tools:
 
 - `skills__create` — write a new skill at org / workspace / user scope
-- `skills__update` — patch manifest fields and/or change the body
+- `skills__update` — patch manifest fields and/or change the body. Not `status`:
+  that is the durable off switch and it is refused here
 - `skills__delete` — remove a skill (snapshots to `_versions/` first)
 - `skills__activate` / `skills__deactivate` — mute or un-mute a skill for THIS
   conversation. Nothing is written; other conversations and workspaces are

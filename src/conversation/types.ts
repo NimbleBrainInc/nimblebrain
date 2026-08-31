@@ -532,15 +532,6 @@ export interface ConnectorSkillInjectedEvent {
 }
 
 /**
- * A catalog skill's full body was delivered via the `nb__use_skill` activation
- * tool. The body itself rides the tool result (`tool.done`), so the
- * reconstructor synthesizes no message for this event — it stamps the
- * `metadata.synthetic = "skill_activated"` dedup marker onto the reconstructed
- * tool-result message identified by `toolCallId`. Also the cross-turn ledger
- * the activation tool's own already-delivered check reads. Emitted at most
- * once per (conversation, skill).
- */
-/**
  * A skill was suppressed or restored FOR THIS CONVERSATION ONLY.
  *
  * The durable `status:` field in a skill's frontmatter is shared by every
@@ -562,6 +553,15 @@ export interface SkillSuppressionEvent {
   suppressed: boolean;
 }
 
+/**
+ * A catalog skill's full body was delivered via the `nb__use_skill` activation
+ * tool. The body itself rides the tool result (`tool.done`), so the
+ * reconstructor synthesizes no message for this event — it stamps the
+ * `metadata.synthetic = "skill_activated"` dedup marker onto the reconstructed
+ * tool-result message identified by `toolCallId`. Also the cross-turn ledger
+ * the activation tool's own already-delivered check reads. Emitted at most
+ * once per (conversation, skill).
+ */
 export interface SkillActivatedEvent {
   ts: string;
   type: "skill.activated";

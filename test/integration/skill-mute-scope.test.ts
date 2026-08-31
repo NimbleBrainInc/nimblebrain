@@ -323,7 +323,6 @@ describe("muting reaches every channel a skill can compose through", () => {
     // is the prompt-visible witness that the filter ran.
     const conv = await chat("first turn");
     expect(promptText()).toContain(CONNECTOR_SKILL);
-
     pendingCall = { trigger: "PLEASE-TOGGLE", tool: "skills__deactivate" };
     pendingName = CONNECTOR_SKILL;
     await chat("PLEASE-TOGGLE", conv);
@@ -332,6 +331,28 @@ describe("muting reaches every channel a skill can compose through", () => {
 
     await chat("next turn", conv);
     expect(promptText()).not.toContain(CONNECTOR_SKILL);
+
+    // The effective-context trace must agree. It builds its own Skill Catalog,
+    // so filtering the pool there does not cover it — a trace that lists what
+    // the prompt dropped is the divergence the tool exists to expose.
+    // DEV_IDENTITY: the owner `runtime.chat` mints with no identity configured,
+    // and the trace's event read is ownership-gated.
+    const trace = await runWithRequestContext(
+      { identity: DEV_IDENTITY, workspaceId: TEST_WORKSPACE_ID, conversationId: conv },
+      () =>
+        runtime.getRegistryForWorkspace(TEST_WORKSPACE_ID).execute({
+          id: "t-trace",
+          name: "compose__effective_context",
+          input: { conversation_id: conv },
+        }),
+    );
+    // The composed prompt is in `structuredContent.text`; `content` is a short
+    // summary. Assert the trace SUCCEEDED and that it really carries a catalog,
+    // so neither an error nor an empty render can pass this for the wrong reason.
+    const traced = (trace.structuredContent ?? {}) as { text?: string };
+    expect(trace.isError ?? false).toBe(false);
+    expect(traced.text).toContain("Skill Catalog");
+    expect(traced.text).not.toContain(CONNECTOR_SKILL);
 
     // Still there for everyone else — the mute is conversation state.
     await chat("a fresh conversation");

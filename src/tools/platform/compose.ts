@@ -233,9 +233,13 @@ export function createComposeSource(runtime: Runtime, eventSink: EventSink): Mcp
  * `composeSystemPromptTraced` to produce the full per-layer breakdown for
  * the current state. The composition is scoped to the **calling
  * request's workspace** (`runtime.requireWorkspaceId()`), not to the
- * `convId`'s workspace — `convId` is a label echoed back in the
- * response, NOT a workspace selector. To inspect a different workspace,
- * the caller must invoke from within that workspace's request context.
+ * `convId`'s workspace — `convId` is NOT a workspace selector. To inspect a
+ * different workspace, the caller must invoke from within that workspace's
+ * request context.
+ *
+ * `convId` does select one thing: the conversation whose mutes are applied,
+ * read through the ownership-checked path below. It stopped being a label
+ * echoed back in the response when the trace started honouring them.
  *
  * Inputs gathered (mirrors `runtime.chat()` for everything not request-
  * scoped):
@@ -336,7 +340,12 @@ async function composeLive(runtime: Runtime, convId: string): Promise<ComposeRes
     collectActivatableSkills({
       fsCapability: poolCapability,
       bundleCapability: [],
-      connectorCandidates: runtime.loadConnectorSkillCandidates(wsId),
+      // Filtered like the pool above. The trace exists to show what composed;
+      // listing a connector overlay the same turn's prompt dropped is the
+      // divergence it is supposed to expose, not produce.
+      connectorCandidates: runtime
+        .loadConnectorSkillCandidates(wsId)
+        .filter((c) => !suppressed.has(c.name)),
     }),
   );
 

@@ -147,15 +147,24 @@ export const SkillsCreateInput = Type.Object(
 );
 export type SkillsCreateInput = Static<typeof SkillsCreateInput>;
 
-// Update: partial of ManifestFields minus `name` — renames are not patchable
-// via update (the name is the filename; the path-derived id would drift).
+// Update: partial of ManifestFields minus `name` and `status`.
+//
+// `name` is not patchable because it IS the filename — the path-derived id
+// would drift out from under the caller.
+//
+// `status` is not patchable because it is the DURABLE off switch, shared by
+// every conversation that loads the skill and every workspace the user
+// touches. `set_status` is its one door, and that door is internal so only the
+// settings UI reaches it; leaving a second, model-visible way in through a
+// `manifest` patch would hand the agent back exactly the capability the mute
+// exists to take away from it.
+//
 // All fields optional (omitted fields keep their current values), unlike
 // create where name + description are required.
 const UpdateManifestFields = {
   description: Type.Optional(ManifestFields.description),
   loadingStrategy: ManifestFields.loadingStrategy,
   priority: ManifestFields.priority,
-  status: ManifestFields.status,
   toolAffinity: ManifestFields.toolAffinity,
   triggers: ManifestFields.triggers,
   allowedTools: ManifestFields.allowedTools,

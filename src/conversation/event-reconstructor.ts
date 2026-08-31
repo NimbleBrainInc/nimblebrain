@@ -278,24 +278,11 @@ export function extractOperatorTurns(
 }
 
 /**
- * Names of skills whose full body has already been delivered into this
- * conversation — via surface-once overlay injection (`connector.skill.injected`)
- * or explicit activation (`skill.activated`). The `nb__use_skill` tool's
- * already-delivered check reads this so it answers "already loaded" instead of
- * delivering a second copy.
- *
- * Compaction consistency: deliveries whose record sits BEFORE the most recent
- * `history.compacted` boundary are excluded — their verbatim block was folded
- * into the summary, so one re-delivery is acceptable. This matches the
- * reconstruction semantics the message-metadata dedup markers get for free
- * (their carrier messages disappear from the compacted projection).
- */
-/**
  * Skills the operator suppressed for THIS conversation and has not restored.
  * Last event per name wins, so a restore after a suppress clears it.
  *
  * Deliberately NOT boundary-aware, unlike {@link collectDeliveredSkillNames}
- * directly above. That one drops pre-compaction records because a delivered
+ * directly below. That one drops pre-compaction records because a delivered
  * BODY was folded into the summary and re-delivering it is merely wasteful.
  * A suppression is not a payload — it is a standing preference for the rest of
  * the conversation. Expiring it at a compaction boundary would silently switch
@@ -315,6 +302,19 @@ export function collectSuppressedSkillNames(events: readonly ConversationEvent[]
   return names;
 }
 
+/**
+ * Names of skills whose full body has already been delivered into this
+ * conversation — via surface-once overlay injection (`connector.skill.injected`)
+ * or explicit activation (`skill.activated`). The `nb__use_skill` tool's
+ * already-delivered check reads this so it answers "already loaded" instead of
+ * delivering a second copy.
+ *
+ * Compaction consistency: deliveries whose record sits BEFORE the most recent
+ * `history.compacted` boundary are excluded — their verbatim block was folded
+ * into the summary, so one re-delivery is acceptable. This matches the
+ * reconstruction semantics the message-metadata dedup markers get for free
+ * (their carrier messages disappear from the compacted projection).
+ */
 export function collectDeliveredSkillNames(events: readonly ConversationEvent[]): Set<string> {
   let boundary: string | undefined;
   for (const e of events) {

@@ -768,6 +768,31 @@ describe("durable status is set_status only", () => {
     expect(readManifestField(id, "status")).toBe("active");
   });
 
+  test("update refuses manifest.status — set_status is the only durable door", async () => {
+    // The schema no longer declares the field, but the validator lets unknown
+    // keys through, so a silent drop would report a disable that never
+    // happened. Refuse instead, and say where the capability lives.
+    const src = await buildSource();
+    const client = src.getClient()!;
+    await client.callTool({
+      name: "create",
+      arguments: {
+        scope: "org",
+        manifest: { name: "no-status-via-update", description: "test", type: "skill" },
+        body: "x",
+      },
+    });
+    const id = join(workDir, "skills", "no-status-via-update.md");
+
+    const res = await client.callTool({
+      name: "update",
+      arguments: { id, manifest: { status: "disabled" } },
+    });
+    expect(res.isError).toBe(true);
+    expect(JSON.stringify(res.content)).toContain("Skills settings");
+    expect(readManifestField(id, "status")).toBe("active");
+  });
+
   test("set_status is internal — surfaceTools keeps it out of the model's list", async () => {
     // The wire's `annotations` is a typed MCP object, so asserting the custom
     // key survives `listTools()` tests the SDK, not us. What matters is the
