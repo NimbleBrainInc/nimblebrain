@@ -638,8 +638,8 @@ All default to `true`. Setting to `false` removes the capability entirely — to
 
 | Flag | Controls | Tool(s) Affected |
 |------|----------|-----------------|
-| `bundleManagement` | Install/uninstall/configure apps | `nb__manage_app` |
-| `skillManagement` | Create/edit/delete skills | `nb__manage_skill` |
+| `bundleManagement` | Reserved — gates no tool today | — |
+| `skillManagement` | Create, edit, delete, and activate skills | `skills__create`, `skills__update`, `skills__delete`, `skills__activate`, `skills__deactivate`, `skills__history`, `skills__restore` |
 | `delegation` | Multi-agent delegation | `nb__delegate` |
 | `toolDiscovery` | Tool search (scope=tools) | `nb__search` |
 | `bundleDiscovery` | Registry search (scope=registry) | `nb__search` |
