@@ -78,8 +78,9 @@ import { workspaceFilesDir } from "../files/paths.ts";
 import { rehydrateUserResources } from "../files/rehydrate.ts";
 import { createFileStore, type FileStore } from "../files/store.ts";
 import { DEFAULT_FILE_CONFIG, type FileConfig } from "../files/types.ts";
+import { hookPortForSource } from "../hooks/provisioning.ts";
 import type { HookReconcileDeps } from "../hooks/reconcile.ts";
-import { ensureHooksOnRunning } from "../hooks/reconcile.ts";
+import { ensureHooksOnRunning, stopAllHookWatches } from "../hooks/reconcile.ts";
 import { readHookIdentity } from "../hooks/token.ts";
 import { FileBackedHostResourcesResolver, TokenBucketRateLimit } from "../host-resources/index.ts";
 import { IdentityContext } from "../identity/context.ts";
@@ -4020,11 +4021,7 @@ export class Runtime {
         }
         const source = registry.getSources().find((src) => src.name === serverName);
         if (!source) return undefined;
-        return {
-          tools: () => source.tools(),
-          execute: (toolName: string, input: Record<string, unknown>) =>
-            source.execute(toolName, input),
-        };
+        return hookPortForSource(source);
       },
     };
   }
@@ -5268,6 +5265,9 @@ export class Runtime {
 
   async shutdown(): Promise<void> {
     await this.telemetryManager.shutdown();
+    // Detach the hook tool-set watches first: each holds a source, and through
+    // its listener the reconcile deps that close over this runtime.
+    stopAllHookWatches();
     // Abort every in-flight detached turn BEFORE removing the sources they
     // depend on. A detached turn's lifecycle is decoupled from any HTTP
     // request (it runs to completion server-side), so without this a turn

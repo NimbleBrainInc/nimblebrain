@@ -22,12 +22,12 @@ import type { HookDeclaration } from "./types.ts";
  * completing minutes after the install returned — without the same logic
  * appearing in three places and drifting between them.
  *
- * It is a reconcile in shape, not a timer: it runs when a connection reaches
- * `running`, because that is the moment both halves it needs become true (a
- * declaration to read, and a live source to call `register_tool` on). Nothing
- * here polls, and nothing needs to: the minted URL is stable across restarts,
- * and the server persists it, so a runtime that comes back up has nothing to
- * repair.
+ * It is a reconcile in shape, not a timer. It runs on the two events that make
+ * both halves it needs true — a declaration to read, and a live source to call
+ * `register_tool` on: a connection reaching `running`, and the connector's tool
+ * set becoming enumerable (`watchToolSurface`). Nothing here polls, and nothing
+ * needs to: the minted URL is stable across restarts and the server persists
+ * it, so the work is bounded by those transitions rather than by a clock.
  */
 
 export interface HookReconcileDeps {
@@ -170,8 +170,8 @@ function singleFlight(
 }
 
 /**
- * The connection-reached-running path: ensure only what is missing, and never
- * throw.
+ * The connection-reached-running path: ensure only what is missing, never
+ * throw, and leave a way back for the attempt that could not finish.
  *
  * A contract error here cannot fail an install (the install already returned),
  * so surfacing it as a rejected promise would only produce an unhandled one. It
@@ -183,6 +183,12 @@ export function ensureHooksOnRunning(
   wsId: string,
   connector: string,
 ): void {
+  watchToolSurface(deps, wsId, connector);
+  provisionInBackground(deps, wsId, connector);
+}
+
+/** Run the reconcile for its effect, reporting a failure rather than raising it. */
+function provisionInBackground(deps: HookReconcileDeps, wsId: string, connector: string): void {
   void ensureHooks(deps, wsId, connector, { onlyMissing: true }).catch((err) => {
     const contract = err instanceof HookContractError;
     log.warn("[hooks] could not provision declared hooks for a running connector", {
@@ -192,4 +198,117 @@ export function ensureHooksOnRunning(
       contract_error: contract,
     });
   });
+}
+
+/**
+ * Keys with a follow-up pass already queued behind an in-flight one. A burst of
+ * signals collapses to one follow-up: every one of them says the same thing.
+ */
+const queuedAfterFlight = new Set<string>();
+
+/**
+ * Run a pass for a tool-set change, which must never be answered by a pass that
+ * has already read the tool list.
+ *
+ * `singleFlight` coalesces concurrent provisioning for a connector, and for the
+ * two callers it was written for that is exactly right: an install and its
+ * connection-running observer ask the same question at the same moment. A
+ * tool-set change does not ask that question — its whole content is "the list
+ * you read is stale" — so handing it the in-flight pass's answer consumes the
+ * one notice that a re-read was needed, and a deferred stream stays deferred
+ * with nothing left to fire.
+ *
+ * It must not skip the flight either: two passes minting concurrently is the
+ * divergent-`kid` failure `singleFlight` exists to prevent. So it waits for the
+ * stale pass and then runs its own, which can only read at or after the change.
+ * A rejected flight is still a reason to run — a manifest that failed the
+ * contract check may be precisely what changed.
+ */
+function retrigger(deps: HookReconcileDeps, wsId: string, connector: string): void {
+  const key = flightKey(wsId, connector);
+  const inflight = flights.get(key);
+  if (!inflight) {
+    provisionInBackground(deps, wsId, connector);
+    return;
+  }
+  if (queuedAfterFlight.has(key)) return;
+  queuedAfterFlight.add(key);
+  // Chained on the flight's own promise, which `singleFlight` clears from
+  // `flights` in a handler registered before this one — so the follow-up always
+  // starts a fresh flight rather than rejoining the one it is waiting on.
+  void inflight
+    .catch(() => {})
+    .then(() => {
+      queuedAfterFlight.delete(key);
+      provisionInBackground(deps, wsId, connector);
+    });
+}
+
+/** The armed tool-set watches, one per (workspace, connector). */
+const watches = new Map<string, () => void>();
+
+/**
+ * Re-run the reconcile whenever a connector's tool set changes.
+ *
+ * `running` is when a CONNECTION is established, which is not when its server
+ * has advertised anything, and it is a one-shot: a source whose tools populate
+ * after the transition has no second transition to be provisioned on, and a
+ * source that reconnects — a health-monitor restart, a re-auth, a server
+ * redeployed under the same URL — reconnects through the source alone and
+ * records no connection state, so no second transition is observed even though
+ * the connection is live again. Either way an attempt that could not finish had
+ * nothing to try again, and the stream stayed unprovisioned until the runtime
+ * process restarted.
+ *
+ * The source's own tool-set signal is the seam that covers both, and it is why
+ * this needs no timer: it fires on connect, on every reconnect, and on a
+ * server's native `tools/list_changed`. Its meaning — "my tools are enumerable
+ * and may have changed" — is exactly the precondition provisioning was missing.
+ *
+ * Cheap to fire: `onlyMissing` filters a fully-provisioned connector to an empty
+ * declaration set before anything reaches the source, so the common case (a
+ * healthy connector reconnecting) costs a workspace read and stops.
+ *
+ * One watch per (workspace, connector), re-armed on each transition to `running`
+ * so it always points at the source that is live NOW — a reinstall builds a new
+ * source object, and a watch left on the old one would fire for a source nobody
+ * routes to. {@link stopWatchingHooks} drops it on uninstall.
+ */
+function watchToolSurface(deps: HookReconcileDeps, wsId: string, connector: string): void {
+  // Drop the previous watch BEFORE deciding whether a new one can be armed: a
+  // re-arm that finds no live source is the one case where the old watch is
+  // certainly pointing at a source on its way out.
+  const key = flightKey(wsId, connector);
+  watches.get(key)?.();
+  watches.delete(key);
+  const port = deps.portFor(wsId, connector);
+  if (!port?.subscribeToolsChanged) return;
+  watches.set(
+    key,
+    port.subscribeToolsChanged(() => retrigger(deps, wsId, connector)),
+  );
+}
+
+/**
+ * Drop a connector's tool-set watch. Called on uninstall, beside the
+ * registration revoke: the connector has no declarations left to reconcile, and
+ * the closure would otherwise hold its source past the point anything routes to
+ * it.
+ */
+export function stopWatchingHooks(wsId: string, connector: string): void {
+  const key = flightKey(wsId, connector);
+  watches.get(key)?.();
+  watches.delete(key);
+}
+
+/**
+ * Drop every armed watch. Called on runtime shutdown, which removes the sources
+ * but not the module-level map that holds them: each entry retains the
+ * unsubscribe closure, its source, and through the listener's `deps` the runtime
+ * that built them, so a process that starts more than one runtime keeps every
+ * earlier one alive.
+ */
+export function stopAllHookWatches(): void {
+  for (const unwatch of watches.values()) unwatch();
+  watches.clear();
 }

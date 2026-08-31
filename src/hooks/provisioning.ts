@@ -1,5 +1,6 @@
 import { log } from "../observability/log.ts";
-import type { Tool, ToolResult } from "../tools/types.ts";
+import type { Tool, ToolResult, ToolSource } from "../tools/types.ts";
+import { splitInnerToolName } from "../util/tool-name.ts";
 import type { WorkspaceStore } from "../workspace/workspace-store.ts";
 import { assertForwardablePath } from "./declaration.ts";
 import { registrationKey, updateRegistrations, withRotatedKid } from "./registrations.ts";
@@ -9,9 +10,9 @@ import type { HookDeclaration, HookRegistration } from "./types.ts";
 /**
  * Minting, handing over, and retiring hook URLs.
  *
- * The two failure modes here are deliberately NOT the same severity, and the
- * line between them is the one thing to preserve if this file is ever
- * refactored:
+ * The three outcomes short of a live stream are deliberately NOT the same
+ * severity, and the lines between them are the one thing to preserve if this
+ * file is ever refactored:
  *
  *   - A **contract violation** — a declared `register_tool` that does not exist
  *     on the server, or does not accept `{vendor, url}` — throws
@@ -28,6 +29,14 @@ import type { HookDeclaration, HookRegistration } from "./types.ts";
  *     the runtime kept. The caller surfaces it as a warning on a successful
  *     install instead, and the reconcile re-runs it on every transition to
  *     `running` so it stays visible rather than firing once.
+ *
+ *   - **Not ready** — the source is up but advertises no tools yet. Nothing is
+ *     written and nothing is reported as wrong. It is indistinguishable, at the
+ *     level of a tool list, from a source that has not started, and it is
+ *     answered the same way: defer, and let the next reconcile provision. What
+ *     makes this its own case rather than a contract violation is that every
+ *     declared name is absent from an empty list, so folding the two together
+ *     accuses a correct manifest of a fault it does not have.
  *
  *   - A **transient failure** — the registration tool exists but the call fails
  *     (the server is starting, the operator has denied that tool by permission,
@@ -63,14 +72,20 @@ export class HookContractError extends Error {
  * (it only requires that they appear and are not typed as something other than
  * a string): a server may reasonably add its own optional arguments, and this
  * is a compatibility gate, not a schema validator.
+ *
+ * `tools` must be the source's POPULATED list. Every name is absent from an
+ * empty one, so calling this with an empty list would report a correct manifest
+ * as a contract violation — the caller separates the two (see
+ * {@link provisionHooks}).
  */
 export function verifyRegisterTool(tools: Tool[], decl: HookDeclaration, connector: string): void {
   const tool = tools.find((t) => t.name === decl.register_tool);
   if (!tool) {
     throw new HookContractError(
       `Connector "${connector}" declares hook "${decl.vendor}" with register_tool ` +
-        `"${decl.register_tool}", which is not on its tool list. A hook whose registration ` +
-        `tool is missing can never be handed its URL.`,
+        `"${decl.register_tool}", which is not among the ${tools.length} tools its server ` +
+        `advertises (${summarizeToolNames(tools)}). A hook whose registration tool is ` +
+        `missing can never be handed its URL.`,
     );
   }
   const props = (tool.inputSchema?.properties ?? {}) as Record<string, unknown>;
@@ -93,12 +108,54 @@ export function verifyRegisterTool(tools: Tool[], decl: HookDeclaration, connect
   }
 }
 
-/** The narrow slice of a connector's source that provisioning needs. */
+/**
+ * The narrow slice of a connector's source that provisioning needs.
+ *
+ * **Both halves speak the BARE tool name** — the same vocabulary a declaration's
+ * `register_tool` is written in. A registry source does not: it advertises
+ * `<source>__<tool>` and takes the bare name on `execute`, because the
+ * qualified form is what routes a call to the right source in a workspace-wide
+ * tool list. Provisioning is already inside one source and has no such
+ * question to answer, so the port answers in one vocabulary and
+ * {@link hookPortForSource} is the single place the two meet.
+ */
 export interface HookConnectorPort {
-  /** Advertised tool list, for the install-time contract check. */
+  /** Advertised tools, named as a declaration names them. For the contract check. */
   tools(): Promise<Tool[]>;
   /** Invoke a tool by its bare name, through the ordinary MCP dispatch path. */
   execute(toolName: string, input: Record<string, unknown>): Promise<ToolResult>;
+  /**
+   * Subscribe to "this source's tool set may have changed", returning an
+   * unsubscribe. The reconcile's retrigger; see `watchToolSurface` in
+   * `reconcile.ts` for why provisioning needs one.
+   *
+   * Optional because the underlying `ToolSource` method is: a source whose
+   * tools are fixed at construction never fires one, and a port without it
+   * simply has no retrigger.
+   */
+  subscribeToolsChanged?(listener: () => void): () => void;
+}
+
+/** The `tools()`/`execute()`/`subscribeToolsChanged()` slice of a registry source. */
+type HookSourceLike = Pick<ToolSource, "tools" | "execute" | "subscribeToolsChanged">;
+
+/**
+ * Adapt a registry source to the port, translating its advertised
+ * `<source>__<tool>` names down to the bare names a declaration uses.
+ *
+ * Without the translation every declared `register_tool` is absent from every
+ * tool list, so a correct manifest is reported as a contract violation and no
+ * stream is ever provisioned. The two names are decomposed by
+ * `splitInnerToolName`, the one grammar every door shares — a hand-rolled
+ * `slice` here would be a second one.
+ */
+export function hookPortForSource(source: HookSourceLike): HookConnectorPort {
+  return {
+    tools: async () =>
+      (await source.tools()).map((t) => ({ ...t, name: splitInnerToolName(t.name).bareToolName })),
+    execute: (toolName, input) => source.execute(toolName, input),
+    subscribeToolsChanged: source.subscribeToolsChanged?.bind(source),
+  };
 }
 
 export interface ProvisionHooksOptions {
@@ -195,6 +252,22 @@ export async function provisionHooks(opts: ProvisionHooksOptions): Promise<Provi
   if (declarations.length === 0) return [];
 
   const tools = await opts.port.tools();
+  // An empty tool list is NOT a contract violation, and the difference is the
+  // whole reason this branch exists. A contract violation says "this manifest
+  // is wrong, no retry will help"; an empty list says the source is up but has
+  // not advertised anything yet — a start that is still completing, a server
+  // registering its tools after the handshake. Every declared name is absent
+  // from an empty list, so checking one against it would accuse a manifest that
+  // is correct and send the reader to re-read it. It is the same state as a
+  // source that is not running: nothing has been written, so nothing is half
+  // done, and the reconcile runs again when the tool set materializes.
+  if (tools.length === 0) {
+    log.debug(
+      "mcp",
+      `[hooks] ${opts.connector} is running but advertises no tools yet — deferring`,
+    );
+    return [];
+  }
   for (const decl of declarations) {
     assertForwardablePath(decl.route, `connector "${opts.connector}" hook "${decl.vendor}"`);
     verifyRegisterTool(tools, decl, opts.connector);
@@ -285,6 +358,23 @@ export async function revokeHooksForConnector(
     return removed > 0 ? current : null;
   });
   return removed;
+}
+
+/**
+ * The advertised names, for a contract error that has to be actionable.
+ *
+ * A message that only names what is MISSING sends the reader to re-read a
+ * manifest; naming what the server actually serves lets them see the mismatch —
+ * a rename, a tool behind a flag the deployment does not set.
+ *
+ * Bounded on BOTH axes, because both are the server's to choose: a hundred tools
+ * named at a hundred characters each is the same unbounded log line as a
+ * thousand tools, and the names come off the wire.
+ */
+function summarizeToolNames(tools: Tool[]): string {
+  const shown = tools.slice(0, 12).map((t) => t.name.slice(0, 60));
+  const joined = shown.join(", ");
+  return tools.length > shown.length ? `${joined}, …` : joined;
 }
 
 /** First line of a tool error result, for a log field. Bounded so a verbose
