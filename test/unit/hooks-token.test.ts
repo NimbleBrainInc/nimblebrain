@@ -159,8 +159,10 @@ describe("the rotation overlap window", () => {
       key: KEY,
       previousKeys: [OTHER_KEY],
     });
-    expect(opened.kid).toBe(FIELDS.kid);
-    expect(opened.wid).toBe(FIELDS.wid);
+    expect(opened.payload.kid).toBe(FIELDS.kid);
+    expect(opened.payload.wid).toBe(FIELDS.wid);
+    // Slot 1 is the outgoing key — the signal that says the rotation is not done.
+    expect(opened.slot).toBe(1);
   });
 
   test("dropping the outgoing key is what actually retires its URLs", () => {
@@ -200,6 +202,27 @@ describe("the rotation overlap window", () => {
       .map((k) => k.toString("base64"))
       .join(",");
     expect(() => readHookTokenKeys({ [HOOK_TOKEN_KEY_ENV]: four })).toThrow(/at most/);
+  });
+
+  test.each([
+    ["newline", "\n"],
+    ["space", " "],
+    ["semicolon", ";"],
+  ])("a ring separated by a %s is refused, not silently read as one key", (_label, sep) => {
+    // The decoder truncates at the first character outside the alphabet rather
+    // than failing, and a 32-byte key ends in padding — so without the round-trip
+    // check this parses as ONE key, at full length, and the overlap the operator
+    // thinks they created does not exist.
+    const ring = `${KEY.toString("base64")}${sep}${OTHER_KEY.toString("base64")}`;
+    expect(() => readHookTokenKeys({ [HOOK_TOKEN_KEY_ENV]: ring })).toThrow(/valid base64/);
+  });
+
+  test("a comma-separated ring is unaffected by the round-trip check", () => {
+    const ring = `${KEY.toString("base64")}, ${OTHER_KEY.toString("base64")}`;
+    const keys = readHookTokenKeys({ [HOOK_TOKEN_KEY_ENV]: ring });
+    expect(keys).toHaveLength(2);
+    expect(keys?.[0].equals(KEY)).toBe(true);
+    expect(keys?.[1].equals(OTHER_KEY)).toBe(true);
   });
 
   test("a malformed key anywhere in the ring fails at boot, not just the first", () => {

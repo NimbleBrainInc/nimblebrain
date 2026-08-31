@@ -434,6 +434,22 @@ every registered webhook down with no error anywhere. **Absent key ⇒ the door 
 not mounted at all** and the whole prefix 404s at the router, so a local
 checkout gains no surface.
 
+The value is an ordered, comma-separated **ring**: the first entry seals every
+new token, every entry still opens one, at most three live at once. That overlap
+is what makes rotating the key survivable — the MAC is verified before any
+registration is looked up, so the per-stream `kid` grace below cannot reach a key
+change, and without the ring a new key retires every vendor-held URL the instant
+it loads. Each entry is round-tripped at parse: the base64 decoder truncates at
+the first character outside its alphabet instead of failing, so any separator but
+a comma would otherwise read as one key and the overlap would silently not exist.
+
+**Rotating the key is not `rotate_hook`.** `rotate_hook` mints a new `kid` for one
+stream and retires the old one on a grace window. Rotating the key is: prepend,
+restart, then re-register **every** stream — a restart alone re-registers nothing,
+because reconciliation provisions only declarations that hold no registration —
+then confirm a delivery still lands before dropping the outgoing key. Dropping it
+is what actually retires its URLs, and it is irreversible.
+
 **Registrations** live on the workspace record (`Workspace.hooks`), beside
 `oauthOperatorApps`. They hold the current and previous `kid` and the route —
 **never a token**. The runtime could reconstruct one and must not: a hook URL is

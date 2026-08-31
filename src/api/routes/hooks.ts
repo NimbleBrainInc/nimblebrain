@@ -258,7 +258,25 @@ async function admitDelivery(
 ): Promise<AdmittedDelivery | undefined> {
   let payload: HookTokenPayload;
   try {
-    payload = openHookTokenForIdentity(path.token, identity);
+    const opened = openHookTokenForIdentity(path.token, identity);
+    payload = opened.payload;
+    if (opened.slot > 0) {
+      // This URL was minted under a key that no longer seals — the outgoing side
+      // of a key rotation. Logged HERE, and only in that case, because it is the
+      // ring's exit condition and nothing else can see it: the operator deciding
+      // whether it is safe to drop the outgoing key needs to know whether any
+      // traffic still arrives on it, and dropping it blind is the fleet-wide
+      // silent 404 the ring exists to prevent. Silent in the steady state, so it
+      // costs nothing when no rotation is in flight. Deliberately not carried
+      // onto the admitted delivery: authority comes from the registration lookup
+      // below, and nothing downstream may branch on which key opened the token.
+      log.info("[hooks] delivery on a superseded key", {
+        workspace_id: payload.wid,
+        connector: payload.connector,
+        vendor: payload.vendor,
+        key_slot: opened.slot,
+      });
+    }
   } catch {
     return undefined;
   }

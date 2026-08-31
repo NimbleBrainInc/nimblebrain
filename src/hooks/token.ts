@@ -55,7 +55,13 @@ import { WORKSPACE_ID_RE } from "../workspace/workspace-id-pattern.ts";
  * With an overlap window the same rotation is ordinary: prepend the new key,
  * let re-registration mint fresh URLs under it while the old key still opens
  * the ones already out there, then drop the old key once nothing is minting
- * against it. Base64 has no comma, so the separator can never be ambiguous.
+ * against it.
+ *
+ * Base64 has no comma, so the comma cannot be ambiguous — but that is not what
+ * makes the parse safe. Node's decoder truncates at the first character outside
+ * the alphabet instead of failing, so ANY other separator would yield one entry
+ * holding the first key alone and pass every length check. Each entry is
+ * round-tripped for that reason.
  */
 export const HOOK_TOKEN_KEY_ENV = "NB_HOOK_TOKEN_KEY";
 
@@ -148,6 +154,20 @@ export function readHookTokenKeys(
   }
   const keys = entries.map((entry, index) => {
     const key = Buffer.from(entry, "base64");
+    // Reject anything that does not survive a round trip. Node's base64 decoder
+    // TRUNCATES at the first character outside the alphabet rather than failing,
+    // and a 32-byte key always ends in `=` padding — so a ring written with a
+    // newline, a space or a semicolon instead of a comma splits into ONE entry
+    // that decodes to the first key alone, at full length, past every check
+    // below. The ring would silently be no ring, and every URL minted under the
+    // outgoing key would 404 with nothing logged. A separator slip in a
+    // multi-line secret is exactly how that happens, so the parse has to catch
+    // it rather than the format being trusted to prevent it.
+    if (key.toString("base64") !== entry) {
+      throw new Error(
+        `[hooks] ${HOOK_TOKEN_KEY_ENV} entry ${index} is not valid base64 (separate keys with a comma)`,
+      );
+    }
     if (key.length < MIN_HOOK_KEY_BYTES) {
       throw new Error(
         `[hooks] ${HOOK_TOKEN_KEY_ENV} entry ${index} must decode to >= ${MIN_HOOK_KEY_BYTES} bytes (got ${key.length})`,
@@ -317,11 +337,21 @@ export function readHookIdentity(env: NodeJS.ProcessEnv = process.env): HookIden
  * from the registration lookup that follows, not from which key was current
  * when the URL was minted.
  */
-export function openHookTokenForIdentity(wire: string, identity: HookIdentity): HookTokenPayload {
+export function openHookTokenForIdentity(
+  wire: string,
+  identity: HookIdentity,
+): { payload: HookTokenPayload; slot: number } {
+  const ring = [identity.key, ...(identity.previousKeys ?? [])];
   let firstError: unknown;
-  for (const key of [identity.key, ...(identity.previousKeys ?? [])]) {
+  for (let slot = 0; slot < ring.length; slot++) {
     try {
-      return openHookToken(wire, key, identity.tid);
+      // `slot` rides out for the delivery log ONLY. Nothing downstream may branch
+      // on it: a delivery's authority comes from the registration lookup that
+      // follows, not from which key happened to be current when the URL was
+      // minted. What it buys is the ring's exit condition — without it an
+      // operator cannot see whether any traffic still rides the outgoing key,
+      // and dropping that key blind is the outage the ring exists to prevent.
+      return { payload: openHookToken(wire, ring[slot] as Buffer, identity.tid), slot };
     } catch (err) {
       firstError ??= err;
     }
