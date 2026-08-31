@@ -151,7 +151,7 @@ export const llmCallsTotal = new Counter({
 /**
  * LLM request latency in seconds — the wall-clock of one provider round-trip
  * (streaming included), observed on the main agentic loop's `llm.done`. Drives
- * the p99-latency alert. Buckets run long (to 120s): an agentic call with a
+ * the p99-latency alert. Buckets run long (to 300s): an agentic call with a
  * large context and tool streaming sits far right of an HTTP histogram, so the
  * 0.005–10s bucket set used for `http_request_duration_seconds` would clip the
  * tail the alert cares about. Forked fast-slot calls (compaction / title /
@@ -169,7 +169,7 @@ export const llmRequestDurationSeconds = new Histogram({
   name: "nb_llm_request_duration_seconds",
   help: "LLM request latency in seconds, by call source, origin, and model.",
   labelNames: ["source", "model", "origin"] as const,
-  buckets: [0.25, 0.5, 1, 2, 5, 10, 20, 30, 45, 60, 90, 120],
+  buckets: [0.25, 0.5, 1, 2, 5, 10, 20, 30, 45, 60, 90, 120, 180, 300],
   registers: [metricsRegistry],
 });
 

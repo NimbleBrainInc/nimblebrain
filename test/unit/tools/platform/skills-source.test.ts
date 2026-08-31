@@ -19,6 +19,10 @@ import {
   createSkillsSource,
   isTaskForbiddenSkillTool,
 } from "../../../../src/tools/platform/skills.ts";
+import {
+  resolveFeatures,
+  type ResolvedFeatures,
+} from "../../../../src/config/features.ts";
 import { runWithRequestContext } from "../../../../src/runtime/request-context.ts";
 
 // ── Fake Runtime ────────────────────────────────────────────────────────
@@ -67,6 +71,29 @@ afterEach(async () => {
 async function buildSource(): Promise<McpSource> {
   const runtime = new FakeRuntime(workDir);
   source = createSkillsSource(runtime as unknown as never, new NoopEventSink());
+  await source.start();
+  return source;
+}
+
+/**
+ * Build the source the way PRODUCTION does — with `features` passed.
+ *
+ * `createSkillsSource` branches on whether `features` is present, and every
+ * other fixture in this file omits it. That left the branch the real runtime
+ * actually takes (`createPlatformSources` passes `runtime.getFeatures()`)
+ * untested, so a change that dropped the unattended wall on the feature-gated
+ * path only would have shipped with the suite green. Assert the wall through
+ * this door too.
+ */
+async function buildSourceWithFeatures(
+  overrides: Partial<ResolvedFeatures> = {},
+): Promise<McpSource> {
+  const runtime = new FakeRuntime(workDir);
+  source = createSkillsSource(
+    runtime as unknown as never,
+    new NoopEventSink(),
+    resolveFeatures({ skillManagement: true, ...overrides }),
+  );
   await source.start();
   return source;
 }
@@ -280,6 +307,40 @@ describe("skills source — unattended-run wall", () => {
       .map((c) => c.text)
       .join("");
     expect(text).not.toContain("not available inside an unattended automation run");
+  });
+
+  test("the wall survives the feature-gated build path", async () => {
+    // The regression this pins: `createSkillsSource` branches on `features`,
+    // and only the no-`features` branch was covered. Composing the feature
+    // filter and the wall as one pipeline (filter, then wrap the survivors)
+    // is what keeps both live; taking either INSTEAD of the other at the
+    // `tools:` argument passes every other test in this file.
+    const src = await buildSourceWithFeatures();
+    const client = src.getClient()!;
+    const result = await runWithRequestContext(
+      { identity: { id: "user_test" }, unattended: true } as never,
+      () => client.callTool({ name: "create", arguments: VALID_CREATE }),
+    );
+    expect(result.isError).toBe(true);
+    const text = (result.content as Array<{ type: string; text: string }>)
+      .filter((c) => c.type === "text")
+      .map((c) => c.text)
+      .join("");
+    expect(text).toContain("not available inside an unattended automation run");
+  });
+
+  test("the feature gate survives alongside the wall", async () => {
+    // The other half of the same composition: with skill management off the
+    // mutations are never BUILT, so they are absent rather than refused. Pins
+    // that walling the list did not swallow the filter.
+    const src = await buildSourceWithFeatures({ skillManagement: false });
+    const names = (await src.getClient()!.listTools()).tools.map((t) => t.name).sort();
+    for (const m of MUTATIONS) expect(names).not.toContain(m);
+    // `history` is feature-gated but task-safe — the two axes are independent,
+    // and this is the case that proves it: gated off here, allowed in a run.
+    expect(names).not.toContain("history");
+    expect(names).toContain("list");
+    expect(names).toContain("read");
   });
 
   test("outside a run the same mutation is not walled", async () => {
