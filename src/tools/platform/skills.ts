@@ -1777,7 +1777,10 @@ function buildCreateManifest(
     description: manifest.description,
     loadingStrategy: manifest.loadingStrategy ?? "dynamic",
     priority: manifest.priority ?? 50,
-    status: manifest.status ?? "active",
+    // Always active. `status` is not a create-time field — see
+    // `CreateManifestFields`; `set_status` is the one door to the durable off
+    // switch, and it is internal.
+    status: "active",
     ...(manifest.toolAffinity && manifest.toolAffinity.length > 0
       ? { toolAffinity: manifest.toolAffinity }
       : {}),
@@ -1806,6 +1809,8 @@ async function createSkill(
   eventSink: EventSink,
 ): Promise<ToolResult> {
   const { scope, manifest, body } = input as unknown as SkillsCreateInput;
+  const statusError = durableStatusError(manifest);
+  if (statusError) return statusError;
   const { name } = manifest;
   assertValidName(name);
 
@@ -1916,6 +1921,25 @@ function buildUpdatePatch(
  * the whole body when the caller sent a full rewrite. An error costs one
  * retry; both defaults cost content.
  */
+/**
+ * Refuse a `manifest.status` from a model-facing tool.
+ *
+ * `set_status` is the one door to the durable off switch and it is internal.
+ * Both create and update drop the field from their schemas, but the validator
+ * lets unknown keys through, so ignoring one would report a disable that never
+ * happened — the silent no-op this whole change exists to remove.
+ */
+function durableStatusError(manifest: unknown): ToolResult | null {
+  if ((manifest as { status?: unknown } | undefined)?.status === undefined) return null;
+  return errorResult(
+    new Error(
+      "`manifest.status` is not settable here. Turning a skill off durably affects every " +
+        "conversation in every workspace, so the user does it in Skills settings. To stop " +
+        "using a skill for this conversation, call `skills__deactivate`.",
+    ),
+  );
+}
+
 function bodyModeError(body: string | undefined, bodyMode: unknown): ToolResult | null {
   if (body === undefined) return null;
   if (bodyMode === "append" || bodyMode === "replace") return null;
@@ -1976,18 +2000,16 @@ async function updateSkillHandler(
   // the denial that actually applies.
   const modeError = bodyModeError(body, bodyMode);
   if (modeError) return modeError;
+  // Above the snapshot, with the other refusals: a call that writes nothing
+  // must leave no version behind, or `skills__history` fills with duplicates
+  // of a state that never changed.
+  if (!opts.allowStatus) {
+    const statusError = durableStatusError(patch);
+    if (statusError) return statusError;
+  }
 
   snapshotSkillVersion(id);
 
-  if (!opts.allowStatus && (patch as { status?: unknown } | undefined)?.status !== undefined) {
-    return errorResult(
-      new Error(
-        "`manifest.status` is not editable here. Turning a skill off durably affects every " +
-          "conversation in every workspace, so the user does it in Skills settings. To stop " +
-          "using a skill for this conversation, call `skills__deactivate`.",
-      ),
-    );
-  }
   // `buildUpdatePatch` drops `status` by construction, so the only way it
   // reaches the writer is this explicit re-add on the allowed path.
   const status = (patch as { status?: "active" | "disabled" } | undefined)?.status;

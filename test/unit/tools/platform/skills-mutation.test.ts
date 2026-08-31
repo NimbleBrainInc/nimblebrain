@@ -793,6 +793,46 @@ describe("durable status is set_status only", () => {
     expect(readManifestField(id, "status")).toBe("active");
   });
 
+  test("create refuses manifest.status — a skill cannot be born disabled", async () => {
+    // Worse than a disabled edit, not better: the tier merge dedups by NAME
+    // before the active-status filter, so a lower-tier skill created disabled
+    // takes the name and is then dropped — and the org skill it shadowed
+    // composes nowhere at all.
+    const src = await buildSource();
+    const client = src.getClient()!;
+    const res = await client.callTool({
+      name: "create",
+      arguments: {
+        scope: "org",
+        manifest: { name: "born-disabled", description: "test", status: "disabled" },
+        body: "x",
+      },
+    });
+    expect(res.isError).toBe(true);
+    expect(JSON.stringify(res.content)).toContain("Skills settings");
+    expect(existsSync(join(workDir, "skills", "born-disabled.md"))).toBe(false);
+  });
+
+  test("a refused update leaves no version snapshot behind", async () => {
+    // The refusal sits above snapshotSkillVersion: a call that writes nothing
+    // must leave no version, or history fills with copies of an unchanged file.
+    const src = await buildSource();
+    const client = src.getClient()!;
+    await client.callTool({
+      name: "create",
+      arguments: {
+        scope: "org",
+        manifest: { name: "no-snapshot-on-refusal", description: "test" },
+        body: "x",
+      },
+    });
+    const id = join(workDir, "skills", "no-snapshot-on-refusal.md");
+    for (let i = 0; i < 3; i++) {
+      await client.callTool({ name: "update", arguments: { id, manifest: { status: "disabled" } } });
+    }
+    expect(existsSync(join(workDir, "skills", "_versions"))).toBe(false);
+  });
+
   test("set_status is internal — surfaceTools keeps it out of the model's list", async () => {
     // The wire's `annotations` is a typed MCP object, so asserting the custom
     // key survives `listTools()` tests the SDK, not us. What matters is the

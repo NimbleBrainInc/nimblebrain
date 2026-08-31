@@ -132,10 +132,17 @@ export const SkillsLoadingLogInput = Type.Object({
 });
 export type SkillsLoadingLogInput = Static<typeof SkillsLoadingLogInput>;
 
+// Create: ManifestFields minus `status`, for the reason `UpdateManifestFields`
+// gives below. A skill born disabled is worse than a disabled edit, not better:
+// the tier merge dedups by NAME before the active-status filter runs, so a
+// lower-tier skill created disabled takes the name and is then dropped — and
+// the same-named org skill it shadowed composes nowhere at all.
+const { status: _statusNotCreatable, ...CreateManifestFields } = ManifestFields;
+
 export const SkillsCreateInput = Type.Object(
   {
     scope: ScopeWritable,
-    manifest: Type.Object(ManifestFields, {
+    manifest: Type.Object(CreateManifestFields, {
       required: ["name", "description"],
       description: "YAML frontmatter for the skill file. Identity + selection metadata.",
     }),

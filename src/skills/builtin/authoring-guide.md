@@ -193,8 +193,9 @@ Standard top-level: `name` (lowercase + hyphens, ≤64) and `description`.
 Optional: `license`, and `allowed-tools` (a space-separated string of tools
 the skill may **call** — distinct from `tool-affinity`, which is *when to
 load*). NimbleBrain config nests under `metadata.nimblebrain`:
-`loading-strategy` (required), `priority`, `status`, `tool-affinity`,
-`triggers`.
+`loading-strategy` (required), `priority`, `tool-affinity`, `triggers`. Not
+`status` — you cannot create or edit a skill's durable on/off state; a new
+skill is always active.
 
 A valid dynamic workflow skill:
 
