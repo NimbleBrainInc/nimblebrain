@@ -617,10 +617,10 @@ describe("SkillsBrowser with surface='workspace' — composition list", () => {
     });
 
     // The toggle fired...
+    // The durable toggle: `set_status`, not the agent's conversation-scoped
+    // `activate`/`deactivate`.
     const toggleCall = callToolCalls.find(
-      // The durable toggle: `set_status`, not the agent's conversation-scoped
-              // `activate`/`deactivate`.
-              (c) => c.server === "skills" && c.tool === "set_status",
+      (c) => c.server === "skills" && c.tool === "set_status",
     );
     expect(toggleCall).toBeDefined();
     // ...and the row stayed collapsed.

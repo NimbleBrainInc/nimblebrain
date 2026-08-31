@@ -14,18 +14,54 @@
  */
 
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { existsSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { LanguageModelV3, LanguageModelV3CallOptions } from "@ai-sdk/provider";
 import { extractText } from "../../src/engine/content-helpers.ts";
 import { runWithRequestContext } from "../../src/runtime/request-context.ts";
+import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
+import { McpSource } from "../../src/tools/mcp-source.ts";
 import { createMockModel } from "../helpers/mock-model.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
 
 const SKILL_NAME = "house-voice";
+const BUNDLE_SERVER = "ai-nimblebrain-guide-mcp";
+const BUNDLE_SKILL = `bundle:${BUNDLE_SERVER}:guide`;
+const BUNDLE_MARKER = "BUNDLE-MARKER-XRAY";
 const MARKER = "VOICE-MARKER-WHISKEY";
+
+function createGuideBundle(dir: string): string {
+  mkdirSync(dir, { recursive: true });
+  const nm = join(import.meta.dir, "../..", "node_modules");
+  const body = `---\nname: guide\ndescription: Bundle guidance.\nmetadata:\n  nimblebrain:\n    loading-strategy: always\n---\n\n# guide\n\n${BUNDLE_MARKER} — always applies.`;
+  writeFileSync(
+    join(dir, "server.cjs"),
+    `
+const { Server } = require("${nm}/@modelcontextprotocol/sdk/dist/cjs/server/index.js");
+const { StdioServerTransport } = require("${nm}/@modelcontextprotocol/sdk/dist/cjs/server/stdio.js");
+const { ListToolsRequestSchema, CallToolRequestSchema, ListResourcesRequestSchema, ReadResourceRequestSchema } =
+  require("${nm}/@modelcontextprotocol/sdk/dist/cjs/types.js");
+async function main() {
+  const server = new Server({ name: "guide", version: "0.1.0" }, { capabilities: { tools: {}, resources: {} } });
+  server.setRequestHandler(ListToolsRequestSchema, async () => ({
+    tools: [{ name: "go", description: "Go", inputSchema: { type: "object", properties: {} } }],
+  }));
+  server.setRequestHandler(CallToolRequestSchema, async () => ({ content: [{ type: "text", text: "ok" }] }));
+  server.setRequestHandler(ListResourcesRequestSchema, async () => ({
+    resources: [{ uri: "skill://guide/SKILL.md", name: "guide", mimeType: "text/markdown" }],
+  }));
+  server.setRequestHandler(ReadResourceRequestSchema, async (req) => ({
+    contents: [{ uri: req.params.uri, mimeType: "text/markdown", text: ${JSON.stringify(body)} }],
+  }));
+  await server.connect(new StdioServerTransport());
+}
+main();
+`,
+  );
+  return dir;
+}
 
 const testDir = join(tmpdir(), `nimblebrain-skill-mute-${Date.now()}`);
 let runtime: Runtime;
@@ -65,7 +101,7 @@ function capturingModel(): LanguageModelV3 {
             type: "tool-call" as const,
             toolCallId: `tc-${Math.random().toString(36).slice(2)}`,
             toolName: call.tool,
-            input: JSON.stringify({ id: SKILL_NAME }),
+            input: JSON.stringify({ id: pendingName ?? SKILL_NAME }),
           },
         ],
         finishReason: "tool-calls" as const,
@@ -79,6 +115,8 @@ function capturingModel(): LanguageModelV3 {
 
 /** Set before a chat turn to make the model issue that tool call on it. */
 let pendingCall: { trigger: string; tool: string } | null = null;
+/** Skill name for that call; defaults to the filesystem fixture. */
+let pendingName: string | null = null;
 
 function promptText(): string {
   if (!lastPrompt) return "";
@@ -137,6 +175,21 @@ beforeAll(async () => {
     body: `${MARKER} — always speak in the house voice.`,
   });
   expect(created.isError).toBe(false);
+  const guide = new McpSource(
+    BUNDLE_SERVER,
+    {
+      type: "stdio",
+      spawn: {
+        command: "node",
+        args: [join(createGuideBundle(join(testDir, "guide")), "server.cjs")],
+        env: process.env as Record<string, string>,
+      },
+    },
+    new NoopEventSink(),
+  );
+  await guide.start();
+  runtime.getRegistryForWorkspace(TEST_WORKSPACE_ID).addSource(guide);
+
   const listed = await callTool("skills__list", {});
   const m = /(\/\S*house-voice\.md)/.exec(listed.content);
   skillPath = m?.[1] ?? "";
@@ -196,12 +249,53 @@ describe("muting a skill is conversation-scoped", () => {
     expect(before).toContain("status: active");
   });
 
-  it("rejects an unknown name instead of silently muting nothing", async () => {
-    const conv = await chat("a turn");
-    const res = await callTool("skills__deactivate", { id: "no-such-skill" });
-    // No conversation in scope: the refusal names the reason rather than
-    // reporting a success that changed nothing.
+  it("refuses a mute with no conversation in scope", async () => {
+    // The marker only becomes an event inside a run, so out-of-band the call
+    // would report success having changed nothing.
+    const res = await callTool("skills__deactivate", { id: SKILL_NAME });
     expect(res.isError).toBe(true);
     expect(res.content).toContain("only works inside a chat");
+  });
+
+  it("rejects an unknown name instead of silently muting nothing", async () => {
+    // Reached only from inside a run — the no-conversation guard runs first,
+    // so an out-of-band call never gets as far as the name lookup.
+    const conv = await chat("a turn");
+    pendingCall = { trigger: "PLEASE-TOGGLE", tool: "skills__deactivate" };
+    pendingName = "no-such-skill";
+    await chat("PLEASE-TOGGLE", conv);
+    pendingCall = null;
+    pendingName = null;
+
+    // The skill is untouched, and the failure named the reason.
+    await chat("after", conv);
+    expect(promptText()).toContain(MARKER);
+    const events = await (await runtime.resolveConversationStore(conv))?.readEvents(conv);
+    const errored = events?.find(
+      (e) => e.type === "tool.done" && e.name === "skills__deactivate" && e.ok === false,
+    );
+    expect(errored).toBeDefined();
+    expect(JSON.stringify(errored)).toContain("Unknown skill");
+  });
+});
+
+describe("muting reaches every channel a skill can compose through", () => {
+  it("mutes a bundle-published `always` skill, not just filesystem ones", async () => {
+    // The tool validates names against the activatable union, which includes
+    // bundle-published guidance — so the model learns these names from the
+    // Skill Catalog and can name one here. If the mute only covers the
+    // filesystem tiers, this reports success and the skill composes anyway:
+    // the silent no-op the handler's own guard exists to refuse.
+    const conv = await chat("first turn");
+    expect(promptText()).toContain(BUNDLE_MARKER);
+
+    pendingCall = { trigger: "PLEASE-TOGGLE", tool: "skills__deactivate" };
+    pendingName = BUNDLE_SKILL;
+    await chat("PLEASE-TOGGLE", conv);
+    pendingCall = null;
+    pendingName = null;
+
+    await chat("next turn", conv);
+    expect(promptText()).not.toContain(BUNDLE_MARKER);
   });
 });

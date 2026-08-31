@@ -229,10 +229,27 @@ export const SkillsSetStatusInput = Type.Object(
 );
 export type SkillsSetStatusInput = Static<typeof SkillsSetStatusInput>;
 
-export const SkillsActivateInput = IdOnlyInput;
+/**
+ * The mute pair takes a skill NAME, not a path. `IdOnlyInput`'s description
+ * says "filesystem path", which sends the model down the `update`/`delete`
+ * shape — and a bundle-published skill has no path at all, so a basename
+ * fallback cannot rescue it.
+ */
+const SkillNameInput = Type.Object(
+  {
+    id: Type.String({
+      description:
+        "Skill name, exactly as `skills__list` or the Skill Catalog reports it " +
+        "(e.g. `house-voice`, `bundle:<server>:<skill>`). Not a filesystem path.",
+    }),
+  },
+  { required: ["id"] },
+);
+
+export const SkillsActivateInput = SkillNameInput;
 export type SkillsActivateInput = Static<typeof SkillsActivateInput>;
 
-export const SkillsDeactivateInput = IdOnlyInput;
+export const SkillsDeactivateInput = SkillNameInput;
 export type SkillsDeactivateInput = Static<typeof SkillsDeactivateInput>;
 
 // Static schema by design: a per-request name enum would vary the tools block
