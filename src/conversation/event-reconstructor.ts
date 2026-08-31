@@ -278,6 +278,31 @@ export function extractOperatorTurns(
 }
 
 /**
+ * Skills the operator suppressed for THIS conversation and has not restored.
+ * Last event per name wins, so a restore after a suppress clears it.
+ *
+ * Deliberately NOT boundary-aware, unlike {@link collectDeliveredSkillNames}
+ * directly below. That one drops pre-compaction records because a delivered
+ * BODY was folded into the summary and re-delivering it is merely wasteful.
+ * A suppression is not a payload — it is a standing preference for the rest of
+ * the conversation. Expiring it at a compaction boundary would silently switch
+ * a skill back on mid-conversation, which is the same class of invisible state
+ * reversal this whole mechanism exists to remove, one layer down.
+ */
+export function collectSuppressedSkillNames(events: readonly ConversationEvent[]): Set<string> {
+  const state = new Map<string, boolean>();
+  for (const e of events) {
+    if (e.type !== "skill.suppression") continue;
+    state.set(e.skillName, e.suppressed);
+  }
+  const names = new Set<string>();
+  for (const [name, suppressed] of state) {
+    if (suppressed) names.add(name);
+  }
+  return names;
+}
+
+/**
  * Names of skills whose full body has already been delivered into this
  * conversation — via surface-once overlay injection (`connector.skill.injected`)
  * or explicit activation (`skill.activated`). The `nb__use_skill` tool's
