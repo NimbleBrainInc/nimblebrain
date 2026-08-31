@@ -11,6 +11,7 @@ import { log } from "../observability/log.ts";
 import { getRequestContext } from "../runtime/request-context.ts";
 import type { Runtime } from "../runtime/runtime.ts";
 import type { SelectedSkill } from "../skills/select.ts";
+import { approxTokens } from "../skills/tokens.ts";
 import type { Skill } from "../skills/types.ts";
 import { createManageAppsTool } from "./app-tools.ts";
 import { createManageConnectorsTool } from "./connector-tools.ts";
@@ -501,6 +502,7 @@ async function handleSkillStatus(
   const toolAffined = layer3.filter((s) => !coreNames.has(s.skill.manifest.name));
 
   const sections = [
+    formatAlwaysOnCost(context),
     buildSkillSection("## Core Skills (immutable)", coreContext, formatSkillSummary),
     buildSkillSection("## User Context Skills (always active)", userContext, formatSkillSummary),
     buildSkillSection("## Tool-Affined Skills (active)", toolAffined, formatLayer3Summary),
@@ -511,6 +513,44 @@ async function handleSkillStatus(
     return { content: textContent("No skills loaded."), isError: false };
   }
   return { content: textContent(sections.join("\n\n")), isError: false };
+}
+
+/**
+ * What the always-on channel costs this workspace, per tier.
+ *
+ * Every skill here is paid on EVERY turn, and until this existed the only way
+ * to find out was to read conversation logs off the disk. That is how a
+ * workspace ended up carrying 13k tokens of one operator's personal doctrine
+ * without anyone noticing: user-tier skills follow their author into every
+ * workspace by design, so a skill authored at the wrong tier is invisible
+ * rather than wrong — it just quietly bills every turn, everywhere.
+ *
+ * Reporting the tiers separately is the whole fix. A workspace whose own
+ * contribution is a fraction of its always-on cost is the signal that a skill
+ * belongs at a different scope, and moving one is already `read` → `create` at
+ * the new scope → `delete`.
+ */
+function formatAlwaysOnCost(context: readonly Skill[]): string | null {
+  if (context.length === 0) return null;
+  const byScope = new Map<string, { count: number; tokens: number }>();
+  for (const s of context) {
+    const scope = s.manifest.scope ?? "org";
+    const row = byScope.get(scope) ?? { count: 0, tokens: 0 };
+    row.count += 1;
+    row.tokens += approxTokens(s.body);
+    byScope.set(scope, row);
+  }
+  const total = [...byScope.values()].reduce((n, r) => n + r.tokens, 0);
+  const lines = [...byScope.entries()]
+    .sort((a, b) => b[1].tokens - a[1].tokens)
+    .map(([scope, r]) => `- ${scope}: ${r.count} skill(s), ~${r.tokens.toLocaleString()} tokens`);
+  return [
+    "## Always-On Cost (every turn)",
+    "",
+    ...lines,
+    "",
+    `Total ~${total.toLocaleString()} tokens per turn.`,
+  ].join("\n");
 }
 
 /** Single-skill detail view for status(scope="skills", name=...). */
