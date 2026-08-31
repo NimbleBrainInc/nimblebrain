@@ -19,6 +19,8 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { isInternalTool } from "../../../../src/engine/types.ts";
+import { surfaceTools } from "../../../../src/tools/surfacing.ts";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { NoopEventSink } from "../../../../src/adapters/noop-events.ts";
 import { runWithRequestContext } from "../../../../src/runtime/request-context.ts";
@@ -722,8 +724,8 @@ describe("skills__delete", () => {
 
 // ── activate / deactivate ────────────────────────────────────────────────
 
-describe("skills__activate / skills__deactivate", () => {
-  test("activate sets status=active; deactivate sets status=disabled", async () => {
+describe("durable status is set_status only", () => {
+  test("set_status writes the durable status to the file", async () => {
     const src = await buildSource();
     const client = src.getClient()!;
     await client.callTool({
@@ -736,14 +738,214 @@ describe("skills__activate / skills__deactivate", () => {
     });
     const id = join(workDir, "skills", "togglable.md");
 
-    const off = await client.callTool({ name: "deactivate", arguments: { id } });
+    const off = await client.callTool({ name: "set_status", arguments: { id, status: "disabled" } });
     expect(off.isError).toBeFalsy();
     expect(readManifestField(id, "status")).toBe("disabled");
 
-    const on = await client.callTool({ name: "activate", arguments: { id } });
+    const on = await client.callTool({ name: "set_status", arguments: { id, status: "active" } });
     expect(on.isError).toBeFalsy();
     // The writer emits status explicitly under metadata.nimblebrain.
     expect(readManifestField(id, "status")).toBe("active");
+  });
+
+  test("activate / deactivate write nothing to the file", async () => {
+    // They mute for one conversation now. The durable field is shared by every
+    // conversation that loads the skill — in every workspace for a user-scope
+    // one — so an agent reaching for "not right now" must not land there.
+    const src = await buildSource();
+    const client = src.getClient()!;
+    await client.callTool({
+      name: "create",
+      arguments: {
+        scope: "org",
+        manifest: { name: "untouched", description: "test", type: "skill" },
+        body: "x",
+      },
+    });
+    const id = join(workDir, "skills", "untouched.md");
+
+    await client.callTool({ name: "deactivate", arguments: { id } });
+    expect(readManifestField(id, "status")).toBe("active");
+  });
+
+  test("update refuses manifest.status — set_status is the only durable door", async () => {
+    // The schema no longer declares the field, but the validator lets unknown
+    // keys through, so a silent drop would report a disable that never
+    // happened. Refuse instead, and say where the capability lives.
+    const src = await buildSource();
+    const client = src.getClient()!;
+    await client.callTool({
+      name: "create",
+      arguments: {
+        scope: "org",
+        manifest: { name: "no-status-via-update", description: "test", type: "skill" },
+        body: "x",
+      },
+    });
+    const id = join(workDir, "skills", "no-status-via-update.md");
+
+    const res = await client.callTool({
+      name: "update",
+      arguments: { id, manifest: { status: "disabled" } },
+    });
+    expect(res.isError).toBe(true);
+    expect(JSON.stringify(res.content)).toContain("Skills settings");
+    expect(readManifestField(id, "status")).toBe("active");
+  });
+
+  test("create refuses manifest.status — a skill cannot be born disabled", async () => {
+    // Worse than a disabled edit, not better: the tier merge dedups by NAME
+    // before the active-status filter, so a lower-tier skill created disabled
+    // takes the name and is then dropped — and the org skill it shadowed
+    // composes nowhere at all.
+    const src = await buildSource();
+    const client = src.getClient()!;
+    const res = await client.callTool({
+      name: "create",
+      arguments: {
+        scope: "org",
+        manifest: { name: "born-disabled", description: "test", status: "disabled" },
+        body: "x",
+      },
+    });
+    expect(res.isError).toBe(true);
+    expect(JSON.stringify(res.content)).toContain("Skills settings");
+    expect(existsSync(join(workDir, "skills", "born-disabled.md"))).toBe(false);
+  });
+
+  test("a refused update leaves no version snapshot behind", async () => {
+    // The refusal sits above snapshotSkillVersion: a call that writes nothing
+    // must leave no version, or history fills with copies of an unchanged file.
+    const src = await buildSource();
+    const client = src.getClient()!;
+    await client.callTool({
+      name: "create",
+      arguments: {
+        scope: "org",
+        manifest: { name: "no-snapshot-on-refusal", description: "test" },
+        body: "x",
+      },
+    });
+    const id = join(workDir, "skills", "no-snapshot-on-refusal.md");
+    for (let i = 0; i < 3; i++) {
+      await client.callTool({ name: "update", arguments: { id, manifest: { status: "disabled" } } });
+    }
+    expect(existsSync(join(workDir, "skills", "_versions"))).toBe(false);
+  });
+
+  // One invariant instead of a guard per door.
+  //
+  // Four rounds of review found the same defect four times: update, then
+  // create, then restore each let the durable off switch through, and each was
+  // closed on its own. A per-door guard only ever proves the door someone
+  // thought to name. The pair below replaces that: the invariant drives every
+  // writer that can reach `status` — create, update, restore — at a skill that
+  // is on, and asserts nothing turns it off; the enumeration test pins the
+  // writer set itself, so a new door has to be argued rather than merely added.
+  // The three it does not drive are accounted for, not skipped: `activate` and
+  // `deactivate` write no file at all (they refuse outside a chat, and their
+  // scope is `skill-mute-scope.test.ts`), and `delete` removes the very file
+  // the assertion reads.
+  const MODEL_FACING_WRITERS = ["create", "update", "delete", "activate", "deactivate", "restore"];
+
+  test("no model-facing writer is covered by accident — the set is enumerated", async () => {
+    // Through `surfaceTools`, not the wire: the MCP `annotations` schema drops
+    // the custom internal key, so a wire-level check would count `set_status`
+    // as model-facing and hide the very door this suite proves is shut.
+    const src = await buildSource();
+    const { direct, proxied } = surfaceTools(await src.tools(), null, { maxDirectTools: 1000 });
+    const writers = [...direct, ...proxied]
+      .map((t) => t.name.split("__").pop() ?? t.name)
+      .filter((n) => !["list", "read", "history", "loading_log"].includes(n))
+      .sort();
+    expect(writers).toEqual([...MODEL_FACING_WRITERS].sort());
+  });
+
+  test("no model-facing writer can leave a skill durably disabled", async () => {
+    const src = await buildSource();
+    const client = src.getClient()!;
+
+    // A skill that has been off and on again — so its history holds a
+    // `status: disabled` snapshot, the shape restore turned into a durable
+    // disable.
+    await client.callTool({
+      name: "create",
+      arguments: {
+        scope: "org",
+        manifest: { name: "invariant-probe", description: "test" },
+        body: "body",
+      },
+    });
+    const id = join(workDir, "skills", "invariant-probe.md");
+    await client.callTool({ name: "set_status", arguments: { id, status: "disabled" } });
+    await client.callTool({ name: "set_status", arguments: { id, status: "active" } });
+    const hist = await client.callTool({ name: "history", arguments: { id } });
+    const versions = (
+      (hist as { structuredContent?: { versions?: Array<{ version: string }> } }).structuredContent
+        ?.versions ?? []
+    ).map((v) => v.version);
+    expect(versions.length).toBeGreaterThan(0);
+    expect(readManifestField(id, "status")).toBe("active");
+
+    // Every door the model can reach, aimed at turning a skill off. `create`
+    // is aimed at a NEW name: its hazard is a skill *born* disabled — which
+    // masks a same-named higher-tier skill out of composition, since the tier
+    // merge dedups by name before the status filter — and a create aimed at
+    // `invariant-probe` would be refused for already existing long before the
+    // durable-status refusal is reached, proving nothing.
+    const bornDisabled = join(workDir, "skills", "invariant-born-disabled.md");
+    const attempts: Array<{
+      call: { name: string; arguments: Record<string, unknown> };
+      check: () => void;
+    }> = [
+      {
+        call: {
+          name: "create",
+          arguments: {
+            scope: "org",
+            manifest: {
+              name: "invariant-born-disabled",
+              description: "test",
+              status: "disabled",
+            },
+            body: "body",
+          },
+        },
+        check: () => expect(existsSync(bornDisabled)).toBe(false),
+      },
+      {
+        call: { name: "update", arguments: { id, manifest: { status: "disabled" } } },
+        check: () => expect(readManifestField(id, "status")).toBe("active"),
+      },
+      ...versions.map((version) => ({
+        call: { name: "restore", arguments: { id, version } },
+        check: () => expect(readManifestField(id, "status")).toBe("active"),
+      })),
+    ];
+    for (const attempt of attempts) {
+      await client.callTool(attempt.call);
+      attempt.check();
+      // And the skill that was on is still on, whichever door was tried.
+      expect(readManifestField(id, "status")).toBe("active");
+    }
+  });
+
+  test("set_status is internal — surfaceTools keeps it out of the model's list", async () => {
+    // The wire's `annotations` is a typed MCP object, so asserting the custom
+    // key survives `listTools()` tests the SDK, not us. What matters is the
+    // behaviour: the filter at the top of `surfaceTools` drops internal tools
+    // from what the model is offered, while the tool stays callable by name
+    // for the settings UI over REST.
+    const src = await buildSource();
+    const tools = await src.tools();
+    const setStatus = tools.find((t) => t.name.endsWith("set_status"));
+    expect(setStatus).toBeDefined();
+    expect(isInternalTool(setStatus as { annotations?: Record<string, unknown> })).toBe(true);
+
+    const { direct, proxied } = surfaceTools(tools, null, { maxDirectTools: 1000 });
+    expect([...direct, ...proxied].some((t) => t.name.endsWith("set_status"))).toBe(false);
+    // The conversation-scoped pair stays visible.
+    expect([...direct, ...proxied].some((t) => t.name.endsWith("deactivate"))).toBe(true);
   });
 });
 

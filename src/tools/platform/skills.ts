@@ -28,7 +28,13 @@ import { isToolEnabled, type ResolvedFeatures } from "../../config/features.ts";
 import { collectDeliveredSkillNames } from "../../conversation/event-reconstructor.ts";
 import type { ConversationEvent } from "../../conversation/types.ts";
 import { textContent } from "../../engine/content-helpers.ts";
-import { type EventSink, SKILL_ACTIVATED_META_KEY, type ToolResult } from "../../engine/types.ts";
+import {
+  type EventSink,
+  INTERNAL_TOOL_ANNOTATION,
+  SKILL_ACTIVATED_META_KEY,
+  SKILL_SUPPRESSION_META_KEY,
+  type ToolResult,
+} from "../../engine/types.ts";
 import { ORG_ADMIN_ROLES } from "../../identity/types.ts";
 import { log } from "../../observability/log.ts";
 import { formatActivatedSkillBlock } from "../../prompt/compose.ts";
@@ -53,7 +59,7 @@ import {
   readSkillVersionRaw,
   snapshotSkillVersion,
 } from "../../skills/versions.ts";
-import { deleteSkill, updateSkill, writeSkill } from "../../skills/writer.ts";
+import { deleteSkill, readSkill, updateSkill, writeSkill } from "../../skills/writer.ts";
 import { splitInnerToolName } from "../../util/tool-name.ts";
 import { canWriteWorkspaceScoped } from "../../workspace/authz.ts";
 import { defineInProcessApp, type InProcessTool } from "../in-process-app.ts";
@@ -75,6 +81,7 @@ import {
   SkillsLoadingLogInput,
   SkillsReadInput,
   SkillsRestoreInput,
+  SkillsSetStatusInput,
   SkillsUpdateInput,
   UseSkillInput,
 } from "./schemas/skills.ts";
@@ -132,12 +139,13 @@ const SKILLS_UPDATE_DESCRIPTION =
   "`skills__restore` puts one back. Bundle (Layer 1) skills are not editable.";
 
 // Tool input schemas live in `./schemas/skills.ts` — see the catalog at
-// `./schemas/catalog.ts`. The LLM-facing create/update input is a `Pick` of
-// the canonical manifest: `name`, `description`, `allowed-tools`, and the
-// authorable NimbleBrain fields (`loading-strategy`, `priority`, `status`,
-// `tool-affinity`, `triggers`). `provenance` and `scope` are NOT authorable —
-// the writer stamps `provenance` and the loader stamps `scope` from the
-// directory tier.
+// `./schemas/catalog.ts`. The LLM-facing create/update input is a SUBSET of the
+// canonical manifest: `name`, `description`, `allowed-tools`, and the authorable
+// NimbleBrain fields (`loading-strategy`, `priority`, `tool-affinity`,
+// `triggers`). `provenance`, `scope` and `status` are NOT authorable — the
+// writer stamps `provenance`, the loader stamps `scope` from the directory
+// tier, and `status` is the durable off switch that only the internal
+// `set_status` writes.
 
 const SKILLS_HISTORY_DESCRIPTION =
   "List the saved snapshots of a skill, newest first. Every `update`, `delete`, and `restore` " +
@@ -155,9 +163,17 @@ const SKILLS_DELETE_DESCRIPTION =
   "deleting org- or workspace-scope skills. Bundle (Layer 1) skills cannot be deleted via " +
   "the platform — those ship with the bundle.";
 
+const SKILLS_SET_STATUS_DESCRIPTION =
+  "Durably enable or disable a skill by writing `status` to its frontmatter. INTERNAL: the Skills " +
+  "settings page invokes this by name; the model never sees it. The blast radius is why — a " +
+  "user-scope skill's file is read by every conversation that user has, in every workspace, so " +
+  "flipping it is a decision for a human looking at the surface that shows what they are changing. " +
+  "The agent's `activate`/`deactivate` mute for one conversation instead.";
+
 const SKILLS_ACTIVATE_DESCRIPTION =
-  "Activate a skill (set status=active). Sugar over `update`; cleaner permission/audit shape. " +
-  "Active skills are eligible for Layer 3 selection on subsequent turns.";
+  "Un-mute a skill previously muted with `deactivate` in this conversation, so it composes again " +
+  "from the next turn. Scope is this conversation only. This does NOT load a skill on demand — for " +
+  "that use `nb__use_skill`, which delivers the body immediately.";
 
 const USE_SKILL_DESCRIPTION =
   "Load a skill from the Skill Catalog into this conversation. Pass `name` exactly as listed " +
@@ -169,8 +185,11 @@ const USE_SKILL_DESCRIPTION =
   "does NOT change the skill's stored status (that is `activate`/`deactivate`).";
 
 const SKILLS_DEACTIVATE_DESCRIPTION =
-  "Deactivate a skill (set status=disabled). The skill stays on disk but is skipped during Layer 3 " +
-  "selection. Reactivate with `activate`. Use to mute a skill mid-incident without deleting it.";
+  "Mute a skill for THIS CONVERSATION — it stops composing into your context from the next turn. " +
+  "Scope is this conversation only: nothing is written to the skill, and the user's other chats and " +
+  "workspaces are unaffected. Undo with `activate`. Use when a skill is not relevant to the task at " +
+  "hand. To turn a skill off permanently the user does it in Skills settings — you cannot, and " +
+  "should say so rather than muting and calling it done.";
 
 // ── Source factory ───────────────────────────────────────────────────────
 
@@ -372,12 +391,32 @@ export function createSkillsSource(
       },
     },
     {
+      name: "set_status",
+      description: SKILLS_SET_STATUS_DESCRIPTION,
+      annotations: { [INTERNAL_TOOL_ANNOTATION]: true },
+      inputSchema: SkillsSetStatusInput,
+      handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
+        try {
+          const status = input.status === "disabled" ? "disabled" : "active";
+          return await updateSkillHandler(
+            runtime,
+            { id: input.id, manifest: { status } },
+            eventSink,
+            authoringGuidePath,
+            { allowStatus: true },
+          );
+        } catch (err) {
+          return errorResult(err);
+        }
+      },
+    },
+    {
       name: "activate",
       description: SKILLS_ACTIVATE_DESCRIPTION,
       inputSchema: SkillsActivateInput,
       handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
         try {
-          return await setStatusHandler(runtime, input, "active", eventSink, authoringGuidePath);
+          return await setStatusHandler(runtime, input, "active");
         } catch (err) {
           return errorResult(err);
         }
@@ -389,7 +428,7 @@ export function createSkillsSource(
       inputSchema: SkillsDeactivateInput,
       handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
         try {
-          return await setStatusHandler(runtime, input, "disabled", eventSink, authoringGuidePath);
+          return await setStatusHandler(runtime, input, "disabled");
         } catch (err) {
           return errorResult(err);
         }
@@ -1739,7 +1778,10 @@ function buildCreateManifest(
     description: manifest.description,
     loadingStrategy: manifest.loadingStrategy ?? "dynamic",
     priority: manifest.priority ?? 50,
-    status: manifest.status ?? "active",
+    // Always active. `status` is not a create-time field — see
+    // `CreateManifestFields`; `set_status` is the one door to the durable off
+    // switch, and it is internal.
+    status: "active",
     ...(manifest.toolAffinity && manifest.toolAffinity.length > 0
       ? { toolAffinity: manifest.toolAffinity }
       : {}),
@@ -1795,6 +1837,12 @@ async function createSkill(
   if (existsSync(target)) {
     return errorResult(new Error(`Skill "${name}" already exists in ${scope} scope`));
   }
+
+  // After the permission gate, matching `updateSkillHandler`: a caller who may
+  // not write here should hear that, not a schema complaint they could "fix"
+  // and still be refused.
+  const statusError = durableStatusError(manifest);
+  if (statusError) return statusError;
 
   // Build the runtime manifest from the flat LLM-facing input and stamp
   // provenance (never author-supplied — see schema). The writer maps this to
@@ -1862,7 +1910,6 @@ function buildUpdatePatch(
     ...(patch.description !== undefined ? { description: patch.description } : {}),
     ...(patch.loadingStrategy !== undefined ? { loadingStrategy: patch.loadingStrategy } : {}),
     ...(patch.priority !== undefined ? { priority: patch.priority } : {}),
-    ...(patch.status !== undefined ? { status: patch.status } : {}),
     ...(patch.toolAffinity !== undefined ? { toolAffinity: patch.toolAffinity } : {}),
     ...(patch.triggers !== undefined ? { triggers: patch.triggers } : {}),
     ...(patch.allowedTools !== undefined ? { allowedTools: patch.allowedTools } : {}),
@@ -1872,6 +1919,25 @@ function buildUpdatePatch(
 // Input shape for `skills__update`. `manifest` is a partial of the
 // create-shape — every field optional. Derived from the TypeBox schema
 // in `./schemas/skills.ts`; the validator has already enforced shape.
+/**
+ * Refuse a `manifest.status` from a model-facing tool.
+ *
+ * `set_status` is the one door to the durable off switch and it is internal.
+ * Both create and update drop the field from their schemas, but the validator
+ * lets unknown keys through, so ignoring one would report a disable that never
+ * happened — the silent no-op this whole change exists to remove.
+ */
+function durableStatusError(manifest: unknown): ToolResult | null {
+  if ((manifest as { status?: unknown } | undefined)?.status === undefined) return null;
+  return errorResult(
+    new Error(
+      "`manifest.status` is not settable here. Turning a skill off durably affects every " +
+        "conversation in every workspace, so the user does it in Skills settings. To stop " +
+        "using a skill for this conversation, call `skills__deactivate`.",
+    ),
+  );
+}
+
 /**
  * Refuse a body whose intent isn't stated. Defaulting either way is a silent
  * data hazard: `replace` destroys the rest of the skill when the caller meant
@@ -1911,6 +1977,14 @@ async function updateSkillHandler(
   input: Record<string, unknown>,
   eventSink: EventSink,
   authoringGuidePath: string,
+  /**
+   * Let this call write `manifest.status`. ONLY `set_status` passes it — that
+   * tool is internal, so the door stays shut to the model. Without the flag a
+   * `status` in the patch is refused rather than dropped: the schema no longer
+   * declares the field, but the validator lets unknown keys through, so
+   * ignoring it would report a successful disable that never happened.
+   */
+  opts: { allowStatus?: boolean } = {},
 ): Promise<ToolResult> {
   const { id, manifest: patch, body, body_mode: bodyMode } = input as unknown as SkillsUpdateInput;
 
@@ -1931,10 +2005,23 @@ async function updateSkillHandler(
   // the denial that actually applies.
   const modeError = bodyModeError(body, bodyMode);
   if (modeError) return modeError;
+  // Above the snapshot, with the other refusals: a call that writes nothing
+  // must leave no version behind, or `skills__history` fills with duplicates
+  // of a state that never changed.
+  if (!opts.allowStatus) {
+    const statusError = durableStatusError(patch);
+    if (statusError) return statusError;
+  }
 
   snapshotSkillVersion(id);
 
-  const partial = buildUpdatePatch(patch);
+  // `buildUpdatePatch` drops `status` by construction, so the only way it
+  // reaches the writer is this explicit re-add on the allowed path.
+  const status = (patch as { status?: "active" | "disabled" } | undefined)?.status;
+  const partial = {
+    ...buildUpdatePatch(patch),
+    ...(opts.allowStatus && status !== undefined ? { status } : {}),
+  };
   // Merged result is canonically validated by the writer before write; a patch
   // that would make the skill unloadable fails cleanly, leaving the file as-is.
   try {
@@ -2053,8 +2140,20 @@ async function restoreSkillHandler(
 
   const dir = dirname(path);
   const name = (path.split("/").pop() ?? "").replace(/\.md$/, "");
+  // A restore recovers CONTENT, never the durable on/off state. A snapshot is
+  // taken before every write, including the one that re-enables a skill — so
+  // any skill toggled off and back on leaves a `status: disabled` snapshot
+  // sitting in its history, and restoring it verbatim would hand the agent the
+  // durable disable that `set_status` is internal to withhold. The live file's
+  // status carries across untouched.
+  const liveStatus = readSkill(dir, name)?.manifest.status;
   try {
-    writeSkill(dir, name, parsed.manifest, parsed.body);
+    writeSkill(
+      dir,
+      name,
+      { ...parsed.manifest, ...(liveStatus !== undefined ? { status: liveStatus } : {}) },
+      parsed.body,
+    );
   } catch (err) {
     return errorResult(err instanceof Error ? err : new Error(String(err)));
   }
@@ -2100,19 +2199,84 @@ async function deleteSkillHandler(
   };
 }
 
+/**
+ * Mute or un-mute a skill FOR THE CURRENT CONVERSATION.
+ *
+ * This used to write `status:` to the skill file, which is shared by every
+ * conversation that loads it — for a user-scope skill, across every workspace
+ * that user touches. So one chat's "not right now" silently reconfigured all
+ * the others, with no signal to any of them, and an operator ended up policing
+ * skill state by hand.
+ *
+ * The two intents behind that one write are genuinely different, and only one
+ * of them is the agent's: "don't use this for the task at hand" is per
+ * conversation, while "retire this skill" is a durable decision a human makes
+ * in settings, where they can see the blast radius. Turning a skill off
+ * permanently is no longer reachable from here at all.
+ *
+ * Resolution is by NAME, not path: a mute is conversation state, so it never
+ * touches the file and needs none of the path gates `update` runs. The name is
+ * validated against what this workspace can actually activate, so a typo is an
+ * error rather than a silent no-op the model reads as success.
+ */
 async function setStatusHandler(
   runtime: Runtime,
   input: Record<string, unknown>,
   status: "active" | "disabled",
-  eventSink: EventSink,
-  authoringGuidePath: string,
 ): Promise<ToolResult> {
-  return updateSkillHandler(
-    runtime,
-    { id: input.id, manifest: { status } },
-    eventSink,
-    authoringGuidePath,
-  );
+  const name = typeof input.id === "string" ? input.id : "";
+  if (!name) return errorResult(new Error("`id` is required — the skill name from `skills__list`"));
+
+  const { wsId, userId } = resolveCallContext(runtime);
+  // A mute takes effect through a `_meta` marker the ENGINE turns into a
+  // conversation event. Called outside a run — over REST, say — the marker is
+  // dropped and the call would report success while changing nothing. Refuse
+  // instead: a steering control that silently does nothing is how the bug this
+  // replaces stayed invisible for so long.
+  if (!wsId || !getRequestContext()?.conversationId) {
+    return errorResult(
+      new Error(
+        "Muting a skill is conversation state, so it only works inside a chat. " +
+          "To change a skill's stored status, use Skills settings.",
+      ),
+    );
+  }
+  // The mutable set is everything that can COMPOSE into this conversation, not
+  // just what can be activated on demand. `listActivatableSkills` is the
+  // catalog — `dynamic` skills plus bundle/connector guidance — and excludes
+  // `always` skills by construction, since you never activate one. Those are
+  // exactly the skills a user most wants muted (the always-on voice skill is
+  // the motivating case), so validating against the catalog alone rejected the
+  // main use with a confusing "unknown skill".
+  // The same union composition filters — see `Runtime.suppressibleSkillNames`.
+  // Anything narrower rejects a name the model legitimately read from the
+  // catalog; anything wider accepts one the filter will not act on.
+  const known = await runtime.suppressibleSkillNames(wsId, userId);
+  // A path still reaches here from habit (`update`/`delete` take one), so fall
+  // back to its basename. A bundle-published skill has no path, which is why
+  // the schema now asks for a name rather than relying on this.
+  const resolved = known.has(name) ? name : (name.split("/").pop() ?? name).replace(/\.md$/, "");
+  if (!known.has(resolved)) {
+    return errorResult(
+      new Error(
+        `Unknown skill "${name}". Valid names in this workspace: ${[...known].sort().join(", ") || "(none)"}.`,
+      ),
+    );
+  }
+
+  const suppressed = status === "disabled";
+  return {
+    content: textContent(
+      suppressed
+        ? `Muted "${resolved}" for this conversation. It stops composing from the next turn. ` +
+            `Other conversations and workspaces are unaffected; to turn it off everywhere, the user ` +
+            `does that in Skills settings.`
+        : `Un-muted "${resolved}" for this conversation. It composes again from the next turn.`,
+    ),
+    structuredContent: { name: resolved, suppressed, scope: "conversation" },
+    _meta: { [SKILL_SUPPRESSION_META_KEY]: { skillName: resolved, suppressed } },
+    isError: false,
+  };
 }
 
 function extractUserIdFromPath(path: string, workDir: string): string | null {

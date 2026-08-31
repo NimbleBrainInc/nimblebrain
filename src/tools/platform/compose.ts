@@ -31,6 +31,7 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { isToolVisibleToRole } from "../../config/features.ts";
+import { collectSuppressedSkillNames } from "../../conversation/event-reconstructor.ts";
 import {
   CONVERSATION_ID_RE,
   type ContextAssembledEvent,
@@ -232,9 +233,13 @@ export function createComposeSource(runtime: Runtime, eventSink: EventSink): Mcp
  * `composeSystemPromptTraced` to produce the full per-layer breakdown for
  * the current state. The composition is scoped to the **calling
  * request's workspace** (`runtime.requireWorkspaceId()`), not to the
- * `convId`'s workspace — `convId` is a label echoed back in the
- * response, NOT a workspace selector. To inspect a different workspace,
- * the caller must invoke from within that workspace's request context.
+ * `convId`'s workspace — `convId` is NOT a workspace selector. To inspect a
+ * different workspace, the caller must invoke from within that workspace's
+ * request context.
+ *
+ * `convId` does select one thing: the conversation whose mutes are applied,
+ * read through the ownership-checked path below. It stopped being a label
+ * echoed back in the response when the trace started honouring them.
  *
  * Inputs gathered (mirrors `runtime.chat()` for everything not request-
  * scoped):
@@ -248,7 +253,8 @@ export function createComposeSource(runtime: Runtime, eventSink: EventSink): Mcp
  *   - `overlays` = `runtime.readPromptOverlays(wsId)` — the workspace
  *     instruction overlay.
  *   - `layer3Skills` = `loadConversationSkills` ∩ `selectLayer3Skills`
- *     against the role-filtered active tool set.
+ *     against the role-filtered active tool set, less the skills this
+ *     conversation has muted.
  *   - `prefs` = identity preferences.
  *
  * Skipped vs. `runtime.chat()` (request-scoped, no signal in a debug
@@ -277,8 +283,14 @@ async function composeLive(runtime: Runtime, convId: string): Promise<ComposeRes
   // context skills, which the boot-only `activeContextSkills()` would miss, and
   // it filters disabled context skills the same way.
   const userId = identity?.id ?? null;
+  // The conversation's own mutes apply, exactly as they do in `runtime.chat()`.
+  // A trace that reports a muted skill's body as composing is the divergence
+  // this tool exists to close, one surface over. Read through the file's
+  // ownership-gated `readConvEvents` — `convId` is a tool input, so an
+  // ungated read would reach a peer's conversation.
+  const suppressed = collectSuppressedSkillNames((await readConvEvents(runtime, convId)) ?? []);
   const { context: poolContext, capability: poolCapability } = partitionSkillsByRole(
-    runtime.loadConversationSkills(wsId, userId),
+    runtime.loadConversationSkills(wsId, userId).filter((sk) => !suppressed.has(sk.manifest.name)),
   );
   const requestContextSkills = identityOverride ? [...poolContext, identityOverride] : poolContext;
 
@@ -328,7 +340,12 @@ async function composeLive(runtime: Runtime, convId: string): Promise<ComposeRes
     collectActivatableSkills({
       fsCapability: poolCapability,
       bundleCapability: [],
-      connectorCandidates: runtime.loadConnectorSkillCandidates(wsId),
+      // Filtered like the pool above. The trace exists to show what composed;
+      // listing a connector overlay the same turn's prompt dropped is the
+      // divergence it is supposed to expose, not produce.
+      connectorCandidates: runtime
+        .loadConnectorSkillCandidates(wsId)
+        .filter((c) => !suppressed.has(c.name)),
     }),
   );
 

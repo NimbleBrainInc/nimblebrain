@@ -60,6 +60,7 @@ import {
   type ResolvedThinking,
   SKILL_ACTIVATED_META_KEY,
   SKILL_ACTIVATED_SYNTHETIC,
+  SKILL_SUPPRESSION_META_KEY,
   type StopReason,
   type ThinkingEffort,
   type ToolCall,
@@ -1831,6 +1832,27 @@ export class AgentEngine {
   }
 
   /**
+   * Turn a {@link SKILL_SUPPRESSION_META_KEY} marker into a persisted
+   * `skill.suppression` event. Mirrors {@link recordSkillActivation}: only the
+   * engine knows the runId, and only the conversation log outlives the run.
+   *
+   * Unlike an activation, this is NOT added to the run's injected set — that
+   * set exists to stop a body being delivered twice, and a suppression
+   * delivers nothing. Suppressing then re-activating a skill in one run must
+   * both take effect, in order.
+   */
+  private recordSkillSuppression(result: ToolResult, runId: string): void {
+    const raw = result._meta?.[SKILL_SUPPRESSION_META_KEY];
+    if (!raw || typeof raw !== "object") return;
+    const marker = raw as { skillName?: unknown; suppressed?: unknown };
+    if (typeof marker.skillName !== "string" || marker.skillName.length === 0) return;
+    this.events.emit({
+      type: "skill.suppression",
+      data: { runId, skillName: marker.skillName, suppressed: marker.suppressed === true },
+    });
+  }
+
+  /**
    * Emit `tool.progress` when a tool result was bounded for model context.
    * `outputText` (full) is persisted for the UI and the record; `modelOutput`
    * (bounded) is what enters the prompt. The message differs for inline-UI
@@ -2077,6 +2099,7 @@ export class AgentEngine {
     const resourceLinks = extractResourceLinks(finalResult.content);
 
     this.recordSkillActivation(ctx, gatedCall, finalResult);
+    this.recordSkillSuppression(finalResult, ctx.runId);
 
     this.events.emit({
       type: "tool.done",

@@ -132,10 +132,17 @@ export const SkillsLoadingLogInput = Type.Object({
 });
 export type SkillsLoadingLogInput = Static<typeof SkillsLoadingLogInput>;
 
+// Create: ManifestFields minus `status`, for the reason `UpdateManifestFields`
+// gives below. A skill born disabled is worse than a disabled edit, not better:
+// the tier merge dedups by NAME before the active-status filter runs, so a
+// lower-tier skill created disabled takes the name and is then dropped — and
+// the same-named org skill it shadowed composes nowhere at all.
+const { status: _statusNotCreatable, ...CreateManifestFields } = ManifestFields;
+
 export const SkillsCreateInput = Type.Object(
   {
     scope: ScopeWritable,
-    manifest: Type.Object(ManifestFields, {
+    manifest: Type.Object(CreateManifestFields, {
       required: ["name", "description"],
       description: "YAML frontmatter for the skill file. Identity + selection metadata.",
     }),
@@ -147,15 +154,24 @@ export const SkillsCreateInput = Type.Object(
 );
 export type SkillsCreateInput = Static<typeof SkillsCreateInput>;
 
-// Update: partial of ManifestFields minus `name` — renames are not patchable
-// via update (the name is the filename; the path-derived id would drift).
+// Update: partial of ManifestFields minus `name` and `status`.
+//
+// `name` is not patchable because it IS the filename — the path-derived id
+// would drift out from under the caller.
+//
+// `status` is not patchable because it is the DURABLE off switch, shared by
+// every conversation that loads the skill and every workspace the user
+// touches. `set_status` is its one door, and that door is internal so only the
+// settings UI reaches it; leaving a second, model-visible way in through a
+// `manifest` patch would hand the agent back exactly the capability the mute
+// exists to take away from it.
+//
 // All fields optional (omitted fields keep their current values), unlike
 // create where name + description are required.
 const UpdateManifestFields = {
   description: Type.Optional(ManifestFields.description),
   loadingStrategy: ManifestFields.loadingStrategy,
   priority: ManifestFields.priority,
-  status: ManifestFields.status,
   toolAffinity: ManifestFields.toolAffinity,
   triggers: ManifestFields.triggers,
   allowedTools: ManifestFields.allowedTools,
@@ -218,10 +234,38 @@ const IdOnlyInput = Type.Object(
 export const SkillsDeleteInput = IdOnlyInput;
 export type SkillsDeleteInput = Static<typeof SkillsDeleteInput>;
 
-export const SkillsActivateInput = IdOnlyInput;
+export const SkillsSetStatusInput = Type.Object(
+  {
+    id: Type.String({ description: "Filesystem path returned by `skills__list`." }),
+    status: Type.Union([Type.Literal("active"), Type.Literal("disabled")], {
+      description: "Durable status written to the skill's frontmatter.",
+    }),
+  },
+  { required: ["id", "status"] },
+);
+export type SkillsSetStatusInput = Static<typeof SkillsSetStatusInput>;
+
+/**
+ * The mute pair takes a skill NAME, not a path. `IdOnlyInput`'s description
+ * says "filesystem path", which sends the model down the `update`/`delete`
+ * shape — and a bundle-published skill has no path at all, so a basename
+ * fallback cannot rescue it.
+ */
+const SkillNameInput = Type.Object(
+  {
+    id: Type.String({
+      description:
+        "Skill name, exactly as `skills__list` or the Skill Catalog reports it " +
+        "(e.g. `house-voice`, `bundle:<server>:<skill>`). Not a filesystem path.",
+    }),
+  },
+  { required: ["id"] },
+);
+
+export const SkillsActivateInput = SkillNameInput;
 export type SkillsActivateInput = Static<typeof SkillsActivateInput>;
 
-export const SkillsDeactivateInput = IdOnlyInput;
+export const SkillsDeactivateInput = SkillNameInput;
 export type SkillsDeactivateInput = Static<typeof SkillsDeactivateInput>;
 
 // Static schema by design: a per-request name enum would vary the tools block

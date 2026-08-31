@@ -19,6 +19,7 @@ import {
   type EventSink,
   INFRA_ERROR_META_KEY,
   SKILL_ACTIVATED_META_KEY,
+  SKILL_SUPPRESSION_META_KEY,
   type ToolResult,
 } from "../engine/types.ts";
 import {
@@ -2965,6 +2966,10 @@ function hostOwnedMetaStripped(
   }
   if (!opts.inProcess && SKILL_ACTIVATED_META_KEY in out) {
     const { [SKILL_ACTIVATED_META_KEY]: _droppedActivation, ...rest } = out;
+    out = rest;
+  }
+  if (!opts.inProcess && SKILL_SUPPRESSION_META_KEY in out) {
+    const { [SKILL_SUPPRESSION_META_KEY]: _droppedSuppression, ...rest } = out;
     out = rest;
   }
   return out;
