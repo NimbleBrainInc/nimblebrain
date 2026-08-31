@@ -9,6 +9,7 @@ import {
   CONNECTORS_CONFIG_KEYS,
   MANAGED_PROVIDER_KEYS,
 } from "../../src/connectors/providers/config.ts";
+import { MODEL_SLOTS } from "../../src/model/slots.ts";
 
 /**
  * Drift guard: the published config schema must stay in lockstep with the
@@ -38,6 +39,7 @@ const schema = JSON.parse(
 ) as {
   properties: {
     features: SchemaObject;
+    models: SchemaObject;
     connectors: SchemaObject & {
       properties: {
         providers: SchemaObject & {
@@ -75,6 +77,13 @@ describe("config schema ↔ feature flags", () => {
   // resolveFeatures() with no argument returns the complete default set, so its
   // keys are the authoritative list of every feature flag the runtime knows.
   expectLockstep("features", schema.properties.features, Object.keys(resolveFeatures()));
+});
+
+describe("config schema ↔ model slots", () => {
+  // `MODEL_SLOTS` is the runtime's list of role names, and `scripts/dev-worktree.ts`
+  // seeds a `models` block against the schema's copy of it. Without this, a slot
+  // added to the runtime leaves the schema behind and the seed cannot use it.
+  expectLockstep("models", schema.properties.models, [...MODEL_SLOTS]);
 });
 
 describe("config schema ↔ managed-connector provider config", () => {
