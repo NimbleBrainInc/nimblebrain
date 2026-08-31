@@ -290,10 +290,19 @@ function groupKeyFor(record: LlmCallRecord, groupBy: UsageGroupBy, modelKey: str
       // dimension the schema calls "conversation".
       return conversationOf(record) ?? "none";
     case "turn":
-      // One engine run — a `run.start`→`run.done` span, i.e. one assistant
-      // turn. The forked fast-slot calls (title, compaction) belong to no turn
-      // of their own and group under "none".
-      return record.runId ?? "none";
+      // One assistant turn. A delegated sub-agent runs its own engine and so
+      // mints its own `runId`; keying on that alone would bill one turn as
+      // several rows, understating the turn the user actually took and putting
+      // sub-agent rows beside top-level ones with nothing to tell them apart.
+      // `parentRunId` is the TOP-LEVEL run at any depth — the delegate tracker
+      // only advances `currentRunId` for runs that have no parent
+      // (`runtime.ts:286`) — so preferring it rolls a whole delegation subtree
+      // onto the turn that spawned it.
+      //
+      // The forked fast-slot calls (title, compaction, briefing) carry no
+      // engine run at all, and neither do records predating this field; both
+      // group under "none".
+      return record.parentRunId ?? record.runId ?? "none";
     case "user":
       return record.userId ?? "unknown";
     case "origin":
@@ -523,9 +532,9 @@ function accumulateRecord(record: LlmCallRecord, sink: AggregationSink): void {
   addTokens(sink.totals.tokens, tokens);
   addCost(sink.totals.cost, cost);
   sink.totals.llmMs += record.llmMs;
-  // A task run stamps its run id into `sessionId`, so the two counts have to be
-  // split by origin or an automation would be reported as a conversation. This
-  // is what `origin` and `delegated` being orthogonal buys: a delegated call
+  // `conversationOf` / `taskRunOf` decide which of the two a record belongs to,
+  // so an automation is never counted as a conversation. This is what `origin`
+  // and `delegated` being orthogonal buys: a delegated call
   // inside an automation is `task`, so it counts toward the run that spawned it.
   const conversationId = conversationOf(record);
   const taskRunId = taskRunOf(record);
@@ -551,9 +560,8 @@ function accumulateRecord(record: LlmCallRecord, sink: AggregationSink): void {
     addTokens(bucket.tokens, tokens);
     addCost(bucket.cost, cost);
     bucket.llmCalls++;
-    // Same split as `totals`, for the same reason: a task run stamps its run id
-    // into `sessionId`, so folding the two here would report an automation as a
-    // conversation in every breakdown row while the totals said otherwise.
+    // Same split as `totals`, through the same two helpers, so a breakdown row
+    // cannot report an automation as a conversation while the totals disagree.
     if (conversationId) bucket.sids.add(conversationId);
     if (taskRunId) bucket.runIds.add(taskRunId);
     if (!priced) bucket.unpricedCalls++;

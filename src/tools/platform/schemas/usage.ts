@@ -21,7 +21,8 @@ const UsageGroupBy = StringEnum(USAGE_GROUP_BYS, {
   description:
     "Group breakdown. Default: day. `user` buckets by the caller (org scope); " +
     "`origin` splits interactive chat from automation runs; `turn` buckets by a single " +
-    "assistant turn, which is what to group by for per-turn cost; `provider` buckets by " +
+    "assistant turn and is the finest grain here, so narrow the period before reaching for " +
+    "it; `provider` buckets by " +
     "the model string's provider prefix.",
 });
 
