@@ -532,6 +532,28 @@ export interface ConnectorSkillInjectedEvent {
 }
 
 /**
+ * A skill was suppressed or restored FOR THIS CONVERSATION ONLY.
+ *
+ * The durable `status:` field in a skill's frontmatter is shared by every
+ * conversation that loads the file — for a user-scope skill, across every
+ * workspace that user touches. Recording the agent's "not for this task" as a
+ * conversation event is what keeps that intent from becoming a global,
+ * invisible edit to a file other conversations are reading.
+ *
+ * `suppressed: false` is a restore, not a delete: the log is append-only, so
+ * the LAST event for a name wins. That also leaves the toggle history legible.
+ */
+export interface SkillSuppressionEvent {
+  ts: string;
+  type: "skill.suppression";
+  runId: string;
+  /** Skill name as `skills__list` reports it. */
+  skillName: string;
+  /** true = suppressed for this conversation; false = restored. */
+  suppressed: boolean;
+}
+
+/**
  * A catalog skill's full body was delivered via the `nb__use_skill` activation
  * tool. The body itself rides the tool result (`tool.done`), so the
  * reconstructor synthesizes no message for this event — it stamps the
@@ -586,6 +608,7 @@ export type ConversationEvent =
   | ContextAssembledEvent
   | ConnectorSkillInjectedEvent
   | SkillActivatedEvent
+  | SkillSuppressionEvent
   | TitleChangeEvent
   | HistoryCompactedEvent
   | AuxUsageEvent;

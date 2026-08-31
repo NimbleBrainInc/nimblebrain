@@ -43,6 +43,19 @@ export const SKILL_ACTIVATED_SYNTHETIC = "skill_activated";
  */
 export const SKILL_ACTIVATED_META_KEY = "ai.nimblebrain/skill-activated";
 
+/**
+ * `_meta` marker: this tool call muted a skill for THIS CONVERSATION. The
+ * engine turns it into a persisted `skill.suppression` event, which the next
+ * turn's composition reads.
+ *
+ * Host-owned for the same reason as the activation marker above, and a
+ * stricter one: a bundle able to set this could mute another vendor's
+ * always-on guidance — the consistency gate, the safety rules — by name, for
+ * the rest of the conversation, invisibly. `McpSource` strips it from anything
+ * arriving over a real wire; only in-process platform sources may carry it.
+ */
+export const SKILL_SUPPRESSION_META_KEY = "ai.nimblebrain/skill-suppression";
+
 /** Port 2: Tool routing abstraction. */
 export interface ToolRouter {
   availableTools(): Promise<ToolSchema[]>;
@@ -231,6 +244,7 @@ export type EngineEventType =
    * scope, tokens }.
    */
   | "skill.activated"
+  | "skill.suppression"
   | "context.assembled"
   /**
    * Emitted when a model call is rejected for exceeding the context window

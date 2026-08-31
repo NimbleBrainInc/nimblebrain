@@ -73,7 +73,7 @@ export const FEATURE_TOOL_MAP: Record<string, keyof FeatureFlags> = {
   // Identity & workspace tools
   nb__manage_users: "userManagement",
   nb__manage_workspaces: "workspaceManagement",
-  // Skill mutation surface — all seven gated by `skillManagement`. `history` is
+  // Skill mutation surface — all eight gated by `skillManagement`. `history` is
   // a read, but it reads the mutation surface's own audit trail, and `restore`
   // writes: leaving either ungated keeps a skill-writing tool live in a
   // deployment that turned skill management off.
@@ -84,6 +84,7 @@ export const FEATURE_TOOL_MAP: Record<string, keyof FeatureFlags> = {
   skills__deactivate: "skillManagement",
   skills__history: "skillManagement",
   skills__restore: "skillManagement",
+  skills__set_status: "skillManagement",
   // Unprefixed names (used during system tool registration)
   delegate: "delegation",
   manage_users: "userManagement",

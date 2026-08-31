@@ -129,6 +129,7 @@ describe("skills source — tools list", () => {
       "loading_log",
       "read",
       "restore",
+      "set_status",
       "update",
     ]);
   });
@@ -205,7 +206,22 @@ describe("skills source — resources", () => {
 // read the catalog and report on it, but not write to it.
 
 describe("skills source — unattended-run wall", () => {
-  const MUTATIONS = ["create", "update", "delete", "activate", "deactivate", "restore"];
+  // `set_status` is the durable write and is barred, obviously.
+  //
+  // `activate`/`deactivate` are barred too, and stay barred now that they only
+  // mute for one conversation. They no longer touch a file, but "turn the
+  // guidance off" is exactly the lever untrusted content would reach for, and
+  // an unattended run is where nobody is watching it happen. Not writing to
+  // disk makes them safer for a human's chat; it does not make them safe here.
+  const MUTATIONS = [
+    "create",
+    "update",
+    "delete",
+    "activate",
+    "deactivate",
+    "restore",
+    "set_status",
+  ];
   const READS = ["list", "read", "history", "loading_log"];
 
   test("every tool is classified — a new one cannot be added without a decision", async () => {

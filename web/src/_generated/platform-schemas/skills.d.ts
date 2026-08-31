@@ -32,7 +32,6 @@ export declare const SkillsCreateInput: import("@sinclair/typebox").TObject<{
         description: import("@sinclair/typebox").TString;
         loadingStrategy: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"always" | "dynamic">>;
         priority: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
-        status: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"active" | "disabled">>;
         toolAffinity: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
         triggers: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
         allowedTools: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
@@ -46,7 +45,6 @@ export declare const SkillsUpdateInput: import("@sinclair/typebox").TObject<{
         description: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         loadingStrategy: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"always" | "dynamic">>;
         priority: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
-        status: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"active" | "disabled">>;
         toolAffinity: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
         triggers: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
         allowedTools: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
@@ -68,6 +66,11 @@ export declare const SkillsDeleteInput: import("@sinclair/typebox").TObject<{
     id: import("@sinclair/typebox").TString;
 }>;
 export type SkillsDeleteInput = Static<typeof SkillsDeleteInput>;
+export declare const SkillsSetStatusInput: import("@sinclair/typebox").TObject<{
+    id: import("@sinclair/typebox").TString;
+    status: import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TLiteral<"active">, import("@sinclair/typebox").TLiteral<"disabled">]>;
+}>;
+export type SkillsSetStatusInput = Static<typeof SkillsSetStatusInput>;
 export declare const SkillsActivateInput: import("@sinclair/typebox").TObject<{
     id: import("@sinclair/typebox").TString;
 }>;

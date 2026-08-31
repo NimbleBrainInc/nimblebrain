@@ -36,6 +36,7 @@ describe("isToolEnabled", () => {
 			"skills__deactivate",
 			"skills__history",
 			"skills__restore",
+			"skills__set_status",
 		]) {
 			expect(isToolEnabled(tool, features)).toBe(false);
 		}

@@ -36,7 +36,10 @@ import {
   planCompaction,
   summarizeMessages,
 } from "../conversation/compaction.ts";
-import { extractOperatorTurns } from "../conversation/event-reconstructor.ts";
+import {
+  collectSuppressedSkillNames,
+  extractOperatorTurns,
+} from "../conversation/event-reconstructor.ts";
 import {
   type ConversationMutation,
   EventSourcedConversationStore,
@@ -1447,8 +1450,21 @@ export class Runtime {
     // conditional channels (keyword matcher + tool-affinity Layer 3). Disjoint by
     // `type`, so nothing is injected twice — no downstream de-dup.
     const conversationPool = this.loadConversationSkills(convWsId, userId);
-    const { context: poolContext, capability: poolCapability } =
-      partitionSkillsByRole(conversationPool);
+    // Conversation-scoped suppression, applied to the POOLS rather than to the
+    // channel routers. `partitionSkillsByRole` and `selectLayer3Skills` read
+    // the durable `manifest.status` and that logic is correct — a skill the
+    // operator retired stays off everywhere. This is the other axis: "not for
+    // this task", held in this conversation's own event log, so it steers one
+    // conversation without editing a file every other conversation reads.
+    //
+    // EVERY pool that can reach composition is filtered, not just this one:
+    // the bundle pool below and the connector overlays too. `suppressibleSkillNames`
+    // builds the mute's validation set from the same union, so a name the tool
+    // accepts is always a name some filter here will act on.
+    const suppressed = collectSuppressedSkillNames(await store.readEvents(conversation.id));
+    const { context: poolContext, capability: poolCapability } = partitionSkillsByRole(
+      withoutSuppressed(conversationPool, suppressed),
+    );
 
     // The workspace BRIEFING (apps + workspace overlay + "## Workspace" block
     // + workspace persona) reflects the conversation's own workspace
@@ -1516,7 +1532,7 @@ export class Runtime {
     // tool-affinity selection needs. Splitting discovery (registry only) from
     // selection (needs the toolset) breaks it. The partition is threaded into
     // `selectRequestLayer3` below, so discovery still happens once per turn.
-    const bundlePool = await this.discoverBundleSkillsByRole(convWsId, {
+    const bundlePoolRaw = await this.discoverBundleSkillsByRole(convWsId, {
       // Exclude only the ONE skill `<app-guide>` carries, resolved above — not
       // the entered server (its other skills must still route by strategy), and
       // not a same-pathed skill published by any other server.
@@ -1524,6 +1540,12 @@ export class Runtime {
         ? { excludeSkill: { serverName: focusedServerName, uri: focusedSkillUri } }
         : {}),
     });
+    // Bundle guidance is mutable by name too — `listActivatableSkills` puts it
+    // in the catalog the model reads, so it is a name the model will pass.
+    const bundlePool = {
+      context: withoutSuppressed(bundlePoolRaw.context, suppressed),
+      capability: withoutSuppressed(bundlePoolRaw.capability, suppressed),
+    };
 
     // Per-request trigger match, over the conversation pool AND the workspace's
     // server-published skills. A connector's skill declares `triggers` in the
@@ -1619,7 +1641,10 @@ export class Runtime {
     // on this request path already; no second discovery pass. The catalog is
     // name+description only (never load state), so the stable segment's bytes
     // move only on install/authoring events.
-    const connectorOverlayCandidates = this.loadConnectorSkillCandidates(convWsId);
+    const connectorOverlayCandidates = candidatesWithoutSuppressed(
+      this.loadConnectorSkillCandidates(convWsId),
+      suppressed,
+    );
     const skillCatalog = toCatalogEntries(
       collectActivatableSkills({
         fsCapability: poolCapability,
@@ -4772,6 +4797,38 @@ export class Runtime {
   }
 
   /**
+   * Every skill name a conversation in this workspace can mute.
+   *
+   * Deliberately the SAME union composition filters: the filesystem tiers, both
+   * halves of the bundle pool, and the connector overlays. Building the two
+   * from one place is the point — validating against a wider set than the
+   * filter covers accepts a name, reports "stops composing", and composes it
+   * anyway; validating against a narrower one makes the commonest case (an
+   * always-on bundle skill, the kind a vendor ships six of) unmutable.
+   */
+  async suppressibleSkillNames(wsId: string, userId: string | null): Promise<Set<string>> {
+    const bundle = await this.discoverBundleSkillsByRole(wsId);
+    return new Set<string>([
+      ...this.loadConversationSkills(wsId, userId).map((sk) => sk.manifest.name),
+      ...bundle.context.map((sk) => sk.manifest.name),
+      ...bundle.capability.map((sk) => sk.manifest.name),
+      ...this.loadConnectorSkillCandidates(wsId).map((c) => c.name),
+    ]);
+  }
+
+  /**
+   * Names muted in a conversation, or an empty set when there is none in scope.
+   * Reads the conversation's own event log through the locator, so any surface
+   * that reports composition can agree with what composition actually did.
+   */
+  async suppressedSkillNamesFor(convId: string | undefined): Promise<Set<string>> {
+    if (!convId) return new Set();
+    const store = await this.resolveConversationStore(convId);
+    if (!store) return new Set();
+    return collectSuppressedSkillNames(await store.readEvents(convId));
+  }
+
+  /**
    * Materialized connector overlays in a workspace, with provenance — backs
    * `manage_connectors list_bound_skills`. Distinct from
    * {@link loadConnectorSkillCandidates} (the engine's lightweight pool): this
@@ -4915,8 +4972,13 @@ export class Runtime {
     // `capability` feeds Layer 3. Reading the raw boot-time `this.contextSkills`
     // would both miss workspace/user-tier context skills and show toggled-Off
     // rules as active — the divergence this reporter exists to kill.
+    // The conversation's mutes apply here too. This reporter exists to stop the
+    // status surface and the prompt diverging, and a muted skill still listed
+    // as loaded is that divergence — an operator asking "did my mute take?" is
+    // told it did not.
+    const suppressed = await this.suppressedSkillNamesFor(getRequestContext()?.conversationId);
     const { context, capability } = partitionSkillsByRole(
-      this.loadConversationSkills(wsId, userId),
+      withoutSuppressed(this.loadConversationSkills(wsId, userId), suppressed),
     );
     const { context: bundleContext, layer3 } = await this.selectRequestLayer3({
       wsId,
@@ -4926,7 +4988,10 @@ export class Runtime {
     });
     // Include always-on bundle skills in the reported context so the status
     // surface matches what the prompt actually composes.
-    return { context: [...context, ...bundleContext], layer3 };
+    return {
+      context: [...context, ...withoutSuppressed(bundleContext, suppressed)],
+      layer3: layer3.filter((sel) => !suppressed.has(sel.skill.manifest.name)),
+    };
   }
 
   /** Get the path to the nimblebrain.json config file (Helm-managed seed). */
@@ -5604,6 +5669,31 @@ function reportSkillDiscoveryDegraded(input: {
     reason: input.reason,
     recovered: input.recovered,
   });
+}
+
+/**
+ * Drop the skills this conversation has muted.
+ *
+ * Applied to EVERY pool that can reach composition, not just the filesystem
+ * tiers. The mute is validated against the activatable union — which includes
+ * bundle-published guidance and connector overlays — so filtering one pool
+ * accepts a name, reports "stops composing", and composes it anyway through
+ * another. A steering control that reports success and changes nothing is the
+ * defect this whole mechanism replaces, so it must not reappear one pool over.
+ */
+function withoutSuppressed<T extends { manifest: { name: string } }>(
+  pool: T[],
+  suppressed: ReadonlySet<string>,
+): T[] {
+  return suppressed.size > 0 ? pool.filter((sk) => !suppressed.has(sk.manifest.name)) : pool;
+}
+
+/** Same, for the engine's lightweight connector-overlay candidate shape. */
+function candidatesWithoutSuppressed<T extends { name: string }>(
+  candidates: T[],
+  suppressed: ReadonlySet<string>,
+): T[] {
+  return suppressed.size > 0 ? candidates.filter((c) => !suppressed.has(c.name)) : candidates;
 }
 
 /** Compose the present-only `surfaceTools` options (focused server + request-allowed tools). */

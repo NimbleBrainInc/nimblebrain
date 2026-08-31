@@ -51,7 +51,6 @@ export declare const PlatformToolCatalog: {
                     description: import("@sinclair/typebox").TString;
                     loadingStrategy: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"always" | "dynamic">>;
                     priority: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
-                    status: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"active" | "disabled">>;
                     toolAffinity: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
                     triggers: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
                     allowedTools: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
@@ -66,7 +65,6 @@ export declare const PlatformToolCatalog: {
                     description: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
                     loadingStrategy: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"always" | "dynamic">>;
                     priority: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
-                    status: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"active" | "disabled">>;
                     toolAffinity: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
                     triggers: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
                     allowedTools: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
