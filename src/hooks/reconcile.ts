@@ -200,6 +200,50 @@ function provisionInBackground(deps: HookReconcileDeps, wsId: string, connector:
   });
 }
 
+/**
+ * Keys with a follow-up pass already queued behind an in-flight one. A burst of
+ * signals collapses to one follow-up: every one of them says the same thing.
+ */
+const queuedAfterFlight = new Set<string>();
+
+/**
+ * Run a pass for a tool-set change, which must never be answered by a pass that
+ * has already read the tool list.
+ *
+ * `singleFlight` coalesces concurrent provisioning for a connector, and for the
+ * two callers it was written for that is exactly right: an install and its
+ * connection-running observer ask the same question at the same moment. A
+ * tool-set change does not ask that question — its whole content is "the list
+ * you read is stale" — so handing it the in-flight pass's answer consumes the
+ * one notice that a re-read was needed, and a deferred stream stays deferred
+ * with nothing left to fire.
+ *
+ * It must not skip the flight either: two passes minting concurrently is the
+ * divergent-`kid` failure `singleFlight` exists to prevent. So it waits for the
+ * stale pass and then runs its own, which can only read at or after the change.
+ * A rejected flight is still a reason to run — a manifest that failed the
+ * contract check may be precisely what changed.
+ */
+function retrigger(deps: HookReconcileDeps, wsId: string, connector: string): void {
+  const key = flightKey(wsId, connector);
+  const inflight = flights.get(key);
+  if (!inflight) {
+    provisionInBackground(deps, wsId, connector);
+    return;
+  }
+  if (queuedAfterFlight.has(key)) return;
+  queuedAfterFlight.add(key);
+  // Chained on the flight's own promise, which `singleFlight` clears from
+  // `flights` in a handler registered before this one — so the follow-up always
+  // starts a fresh flight rather than rejoining the one it is waiting on.
+  void inflight
+    .catch(() => {})
+    .then(() => {
+      queuedAfterFlight.delete(key);
+      provisionInBackground(deps, wsId, connector);
+    });
+}
+
 /** The armed tool-set watches, one per (workspace, connector). */
 const watches = new Map<string, () => void>();
 
@@ -210,10 +254,11 @@ const watches = new Map<string, () => void>();
  * has advertised anything, and it is a one-shot: a source whose tools populate
  * after the transition has no second transition to be provisioned on, and a
  * source that reconnects — a health-monitor restart, a re-auth, a server
- * redeployed under the same URL — never reaches `running` a second time at all,
- * because reconnection is the source's own affair and records no connection
- * state. Either way an attempt that could not finish had nothing to try again,
- * and the stream stayed unprovisioned until the runtime process restarted.
+ * redeployed under the same URL — reconnects through the source alone and
+ * records no connection state, so no second transition is observed even though
+ * the connection is live again. Either way an attempt that could not finish had
+ * nothing to try again, and the stream stayed unprovisioned until the runtime
+ * process restarted.
  *
  * The source's own tool-set signal is the seam that covers both, and it is why
  * this needs no timer: it fires on connect, on every reconnect, and on a
@@ -230,13 +275,17 @@ const watches = new Map<string, () => void>();
  * routes to. {@link stopWatchingHooks} drops it on uninstall.
  */
 function watchToolSurface(deps: HookReconcileDeps, wsId: string, connector: string): void {
-  const port = deps.portFor(wsId, connector);
-  if (!port?.subscribeToolsChanged) return;
+  // Drop the previous watch BEFORE deciding whether a new one can be armed: a
+  // re-arm that finds no live source is the one case where the old watch is
+  // certainly pointing at a source on its way out.
   const key = flightKey(wsId, connector);
   watches.get(key)?.();
+  watches.delete(key);
+  const port = deps.portFor(wsId, connector);
+  if (!port?.subscribeToolsChanged) return;
   watches.set(
     key,
-    port.subscribeToolsChanged(() => provisionInBackground(deps, wsId, connector)),
+    port.subscribeToolsChanged(() => retrigger(deps, wsId, connector)),
   );
 }
 
@@ -250,4 +299,16 @@ export function stopWatchingHooks(wsId: string, connector: string): void {
   const key = flightKey(wsId, connector);
   watches.get(key)?.();
   watches.delete(key);
+}
+
+/**
+ * Drop every armed watch. Called on runtime shutdown, which removes the sources
+ * but not the module-level map that holds them: each entry retains the
+ * unsubscribe closure, its source, and through the listener's `deps` the runtime
+ * that built them, so a process that starts more than one runtime keeps every
+ * earlier one alive.
+ */
+export function stopAllHookWatches(): void {
+  for (const unwatch of watches.values()) unwatch();
+  watches.clear();
 }

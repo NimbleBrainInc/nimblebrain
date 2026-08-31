@@ -365,12 +365,16 @@ export async function revokeHooksForConnector(
  *
  * A message that only names what is MISSING sends the reader to re-read a
  * manifest; naming what the server actually serves lets them see the mismatch —
- * a rename, a tool behind a flag the deployment does not set. Bounded, because
- * a server may advertise a hundred tools and this ends up in a log line.
+ * a rename, a tool behind a flag the deployment does not set.
+ *
+ * Bounded on BOTH axes, because both are the server's to choose: a hundred tools
+ * named at a hundred characters each is the same unbounded log line as a
+ * thousand tools, and the names come off the wire.
  */
 function summarizeToolNames(tools: Tool[]): string {
-  const shown = tools.slice(0, 12).map((t) => t.name);
-  return tools.length > shown.length ? `${shown.join(", ")}, …` : shown.join(", ");
+  const shown = tools.slice(0, 12).map((t) => t.name.slice(0, 60));
+  const joined = shown.join(", ");
+  return tools.length > shown.length ? `${joined}, …` : joined;
 }
 
 /** First line of a tool error result, for a log field. Bounded so a verbose

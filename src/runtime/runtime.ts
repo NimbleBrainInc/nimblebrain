@@ -80,7 +80,7 @@ import { createFileStore, type FileStore } from "../files/store.ts";
 import { DEFAULT_FILE_CONFIG, type FileConfig } from "../files/types.ts";
 import { hookPortForSource } from "../hooks/provisioning.ts";
 import type { HookReconcileDeps } from "../hooks/reconcile.ts";
-import { ensureHooksOnRunning } from "../hooks/reconcile.ts";
+import { ensureHooksOnRunning, stopAllHookWatches } from "../hooks/reconcile.ts";
 import { readHookIdentity } from "../hooks/token.ts";
 import { FileBackedHostResourcesResolver, TokenBucketRateLimit } from "../host-resources/index.ts";
 import { IdentityContext } from "../identity/context.ts";
@@ -5265,6 +5265,9 @@ export class Runtime {
 
   async shutdown(): Promise<void> {
     await this.telemetryManager.shutdown();
+    // Detach the hook tool-set watches first: each holds a source, and through
+    // its listener the reconcile deps that close over this runtime.
+    stopAllHookWatches();
     // Abort every in-flight detached turn BEFORE removing the sources they
     // depend on. A detached turn's lifecycle is decoupled from any HTTP
     // request (it runs to completion server-side), so without this a turn

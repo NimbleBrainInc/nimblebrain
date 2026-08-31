@@ -62,9 +62,21 @@ function makeSource(initial: Tool[]) {
   const calls: { tool: string; vendor: string; url: string }[] = [];
   /** How many passes have read the tool list — one per provisioning attempt. */
   let toolsReads = 0;
+  /** When set, the next read holds open until `releaseRead` — a `tools/list` on the wire. */
+  let parkNext = false;
+  let release: (() => void) | null = null;
   return {
     calls,
     toolsReads: () => toolsReads,
+    /** Hold the next tool-list read open, so a change can land while it is outstanding. */
+    parkNextRead(): void {
+      parkNext = true;
+    },
+    isParked: () => release !== null,
+    releaseRead(): void {
+      release?.();
+      release = null;
+    },
     /** Populate the tool list and fire the signal, as a source completing its connect does. */
     advertise(next: Tool[]): void {
       tools = next;
@@ -74,7 +86,16 @@ function makeSource(initial: Tool[]) {
     source: {
       tools: async (): Promise<Tool[]> => {
         toolsReads++;
-        return tools;
+        // A read answers with the list as it stood when the read STARTED. That
+        // is what makes a change landing mid-read invisible to it.
+        const atEntry = tools;
+        if (parkNext) {
+          parkNext = false;
+          await new Promise<void>((r) => {
+            release = r;
+          });
+        }
+        return atEntry;
       },
       execute: async (toolName: string, input: Record<string, unknown>): Promise<ToolResult> => {
         calls.push({
@@ -182,6 +203,35 @@ describe("a source that is running but has advertised nothing yet", () => {
     await until(() => fake.calls.length === 1, "the retriggered provision");
     expect(fake.toolsReads()).toBe(2);
     expect(fake.calls[0]?.tool).toBe("set_webhook_url");
+    expect(listRegistrations((await store.get(wsId)) ?? {})).toHaveLength(1);
+  });
+
+  test("a tool set that changes mid-read is not answered by the read that missed it", async () => {
+    // `singleFlight` coalesces concurrent provisioning for a connector, and for
+    // the install/running pair it was written for that is right — they ask the
+    // same question at the same moment. A retrigger does not: its whole content
+    // is "the list you read is stale", so being handed that pass's answer
+    // consumes the one notice that a re-read was needed.
+    const fake = makeSource([]);
+    const deps = makeDeps(fake.source);
+
+    fake.parkNextRead();
+    ensureHooksOnRunning(deps, wsId, CONNECTOR);
+    await until(() => fake.isParked(), "the pass to be reading the tool list");
+
+    // The server finishes registering its tools and pushes the change while
+    // that read is still outstanding.
+    fake.advertise([advertised("set_webhook_url")]);
+    await settle();
+    // The retrigger reached the flight and joined it rather than reading for
+    // itself — without this the test would pass on the serialized ordering the
+    // case above already covers.
+    expect(fake.toolsReads()).toBe(1);
+
+    // The parked read now answers with the list as it stood BEFORE the change.
+    fake.releaseRead();
+
+    await until(() => fake.calls.length === 1, "the pass queued behind the stale one");
     expect(listRegistrations((await store.get(wsId)) ?? {})).toHaveLength(1);
   });
 
