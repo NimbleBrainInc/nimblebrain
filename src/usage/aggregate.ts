@@ -384,11 +384,26 @@ export const MAX_BREAKDOWN_ROWS = 250;
  */
 export const MAX_ZERO_FILL_DAYS = 366;
 
-/** Inclusive day count of a resolved range; 0 when either end will not parse. */
+/**
+ * Inclusive day count of a resolved range.
+ *
+ * An endpoint that will not parse counts as infinitely wide, so a caller who
+ * sends one gets the fill skipped rather than attempted. `from` and `to` are
+ * unvalidated strings off the wire and this is the only thing standing between
+ * one of them and a fill loop, so it fails closed: the safe answer to "how wide
+ * is this window" when the window is unreadable is "too wide".
+ *
+ * Nothing downstream depends on that today — the fill loop parses the same
+ * string, so an unreadable endpoint stops it immediately, and the range filter
+ * upstream has already dropped every record, leaving the whole report empty.
+ * That makes the disposition unobservable through `aggregateUsage` and untested
+ * on purpose. It is here so the guard's correctness is a property of the guard
+ * rather than a coincidence of how two other call sites happen to fail.
+ */
 function rangeDays(range: { from: string; to: string }): number {
   const from = Date.parse(`${range.from}T00:00:00Z`);
   const to = Date.parse(`${range.to}T00:00:00Z`);
-  if (Number.isNaN(from) || Number.isNaN(to)) return 0;
+  if (Number.isNaN(from) || Number.isNaN(to)) return Number.POSITIVE_INFINITY;
   return Math.floor((to - from) / 86_400_000) + 1;
 }
 
