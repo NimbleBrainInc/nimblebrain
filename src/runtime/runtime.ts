@@ -78,6 +78,7 @@ import { workspaceFilesDir } from "../files/paths.ts";
 import { rehydrateUserResources } from "../files/rehydrate.ts";
 import { createFileStore, type FileStore } from "../files/store.ts";
 import { DEFAULT_FILE_CONFIG, type FileConfig } from "../files/types.ts";
+import { hookPortForSource } from "../hooks/provisioning.ts";
 import type { HookReconcileDeps } from "../hooks/reconcile.ts";
 import { ensureHooksOnRunning } from "../hooks/reconcile.ts";
 import { readHookIdentity } from "../hooks/token.ts";
@@ -4020,11 +4021,7 @@ export class Runtime {
         }
         const source = registry.getSources().find((src) => src.name === serverName);
         if (!source) return undefined;
-        return {
-          tools: () => source.tools(),
-          execute: (toolName: string, input: Record<string, unknown>) =>
-            source.execute(toolName, input),
-        };
+        return hookPortForSource(source);
       },
     };
   }

@@ -43,7 +43,7 @@ import {
 import { textContent } from "../engine/content-helpers.ts";
 import { INTERNAL_TOOL_ANNOTATION, type ToolResult } from "../engine/types.ts";
 import { HookContractError, revokeHooksForConnector } from "../hooks/provisioning.ts";
-import { ensureHooks } from "../hooks/reconcile.ts";
+import { ensureHooks, stopWatchingHooks } from "../hooks/reconcile.ts";
 import { listRegistrations } from "../hooks/registrations.ts";
 import type { ConnectorOwner } from "../identity/connector-owner.ts";
 import { IdentityConnectorStore } from "../identity/connector-store.ts";
@@ -2868,6 +2868,9 @@ async function handleUninstall(
     // one. It is what keeps a later reinstall from resurrecting a key id whose
     // URL has been in the wild the whole time.
     await revokeHooksForConnector(ctx.runtime.getWorkspaceStore(), wsId, serverName);
+    // And drop the tool-set watch, whose closure would otherwise hold a source
+    // nothing routes to any more.
+    stopWatchingHooks(wsId, serverName);
     // Drop tool permissions for this connector — they have no meaning
     // once the bundle is gone.
     await ctx.runtime

@@ -241,8 +241,13 @@ declaration — the connector still installs, and its tools still work. A stream
 whose registration tool is wrong would otherwise fail silently, months later, at
 a vendor nobody is watching.
 
-The check re-runs every time the connection is (re)established, so fixing the
-manifest and reconnecting provisions the streams without a reinstall.
+The check re-runs every time the connection is (re)established **and** every time
+your advertised tool set changes, so fixing the manifest and reconnecting
+provisions the streams without a reinstall.
+
+Your tools do not have to be ready the moment the host connects. A server that
+advertises nothing yet is not a contract failure — nothing is minted, nothing is
+reported wrong, and the streams provision as soon as your tool list appears.
 
 ```python
 @mcp.tool()
