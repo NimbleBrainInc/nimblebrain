@@ -833,14 +833,19 @@ describe("durable status is set_status only", () => {
     expect(existsSync(join(workDir, "skills", "_versions"))).toBe(false);
   });
 
-  // One invariant over every model-facing writer, instead of a guard per door.
+  // One invariant instead of a guard per door.
   //
   // Four rounds of review found the same defect four times: update, then
   // create, then restore each let the durable off switch through, and each was
   // closed on its own. A per-door guard only ever proves the door someone
-  // thought to name. This asserts the property — no tool the model can call
-  // leaves a skill durably disabled — over the whole set at once, and the
-  // coverage check below fails when a fifth writer is added without a decision.
+  // thought to name. The pair below replaces that: the invariant drives every
+  // writer that can reach `status` — create, update, restore — at a skill that
+  // is on, and asserts nothing turns it off; the enumeration test pins the
+  // writer set itself, so a new door has to be argued rather than merely added.
+  // The three it does not drive are accounted for, not skipped: `activate` and
+  // `deactivate` write no file at all (they refuse outside a chat, and their
+  // scope is `skill-mute-scope.test.ts`), and `delete` removes the very file
+  // the assertion reads.
   const MODEL_FACING_WRITERS = ["create", "update", "delete", "activate", "deactivate", "restore"];
 
   test("no model-facing writer is covered by accident — the set is enumerated", async () => {
@@ -882,21 +887,45 @@ describe("durable status is set_status only", () => {
     expect(versions.length).toBeGreaterThan(0);
     expect(readManifestField(id, "status")).toBe("active");
 
-    // Every door the model can reach, aimed at turning it off.
-    const attempts: Array<{ name: string; arguments: Record<string, unknown> }> = [
+    // Every door the model can reach, aimed at turning a skill off. `create`
+    // is aimed at a NEW name: its hazard is a skill *born* disabled — which
+    // masks a same-named higher-tier skill out of composition, since the tier
+    // merge dedups by name before the status filter — and a create aimed at
+    // `invariant-probe` would be refused for already existing long before the
+    // durable-status refusal is reached, proving nothing.
+    const bornDisabled = join(workDir, "skills", "invariant-born-disabled.md");
+    const attempts: Array<{
+      call: { name: string; arguments: Record<string, unknown> };
+      check: () => void;
+    }> = [
       {
-        name: "create",
-        arguments: {
-          scope: "org",
-          manifest: { name: "invariant-probe", description: "test", status: "disabled" },
-          body: "body",
+        call: {
+          name: "create",
+          arguments: {
+            scope: "org",
+            manifest: {
+              name: "invariant-born-disabled",
+              description: "test",
+              status: "disabled",
+            },
+            body: "body",
+          },
         },
+        check: () => expect(existsSync(bornDisabled)).toBe(false),
       },
-      { name: "update", arguments: { id, manifest: { status: "disabled" } } },
-      ...versions.map((version) => ({ name: "restore", arguments: { id, version } })),
+      {
+        call: { name: "update", arguments: { id, manifest: { status: "disabled" } } },
+        check: () => expect(readManifestField(id, "status")).toBe("active"),
+      },
+      ...versions.map((version) => ({
+        call: { name: "restore", arguments: { id, version } },
+        check: () => expect(readManifestField(id, "status")).toBe("active"),
+      })),
     ];
     for (const attempt of attempts) {
-      await client.callTool(attempt);
+      await client.callTool(attempt.call);
+      attempt.check();
+      // And the skill that was on is still on, whichever door was tried.
       expect(readManifestField(id, "status")).toBe("active");
     }
   });
