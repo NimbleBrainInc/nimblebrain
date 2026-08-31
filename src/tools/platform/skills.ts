@@ -2190,8 +2190,6 @@ async function setStatusHandler(
   // Anything narrower rejects a name the model legitimately read from the
   // catalog; anything wider accepts one the filter will not act on.
   const known = await runtime.suppressibleSkillNames(wsId, userId);
-  // A path is what `update`/`delete` take, so the model will reach for one
-  // here too. Accept its basename rather than failing on a well-meant call.
   // A path still reaches here from habit (`update`/`delete` take one), so fall
   // back to its basename. A bundle-published skill has no path, which is why
   // the schema now asks for a name rather than relying on this.

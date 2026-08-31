@@ -19,6 +19,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { LanguageModelV3, LanguageModelV3CallOptions } from "@ai-sdk/provider";
 import { extractText } from "../../src/engine/content-helpers.ts";
+import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 import { runWithRequestContext } from "../../src/runtime/request-context.ts";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
@@ -31,6 +32,8 @@ const BUNDLE_SERVER = "ai-nimblebrain-guide-mcp";
 const BUNDLE_SKILL = `bundle:${BUNDLE_SERVER}:guide`;
 const BUNDLE_MARKER = "BUNDLE-MARKER-XRAY";
 const MARKER = "VOICE-MARKER-WHISKEY";
+const CONNECTOR_SERVER = "gmail";
+const CONNECTOR_SKILL = "gmail-threading";
 
 function createGuideBundle(dir: string): string {
   mkdirSync(dir, { recursive: true });
@@ -190,6 +193,19 @@ beforeAll(async () => {
   await guide.start();
   runtime.getRegistryForWorkspace(TEST_WORKSPACE_ID).addSource(guide);
 
+  // A materialized connector overlay — the third pool the mute filters. Written
+  // straight to the workspace's `connector-skills/` store, which is what
+  // `loadConnectorSkillCandidates` reads (per turn, so no restart needed).
+  const overlayDir = join(
+    runtime.getWorkspaceContext(TEST_WORKSPACE_ID).getDataPath("connector-skills"),
+    CONNECTOR_SERVER,
+  );
+  mkdirSync(overlayDir, { recursive: true });
+  writeFileSync(
+    join(overlayDir, `${CONNECTOR_SKILL}.md`),
+    `---\nname: ${CONNECTOR_SKILL}\ndescription: How this connector threads replies.\n---\n\nThread replies by references header.`,
+  );
+
   const listed = await callTool("skills__list", {});
   const m = /(\/\S*house-voice\.md)/.exec(listed.content);
   skillPath = m?.[1] ?? "";
@@ -297,5 +313,77 @@ describe("muting reaches every channel a skill can compose through", () => {
 
     await chat("next turn", conv);
     expect(promptText()).not.toContain(BUNDLE_MARKER);
+  });
+
+  it("mutes a connector overlay — it leaves the catalog the model reads", async () => {
+    // Connector overlays never compose into the system prompt; they ride the
+    // conversation history via the engine's surface-once hook. The catalog is
+    // where the model learns the name, and it is built from the same filtered
+    // list handed to `EngineConfig.connectorSkillCandidates` — so the catalog
+    // is the prompt-visible witness that the filter ran.
+    const conv = await chat("first turn");
+    expect(promptText()).toContain(CONNECTOR_SKILL);
+
+    pendingCall = { trigger: "PLEASE-TOGGLE", tool: "skills__deactivate" };
+    pendingName = CONNECTOR_SKILL;
+    await chat("PLEASE-TOGGLE", conv);
+    pendingCall = null;
+    pendingName = null;
+
+    await chat("next turn", conv);
+    expect(promptText()).not.toContain(CONNECTOR_SKILL);
+
+    // Still there for everyone else — the mute is conversation state.
+    await chat("a fresh conversation");
+    expect(promptText()).toContain(CONNECTOR_SKILL);
+  });
+
+  it("the status surface reports the mute, so it agrees with the prompt", async () => {
+    // `describeRequestSkills` backs `nb__status scope:skills`. It exists to stop
+    // the status surface and the prompt diverging; a muted skill still listed as
+    // loaded is exactly that divergence.
+    const conv = await chat("a turn");
+    const named = async () =>
+      (
+        await runWithRequestContext(
+          { identity: null, workspaceId: TEST_WORKSPACE_ID, conversationId: conv },
+          () => runtime.describeRequestSkills(TEST_WORKSPACE_ID),
+        )
+      ).context.map((sk) => sk.manifest.name);
+
+    expect(await named()).toContain(SKILL_NAME);
+    await muteViaAgent("skills__deactivate", conv);
+    expect(await named()).not.toContain(SKILL_NAME);
+
+    // And the prompt agrees — the whole point of the reporter.
+    await chat("after", conv);
+    expect(promptText()).not.toContain(MARKER);
+  });
+
+  it("the effective-context trace reports the mute too", async () => {
+    // `compose__effective_context` claims to replicate what `chat` composes.
+    // A trace still carrying a muted skill's body is the same divergence the
+    // status surface exists to close, one tool over. Runs under DEV_IDENTITY:
+    // that is the owner `runtime.chat` mints with no identity configured, and
+    // the trace's event read is ownership-gated.
+    const conv = await chat("a turn");
+    const trace = async () => {
+      const registry = runtime.getRegistryForWorkspace(TEST_WORKSPACE_ID);
+      const res = await runWithRequestContext(
+        { identity: DEV_IDENTITY, workspaceId: TEST_WORKSPACE_ID, conversationId: conv },
+        () =>
+          registry.execute({
+            id: `c-${Math.random()}`,
+            name: "compose__effective_context",
+            input: { conversation_id: conv },
+          }),
+      );
+      // The body lives in the structured trace; `content` is a one-line digest.
+      return (res as { structuredContent?: { text?: string } }).structuredContent?.text ?? "";
+    };
+
+    expect(await trace()).toContain(MARKER);
+    await muteViaAgent("skills__deactivate", conv);
+    expect(await trace()).not.toContain(MARKER);
   });
 });

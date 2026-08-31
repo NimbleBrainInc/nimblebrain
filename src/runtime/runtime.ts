@@ -5671,7 +5671,6 @@ function reportSkillDiscoveryDegraded(input: {
   });
 }
 
-/** Compose the present-only `surfaceTools` options (focused server + request-allowed tools). */
 /**
  * Drop the skills this conversation has muted.
  *
@@ -5697,6 +5696,7 @@ function candidatesWithoutSuppressed<T extends { name: string }>(
   return suppressed.size > 0 ? candidates.filter((c) => !suppressed.has(c.name)) : candidates;
 }
 
+/** Compose the present-only `surfaceTools` options (focused server + request-allowed tools). */
 function buildSurfaceOptions(
   focusedServerName: string | undefined,
   requestAllowedTools: string[] | undefined,
