@@ -84,4 +84,15 @@ export interface UsageReportOutput {
     models: UsageModelEntry[];
     breakdown: UsageBreakdownEntry[];
     breakdowns: Partial<Record<UsageGroupBy, UsageBreakdownEntry[]>>;
+    /**
+     * Dimensions whose breakdown was capped at the costliest rows, with how many
+     * rows exist in full. Absent when every breakdown is complete — so its
+     * presence is the signal that a row list is a top-N view and must not be
+     * read as the whole set. `totals` is unaffected: it counts every record,
+     * capped rows included, so no spend is missing from the report.
+     */
+    truncatedBreakdowns?: Partial<Record<UsageGroupBy, {
+        returned: number;
+        total: number;
+    }>>;
 }
