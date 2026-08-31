@@ -90,7 +90,39 @@ export interface UsageLedgerEntry {
   userId?: string;
   /** The one workspace the call was bound to. */
   workspaceId?: string;
-  /** `conversationId` for chat, `runId` for a task run. */
+  /**
+   * The chat thread this call belongs to. Absent for a task run (which has no
+   * conversation) and for a detached background call.
+   */
+  conversationId?: string;
+  /**
+   * The engine run this call belongs to — one `run.start`→`run.done` span,
+   * which is one assistant turn. Present for chat and task alike; absent on
+   * the forked fast-slot calls (title, compaction, briefing), which emit no
+   * event and are not a turn of their own.
+   *
+   * Same referent as {@link parentRunId}, so the two compose into the
+   * delegation tree: a child's `parentRunId` is its parent's `runId`.
+   */
+  runId?: string;
+  /**
+   * The automation run this call belongs to (`executeTask`'s correlation id).
+   * Absent in chat. Distinct from {@link runId}: this is the id the automations
+   * bundle persists the run result under, so it is the join key from spend back
+   * to a stored run.
+   */
+  taskRunId?: string;
+  /**
+   * @deprecated Legacy read-only. Held whichever id correlated the work — a
+   * conversation for chat, an automation run for a task — discriminated by
+   * `origin`. No longer written; `conversationId` / `taskRunId` carry those
+   * two facts under their own names, and `runId` adds the per-turn grain the
+   * single field could not express.
+   *
+   * Readers must keep honouring it until every retained record predating the
+   * split has aged out (see `retentionMonths`, default 24). `aggregate.ts`
+   * normalizes it; nothing else should read it.
+   */
   sessionId?: string;
   /** Resolved unit prices. Absent when the catalog did not know the model. */
   rates?: UsageRates;

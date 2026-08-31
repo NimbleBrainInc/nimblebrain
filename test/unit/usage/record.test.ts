@@ -72,38 +72,81 @@ describe("originOf", () => {
   });
 });
 
-describe("the ledger's sessionId correlates a run as well as a chat", () => {
-  // One ledger column, two kinds of id, separated downstream by `origin`
-  // (`aggregate.ts` counts a task's as a run and everything else as a
-  // conversation). Every historical record was written under that contract, so
-  // the run id has to keep landing here now that the context fields have split.
-  function sessionIdFor(ctx: Parameters<typeof runWithRequestContext>[0]): unknown {
+describe("each id in the ledger lands under its own name", () => {
+  // `sessionId` used to hold a conversation-or-run union told apart by
+  // `origin`. Each fact now has its own field, and `runId` — the engine's, per
+  // turn — is the one the union could not express at all.
+  function fieldsFor(
+    ctx: Parameters<typeof runWithRequestContext>[0],
+    event?: Record<string, unknown>,
+  ): Record<string, unknown> {
     const dir = mkdtempSync(join(tmpdir(), "nb-session-"));
     const month = usageMonthOf(new Date().toISOString());
     const ledger = new UsageLedger(dir, "inst", { retentionMonths: 0 });
     setUsageLedger(ledger);
     try {
       runWithRequestContext(ctx, () => {
-        recordLlmCall({ source: "main", model: "test-model-session", usage: USAGE });
+        recordLlmCall({
+          source: "main",
+          model: "test-model-session",
+          usage: USAGE,
+          ...(event ? { event } : {}),
+        });
       });
     } finally {
       clearUsageLedger(ledger);
     }
     const path = usageShardPath(dir, month, "inst");
     const line = readFileSync(path, "utf-8").split("\n").filter(Boolean)[0]!;
-    return (JSON.parse(line) as Record<string, unknown>).sessionId;
+    return JSON.parse(line) as Record<string, unknown>;
   }
 
-  test("a run's id reaches sessionId", () => {
-    expect(sessionIdFor({ identity: null, runId: "run-42", unattended: true })).toBe("run-42");
+  test("a chat's conversation id lands in conversationId", () => {
+    const rec = fieldsFor({ identity: null, conversationId: "conv-42" });
+    expect(rec.conversationId).toBe("conv-42");
+    expect(rec.taskRunId).toBeUndefined();
   });
 
-  test("a chat's conversation id reaches sessionId", () => {
-    expect(sessionIdFor({ identity: null, conversationId: "conv-42" })).toBe("conv-42");
+  test("an automation's run id lands in taskRunId, not conversationId", () => {
+    // The original defect one layer up: a run id occupying a conversation
+    // field. It must not reappear as a conversation under a new name.
+    const rec = fieldsFor({ identity: null, runId: "run-42", unattended: true });
+    expect(rec.taskRunId).toBe("run-42");
+    expect(rec.conversationId).toBeUndefined();
   });
 
-  test("neither in scope leaves it unset", () => {
-    expect(sessionIdFor({ identity: null })).toBeUndefined();
+  test("the engine's run id lands in runId — the per-turn grain", () => {
+    // Read off the emitting event, where it already was; `parentRunId` beside
+    // it has the same referent, which is what makes the delegation tree join.
+    const rec = fieldsFor({ identity: null, conversationId: "conv-42" }, { runId: "engine-run-7" });
+    expect(rec.runId).toBe("engine-run-7");
+    expect(rec.conversationId).toBe("conv-42");
+  });
+
+  test("a chat and its turn are recorded together, not as one id", () => {
+    const rec = fieldsFor({ identity: null, conversationId: "conv-42" }, { runId: "engine-run-7" });
+    expect([rec.conversationId, rec.runId]).toEqual(["conv-42", "engine-run-7"]);
+  });
+
+  test("a forked fast-slot call has no turn of its own", () => {
+    // Title/compaction/briefing emit no event, so there is no engine run to
+    // attribute them to — they belong to the scope they ran in.
+    const rec = fieldsFor({ identity: null, conversationId: "conv-42" });
+    expect(rec.runId).toBeUndefined();
+  });
+
+  test("sessionId is no longer written", () => {
+    expect(fieldsFor({ identity: null, conversationId: "conv-42" }).sessionId).toBeUndefined();
+    expect(
+      fieldsFor({ identity: null, runId: "run-42", unattended: true }).sessionId,
+    ).toBeUndefined();
+  });
+
+  test("nothing in scope leaves all three unset", () => {
+    const rec = fieldsFor({ identity: null });
+    expect(rec.conversationId).toBeUndefined();
+    expect(rec.taskRunId).toBeUndefined();
+    expect(rec.runId).toBeUndefined();
   });
 });
 
