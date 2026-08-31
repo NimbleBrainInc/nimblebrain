@@ -313,17 +313,36 @@ describe("bundle unhealthy gauge", () => {
 });
 
 describe("LLM latency + error metrics", () => {
-  it("test_llm_latency_histogram_resolves_calls_beyond_two_minutes", async () => {
-    llmRequestDurationSeconds.labels("main", "tm-long-tail", "chat").observe(240);
+  // Cumulative count in one bucket of the round-trip histogram, for a model
+  // label-series. Absent bucket reads 0, so a delta stays meaningful whether or
+  // not the boundary exists.
+  async function readBucket(le: number, model: string): Promise<number> {
     const metric = await llmRequestDurationSeconds.get();
-    const buckets = metric.values.filter(
-      (sample) =>
-        sample.metricName === "nb_llm_request_duration_seconds_bucket" &&
-        sample.labels.model === "tm-long-tail",
-    );
+    for (const s of metric.values) {
+      if (
+        // biome-ignore lint/suspicious/noExplicitAny: prom-client value shape.
+        (s as any).metricName === "nb_llm_request_duration_seconds_bucket" &&
+        s.labels.model === model &&
+        s.labels.le === le
+      ) {
+        return s.value;
+      }
+    }
+    return 0;
+  }
 
-    expect(buckets.find((sample) => sample.labels.le === 180)?.value).toBe(0);
-    expect(buckets.find((sample) => sample.labels.le === 300)?.value).toBe(1);
+  it("test_llm_latency_histogram_resolves_calls_beyond_two_minutes", async () => {
+    const model = "tm-long-tail";
+    const before180 = await readBucket(180, model);
+    const before300 = await readBucket(300, model);
+
+    llmRequestDurationSeconds.labels("main", model, "chat").observe(240);
+
+    // A 240s call falls past the 180s boundary and lands at 300s. Without a
+    // finite bucket out there it reaches only `+Inf`, and `histogram_quantile`
+    // pegs the p99 at the top finite boundary instead of the real tail.
+    expect((await readBucket(180, model)) - before180).toBe(0);
+    expect((await readBucket(300, model)) - before300).toBe(1);
   });
 
   // Read a histogram's _sum / _count for a label-series. prom-client emits the
