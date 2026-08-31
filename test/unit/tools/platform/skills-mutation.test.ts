@@ -833,6 +833,74 @@ describe("durable status is set_status only", () => {
     expect(existsSync(join(workDir, "skills", "_versions"))).toBe(false);
   });
 
+  // One invariant over every model-facing writer, instead of a guard per door.
+  //
+  // Four rounds of review found the same defect four times: update, then
+  // create, then restore each let the durable off switch through, and each was
+  // closed on its own. A per-door guard only ever proves the door someone
+  // thought to name. This asserts the property — no tool the model can call
+  // leaves a skill durably disabled — over the whole set at once, and the
+  // coverage check below fails when a fifth writer is added without a decision.
+  const MODEL_FACING_WRITERS = ["create", "update", "delete", "activate", "deactivate", "restore"];
+
+  test("no model-facing writer is covered by accident — the set is enumerated", async () => {
+    // Through `surfaceTools`, not the wire: the MCP `annotations` schema drops
+    // the custom internal key, so a wire-level check would count `set_status`
+    // as model-facing and hide the very door this suite proves is shut.
+    const src = await buildSource();
+    const { direct, proxied } = surfaceTools(await src.tools(), null, { maxDirectTools: 1000 });
+    const writers = [...direct, ...proxied]
+      .map((t) => t.name.split("__").pop() ?? t.name)
+      .filter((n) => !["list", "read", "history", "loading_log"].includes(n))
+      .sort();
+    expect(writers).toEqual([...MODEL_FACING_WRITERS].sort());
+  });
+
+  test("no model-facing writer can leave a skill durably disabled", async () => {
+    const src = await buildSource();
+    const client = src.getClient()!;
+
+    // A skill that has been off and on again — so its history holds a
+    // `status: disabled` snapshot, the shape restore turned into a durable
+    // disable.
+    await client.callTool({
+      name: "create",
+      arguments: {
+        scope: "org",
+        manifest: { name: "invariant-probe", description: "test" },
+        body: "body",
+      },
+    });
+    const id = join(workDir, "skills", "invariant-probe.md");
+    await client.callTool({ name: "set_status", arguments: { id, status: "disabled" } });
+    await client.callTool({ name: "set_status", arguments: { id, status: "active" } });
+    const hist = await client.callTool({ name: "history", arguments: { id } });
+    const versions = (
+      (hist as { structuredContent?: { versions?: Array<{ version: string }> } }).structuredContent
+        ?.versions ?? []
+    ).map((v) => v.version);
+    expect(versions.length).toBeGreaterThan(0);
+    expect(readManifestField(id, "status")).toBe("active");
+
+    // Every door the model can reach, aimed at turning it off.
+    const attempts: Array<{ name: string; arguments: Record<string, unknown> }> = [
+      {
+        name: "create",
+        arguments: {
+          scope: "org",
+          manifest: { name: "invariant-probe", description: "test", status: "disabled" },
+          body: "body",
+        },
+      },
+      { name: "update", arguments: { id, manifest: { status: "disabled" } } },
+      ...versions.map((version) => ({ name: "restore", arguments: { id, version } })),
+    ];
+    for (const attempt of attempts) {
+      await client.callTool(attempt);
+      expect(readManifestField(id, "status")).toBe("active");
+    }
+  });
+
   test("set_status is internal — surfaceTools keeps it out of the model's list", async () => {
     // The wire's `annotations` is a typed MCP object, so asserting the custom
     // key survives `listTools()` tests the SDK, not us. What matters is the

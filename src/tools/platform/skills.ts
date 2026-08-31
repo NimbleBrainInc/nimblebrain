@@ -59,7 +59,7 @@ import {
   readSkillVersionRaw,
   snapshotSkillVersion,
 } from "../../skills/versions.ts";
-import { deleteSkill, updateSkill, writeSkill } from "../../skills/writer.ts";
+import { deleteSkill, readSkill, updateSkill, writeSkill } from "../../skills/writer.ts";
 import { splitInnerToolName } from "../../util/tool-name.ts";
 import { canWriteWorkspaceScoped } from "../../workspace/authz.ts";
 import { defineInProcessApp, type InProcessTool } from "../in-process-app.ts";
@@ -139,12 +139,13 @@ const SKILLS_UPDATE_DESCRIPTION =
   "`skills__restore` puts one back. Bundle (Layer 1) skills are not editable.";
 
 // Tool input schemas live in `./schemas/skills.ts` — see the catalog at
-// `./schemas/catalog.ts`. The LLM-facing create/update input is a `Pick` of
-// the canonical manifest: `name`, `description`, `allowed-tools`, and the
-// authorable NimbleBrain fields (`loading-strategy`, `priority`, `status`,
-// `tool-affinity`, `triggers`). `provenance` and `scope` are NOT authorable —
-// the writer stamps `provenance` and the loader stamps `scope` from the
-// directory tier.
+// `./schemas/catalog.ts`. The LLM-facing create/update input is a SUBSET of the
+// canonical manifest: `name`, `description`, `allowed-tools`, and the authorable
+// NimbleBrain fields (`loading-strategy`, `priority`, `tool-affinity`,
+// `triggers`). `provenance`, `scope` and `status` are NOT authorable — the
+// writer stamps `provenance`, the loader stamps `scope` from the directory
+// tier, and `status` is the durable off switch that only the internal
+// `set_status` writes.
 
 const SKILLS_HISTORY_DESCRIPTION =
   "List the saved snapshots of a skill, newest first. Every `update`, `delete`, and `restore` " +
@@ -1809,8 +1810,6 @@ async function createSkill(
   eventSink: EventSink,
 ): Promise<ToolResult> {
   const { scope, manifest, body } = input as unknown as SkillsCreateInput;
-  const statusError = durableStatusError(manifest);
-  if (statusError) return statusError;
   const { name } = manifest;
   assertValidName(name);
 
@@ -1838,6 +1837,12 @@ async function createSkill(
   if (existsSync(target)) {
     return errorResult(new Error(`Skill "${name}" already exists in ${scope} scope`));
   }
+
+  // After the permission gate, matching `updateSkillHandler`: a caller who may
+  // not write here should hear that, not a schema complaint they could "fix"
+  // and still be refused.
+  const statusError = durableStatusError(manifest);
+  if (statusError) return statusError;
 
   // Build the runtime manifest from the flat LLM-facing input and stamp
   // provenance (never author-supplied — see schema). The writer maps this to
@@ -1915,13 +1920,6 @@ function buildUpdatePatch(
 // create-shape — every field optional. Derived from the TypeBox schema
 // in `./schemas/skills.ts`; the validator has already enforced shape.
 /**
- * Refuse a body whose intent isn't stated. Defaulting either way is a silent
- * data hazard: `replace` destroys the rest of the skill when the caller meant
- * to add a rule (the incident this guard exists for), and `append` duplicates
- * the whole body when the caller sent a full rewrite. An error costs one
- * retry; both defaults cost content.
- */
-/**
  * Refuse a `manifest.status` from a model-facing tool.
  *
  * `set_status` is the one door to the durable off switch and it is internal.
@@ -1940,6 +1938,13 @@ function durableStatusError(manifest: unknown): ToolResult | null {
   );
 }
 
+/**
+ * Refuse a body whose intent isn't stated. Defaulting either way is a silent
+ * data hazard: `replace` destroys the rest of the skill when the caller meant
+ * to add a rule (the incident this guard exists for), and `append` duplicates
+ * the whole body when the caller sent a full rewrite. An error costs one
+ * retry; both defaults cost content.
+ */
 function bodyModeError(body: string | undefined, bodyMode: unknown): ToolResult | null {
   if (body === undefined) return null;
   if (bodyMode === "append" || bodyMode === "replace") return null;
@@ -2135,8 +2140,20 @@ async function restoreSkillHandler(
 
   const dir = dirname(path);
   const name = (path.split("/").pop() ?? "").replace(/\.md$/, "");
+  // A restore recovers CONTENT, never the durable on/off state. A snapshot is
+  // taken before every write, including the one that re-enables a skill — so
+  // any skill toggled off and back on leaves a `status: disabled` snapshot
+  // sitting in its history, and restoring it verbatim would hand the agent the
+  // durable disable that `set_status` is internal to withhold. The live file's
+  // status carries across untouched.
+  const liveStatus = readSkill(dir, name)?.manifest.status;
   try {
-    writeSkill(dir, name, parsed.manifest, parsed.body);
+    writeSkill(
+      dir,
+      name,
+      { ...parsed.manifest, ...(liveStatus !== undefined ? { status: liveStatus } : {}) },
+      parsed.body,
+    );
   } catch (err) {
     return errorResult(err instanceof Error ? err : new Error(String(err)));
   }
