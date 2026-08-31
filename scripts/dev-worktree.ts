@@ -31,6 +31,7 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { loadDotenvIntoProcess } from "./lib/dev-env.ts";
 import { installIfMissing } from "./lib/dev-prepare.ts";
+import { buildDevWorktreeSeed } from "./lib/dev-worktree-config.ts";
 
 // Anchor the worktree root from the script's location, not `process.cwd()`,
 // so `bun run scripts/dev-worktree.ts` from a subdirectory still resolves
@@ -49,23 +50,7 @@ const WEB_PORT = process.env.NB_WEB_PORT || "27270";
 function seedConfigIfMissing(): void {
   if (existsSync(CONFIG_PATH)) return;
   mkdirSync(WORKDIR, { recursive: true });
-  const seed = {
-    $schema: "https://schemas.nimblebrain.ai/v1/nimblebrain-config.schema.json",
-    version: "1",
-    // `workDir` is relative to the config file; using the basename keeps the
-    // workdir co-located with this config (matches the `.environments/*`
-    // pattern). `NB_WORK_DIR` overrides at runtime regardless.
-    workDir: WORKDIR === join(WORKTREE_ROOT, WORKDIR_NAME) ? WORKDIR_NAME : WORKDIR,
-    bundles: [],
-    // Defaults mirror the documented values in `AGENTS.md` § Defaults so
-    // dev:worktree starts in the same shape the rest of the platform's dev
-    // environments use.
-    models: {
-      default: "anthropic:claude-sonnet-4-6",
-      fast: "anthropic:claude-haiku-4-5-20251001",
-      reasoning: "anthropic:claude-opus-4-6",
-    },
-  };
+  const seed = buildDevWorktreeSeed(WORKTREE_ROOT, WORKDIR);
   writeFileSync(CONFIG_PATH, `${JSON.stringify(seed, null, 2)}\n`);
   console.log(`[dev:worktree] Seeded ${CONFIG_PATH}`);
 }
