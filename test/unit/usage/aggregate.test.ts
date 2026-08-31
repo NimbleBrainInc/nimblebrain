@@ -7,6 +7,7 @@ import {
   computeCacheHitRate,
   resolveDateRange,
 } from "../../../src/usage/aggregate.ts";
+import { MAX_BREAKDOWN_ROWS } from "../../../src/usage/aggregate.ts";
 import { estimateCost, resolveRates } from "../../../src/usage/cost.ts";
 import { usageMonthDir, usageMonthOf } from "../../../src/usage/paths.ts";
 import type { UsageLedgerEntry } from "../../../src/usage/types.ts";
@@ -731,5 +732,103 @@ describe("the ledger's id split", () => {
 
     const report = await aggregateUsage(dir, "all", "turn");
     expect((report.breakdowns.turn ?? []).map((r) => r.key)).toEqual(["none"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Breakdown row cap
+// ---------------------------------------------------------------------------
+
+describe("the breakdown row cap", () => {
+  // `conversation` and `turn` are keyed on ids minted per thread and per turn,
+  // so their row count grows with everything the tenant has ever done. The
+  // whole report is serialized twice before anything trims it, and the
+  // unbounded copy is what lands in the conversation record.
+
+  /** N conversations, each one record, costing more the higher its index. */
+  function writeGraduatedConversations(dir: string, n: number): void {
+    for (let i = 0; i < n; i++) {
+      writeRecord(dir, {
+        conversationId: `conv_${String(i).padStart(5, "0")}`,
+        usage: { inputTokens: 1000 + i, outputTokens: 500 },
+      });
+    }
+  }
+
+  it("caps the rows and says so", async () => {
+    const dir = makeTmpDir();
+    writeGraduatedConversations(dir, MAX_BREAKDOWN_ROWS + 40);
+
+    const report = await aggregateUsage(dir, "all", "conversation");
+    expect(report.breakdowns.conversation).toHaveLength(MAX_BREAKDOWN_ROWS);
+    expect(report.truncatedBreakdowns?.conversation).toEqual({
+      returned: MAX_BREAKDOWN_ROWS,
+      total: MAX_BREAKDOWN_ROWS + 40,
+    });
+  });
+
+  it("keeps the costliest rows, not an arbitrary slice", async () => {
+    // Cost rises with the index, so the cheapest 40 are the ones dropped. A cap
+    // that sliced the key-sorted list would keep exactly the wrong end.
+    const dir = makeTmpDir();
+    writeGraduatedConversations(dir, MAX_BREAKDOWN_ROWS + 40);
+
+    const keys = (await aggregateUsage(dir, "all", "conversation")).breakdowns.conversation!.map(
+      (r) => r.key,
+    );
+    expect(keys).not.toContain("conv_00000");
+    expect(keys).toContain(`conv_${String(MAX_BREAKDOWN_ROWS + 39).padStart(5, "0")}`);
+  });
+
+  it("returns capped rows in key order, as an uncapped breakdown does", async () => {
+    const dir = makeTmpDir();
+    writeGraduatedConversations(dir, MAX_BREAKDOWN_ROWS + 40);
+
+    const keys = (await aggregateUsage(dir, "all", "conversation")).breakdowns.conversation!.map(
+      (r) => r.key,
+    );
+    expect(keys).toEqual([...keys].sort((a, b) => a.localeCompare(b)));
+  });
+
+  it("loses no spend — totals still count every record", async () => {
+    // The property that makes capping safe: `totals` is accumulated from the
+    // records, not from the rows, so a narrower view never understates spend.
+    const dir = makeTmpDir();
+    const n = MAX_BREAKDOWN_ROWS + 40;
+    writeGraduatedConversations(dir, n);
+
+    const report = await aggregateUsage(dir, "all", "conversation");
+    expect(report.totals.llmCalls).toBe(n);
+    expect(report.totals.conversations).toBe(n);
+    const shown = report.breakdowns
+      .conversation!.reduce((sum, r) => sum + r.llmCalls, 0);
+    expect(shown).toBeLessThan(report.totals.llmCalls);
+  });
+
+  it("says nothing when the breakdown is complete", async () => {
+    // Absence is the signal, so it must be absent rather than zero-valued.
+    const dir = makeTmpDir();
+    writeGraduatedConversations(dir, 3);
+
+    const report = await aggregateUsage(dir, "all", "conversation");
+    expect(report.truncatedBreakdowns).toBeUndefined();
+  });
+
+  it("does not cap `day`, whose zero-fill needs a contiguous series", async () => {
+    // Deliberately ABOVE the cap: at 40 days this test passed whether or not
+    // the exemption existed, which is no test at all. `day` is bounded by the
+    // period rather than by tenant history, and it is filled to a gapless run
+    // for the chart it feeds, so a cap would punch holes in it.
+    const dir = makeTmpDir();
+    const days = MAX_BREAKDOWN_ROWS + 50;
+    const start = new Date("2025-01-01T12:00:00Z");
+    for (let i = 0; i < days; i++) {
+      const ts = new Date(start.getTime() + i * 86_400_000).toISOString();
+      writeRecord(dir, { ts, conversationId: `conv_${String(i).padStart(5, "0")}` });
+    }
+
+    const report = await aggregateUsage(dir, "all", "day");
+    expect(report.breakdowns.day).toHaveLength(days);
+    expect(report.truncatedBreakdowns?.day).toBeUndefined();
   });
 });

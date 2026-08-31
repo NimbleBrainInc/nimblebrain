@@ -88,6 +88,21 @@ export interface ModelUsage {
   cacheHitRate?: number;
 }
 
+/**
+ * How much of a dimension's breakdown was returned, when the cap bound.
+ *
+ * Present per dimension only when rows were dropped, so its absence means the
+ * breakdown is complete. `totals` is unaffected either way — it is accumulated
+ * from every record, not from these rows — so this reports a narrower VIEW,
+ * never missing spend.
+ */
+export interface BreakdownTruncation {
+  /** Rows in the response: the {@link MAX_BREAKDOWN_ROWS} costliest. */
+  returned: number;
+  /** Rows the dimension has in full. */
+  total: number;
+}
+
 export interface BreakdownEntry {
   key: string;
   tokens: TokenBreakdown;
@@ -136,6 +151,13 @@ export interface UsageReport {
   models: ModelUsage[];
   breakdown: BreakdownEntry[];
   breakdowns: Partial<Record<UsageGroupBy, BreakdownEntry[]>>;
+  /**
+   * Dimensions whose breakdown hit {@link MAX_BREAKDOWN_ROWS}. Absent when
+   * every breakdown is complete, so a consumer that ignores it still reads a
+   * complete report correctly and a partial one is never silently mistaken for
+   * the whole set.
+   */
+  truncatedBreakdowns?: Partial<Record<UsageGroupBy, BreakdownTruncation>>;
 }
 
 interface BreakdownAccumulator {
@@ -343,6 +365,16 @@ function emptyBreakdownEntry(key: string): BreakdownEntry {
   };
 }
 
+/**
+ * Most rows any one breakdown returns.
+ *
+ * Sized so a full report stays a few hundred KB rather than tens of MB: at the
+ * ~0.85 KB a row serializes to, this is ~210 KB. Every low-cardinality
+ * dimension (`user`, `model`, `origin`, `provider`) sits far below it and is
+ * unaffected; it binds only on the id-keyed ones.
+ */
+export const MAX_BREAKDOWN_ROWS = 250;
+
 function finalizeBreakdown(
   map: Map<string, BreakdownAccumulator>,
   groupBy: UsageGroupBy,
@@ -361,6 +393,29 @@ function finalizeBreakdown(
       cacheHitRate: computeCacheHitRate(data.tokens),
     }))
     .sort((a, b) => a.key.localeCompare(b.key));
+
+  // Cap the rows. `conversation` and `turn` are keyed on ids the ledger mints
+  // per thread and per turn, so their cardinality grows with every turn the
+  // tenant ever takes — over the retention window that is tens of thousands of
+  // rows, and the whole report is serialized twice (the text the model reads
+  // and the structured copy) before anything trims it. The engine bounds what
+  // reaches the MODEL at `MAX_TOOL_RESULT_CHARS`, but the full string is built
+  // in the process first and the unbounded copy is what gets persisted to the
+  // conversation record, so the ceiling has to be here rather than downstream.
+  //
+  // Top-N by cost, because the question a breakdown answers is where the money
+  // went; the rows dropped are the cheapest ones. `totals` is accumulated from
+  // every record independently of this, so capping loses no spend from the
+  // report — only rows from one view of it, and `truncatedBreakdowns` says so.
+  //
+  // `day` is exempt: it is bounded by the period, and it is zero-filled below
+  // to a contiguous series that a capped set would put holes in.
+  if (groupBy !== "day" && breakdown.length > MAX_BREAKDOWN_ROWS) {
+    return [...breakdown]
+      .sort((a, b) => b.cost.total - a.cost.total)
+      .slice(0, MAX_BREAKDOWN_ROWS)
+      .sort((a, b) => a.key.localeCompare(b.key));
+  }
 
   // For day grouping over a bounded period, zero-fill missing days so the
   // chart and table show the full window rather than only days with activity.
@@ -623,10 +678,24 @@ export async function aggregateUsage(
     })
     .sort((a, b) => b.cost.total - a.cost.total);
   const breakdowns: Partial<Record<UsageGroupBy, BreakdownEntry[]>> = {};
+  const truncatedBreakdowns: Partial<Record<UsageGroupBy, BreakdownTruncation>> = {};
   for (const [dimension, map] of sink.breakdownMaps) {
-    breakdowns[dimension] = finalizeBreakdown(map, dimension, period, range);
+    const rows = finalizeBreakdown(map, dimension, period, range);
+    breakdowns[dimension] = rows;
+    // `map.size` is the pre-cap key count. Compared only off `day`, whose row
+    // count can exceed it by design once the zero-fill has run.
+    if (dimension !== "day" && map.size > rows.length) {
+      truncatedBreakdowns[dimension] = { returned: rows.length, total: map.size };
+    }
   }
   const breakdown = breakdowns[groupBys[0]!] ?? [];
 
-  return { period: range, totals, models, breakdown, breakdowns };
+  return {
+    period: range,
+    totals,
+    models,
+    breakdown,
+    breakdowns,
+    ...(Object.keys(truncatedBreakdowns).length > 0 ? { truncatedBreakdowns } : {}),
+  };
 }
