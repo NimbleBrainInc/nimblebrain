@@ -5,7 +5,7 @@
  * `FEATURE_TOOL_MAP` already had the seven mutation tools mapped to the flag,
  * and `test/unit/features.test.ts` already asserted `isToolEnabled` returns
  * false for each — but that pins the MAP, not the enforcement. The skills source
- * built all eleven tools regardless of the flag, so `/mcp` and REST refused them
+ * built all ten tools regardless of the flag, so `/mcp` and REST refused them
  * on the way in while the chat door listed them to the model and executed them:
  * with skill management switched off, the agent could still write a skill to
  * disk.
@@ -33,7 +33,7 @@ const GATED = [
 ];
 
 /** Reads, which the flag deliberately leaves alone. */
-const UNGATED = ["skills__list", "skills__read"];
+const UNGATED = ["skills__list", "skills__read", "skills__loading_log"];
 
 async function startRuntime(
   workDir: string,
