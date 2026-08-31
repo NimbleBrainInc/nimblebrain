@@ -9,13 +9,13 @@ import { type Static } from "@sinclair/typebox";
  * guard (`src/usage/aggregate.ts`) all derive from this array
  * so a new dimension is added in exactly one place.
  */
-export declare const USAGE_GROUP_BYS: readonly ["day", "conversation", "model", "user", "origin", "provider"];
+export declare const USAGE_GROUP_BYS: readonly ["day", "conversation", "turn", "model", "user", "origin", "provider"];
 export declare const UsageReportInput: import("@sinclair/typebox").TObject<{
     scope: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"user" | "org">>;
     period: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"day" | "week" | "month" | "all">>;
     from: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     to: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-    groupBy: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TUnsafe<"model" | "user" | "day" | "conversation" | "origin" | "provider">, import("@sinclair/typebox").TArray<import("@sinclair/typebox").TUnsafe<"model" | "user" | "day" | "conversation" | "origin" | "provider">>]>>;
+    groupBy: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TUnsafe<"model" | "user" | "day" | "conversation" | "turn" | "origin" | "provider">, import("@sinclair/typebox").TArray<import("@sinclair/typebox").TUnsafe<"model" | "user" | "day" | "conversation" | "turn" | "origin" | "provider">>]>>;
 }>;
 export type UsageReportInput = Static<typeof UsageReportInput>;
 export type UsageGroupBy = (typeof USAGE_GROUP_BYS)[number];
