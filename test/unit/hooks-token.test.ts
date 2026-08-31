@@ -7,7 +7,8 @@ import {
   newKid,
   openHookToken,
   readHookIdentity,
-  readHookTokenKey,
+  openHookTokenForIdentity,
+  readHookTokenKeys,
   sealHookToken,
 } from "../../src/hooks/token.ts";
 
@@ -100,20 +101,20 @@ describe("hook token refuses to seal malformed fields", () => {
 
 describe("hook key provisioning", () => {
   test("absent key means no hooks door, not an error", () => {
-    expect(readHookTokenKey({})).toBeUndefined();
+    expect(readHookTokenKeys({})).toBeUndefined();
     expect(readHookIdentity({})).toBeUndefined();
   });
 
   test("a key present but too short fails loudly at boot", () => {
     const short = randomBytes(16).toString("base64");
-    expect(() => readHookTokenKey({ [HOOK_TOKEN_KEY_ENV]: short })).toThrow(/32 bytes/);
+    expect(() => readHookTokenKeys({ [HOOK_TOKEN_KEY_ENV]: short })).toThrow(/32 bytes/);
   });
 
   test.each([
     ["all zeros", Buffer.alloc(32, 0)],
     ["all 0xff", Buffer.alloc(32, 0xff)],
   ])("a placeholder key (%s) fails loudly at boot", (_label, buf) => {
-    expect(() => readHookTokenKey({ [HOOK_TOKEN_KEY_ENV]: buf.toString("base64") })).toThrow(
+    expect(() => readHookTokenKeys({ [HOOK_TOKEN_KEY_ENV]: buf.toString("base64") })).toThrow(
       /placeholder/,
     );
   });
@@ -147,5 +148,69 @@ describe("kid + url", () => {
     } finally {
       delete process.env.NB_PUBLIC_ORIGIN;
     }
+  });
+});
+
+describe("the rotation overlap window", () => {
+  test("a URL minted under the outgoing key still opens while it is in the ring", () => {
+    const wire = sealHookToken(FIELDS, OTHER_KEY);
+    const opened = openHookTokenForIdentity(wire, {
+      tid: TID,
+      key: KEY,
+      previousKeys: [OTHER_KEY],
+    });
+    expect(opened.kid).toBe(FIELDS.kid);
+    expect(opened.wid).toBe(FIELDS.wid);
+  });
+
+  test("dropping the outgoing key is what actually retires its URLs", () => {
+    const wire = sealHookToken(FIELDS, OTHER_KEY);
+    expectRejected(() => openHookTokenForIdentity(wire, { tid: TID, key: KEY }));
+  });
+
+  test("the ring seals under the first key, never an outgoing one", () => {
+    const identity = readHookIdentity({
+      [HOOK_TOKEN_KEY_ENV]: `${KEY.toString("base64")},${OTHER_KEY.toString("base64")}`,
+      NB_TENANT_ID: TID,
+    });
+    expect(identity).toBeDefined();
+    // What the ring seals under is the ring's first entry, and the outgoing key
+    // opens without ever minting: a rotation that kept minting under the old key
+    // would never finish, because the set of live old URLs would keep growing.
+    const minted = sealHookToken(FIELDS, identity!.key);
+    expect(() => openHookToken(minted, KEY, TID)).not.toThrow();
+    expectRejected(() => openHookToken(minted, OTHER_KEY, TID));
+    expect(identity!.previousKeys).toHaveLength(1);
+  });
+
+  test("a tenant that has never rotated carries no overlap", () => {
+    const identity = readHookIdentity({
+      [HOOK_TOKEN_KEY_ENV]: KEY.toString("base64"),
+      NB_TENANT_ID: TID,
+    });
+    expect(identity?.previousKeys).toEqual([]);
+  });
+
+  test("a ring of only separators fails at boot, not at the first mint", () => {
+    expect(() => readHookTokenKeys({ [HOOK_TOKEN_KEY_ENV]: " , , " })).toThrow(/names no key/);
+  });
+
+  test("an unbounded ring is refused — every entry still opens live URLs", () => {
+    const four = [KEY, OTHER_KEY, randomBytes(32), randomBytes(32)]
+      .map((k) => k.toString("base64"))
+      .join(",");
+    expect(() => readHookTokenKeys({ [HOOK_TOKEN_KEY_ENV]: four })).toThrow(/at most/);
+  });
+
+  test("a malformed key anywhere in the ring fails at boot, not just the first", () => {
+    const ring = `${KEY.toString("base64")},${randomBytes(16).toString("base64")}`;
+    expect(() => readHookTokenKeys({ [HOOK_TOKEN_KEY_ENV]: ring })).toThrow(/32 bytes/);
+  });
+
+  test("another tenant's key in the ring still cannot open this tenant's door", () => {
+    const wire = sealHookToken({ ...FIELDS, tid: "tenant-b" }, OTHER_KEY);
+    expectRejected(() =>
+      openHookTokenForIdentity(wire, { tid: TID, key: KEY, previousKeys: [OTHER_KEY] }),
+    );
   });
 });

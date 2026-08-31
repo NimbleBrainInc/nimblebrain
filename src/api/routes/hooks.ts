@@ -7,7 +7,7 @@ import {
   HOOKS_PATH_PREFIX,
   type HookIdentity,
   type HookTokenPayload,
-  openHookToken,
+  openHookTokenForIdentity,
   readHookIdentity,
 } from "../../hooks/token.ts";
 import type { HookRegistration } from "../../hooks/types.ts";
@@ -258,7 +258,7 @@ async function admitDelivery(
 ): Promise<AdmittedDelivery | undefined> {
   let payload: HookTokenPayload;
   try {
-    payload = openHookToken(path.token, identity.key, identity.tid);
+    payload = openHookTokenForIdentity(path.token, identity);
   } catch {
     return undefined;
   }

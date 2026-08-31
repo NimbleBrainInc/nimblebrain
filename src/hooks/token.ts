@@ -40,10 +40,34 @@ import { WORKSPACE_ID_RE } from "../workspace/workspace-id-pattern.ts";
  * time is strictly stronger than an expiry that runs once.
  */
 
-/** Env var holding this tenant's hook-token key, base64, >= 32 bytes. */
+/**
+ * Env var holding this tenant's hook-token keys: one or more base64 keys of
+ * >= 32 bytes, comma-separated. **The first seals; every one opens.**
+ *
+ * The order IS the rotation seam, and it exists because rotating this key is
+ * otherwise destructive with no grace period anywhere. A vendor holds a hook
+ * URL for months; the MAC is verified before any registration is looked up, so
+ * the `kid` retirement grace that `rotateHook` gives a superseded registration
+ * cannot help a key change. With a single key, loading a new one kills every
+ * hook URL every vendor holds, across every workspace in the tenant, at once —
+ * and the door answers 404 with nothing logged as wrong.
+ *
+ * With an overlap window the same rotation is ordinary: prepend the new key,
+ * let re-registration mint fresh URLs under it while the old key still opens
+ * the ones already out there, then drop the old key once nothing is minting
+ * against it. Base64 has no comma, so the separator can never be ambiguous.
+ */
 export const HOOK_TOKEN_KEY_ENV = "NB_HOOK_TOKEN_KEY";
 
 const MIN_HOOK_KEY_BYTES = 32;
+
+/**
+ * How many keys the ring may hold. A bound rather than a preference: every
+ * entry is a key that still opens live URLs, so an unbounded ring is an
+ * unbounded set of credentials nobody is tracking. Two is the rotation itself
+ * (new + outgoing); the third is room for a rotation interrupted by another.
+ */
+const MAX_HOOK_KEYS = 3;
 
 /**
  * Grammar for the `connector` and `vendor` path segments.
@@ -101,23 +125,47 @@ export function newKid(): string {
  * to the expensive one, and the first routine tenant-key rotation after that
  * would take every registered webhook down with no error anywhere.
  */
-export function readHookTokenKey(env: NodeJS.ProcessEnv = process.env): Buffer | undefined {
+export function readHookTokenKeys(
+  env: NodeJS.ProcessEnv = process.env,
+): [Buffer, ...Buffer[]] | undefined {
   const raw = env[HOOK_TOKEN_KEY_ENV]?.trim();
   if (!raw) return undefined;
-  const key = Buffer.from(raw, "base64");
-  if (key.length < MIN_HOOK_KEY_BYTES) {
+  const entries = raw
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
+  // Separators and nothing else is a configured-but-empty ring. It clears the
+  // absent check above, so without this it would mint under `keys[0]` of an
+  // empty array — a configuration error reported as a crash at the first mint
+  // rather than at boot.
+  if (entries.length === 0) {
+    throw new Error(`[hooks] ${HOOK_TOKEN_KEY_ENV} holds only separators and names no key`);
+  }
+  if (entries.length > MAX_HOOK_KEYS) {
     throw new Error(
-      `[hooks] ${HOOK_TOKEN_KEY_ENV} must decode to >= ${MIN_HOOK_KEY_BYTES} bytes (got ${key.length})`,
+      `[hooks] ${HOOK_TOKEN_KEY_ENV} holds ${entries.length} keys; at most ${MAX_HOOK_KEYS} may be live at once`,
     );
   }
-  // Same placeholder guard the OAuth master key gets. A configured-but-useless
-  // key must fail at boot, not mint forgeable capabilities that look fine.
-  if (isUniformByte(key, 0) || isUniformByte(key, 0xff)) {
-    throw new Error(
-      `[hooks] ${HOOK_TOKEN_KEY_ENV} is a placeholder pattern (all 0x00 or all 0xff); generate with a CSPRNG`,
-    );
-  }
-  return key;
+  const keys = entries.map((entry, index) => {
+    const key = Buffer.from(entry, "base64");
+    if (key.length < MIN_HOOK_KEY_BYTES) {
+      throw new Error(
+        `[hooks] ${HOOK_TOKEN_KEY_ENV} entry ${index} must decode to >= ${MIN_HOOK_KEY_BYTES} bytes (got ${key.length})`,
+      );
+    }
+    // Same placeholder guard the OAuth master key gets. A configured-but-useless
+    // key must fail at boot, not mint forgeable capabilities that look fine.
+    if (isUniformByte(key, 0) || isUniformByte(key, 0xff)) {
+      throw new Error(
+        `[hooks] ${HOOK_TOKEN_KEY_ENV} entry ${index} is a placeholder pattern (all 0x00 or all 0xff); generate with a CSPRNG`,
+      );
+    }
+    return key;
+  });
+  // The empty case threw above, so the ring has a first entry. Say so in the
+  // type rather than at the call site: `keys[0]` IS the sealing key, and a
+  // caller that has to assert that is a caller that could get it wrong.
+  return keys as [Buffer, ...Buffer[]];
 }
 
 /** Seal a hook token. Pure — no env, no I/O. */
@@ -221,7 +269,18 @@ export function buildHookUrl(connector: string, vendor: string, token: string): 
  */
 export interface HookIdentity {
   tid: string;
+  /** The key new tokens are sealed under — the ring's first entry. */
   key: Buffer;
+  /**
+   * Keys that still OPEN but no longer seal: the outgoing side of a rotation.
+   * **Optional because absent is the steady state** — a deployment that has
+   * never rotated has exactly one key, and modelling that as a required empty
+   * array would make every construction site carry the rotation's vocabulary.
+   * A URL minted under one of these stays live until the operator drops the
+   * key, which is what makes rotating this key an ordinary operation rather
+   * than a planned outage of the whole inbound path.
+   */
+  previousKeys?: readonly Buffer[];
 }
 
 /**
@@ -235,14 +294,37 @@ export interface HookIdentity {
  * at the router — the honest "not installed" answer, and the same shape
  * `app.ts` already uses for managed-connector provider routes.
  *
- * A key that IS set but malformed still throws, from `readHookTokenKey`. That
+ * A key that IS set but malformed still throws, from `readHookTokenKeys`. That
  * distinction matters: absent means "not configured", present-and-wrong means
  * "configured incorrectly", and only the second is a deploy that should fail.
  */
 export function readHookIdentity(env: NodeJS.ProcessEnv = process.env): HookIdentity | undefined {
-  const key = readHookTokenKey(env);
-  if (!key) return undefined;
+  const keys = readHookTokenKeys(env);
+  if (!keys) return undefined;
   const tid = env.NB_TENANT_ID?.trim();
   if (!tid || !ALLOWED_TID_PATTERN.test(tid)) return undefined;
-  return { tid, key };
+  return { tid, key: keys[0], previousKeys: keys.slice(1) };
+}
+
+/**
+ * Open a hook token against the whole ring — the sealing key first, then each
+ * key still in its overlap window.
+ *
+ * Order is for the common case, not for correctness: almost every delivery
+ * opens on the first key, and a token that opens under none is the same 404 as
+ * one that never verified. Which key opened it is deliberately not returned —
+ * nothing downstream may branch on it, because a delivery's authority comes
+ * from the registration lookup that follows, not from which key was current
+ * when the URL was minted.
+ */
+export function openHookTokenForIdentity(wire: string, identity: HookIdentity): HookTokenPayload {
+  let firstError: unknown;
+  for (const key of [identity.key, ...(identity.previousKeys ?? [])]) {
+    try {
+      return openHookToken(wire, key, identity.tid);
+    } catch (err) {
+      firstError ??= err;
+    }
+  }
+  throw firstError instanceof Error ? firstError : new EnvelopeError("invalid_payload");
 }
