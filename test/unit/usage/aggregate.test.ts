@@ -3,11 +3,11 @@ import { appendFileSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  MAX_BREAKDOWN_ROWS,
   aggregateUsage,
   computeCacheHitRate,
   resolveDateRange,
 } from "../../../src/usage/aggregate.ts";
-import { MAX_BREAKDOWN_ROWS } from "../../../src/usage/aggregate.ts";
 import { estimateCost, resolveRates } from "../../../src/usage/cost.ts";
 import { usageMonthDir, usageMonthOf } from "../../../src/usage/paths.ts";
 import type { UsageLedgerEntry } from "../../../src/usage/types.ts";
@@ -767,6 +767,21 @@ describe("the breakdown row cap", () => {
     });
   });
 
+  it("announces the truncation before the rows it is about", async () => {
+    // The report is serialized in key order and the engine head-truncates what
+    // the model sees, so this field emitted after a capped breakdown lands past
+    // the cut — invisible to the one consumer that has to know the rows are
+    // partial. Order is load-bearing here, not cosmetic.
+    const dir = makeTmpDir();
+    writeGraduatedConversations(dir, MAX_BREAKDOWN_ROWS + 40);
+
+    const report = await aggregateUsage(dir, "all", "conversation");
+    const keys = Object.keys(report);
+    expect(keys.indexOf("truncatedBreakdowns")).toBeGreaterThan(-1);
+    expect(keys.indexOf("truncatedBreakdowns")).toBeLessThan(keys.indexOf("breakdowns"));
+    expect(keys.indexOf("truncatedBreakdowns")).toBeLessThan(keys.indexOf("breakdown"));
+  });
+
   it("keeps the costliest rows, not an arbitrary slice", async () => {
     // Cost rises with the index, so the cheapest 40 are the ones dropped. A cap
     // that sliced the key-sorted list would keep exactly the wrong end.
@@ -814,11 +829,40 @@ describe("the breakdown row cap", () => {
     expect(report.truncatedBreakdowns).toBeUndefined();
   });
 
+  it("stops zero-filling `day` once the window is too wide to be a chart", async () => {
+    // `from` overrides the period entirely and is an unvalidated string off the
+    // wire, so the row count follows the REQUESTED RANGE, not the data: one
+    // stored record with a `from` predating the ledger walked one row per
+    // calendar day to today. That made `day` — the dimension deliberately
+    // exempted from the cap — the only unbounded one left.
+    const dir = makeTmpDir();
+    writeRecord(dir, { ts: "2026-04-10T12:00:00Z", conversationId: "conv_one" });
+
+    const report = await aggregateUsage(dir, "month", "day", { from: "1970-01-01" });
+    // Only the day that has activity; no fill across the intervening decades.
+    expect(report.breakdowns.day).toHaveLength(1);
+    expect(report.breakdowns.day![0]!.key).toBe("2026-04-10");
+  });
+
+  it("still zero-fills a window narrow enough to read", async () => {
+    // The other arm: the guard is a width test, so an ordinary range keeps the
+    // contiguous series the chart is built on.
+    const dir = makeTmpDir();
+    writeRecord(dir, { ts: "2026-04-10T12:00:00Z", conversationId: "conv_one" });
+
+    const report = await aggregateUsage(dir, "month", "day", {
+      from: "2026-04-01",
+      to: "2026-04-30",
+    });
+    expect(report.breakdowns.day).toHaveLength(30);
+  });
+
   it("does not cap `day`, whose zero-fill needs a contiguous series", async () => {
-    // Deliberately ABOVE the cap: at 40 days this test passed whether or not
-    // the exemption existed, which is no test at all. `day` is bounded by the
-    // period rather than by tenant history, and it is filled to a gapless run
-    // for the chart it feeds, so a cap would punch holes in it.
+    // Deliberately ABOVE the row cap: at 40 days this test passed whether or
+    // not the exemption existed, which is no test at all. `day` feeds a chart
+    // and a cap would punch holes in it, so it is exempt from the ROW cap; what
+    // bounds it instead is the zero-fill width guard the two tests above pin.
+    // Here every day is a day with activity, so nothing is filled or dropped.
     const dir = makeTmpDir();
     const days = MAX_BREAKDOWN_ROWS + 50;
     const start = new Date("2025-01-01T12:00:00Z");

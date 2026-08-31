@@ -375,10 +375,26 @@ function emptyBreakdownEntry(key: string): BreakdownEntry {
  */
 export const MAX_BREAKDOWN_ROWS = 250;
 
+/**
+ * Widest window, in days, that `day` grouping will zero-fill.
+ *
+ * A year of daily points is already more than a chart reads; past that the
+ * empty days are noise, and the row count stops being a property of the data
+ * and becomes one of whatever `from` the caller sent.
+ */
+export const MAX_ZERO_FILL_DAYS = 366;
+
+/** Inclusive day count of a resolved range; 0 when either end will not parse. */
+function rangeDays(range: { from: string; to: string }): number {
+  const from = Date.parse(`${range.from}T00:00:00Z`);
+  const to = Date.parse(`${range.to}T00:00:00Z`);
+  if (Number.isNaN(from) || Number.isNaN(to)) return 0;
+  return Math.floor((to - from) / 86_400_000) + 1;
+}
+
 function finalizeBreakdown(
   map: Map<string, BreakdownAccumulator>,
   groupBy: UsageGroupBy,
-  period: string,
   range: { from: string; to: string },
 ): BreakdownEntry[] {
   const breakdown: BreakdownEntry[] = [...map.entries()]
@@ -408,8 +424,11 @@ function finalizeBreakdown(
   // every record independently of this, so capping loses no spend from the
   // report — only rows from one view of it, and `truncatedBreakdowns` says so.
   //
-  // `day` is exempt: it is bounded by the period, and it is zero-filled below
-  // to a contiguous series that a capped set would put holes in.
+  // `day` is exempt because it is zero-filled below to a contiguous series that
+  // a capped set would put holes in. Its own ceiling is the zero-fill guard,
+  // which stops filling once the window is too wide to be a chart — without
+  // that, `day` is the one dimension whose row count follows the requested
+  // RANGE rather than anything the tenant did.
   if (groupBy !== "day" && breakdown.length > MAX_BREAKDOWN_ROWS) {
     return [...breakdown]
       .sort((a, b) => b.cost.total - a.cost.total)
@@ -417,10 +436,26 @@ function finalizeBreakdown(
       .sort((a, b) => a.key.localeCompare(b.key));
   }
 
-  // For day grouping over a bounded period, zero-fill missing days so the
-  // chart and table show the full window rather than only days with activity.
-  // Skipped for `all` — the range can span years and noise outweighs signal.
-  if (groupBy !== "day" || period === "all") return breakdown;
+  // For day grouping over a window narrow enough to read, zero-fill missing
+  // days so the chart and table show the whole window rather than only the days
+  // with activity.
+  //
+  // The guard is on the RANGE, not on how the range was asked for. `period` is
+  // not the only thing that sets it: `from` overrides the period entirely
+  // (`resolveDateRange`) and is an unvalidated string off the wire, so a
+  // `from` predating the ledger walks one row per calendar day from then to
+  // today — tens of thousands of rows from a single stored record, serialized
+  // in full and persisted unbounded to the conversation record. Testing
+  // `period === "all"` only caught the one spelling of a wide window that goes
+  // through `period`, which is why this is a width test: it subsumes `all`
+  // (2020-01-01 to today is far past the ceiling) and covers every other way a
+  // caller can ask for one.
+  //
+  // Skipping the fill is not truncation — every day with activity is still
+  // returned, so nothing is dropped and there is nothing to report. What is
+  // lost is the empty days, which is exactly the noise the window was too wide
+  // to be showing.
+  if (groupBy !== "day" || rangeDays(range) > MAX_ZERO_FILL_DAYS) return breakdown;
 
   const byKey = new Map(breakdown.map((e) => [e.key, e]));
   const filled: BreakdownEntry[] = [];
@@ -680,7 +715,7 @@ export async function aggregateUsage(
   const breakdowns: Partial<Record<UsageGroupBy, BreakdownEntry[]>> = {};
   const truncatedBreakdowns: Partial<Record<UsageGroupBy, BreakdownTruncation>> = {};
   for (const [dimension, map] of sink.breakdownMaps) {
-    const rows = finalizeBreakdown(map, dimension, period, range);
+    const rows = finalizeBreakdown(map, dimension, range);
     breakdowns[dimension] = rows;
     // `map.size` is the pre-cap key count. Compared only off `day`, whose row
     // count can exceed it by design once the zero-fill has run.
@@ -693,9 +728,14 @@ export async function aggregateUsage(
   return {
     period: range,
     totals,
+    // Before the rows, deliberately. The report is serialized in key order and
+    // the engine head-truncates what the model sees at `MAX_TOOL_RESULT_CHARS`;
+    // emitted after a capped breakdown this lands tens of thousands of
+    // characters past the cut, so the one consumer that needs to know the rows
+    // are partial is the one consumer that would never see it.
+    ...(Object.keys(truncatedBreakdowns).length > 0 ? { truncatedBreakdowns } : {}),
     models,
     breakdown,
     breakdowns,
-    ...(Object.keys(truncatedBreakdowns).length > 0 ? { truncatedBreakdowns } : {}),
   };
 }
