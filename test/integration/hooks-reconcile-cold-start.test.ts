@@ -5,6 +5,7 @@ import {
   ensureHooks,
   ensureHooksOnRunning,
   type HookReconcileDeps,
+  stopAllHookWatches,
   stopWatchingHooks,
 } from "../../src/hooks/reconcile.ts";
 import { listRegistrations } from "../../src/hooks/registrations.ts";
@@ -31,6 +32,7 @@ import { makeTestWorkDir } from "../helpers/test-workdir.ts";
 
 const IDENTITY: HookIdentity = { tid: "tenant-a", key: randomBytes(32) };
 const CONNECTOR = "acme-billing-mcp";
+const OTHER_CONNECTOR = "acme-shipping-mcp";
 
 const DECL: HookDeclaration = {
   vendor: "acme",
@@ -265,6 +267,34 @@ describe("a source that is running but has advertised nothing yet", () => {
     fake.advertise([advertised("set_webhook_url")]);
     await settle();
     expect(fake.calls).toHaveLength(0);
+  });
+
+  test("every watch is dropped when the runtime shuts down", async () => {
+    // The map outlives the runtime that filled it: each entry holds the
+    // unsubscribe closure, its source, and through the listener's `deps` the
+    // runtime itself, so a shutdown that only removes sources leaves all three
+    // reachable. `Runtime.shutdown()` calls this drain for that reason.
+    const first = makeSource([]);
+    const second = makeSource([]);
+    ensureHooksOnRunning(makeDeps(first.source), wsId, CONNECTOR);
+    ensureHooksOnRunning(makeDeps(second.source), wsId, OTHER_CONNECTOR);
+    await until(
+      () => first.toolsReads() === 1 && second.toolsReads() === 1,
+      "both passes to read their tool lists",
+    );
+    await settle();
+    expect(first.listenerCount()).toBe(1);
+    expect(second.listenerCount()).toBe(1);
+
+    stopAllHookWatches();
+
+    expect(first.listenerCount()).toBe(0);
+    expect(second.listenerCount()).toBe(0);
+    first.advertise([advertised("set_webhook_url")]);
+    second.advertise([advertised("set_webhook_url")]);
+    await settle();
+    expect(first.calls).toHaveLength(0);
+    expect(second.calls).toHaveLength(0);
   });
 });
 

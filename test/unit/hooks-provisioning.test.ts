@@ -118,6 +118,23 @@ describe("verifyRegisterTool", () => {
       expect((err as Error).message).not.toContain("tool_39");
     }
   });
+
+  test("caps each name too, so a few very long ones cannot write it either", () => {
+    // Both axes are the server's to choose. A short list of long names is the
+    // same unbounded log line as a long list of short ones, so bounding the
+    // count alone leaves the message open.
+    const served = [tool({ name: `long_${"x".repeat(400)}` }), tool({ name: "list_invoices" })];
+    try {
+      verifyRegisterTool(served, DECL, "acme-mcp");
+      throw new Error("expected a contract error");
+    } catch (err) {
+      const message = (err as Error).message;
+      // Enough of the name to recognise it, not the whole thing.
+      expect(message).toContain("long_xxxx");
+      expect(message).not.toContain("x".repeat(400));
+      expect(message).toContain("list_invoices");
+    }
+  });
 });
 
 describe("hookPortForSource", () => {
