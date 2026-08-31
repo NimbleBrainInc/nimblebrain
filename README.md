@@ -639,7 +639,7 @@ All default to `true`. What `false` does depends on the flag: most withhold a to
 | Flag | Controls | Effect when `false` |
 |------|----------|---------------------|
 | `bundleManagement` | Reserved — gates no tool today | None on the current tool set |
-| `skillManagement` | Create, edit, delete, and activate skills | `skills__create`, `skills__update`, `skills__delete`, `skills__activate`, `skills__deactivate`, `skills__history`, `skills__restore` are never built |
+| `skillManagement` | Create, edit, delete, and activate skills | `skills__create`, `skills__update`, `skills__delete`, `skills__activate`, `skills__deactivate`, `skills__history`, `skills__restore`, `skills__set_status` are never built |
 | `delegation` | Multi-agent delegation | `nb__delegate` is not registered |
 | `toolDiscovery` | Tool search | `nb__search` stays; `scope: "tools"` returns an error |
 | `bundleDiscovery` | Registry search | `nb__search` stays; `scope: "registry"` returns an error |
