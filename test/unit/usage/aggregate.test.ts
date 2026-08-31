@@ -631,7 +631,7 @@ describe("the ledger's id split", () => {
 		const dir = makeTmpDir();
 		writeRecord(dir, { conversationId: "conv_new", runId: "turn-1" });
 
-		const report = await aggregateUsage(dir, "all");
+		const report = await aggregateUsage(dir, "all", "day");
 		expect(report.totals.conversations).toBe(1);
 		expect(report.totals.runs ?? 0).toBe(0);
 	});
@@ -640,7 +640,7 @@ describe("the ledger's id split", () => {
 		const dir = makeTmpDir();
 		writeRecord(dir, { origin: "task", taskRunId: "run_new", runId: "turn-1" });
 
-		const report = await aggregateUsage(dir, "all");
+		const report = await aggregateUsage(dir, "all", "day");
 		expect(report.totals.runs).toBe(1);
 		expect(report.totals.conversations).toBe(0);
 	});
@@ -653,7 +653,7 @@ describe("the ledger's id split", () => {
 		writeRecord(dir, { sessionId: "conv_same" });
 		writeRecord(dir, { conversationId: "conv_same", runId: "turn-2" });
 
-		const report = await aggregateUsage(dir, "all");
+		const report = await aggregateUsage(dir, "all", "day");
 		expect(report.totals.conversations).toBe(1);
 	});
 
@@ -662,7 +662,7 @@ describe("the ledger's id split", () => {
 		writeRecord(dir, { origin: "task", sessionId: "run_same" });
 		writeRecord(dir, { origin: "task", taskRunId: "run_same", runId: "turn-2" });
 
-		const report = await aggregateUsage(dir, "all");
+		const report = await aggregateUsage(dir, "all", "day");
 		expect(report.totals.runs).toBe(1);
 	});
 
