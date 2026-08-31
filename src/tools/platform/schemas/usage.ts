@@ -10,6 +10,7 @@ import { StringEnum } from "./_shared.ts";
 export const USAGE_GROUP_BYS = [
   "day",
   "conversation",
+  "turn",
   "model",
   "user",
   "origin",
@@ -19,7 +20,8 @@ export const USAGE_GROUP_BYS = [
 const UsageGroupBy = StringEnum(USAGE_GROUP_BYS, {
   description:
     "Group breakdown. Default: day. `user` buckets by the caller (org scope); " +
-    "`origin` splits interactive chat from automation runs; `provider` buckets by " +
+    "`origin` splits interactive chat from automation runs; `turn` buckets by a single " +
+    "assistant turn, which is what to group by for per-turn cost; `provider` buckets by " +
     "the model string's provider prefix.",
 });
 

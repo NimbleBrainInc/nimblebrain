@@ -145,12 +145,19 @@ export function recordLlmCall(args: {
     ...(delegated && typeof parentRunId === "string" ? { parentRunId } : {}),
     ...(ctx?.identity?.id ? { userId: ctx.identity.id } : {}),
     ...(ctx?.workspaceId ? { workspaceId: ctx.workspaceId } : {}),
-    // `sessionId` is whichever id correlates this work: a chat's conversation,
-    // a run's id. Deliberately one ledger field — `aggregate.ts` separates the
-    // two by `origin` ("task" counts a run, everything else a conversation),
-    // and every historical record was written under that contract, so splitting
-    // the column here would strand them.
-    ...(ctx?.conversationId || ctx?.runId ? { sessionId: ctx.conversationId ?? ctx.runId } : {}),
+    // Each id under its own name, so no reader has to consult `origin` to learn
+    // what it is holding. `runId` is the engine's — the same referent as
+    // `parentRunId` above, which is what lets the two compose into a
+    // delegation tree — and it is the only one of the three that is per-TURN,
+    // so it is what makes "what did this turn cost" answerable at all.
+    //
+    // `sessionId` is deliberately not written any more. It held a
+    // conversation-or-run union discriminated by `origin`; the three fields
+    // here say the same things without the discriminator, and say one more.
+    // `aggregate.ts` still reads the old field for records already on disk.
+    ...(ctx?.conversationId ? { conversationId: ctx.conversationId } : {}),
+    ...(ctx?.runId ? { taskRunId: ctx.runId } : {}),
+    ...(typeof args.event?.runId === "string" ? { runId: args.event.runId } : {}),
     ...(rates ? { rates } : {}),
   };
   ledger.append(entry);

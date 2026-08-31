@@ -599,3 +599,108 @@ describe("breakdown rows make the same split as totals", () => {
     expect(byProvider.breakdown.map((b) => b.key).sort()).toEqual(["anthropic", "nebius"]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// The id split: new-shape records, legacy records, and the two mixed
+// ---------------------------------------------------------------------------
+
+/** Write one record in whichever shape the caller spells out. */
+function writeRecord(dir: string, fields: Partial<UsageLedgerEntry>): void {
+	const entry: UsageLedgerEntry = {
+		ts: "2026-04-10T12:00:00Z",
+		source: "main",
+		origin: "chat",
+		delegated: false,
+		model: "claude-sonnet-4-5-20250929",
+		usage: { inputTokens: 1000, outputTokens: 500 },
+		llmMs: 200,
+		...fields,
+	} as UsageLedgerEntry;
+	const monthDir = usageMonthDir(dir, usageMonthOf(entry.ts));
+	mkdirSync(monthDir, { recursive: true });
+	appendFileSync(join(monthDir, "test.jsonl"), `${JSON.stringify(entry)}\n`);
+}
+
+describe("the ledger's id split", () => {
+	// Every OTHER test in this file writes the legacy `sessionId` shape, so the
+	// back-compat read is already under test by the whole suite above. These
+	// cover the new shape, and the mixture that a retention window spanning the
+	// split actually contains.
+
+	it("counts a new-shape chat record as a conversation", async () => {
+		const dir = makeTmpDir();
+		writeRecord(dir, { conversationId: "conv_new", runId: "turn-1" });
+
+		const report = await aggregateUsage(dir, "all");
+		expect(report.totals.conversations).toBe(1);
+		expect(report.totals.runs ?? 0).toBe(0);
+	});
+
+	it("counts a new-shape automation record as a run, not a conversation", async () => {
+		const dir = makeTmpDir();
+		writeRecord(dir, { origin: "task", taskRunId: "run_new", runId: "turn-1" });
+
+		const report = await aggregateUsage(dir, "all");
+		expect(report.totals.runs).toBe(1);
+		expect(report.totals.conversations).toBe(0);
+	});
+
+	it("does not double-count one conversation written in both shapes", async () => {
+		// The mixture inside one retention window: the same conversation before
+		// and after the split. Both spellings must resolve to one id, or every
+		// conversation straddling the change reads as two.
+		const dir = makeTmpDir();
+		writeRecord(dir, { sessionId: "conv_same" });
+		writeRecord(dir, { conversationId: "conv_same", runId: "turn-2" });
+
+		const report = await aggregateUsage(dir, "all");
+		expect(report.totals.conversations).toBe(1);
+	});
+
+	it("counts legacy and new automation records as one run", async () => {
+		const dir = makeTmpDir();
+		writeRecord(dir, { origin: "task", sessionId: "run_same" });
+		writeRecord(dir, { origin: "task", taskRunId: "run_same", runId: "turn-2" });
+
+		const report = await aggregateUsage(dir, "all");
+		expect(report.totals.runs).toBe(1);
+	});
+
+	it("keeps an automation out of the conversation breakdown", async () => {
+		// The defect the undiscriminated read had: a task's run id keyed a row in
+		// a dimension the schema calls "conversation", so a usage report listed
+		// `run_…` among its conversations.
+		const dir = makeTmpDir();
+		writeRecord(dir, { origin: "task", taskRunId: "run_x", runId: "turn-1" });
+		writeRecord(dir, { conversationId: "conv_x", runId: "turn-2" });
+
+		const report = await aggregateUsage(dir, "all", "conversation");
+		const keys = (report.breakdowns.conversation ?? []).map((r) => r.key);
+		expect(keys).toContain("conv_x");
+		expect(keys).not.toContain("run_x");
+	});
+
+	it("groups by turn — the grain the single field could not express", async () => {
+		// Two turns of ONE conversation. Grouped by conversation this is a single
+		// row and the per-turn split is unrecoverable; that is the whole reason
+		// the engine's run id is now recorded.
+		const dir = makeTmpDir();
+		writeRecord(dir, { conversationId: "conv_multi", runId: "turn-a" });
+		writeRecord(dir, { conversationId: "conv_multi", runId: "turn-b" });
+
+		const report = await aggregateUsage(dir, "all", "turn");
+		const rows = report.breakdowns.turn ?? [];
+		expect(rows.map((r) => r.key).sort()).toEqual(["turn-a", "turn-b"]);
+		expect(report.totals.conversations).toBe(1);
+	});
+
+	it("groups a legacy record's turn under `none` rather than inventing one", async () => {
+		// Records predating the split carry no engine run id. They must be legible
+		// as "not attributable to a turn", not silently folded into another's.
+		const dir = makeTmpDir();
+		writeRecord(dir, { sessionId: "conv_old" });
+
+		const report = await aggregateUsage(dir, "all", "turn");
+		expect((report.breakdowns.turn ?? []).map((r) => r.key)).toEqual(["none"]);
+	});
+});
