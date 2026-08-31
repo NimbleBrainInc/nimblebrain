@@ -1,6 +1,6 @@
 import { join } from "node:path";
 
-const WORKDIR_NAME = ".nimblebrain-worktree";
+export const WORKDIR_NAME = ".nimblebrain-worktree";
 
 /** Build the schema-valid config written on the first `dev:worktree` run. */
 export function buildDevWorktreeSeed(worktreeRoot: string, workdir: string) {

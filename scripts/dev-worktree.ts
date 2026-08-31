@@ -31,14 +31,13 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { loadDotenvIntoProcess } from "./lib/dev-env.ts";
 import { installIfMissing } from "./lib/dev-prepare.ts";
-import { buildDevWorktreeSeed } from "./lib/dev-worktree-config.ts";
+import { buildDevWorktreeSeed, WORKDIR_NAME } from "./lib/dev-worktree-config.ts";
 
 // Anchor the worktree root from the script's location, not `process.cwd()`,
 // so `bun run scripts/dev-worktree.ts` from a subdirectory still resolves
 // the right place. The script lives at `<worktree>/scripts/dev-worktree.ts`,
 // so the parent of its containing directory is the worktree root.
 const WORKTREE_ROOT = dirname(import.meta.dir);
-const WORKDIR_NAME = ".nimblebrain-worktree";
 // `||` (not `??`) so an accidentally-exported empty `NB_WORK_DIR=""` from a
 // misconfigured shell or direnv doesn't slip through and produce nonsense
 // paths. Same for the port vars below.
