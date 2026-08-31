@@ -634,20 +634,23 @@ Each entry in `workspace.json → bundles[]` accepts:
 
 #### Feature Flags
 
-All default to `true`. Setting to `false` removes the capability entirely — tool not registered, not visible to LLM, returns 403 via HTTP.
+All default to `true`. What `false` does depends on the flag: most withhold a tool, two narrow one tool's behavior, and two gate no tool at all.
 
-| Flag | Controls | Tool(s) Affected |
-|------|----------|-----------------|
-| `bundleManagement` | Reserved — gates no tool today | — |
-| `skillManagement` | Create, edit, delete, and activate skills | `skills__create`, `skills__update`, `skills__delete`, `skills__activate`, `skills__deactivate`, `skills__history`, `skills__restore` |
-| `delegation` | Multi-agent delegation | `nb__delegate` |
-| `toolDiscovery` | Tool search (scope=tools) | `nb__search` |
-| `bundleDiscovery` | Registry search (scope=registry) | `nb__search` |
-| `fileContext` | File upload and context extraction | File processing |
-| `userManagement` | Create/delete users | `nb__manage_users` |
-| `workspaceManagement` | Workspaces, members, sharing | `nb__manage_workspaces` |
+| Flag | Controls | Effect when `false` |
+|------|----------|---------------------|
+| `bundleManagement` | Reserved — gates no tool today | None on the current tool set |
+| `skillManagement` | Create, edit, delete, and activate skills | `skills__create`, `skills__update`, `skills__delete`, `skills__activate`, `skills__deactivate`, `skills__history`, `skills__restore` are never built |
+| `delegation` | Multi-agent delegation | `nb__delegate` is not registered |
+| `toolDiscovery` | Tool search | `nb__search` stays; `scope: "tools"` returns an error |
+| `bundleDiscovery` | Registry search | `nb__search` stays; `scope: "registry"` returns an error |
+| `fileContext` | File upload, serving, and context extraction | The file endpoints refuse (404, or 415 on a multipart upload) |
+| `userManagement` | Create, update, and delete users | `nb__manage_users` is not registered |
+| `workspaceManagement` | Workspaces, members, sharing | `nb__manage_workspaces` is not registered |
+| `compaction` | Folding the oldest turns of a long conversation into a summary at run start | Full history replays every turn (event-sourced stores only) |
 
-**Enforcement:** Three layers — (1) tools excluded from registry at startup, (2) `POST /v1/tools/call` returns 403, (3) MCP ListTools filters and CallTool rejects. Read-only tools (`nb__status`) are never gated.
+**Enforcement.** For the flags that withhold a tool, three layers: (1) the tool is not built into its source at startup, so it reaches no tool list and no dispatcher; (2) `POST /v1/tools/call` returns `403 feature_disabled`; (3) MCP `tools/list` filters it and `tools/call` returns an error. `toolDiscovery`, `bundleDiscovery`, and `fileContext` are enforced inside the handler instead — the tool or endpoint is present and refuses. `compaction` gates no call path at all. Tools outside the table (`nb__status`, the read-only platform surfaces, `nb__search` itself) are never gated.
+
+Full reference: [Feature flags](https://docs.nimblebrain.ai/config/features/) on docs.nimblebrain.ai.
 
 #### Bundle Env Isolation
 
