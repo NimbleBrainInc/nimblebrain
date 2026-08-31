@@ -1,9 +1,10 @@
 /**
  * `nb__status scope:skills` reports what the always-on channel costs, per tier.
  *
- * Every skill in that channel is paid on every turn. Until this existed the
- * only way to learn the number was to read conversation logs off the disk —
- * which is how a workspace came to carry ~13k tokens of one operator's
+ * Every skill in that channel is paid on every turn, and nothing aggregated
+ * that per tier — the per-skill figures were reachable only through
+ * `compose__assembled_context`, which reads one conversation's recorded run
+ * events. That is how a workspace came to carry ~13k tokens of one operator's
  * personal doctrine without anyone noticing. User-tier skills follow their
  * author into every workspace BY DESIGN, so a skill authored at the wrong tier
  * is not wrong, just invisible; it quietly bills every turn, everywhere.
@@ -54,6 +55,11 @@ beforeAll(async () => {
     telemetry: { enabled: false },
   });
   await provisionTestWorkspace(runtime);
+  // The shape that motivated this: a lot of user-tier doctrine, very little
+  // belonging to the workspace itself. Built here, not in the first case, so
+  // neither case depends on the other having run.
+  await createAlwaysOn("user", "personal-voice", "PERSONAL ".repeat(200));
+  await createAlwaysOn("workspace", "campaign-rule", "CAMPAIGN brief.");
 });
 
 afterAll(async () => {
@@ -63,11 +69,6 @@ afterAll(async () => {
 
 describe("always-on cost by tier", () => {
   it("reports each tier separately, so a lopsided workspace is visible", async () => {
-    // The shape that motivated this: a lot of user-tier doctrine, very little
-    // belonging to the workspace itself.
-    await createAlwaysOn("user", "personal-voice", "PERSONAL ".repeat(200));
-    await createAlwaysOn("workspace", "campaign-rule", "CAMPAIGN brief.");
-
     const status = await callTool("nb__status", { scope: "skills" });
     expect(status.isError).toBe(false);
     expect(status.content).toContain("Always-On Cost");
@@ -75,6 +76,13 @@ describe("always-on cost by tier", () => {
     expect(status.content).toMatch(/- user: 1 skill\(s\), ~\d/);
     expect(status.content).toMatch(/- workspace: 1 skill\(s\), ~\d/);
     expect(status.content).toContain("Total ~");
+    // Vendored core gets its own row. The loader stamps it `bundle` to say it
+    // is immutable, but an operator cannot move it, so counting it beside the
+    // tiers they CAN move from would price an action that does not exist.
+    // Nothing here publishes an always-on bundle skill, so a `bundle` row
+    // would mean core leaked back into it.
+    expect(status.content).toMatch(/- core: \d+ skill\(s\), ~\d/);
+    expect(status.content).not.toContain("- bundle:");
   });
 
   it("the user tier's cost dominates when a skill is authored at the wrong scope", async () => {
