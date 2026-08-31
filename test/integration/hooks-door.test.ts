@@ -127,9 +127,9 @@ function makeCtx(over: Partial<AppContext> = {}): AppContext {
   } as unknown as AppContext;
 }
 
-function makeApp(): Hono {
+function makeApp(identity: HookIdentity = IDENTITY): Hono {
   const routes = hooksRoutes(makeCtx(), {
-    identity: IDENTITY,
+    identity,
     // Fresh buckets per app so one test's traffic never counts against
     // another's, sized from the door's own constants so a deliberate resize
     // moves the fixture and the boundary tests together.
@@ -652,5 +652,63 @@ describe("a deployment with no hook key", () => {
     // An honest router 404 for the whole prefix, rather than a mounted route
     // that fails an internal config gate.
     expect(hooksRoutes(makeCtx(), { identity: undefined })).toBeNull();
+  });
+});
+
+describe("the rotation overlap, at the door", () => {
+  const OUTGOING_KEY = randomBytes(32);
+  const ROTATED: HookIdentity = { tid: TID, key: KEY, previousKeys: [OUTGOING_KEY] };
+
+  test("a URL minted under the outgoing key is still forwarded, and says so", async () => {
+    // The whole point of the ring, exercised where a vendor actually meets it.
+    // Pinned here rather than only at the function boundary because the door is
+    // the line that decides whether an operator mid-rotation keeps receiving.
+    let res!: Response;
+    await capturingLogs(async () => {
+      res = await deliver(
+        makeApp(ROTATED),
+        `/v1/hooks/${CONNECTOR}/${VENDOR}/${token({}, OUTGOING_KEY)}`,
+      );
+    });
+    expect(res.status).toBe(202);
+    expect(forwarded).toHaveLength(1);
+    // The line is the ring's EXIT CONDITION, not decoration: it is the only
+    // evidence an operator has that traffic still rides the outgoing key, and
+    // dropping that key without it is the fleet-wide silent 404. Asserted here
+    // so deleting it fails a test rather than passing one.
+    const superseded = logLines.filter((l) => l.includes("delivery on a superseded key"));
+    expect(superseded).toHaveLength(1);
+    expect(superseded[0]).toContain('"key_slot":1');
+  });
+
+  test("a URL minted under the sealing key says nothing", async () => {
+    // Silent in the steady state — a line on every delivery would be noise no
+    // operator reads, which is the same as having no signal at all.
+    await capturingLogs(async () => {
+      const res = await deliver(makeApp(ROTATED), `/v1/hooks/${CONNECTOR}/${VENDOR}/${token()}`);
+      expect(res.status).toBe(202);
+    });
+    expect(logLines.join("\n")).not.toContain("delivery on a superseded key");
+  });
+
+  test("the same URL 404s once the outgoing key leaves the ring", async () => {
+    // Dropping the key is what retires its URLs — the irreversible half of a
+    // rotation, and the reason the procedure says to confirm a delivery first.
+    const res = await deliver(
+      makeApp(),
+      `/v1/hooks/${CONNECTOR}/${VENDOR}/${token({}, OUTGOING_KEY)}`,
+    );
+    expect(res.status).toBe(404);
+    expect(forwarded).toHaveLength(0);
+  });
+
+  test("a key that never sealed this tenant's token is still refused", async () => {
+    // An overlap widens which keys open, never which tenants do.
+    const res = await deliver(
+      makeApp(ROTATED),
+      `/v1/hooks/${CONNECTOR}/${VENDOR}/${token({}, OTHER_TENANT_KEY)}`,
+    );
+    expect(res.status).toBe(404);
+    expect(forwarded).toHaveLength(0);
   });
 });

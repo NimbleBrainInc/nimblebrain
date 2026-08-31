@@ -7,7 +7,7 @@ import {
   HOOKS_PATH_PREFIX,
   type HookIdentity,
   type HookTokenPayload,
-  openHookToken,
+  openHookTokenForIdentity,
   readHookIdentity,
 } from "../../hooks/token.ts";
 import type { HookRegistration } from "../../hooks/types.ts";
@@ -256,11 +256,33 @@ async function admitDelivery(
   identity: HookIdentity,
   path: { connector: string; vendor: string; token: string },
 ): Promise<AdmittedDelivery | undefined> {
-  let payload: HookTokenPayload;
+  let opened: { payload: HookTokenPayload; slot: number };
   try {
-    payload = openHookToken(path.token, identity.key, identity.tid);
+    opened = openHookTokenForIdentity(path.token, identity);
   } catch {
     return undefined;
+  }
+  const payload = opened.payload;
+
+  // Outside the `try` on purpose: that catch means "reject this delivery", so a
+  // throw from anything inside it becomes a silent 404 — the exact failure the
+  // ring exists to prevent. Only the open belongs under it.
+  if (opened.slot > 0) {
+    // This URL was minted under a key that no longer seals — the outgoing side
+    // of a key rotation. Logged HERE, and only in that case, because it is the
+    // ring's exit condition and nothing else can see it: the operator deciding
+    // whether it is safe to drop the outgoing key needs to know whether any
+    // traffic still arrives on it, and dropping it blind is the fleet-wide
+    // silent 404 the ring exists to prevent. Silent in the steady state, so it
+    // costs nothing when no rotation is in flight. Deliberately not carried
+    // onto the admitted delivery: authority comes from the registration lookup
+    // below, and nothing downstream may branch on which key opened the token.
+    log.info("[hooks] delivery on a superseded key", {
+      workspace_id: payload.wid,
+      connector: payload.connector,
+      vendor: payload.vendor,
+      key_slot: opened.slot,
+    });
   }
 
   // The runtime routes on the SEALED connector and vendor. The path segments
