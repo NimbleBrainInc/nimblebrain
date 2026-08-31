@@ -43,7 +43,7 @@ export async function createPlatformSources(
     await createAutomationsSource(runtime, eventSink),
     createUsageSource(runtime, eventSink),
     createInstructionsSource(runtime, eventSink),
-    createSkillsSource(runtime, eventSink),
+    createSkillsSource(runtime, eventSink, runtime.getFeatures()),
     createComposeSource(runtime, eventSink),
   ];
 
