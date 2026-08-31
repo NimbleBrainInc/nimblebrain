@@ -309,6 +309,27 @@ function buildOpenAIThinkingOptions(
 }
 
 /**
+ * Build GreenPT's options.
+ *
+ * Sends nothing, on every mode: no ladder here is measured. GreenPT documents
+ * `low | high | max` for `kimi-k3` alone, and publishes no reasoning parameter
+ * at all for `glm-5.2` or `kimi-k2.7-code` — so no tier is known to be accepted
+ * across the catalog. `medium`, the platform's `DEFAULT_THINKING_EFFORT`, is in
+ * no GreenPT ladder that is documented anywhere, so mapping through
+ * `toOpenAIEffort` would put an unaccepted value on the wire for every stock
+ * call, with no configuration at all.
+ *
+ * Fail closed like the xAI arm rather than guess: each model applies its own
+ * per-call default (K3's is `max`, the deepest tier it offers). Nebius skips a
+ * per-model table only because every tier was measured on every catalog model;
+ * that measurement does not exist for GreenPT. Give this arm a per-model table
+ * once the tiers are probed against a live key.
+ */
+function buildGreenptThinkingOptions(): SharedV3ProviderOptions {
+  return {};
+}
+
+/**
  * Build Nebius's options.
  *
  * Same wire parameter as OpenAI (`reasoning_effort`) under a different options
@@ -503,6 +524,8 @@ function buildThinkingProviderOptions(
       return buildAnthropicThinkingOptions(model, thinking, maxOutputTokens);
     case "openai":
       return buildOpenAIThinkingOptions(model, thinking);
+    case "greenpt":
+      return buildGreenptThinkingOptions();
     case "nebius":
       return buildNebiusThinkingOptions(thinking);
     case "xai":

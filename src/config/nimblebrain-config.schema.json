@@ -75,6 +75,26 @@
           },
           "additionalProperties": false
         },
+        "greenpt": {
+          "type": "object",
+          "description": "GreenPT — European AI provider with an OpenAI-compatible API and infrastructure powered by 100% renewable energy. Reference models as greenpt:<model-id>.",
+          "properties": {
+            "apiKey": {
+              "type": "string",
+              "description": "GreenPT API key. Falls back to GREENPT_API_KEY env var."
+            },
+            "baseURL": {
+              "type": "string",
+              "description": "Override the inference endpoint. Default: https://api.greenpt.ai/v1"
+            },
+            "models": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "Allowlist of model IDs. Omit to allow all."
+            }
+          },
+          "additionalProperties": false
+        },
         "nebius": {
           "type": "object",
           "description": "Nebius Token Factory — OpenAI-compatible gateway for open-weight models. Reference models as nebius:<model-id>.",
