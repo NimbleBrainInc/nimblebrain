@@ -65,18 +65,22 @@ export function createNotificationsSource(runtime: Runtime, eventSink: EventSink
     return runtime.getNotificationStore(wsId);
   }
 
-  /** Shared error handler — catches, formats, returns an isError result. */
+  /**
+   * Shared error handler — catches, formats, returns an isError result.
+   *
+   * The payload goes in `content` and nowhere else. Only `content` reaches the
+   * model (the engine sends `extractTextForModel(result.content)`), and these
+   * items exist to be read by the agent, so a second copy in
+   * `structuredContent` would be bytes on the wire that nothing reads. The
+   * shape is pinned by the named `XxxOutput` declaration at each call site,
+   * which is what the output-type convention actually rests on.
+   */
   function withErrorHandling(
     fn: (input: Record<string, unknown>) => object,
   ): (input: Record<string, unknown>) => Promise<ToolResult> {
     return async (input) => {
       try {
-        const result = fn(input);
-        return {
-          content: textContent(JSON.stringify(result, null, 2)),
-          structuredContent: result as unknown as Record<string, unknown>,
-          isError: false,
-        };
+        return { content: textContent(JSON.stringify(fn(input), null, 2)), isError: false };
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         return { content: textContent(JSON.stringify({ error: message })), isError: true };

@@ -43,6 +43,14 @@ import {
  * owner partition would file the inbox under whoever happened to be polling,
  * which is nobody.
  *
+ * **Every filesystem call here is synchronous, and that is load-bearing.**
+ * `markRead` is a read-modify-rewrite of a whole day file while `append` is
+ * appending to the same one; they cannot interleave only because each method
+ * runs to completion against the event loop. Converting one call to
+ * `fs/promises` opens a window in which an append landing between `markRead`'s
+ * read and its rename is silently dropped. If this ever needs to be async, it
+ * needs a lock first.
+ *
  * Reads scan the retained day files rather than consulting a cache. The volume
  * is a few events an hour per workspace against a 90-day retention, so the
  * scan is small, and every operation seeing exactly what is on disk matters

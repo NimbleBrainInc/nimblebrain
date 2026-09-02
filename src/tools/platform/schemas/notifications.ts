@@ -39,8 +39,9 @@ export const NotificationsListInput = Type.Object({
     Type.Number({
       minimum: 0,
       description:
-        "Only items with a `seq` greater than this. Pass the highest `seq` you have already " +
-        "seen to page through what is new.",
+        "Only items with a `seq` greater than this — a resume point, not a backlog pager. " +
+        "Pass the highest `seq` you have already seen to get what has arrived since; results " +
+        "stay newest-first, so widen `limit` rather than paging to reach further back.",
     }),
   ),
   limit: Type.Optional(
@@ -107,7 +108,10 @@ export interface NotificationsListOutput {
   notifications: NotificationView[];
   /**
    * Highest `seq` in this page, absent when the page is empty. Pass it back as
-   * `after` to continue.
+   * `after` to get what arrives after it. It does not walk backwards: with
+   * more unread items than `limit`, the older ones are reached by raising
+   * `limit`, or by the workspace notifications endpoint, which pages
+   * ascending.
    */
   cursor?: number;
 }

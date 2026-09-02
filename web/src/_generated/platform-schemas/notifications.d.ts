@@ -71,7 +71,10 @@ export interface NotificationsListOutput {
     notifications: NotificationView[];
     /**
      * Highest `seq` in this page, absent when the page is empty. Pass it back as
-     * `after` to continue.
+     * `after` to get what arrives after it. It does not walk backwards: with
+     * more unread items than `limit`, the older ones are reached by raising
+     * `limit`, or by the workspace notifications endpoint, which pages
+     * ascending.
      */
     cursor?: number;
 }
