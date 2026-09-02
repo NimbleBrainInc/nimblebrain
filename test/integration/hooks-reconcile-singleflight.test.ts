@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { ensureHooks, type HookReconcileDeps } from "../../src/hooks/reconcile.ts";
 import { listRegistrations } from "../../src/hooks/registrations.ts";
-import { deliveryIdHash, type HookIdentity } from "../../src/hooks/token.ts";
+import type { HookIdentity } from "../../src/hooks/token.ts";
 import type { HookDeclaration } from "../../src/hooks/types.ts";
 import type { Tool, ToolResult } from "../../src/tools/types.ts";
 import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
@@ -102,7 +102,7 @@ describe("concurrent provisioning of one stream", () => {
     // hash, so this is the one comparison either side can make — and the
     // failure it guards is the server holding a URL the door does not know.
     const handedId = registered[0]?.url.split("/").pop() ?? "";
-    expect(deliveryIdHash(handedId)).toBe(persisted?.idHash);
+    expect(handedId).toBe(persisted?.deliveryId);
 
     // Both callers observe the same outcome, because they shared one run.
     expect(observer.map((h) => h.kid)).toEqual([persisted?.kid]);
@@ -171,10 +171,10 @@ describe("concurrent provisioning of one stream", () => {
     // URL the door cannot find.
     const persisted = listRegistrations((await store.get(wsId)) ?? {});
     expect(persisted).toHaveLength(2);
-    const persistedHashes = new Set(persisted.map((r) => r.idHash));
+    const persistedIds = new Set(persisted.map((r) => r.deliveryId));
     for (const call of registered) {
       const handed = call.url.split("/").pop() ?? "";
-      expect(persistedHashes.has(deliveryIdHash(handed))).toBe(true);
+      expect(persistedIds.has(handed)).toBe(true);
     }
   });
 

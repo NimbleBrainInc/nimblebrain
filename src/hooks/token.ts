@@ -1,4 +1,4 @@
-import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import {
   ALLOWED_TID_PATTERN,
   EnvelopeError,
@@ -300,28 +300,10 @@ const DELIVERY_ID_BYTES = 32;
  * What it costs is a lookup where a MAC verification used to be: the door can no
  * longer route from the URL alone. That sits behind the same pre-token rate
  * limiter the verification did, so it is not new exposure — it is a read instead
- * of a hash, in the same place.
+ * of a verification, in the same place.
  */
 export function newDeliveryId(): string {
   return randomBytes(DELIVERY_ID_BYTES).toString("base64url");
-}
-
-/**
- * The stored form of a delivery id.
- *
- * **The id itself is never written down.** Only this is, and that keeps the
- * property the sealed-token design had for free: a workspace record on its own
- * yields no working URL. It held a `kid`, which is useless without the key; it
- * now holds a hash, which is useless without a preimage. Storing the id would
- * have turned every backup and every record read into a set of live delivery
- * capabilities.
- *
- * SHA-256 with no salt and no stretching, deliberately: the input is 256 bits of
- * uniform randomness, so there is no dictionary to defend against and a slow KDF
- * would only tax the door on a path a vendor drives.
- */
-export function deliveryIdHash(deliveryId: string): string {
-  return createHash("sha256").update(deliveryId, "utf8").digest("base64url");
 }
 
 /**

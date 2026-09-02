@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { describe, expect, test } from "bun:test";
 import { EnvelopeError } from "../../src/oauth/envelope.ts";
-import { HOOK_TOKEN_KEY_ENV, buildHookUrl, deliveryIdHash, newDeliveryId, newKid, openHookToken, openHookTokenForIdentity, readHookIdentity, readHookTokenKeys, sealHookToken } from "../../src/hooks/token.ts";
+import { HOOK_TOKEN_KEY_ENV, buildHookUrl, newDeliveryId, newKid, openHookToken, openHookTokenForIdentity, readHookIdentity, readHookTokenKeys, sealHookToken } from "../../src/hooks/token.ts";
 
 const KEY = randomBytes(32);
 const OTHER_KEY = randomBytes(32);
@@ -157,16 +157,15 @@ describe("kid + url", () => {
     expect(ids.size).toBe(200);
   });
 
-  test("the stored form is a hash, so a record yields no working URL", () => {
-    // The property the sealed token had for free: it stored a `kid`, useless
-    // without the key. A stored id would have made every record read a set of
-    // live capabilities.
+  test("a delivery id is opaque — it encodes nothing about who it is for", () => {
+    // The old URL carried tenant, workspace, connector and vendor in clear
+    // before its token began. This carries none of them: a URL seen in a vendor
+    // dashboard or a proxy log discloses nothing but the runtime's own host.
     const id = newDeliveryId();
-    const hash = deliveryIdHash(id);
-    expect(hash).not.toBe(id);
-    expect(hash).not.toContain(id);
-    expect(deliveryIdHash(id)).toBe(hash);
-    expect(deliveryIdHash(newDeliveryId())).not.toBe(hash);
+    for (const leak of ["tenant", "ws_", "mcp", "vendor", "connector"]) {
+      expect(id.toLowerCase()).not.toContain(leak);
+    }
+    expect(id).toMatch(/^[A-Za-z0-9_-]+$/);
   });
 });
 

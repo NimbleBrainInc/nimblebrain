@@ -8,9 +8,8 @@ import {
   hooksRoutes,
 } from "../../src/api/routes/hooks.ts";
 import type { AppContext } from "../../src/api/types.ts";
-import { registrationKey } from "../../src/hooks/registrations.ts";
+import { listRegistrations, registrationKey } from "../../src/hooks/registrations.ts";
 import {
-  deliveryIdHash,
   type HookIdentity,
   newDeliveryId,
 } from "../../src/hooks/token.ts";
@@ -87,7 +86,7 @@ function registration(over: Partial<HookRegistration> = {}): HookRegistration {
     connector: CONNECTOR,
     vendor: VENDOR,
     kid: KID,
-    idHash: deliveryIdHash(DELIVERY_ID),
+    deliveryId: (DELIVERY_ID),
     createdAt: new Date().toISOString(),
     route: ROUTE,
     ...over,
@@ -330,7 +329,7 @@ describe("every way a delivery is refused looks the same", () => {
       id: other.id,
       hooks: {
         [registrationKey(CONNECTOR, VENDOR)]: registration({
-          idHash: deliveryIdHash(otherId),
+          deliveryId: (otherId),
           route: "/ingest/other",
         }),
       },
@@ -351,7 +350,7 @@ describe("every way a delivery is refused looks the same", () => {
     await seedWorkspace({
       id: doomed.id,
       hooks: {
-        [registrationKey(CONNECTOR, VENDOR)]: registration({ idHash: deliveryIdHash(doomedId) }),
+        [registrationKey(CONNECTOR, VENDOR)]: registration({ deliveryId: (doomedId) }),
       },
     });
     await store.delete(doomed.id);
@@ -372,8 +371,8 @@ describe("every way a delivery is refused looks the same", () => {
     await seedWorkspace({
       hooks: {
         [registrationKey(CONNECTOR, VENDOR)]: registration({
-          idHash: deliveryIdHash(newDeliveryId()),
-          prevIdHash: deliveryIdHash(DELIVERY_ID),
+          deliveryId: (newDeliveryId()),
+          prevDeliveryId: (DELIVERY_ID),
           rotatedAt: new Date(Date.now() - HOOK_ROTATION_GRACE_MS - 1_000).toISOString(),
         }),
       },
@@ -577,7 +576,7 @@ describe("the two rate-limit buckets", () => {
         id: other.id,
         hooks: {
           [registrationKey(CONNECTOR, VENDOR)]: registration({
-            idHash: deliveryIdHash(otherId),
+            deliveryId: (otherId),
           }),
         },
       });
@@ -693,6 +692,21 @@ describe("a deployment with no hook key", () => {
   });
 });
 
+describe("the URL an admin has to be able to read", () => {
+  test("the stored id IS the URL's segment, so a workspace record yields it", async () => {
+    // The property the settings page depends on. A digest here would make the
+    // URL unreadable, so the only way to learn one would be to rotate — an act
+    // of looking that breaks the integration it is looking at.
+    const persisted = listRegistrations((await store.get(wsId)) ?? {});
+    expect(persisted).toHaveLength(1);
+    expect(persisted[0]?.deliveryId).toBe(DELIVERY_ID);
+    // And it is the same string the door admits, so what an admin copies is
+    // what a vendor may post to.
+    const res = await deliver(makeApp(), `/v1/hooks/${persisted[0]?.deliveryId}`);
+    expect(res.status).toBe(202);
+  });
+});
+
 describe("the rotation overlap, at the door", () => {
   const OUTGOING_ID = newDeliveryId();
 
@@ -701,7 +715,7 @@ describe("the rotation overlap, at the door", () => {
     await seedWorkspace({
       hooks: {
         [registrationKey(CONNECTOR, VENDOR)]: registration({
-          prevIdHash: deliveryIdHash(OUTGOING_ID),
+          prevDeliveryId: (OUTGOING_ID),
           rotatedAt,
         }),
       },
@@ -759,7 +773,7 @@ describe("the rotation overlap, at the door", () => {
     await seedWorkspace({
       id: other.id,
       hooks: {
-        [registrationKey(CONNECTOR, VENDOR)]: registration({ idHash: deliveryIdHash(newDeliveryId()) }),
+        [registrationKey(CONNECTOR, VENDOR)]: registration({ deliveryId: (newDeliveryId()) }),
       },
     });
     const res = await deliver(makeApp(), hookUrl(OUTGOING_ID));

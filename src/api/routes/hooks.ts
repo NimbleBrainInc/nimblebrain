@@ -3,12 +3,7 @@ import { serverNameFromRef } from "../../bundles/paths.ts";
 import type { BundleRef } from "../../bundles/types.ts";
 import { forwardDelivery } from "../../hooks/forward.ts";
 import { isDeliveryIdAdmissible, listRegistrations } from "../../hooks/registrations.ts";
-import {
-  deliveryIdHash,
-  type HookIdentity,
-  HOOKS_PATH_PREFIX,
-  readHookIdentity,
-} from "../../hooks/token.ts";
+import { type HookIdentity, HOOKS_PATH_PREFIX, readHookIdentity } from "../../hooks/token.ts";
 import type { HookRegistration } from "../../hooks/types.ts";
 import { log } from "../../observability/log.ts";
 import { clientAddressFor } from "../client-address.ts";
@@ -250,10 +245,6 @@ async function admitDelivery(
   ctx: AppContext,
   deliveryId: string,
 ): Promise<AdmittedDelivery | undefined> {
-  // Hashed once, compared against stored hashes. The id is never written down,
-  // so this is the only form either side has in common.
-  const idHash = deliveryIdHash(deliveryId);
-
   // A scan, not an index. A tenant holds tens of workspaces and each a handful
   // of registrations, so the walk is small and — unlike an index — has no second
   // copy to fall out of step with the records it describes. It sits behind the
@@ -262,9 +253,9 @@ async function admitDelivery(
   // this does. Build an index when a measurement asks for one.
   for (const ws of await ctx.runtime.getWorkspaceStore().list()) {
     for (const registration of listRegistrations(ws)) {
-      if (!isDeliveryIdAdmissible(registration, idHash)) continue;
+      if (!isDeliveryIdAdmissible(registration, deliveryId)) continue;
 
-      if (registration.idHash !== idHash) {
+      if (registration.deliveryId !== deliveryId) {
         // The outgoing side of a rotation, inside its grace window. Logged here
         // and only here, because the operator deciding whether the old URL is
         // finally unused has nothing else that can see it — and dropping it

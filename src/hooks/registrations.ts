@@ -1,3 +1,4 @@
+import { timingSafeEqual } from "node:crypto";
 import type { Workspace } from "../workspace/types.ts";
 import type { WorkspaceStore } from "../workspace/workspace-store.ts";
 import { HOOK_ROTATION_GRACE_MS, type HookRegistration } from "./types.ts";
@@ -42,31 +43,47 @@ export function findRegistration(
 }
 
 /**
- * Whether a delivery id is admissible against one registration, now.
+ * Whether a presented delivery id is admissible for a registration, now.
  *
- * Exactly two are admissible: the current id, and the immediately-previous one
- * while its grace window is open. Anything else — an id from two rotations ago,
- * one belonging to another workspace, one invented — takes the identical
- * rejection path, so a prober learns nothing from the difference between
- * "retired" and "never existed".
+ * Exactly two are: the current id, and the immediately-previous one while its
+ * grace window is open. Anything else — an id from two rotations ago, one
+ * belonging to another workspace, one invented — takes the identical rejection
+ * path, so a prober learns nothing from the difference between "retired" and
+ * "never existed".
  *
  * This replaced a twin that weighed the KEY id. The key and the id rotate
  * together, so keeping both would have been two windows to hold in step, and a
  * disagreement between them would decide whether a delivery lands.
  *
- * Compared as HASHES, so nothing here holds a live id.
+ * Compared in constant time. The id is 256 bits of uniform randomness behind a
+ * per-source rate limit, so a timing oracle is not a practical attack — but the
+ * comparison is the only thing standing between a guess and a forward, and
+ * making it constant-time costs three lines and ends the question rather than
+ * leaving a reviewer to re-derive that argument.
  */
 export function isDeliveryIdAdmissible(
   reg: HookRegistration,
-  idHash: string,
+  deliveryId: string,
   now: number = Date.now(),
 ): boolean {
-  if (idHash === reg.idHash) return true;
-  if (!reg.prevIdHash || idHash !== reg.prevIdHash) return false;
+  if (equalsConstantTime(deliveryId, reg.deliveryId)) return true;
+  if (!reg.prevDeliveryId || !equalsConstantTime(deliveryId, reg.prevDeliveryId)) return false;
   if (!reg.rotatedAt) return false;
   const rotatedAt = Date.parse(reg.rotatedAt);
   if (!Number.isFinite(rotatedAt)) return false;
   return now - rotatedAt < HOOK_ROTATION_GRACE_MS;
+}
+
+/**
+ * Constant-time string equality. A length mismatch returns early, which leaks
+ * only the length — not a secret, and `timingSafeEqual` requires equal lengths
+ * anyway.
+ */
+function equalsConstantTime(a: string, b: string): boolean {
+  const left = Buffer.from(a, "utf8");
+  const right = Buffer.from(b, "utf8");
+  if (left.length !== right.length) return false;
+  return timingSafeEqual(left, right);
 }
 
 /** Every registration on a workspace record, as a stable-ordered list. */
@@ -153,7 +170,7 @@ export function withRotatedKid(
     connector: string;
     vendor: string;
     kid: string;
-    idHash: string;
+    deliveryId: string;
     route: string;
     headerRenames?: Record<string, string>;
   },
@@ -163,7 +180,7 @@ export function withRotatedKid(
     connector: next.connector,
     vendor: next.vendor,
     kid: next.kid,
-    idHash: next.idHash,
+    deliveryId: next.deliveryId,
     createdAt: existing?.createdAt ?? nowIso,
     route: next.route,
   };
@@ -176,7 +193,7 @@ export function withRotatedKid(
     // vendor's in-flight redeliveries were queued against the outgoing URL, and
     // that URL carries the outgoing id — honouring one without the other would
     // drop exactly the deliveries the grace exists for.
-    reg.prevIdHash = existing.idHash;
+    reg.prevDeliveryId = existing.deliveryId;
     reg.rotatedAt = nowIso;
   }
   return reg;

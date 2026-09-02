@@ -4,7 +4,7 @@ import { splitInnerToolName } from "../util/tool-name.ts";
 import type { WorkspaceStore } from "../workspace/workspace-store.ts";
 import { assertForwardablePath } from "./declaration.ts";
 import { registrationKey, updateRegistrations, withRotatedKid } from "./registrations.ts";
-import { buildHookUrl, deliveryIdHash, type HookIdentity, newDeliveryId, newKid } from "./token.ts";
+import { buildHookUrl, type HookIdentity, newDeliveryId, newKid } from "./token.ts";
 import type { HookDeclaration, HookRegistration } from "./types.ts";
 
 /**
@@ -188,12 +188,7 @@ export interface ProvisionedHook {
 interface MintedHook {
   reg: HookRegistration;
   decl: HookDeclaration;
-  /**
-   * Present only when this run MINTED an id. Absent for a registration that did
-   * not rotate: its URL exists at the server and nowhere else, because only the
-   * hash is stored. Nothing to hand over is a state, not a failure.
-   */
-  url?: string;
+  url: string;
 }
 
 /**
@@ -210,27 +205,26 @@ function nextRegistration(
   existing: HookRegistration | undefined,
   opts: ProvisionHooksOptions,
   decl: HookDeclaration,
-): { reg: HookRegistration; deliveryId?: string } {
+): { reg: HookRegistration } {
   const kid = existing && !opts.rotate ? existing.kid : newKid();
+  const deliveryId = newDeliveryId();
   if (existing && kid === existing.kid) {
-    // Unchanged, and therefore NO URL. The id is stored only as a hash, so an
-    // existing registration's URL cannot be reproduced — which is the point of
-    // storing a hash, not a shortcoming of it. The server already holds that
-    // URL; a server that has lost it needs a rotation, not a re-derivation, and
-    // that is the one operation which can hand it a working one again.
+    // Unchanged, and the SAME id is handed over again. Re-registering a URL the
+    // server already holds is a no-op there and the cheapest possible self-heal
+    // here: a server that lost its URL — reinstalled, restored, or simply never
+    // recorded it — gets it back from an ordinary reconcile rather than needing
+    // a rotation, which would retire a URL the vendor is happily delivering to.
     return { reg: { ...existing, route: decl.route, headerRenames: decl.header_renames } };
   }
-  const deliveryId = newDeliveryId();
   return {
     reg: withRotatedKid(existing, {
       connector: opts.connector,
       vendor: decl.vendor,
       kid,
-      idHash: deliveryIdHash(deliveryId),
+      deliveryId,
       route: decl.route,
       headerRenames: decl.header_renames,
     }),
-    deliveryId,
   };
 }
 
@@ -276,13 +270,11 @@ export async function provisionHooks(opts: ProvisionHooksOptions): Promise<Provi
   const written = await updateRegistrations(opts.store, opts.wsId, (current) => {
     for (const decl of declarations) {
       const key = registrationKey(opts.connector, decl.vendor);
-      const { reg, deliveryId } = nextRegistration(current[key], opts, decl);
+      const { reg } = nextRegistration(current[key], opts, decl);
       current[key] = reg;
-      minted.set(decl.vendor, {
-        reg,
-        decl,
-        ...(deliveryId ? { url: buildHookUrl(deliveryId) } : {}),
-      });
+      // Built from the STORED id, so an unchanged registration reproduces the
+      // URL the server already has and a rotated one carries the new secret.
+      minted.set(decl.vendor, { reg, decl, url: buildHookUrl(reg.deliveryId) });
     }
     return current;
   });

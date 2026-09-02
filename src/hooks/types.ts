@@ -104,20 +104,27 @@ export interface HookRegistration {
   /** Current key id. The door admits a token bearing this one. */
   kid: string;
   /**
-   * SHA-256 of the CURRENT delivery id, base64url. The door admits a request
-   * whose path segment hashes to this.
+   * The CURRENT delivery id — the secret segment of the URL a vendor holds, and
+   * the whole capability. The door admits a request whose path segment equals it.
    *
-   * The hash and never the id: a record on its own must not yield a working
-   * URL, which is the property the sealed-token design had because it stored a
-   * `kid` rather than a token.
+   * Stored as it is, not as a digest, because a delivery URL is an ADDRESS a
+   * workspace admin has to be able to read and hand to another system. A digest
+   * would make reading it impossible, so the only way to learn a URL would be to
+   * rotate — an act of looking that breaks the integration it was looking at.
+   *
+   * That it sits in plain text on the record is consistent rather than lax: this
+   * runtime encrypts nothing at rest, so a digest here would protect a webhook
+   * address more strongly than the connector credentials beside it. What bounds
+   * the exposure is that reading it needs workspace-admin, and rotating is one
+   * action.
    */
-  idHash: string;
+  deliveryId: string;
   /**
-   * The `idHash` this one replaced, admissible for {@link HOOK_ROTATION_GRACE_MS}
-   * after `rotatedAt` — the same grace `prevKid` gets, for the same reason: a
-   * vendor's in-flight redeliveries were queued against the old URL.
+   * The id this one replaced, admissible for {@link HOOK_ROTATION_GRACE_MS} after
+   * `rotatedAt` — the same grace `prevKid` gets, for the same reason: a vendor's
+   * in-flight redeliveries were queued against the old URL.
    */
-  prevIdHash?: string;
+  prevDeliveryId?: string;
   /**
    * The `kid` this one replaced. Stays admissible for {@link HOOK_ROTATION_GRACE_MS}
    * so a vendor's in-flight redeliveries — queued against the old URL before it
