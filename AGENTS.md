@@ -408,61 +408,73 @@ Three more rules that are load-bearing, not stylistic:
   while it is busy costs the vendor a retry — the door must never be the reason
   it is busy. Durability belongs to the vendor's retry and the receiving
   bundle's raw capture, both of which can provide it.
-- **Every rejection is the same bare 404.** Bad token, wrong tenant's key, path
-  segments disagreeing with the sealed ones, a retired `kid`, an uninstalled
-  connector — one path, one answer, no body. Anything that distinguishes them
-  is an oracle a prober walks. `admitDelivery` returns `undefined` for all of
-  them precisely so the caller has nothing to branch on.
+- **Every rejection is the same bare 404.** An id matching no registration, one
+  whose grace window has closed, one whose workspace is gone, a registration too
+  old to carry an id, an uninstalled connector — one path, one answer, no body.
+  Anything that distinguishes them is an oracle a prober walks. `admitDelivery`
+  returns `undefined` for all of them precisely so the caller has nothing to
+  branch on — including the too-old case, which must never throw: the door scans
+  every workspace, so one stale record raising would answer **500** for
+  deliveries belonging to workspaces that are entirely current.
 - **No agent-facing surface.** Nothing mints or rotates a hook from a tool the
   model can reach, and no path leads from a delivery to an agent run.
-  `rotate_hook` / `list_hooks` ride `manage_connectors`, which carries
-  `INTERNAL_TOOL_ANNOTATION` — stripped from the chat tool list, refused for
-  promotion, reached by the web shell.
+  `hooks__list_webhooks` / `hooks__rotate_webhook` carry
+  `INTERNAL_TOOL_ANNOTATION` — stripped from the chat tool list and from
+  `tools/list`, reached by the web shell's Webhooks settings tab.
 
-**The token** is the same MAC envelope the login assertion and the tenant-key
-mint use (`signMacEnvelope` / `verifyMacEnvelope` — one construction, three
-payload schemas). It is **MAC'd, not encrypted**: the tenant is in the host and
-the connector and vendor are in the path, so sealing would hide only `wid`, and
-a URL holder can read the payload. It carries **no expiry** — a vendor holds the
-URL for months, so retirement is the `kid` lookup, which runs on every delivery
-and is effective immediately, rather than a clock that can only fire late.
+**The URL's secret is an opaque delivery id** — 256 bits of randomness, and the
+whole capability. It names one registration; the connector, vendor and route are
+read back from that record rather than restated in the path. Nothing is sealed
+and nothing is MAC'd, which is why the URL is ~96 characters and fits a vendor's
+255-character column, the constraint that killed the sealed-payload design.
 
-**The key** is `NB_HOOK_TOKEN_KEY`, a per-tenant secret provisioned like its
-sibling `NB_MCP_AUTHORIZER_TENANT_KEY` and never derived from it: the tenant key
-is cheap to rotate, this one is not (third parties hold URLs minted under it),
-and deriving one from the other would make a routine tenant-key rotation take
-every registered webhook down with no error anywhere. **Absent key ⇒ the door is
-not mounted at all** and the whole prefix 404s at the router, so a local
-checkout gains no surface.
+The id is **stored as it is, not as a digest**, and that is deliberate: a
+delivery URL is an ADDRESS handed to external systems repeatedly, so an admin
+has to be able to read it. Under a digest the only way to see one is to rotate,
+and looking would break the integration being looked at. The record already sits
+beside that workspace's conversations, files and connector credentials, none of
+which this runtime encrypts at rest. What bounds it instead is that reading
+needs workspace admin and rotating is one action. The door compares in constant
+time — not because a timing oracle is practical against 256 bits behind a
+per-source rate limit, but because that comparison is the only thing between a
+guess and a forward.
 
-The value is an ordered, comma-separated **ring**: the first entry seals every
-new token, every entry still opens one, at most three live at once. That overlap
-is what makes rotating the key survivable — the MAC is verified before any
-registration is looked up, so the per-stream `kid` grace below cannot reach a key
-change, and without the ring a new key retires every vendor-held URL the instant
-it loads. Each entry is round-tripped at parse: the base64 decoder truncates at
-the first character outside its alphabet instead of failing, so any separator but
-a comma would otherwise read as one key and the overlap would silently not exist.
+There is **no expiry**. A vendor holds a URL for months, so retirement is the
+lookup, which runs on every delivery and is effective immediately, rather than a
+clock that can only fire late.
 
-**Rotating the key is not `rotate_hook`.** `rotate_hook` mints a new `kid` for one
-stream and retires the old one on a grace window. Rotating the key is: prepend,
-restart, then re-register **every** stream — a restart alone re-registers nothing,
-because reconciliation provisions only declarations that hold no registration —
-then confirm a delivery still lands before dropping the outgoing key. Dropping it
-is what actually retires its URLs, and it is irreversible.
+**The key** is `NB_HOOK_TOKEN_KEY`, a per-tenant secret. It no longer seals or
+opens anything — it is the **switch deciding whether the door mounts at all**.
+**Absent key ⇒ nothing is mounted** and the whole prefix 404s at the router, so
+a local checkout gains no surface. The comma-separated ring it accepts is still
+parsed and validated at boot (base64 round-trip, minimum length, placeholder
+patterns, at most three entries) so an existing multi-key deployment keeps
+booting, but the entries beyond the first now decide nothing. A leaked key used
+to compromise every URL for the tenant; there is now no key to leak, and each
+URL stands alone — revoked by rotating its own record, not by rotating a secret
+that governs all of them.
 
 **Registrations** live on the workspace record (`Workspace.hooks`), beside
-`oauthOperatorApps`. They hold the current and previous `kid` and the route —
-**never a token**. The runtime could reconstruct one and must not: a hook URL is
-a live bearer capability and a tool result lands in a transcript.
+`oauthOperatorApps`. They hold the current and previous delivery id, the `kid`,
+and the route. The `kid` is **correlation only** — it is what the runtime's log
+line names so an operator can line a delivery up against the URL it arrived on;
+the door never admits on it. The delivery id is never logged, because unlike a
+`kid` it IS a working URL.
 
-**Rotation** (`manage_connectors { action: "rotate_hook", serverName, vendor }`,
-workspace admin): mints a fresh `kid`, keeps the outgoing one admissible for 24 h
-so in-flight redeliveries land, and calls the server's `register_tool` with the
-new URL. Cheap and routine — it is the control for a URL that may have leaked
-into an access log or a screenshot, and a control nobody reaches for because it
-loses data is not a control. `list_hooks` shows what exists and when it last
-rotated; it never returns a URL.
+**Rotation** (`hooks__rotate_webhook { connector, vendor, confirm }`, workspace
+admin, `confirm` must equal the vendor slug): mints a fresh id, keeps the
+outgoing one admissible for 24 h so in-flight redeliveries land, and calls the
+server's `register_tool` with the new URL. It **refuses when nothing was
+provisioned** — a connector that is not running cannot be handed a URL, and
+reporting a rotation that did not happen is worst exactly when this control is
+reached, which is after a URL has leaked. Cheap and routine otherwise: a control
+nobody reaches for because it loses data is not a control.
+
+**`hooks__list_webhooks` returns the address**, with which connector and route it
+feeds and whether the previous URL is still admissible — derived from
+`isPreviousStillValid`, the same window the door enforces, because two copies of
+that rule is how a settings page comes to promise an admin a URL still works
+after the door stopped taking it.
 
 **Provisioning is a reconcile, not an install step.** `ensureHooks` runs when a
 connection reaches `running` (`setConnectionRunningObserver`), which covers a

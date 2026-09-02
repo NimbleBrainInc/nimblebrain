@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { ensureHooks, type HookReconcileDeps } from "../../src/hooks/reconcile.ts";
 import { listRegistrations } from "../../src/hooks/registrations.ts";
-import { type HookIdentity, openHookToken } from "../../src/hooks/token.ts";
+import type { HookIdentity } from "../../src/hooks/token.ts";
 import type { HookDeclaration } from "../../src/hooks/types.ts";
 import type { Tool, ToolResult } from "../../src/tools/types.ts";
 import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
@@ -97,16 +97,12 @@ describe("concurrent provisioning of one stream", () => {
     // a second mint silently overwrote a live registration.
     expect(persisted?.prevKid).toBeUndefined();
 
-    // The URL the server was handed must OPEN to the kid the door will admit.
-    // Substring-matching the URL would pass on a token that merely mentions the
-    // kid; the failure this guards is the server holding a URL whose sealed kid
-    // the door refuses, so the token has to be opened.
-    const handedKid = openHookToken(
-      registered[0]?.url.split("/").pop() ?? "",
-      IDENTITY.key,
-      IDENTITY.tid,
-    ).kid;
-    expect(handedKid).toBe(persisted?.kid);
+    // The URL the server was handed must resolve to the registration the door
+    // will admit. Hashing it is the whole check: the id is stored only as a
+    // hash, so this is the one comparison either side can make — and the
+    // failure it guards is the server holding a URL the door does not know.
+    const handedId = registered[0]?.url.split("/").pop() ?? "";
+    expect(handedId).toBe(persisted?.deliveryId);
 
     // Both callers observe the same outcome, because they shared one run.
     expect(observer.map((h) => h.kid)).toEqual([persisted?.kid]);
@@ -170,17 +166,15 @@ describe("concurrent provisioning of one stream", () => {
     expect(b).toHaveLength(1);
     expect(registered).toHaveLength(2);
 
-    // Every URL handed to a server must open to a kid the store actually holds.
+    // Every URL handed to a server must resolve to a registration the store
+    // actually holds — one write racing another must not leave a server with a
+    // URL the door cannot find.
     const persisted = listRegistrations((await store.get(wsId)) ?? {});
     expect(persisted).toHaveLength(2);
-    const persistedKids = new Set(persisted.map((r) => r.kid));
+    const persistedIds = new Set(persisted.map((r) => r.deliveryId));
     for (const call of registered) {
-      const handed = openHookToken(
-        call.url.split("/").pop() ?? "",
-        IDENTITY.key,
-        IDENTITY.tid,
-      ).kid;
-      expect(persistedKids.has(handed)).toBe(true);
+      const handed = call.url.split("/").pop() ?? "";
+      expect(persistedIds.has(handed)).toBe(true);
     }
   });
 

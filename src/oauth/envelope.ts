@@ -168,10 +168,11 @@ export function isUniformByte(buf: Buffer, byte: number): boolean {
  *
  * This is the single crypto construction shared by every payload schema that
  * rides this envelope: the LOGIN assertion (`signEnvelope`, payload carries
- * `inner`), the tenant-key MINT request (`buildMintRequest` in
- * `tenant-key-mint.ts`, payload carries `workspace`/`audience`/`scope`), and the
- * HOOK token (`sealHookToken` in `hooks/token.ts`, payload carries
- * `wid`/`connector`/`vendor`/`kid`). The authorizer mirrors this exactly with a
+ * `inner`) and the tenant-key MINT request (`buildMintRequest` in
+ * `tenant-key-mint.ts`, payload carries `workspace`/`audience`/`scope`). The
+ * inbound hooks door was a third: it now addresses a stream by an opaque stored
+ * id instead of a sealed payload, so it seals nothing and rides nothing here.
+ * The authorizer mirrors this exactly with a
  * single `verifyMac` over the schemas it sees — keeping sign and verify as one
  * construction on each side, not several copies of a security-critical path.
  *
