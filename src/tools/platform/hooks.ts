@@ -69,6 +69,60 @@ async function adminWorkspace(
       };
 }
 
+/** Whether this workspace actually holds the stream a rotation names. */
+async function holdsStream(
+  runtime: Runtime,
+  wsId: string,
+  connector: string,
+  vendor: string,
+): Promise<boolean> {
+  const ws = await runtime.getWorkspaceStore().get(wsId);
+  return listRegistrations(ws ?? {}).some((r) => r.connector === connector && r.vendor === vendor);
+}
+
+/**
+ * Mint a replacement URL and hand it to the connector.
+ *
+ * The record is re-read afterwards rather than inferred from the reconcile's
+ * return: the URL reported here has to be the one the door will admit, and the
+ * store is the only thing that knows that.
+ */
+async function rotate(
+  runtime: Runtime,
+  wsId: string,
+  connector: string,
+  vendor: string,
+): Promise<ToolResult> {
+  const provisioned = await ensureHooks(runtime.getHookReconcileDeps(), wsId, connector, {
+    rotate: true,
+    onlyVendor: vendor,
+  });
+  const outcome = provisioned.find((p) => p.vendor === vendor);
+
+  const after = await runtime.getWorkspaceStore().get(wsId);
+  const rotated = listRegistrations(after ?? {}).find(
+    (r) => r.connector === connector && r.vendor === vendor,
+  );
+
+  return {
+    content: textContent(
+      JSON.stringify({
+        connector,
+        vendor,
+        url: rotated ? buildHookUrl(rotated.deliveryId) : null,
+        // Whether the CONNECTOR took the new URL. False is the recoverable case
+        // and has to be said: the URL is minted and the door admits it, but the
+        // vendor is still delivering to the old one, which the grace window is
+        // holding open.
+        registered: outcome?.registered ?? false,
+        error: outcome?.error ?? null,
+        previousStillValid: Boolean(rotated?.prevDeliveryId && rotated?.rotatedAt),
+      }),
+    ),
+    isError: false,
+  };
+}
+
 export function createHooksSource(runtime: Runtime, eventSink: EventSink): McpSource {
   const tools: InProcessTool[] = [
     {
@@ -131,48 +185,13 @@ export function createHooksSource(runtime: Runtime, eventSink: EventSink): McpSo
               "re-register the new one with the vendor.",
           );
         }
-
-        const ws = await runtime.getWorkspaceStore().get(auth.wsId);
-        const existing = listRegistrations(ws ?? {}).find(
-          (r) => r.connector === connector && r.vendor === vendor,
-        );
-        if (!existing) {
+        if (!(await holdsStream(runtime, auth.wsId, connector, vendor))) {
           return refuse(
             `This workspace holds no ${vendor} stream for ${connector}. list_webhooks ` +
               "shows what it does hold.",
           );
         }
-
-        const provisioned = await ensureHooks(
-          runtime.getHookReconcileDeps(),
-          auth.wsId,
-          connector,
-          { rotate: true, onlyVendor: vendor },
-        );
-        const result = provisioned.find((p) => p.vendor === vendor);
-
-        const after = await runtime.getWorkspaceStore().get(auth.wsId);
-        const rotated = listRegistrations(after ?? {}).find(
-          (r) => r.connector === connector && r.vendor === vendor,
-        );
-
-        return {
-          content: textContent(
-            JSON.stringify({
-              connector,
-              vendor,
-              url: rotated ? buildHookUrl(rotated.deliveryId) : null,
-              // Whether the CONNECTOR took the new URL. False is the recoverable
-              // case and has to be said: the URL is minted and the door admits
-              // it, but the vendor is still delivering to the old one, which the
-              // grace window is holding open.
-              registered: result?.registered ?? false,
-              error: result?.error ?? null,
-              previousStillValid: Boolean(rotated?.prevDeliveryId && rotated?.rotatedAt),
-            }),
-          ),
-          isError: false,
-        };
+        return rotate(runtime, auth.wsId, connector, vendor);
       },
     },
   ];
