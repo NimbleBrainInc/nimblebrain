@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import {
   ALLOWED_TID_PATTERN,
   EnvelopeError,
@@ -274,8 +274,54 @@ export const HOOKS_PATH_PREFIX = "/v1/hooks";
  * callback is an open redirect, and here it would additionally point a vendor's
  * deliveries at an attacker's origin for as long as the registration lasts.
  */
-export function buildHookUrl(connector: string, vendor: string, token: string): string {
-  return `${publicOrigin()}${HOOKS_PATH_PREFIX}/${connector}/${vendor}/${token}`;
+export function buildHookUrl(deliveryId: string): string {
+  return `${publicOrigin()}${HOOKS_PATH_PREFIX}/${deliveryId}`;
+}
+
+/**
+ * Bytes of randomness behind a delivery id. 256 bits: the id IS the capability,
+ * so it has to be unguessable on its own rather than merely unique.
+ */
+const DELIVERY_ID_BYTES = 32;
+
+/**
+ * Mint a delivery id — the secret a vendor holds and puts in the URL.
+ *
+ * **Why an opaque id rather than a sealed payload.** A self-describing token
+ * carries tenant, workspace, connector, vendor and kid, and that costs length:
+ * the URL it produced ran past 330 characters. At least one vendor stores a
+ * webhook URL in a 255-character column and answers a 500 above it, so a URL
+ * that long cannot be registered at all. Shortening the payload would have
+ * fitted THAT vendor and left the margin depending on how long a tenant's
+ * hostname happens to be — a correctness property nobody maintains, failing for
+ * some tenants and not others. An opaque id is short by construction and the
+ * margin does not move.
+ *
+ * What it costs is a lookup where a MAC verification used to be: the door can no
+ * longer route from the URL alone. That sits behind the same pre-token rate
+ * limiter the verification did, so it is not new exposure — it is a read instead
+ * of a hash, in the same place.
+ */
+export function newDeliveryId(): string {
+  return randomBytes(DELIVERY_ID_BYTES).toString("base64url");
+}
+
+/**
+ * The stored form of a delivery id.
+ *
+ * **The id itself is never written down.** Only this is, and that keeps the
+ * property the sealed-token design had for free: a workspace record on its own
+ * yields no working URL. It held a `kid`, which is useless without the key; it
+ * now holds a hash, which is useless without a preimage. Storing the id would
+ * have turned every backup and every record read into a set of live delivery
+ * capabilities.
+ *
+ * SHA-256 with no salt and no stretching, deliberately: the input is 256 bits of
+ * uniform randomness, so there is no dictionary to defend against and a slow KDF
+ * would only tax the door on a path a vendor drives.
+ */
+export function deliveryIdHash(deliveryId: string): string {
+  return createHash("sha256").update(deliveryId, "utf8").digest("base64url");
 }
 
 /**

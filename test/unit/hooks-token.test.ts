@@ -1,16 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { describe, expect, test } from "bun:test";
 import { EnvelopeError } from "../../src/oauth/envelope.ts";
-import {
-  buildHookUrl,
-  HOOK_TOKEN_KEY_ENV,
-  newKid,
-  openHookToken,
-  readHookIdentity,
-  openHookTokenForIdentity,
-  readHookTokenKeys,
-  sealHookToken,
-} from "../../src/hooks/token.ts";
+import { HOOK_TOKEN_KEY_ENV, buildHookUrl, deliveryIdHash, newDeliveryId, newKid, openHookToken, openHookTokenForIdentity, readHookIdentity, readHookTokenKeys, sealHookToken } from "../../src/hooks/token.ts";
 
 const KEY = randomBytes(32);
 const OTHER_KEY = randomBytes(32);
@@ -139,15 +130,43 @@ describe("kid + url", () => {
     expect(kids.size).toBe(200);
   });
 
-  test("the URL carries connector and vendor as path segments", () => {
+  test("the URL is the origin, the prefix, and one opaque segment", () => {
     process.env.NB_PUBLIC_ORIGIN = "https://runtime.example";
     try {
-      expect(buildHookUrl("acme-billing-mcp", "acme", "v1.a.b")).toBe(
-        "https://runtime.example/v1/hooks/acme-billing-mcp/acme/v1.a.b",
-      );
+      expect(buildHookUrl("abc123")).toBe("https://runtime.example/v1/hooks/abc123");
     } finally {
       delete process.env.NB_PUBLIC_ORIGIN;
     }
+  });
+
+  test("a minted URL fits the shortest webhook column a vendor is known to have", () => {
+    // A vendor stores a delivery URL in 255 characters and answers a 500 above
+    // it. The previous URL ran past 330 and could not be registered at all. The
+    // margin has to survive a long tenant hostname, not just today's.
+    process.env.NB_PUBLIC_ORIGIN = `https://${"a".repeat(63)}.platform.example.com`;
+    try {
+      const url = buildHookUrl(newDeliveryId());
+      expect(url.length).toBeLessThanOrEqual(255);
+    } finally {
+      delete process.env.NB_PUBLIC_ORIGIN;
+    }
+  });
+
+  test("delivery ids do not repeat", () => {
+    const ids = new Set(Array.from({ length: 200 }, () => newDeliveryId()));
+    expect(ids.size).toBe(200);
+  });
+
+  test("the stored form is a hash, so a record yields no working URL", () => {
+    // The property the sealed token had for free: it stored a `kid`, useless
+    // without the key. A stored id would have made every record read a set of
+    // live capabilities.
+    const id = newDeliveryId();
+    const hash = deliveryIdHash(id);
+    expect(hash).not.toBe(id);
+    expect(hash).not.toContain(id);
+    expect(deliveryIdHash(id)).toBe(hash);
+    expect(deliveryIdHash(newDeliveryId())).not.toBe(hash);
   });
 });
 

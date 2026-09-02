@@ -41,6 +41,28 @@ export function findRegistration(
   return ws.hooks?.[keyOf(connector, vendor)];
 }
 
+/**
+ * Whether a delivery id is admissible against one registration, now.
+ *
+ * The exact shape of {@link isKidAdmissible}, over the id rather than the key,
+ * because the two rotate together and a URL minted under the outgoing id has the
+ * same in-flight redeliveries to honour.
+ *
+ * Compared as HASHES, so nothing here has to hold a live id.
+ */
+export function isDeliveryIdAdmissible(
+  reg: HookRegistration,
+  idHash: string,
+  now: number = Date.now(),
+): boolean {
+  if (idHash === reg.idHash) return true;
+  if (!reg.prevIdHash || idHash !== reg.prevIdHash) return false;
+  if (!reg.rotatedAt) return false;
+  const rotatedAt = Date.parse(reg.rotatedAt);
+  if (!Number.isFinite(rotatedAt)) return false;
+  return now - rotatedAt < HOOK_ROTATION_GRACE_MS;
+}
+
 /** Every registration on a workspace record, as a stable-ordered list. */
 export function listRegistrations(ws: Pick<Workspace, "hooks">): HookRegistration[] {
   return Object.values(ws.hooks ?? {}).sort((a, b) =>
@@ -147,6 +169,7 @@ export function withRotatedKid(
     connector: string;
     vendor: string;
     kid: string;
+    idHash: string;
     route: string;
     headerRenames?: Record<string, string>;
   },
@@ -156,6 +179,7 @@ export function withRotatedKid(
     connector: next.connector,
     vendor: next.vendor,
     kid: next.kid,
+    idHash: next.idHash,
     createdAt: existing?.createdAt ?? nowIso,
     route: next.route,
   };
@@ -164,6 +188,11 @@ export function withRotatedKid(
   }
   if (existing) {
     reg.prevKid = existing.kid;
+    // The id rotates WITH the key, so its grace window is the same window. A
+    // vendor's in-flight redeliveries were queued against the outgoing URL, and
+    // that URL carries the outgoing id — honouring one without the other would
+    // drop exactly the deliveries the grace exists for.
+    reg.prevIdHash = existing.idHash;
     reg.rotatedAt = nowIso;
   }
   return reg;

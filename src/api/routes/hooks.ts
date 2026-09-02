@@ -2,12 +2,11 @@ import { Hono } from "hono";
 import { serverNameFromRef } from "../../bundles/paths.ts";
 import type { BundleRef } from "../../bundles/types.ts";
 import { forwardDelivery } from "../../hooks/forward.ts";
-import { findRegistration, isKidAdmissible } from "../../hooks/registrations.ts";
+import { isDeliveryIdAdmissible, listRegistrations } from "../../hooks/registrations.ts";
 import {
-  HOOKS_PATH_PREFIX,
+  deliveryIdHash,
   type HookIdentity,
-  type HookTokenPayload,
-  openHookTokenForIdentity,
+  HOOKS_PATH_PREFIX,
   readHookIdentity,
 } from "../../hooks/token.ts";
 import type { HookRegistration } from "../../hooks/types.ts";
@@ -168,7 +167,7 @@ export function hooksRoutes(ctx: AppContext, opts: HooksRoutesOptions = {}): Hon
   // do so for ANY three-segment path under the prefix. Registering POST alone
   // would make Hono answer 404 for a GET, and the difference between "405 here"
   // and "404 there" would map out which paths exist.
-  app.all(`${HOOKS_PATH_PREFIX}/:connector/:vendor/:token`, async (c) => {
+  app.all(`${HOOKS_PATH_PREFIX}/:deliveryId`, async (c) => {
     const req = c.req.raw;
 
     // Step 0 — anonymous bucket, keyed on the client address, before the body
@@ -189,17 +188,13 @@ export function hooksRoutes(ctx: AppContext, opts: HooksRoutesOptions = {}): Hon
       return new Response(null, { status: 413 });
     }
 
-    const admitted = await admitDelivery(ctx, identity, {
-      connector: c.req.param("connector"),
-      vendor: c.req.param("vendor"),
-      token: c.req.param("token"),
-    });
+    const admitted = await admitDelivery(ctx, c.req.param("deliveryId"));
     if (!admitted) {
       hooksReceivedTotal.inc({ outcome: "rejected" });
       return notFound();
     }
 
-    if (!workspaceLimiter.consume(`${admitted.payload.wid}|${admitted.payload.connector}`)) {
+    if (!workspaceLimiter.consume(`${admitted.wsId}|${admitted.registration.connector}`)) {
       return rateLimited();
     }
 
@@ -235,7 +230,7 @@ type RemoteBundleRef = Extract<BundleRef, { url: string }>;
 
 /** A delivery that passed every check, with everything the forward needs. */
 interface AdmittedDelivery {
-  payload: HookTokenPayload;
+  wsId: string;
   registration: HookRegistration;
   ref: RemoteBundleRef;
 }
@@ -253,57 +248,46 @@ interface AdmittedDelivery {
  */
 async function admitDelivery(
   ctx: AppContext,
-  identity: HookIdentity,
-  path: { connector: string; vendor: string; token: string },
+  deliveryId: string,
 ): Promise<AdmittedDelivery | undefined> {
-  let opened: { payload: HookTokenPayload; slot: number };
-  try {
-    opened = openHookTokenForIdentity(path.token, identity);
-  } catch {
-    return undefined;
+  // Hashed once, compared against stored hashes. The id is never written down,
+  // so this is the only form either side has in common.
+  const idHash = deliveryIdHash(deliveryId);
+
+  // A scan, not an index. A tenant holds tens of workspaces and each a handful
+  // of registrations, so the walk is small and — unlike an index — has no second
+  // copy to fall out of step with the records it describes. It sits behind the
+  // per-source bucket above, in the same place the MAC verification used to,
+  // which is what keeps an unauthenticated caller from choosing how much work
+  // this does. Build an index when a measurement asks for one.
+  for (const ws of await ctx.runtime.getWorkspaceStore().list()) {
+    for (const registration of listRegistrations(ws)) {
+      if (!isDeliveryIdAdmissible(registration, idHash)) continue;
+
+      if (registration.idHash !== idHash) {
+        // The outgoing side of a rotation, inside its grace window. Logged here
+        // and only here, because the operator deciding whether the old URL is
+        // finally unused has nothing else that can see it — and dropping it
+        // blind is the silent 404 the grace exists to prevent. Silent in the
+        // steady state, so it costs nothing when no rotation is in flight.
+        log.info("[hooks] delivery on a superseded delivery id", {
+          workspace_id: ws.id,
+          connector: registration.connector,
+          vendor: registration.vendor,
+        });
+      }
+
+      // The connector must still be installed — which is also where the forward
+      // target comes from, so this is a required lookup rather than an extra
+      // check. An uninstall drops the registration too; this is what still holds
+      // if a workspace record is edited by hand or a cleanup path is missed.
+      const ref = findInstalledConnector(ws.bundles ?? [], registration.connector);
+      if (!ref || !("url" in ref)) return undefined;
+
+      return { wsId: ws.id, registration, ref };
+    }
   }
-  const payload = opened.payload;
-
-  // Outside the `try` on purpose: that catch means "reject this delivery", so a
-  // throw from anything inside it becomes a silent 404 — the exact failure the
-  // ring exists to prevent. Only the open belongs under it.
-  if (opened.slot > 0) {
-    // This URL was minted under a key that no longer seals — the outgoing side
-    // of a key rotation. Logged HERE, and only in that case, because it is the
-    // ring's exit condition and nothing else can see it: the operator deciding
-    // whether it is safe to drop the outgoing key needs to know whether any
-    // traffic still arrives on it, and dropping it blind is the fleet-wide
-    // silent 404 the ring exists to prevent. Silent in the steady state, so it
-    // costs nothing when no rotation is in flight. Deliberately not carried
-    // onto the admitted delivery: authority comes from the registration lookup
-    // below, and nothing downstream may branch on which key opened the token.
-    log.info("[hooks] delivery on a superseded key", {
-      workspace_id: payload.wid,
-      connector: payload.connector,
-      vendor: payload.vendor,
-      key_slot: opened.slot,
-    });
-  }
-
-  // The runtime routes on the SEALED connector and vendor. The path segments
-  // exist so an operator reading a log line or a vendor dashboard can tell what
-  // a URL is for; they are cross-checked here and never trusted.
-  if (payload.connector !== path.connector || payload.vendor !== path.vendor) return undefined;
-
-  const ws = await ctx.runtime.getWorkspaceStore().get(payload.wid);
-  if (!ws) return undefined;
-
-  const registration = findRegistration(ws, payload.connector, payload.vendor);
-  if (!registration || !isKidAdmissible(registration, payload.kid)) return undefined;
-
-  // The connector must still be installed — which is also where the forward
-  // target comes from, so this is a required lookup rather than an extra check.
-  // An uninstall drops the registration too; this is what still holds if a
-  // workspace record is edited by hand or a cleanup path is ever missed.
-  const ref = findInstalledConnector(ws.bundles ?? [], payload.connector);
-  if (!ref || !("url" in ref)) return undefined;
-
-  return { payload, registration, ref };
+  return undefined;
 }
 
 /** The forward hop, plus the metric, the log line, and the vendor's answer. */
@@ -314,14 +298,14 @@ async function forwardAdmitted(
   body: Uint8Array,
   fetchImpl: typeof fetch | undefined,
 ): Promise<Response> {
-  const { payload, registration, ref } = admitted;
+  const { wsId, registration, ref } = admitted;
   const startedAt = performance.now();
   try {
     const upstream = await forwardDelivery({
       baseUrl: ref.url,
       transport: ref.transport,
       route: registration.route,
-      workspaceId: payload.wid,
+      workspaceId: wsId,
       inboundHeaders: req.headers,
       headerRenames: registration.headerRenames,
       body,
@@ -330,7 +314,7 @@ async function forwardAdmitted(
     });
     hooksForwardSeconds.observe((performance.now() - startedAt) / 1000);
     hooksReceivedTotal.inc({ outcome: "forwarded" });
-    logDelivery(payload, "forwarded", upstream.status, startedAt);
+    logDelivery(wsId, registration, "forwarded", upstream.status, startedAt);
     // The connector's status is the vendor's answer: it is the party that knows
     // whether the delivery was accepted, and a runtime that rewrote it would be
     // deciding on the bundle's behalf whether a retry is wanted.
@@ -341,7 +325,7 @@ async function forwardAdmitted(
   } catch (err) {
     hooksForwardSeconds.observe((performance.now() - startedAt) / 1000);
     hooksReceivedTotal.inc({ outcome: "upstream_error" });
-    logDelivery(payload, "upstream_error", undefined, startedAt, err);
+    logDelivery(wsId, registration, "upstream_error", undefined, startedAt, err);
     // 502 so the vendor retries. A configuration problem — an interactive-OAuth
     // connector that install should have refused, a route that no longer
     // resolves inside the connector's origin — answers the same way
@@ -393,17 +377,21 @@ function passthroughResponseHeaders(upstream: Headers): Headers {
  * runtime has no business having read it.
  */
 function logDelivery(
-  payload: { wid: string; connector: string; vendor: string; kid: string },
+  wsId: string,
+  registration: { connector: string; vendor: string; kid: string },
   outcome: string,
   status: number | undefined,
   startedAt: number,
   err?: unknown,
 ): void {
   const fields: Record<string, unknown> = {
-    workspace_id: payload.wid,
-    connector: payload.connector,
-    vendor: payload.vendor,
-    kid: payload.kid,
+    workspace_id: wsId,
+    connector: registration.connector,
+    vendor: registration.vendor,
+    // The KEY id, still, and never the delivery id: the log correlates a
+    // delivery to the rotation it arrived under, and printing the capability
+    // itself would put a live URL in every log sink that reads this line.
+    kid: registration.kid,
     outcome,
     duration_ms: Math.round(performance.now() - startedAt),
   };

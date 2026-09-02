@@ -4,7 +4,7 @@ import { splitInnerToolName } from "../util/tool-name.ts";
 import type { WorkspaceStore } from "../workspace/workspace-store.ts";
 import { assertForwardablePath } from "./declaration.ts";
 import { registrationKey, updateRegistrations, withRotatedKid } from "./registrations.ts";
-import { buildHookUrl, type HookIdentity, newKid, sealHookToken } from "./token.ts";
+import { buildHookUrl, deliveryIdHash, type HookIdentity, newDeliveryId, newKid } from "./token.ts";
 import type { HookDeclaration, HookRegistration } from "./types.ts";
 
 /**
@@ -188,7 +188,12 @@ export interface ProvisionedHook {
 interface MintedHook {
   reg: HookRegistration;
   decl: HookDeclaration;
-  url: string;
+  /**
+   * Present only when this run MINTED an id. Absent for a registration that did
+   * not rotate: its URL exists at the server and nowhere else, because only the
+   * hash is stored. Nothing to hand over is a state, not a failure.
+   */
+  url?: string;
 }
 
 /**
@@ -205,36 +210,28 @@ function nextRegistration(
   existing: HookRegistration | undefined,
   opts: ProvisionHooksOptions,
   decl: HookDeclaration,
-): HookRegistration {
+): { reg: HookRegistration; deliveryId?: string } {
   const kid = existing && !opts.rotate ? existing.kid : newKid();
   if (existing && kid === existing.kid) {
-    return { ...existing, route: decl.route, headerRenames: decl.header_renames };
+    // Unchanged, and therefore NO URL. The id is stored only as a hash, so an
+    // existing registration's URL cannot be reproduced — which is the point of
+    // storing a hash, not a shortcoming of it. The server already holds that
+    // URL; a server that has lost it needs a rotation, not a re-derivation, and
+    // that is the one operation which can hand it a working one again.
+    return { reg: { ...existing, route: decl.route, headerRenames: decl.header_renames } };
   }
-  return withRotatedKid(existing, {
-    connector: opts.connector,
-    vendor: decl.vendor,
-    kid,
-    route: decl.route,
-    headerRenames: decl.header_renames,
-  });
-}
-
-/** Seal a capability for one stream and build the URL the server is handed. */
-function mintUrl(opts: ProvisionHooksOptions, decl: HookDeclaration, kid: string): string {
-  return buildHookUrl(
-    opts.connector,
-    decl.vendor,
-    sealHookToken(
-      {
-        tid: opts.identity.tid,
-        wid: opts.wsId,
-        connector: opts.connector,
-        vendor: decl.vendor,
-        kid,
-      },
-      opts.identity.key,
-    ),
-  );
+  const deliveryId = newDeliveryId();
+  return {
+    reg: withRotatedKid(existing, {
+      connector: opts.connector,
+      vendor: decl.vendor,
+      kid,
+      idHash: deliveryIdHash(deliveryId),
+      route: decl.route,
+      headerRenames: decl.header_renames,
+    }),
+    deliveryId,
+  };
 }
 
 /**
@@ -279,9 +276,13 @@ export async function provisionHooks(opts: ProvisionHooksOptions): Promise<Provi
   const written = await updateRegistrations(opts.store, opts.wsId, (current) => {
     for (const decl of declarations) {
       const key = registrationKey(opts.connector, decl.vendor);
-      const reg = nextRegistration(current[key], opts, decl);
+      const { reg, deliveryId } = nextRegistration(current[key], opts, decl);
       current[key] = reg;
-      minted.set(decl.vendor, { reg, decl, url: mintUrl(opts, decl, reg.kid) });
+      minted.set(decl.vendor, {
+        reg,
+        decl,
+        ...(deliveryId ? { url: buildHookUrl(deliveryId) } : {}),
+      });
     }
     return current;
   });

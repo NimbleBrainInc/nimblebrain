@@ -104,6 +104,21 @@ export interface HookRegistration {
   /** Current key id. The door admits a token bearing this one. */
   kid: string;
   /**
+   * SHA-256 of the CURRENT delivery id, base64url. The door admits a request
+   * whose path segment hashes to this.
+   *
+   * The hash and never the id: a record on its own must not yield a working
+   * URL, which is the property the sealed-token design had because it stored a
+   * `kid` rather than a token.
+   */
+  idHash: string;
+  /**
+   * The `idHash` this one replaced, admissible for {@link HOOK_ROTATION_GRACE_MS}
+   * after `rotatedAt` — the same grace `prevKid` gets, for the same reason: a
+   * vendor's in-flight redeliveries were queued against the old URL.
+   */
+  prevIdHash?: string;
+  /**
    * The `kid` this one replaced. Stays admissible for {@link HOOK_ROTATION_GRACE_MS}
    * so a vendor's in-flight redeliveries — queued against the old URL before it
    * re-registered — still land rather than being dropped as forgeries.
