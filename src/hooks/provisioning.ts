@@ -4,7 +4,7 @@ import { splitInnerToolName } from "../util/tool-name.ts";
 import type { WorkspaceStore } from "../workspace/workspace-store.ts";
 import { assertForwardablePath } from "./declaration.ts";
 import { registrationKey, updateRegistrations, withRotatedKid } from "./registrations.ts";
-import { buildHookUrl, type HookIdentity, newKid, sealHookToken } from "./token.ts";
+import { buildHookUrl, newDeliveryId, newKid } from "./token.ts";
 import type { HookDeclaration, HookRegistration } from "./types.ts";
 
 /**
@@ -159,7 +159,6 @@ export function hookPortForSource(source: HookSourceLike): HookConnectorPort {
 }
 
 export interface ProvisionHooksOptions {
-  identity: HookIdentity;
   store: WorkspaceStore;
   wsId: string;
   connector: string;
@@ -205,36 +204,26 @@ function nextRegistration(
   existing: HookRegistration | undefined,
   opts: ProvisionHooksOptions,
   decl: HookDeclaration,
-): HookRegistration {
+): { reg: HookRegistration } {
   const kid = existing && !opts.rotate ? existing.kid : newKid();
   if (existing && kid === existing.kid) {
-    return { ...existing, route: decl.route, headerRenames: decl.header_renames };
+    // Unchanged, and the SAME id is handed over again. Re-registering a URL the
+    // server already holds is a no-op there and the cheapest possible self-heal
+    // here: a server that lost its URL — reinstalled, restored, or simply never
+    // recorded it — gets it back from an ordinary reconcile rather than needing
+    // a rotation, which would retire a URL the vendor is happily delivering to.
+    return { reg: { ...existing, route: decl.route, headerRenames: decl.header_renames } };
   }
-  return withRotatedKid(existing, {
-    connector: opts.connector,
-    vendor: decl.vendor,
-    kid,
-    route: decl.route,
-    headerRenames: decl.header_renames,
-  });
-}
-
-/** Seal a capability for one stream and build the URL the server is handed. */
-function mintUrl(opts: ProvisionHooksOptions, decl: HookDeclaration, kid: string): string {
-  return buildHookUrl(
-    opts.connector,
-    decl.vendor,
-    sealHookToken(
-      {
-        tid: opts.identity.tid,
-        wid: opts.wsId,
-        connector: opts.connector,
-        vendor: decl.vendor,
-        kid,
-      },
-      opts.identity.key,
-    ),
-  );
+  return {
+    reg: withRotatedKid(existing, {
+      connector: opts.connector,
+      vendor: decl.vendor,
+      kid,
+      deliveryId: newDeliveryId(),
+      route: decl.route,
+      headerRenames: decl.header_renames,
+    }),
+  };
 }
 
 /**
@@ -279,9 +268,11 @@ export async function provisionHooks(opts: ProvisionHooksOptions): Promise<Provi
   const written = await updateRegistrations(opts.store, opts.wsId, (current) => {
     for (const decl of declarations) {
       const key = registrationKey(opts.connector, decl.vendor);
-      const reg = nextRegistration(current[key], opts, decl);
+      const { reg } = nextRegistration(current[key], opts, decl);
       current[key] = reg;
-      minted.set(decl.vendor, { reg, decl, url: mintUrl(opts, decl, reg.kid) });
+      // Built from the STORED id, so an unchanged registration reproduces the
+      // URL the server already has and a rotated one carries the new secret.
+      minted.set(decl.vendor, { reg, decl, url: buildHookUrl(reg.deliveryId) });
     }
     return current;
   });

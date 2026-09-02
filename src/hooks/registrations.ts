@@ -1,3 +1,4 @@
+import { timingSafeEqual } from "node:crypto";
 import type { Workspace } from "../workspace/types.ts";
 import type { WorkspaceStore } from "../workspace/workspace-store.ts";
 import { HOOK_ROTATION_GRACE_MS, type HookRegistration } from "./types.ts";
@@ -41,33 +42,76 @@ export function findRegistration(
   return ws.hooks?.[keyOf(connector, vendor)];
 }
 
+/**
+ * Whether a presented delivery id is admissible for a registration, now.
+ *
+ * Exactly two are: the current id, and the immediately-previous one while its
+ * grace window is open. Anything else — an id from two rotations ago, one
+ * belonging to another workspace, one invented — takes the identical rejection
+ * path, so a prober learns nothing from the difference between "retired" and
+ * "never existed".
+ *
+ * This replaced a twin that weighed the KEY id. The key and the id rotate
+ * together, so keeping both would have been two windows to hold in step, and a
+ * disagreement between them would decide whether a delivery lands.
+ *
+ * Compared in constant time. The id is 256 bits of uniform randomness behind a
+ * per-source rate limit, so a timing oracle is not a practical attack — but the
+ * comparison is the only thing standing between a guess and a forward, and
+ * making it constant-time costs three lines and ends the question rather than
+ * leaving a reviewer to re-derive that argument.
+ */
+export function isDeliveryIdAdmissible(
+  reg: HookRegistration,
+  deliveryId: string,
+  now: number = Date.now(),
+): boolean {
+  // A registration written before delivery ids existed carries no id to compare
+  // against. It is inadmissible, and deliberately not an error: the door scans
+  // every workspace, so throwing here would let one stale record answer 500 for
+  // deliveries belonging to workspaces that are perfectly current — and a 500 is
+  // the one distinguishable answer this door exists to never give. Rotating the
+  // stream writes an id and repairs it.
+  if (reg.deliveryId && equalsConstantTime(deliveryId, reg.deliveryId)) return true;
+  const prev = reg.prevDeliveryId;
+  if (!prev || !isPreviousStillValid(reg, now)) return false;
+  return equalsConstantTime(deliveryId, prev);
+}
+
+/**
+ * Whether a rotated stream's PREVIOUS URL is still one the door will admit.
+ *
+ * Exported because the operator surface has to report the same window the door
+ * enforces. Two copies of this rule is how a settings page comes to promise an
+ * admin that the old URL still works for a day after the door stopped taking it.
+ */
+export function isPreviousStillValid(
+  reg: Pick<HookRegistration, "prevDeliveryId" | "rotatedAt">,
+  now: number = Date.now(),
+): boolean {
+  if (!reg.prevDeliveryId || !reg.rotatedAt) return false;
+  const rotatedAt = Date.parse(reg.rotatedAt);
+  if (!Number.isFinite(rotatedAt)) return false;
+  return now - rotatedAt < HOOK_ROTATION_GRACE_MS;
+}
+
+/**
+ * Constant-time string equality. A length mismatch returns early, which leaks
+ * only the length — not a secret, and `timingSafeEqual` requires equal lengths
+ * anyway.
+ */
+function equalsConstantTime(a: string, b: string): boolean {
+  const left = Buffer.from(a, "utf8");
+  const right = Buffer.from(b, "utf8");
+  if (left.length !== right.length) return false;
+  return timingSafeEqual(left, right);
+}
+
 /** Every registration on a workspace record, as a stable-ordered list. */
 export function listRegistrations(ws: Pick<Workspace, "hooks">): HookRegistration[] {
   return Object.values(ws.hooks ?? {}).sort((a, b) =>
     keyOf(a.connector, a.vendor).localeCompare(keyOf(b.connector, b.vendor)),
   );
-}
-
-/**
- * Whether a presented `kid` is admissible for a registration.
- *
- * Exactly two are: the current one, and the immediately-previous one while its
- * grace window is open. Anything else — a `kid` from two rotations ago, one
- * from another workspace, one invented — takes the identical rejection path, so
- * a prober learns nothing from the difference between "retired" and "never
- * existed".
- */
-export function isKidAdmissible(
-  reg: HookRegistration,
-  kid: string,
-  now: number = Date.now(),
-): boolean {
-  if (kid === reg.kid) return true;
-  if (!reg.prevKid || kid !== reg.prevKid) return false;
-  if (!reg.rotatedAt) return false;
-  const rotatedAt = Date.parse(reg.rotatedAt);
-  if (!Number.isFinite(rotatedAt)) return false;
-  return now - rotatedAt < HOOK_ROTATION_GRACE_MS;
 }
 
 /**
@@ -147,6 +191,7 @@ export function withRotatedKid(
     connector: string;
     vendor: string;
     kid: string;
+    deliveryId: string;
     route: string;
     headerRenames?: Record<string, string>;
   },
@@ -156,6 +201,7 @@ export function withRotatedKid(
     connector: next.connector,
     vendor: next.vendor,
     kid: next.kid,
+    deliveryId: next.deliveryId,
     createdAt: existing?.createdAt ?? nowIso,
     route: next.route,
   };
@@ -164,6 +210,11 @@ export function withRotatedKid(
   }
   if (existing) {
     reg.prevKid = existing.kid;
+    // The id rotates WITH the key, so its grace window is the same window. A
+    // vendor's in-flight redeliveries were queued against the outgoing URL, and
+    // that URL carries the outgoing id — honouring one without the other would
+    // drop exactly the deliveries the grace exists for.
+    reg.prevDeliveryId = existing.deliveryId;
     reg.rotatedAt = nowIso;
   }
   return reg;

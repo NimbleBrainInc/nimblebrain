@@ -109,7 +109,6 @@ export async function ensureHooks(
 
   const run = () =>
     provisionHooks({
-      identity,
       store: deps.workspaceStore,
       wsId,
       connector,

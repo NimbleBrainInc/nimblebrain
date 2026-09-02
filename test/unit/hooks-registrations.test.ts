@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   findRegistration,
-  isKidAdmissible,
+  isDeliveryIdAdmissible,
   listRegistrations,
   registrationKey,
   withRotatedKid,
@@ -10,11 +10,15 @@ import { HOOK_ROTATION_GRACE_MS, type HookRegistration } from "../../src/hooks/t
 
 const NOW = Date.parse("2026-08-28T00:00:00.000Z");
 
+const CURRENT_ID = "current-delivery-id";
+const OLD_ID = "outgoing-delivery-id";
+
 function reg(over: Partial<HookRegistration> = {}): HookRegistration {
   return {
     connector: "acme-mcp",
     vendor: "acme",
     kid: "hk_current",
+    deliveryId: CURRENT_ID,
     createdAt: new Date(NOW).toISOString(),
     route: "/ingest/acme",
     ...over,
@@ -58,42 +62,46 @@ describe("withRotatedKid", () => {
   });
 });
 
-describe("isKidAdmissible", () => {
-  test("admits the current kid", () => {
-    expect(isKidAdmissible(reg(), "hk_current", NOW)).toBe(true);
+describe("isDeliveryIdAdmissible", () => {
+  test("admits the current id", () => {
+    expect(isDeliveryIdAdmissible(reg(), CURRENT_ID, NOW)).toBe(true);
   });
 
-  test("admits the previous kid inside the grace window", () => {
+  test("admits the outgoing id inside the grace window", () => {
     const r = reg({
-      prevKid: "hk_old",
+      prevDeliveryId: OLD_ID,
       rotatedAt: new Date(NOW - HOOK_ROTATION_GRACE_MS + 60_000).toISOString(),
     });
     // A redelivery queued against the old URL before the server re-registered
     // still has to land, or a routine rotation loses whatever was in flight.
-    expect(isKidAdmissible(r, "hk_old", NOW)).toBe(true);
+    expect(isDeliveryIdAdmissible(r, OLD_ID, NOW)).toBe(true);
   });
 
-  test("refuses the previous kid once the grace window closes", () => {
+  test("refuses the outgoing id once the grace window closes", () => {
     const r = reg({
-      prevKid: "hk_old",
+      prevDeliveryId: OLD_ID,
       rotatedAt: new Date(NOW - HOOK_ROTATION_GRACE_MS - 1).toISOString(),
     });
-    expect(isKidAdmissible(r, "hk_old", NOW)).toBe(false);
+    expect(isDeliveryIdAdmissible(r, OLD_ID, NOW)).toBe(false);
   });
 
   test.each([
-    ["an unknown kid", "hk_never"],
-    ["a kid from two rotations ago", "hk_ancient"],
-    ["an empty kid", ""],
-  ])("refuses %s", (_label, kid) => {
-    const r = reg({ prevKid: "hk_old", rotatedAt: new Date(NOW).toISOString() });
-    expect(isKidAdmissible(r, kid, NOW)).toBe(false);
+    ["an unknown id", "never-minted"],
+    ["an id from two rotations ago", "two-rotations-ago"],
+    ["an empty id", ""],
+  ])("refuses %s", (_label, id) => {
+    const r = reg({ prevDeliveryId: OLD_ID, rotatedAt: new Date(NOW).toISOString() });
+    expect(isDeliveryIdAdmissible(r, id, NOW)).toBe(false);
   });
 
-  test("refuses a previous kid whose rotation stamp is missing or unparseable", () => {
-    expect(isKidAdmissible(reg({ prevKid: "hk_old" }), "hk_old", NOW)).toBe(false);
+  test("refuses an outgoing id whose rotation stamp is missing or unparseable", () => {
+    expect(isDeliveryIdAdmissible(reg({ prevDeliveryId: OLD_ID }), OLD_ID, NOW)).toBe(false);
     expect(
-      isKidAdmissible(reg({ prevKid: "hk_old", rotatedAt: "not-a-date" }), "hk_old", NOW),
+      isDeliveryIdAdmissible(
+        reg({ prevDeliveryId: OLD_ID, rotatedAt: "not-a-date" }),
+        OLD_ID,
+        NOW,
+      ),
     ).toBe(false);
   });
 });
