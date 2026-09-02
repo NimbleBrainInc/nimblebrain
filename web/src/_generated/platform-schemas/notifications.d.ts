@@ -15,7 +15,7 @@ import { type Static } from "@sinclair/typebox";
  */
 export declare const NOTIFICATION_LEVELS: readonly ["info", "attention", "urgent"];
 export type NotificationLevel = (typeof NOTIFICATION_LEVELS)[number];
-/** Page sizes for every notification list — the tool, the store, the REST route. */
+/** Page sizes for every notification list — the tool and the store. */
 export declare const NOTIFICATION_LIST_DEFAULT_LIMIT = 20;
 export declare const NOTIFICATION_LIST_MAX_LIMIT = 100;
 export declare const NotificationsListInput: import("@sinclair/typebox").TObject<{
@@ -23,6 +23,7 @@ export declare const NotificationsListInput: import("@sinclair/typebox").TObject
     level: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"attention" | "info" | "urgent">>;
     source: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     after: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
+    order: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"desc" | "asc">>;
     limit: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
 }>;
 export type NotificationsListInput = Static<typeof NotificationsListInput>;
@@ -71,10 +72,9 @@ export interface NotificationsListOutput {
     notifications: NotificationView[];
     /**
      * Highest `seq` in this page, absent when the page is empty. Pass it back as
-     * `after` to get what arrives after it. It does not walk backwards: with
-     * more unread items than `limit`, the older ones are reached by raising
-     * `limit`, or by the workspace notifications endpoint, which pages
-     * ascending.
+     * `after` to continue — forward through a backlog under `order: "asc"`, or
+     * as a "what has arrived since" mark under the default newest-first order,
+     * which does not walk backwards.
      */
     cursor?: number;
 }

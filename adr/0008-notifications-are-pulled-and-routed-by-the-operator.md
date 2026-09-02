@@ -31,8 +31,9 @@ exposes that store as one MCP resource, an outbox it declares in its host
 manifest. The runtime reads that resource on its own schedule through the
 ordinary MCP path, and writes every envelope, durably and first, into an inbox
 owned by the workspace whose connector produced it. The inbox is the guarantee:
-the web shell renders it live and replays it over a list endpoint, and the agent
-reads it through a tool. Everything past the inbox is best-effort. Delivery to a
+the agent and the web shell both read it through one tool, which lists newest
+first for "what is new" and oldest first for the replay the event stream cannot
+give a client that was away. Everything past the inbox is best-effort. Delivery to a
 human is a route — operator configuration on the workspace record naming a
 deterministic tool call on a connector the workspace already installed. The
 runtime grows no SMTP, Slack, or WhatsApp client.
@@ -66,6 +67,13 @@ member has their route skipped and self-healing on re-add (ADR-0007).
   crosses the wall (ADR-0005) and a workspace delete takes its notifications
   with it. It carries no owner sub-partition: a notification is authored by a
   connector, so any member who can reach that connector's tools can read it.
+- **The inbox has one read surface, not two.** `notifications__list` serves the
+  agent and the web shell alike, so there is one authorization story — the
+  session's workspace was membership-validated at establishment and a caller
+  cannot name another one. A REST route addressing a workspace by path would
+  need its own membership check, which is a second implementation of the
+  decision that must never be wrong; the browser already names its workspace on
+  every request, so it buys nothing to pay for that.
 - Latency is one poll interval, not one network hop. That is the honest cost of
   the runtime pacing its own load, and it rules this out for sub-second cases.
 - Server-authored text now reaches a human's attention surface. What governs it

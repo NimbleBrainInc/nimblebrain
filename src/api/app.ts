@@ -16,7 +16,6 @@ import { hooksRoutes } from "./routes/hooks.ts";
 import { mcpRoutes } from "./routes/mcp.ts";
 import { mcpAuthRoutes } from "./routes/mcp-auth.ts";
 import { metricsRoutes } from "./routes/metrics.ts";
-import { notificationRoutes } from "./routes/notifications.ts";
 import { resourceRoutes } from "./routes/resources.ts";
 import { toolRoutes } from "./routes/tools.ts";
 import { wellKnownRoutes } from "./routes/well-known.ts";
@@ -87,12 +86,6 @@ export function createApp(
   // `requireWorkspace` `use("*")` middleware doesn't 400 us on a
   // path that intentionally has no X-Workspace-Id header.
   app.route("/", conversationEventRoutes(ctx));
-
-  // Notification inbox replay. Its workspace is a path segment, not the
-  // `X-Workspace-Id` header, so it registers alongside the conversation SSE
-  // route — ahead of the sub-apps whose `use("*")` workspace middleware would
-  // otherwise 400 a request that deliberately carries no header.
-  app.route("/", notificationRoutes(ctx));
 
   app.route("/", bootstrapRoutes(ctx));
   app.route("/", chatRoutes(ctx));

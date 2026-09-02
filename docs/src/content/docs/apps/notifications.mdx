@@ -334,9 +334,10 @@ server.registerResource(
 2. Every event is written to that workspace's inbox — durably, and before
    anything else happens. That write is the guarantee; everything after it is
    best-effort.
-3. The web client renders it live, and replays it after a reconnect.
+3. The web client renders it live, and replays what it missed after a reconnect.
 4. The agent reads it with `notifications__list`, framed as untrusted data from
-   a connector.
+   a connector — newest first, or oldest first to walk forward through a
+   backlog.
 5. If an operator has written a route that matches, the host delivers it — a
    Slack message, a mail, an agent run — as the admin who wrote the route.
 

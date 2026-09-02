@@ -54,14 +54,24 @@ import {
  * Reads scan the retained day files rather than consulting a cache. The volume
  * is a few events an hour per workspace against a 90-day retention, so the
  * scan is small, and every operation seeing exactly what is on disk matters
- * more than the microseconds: the poller, the tool surface and the REST route
- * all read and write this same tree.
+ * more than the microseconds: the poller and the tool surface read and write
+ * this same tree.
  */
 
 /** How long an item stays in the inbox. The workspace audit line outlives it. */
 export const NOTIFICATION_RETENTION_DAYS = 90;
 
 const DAY_FILE_RE = /^(\d{4}-\d{2}-\d{2})\.jsonl$/;
+
+/**
+ * Which end of the inbox a list reads from.
+ *
+ * `desc` answers "what is new" and is the default: an inbox is read newest
+ * first. `asc` answers "what did I miss", and is the only one of the two that
+ * pages — with `after` set to the highest `seq` already seen, successive calls
+ * walk forward through a backlog instead of re-returning its newest page.
+ */
+export type NotificationOrder = "asc" | "desc";
 
 /** Filters for {@link NotificationStore.list}. All optional; all narrowing. */
 export interface NotificationListOptions {
@@ -75,6 +85,8 @@ export interface NotificationListOptions {
   after?: number;
   /** Page size, clamped to {@link NOTIFICATION_LIST_MAX_LIMIT}. */
   limit?: number;
+  /** Newest first (default) or oldest first. See {@link NotificationOrder}. */
+  order?: NotificationOrder;
 }
 
 /** What an append did: the stored item, and whether this call created it. */
@@ -171,33 +183,26 @@ export class NotificationStore {
   }
 
   /**
-   * Items matching the filters, **newest first**, capped.
+   * Items matching the filters, capped, newest first unless asked otherwise.
    *
-   * Newest-first because this backs a human's inbox and an agent's "what is
-   * new"; `after` still means "seq greater than", so a caller resuming from a
-   * cursor gets what it has not seen with the most recent at the top.
+   * `after` means "seq greater than" in both directions, but it only *pages*
+   * ascending: reading newest-first, a caller who passes back the highest
+   * `seq` it saw gets what has since arrived, which is the right answer for
+   * "what is new" and no answer at all for "what did I miss". Ascending is the
+   * replay the SSE stream cannot provide, so a tab opened tomorrow can walk
+   * forward through what a tab open today saw live.
    */
   list(opts: NotificationListOptions = {}): Notification[] {
     const limit = clampLimit(opts.limit);
+    const items = this.#loadAll();
+    if (opts.order !== "asc") items.reverse();
     const out: Notification[] = [];
-    for (const item of this.#loadAll().reverse()) {
+    for (const item of items) {
       if (!matchesFilters(item, opts)) continue;
       out.push(item);
       if (out.length >= limit) break;
     }
     return out;
-  }
-
-  /**
-   * Items with `seq` greater than `after`, in **ascending seq order** — the
-   * replay the SSE stream cannot provide, so a tab opened tomorrow sees what a
-   * tab open today saw live.
-   */
-  since(after: number, limit?: number): Notification[] {
-    const cap = clampLimit(limit);
-    return this.#loadAll()
-      .filter((item) => item.seq > after)
-      .slice(0, cap);
   }
 
   /** One item by its `(source, eventId)` identity, or `undefined`. */

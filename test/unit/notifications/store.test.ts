@@ -243,15 +243,46 @@ describe("list", () => {
   });
 });
 
-describe("since", () => {
-  test("returns ascending seq order for replay", () => {
+describe("order", () => {
+  function seedThree(store: NotificationStore): void {
+    for (const eventId of ["e1", "e2", "e3"]) store.append("acme", envelope({ eventId }));
+  }
+
+  test("ascending is the replay order", () => {
     const store = storeFor(WS_A);
-    store.append("acme", envelope({ eventId: "e1" }));
-    store.append("acme", envelope({ eventId: "e2" }));
-    store.append("acme", envelope({ eventId: "e3" }));
-    expect(store.since(0).map((i) => i.seq)).toEqual([1, 2, 3]);
-    expect(store.since(1).map((i) => i.envelope.eventId)).toEqual(["e2", "e3"]);
-    expect(store.since(3)).toEqual([]);
+    seedThree(store);
+    expect(store.list({ order: "asc" }).map((i) => i.seq)).toEqual([1, 2, 3]);
+    expect(store.list({ order: "asc", after: 1 }).map((i) => i.envelope.eventId)).toEqual([
+      "e2",
+      "e3",
+    ]);
+    expect(store.list({ order: "asc", after: 3 })).toEqual([]);
+  });
+
+  test("ascending pages forward; descending does not", () => {
+    const store = storeFor(WS_A);
+    seedThree(store);
+    // The property the two orders differ on. Ascending takes the OLDEST page
+    // above the cursor, so repeating with the page's highest seq advances.
+    const first = store.list({ order: "asc", limit: 2 });
+    expect(first.map((i) => i.seq)).toEqual([1, 2]);
+    const second = store.list({ order: "asc", limit: 2, after: 2 });
+    expect(second.map((i) => i.seq)).toEqual([3]);
+
+    // Descending takes the NEWEST page, so its own cursor returns nothing —
+    // it is a "what has arrived since" mark, not a pager.
+    const newest = store.list({ limit: 2 });
+    expect(newest.map((i) => i.seq)).toEqual([3, 2]);
+    expect(store.list({ limit: 2, after: 3 })).toEqual([]);
+  });
+
+  test("filters apply in both directions", () => {
+    const store = storeFor(WS_A);
+    seedThree(store);
+    store.append("beta", envelope({ eventId: "b1" }));
+    expect(store.list({ order: "asc", source: "beta" }).map((i) => i.seq)).toEqual([4]);
+    store.markRead([{ source: "acme", eventId: "e1" }]);
+    expect(store.list({ order: "asc", unreadOnly: true }).map((i) => i.seq)).toEqual([2, 3, 4]);
   });
 });
 

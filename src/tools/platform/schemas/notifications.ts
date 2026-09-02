@@ -14,7 +14,7 @@ import { StringEnum } from "./_shared.ts";
 export const NOTIFICATION_LEVELS = ["info", "attention", "urgent"] as const;
 export type NotificationLevel = (typeof NOTIFICATION_LEVELS)[number];
 
-/** Page sizes for every notification list — the tool, the store, the REST route. */
+/** Page sizes for every notification list — the tool and the store. */
 export const NOTIFICATION_LIST_DEFAULT_LIMIT = 20;
 export const NOTIFICATION_LIST_MAX_LIMIT = 100;
 
@@ -39,9 +39,17 @@ export const NotificationsListInput = Type.Object({
     Type.Number({
       minimum: 0,
       description:
-        "Only items with a `seq` greater than this — a resume point, not a backlog pager. " +
-        "Pass the highest `seq` you have already seen to get what has arrived since; results " +
-        "stay newest-first, so widen `limit` rather than paging to reach further back.",
+        "Only items with a `seq` greater than this. Pass back the `cursor` from your last " +
+        'call: with the default newest-first order that means "what has arrived since", and ' +
+        'with `order: "asc"` it walks forward through a backlog one page at a time.',
+    }),
+  ),
+  order: Type.Optional(
+    StringEnum(["desc", "asc"] as const, {
+      description:
+        'Newest first (`desc`, the default) answers "what is new". `asc` answers "what did ' +
+        'I miss" and is the one that pages: repeat with `after` set to the previous ' +
+        "`cursor` to walk a backlog forward.",
     }),
   ),
   limit: Type.Optional(
@@ -108,10 +116,9 @@ export interface NotificationsListOutput {
   notifications: NotificationView[];
   /**
    * Highest `seq` in this page, absent when the page is empty. Pass it back as
-   * `after` to get what arrives after it. It does not walk backwards: with
-   * more unread items than `limit`, the older ones are reached by raising
-   * `limit`, or by the workspace notifications endpoint, which pages
-   * ascending.
+   * `after` to continue — forward through a backlog under `order: "asc"`, or
+   * as a "what has arrived since" mark under the default newest-first order,
+   * which does not walk backwards.
    */
   cursor?: number;
 }

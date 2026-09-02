@@ -159,6 +159,39 @@ describe("list", () => {
   });
 });
 
+describe("order is what makes the cursor a pager", () => {
+  // The replay the SSE stream cannot do: a client that was away walks forward
+  // through what it missed, one page at a time, from the cursor it holds.
+  test("ascending pages forward from the returned cursor", async () => {
+    for (const id of ["a1", "a2", "a3"]) seed(WS_A, "acme", id);
+
+    const first = payload<NotificationsListOutput>(
+      await exec("list", { order: "asc", limit: 2 }, WS_A),
+    );
+    expect(first.notifications.map((n) => n.seq)).toEqual([1, 2]);
+    expect(first.cursor).toBe(2);
+
+    const second = payload<NotificationsListOutput>(
+      await exec("list", { order: "asc", limit: 2, after: first.cursor }, WS_A),
+    );
+    expect(second.notifications.map((n) => n.seq)).toEqual([3]);
+  });
+
+  test("descending is the default and returns the newest page", async () => {
+    for (const id of ["a1", "a2", "a3"]) seed(WS_A, "acme", id);
+    const out = payload<NotificationsListOutput>(await exec("list", { limit: 2 }, WS_A));
+    expect(out.notifications.map((n) => n.seq)).toEqual([3, 2]);
+    expect(out.cursor).toBe(3);
+  });
+
+  test("ascending stays inside the bound workspace", async () => {
+    seed(WS_A, "acme", "a1");
+    seed(WS_B, "acme", "b1");
+    const out = payload<NotificationsListOutput>(await exec("list", { order: "asc" }, WS_A));
+    expect(out.notifications.map((n) => n.id)).toEqual(["acme:a1"]);
+  });
+});
+
 describe("mark_read fails closed across the wall", () => {
   test("an id from another workspace marks nothing and is reported skipped", async () => {
     seed(WS_A, "acme", "a1");
