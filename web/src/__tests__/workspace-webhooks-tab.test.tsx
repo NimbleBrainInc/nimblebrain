@@ -12,6 +12,10 @@
 //      nowhere, and contradicting the door, which already refuses that record.
 // ---------------------------------------------------------------------------
 
+// Deliberately does NOT `mock.module("../context/WorkspaceContext", …)`: bun
+// module mocks are process-global, and a partial replacement leaks into every
+// other file that imports the real provider. The real provider takes its state
+// as props, so there is nothing to gain by mocking it.
 import { afterEach, describe, expect, mock, test } from "bun:test";
 import { realClient } from "../../test/setup";
 
@@ -36,17 +40,22 @@ mock.module("../api/client", () => ({
   }),
 }));
 
-mock.module("../context/WorkspaceContext", () => ({
-  useWorkspaceContext: () => ({
-    activeWorkspace: { id: "ws_outbound", name: "Outbound" },
-    loading: false,
-  }),
-}));
-
 const React = await import("react");
 const ReactDOMClient = await import("react-dom/client");
 const { act } = await import("react");
+const { WorkspaceProvider } = await import("../context/WorkspaceContext");
 const { WorkspaceWebhooksTab } = await import("../pages/settings/WorkspaceWebhooksTab");
+
+import type { WorkspaceInfo } from "../context/WorkspaceContext";
+
+const WS: WorkspaceInfo = {
+  id: "ws_outbound",
+  name: "Outbound",
+  bundles: [],
+  memberCount: 1,
+  isPersonal: false,
+  userRole: "admin",
+};
 
 let unmount: (() => void) | null = null;
 
@@ -68,7 +77,13 @@ async function mount(): Promise<HTMLDivElement> {
   document.body.appendChild(container);
   const root = ReactDOMClient.createRoot(container);
   await act(async () => {
-    root.render(React.createElement(WorkspaceWebhooksTab));
+    root.render(
+      React.createElement(
+        WorkspaceProvider,
+        { initialWorkspaces: [WS], initialActiveId: WS.id },
+        React.createElement(WorkspaceWebhooksTab),
+      ),
+    );
   });
   unmount = () => {
     act(() => root.unmount());
