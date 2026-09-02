@@ -6,6 +6,7 @@ import { createComposeSource } from "./compose.ts";
 import { createConversationsSource } from "./conversations.ts";
 import { createFilesSource } from "./files.ts";
 import { createHomeSource } from "./home.ts";
+import { createHooksSource } from "./hooks.ts";
 import { createInstructionsSource } from "./instructions.ts";
 import { createSkillsSource } from "./skills.ts";
 import { createUsageSource } from "./usage.ts";
@@ -43,6 +44,7 @@ export async function createPlatformSources(
     await createAutomationsSource(runtime, eventSink),
     createUsageSource(runtime, eventSink),
     createInstructionsSource(runtime, eventSink),
+    createHooksSource(runtime, eventSink),
     createSkillsSource(runtime, eventSink, runtime.getFeatures()),
     createComposeSource(runtime, eventSink),
   ];

@@ -62,6 +62,7 @@ import { SettingsAppPanel } from "./pages/settings/SettingsAppPanel";
 import { SkillsTab } from "./pages/settings/SkillsTab";
 import { UsersTab } from "./pages/settings/UsersTab";
 import { WorkspaceAppsTab } from "./pages/settings/WorkspaceAppsTab";
+import { WorkspaceWebhooksTab } from "./pages/settings/WorkspaceWebhooksTab";
 import { WorkspaceConnectorsTab } from "./pages/settings/WorkspaceConnectorsTab";
 import { WorkspaceDetailPage } from "./pages/settings/WorkspaceDetailPage";
 import { WorkspaceGeneralTab } from "./pages/settings/WorkspaceGeneralTab";
@@ -425,7 +426,7 @@ function AuthenticatedAppContent({
                   chat's In-context panel. Renders in the main area beside the
                   docked chat (the `/w/` prefix keeps ChatChrome mounted). */}
               <Route path="context/:convId" element={<ContextInspectorPage />} />
-              {/* Workspace settings — General/Members/Usage/Apps/Connectors/Skills. */}
+              {/* Workspace settings — General/Members/Usage/Apps/Connectors/Skills/Webhooks. */}
               <Route path="settings" element={<WorkspaceSettingsPage />}>
                 <Route index element={<Navigate to="general" replace />} />
                 <Route path="general" element={<WorkspaceGeneralTab />} />
@@ -436,6 +437,7 @@ function AuthenticatedAppContent({
                 <Route path="connectors/browse" element={<ConnectorBrowsePage />} />
                 <Route path="connectors/:serverName" element={<ConnectorDetailPage />} />
                 <Route path="skills" element={<SkillsTab />} />
+                <Route path="webhooks" element={<WorkspaceWebhooksTab />} />
               </Route>
               {/* Unmatched path INSIDE a workspace. This has to be a child of
                   `/w/:slug`, not the top-level splat: the router ranks by
