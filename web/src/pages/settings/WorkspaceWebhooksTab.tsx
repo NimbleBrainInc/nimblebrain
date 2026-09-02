@@ -93,7 +93,26 @@ function WebhookUrl({ url }: { url: string | null }) {
   );
 }
 
-function RotateControl({ hook, onRotated }: { hook: Webhook; onRotated: () => void }) {
+/**
+ * One stream: its address, its facts, and the control that replaces it.
+ *
+ * The rotate TRIGGER sits in the Section's action slot; the confirmation and any
+ * outcome render in the body. That split is not cosmetic. The slot is
+ * `shrink-0` against a truncating title, so a variable-width panel there takes
+ * the header's whole width and clips the title — and, more importantly, an
+ * outcome rendered inside the panel dies with it: closing on success would
+ * unmount the one line saying the connector did NOT take the new URL, which is
+ * the case an admin most needs to see.
+ */
+function WebhookRow({
+  hook,
+  flush,
+  onRotated,
+}: {
+  hook: Webhook;
+  flush: boolean;
+  onRotated: () => void;
+}) {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -109,7 +128,8 @@ function RotateControl({ hook, onRotated }: { hook: Webhook; onRotated: () => vo
       const out = parseToolResult<{ registered?: boolean; error?: string | null }>(res);
       // A mint the connector did not register is NOT a failure to report as one:
       // the new URL works at the door, and the vendor is still on the old one,
-      // which the grace window is holding open.
+      // which the grace window is holding open. It IS the case that ends with
+      // deliveries stopping if nobody acts, so it has to outlive the panel.
       if (out && out.registered === false) {
         setError(
           `Rotated, but ${hook.connector} did not register the new URL with ${hook.vendor}. ` +
@@ -126,36 +146,68 @@ function RotateControl({ hook, onRotated }: { hook: Webhook; onRotated: () => vo
     }
   };
 
-  if (!open) {
-    return (
-      <Button variant="outline" size="sm" onClick={() => setOpen(true)}>
-        <RefreshCw className="h-3.5 w-3.5 mr-1.5" />
-        Rotate
-      </Button>
-    );
-  }
-
-  // One confirming click, and no typed word. Rotating is not destructive: the
-  // current URL keeps working through the grace window and the connector
-  // re-registers the new one on its own, so the cost of an accidental rotation
-  // is a re-registration nobody has to perform. Typed confirmation is for an
-  // action you cannot take back.
   return (
-    <div className="space-y-2">
-      <div className="flex flex-wrap items-center gap-2">
-        <Button size="sm" onClick={rotate} disabled={busy}>
-          {busy ? "Rotating…" : "Rotate now"}
-        </Button>
-        <Button variant="ghost" size="sm" onClick={() => setOpen(false)} disabled={busy}>
-          Cancel
-        </Button>
-        <p className="text-xs text-muted-foreground">
-          Mints a new URL and asks {hook.connector} to register it with {hook.vendor}. The current
-          URL keeps working for a grace window, then stops.
-        </p>
+    <Section
+      title={hook.vendor}
+      description={hook.connector}
+      flush={flush}
+      action={
+        open ? null : (
+          <Button variant="outline" size="sm" onClick={() => setOpen(true)}>
+            <RefreshCw className="h-3.5 w-3.5 mr-1.5" />
+            Rotate
+          </Button>
+        )
+      }
+    >
+      <div className="space-y-3">
+        <WebhookUrl url={hook.url} />
+        {/* `max-content` so a label hugs its value. A plain two-column grid
+            splits the container, which pushes every value to the far side of
+            the page and reads as two unrelated lists. */}
+        <dl className="grid grid-cols-[max-content_1fr] gap-x-6 gap-y-1 text-xs text-muted-foreground">
+          <dt>Delivered to</dt>
+          <dd className="font-mono text-foreground/80">{hook.route}</dd>
+          <dt>Created</dt>
+          <dd>{new Date(hook.createdAt).toLocaleString()}</dd>
+          {hook.rotatedAt ? (
+            <>
+              <dt>Last rotated</dt>
+              <dd>{new Date(hook.rotatedAt).toLocaleString()}</dd>
+            </>
+          ) : null}
+        </dl>
+        {hook.previousStillValid ? (
+          // Worth saying plainly: mid-rotation is exactly when it is still safe
+          // to defer re-registering, and the operator cannot tell from the URL.
+          <p className="text-xs text-muted-foreground">
+            The previous URL still works while its grace window is open.
+          </p>
+        ) : null}
+        {open ? (
+          // One confirming click, and no typed word. Rotating is not
+          // destructive: the current URL keeps working through the grace window
+          // and the connector re-registers the new one on its own, so the cost
+          // of an accidental rotation is a re-registration nobody has to
+          // perform. Typed confirmation is for what you cannot take back.
+          <div className="flex flex-wrap items-center gap-2 rounded-md border border-border/60 p-3">
+            <Button size="sm" onClick={rotate} disabled={busy}>
+              {busy ? "Rotating…" : "Rotate now"}
+            </Button>
+            <Button variant="ghost" size="sm" onClick={() => setOpen(false)} disabled={busy}>
+              Cancel
+            </Button>
+            <p className="text-xs text-muted-foreground flex-1 min-w-48">
+              Mints a new URL and asks {hook.connector} to register it with {hook.vendor}. The
+              current URL keeps working for a grace window, then stops.
+            </p>
+          </div>
+        ) : null}
+        {/* Outside the panel, deliberately: a rotation's outcome outlives the
+            control that started it. */}
+        {error ? <InlineError message={error} /> : null}
       </div>
-      {error ? <InlineError message={error} /> : null}
-    </div>
+    </Section>
   );
 }
 
@@ -190,40 +242,12 @@ export function WorkspaceWebhooksTab() {
           <EmptyState message="No connector in this workspace declares an inbound stream, so there is no delivery URL to show. One is minted when a connector that receives provider events is installed." />
         ) : null}
         {(hooks ?? []).map((hook, i) => (
-          <Section
+          <WebhookRow
             key={`${hook.connector}:${hook.vendor}`}
-            title={hook.vendor}
-            description={hook.connector}
+            hook={hook}
             flush={i === 0}
-            action={<RotateControl hook={hook} onRotated={load} />}
-          >
-            <div className="space-y-3">
-              <WebhookUrl url={hook.url} />
-              {/* `max-content` so a label hugs its value. A plain two-column grid
-                  splits the container, which pushes every value to the far side
-                  of the page and reads as two unrelated lists. */}
-              <dl className="grid grid-cols-[max-content_1fr] gap-x-6 gap-y-1 text-xs text-muted-foreground">
-                <dt>Delivered to</dt>
-                <dd className="font-mono text-foreground/80">{hook.route}</dd>
-                <dt>Created</dt>
-                <dd>{new Date(hook.createdAt).toLocaleString()}</dd>
-                {hook.rotatedAt ? (
-                  <>
-                    <dt>Last rotated</dt>
-                    <dd>{new Date(hook.rotatedAt).toLocaleString()}</dd>
-                  </>
-                ) : null}
-              </dl>
-              {hook.previousStillValid ? (
-                // Worth saying plainly: mid-rotation is exactly when it is still
-                // safe to defer re-registering, and the operator cannot tell from
-                // the URL alone.
-                <p className="text-xs text-muted-foreground">
-                  The previous URL still works while its grace window is open.
-                </p>
-              ) : null}
-            </div>
-          </Section>
+            onRotated={load}
+          />
         ))}
       </RequireActiveWorkspace>
     </div>
