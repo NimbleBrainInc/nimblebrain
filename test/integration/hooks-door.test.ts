@@ -9,7 +9,11 @@ import {
 } from "../../src/api/routes/hooks.ts";
 import type { AppContext } from "../../src/api/types.ts";
 import { registrationKey } from "../../src/hooks/registrations.ts";
-import { type HookIdentity, sealHookToken } from "../../src/hooks/token.ts";
+import {
+  deliveryIdHash,
+  type HookIdentity,
+  newDeliveryId,
+} from "../../src/hooks/token.ts";
 import { HOOK_ROTATION_GRACE_MS, type HookRegistration } from "../../src/hooks/types.ts";
 import { RequestRateLimiter } from "../../src/api/rate-limiter.ts";
 import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
@@ -34,6 +38,10 @@ const IDENTITY: HookIdentity = { tid: TID, key: KEY };
 const CONNECTOR = "acme-billing-mcp";
 const VENDOR = "acme";
 const KID = "hk_current0000001";
+/** The id a vendor holds. Fixed per run so a test can post to a known URL. */
+const DELIVERY_ID = newDeliveryId();
+/** An id no registration was ever minted for. */
+const UNKNOWN_ID = newDeliveryId();
 const ROUTE = "/ingest/acme";
 const CONNECTOR_URL = "https://connector.internal/mcp";
 
@@ -79,10 +87,16 @@ function registration(over: Partial<HookRegistration> = {}): HookRegistration {
     connector: CONNECTOR,
     vendor: VENDOR,
     kid: KID,
+    idHash: deliveryIdHash(DELIVERY_ID),
     createdAt: new Date().toISOString(),
     route: ROUTE,
     ...over,
   };
+}
+
+/** The URL a vendor was handed, for a given delivery id. */
+function hookUrl(id: string = DELIVERY_ID): string {
+  return `/v1/hooks/${id}`;
 }
 
 async function seedWorkspace(opts: {
@@ -104,13 +118,6 @@ async function seedWorkspace(opts: {
           ],
     hooks: opts.hooks ?? { [registrationKey(CONNECTOR, VENDOR)]: registration() },
   });
-}
-
-function token(over: Partial<Parameters<typeof sealHookToken>[0]> = {}, key: Buffer = KEY): string {
-  return sealHookToken(
-    { tid: TID, wid: wsId, connector: CONNECTOR, vendor: VENDOR, kid: KID, ...over },
-    key,
-  );
 }
 
 /** Records the forward instead of making it, and answers as the connector would. */
@@ -182,7 +189,7 @@ afterEach(() => {
 
 describe("a legitimate delivery", () => {
   test("is forwarded to the connector's declared route", async () => {
-    const res = await deliver(makeApp(), `/v1/hooks/${CONNECTOR}/${VENDOR}/${token()}`);
+    const res = await deliver(makeApp(), hookUrl());
     expect(res.status).toBe(202);
     expect(forwarded).toHaveLength(1);
     expect(forwarded[0]?.url).toBe("https://connector.internal/ingest/acme");
@@ -193,7 +200,7 @@ describe("a legitimate delivery", () => {
     // runtime that rewrote this would be deciding on its behalf whether the
     // vendor should retry.
     upstreamResponse = () => new Response("busy", { status: 503 });
-    const res = await deliver(makeApp(), `/v1/hooks/${CONNECTOR}/${VENDOR}/${token()}`);
+    const res = await deliver(makeApp(), hookUrl());
     expect(res.status).toBe(503);
   });
 
@@ -203,14 +210,14 @@ describe("a legitimate delivery", () => {
     // stamped kid would reach nothing and read as a broken pipeline whose
     // obvious repair is a hole in that rule. Correlation lives in the log line
     // asserted further down instead.
-    await deliver(makeApp(), `/v1/hooks/${CONNECTOR}/${VENDOR}/${token()}`);
+    await deliver(makeApp(), hookUrl());
     const headers = forwarded[0]?.init.headers as Headers;
     expect(headers.get("x-nb-hook-kid")).toBeNull();
     expect([...headers.keys()].filter((k) => k.startsWith("x-nb-"))).toEqual([]);
   });
 
   test("strips an inbound x-nb-* header the caller invented", async () => {
-    await deliver(makeApp(), `/v1/hooks/${CONNECTOR}/${VENDOR}/${token()}`, {
+    await deliver(makeApp(), hookUrl(), {
       headers: { "x-nb-hook-kid": "hk_forged", "x-nb-future-thing": "v" },
     });
     const headers = forwarded[0]?.init.headers as Headers;
@@ -223,7 +230,7 @@ describe("a legitimate delivery", () => {
     // being on this path at all; binary bytes are what prove nothing touched it.
     const body = new Uint8Array(256);
     for (let i = 0; i < body.length; i++) body[i] = i;
-    await deliver(makeApp(), `/v1/hooks/${CONNECTOR}/${VENDOR}/${token()}`, {
+    await deliver(makeApp(), hookUrl(), {
       body,
       headers: { "content-type": "application/octet-stream" },
     });
@@ -233,7 +240,7 @@ describe("a legitimate delivery", () => {
   });
 
   test("does not forward an inbound identity header", async () => {
-    await deliver(makeApp(), `/v1/hooks/${CONNECTOR}/${VENDOR}/${token()}`, {
+    await deliver(makeApp(), hookUrl(), {
       headers: { authorization: "Bearer forged", "x-tenant-id": "tenant-b" },
     });
     const headers = forwarded[0]?.init.headers as Headers;
@@ -260,7 +267,7 @@ describe("the response the vendor gets", () => {
           "content-length": "45",
         },
       });
-    const res = await deliver(makeApp(), `/v1/hooks/${CONNECTOR}/${VENDOR}/${token()}`);
+    const res = await deliver(makeApp(), hookUrl());
     expect(res.status).toBe(202);
     expect(res.headers.get("content-encoding")).toBeNull();
     expect(res.headers.get("content-length")).toBeNull();
@@ -279,7 +286,7 @@ describe("the response the vendor gets", () => {
           "keep-alive": "timeout=5",
         },
       });
-    const res = await deliver(makeApp(), `/v1/hooks/${CONNECTOR}/${VENDOR}/${token()}`);
+    const res = await deliver(makeApp(), hookUrl());
     // These describe the hop the runtime made, not the one it is answering on.
     expect(res.headers.get("connection")).toBeNull();
     expect(res.headers.get("keep-alive")).toBeNull();
@@ -291,72 +298,87 @@ describe("the response the vendor gets", () => {
 });
 
 describe("every way a delivery is refused looks the same", () => {
-  test("a token that does not open", async () => {
+  test("an id that is not a delivery id at all", async () => {
+    await expectIndistinguishable404(await deliver(makeApp(), hookUrl("not-an-id")));
+  });
+
+  test("a well-formed id no registration was minted for", async () => {
+    // The replacement for every "sealed under the wrong key / for the wrong
+    // tenant" case. Those asked whether a capability minted by someone else's
+    // authority works here; an opaque id has no authority to forge, so the whole
+    // class collapses into one question — does this id hash to a registration —
+    // and this is it.
+    await expectIndistinguishable404(await deliver(makeApp(), hookUrl(UNKNOWN_ID)));
+  });
+
+  test("an id that is a PREFIX of the real one", async () => {
+    // A scan comparing loosely would admit this. The comparison is over whole
+    // hashes, so a prefix is simply a different id.
     await expectIndistinguishable404(
-      await deliver(makeApp(), `/v1/hooks/${CONNECTOR}/${VENDOR}/not-a-token`),
+      await deliver(makeApp(), hookUrl(DELIVERY_ID.slice(0, -1))),
     );
   });
 
-  test("a token sealed under another tenant's key", async () => {
-    await expectIndistinguishable404(
-      await deliver(makeApp(), `/v1/hooks/${CONNECTOR}/${VENDOR}/${token({}, OTHER_TENANT_KEY)}`),
-    );
+  test("another workspace's id does not reach this workspace's connector", async () => {
+    // The isolation the sealed `wid` used to carry. Resolution is now a lookup,
+    // so the property has to be asserted against the lookup: an id minted for
+    // one workspace forwards for THAT workspace, and nothing about the door's
+    // scan may let it land on a neighbour's registration.
+    const other = await store.create({ name: "other", ownerId: "usr_other" });
+    const otherId = newDeliveryId();
+    await seedWorkspace({
+      id: other.id,
+      hooks: {
+        [registrationKey(CONNECTOR, VENDOR)]: registration({
+          idHash: deliveryIdHash(otherId),
+          route: "/ingest/other",
+        }),
+      },
+    });
+
+    const res = await deliver(makeApp(), hookUrl(otherId));
+    expect(res.status).toBe(202);
+    // Forwarded on the OTHER workspace's route, never this one's.
+    expect(forwarded).toHaveLength(1);
+    expect(forwarded[0]?.url).toContain("/ingest/other");
   });
 
-  test("a token sealed for another tenant", async () => {
-    const wire = sealHookToken(
-      { tid: "tenant-b", wid: wsId, connector: CONNECTOR, vendor: VENDOR, kid: KID },
-      KEY,
-    );
-    await expectIndistinguishable404(
-      await deliver(makeApp(), `/v1/hooks/${CONNECTOR}/${VENDOR}/${wire}`),
-    );
-  });
-
-  test("a path connector that disagrees with the sealed one", async () => {
-    // The runtime routes on the SEALED values; the path segments are for
-    // operators reading logs, and are cross-checked rather than trusted.
-    await expectIndistinguishable404(
-      await deliver(makeApp(), `/v1/hooks/other-mcp/${VENDOR}/${token()}`),
-    );
-  });
-
-  test("a path vendor that disagrees with the sealed one", async () => {
-    await expectIndistinguishable404(
-      await deliver(makeApp(), `/v1/hooks/${CONNECTOR}/other/${token()}`),
-    );
-  });
-
-  test("a workspace that no longer exists", async () => {
-    const wire = sealHookToken(
-      { tid: TID, wid: "ws_gone", connector: CONNECTOR, vendor: VENDOR, kid: KID },
-      KEY,
-    );
-    await expectIndistinguishable404(
-      await deliver(makeApp(), `/v1/hooks/${CONNECTOR}/${VENDOR}/${wire}`),
-    );
+  test("an id whose workspace is gone", async () => {
+    // Its registration went with the record, so the scan finds nothing — the
+    // same answer as an id that never existed, which is the point.
+    const doomed = await store.create({ name: "doomed", ownerId: "usr_doomed" });
+    const doomedId = newDeliveryId();
+    await seedWorkspace({
+      id: doomed.id,
+      hooks: {
+        [registrationKey(CONNECTOR, VENDOR)]: registration({ idHash: deliveryIdHash(doomedId) }),
+      },
+    });
+    await store.delete(doomed.id);
+    await expectIndistinguishable404(await deliver(makeApp(), hookUrl(doomedId)));
   });
 
   test("a registration that was never minted", async () => {
     await seedWorkspace({ hooks: {} });
     await expectIndistinguishable404(
-      await deliver(makeApp(), `/v1/hooks/${CONNECTOR}/${VENDOR}/${token()}`),
+      await deliver(makeApp(), hookUrl()),
     );
   });
 
-  test("a key id from before the last rotation, past its grace window", async () => {
+  test("a registration whose id rotated away, past its grace window", async () => {
+    // Replaces a case that asked about the KEY id. The door no longer weighs
+    // that: the id and the key rotate together, so a second window would be a
+    // second truth to keep in step. The id's window is the one gate.
     await seedWorkspace({
       hooks: {
         [registrationKey(CONNECTOR, VENDOR)]: registration({
-          kid: "hk_new",
-          prevKid: KID,
-          rotatedAt: new Date(Date.now() - HOOK_ROTATION_GRACE_MS - 1000).toISOString(),
+          idHash: deliveryIdHash(newDeliveryId()),
+          prevIdHash: deliveryIdHash(DELIVERY_ID),
+          rotatedAt: new Date(Date.now() - HOOK_ROTATION_GRACE_MS - 1_000).toISOString(),
         }),
       },
     });
-    await expectIndistinguishable404(
-      await deliver(makeApp(), `/v1/hooks/${CONNECTOR}/${VENDOR}/${token()}`),
-    );
+    await expectIndistinguishable404(await deliver(makeApp(), hookUrl()));
   });
 
   test("a connector that has been uninstalled", async () => {
@@ -364,7 +386,7 @@ describe("every way a delivery is refused looks the same", () => {
     // door's own check, independent of uninstall's cleanup.
     await seedWorkspace({ installed: false });
     await expectIndistinguishable404(
-      await deliver(makeApp(), `/v1/hooks/${CONNECTOR}/${VENDOR}/${token()}`),
+      await deliver(makeApp(), hookUrl()),
     );
   });
 });
@@ -380,7 +402,7 @@ describe("a rotated key id inside the grace window", () => {
         }),
       },
     });
-    const res = await deliver(makeApp(), `/v1/hooks/${CONNECTOR}/${VENDOR}/${token()}`);
+    const res = await deliver(makeApp(), hookUrl());
     expect(res.status).toBe(202);
     expect(forwarded).toHaveLength(1);
   });
@@ -390,7 +412,7 @@ describe("shape and size", () => {
   test.each(["GET", "PUT", "DELETE", "PATCH"])("%s is refused with 405, not 404", async (method) => {
     // 405 for ANY three-segment path under the prefix, so the difference
     // between "405 here" and "404 there" cannot map out which paths exist.
-    const res = await deliver(makeApp(), "/v1/hooks/whatever/anything/at-all", {
+    const res = await deliver(makeApp(), hookUrl("whatever"), {
       method,
       body: undefined,
     });
@@ -399,7 +421,7 @@ describe("shape and size", () => {
   });
 
   test("a body over the cap is refused with 413 before the token is opened", async () => {
-    const res = await deliver(makeApp(), `/v1/hooks/${CONNECTOR}/${VENDOR}/${token()}`, {
+    const res = await deliver(makeApp(), hookUrl(), {
       body: new Uint8Array(300 * 1024),
     });
     expect(res.status).toBe(413);
@@ -408,7 +430,7 @@ describe("shape and size", () => {
 
   test("a declared Content-Length over the cap short-circuits the read", async () => {
     const res = await makeApp().fetch(
-      new Request(`https://runtime.example/v1/hooks/${CONNECTOR}/${VENDOR}/${token()}`, {
+      new Request(`https://runtime.example${hookUrl()}`, {
         method: "POST",
         body: "{}",
         headers: { "content-length": String(10 * 1024 * 1024) },
@@ -444,10 +466,10 @@ describe("the two rate-limit buckets", () => {
   const SOURCE_A = "203.0.113.10";
   const SOURCE_B = "203.0.113.11";
 
-  const BAD_TOKEN_PATH = `/v1/hooks/${CONNECTOR}/${VENDOR}/not-a-token`;
+  const BAD_TOKEN_PATH = hookUrl(UNKNOWN_ID);
 
-  function goodPath(wire: string = token()): string {
-    return `/v1/hooks/${CONNECTOR}/${VENDOR}/${wire}`;
+  function goodPath(id: string = DELIVERY_ID): string {
+    return hookUrl(id);
   }
 
   /** A delivery from a named source, so the per-source bucket is deterministic. */
@@ -550,15 +572,26 @@ describe("the two rate-limit buckets", () => {
 
     test("does not spend another workspace's allowance", async () => {
       const other = await store.create("Other Workspace");
-      await seedWorkspace({ id: other.id });
+      const otherId = newDeliveryId();
+      await seedWorkspace({
+        id: other.id,
+        hooks: {
+          [registrationKey(CONNECTOR, VENDOR)]: registration({
+            idHash: deliveryIdHash(otherId),
+          }),
+        },
+      });
       const app = makeApp();
       await drive(app, SOURCE_A, goodPath(), HOOK_WORKSPACE_BUCKET_MAX + 1);
       expect((await deliverFrom(app, SOURCE_A, goodPath())).status).toBe(429);
 
       // Same connector, same source, different workspace: a burst is meant to
       // fail against ONE workspace, which is the whole reason this bucket is
-      // keyed the way it is rather than sitting per-tenant at the edge.
-      const res = await deliverFrom(app, SOURCE_A, goodPath(token({ wid: other.id })));
+      // keyed the way it is rather than sitting per-tenant at the edge. The
+      // workspace is now established by the LOOKUP rather than a sealed field,
+      // so this also pins that the key the bucket is built from still comes out
+      // of the registration the id resolved to.
+      const res = await deliverFrom(app, SOURCE_A, goodPath(otherId));
       expect(res.status).toBe(202);
       expect(forwarded).toHaveLength(HOOK_WORKSPACE_BUCKET_MAX + 1);
     });
@@ -607,29 +640,34 @@ describe("the two rate-limit buckets", () => {
 });
 
 describe("what the door writes down", () => {
-  test("never the token, in any log line or response body", async () => {
-    const wire = token();
+  test("never the delivery id, in any log line or response body", async () => {
+    // Sharper than it was for a token. The id is the WHOLE capability — there is
+    // no key it must also be paired with — so a log line carrying it hands a
+    // working URL to every sink that reads the line. Both the admitted and the
+    // refused path are driven, because a rejection is where an id is most
+    // tempting to print.
     let bodies: string[] = [];
     await capturingLogs(async () => {
       const app = makeApp();
-      const ok = await deliver(app, `/v1/hooks/${CONNECTOR}/${VENDOR}/${wire}`);
-      const bad = await deliver(app, `/v1/hooks/${CONNECTOR}/${VENDOR}/${wire}x`);
+      const ok = await deliver(app, hookUrl());
+      const bad = await deliver(app, hookUrl(UNKNOWN_ID));
       bodies = [await ok.text(), await bad.text()];
     });
     const everything = [...logLines, ...bodies].join("\n");
-    // The whole token, and the MAC segment on its own — a partial leak is a
-    // leak, because the payload half is derivable.
-    expect(everything).not.toContain(wire);
-    expect(everything).not.toContain(wire.split(".")[2] ?? "impossible");
-    // The kid IS expected, and this line is the ONLY place it appears now that
-    // the forward stamps no header — it is the whole of kid correlation.
+    expect(everything).not.toContain(DELIVERY_ID);
+    expect(everything).not.toContain(UNKNOWN_ID);
+    // Nor any leading run of one: a prefix narrows a guess, and the id is the
+    // only secret there is.
+    expect(everything).not.toContain(DELIVERY_ID.slice(0, 12));
+    // The KEY id is still expected, and this line is the only place it appears
+    // — it is the whole of rotation correlation, and it opens nothing.
     expect(logLines.join("\n")).toContain(KID);
   });
 
   test("never the body", async () => {
     const secret = "a-tenant-secret-that-must-not-be-logged";
     await capturingLogs(async () => {
-      await deliver(makeApp(), `/v1/hooks/${CONNECTOR}/${VENDOR}/${token()}`, {
+      await deliver(makeApp(), hookUrl(), {
         body: JSON.stringify({ secret }),
       });
     });
@@ -642,7 +680,7 @@ describe("when the connector cannot be reached", () => {
     upstreamResponse = () => {
       throw new Error("connection refused");
     };
-    const res = await deliver(makeApp(), `/v1/hooks/${CONNECTOR}/${VENDOR}/${token()}`);
+    const res = await deliver(makeApp(), hookUrl());
     expect(res.status).toBe(502);
   });
 });
@@ -656,59 +694,79 @@ describe("a deployment with no hook key", () => {
 });
 
 describe("the rotation overlap, at the door", () => {
-  const OUTGOING_KEY = randomBytes(32);
-  const ROTATED: HookIdentity = { tid: TID, key: KEY, previousKeys: [OUTGOING_KEY] };
+  const OUTGOING_ID = newDeliveryId();
 
-  test("a URL minted under the outgoing key is still forwarded, and says so", async () => {
-    // The whole point of the ring, exercised where a vendor actually meets it.
-    // Pinned here rather than only at the function boundary because the door is
-    // the line that decides whether an operator mid-rotation keeps receiving.
+  /** The registration mid-rotation: a new id current, the outgoing one in grace. */
+  async function midRotation(rotatedAt: string = new Date().toISOString()): Promise<void> {
+    await seedWorkspace({
+      hooks: {
+        [registrationKey(CONNECTOR, VENDOR)]: registration({
+          prevIdHash: deliveryIdHash(OUTGOING_ID),
+          rotatedAt,
+        }),
+      },
+    });
+  }
+
+  test("a URL minted under the outgoing id is still forwarded, and says so", async () => {
+    // The whole point of the grace, exercised where a vendor actually meets it.
+    // Pinned at the door rather than only at the function boundary because the
+    // door is the line that decides whether an operator mid-rotation keeps
+    // receiving — a vendor's queued redeliveries carry the OLD URL.
+    await midRotation();
     let res!: Response;
     await capturingLogs(async () => {
-      res = await deliver(
-        makeApp(ROTATED),
-        `/v1/hooks/${CONNECTOR}/${VENDOR}/${token({}, OUTGOING_KEY)}`,
-      );
+      res = await deliver(makeApp(), hookUrl(OUTGOING_ID));
     });
     expect(res.status).toBe(202);
     expect(forwarded).toHaveLength(1);
-    // The line is the ring's EXIT CONDITION, not decoration: it is the only
-    // evidence an operator has that traffic still rides the outgoing key, and
-    // dropping that key without it is the fleet-wide silent 404. Asserted here
-    // so deleting it fails a test rather than passing one.
-    const superseded = logLines.filter((l) => l.includes("delivery on a superseded key"));
+    // The exit condition, not decoration: the only evidence an operator has
+    // that traffic still rides the outgoing URL. Retiring it blind is the
+    // silent 404 the grace exists to prevent, so deleting this line must fail
+    // a test rather than pass one.
+    const superseded = logLines.filter((l) =>
+      l.includes("delivery on a superseded delivery id"),
+    );
     expect(superseded).toHaveLength(1);
-    expect(superseded[0]).toContain('"key_slot":1');
   });
 
-  test("a URL minted under the sealing key says nothing", async () => {
-    // Silent in the steady state — a line on every delivery would be noise no
+  test("a URL minted under the current id says nothing", async () => {
+    // Silent in the steady state — a line on every delivery is noise no
     // operator reads, which is the same as having no signal at all.
+    await midRotation();
     await capturingLogs(async () => {
-      const res = await deliver(makeApp(ROTATED), `/v1/hooks/${CONNECTOR}/${VENDOR}/${token()}`);
+      const res = await deliver(makeApp(), hookUrl());
       expect(res.status).toBe(202);
     });
-    expect(logLines.join("\n")).not.toContain("delivery on a superseded key");
+    expect(logLines.join("\n")).not.toContain("delivery on a superseded delivery id");
   });
 
-  test("the same URL 404s once the outgoing key leaves the ring", async () => {
-    // Dropping the key is what retires its URLs — the irreversible half of a
-    // rotation, and the reason the procedure says to confirm a delivery first.
-    const res = await deliver(
-      makeApp(),
-      `/v1/hooks/${CONNECTOR}/${VENDOR}/${token({}, OUTGOING_KEY)}`,
-    );
+  test("the outgoing URL 404s once its grace window has passed", async () => {
+    // The window closing is what retires the old URL. Nothing is deleted and no
+    // operator acts — which is the difference from the key ring it replaces,
+    // where retiring took a deliberate, irreversible drop.
+    await midRotation(new Date(Date.now() - HOOK_ROTATION_GRACE_MS - 1_000).toISOString());
+    const res = await deliver(makeApp(), hookUrl(OUTGOING_ID));
     expect(res.status).toBe(404);
     expect(forwarded).toHaveLength(0);
   });
 
-  test("a key that never sealed this tenant's token is still refused", async () => {
-    // An overlap widens which keys open, never which tenants do.
-    const res = await deliver(
-      makeApp(ROTATED),
-      `/v1/hooks/${CONNECTOR}/${VENDOR}/${token({}, OTHER_TENANT_KEY)}`,
-    );
-    expect(res.status).toBe(404);
-    expect(forwarded).toHaveLength(0);
+  test("an outgoing id is only admissible against the registration it rotated on", async () => {
+    // A grace widens which id opens ONE registration, never which registrations
+    // an id opens.
+    await midRotation();
+    const other = await store.create({ name: "other", ownerId: "usr_other" });
+    await seedWorkspace({
+      id: other.id,
+      hooks: {
+        [registrationKey(CONNECTOR, VENDOR)]: registration({ idHash: deliveryIdHash(newDeliveryId()) }),
+      },
+    });
+    const res = await deliver(makeApp(), hookUrl(OUTGOING_ID));
+    expect(res.status).toBe(202);
+    // Forwarded once, on the rotating workspace's route — not twice, and not
+    // the neighbour's.
+    expect(forwarded).toHaveLength(1);
+    expect(forwarded[0]?.url).toContain(ROUTE);
   });
 });

@@ -44,11 +44,17 @@ export function findRegistration(
 /**
  * Whether a delivery id is admissible against one registration, now.
  *
- * The exact shape of {@link isKidAdmissible}, over the id rather than the key,
- * because the two rotate together and a URL minted under the outgoing id has the
- * same in-flight redeliveries to honour.
+ * Exactly two are admissible: the current id, and the immediately-previous one
+ * while its grace window is open. Anything else — an id from two rotations ago,
+ * one belonging to another workspace, one invented — takes the identical
+ * rejection path, so a prober learns nothing from the difference between
+ * "retired" and "never existed".
  *
- * Compared as HASHES, so nothing here has to hold a live id.
+ * This replaced a twin that weighed the KEY id. The key and the id rotate
+ * together, so keeping both would have been two windows to hold in step, and a
+ * disagreement between them would decide whether a delivery lands.
+ *
+ * Compared as HASHES, so nothing here holds a live id.
  */
 export function isDeliveryIdAdmissible(
   reg: HookRegistration,
@@ -68,28 +74,6 @@ export function listRegistrations(ws: Pick<Workspace, "hooks">): HookRegistratio
   return Object.values(ws.hooks ?? {}).sort((a, b) =>
     keyOf(a.connector, a.vendor).localeCompare(keyOf(b.connector, b.vendor)),
   );
-}
-
-/**
- * Whether a presented `kid` is admissible for a registration.
- *
- * Exactly two are: the current one, and the immediately-previous one while its
- * grace window is open. Anything else — a `kid` from two rotations ago, one
- * from another workspace, one invented — takes the identical rejection path, so
- * a prober learns nothing from the difference between "retired" and "never
- * existed".
- */
-export function isKidAdmissible(
-  reg: HookRegistration,
-  kid: string,
-  now: number = Date.now(),
-): boolean {
-  if (kid === reg.kid) return true;
-  if (!reg.prevKid || kid !== reg.prevKid) return false;
-  if (!reg.rotatedAt) return false;
-  const rotatedAt = Date.parse(reg.rotatedAt);
-  if (!Number.isFinite(rotatedAt)) return false;
-  return now - rotatedAt < HOOK_ROTATION_GRACE_MS;
 }
 
 /**
