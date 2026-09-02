@@ -3,7 +3,7 @@ import { serverNameFromRef } from "../../bundles/paths.ts";
 import type { BundleRef } from "../../bundles/types.ts";
 import { forwardDelivery } from "../../hooks/forward.ts";
 import { isDeliveryIdAdmissible, listRegistrations } from "../../hooks/registrations.ts";
-import { type HookIdentity, HOOKS_PATH_PREFIX, readHookIdentity } from "../../hooks/token.ts";
+import { HOOKS_PATH_PREFIX, type HookIdentity, readHookIdentity } from "../../hooks/token.ts";
 import type { HookRegistration } from "../../hooks/types.ts";
 import { log } from "../../observability/log.ts";
 import { clientAddressFor } from "../client-address.ts";
