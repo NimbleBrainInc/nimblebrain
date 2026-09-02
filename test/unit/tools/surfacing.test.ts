@@ -277,16 +277,16 @@ describe("surfaceTools — focusedServerName", () => {
 
 describe("composeSystemPrompt — apps injection", () => {
 	const apps: PromptAppInfo[] = [
-		{ name: "Tasks", trustScore: 92, ui: { name: "Tasks", primaryView: "Task Board" } },
-		{ name: "Weather", trustScore: 78, ui: null },
+		{ name: "Tasks", ui: { name: "Tasks", primaryView: "Task Board" } },
+		{ name: "Weather", ui: null },
 	];
 
 	it("injects Installed Apps section with correct names, UI status, and trust scores", () => {
 		const result = composeSystemPrompt([], null, apps);
 
 		expect(result).toContain("## Installed Apps");
-		expect(result).toContain("- Tasks (has UI: Tasks) — MTF Score: 92");
-		expect(result).toContain("- Weather (no UI) — MTF Score: 78");
+		expect(result).toContain("- Tasks (has UI: Tasks)");
+		expect(result).toContain("- Weather (no UI)");
 	});
 
 	it("includes sidebar instruction when apps have UI", () => {
@@ -301,7 +301,7 @@ describe("composeSystemPrompt — apps injection", () => {
 		const result = composeSystemPrompt([], null, []);
 
 		expect(result).not.toContain("## Installed Apps");
-		expect(result).not.toContain("MTF Score");
+		expect(result).not.toContain("Installed Apps");
 	});
 
 	it("no apps section injected when apps parameter is undefined", () => {
@@ -342,12 +342,12 @@ describe("composeSystemPrompt — apps injection", () => {
 
 	it("UI with no primaryView falls back to app name", () => {
 		const appWithUiNoPrimaryView: PromptAppInfo[] = [
-			{ name: "CRM", trustScore: 87, ui: { name: "Contact Manager" } },
+			{ name: "CRM", ui: { name: "Contact Manager" } },
 		];
 
 		const result = composeSystemPrompt([], null, appWithUiNoPrimaryView);
 
-		expect(result).toContain("- CRM (has UI: Contact Manager) — MTF Score: 87");
+		expect(result).toContain("- CRM (has UI: Contact Manager)");
 	});
 });
 

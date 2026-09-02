@@ -92,21 +92,19 @@ Before the engine loop starts, the `Runtime` orchestrates the composition descri
 
 ## Bundles (apps)
 
-A **bundle** is an MCP server package installed into NimbleBrain. Bundles follow the [MCPB](https://github.com/modelcontextprotocol/mcpb) format — each has a `manifest.json` declaring how to start the server, what tools it provides, and optional UI metadata.
+A **connector** is a remote MCP server a workspace connects to. The runtime
+orchestrates over remote MCP: it holds the server's URL and a credential, and
+never downloads, verifies, or executes the server's code. Supply-chain review
+belongs where the server is built and published, not in a process that also
+holds tenant credentials.
 
 ### Sources
 
-Bundles are installed per workspace and tracked in `workspace.json` (not `nimblebrain.json` — bundle entries placed there are stripped on load). They come from:
-
-| Source | How it works |
-|--------|-------------|
-| Registry | Downloaded from the [mpak](https://mpak.dev) registry by scoped name (e.g. `@nimblebraininc/ipinfo`). Managed across the org via `manage_apps`. |
-| Connector catalog | Remote MCP connectors installed point-and-click from the in-app catalog, or via `manage_connectors`. |
-| Local path | A bundle directory on the filesystem, for local development. |
+Connectors are installed per workspace and tracked in `workspace.json` (not `nimblebrain.json` — entries placed there are stripped on load). They are discovered through the **connectors catalog**: one or more registries aggregated into a single Browse list, installed point-and-click or via `manage_connectors`. See [Connectors Catalog](/config/connectors-catalog/).
 
 ### Lifecycle states
 
-Each bundle process goes through these states:
+Each connection goes through these states:
 
 ```
 starting ──► running ──► crashed ──► dead
@@ -116,30 +114,35 @@ starting ──► running ──► crashed ──► dead
 
 | State | Meaning |
 |-------|---------|
-| `starting` | Process is spawning |
+| `starting` | Connection being established |
 | `running` | Healthy and serving tools |
-| `crashed` | Process exited unexpectedly (will attempt recovery) |
-| `dead` | Repeated crashes, not restarting |
+| `not_authenticated` | Installed, no tokens yet — the user clicks Connect |
+| `pending_auth` | An OAuth flow is in flight |
+| `reauth_required` | Tokens were rejected — the user clicks Reconnect |
+| `crashed` | The connection dropped (will attempt recovery) |
+| `dead` | Repeatedly unreachable, not retrying on its own |
 | `stopped` | Manually stopped via API or CLI |
 
-### No bundles by default
+### No connectors by default
 
-NimbleBrain does not install any MCP bundles by default. Platform capabilities (home, conversations, files, settings, usage, automations) are built in as inline tool sources. Install bundles from the [mpak registry](https://mpak.dev), a local path, or a remote URL to give the agent domain-specific tools.
+NimbleBrain installs no connectors by default. Platform capabilities (home, conversations, files, settings, usage, automations) are built in as inline tool sources. Install connectors from the catalog to give the agent domain-specific tools.
 
-### Bundle options
+### Connector options
 
 ```json
 {
-  "name": "@nimblebraininc/postgres",
-  "env": { "DATABASE_URL": "postgres://localhost/mydb" }
+  "url": "https://mcp.example.com/mcp",
+  "serverName": "example"
 }
 ```
 
 | Field | Description |
 |-------|-------------|
-| `env` | Environment variables passed to the bundle process |
-| `trustScore` | MTF trust score (0–100) from the mpak registry |
+| `serverName` | The name the server registers under; tools reach the agent as `<serverName>__<tool>` |
+| `transport` | Transport class, auth, headers, and reconnection behavior |
 | `ui` | UI metadata: name, icon, and placement declarations |
+
+See [Connector Configuration](/config/bundles/) for the full field reference.
 
 ## Skills
 
@@ -208,12 +211,12 @@ Every NimbleBrain instance has these `nb__*` tools available:
 
 | Tool | Description |
 |------|-------------|
-| `nb__search` | Search installed tools (`scope: "tools"`) or the mpak registry (`scope: "registry"`) |
+| `nb__search` | Search installed tools (`scope: "tools"`) or the connector registries (`scope: "registry"`) |
 | `nb__status` | Platform status; `scope: "bundles"` for per-app health, `scope: "skills"` for loaded skills, `scope: "config"` for model and limits |
 | `nb__delegate` | Spawn a child agent for sub-tasks (multi-agent delegation) |
 | `nb__read_resource` | Read an MCP resource by URI |
 | `manage_connectors` | List the connector catalog, install/disconnect remote MCP connectors per workspace or per user |
-| `manage_apps` | Org-level management of installed registry apps: list, check for updates, upgrade |
+| `manage_registries` | Org-level management of the connector registries Browse pulls from |
 | `manage_workspaces` | Create and manage workspaces |
 | `manage_members` | Manage workspace membership |
 | `manage_users` | Manage users (when a managed identity adapter is configured) |
@@ -312,6 +315,6 @@ import { CardGrid, LinkCard } from '@astrojs/starlight/components';
 <CardGrid>
   <LinkCard title="MCP Apps" description="Interactive UIs inside the host via the ext-apps spec" href="/concepts/mcp-apps" />
   <LinkCard title="Chat" description="Send messages and work with the agent" href="/using/chat" />
-  <LinkCard title="Installing Apps" description="Browse and install MCP bundles" href="/using/installing-apps" />
+  <LinkCard title="Connectors" description="Browse and connect remote MCP servers" href="/using/connectors" />
   <LinkCard title="nimblebrain.json" description="Full configuration reference" href="/config/nimblebrain-json" />
 </CardGrid>

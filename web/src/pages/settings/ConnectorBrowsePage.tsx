@@ -87,30 +87,23 @@ export function ConnectorBrowsePage() {
     };
   }, [fetchDirectory]);
 
-  // Build install lookups so we can drop already-installed entries
-  // from the Browse list. remote-oauth matches on URL, mpak-bundle on
-  // package name (== InstalledConnector.bundleName).
-  const installedByKey = useMemo(() => {
+  // Build the install lookup so we can drop already-installed entries from
+  // the Browse list. A remote-oauth entry matches on URL.
+  const installedUrls = useMemo(() => {
     const byUrl = new Set<string>();
-    const byBundleName = new Set<string>();
     for (const ins of installed) {
       if (ins.url) byUrl.add(ins.url);
-      byBundleName.add(ins.bundleName);
     }
-    return { byUrl, byBundleName };
+    return byUrl;
   }, [installed]);
 
   // useCallback so the visibleEntries memo can depend on a stable isInstalled
-  // (its identity changes only when installedByKey does — the same trigger the
+  // (its identity changes only when installedUrls does — the same trigger the
   // memo needs to drop newly-installed connectors from the list).
   const isInstalled = useCallback(
-    (entry: DirectoryEntry): boolean => {
-      if (entry.install.kind === "remote-oauth") return installedByKey.byUrl.has(entry.install.url);
-      if (entry.install.kind === "mpak-bundle")
-        return installedByKey.byBundleName.has(entry.install.package);
-      return false;
-    },
-    [installedByKey],
+    (entry: DirectoryEntry): boolean =>
+      entry.install.kind === "remote-oauth" && installedUrls.has(entry.install.url),
+    [installedUrls],
   );
 
   // One unified browse list: every connector is installable into any
@@ -190,15 +183,10 @@ export function ConnectorBrowsePage() {
     setBusyId(`${entry.registryId}::${entry.id}`);
     try {
       const result = await installConnector(entry);
-      // Remote OAuth: kick the user into the vendor's auth flow. Stdio
-      // (mpak-bundle): install completes in-process; route to Configure so the
-      // user can fill in any user_config fields. direct-url not yet supported.
+      // Remote OAuth: kick the user into the vendor's auth flow.
+      // direct-url not yet supported.
       if (entry.install.kind === "remote-oauth") {
         await routeRemoteOAuthInstall(entry, entry.install, result.serverName);
-        return;
-      }
-      if (entry.install.kind === "mpak-bundle") {
-        navigate(`${configureBasePath}/${result.serverName}`);
         return;
       }
     } catch (err) {

@@ -12,14 +12,11 @@ import type { InProcessTool } from "./in-process-app.ts";
  * and the workspace UI can name where things came from), but writes
  * are gated to org admins.
  *
- * The two seeded registries are:
- *   - "curated"  — locked, always on
- *   - "mpak"     — toggleable
+ * One registry is seeded: "curated" — locked, always on.
  *
- * Registry URLs (e.g., a self-hosted mpak) are deployment configuration,
- * not runtime state — set via the `NB_REGISTRIES` env var or by editing
- * `registries.json` directly. This tool intentionally has no `set_url`
- * action.
+ * Registry URLs are deployment configuration, not runtime state — set via
+ * the `NB_REGISTRIES` env var or by editing `registries.json` directly. This
+ * tool intentionally has no `set_url` action.
  */
 
 export interface ManageRegistriesContext {
@@ -30,8 +27,7 @@ export interface ManageRegistriesContext {
 export function createManageRegistriesTool(ctx: ManageRegistriesContext): InProcessTool {
   return {
     name: "manage_registries",
-    description:
-      "List and configure connector registries (curated, mpak, future). Org admin gated for writes.",
+    description: "List and configure connector registries. Org admin gated for writes.",
     annotations: { [INTERNAL_TOOL_ANNOTATION]: true },
     inputSchema: {
       type: "object",

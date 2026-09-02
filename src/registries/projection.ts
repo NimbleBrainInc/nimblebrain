@@ -88,7 +88,7 @@ function connectorMetaAuthFields(meta: NimbleBrainConnectorMeta | undefined): {
  *   - `description`   ← `ServerDetail.description`
  *   - `iconUrl`       ← `ServerDetail.icons[0].src` (theme-aware picker is a follow-up)
  *   - `tags`          ← `_meta.ai.nimblebrain/connector.tags`
- *   - `install`       ← derived from `packages[]` (mpak-bundle) or `remotes[]` (remote-oauth)
+ *   - `install`       ← derived from `remotes[]` (remote-oauth)
  *
  * Returns null if the entry isn't installable (no packages, no remotes,
  * or unsupported transport — e.g. an SSE-only remote when we don't ship
@@ -118,17 +118,14 @@ export function projectServerDetailToDirectoryEntry(
 }
 
 /**
- * Decide which installable variant to surface. Bundles take precedence:
- * the MCP registry spec allows entries to advertise both packages and
- * remotes (a vendor that ships both a bundled CLI and a hosted endpoint),
- * but our Browse install dispatcher is single-action — pick the local
- * one because it's reproducible and doesn't depend on vendor uptime.
+ * Decide which installable variant to surface. Only `remotes[]` is
+ * installable: the runtime orchestrates over remote MCP and never acquires,
+ * verifies, or executes server code, so an entry advertising only
+ * `packages[]` — a downloadable bundle — projects as not installable and is
+ * dropped from Browse. An entry advertising both (a vendor shipping a CLI
+ * and a hosted endpoint) surfaces its remote.
  */
 function deriveInstall(s: ServerDetail): DirectoryEntry["install"] | null {
-  const pkg = s.packages?.[0];
-  if (pkg) {
-    return { kind: "mpak-bundle", package: pkg.identifier };
-  }
   const remote = s.remotes?.[0];
   if (remote && (remote.type === "streamable-http" || remote.type === "sse")) {
     return {
@@ -245,10 +242,10 @@ export function serverDetailToCatalogEntry(s: ServerDetail): ConnectorCatalogEnt
 
 /**
  * Defense-in-depth safety check on a `ServerDetail` regardless of which
- * source emitted it. Runs at the directory boundary so mpak-published
+ * source emitted it. Runs at the directory boundary so registry-published
  * entries are scrubbed identically to bundled-static / NB_REGISTRIES
  * static entries — pre-fix only static-source ran this check, so a
- * malicious mpak publisher (or any non-curated mpak scope) could ship
+ * malicious publisher on a non-curated registry could ship
  * `_meta.docsUrl: "javascript:..."` and the Configure page would render
  * it as a clickable `<a href>`. `target="_blank" rel="noopener noreferrer"`
  * does NOT block `javascript:` URI execution.

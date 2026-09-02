@@ -688,27 +688,8 @@ export interface ConnectorCatalogEntry {
 }
 
 /**
- * Bundle `user_config` field descriptor as declared in the bundle's
- * manifest. Mirrors the server's `UserConfigFieldDef` — kept in sync by
- * convention because the server forwards manifest declarations
- * unchanged. Only `string` types appear in production today; the modal
- * renders any unknown type as disabled with a console warning.
- */
-export interface BundleUserConfigField {
-  type: string;
-  title?: string;
-  description?: string;
-  sensitive?: boolean;
-  required?: boolean;
-  default?: unknown;
-}
-
-/**
- * Per-workspace installed view. Returns every bundle visible in the
- * workspace — local stdio servers, local URL bundles, Synapse apps, and
- * remote OAuth connectors. `type` distinguishes remote URL connectors
- * from local in-process / subprocess bundles. Personal connectors live
- * in the caller's personal workspace.
+ * Per-workspace installed view. Returns every connector visible in the
+ * workspace. Personal connectors live in the caller's personal workspace.
  *
  * Stage 2: `scope` is always `"workspace"`. The legacy `"user"` arm was
  * removed in T008/T009.
@@ -725,23 +706,18 @@ export interface InstalledConnector {
    * display-only.
    */
   handshakeVersion?: string;
-  type: "remote" | "local";
   state: string;
   scope: "workspace";
   /** Whether this connector exposes a UI surface (auto-mounts a sidebar entry). */
   interactive: boolean;
   toolCount: number;
-  trustScore: number | null;
   /**
-   * Brand icon URL — one field for both remote (catalog.iconUrl) and
-   * stdio (mpak `ServerDetail.icons[0].src` matched by package name).
-   * Falls through to the deterministic letter avatar when unset
-   * (bundle isn't in any active mpak registry, or the mpak fetch
-   * failed). Replaces the old per-component fan-out across
-   * `catalog?.iconUrl` (which only ever populated for remote bundles).
+   * Brand icon URL from the connector's catalog match. Falls through to the
+   * deterministic letter avatar when unset (the connector isn't in any
+   * enabled registry, or the fetch failed).
    */
   iconUrl?: string;
-  // ── Optional fields, only populated for URL bundles / catalog-matched ──
+  // ── Optional fields, only populated for catalog-matched connectors ──
   url?: string;
   catalogId?: string | null;
   catalog?: ConnectorCatalogEntry;
@@ -764,26 +740,16 @@ export interface InstalledConnector {
     configuredByLabel?: string;
   };
   /**
-   * Stdio bundle credential schema + per-field populated probe. The
-   * Configure page's bundle-config section renders the schema and
-   * uses `populated` to display configured / not-configured per row.
-   * Values are never echoed.
-   */
-  userConfig?: {
-    schema: Record<string, BundleUserConfigField>;
-    populated: Record<string, boolean>;
-  };
-  /**
    * Generic, type-agnostic UI status. Derived server-side from the
    * underlying BundleState + credential probes so list-page pills,
    * detail-page hero, and any future surface read one value.
    *
    *   ready          — works
-   *   needs_setup    — admin must configure (operator OAuth or user_config)
+   *   needs_setup    — admin must configure the operator OAuth client
    *   needs_auth     — workspace member must (re)authenticate
    *   connecting     — OAuth flow in flight
-   *   failed         — crashed / dead, no actionable next step
-   *   starting       — subprocess booting
+   *   failed         — dead, no actionable next step
+   *   starting       — connection being established
    */
   status: "ready" | "needs_setup" | "needs_auth" | "connecting" | "failed" | "starting";
   /** Human-readable detail for `status` (tooltip / banner copy). */
@@ -963,55 +929,6 @@ export async function uninstallConnector(
 }
 
 /**
- * One installed registry app, aggregated org-wide (deduped by bundle name).
- * App version is org-global because the mpak cache is shared platform-wide —
- * see `src/tools/app-tools.ts`.
- */
-export interface OrgApp {
-  bundleName: string;
-  version: string;
-  trustScore: number | null;
-  workspaceCount: number;
-  workspaceIds: string[];
-}
-
-/** One available app update. */
-export interface AppUpdate {
-  bundleName: string;
-  current: string;
-  latest: string;
-}
-
-/** List installed registry apps across the org (org_admin). */
-export async function listApps(): Promise<{ apps: OrgApp[] }> {
-  const result = await callTool("nb", "manage_apps", { action: "list" });
-  return unwrapStructured(result, "list");
-}
-
-/** Check the registry for newer app versions across the org (org_admin). */
-export async function checkAppUpdates(): Promise<{ updates: AppUpdate[] }> {
-  const result = await callTool("nb", "manage_apps", { action: "check_updates" });
-  return unwrapStructured(result, "check_updates");
-}
-
-/**
- * Upgrade an app to its latest version across every workspace that has it
- * (org_admin). `upgraded` is false when already at latest; `workspaces` reports
- * per-workspace success.
- */
-export async function upgradeApp(bundleName: string): Promise<{
-  ok: boolean;
-  upgraded: boolean;
-  bundleName: string;
-  from: string;
-  to: string;
-  workspaces: Array<{ wsId: string; ok: boolean; error?: string }>;
-}> {
-  const result = await callTool("nb", "manage_apps", { action: "upgrade", bundleName });
-  return unwrapStructured(result, "upgrade");
-}
-
-/**
  * Install a connector. Pass the full `DirectoryEntry` the user clicked.
  * The connector installs into the workspace the shell is currently in —
  * the `X-Workspace-Id` header `callTool` already sends (set from the
@@ -1071,13 +988,13 @@ export interface ConnectorTool {
 
 /**
  * One row in the Browse directory — uniform shape across registry
- * sources (static, mpak, future). The `install` discriminator drives
- * the install-button behavior in the UI.
+ * sources. The `install` discriminator drives the install-button behavior
+ * in the UI.
  */
 export interface DirectoryEntry {
   id: string;
   registryId: string;
-  registryType: "static" | "mpak" | "mcp" | "custom-url";
+  registryType: string;
   name: string;
   description: string;
   iconUrl?: string;
@@ -1087,7 +1004,7 @@ export interface DirectoryEntry {
   /**
    * Static-auth entries: true when the workspace has both clientId and
    * client_secret configured. Undefined for entries where operator
-   * setup doesn't apply (DCR remote-oauth, mpak, direct-url).
+   * setup doesn't apply (DCR remote-oauth, direct-url).
    */
   operatorConfigured?: boolean;
   install:
@@ -1100,7 +1017,6 @@ export interface DirectoryEntry {
         operatorSetup?: { portalUrl: string; hint: string; clientSecretKey: string };
         composio?: ComposioConfig;
       }
-    | { kind: "mpak-bundle"; package: string }
     | { kind: "direct-url"; url: string };
 }
 
@@ -1227,7 +1143,7 @@ export async function getOAuthRedirectUri(): Promise<{ redirectUri: string }> {
 export interface RegistryConfig {
   id: string;
   name: string;
-  type: "curated" | "mpak" | "directory" | "custom-url";
+  type: string;
   enabled: boolean;
   url?: string;
   locked?: boolean;

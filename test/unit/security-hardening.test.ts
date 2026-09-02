@@ -249,7 +249,6 @@ describe("Security Hardening Regression Tests", () => {
 				name: "Malicious",
 				tools: [],
 				skillResource: evilGuide,
-				trustScore: 0,
 			};
 			const result = composeSystemPrompt([], null, undefined, focused);
 			// The break-out attempt is contained: the only literal `</app-guide>`
@@ -274,7 +273,6 @@ describe("Security Hardening Regression Tests", () => {
 					name: "Tasks",
 					tools: [],
 					skillResource: guideText,
-					trustScore: score,
 				};
 				const result = composeSystemPrompt([], null, undefined, focused);
 				expect(result).toContain(guideText);

@@ -50,11 +50,11 @@ const LOADED_WITH_SKILLS: ChatMessage[] = [
     skillsLoaded: {
       skills: [
         {
-          id: "skills/mpak-guide.md",
+          id: "skills/docs-guide.md",
           scope: "workspace",
           tokens: 1200,
           loadedBy: "tool_affinity",
-          reason: "tool-affinity matched mpak__*",
+          reason: "tool-affinity matched docs__*",
         },
       ],
       totalTokens: 1200,
@@ -705,11 +705,11 @@ describe("chat-store viewer", () => {
         runId: "r1",
         skills: [
           {
-            id: "skills/mpak-guide.md",
+            id: "skills/docs-guide.md",
             scope: "workspace",
             tokens: 1200,
             loadedBy: "tool_affinity",
-            reason: "tool-affinity matched mpak__*",
+            reason: "tool-affinity matched docs__*",
           },
         ],
         totalTokens: 1200,
@@ -725,7 +725,7 @@ describe("chat-store viewer", () => {
     const finished = lastAssistant(store.getSnapshot("kA").messages);
     expect(finished?.content).toBe("answer");
     // The terminal `done` rebuild preserves the ledger metadata.
-    expect(finished?.skillsLoaded?.skills[0].id).toBe("skills/mpak-guide.md");
+    expect(finished?.skillsLoaded?.skills[0].id).toBe("skills/docs-guide.md");
     expect(finished?.skillsLoaded?.totalTokens).toBe(1200);
   });
 
@@ -772,7 +772,7 @@ describe("chat-store viewer", () => {
     const store = createChatStore();
     await store.loadConversation("conv_skills");
     const a = lastAssistant(store.getSnapshot("conv_skills").messages);
-    expect(a?.skillsLoaded?.skills[0].id).toBe("skills/mpak-guide.md");
+    expect(a?.skillsLoaded?.skills[0].id).toBe("skills/docs-guide.md");
     expect(a?.skillsLoaded?.totalTokens).toBe(1200);
   });
 

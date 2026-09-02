@@ -97,12 +97,12 @@ describe("ledgerChanges", () => {
   test("same skills with a different reason is a change", () => {
     // The drawer prints `reason` verbatim, so a skill that loaded for a new
     // reason renders differently and has something to say.
-    const affinity = ctx("mpak-guide");
+    const affinity = ctx("docs-guide");
     const triggered: SkillsLoadedContext = {
-      skills: [{ ...affinity.skills[0]!, loadedBy: "trigger", reason: 'trigger matched "mpak"' }],
+      skills: [{ ...affinity.skills[0]!, loadedBy: "trigger", reason: 'trigger matched "docs"' }],
       totalTokens: affinity.totalTokens,
     };
-    expect(announced(turns(affinity, triggered))).toEqual([["mpak-guide"], ["mpak-guide"]]);
+    expect(announced(turns(affinity, triggered))).toEqual([["docs-guide"], ["docs-guide"]]);
   });
 
   test("user turns never carry a line, and never break the comparison", () => {

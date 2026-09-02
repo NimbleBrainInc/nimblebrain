@@ -30,7 +30,7 @@ To build from source instead of pulling (e.g. when developing against local chan
 ### Option 2: Local development
 
 ```bash
-# Prerequisites: Bun (https://bun.sh), mpak CLI (https://mpak.dev), Node.js 22+
+# Prerequisites: Bun (https://bun.sh), Node.js 22+
 export ANTHROPIC_API_KEY=sk-ant-...
 
 bun install
@@ -131,7 +131,7 @@ All system tools are prefixed with `nb__` (the `nb` source name + `__` separator
 | Tool | Purpose |
 |-----------|---------|
 | `nb__status` | Platform status: overview, bundles, skills, or config (scope param) |
-| `nb__search` | Unified search: installed tools or mpak registry (scope param) |
+| `nb__search` | Unified search: installed tools or the connector registries (scope param) |
 | `nb__read_resource` | Read a `skill://` / `ui://` resource from an installed app's MCP server |
 | `nb__set_preferences` | Set user preferences (name, timezone, theme) |
 | `nb__manage_tools` | Promote/release tools in the active set |
@@ -165,17 +165,16 @@ Two categories of skills:
 - **Core** (`src/skills/core/`) — always injected into the system prompt (e.g., `bootstrap.md` teaches meta-tool usage)
 - **User-matchable** — loaded from `src/skills/builtin/` (currently empty), `~/.nimblebrain/skills/`, and config-specified directories
 
-### Bundles
+### Connectors
 
-Bundles are [MCPB](https://github.com/modelcontextprotocol/mcpb)-format MCP servers. They can be:
+A connector is a remote MCP server the platform connects to over Streamable HTTP
+or SSE. The runtime orchestrates over remote MCP: it holds a URL and a
+credential, and never downloads, verifies, or executes a server's code — so
+supply-chain review lives where a server is built and published, not in a process
+that also holds tenant credentials. Every connector is aggregated into the same
+unified tool namespace by the `ToolRegistry`.
 
-- **Named** — downloaded and cached via `mpak run @scope/name`
-- **Local** — resolved from a path on disk
-- **Remote** — connected via Streamable HTTP or SSE transport (distributed MCP servers)
-
-Local and named bundles spawn as subprocesses communicating via stdio (MCP JSON-RPC 2.0). Remote bundles connect over HTTP. All three types are aggregated into the same unified tool namespace by the `ToolRegistry`.
-
-No MCP bundles are installed by default. Platform capabilities (home, conversations, files, settings, usage, automations) are built in as inline tool sources (see `src/tools/platform/`). Install bundles explicitly via the mpak registry or a local path. Tool visibility follows the tiered surfacing rules described under [Tiered Tool Surfacing](#tiered-tool-surfacing).
+No connectors are installed by default. Platform capabilities (home, conversations, files, settings, usage, automations) are built in as inline tool sources (see `src/tools/platform/`). Install connectors from the connectors catalog. Tool visibility follows the tiered surfacing rules described under [Tiered Tool Surfacing](#tiered-tool-surfacing).
 
 ## Configuration
 
@@ -392,8 +391,7 @@ src/
 │   ├── types.ts          RuntimeConfig, ChatRequest, ChatResult
 │   ├── tools.ts          filterTools (skill-scoped tool filtering)
 │   ├── features.ts       Feature flags resolution and tool gating
-│   ├── env-filter.ts     Bundle env var allowlist/filter
-│   └── workspace-runtime.ts  Per-workspace bundle spawning
+│   └── workspace-runtime.ts  Per-workspace connector startup
 ├── identity/             Authentication adapters
 │   ├── provider.ts       IdentityProvider interface, UserIdentity type
 │   ├── providers/dev.ts  Dev mode (no auth)
@@ -474,7 +472,7 @@ docker compose up
 
 Images are published to GHCR on every release:
 
-- `ghcr.io/nimblebraininc/nimblebrain-runtime` — runtime (Bun + Python 3.13 + Node 22 + mpak). Also published as `ghcr.io/nimblebraininc/nimblebrain` (transitional alias).
+- `ghcr.io/nimblebraininc/nimblebrain-runtime` — runtime (Bun; Node 24 builds the in-image bundle UIs). Also published as `ghcr.io/nimblebraininc/nimblebrain` (transitional alias).
 - `ghcr.io/nimblebraininc/nimblebrain-web` — Caddy serving the SPA, proxying `/v1/*` to the platform
 
 Each release is tagged with the version (e.g. `v1.2.3`) and the short git SHA. Stable releases also move `:latest` forward; pre-releases (e.g. `v0.4.0-beta.1`) do not. Pin to a version tag in production. Pass `--build` to `docker compose` to build from source instead.
@@ -497,7 +495,7 @@ When total tools ≤30, all are surfaced directly. Above 30 with no skill matche
 
 | Tool | What it does |
 |------|-------------|
-| `nb__list_apps` | List installed apps with status, tools, trust scores |
+| `nb__list_apps` | List installed apps with status and tools |
 | `nb__get_config` | Get runtime configuration (providers, model, limits) |
 | `nb__set_model_config` | Update model selection and runtime limits (admin only) |
 | `nb__manage_identity` | Write or reset workspace agent identity override (admin only) |
@@ -507,16 +505,15 @@ When total tools ≤30, all are surfaced directly. Above 30 with no skill matche
 | `nb__manage_users` | Create, update, delete, or list users (admin only) |
 | `nb__manage_workspaces` | Workspace CRUD + member management (admin only) |
 | `nb__manage_registries` | List and configure connector registries (admin only) |
-| `nb__manage_apps` | Org-global app-version management: list, check, upgrade (admin only) |
 | `nb__manage_connectors` | Browse, install, configure, and disconnect connectors |
 
-### Bundle Lifecycle
+### Connector Lifecycle
 
-`BundleLifecycleManager` (`src/bundles/lifecycle.ts`) tracks bundle states:
+`BundleLifecycleManager` (`src/bundles/lifecycle.ts`) tracks connector states:
 
-- **Install**: mpak download → read manifest → extract UI metadata from `_meta["ai.nimblebrain/host"]` → record trust score → spawn MCP server → register → atomic config write → emit event
-- **Uninstall**: check protected → stop server → remove source → atomic config removal → emit event (data NOT deleted)
-- **States**: starting → running → crashed → dead (+ stopped for manual stop)
+- **Install**: resolve the catalog entry → persist the `url` ref (with its transport, OAuth config, and host UI metadata) on the workspace → connect → register → emit event
+- **Uninstall**: stop the connection → remove source → clear the workspace's OAuth state and revoke any brokered connection → atomic config removal → emit event (data NOT deleted)
+- **States**: starting → running, plus the auth states a remote connection has — `not_authenticated`, `pending_auth`, `reauth_required` — and `crashed` / `dead` / `stopped`
 - **Atomic writes**: config changes use write-temp-then-rename
 
 ### Multi-Agent Delegation
@@ -560,7 +557,7 @@ Bundles can be installed per-workspace (tracked via `BundleInstance.wsId`). Each
 `src/prompt/compose.ts` joins layers with `---`:
 - Layer 0: Identity — context skills or default fallback
 - Layer 1: Core skills — always present (bootstrap.md teaches meta-tool usage)
-- Layer 2: Installed Apps — dynamically injected list with UI status and MTF trust scores
+- Layer 2: Installed Apps — dynamically injected list with UI status
 - Layer 3: Matched skill system prompt
 
 ### HTTP API Internals
@@ -617,20 +614,17 @@ Placements with a `route` field get React Router routes in `App.tsx`. Routes fro
 
 `NB_WORK_DIR` overrides `workDir` from either the config file or `--workdir`.
 
-#### Bundle Entry Fields (in `workspace.json`)
+#### Connector Entry Fields (in `workspace.json`)
 
-Each entry in `workspace.json → bundles[]` accepts:
+Each entry in `workspace.json → bundles[]` is one remote MCP server:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `name` | string | Bundle name from the mpak registry |
-| `path` | string | Local filesystem path (resolved relative to the config file) |
 | `url` | string | Remote MCP server URL (HTTPS; HTTP blocked unless `allowInsecureRemotes`) |
-| `env` | object | Environment variables passed to the bundle process |
-| `allowedEnv` | string[] | Host env vars this bundle may read |
-| `protected` | boolean | Prevents uninstall via `nb__manage_app` |
-| `trustScore` | number\|null | MTF trust score (0-100) |
-| `ui` | object\|null | UI metadata: `{ name, icon, primaryView? }` |
+| `serverName` | string | Name the server registers under; tools reach the agent as `<serverName>__<tool>` |
+| `transport` | object | Transport class, auth, headers, reconnection |
+| `oauthClient` / `scopes` / `additionalAuthorizationParams` | — | OAuth wiring for the connection |
+| `ui` | object\|null | Host UI metadata from the catalog entry: `{ name, icon, placements? }` |
 
 #### Feature Flags
 

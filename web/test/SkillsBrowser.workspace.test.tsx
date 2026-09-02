@@ -59,7 +59,7 @@ const SKILLS_FIXTURE = [
     priority: 30,
     tokens: 50,
     source: { path: "/tmp/skills/org/voice.md" },
-    toolAffinity: ["mpak__*"],
+    toolAffinity: ["docs__*"],
     loading: { wouldLoad: true, mechanism: "tool_affinity" },
   },
   {
@@ -569,7 +569,7 @@ describe("SkillsBrowser with surface='workspace' — composition list", () => {
     // The org tier is visible at rest, so its tool-affinity row renders the
     // mechanism's mono glob branch (`<span className="font-mono">`) too.
     expect(text).toContain("On tool match");
-    expect(text).toContain("mpak__*");
+    expect(text).toContain("docs__*");
   });
 
   test("scope renders as a token-driven tick, never a ledger label or raw hex", async () => {

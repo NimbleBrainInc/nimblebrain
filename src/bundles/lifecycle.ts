@@ -1,5 +1,4 @@
 import { existsSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { resolveConnectorSkillsConfig } from "../config/connector-skills.ts";
 import { cleanupComposioBundle } from "../connectors/providers/composio/sdk.ts";
@@ -25,8 +24,6 @@ import { mcpOAuthDir, WorkspaceOAuthProvider } from "../tools/workspace-oauth-pr
 import { validateAdditionalAuthorizationParams } from "../util/oauth-params.ts";
 import { WorkspaceContext } from "../workspace/context.ts";
 import { resolveWorkspaceDisplayName } from "../workspace/workspace-store.ts";
-import type { AutomationDomainContext } from "./automations/src/domain.ts";
-import { createAutomation, deleteAutomation } from "./automations/src/domain.ts";
 import { bundleHasStaticAuth } from "./bundle-auth.ts";
 import {
   composioConnectorDir,
@@ -39,15 +36,9 @@ import {
   summarizeConnectionState,
   WORKSPACE_PRINCIPAL_ID,
 } from "./connection.ts";
-import { hostMetaToUiMeta, sanitizePlacements } from "./defaults.ts";
-import { getMpak } from "./mpak.ts";
+import { sanitizePlacements } from "./defaults.ts";
 import { hasPersistedWorkspaceOAuthTokens } from "./oauth-tokens.ts";
-import {
-  defaultWorkDir,
-  deriveServerName,
-  resolveBundleDataDirForRef,
-  validateServerName,
-} from "./paths.ts";
+import { defaultWorkDir, deriveServerName, validateServerName } from "./paths.ts";
 import { consumePendingAuth } from "./pending-auth-buffer.ts";
 import {
   type BundleMcpDeps,
@@ -59,17 +50,11 @@ import {
 import type {
   BriefingBlock,
   BundleInstance,
-  BundleManifest,
   BundleRef,
   BundleState,
   BundleUiMeta,
   ConnectorSkillLockEntry,
-  HostManifestMeta,
-  RemoteTransportConfig,
 } from "./types.ts";
-
-/** The URL-bundle member of the `BundleRef` union (carries `url`, OAuth config, transport). */
-type UrlBundleRef = Extract<BundleRef, { url: string }>;
 
 /** Resolved pre-registered OAuth client (Track A), with the secret dereferenced to a string. */
 type StaticOAuthClient = {
@@ -86,8 +71,6 @@ type SeedManifestMeta = {
   description?: string;
   ui: BundleUiMeta | null;
   briefing?: BriefingBlock | null;
-  type: "upjack" | "plain";
-  upjackNamespace?: string;
 };
 
 // ---------------------------------------------------------------------------
@@ -148,7 +131,6 @@ export class ConnectorBusyError extends Error {
  * deploy runbook is the operator contract; the runtime stays strict.
  */
 export function assertBundleRefIsPostStage2(ref: BundleRef): void {
-  if (!("url" in ref)) return;
   // Widen to the runtime-disk shape so we can detect a value that
   // JSON.parse left in place but the static type rejects.
   const widened: { oauthScope?: string } = ref as { oauthScope?: string };
@@ -194,14 +176,6 @@ export class BundleLifecycleManager {
   private instances = new Map<string, BundleInstance>();
   private placementRegistry: PlacementRegistry | null = null;
   /**
-   * Bundle names with an org-wide upgrade currently in flight, keyed by
-   * `bundleName` — `upgradeApp` swaps the app across every workspace at once,
-   * so the guard is per-app, not per-(serverName, wsId). Prevents a concurrent
-   * double-upgrade, which would `removeSource` then race two `addSource` calls
-   * and leave a torn state.
-   */
-  private upgradesInFlight = new Set<string>();
-  /**
    * In-flight OAuth flows, keyed by `${serverName}|${wsId}|${principalId}`.
    *
    * **Invariant: at most one OAuth flow is alive per key at a time.**
@@ -232,16 +206,6 @@ export class BundleLifecycleManager {
    * paths would lock the slot forever.
    */
   private authFlowsInFlight = new Map<string, Promise<{ authorizationUrl: string | null }>>();
-  /**
-   * Getter for a workspace-scoped automations domain context. Set by
-   * Runtime after the automations platform source is constructed. Used
-   * by `syncBundleAutomations` / `removeBundleAutomations` to bypass the
-   * LLM-facing tool surface — bundle-contributed schedules need to set
-   * `source: "bundle"` and `bundleName`, which the LLM-facing schema
-   * deliberately doesn't accept. See src/tools/platform/CLAUDE.md § 1.4.
-   */
-  private getAutomationsCtx: (() => AutomationDomainContext) | null = null;
-
   /**
    * Factory for per-workspace host-resources deps. Set by Runtime after
    * construction (`setBundleMcpDepsFactory`). When set, every install
@@ -293,7 +257,6 @@ export class BundleLifecycleManager {
     private eventSink: EventSink,
     private configPath: string | undefined,
     private allowInsecureRemotes = false,
-    private mpakHome: string = join(homedir(), ".mpak"),
   ) {}
 
   /** Inject the fetch used for connector-skill overlay resolution (tests). */
@@ -312,23 +275,10 @@ export class BundleLifecycleManager {
   }
 
   /**
-   * Wire the automations domain-context getter. Called by Runtime once
-   * the automations platform source is constructed. Until this is set,
-   * bundle-contributed schedules will be skipped (with a stderr warning)
-   * — useful for minimal test runtimes that don't want the automations
-   * subsystem.
-   */
-  setAutomationsContextGetter(getter: () => AutomationDomainContext): void {
-    this.getAutomationsCtx = getter;
-  }
-
-  /**
    * Wire the host-resources deps factory. Called by Runtime once the
-   * resolver + rate-limit are constructed. When unset, bundles spawn
-   * without inbound `ai.nimblebrain/resources/*` handlers registered;
-   * any bundle declaring `required: true` already fails the install
-   * gate so this is reached only by bundles that don't need the
-   * extension.
+   * resolver + rate-limit are constructed. When unset, sources start
+   * without inbound `ai.nimblebrain/resources/*` handlers registered; a
+   * server that needs them probes at runtime and adapts.
    */
   setBundleMcpDepsFactory(factory: (wsId: string) => BundleMcpDeps): void {
     this.getBundleMcpDeps = factory;
@@ -470,320 +420,6 @@ export class BundleLifecycleManager {
     }
   }
 
-  // ---- Install -----------------------------------------------------------
-
-  /**
-   * Install a named bundle from the mpak registry.
-   *
-   * Steps (PRODUCT_SPEC ss3.2):
-   * 1. mpak install @org/bundle
-   * 2. Read manifest from extracted path
-   * 3. Detect Upjack metadata
-   * 4. Build spawn config, create McpSource, start, register
-   * 5. Record trust score from mpak
-   * 6. Read UI metadata from _meta["ai.nimblebrain/host"]
-   * 7. Write bundle entry to nimblebrain.json atomically
-   * 8. Emit bundle.installed event
-   */
-  async installNamed(
-    name: string,
-    registry: ToolRegistry,
-    wsId: string,
-    env?: Record<string, string>,
-  ): Promise<BundleInstance> {
-    // No cache pre-warm here: startBundleSource warms the mpak cache itself
-    // before reading the manifest (see its named-bundle branch, #60), so a
-    // cold first-install registers placements without a restart on every
-    // path, not just this one.
-
-    // Workspace-scoped data dir keeps two workspaces installing the same
-    // bundle from stomping on each other's entity data. Slug source is
-    // `manifest.name` via `resolveBundleDataDirForRef` — same call used by
-    // the boot-time inventory and the JIT install path, so all three agree.
-    const nbWorkDir = defaultWorkDir();
-    const wsContext = new WorkspaceContext({ wsId, workDir: nbWorkDir });
-    const configDir = this.configPath ? dirname(this.configPath) : undefined;
-    const bundleDataDir = resolveBundleDataDirForRef(nbWorkDir, wsId, { name }, configDir);
-
-    const { sourceName, manifest } = await startBundleSource(
-      { name, env },
-      registry,
-      this.eventSink,
-      this.configPath ? dirname(this.configPath) : undefined,
-      {
-        dataDir: bundleDataDir,
-        workspaceContext: wsContext,
-        bundleMcp: this.resolveBundleMcpDeps(wsId),
-      },
-    );
-    if (!manifest) {
-      // Named bundles always have a manifest — startBundleSource reads it
-      // from the mpak cache. Null here is a precondition violation.
-      throw new Error(`No manifest found for ${name} after install`);
-    }
-
-    const isUpjack = manifest._meta?.["ai.nimblebrain/upjack"] != null;
-    const instance = createInstance(sourceName, name, manifest, isUpjack, wsId, bundleDataDir);
-    instance.configKey = name;
-    instance.installSource = "registry";
-    this.transition(instance, "running");
-
-    instance.trustScore = await fetchTrustScore(name, this.mpakHome);
-    instance.ui = extractUiMeta(manifest);
-    instance.briefing = extractBriefing(manifest);
-    this.registerPlacements(sourceName, instance.ui, wsId);
-
-    if (this.configPath) {
-      const entry: Record<string, unknown> = { name };
-      if (instance.trustScore != null) entry.trustScore = instance.trustScore;
-      if (instance.ui) entry.ui = instance.ui;
-      atomicConfigAdd(this.configPath, entry);
-    }
-
-    this.instances.set(`${sourceName}|${wsId}`, instance);
-    await this.syncBundleAutomations(manifest, name, registry);
-
-    this.eventSink.emit({
-      type: "bundle.installed",
-      data: {
-        wsId,
-        serverName: sourceName,
-        bundleName: name,
-        version: instance.version,
-        type: instance.type,
-        trustScore: instance.trustScore,
-        ui: instance.ui,
-        placements: instance.ui?.placements ?? null,
-      },
-    });
-
-    return instance;
-  }
-
-  /**
-   * Install a bundle from a local disk path.
-   * Same as named install but skips mpak download (PRODUCT_SPEC ss3.2 "From local path").
-   */
-  async installLocal(
-    bundlePath: string,
-    registry: ToolRegistry,
-    wsId: string,
-    env?: Record<string, string>,
-  ): Promise<BundleInstance> {
-    // Workspace-scoped data dir computed up-front via the canonical helper
-    // (slug = manifest.name) so the subprocess's MPAK_WORKSPACE and the
-    // seedInstance / briefing reader path agree on a single location.
-    // Without this override `buildLocalSource`'s fallback would compose a
-    // `<nbWorkDir>/data/<slug>` path that bypasses the workspace prefix
-    // and uses a path-derived slug.
-    const nbWorkDir = defaultWorkDir();
-    const configDir = this.configPath ? dirname(this.configPath) : undefined;
-    const bundleDataDir = resolveBundleDataDirForRef(
-      nbWorkDir,
-      wsId,
-      { path: bundlePath },
-      configDir,
-    );
-    const { sourceName, manifest } = await startBundleSource(
-      { path: bundlePath, env },
-      registry,
-      this.eventSink,
-      configDir,
-      { dataDir: bundleDataDir, bundleMcp: this.resolveBundleMcpDeps(wsId) },
-    );
-    if (!manifest) {
-      // Local bundles always have a manifest.json on disk; startBundleSource
-      // reads and validates it before spawning. Null is a precondition
-      // violation.
-      throw new Error(`No manifest read for local bundle at ${bundlePath}`);
-    }
-
-    const isUpjack = manifest._meta?.["ai.nimblebrain/upjack"] != null;
-    // Use manifest.name (scoped name) as bundleName, not the filesystem path.
-    const instance = createInstance(
-      sourceName,
-      manifest.name,
-      manifest,
-      isUpjack,
-      wsId,
-      bundleDataDir,
-    );
-    instance.configKey = bundlePath; // config entry uses the filesystem path
-    instance.installSource = "local";
-    this.transition(instance, "running");
-
-    instance.ui = extractUiMeta(manifest);
-    instance.briefing = extractBriefing(manifest);
-    this.registerPlacements(sourceName, instance.ui, wsId);
-
-    if (this.configPath) {
-      const entry: Record<string, unknown> = { path: bundlePath };
-      if (instance.ui) entry.ui = instance.ui;
-      atomicConfigAdd(this.configPath, entry);
-    }
-
-    this.instances.set(`${sourceName}|${wsId}`, instance);
-    await this.syncBundleAutomations(manifest, manifest.name, registry);
-
-    this.eventSink.emit({
-      type: "bundle.installed",
-      data: {
-        wsId,
-        serverName: sourceName,
-        bundleName: bundlePath,
-        version: instance.version,
-        type: instance.type,
-        ui: instance.ui,
-        placements: instance.ui?.placements ?? null,
-      },
-    });
-
-    return instance;
-  }
-
-  /**
-   * Install a remote MCP server by URL.
-   * No mpak download — connects directly via HTTP transport (PRODUCT_SPEC ss15).
-   *
-   * Connection lifecycle: the BundleInstance is registered up-front with
-   * a single `_workspace` Connection in `starting` state. If the OAuth
-   * provider needs interactive auth, the
-   * `onInteractiveAuthRequired` callback fires synchronously inside
-   * `startBundleSource` → the Connection transitions to `pending_auth`
-   * and a `connection.state_changed` event broadcasts BEFORE
-   * `startBundleSource` returns. (`startBundleSource` itself still
-   * blocks on `source.start()` until auth completes; non-blocking install
-   * is a follow-up. The UI banner appears the moment we hit
-   * `pending_auth`, even though the API caller is still awaiting.)
-   *
-   * On success: Connection transitions to `running`. On failure: `dead`.
-   * The install API caller's `BundleInstance` reflects the post-completion
-   * state.
-   */
-  async installRemote(
-    url: string,
-    serverName: string,
-    registry: ToolRegistry,
-    wsId: string,
-    transportConfig?: RemoteTransportConfig,
-    ui?: BundleUiMeta | null,
-    trustScore?: number | null,
-  ): Promise<BundleInstance> {
-    const nbWorkDir = defaultWorkDir();
-
-    // Pre-register the instance + Connection BEFORE startBundleSource so
-    // the interactive-auth callback (fired during source.start()) can find
-    // the instance to transition. The lifecycle.recordConnectionStateChange
-    // path below would otherwise no-op on a missing instance.
-    const instance: BundleInstance = {
-      serverName,
-      bundleName: url,
-      installSource: "remote",
-      version: "remote",
-      state: "starting",
-      trustScore: trustScore ?? null,
-      ui: ui ?? null,
-      briefing: null,
-      type: "plain",
-      wsId,
-    };
-    this.instances.set(`${serverName}|${wsId}`, instance);
-    this.recordConnectionStateChange(serverName, wsId, "_workspace", "starting");
-
-    const onInteractiveAuthRequired = (authorizationUrl: string) => {
-      this.recordConnectionStateChange(serverName, wsId, "_workspace", "pending_auth", {
-        authorizationUrl,
-      });
-    };
-
-    // Mid-session auth loss on the running connection (a tool call hit
-    // UnauthorizedError because the refresh token was rejected). Flip to
-    // reauth_required so the UI offers "Reconnect" instead of failing silently.
-    const onAuthLost = () => {
-      this.recordConnectionStateChange(serverName, wsId, "_workspace", "reauth_required");
-    };
-
-    let sourceName: string;
-    let meta: Awaited<ReturnType<typeof startBundleSource>>["meta"];
-    try {
-      const result = await startBundleSource(
-        { url, serverName, transport: transportConfig, ui: ui ?? null },
-        registry,
-        this.eventSink,
-        this.configPath ? dirname(this.configPath) : undefined,
-        {
-          allowInsecureRemotes: this.allowInsecureRemotes,
-          wsId,
-          workDir: nbWorkDir,
-          onInteractiveAuthRequired,
-          onAuthLost,
-          bundleMcp: this.resolveBundleMcpDeps(wsId),
-        },
-      );
-      sourceName = result.sourceName;
-      meta = result.meta;
-    } catch (err) {
-      // Auth flow rejected, transport unavailable, etc. Transition the
-      // pre-registered Connection to dead so the UI updates and the
-      // bundle isn't left stuck in starting/pending_auth.
-      this.recordConnectionStateChange(serverName, wsId, "_workspace", "dead", {
-        lastError: err instanceof Error ? err.message : String(err),
-      });
-      this.instances.delete(`${serverName}|${wsId}`);
-      throw err;
-    }
-
-    instance.serverName = sourceName;
-    instance.version = meta?.version ?? "remote";
-    this.recordConnectionStateChange(sourceName, wsId, "_workspace", "running");
-
-    // Register placements in PlacementRegistry
-    this.registerPlacements(sourceName, instance.ui, wsId);
-
-    // Atomic config write
-    this.persistRemoteBundleEntry(url, sourceName, transportConfig, ui, trustScore);
-
-    // Re-key in case sourceName differs from the input serverName.
-    if (sourceName !== serverName) {
-      this.instances.delete(`${serverName}|${wsId}`);
-      this.instances.set(`${sourceName}|${wsId}`, instance);
-    }
-
-    // Emit event
-    this.eventSink.emit({
-      type: "bundle.installed",
-      data: {
-        wsId,
-        serverName: sourceName,
-        bundleName: url,
-        version: instance.version,
-        type: instance.type,
-        remote: true,
-        ui: instance.ui,
-        trustScore: instance.trustScore,
-        placements: instance.ui?.placements ?? null,
-      },
-    });
-
-    return instance;
-  }
-
-  /** Atomically persist a remote bundle's config entry (no-op when no config path is set). */
-  private persistRemoteBundleEntry(
-    url: string,
-    serverName: string,
-    transportConfig: RemoteTransportConfig | undefined,
-    ui: BundleUiMeta | null | undefined,
-    trustScore: number | null | undefined,
-  ): void {
-    if (!this.configPath) return;
-    const entry: Record<string, unknown> = { url, serverName };
-    if (transportConfig) entry.transport = transportConfig;
-    if (ui) entry.ui = ui;
-    if (trustScore != null) entry.trustScore = trustScore;
-    atomicConfigAdd(this.configPath, entry);
-  }
-
   // ---- Uninstall ---------------------------------------------------------
 
   /**
@@ -816,9 +452,6 @@ export class BundleLifecycleManager {
       const configKey = instance?.configKey ?? nameOrPath;
       atomicConfigRemove(this.configPath, configKey);
     }
-
-    // Step 4b — Remove bundle-contributed automations (non-blocking)
-    await this.removeBundleAutomations(instance?.bundleName ?? nameOrPath, registry);
 
     // Track state change before removing
     if (instance) {
@@ -874,32 +507,22 @@ export class BundleLifecycleManager {
   }
 
   /**
-   * Best-effort teardown of a bundle's workspace-scoped credentials on
-   * uninstall: the credential store, the mcp-oauth state dir, and — for
-   * Composio-backed bundles — the upstream connected account plus its local
-   * connector dir. Credentials are config, not data; data dirs are preserved.
-   * Every step is guarded so one failure can't sink the others.
+   * Best-effort teardown of a connector's workspace-scoped credentials on
+   * uninstall: the mcp-oauth state dir, and — for Composio-backed connectors —
+   * the upstream connected account plus its local connector dir. Credentials
+   * are config, not data; data dirs are preserved. Every step is guarded so
+   * one failure can't sink the others.
    */
   private async cleanupBundleCredentials(
     instance: BundleInstance,
     serverName: string,
   ): Promise<void> {
     const workDir = defaultWorkDir();
-    try {
-      await new WorkspaceContext({ wsId: instance.wsId, workDir })
-        .getCredentialStore()
-        .clearAll(instance.bundleName);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      process.stderr.write(
-        `[lifecycle] Failed to clear credentials for ${instance.bundleName} in ${instance.wsId}: ${msg}\n`,
-      );
-    }
-    // Drop the OAuth state dir as defense-in-depth. URL bundles route through
-    // `disconnect` first (which now invalidates "all" including client.json) —
-    // but stdio bundles never had OAuth state, and any leftover from a partial
-    // earlier disconnect shouldn't survive an uninstall. Worst case the dir is
-    // already gone; rmSync with `force` is a no-op then.
+    // Drop the OAuth state dir as defense-in-depth. Uninstall normally follows
+    // a `disconnect` (which invalidates "all" including client.json), but a
+    // leftover from a partial earlier disconnect shouldn't survive an
+    // uninstall. Worst case the dir is already gone; rmSync with `force` is a
+    // no-op then.
     try {
       const oauthDir = new WorkspaceContext({
         wsId: instance.wsId,
@@ -977,207 +600,6 @@ export class BundleLifecycleManager {
       process.stderr.write(
         `[lifecycle] Failed to clear composio dir for ${serverName} in ${instance.wsId}: ${msg}\n`,
       );
-    }
-  }
-
-  // ---- Upgrade -----------------------------------------------------------
-
-  /**
-   * Re-spawn one workspace's instance from whatever version is currently in
-   * the (shared, name-keyed) mpak cache. Assumes the caller has ALREADY
-   * force-pulled the desired version into the cache — this does NOT contact the
-   * registry. Tears down the old source and starts the new one, preserving the
-   * workspace data dir, credentials, and config entry; refreshes instance
-   * metadata, placements, and automations; emits `bundle.upgraded`.
-   *
-   * Best-effort hot-swap: the registry rejects duplicate source names, so the
-   * old source is removed before the new one starts (sub-second gap). If the
-   * new spawn fails the instance is left `dead` and the error propagates.
-   *
-   * Looked up by the instance's persisted `serverName` (not re-derived) so it
-   * works for canonical reverse-DNS serverNames, not just legacy short slugs.
-   */
-  private async respawnInstanceToCachedVersion(
-    instance: BundleInstance,
-    registry: ToolRegistry,
-  ): Promise<{ from: string; to: string; serverName: string }> {
-    const wsId = instance.wsId;
-    const serverName = instance.serverName;
-    const name = instance.bundleName;
-    const fromVersion = instance.version;
-
-    // Resolve workspace-scoped paths exactly as installNamed does, so the
-    // re-spawned subprocess writes to the same data dir and resolves the same
-    // credentials.
-    const nbWorkDir = defaultWorkDir();
-    const wsContext = new WorkspaceContext({ wsId, workDir: nbWorkDir });
-    const configDir = this.configPath ? dirname(this.configPath) : undefined;
-    const bundleDataDir = resolveBundleDataDirForRef(nbWorkDir, wsId, { name }, configDir);
-
-    // Remove the old source, then spawn the new version. Carry the persisted
-    // serverName through so the re-spawned source keeps the same registry key.
-    if (registry.hasSource(serverName)) {
-      await registry.removeSource(serverName);
-    }
-
-    // The old source is already removed; from here any failure leaves the
-    // instance with no live source, so every failure path must transition it to
-    // `dead` before propagating — otherwise the instance stays `running` while
-    // its tools 404 until the next boot self-heals (torn state).
-    let spawn: Awaited<ReturnType<typeof startBundleSource>>;
-    try {
-      spawn = await startBundleSource({ name, serverName }, registry, this.eventSink, configDir, {
-        dataDir: bundleDataDir,
-        workspaceContext: wsContext,
-        bundleMcp: this.resolveBundleMcpDeps(wsId),
-      });
-    } catch (err) {
-      // Spawn failed: bad binary, prepareServer error, or the refreshed manifest
-      // hit the terminal host-manifest gate.
-      await this.failRespawn(instance, name, registry);
-      throw err;
-    }
-    const { sourceName: newSourceName, manifest } = spawn;
-    if (!manifest) {
-      // Named bundles always carry a manifest; null is a precondition violation.
-      await this.failRespawn(instance, name, registry);
-      throw new Error(`No manifest found for ${name} after upgrade fetch`);
-    }
-
-    // Update instance metadata in place.
-    const isUpjack = manifest._meta?.["ai.nimblebrain/upjack"] != null;
-    instance.serverName = newSourceName;
-    instance.version = manifest.version;
-    instance.description = manifest.description;
-    instance.type = isUpjack ? "upjack" : "plain";
-    instance.ui = extractUiMeta(manifest);
-    instance.briefing = extractBriefing(manifest);
-    instance.trustScore = await fetchTrustScore(name, this.mpakHome);
-    this.transition(instance, "running");
-
-    // Re-key the instance map if the spawned serverName diverged (defensive —
-    // it derives from the same persisted ref so it normally matches).
-    if (newSourceName !== serverName) {
-      this.instances.delete(`${serverName}|${wsId}`);
-      this.instances.set(`${newSourceName}|${wsId}`, instance);
-    }
-
-    // Always unregister stale placements first, then re-register whatever the
-    // new manifest declares. Without the unconditional unregister, a version
-    // that drops all placements would leave stale nav entries behind.
-    this.placementRegistry?.unregister(serverName, wsId);
-    this.registerPlacements(newSourceName, instance.ui, wsId);
-
-    // Clean stale automations, then sync from the new manifest — matching the
-    // uninstall→install ordering so a schedule dropped between versions stops
-    // running with a stale prompt.
-    await this.removeBundleAutomations(name, registry);
-    await this.syncBundleAutomations(manifest, name, registry);
-
-    this.eventSink.emit({
-      type: "bundle.upgraded",
-      data: {
-        wsId,
-        serverName: newSourceName,
-        bundleName: name,
-        fromVersion,
-        toVersion: manifest.version,
-      },
-    });
-
-    return { from: fromVersion, to: manifest.version, serverName: newSourceName };
-  }
-
-  /**
-   * Failure cleanup for an interrupted re-spawn. The old source was already
-   * removed, so mark the instance `dead` (no live source) and drop its
-   * now-orphaned automations — otherwise they stay scheduled against the
-   * removed source and error when they fire, until the next boot reload
-   * re-syncs them. Mirrors uninstall's unconditional automation cleanup.
-   * Best-effort: an automation-cleanup error must not mask the spawn failure.
-   */
-  private async failRespawn(
-    instance: BundleInstance,
-    bundleName: string,
-    registry: ToolRegistry,
-  ): Promise<void> {
-    this.transition(instance, "dead");
-    await this.removeBundleAutomations(bundleName, registry).catch(() => {});
-  }
-
-  /**
-   * Upgrade a registry app to its latest published version across EVERY
-   * workspace that has it installed.
-   *
-   * App *version* is an org-global concern: the mpak cache is keyed by name
-   * only (no version) and shared platform-wide, so a single force-pull updates
-   * the artifact for everyone. We therefore pull once, then re-spawn every
-   * workspace's instance from the refreshed cache — keeping the running version
-   * consistent platform-wide. Looping the per-workspace path would NOT work:
-   * after the first workspace the cache is already latest, so a per-workspace
-   * `checkForUpdate` returns null and the rest would silently keep running the
-   * old subprocess.
-   *
-   * `getRegistry` resolves a workspace's ToolRegistry (caller wires it to
-   * `runtime.getRegistryForWorkspace`). Per-workspace failures are isolated so
-   * one bad re-spawn doesn't abort the others. No-op (no event) when already at
-   * the latest version. No `protected` guard — security patches must flow.
-   */
-  async upgradeApp(
-    bundleName: string,
-    getRegistry: (wsId: string) => ToolRegistry,
-  ): Promise<{
-    bundleName: string;
-    from: string;
-    to: string;
-    workspaces: Array<{ wsId: string; ok: boolean; error?: string }>;
-  }> {
-    const targets = this.getInstances().filter(
-      (i) => i.bundleName === bundleName && i.installSource === "registry",
-    );
-    const [first] = targets;
-    if (!first) {
-      throw new Error(`App "${bundleName}" is not installed in any workspace.`);
-    }
-    if (this.upgradesInFlight.has(bundleName)) {
-      throw new Error(`Upgrade already in progress for "${bundleName}".`);
-    }
-
-    this.upgradesInFlight.add(bundleName);
-    try {
-      const mpak = getMpak(this.mpakHome);
-      const fromVersion = first.version;
-
-      // Is a newer version published? `force` bypasses the name-keyed cache's
-      // staleness check so we ask the registry directly.
-      const latest = await mpak.bundleCache.checkForUpdate(bundleName, { force: true });
-      if (!latest) {
-        return { bundleName, from: fromVersion, to: fromVersion, workspaces: [] };
-      }
-
-      // Pull the new artifact into the shared cache ONCE; every workspace
-      // re-spawns from it below.
-      await mpak.bundleCache.loadBundle(bundleName, { force: true });
-
-      const workspaces: Array<{ wsId: string; ok: boolean; error?: string }> = [];
-      let toVersion = latest;
-      for (const instance of targets) {
-        try {
-          const r = await this.respawnInstanceToCachedVersion(instance, getRegistry(instance.wsId));
-          toVersion = r.to;
-          workspaces.push({ wsId: instance.wsId, ok: true });
-        } catch (err) {
-          workspaces.push({
-            wsId: instance.wsId,
-            ok: false,
-            error: err instanceof Error ? err.message : String(err),
-          });
-        }
-      }
-
-      return { bundleName, from: fromVersion, to: toVersion, workspaces };
-    } finally {
-      this.upgradesInFlight.delete(bundleName);
     }
   }
 
@@ -1594,7 +1016,7 @@ export class BundleLifecycleManager {
     wsId: string;
     principalId: string;
     opts: { workDir: string; callbackUrl: string; allowInsecureRemotes?: boolean };
-    ref: UrlBundleRef;
+    ref: BundleRef;
     ownerDisplayName: string | undefined;
     staticClient: StaticOAuthClient | undefined;
     providerAbort: AbortController;
@@ -1951,120 +1373,6 @@ export class BundleLifecycleManager {
     for (const [wsId, registry] of registries) this.registriesByWs.set(wsId, registry);
   }
 
-  // ---- Bundle-contributed automations -------------------------------------
-
-  /**
-   * Extract schedules from an Upjack manifest and create automations via
-   * the domain API. Idempotent — create returns existing if the id
-   * matches. Errors are logged but never fail the install (graceful
-   * degradation).
-   *
-   * Bypasses the LLM-facing `automations__create` tool because bundle-
-   * authored schedules need to stamp `source: "bundle"` and `bundleName`
-   * — operator fields the tool surface doesn't accept. Without this,
-   * `removeBundleAutomations` couldn't find what to clean up on
-   * uninstall.
-   */
-  private async syncBundleAutomations(
-    manifest: BundleManifest,
-    bundleName: string,
-    _registry: ToolRegistry,
-  ): Promise<void> {
-    const upjackMeta = manifest._meta?.["ai.nimblebrain/upjack"] as
-      | Record<string, unknown>
-      | undefined;
-    if (!upjackMeta) return;
-
-    const schedules = upjackMeta.schedules as UpjackScheduleDeclaration[] | undefined;
-    if (!schedules || !Array.isArray(schedules) || schedules.length === 0) return;
-
-    if (!this.getAutomationsCtx) {
-      process.stderr.write(
-        `[lifecycle] Automations subsystem not registered — skipping ${schedules.length} schedule(s) for ${bundleName}\n`,
-      );
-      return;
-    }
-    const ctx = this.getAutomationsCtx();
-
-    // Derive the short name used as the automation id prefix
-    // e.g. "@acme/monitoring" → "monitoring"
-    const shortName = deriveServerName(manifest.name);
-
-    for (const sched of schedules) {
-      try {
-        if (!sched.name || !sched.prompt || !sched.schedule) {
-          process.stderr.write(
-            `[lifecycle] Skipping schedule in ${bundleName}: missing required fields (name, prompt, schedule)\n`,
-          );
-          continue;
-        }
-
-        const automationId = `${shortName}__${sched.name}`;
-
-        createAutomation(
-          {
-            name: automationId,
-            prompt: sched.prompt,
-            schedule: sched.schedule,
-            description: sched.description,
-            skill: sched.skill,
-            allowedTools: sched.allowedTools,
-            maxIterations: sched.maxIterations,
-            maxInputTokens: sched.maxInputTokens,
-            model: sched.model ?? undefined,
-            enabled: sched.enabled ?? true,
-            source: "bundle",
-            bundleName,
-          },
-          ctx,
-        );
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        process.stderr.write(
-          `[lifecycle] Failed to create automation for schedule "${sched.name}" in ${bundleName}: ${msg}\n`,
-        );
-      }
-    }
-  }
-
-  /**
-   * Remove all bundle-contributed automations for a given bundleName.
-   * Reads the store directly via the domain context, filters by
-   * `source: "bundle"` and matching `bundleName`, then deletes each.
-   * Errors are logged but never fail the uninstall.
-   */
-  private async removeBundleAutomations(
-    bundleName: string,
-    _registry: ToolRegistry,
-  ): Promise<void> {
-    if (!this.getAutomationsCtx) return; // No automations subsystem in this runtime.
-    try {
-      const ctx = this.getAutomationsCtx();
-      const defs = ctx.definitions();
-      const toDelete: string[] = [];
-      for (const auto of defs.values()) {
-        if (auto.source === "bundle" && auto.bundleName === bundleName) {
-          toDelete.push(auto.name);
-        }
-      }
-      for (const name of toDelete) {
-        try {
-          deleteAutomation(name, ctx);
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
-          process.stderr.write(
-            `[lifecycle] Failed to delete automation "${name}" during uninstall of ${bundleName}: ${msg}\n`,
-          );
-        }
-      }
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      process.stderr.write(
-        `[lifecycle] Could not clean up automations for ${bundleName}: ${msg}\n`,
-      );
-    }
-  }
-
   /**
    * Register placements from a bundle's UI metadata in the PlacementRegistry.
    * Scoped to `wsId` so two workspaces installing the same bundle get separate
@@ -2142,13 +1450,13 @@ export class BundleLifecycleManager {
     // with the fresh one.
     const instance = this.instances.get(`${serverName}|${wsId}`);
     const ref = instance?.ref;
-    if (!ref || !("url" in ref)) {
+    if (!ref) {
       throw new Error(
         `[lifecycle] cannot re-register source "${serverName}" in ${wsId} — no URL ref persisted`,
       );
     }
 
-    await startBundleSource(ref, wsRegistry, this.eventSink, undefined, {
+    await startBundleSource(ref, wsRegistry, this.eventSink, {
       allowInsecureRemotes: this.allowInsecureRemotes,
       // A recovery that fails must not be destructive. With this set, the catch
       // sees the retained entry still holding the name and leaves it alone, so a
@@ -2231,9 +1539,9 @@ export class BundleLifecycleManager {
     registry: ToolRegistry,
   ): Promise<ToolSource | undefined> {
     const ref = await new IdentityConnectorStore({ workDir }).get(userId, serverName);
-    if (!ref || !("url" in ref)) return undefined;
+    if (!ref) return undefined;
 
-    await startBundleSource(ref, registry, this.eventSink, undefined, {
+    await startBundleSource(ref, registry, this.eventSink, {
       allowInsecureRemotes: this.allowInsecureRemotes,
       workDir,
       identityOwner: { userId },
@@ -2627,8 +1935,6 @@ export class BundleLifecycleManager {
         serverName,
         bundleName: instance.bundleName,
         version: instance.version,
-        type: instance.type,
-        trustScore: instance.trustScore,
         ui: instance.ui,
         placements: instance.ui?.placements ?? null,
       },
@@ -2654,8 +1960,7 @@ export class BundleLifecycleManager {
     ref: BundleRef,
     manifestMeta: SeedManifestMeta | undefined,
     wsId: string,
-    dataDir?: string,
-    /** Boot-start failure message for an installed-but-not-running URL bundle.
+    /** Boot-start failure message for an installed-but-not-running bundle.
      *  Set only by the boot seeder; makes the seeded Connection `dead` instead
      *  of the auth-derived state. */
     startError?: string,
@@ -2663,17 +1968,15 @@ export class BundleLifecycleManager {
     // Track A: validate authorize-URL params at the seed boundary.
     // Catches reserved-key collisions (client_id, state, PKCE, scope, etc.)
     // before they break OAuth flows at runtime.
-    if ("url" in ref && ref.additionalAuthorizationParams) {
+    if (ref.additionalAuthorizationParams) {
       validateAdditionalAuthorizationParams(ref.additionalAuthorizationParams);
     }
 
-    const instance = buildSeededInstance(serverName, bundleName, ref, manifestMeta, wsId, dataDir);
-    this.instances.set(`${serverName}|${wsId}`, instance);
-
-    // For URL bundles, derive the boot-time Connection state.
-    if ("url" in ref) {
-      this.seedUrlConnectionState(serverName, wsId, ref, startError);
-    }
+    this.instances.set(
+      `${serverName}|${wsId}`,
+      buildSeededInstance(serverName, bundleName, ref, manifestMeta, wsId),
+    );
+    this.seedUrlConnectionState(serverName, wsId, ref, startError);
   }
 
   /**
@@ -2695,7 +1998,7 @@ export class BundleLifecycleManager {
   private seedUrlConnectionState(
     serverName: string,
     wsId: string,
-    ref: UrlBundleRef,
+    ref: BundleRef,
     startError?: string,
   ): void {
     const pendingAuthUrl = consumePendingAuth(wsId, serverName);
@@ -2753,54 +2056,16 @@ export class BundleLifecycleManager {
 }
 
 // ---------------------------------------------------------------------------
-// Upjack schedule declaration (from manifest _meta["ai.nimblebrain/upjack"].schedules)
-// ---------------------------------------------------------------------------
-
-interface UpjackScheduleDeclaration {
-  name: string;
-  prompt: string;
-  schedule: {
-    type: "cron" | "interval";
-    expression?: string;
-    timezone?: string;
-    intervalMs?: number;
-  };
-  description?: string;
-  skill?: string;
-  allowedTools?: string[];
-  maxIterations?: number;
-  maxInputTokens?: number;
-  model?: string | null;
-  enabled?: boolean;
-}
-
-// ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
-
-/** Derive the install channel from a persisted BundleRef's shape. */
-function deriveInstallSource(ref: BundleRef): NonNullable<BundleInstance["installSource"]> {
-  if ("name" in ref) return "registry";
-  if ("url" in ref) return "remote";
-  return "local";
-}
 
 /**
  * Build the `BundleInstance` `seedInstance` records.
  *
- * **`state` is hardcoded `"running"` here and corrected afterwards, only for URL
- * refs** — `seedUrlConnectionState` is what resolves `dead` / `not_authenticated`
- * / `reauth_required` / `running` and recomputes `instance.state` from the
- * Connection. A named or path ref never reaches it, so anything this builds for
- * one stays `running` whether or not it started. That is why the boot loop drops
- * a failed named bundle instead of keeping it (see `unstartedUrlBundleEntry`):
- * keeping it would seed a permanently running instance for a dead bundle.
- *
- * Derives `entityDataRoot` from `dataDir` + upjack namespace, resolves
- * `oauthScope` for URL bundles (post-Stage-2 the only legal value is
- * `"workspace"`), and the install channel from the ref shape. `dataDir` is
- * already the canonical bundle-data parent (slug = manifest.name) thanks to
- * `resolveBundleDataDirForRef` at every caller, so no re-derivation here.
+ * **`state` is hardcoded `"running"` here and corrected afterwards** —
+ * `seedUrlConnectionState` is what resolves `dead` / `not_authenticated` /
+ * `reauth_required` / `running` and recomputes `instance.state` from the
+ * Connection.
  */
 function buildSeededInstance(
   serverName: string,
@@ -2808,37 +2073,22 @@ function buildSeededInstance(
   ref: BundleRef,
   manifestMeta: SeedManifestMeta | undefined,
   wsId: string,
-  dataDir: string | undefined,
 ): BundleInstance {
-  const entityDataRoot =
-    dataDir && manifestMeta?.upjackNamespace
-      ? join(dataDir, manifestMeta.upjackNamespace, "data")
-      : undefined;
-
-  const oauthScope: BundleInstance["oauthScope"] | undefined =
-    "url" in ref ? "workspace" : undefined;
-
   return {
     serverName,
-    // Prefer the scoped manifest name over the config label (filesystem path)
     bundleName: manifestMeta?.manifestName ?? bundleName,
     // Config key for reliable uninstall — the original value from nimblebrain.json
     configKey: bundleName,
     version: manifestMeta?.version ?? "unknown",
     description: manifestMeta?.description,
     state: "running",
-    trustScore: ref.trustScore ?? null,
     ui: ref.ui ?? manifestMeta?.ui ?? null,
     briefing: manifestMeta?.briefing ?? null,
-    type: manifestMeta?.type ?? "plain",
     wsId,
-    installSource: deriveInstallSource(ref),
-    ...(oauthScope !== undefined ? { oauthScope } : {}),
-    ...(entityDataRoot !== undefined ? { entityDataRoot } : {}),
-    // URL bundles only — needed to reconstruct McpSources on-demand
-    // (URL, transport config, oauthClient + scopes). Stored as an
-    // opaque copy.
-    ...("url" in ref ? { ref: { ...ref } } : {}),
+    oauthScope: "workspace",
+    // Needed to reconstruct McpSources on-demand (URL, transport config,
+    // oauthClient + scopes). Stored as an opaque copy.
+    ref: { ...ref },
   };
 }
 
@@ -2848,7 +2098,7 @@ function buildSeededInstance(
  * present. Returns undefined when the bundle has no static client (DCR path).
  */
 async function resolveStaticClientConfig(
-  ref: UrlBundleRef,
+  ref: BundleRef,
   wsId: string,
   serverName: string,
   workDir: string,
@@ -2875,62 +2125,6 @@ async function resolveStaticClientConfig(
   };
 }
 
-function createInstance(
-  serverName: string,
-  bundleName: string,
-  manifest: BundleManifest,
-  isUpjack: boolean,
-  wsId: string,
-  dataDir: string,
-): BundleInstance {
-  // Mirror the entityDataRoot composition `seedInstance` does at boot so
-  // JIT installs (installLocal / installNamed) leave the BundleInstance in
-  // the same shape as a boot-seeded one. Without this, briefing facets
-  // pointed at a freshly-installed upjack bundle would find
-  // `instance.entityDataRoot === undefined` and silently report nothing.
-  const upjackMeta = manifest._meta?.["ai.nimblebrain/upjack"] as
-    | { namespace?: string }
-    | undefined;
-  const namespace = upjackMeta?.namespace;
-  return {
-    serverName,
-    bundleName,
-    version: manifest.version,
-    description: manifest.description,
-    state: "starting",
-    trustScore: null,
-    ui: null,
-    briefing: null,
-    type: isUpjack ? "upjack" : "plain",
-    wsId,
-    ...(namespace ? { entityDataRoot: join(dataDir, namespace, "data") } : {}),
-  };
-}
-
-/** Extract UI metadata from _meta["ai.nimblebrain/host"]. */
-function extractUiMeta(manifest: BundleManifest): BundleUiMeta | null {
-  const hostMeta = manifest._meta?.["ai.nimblebrain/host"] as HostManifestMeta | undefined;
-  return hostMetaToUiMeta(hostMeta);
-}
-
-/** Extract briefing metadata from _meta["ai.nimblebrain/host"].briefing. */
-function extractBriefing(manifest: BundleManifest): BriefingBlock | null {
-  const hostMeta = manifest._meta?.["ai.nimblebrain/host"] as HostManifestMeta | undefined;
-  return hostMeta?.briefing ?? null;
-}
-
-/** Fetch trust score from mpak registry via SDK. Returns null on failure. */
-async function fetchTrustScore(name: string, mpakHome: string): Promise<number | null> {
-  try {
-    const mpak = getMpak(mpakHome);
-    const detail = await mpak.client.getBundle(name);
-    const score = (detail as Record<string, unknown>).certification_level;
-    return typeof score === "number" ? score : null;
-  } catch {
-    return null;
-  }
-}
-
 // ---------------------------------------------------------------------------
 // Atomic config read / write helpers
 // ---------------------------------------------------------------------------
@@ -2952,28 +2146,10 @@ function atomicWrite(configPath: string, config: Record<string, unknown>): void 
   renameSync(tmpPath, configPath);
 }
 
-/** Atomically add a bundle entry to the config. */
-function atomicConfigAdd(configPath: string, entry: Record<string, unknown>): void {
-  const config = readConfig(configPath);
-  const bundles = (config.bundles ?? []) as Array<Record<string, unknown>>;
-  const key = entry.name ?? entry.path ?? entry.url;
-  if (!bundles.some((b) => (b.name ?? b.path ?? b.url) === key)) {
-    bundles.push(entry);
-    config.bundles = bundles;
-    atomicWrite(configPath, config);
-  }
-}
-
 /** Atomically remove a bundle entry from the config. */
 function atomicConfigRemove(configPath: string, key: string): void {
   const config = readConfig(configPath);
   const bundles = (config.bundles ?? []) as Array<Record<string, unknown>>;
-  config.bundles = bundles.filter((b) => b.name !== key && b.path !== key && b.url !== key);
+  config.bundles = bundles.filter((b) => b.url !== key);
   atomicWrite(configPath, config);
 }
-
-// ---------------------------------------------------------------------------
-// Exported helpers for use outside the manager
-// ---------------------------------------------------------------------------
-
-export { extractUiMeta };

@@ -29,7 +29,7 @@ describe("themedIconUrl", () => {
     expect(themedIconUrl(u, "dark")).toBe(u);
   });
 
-  test("leaves mpak / third-party URLs unchanged", () => {
+  test("leaves registry / third-party URLs unchanged", () => {
     const u = "https://cdn.example.com/icon.svg";
     expect(themedIconUrl(u, "dark")).toBe(u);
   });

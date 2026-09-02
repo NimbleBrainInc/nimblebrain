@@ -12,7 +12,7 @@ import { themedIconUrl } from "../../lib/icon-theme";
  *
  * Brand icons on our static CDN ship light/dark variants; we swap to
  * the one matching the active theme via `themedIconUrl`. Any other URL
- * (mpak, legacy PNG, third-party) renders unchanged.
+ * (legacy PNG, third-party) renders unchanged.
  *
  * The fallback's background tint is hashed from the connector's
  * display name. Same connector → same color across reloads. The

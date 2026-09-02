@@ -142,7 +142,7 @@ describe("Remote integration: config → validate → load → tools", () => {
 		// Step 3: Start bundle source from the validated ref
 		const registry = new ToolRegistry();
 		const ref: BundleRef = config.bundles[0] as BundleRef;
-		const meta = await startBundleSource(ref, registry, new NoopEventSink(), undefined, { allowInsecureRemotes: true, wsId: "ws_test" });
+		const meta = await startBundleSource(ref, registry, new NoopEventSink(), { allowInsecureRemotes: true, wsId: "ws_test" });
 
 		expect(meta).not.toBeNull();
 		expect(meta.meta).not.toBeNull();
@@ -179,7 +179,7 @@ describe("Remote integration: config → validate → load → tools", () => {
 		// Start source (auth headers won't affect our mock server)
 		const registry = new ToolRegistry();
 		const ref: BundleRef = config.bundles[0] as BundleRef;
-		const meta = await startBundleSource(ref, registry, new NoopEventSink(), undefined, { allowInsecureRemotes: true, wsId: "ws_test" });
+		const meta = await startBundleSource(ref, registry, new NoopEventSink(), { allowInsecureRemotes: true, wsId: "ws_test" });
 
 		expect(meta).not.toBeNull();
 		expect(registry.hasSource("authed-remote")).toBe(true);
@@ -203,7 +203,7 @@ describe("Remote integration: config → validate → load → tools", () => {
 		const registry = new ToolRegistry();
 		const ref: BundleRef = config.bundles[0] as BundleRef;
 
-		const results = await Promise.allSettled([startBundleSource(ref, registry, new NoopEventSink(), undefined, { allowInsecureRemotes: true, wsId: "ws_test" })]);
+		const results = await Promise.allSettled([startBundleSource(ref, registry, new NoopEventSink(), { allowInsecureRemotes: true, wsId: "ws_test" })]);
 		expect(results[0]!.status).toBe("rejected");
 		expect(registry.hasSource("dead-remote")).toBe(false);
 	}, 20_000);
@@ -218,7 +218,7 @@ describe("Remote integration: config → validate → load → tools", () => {
 		const ref: BundleRef = { url: "http://127.0.0.1:1/mcp", serverName: "boot-down-remote" };
 
 		const results = await Promise.allSettled([
-			startBundleSource(ref, registry, new NoopEventSink(), undefined, {
+			startBundleSource(ref, registry, new NoopEventSink(), {
 				allowInsecureRemotes: true,
 				wsId: "ws_test",
 				keepRegisteredOnStartFailure: true,
@@ -396,7 +396,7 @@ describe("Remote integration: registering remote bundles in workspace registry",
 		// Register a remote bundle into the workspace registry
 		const registry = runtime.getRegistryForWorkspace(TEST_WORKSPACE_ID);
 		const ref: BundleRef = { url: mockServer.url, serverName: "runtime-remote" };
-		await startBundleSource(ref, registry, new NoopEventSink(), undefined, { allowInsecureRemotes: true, wsId: "ws_test" });
+		await startBundleSource(ref, registry, new NoopEventSink(), { allowInsecureRemotes: true, wsId: "ws_test" });
 
 		expect(registry.hasSource("runtime-remote")).toBe(true);
 
@@ -424,14 +424,14 @@ describe("Remote integration: registering remote bundles in workspace registry",
 		// Try to register a bad remote (should fail)
 		const badRef: BundleRef = { url: "http://127.0.0.1:1/mcp", serverName: "bad-remote" };
 		const badResult = await Promise.allSettled([
-			startBundleSource(badRef, registry, new NoopEventSink(), undefined, { allowInsecureRemotes: true, wsId: "ws_test" }),
+			startBundleSource(badRef, registry, new NoopEventSink(), { allowInsecureRemotes: true, wsId: "ws_test" }),
 		]);
 		expect(badResult[0]!.status).toBe("rejected");
 		expect(registry.hasSource("bad-remote")).toBe(false);
 
 		// Register a good remote (should succeed)
 		const goodRef: BundleRef = { url: mockServer.url, serverName: "good-remote" };
-		await startBundleSource(goodRef, registry, new NoopEventSink(), undefined, { allowInsecureRemotes: true, wsId: "ws_test" });
+		await startBundleSource(goodRef, registry, new NoopEventSink(), { allowInsecureRemotes: true, wsId: "ws_test" });
 		expect(registry.hasSource("good-remote")).toBe(true);
 
 		await registry.removeSource("good-remote");

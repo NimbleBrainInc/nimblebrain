@@ -28,7 +28,7 @@ export function OAuthConnectionSection({
   // Render only on the happy path. needs_auth / failed / connecting
   // states are handled by the hero with the right CTA + status copy;
   // surfacing the same connection here would double-count.
-  if (installed.type !== "remote" || !installed.url) return null;
+  if (!installed.url) return null;
   if (installed.state !== "running") return null;
 
   const onDisconnect = async () => {

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
@@ -23,7 +23,6 @@ import type { ConfirmationGate } from "../../src/config/privilege.ts";
 import { resolveFeatures } from "../../src/config/features.ts";
 import { isToolEligibleForPromotion } from "../../src/runtime/tool-eligibility.ts";
 import { ConnectorDirectory } from "../../src/registries/directory.ts";
-import { _resetMpakSourceCache } from "../../src/registries/mpak-source.ts";
 import { RegistryStore } from "../../src/registries/registry-store.ts";
 import type { Runtime } from "../../src/runtime/runtime.ts";
 
@@ -427,7 +426,7 @@ describe("System Tools", () => {
 		]);
 	});
 
-	// `search with scope=registry` is not exercised here: it hits the live mpak
+	// `search with scope=registry` is not exercised here: it hits the live
 	// registry over the network, so it can't run in the deterministic unit gate.
 
 	it("tools() returns prefixed tool names", async () => {
@@ -908,58 +907,58 @@ describe("search — feature flag gating", () => {
 // ---------------------------------------------------------------------------
 
 describe("search — scope: registry", () => {
-	const originalFetch = globalThis.fetch;
+	let workDir: string | undefined;
+
 	afterEach(() => {
-		globalThis.fetch = originalFetch;
-		_resetMpakSourceCache();
+		if (workDir) rmSync(workDir, { recursive: true, force: true });
+		workDir = undefined;
 	});
 
-	// One in-scope (@nimblebraininc) + one out-of-scope (@joecardoso13) bundle,
-	// in the ServerDetail shape mpak's /v1/servers/search returns.
-	const TWO_BUNDLES = JSON.stringify({
-		servers: [
-			{
-				name: "ai.nimblebrain/ipinfo",
-				description: "IP geolocation",
-				version: "1.0.0",
-				packages: [
-					{
-						registryType: "mpak",
-						identifier: "@nimblebraininc/ipinfo",
-						version: "1.0.0",
-						transport: { type: "stdio" },
-					},
-				],
-			},
-			{
-				name: "dev.mpak.joecardoso13/asana",
-				description: "MCP server for the Asana API",
-				version: "0.3.0",
-				packages: [
-					{
-						registryType: "mpak",
-						identifier: "@joecardoso13/asana",
-						version: "0.3.0",
-						transport: { type: "stdio" },
-					},
-				],
-			},
-		],
-	});
+	// One in-scope (ai.nimblebrain) + one out-of-scope (dev.acme) server.
+	const TWO_SERVERS = [
+		{
+			name: "ai.nimblebrain/ipinfo",
+			description: "IP geolocation",
+			version: "1.0.0",
+			remotes: [{ type: "streamable-http", url: "https://ipinfo.example.com/mcp" }],
+		},
+		{
+			name: "dev.acme/asana",
+			description: "MCP server for the Asana API",
+			version: "0.3.0",
+			remotes: [{ type: "streamable-http", url: "https://asana.example.com/mcp" }],
+		},
+	];
 
-	// Build a runtime whose ConnectorDirectory is backed by a single mpak
-	// registry with the given scopes (omit for an unscoped / open registry).
-	function runtimeWithMpak(scopes?: string[]): Runtime {
-		const workDir = mkdtempSync(join(tmpdir(), "nb-search-registry-"));
+	/**
+	 * Build a runtime whose ConnectorDirectory is backed by one curated
+	 * registry with the given scopes (omit for an unscoped registry).
+	 */
+	function runtimeWithCatalog(scopes?: string[], servers = TWO_SERVERS): Runtime {
+		workDir = mkdtempSync(join(tmpdir(), "nb-search-registry-"));
+		const catalog = join(workDir, "catalog.json");
+		writeFileSync(catalog, JSON.stringify({ servers }));
 		writeFileSync(
 			join(workDir, "registries.json"),
 			JSON.stringify({
+				// Disabled `bundled-static` placeholder: the store injects one
+				// pointing at the shipped catalog when it is missing, which would
+				// add entries no test asked for.
 				registries: [
 					{
-						id: "mpak",
-						name: "mpak.dev",
-						type: "mpak",
+						id: "bundled-static",
+						name: "Curated services",
+						type: "static",
+						enabled: false,
+						locked: true,
+						url: join(workDir, "missing-on-purpose.yaml"),
+					},
+					{
+						id: "curated",
+						name: "Curated catalog",
+						type: "static",
 						enabled: true,
+						url: catalog,
 						...(scopes ? { scopes } : {}),
 					},
 				],
@@ -973,9 +972,6 @@ describe("search — scope: registry", () => {
 	}
 
 	async function search(runtime: Runtime, query: string) {
-		globalThis.fetch = (async () =>
-			new Response(TWO_BUNDLES, { status: 200 })) as typeof fetch;
-		_resetMpakSourceCache();
 		const registry = await makeRegistry();
 		const systemTools = await createSystemTools(
 			() => registry,
@@ -993,27 +989,35 @@ describe("search — scope: registry", () => {
 		return systemTools.execute("search", { scope: "registry", query });
 	}
 
-	it("renders an in-scope bundle as **@scope/name** <version> [bundle]", async () => {
-		const result = await search(runtimeWithMpak(["nimblebraininc"]), "ipinfo");
+	it("renders an in-scope server as **<name>** <version>", async () => {
+		const result = await search(runtimeWithCatalog(["ai.nimblebrain"]), "ipinfo");
 		expect(result.isError).toBe(false);
 		const text = extractText(result.content);
-		expect(text).toContain("@nimblebraininc/ipinfo");
+		expect(text).toContain("ai.nimblebrain/ipinfo");
 		expect(text).toContain("1.0.0");
-		expect(text).toContain("[bundle]");
 	});
 
-	it("drops bundles from other publishers even when the name matches", async () => {
-		// "asana" matches @joecardoso13/asana by name, but it's out of scope
-		// for the nimblebraininc-scoped registry — the leak this PR fixes.
-		const result = await search(runtimeWithMpak(["nimblebraininc"]), "asana");
+	it("drops servers from other publishers even when the name matches", async () => {
+		// "asana" matches dev.acme/asana by name, but it's out of scope for the
+		// ai.nimblebrain-scoped registry.
+		const result = await search(runtimeWithCatalog(["ai.nimblebrain"]), "asana");
 		const text = extractText(result.content);
-		expect(text).not.toContain("@joecardoso13/asana");
-		expect(text).toContain("No bundles found");
+		expect(text).not.toContain("dev.acme/asana");
+		expect(text).toContain("No servers found");
 	});
 
-	it("an unscoped mpak registry surfaces all publishers (open mpak)", async () => {
-		const result = await search(runtimeWithMpak(undefined), "asana");
-		expect(extractText(result.content)).toContain("@joecardoso13/asana");
+	it("an unscoped registry surfaces all publishers", async () => {
+		const result = await search(runtimeWithCatalog(undefined), "asana");
+		expect(extractText(result.content)).toContain("dev.acme/asana");
+	});
+
+	it("searches every enabled source, not just one type", async () => {
+		// The agent's registry view is the same set Browse shows: whatever the
+		// enabled sources return, with no source-type filter narrowing it.
+		const result = await search(runtimeWithCatalog(undefined), "");
+		const text = extractText(result.content);
+		expect(text).toContain("ai.nimblebrain/ipinfo");
+		expect(text).toContain("dev.acme/asana");
 	});
 
 	it("returns no results when there is no runtime (no directory to query)", async () => {
@@ -1021,33 +1025,48 @@ describe("search — scope: registry", () => {
 		const systemTools = await createSystemTools(() => registry);
 		const result = await systemTools.execute("search", { scope: "registry", query: "ipinfo" });
 		expect(result.isError).toBe(false);
-		expect(extractText(result.content)).toContain("No bundles found");
+		expect(extractText(result.content)).toContain("No servers found");
 	});
 
-	it("reports failure (not 'No bundles found') when the mpak registry is unreachable", async () => {
-		// servers() aggregates the fetch failure into errors instead of
-		// throwing; the handler must not mistake an outage for an empty result
-		// and tell the agent the bundle doesn't exist.
-		globalThis.fetch = (async () =>
-			new Response("upstream down", { status: 503 })) as typeof fetch;
-		_resetMpakSourceCache();
-		const registry = await makeRegistry();
-		const systemTools = await createSystemTools(
-			() => registry,
-			undefined,
-			undefined,
-			undefined,
-			undefined,
-			undefined,
-			undefined,
-			undefined,
-			undefined,
-			undefined,
-			runtimeWithMpak(["nimblebraininc"]),
+	it("reports failure (not 'No servers found') when every source errored", async () => {
+		// servers() aggregates a source failure into errors instead of throwing;
+		// the handler must not mistake an outage for an empty result and tell the
+		// agent the server doesn't exist.
+		workDir = mkdtempSync(join(tmpdir(), "nb-search-registry-"));
+		const unreadable = join(workDir, "unreadable");
+		mkdirSync(unreadable);
+		chmodSync(unreadable, 0o000);
+		writeFileSync(
+			join(workDir, "registries.json"),
+			JSON.stringify({
+				// The store auto-injects a `bundled-static` row pointing at the
+				// shipped catalog when one is missing; a disabled placeholder keeps
+				// it from supplying entries the broken source is meant to be alone with.
+				registries: [
+					{
+						id: "bundled-static",
+						name: "Curated services",
+						type: "static",
+						enabled: false,
+						locked: true,
+						url: join(workDir, "missing-on-purpose.yaml"),
+					},
+					{ id: "broken", name: "Broken", type: "static", enabled: true, url: unreadable },
+				],
+			}),
 		);
-		const result = await systemTools.execute("search", { scope: "registry", query: "asana" });
-		expect(result.isError).toBe(true);
-		expect(extractText(result.content)).toContain("Failed to search mpak registry");
+		const store = new RegistryStore(workDir);
+		const runtime = {
+			getConnectorDirectory: () => new ConnectorDirectory(store),
+			getRegistryStore: () => store,
+		} as unknown as Runtime;
+		try {
+			const result = await search(runtime, "asana");
+			expect(result.isError).toBe(true);
+			expect(extractText(result.content)).toContain("Failed to search the connector registries");
+		} finally {
+			chmodSync(unreadable, 0o700);
+		}
 	});
 });
 

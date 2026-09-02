@@ -16,18 +16,18 @@ describe("skillMechanismLabel", () => {
     expect(
       skillMechanismLabel({
         loading: { mechanism: "tool_affinity" },
-        toolAffinity: ["mpak__*"],
+        toolAffinity: ["docs__*"],
       }),
-    ).toEqual({ text: "On tool match", mono: "mpak__*" });
+    ).toEqual({ text: "On tool match", mono: "docs__*" });
   });
 
   it("joins multiple tool globs into one mono tail", () => {
     expect(
       skillMechanismLabel({
         loading: { mechanism: "tool_affinity" },
-        toolAffinity: ["mpak__*", "github__*"],
+        toolAffinity: ["docs__*", "github__*"],
       }),
-    ).toEqual({ text: "On tool match", mono: "mpak__*, github__*" });
+    ).toEqual({ text: "On tool match", mono: "docs__*, github__*" });
   });
 
   it("quotes a trigger phrase inline (no mono tail)", () => {

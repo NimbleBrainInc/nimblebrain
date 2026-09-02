@@ -81,15 +81,35 @@ cd nimblebrain    # the platform repo
 bun run dev --app /path/to/your-app/ui
 ```
 
-Your app must already be configured as a local bundle in `.nimblebrain/nimblebrain.json`:
+Run your MCP server yourself over HTTP, and point the workspace at it. The
+platform connects to remote MCP servers and never spawns one, so a dev loop is
+the same shape as production: a URL your workspace holds.
 
-```json
+```bash
+# Terminal 1 — your server, over streamable HTTP
+uv run python -m mcp_myapp.server --http --port 8765
+```
+
+Add it to the dev workspace's `workspace.json`, and allow the loopback host
+(the SSRF guard refuses it otherwise):
+
+```json title="<workDir>/workspaces/<wsId>/workspace.json"
 {
   "bundles": [
-    { "path": "/absolute/path/to/your-app" }
+    { "url": "http://localhost:8765/mcp", "serverName": "myapp" }
   ]
 }
 ```
+
+```json title="<workDir>/nimblebrain.json"
+{ "allowInsecureRemotes": true }
+```
+
+<Aside type="caution">
+  `allowInsecureRemotes` disables the loopback / RFC1918 / cloud-metadata
+  refusal for every connector in the instance. It is a development switch —
+  never set it on a deployed platform.
+</Aside>
 
 This gives you everything — data sync, agent interactions, theme injection, keyboard forwarding, multi-app navigation — plus Vite HMR on your UI.
 
@@ -99,12 +119,12 @@ This gives you everything — data sync, agent interactions, theme injection, ke
 bun run dev
 ```
 
-The platform loads your bundle from the `path` in the config. UI changes require:
+The platform connects to the `url` in the workspace config. UI changes require:
 
 <Steps>
 
 1. Rebuild the UI: `cd ui && npm run build`
-2. Restart the dev server so it reloads the bundle (`bun run dev` picks up source changes automatically)
+2. Restart your MCP server so it serves the rebuilt `ui://` resource
 3. Hard-refresh the browser (`Cmd+Shift+R`)
 </Steps>
 

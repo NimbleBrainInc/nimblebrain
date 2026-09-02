@@ -2,11 +2,9 @@ import { describe, expect, it, afterAll, beforeEach } from "bun:test";
 import { mkdirSync, writeFileSync, rmSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { resolveLocalBundle } from "../../src/bundles/resolve.ts";
 import { McpSource } from "../../src/tools/mcp-source.ts";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import { ToolRegistry } from "../../src/tools/registry.ts";
-import type { BundleManifest } from "../../src/bundles/types.ts";
 import { extractText } from "../../src/engine/content-helpers.ts";
 
 const testDir = join(tmpdir(), `nimblebrain-bundles-${Date.now()}`);
@@ -18,21 +16,6 @@ function setupTestDir() {
 
 afterAll(() => {
   if (existsSync(testDir)) rmSync(testDir, { recursive: true });
-});
-
-describe("resolveLocalBundle", () => {
-  beforeEach(setupTestDir);
-
-  it("resolves an existing local path", () => {
-    const bundleDir = join(testDir, "my-bundle");
-    mkdirSync(bundleDir, { recursive: true });
-
-    expect(resolveLocalBundle(bundleDir)).toBe(bundleDir);
-  });
-
-  it("returns null for nonexistent path", () => {
-    expect(resolveLocalBundle("/nonexistent/bundle")).toBeNull();
-  });
 });
 
 describe("ToolRegistry", () => {

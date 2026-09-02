@@ -143,19 +143,20 @@ describe("nb__manage_workspaces", () => {
       expect(parsed.workspace.id).toBe("ws_custom_slug");
     });
 
-    test("creates workspace with bundles", async () => {
+    test("creates workspace with connectors", async () => {
       const result = await tool.handler({
         action: "create",
-        name: "Bundle Workspace",
-        bundles: [{ name: "@nimblebraininc/echo" }],
+        name: "Connector Workspace",
+        bundles: [{ url: "https://echo.example.com/mcp", serverName: "echo" }],
       });
 
       expect(result.isError).toBe(false);
       const parsed = parseResult(result) as {
-        workspace: { bundles: Array<{ name: string }> };
+        workspace: { bundles: Array<{ url: string; serverName?: string }> };
       };
       expect(parsed.workspace.bundles).toHaveLength(1);
-      expect(parsed.workspace.bundles[0].name).toBe("@nimblebraininc/echo");
+      expect(parsed.workspace.bundles[0].url).toBe("https://echo.example.com/mcp");
+      expect(parsed.workspace.bundles[0].serverName).toBe("echo");
     });
 
     test("requires name", async () => {

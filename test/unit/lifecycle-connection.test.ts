@@ -22,7 +22,6 @@ function seedInstance(lifecycle: BundleLifecycleManager, serverName: string, wsI
     bundleName: "https://example.test/mcp",
     version: "remote",
     state: "starting",
-    trustScore: null,
     ui: null,
     briefing: null,
     type: "plain",

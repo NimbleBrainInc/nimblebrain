@@ -1,11 +1,13 @@
 ---
 title: Connectors Catalog
-description: How to curate the OAuth and stdio bundles that appear on the Settings → Connectors page.
+description: How to curate the connectors that appear on the Settings → Connectors page.
 ---
 
 import { Aside, Code, Tabs, TabItem } from '@astrojs/starlight/components';
 
-The Settings → Connectors **Browse** list is assembled by aggregating one or more **registries** into a single directory. Every registry produces the same wire shape — the upstream MCP registry's [`ServerDetail`](https://github.com/modelcontextprotocol/registry) — so curated remote OAuth services and mpak-published stdio bundles render side-by-side without separate plumbing.
+The Settings → Connectors **Browse** list is assembled by aggregating one or more **registries** into a single directory. Every registry produces the same wire shape — the upstream MCP registry's [`ServerDetail`](https://github.com/modelcontextprotocol/registry) — so entries from different sources render side-by-side without separate plumbing.
+
+Only an entry advertising a `remotes[]` endpoint is installable: the runtime connects to remote MCP servers and does not acquire, verify, or execute downloadable `packages[]`. An entry offering only packages is dropped from Browse with a logged reason.
 
 ## How registries work
 
@@ -13,15 +15,15 @@ A registry is a typed source of `ServerDetail` records. Each instance is identif
 
 | Type | Source | When to use |
 |------|--------|-------------|
-| `static` | A YAML / JSON file containing `ServerDetail` entries | Curated lists you ship with the platform or mount via ConfigMap. |
-| `mpak` | The mpak HTTP registry (`registry.mpak.dev` by default) | Discovering third-party stdio bundles published to mpak. |
-| `mcp` | An upstream MCP `/v1/servers` endpoint | Pointing at any spec-conformant MCP registry. (Discovery API only — no install path yet.) |
-| `custom-url` | Reserved | Future expansion. |
+| `static` | A YAML / JSON file (or a directory of them) containing `ServerDetail` entries | Curated lists you ship with the platform or mount via ConfigMap. |
 
-The platform seeds two registries on first boot:
+`type` is an open string keyed into the directory's source-factory map. A type
+this build carries no source for surfaces no entries and logs the reason, rather
+than failing to load — so a new source type is one factory entry and one file.
+
+The platform seeds one registry on first boot:
 
 - **`bundled-static`** (locked, type `static`) — the curated catalog **directory**: `src/connectors/curated/` in-image, or wherever [`NB_CURATED_CATALOG_DIR`](/config/environment/#registries) points. Every `*.yaml`/`*.yml`/`*.json` in it loads into this one registry. Cannot be disabled or removed; operators may rename it.
-- **`mpak`** (type `mpak`, scoped to `["nimblebraininc"]`) — the public mpak registry, narrowed to the `@nimblebraininc/*` scope so first-time installs see only NimbleBrain-curated bundles. Operators can broaden the scope or disable the registry entirely.
 
 Registry config persists at `<workDir>/registries.json`. The shape is:
 
@@ -35,13 +37,6 @@ Registry config persists at `<workDir>/registries.json`. The shape is:
       "enabled": true,
       "locked": true,
       "url": "/abs/path/to/catalog.yaml"
-    },
-    {
-      "id": "mpak",
-      "name": "mpak.dev",
-      "type": "mpak",
-      "enabled": true,
-      "scopes": ["nimblebraininc"]
     }
   ]
 }
@@ -50,7 +45,7 @@ Registry config persists at `<workDir>/registries.json`. The shape is:
 The `scopes` field (when present) restricts a registry's entries to one or more namespaces. A `ServerDetail` passes if **any** of these match **any** configured scope:
 
 - The reverse-DNS prefix of `ServerDetail.name` (`ai.nimblebrain` matches `ai.nimblebrain/echo`).
-- The npm scope of any `packages[].identifier` (`nimblebraininc` matches `@nimblebraininc/echo`).
+- The npm scope of any `packages[].identifier` (`acme` matches `@acme/echo`).
 
 ## Adding a new OAuth connector
 
@@ -312,23 +307,6 @@ The new entry appears on Settings → Connectors → Browse. Walk through the in
 
 If anything is off, check the API server logs for `[static-source]` / `[connector-directory]` warnings — invalid entries are dropped with a logged reason.
 
-## Adding stdio bundles
-
-Stdio bundles install via the mpak SDK, which fetches the published `@nimblebraininc/<name>` package. There is no separate stdio catalog file: any bundle published to a registered `mpak` registry whose `packages[].identifier` matches the registry's `scopes` filter surfaces in Browse automatically.
-
-To narrow or broaden which mpak bundles operators see, edit the seeded mpak row's `scopes` list (default `["nimblebraininc"]`):
-
-```json
-{
-  "id": "mpak",
-  "type": "mpak",
-  "enabled": true,
-  "scopes": ["nimblebraininc", "acme-internal"]
-}
-```
-
-Drop the `scopes` field entirely to surface every bundle on the registry — usually too noisy for first-time users.
-
 ## Operator override
 
 Operators with custom curation needs can replace the persisted `registries.json` at runtime via the `NB_REGISTRIES` env var. Setting this env var **completely overrides** any stored `registries.json` for the lifetime of the process; the bundled-static entry is re-pinned automatically so a malformed override can't accidentally drop the platform default.
@@ -343,16 +321,17 @@ export NB_REGISTRIES='[
     "url": "/etc/nimblebrain/connectors/acme-catalog.yaml"
   },
   {
-    "id": "mpak",
-    "name": "mpak.dev",
-    "type": "mpak",
+    "id": "acme-partners",
+    "name": "Acme Partners",
+    "type": "static",
     "enabled": true,
-    "scopes": ["nimblebraininc", "acme"]
+    "url": "/etc/nimblebrain/connectors/partners.yaml",
+    "scopes": ["com.acme"]
   }
 ]'
 ```
 
-Each entry must include `id`, `name`, and `type`. Supported types: `static`, `mpak`, `mcp`, `custom-url`. Optional fields: `enabled` (default `true`), `url`, `scopes`, `locked`.
+Each entry must include `id`, `name`, and `type`. `static` is the type this build ships a source for; any other value loads without error and surfaces no entries. Optional fields: `enabled` (default `true`), `url`, `scopes`, `locked`.
 
 When `NB_REGISTRIES` is set, persistent edits via the admin UI are rejected — the env var is the source of truth. Unset it to fall back to the persisted file.
 
@@ -435,7 +414,7 @@ The platform reads `NB_REGISTRIES` once at process start. Edits to the env var (
 
 ### Validation
 
-Every `ServerDetail` is validated at the source boundary (mpak fetch, static-source file read) and again at the directory boundary. Invalid entries are dropped with a logged warning naming the registry id and the entry name. Common rejection reasons:
+Every `ServerDetail` is validated at the source boundary (the static-source file read) and again at the directory boundary. Invalid entries are dropped with a logged warning naming the registry id and the entry name. Common rejection reasons:
 
 | Reason | Fix |
 |--------|-----|
@@ -444,6 +423,7 @@ Every `ServerDetail` is validated at the source boundary (mpak fetch, static-sou
 | `auth='static' requires operatorSetup.{portalUrl,hint,clientSecretKey}` | Add the `operatorSetup` block under `_meta["ai.nimblebrain/connector"]`. |
 | `additionalAuthorizationParams cannot include reserved keys` | Remove `client_id`, `redirect_uri`, `state`, `code_challenge`, `code_challenge_method`, `scope`, etc. — these are filled by the OAuth provider. |
 | `duplicate name "<id>"` | Each entry's `name` must be unique within a single static source. |
+| `not installable: needs a \`remotes\` entry` | The entry advertises only `packages[]`. This runtime connects to remote MCP servers; give the entry a `remotes[]` URL. |
 
 When the top-level shape is bad (not a list or `{servers: [...]}`, malformed YAML), the whole override is rejected and the bundled catalog is used. The startup logs name the file path and the parse error.
 
@@ -508,11 +488,11 @@ Operators upgrading from a release before the `ServerDetail` alignment landed sh
 - **Seeded id rename.** The locked seeded registry id `"curated"` is now `"bundled-static"`. Existing `registries.json` rows are preserved; the new id is re-added if missing.
 - **`NB_CATALOG_PATH` and `NB_STDIO_CATALOG_PATH` removed.** Use `NB_REGISTRIES` with a `static`-type registry pointing at a `ServerDetail[]` YAML / JSON file.
 - **Catalog id format.** `DirectoryEntry.id` (and `InstalledConnector.catalogId`) is now the reverse-DNS `ServerDetail.name` (`io.asana/mcp`) instead of a bare slug (`asana`). Catalog-keyed state — `workspace.json#oauthOperatorApps[<id>]` and the matching `<clientSecretKey>` credential entries — must be rekeyed to the reverse-DNS form before existing static-auth connectors will resolve. There's no auto-migration; rekey workspace by workspace through the admin Connectors UI.
-- **`stdio-catalog.yaml` removed.** Curated stdio bundle entries no longer live in a separate file — the mpak registry is queried directly via the SDK and filtered by `scopes`.
-- **Bundle `serverName` slug.** New catalog installs persist a slugified canonical reverse-DNS form (`com-canva-mcp`, `dev-mpak-nimblebraininc-echo`) instead of a short brand slug. Existing installs keep their persisted `serverName` via a fallback. Operators querying by `serverName` (logs, audit) need both forms during the transition.
+- **Connector `serverName` slug.** New catalog installs persist a slugified canonical reverse-DNS form (`com-canva-mcp`) instead of a short brand slug. Existing installs keep their persisted `serverName` via a fallback. Operators querying by `serverName` (logs, audit) need both forms during the transition.
+- **Downloadable bundles removed.** The runtime no longer acquires or spawns a server's code, so a catalog entry advertising only `packages[]` is not installable and no longer appears in Browse. Publish the server behind a URL and give the entry a `remotes[]` endpoint.
 
 ## Related
 
 - [Environment Variables](/config/environment/) — `NB_PUBLIC_ORIGIN`, `NB_REGISTRIES`.
 - [Workspace JSON](/config/workspace-json/) — `oauthOperatorApps`, `connectorsAllowList`.
-- [Credentials](/config/credentials/) — how `user_config` and the credential store work for stdio bundles.
+- [Credentials](/config/credentials/) — where a connector's credentials live and who can read them.

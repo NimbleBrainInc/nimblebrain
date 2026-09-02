@@ -6,9 +6,8 @@ import { SettingsPageHeader } from "./components";
  * Admin surface for connector registries — the sources Browse pulls
  * from. Locked registries (curated) render a disabled toggle so it's
  * obvious they're permanent. Other registries can be enabled or
- * disabled here. Registry URLs (e.g., pointing mpak at a self-hosted
- * instance) are deployment configuration — set via the `NB_REGISTRIES`
- * env var or `registries.json` — not a runtime UI knob.
+ * disabled here. Registry URLs are deployment configuration — set via
+ * the `NB_REGISTRIES` env var or `registries.json` — not a runtime UI knob.
  */
 export function OrgRegistriesTab() {
   const [registries, setRegistries] = useState<RegistryConfig[]>([]);
@@ -51,7 +50,7 @@ export function OrgRegistriesTab() {
     <div className="max-w-3xl mx-auto space-y-6">
       <SettingsPageHeader
         title="Registries"
-        description="Sources the Browse page pulls connectors from. Curated services are always available; mpak.dev and future registries can be enabled or disabled here. URL overrides (e.g., a self-hosted mpak) are deployment config — set via NB_REGISTRIES."
+        description="Sources the Browse page pulls connectors from. Curated services are always available; other registries can be enabled or disabled here. URL overrides are deployment config — set via NB_REGISTRIES."
       />
 
       {error && <p className="text-sm text-destructive">{error}</p>}
@@ -76,7 +75,7 @@ function RegistryRow({
   registry: RegistryConfig;
   onToggle: (next: boolean) => void;
 }) {
-  const supportsUrl = registry.type === "mpak";
+  const supportsUrl = registry.type !== "static";
 
   return (
     <div className="flex items-start gap-4 py-4 border-b border-border">

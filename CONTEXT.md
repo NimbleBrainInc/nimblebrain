@@ -12,14 +12,16 @@ see `AGENTS.md`; for *why a thing is the way it is* see the decision log in
 
 NimbleBrain is a generic agent runtime with the smallest kernel that does three
 things. Everything in the kernel serves one of these; if a capability doesn't,
-it belongs in a bundle, a Synapse app, or upstream MCP — not the runtime.
+it belongs in an MCP server, a Synapse app, or upstream MCP — not the runtime.
 
 1. **Manage skills** — discover, compose, and apply `SKILL.md`-format guidance
    into the agent's prompt without busting the prompt cache. *(Domain terms:
    skill, role/channel, the two planes. ADRs: batch 2 / backlog.)*
 2. **Orchestrate over remote MCP servers** — treat every tool/resource provider
-   (mpak bundle, remote MCP, Composio, Synapse app) as an interchangeable MCP
-   source through one boundary, and keep those connections healthy. *(Domain
+   (a directly-addressed server, a gateway-brokered one, a Synapse app) as an
+   interchangeable MCP source through one boundary, and keep those connections
+   healthy. The runtime connects; it does not acquire, verify, or execute a
+   server's code. *(Domain
    terms: source, connection, recovery. ADRs: 0005 + batch 2.)*
 3. **Provide secure RBAC** — isolate everything behind the workspace boundary,
    private to its owner by default, with no ambient cross-scope authority.

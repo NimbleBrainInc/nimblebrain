@@ -8,7 +8,7 @@
  * The split rationale:
  *
  *   - `ConnectorSource` (`fetch(): Promise<ServerDetail[]>`) is a thin
- *     adapter over a backend (file / mpak SDK / future MCP registry).
+ *     adapter over a backend (file / future MCP registry).
  *     One responsibility: how to talk to that backend. Internal cache
  *     strategy is private to the source.
  *   - `ConnectorDirectory` owns everything that should be uniform
@@ -26,7 +26,6 @@
 
 import type { ServerDetail } from "../connectors/server-detail.ts";
 import { log } from "../observability/log.ts";
-import { MpakSource } from "./mpak-source.ts";
 import {
   type ConnectorCatalogEntry,
   projectServerDetailToDirectoryEntry,
@@ -91,7 +90,7 @@ export class ConnectorDirectory {
    * keeps the first occurrence when a single source repeats an id.
    *
    * `ctx.isOperatorConfigured` is awaited per static-auth entry to
-   * compute the `operatorConfigured` field — DCR / mpak / unknown
+   * compute the `operatorConfigured` field — DCR / unknown
    * entries skip the probe.
    */
   async list(ctx?: ListEntriesContext): Promise<AggregatedDirectory> {
@@ -105,12 +104,14 @@ export class ConnectorDirectory {
         registryType: source.type,
       });
       if (!entry) {
-        // Projection returned null = entry isn't installable (no
-        // packages, no remotes, or unsupported transport). Log so an
-        // operator debugging "why doesn't my entry appear in Browse?"
-        // sees the cause instead of silent omission.
+        // Projection returned null = entry isn't installable by this
+        // runtime (no remotes, or an unsupported transport — a
+        // `packages[]`-only entry is a downloadable bundle, which this
+        // runtime does not acquire). Log so an operator debugging "why
+        // doesn't my entry appear in Browse?" sees the cause instead of a
+        // silent omission.
         log.warn(
-          `[connector-directory] [${source.id}] entry "${detail.name}" dropped — projection returned null (no installable packages or remotes)`,
+          `[connector-directory] [${source.id}] entry "${detail.name}" dropped — not installable as a remote MCP server`,
         );
         continue;
       }
@@ -230,10 +231,10 @@ export class ConnectorDirectory {
         // Defense-in-depth: drop entries with javascript:/data:/file:
         // URLs in icon/portal/docs slots OR reserved-key OAuth-param
         // smuggling. Runs at the directory boundary so every source
-        // (mpak / static / future) is scrubbed identically — pre-fix
-        // only static-source ran this check, so non-curated mpak
-        // entries with `_meta.docsUrl: "javascript:..."` would render
-        // as a clickable `<a href>` in the Configure page.
+        // (static / future) is scrubbed identically — pre-fix only
+        // static-source ran this check, so a non-curated entry with
+        // `_meta.docsUrl: "javascript:..."` would render as a clickable
+        // `<a href>` in the Configure page.
         const safetyError = validateServerDetailSafety(detail);
         if (safetyError) {
           log.warn(
@@ -248,32 +249,31 @@ export class ConnectorDirectory {
   }
 
   /**
-   * Map a registry config to its `ConnectorSource`. Unknown types or
-   * missing required config (a static source without a path) are
-   * silently skipped — keeps a forward-compatible upgrade path when
-   * future source types ship.
+   * Map a registry config to its `ConnectorSource` via {@link SOURCE_FACTORIES}.
+   * A type with no factory — or one whose factory declines for missing
+   * required config (a static source without a path) — yields `null` and the
+   * registry is skipped. That is the forward-compatible path: a new source
+   * type is one factory entry, and a config naming a type this build does not
+   * carry degrades to "no entries from that registry" rather than a crash.
    */
   private buildSource(cfg: RegistryConfig): ConnectorSource | null {
-    switch (cfg.type) {
-      case "static":
-        if (!cfg.url) return null;
-        return new StaticSource(cfg.id, cfg.url);
-      case "mpak":
-        return new MpakSource(cfg.id, cfg.url);
-      case "mcp":
-      case "custom-url":
-        return null;
-      default: {
-        // Exhaustive guard: any new RegistryType added without a case
-        // here triggers a TS error rather than silently slipping
-        // through as `null`.
-        const _exhaustive: never = cfg.type;
-        log.warn(`[connector-directory] unknown registry type: ${String(_exhaustive)}`);
-        return null;
-      }
+    const factory = SOURCE_FACTORIES[cfg.type];
+    if (!factory) {
+      log.warn(`[connector-directory] no source implementation for registry type "${cfg.type}"`);
+      return null;
     }
+    return factory(cfg);
   }
 }
+
+/**
+ * Registry type → source constructor. The map, not a `switch`, is the
+ * extension point: `RegistryType` is an open string (see `types.ts`), so
+ * adding the upstream MCP registry source is one entry here plus its file.
+ */
+const SOURCE_FACTORIES: Record<string, (cfg: RegistryConfig) => ConnectorSource | null> = {
+  static: (cfg) => (cfg.url ? new StaticSource(cfg.id, cfg.url) : null),
+};
 
 /**
  * Drop entries that don't match any of the configured scopes. Match
@@ -286,7 +286,7 @@ export class ConnectorDirectory {
  *     (e.g. `nimblebraininc` matches `@nimblebraininc/echo`)
  *
  * The dual-rule design lets operators write the scope they think in
- * (npm form for mpak operators; reverse-DNS for catalog operators)
+ * (npm form for package operators; reverse-DNS for catalog operators)
  * and have it work uniformly across source types. Empty / undefined
  * `scopes` returns the input untouched (no filter).
  */

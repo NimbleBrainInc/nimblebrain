@@ -5,7 +5,6 @@ import { join } from "node:path";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import { BundleLifecycleManager } from "../../src/bundles/lifecycle.ts";
 import type { BundleRef } from "../../src/bundles/types.ts";
-import { getWorkspaceCredentials } from "../../src/config/workspace-credentials.ts";
 import type { UserIdentity } from "../../src/identity/provider.ts";
 import { ConnectorDirectory } from "../../src/registries/directory.ts";
 import { RegistryStore } from "../../src/registries/registry-store.ts";
@@ -81,27 +80,21 @@ function dropboxEntry(over: Partial<DirectoryEntry> = {}): DirectoryEntry {
 }
 
 /**
- * Build a DirectoryEntry for an mpak-bundle. The default id mirrors
- * what `MpakSource` projects for `@nimblebraininc/echo` via mpak's
- * mechanical reverse-DNS naming. Tests can override `id` / `package`
- * to drive non-default scenarios.
+ * Build a DirectoryEntry for the not-yet-supported `direct-url` kind. Used to
+ * drive the admission checks that run BEFORE the per-kind install dispatch
+ * (workspace resolution, membership, admin role, allow-list, the
+ * personal-workspace connectors-only rule): every one of those rejects before
+ * the kind is reached, and a call that gets past them lands on the
+ * `direct-url` errResult rather than touching a real endpoint.
  */
-function mpakEntry(over: { id?: string; pkg?: string; name?: string } = {}): DirectoryEntry {
-  // mpak's composer maps `@<scope>/<name>` → `dev.mpak.<scope>/<name>`
-  // for the unmapped default; nimblebraininc has a curated map to
-  // ai.nimblebrain. Either form is acceptable input here — tests
-  // pin the platform behavior, not mpak's naming choice.
-  const id = over.id ?? "dev.mpak.nimblebraininc/echo";
+function unsupportedEntry(over: { id?: string; name?: string } = {}): DirectoryEntry {
   return {
-    id,
-    registryId: "mpak",
-    registryType: "mpak",
+    id: over.id ?? "com.example/echo",
+    registryId: "bundled-static",
+    registryType: "static",
     name: over.name ?? "Echo",
     description: "Reference MCP server for testing",
-    install: {
-      kind: "mpak-bundle",
-      package: over.pkg ?? "@nimblebraininc/echo",
-    },
+    install: { kind: "direct-url", url: "https://echo.example.com/mcp" },
   };
 }
 
@@ -153,12 +146,8 @@ function buildHarness(opts: { adminId?: string } = {}): Harness {
   const workspaceStore = new WorkspaceStore(workDir);
   const credStore = new FileCredentialStore(workDir);
   // Pre-seed registries.json so RegistryStore.list() reads it instead of
-  // auto-seeding the production defaults. The bundled-static row is kept
-  // (tests look up real catalog ids like DROPBOX_ID), but mpak is DISABLED:
-  // otherwise ConnectorDirectory.servers() would call MpakSource.fetch
-  // which makes a live HTTP request to registry.mpak.dev. Under suite
-  // load that network call queues past the 5s test timeout — flake
-  // surfaced in QA round 4.
+  // auto-seeding the production defaults, and point the bundled-static row
+  // at the fixture catalog (tests look up real catalog ids like DROPBOX_ID).
   writeFileSync(
     join(workDir, "registries.json"),
     JSON.stringify({
@@ -171,12 +160,6 @@ function buildHarness(opts: { adminId?: string } = {}): Harness {
           locked: true,
           url: CONNECTOR_FIXTURE_DIR,
         },
-        {
-          id: "mpak",
-          name: "mpak.dev",
-          type: "mpak",
-          enabled: false,
-        },
       ],
     }),
   );
@@ -186,7 +169,6 @@ function buildHarness(opts: { adminId?: string } = {}): Harness {
 
   const runtime = {
     getWorkDir: () => workDir,
-    getMpakHome: () => join(workDir, "apps"),
     getWorkspaceStore: () => workspaceStore,
     getWorkspaceContext: (id: string) => new WorkspaceContext({ wsId: id, workDir }),
     getRegistryStore: () => registryStore,
@@ -616,9 +598,6 @@ describe("manage_connectors.list_directory", () => {
   });
 
   test("aggregates entries from the bundled-static registry by default", async () => {
-    // Disable mpak so the test doesn't require live network. The bundled
-    // static registry alone should yield > 0 entries.
-    await h.registryStore.update("mpak", { enabled: false });
     const tool = buildTool(h, ADMIN_USER);
     const result = await tool.handler({ action: "list_directory" });
     expect(result.isError).toBe(false);
@@ -628,7 +607,6 @@ describe("manage_connectors.list_directory", () => {
   });
 
   test("static entry shows operatorConfigured: false before setup_operator runs", async () => {
-    await h.registryStore.update("mpak", { enabled: false });
     const tool = buildTool(h, ADMIN_USER);
     const result = await tool.handler({ action: "list_directory" });
     const dropbox = (structured(result).entries ?? []).find(
@@ -639,7 +617,6 @@ describe("manage_connectors.list_directory", () => {
   });
 
   test("static entry shows operatorConfigured: true after setup_operator runs", async () => {
-    await h.registryStore.update("mpak", { enabled: false });
     const tool = buildTool(h, ADMIN_USER);
     await tool.handler({
       action: "setup_operator",
@@ -768,47 +745,13 @@ describe("manage_connectors.install", () => {
     expect(result.isError).toBe(true);
   });
 
-  test("mpak-bundle entry reaches installBundleInWorkspace dispatch", async () => {
-    // Real fetch+spawn isn't possible in a unit test (no network, no
-    // subprocess). Reaching `installBundleInWorkspace` and getting a
-    // 'Failed to install' from there is the contract — it proves the
-    // dispatch ran the install action rather than rejecting up front.
-    const tool = buildTool(h, ADMIN_USER);
-    const result = await tool.handler({
-      action: "install",
-      entry: mpakEntry(),
-      wsId: h.wsId,
-    });
-    expect(result.isError).toBe(true);
-    const text = (result.content?.[0] as { text?: string } | undefined)?.text ?? "";
-    expect(text.toLowerCase()).toContain("failed to install");
-    expect(text).toContain("Echo");
-  });
-
-  test("any scoped package name installs (no curated-list lookup at install time)", async () => {
-    // The install handler doesn't second-guess what the source emitted —
-    // an entry whose package the platform has never seen still reaches
-    // the install path. The registry that produced the DirectoryEntry
-    // is the source of truth.
-    const tool = buildTool(h, ADMIN_USER);
-    const result = await tool.handler({
-      action: "install",
-      entry: mpakEntry({ id: "@some-vendor/some-bundle", pkg: "@some-vendor/some-bundle" }),
-      wsId: h.wsId,
-    });
-    expect(result.isError).toBe(true);
-    // Reaches install path; failure is the mpak fetch (no real registry).
-    const text = (result.content?.[0] as { text?: string } | undefined)?.text ?? "";
-    expect(text.toLowerCase()).toContain("failed to install");
-  });
-
   test("connectorsAllowList blocks entries whose id isn't on the list", async () => {
     await h.workspaceStore.update(h.wsId, { connectorsAllowList: ["ipinfo"] });
 
     const tool = buildTool(h, ADMIN_USER);
     const result = await tool.handler({
       action: "install",
-      entry: mpakEntry(),
+      entry: unsupportedEntry(),
       wsId: h.wsId,
     });
     expect(result.isError).toBe(true);
@@ -863,7 +806,7 @@ describe("manage_connectors.install", () => {
     // the no-default-to-personal guard: it fires only when no workspace is
     // in scope at all, not on the normal path where the route supplies one.)
     const tool = buildTool(h, ADMIN_USER, null);
-    const result = await tool.handler({ action: "install", entry: mpakEntry() });
+    const result = await tool.handler({ action: "install", entry: unsupportedEntry() });
     expect(result.isError).toBe(true);
     const text = (result.content?.[0] as { text?: string } | undefined)?.text ?? "";
     expect(text.toLowerCase()).toContain("wsid is required");
@@ -874,7 +817,7 @@ describe("manage_connectors.install", () => {
     // that omitted the field and stringified `undefined` would land
     // here; the contract is the same as missing.
     const tool = buildTool(h, ADMIN_USER);
-    const result = await tool.handler({ action: "install", entry: mpakEntry(), wsId: "" });
+    const result = await tool.handler({ action: "install", entry: unsupportedEntry(), wsId: "" });
     expect(result.isError).toBe(true);
     const text = (result.content?.[0] as { text?: string } | undefined)?.text ?? "";
     expect(text.toLowerCase()).toContain("wsid is required");
@@ -887,7 +830,7 @@ describe("manage_connectors.install", () => {
     const tool = buildTool(h, ADMIN_USER);
     const result = await tool.handler({
       action: "install",
-      entry: mpakEntry(),
+      entry: unsupportedEntry(),
       wsId: "ws_does_not_exist",
     });
     expect(result.isError).toBe(true);
@@ -895,21 +838,21 @@ describe("manage_connectors.install", () => {
     expect(text.toLowerCase()).toContain("not found");
   });
 
-  test("returns permission_denied when caller is not workspace admin (mpak)", async () => {
+  test("returns permission_denied when caller is not workspace admin", async () => {
     // Workspace-scope install widens the shared workspace surface
     // (placements, tools, credential inheritance). Non-admin members
     // can't unilaterally add bundles every other member then sees.
     const tool = buildTool(h, NON_ADMIN_USER);
     const result = await tool.handler({
       action: "install",
-      entry: mpakEntry(),
+      entry: unsupportedEntry(),
       wsId: h.wsId,
     });
     expect(result.isError).toBe(true);
     expect(structured(result).error).toBe("permission_denied");
   });
 
-  test("returns permission_denied for an org owner who is NOT a member of the target workspace (mpak)", async () => {
+  test("returns permission_denied for an org owner who is NOT a member of the target workspace", async () => {
     // Strict workspace-scoped-write policy (#389): orgRole grants NO
     // bypass. An org owner/admin who isn't a workspace admin member of
     // the target workspace cannot install — they must be seated as a
@@ -925,24 +868,11 @@ describe("manage_connectors.install", () => {
     const tool = buildTool(h, orgOwnerNonMember);
     const result = await tool.handler({
       action: "install",
-      entry: mpakEntry(),
+      entry: unsupportedEntry(),
       wsId: h.wsId,
     });
     expect(result.isError).toBe(true);
     expect(structured(result).error).toBe("permission_denied");
-  });
-
-  test("rejects mpak entry with non-scoped package name", async () => {
-    // Defense-in-depth at the wire boundary. The entry comes from
-    // tool input; not every caller is the curated registry.
-    const tool = buildTool(h, ADMIN_USER);
-    const result = await tool.handler({
-      action: "install",
-      entry: mpakEntry({ pkg: "not-a-scoped-package" }),
-    });
-    expect(result.isError).toBe(true);
-    const text = (result.content?.[0] as { text?: string } | undefined)?.text ?? "";
-    expect(text.toLowerCase()).toContain("install action is required");
   });
 
   test("rejects remote-oauth entry with non-http(s) URL", async () => {
@@ -1071,22 +1001,20 @@ describe("manage_connectors.install", () => {
     const result = await tool.handler({
       action: "install",
       wsId: ws2.id, // picker says ws_helix
-      entry: mpakEntry(),
+      entry: {
+        id: "com.canva/mcp",
+        registryId: "bundled-static",
+        registryType: "static",
+        name: "Canva",
+        description: "x",
+        install: { kind: "remote-oauth", url: "https://mcp.canva.com/mcp", auth: "dcr" },
+      },
     });
-    // mpak install fails the network fetch (no registry) but that
-    // failure path is downstream of the dispatcher's audit attribution
-    // — we read attribution from the request, not the response. Pin
-    // the request-side variant: the install reached handleInstallMpak,
-    // which means the dispatcher validated the picked wsId. (For a
-    // successful-install attribution pin see the static-auth +
-    // personal-workspace tests above, which return structuredContent
-    // including `wsId`.)
-    expect(result.isError).toBe(true);
-    const text = (result.content?.[0] as { text?: string } | undefined)?.text ?? "";
-    expect(text.toLowerCase()).toContain("failed to install");
-    // The picked wsId reached mpak — the dispatcher did not silently
-    // fall back to h.wsId / personalWorkspaceIdFor.
-    expect(text).not.toContain(h.wsId);
+    expect(result.isError).toBe(false);
+    const sc = result.structuredContent as { wsId?: string };
+    // The picked wsId is what the install recorded — the dispatcher did not
+    // silently fall back to the session header's h.wsId.
+    expect(sc.wsId).toBe(ws2.id);
   });
 });
 
@@ -1121,11 +1049,11 @@ describe("manage_connectors.set_permissions", () => {
   // with no gate at all (#748) — reachable through `/mcp` and the agent, not
   // just the settings UI, which is why the fix is here and not in the client.
   test("a workspace member cannot set workspace tool policy", async () => {
-    seedStdioBundle(h);
+    seedConnector(h);
     const tool = buildTool(h, NON_ADMIN_USER);
     const result = await tool.handler({
       action: "set_permissions",
-      serverName: STUB_BUNDLE_SERVER_NAME,
+      serverName: STUB_SERVER_NAME,
       scope: "workspace",
       tools: { read: "disallow" },
     });
@@ -1140,11 +1068,11 @@ describe("manage_connectors.set_permissions", () => {
   test("a workspace admin can", async () => {
     // The negative above is worthless without this: a handler that refused
     // everyone would satisfy it.
-    seedStdioBundle(h);
+    seedConnector(h);
     const tool = buildTool(h, ADMIN_USER);
     const result = await tool.handler({
       action: "set_permissions",
-      serverName: STUB_BUNDLE_SERVER_NAME,
+      serverName: STUB_SERVER_NAME,
       scope: "workspace",
       tools: { read: "disallow" },
     });
@@ -1158,189 +1086,24 @@ describe("manage_connectors.set_permissions", () => {
   });
 });
 
-// ─────────────────────────────────────────────────────────────────────
-// set_user_config / clear_user_config
-// ─────────────────────────────────────────────────────────────────────
-
-const STUB_BUNDLE_SERVER_NAME = "ipinfo-stub";
-const STUB_BUNDLE_NAME = "@nimblebraininc/ipinfo-stub";
+const STUB_SERVER_NAME = "ipinfo-stub";
+const STUB_URL = "https://ipinfo.example.com/mcp";
 
 /**
- * Write a minimal MCPB manifest into the mpak cache so
- * `mpak.bundleCache.getBundleManifest(bundleName)` returns it on read.
- * The cache layout is `<mpakHome>/cache/<safeName>/manifest.json`,
- * where `safeName` strips the leading `@` and replaces `/` with `-`.
- *
- * Mirrors what `MpakBundleCache.loadBundle` produces in production —
- * just the parts our handlers need (manifest with `user_config`).
+ * Seed one connector instance into the lifecycle so handlers find it via
+ * `getInstance(serverName, wsId)`. Lighter than the full source setup the
+ * production lifecycle does — only `list_installed` needs a registered
+ * ToolSource.
  */
-function seedManifestCache(
-  workDir: string,
-  bundleName: string,
-  manifest: Record<string, unknown>,
-): void {
-  const safeName = bundleName.replace(/^@/, "").replace(/\//g, "-");
-  const cacheDir = join(workDir, "apps", "cache", safeName);
-  mkdirSync(cacheDir, { recursive: true });
-  writeFileSync(join(cacheDir, "manifest.json"), JSON.stringify(manifest));
-}
-
-const STUB_MANIFEST = {
-  manifest_version: "0.4",
-  name: STUB_BUNDLE_NAME,
-  version: "1.0.0",
-  description: "Test stub for user_config flows",
-  server: {
-    type: "python",
-    entry_point: "ipinfo_stub.server",
-    mcp_config: { command: "python", args: ["-m", "ipinfo_stub.server"] },
-  },
-  user_config: {
-    api_key: {
-      type: "string",
-      title: "API Key",
-      description: "IPInfo API token",
-      sensitive: true,
-      required: true,
-    },
-    workspace_id: {
-      type: "string",
-      title: "Workspace",
-      description: "Workspace identifier",
-      required: false,
-    },
-  },
-};
-
-/**
- * Seed a stdio bundle instance into the lifecycle so handlers find it
- * via `getInstance(serverName, wsId)`. The credential-management
- * handlers don't need a registry-registered ToolSource — only
- * `list_installed` does — so we keep this lighter than the full source
- * setup the production lifecycle does.
- */
-function seedStdioBundle(h: Harness): void {
-  const ref: BundleRef = { name: STUB_BUNDLE_NAME };
+function seedConnector(h: Harness): void {
   h.lifecycle.seedInstance(
-    STUB_BUNDLE_SERVER_NAME,
-    STUB_BUNDLE_NAME,
-    ref,
-    {
-      manifestName: STUB_BUNDLE_NAME,
-      version: "1.0.0",
-      ui: null,
-      type: "plain",
-    },
+    STUB_SERVER_NAME,
+    STUB_URL,
+    { url: STUB_URL, serverName: STUB_SERVER_NAME },
+    { manifestName: STUB_SERVER_NAME, version: "1.0.0", ui: null },
     h.wsId,
   );
-  seedManifestCache(h.workDir, STUB_BUNDLE_NAME, STUB_MANIFEST);
 }
-
-describe("manage_connectors.set_user_config", () => {
-  let h: Harness;
-
-  beforeEach(async () => {
-    h = buildHarness();
-    await provisionWorkspace(h);
-    seedStdioBundle(h);
-  });
-
-  afterEach(() => {
-    rmSync(h.workDir, { recursive: true, force: true });
-  });
-
-  test("returns permission_denied when caller is not workspace admin", async () => {
-    const tool = buildTool(h, NON_ADMIN_USER);
-    const result = await tool.handler({
-      action: "set_user_config",
-      serverName: STUB_BUNDLE_SERVER_NAME,
-      fields: { api_key: "k1" },
-    });
-    expect(result.isError).toBe(true);
-    expect(structured(result).error).toBe("permission_denied");
-  });
-
-  test("admin save persists values + returns populated reflecting new state", async () => {
-    const tool = buildTool(h, ADMIN_USER);
-    const result = await tool.handler({
-      action: "set_user_config",
-      serverName: STUB_BUNDLE_SERVER_NAME,
-      fields: { api_key: "secret-1" },
-    });
-    expect(result.isError).toBe(false);
-    const sc = result.structuredContent as {
-      ok: boolean;
-      populated: Record<string, boolean>;
-    };
-    expect(sc.ok).toBe(true);
-    expect(sc.populated.api_key).toBe(true);
-    expect(sc.populated.workspace_id).toBe(false);
-
-    const stored = await getWorkspaceCredentials(h.wsId, STUB_BUNDLE_NAME, h.workDir);
-    expect(stored?.api_key).toBe("secret-1");
-  });
-
-  test("rejects unknown field names — default-deny", async () => {
-    const tool = buildTool(h, ADMIN_USER);
-    const result = await tool.handler({
-      action: "set_user_config",
-      serverName: STUB_BUNDLE_SERVER_NAME,
-      fields: { api_key: "ok", bogus_field: "nope" },
-    });
-    expect(result.isError).toBe(true);
-    const text = (result.content?.[0] as { text?: string } | undefined)?.text ?? "";
-    expect(text).toContain("bogus_field");
-    // Whole batch rejected — api_key should NOT have been written.
-    const stored = await getWorkspaceCredentials(h.wsId, STUB_BUNDLE_NAME, h.workDir);
-    expect(stored).toBeNull();
-  });
-
-  test("empty string clears that single field", async () => {
-    const tool = buildTool(h, ADMIN_USER);
-    await tool.handler({
-      action: "set_user_config",
-      serverName: STUB_BUNDLE_SERVER_NAME,
-      fields: { api_key: "k1", workspace_id: "ws-2" },
-    });
-    const result = await tool.handler({
-      action: "set_user_config",
-      serverName: STUB_BUNDLE_SERVER_NAME,
-      fields: { api_key: "" },
-    });
-    expect(result.isError).toBe(false);
-    const sc = result.structuredContent as { populated: Record<string, boolean> };
-    expect(sc.populated.api_key).toBe(false);
-    expect(sc.populated.workspace_id).toBe(true);
-  });
-
-  test("rejects when bundle is not installed in workspace", async () => {
-    const tool = buildTool(h, ADMIN_USER);
-    const result = await tool.handler({
-      action: "set_user_config",
-      serverName: "not-installed",
-      fields: { api_key: "k" },
-    });
-    expect(result.isError).toBe(true);
-  });
-
-  test("rejects when bundle declares no user_config in its manifest", async () => {
-    // Replace the seeded manifest with one that has no user_config
-    // block. The lifecycle still has the instance, so the handler
-    // gets past the install check and lands on the schema check.
-    const { user_config: _omit, ...without } = STUB_MANIFEST;
-    seedManifestCache(h.workDir, STUB_BUNDLE_NAME, without);
-
-    const tool = buildTool(h, ADMIN_USER);
-    const result = await tool.handler({
-      action: "set_user_config",
-      serverName: STUB_BUNDLE_SERVER_NAME,
-      fields: {},
-    });
-    expect(result.isError).toBe(true);
-    const text = (result.content?.[0] as { text?: string } | undefined)?.text ?? "";
-    expect(text).toContain("user_config");
-  });
-});
 
 describe("manage_connectors.get_installed", () => {
   let h: Harness;
@@ -1372,31 +1135,32 @@ describe("manage_connectors.get_installed", () => {
   });
 });
 
-describe("manage_connectors.uninstall (stdio)", () => {
+describe("manage_connectors.uninstall", () => {
   let h: Harness;
 
   beforeEach(async () => {
     h = buildHarness();
     await provisionWorkspace(h);
-    seedStdioBundle(h);
-    // Mirror what handleInstallStdio writes to workspace.json — the
-    // named-bundle entry the regression covers.
-    await h.workspaceStore.update(h.wsId, { bundles: [{ name: STUB_BUNDLE_NAME }] });
+    seedConnector(h);
+    // Mirror what the install path writes to workspace.json.
+    await h.workspaceStore.update(h.wsId, {
+      bundles: [{ url: STUB_URL, serverName: STUB_SERVER_NAME }],
+    });
   });
 
   afterEach(() => {
     rmSync(h.workDir, { recursive: true, force: true });
   });
 
-  test("strips the named entry from workspace.json so it doesn't reseed at next boot", async () => {
+  test("strips the entry from workspace.json so it doesn't reseed at next boot", async () => {
     const wsBefore = await h.workspaceStore.get(h.wsId);
     expect(wsBefore?.bundles).toHaveLength(1);
-    expect((wsBefore?.bundles[0] as { name: string }).name).toBe(STUB_BUNDLE_NAME);
+    expect(wsBefore?.bundles[0]?.url).toBe(STUB_URL);
 
     const tool = buildTool(h, ADMIN_USER);
     const result = await tool.handler({
       action: "uninstall",
-      serverName: STUB_BUNDLE_SERVER_NAME,
+      serverName: STUB_SERVER_NAME,
       scope: "workspace",
     });
     expect(result.isError).toBe(false);
@@ -1412,7 +1176,7 @@ describe("manage_connectors.uninstall (stdio)", () => {
     const tool = buildTool(h, NON_ADMIN_USER);
     const result = await tool.handler({
       action: "uninstall",
-      serverName: STUB_BUNDLE_SERVER_NAME,
+      serverName: STUB_SERVER_NAME,
       scope: "workspace",
     });
     expect(result.isError).toBe(true);
@@ -1431,7 +1195,7 @@ describe("manage_connectors.disconnect", () => {
   beforeEach(async () => {
     h = buildHarness();
     await provisionWorkspace(h);
-    seedStdioBundle(h);
+    seedConnector(h);
   });
 
   afterEach(() => {
@@ -1445,7 +1209,7 @@ describe("manage_connectors.disconnect", () => {
     const tool = buildTool(h, NON_ADMIN_USER);
     const result = await tool.handler({
       action: "disconnect",
-      serverName: STUB_BUNDLE_SERVER_NAME,
+      serverName: STUB_SERVER_NAME,
       scope: "workspace",
     });
     expect(result.isError).toBe(true);
@@ -1453,117 +1217,24 @@ describe("manage_connectors.disconnect", () => {
   });
 });
 
-describe("manage_connectors.clear_user_config", () => {
-  let h: Harness;
-
-  beforeEach(async () => {
-    h = buildHarness();
-    await provisionWorkspace(h);
-    seedStdioBundle(h);
-  });
-
-  afterEach(() => {
-    rmSync(h.workDir, { recursive: true, force: true });
-  });
-
-  test("returns permission_denied when caller is not workspace admin", async () => {
-    const tool = buildTool(h, NON_ADMIN_USER);
-    const result = await tool.handler({
-      action: "clear_user_config",
-      serverName: STUB_BUNDLE_SERVER_NAME,
-    });
-    expect(result.isError).toBe(true);
-    expect(structured(result).error).toBe("permission_denied");
-  });
-
-  test("admin clear wipes the credential file and returns all-false populated", async () => {
-    // Seed values first so we have something to clear.
-    const adminTool = buildTool(h, ADMIN_USER);
-    await adminTool.handler({
-      action: "set_user_config",
-      serverName: STUB_BUNDLE_SERVER_NAME,
-      fields: { api_key: "k1", workspace_id: "ws-2" },
-    });
-
-    const result = await adminTool.handler({
-      action: "clear_user_config",
-      serverName: STUB_BUNDLE_SERVER_NAME,
-    });
-    expect(result.isError).toBe(false);
-    const sc = result.structuredContent as { populated: Record<string, boolean> };
-    expect(sc.populated.api_key).toBe(false);
-    expect(sc.populated.workspace_id).toBe(false);
-
-    // File should be gone.
-    const stored = await getWorkspaceCredentials(h.wsId, STUB_BUNDLE_NAME, h.workDir);
-    expect(stored).toBeNull();
-  });
-
-  test("clearing when nothing was stored is idempotent (no error)", async () => {
-    const adminTool = buildTool(h, ADMIN_USER);
-    const result = await adminTool.handler({
-      action: "clear_user_config",
-      serverName: STUB_BUNDLE_SERVER_NAME,
-    });
-    expect(result.isError).toBe(false);
-  });
-});
-
-// ─────────────────────────────────────────────────────────────────────
-// deriveConnectorStatus — pure-function status taxonomy
-// ─────────────────────────────────────────────────────────────────────
-
 describe("deriveConnectorStatus", () => {
   test("running + no probes outstanding → ready", () => {
     // This is the state a provider-auth fleet source (e.g. deep_research `web`)
-    // produces: a remote bundle gets NO userConfig probe (`!isRemote`) and has no
-    // operator OAuth client, so its inputs are bare `{ state: "running" }` → ready
-    // (no bogus Connect). Boot-side coverage: provider-source-boot.test.ts.
+    // produces: no operator OAuth client, so its inputs are bare
+    // `{ state: "running" }` → ready (no bogus Connect). Boot-side coverage:
+    // provider-source-boot.test.ts.
     expect(deriveConnectorStatus({ state: "running" })).toEqual({ status: "ready" });
   });
 
   test("missingOperatorSetup wins over every other signal — admin acts first", () => {
-    // Even with state=running and required user_config populated, an
-    // unconfigured operator OAuth client should mark the connector as
-    // needs_setup. Setup is the precondition.
+    // Even with state=running, an unconfigured operator OAuth client should
+    // mark the connector as needs_setup. Setup is the precondition.
     const result = deriveConnectorStatus({
       state: "running",
       missingOperatorSetup: true,
-      userConfig: {
-        schema: { api_key: { type: "string", required: true } },
-        populated: { api_key: true },
-      },
     });
     expect(result.status).toBe("needs_setup");
     expect(result.statusReason).toContain("OAuth app");
-  });
-
-  test("required user_config field unpopulated → needs_setup with field name in reason", () => {
-    const result = deriveConnectorStatus({
-      state: "running",
-      userConfig: {
-        schema: {
-          api_key: { type: "string", title: "Hunter.io API Key", required: true },
-          workspace_id: { type: "string", title: "Workspace", required: false },
-        },
-        populated: { api_key: false, workspace_id: false },
-      },
-    });
-    expect(result.status).toBe("needs_setup");
-    // Required field is named in the reason; optional one isn't.
-    expect(result.statusReason).toContain("Hunter.io API Key");
-    expect(result.statusReason).not.toContain("Workspace");
-  });
-
-  test("optional fields unpopulated → ready (only required fields gate)", () => {
-    const result = deriveConnectorStatus({
-      state: "running",
-      userConfig: {
-        schema: { workspace_id: { type: "string", required: false } },
-        populated: { workspace_id: false },
-      },
-    });
-    expect(result.status).toBe("ready");
   });
 
   test("reauth_required → needs_auth, prefers lastError over generic copy", () => {
@@ -1595,21 +1266,6 @@ describe("deriveConnectorStatus", () => {
 
     const withErr = deriveConnectorStatus({ state: "crashed", lastError: "Out of memory" });
     expect(withErr.statusReason).toBe("Out of memory");
-  });
-
-  test("setup priority outranks failed — config gap is the actionable cause", () => {
-    // A bundle in `crashed` because its required user_config wasn't set
-    // should surface as needs_setup (fixable), never as failed (looks
-    // unrecoverable).
-    const result = deriveConnectorStatus({
-      state: "crashed",
-      lastError: "Missing api_key",
-      userConfig: {
-        schema: { api_key: { type: "string", required: true } },
-        populated: { api_key: false },
-      },
-    });
-    expect(result.status).toBe("needs_setup");
   });
 
   test("setup priority outranks needs_auth — same logic, finer level", () => {
@@ -1646,10 +1302,10 @@ describe("manage_connectors.install — personal workspace is connectors-only", 
 
   const PERSONAL_MSG = /personal workspace is for connectors/i;
 
-  test("rejects a non-remote-oauth (mpak-bundle) install into the personal workspace", async () => {
+  test("rejects a non-remote-oauth install into the personal workspace", async () => {
     const personalWs = personalWorkspaceIdFor(ADMIN_USER.id);
     const tool = buildTool(h, ADMIN_USER, personalWs);
-    const result = await tool.handler({ action: "install", entry: mpakEntry() });
+    const result = await tool.handler({ action: "install", entry: unsupportedEntry() });
     expect(result.isError).toBe(true);
     expect(structured(result).error).not.toBe("permission_denied"); // owner IS admin of their personal ws
     const text = (result.content?.[0] as { text?: string })?.text ?? "";
@@ -1669,9 +1325,9 @@ describe("manage_connectors.install — personal workspace is connectors-only", 
 
   test("does not apply the connectors-only gate to a shared workspace", async () => {
     const tool = buildTool(h, ADMIN_USER, h.wsId); // shared ws_acme
-    const result = await tool.handler({ action: "install", entry: mpakEntry() });
-    // An mpak-bundle install is fine in a shared workspace — whatever the outcome,
-    // it is never the personal-workspace rejection.
+    const result = await tool.handler({ action: "install", entry: unsupportedEntry() });
+    // A non-connector install is admitted in a shared workspace — whatever
+    // the outcome, it is never the personal-workspace rejection.
     const text = (result.content?.[0] as { text?: string })?.text ?? "";
     expect(text).not.toMatch(PERSONAL_MSG);
   });

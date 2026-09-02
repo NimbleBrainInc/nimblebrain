@@ -158,24 +158,21 @@ beforeEach(() => {
 // each test's intent reads as "an X connector in Y state" rather
 // than 30 lines of object literal.
 
-function stdioBundle(over: Partial<InstalledConnector> = {}): InstalledConnector {
+/**
+ * A connector with no catalog match — the shape an entry installed outside the
+ * curated catalog takes. Its `url` is absent, so the catalog-gated sections
+ * render nothing.
+ */
+function uncataloguedConnector(over: Partial<InstalledConnector> = {}): InstalledConnector {
   return {
     serverName: "ipinfo",
-    bundleName: "@nimblebraininc/ipinfo",
+    bundleName: "https://ipinfo.example.com/mcp",
     version: "1.0.0",
-    type: "local",
     state: "running",
     status: "ready",
     scope: "workspace",
     interactive: false,
     toolCount: 5,
-    trustScore: null,
-    userConfig: {
-      schema: {
-        api_key: { type: "string", title: "API Key", sensitive: true, required: true },
-      },
-      populated: { api_key: false },
-    },
     ...over,
   };
 }
@@ -191,7 +188,6 @@ function dcrConnector(over: Partial<InstalledConnector> = {}): InstalledConnecto
     scope: "workspace",
     interactive: false,
     toolCount: 3,
-    trustScore: null,
     url: "https://api.granola.test/mcp",
     catalogId: "ai.granola/mcp",
     catalog: {
@@ -237,7 +233,6 @@ function staticAuthConnector(over: Partial<InstalledConnector> = {}): InstalledC
     scope: "workspace",
     interactive: false,
     toolCount: 8,
-    trustScore: null,
     url: "https://app.asana.com/api/mcp",
     catalogId: "io.asana/mcp",
     catalog: {
@@ -273,9 +268,13 @@ function staticAuthConnector(over: Partial<InstalledConnector> = {}): InstalledC
 // CTA, so duplicating them here would double-count the message.
 
 describe("OAuthConnectionSection", () => {
-  test("renders nothing for stdio (non-remote) bundles", async () => {
+  test("renders nothing for a connector with no url on its ref", async () => {
     mounted = await mount(
-      <OAuthConnectionSection installed={stdioBundle()} canManage={true} onChanged={() => {}} />,
+      <OAuthConnectionSection
+        installed={uncataloguedConnector()}
+        canManage={true}
+        onChanged={() => {}}
+      />,
     );
     expect(mounted.container.textContent).toBe("");
   });
@@ -346,9 +345,13 @@ describe("OAuthConnectionSection", () => {
 // ── OperatorOAuthSection ────────────────────────────────────────────
 
 describe("OperatorOAuthSection", () => {
-  test("renders nothing for stdio bundles (no catalog match)", async () => {
+  test("renders nothing for a connector with no catalog match", async () => {
     mounted = await mount(
-      <OperatorOAuthSection installed={stdioBundle()} canManage={true} onChanged={() => {}} />,
+      <OperatorOAuthSection
+        installed={uncataloguedConnector()}
+        canManage={true}
+        onChanged={() => {}}
+      />,
     );
     expect(mounted.container.textContent).toBe("");
   });
@@ -436,22 +439,6 @@ describe("ConnectorStatusHero", () => {
     expect(findButton(mounted.container, "Connect")).toBeNull();
   });
 
-  test("status=needs_setup on stdio → 'Configure' CTA (admin)", async () => {
-    mounted = await mount(
-      <ConnectorStatusHero
-        installed={stdioBundle({
-          status: "needs_setup",
-          statusReason: "Missing required configuration: API Key.",
-        })}
-        canManage={true}
-        onChanged={() => {}}
-      />,
-    );
-    expect(mounted.container.textContent).toContain("Configuration required");
-    expect(mounted.container.textContent).toContain("API Key");
-    expect(findButton(mounted.container, "Configure")).not.toBeNull();
-  });
-
   test("status=needs_setup + missingOperatorSetup → 'Set up OAuth' (admin)", async () => {
     mounted = await mount(
       <ConnectorStatusHero
@@ -515,10 +502,10 @@ describe("ConnectorStatusHero", () => {
     expect(mounted.container.textContent).not.toContain("catalog v");
   });
 
-  test("version: local bundle semver renders one 'v'", async () => {
+  test("version: a plain semver renders one 'v'", async () => {
     mounted = await mount(
       <ConnectorStatusHero
-        installed={stdioBundle({ version: "1.0.0" })}
+        installed={uncataloguedConnector({ version: "1.0.0" })}
         canManage={true}
         onChanged={() => {}}
       />,
@@ -531,7 +518,7 @@ describe("ConnectorStatusHero", () => {
   test("version: real drift (running != declared) shows a catalog note, each one 'v'", async () => {
     mounted = await mount(
       <ConnectorStatusHero
-        installed={stdioBundle({ handshakeVersion: "v0.2.0", version: "0.1.0" })}
+        installed={uncataloguedConnector({ handshakeVersion: "v0.2.0", version: "0.1.0" })}
         canManage={true}
         onChanged={() => {}}
       />,
@@ -544,7 +531,7 @@ describe("ConnectorStatusHero", () => {
   test("version: no false drift when running and declared differ only by the 'v' prefix", async () => {
     mounted = await mount(
       <ConnectorStatusHero
-        installed={stdioBundle({ handshakeVersion: "v0.1.0", version: "0.1.0" })}
+        installed={uncataloguedConnector({ handshakeVersion: "v0.1.0", version: "0.1.0" })}
         canManage={true}
         onChanged={() => {}}
       />,
@@ -601,17 +588,6 @@ describe("ConnectorStatusHero", () => {
     expect(onChanged).toHaveBeenCalled();
   });
 
-  test("status=starting on a stdio bundle → status visible, no CTA (no OAuth to cancel)", async () => {
-    mounted = await mount(
-      <ConnectorStatusHero
-        installed={stdioBundle({ status: "starting", state: "starting" })}
-        canManage={true}
-        onChanged={() => {}}
-      />,
-    );
-    expect(mounted.container.getElementsByTagName("button").length).toBe(0);
-  });
-
   test("status=failed on remote bundle → 'Reconnect' + statusReason", async () => {
     mounted = await mount(
       <ConnectorStatusHero
@@ -652,39 +628,21 @@ describe("ConnectorStatusHero", () => {
     expect(locationAssign).not.toHaveBeenCalled();
   });
 
-  test("status=failed on stdio bundle → status visible, no one-click CTA", async () => {
-    // No automated recovery path for a crashed local bundle. The
-    // statusReason explains; the admin diagnoses through other tools.
-    mounted = await mount(
-      <ConnectorStatusHero
-        installed={stdioBundle({
-          status: "failed",
-          state: "crashed",
-          statusReason: "Out of memory",
-        })}
-        canManage={true}
-        onChanged={() => {}}
-      />,
-    );
-    expect(mounted.container.textContent).toContain("Failed");
-    expect(mounted.container.textContent).toContain("Out of memory");
-    expect(findButton(mounted.container, "Reconnect")).toBeNull();
-    expect(findButton(mounted.container, "Configure")).toBeNull();
-  });
-
   test("admin-gated CTAs hidden when canManage=false; member-actionable kept", async () => {
-    // Configure (admin) → hidden for non-admins.
+    // Set up OAuth (admin) → hidden for non-admins.
     mounted = await mount(
       <ConnectorStatusHero
-        installed={stdioBundle({
+        installed={staticAuthConnector({
           status: "needs_setup",
-          statusReason: "Missing required configuration: API Key.",
+          missingOperatorSetup: true,
+          operatorOAuth: undefined,
+          statusReason: "OAuth app not configured for this workspace.",
         })}
         canManage={false}
         onChanged={() => {}}
       />,
     );
-    expect(findButton(mounted.container, "Configure")).toBeNull();
+    expect(findButton(mounted.container, "Set up OAuth")).toBeNull();
     mounted.unmount();
 
     // Connect (member-actionable) → still visible for non-admins:

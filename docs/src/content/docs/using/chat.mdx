@@ -46,7 +46,7 @@ The agent has access to:
 
 | Tool | Purpose |
 |------|---------|
-| `nb__search` | Search installed tools (`scope: "tools"`) or the mpak registry (`scope: "registry"`) |
+| `nb__search` | Search installed tools (`scope: "tools"`) or the connector registries (`scope: "registry"`) |
 | `nb__status` | Platform status; `scope: "bundles"` for per-app health, `scope: "skills"` for loaded skills |
 | `nb__delegate` | Spawn a child agent for a sub-task |
 
@@ -115,7 +115,7 @@ For example, with a calendar app open, asking "What's on my schedule?" leads the
 
 - **Be specific about what you want.** "Search for MCP servers related to Slack" works better than "find me something."
 - **Name the app when relevant.** If you have multiple apps installed, say "Use Granola to list my meetings" rather than just "list my meetings."
-- **Ask the agent to install what it needs.** The agent can search mpak and install bundles on its own.
+- **Ask the agent to install what it needs.** The agent can search the connector registries and install a connector on its own.
 - **Use delegation for parallel work.** For tasks that split naturally, ask the agent to delegate sub-tasks. See [Multi-Agent Delegation](/using/delegation).
 
 ## Cost transparency
@@ -128,6 +128,6 @@ Open a past conversation from the Conversations sidebar in the web UI. See [Conv
 
 ## What's next
 
-- [Installing Apps](/using/installing-apps) — add new capabilities to your agent
+- [Connectors](/using/connectors) — add new capabilities to your agent
 - [Skills](/using/skills) — customize how the agent responds with prompt composition
 - [Conversations](/using/conversations) — history, resume, and storage

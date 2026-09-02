@@ -123,7 +123,7 @@ export interface TracedSubItem {
   source: string;
   /** Bundle attribution when known. Drives the `bundle` filter. */
   bundle?: string;
-  /** Free-form metadata appropriate to the kind (skill scope, app trustScore, etc.). */
+  /** Free-form metadata appropriate to the kind (skill scope, app UI descriptor, etc.). */
   metadata?: Record<string, unknown>;
 }
 
@@ -229,7 +229,6 @@ export interface PromptAppInfo {
    * say over how the agent should behave when using this bundle.
    */
   customInstructions?: string;
-  trustScore: number;
   ui: { name: string } | null;
 }
 
@@ -269,7 +268,6 @@ export interface FocusedAppInfo {
   /** URI of a reference resource with detailed tool catalog / error recovery.
    *  When set, a hint is appended after the app guide telling the agent where to find it. */
   referenceResourceUri?: string;
-  trustScore: number;
 }
 
 /** App state entry from the bridge's appStateStore. */
@@ -277,7 +275,6 @@ export interface AppStateInfo {
   state: Record<string, unknown>;
   summary?: string;
   updatedAt: string;
-  trustScore: number;
 }
 
 /** User preferences injected into the system prompt so the agent knows
@@ -694,7 +691,6 @@ function appsLayers(apps?: PromptAppInfo[], hasProxiedTools?: boolean): PendingL
           hasInstructions: !!app.instructions,
           hasCustomInstructions:
             !!app.customInstructions && app.customInstructions.trim().length > 0,
-          trustScore: app.trustScore,
           ui: app.ui,
         },
       })),
@@ -881,8 +877,7 @@ function formatAppsSection(apps: PromptAppInfo[], hasProxiedTools?: boolean): st
     // can carry one; `app.name` is a slug unless an operator hand-sets
     // `ref.serverName`. Sanitized together because the line is shared.
     const uiLabel = app.ui ? `has UI: ${sanitizeLineField(app.ui.name)}` : "no UI";
-    const trustLabel = app.trustScore != null ? ` — MTF Score: ${app.trustScore}` : "";
-    lines.push(`- ${sanitizeLineField(app.name)} (${uiLabel})${trustLabel}`);
+    lines.push(`- ${sanitizeLineField(app.name)} (${uiLabel})`);
     if (app.description) {
       lines.push(wrapContained("app-description", app.description));
     }

@@ -1,3 +1,4 @@
+import type { BundleRef } from "../bundles/types.ts";
 import { textContent } from "../engine/content-helpers.ts";
 import { INTERNAL_TOOL_ANNOTATION, type ToolResult } from "../engine/types.ts";
 import type { UserIdentity } from "../identity/provider.ts";
@@ -8,6 +9,20 @@ import { PersonalWorkspaceInvariantError } from "../workspace/errors.ts";
 import type { WorkspaceMember } from "../workspace/types.ts";
 import type { WorkspaceStore } from "../workspace/workspace-store.ts";
 import type { InProcessTool } from "./in-process-app.ts";
+
+/**
+ * Project one tool-supplied connector row onto a `BundleRef`. Only the URL and
+ * an optional explicit `serverName` are accepted from tool input: every other
+ * field on a ref (transport, OAuth client, broker coordinates) is
+ * operator-catalog territory, set by the install path, never by a caller.
+ */
+function toBundleRef(b: Record<string, unknown>): BundleRef {
+  const url = String(b.url ?? "");
+  return {
+    url,
+    ...(typeof b.serverName === "string" && b.serverName ? { serverName: b.serverName } : {}),
+  };
+}
 
 // ── Types ─────────────────────────────────────────────────────────
 
@@ -79,11 +94,13 @@ export function createManageWorkspacesTool(ctx: ManageWorkspacesContext): InProc
           items: {
             type: "object",
             properties: {
-              name: { type: "string" },
-              path: { type: "string" },
+              url: { type: "string" },
+              serverName: { type: "string" },
             },
+            required: ["url"],
           },
-          description: "Bundle references (optional for create and update).",
+          description:
+            "Connector references — the remote MCP endpoint URL, optionally with the server name to register it under (optional for create and update).",
         },
         userId: {
           type: "string",
@@ -212,14 +229,11 @@ async function handleCreate(
       workspace = await ctx.workspaceStore.addMember(workspace.id, identity.id, "admin");
     }
 
-    // If bundles were provided, update the workspace with them
+    // If connectors were provided, update the workspace with them
     if (bundles && bundles.length > 0) {
-      const bundleRefs = bundles.map((b) => {
-        if (b.name) return { name: String(b.name) };
-        if (b.path) return { path: String(b.path) };
-        return { name: String(b.name ?? "") };
+      const updated = await ctx.workspaceStore.update(workspace.id, {
+        bundles: bundles.map(toBundleRef),
       });
-      const updated = await ctx.workspaceStore.update(workspace.id, { bundles: bundleRefs });
       if (updated) workspace = updated;
     }
 
@@ -353,11 +367,7 @@ async function handleUpdate(
   if (input.name !== undefined) patch.name = String(input.name);
   if (input.bundles !== undefined) {
     const bundles = input.bundles as Array<Record<string, unknown>>;
-    patch.bundles = bundles.map((b) => {
-      if (b.name) return { name: String(b.name) };
-      if (b.path) return { path: String(b.path) };
-      return { name: String(b.name ?? "") };
-    });
+    patch.bundles = bundles.map(toBundleRef);
   }
 
   if (Object.keys(patch).length === 0) {
