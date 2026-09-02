@@ -82,6 +82,16 @@ by the bare id: the server resolves its workspace from the id within the caller'
 own owner partitions, via the `FileLocator` (ADR-0002). The owner partition is
 both the gate and the search scope.
 
+### Notification
+A fact a connector recorded that nobody asked for, pulled from an outbox the
+server declares and held in a workspace-owned inbox at
+`workspaces/<wsId>/notifications/` (ADR-0003, ADR-0008). Unlike the other
+primitives it has **no owner sub-partition**: it is authored by a connector, not
+a user, so any member who can reach that connector's tools can read it. The
+runtime stamps `source`, `workspaceId`, `receivedAt` and a per-workspace
+monotonic `seq`; a server can set none of them. The runtime reads the envelope
+fields it defined and never the server's opaque `data`.
+
 ### Source / Connection *(golden rule #2 — glossary stub)*
 An MCP source is any tool/resource provider behind the MCP boundary; a
 connection is the supervised transport to a remote one. Recovery splits
@@ -104,3 +114,4 @@ The decision log is `adr/`. Foundational (secure RBAC):
 - [0005](adr/0005-no-cross-workspace-reach-tool-shape-is-scope.md) — no cross-workspace reach; a tool name's shape is its scope
 - [0006](adr/0006-personal-connector-use-requires-a-grant.md) — personal-connector use in a shared workspace requires a grant
 - [0007](adr/0007-offboarding-revokes-active-use.md) — offboarding revokes active use; ownership is necessary, not sufficient
+- [0008](adr/0008-notifications-are-pulled-and-routed-by-the-operator.md) — notifications are pulled into a workspace inbox and routed by the operator

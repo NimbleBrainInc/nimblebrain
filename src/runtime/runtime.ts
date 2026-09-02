@@ -100,6 +100,8 @@ import {
 } from "../model/catalog.ts";
 import { buildModelResolver, resolveModelString } from "../model/registry.ts";
 import { type ModelSlot, parseModelSlotRef } from "../model/slots.ts";
+import { NotificationStore } from "../notifications/store.ts";
+import type { NotificationsDeclaration } from "../notifications/types.ts";
 import { registerBuiltinCredentialProviders } from "../oauth/minted-credential-provider.ts";
 import { requestIdentityAttrs, withSpan } from "../observability/index.ts";
 import { log } from "../observability/log.ts";
@@ -3982,6 +3984,39 @@ export class Runtime {
   /** Get the WorkspaceStore instance. */
   getWorkspaceStore(): WorkspaceStore {
     return this._workspaceStore;
+  }
+
+  /**
+   * The notification inbox for one workspace.
+   *
+   * The single construction site, because a store is the write path as well as
+   * the read path: it emits `notification.created` on every item it accepts,
+   * and building one here is what guarantees that event reaches the runtime's
+   * own sink — the SSE stream and the workspace audit log both hang off it.
+   * Cheap (a validated path plus a sink reference) and stateless, so it is
+   * constructed per call rather than cached.
+   */
+  getNotificationStore(wsId: string): NotificationStore {
+    return new NotificationStore(this.getWorkspaceContext(wsId), {
+      eventSink: this.getEventSink(),
+    });
+  }
+
+  /**
+   * The outbox an installed connector declares, or `undefined` when it
+   * declares none.
+   *
+   * Resolved from the operator-published catalog the same way hook
+   * declarations are, and by the same slug rule the install used, so the two
+   * cannot disagree after a catalog edit. The poller reads this to decide
+   * which connectors it has anything to poll.
+   */
+  async getNotificationsDeclaration(
+    serverName: string,
+  ): Promise<NotificationsDeclaration | undefined> {
+    const entries = await this.getConnectorDirectory().catalogEntries();
+    const entry = entries.find((e) => slugifyServerName(e.id) === serverName);
+    return entry?.notifications;
   }
 
   /**

@@ -140,6 +140,7 @@ export default defineConfig({
               { label: 'Host Capabilities', slug: 'apps/host-capabilities' },
               { label: 'Synapse SDK', slug: 'apps/synapse' },
               { label: 'Tool Results & Content Routing', slug: 'apps/tool-results' },
+              { label: 'Notifications', slug: 'apps/notifications' },
               { label: 'MCP App Bridge', slug: 'apps/bridge' },
               { label: 'UI Resources', slug: 'apps/ui-resources' },
               { label: 'Theming', slug: 'apps/theming' },

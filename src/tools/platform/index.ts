@@ -7,6 +7,7 @@ import { createConversationsSource } from "./conversations.ts";
 import { createFilesSource } from "./files.ts";
 import { createHomeSource } from "./home.ts";
 import { createInstructionsSource } from "./instructions.ts";
+import { createNotificationsSource } from "./notifications.ts";
 import { createSkillsSource } from "./skills.ts";
 import { createUsageSource } from "./usage.ts";
 
@@ -14,7 +15,7 @@ import { createUsageSource } from "./usage.ts";
  * Create all platform capability sources, started and ready to register.
  *
  * Each platform capability (conversations, files, automations, home, usage,
- * instructions) is an in-process MCP server (`defineInProcessApp`) that talks
+ * instructions, notifications) is an in-process MCP server (`defineInProcessApp`) that talks
  * to the runtime through the same MCP transport as external bundles — just
  * over an `InMemoryTransport` instead of stdio/HTTP. They have tools,
  * resources, placements, and (in the future) any other MCP capability the
@@ -43,6 +44,7 @@ export async function createPlatformSources(
     await createAutomationsSource(runtime, eventSink),
     createUsageSource(runtime, eventSink),
     createInstructionsSource(runtime, eventSink),
+    createNotificationsSource(runtime, eventSink),
     createSkillsSource(runtime, eventSink, runtime.getFeatures()),
     createComposeSource(runtime, eventSink),
   ];
