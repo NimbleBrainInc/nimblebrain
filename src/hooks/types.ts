@@ -40,10 +40,11 @@
  */
 export interface HookDeclaration {
   /**
-   * Vendor slug — lowercase alphanumeric with internal hyphens. Appears as a
-   * path segment in the minted URL and is sealed into the token, so the two are
-   * cross-checked on every delivery. Operator-facing: it is what makes a log
-   * line and a vendor dashboard legible against each other.
+   * Vendor slug — lowercase alphanumeric with internal hyphens. It does NOT
+   * appear in the minted URL: the delivery id names the registration, and the
+   * vendor is read back from it. Operator-facing, and that is its whole job —
+   * it is what makes a log line and a vendor dashboard legible against each
+   * other.
    */
   vendor: string;
   /**
@@ -84,24 +85,25 @@ export interface HookDeclaration {
  * The runtime's record of one minted stream, per `(workspace, connector, vendor)`.
  *
  * Note what this is NOT: a delivery log, a vendor registry, or a copy of the
- * declaration. It is the **revocation record** — the current `kid` and the one
- * it replaced — plus the forward target that was minted alongside it. The
- * runtime holds no token, ever; a token is reconstructible from the key, and
- * reconstructing one would put a live bearer capability wherever the caller
- * puts the result.
+ * declaration. It is the **revocation record** — the current delivery id and the
+ * one it replaced — plus the forward target minted alongside it.
  *
- * `kid` is where a rotation becomes real: the door admits `kid` or `prevKid`
- * within the grace window and nothing else, so retiring a leaked URL is a write
- * to this record and takes effect on the next request. That is also why the
- * token carries no `exp` — an expiry can only ever fire late and silently,
- * whereas this check runs on every delivery.
+ * The id is where a rotation becomes real: the door admits the current id, or
+ * the previous one while its grace window is open, and nothing else. So
+ * retiring a leaked URL is a write to this record and takes effect on the next
+ * request. That is also why a URL carries no expiry — an expiry can only ever
+ * fire late and silently, whereas this check runs on every delivery.
  */
 export interface HookRegistration {
   /** Slugified server name of the connector that declared the stream. */
   connector: string;
   /** Vendor slug from the declaration. */
   vendor: string;
-  /** Current key id. The door admits a token bearing this one. */
+  /**
+   * Current key id. Correlation only — it is what a runtime log line names so an
+   * operator can line a delivery up against the URL it arrived on. The door
+   * does not admit on it; the delivery id below is the capability.
+   */
   kid: string;
   /**
    * The CURRENT delivery id — the secret segment of the URL a vendor holds, and

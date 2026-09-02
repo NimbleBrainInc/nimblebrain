@@ -43,8 +43,18 @@ class FakeRuntime {
   getWorkspaceStore() {
     return { get: async (id: string) => this.workspaces.get(id) ?? null };
   }
+  /** What `ensureHooks` will find. Empty = the connector is not running. */
+  hookPorts = new Map<string, unknown>();
   getHookReconcileDeps() {
-    throw new Error("rotation is not exercised here");
+    return {
+      workspaceStore: {
+        get: async (id: string) => this.workspaces.get(id) ?? null,
+        update: async () => undefined,
+      },
+      identity: { tid: "tenant-a", key: Buffer.alloc(32, 7) },
+      declarationsFor: () => [],
+      portFor: (name: string) => this.hookPorts.get(name),
+    };
   }
 
   seed(role: "admin" | "member", hooks: Record<string, HookRegistration>): void {
@@ -91,6 +101,62 @@ describe("the webhook tools are not agent capabilities", () => {
     for (const tool of tools) {
       expect(isInternalTool(tool)).toBe(true);
     }
+  });
+});
+
+async function rotate(): Promise<{ isError?: boolean; text: string }> {
+  const res = await source.execute("rotate_webhook", {
+    connector: "acme-billing-mcp",
+    vendor: "acme",
+    confirm: "acme",
+  });
+  return {
+    isError: res.isError,
+    text: (res.content?.[0] as { text?: string } | undefined)?.text ?? "",
+  };
+}
+
+describe("a rotation that did not happen is not reported as one", () => {
+  test("refuses when the connector is not running, and says the old URL is live", async () => {
+    // The realistic shape: the tab lists from the store and never consults
+    // liveness, so an admin can press Rotate against a stopped connector. If
+    // that answered with the re-read record it would hand back the CURRENT url
+    // as the new one — and this control is reached when a URL has leaked.
+    runtime.seed("admin", { "acme-billing-mcp:acme": reg() });
+    const out = await rotate();
+    expect(out.isError).toBe(true);
+    expect(out.text).toContain("Nothing was rotated");
+    expect(out.text).toContain("still live");
+    // And nothing moved.
+    const after = (await list()).webhooks as Array<Record<string, unknown>>;
+    expect(after[0]?.url).toBe(buildHookUrl(DELIVERY_ID));
+  });
+});
+
+describe("the grace window the page reports is the one the door enforces", () => {
+  const rotatedAgo = (ms: number) => new Date(Date.now() - ms).toISOString();
+
+  test("an open window says the previous URL still works", async () => {
+    runtime.seed("admin", {
+      "acme-billing-mcp:acme": reg({ prevDeliveryId: "older-id", rotatedAt: rotatedAgo(60_000) }),
+    });
+    const webhooks = (await list()).webhooks as Array<Record<string, unknown>>;
+    expect(webhooks[0]?.previousStillValid).toBe(true);
+  });
+
+  test("a closed window does not, however long ago the rotation was", async () => {
+    // Neither prevDeliveryId nor rotatedAt is ever cleared, so a rotation from
+    // last year still carries both. Reading them as "still valid" would tell an
+    // admin it is safe to defer re-registering at the vendor, indefinitely,
+    // while the door drops every delivery to the old URL.
+    runtime.seed("admin", {
+      "acme-billing-mcp:acme": reg({
+        prevDeliveryId: "older-id",
+        rotatedAt: rotatedAgo(25 * 60 * 60 * 1000),
+      }),
+    });
+    const webhooks = (await list()).webhooks as Array<Record<string, unknown>>;
+    expect(webhooks[0]?.previousStillValid).toBe(false);
   });
 });
 

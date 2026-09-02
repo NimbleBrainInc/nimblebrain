@@ -86,7 +86,7 @@ function registration(over: Partial<HookRegistration> = {}): HookRegistration {
     connector: CONNECTOR,
     vendor: VENDOR,
     kid: KID,
-    deliveryId: (DELIVERY_ID),
+    deliveryId: DELIVERY_ID,
     createdAt: new Date().toISOString(),
     route: ROUTE,
     ...over,
@@ -250,6 +250,76 @@ describe("a legitimate delivery", () => {
   });
 });
 
+  test("another workspace's id does not reach this workspace's connector", async () => {
+    // The isolation the sealed `wid` used to carry. Resolution is now a lookup,
+    // so the property has to be asserted against the lookup: an id minted for
+    // one workspace forwards for THAT workspace, and nothing about the door's
+    // scan may let it land on a neighbour's registration.
+    const other = await store.create({ name: "other", ownerId: "usr_other" });
+    const otherId = newDeliveryId();
+    await seedWorkspace({
+      id: other.id,
+      hooks: {
+        [registrationKey(CONNECTOR, VENDOR)]: registration({
+          deliveryId: otherId,
+          route: "/ingest/other",
+        }),
+      },
+    });
+
+    const res = await deliver(makeApp(), hookUrl(otherId));
+    expect(res.status).toBe(202);
+    // Forwarded on the OTHER workspace's route, never this one's.
+    expect(forwarded).toHaveLength(1);
+    expect(forwarded[0]?.url).toContain("/ingest/other");
+  });
+
+describe("a registration written before delivery ids existed", () => {
+  test("is inadmissible, and does not 500 a valid delivery to another workspace", async () => {
+    // The door scans every workspace, so a record with no id sits on the path of
+    // deliveries that have nothing to do with it. Reading its id unguarded threw,
+    // and with no `try` in the route that surfaced as a 500 — the one answer this
+    // door's uniform 404 exists to never give, and it would have been given for a
+    // perfectly current workspace.
+    const stale = await store.create({ name: "stale", ownerId: "usr_stale" });
+    await seedWorkspace({
+      id: stale.id,
+      hooks: {
+        [registrationKey(CONNECTOR, VENDOR)]: {
+          connector: CONNECTOR,
+          vendor: VENDOR,
+          kid: KID,
+          createdAt: "2026-01-01T00:00:00.000Z",
+          route: "/ingest/stale",
+        } as unknown as ReturnType<typeof registration>,
+      },
+    });
+    await seedWorkspace({});
+
+    const res = await deliver(makeApp(), hookUrl());
+    expect(res.status).toBe(202);
+    expect(forwarded).toHaveLength(1);
+    expect(forwarded[0]?.url).not.toContain("/ingest/stale");
+  });
+
+  test("its own URL cannot be reconstructed, so it 404s like anything else", async () => {
+    const stale = await store.create({ name: "stale-only", ownerId: "usr_stale" });
+    await seedWorkspace({
+      id: stale.id,
+      hooks: {
+        [registrationKey(CONNECTOR, VENDOR)]: {
+          connector: CONNECTOR,
+          vendor: VENDOR,
+          kid: KID,
+          createdAt: "2026-01-01T00:00:00.000Z",
+          route: "/ingest/stale",
+        } as unknown as ReturnType<typeof registration>,
+      },
+    });
+    await expectIndistinguishable404(await deliver(makeApp(), hookUrl(newDeliveryId())));
+  });
+});
+
 describe("the response the vendor gets", () => {
   test("carries no content-encoding — fetch decoded the body, the header would lie", async () => {
     // `fetch` decompresses transparently but leaves `content-encoding` and the
@@ -311,35 +381,13 @@ describe("every way a delivery is refused looks the same", () => {
   });
 
   test("an id that is a PREFIX of the real one", async () => {
-    // A scan comparing loosely would admit this. The comparison is over whole
-    // hashes, so a prefix is simply a different id.
+    // The near-miss now lives in the space actually compared: the stored id is
+    // the id, so this differs from it by one trailing character. A comparison
+    // that stopped at the shorter length would admit it; the length check in
+    // `equalsConstantTime` is what refuses it.
     await expectIndistinguishable404(
       await deliver(makeApp(), hookUrl(DELIVERY_ID.slice(0, -1))),
     );
-  });
-
-  test("another workspace's id does not reach this workspace's connector", async () => {
-    // The isolation the sealed `wid` used to carry. Resolution is now a lookup,
-    // so the property has to be asserted against the lookup: an id minted for
-    // one workspace forwards for THAT workspace, and nothing about the door's
-    // scan may let it land on a neighbour's registration.
-    const other = await store.create({ name: "other", ownerId: "usr_other" });
-    const otherId = newDeliveryId();
-    await seedWorkspace({
-      id: other.id,
-      hooks: {
-        [registrationKey(CONNECTOR, VENDOR)]: registration({
-          deliveryId: (otherId),
-          route: "/ingest/other",
-        }),
-      },
-    });
-
-    const res = await deliver(makeApp(), hookUrl(otherId));
-    expect(res.status).toBe(202);
-    // Forwarded on the OTHER workspace's route, never this one's.
-    expect(forwarded).toHaveLength(1);
-    expect(forwarded[0]?.url).toContain("/ingest/other");
   });
 
   test("an id whose workspace is gone", async () => {
@@ -350,7 +398,7 @@ describe("every way a delivery is refused looks the same", () => {
     await seedWorkspace({
       id: doomed.id,
       hooks: {
-        [registrationKey(CONNECTOR, VENDOR)]: registration({ deliveryId: (doomedId) }),
+        [registrationKey(CONNECTOR, VENDOR)]: registration({ deliveryId: doomedId }),
       },
     });
     await store.delete(doomed.id);
@@ -371,7 +419,7 @@ describe("every way a delivery is refused looks the same", () => {
     await seedWorkspace({
       hooks: {
         [registrationKey(CONNECTOR, VENDOR)]: registration({
-          deliveryId: (newDeliveryId()),
+          deliveryId: newDeliveryId(),
           prevDeliveryId: (DELIVERY_ID),
           rotatedAt: new Date(Date.now() - HOOK_ROTATION_GRACE_MS - 1_000).toISOString(),
         }),
@@ -390,27 +438,12 @@ describe("every way a delivery is refused looks the same", () => {
   });
 });
 
-describe("a rotated key id inside the grace window", () => {
-  test("still lands, so a rotation never drops an in-flight redelivery", async () => {
-    await seedWorkspace({
-      hooks: {
-        [registrationKey(CONNECTOR, VENDOR)]: registration({
-          kid: "hk_new",
-          prevKid: KID,
-          rotatedAt: new Date(Date.now() - 60_000).toISOString(),
-        }),
-      },
-    });
-    const res = await deliver(makeApp(), hookUrl());
-    expect(res.status).toBe(202);
-    expect(forwarded).toHaveLength(1);
-  });
-});
-
 describe("shape and size", () => {
   test.each(["GET", "PUT", "DELETE", "PATCH"])("%s is refused with 405, not 404", async (method) => {
-    // 405 for ANY three-segment path under the prefix, so the difference
-    // between "405 here" and "404 there" cannot map out which paths exist.
+    // 405 for a single-segment path under the prefix whatever the segment is,
+    // so the difference between "405 here" and "404 there" cannot map out which
+    // ids exist. A path of another shape 404s at the router, which reveals only
+    // the route table.
     const res = await deliver(makeApp(), hookUrl("whatever"), {
       method,
       body: undefined,
@@ -576,7 +609,7 @@ describe("the two rate-limit buckets", () => {
         id: other.id,
         hooks: {
           [registrationKey(CONNECTOR, VENDOR)]: registration({
-            deliveryId: (otherId),
+            deliveryId: otherId,
           }),
         },
       });
@@ -773,7 +806,7 @@ describe("the rotation overlap, at the door", () => {
     await seedWorkspace({
       id: other.id,
       hooks: {
-        [registrationKey(CONNECTOR, VENDOR)]: registration({ deliveryId: (newDeliveryId()) }),
+        [registrationKey(CONNECTOR, VENDOR)]: registration({ deliveryId: newDeliveryId() }),
       },
     });
     const res = await deliver(makeApp(), hookUrl(OUTGOING_ID));

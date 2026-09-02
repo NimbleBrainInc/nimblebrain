@@ -1,13 +1,6 @@
 import { randomBytes, randomUUID } from "node:crypto";
-import {
-  ALLOWED_TID_PATTERN,
-  EnvelopeError,
-  isUniformByte,
-  signMacEnvelope,
-  verifyMacEnvelope,
-} from "../oauth/envelope.ts";
+import { ALLOWED_TID_PATTERN, isUniformByte } from "../oauth/envelope.ts";
 import { publicOrigin } from "../oauth/public-origin.ts";
-import { WORKSPACE_ID_RE } from "../workspace/workspace-id-pattern.ts";
 
 /**
  * The hook token — a capability the runtime mints, hands to a server, and can
@@ -86,25 +79,6 @@ const MAX_HOOK_KEYS = 3;
  * same shape so one rule covers both.
  */
 export const HOOK_SLUG_RE = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/;
-
-/** Payload sealed into a hook token. */
-export interface HookTokenPayload {
-  /**
-   * Payload schema version, distinct from the envelope's own `v1.` wire prefix.
-   * The wire prefix versions the MAC construction shared by all three payload
-   * schemas; this versions THIS schema alone. They are separable on purpose,
-   * and it matters more here than anywhere else that rides the envelope: a
-   * login assertion lives fifteen minutes, but a vendor holds a hook URL
-   * indefinitely, so a future runtime has to be able to open tokens minted by
-   * a much older one.
-   */
-  v: 1;
-  tid: string;
-  wid: string;
-  connector: string;
-  vendor: string;
-  kid: string;
-}
 
 /** Mint a fresh key id. Opaque and unique is the whole requirement — ordering
  *  comes from the record's own `createdAt` / `rotatedAt`, so a sortable id
@@ -188,81 +162,6 @@ export function readHookTokenKeys(
   return keys as [Buffer, ...Buffer[]];
 }
 
-/** Seal a hook token. Pure — no env, no I/O. */
-export function sealHookToken(fields: Omit<HookTokenPayload, "v">, key: Buffer): string {
-  if (!ALLOWED_TID_PATTERN.test(fields.tid)) {
-    throw new EnvelopeError("invalid_tid");
-  }
-  if (!WORKSPACE_ID_RE.test(fields.wid)) {
-    throw new EnvelopeError("invalid_payload");
-  }
-  if (!HOOK_SLUG_RE.test(fields.connector) || !HOOK_SLUG_RE.test(fields.vendor)) {
-    throw new EnvelopeError("invalid_payload");
-  }
-  if (typeof fields.kid !== "string" || fields.kid.length === 0 || fields.kid.length > 64) {
-    throw new EnvelopeError("invalid_payload");
-  }
-  const payload: HookTokenPayload = { v: 1, ...fields };
-  return signMacEnvelope(payload, key);
-}
-
-/**
- * Open a hook token, or throw `EnvelopeError`.
- *
- * Every rejection reason — malformed wire, wrong key, wrong tenant, a field
- * that fails its grammar — is a throw, and the door collapses all of them into
- * one indistinguishable 404. Distinguishing them at the boundary would hand a
- * prober an oracle for which half of a guess was right.
- *
- * `expectedTid` is checked here rather than left to the caller because a token
- * sealed under another tenant's key cannot reach this point anyway (the MAC
- * fails first) — so this check is what catches the residual case of one
- * tenant's key being provisioned onto another tenant's pod, where the MAC
- * would pass and the routing would be wrong.
- */
-export function openHookToken(wire: string, key: Buffer, expectedTid: string): HookTokenPayload {
-  const raw = verifyMacEnvelope(wire, key);
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw.toString("utf8"));
-  } catch {
-    throw new EnvelopeError("invalid_payload");
-  }
-  if (!parsed || typeof parsed !== "object") {
-    throw new EnvelopeError("invalid_payload");
-  }
-  const p = parsed as Record<string, unknown>;
-  if (p.v !== 1) {
-    throw new EnvelopeError("invalid_payload");
-  }
-  if (typeof p.tid !== "string" || !ALLOWED_TID_PATTERN.test(p.tid)) {
-    throw new EnvelopeError("invalid_tid");
-  }
-  if (p.tid !== expectedTid) {
-    throw new EnvelopeError("tid_mismatch");
-  }
-  if (typeof p.wid !== "string" || !WORKSPACE_ID_RE.test(p.wid)) {
-    throw new EnvelopeError("invalid_payload");
-  }
-  if (typeof p.connector !== "string" || !HOOK_SLUG_RE.test(p.connector)) {
-    throw new EnvelopeError("invalid_payload");
-  }
-  if (typeof p.vendor !== "string" || !HOOK_SLUG_RE.test(p.vendor)) {
-    throw new EnvelopeError("invalid_payload");
-  }
-  if (typeof p.kid !== "string" || p.kid.length === 0 || p.kid.length > 64) {
-    throw new EnvelopeError("invalid_payload");
-  }
-  return {
-    v: 1,
-    tid: p.tid,
-    wid: p.wid,
-    connector: p.connector,
-    vendor: p.vendor,
-    kid: p.kid,
-  };
-}
-
 /** Path prefix the door is mounted at. Everything else beneath it 404s. */
 export const HOOKS_PATH_PREFIX = "/v1/hooks";
 
@@ -319,16 +218,6 @@ export interface HookIdentity {
   tid: string;
   /** The key new tokens are sealed under — the ring's first entry. */
   key: Buffer;
-  /**
-   * Keys that still OPEN but no longer seal: the outgoing side of a rotation.
-   * **Optional because absent is the steady state** — a deployment that has
-   * never rotated has exactly one key, and modelling that as a required empty
-   * array would make every construction site carry the rotation's vocabulary.
-   * A URL minted under one of these stays live until the operator drops the
-   * key, which is what makes rotating this key an ordinary operation rather
-   * than a planned outage of the whole inbound path.
-   */
-  previousKeys?: readonly Buffer[];
 }
 
 /**
@@ -351,37 +240,5 @@ export function readHookIdentity(env: NodeJS.ProcessEnv = process.env): HookIden
   if (!keys) return undefined;
   const tid = env.NB_TENANT_ID?.trim();
   if (!tid || !ALLOWED_TID_PATTERN.test(tid)) return undefined;
-  return { tid, key: keys[0], previousKeys: keys.slice(1) };
-}
-
-/**
- * Open a hook token against the whole ring — the sealing key first, then each
- * key still in its overlap window.
- *
- * Order is for the common case, not for correctness: almost every delivery
- * opens on the first key, and a token that opens under none is the same 404 as
- * one that never verified.
- *
- * `slot` is which ring position opened it, and it is OBSERVABLE ONLY — it exists
- * so a delivery arriving on a superseded key can be logged, because that is the
- * ring's exit condition and nothing else can see it: an operator dropping the
- * outgoing key blind causes the fleet-wide silent 404 the ring exists to
- * prevent. Nothing downstream may branch on it. A delivery's authority comes
- * from the registration lookup that follows, not from which key was current
- * when the URL was minted.
- */
-export function openHookTokenForIdentity(
-  wire: string,
-  identity: HookIdentity,
-): { payload: HookTokenPayload; slot: number } {
-  const ring = [identity.key, ...(identity.previousKeys ?? [])];
-  let firstError: unknown;
-  for (let slot = 0; slot < ring.length; slot++) {
-    try {
-      return { payload: openHookToken(wire, ring[slot] as Buffer, identity.tid), slot };
-    } catch (err) {
-      firstError ??= err;
-    }
-  }
-  throw firstError instanceof Error ? firstError : new EnvelopeError("invalid_payload");
+  return { tid, key: keys[0] };
 }

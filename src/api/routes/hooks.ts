@@ -12,12 +12,14 @@ import type { RequestRateLimiter } from "../rate-limiter.ts";
 import type { AppContext } from "../types.ts";
 
 /**
- * The hooks door — `POST /v1/hooks/:connector/:vendor/:token`.
+ * The hooks door — `POST /v1/hooks/:deliveryId`.
  *
  * The one generic entry point for inbound vendor deliveries. It is mounted
  * AHEAD of auth middleware, alongside the OAuth return legs, because like them
  * it is unauthenticated by design: a vendor's HTTP POST cannot carry a platform
- * token, and the credential it does carry is the capability in the path.
+ * token, and the credential it does carry is the id in the path — which names
+ * one registration and nothing else, so the connector and vendor are read from
+ * the record rather than restated by the caller.
  *
  * **The handler stays thin, and that is a hard constraint rather than a style
  * preference.** A tenant runtime is one pod; a delivery arriving while it is
@@ -26,10 +28,13 @@ import type { AppContext } from "../types.ts";
  * vendor's own retry and to the receiving bundle's raw capture and reconcile
  * poll — both of which can provide it and neither of which is this process.
  *
- * **Every rejection is the same 404 with an empty body.** A bad token, a token
- * sealed under another tenant's key, path segments that disagree with the
- * sealed ones, a retired key id, an uninstalled connector — all of them take
- * one path and produce one indistinguishable answer. Distinguishing them would
+ * **Every rejection is the same 404 with an empty body.** An id that matches no
+ * registration, one whose grace window has closed, one whose workspace is gone,
+ * an uninstalled connector — all of them take one path and produce one
+ * indistinguishable answer. That includes a record too old to carry an id at
+ * all: it is inadmissible, never an exception, because this handler has no
+ * `try` and one stale record would otherwise answer 500 for every workspace the
+ * scan reaches afterwards. Distinguishing any of them would
  * hand a prober an oracle for which half of a guess was right, which is the
  * same reasoning that makes an RLS-denied row a 404 rather than a 403.
  */
@@ -158,10 +163,12 @@ export function hooksRoutes(ctx: AppContext, opts: HooksRoutesOptions = {}): Hon
 
   const app = new Hono();
 
-  // `all`, not `post`: a non-POST must answer 405 rather than 404, and it must
-  // do so for ANY three-segment path under the prefix. Registering POST alone
-  // would make Hono answer 404 for a GET, and the difference between "405 here"
-  // and "404 there" would map out which paths exist.
+  // `all`, not `post`: a non-POST must answer 405 rather than 404 for a
+  // single-segment path under the prefix, whatever that segment is. Registering
+  // POST alone would make Hono answer 404 for a GET, and the difference between
+  // "405 here" and "404 there" would map out which ids exist. A path of any
+  // OTHER shape matches no route and 404s at the router — that answer is about
+  // the route table, which is public, and says nothing about a delivery id.
   app.all(`${HOOKS_PATH_PREFIX}/:deliveryId`, async (c) => {
     const req = c.req.raw;
 
@@ -231,12 +238,12 @@ interface AdmittedDelivery {
 }
 
 /**
- * Open the token and decide whether this delivery may be forwarded.
+ * Resolve the delivery id and decide whether this delivery may be forwarded.
  *
- * Returns `undefined` for every rejection reason there is — a token that will
- * not open, one sealed under another tenant's key, path segments that disagree
- * with the sealed ones, a workspace that is gone, a missing or retired key id,
- * a connector no longer installed. Collapsing them into one return value is
+ * Returns `undefined` for every rejection reason there is — an id matching no
+ * registration, one whose rotation grace window has closed, a registration with
+ * no id at all, a workspace that is gone, a connector no longer installed.
+ * Collapsing them into one return value is
  * deliberate and is the whole point of the function: the caller has nothing to
  * branch on, so it cannot accidentally answer two rejections differently and
  * hand a prober an oracle for which half of a guess was right.
@@ -362,9 +369,9 @@ function passthroughResponseHeaders(upstream: Headers): Headers {
  * so the field is load-bearing rather than decorative: dropping it would leave
  * no way to tell which URL a delivery arrived on.
  *
- * **Never the token and never the body.** The `kid` names which minted URL was
- * used without being usable as one; the token IS one, and a live bearer
- * capability does not belong in a log. The body is the tenant's data, and the
+ * **Never the delivery id and never the body.** The `kid` names which minted
+ * URL was used without being usable as one; the id IS the URL's whole secret,
+ * and a live bearer capability does not belong in a log. The body is the tenant's data, and the
  * runtime has no business having read it.
  */
 function logDelivery(

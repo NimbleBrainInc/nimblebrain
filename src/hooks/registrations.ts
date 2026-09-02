@@ -66,9 +66,30 @@ export function isDeliveryIdAdmissible(
   deliveryId: string,
   now: number = Date.now(),
 ): boolean {
-  if (equalsConstantTime(deliveryId, reg.deliveryId)) return true;
-  if (!reg.prevDeliveryId || !equalsConstantTime(deliveryId, reg.prevDeliveryId)) return false;
-  if (!reg.rotatedAt) return false;
+  // A registration written before delivery ids existed carries no id to compare
+  // against. It is inadmissible, and deliberately not an error: the door scans
+  // every workspace, so throwing here would let one stale record answer 500 for
+  // deliveries belonging to workspaces that are perfectly current — and a 500 is
+  // the one distinguishable answer this door exists to never give. Rotating the
+  // stream writes an id and repairs it.
+  if (reg.deliveryId && equalsConstantTime(deliveryId, reg.deliveryId)) return true;
+  const prev = reg.prevDeliveryId;
+  if (!prev || !isPreviousStillValid(reg, now)) return false;
+  return equalsConstantTime(deliveryId, prev);
+}
+
+/**
+ * Whether a rotated stream's PREVIOUS URL is still one the door will admit.
+ *
+ * Exported because the operator surface has to report the same window the door
+ * enforces. Two copies of this rule is how a settings page comes to promise an
+ * admin that the old URL still works for a day after the door stopped taking it.
+ */
+export function isPreviousStillValid(
+  reg: Pick<HookRegistration, "prevDeliveryId" | "rotatedAt">,
+  now: number = Date.now(),
+): boolean {
+  if (!reg.prevDeliveryId || !reg.rotatedAt) return false;
   const rotatedAt = Date.parse(reg.rotatedAt);
   if (!Number.isFinite(rotatedAt)) return false;
   return now - rotatedAt < HOOK_ROTATION_GRACE_MS;

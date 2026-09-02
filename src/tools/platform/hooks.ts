@@ -23,7 +23,7 @@
 import { type EventSink, INTERNAL_TOOL_ANNOTATION, type ToolResult } from "../../engine/types.ts";
 
 import { ensureHooks } from "../../hooks/reconcile.ts";
-import { listRegistrations } from "../../hooks/registrations.ts";
+import { isPreviousStillValid, listRegistrations } from "../../hooks/registrations.ts";
 import { buildHookUrl } from "../../hooks/token.ts";
 import type { Runtime } from "../../runtime/runtime.ts";
 import { canWriteWorkspaceScoped } from "../../workspace/authz.ts";
@@ -39,7 +39,9 @@ function textContent(text: string) {
 }
 
 function refuse(message: string): ToolResult {
-  return { content: textContent(JSON.stringify({ error: message })), isError: true };
+  // Human text in `content`: the web tier's parseToolResult throws
+  // `new Error(content[0].text)`, so whatever is here is what the admin reads.
+  return { content: textContent(message), structuredContent: { error: message }, isError: true };
 }
 
 /**
@@ -98,6 +100,18 @@ async function rotate(
     onlyVendor: vendor,
   });
   const outcome = provisioned.find((p) => p.vendor === vendor);
+  if (!outcome) {
+    // Nothing was minted, so nothing rotated. Reporting the re-read record here
+    // would hand back the CURRENT url as though it were the new one — and this
+    // control is reached when a URL has leaked, which is the worst moment to be
+    // told a rotation happened that did not.
+    return refuse(
+      `Nothing was rotated. "${connector}" declares no inbound hook for "${vendor}", or its ` +
+        "connection is not running — the new URL has to be handed to the server, so it can " +
+        "only be rotated while that server is reachable. The existing URL is unchanged and " +
+        "still live. Start the connector and try again.",
+    );
+  }
 
   const after = await runtime.getWorkspaceStore().get(wsId);
   const rotated = listRegistrations(after ?? {}).find(
@@ -114,9 +128,9 @@ async function rotate(
         // and has to be said: the URL is minted and the door admits it, but the
         // vendor is still delivering to the old one, which the grace window is
         // holding open.
-        registered: outcome?.registered ?? false,
-        error: outcome?.error ?? null,
-        previousStillValid: Boolean(rotated?.prevDeliveryId && rotated?.rotatedAt),
+        registered: outcome.registered,
+        error: outcome.error ?? null,
+        previousStillValid: rotated ? isPreviousStillValid(rotated) : false,
       }),
     ),
     isError: false,
@@ -151,7 +165,7 @@ export function createHooksSource(runtime: Runtime, eventSink: EventSink): McpSo
           // True while the previous URL still opens. An operator mid-rotation
           // needs to know the old one has not stopped working yet, because that
           // is exactly when re-registering at the vendor is still safe to defer.
-          previousStillValid: Boolean(reg.prevDeliveryId && reg.rotatedAt),
+          previousStillValid: isPreviousStillValid(reg),
         }));
 
         return {

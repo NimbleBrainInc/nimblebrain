@@ -4,7 +4,7 @@ import { splitInnerToolName } from "../util/tool-name.ts";
 import type { WorkspaceStore } from "../workspace/workspace-store.ts";
 import { assertForwardablePath } from "./declaration.ts";
 import { registrationKey, updateRegistrations, withRotatedKid } from "./registrations.ts";
-import { buildHookUrl, type HookIdentity, newDeliveryId, newKid } from "./token.ts";
+import { buildHookUrl, newDeliveryId, newKid } from "./token.ts";
 import type { HookDeclaration, HookRegistration } from "./types.ts";
 
 /**
@@ -159,7 +159,6 @@ export function hookPortForSource(source: HookSourceLike): HookConnectorPort {
 }
 
 export interface ProvisionHooksOptions {
-  identity: HookIdentity;
   store: WorkspaceStore;
   wsId: string;
   connector: string;
@@ -207,7 +206,6 @@ function nextRegistration(
   decl: HookDeclaration,
 ): { reg: HookRegistration } {
   const kid = existing && !opts.rotate ? existing.kid : newKid();
-  const deliveryId = newDeliveryId();
   if (existing && kid === existing.kid) {
     // Unchanged, and the SAME id is handed over again. Re-registering a URL the
     // server already holds is a no-op there and the cheapest possible self-heal
@@ -221,7 +219,7 @@ function nextRegistration(
       connector: opts.connector,
       vendor: decl.vendor,
       kid,
-      deliveryId,
+      deliveryId: newDeliveryId(),
       route: decl.route,
       headerRenames: decl.header_renames,
     }),
