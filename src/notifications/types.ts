@@ -24,6 +24,7 @@
  */
 
 import {
+  type DeliveryRecord,
   NOTIFICATION_LEVELS,
   type NotificationLevel,
 } from "../tools/platform/schemas/notifications.ts";
@@ -33,7 +34,7 @@ import {
  * from one place. The values themselves live in the schema module, which is
  * the one directory the web codegen compiles and must stay self-contained.
  */
-export { NOTIFICATION_LEVELS, type NotificationLevel };
+export { type DeliveryRecord, NOTIFICATION_LEVELS, type NotificationLevel };
 
 /**
  * Rank used to resolve a `level` filter as a minimum rather than an exact
@@ -104,17 +105,6 @@ export interface NotificationEnvelope {
   /** Position after this event, when the server issues per-event cursors. */
   cursor?: string;
   _meta?: NotificationEnvelopeMeta;
-}
-
-/** How one route target fared for one notification. */
-export interface DeliveryRecord {
-  /** The route that matched, from the workspace record. */
-  routeId: string;
-  /** What the route aimed at — a tool name, or an automation id. */
-  target: string;
-  attempts: number;
-  lastError?: string;
-  outcome: "delivered" | "failed" | "skipped";
 }
 
 /**

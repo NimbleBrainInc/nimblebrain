@@ -170,6 +170,26 @@ async function main() {
   await sleep(1000);
   await screenshot(ws, "shortcuts-modal.png");
 
+  // ── 3. The notification inbox, with one item opened ──
+  // Opening a row is what reveals the body, the event name and the delivery
+  // ledger, which is most of what the page is for — a closed list would show
+  // titles and nothing the docs page talks about.
+  console.log("\n3. Notification inbox");
+  await navigate(ws, `${BASE_URL}/w/product/notifications`);
+  await sleep(1500);
+  await evaluateJS(
+    ws,
+    `document.querySelectorAll('[data-testid="notification-row"]')[0]?.click()`,
+  );
+  await sleep(800);
+  await screenshot(ws, "notifications-inbox.png");
+
+  // ── 4. Notification settings — ceilings and the route editor ──
+  console.log("\n4. Notification settings");
+  await navigate(ws, `${BASE_URL}/w/product/settings/notifications`);
+  await sleep(1500);
+  await screenshot(ws, "notifications-settings.png");
+
   console.log("\n✅ Screenshots captured to:", OUTPUT_DIR);
 
   ws.close();

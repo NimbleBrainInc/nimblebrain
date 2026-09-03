@@ -271,6 +271,52 @@ export declare const PlatformToolCatalog: {
             }>;
         };
     };
+    readonly notifications: {
+        readonly list: {
+            readonly input: import("@sinclair/typebox").TObject<{
+                unreadOnly: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TBoolean>;
+                level: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"attention" | "info" | "urgent">>;
+                source: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+                after: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
+                order: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"desc" | "asc">>;
+                limit: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
+            }>;
+        };
+        readonly mark_read: {
+            readonly input: import("@sinclair/typebox").TObject<{
+                ids: import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>;
+            }>;
+        };
+        readonly settings: {
+            readonly input: import("@sinclair/typebox").TObject<{}>;
+        };
+        readonly set_source_level: {
+            readonly input: import("@sinclair/typebox").TObject<{
+                source: import("@sinclair/typebox").TString;
+                maxLevel: import("@sinclair/typebox").TUnsafe<"attention" | "info" | "urgent">;
+            }>;
+        };
+        readonly set_routes: {
+            readonly input: import("@sinclair/typebox").TObject<{
+                routes: import("@sinclair/typebox").TArray<import("@sinclair/typebox").TObject<{
+                    id: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+                    match: import("@sinclair/typebox").TObject<{
+                        source: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+                        name: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+                        level: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"attention" | "info" | "urgent">>;
+                    }>;
+                    deliver: import("@sinclair/typebox").TArray<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TObject<{
+                        kind: import("@sinclair/typebox").TLiteral<"tool">;
+                        tool: import("@sinclair/typebox").TString;
+                        input: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<Record<string, unknown>>>;
+                    }>, import("@sinclair/typebox").TObject<{
+                        kind: import("@sinclair/typebox").TLiteral<"agent">;
+                        automation: import("@sinclair/typebox").TString;
+                    }>]>>;
+                }>>;
+            }>;
+        };
+    };
     readonly files: {
         readonly list: {
             readonly input: import("@sinclair/typebox").TObject<{

@@ -151,6 +151,39 @@ export interface ConversationTitleEvent {
   wsId?: string;
 }
 
+/**
+ * A connector's notification reached a workspace's inbox.
+ *
+ * A summary, not the item: enough to know something arrived in a workspace the
+ * tab can see, and deliberately not the body, the link or the connector's
+ * payload. The inbox refetches on it rather than rendering from it — the frame
+ * is a hint that the list moved, and the list is the thing that is true.
+ */
+export interface NotificationCreatedEvent {
+  workspaceId: string;
+  id: string;
+  seq: number;
+  source: string;
+  name: string;
+  level: "info" | "attention" | "urgent";
+  title: string;
+  subject?: string;
+  receivedAt: string;
+}
+
+/**
+ * A route target for a notification did not deliver, with its retries spent.
+ *
+ * Typed down to the one field the fan-out itself guarantees. The runtime's
+ * `SSE_ROUTES` requires `workspaceId` to scope the frame at all, so that field
+ * is pinned; the rest of the payload belongs to the slice that emits it, which
+ * is unbuilt. The consumer here refetches, so it needs nothing more, and
+ * inventing the remaining fields now would be a contract nobody has agreed to.
+ */
+export interface NotificationDeliveryFailedEvent {
+  workspaceId: string;
+}
+
 /** SSE event type to payload mapping. */
 export interface SseEventMap {
   "bundle.installed": BundleInstalledEvent;
@@ -159,6 +192,8 @@ export interface SseEventMap {
   "data.changed": DataChangedEvent;
   "conversation.title": ConversationTitleEvent;
   "config.changed": ConfigChangedEvent;
+  "notification.created": NotificationCreatedEvent;
+  "notification.delivery_failed": NotificationDeliveryFailedEvent;
   heartbeat: HeartbeatEvent;
 }
 

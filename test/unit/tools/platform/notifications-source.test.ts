@@ -19,6 +19,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { NoopEventSink } from "../../../../src/adapters/noop-events.ts";
 import type { ToolResult } from "../../../../src/engine/types.ts";
 import { parseNotificationEnvelope } from "../../../../src/notifications/envelope.ts";
+import { resolvePollConfig } from "../../../../src/notifications/poll-config.ts";
 import { NotificationStore } from "../../../../src/notifications/store.ts";
 import { runWithRequestContext } from "../../../../src/runtime/request-context.ts";
 import type { Runtime } from "../../../../src/runtime/runtime.ts";
@@ -31,6 +32,7 @@ import {
   type NotificationsMarkReadOutput,
 } from "../../../../src/tools/platform/schemas/notifications.ts";
 import { WorkspaceContext } from "../../../../src/workspace/context.ts";
+import { WorkspaceStore } from "../../../../src/workspace/workspace-store.ts";
 
 const OWNER_ID = "usr_test";
 const WS_A = "ws_aaaaaaaaaaaaaaaa";
@@ -58,9 +60,21 @@ function seed(wsId: string, source_: string, eventId: string, extra: Record<stri
   return storeFor(wsId).append(source_, envelope).item;
 }
 
+/**
+ * The Runtime surface this source reaches at construction.
+ *
+ * Beyond the store it reads, the factory also builds the poller — so the stub
+ * has to answer what the poller needs to exist. With no lifecycle instances it
+ * has nothing to read, which is what these tests want: they are about the tool
+ * door, and the poller is exercised in `notifications/poller.test.ts`.
+ */
 function makeRuntime(): Runtime {
   return {
     getNotificationStore: (wsId: string) => storeFor(wsId),
+    getWorkspaceStore: () => new WorkspaceStore(workDir),
+    getLifecycle: () => ({ getInstances: () => [] }),
+    getNotificationsDeclaration: async () => undefined,
+    getNotificationsPollConfig: () => resolvePollConfig(),
   } as unknown as Runtime;
 }
 

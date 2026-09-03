@@ -73,6 +73,15 @@ A sibling `nimblebrain.overrides.json` next to the resolved config file is **dee
     }
   },
 
+  "notifications": {
+    "poll": {
+      "intervalMs":      60000,
+      "maxIntervalMs":   300000,
+      "maxEvents":       100,
+      "budgetPerMinute": 10
+    }
+  },
+
   "files": {
     "maxFileSize":          26214400,
     "maxTotalSize":         104857600,
@@ -109,6 +118,7 @@ A sibling `nimblebrain.overrides.json` next to the resolved config file is **dee
 | `http` | `object` | `{ "port": 27247, "host": "127.0.0.1" }` | HTTP server config. Omit for programmatic-only use. |
 | `features` | `object` | all `true` | Feature flags. See [Feature Flags](/config/features). |
 | `connectors` | `object` | — | Managed-connector provider settings (Composio). See [connectors](#connectors). |
+| `notifications` | `object` | — | Pacing for the notification outbox poll. See [notifications](#notifications). |
 | `files` | `object` | — | File upload limits. See [files](#files). |
 | `allowInsecureRemotes` | `boolean` | `false` | Allow HTTP (non-TLS) remote bundle connections. Dev only. |
 | `telemetry` | `object` | `{ "enabled": true }` | Anonymous usage telemetry. See [telemetry](#telemetry). |
@@ -541,6 +551,79 @@ It is declarable because nothing persisted points at where it lives. A connector
 Settings resolve from this block only — there is no environment fallback for them. The **broker credential** is the exception: `apiKey` also reads `COMPOSIO_API_KEY` / `SMITHERY_API_KEY`, because a secret has a legitimate home in the environment. One value, one source, with that single documented exception.
 
 `NB_TENANT_ID` is likewise not part of this block. It is a deployment identity, stays env-only, and is still required when the OAuth bouncer is configured.
+
+## notifications
+
+An app can declare an **outbox** — one resource carrying facts it recorded that
+nobody asked for, such as a domain going active or a reply landing. The runtime
+reads each declared outbox on a schedule and writes what it finds to the
+workspace's notification inbox. What an outbox carries is the app's decision and
+who may declare one is yours; what the poll *costs* is the runtime's, and this
+block is where you move it.
+
+```json
+{
+  "notifications": {
+    "poll": {
+      "intervalMs":      60000,
+      "maxIntervalMs":   300000,
+      "maxEvents":       100,
+      "budgetPerMinute": 10
+    }
+  }
+}
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `poll.intervalMs` | `integer` (ms) | `60000` | Base cadence per `(workspace, connector)`. Floored at the fixed 15,000 ms poll floor. |
+| `poll.maxIntervalMs` | `integer` (ms) | `300000` | Backoff ceiling — the slowest an idle outbox is read, and the interval an open circuit breaker half-opens on. Never resolves below `intervalMs`. |
+| `poll.maxEvents` | `integer` | `100` | Events requested per read. Capped at 1000. |
+| `poll.budgetPerMinute` | `integer` | `10` | Polls allowed per workspace per minute, across every connector in it. |
+
+Nothing here is required: a deployment that sets no block polls at these
+defaults, and one where no app declares an outbox polls nothing at all.
+
+### The cadence is adaptive, and an app may recommend one
+
+Each outbox is read on its own schedule, not on a fleet-wide tick:
+
+- Consecutive reads that return no events **double** the interval, up to
+  `maxIntervalMs`. A read that returns events snaps straight back to
+  `intervalMs`.
+- An answer carrying `nextPollMs` is honoured, clamped between a fixed 15-second
+  floor and `maxIntervalMs`. An app watching something that is about to change
+  asks to be read sooner this way; one that is rate-limited upstream asks to be
+  read less.
+- An answer carrying `hasMore: true` means the batch was cut at `maxEvents`, and
+  the runtime reads again immediately — out of the same budget, because it is
+  the same cost.
+- An outbox that fails three reads in a row is read once per `maxIntervalMs`
+  until it answers, rather than on every tick.
+
+The 15-second floor is not configurable. It bounds how much of a tenant's
+request budget a standing background loop can consume, and an app that wants to
+be read faster than that wants a push rather than a poll.
+
+### The budget, and why the default is what it is
+
+`budgetPerMinute` is a per-workspace allowance, not a global one. The default is
+derived rather than picked: the poll may take about a quarter of a tenant's
+request rate, and one poll costs up to three requests when it has to re-establish
+an idle-closed connection first — so the allowance buys a third as many polls as
+requests.
+
+When a workspace's allowance runs out mid-pass, the connectors it did not reach
+are deferred to the next tick and the pass **resumes with them**. A workspace
+with more outboxes than budget reads all of them, more slowly — it never reads
+the first few forever.
+
+<Aside type="caution">
+  The poller runs in every replica, so `replicas: 1` is the supported topology —
+  the same prerequisite the connection revalidator carries. Two replicas would
+  read the same outbox twice and race the same stored position. See
+  [Observability](/deploy/observability/#background-loops).
+</Aside>
 
 ## files
 

@@ -101,6 +101,18 @@ export interface RequestContext {
    * is not (see that module's trust-boundary note).
    */
   unattended?: boolean;
+  /**
+   * The caller's own short opaque string identifying WHAT made an unattended
+   * dispatch — `"route:rt_…"` for a notification route. Set only by
+   * `dispatchUnattended`; absent in a chat and in a scheduled run, which have
+   * a conversation and a run id to be identified by.
+   *
+   * Two readers, and they are the whole of it: the audit line, and the
+   * outbound `_meta` stamp under `UNATTENDED_META_KEY` so a bundle can tell a
+   * configuration-fired call from a chat turn. The host never parses it — a
+   * caller may put anything short in here, and the value decides nothing.
+   */
+  unattendedReason?: string;
 }
 
 const storage = new AsyncLocalStorage<RequestContext>();

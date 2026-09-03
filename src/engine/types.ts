@@ -200,6 +200,23 @@ export const INFRA_ERROR_META_KEY = "ai.nimblebrain/infra-error";
  * source of the key: use {@link isInternalTool} to read it and this const as the
  * annotation key to set it, so a rename can never split the read/write sites.
  */
+/**
+ * Reverse-DNS `_meta` key stamped on the OUTBOUND `tools/call` of an unattended
+ * dispatch — a single tool call made with no session, from stored
+ * configuration, on behalf of a named principal. Its value is the caller's own
+ * short opaque `reason` string, so a server that cares can tell a
+ * configuration-fired call from a chat turn and answer differently (skip a
+ * confirmation prompt, tag what it writes). A server that does not care ignores
+ * it, which is why nothing about the dispatch depends on it being read.
+ *
+ * Host-owned in the same sense as {@link INFRA_ERROR_META_KEY}: it asserts
+ * something about the CALLER, and only the host is in a position to know it. So
+ * it is stripped from any RESULT arriving over the wire — a bundle echoing it
+ * back would be claiming a provenance it cannot have, and the audit line, not
+ * the result, is where that provenance is recorded.
+ */
+export const UNATTENDED_META_KEY = "ai.nimblebrain/unattended";
+
 export const INTERNAL_TOOL_ANNOTATION = "ai.nimblebrain/internal";
 
 /** True when a tool carries {@link INTERNAL_TOOL_ANNOTATION} in its `_meta`. */
@@ -321,7 +338,16 @@ export type EngineEventType =
   | "notification.delivery_failed"
   | "http.error"
   | "audit.auth_failure"
-  | "audit.permission_denied";
+  | "audit.permission_denied"
+  /**
+   * An unattended dispatch — one tool call made with no session, as a named
+   * principal, from stored configuration — reached the door. Emitted once per
+   * call, whatever the outcome, including the ones that never touch a registry:
+   * the point of the line is that the attempt is on the record, so a dispatch
+   * nobody watched is still something an operator can read back. Payload:
+   * { principalId, workspaceId, tool, reason, outcome, classification?, ms }.
+   */
+  | "audit.unattended_dispatch";
 
 /**
  * Generic event envelope. Per-event-type payload schemas are declared in

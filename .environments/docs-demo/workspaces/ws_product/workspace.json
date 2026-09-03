@@ -8,5 +8,28 @@
   ],
   "bundles": [],
   "createdAt": "2026-03-01T10:00:00.000Z",
-  "updatedAt": "2026-04-10T14:30:00.000Z"
+  "updatedAt": "2026-04-10T14:30:00.000Z",
+  "notifications": {
+    "sources": {
+      "acme-outreach": { "maxLevel": "attention" },
+      "billing-watch": { "maxLevel": "urgent" }
+    },
+    "routes": [
+      {
+        "id": "rt_9f3c1a0b7d24",
+        "createdBy": "usr_default",
+        "match": { "source": "acme-outreach", "name": "domain.*", "level": "attention" },
+        "deliver": [
+          {
+            "kind": "tool",
+            "tool": "slack__send_message",
+            "input": {
+              "channel": "#outbound",
+              "text": "{{title}}\n{{body}}\n{{link.resource}}"
+            }
+          }
+        ]
+      }
+    ]
+  }
 }

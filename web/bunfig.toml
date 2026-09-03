@@ -1,2 +1,21 @@
 [test]
 preload = ["./test/setup.ts"]
+
+# Hold a newly published version for 14 days before it can be resolved.
+# Matches the cooldown Renovate applies to its own PRs, so a dependency
+# reaches this repo on the same terms whether a bot or a person adds it.
+# The window is what makes it worth having: a compromised or typo-squatted
+# publish is usually caught and yanked well inside two weeks.
+#
+# This filters RESOLUTION only — `bun add`, `bun update`, and a non-frozen
+# `bun install`. Every install in CI and in both Dockerfiles is frozen, so
+# they replay the lockfile and are unaffected either way.
+#
+# bunfig.toml is NOT resolved up the directory tree, so this governs only
+# installs run from this directory. `web/bunfig.toml` carries its own copy;
+# the bundle UIs under src/bundles/*/ui have no bunfig and are not covered.
+[install]
+minimumReleaseAge = 1209600
+# `latest` here tracks the installed bun rather than naming a version, and
+# holding it back would pin types older than the runtime they describe.
+minimumReleaseAgeExcludes = ["@types/bun"]

@@ -497,6 +497,7 @@ export class WorkspaceStore {
         | "identity"
         | "oauthOperatorApps"
         | "hooks"
+        | "notifications"
         | "about"
       >
     >,

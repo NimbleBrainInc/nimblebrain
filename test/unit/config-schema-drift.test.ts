@@ -10,6 +10,7 @@ import {
   MANAGED_PROVIDER_KEYS,
 } from "../../src/connectors/providers/config.ts";
 import { MODEL_SLOTS } from "../../src/model/slots.ts";
+import { NOTIFICATIONS_POLL_CONFIG_KEYS } from "../../src/notifications/poll-config.ts";
 
 /**
  * Drift guard: the published config schema must stay in lockstep with the
@@ -40,6 +41,9 @@ const schema = JSON.parse(
   properties: {
     features: SchemaObject;
     models: SchemaObject;
+    notifications: SchemaObject & {
+      properties: { poll: SchemaObject };
+    };
     connectors: SchemaObject & {
       properties: {
         providers: SchemaObject & {
@@ -111,4 +115,19 @@ describe("config schema ↔ managed-connector provider config", () => {
     connectors.properties.gateways.additionalProperties,
     GATEWAY_CONFIG_KEYS,
   );
+});
+
+describe("config schema ↔ notification poll config", () => {
+  // The key list is `resolvePollConfig()`'s own output, so a fifth knob added
+  // to the runtime is a failure here until the published schema declares it —
+  // and a knob declared here with nothing resolving it is a dead one an editor
+  // would still offer.
+  expectLockstep(
+    "notifications.poll",
+    schema.properties.notifications.properties.poll,
+    NOTIFICATIONS_POLL_CONFIG_KEYS,
+  );
+  // The parent carries exactly one member today; declaring it keeps a future
+  // `notifications.<something>` from landing in the schema alone.
+  expectLockstep("notifications", schema.properties.notifications, ["poll"]);
 });
