@@ -9,11 +9,11 @@ describe("Remote transport — JSON Schema validation", () => {
 		return validate(config) as boolean;
 	}
 
-	it("accepts bundles with url, name, and path variants", () => {
-		// bundles is a valid top-level config field supporting all three BundleRef variants
+	it("accepts a url bundle and refuses one without a url", () => {
+		// Every connector is a remote MCP endpoint; `url` is the only addressing form.
 		expect(isValid({ bundles: [{ url: "https://example.com/mcp" }] })).toBe(true);
-		expect(isValid({ bundles: [{ name: "@nimblebraininc/echo" }] })).toBe(true);
-		expect(isValid({ bundles: [{ path: "../mcp-servers/hello" }] })).toBe(true);
+		expect(isValid({ bundles: [{ name: "@nimblebraininc/echo" }] })).toBe(false);
+		expect(isValid({ bundles: [{ path: "../mcp-servers/hello" }] })).toBe(false);
 	});
 });
 
@@ -26,7 +26,6 @@ describe("Remote transport — TypeScript types", () => {
 				type: "streamable-http",
 				auth: { type: "bearer", token: "tok_123" },
 			},
-			trustScore: 85,
 			ui: null,
 		};
 		expect("url" in ref).toBe(true);

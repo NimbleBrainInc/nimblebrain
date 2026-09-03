@@ -29,7 +29,7 @@ A provider's API key can be supplied here or in `nimblebrain.json` under `provid
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `NB_WORK_DIR` | No | `~/.nimblebrain` | Working directory for runtime state (conversations, logs, workspaces, cache). Does **not** drive config-file discovery — see [config resolution](/config/nimblebrain-json/#config-resolution). Also passed to bundle subprocesses so they can locate workspace data. |
+| `NB_WORK_DIR` | No | `~/.nimblebrain` | Working directory for runtime state (conversations, logs, workspaces). Does **not** drive config-file discovery — see [config resolution](/config/nimblebrain-json/#config-resolution). |
 | `PORT` | No | `27247` | HTTP server port. **Wins over** the `--port` CLI flag when both are set. |
 | `ALLOWED_ORIGINS` | No | — | Comma-separated additional CORS origins. The canonical origins (platform host, custom domain) are already trusted; this is for extra origins. |
 | `NB_CHAT_RATE_LIMIT` | No | `20` | Chat requests per minute per identity. |
@@ -57,7 +57,7 @@ The platform builds every outward-facing URL (OAuth callbacks, post-login landin
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `NB_CURATED_CATALOG_DIR` | No | in-image example | Path backing the locked `bundled-static` registry — a directory of `ServerDetail` YAML/JSON files (the intended use, hence the name) or a single such file — every `*.yaml`/`*.yml`/`*.json` in it, read in sorted filename order. Replaces `src/connectors/curated/` wholesale, and wins over the persisted `registries.json` url for that registry. This is where `auth: static` and brokered (`composio`, `smithery`) entries belong; the in-image example is DCR-only. Read at registry-build time. See [Connectors Catalog](/config/connectors-catalog/). |
-| `NB_REGISTRIES` | No | — | JSON array of registry configs that **completely overrides** the persisted `registries.json` for the lifetime of the process. Adds custom `static` / `mpak` / `mcp` registries without touching the pod filesystem. The locked bundled-static registry is re-pinned automatically. Read once at startup. See [Connectors Catalog → Operator override](/config/connectors-catalog/#operator-override). |
+| `NB_REGISTRIES` | No | — | JSON array of registry configs that **completely overrides** the persisted `registries.json` for the lifetime of the process. Adds custom registries without touching the pod filesystem. The locked bundled-static registry is re-pinned automatically. Read once at startup. See [Connectors Catalog → Operator override](/config/connectors-catalog/#operator-override). |
 
 ### MCP sessions
 
@@ -71,10 +71,10 @@ The platform builds every outward-facing URL (OAuth callbacks, post-login landin
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `WORKOS_API_KEY` | When `auth.adapter: "workos"` and no `apiKey` in `instance.json` | — | WorkOS API key. Also settable via `instance.json → auth.apiKey`. |
-| `NB_INTERNAL_TOKEN` | No | — | Shared secret for service-to-service calls. Hard-denied to bundle subprocesses. |
+| `NB_INTERNAL_TOKEN` | No | — | Shared secret for service-to-service calls. |
 
 <Aside type="caution">
-  `NB_API_KEY` is **not** an authentication gate. It exists only as an entry in the bundle env-var deny-list — a name that is never forwarded to a bundle subprocess even if a manifest requests it. It does not enable, configure, or bypass auth. To configure auth, use [`instance.json`](/config/instance-json/).
+  `NB_API_KEY` is **not** an authentication gate. It does not enable, configure, or bypass auth. To configure auth, use [`instance.json`](/config/instance-json/).
 </Aside>
 
 ### Composio aggregator
@@ -184,7 +184,7 @@ export NB_WORK_DIR=/data/nimblebrain
 
 The working directory contains `workspaces/<wsId>/` (which holds each workspace's conversations, files, and automations), `users/<userId>/`, `logs/`, `registries.json`, and `cache/`.
 
-`NB_WORK_DIR` sets the `workDir` runtime value (where state lives) and is forwarded to bundle subprocesses. It does **not** select which `nimblebrain.json` is loaded — config-file discovery is driven by `--config`, a project-local `.nimblebrain/`, and the command's default workdir. See [config resolution](/config/nimblebrain-json/#config-resolution).
+`NB_WORK_DIR` sets the `workDir` runtime value (where state lives). It does **not** select which `nimblebrain.json` is loaded — config-file discovery is driven by `--config`, a project-local `.nimblebrain/`, and the command's default workdir. See [config resolution](/config/nimblebrain-json/#config-resolution).
 
 ## ALLOWED_ORIGINS
 

@@ -18,8 +18,8 @@ describe("JSON Schema validation", () => {
 	it("accepts bundles in config", () => {
 		// bundles is a valid top-level config field
 		expect(isValid({ bundles: [] })).toBe(true);
-		expect(isValid({ bundles: [{ name: "@test/echo" }] })).toBe(true);
 		expect(isValid({ bundles: [{ url: "https://example.com/mcp" }] })).toBe(true);
+		expect(isValid({ bundles: [{ name: "@test/echo" }] })).toBe(false);
 	});
 
 	it("rejects workspace-owned fields (agents, skillDirs, etc.)", () => {
@@ -137,9 +137,7 @@ describe("AppInfo type", () => {
 			bundleName: "@nimblebraininc/tasks",
 			version: "1.2.0",
 			status: "running",
-			type: "upjack",
 			toolCount: 12,
-			trustScore: 92,
 			ui: {
 				name: "Tasks",
 				icon: "✓",
@@ -157,9 +155,7 @@ describe("AppInfo type", () => {
 			bundleName: "@nimblebraininc/weather",
 			version: "0.3.0",
 			status: "running",
-			type: "plain",
 			toolCount: 3,
-			trustScore: 78,
 			ui: null,
 		};
 		expect(app.ui).toBeNull();

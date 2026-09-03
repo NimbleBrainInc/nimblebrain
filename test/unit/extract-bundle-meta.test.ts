@@ -30,7 +30,6 @@ describe("extractBundleMeta", () => {
     expect(meta.manifestName).toBe("@nimblebraininc/synapse-hello");
     expect(meta.version).toBe("0.1.0");
     expect(meta.description).toBe("Hello World Synapse App");
-    expect(meta.type).toBe("plain");
     expect(meta.ui).not.toBeNull();
     expect(meta.ui!.name).toBe("Hello");
     expect(meta.ui!.icon).toBe("hand");
@@ -50,7 +49,6 @@ describe("extractBundleMeta", () => {
 
     expect(meta.ui).toBeNull();
     expect(meta.briefing).toBeNull();
-    expect(meta.type).toBe("plain");
   });
 
   it("returns null UI when host metadata has no name", () => {
@@ -68,47 +66,6 @@ describe("extractBundleMeta", () => {
     const meta = extractBundleMeta(manifest);
 
     expect(meta.ui).toBeNull();
-  });
-
-  it("detects upjack type from manifest metadata", () => {
-    const manifest = {
-      name: "@nimblebraininc/synapse-crm",
-      version: "0.2.0",
-      _meta: {
-        "ai.nimblebrain/host": {
-          host_version: "1.0",
-          name: "CRM",
-          icon: "users",
-          placements: [
-            { slot: "sidebar.apps", resourceUri: "ui://crm/main", label: "CRM" },
-          ],
-        },
-        "ai.nimblebrain/upjack": {
-          upjack_version: "0.1",
-          namespace: "apps/crm",
-          entities: [],
-        },
-      },
-    };
-
-    const meta = extractBundleMeta(manifest);
-
-    expect(meta.type).toBe("upjack");
-    expect(meta.ui).not.toBeNull();
-    expect(meta.ui!.name).toBe("CRM");
-    expect(meta.upjackNamespace).toBe("apps/crm");
-  });
-
-  it("returns undefined upjackNamespace for plain bundles", () => {
-    const manifest = {
-      name: "@nimblebraininc/echo",
-      version: "0.1.5",
-      description: "Echo server",
-    };
-
-    const meta = extractBundleMeta(manifest);
-
-    expect(meta.upjackNamespace).toBeUndefined();
   });
 
   it("extracts briefing from host metadata", () => {

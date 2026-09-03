@@ -160,7 +160,6 @@ function ConnectorRow({
  * + chevron). Action verbs lead the user to the right next step:
  *
  *   needs_setup + missingOperatorSetup → "Set up"
- *   needs_setup + unpopulated user_config → "Configure"
  *   needs_auth + state=not_authenticated → "Connect"
  *   needs_auth + state=reauth_required → "Reconnect"
  *   failed → "Failed" (no verb — admin investigates on the detail page)

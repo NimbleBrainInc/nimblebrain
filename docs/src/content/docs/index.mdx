@@ -27,9 +27,9 @@ You ──→ Web UI / CLI / MCP Client ──→ API Server ──→ Runtime
                      ┌─────────────────┐   ┌──────────────────────┐
                      │  Agent Engine   │   │  Unified Tool Space   │
                      │  (agentic loop) │──►│                      │
-                     └─────────────────┘   │  MCP App 1 (stdio)   │
-                                           │  MCP App 2 (stdio)   │
-                                           │  MCP App 3 (HTTP)    │
+                     └─────────────────┘   │  MCP App 1 (HTTP)    │
+                                           │  MCP App 2 (HTTP)    │
+                                           │  MCP App 3 (SSE)     │
                                            │  System Tools (nb__*)│
                                            └──────────────────────┘
 ```
@@ -58,15 +58,15 @@ NimbleBrain doesn't just run MCP servers — it **composes** them:
 | **ToolRegistry** | Aggregates tools from multiple MCP sources (stdio, HTTP, SSE) into one namespace |
 | **Agent Engine** | Agentic loop: call Claude, extract tool uses, execute tools in parallel, repeat |
 | **MCP App Bridge** | [ext-apps spec](https://modelcontextprotocol.io/extensions/apps/overview) host — renders app UIs in sandboxed iframes with bidirectional tool access |
-| **Bundles (Apps)** | MCP server bundles from the [mpak](https://mpak.dev) registry, local paths, or remote URLs |
+| **Connectors (Apps)** | Remote MCP servers a workspace connects to by URL, discovered through the connectors catalog |
 | **Skills** | Markdown files that compose the system prompt and scope tool access per task |
 | **`/mcp` Endpoint** | Exposes the platform as a Streamable HTTP MCP server for external clients |
-| **System Tools** | Built-in tools for discovery (`nb__search`/`nb__status`), multi-agent delegation (`nb__delegate`), and platform management (`manage_connectors`, `manage_apps`, `manage_workspaces`, `manage_users`) |
+| **System Tools** | Built-in tools for discovery (`nb__search`/`nb__status`), multi-agent delegation (`nb__delegate`), and platform management (`manage_connectors`, `manage_registries`, `manage_workspaces`, `manage_users`) |
 
 ## Who is it for?
 
 - **Platform builders** — Compose multiple MCP servers into a unified agent workspace with orchestrated tool access
-- **App developers** — Build MCP bundles with optional interactive UIs that run inside any MCP Apps host
+- **App developers** — Build MCP servers with optional interactive UIs that run inside any MCP Apps host
 - **End users** — Install apps, chat with an AI agent that has access to all your tools, interact with app UIs inline
 - **Self-hosters** — Deploy on your own infrastructure with Docker Compose or Kubernetes
 

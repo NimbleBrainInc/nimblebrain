@@ -228,7 +228,7 @@ async function readBodyWithinCap(req: Request): Promise<Uint8Array | null> {
 
 /** The `url:` variant of a `BundleRef` — the only shape a hook can forward to,
  *  because a forward needs a base URL and a transport to resolve against. */
-type RemoteBundleRef = Extract<BundleRef, { url: string }>;
+type RemoteBundleRef = BundleRef;
 
 /** A delivery that passed every check, with everything the forward needs. */
 interface AdmittedDelivery {

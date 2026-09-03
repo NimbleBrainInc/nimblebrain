@@ -17,7 +17,7 @@ import type { RegistryConfig } from "./types.ts";
  * Schema:
  *   `{ registries: RegistryConfig[] }`
  *
- * On first read with no file present, the store seeds two defaults:
+ * On first read with no file present, the store seeds one default:
  *
  *   - `bundled-static` — a `StaticSource` pointing at the curated
  *     catalog directory. Defaults to the minimal in-image example
@@ -25,11 +25,6 @@ import type { RegistryConfig } from "./types.ts";
  *     `NB_CURATED_CATALOG_DIR` (a mounted ConfigMap dir) to supply the
  *     real catalog. Locked: the registry is always present and can't be
  *     disabled, but its backing path is deployment configuration.
- *   - `mpak`           — an `MpakSource` row with no persisted `url`;
- *     the SDK owns the default registry host. Default enabled, scoped
- *     to `["nimblebraininc"]` so first installs are NimbleBrain-curated.
- *     Operator can disable, broaden the scope, or point `url` at a
- *     self-hosted mpak instance.
  *
  * Operator overrides at process start:
  *
@@ -98,13 +93,12 @@ function resolveCuratedUrl(persisted: string | undefined): string {
 }
 
 const BUNDLED_STATIC_ID = "bundled-static";
-const MPAK_ID = "mpak";
 
 /**
  * Look up a seeded registry by id. Used by env-override paths so we
  * don't pin behavior to the array order in `defaultRegistries()` —
- * adding a new seeded registry above mpak would otherwise silently
- * swap which entry is "the mpak default" or "the locked bundled-static."
+ * adding a new seeded registry above would otherwise silently swap
+ * which entry is "the locked bundled-static."
  */
 function defaultRegistryById(id: string): RegistryConfig {
   const found = defaultRegistries().find((r) => r.id === id);
@@ -123,21 +117,6 @@ function defaultRegistries(): RegistryConfig[] {
       enabled: true,
       locked: true,
       url: curatedCatalogPath(),
-    },
-    // No `url` — the mpak SDK owns its default registry host. Operators
-    // self-hosting a private mpak instance set `url` via the admin UI
-    // or `NB_REGISTRIES`; otherwise the SDK's built-in default is used.
-    //
-    // `scopes` defaults to `["nimblebraininc"]` so first-time installs
-    // see only NimbleBrain-curated bundles. Open mpak is one config
-    // edit away (drop or extend the scopes list) — narrow-by-default
-    // keeps the Browse list focused for the common case.
-    {
-      id: MPAK_ID,
-      name: "mpak.dev",
-      type: "mpak",
-      enabled: true,
-      scopes: ["nimblebraininc"],
     },
   ];
 }
@@ -326,9 +305,15 @@ function validateRegistryConfigs(raw: unknown[], source: string): RegistryConfig
   return out;
 }
 
-/** True when the value is one of the supported registry source types. */
+/**
+ * True when the value is a usable registry type. `RegistryType` is an open
+ * string keyed into the directory's source-factory map, so the check here is
+ * shape only — a type with no factory surfaces no entries and warns at
+ * `buildSource`, which is the right place to notice a build that does not
+ * carry the source.
+ */
 function isValidRegistryType(t: unknown): t is RegistryConfig["type"] {
-  return t === "static" || t === "mpak" || t === "mcp" || t === "custom-url";
+  return typeof t === "string" && t.length > 0;
 }
 
 /**
@@ -373,7 +358,7 @@ function parseRegistryConfig(
     return null;
   }
   if (!isValidRegistryType(c.type)) {
-    log.warn(`[registries] ${tag} dropped — type must be static|mpak|mcp|custom-url`);
+    log.warn(`[registries] ${tag} dropped — type must be a non-empty string`);
     return null;
   }
   const scopes = parseScopes(c, tag);

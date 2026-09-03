@@ -63,7 +63,6 @@ describe("boot-start failure — seeding an installed-but-not-running URL bundle
       fleetRef(),
       undefined,
       WS,
-      undefined,
       'Streamable HTTP error: Error POSTing to endpoint: {"error":"bad_gateway"}',
     );
 
@@ -96,7 +95,6 @@ describe("boot-start failure — seeding an installed-but-not-running URL bundle
       fleetRef(),
       undefined,
       WS,
-      undefined,
       "connect ECONNREFUSED",
     );
 
@@ -112,7 +110,6 @@ describe("boot-start failure — seeding an installed-but-not-running URL bundle
       fleetRef(),
       undefined,
       WS,
-      undefined,
       "connect ECONNREFUSED",
     );
 

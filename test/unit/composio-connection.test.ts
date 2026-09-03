@@ -42,7 +42,7 @@ describe("connectorSlug", () => {
   test("disarms path-traversal input by collapsing slashes to dashes", () => {
     // `../escape` becomes `..-escape` after slash collapse — a valid
     // filename that can't traverse out of the credentials directory.
-    // Mirrors the bundleSlug semantics in workspace-credentials.ts.
+    // Mirrors the connector-slug semantics in composio-connection.ts.
     expect(connectorSlug("../escape")).toBe("..-escape");
   });
 

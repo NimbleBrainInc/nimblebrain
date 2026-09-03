@@ -6,9 +6,9 @@ import { WorkspaceContext } from "../workspace/context.ts";
 import { Redacted } from "./redacted.ts";
 
 /**
- * Workspace-scoped store for opaque secrets that don't fit the per-bundle
- * `user_config` shape — most importantly OAuth `client_secret` values
- * referenced from `workspace.json` via `{ ref: "credential", key: "..." }`.
+ * Workspace-scoped store for opaque secrets — most importantly the OAuth
+ * `client_secret` values referenced from `workspace.json` via
+ * `{ ref: "credential", key: "..." }`.
  *
  * The interface is the boundary between call sites and the storage backend.
  * v1 ships a plaintext-on-disk implementation (`FileCredentialStore`) at

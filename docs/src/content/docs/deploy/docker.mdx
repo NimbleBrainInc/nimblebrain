@@ -229,15 +229,14 @@ docker compose up -d
 
 ## Platform image details
 
-The `ghcr.io/nimblebraininc/nimblebrain-runtime` image is built on `python:3.13-slim` (Python is the base so Python-based MCP bundles run natively) and adds the Bun runtime plus the tooling bundles shell out to:
+The `ghcr.io/nimblebraininc/nimblebrain-runtime` image runs the platform on Bun. Connectors are remote MCP servers, so nothing an operator installs runs in this container and the image carries no runtime for hosting one:
 
 | Component | Version | Purpose |
 |-----------|---------|---------|
-| Python | 3.13 | Base image; runs Python-based MCP bundles |
 | Bun | latest | JavaScript/TypeScript runtime (runs the platform itself) |
-| Node.js + npm | 24 | Runs Node-based MCP bundles |
-| Git, curl, unzip | System | Bundle clones at boot, the health check, archive extraction |
-| mpak CLI | `@nimblebrain/mpak@0.4.1` | Downloads and manages bundles from the mpak registry |
+| Python | 3.13 | Base image |
+| Node.js + npm | 24 | Builds the in-image bundle UIs (home, conversations, files, automations, usage) |
+| Git, curl, unzip | System | Install steps and the health check |
 
 The container runs as a non-root user (UID 1000). The entrypoint is `bun run src/cli/index.ts serve`, which starts the HTTP API server on port 27247 with `NB_WORK_DIR=/data` and `NB_HOST=0.0.0.0`.
 

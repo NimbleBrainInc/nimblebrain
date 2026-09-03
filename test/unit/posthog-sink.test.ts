@@ -158,59 +158,21 @@ describe("PostHogEventSink", () => {
 		expect(errorEvent!.properties.message).toBeUndefined();
 	});
 
-	// The install kind is the `installSource` the lifecycle stamps on the event.
-	// Field names here mirror `BundleLifecycle`'s emissions exactly — a fixture
-	// carrying fields the runtime never emits is how a dead dimension survives.
-	it("maps bundle.installed to the install kind the event reports", () => {
+	it("maps bundle.installed as a remote install, carrying only UI presence", () => {
 		const { mock, sink } = createTestSetup();
 
+		emit(sink, "bundle.installed", { name: "remote-thing", url: "https://example.com/mcp" });
 		emit(sink, "bundle.installed", {
-			serverName: "tasks",
-			bundleName: "@org/my-bundle",
-			installSource: "registry",
-			trustScore: 80,
-		});
-		emit(sink, "bundle.installed", {
-			serverName: "my-local-bundle",
-			bundleName: "/Users/dev/bundles/my-local-bundle",
-			installSource: "local",
-		});
-		emit(sink, "bundle.installed", {
-			serverName: "remote-thing",
-			bundleName: "https://example.com/mcp",
-			installSource: "remote",
-			remote: true,
-			trustScore: 50,
+			name: "ui-thing",
+			url: "https://example.com/mcp",
+			ui: { name: "UI" },
 		});
 
 		const installs = mock.events.filter((e) => e.event === "bundle.installed");
-		expect(installs).toHaveLength(3);
-		expect(installs[0].properties.source).toBe("registry");
-		expect(installs[1].properties.source).toBe("local");
-		expect(installs[2].properties.source).toBe("remote");
-	});
-
-	it("maps bundle.uninstalled to the install kind the event reports", () => {
-		const { mock, sink } = createTestSetup();
-
-		emit(sink, "bundle.uninstalled", {
-			serverName: "tasks",
-			bundleName: "@org/my-bundle",
-			installSource: "registry",
-		});
-
-		const uninstall = mock.events.find((e) => e.event === "bundle.uninstalled");
-		expect(uninstall!.properties.source).toBe("registry");
-	});
-
-	it("reports an install kind of \"unknown\" when the event carries none", () => {
-		const { mock, sink } = createTestSetup();
-
-		// An uninstall that resolved no instance has no install kind to report.
-		emit(sink, "bundle.uninstalled", { serverName: "gone", bundleName: "gone" });
-
-		const uninstall = mock.events.find((e) => e.event === "bundle.uninstalled");
-		expect(uninstall!.properties.source).toBe("unknown");
+		expect(installs).toHaveLength(2);
+		expect(installs[0].properties.source).toBe("remote");
+		expect(installs[0].properties.has_ui).toBe(false);
+		expect(installs[1].properties.has_ui).toBe(true);
 	});
 
 	it("skips text.delta, tool.start, tool.done, tool.progress, data.changed", () => {

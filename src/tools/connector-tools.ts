@@ -1,5 +1,3 @@
-import { readFile } from "node:fs/promises";
-import { join } from "node:path";
 import { mcpAuthCallbackUrl } from "../api/routes/mcp-auth.ts";
 import {
   type ComposioConnection,
@@ -10,7 +8,6 @@ import {
 import { WORKSPACE_PRINCIPAL_ID } from "../bundles/connection.ts";
 import { brokeredRef } from "../bundles/connection-probe.ts";
 import { sanitizePlacements } from "../bundles/defaults.ts";
-import { getMpak } from "../bundles/mpak.ts";
 import {
   deriveServerName,
   isReservedServerName,
@@ -18,14 +15,7 @@ import {
   slugifyServerName,
 } from "../bundles/paths.ts";
 import { startBundleSource } from "../bundles/startup.ts";
-import type {
-  BundleInstance,
-  BundleManifest,
-  BundleRef,
-  RemoteTransportConfig,
-} from "../bundles/types.ts";
-import { installBundleInWorkspace } from "../bundles/workspace-ops.ts";
-import type { UserConfigFieldDef } from "../config/workspace-credentials.ts";
+import type { BundleInstance, BundleRef, RemoteTransportConfig } from "../bundles/types.ts";
 import {
   composioAuthConfigId,
   validateComposioConfig,
@@ -128,11 +118,6 @@ export interface StatusInputs {
   state: string;
   /** True when a static-auth catalog entry has no operator OAuth client configured. */
   missingOperatorSetup?: boolean;
-  /** Stdio bundle's user_config probe — present only when the manifest declares one. */
-  userConfig?: {
-    schema: Record<string, UserConfigFieldDef>;
-    populated: Record<string, boolean>;
-  };
   /** Last connection error from the principal Connection (crashed / dead / reauth_required). */
   lastError?: string;
 }
@@ -142,70 +127,22 @@ export interface StatusInputs {
  * status for the UI. Six values:
  *
  *   ready          — works
- *   needs_setup    — admin must configure something (operator OAuth client OR
- *                     stdio user_config) before this is usable
+ *   needs_setup    — admin must configure the operator OAuth client before
+ *                     this is usable
  *   needs_auth     — workspace member must (re)authenticate (Connect / Reconnect)
  *   connecting     — OAuth flow in flight
- *   failed         — bundle crashed / dead with no actionable next step
- *   starting       — subprocess booting up
+ *   failed         — connection dead with no actionable next step
+ *   starting       — connection being established
  *
- * Priority — setup blocks auth blocks usage. A stdio bundle that crashed
- * because its api_key wasn't set surfaces as `needs_setup` (the actionable
- * cause), never as `failed`. Same for static-auth bundles whose OAuth
- * never succeeded because the operator clientSecret is missing.
+ * Priority — setup blocks auth blocks usage. A static-auth connector whose
+ * OAuth never succeeded because the operator clientSecret is missing surfaces
+ * as `needs_setup` (the actionable cause), never as `failed`.
  *
  * The connector-type detail — *which* credentials missing, *what* button
  * label — is left to the UI, derived from the other InstalledConnector
  * fields. This helper's job is the discriminator + a human-readable
  * reason string for tooltips / banners.
  */
-/**
- * Resolve a bundle's manifest from whichever path it actually lives at.
- *
- * Two install shapes coexist in the platform:
- *
- *   - Name-installed (`{ name: "@scope/bundle" }`): mpak fetches and
- *     extracts the bundle into `<mpakHome>/cache/<safeName>/`. Manifest
- *     reads via `mpak.bundleCache.getBundleManifest(name)`.
- *
- *   - Path-installed (`{ path: "/abs/path/to/bundle" }`): bundle lives
- *     wherever the operator points to (e.g. `synapse-apps/synapse-db-query`
- *     during local development). The manifest is at `<path>/manifest.json`.
- *     The mpak cache has no entry; reading via `getBundleManifest` returns
- *     null and any caller relying solely on the cache silently misses
- *     `user_config`.
- *
- * `BundleInstance.configKey` carries the original ref's identity — the
- * path string for path installs, the name string for name installs.
- * That's the key we fall back to when the cache misses. Wrap both in
- * try/catch so a stale config (path no longer exists, manifest moved)
- * gracefully degrades to a missing-userConfig response instead of
- * throwing.
- */
-async function readBundleManifest(
-  mpak: ReturnType<typeof getMpak>,
-  instance: { bundleName: string; configKey?: string },
-): Promise<BundleManifest | null> {
-  try {
-    const cached = mpak.bundleCache.getBundleManifest(instance.bundleName) as BundleManifest | null;
-    if (cached) return cached;
-  } catch {
-    // Corrupt-cache errors fall through to the disk-read fallback.
-  }
-  // Path-install fallback. configKey can be either a name or a path;
-  // attempt the disk read regardless and let the file-not-found case
-  // settle to null.
-  if (instance.configKey) {
-    try {
-      const raw = await readFile(join(instance.configKey, "manifest.json"), "utf-8");
-      return JSON.parse(raw) as BundleManifest;
-    } catch {
-      // Not a valid path or file missing — manifest unavailable.
-    }
-  }
-  return null;
-}
-
 export function deriveConnectorStatus(input: StatusInputs): {
   status: "ready" | "needs_setup" | "needs_auth" | "connecting" | "failed" | "starting";
   statusReason?: string;
@@ -214,19 +151,7 @@ export function deriveConnectorStatus(input: StatusInputs): {
   if (input.missingOperatorSetup) {
     return { status: "needs_setup", statusReason: "OAuth app not configured for this workspace." };
   }
-  // 2. Required user_config field unpopulated → admin sets credentials.
-  if (input.userConfig) {
-    const missing = Object.entries(input.userConfig.schema)
-      .filter(([key, def]) => def.required && !input.userConfig?.populated[key])
-      .map(([key, def]) => def.title ?? key);
-    if (missing.length > 0) {
-      return {
-        status: "needs_setup",
-        statusReason: `Missing required configuration: ${missing.join(", ")}.`,
-      };
-    }
-  }
-  // 3. Auth lifecycle. Reconnect outranks first-time connect (a token
+  // 2. Auth lifecycle. Reconnect outranks first-time connect (a token
   //    that just expired is more disruptive than one never used).
   if (input.state === "reauth_required") {
     return {
@@ -237,16 +162,16 @@ export function deriveConnectorStatus(input: StatusInputs): {
   if (input.state === "not_authenticated") {
     return { status: "needs_auth", statusReason: "Connect to use this connector." };
   }
-  // 4. Transient flows.
+  // 3. Transient flows.
   if (input.state === "pending_auth") {
     return { status: "connecting" };
   }
   if (input.state === "starting") {
     return { status: "starting" };
   }
-  // 5. Failures. Reported with the reason; the web client decides the
+  // 4. Failures. Reported with the reason; the web client decides the
   //    affordance (`resolveAction` in ConnectorStatusHero.tsx — Reconnect,
-  //    usually). `dead` covers a bundle whose boot-start failed, which the
+  //    usually). `dead` covers a connector whose boot-start failed, which the
   //    doors revive on next use.
   if (input.state === "crashed" || input.state === "dead" || input.state === "stopped") {
     return {
@@ -254,7 +179,7 @@ export function deriveConnectorStatus(input: StatusInputs): {
       ...(input.lastError ? { statusReason: input.lastError } : {}),
     };
   }
-  // 6. Default — running, no missing config, no failed connection.
+  // 5. Default — running, no missing config, no failed connection.
   return { status: "ready" };
 }
 
@@ -284,8 +209,6 @@ export function createManageConnectorsTool(ctx: ManageConnectorsContext): InProc
             "set_permissions",
             "setup_operator",
             "remove_operator_setup",
-            "set_user_config",
-            "clear_user_config",
             "get_redirect_uri",
             "list_bound_skills",
             "list_personal_connectors",
@@ -338,7 +261,7 @@ export function createManageConnectorsTool(ctx: ManageConnectorsContext): InProc
         fields: {
           type: "object",
           description:
-            "For set_user_config: map of bundle user_config field name → string value. Empty string clears that field. Omitted fields are unchanged. Unknown field names are rejected (default-deny). For connect_api_key: map of the connector's declared Composio field key → value (e.g. api_key, subdomain); handed to Composio and never persisted by the platform.",
+            "For connect_api_key: map of the connector's declared Composio field key → value (e.g. api_key, subdomain); handed to Composio and never persisted by the platform.",
           additionalProperties: { type: "string" },
         },
       },
@@ -389,10 +312,6 @@ export function createManageConnectorsTool(ctx: ManageConnectorsContext): InProc
           );
         case "remove_operator_setup":
           return handleRemoveOperatorSetup(ctx, args.wsId, args.identity, args.catalogId);
-        case "set_user_config":
-          return handleSetUserConfig(ctx, args.wsId, args.identity, args.serverName, args.fields);
-        case "clear_user_config":
-          return handleClearUserConfig(ctx, args.wsId, args.identity, args.serverName);
         case "get_redirect_uri":
           return handleGetRedirectUri(args.identity);
         case "list_bound_skills":
@@ -522,13 +441,13 @@ async function handleListCatalog(
 /**
  * Aggregate every enabled registry's entries into a single browseable
  * directory. Replaces the catalog-only `list_catalog` for the Browse
- * page — Browse needs the unified shape so mpak bundles and curated
+ * page — Browse needs the unified shape so registry entries and curated
  * remote services render side-by-side.
  *
  * Per-registry failures are isolated and surfaced in `errors` so the
  * UI can show partial results with a "missing X" hint. Workspace
  * `connectorsAllowList` filters apply only to curated entries today
- * (mpak hasn't shipped its scoping primitive yet).
+ * (upstream registries have not shipped a scoping primitive yet).
  */
 async function handleListDirectory(
   ctx: ManageConnectorsContext,
@@ -604,7 +523,6 @@ type InstalledEntry = {
    * stopped or the server reports none.
    */
   handshakeVersion?: string;
-  type: "remote" | "local";
   state: string;
   // Stage 2: only workspace-scope connectors exist. Personal connectors
   // live in the caller's personal workspace; the legacy `"user"` arm was
@@ -612,17 +530,12 @@ type InstalledEntry = {
   scope: "workspace";
   interactive: boolean;
   toolCount: number;
-  trustScore: number | null;
   /**
-   * Brand icon URL. One field for both remote (catalog.iconUrl) and
-   * stdio bundles (mpak ServerDetail.icons[0].src by package name) so
-   * the UI doesn't fan out across two sources to render the same
-   * thing. Falls through to the deterministic letter avatar when
-   * unset (e.g. the bundle isn't in any active mpak registry, or
-   * the mpak fetch failed).
+   * Brand icon URL, from the catalog entry this connector matched. Falls
+   * through to the deterministic letter avatar when unset (the connector
+   * isn't in any enabled registry, or the fetch failed).
    */
   iconUrl?: string;
-  // Optional — only populated for URL bundles / catalog-matched entries
   url?: string;
   catalogId?: string | null;
   catalog?: ConnectorCatalogEntry;
@@ -651,18 +564,6 @@ type InstalledEntry = {
     configuredByLabel?: string;
   };
   /**
-   * Stdio bundle credential schema + per-field configured-state probe.
-   * Populated only when the bundle's manifest declares `user_config`.
-   * `populated[k]` is `true` when a non-empty value is currently
-   * stored — never the value itself. The Configure page's bundle-config
-   * section reads schema for field metadata and populated for
-   * configured/not-configured indicators.
-   */
-  userConfig?: {
-    schema: Record<string, UserConfigFieldDef>;
-    populated: Record<string, boolean>;
-  };
-  /**
    * Generic, type-agnostic status the UI renders without re-deriving
    * from the underlying BundleState + credential probes. Six values
    * collapse what would otherwise be ~10 specific failure modes —
@@ -671,8 +572,7 @@ type InstalledEntry = {
    *
    * Priority when multiple flags apply: setup blocks auth blocks
    * usage. needs_setup > needs_auth > failed > connecting/starting >
-   * ready. A bundle that crashed because of missing user_config
-   * surfaces as `needs_setup` (the actionable cause), not `failed`.
+   * ready.
    */
   status: "ready" | "needs_setup" | "needs_auth" | "connecting" | "failed" | "starting";
   /** Human-readable detail for status. Surfaces in tooltips / banners. */
@@ -690,8 +590,6 @@ interface InstalledEntryDeps {
   credStore: FileCredentialStore;
   catalogByUrl: Map<string, ConnectorCatalogEntry>;
   catalogById: Map<string, ConnectorCatalogEntry>;
-  mpakIcons: Map<string, string>;
-  mpak: ReturnType<typeof getMpak>;
   resolveUserLabel: (userId: string) => Promise<string | undefined>;
   /** When set, `buildInstalledEntry` skips every instance except this one
    *  before any per-instance IO. */
@@ -713,16 +611,15 @@ function resolveInstanceCatalog(
   instance: BundleInstance,
   catalogByUrl: Map<string, ConnectorCatalogEntry>,
   catalogById: Map<string, ConnectorCatalogEntry>,
-): { isRemote: boolean; url: string | undefined; cat: ConnectorCatalogEntry | undefined } {
+): { url: string | undefined; cat: ConnectorCatalogEntry | undefined } {
   const ref = instance.ref;
-  const isRemote = !!ref && "url" in ref;
-  const url = isRemote ? (ref as { url: string }).url : undefined;
-  const connectorId = isRemote ? brokeredRef(ref)?.connectorId : undefined;
+  const url = ref?.url;
+  const connectorId = ref ? brokeredRef(ref)?.connectorId : undefined;
   let cat = url ? catalogByUrl.get(url) : undefined;
   if (!cat && connectorId) {
     cat = catalogById.get(connectorId);
   }
-  return { isRemote, url, cat };
+  return { url, cat };
 }
 
 /**
@@ -825,69 +722,29 @@ async function applyOperatorOAuth(
 }
 
 /**
- * Stdio bundle credential schema + per-field configured probe, driven by the
- * bundle's manifest `user_config` block. Manifest resolution handles both
- * name-installed (mpak cache) and path-installed (read from disk) bundles — the
- * latter is how every Synapse app under local-dev install ends up registered.
- * Best-effort cosmetic data: on a read error the connector surfaces without the
- * bundle-config section rather than failing the whole list_installed call.
+ * Enrich an entry with its live OAuth connection state + operator OAuth audit
+ * config. Skipped when the instance carries no ref (an instance seeded before
+ * its ref was persisted), which leaves the entry with the state the lifecycle
+ * already reported.
  */
-async function probeStdioUserConfig(
-  ctx: ManageConnectorsContext,
-  wsId: string,
-  mpak: ReturnType<typeof getMpak>,
-  instance: BundleInstance,
-): Promise<
-  { schema: Record<string, UserConfigFieldDef>; populated: Record<string, boolean> } | undefined
-> {
-  try {
-    const manifest = await readBundleManifest(mpak, instance);
-    const schema = manifest?.user_config;
-    if (schema && Object.keys(schema).length > 0) {
-      const stored =
-        (await ctx.runtime.getWorkspaceContext(wsId).getCredentials(instance.bundleName)) ?? {};
-      const populated: Record<string, boolean> = {};
-      for (const key of Object.keys(schema)) {
-        const v = stored[key];
-        populated[key] = typeof v === "string" && v.length > 0;
-      }
-      return { schema, populated };
-    }
-  } catch {
-    // Read errors are best-effort cosmetic data — see the doc comment.
-  }
-  return undefined;
-}
-
-/**
- * Apply the probes appropriate to the entry's transport: remote bundles get
- * their live OAuth connection state + operator OAuth audit config; stdio bundles
- * get the manifest `user_config` schema + configured-state probe.
- */
-async function applyTransportSpecificProbes(
+async function applyConnectionProbes(
   entry: InstalledEntry,
   deps: InstalledEntryDeps,
   instance: BundleInstance,
-  isRemote: boolean,
   url: string | undefined,
   cat: ConnectorCatalogEntry | undefined,
 ): Promise<void> {
-  if (isRemote && url) {
-    await applyRemoteConnectionState(
-      entry,
-      instance,
-      instance.ref as BundleRef,
-      url,
-      cat,
-      deps.credStore,
-      deps.wsId,
-    );
-    await applyOperatorOAuth(entry, cat, deps.ws, deps.resolveUserLabel);
-  }
-  if (!isRemote) {
-    const userConfig = await probeStdioUserConfig(deps.ctx, deps.wsId, deps.mpak, instance);
-    if (userConfig) entry.userConfig = userConfig;
-  }
+  if (!url || !instance.ref) return;
+  await applyRemoteConnectionState(
+    entry,
+    instance,
+    instance.ref,
+    url,
+    cat,
+    deps.credStore,
+    deps.wsId,
+  );
+  await applyOperatorOAuth(entry, cat, deps.ws, deps.resolveUserLabel);
 }
 
 /**
@@ -903,11 +760,7 @@ async function buildInstalledEntry(
   if (instance.wsId !== deps.wsId) return null;
   if (deps.onlyServerName && instance.serverName !== deps.onlyServerName) return null;
 
-  const { isRemote, url, cat } = resolveInstanceCatalog(
-    instance,
-    deps.catalogByUrl,
-    deps.catalogById,
-  );
+  const { url, cat } = resolveInstanceCatalog(instance, deps.catalogByUrl, deps.catalogById);
   const { toolCount, handshakeVersion } = await probeToolCountAndVersion(
     deps.registry,
     instance.serverName,
@@ -916,34 +769,31 @@ async function buildInstalledEntry(
   // so a sole spoofed placement doesn't light the chip while rendering nothing.
   const interactive =
     cat?.interactive === true || sanitizePlacements(instance.ui?.placements).length > 0;
-  // Resolve brand icon once: prefer the static catalog match (remote bundles),
-  // fall back to the mpak-by-package-name lookup (stdio). Either may be
-  // undefined; the UI handles the missing case with a deterministic letter avatar.
-  const iconUrl = cat?.iconUrl ?? deps.mpakIcons.get(instance.bundleName);
+  // Brand icon comes from the catalog match; undefined is fine — the UI falls
+  // back to a deterministic letter avatar.
+  const iconUrl = cat?.iconUrl;
 
   const entry: InstalledEntry = {
     serverName: instance.serverName,
     bundleName: instance.bundleName,
     version: instance.version,
     ...(handshakeVersion ? { handshakeVersion } : {}),
-    type: isRemote ? "remote" : "local",
     state: instance.state,
     // Provisional — overwritten by deriveConnectorStatus below once every probe
-    // (operatorOAuth, userConfig, lastError) has been resolved on the entry.
-    // Initial value satisfies the public InstalledConnector contract that
-    // `status` is required.
+    // (operatorOAuth, lastError) has been resolved on the entry. Initial value
+    // satisfies the public InstalledConnector contract that `status` is
+    // required.
     status: "ready",
     scope: "workspace",
     interactive,
     toolCount,
-    trustScore: instance.trustScore ?? null,
     ...(iconUrl ? { iconUrl } : {}),
   };
 
-  await applyTransportSpecificProbes(entry, deps, instance, isRemote, url, cat);
+  await applyConnectionProbes(entry, deps, instance, url, cat);
 
   // Derive the generic UI status last so it sees every populated probe
-  // (operatorOAuth gate, userConfig populated map, lastError).
+  // (operatorOAuth gate, lastError).
   const derived = deriveConnectorStatus(entry);
   entry.status = derived.status;
   if (derived.statusReason) entry.statusReason = derived.statusReason;
@@ -972,7 +822,7 @@ async function handleListInstalled(
   const workDir = ctx.runtime.getWorkDir();
   const credStore = new FileCredentialStore(workDir);
   // One directory instance per request — its memoized `servers()`
-  // means catalogByUrl + iconByPackage share a single fetch even
+  // means catalogByUrl + catalogByIdMap share a single fetch even
   // though they're called separately. Reaching for the lookup tables
   // (rather than the raw catalog list + manual map-build) keeps the
   // construction concern inside the facade.
@@ -982,12 +832,6 @@ async function handleListInstalled(
   // `ref.url` is a per-install Composio session URL and therefore
   // misses `catalogByUrl`. Built once per request.
   const catalogById = await directory.catalogByIdMap();
-  // Stdio bundles aren't keyable by URL — they're matched to their
-  // mpak `ServerDetail` by the package identifier on the bundle
-  // instance (`@scope/name`). Best-effort: a down mpak registry just
-  // means stdio cards fall back to the deterministic letter avatar.
-  const mpakIcons = await directory.iconByPackage();
-
   const installed: InstalledEntry[] = [];
 
   // Resolve operator OAuth audit labels lazily so the most common
@@ -1006,23 +850,15 @@ async function handleListInstalled(
     userLabelCache.set(userId, label);
     return label;
   };
-  // Resolved mpak home — the SAME (absolute) string the lifecycle is
-  // constructed with, so `getMpak()`'s singleton is shared rather than
-  // thrashed. Don't hand-build `join(workDir, "apps")`: `getWorkDir()` isn't
-  // pre-resolved, so under a relative dev `workDir` it would key a second SDK
-  // instance on a relative string for the same dir.
-  const mpak = getMpak(ctx.runtime.getMpakHome());
-
-  // Workspace-scope entries: walk every bundle visible in the workspace
-  // registry (includes local stdio, local URL, Synapse apps, and remote
-  // OAuth). The `list_apps` tool surfaces the same registry-installed set.
+  // Workspace-scope entries: walk every connector visible in the workspace
+  // registry.
   //
   // Read directly from the lifecycle's instance map, NOT the shorthand
   // `getBundleInstancesForWorkspace` — see the rationale on that method for why
   // its registry filter is load-bearing and why this page must bypass it.
   //
-  // The short version: a bundle can be installed and unregistered (torn down by
-  // Disconnect, or a boot-start that failed), and this page is where the user
+  // The short version: a connector can be installed and unregistered (torn down
+  // by Disconnect, or a boot-start that failed), and this page is where the user
   // clicks Connect / Reconnect to get it back. Filtering it out would hide the
   // only affordance that recovers it.
   if ((scope === "all" || scope === "workspace") && wsId) {
@@ -1034,8 +870,6 @@ async function handleListInstalled(
       credStore,
       catalogByUrl,
       catalogById,
-      mpakIcons,
-      mpak,
       resolveUserLabel,
       ...(onlyServerName ? { onlyServerName } : {}),
     };
@@ -1101,9 +935,8 @@ async function handleGetInstalled(
  *     found" class of error doesn't exist in this design).
  *
  * Defense-in-depth on the wire payload: `parseDirectoryEntry` re-runs
- * the value-shape gate (`SCOPED_PACKAGE_RE` for mpak packages,
- * `isHttpUrl` for remote URLs, reserved-OAuth-params for the install
- * action). The entry came from a client over the tool surface, not
+ * the value-shape gate (`isHttpUrl` for remote URLs,
+ * reserved-OAuth-params for the install action). The entry came from a client over the tool surface, not
  * directly from a trusted source instance, so trust-but-verify at the
  * dispatch boundary catches a tampered payload regardless of which
  * registry a well-formed analog originally came from.
@@ -1159,8 +992,6 @@ async function handleInstall(
       if (collision) return collision;
       return handleInstallRemoteOAuth(ctx, wsId, ws, entry);
     }
-    case "mpak-bundle":
-      return handleInstallMpak(ctx, wsId, entry);
     case "direct-url":
       return errResult("direct-url install is not yet supported.");
   }
@@ -1459,10 +1290,9 @@ async function handleConnectApiKey(
   const { entry, composio } = connector;
 
   // Validate submitted values against the declared fields: every required field
-  // present and non-empty; unknown keys rejected (default-deny, same posture as
-  // set_user_config). Only declared keys are forwarded to Composio. This runs
-  // before any config gate — field shape is caller-error, independent of whether
-  // the broker is configured.
+  // present and non-empty; unknown keys rejected (default-deny). Only declared
+  // keys are forwarded to Composio. This runs before any config gate — field
+  // shape is caller-error, independent of whether the broker is configured.
   const collected = collectApiKeyFields(composio, catalogId, rawFields);
   if ("error" in collected) return errResult(collected.error);
   const { values } = collected;
@@ -1748,9 +1578,6 @@ async function revokeReplacedComposioAccount(
  * controlled package name or URL).
  *
  * Per-kind shape:
- *   - mpak-bundle: `package` must be a scoped npm-style name
- *     `@scope/name` (lowercase kebab on each segment) — the same
- *     shape mpak's registry accepts.
  *   - remote-oauth: `url` must parse as `http(s):` — protocol
  *     allowlist mirrors the catalog's `iconUrl` rules so a malformed
  *     entry can't slip a `javascript:` / `data:` / `file:` URL into
@@ -1761,14 +1588,12 @@ async function revokeReplacedComposioAccount(
  * Workspace `connectorsAllowList` (when set) further narrows the
  * accepted ids — but it's optional, so this is the always-on gate.
  */
-const SCOPED_PACKAGE_RE = /^@[a-z0-9][a-z0-9-]*\/[a-z0-9][a-z0-9-]*$/;
-
 function parseDirectoryEntry(input: unknown): DirectoryEntry | null {
   if (!input || typeof input !== "object") return null;
   const e = input as Record<string, unknown>;
   if (typeof e.id !== "string" || !e.id) return null;
   if (typeof e.name !== "string") return null;
-  const install = e.install as { kind?: unknown; package?: unknown; url?: unknown } | undefined;
+  const install = e.install as { kind?: unknown; url?: unknown } | undefined;
   if (!install || typeof install !== "object") return null;
   if (!isValidInstallKind(install.kind)) return null;
   if (!isInstallPayloadValid(install)) return null;
@@ -1782,24 +1607,16 @@ function parseDirectoryEntry(input: unknown): DirectoryEntry | null {
 
 /** The closed set of install action kinds the dispatch understands. */
 function isValidInstallKind(kind: unknown): boolean {
-  return kind === "remote-oauth" || kind === "mpak-bundle" || kind === "direct-url";
+  return kind === "remote-oauth" || kind === "direct-url";
 }
 
 /**
- * Per-kind value-shape gate: mpak packages must be a scoped npm-style name
- * (`@scope/name`, the shape mpak's registry accepts); remote-oauth URLs must
- * parse as `http(s):` (the protocol allowlist that keeps a malformed entry from
- * slipping a `javascript:` / `data:` / `file:` URL into bundle creation).
- * direct-url has no value-shape check yet (parked behind an errResult).
+ * Per-kind value-shape gate: remote-oauth URLs must parse as `http(s):` (the
+ * protocol allowlist that keeps a malformed entry from slipping a
+ * `javascript:` / `data:` / `file:` URL into connector creation). direct-url
+ * has no value-shape check yet (parked behind an errResult).
  */
-function isInstallPayloadValid(install: {
-  kind?: unknown;
-  package?: unknown;
-  url?: unknown;
-}): boolean {
-  if (install.kind === "mpak-bundle") {
-    return typeof install.package === "string" && SCOPED_PACKAGE_RE.test(install.package);
-  }
+function isInstallPayloadValid(install: { kind?: unknown; url?: unknown }): boolean {
   if (install.kind === "remote-oauth") {
     return typeof install.url === "string" && isHttpUrl(install.url);
   }
@@ -1871,7 +1688,7 @@ async function handleInstallRemoteOAuth(
 
   // serverName is the slugified canonical reverse-DNS form — opaque,
   // URL-safe, filesystem-safe, collision-free by construction. See
-  // `slugifyServerName` for the rule. mpak install path mirrors this.
+  // `slugifyServerName` for the rule.
   const serverName = slugifyServerName(entry.id);
 
   const lifecycle = ctx.runtime.getLifecycle();
@@ -2479,7 +2296,7 @@ async function eagerStartRemoteSource(
   action: RemoteOAuthInstall,
 ): Promise<string | undefined> {
   try {
-    await startBundleSource(ref, wsRegistry, ctx.runtime.getEventSink(), undefined, {
+    await startBundleSource(ref, wsRegistry, ctx.runtime.getEventSink(), {
       allowInsecureRemotes: ctx.runtime.getAllowInsecureRemotes(),
       wsId,
       workDir: ctx.runtime.getWorkDir(),
@@ -2513,122 +2330,6 @@ function remoteInstallMessage(
   return isPersonalTarget
     ? `Installed "${entryName}" in your personal workspace.`
     : `Installed "${entryName}" in this workspace.`;
-}
-
-/**
- * Mpak (stdio) install. The bundle is fetched from whichever mpak
- * registry the SDK is pointed at, spawned as a subprocess, and
- * registered in the workspace registry via the shared
- * `installBundleInWorkspace` primitive.
- *
- * Workspace-scope only — every stdio bundle is workspace-shared
- * today. A future per-user mpak install would need its own
- * dispatcher branch.
- */
-async function handleInstallMpak(
-  ctx: ManageConnectorsContext,
-  wsId: string | null,
-  entry: DirectoryEntry,
-): Promise<ToolResult> {
-  if (!wsId) return errResult("Workspace context required for stdio install.");
-  if (entry.install.kind !== "mpak-bundle") {
-    return errResult("invariant violated: handleInstallMpak requires mpak-bundle entry");
-  }
-  const bundleName = entry.install.package;
-
-  const ws = await ctx.runtime.getWorkspaceStore().get(wsId);
-  if (!ws) return errResult(`Workspace "${wsId}" not found.`);
-
-  const lifecycle = ctx.runtime.getLifecycle();
-  const registry = ctx.runtime.getRegistryForWorkspace(wsId);
-
-  // Idempotency: workspace.json already has this bundle. If the
-  // lifecycle still tracks it, surface alreadyInstalled. If not,
-  // fall through and let installBundleInWorkspace re-register —
-  // this self-heals the case where uninstall left a stale entry.
-  // Honors the persisted `serverName` (canonical reverse-DNS form,
-  // set at install time) so legacy short-slug installs and new
-  // canonical-form installs both resolve correctly.
-  const already = ws.bundles.find((b) => "name" in b && b.name === bundleName);
-  if (already) {
-    const existingServerName =
-      ("name" in already && already.serverName) || deriveServerName(bundleName);
-    if (lifecycle.getInstance(existingServerName, wsId)) {
-      return {
-        content: textContent(`"${entry.name}" already installed.`),
-        structuredContent: {
-          ok: true,
-          alreadyInstalled: true,
-          serverName: existingServerName,
-          scope: "workspace",
-        },
-        isError: false,
-      };
-    }
-  }
-
-  // Install does NOT force-refresh the shared mpak cache. App *version* is an
-  // org-global concern: the cache is keyed by name only (no version) and shared
-  // across every workspace, so a force-pull here would let a workspace admin
-  // silently bump every workspace's version on its next respawn — bypassing the
-  // org_admin `manage_apps.upgrade` gate. Instead, a ws_admin install adopts
-  // whatever version the org already has cached; a first-ever install cold-
-  // downloads the current release via `prepareServer`. The original "stuck on a
-  // bad version" incident stays cured WITHOUT a force-pull here: a gate-failing
-  // cached manifest self-heals on spawn (`startBundleSource` force-repulls on a
-  // HostManifestGateError, on the install path too).
-
-  // Persist the slugified canonical reverse-DNS form as the BundleRef's
-  // serverName so this install — and every lookup that follows — uses
-  // the same opaque, URL-safe, collision-free identifier the catalog
-  // source emits. Matches the remote-OAuth path's slugify call.
-  const ref: BundleRef = { name: bundleName, serverName: slugifyServerName(entry.id) };
-  let inventoryEntry: Awaited<ReturnType<typeof installBundleInWorkspace>>;
-  try {
-    inventoryEntry = await installBundleInWorkspace(
-      wsId,
-      ref,
-      registry,
-      ctx.runtime.getEventSink(),
-      ctx.runtime.getConfigPath(),
-      {
-        allowInsecureRemotes: ctx.runtime.getAllowInsecureRemotes(),
-        workDir: ctx.runtime.getWorkDir(),
-        bundleMcp: ctx.runtime.getBundleMcpDeps(wsId),
-      },
-    );
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return errResult(`Failed to install "${entry.name}": ${msg}`);
-  }
-
-  lifecycle.seedInstance(
-    inventoryEntry.serverName,
-    bundleName,
-    ref,
-    inventoryEntry.meta ?? undefined,
-    wsId,
-    inventoryEntry.dataDir,
-  );
-  // Register placements + emit bundle.installed so the web shell's
-  // sidebar refreshes without a reboot. seedInstance is intentionally
-  // state-only; the side effects live here.
-  lifecycle.notifyInstalled(inventoryEntry.serverName, wsId);
-
-  if (!already) {
-    await ctx.runtime.getWorkspaceStore().update(wsId, { bundles: [...ws.bundles, ref] });
-  }
-
-  return {
-    content: textContent(`Installed "${entry.name}" in this workspace.`),
-    structuredContent: {
-      ok: true,
-      alreadyInstalled: false,
-      serverName: inventoryEntry.serverName,
-      scope: "workspace",
-    },
-    isError: false,
-  };
 }
 
 async function handleDisconnect(
@@ -2724,22 +2425,16 @@ async function handleUninstall(
     };
   }
   const instance = lifecycle.getInstance(serverName, wsId);
-  const ref = instance?.ref;
-  const isUrlBundle = !!ref && "url" in ref;
 
   // Revoke OAuth tokens upstream first when applicable.
-  const revokeResult = isUrlBundle
+  const revokeResult = instance?.ref
     ? await revokeUrlBundleTokens(lifecycle, ctx, serverName, wsId)
     : {};
 
   try {
     const registry = ctx.runtime.getRegistryForWorkspace(wsId);
-    // Capture the manifest name BEFORE lifecycle.uninstall — the instance
-    // reference is still valid afterwards but the lifecycle map drops it, and we
-    // need the name to strip the matching workspace.json entry.
-    const installedBundleName = instance?.bundleName;
     await lifecycle.uninstall(serverName, registry, wsId);
-    await stripUninstalledBundleEntry(ctx, wsId, serverName, installedBundleName);
+    await stripUninstalledBundleEntry(ctx, wsId, serverName);
     // Retire every hook this connector held. The door independently refuses a
     // delivery for an uninstalled connector — it needs the connector's base URL
     // to have anywhere to forward to — so this is not the only thing that stops
@@ -2790,28 +2485,24 @@ async function revokeUrlBundleTokens(
 }
 
 /**
- * Strip the just-uninstalled bundle from `workspace.json#bundles[]`.
+ * Strip the just-uninstalled connector from `workspace.json#bundles[]`.
  * `lifecycle.uninstall` clears its own `instances` map and the legacy global
- * `nimblebrain.json`, but not the workspace record — this removes both URL
- * bundles and named entries.
+ * `nimblebrain.json`, but not the workspace record.
  */
 async function stripUninstalledBundleEntry(
   ctx: ManageConnectorsContext,
   wsId: string,
   serverName: string,
-  installedBundleName: string | undefined,
 ): Promise<void> {
   const wsAfter = await ctx.runtime.getWorkspaceStore().get(wsId);
   if (!wsAfter) return;
+  // `deriveServerName` needs a string; a legacy or malformed row has no `url`,
+  // and throwing here would fail the uninstall of a *different*, healthy
+  // connector. Such a row matches nothing, so it is retained untouched.
   const filtered = wsAfter.bundles.filter((b) => {
-    if ("url" in b) {
-      const sn = b.serverName ?? deriveServerName(b.url);
-      return sn !== serverName;
-    }
-    if ("name" in b) {
-      return b.name !== installedBundleName && b.name !== serverName;
-    }
-    return true;
+    if (b.serverName) return b.serverName !== serverName;
+    if (typeof b.url !== "string" || b.url.length === 0) return true;
+    return deriveServerName(b.url) !== serverName;
   });
   if (filtered.length !== wsAfter.bundles.length) {
     await ctx.runtime.getWorkspaceStore().update(wsId, { bundles: filtered });
@@ -3115,7 +2806,9 @@ async function handleListPersonalCatalog(
   const installed = await new IdentityConnectorStore({ workDir: ctx.runtime.getWorkDir() }).list(
     callerId,
   );
-  const installedServerNames = new Set(installed.map((ref) => serverNameFromRef(ref)));
+  const installedServerNames = new Set(
+    installed.map((ref) => serverNameFromRef(ref)).filter((n): n is string => n !== null),
+  );
 
   const catalog = entries.filter(
     (e) =>
@@ -3162,8 +2855,19 @@ async function handleListPersonalConnectors(
   const workDir = ctx.runtime.getWorkDir();
   const owner = { type: "user", userId: callerId } as const;
   const lifecycle = ctx.runtime.getLifecycle();
-  const connectors = refs.map((ref) => {
+  // Resolve names first, in their own pass: a stored row this build cannot
+  // name is dropped here rather than rendered under a name no Connect route
+  // resolves. Keeping it out of the projection below leaves that closure
+  // exactly as it was.
+  const named = refs.flatMap((ref) => {
     const serverName = serverNameFromRef(ref);
+    if (serverName !== null) return [{ ref, serverName }];
+    log.warn(
+      `[connectors] personal connector row names no server (url: ${JSON.stringify(ref.url)}) — omitted from the listing.`,
+    );
+    return [];
+  });
+  const connectors = named.map(({ ref, serverName }) => {
     const cat = byServerName.get(serverName);
     // Auth type + (for composio) the catalog connector id are read from the
     // stored ref, not the catalog — they're what the Connect route keys on and
@@ -3516,257 +3220,6 @@ async function handleRemoveOperatorSetup(
     structuredContent: { ok: true, catalogId },
     isError: false,
   };
-}
-
-/**
- * Resolve the bundle manifest's `user_config` schema for a workspace-
- * installed stdio bundle, with admin-gating built in. Returns the
- * BundleInstance + schema on success, or a `ToolResult` error to forward.
- *
- * Centralizes the four checks every credential-write action must do
- * (auth, ws context, admin role, bundle installed + schema present) so
- * `set_user_config` / `clear_user_config` stay focused on their write
- * step and don't drift in their guards.
- */
-async function resolveBundleSchema(
-  ctx: ManageConnectorsContext,
-  wsId: string | null,
-  identity: UserIdentity | null,
-  serverName: string,
-): Promise<
-  | { ok: true; bundleName: string; schema: Record<string, UserConfigFieldDef> }
-  | { ok: false; result: ToolResult }
-> {
-  if (!wsId) return { ok: false, result: errResult("Workspace context required.") };
-  if (!serverName) return { ok: false, result: errResult("serverName is required.") };
-  if (!identity) return { ok: false, result: errResult("Authentication required.") };
-
-  const ws = await ctx.runtime.getWorkspaceStore().get(wsId);
-  if (!ws) return { ok: false, result: errResult(`Workspace "${wsId}" not found.`) };
-  if (!isWorkspaceAdmin(ws, identity)) {
-    return {
-      ok: false,
-      result: {
-        content: textContent("Workspace admin role required to manage bundle credentials."),
-        structuredContent: { error: "permission_denied" },
-        isError: true,
-      },
-    };
-  }
-
-  const lifecycle = ctx.runtime.getLifecycle();
-  const instance = lifecycle.getInstance(serverName, wsId);
-  if (!instance) {
-    return { ok: false, result: errResult(`Bundle "${serverName}" not installed in workspace.`) };
-  }
-
-  const mpakHome = join(ctx.runtime.getWorkDir(), "apps");
-  const mpak = getMpak(mpakHome);
-  // Same manifest-resolution rules as handleListInstalled — name-
-  // installed bundles read from the mpak cache, path-installed
-  // (Synapse apps in local dev) read from `<configKey>/manifest.json`.
-  const manifest = await readBundleManifest(mpak, instance);
-  const schema = manifest?.user_config;
-  if (!schema || Object.keys(schema).length === 0) {
-    return {
-      ok: false,
-      result: errResult(`Bundle "${serverName}" declares no user_config fields.`),
-    };
-  }
-  return { ok: true, bundleName: instance.bundleName, schema };
-}
-
-/**
- * Probe the workspace credential file for which `user_config` fields
- * currently have non-empty stored values. Returns `{ key: boolean }`
- * keyed on the schema's field names — never the values themselves.
- */
-async function probeUserConfigPopulated(
-  runtime: Runtime,
-  wsId: string,
-  bundleName: string,
-  schema: Record<string, UserConfigFieldDef>,
-): Promise<Record<string, boolean>> {
-  const stored = (await runtime.getWorkspaceContext(wsId).getCredentials(bundleName)) ?? {};
-  const out: Record<string, boolean> = {};
-  for (const key of Object.keys(schema)) {
-    const v = stored[key];
-    out[key] = typeof v === "string" && v.length > 0;
-  }
-  return out;
-}
-
-/**
- * Write or clear individual `user_config` fields on a stdio bundle's
- * workspace credential file. Per-field semantics:
- *
- *   - Field present in `fields`, value non-empty → save.
- *   - Field present in `fields`, value empty string → clear that one field.
- *   - Field absent from `fields` → leave existing value untouched.
- *
- * Unknown field names (anything not in the manifest's `user_config`)
- * are rejected up front (default-deny). Each individual save/clear is
- * already atomic via `withFileLock`; running them in sequence within a
- * single tool call is the simplest "no half-applied state" we can offer
- * without restructuring the credential primitive's API. Sequential is
- * safe because the lock serializes per-file.
- *
- * Admin-gated. Returns the post-write `populated` map so the UI can
- * reflect new state without a follow-up list_installed round-trip.
- */
-async function handleSetUserConfig(
-  ctx: ManageConnectorsContext,
-  wsId: string | null,
-  identity: UserIdentity | null,
-  serverName: string,
-  fieldsInput: Record<string, unknown>,
-): Promise<ToolResult> {
-  const resolved = await resolveBundleSchema(ctx, wsId, identity, serverName);
-  if (!resolved.ok) return resolved.result;
-  const { bundleName, schema } = resolved;
-  // Unsafe to assert inside the closure result type guard, but wsId is
-  // checked in resolveBundleSchema — re-narrow for the rest of the body.
-  if (!wsId) return errResult("Workspace context required.");
-
-  // Default-deny on unknown keys. Reject the whole batch — partial
-  // success on a typo would leave the writer guessing which fields took.
-  const unknown = Object.keys(fieldsInput).filter((k) => !(k in schema));
-  if (unknown.length > 0) {
-    return errResult(
-      `Unknown user_config field(s) for "${serverName}": ${unknown.join(", ")}. ` +
-        `Allowed: ${Object.keys(schema).join(", ")}.`,
-    );
-  }
-
-  // Type-coerce values. The JSON schema declares `string`, but defend
-  // against a misbehaving caller passing other primitives — anything
-  // non-string gets rejected explicitly rather than coerced silently.
-  const writes: Array<{ key: string; value: string }> = [];
-  for (const [key, raw] of Object.entries(fieldsInput)) {
-    if (typeof raw !== "string") {
-      return errResult(`Field "${key}" must be a string (got ${typeof raw}).`);
-    }
-    writes.push({ key, value: raw });
-  }
-
-  const credentialStore = ctx.runtime.getWorkspaceContext(wsId).getCredentialStore();
-  for (const { key, value } of writes) {
-    if (value.length === 0) {
-      // Empty string = clear that single field. Use the dedicated
-      // primitive so the key is removed from the credential file
-      // (rather than persisted as `{ "key": "" }` which would still
-      // resolve as "configured" in shape probes that check
-      // key-presence).
-      await credentialStore.clear(bundleName, key);
-    } else {
-      await credentialStore.save(bundleName, key, value);
-    }
-  }
-
-  // Mode 1 (env_inject) bundles only read user_config at spawn — env
-  // vars are baked in at fork time. Saving to the credential file is
-  // necessary but not sufficient; without a respawn the running
-  // subprocess keeps using whatever it was launched with. Respawn so the
-  // post-write state reflects the new credentials.
-  const respawn = await respawnBundleAfterCredentialChange(ctx, wsId, bundleName, serverName);
-
-  const populated = await probeUserConfigPopulated(ctx.runtime, wsId, bundleName, schema);
-  return {
-    content: textContent(`Updated ${writes.length} field(s) for "${serverName}".`),
-    structuredContent: { ok: true, serverName, populated, respawn },
-    isError: false,
-  };
-}
-
-/**
- * Drop the entire workspace credential file for a stdio bundle. After
- * this returns, every field in the bundle's `user_config` schema reads
- * as not-configured. Admin-gated.
- *
- * Intentionally does NOT respawn the bundle subprocess. A respawn
- * after clear would fail at `prepareServer` for any bundle with
- * required fields, which leaves the workspace registry with no source
- * — and `getBundleInstancesForWorkspace` filters the installed list
- * by `wsRegistry.sourceNames()`. The connector would silently
- * disappear from the UI (404 on the Configure page, gone from the
- * Connectors list), with no way for the user to re-add credentials
- * short of uninstall + reinstall.
- *
- * The behavior here is pragmatic: the credential file on disk is
- * gone (next platform start spawns the bundle without those values),
- * but the running subprocess keeps its launched env until restart.
- * That's a small soundness gap for the rare "revoke without
- * uninstall" case; users wanting full revocation should uninstall.
- * Keep `respawn: { ok: true }` in the response so the UI surface is
- * consistent with `set_user_config`.
- */
-async function handleClearUserConfig(
-  ctx: ManageConnectorsContext,
-  wsId: string | null,
-  identity: UserIdentity | null,
-  serverName: string,
-): Promise<ToolResult> {
-  const resolved = await resolveBundleSchema(ctx, wsId, identity, serverName);
-  if (!resolved.ok) return resolved.result;
-  if (!wsId) return errResult("Workspace context required.");
-  const { bundleName, schema } = resolved;
-
-  await ctx.runtime.getWorkspaceContext(wsId).getCredentialStore().clearAll(bundleName);
-
-  // After clearAll, every field reads as unpopulated. Build the map
-  // directly rather than re-probing — saves one filesystem stat that
-  // would always return null/empty here.
-  const populated: Record<string, boolean> = {};
-  for (const key of Object.keys(schema)) populated[key] = false;
-  return {
-    content: textContent(`Cleared all credentials for "${serverName}".`),
-    structuredContent: { ok: true, serverName, populated, respawn: { ok: true } },
-    isError: false,
-  };
-}
-
-/**
- * Tear down + restart a stdio bundle's McpSource so a fresh subprocess
- * picks up the just-written credentials from the workspace credential
- * store. Called after `set_user_config` and `clear_user_config`.
- *
- * Why not just leave the bundle running? Mode 1 bundles read
- * `user_config` once, at spawn, via `${user_config.foo}` placeholders
- * resolved into env vars. The subprocess has no way to re-read after
- * launch. Without this respawn the user updates a key in the UI,
- * sees "✓ configured," then watches the next tool call fail with the
- * old key — the bug the user hit before this fix.
- *
- * Best-effort by design: a respawn failure (e.g., required field still
- * missing after a partial save) shouldn't roll back the credential
- * write. The caller's structured response carries `{ respawn: { ok,
- * error? } }` so the UI can surface the failure separately.
- */
-async function respawnBundleAfterCredentialChange(
-  ctx: ManageConnectorsContext,
-  wsId: string,
-  bundleName: string,
-  serverName: string,
-): Promise<{ ok: boolean; error?: string }> {
-  try {
-    const registry = ctx.runtime.getRegistryForWorkspace(wsId);
-    if (registry.hasSource(serverName)) {
-      await registry.removeSource(serverName);
-    }
-    // Pass `name` (the scoped manifest name) so startBundleSource hits
-    // the named-bundle path that resolves user_config from the
-    // workspace credential store. configDir is undefined — the
-    // named-bundle path doesn't need it.
-    await startBundleSource({ name: bundleName }, registry, ctx.runtime.getEventSink(), undefined, {
-      wsId,
-      workDir: ctx.runtime.getWorkDir(),
-      allowInsecureRemotes: ctx.runtime.getAllowInsecureRemotes(),
-      bundleMcp: ctx.runtime.getBundleMcpDeps(wsId),
-    });
-    return { ok: true };
-  } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) };
-  }
 }
 
 /**

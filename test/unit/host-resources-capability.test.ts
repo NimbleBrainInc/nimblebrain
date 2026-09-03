@@ -4,10 +4,9 @@ import {
   HOST_RESOURCES_CAPABILITY_V1,
   HOST_RESOURCES_MAX_READ_SIZE,
   hostExtensions,
-  hostProvidedCapabilityKeys,
 } from "../../src/host-resources/index.ts";
 
-// Phase 1 ground rules for the host-resources capability:
+// Ground rules for the host-resources capability:
 // - The key namespaces under `ai.nimblebrain/` (reverse-DNS of nimblebrain.ai;
 //   matches the MCP extension naming convention).
 // - Each operation is declared as an object, NOT a bare boolean. Future
@@ -56,23 +55,10 @@ describe("HOST_RESOURCES_CAPABILITY_V1", () => {
   });
 });
 
-describe("hostProvidedCapabilityKeys", () => {
-  it("advertises exactly the host-resources key in Phase 1", () => {
-    expect(hostProvidedCapabilityKeys()).toEqual([HOST_RESOURCES_CAPABILITY_KEY]);
-  });
-
-  it("is keyed for set-intersection use by the install gate", () => {
-    const keys = hostProvidedCapabilityKeys();
-    expect(keys.includes(HOST_RESOURCES_CAPABILITY_KEY)).toBe(true);
-    expect(keys.includes("ai.nimblebrain/nonexistent")).toBe(false);
-  });
-});
-
 describe("hostExtensions", () => {
   it("emits exactly the keyed object form expected by MCP ClientCapabilities.extensions", () => {
-    // The shape is `Record<vendorKey, capabilityPayload>` — mirrors how the
-    // platform advertises every extension and how the bundle's
-    // host_capabilities declares its requirements.
+    // The shape is `Record<vendorKey, capabilityPayload>` — the namespace a
+    // server reads when it probes at runtime for what the host provides.
     expect(hostExtensions()).toEqual({
       [HOST_RESOURCES_CAPABILITY_KEY]: HOST_RESOURCES_CAPABILITY_V1,
     });

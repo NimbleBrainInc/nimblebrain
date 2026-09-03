@@ -1,6 +1,4 @@
-import { afterAll, afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { join } from "node:path";
 import type { BundleRef } from "../../../src/bundles/types.ts";
 import type { Workspace } from "../../../src/workspace/types.ts";
@@ -10,34 +8,11 @@ import {
   resolveBundleStartConcurrency,
 } from "../../../src/runtime/workspace-runtime.ts";
 
-const tmpFixtures: string[] = [];
-afterAll(() => {
-  for (const dir of tmpFixtures) {
-    try {
-      rmSync(dir, { recursive: true, force: true });
-    } catch {
-      /* ignore */
-    }
-  }
-});
-
-function makeBundleFixture(manifestName: string): string {
-  const dir = mkdtempSync(join(tmpdir(), "nb-ws-runtime-bundle-"));
-  tmpFixtures.push(dir);
-  mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, "manifest.json"), JSON.stringify({ name: manifestName, version: "0.0.0" }));
-  return dir;
-}
-
 // ---------------------------------------------------------------------------
 // Fixtures
 // ---------------------------------------------------------------------------
 
-function makeWorkspace(
-  id: string,
-  name: string,
-  bundles: BundleRef[],
-): Workspace {
+function makeWorkspace(id: string, name: string, bundles: BundleRef[]): Workspace {
   return {
     id,
     name,
@@ -50,6 +25,10 @@ function makeWorkspace(
 
 const WORK_DIR = "/home/user/.nimblebrain";
 
+function crm(): BundleRef {
+  return { url: "https://crm.example.com/mcp", serverName: "crm" };
+}
+
 // ---------------------------------------------------------------------------
 // buildProcessInventory
 // ---------------------------------------------------------------------------
@@ -60,17 +39,17 @@ describe("buildProcessInventory", () => {
     expect(entries).toEqual([]);
   });
 
-  it("builds empty inventory for workspace with no bundles", () => {
+  it("builds empty inventory for workspace with no connectors", () => {
     const ws = makeWorkspace("ws_empty", "Empty", []);
     const entries = buildProcessInventory([ws], WORK_DIR);
     expect(entries).toEqual([]);
   });
 
-  it("2 workspaces with 3 bundles each → 6 entries", () => {
+  it("2 workspaces with 3 connectors each → 6 entries", () => {
     const bundles: BundleRef[] = [
-      { name: "@nimblebraininc/crm" },
-      { name: "@nimblebraininc/tasks" },
-      { name: "@nimblebraininc/docs" },
+      crm(),
+      { url: "https://tasks.example.com/mcp", serverName: "tasks" },
+      { url: "https://docs.example.com/mcp", serverName: "docs" },
     ];
     const ws1 = makeWorkspace("ws_engineering", "Engineering", bundles);
     const ws2 = makeWorkspace("ws_sales", "Sales", bundles);
@@ -80,26 +59,24 @@ describe("buildProcessInventory", () => {
   });
 
   it("each entry has correct workspace-scoped data dir", () => {
-    const bundles: BundleRef[] = [{ name: "@nimblebraininc/crm" }];
-    const ws = makeWorkspace("ws_engineering", "Engineering", bundles);
+    const ws = makeWorkspace("ws_engineering", "Engineering", [crm()]);
 
     const entries = buildProcessInventory([ws], WORK_DIR);
     expect(entries).toHaveLength(1);
     expect(entries[0].dataDir).toBe(
-      join(WORK_DIR, "workspaces", "ws_engineering", "data", "nimblebraininc-crm"),
+      join(WORK_DIR, "workspaces", "ws_engineering", "data", "crm"),
     );
   });
 
   it("entry has plain serverName (no compound key)", () => {
-    const bundles: BundleRef[] = [{ name: "@nimblebraininc/crm" }];
-    const ws = makeWorkspace("ws_engineering", "Engineering", bundles);
+    const ws = makeWorkspace("ws_engineering", "Engineering", [crm()]);
 
     const entries = buildProcessInventory([ws], WORK_DIR);
     expect(entries[0].serverName).toBe("crm");
   });
 
-  it("same bundle in two workspaces → two entries, different data dirs", () => {
-    const bundles: BundleRef[] = [{ name: "@nimblebraininc/crm" }];
+  it("same connector in two workspaces → two entries, different data dirs", () => {
+    const bundles = [crm()];
     const ws1 = makeWorkspace("ws_engineering", "Engineering", bundles);
     const ws2 = makeWorkspace("ws_sales", "Sales", bundles);
 
@@ -114,46 +91,19 @@ describe("buildProcessInventory", () => {
     expect(entries[1].dataDir).toContain("ws_sales");
   });
 
-  it("path bundle: dataDir slug comes from manifest.name on disk, NOT from the path", () => {
-    const fixture = makeBundleFixture("@nimblebraininc/synapse-crm");
-    const ws = makeWorkspace("ws_dev", "Dev", [{ path: fixture }]);
+  it("derives serverName from the URL when the ref carries none", () => {
+    const ws = makeWorkspace("ws_prod", "Production", [{ url: "https://example.com/mcp" }]);
 
     const entries = buildProcessInventory([ws], WORK_DIR);
     expect(entries).toHaveLength(1);
-    // Regression: the launch-path dataDir used to slug the path string
-    // (`Users-...-synapse-crm`), while seedInstance / the briefing collector
-    // slugged the manifest name (`nimblebraininc-synapse-crm`). They MUST
-    // agree now — both go through `resolveBundleDataDirForRef`.
-    expect(entries[0].dataDir).toBe(
-      join(WORK_DIR, "workspaces", "ws_dev", "data", "nimblebraininc-synapse-crm"),
-    );
+    expect(entries[0].serverName.length).toBeGreaterThan(0);
   });
 
-  it("path bundle + name bundle with the same manifest.name produce the same dataDir", () => {
-    const fixture = makeBundleFixture("@nimblebraininc/synapse-crm");
-    const wsPath = makeWorkspace("ws_dev", "Dev", [{ path: fixture }]);
-    const wsName = makeWorkspace("ws_dev", "Dev", [{ name: "@nimblebraininc/synapse-crm" }]);
-
-    const [pathEntry] = buildProcessInventory([wsPath], WORK_DIR);
-    const [nameEntry] = buildProcessInventory([wsName], WORK_DIR);
-    expect(pathEntry.dataDir).toBe(nameEntry.dataDir);
-  });
-
-  it("handles url-based bundle refs with explicit serverName", () => {
-    const bundles: BundleRef[] = [
-      { url: "https://example.com/mcp", serverName: "remote-tool" },
-    ];
-    const ws = makeWorkspace("ws_prod", "Production", bundles);
-
-    const entries = buildProcessInventory([ws], WORK_DIR);
-    expect(entries).toHaveLength(1);
-    expect(entries[0].serverName).toBe("remote-tool");
-  });
-
-  it("preserves the original bundle ref in each entry", () => {
+  it("preserves the original connector ref in each entry", () => {
     const ref: BundleRef = {
-      name: "@nimblebraininc/crm",
-      env: { DB_URL: "postgres://localhost/crm" },
+      url: "https://crm.example.com/mcp",
+      serverName: "crm",
+      scopes: ["read"],
     };
     const ws = makeWorkspace("ws_eng", "Eng", [ref]);
 
@@ -161,15 +111,15 @@ describe("buildProcessInventory", () => {
     expect(entries[0].bundle).toBe(ref);
   });
 
-  it("multiple workspaces with different bundles", () => {
+  it("multiple workspaces with different connectors", () => {
     const ws1 = makeWorkspace("ws_eng", "Engineering", [
-      { name: "@nimblebraininc/crm" },
-      { name: "@nimblebraininc/tasks" },
+      crm(),
+      { url: "https://tasks.example.com/mcp", serverName: "tasks" },
     ]);
     const ws2 = makeWorkspace("ws_sales", "Sales", [
-      { name: "@nimblebraininc/crm" },
-      { name: "@acme/analytics" },
-      { name: "@acme/reports" },
+      crm(),
+      { url: "https://analytics.example.com/mcp", serverName: "analytics" },
+      { url: "https://reports.example.com/mcp", serverName: "reports" },
     ]);
 
     const entries = buildProcessInventory([ws1, ws2], WORK_DIR);
@@ -181,8 +131,43 @@ describe("buildProcessInventory", () => {
     expect(salesEntries).toHaveLength(3);
   });
 
-  it("no global bundle state leaks between workspaces", () => {
-    const bundles: BundleRef[] = [{ name: "@nimblebraininc/crm" }];
+  it("skips a row with no usable url instead of aborting the whole inventory", () => {
+    // Boot reads every workspace's `bundles[]` in one pass before any
+    // per-entry containment, so a throw here takes the instance down over one
+    // bad row. Both reachable shapes are covered: a legacy `name:`/`path:`
+    // entry predating the URL-only ref, and a `url: ""` that reached the store.
+    const ws = makeWorkspace("ws_mixed", "Mixed", [
+      { name: "@acme/echo" } as unknown as BundleRef,
+      { path: "/opt/echo" } as unknown as BundleRef,
+      { url: "" } as BundleRef,
+      // Blank-but-nonempty and unparseable urls: the first guard tested
+      // `length === 0`, so these still reached `getDataPath` and threw the
+      // whole-instance boot crash the guard existed to stop.
+      { url: "   " } as BundleRef,
+      { url: "..." } as BundleRef,
+      crm(),
+    ]);
+
+    const entries = buildProcessInventory([ws], WORK_DIR);
+
+    // The healthy row survives; the three unusable ones are dropped, not thrown on.
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.serverName).toBe("crm");
+  });
+
+  it("one workspace's bad row does not cost another workspace its connectors", () => {
+    const broken = makeWorkspace("ws_broken", "Broken", [
+      { name: "@acme/echo" } as unknown as BundleRef,
+    ]);
+    const healthy = makeWorkspace("ws_healthy", "Healthy", [crm()]);
+
+    const entries = buildProcessInventory([broken, healthy], WORK_DIR);
+
+    expect(entries.map((e) => e.wsId)).toEqual(["ws_healthy"]);
+  });
+
+  it("no global connector state leaks between workspaces", () => {
+    const bundles = [crm()];
     const ws1 = makeWorkspace("ws_a", "A", bundles);
     const ws2 = makeWorkspace("ws_b", "B", bundles);
 

@@ -470,7 +470,6 @@ describe("E2E: install app -> tool call via API", () => {
 		// Seed lifecycle instance to match the registered source
 		runtime.getLifecycle().seedInstance("tasks", "@nimblebraininc/tasks", {
 			name: "@nimblebraininc/tasks",
-			trustScore: 92,
 			ui: {
 				name: "Task Manager",
 				icon: "check",
@@ -719,10 +718,8 @@ describe("E2E: SSE event filtering — only bundle and data.changed events pass 
 			data: {
 				wsId: "ws_test",
 				serverName: "tasks",
-				bundleName: "@test/tasks",
+				bundleName: "https://tasks.example.com/mcp",
 				version: "1.0.0",
-				type: "plain",
-				trustScore: 85,
 				ui: null,
 			},
 		});
@@ -733,7 +730,6 @@ describe("E2E: SSE event filtering — only bundle and data.changed events pass 
 		// Should only contain the bundle.installed event, not run.start
 		expect(text).toContain("event: bundle.installed");
 		expect(text).toContain('"serverName":"tasks"');
-		expect(text).toContain('"trustScore":85');
 		expect(text).not.toContain("run.start");
 
 		reader.cancel();

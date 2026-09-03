@@ -1,58 +1,15 @@
-import { afterAll, describe, expect, it } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { deriveBundleDataDir, resolveBundleDataDirForRef } from "../../../src/bundles/paths.ts";
-
-const tmpRoots: string[] = [];
-afterAll(() => {
-  for (const dir of tmpRoots) {
-    try {
-      rmSync(dir, { recursive: true, force: true });
-    } catch {
-      /* ignore */
-    }
-  }
-});
-
-function makeBundleDir(manifestName: string): string {
-  const dir = mkdtempSync(join(tmpdir(), "nb-bundle-fixture-"));
-  tmpRoots.push(dir);
-  mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, "manifest.json"), JSON.stringify({ name: manifestName, version: "0.0.0" }));
-  return dir;
-}
+import { describe, expect, it } from "bun:test";
+import {
+  deriveBundleDataDir,
+  resolveBundleDataDirForRef,
+  serverNameFromRef,
+} from "../../../src/bundles/paths.ts";
+import type { BundleRef } from "../../../src/bundles/types.ts";
 
 describe("resolveBundleDataDirForRef", () => {
   const workDir = "/home/user/.nimblebrain";
 
-  it("named ref: slug from ref.name (which is the canonical manifest name)", () => {
-    const dir = resolveBundleDataDirForRef(workDir, "ws_eng", { name: "@nimblebraininc/crm" });
-    expect(dir).toBe(`${workDir}/workspaces/ws_eng/data/nimblebraininc-crm`);
-  });
-
-  it("path ref: slug from manifest.name on disk, NOT from the path string", () => {
-    const bundleDir = makeBundleDir("@nimblebraininc/synapse-crm");
-    const dir = resolveBundleDataDirForRef(workDir, "ws_mat", { path: bundleDir });
-    expect(dir).toBe(`${workDir}/workspaces/ws_mat/data/nimblebraininc-synapse-crm`);
-  });
-
-  it(
-    "regression: a path ref and a name ref for the SAME bundle produce the SAME slug " +
-      "(this is the contract that keeps the launch-write path aligned with the seedInstance / " +
-      "briefing-read path; before this it diverged because the launch path slugified the " +
-      "filesystem path while the reader slugified the manifest name)",
-    () => {
-      const bundleDir = makeBundleDir("@nimblebraininc/synapse-crm");
-      const fromPath = resolveBundleDataDirForRef(workDir, "ws_mat", { path: bundleDir });
-      const fromName = resolveBundleDataDirForRef(workDir, "ws_mat", {
-        name: "@nimblebraininc/synapse-crm",
-      });
-      expect(fromPath).toBe(fromName);
-    },
-  );
-
-  it("url ref: slug from persisted ref.serverName (the install-time canonical slug)", () => {
+  it("slug comes from the persisted ref.serverName (the install-time canonical slug)", () => {
     const dir = resolveBundleDataDirForRef(workDir, "ws_eng", {
       url: "https://mcp.example.com/sse",
       serverName: "example-mcp",
@@ -60,26 +17,18 @@ describe("resolveBundleDataDirForRef", () => {
     expect(dir).toBe(`${workDir}/workspaces/ws_eng/data/example-mcp`);
   });
 
-  it("url ref without serverName: falls back to deriving the slug from the URL", () => {
-    const dir = resolveBundleDataDirForRef(workDir, "ws_eng", { url: "https://mcp.example.com/sse" });
+  it("without serverName: falls back to deriving the slug from the URL", () => {
+    const dir = resolveBundleDataDirForRef(workDir, "ws_eng", {
+      url: "https://mcp.example.com/sse",
+    });
     expect(dir.startsWith(`${workDir}/workspaces/ws_eng/data/`)).toBe(true);
   });
 
-  it("two workspaces with the same bundle get separate directories", () => {
-    const ws1 = resolveBundleDataDirForRef(workDir, "ws_eng", { name: "@nimblebraininc/crm" });
-    const ws2 = resolveBundleDataDirForRef(workDir, "ws_sales", { name: "@nimblebraininc/crm" });
-    expect(ws1).not.toBe(ws2);
-  });
-
-  it("path ref with a broken manifest: falls back to path-derived slug + warn (bundle will fail to start anyway)", () => {
-    const dir = mkdtempSync(join(tmpdir(), "nb-bundle-fixture-broken-"));
-    tmpRoots.push(dir);
-    mkdirSync(dir, { recursive: true });
-    writeFileSync(join(dir, "manifest.json"), "{ not valid json");
-    const out = resolveBundleDataDirForRef(workDir, "ws_eng", { path: dir });
-    // Fallback slug is path-derived — the exact form doesn't matter for callers, only that
-    // it's a string (not a throw) so inventory build proceeds.
-    expect(out.startsWith(`${workDir}/workspaces/ws_eng/data/`)).toBe(true);
+  it("two workspaces with the same connector get separate directories", () => {
+    const ref = { url: "https://mcp.example.com/sse", serverName: "example-mcp" };
+    expect(resolveBundleDataDirForRef(workDir, "ws_eng", ref)).not.toBe(
+      resolveBundleDataDirForRef(workDir, "ws_sales", ref),
+    );
   });
 });
 
@@ -97,10 +46,6 @@ describe("deriveBundleDataDir", () => {
     expect(deriveBundleDataDir("@bar/tasks")).toBe("bar-tasks");
   });
 
-  it("collapses absolute path bundle refs into one directory segment", () => {
-    expect(deriveBundleDataDir("/abs/path/with/slashes")).toBe("abs-path-with-slashes");
-  });
-
   it("replaces reverse-DNS separators", () => {
     expect(deriveBundleDataDir("com.example/app")).toBe("com-example-app");
   });
@@ -111,5 +56,42 @@ describe("deriveBundleDataDir", () => {
 
   it("collapses unsafe characters and duplicate dashes", () => {
     expect(deriveBundleDataDir("/a//b @ c")).toBe("a-b-c");
+  });
+});
+
+describe("serverNameFromRef", () => {
+  it("returns the persisted serverName when the ref carries one", () => {
+    expect(serverNameFromRef({ url: "https://x.test/mcp", serverName: "com-x-mcp" })).toBe(
+      "com-x-mcp",
+    );
+  });
+
+  it("derives from the url when the ref predates serverName persistence", () => {
+    expect(serverNameFromRef({ url: "https://mcp.example.com/echo" })).toBe("echo");
+  });
+
+  it("returns null for a row this build can neither name nor reach", () => {
+    // Disk holds rows the current type no longer describes. Returning a string
+    // meant `deriveServerName(undefined)` threw a bare TypeError out of
+    // whichever reader touched the row first — a webhook delivery, a personal
+    // connector listing, boot. Null makes the compiler name those readers.
+    for (const row of [
+      { name: "@acme/echo" },
+      { path: "/srv/echo" },
+      { url: "" },
+      { url: "   " },
+      { url: "..." },
+      { url: "ftp://x.test/mcp" },
+    ]) {
+      expect(serverNameFromRef(row as unknown as BundleRef)).toBeNull();
+    }
+  });
+
+  it("still names a legacy row that carries an explicit serverName", () => {
+    // Identity, not reachability: such a row cannot be connected to, but every
+    // lookup keyed on its name must still resolve it (uninstall, grant lists).
+    expect(
+      serverNameFromRef({ name: "@acme/echo", serverName: "acme-echo" } as unknown as BundleRef),
+    ).toBe("acme-echo");
   });
 });

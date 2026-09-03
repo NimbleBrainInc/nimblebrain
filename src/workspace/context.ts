@@ -1,5 +1,4 @@
 import { join } from "node:path";
-import { WorkspaceCredentialStore } from "../config/workspace-credentials.ts";
 import { WORKSPACE_ID_RE } from "./workspace-store.ts";
 
 /**
@@ -19,11 +18,6 @@ import { WORKSPACE_ID_RE } from "./workspace-store.ts";
  *     is validated against `WORKSPACE_ID_RE` at construction and bound to
  *     the instance as `readonly`. No method on this class takes a `wsId`
  *     argument — the context's wsId is implicit in every operation.
- *
- *   - Owns a `WorkspaceCredentialStore` constructed with the same wsId.
- *     Callers get the bound store via `getCredentialStore()` and never
- *     have a way to construct one for a different workspace through this
- *     context.
  *
  *   - Exposes typed path helpers (`getRoot`, `getDataPath`) so call sites
  *     don't reconstruct the `workspaces/{wsId}/{scope}` layout by hand.
@@ -124,7 +118,6 @@ export class WorkspaceContext {
   readonly #wsId: string;
   readonly #workDir: string;
   readonly #root: string;
-  readonly #credentialStore: WorkspaceCredentialStore;
 
   constructor(opts: { wsId: string; workDir: string }) {
     if (typeof opts.wsId !== "string" || !WORKSPACE_ID_RE.test(opts.wsId)) {
@@ -138,10 +131,6 @@ export class WorkspaceContext {
     this.#wsId = opts.wsId;
     this.#workDir = opts.workDir;
     this.#root = join(opts.workDir, "workspaces", opts.wsId);
-    this.#credentialStore = new WorkspaceCredentialStore({
-      wsId: opts.wsId,
-      workDir: opts.workDir,
-    });
   }
 
   /** The workspace id bound to this context. */
@@ -187,25 +176,5 @@ export class WorkspaceContext {
     }
     for (const segment of subpath) assertSafeSubpathSegment(segment, scope);
     return join(this.#root, scope, ...subpath);
-  }
-
-  /**
-   * The credential store bound to this workspace. The returned object's
-   * `wsId` matches this context's; there is no way to obtain a credential
-   * store for a different workspace through this context.
-   */
-  getCredentialStore(): WorkspaceCredentialStore {
-    return this.#credentialStore;
-  }
-
-  /**
-   * Convenience: equivalent to `getCredentialStore().get(bundleName)`.
-   *
-   * Provided because the credential read is by far the most common
-   * single-shot operation, and threading the store through every call
-   * site that just wants `{api_key: ...}` is noisy.
-   */
-  async getCredentials(bundleName: string): Promise<Record<string, string> | null> {
-    return this.#credentialStore.get(bundleName);
   }
 }

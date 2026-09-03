@@ -314,11 +314,19 @@ The Synapse Vite plugin reads `../manifest.json`, starts the MCP server automati
 
 ### Full platform (NimbleBrain)
 
+Run your server over HTTP, point a dev workspace at its URL, and start the
+platform with `--app` so the UI is served from Vite:
+
 ```bash
+# Terminal 1
+uv run python -m mcp_hello.server --http --port 8765
+# Terminal 2, in the platform repo
 bun run dev --app ./ui
 ```
 
-Same as above but inside the full NimbleBrain platform — data sync, agent interactions, multi-app navigation.
+See [Local Development](/apps/local-dev/) for the workspace entry and the
+`allowInsecureRemotes` switch loopback URLs need. You get everything the preview
+gives you plus data sync, agent interactions, and multi-app navigation.
 
 ### Tools only (no UI)
 

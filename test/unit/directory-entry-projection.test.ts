@@ -71,32 +71,25 @@ describe("projectServerDetailToDirectoryEntry", () => {
     expect(e?.iconUrl).toBeUndefined();
   });
 
-  test("derives mpak-bundle install when packages are present", () => {
+  test("a packages-only entry is not installable — this runtime acquires nothing", () => {
     const e = projectServerDetailToDirectoryEntry(
       detail({
-        packages: [
-          { registryType: "mpak", identifier: "@x/y", transport: { type: "stdio" } },
-        ],
+        packages: [{ registryType: "npm", identifier: "@x/y", transport: { type: "stdio" } }],
       }),
       CTX,
     );
-    expect(e?.install.kind).toBe("mpak-bundle");
-    if (e?.install.kind === "mpak-bundle") {
-      expect(e.install.package).toBe("@x/y");
-    }
+    expect(e).toBeNull();
   });
 
-  test("packages take precedence over remotes (local install is reproducible)", () => {
+  test("an entry advertising both packages and remotes surfaces its remote", () => {
     const e = projectServerDetailToDirectoryEntry(
       detail({
-        packages: [
-          { registryType: "mpak", identifier: "@x/y", transport: { type: "stdio" } },
-        ],
+        packages: [{ registryType: "npm", identifier: "@x/y", transport: { type: "stdio" } }],
         remotes: [{ type: "streamable-http", url: "https://example.com/mcp" }],
       }),
       CTX,
     );
-    expect(e?.install.kind).toBe("mpak-bundle");
+    expect(e?.install.kind).toBe("remote-oauth");
   });
 
   test("derives remote-oauth install with NimbleBrain meta auth + scopes", () => {

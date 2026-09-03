@@ -1,4 +1,3 @@
-import type { BundleInstance } from "../bundles/types.ts";
 import type { EngineEvent, EventSink } from "../engine/types.ts";
 import type { TelemetryManager } from "./manager.ts";
 
@@ -25,25 +24,6 @@ function createRunMetrics(): RunMetrics {
     outputTokens: 0,
     cacheTokens: 0,
   };
-}
-
-/** Install kinds a bundle event can report, plus the fallback for one that reports none. */
-type BundleSource = NonNullable<BundleInstance["installSource"]> | "unknown";
-
-/**
- * Read the install kind off a bundle event.
- *
- * The value is `BundleInstance.installSource`, stamped by the lifecycle at
- * install time and carried on the event — a closed enum of three, not something
- * inferred from a bundle name or URL. Inferring it would put a name string in
- * front of this file, whose contract is to never read one.
- *
- * `"unknown"` covers an event from a code path that has no instance to read
- * (an uninstall that resolved no instance).
- */
-function readSource(data: Record<string, unknown>): BundleSource {
-  const source = data.installSource;
-  return source === "registry" || source === "local" || source === "remote" ? source : "unknown";
 }
 
 /** Handles one engine event: accumulates per-run metrics or captures a telemetry event. */
@@ -169,20 +149,16 @@ export class PostHogEventSink implements EventSink {
     if (runId) this.runs.delete(runId);
   }
 
-  /** Capture bundle.installed with the reported install kind, UI presence, and trust score. */
+  /** Capture bundle.installed with UI presence. Every connector is remote. */
   private captureBundleInstalled(data: Record<string, unknown>): void {
-    const source = readSource(data);
     this.telemetry.capture("bundle.installed", {
-      source,
+      source: "remote",
       has_ui: Boolean(data.ui),
-      trust_score: (data.trustScore as number) ?? 0,
     });
   }
 
-  /** Capture bundle.uninstalled with the reported install kind. */
-  private captureBundleUninstalled(data: Record<string, unknown>): void {
-    this.telemetry.capture("bundle.uninstalled", {
-      source: readSource(data),
-    });
+  /** Capture bundle.uninstalled. */
+  private captureBundleUninstalled(_data: Record<string, unknown>): void {
+    this.telemetry.capture("bundle.uninstalled", { source: "remote" });
   }
 }

@@ -8,7 +8,7 @@
  * active theme by swapping the last path segment — no extra metadata to thread
  * through the registry → projection → provider chain.
  *
- * Every other URL is returned unchanged: mpak `ServerDetail.icons[].src`,
+ * Every other URL is returned unchanged: registry `ServerDetail.icons[].src`,
  * legacy flat `/icons/<name>.png`, or any third-party host. Those render as-is
  * and the caller's letter-avatar fallback covers anything that fails to load.
  */

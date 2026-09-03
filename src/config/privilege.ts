@@ -1,24 +1,12 @@
 import type { EngineHooks, EventSink, ToolCall } from "../engine/types.ts";
 import type { ResolvedFeatures } from "./features.ts";
 
-/** Field descriptor from a bundle's user_config manifest section. */
-export interface ConfigField {
-  key: string;
-  title?: string;
-  description?: string;
-  sensitive?: boolean;
-  required?: boolean;
-}
-
-/** Gate for confirming privileged tool calls and prompting for config values. */
+/** Gate for confirming privileged tool calls. */
 export interface ConfirmationGate {
   readonly supportsInteraction: boolean;
 
   /** Returns true if user approves, false to deny. */
   confirm(description: string, details: Record<string, unknown>): Promise<boolean>;
-
-  /** Prompt for a bundle config value — masked if sensitive, saved via ConfigManager. */
-  promptConfigValue(field: ConfigField): Promise<string | null>;
 }
 
 /**
@@ -116,8 +104,5 @@ export class NoopConfirmationGate implements ConfirmationGate {
   readonly supportsInteraction = false;
   async confirm(): Promise<boolean> {
     return true;
-  }
-  async promptConfigValue(): Promise<string | null> {
-    return null;
   }
 }

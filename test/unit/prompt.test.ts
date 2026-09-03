@@ -168,7 +168,7 @@ describe("composeSystemPrompt — workspace identity", () => {
 });
 
 const sampleApps: PromptAppInfo[] = [
-  { name: "tasks", trustScore: 85, ui: { name: "Tasks", primaryView: "board" } },
+  { name: "tasks", ui: { name: "Tasks", primaryView: "board" } },
 ];
 
 const sampleFocusedApp: FocusedAppInfo = {
@@ -177,7 +177,6 @@ const sampleFocusedApp: FocusedAppInfo = {
     { name: "tasks__create", description: "Create a new task" },
     { name: "tasks__list", description: "List all tasks" },
   ],
-  trustScore: 85,
 };
 
 describe("composeSystemPrompt — focusedApp", () => {
@@ -221,7 +220,6 @@ describe("composeSystemPrompt — focusedApp", () => {
   it("with focusedApp (with skill resource): contains App Guide with resource content", () => {
     const focused: FocusedAppInfo = {
       ...sampleFocusedApp,
-      trustScore: 85,
       skillResource:
         "Use tasks__create to add items. Always set a due date when the user mentions a deadline.",
     };
@@ -260,7 +258,6 @@ describe("composeSystemPrompt — focusedApp", () => {
         { name: "cal__add_event", description: "Add a calendar event" },
         { name: "cal__delete_event", description: "Delete a calendar event" },
       ],
-      trustScore: 85,
     };
     const result = composeSystemPrompt([], null, undefined, focused);
     expect(result).not.toContain("cal__add_event");
@@ -471,7 +468,6 @@ describe("composeSystemPrompt — reference resource", () => {
       tools: [],
       skillResource: "Use set_source to edit documents.",
       referenceResourceUri: "skill://typst-pdf/reference",
-      trustScore: 85,
     };
     const result = composeSystemPrompt([], null, undefined, focused);
     expect(result).toContain("Use set_source to edit documents.");
@@ -483,7 +479,6 @@ describe("composeSystemPrompt — reference resource", () => {
       name: "PDF Generator",
       tools: [],
       skillResource: "Use set_source to edit documents.",
-      trustScore: 85,
     };
     const result = composeSystemPrompt([], null, undefined, focused);
     expect(result).toContain("Use set_source to edit documents.");
@@ -495,7 +490,6 @@ describe("composeSystemPrompt — reference resource", () => {
       name: "PDF Generator",
       tools: [],
       referenceResourceUri: "skill://typst-pdf/reference",
-      trustScore: 85,
     };
     const result = composeSystemPrompt([], null, undefined, focused);
     expect(result).toContain("No app-specific guide available.");
@@ -562,7 +556,6 @@ describe("composeSystemPrompt — app guide injection", () => {
       name: "Tasks",
       tools: [],
       skillResource: guideText,
-      trustScore: 80,
     };
     const result = composeSystemPrompt([], null, undefined, focused);
     expect(result).toContain(guideText);
@@ -575,7 +568,6 @@ describe("composeSystemPrompt — app guide injection", () => {
       name: "Tasks",
       tools: [],
       skillResource: guideText,
-      trustScore: 30,
     };
     const result = composeSystemPrompt([], null, undefined, focused);
     expect(result).toContain(guideText);
@@ -587,7 +579,6 @@ describe("composeSystemPrompt — app guide injection", () => {
     const focused: FocusedAppInfo = {
       name: "Tasks",
       tools: [],
-      trustScore: 10,
     };
     const result = composeSystemPrompt([], null, undefined, focused);
     expect(result).toContain("## Active App: Tasks");
@@ -600,7 +591,6 @@ describe("composeSystemPrompt — bundle custom-instructions overlay", () => {
   function makeApp(overrides: Partial<PromptAppInfo>): PromptAppInfo {
     return {
       name: "ipinfo",
-      trustScore: 0,
       ui: null,
       ...overrides,
     };
@@ -727,9 +717,9 @@ describe("composeSystemPrompt — workspace overlay", () => {
   it("layer order: identity → core → workspace → apps → focused/skill", () => {
     const soul = makeContextSkill("soul", 0, "Identity layer.");
     const apps: PromptAppInfo[] = [
-      { name: "ipinfo", trustScore: 0, ui: null },
+      { name: "ipinfo", ui: null },
     ];
-    const focused: FocusedAppInfo = { name: "ipinfo", tools: [], trustScore: 0 };
+    const focused: FocusedAppInfo = { name: "ipinfo", tools: [] };
     const overlays: OverlayLayers = { workspace: "WS" };
 
     const result = composeSystemPrompt(
@@ -873,7 +863,7 @@ describe("composeSystemPrompt — Layer 3 skills (Phase 2)", () => {
 
   it("layer 3 section sits between overlays and apps", () => {
     const soul = makeContextSkill("soul", 0, "Identity.");
-    const apps: PromptAppInfo[] = [{ name: "ipinfo", trustScore: 0, ui: null }];
+    const apps: PromptAppInfo[] = [{ name: "ipinfo", ui: null }];
     const overlays: OverlayLayers = { workspace: "WS body" };
     const entry = makeEntry();
     const result = composeSystemPrompt(
@@ -1062,7 +1052,7 @@ describe("composeSystemPromptTraced", () => {
       reason: "loading_strategy: always",
     };
     const apps: PromptAppInfo[] = [
-      { name: "synapse-collateral", trustScore: 90, ui: { name: "Collateral" } },
+      { name: "synapse-collateral", ui: { name: "Collateral" } },
     ];
     const traced = composeSystemPromptTraced(
       [soul, userCtx],
@@ -1169,8 +1159,8 @@ describe("composeSystemPromptTraced", () => {
 
   it("apps section carries one subItem per app with bundle attribution", () => {
     const apps: PromptAppInfo[] = [
-      { name: "synapse-collateral", trustScore: 90, ui: { name: "Collateral" } },
-      { name: "synapse-crm", trustScore: 80, ui: null, customInstructions: "Use stages strictly." },
+      { name: "synapse-collateral", ui: { name: "Collateral" } },
+      { name: "synapse-crm", ui: null, customInstructions: "Use stages strictly." },
     ];
     const traced = composeSystemPromptTraced(
       [makeContextSkill("soul", 0, "I am.")],

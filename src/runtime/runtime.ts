@@ -391,11 +391,11 @@ export class Runtime {
   /**
    * Per-workspace host-resources deps factory. Set in `Runtime.start()`
    * after the resolver + rate-limit are constructed; consumed by every
-   * install path that spawns a bundle (lifecycle.installNamed/Local/
-   * Remote, connector-tools install, workspace-runtime boot reload).
-   * Returns `undefined` only when the
-   * runtime is constructed without the host-resources subsystem wired
-   * — never in production.
+   * path that starts a connector source (connector-tools install,
+   * workspace-runtime boot reload, the lifecycle's on-demand
+   * reconstruction). Returns `undefined` only when the runtime is
+   * constructed without the host-resources subsystem wired — never in
+   * production.
    */
   private _bundleMcpDepsFactory: ((wsId: string) => BundleMcpDeps) | null = null;
   /** Getter for current workspace ID (set per-request). */
@@ -561,12 +561,10 @@ export class Runtime {
 
     // Create placement registry and lifecycle manager
     const placementRegistry = new PlacementRegistry();
-    const mpakHome = join(resolve(resolveWorkDir(config)), "apps");
     const lifecycle = new BundleLifecycleManager(
       events,
       config.configPath,
       config.allowInsecureRemotes,
-      mpakHome,
     );
     lifecycle.setPlacementRegistry(placementRegistry);
     // Connector-skill cleanup on uninstall resolves the `connector-skills/`
@@ -896,7 +894,7 @@ export class Runtime {
       events,
       features,
       rt,
-      undefined, // reserved slot — was mpakHome (legacy searchBundles path, removed)
+      undefined, // reserved slot — was a registry-SDK home (legacy bundle-search path, removed)
       manageUsersCtx,
       manageWorkspacesCtx,
       manageMembersCtx,
@@ -909,18 +907,8 @@ export class Runtime {
     // Phase 2: Create platform capability sources. Each is an in-process
     // MCP server reachable through `InMemoryTransport` — no subprocess.
     // `createPlatformSources` returns sources already started.
-    //
-    // The automations source registers its domain-context getter on `rt`
-    // during construction (rt.registerAutomationsContext). We forward the
-    // getter to the lifecycle manager so bundle-contributed schedules
-    // can be created/removed via the domain API directly — bypassing the
-    // LLM-facing tool surface (which doesn't accept `source: "bundle"`
-    // or `bundleName`). See src/tools/platform/CLAUDE.md § 1.4.
     const { createPlatformSources } = await import("../tools/platform/index.ts");
     const platformSources = await createPlatformSources(rt, events);
-    if (rt._automationsContextGetter) {
-      lifecycle.setAutomationsContextGetter(rt._automationsContextGetter);
-    }
     // Make the host-resources factory accessible on `rt` so non-lifecycle
     // install paths (connector-tools, boot reload) can pull deps directly.
     rt._bundleMcpDepsFactory = bundleMcpDepsFactory;
@@ -935,35 +923,27 @@ export class Runtime {
     const workspaceSources = platformSources.filter((s) => !isIdentitySource(s.name));
 
     // Phase 3: Start workspace bundles with per-workspace registries
-    const configDir = config.configPath ? dirname(config.configPath) : undefined;
     const { registries: workspaceRegistries, entries: workspaceBundleEntries } =
-      await startWorkspaceBundles(
-        workspaceStore,
-        workspaceSources,
-        systemTools,
-        events,
-        configDir,
-        {
-          workDir: resolveWorkDir(config),
-          allowInsecureRemotes: config.allowInsecureRemotes,
-          // Boot re-spawn picks up host-resources handlers per workspace so
-          // a platform restart doesn't silently drop the capability for
-          // already-installed bundles.
-          getBundleMcpDeps: bundleMcpDepsFactory,
-          // Late-bound: a boot-started connection that loses auth mid-session
-          // fires this on a post-boot tool call, by which point `rt.lifecycle`
-          // is constructed. Flip the Connection to reauth_required so the UI
-          // offers "Reconnect" instead of every call failing silently.
-          onAuthLost: (wsId, serverName) => {
-            rt.lifecycle?.recordConnectionStateChange(
-              serverName,
-              wsId,
-              "_workspace",
-              "reauth_required",
-            );
-          },
+      await startWorkspaceBundles(workspaceStore, workspaceSources, systemTools, events, {
+        workDir: resolveWorkDir(config),
+        allowInsecureRemotes: config.allowInsecureRemotes,
+        // Boot re-spawn picks up host-resources handlers per workspace so
+        // a platform restart doesn't silently drop the capability for
+        // already-installed bundles.
+        getBundleMcpDeps: bundleMcpDepsFactory,
+        // Late-bound: a boot-started connection that loses auth mid-session
+        // fires this on a post-boot tool call, by which point `rt.lifecycle`
+        // is constructed. Flip the Connection to reauth_required so the UI
+        // offers "Reconnect" instead of every call failing silently.
+        onAuthLost: (wsId: string, serverName: string) => {
+          rt.lifecycle?.recordConnectionStateChange(
+            serverName,
+            wsId,
+            "_workspace",
+            "reauth_required",
+          );
         },
-      );
+      });
     rt._workspaceRegistries = workspaceRegistries;
     rt._platformSources = platformSources;
     rt._workspaceSources = workspaceSources;
@@ -2493,7 +2473,6 @@ export class Runtime {
         referenceUri && source instanceof McpSource
           ? await this.hasResource(source, referenceUri)
           : false;
-      const bundleInstance = this.lifecycle?.getInstance(appContext.serverName, appWsId);
       focusedApp = {
         name: appContext.appName,
         tools: sourceTools.map((t) => ({
@@ -2502,7 +2481,6 @@ export class Runtime {
         })),
         ...(skillResource ? { skillResource } : {}),
         ...(hasReference && referenceUri ? { referenceResourceUri: referenceUri } : {}),
-        trustScore: bundleInstance?.trustScore ?? 100,
       };
     } catch {
       // Source stopped or crashed — no app briefing this turn.
@@ -2516,8 +2494,6 @@ export class Runtime {
           state: appContext.appState.state,
           summary: appContext.appState.summary,
           updatedAt: appContext.appState.updatedAt,
-          trustScore:
-            this.lifecycle?.getInstance(appContext.serverName, appWsId)?.trustScore ?? 100,
         }
       : undefined;
 
@@ -3283,15 +3259,14 @@ export class Runtime {
   }
 
   /**
-   * Assemble one app's system-prompt entry: trust score, UI descriptor, the MCP
-   * server's `initialize.instructions`, and the optional `app://instructions`
+   * Assemble one app's system-prompt entry: UI descriptor, the MCP server's
+   * `initialize.instructions`, and the optional `app://instructions`
    * custom-instructions overlay.
    */
   private async buildAppInfo(
     instance: BundleInstance,
     registry: ToolRegistry | undefined,
   ): Promise<PromptAppInfo> {
-    const trustScore = instance.trustScore ?? 0;
     const ui: PromptAppInfo["ui"] = instance.ui ? { name: instance.ui.name } : null;
 
     // Surface the MCP server's `initialize.instructions` (when set) so the
@@ -3311,7 +3286,6 @@ export class Runtime {
       description: instance.description,
       instructions,
       ...(customInstructions !== undefined ? { customInstructions } : {}),
-      trustScore,
       ui,
     };
   }
@@ -4024,7 +3998,7 @@ export class Runtime {
 
   /**
    * Get the RegistryStore — instance-level config of which connector
-   * registries (curated / mpak / future) are enabled. Auto-seeds with
+   * registries (curated / future) are enabled. Auto-seeds with
    * sensible defaults on first read.
    *
    * Reserved for admin / mutation paths (the admin tool that updates
@@ -4045,7 +4019,7 @@ export class Runtime {
    * everything connector-catalog-shaped (Browse rows, raw
    * `ServerDetail[]`, lookup tables for Configure / installed-list).
    * Returns a new instance per call so per-instance memoization stays
-   * scoped to one tool invocation; the underlying source caches (mpak
+   * scoped to one tool invocation; the underlying source caches (HTTP
    * HTTP TTL, etc.) are still shared module-wide.
    */
   getConnectorDirectory(): ConnectorDirectory {
@@ -5104,18 +5078,6 @@ export class Runtime {
   }
 
   /**
-   * Absolute mpak home (`<workDir>/apps`). Single source of truth for the
-   * cache path: `getMpak()` is a singleton keyed by this string, so every
-   * caller must pass the SAME (resolved, absolute) form or the singleton
-   * thrashes — `getWorkDir()` is NOT pre-resolved, so callers must use this,
-   * not `join(getWorkDir(), "apps")`. Matches the value handed to the
-   * lifecycle at construction.
-   */
-  getMpakHome(): string {
-    return join(resolve(resolveWorkDir(this.config)), "apps");
-  }
-
-  /**
    * Whether the runtime allows OAuth flows / bundle URLs to target loopback
    * / RFC1918 / cloud-metadata hosts. Mirrors `config.allowInsecureRemotes`;
    * read by `/v1/mcp-auth/initiate` when constructing the workspace OAuth
@@ -5154,9 +5116,7 @@ export class Runtime {
         bundleName: instance.bundleName,
         version: instance.version,
         status: instance.state,
-        type: instance.type,
         toolCount,
-        trustScore: instance.trustScore ?? 0,
         ui: instance.ui,
       });
     }
@@ -5329,9 +5289,8 @@ function seedWorkspaceBundleInstances(
   entries: ProcessInventoryEntry[],
 ): void {
   for (const entry of entries) {
-    const { serverName: sn, bundle: ref, meta, wsId, dataDir, startError } = entry;
-    const label = "name" in ref ? ref.name : "url" in ref ? ref.url : ref.path;
-    lifecycle.seedInstance(sn, label, ref, meta ?? undefined, wsId, dataDir, startError);
+    const { serverName: sn, bundle: ref, meta, wsId, startError } = entry;
+    lifecycle.seedInstance(sn, ref.url, ref, meta ?? undefined, wsId, startError);
 
     const instance = lifecycle.getInstance(sn, wsId);
     if (instance?.ui?.placements && instance.ui.placements.length > 0) {
@@ -5391,8 +5350,6 @@ function initWorkDir(config: RuntimeConfig): void {
   const workDir = resolveWorkDir(config);
   const resolvedWorkDir = resolve(workDir);
   process.env.NB_WORK_DIR = resolvedWorkDir;
-  // Co-locate mpak cache/config/tmp under NimbleBrain's state tree
-  process.env.MPAK_HOME = join(resolvedWorkDir, "apps");
 
   // Sync core skills (soul.md) into the work dir so bundles can find them
   // without needing env vars that point into the source tree.

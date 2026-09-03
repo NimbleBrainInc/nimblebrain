@@ -12,7 +12,6 @@ import {
 	validateInternalToken,
 	INTERNAL_TOKEN_ALLOWED_PATHS,
 } from "../../src/api/auth-utils.ts";
-import { filterEnvForBundle } from "../../src/bundles/env-filter.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
 
 let runtime: Runtime;
@@ -175,16 +174,5 @@ describe("internal auth token - server integration", () => {
 
 	it("runtime exposes internal token via getInternalToken()", () => {
 		expect(runtime.getInternalToken()).toBe(handle.internalToken);
-	});
-});
-
-describe("internal auth token - env isolation", () => {
-	it("NB_INTERNAL_TOKEN is hard-denied in env filter", () => {
-		const env: Record<string, string> = {
-			PATH: "/usr/bin",
-			NB_INTERNAL_TOKEN: "secret-token",
-		};
-		const result = filterEnvForBundle(env, undefined, ["NB_INTERNAL_TOKEN"]);
-		expect(result.NB_INTERNAL_TOKEN).toBeUndefined();
 	});
 });
