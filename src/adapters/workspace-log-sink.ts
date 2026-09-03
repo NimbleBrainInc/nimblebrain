@@ -7,7 +7,6 @@ import { log } from "../observability/log.ts";
 const WORKSPACE_EVENTS = new Set<EngineEventType>([
   "bundle.installed",
   "bundle.uninstalled",
-  "bundle.upgraded",
   "data.changed",
   "config.changed",
   "skill.created",

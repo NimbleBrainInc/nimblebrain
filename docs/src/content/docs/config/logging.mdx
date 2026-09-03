@@ -75,7 +75,7 @@ Remaining fields vary by event type — they are the event's payload, written in
 
 Only workspace-level events are written to this log; conversation streaming events (`text.delta`, `tool.start`, and the like) are not.
 
-**Bundle lifecycle** — `bundle.installed`, `bundle.uninstalled`, `bundle.upgraded`. Track connectors entering, leaving, and upgrading in the workspace.
+**Connector lifecycle** — `bundle.installed`, `bundle.uninstalled`. Track connectors entering and leaving the workspace.
 
 ```json
 {"ts":"2026-03-25T14:30:00.123Z","event":"bundle.installed","wsId":"ws_product","serverName":"com-example-postgres","bundleName":"https://mcp.example.com/mcp","version":"remote (12 tools)"}
