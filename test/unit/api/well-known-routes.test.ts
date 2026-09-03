@@ -13,34 +13,39 @@ import { wellKnownRoutes } from "../../../src/api/routes/well-known.ts";
 
 // ── Test helpers ──────────────────────────────────────────────────
 
-/** Build a minimal AppContext with a provider that optionally has getAuthkitDomain(). */
-function makeCtx(authkitDomain?: string): AppContext {
-  const provider = authkitDomain
+/**
+ * Build a minimal AppContext whose provider optionally declares an
+ * authorization server — the only thing these routes read off it.
+ */
+function makeCtx(issuerHost?: string): AppContext {
+  const authServer = issuerHost
     ? {
-        capabilities: { authCodeFlow: false, tokenRefresh: false, managedUsers: false },
-        verifyRequest: async () => null,
-        listUsers: async () => [],
-        createUser: async () => {
-          throw new Error("not implemented");
-        },
-        deleteUser: async () => false,
-        getAuthkitDomain: () => authkitDomain,
+        issuer: `https://${issuerHost}`,
+        metadataUrl: `https://${issuerHost}/.well-known/oauth-authorization-server`,
       }
-    : {
-        capabilities: { authCodeFlow: false, tokenRefresh: false, managedUsers: false },
-        verifyRequest: async () => null,
-        listUsers: async () => [],
-        createUser: async () => {
-          throw new Error("not implemented");
-        },
-        deleteUser: async () => false,
-      };
+    : null;
+
+  const provider = {
+    capabilities: {
+      authCodeFlow: false,
+      tokenRefresh: false,
+      managedUsers: false,
+      authorizationServer: authServer !== null,
+    },
+    verifyRequest: async () => null,
+    listUsers: async () => [],
+    createUser: async () => {
+      throw new Error("not implemented");
+    },
+    deleteUser: async () => false,
+    authorizationServer: () => authServer,
+  };
 
   return { provider } as unknown as AppContext;
 }
 
-function createApp(authkitDomain?: string) {
-  const ctx = makeCtx(authkitDomain);
+function createApp(issuerHost?: string) {
+  const ctx = makeCtx(issuerHost);
   const app = new Hono();
   app.route("/", wellKnownRoutes(ctx));
   return app;
@@ -49,8 +54,8 @@ function createApp(authkitDomain?: string) {
 // ── Protected Resource Metadata ──────────────────────────────────
 
 describe("GET /.well-known/oauth-protected-resource", () => {
-  it("returns correct JSON when authkitDomain is configured", async () => {
-    const app = createApp("myapp");
+  it("returns correct JSON when the provider declares an authorization server", async () => {
+    const app = createApp("myapp.authkit.app");
     const res = await app.request("http://api.example.com/.well-known/oauth-protected-resource");
 
     expect(res.status).toBe(200);
@@ -60,7 +65,7 @@ describe("GET /.well-known/oauth-protected-resource", () => {
     expect(body.bearer_methods_supported).toEqual(["header"]);
   });
 
-  it("returns 404 when authkitDomain is not configured", async () => {
+  it("returns 404 when the provider declares no authorization server", async () => {
     const app = createApp(undefined);
     const res = await app.request("/.well-known/oauth-protected-resource");
 
@@ -70,7 +75,7 @@ describe("GET /.well-known/oauth-protected-resource", () => {
   });
 
   it("honors X-Forwarded-Proto when behind a TLS-terminating proxy", async () => {
-    const app = createApp("myapp");
+    const app = createApp("myapp.authkit.app");
     // Simulates ALB → pod: pod sees HTTP, but ALB sets X-Forwarded-Proto: https.
     const res = await app.request(
       "http://hq.example.com/.well-known/oauth-protected-resource",
@@ -86,7 +91,7 @@ describe("GET /.well-known/oauth-protected-resource", () => {
 // ── Authorization Server Metadata proxy ──────────────────────────
 
 describe("GET /.well-known/oauth-authorization-server", () => {
-  it("proxies upstream metadata when authkitDomain is configured", async () => {
+  it("proxies the declared metadata URL", async () => {
     const upstreamMetadata = {
       issuer: "https://myapp.authkit.app",
       authorization_endpoint: "https://myapp.authkit.app/authorize",
@@ -107,7 +112,7 @@ describe("GET /.well-known/oauth-authorization-server", () => {
     };
 
     try {
-      const app = createApp("myapp");
+      const app = createApp("myapp.authkit.app");
       const res = await app.request("/.well-known/oauth-authorization-server");
 
       expect(res.status).toBe(200);
@@ -127,7 +132,7 @@ describe("GET /.well-known/oauth-authorization-server", () => {
     };
 
     try {
-      const app = createApp("myapp");
+      const app = createApp("myapp.authkit.app");
       const res = await app.request("/.well-known/oauth-authorization-server");
 
       expect(res.status).toBe(502);
@@ -145,7 +150,7 @@ describe("GET /.well-known/oauth-authorization-server", () => {
     };
 
     try {
-      const app = createApp("myapp");
+      const app = createApp("myapp.authkit.app");
       const res = await app.request("/.well-known/oauth-authorization-server");
 
       expect(res.status).toBe(502);
@@ -156,7 +161,7 @@ describe("GET /.well-known/oauth-authorization-server", () => {
     }
   });
 
-  it("returns 404 when authkitDomain is not configured", async () => {
+  it("returns 404 when the provider declares no authorization server", async () => {
     const app = createApp(undefined);
     const res = await app.request("/.well-known/oauth-authorization-server");
 

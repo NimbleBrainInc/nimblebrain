@@ -27,6 +27,22 @@ export interface ProviderCapabilities {
   tokenRefresh: boolean;
   /** Provider owns the user directory (skip local UserStore for CRUD). */
   managedUsers: boolean;
+  /** Provider is also an OAuth authorization server external clients can discover. */
+  authorizationServer: boolean;
+}
+
+// ── Authorization server ───────────────────────────────────────────
+
+/** Where an external MCP client goes to obtain a token for this instance. */
+export interface AuthorizationServer {
+  /** The `iss` value, and the entry point clients advertise and validate against. */
+  issuer: string;
+  /**
+   * Where the issuer's own metadata document lives, when the runtime proxies
+   * it for clients that predate Protected Resource Metadata. Omit when the
+   * issuer publishes nothing to proxy.
+   */
+  metadataUrl?: string;
 }
 
 // ── Token exchange ─────────────────────────────────────────────────
@@ -134,6 +150,13 @@ export interface IdentityProvider {
 
   /** Get the authorization URL for redirect login (only called by /v1/auth/authorize). */
   getAuthorizationUrl?(): string;
+
+  /**
+   * The OAuth authorization server external MCP clients should discover, if
+   * this provider is one. Returns null when it is not, or when the deployment
+   * has not configured one. Guarded by `capabilities.authorizationServer`.
+   */
+  authorizationServer?(): AuthorizationServer | null;
 
   /** Verify an incoming request and return the authenticated identity, or null. */
   verifyRequest(req: Request): Promise<UserIdentity | null>;
