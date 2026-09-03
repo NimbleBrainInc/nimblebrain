@@ -159,7 +159,13 @@ export function createHooksSource(runtime: Runtime, eventSink: EventSink): McpSo
           // The address, in full. Rebuilt from the stored id rather than kept
           // as a second copy, so there is one thing to rotate and no way for a
           // displayed URL to disagree with the one the door admits.
-          url: buildHookUrl(reg.deliveryId),
+          //
+          // Null when the record predates delivery ids. There is no URL to
+          // report, and reporting one anyway is the failure this whole surface
+          // is meant to avoid: the door refuses such a record, so any address
+          // shown here would be one the door does not admit — copied into a
+          // vendor console, it fails silently and for no visible reason.
+          url: reg.deliveryId ? buildHookUrl(reg.deliveryId) : null,
           createdAt: reg.createdAt,
           rotatedAt: reg.rotatedAt ?? null,
           // True while the previous URL still opens. An operator mid-rotation
@@ -179,8 +185,8 @@ export function createHooksSource(runtime: Runtime, eventSink: EventSink): McpSo
       description:
         "Replace one stream's delivery URL and hand the new one to the connector, " +
         "which re-registers it with the vendor. The previous URL keeps working for a " +
-        "grace window so deliveries already in flight are not lost. Requires `confirm` " +
-        "to equal the vendor slug. Workspace admin only.",
+        "grace window so deliveries already in flight are not lost, then stops. " +
+        "Workspace admin only.",
       annotations: { [INTERNAL_TOOL_ANNOTATION]: true },
       inputSchema: HooksRotateInput,
       handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
@@ -189,16 +195,6 @@ export function createHooksSource(runtime: Runtime, eventSink: EventSink): McpSo
 
         const connector = String(input.connector ?? "");
         const vendor = String(input.vendor ?? "");
-        // Typed rather than clicked. A rotation starts a clock on the URL the
-        // vendor is delivering to right now, and naming the stream is what makes
-        // that a decision instead of a reflex.
-        if (String(input.confirm ?? "") !== vendor) {
-          return refuse(
-            `To rotate the ${vendor} stream, set "confirm" to "${vendor}". The current URL ` +
-              "stops working once its grace window closes, and the connector must " +
-              "re-register the new one with the vendor.",
-          );
-        }
         if (!(await holdsStream(runtime, auth.wsId, connector, vendor))) {
           return refuse(
             `This workspace holds no ${vendor} stream for ${connector}. list_webhooks ` +
