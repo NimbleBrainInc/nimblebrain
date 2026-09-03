@@ -33,6 +33,12 @@ import { validateToolInput } from "./validate-input.ts";
  *    behavioural hints (`destructiveHint` and friends).
  *
  * `McpSource.tools()` reads both back under the same names on the client side.
+ *
+ * `outputSchema` is a promise, not a label: declaring one obligates `handler`
+ * to return `structuredContent` on every success. The SDK client caches a
+ * validator per declaring tool at `tools/list` and rejects a result without it,
+ * which surfaces as `isError: true` on the tool's own call rather than as
+ * anything naming the schema. A tool that returns text alone declares nothing.
  */
 export interface InProcessTool {
   name: string;
@@ -41,6 +47,8 @@ export interface InProcessTool {
   handler: (input: Record<string, unknown>) => Promise<ToolResult>;
   meta?: Record<string, unknown>;
   annotations?: ToolAnnotations;
+  /** See the note on {@link InProcessTool}: this obliges `handler` to return
+   * `structuredContent`. */
   outputSchema?: Record<string, unknown>;
 }
 
