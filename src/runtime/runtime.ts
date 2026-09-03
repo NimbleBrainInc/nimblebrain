@@ -387,11 +387,11 @@ export class Runtime {
   /**
    * Per-workspace host-resources deps factory. Set in `Runtime.start()`
    * after the resolver + rate-limit are constructed; consumed by every
-   * install path that spawns a bundle (lifecycle.installNamed/Local/
-   * Remote, connector-tools install, workspace-runtime boot reload).
-   * Returns `undefined` only when the
-   * runtime is constructed without the host-resources subsystem wired
-   * — never in production.
+   * path that starts a connector source (connector-tools install,
+   * workspace-runtime boot reload, the lifecycle's on-demand
+   * reconstruction). Returns `undefined` only when the runtime is
+   * constructed without the host-resources subsystem wired — never in
+   * production.
    */
   private _bundleMcpDepsFactory: ((wsId: string) => BundleMcpDeps) | null = null;
   /** Getter for current workspace ID (set per-request). */

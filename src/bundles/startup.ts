@@ -62,7 +62,7 @@ export function composeBundleMcpContext(
  *
  *   1. `workspaceContext` (preferred) — typed handle, owns wsId + workDir.
  *   2. `wsId` + `workDir` (legacy) — separate fields the old callers pass.
- *   3. Neither (URL/local-path bundles without OAuth and without user_config).
+ *   3. Neither (a connector with static auth, which opens no OAuth flow).
  *
  * Returns a single `WorkspaceContext` (or undefined when no workspace is
  * in play). If both forms are passed, they must agree — otherwise we
@@ -173,10 +173,8 @@ interface StartBundleOpts {
    */
   workspaceContext?: WorkspaceContext;
   /**
-   * Workspace id for credential resolution. Required for named bundles — the
-   * named-bundle path resolves `user_config` via `resolveUserConfig` which is
-   * workspace-scoped by design. Unused for URL and local-path bundles, which
-   * don't go through `prepareServer` for `user_config`.
+   * Workspace id for credential resolution. Required for a connector that
+   * opens an OAuth flow — its tokens are workspace-scoped by design.
    *
    * @deprecated Pass `workspaceContext` instead. Kept for incremental
    * migration; see a follow-up migration.
@@ -362,8 +360,8 @@ export async function buildUrlOAuthProvider(
     throw new Error(
       `[bundles] URL bundle "${serverName}" without static auth requires opts.workspaceContext ` +
         "(or the legacy opts.wsId) — OAuth credentials are workspace-scoped and silent defaults " +
-        "would cross tenants. Thread workspaceContext through installRemote() or the caller " +
-        "that invoked startBundleSource().",
+        "would cross tenants. Thread workspaceContext through the caller that invoked " +
+        "startBundleSource().",
     );
   }
   const wsId = wsContext.workspaceId;

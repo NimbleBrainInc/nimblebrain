@@ -13,9 +13,7 @@ export interface AppInfo {
   bundleName: string;
   version: string;
   status: BundleState;
-  type: "upjack" | "plain";
   toolCount: number;
-  trustScore: number;
   ui: BundleUiMeta | null;
 }
 

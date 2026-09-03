@@ -47,18 +47,6 @@ const disconnectConnector = mock(async () => ({
   deletedLocal: true,
 }));
 const initiateMcpOAuth = mock(async () => ({ authorizationUrl: "https://example.test/auth" }));
-const clearBundleUserConfig = mock(async () => ({
-  ok: true,
-  serverName: "stub",
-  populated: {},
-  respawn: { ok: true },
-}));
-const setBundleUserConfig = mock(async () => ({
-  ok: true,
-  serverName: "stub",
-  populated: { api_key: true },
-  respawn: { ok: true },
-}));
 const setupConnectorOperator = mock(async () => ({
   ok: true,
   catalogId: "io.asana/mcp",
@@ -71,15 +59,13 @@ const connectComposioApiKey = mock(async () => ({
 }));
 
 // Spread the preload's real-module snapshot (see web/test/setup.ts) so this
-// whole-module mock exposes every api/client export; only these five are
+// whole-module mock exposes every api/client export; only these four are
 // overridden. Keeps the process-global mock registry complete even when it
 // leaks into another suite loading concurrently.
 mock.module("../api/client", () => ({
   ...realClient,
   disconnectConnector,
   initiateMcpOAuth,
-  clearBundleUserConfig,
-  setBundleUserConfig,
   setupConnectorOperator,
   connectComposioApiKey,
 }));
@@ -147,8 +133,6 @@ function findButton(container: HTMLElement, prefix: string): HTMLButtonElement |
 beforeEach(() => {
   disconnectConnector.mockClear();
   initiateMcpOAuth.mockClear();
-  clearBundleUserConfig.mockClear();
-  setBundleUserConfig.mockClear();
   setupConnectorOperator.mockClear();
   connectComposioApiKey.mockClear();
 });

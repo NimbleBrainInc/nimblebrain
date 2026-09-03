@@ -1069,64 +1069,6 @@ export async function connectComposioApiKey(
 }
 
 /**
- * Result envelope for set/clear bundle user_config calls. The
- * credential write itself is reported via `ok` + `populated`; the
- * implicit subprocess respawn that picks up the new env is reported
- * separately under `respawn` so the UI can surface a partial-success
- * state (creds saved, but bundle didn't come back up).
- */
-export interface BundleUserConfigResult {
-  ok: boolean;
-  serverName: string;
-  populated: Record<string, boolean>;
-  respawn: { ok: boolean; error?: string };
-}
-
-/**
- * Set or clear individual `user_config` fields on a stdio bundle. Empty
- * string clears one field; absent fields are unchanged. Returns the
- * post-write `populated` map so the caller can refresh UI state without
- * a follow-up list_installed round-trip.
- *
- * Saving credentials triggers an automatic subprocess respawn so the
- * new env takes effect immediately — Mode 1 (env_inject) bundles
- * otherwise need a platform restart to pick up new values.
- */
-export async function setBundleUserConfig(
-  serverName: string,
-  fields: Record<string, string>,
-): Promise<BundleUserConfigResult> {
-  const result = await callTool("nb", "manage_connectors", {
-    action: "set_user_config",
-    serverName,
-    fields,
-  });
-  return unwrapStructured(result, "set_user_config");
-}
-
-/**
- * Drop the entire workspace credential file for a stdio bundle. Every
- * declared field reverts to not-configured. Triggers an automatic
- * Important caveat — the running subprocess is **not** restarted.
- * Clearing on a bundle with required fields would orphan the
- * connector (respawn would fail at prepareServer and the workspace
- * registry would lose the source, taking the connector off the UI),
- * so the server intentionally only zeroes the disk file. The bundle
- * keeps serving requests with whatever env it was launched with
- * until the next platform restart. Surface this to operators as
- * "credential rotated, takes effect next deploy" — it's not the same
- * as immediate revocation. (Active follow-up to give admins an
- * explicit Stop affordance for hard-revocation cases.)
- */
-export async function clearBundleUserConfig(serverName: string): Promise<BundleUserConfigResult> {
-  const result = await callTool("nb", "manage_connectors", {
-    action: "clear_user_config",
-    serverName,
-  });
-  return unwrapStructured(result, "clear_user_config");
-}
-
-/**
  * The exact redirect URI the platform sends to vendor OAuth servers.
  * OperatorSetupModal shows this to admins so they can register the
  * same value in the vendor's OAuth app config; a mismatch yields a

@@ -1290,10 +1290,9 @@ async function handleConnectApiKey(
   const { entry, composio } = connector;
 
   // Validate submitted values against the declared fields: every required field
-  // present and non-empty; unknown keys rejected (default-deny, same posture as
-  // set_user_config). Only declared keys are forwarded to Composio. This runs
-  // before any config gate — field shape is caller-error, independent of whether
-  // the broker is configured.
+  // present and non-empty; unknown keys rejected (default-deny). Only declared
+  // keys are forwarded to Composio. This runs before any config gate — field
+  // shape is caller-error, independent of whether the broker is configured.
   const collected = collectApiKeyFields(composio, catalogId, rawFields);
   if ("error" in collected) return errResult(collected.error);
   const { values } = collected;

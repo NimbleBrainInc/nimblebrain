@@ -21,11 +21,8 @@ import { useCanWriteActiveWorkspace } from "../../hooks/useScopedRole";
  *     fades to just the title block when ready.
  *
  *   - The action bar (top-right) groups secondary management
- *     affordances: Docs, Configure (when stdio bundle has a
- *     `user_config` schema and status is ready — the hero owns
- *     `needs_setup`), and Uninstall. Putting Configure here instead
- *     of as another inline section keeps the page body focused on
- *     status + connection state + tool permissions, with all
+ *     affordances: Docs and Uninstall, keeping the page body focused
+ *     on status + connection state + tool permissions with all
  *     "manage this connector" entry points in one consistent place.
  *
  *   - Tool permissions render inline as the page's primary content
