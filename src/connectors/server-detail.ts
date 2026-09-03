@@ -22,6 +22,7 @@ import { join } from "node:path";
 import Ajv, { type ValidateFunction } from "ajv";
 import addFormats from "ajv-formats";
 import type { HostManifestMeta } from "../bundles/types.ts";
+import type { ConnectorAuthKind } from "./auth-kind.ts";
 
 /** Optional sized icon. Upstream Icon definition. */
 export interface Icon {
@@ -180,23 +181,33 @@ export interface SmitheryConnectorConfig {
  */
 export interface NimbleBrainConnectorMeta {
   /**
-   * OAuth flow type for remote services.
+   * How this connector authenticates. Either a runtime-native kind — the
+   * runtime is the OAuth client or credential holder — or the id of a
+   * registered brokered provider.
    *
+   * Runtime-native ({@link RUNTIME_NATIVE_AUTH_KINDS}):
    * - `dcr`: dynamic client registration (RFC 7591). Provider issues
    *   a client at first use; no operator setup.
    * - `static`: pre-registered OAuth client. Operator provides
    *   `clientId` + `clientSecret` from the vendor's developer portal.
-   * - `composio`: Composio aggregator holds the vendor's tokens.
-   *   Platform persists only an opaque `connectedAccountId` per
-   *   workspace. Required: the `composio` block below.
-   * - `smithery`: Smithery brokers the connection and hosts the MCP
-   *   session. Platform persists only the derived connection id.
-   *   Required: the `smithery` block below.
    * - `provider`: a platform-managed connector whose credential is produced
    *   server-side by a named credential provider (no user/operator OAuth, no
    *   per-user secret). Required: the `providerAuth` block below.
+   *
+   * Anything else names a **brokered** provider (`composio`, `smithery`) — a
+   * third party that holds the upstream credential and hosts the MCP session.
+   * It is validated against the registered providers when the install runs, not
+   * against a literal union here: a deployment that has not configured a
+   * broker still shows its connectors in Browse and refuses at install, rather
+   * than having them vanish depending on deploy config.
+   *
+   * **A brokered entry carries its provider's config block under the key
+   * naming that provider** — `composio:` / `smithery:` below. That convention
+   * is what lets the install path hand a provider its own coordinates without
+   * knowing what they are; the two typed blocks are documentation of the shapes
+   * we ship, not an enumeration the runtime enforces.
    */
-  auth?: "dcr" | "static" | "composio" | "smithery" | "provider";
+  auth?: ConnectorAuthKind;
   /** Required for `auth: "static"`: where the operator creates the OAuth app. */
   operatorSetup?: {
     portalUrl: string;
@@ -204,7 +215,7 @@ export interface NimbleBrainConnectorMeta {
     clientSecretKey: string;
   };
   /**
-   * Required for `auth: "composio"`. See {@link ComposioConnectorConfig}
+   * Composio's block, for `auth: "composio"`. See {@link ComposioConnectorConfig}
    * for the full shape (toolkit, tools, authScheme, fields).
    *
    * The MCP URL and headers are obtained from Composio's session API at
@@ -213,7 +224,7 @@ export interface NimbleBrainConnectorMeta {
    */
   composio?: ComposioConnectorConfig;
   /**
-   * Required for `auth: "smithery"`. See {@link SmitheryConnectorConfig}.
+   * Smithery's block, for `auth: "smithery"`. See {@link SmitheryConnectorConfig}.
    *
    * The MCP URL and headers come from Smithery's Connect API at install time —
    * operators name the registry server, not an endpoint.

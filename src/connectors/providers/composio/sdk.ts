@@ -453,11 +453,10 @@ export async function deleteComposioConnectedAccount(opts: {
  * the bundle is still authenticated).
  *
  * Idempotent and best-effort throughout: every step swallows its own
- * errors and reports them in the return value. Safe to call from
- * both `disconnect` (keep the bundle installed, drop credentials)
- * and `uninstall` (full removal). Disconnect-only callers can read
- * the return value to surface revoke status; uninstall just calls
- * for side-effects.
+ * errors and reports them in the return value. It backs the provider's
+ * `cleanup` arm, which both `disconnect` (keep the bundle installed, drop
+ * credentials) and `uninstall` (full removal) call. Disconnect reads the return
+ * value to surface revoke status; uninstall just calls for side-effects.
  *
  * Reads the broker credential from the resolved provider config. If
  * Composio isn't configured, the upstream-delete step is skipped
@@ -471,26 +470,21 @@ export async function deleteComposioConnectedAccount(opts: {
  * That recipe got mis-followed once already (uninstall had only the
  * `mcp-oauth` rmSync and missed composio entirely — see the QA
  * review that prompted this helper). One function, one canonical
- * cleanup recipe, two callers.
+ * cleanup recipe, one seam arm.
  */
 export async function cleanupComposioBundle(opts: {
   workDir: string;
-  wsId: string;
+  owner: ConnectorOwner;
   connectorId: string;
 }): Promise<{
   upstreamDeleted: boolean;
   localDeleted: boolean;
   lastError?: string;
 }> {
-  // Dynamic import to avoid a top-of-file dependency from the SDK
-  // module on `src/bundles/composio-connection.ts`. The connection
-  // module sits in the bundle layer; pulling it eagerly here would
-  // create a cycle if a future refactor moves any of these helpers.
-  // Cleanup is rare (uninstall / disconnect), so the import cost is
-  // negligible vs. the architectural cleanliness.
-  const { readComposioConnection, deleteComposioConnection } = await import(
-    "../../../bundles/composio-connection.ts"
-  );
+  // Dynamic import so this vendor-adapter module keeps no load-time edge to the
+  // connection store. Cleanup is rare (uninstall / disconnect), so the import
+  // cost is negligible.
+  const { readComposioConnection, deleteComposioConnection } = await import("./connection.ts");
 
   let upstreamDeleted = false;
   let localDeleted = false;
@@ -508,11 +502,7 @@ export async function cleanupComposioBundle(opts: {
 
   let connectedAccountId: string | undefined;
   try {
-    const connection = await readComposioConnection(
-      opts.workDir,
-      { type: "workspace", wsId: opts.wsId },
-      opts.connectorId,
-    );
+    const connection = await readComposioConnection(opts.workDir, opts.owner, opts.connectorId);
     connectedAccountId = connection?.connectedAccountId;
   } catch (err) {
     lastError = err instanceof Error ? err.message : String(err);
@@ -526,11 +516,7 @@ export async function cleanupComposioBundle(opts: {
   }
 
   try {
-    localDeleted = await deleteComposioConnection(
-      opts.workDir,
-      { type: "workspace", wsId: opts.wsId },
-      opts.connectorId,
-    );
+    localDeleted = await deleteComposioConnection(opts.workDir, opts.owner, opts.connectorId);
   } catch (err) {
     lastError = err instanceof Error ? err.message : String(err);
   }

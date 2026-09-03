@@ -177,33 +177,41 @@ export type BundleRef = {
    */
   additionalAuthorizationParams?: Record<string, string>;
   /**
-   * Composio-backed connectors carry the catalog id forward so the
-   * lifecycle's boot-time state check can probe the right
-   * `connection.json` (under `credentials/composio/<connectorId>/`
-   * rather than `credentials/mcp-oauth/<serverName>/tokens.json`).
-   * Set at install time by `handleInstallRemoteOAuth`'s composio
-   * branch. Undefined for dcr/static OAuth bundles.
+   * Set on a **brokered** install — one where a third-party provider
+   * (Composio, Smithery) holds the upstream credential and hosts the MCP
+   * session. Absent for every runtime-native ref (dcr / static / provider).
+   *
+   * One block for every provider, deliberately. `provider` names the registered
+   * {@link ManagedConnectorProvider} that minted the install, `connectorId` is
+   * the catalog entry id it was installed from (every brokered install persists
+   * a per-install session URL, so a url→catalog lookup misses and the stamped
+   * id is the only way back to the entry), and `providerRef` is
+   * `ManagedSession.providerRef` verbatim — opaque provider-scoped coordinates
+   * the kernel never reads. Read it through `brokeredRef()`
+   * (`./brokered.ts`), which also maps the legacy per-vendor blocks forward.
    */
-  composio?: { connectorId: string };
-  /**
-   * Smithery-backed connectors carry four coordinates, each load-bearing:
-   * `connectorId` resolves the catalog entry (the persisted url is a
-   * per-install session URL that misses the url→catalog map, same as
-   * Composio); `connectionId` is what the liveness probe reads and what
-   * teardown deletes at the broker; `namespace` pins the probe and the
-   * delete to the namespace the connection was CREATED in, so repointing
-   * `connectors.providers.smithery.namespace` can't make either act on the
-   * wrong one. Set at
-   * install time by `handleInstallRemoteOAuth`'s smithery branch. Undefined
-   * for every other auth kind.
-   */
-  smithery?: {
-    connectorId: string;
-    connectionId: string;
-    namespace: string;
-    baseUrl: string;
-  };
+  brokered?: BrokeredRef;
 };
+
+/**
+ * The brokered coordinates a `BundleRef` carries — who brokered this install,
+ * which catalog entry it came from, and whatever that provider needs to name
+ * the thing it minted.
+ *
+ * `providerRef` is **opaque to the kernel**: it is `ManagedSession.providerRef`
+ * as the provider returned it, handed back to that same provider's probe and
+ * teardown. Nothing outside `src/connectors/providers/<provider>/` may read a
+ * key out of it — the moment the kernel does, the seam carries a schema again
+ * and a third provider means teaching the kernel a third shape.
+ */
+export interface BrokeredRef {
+  /** Registered provider id — the connector's brokered `auth` kind. */
+  provider: string;
+  /** The catalog entry id the install stamped on the ref. */
+  connectorId: string;
+  /** `ManagedSession.providerRef` verbatim. Opaque here; meaningful only to `provider`. */
+  providerRef?: Record<string, string>;
+}
 
 /**
  * Config for a pre-registered OAuth client (Track A — alternative to DCR).

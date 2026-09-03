@@ -32,9 +32,10 @@ import {
   type TransportCredentialProvider,
 } from "../../../tools/credential-provider.ts";
 import { validateComposioConfig } from "./config.ts";
+import { COMPOSIO_PROVIDER_ID } from "./id.ts";
 
 /** The credential-provider name a Composio-installed ref selects. */
-export const COMPOSIO_CREDENTIAL_PROVIDER = "composio";
+export const COMPOSIO_CREDENTIAL_PROVIDER = COMPOSIO_PROVIDER_ID;
 
 /** The header a Composio hosted-session endpoint authenticates on. */
 const COMPOSIO_AUTH_HEADER = "x-api-key";

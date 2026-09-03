@@ -1,0 +1,78 @@
+/**
+ * The connector auth-kind taxonomy.
+ *
+ * Its own dependency-free module because everything from the catalog wire shape
+ * to the install path to the provider registry needs it, and it must not drag
+ * any of them into each other to get it.
+ */
+
+/**
+ * The auth kinds the RUNTIME implements itself — it is the OAuth client, the
+ * tokens live in our own credential store, and no vendor SDK is involved.
+ *
+ *   - `dcr`      — dynamic client registration (RFC 7591).
+ *   - `static`   — a pre-registered OAuth client the operator configured.
+ *   - `provider` — a credential minted server-side by a named credential
+ *                  provider (no user or operator OAuth at all).
+ *
+ * This list is closed because the runtime is the thing that would have to grow
+ * to extend it. Every OTHER auth kind is brokered.
+ */
+export const RUNTIME_NATIVE_AUTH_KINDS = ["dcr", "static", "provider"] as const;
+
+export type RuntimeNativeAuthKind = (typeof RUNTIME_NATIVE_AUTH_KINDS)[number];
+
+/**
+ * A connector's auth kind: one of {@link RUNTIME_NATIVE_AUTH_KINDS}, or the id
+ * of a registered `ManagedConnectorProvider`.
+ *
+ * Deliberately an open string. A brokered kind IS its provider's id, so the
+ * taxonomy's brokered half is the provider registry — a value validated against
+ * what is registered, not against a literal union that had to be hand-mirrored
+ * in every file that named one.
+ */
+export type ConnectorAuthKind = string;
+
+/** Whether `kind` is implemented by the runtime itself (as opposed to brokered). */
+export function isRuntimeNativeAuthKind(kind: string): kind is RuntimeNativeAuthKind {
+  return (RUNTIME_NATIVE_AUTH_KINDS as readonly string[]).includes(kind);
+}
+
+/**
+ * Whether `kind` names a brokered provider — i.e. anything that is not
+ * runtime-native. Whether a provider is actually *registered* for it is a
+ * separate question, answered by `ManagedConnectorRegistry.get`: a catalog may
+ * legitimately offer a connector this deployment has not configured a broker
+ * for, and it must still render in Browse and refuse at install rather than
+ * vanish depending on deploy config.
+ */
+export function isBrokeredAuthKind(kind: string): boolean {
+  return kind.length > 0 && !isRuntimeNativeAuthKind(kind);
+}
+
+/**
+ * The provider config block a brokered entry carries, read off the record that
+ * carries it — the catalog `_meta` extension, a projected catalog entry, or an
+ * install action; all three keep the block under the key naming the provider.
+ *
+ * That convention is the whole mechanism. It is what lets the kernel hand a
+ * provider its own coordinates without knowing their shape, and therefore what
+ * makes a third provider a folder plus a registry line rather than a typed
+ * field on three records and an arm in every consumer.
+ *
+ * Returns `undefined` for a runtime-native entry, and for a brokered one whose
+ * block is missing — the install path refuses that rather than guessing, since
+ * a provider with no coordinates cannot mint anything.
+ */
+export function brokeredCatalogConfig(
+  entry: { auth?: ConnectorAuthKind } | undefined,
+): Record<string, unknown> | undefined {
+  const kind = entry?.auth;
+  if (!kind || !isBrokeredAuthKind(kind)) return undefined;
+  // The one cast: the typed blocks (`composio`, `smithery`) are declared
+  // instances of a convention the type system cannot express — the key is a
+  // value, not a literal — so reading by that key means widening once, here.
+  const block = (entry as unknown as Record<string, unknown>)[kind];
+  if (!block || typeof block !== "object" || Array.isArray(block)) return undefined;
+  return block as Record<string, unknown>;
+}

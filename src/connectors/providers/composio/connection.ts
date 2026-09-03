@@ -1,13 +1,19 @@
 /**
- * Composio connected-account state for a workspace.
+ * Composio connected-account state — the local half of a Composio install.
  *
  * NimbleBrain integrates with Composio as a remote OAuth provider for
  * toolkits (Gmail, Slack, HubSpot, …) where we do not yet hold the
  * vendor's own restricted-scope approval. Composio holds the user's
  * vendor tokens; the platform only holds an opaque `connectedAccountId`
- * pointer per workspace per connector.
+ * pointer per owner per connector.
  *
- * Storage layout (mirrors `oauth-tokens.ts` workspaceOAuthDir):
+ * This file is Composio's own business and lives behind the provider seam:
+ * the kernel owns the DIRECTORY rule (`credentials/<provider>/<connectorId>/`,
+ * built by `brokeredConnectorDir`) and knows nothing of what is written inside
+ * it. The kernel reaches this state only through the provider's `hasConnection`
+ * and `cleanup` arms.
+ *
+ * Storage layout:
  *   <workDir>/workspaces/<wsId>/credentials/composio/<connectorId>/connection.json
  *
  * The file's EXISTENCE is the gating signal for a Composio-backed
@@ -32,9 +38,9 @@
 import { existsSync } from "node:fs";
 import { chmod, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { ConnectorOwner } from "../identity/connector-owner.ts";
-import { IdentityContext } from "../identity/context.ts";
-import { WorkspaceContext } from "../workspace/context.ts";
+import { brokeredConnectorDir } from "../../../bundles/brokered.ts";
+import type { ConnectorOwner } from "../../../identity/connector-owner.ts";
+import { COMPOSIO_PROVIDER_ID } from "./id.ts";
 
 /**
  * Persisted state for one (workspace, connector) Composio connection.
@@ -65,59 +71,16 @@ export interface ComposioConnection {
 }
 
 /**
- * Slug rule for `connectorId` segment of the path.
- *
- * Catalog entries name connectors with reverse-DNS dots and slashes
- * (`com.google/gmail`). Those translate into filesystem-unsafe path
- * components; we slug to `[A-Za-z0-9._-]+`. Validation is
- * tight: anything that would escape the connector directory or shell
- * out throws. Better to fail loud than to silently write to an
- * unexpected path.
- */
-const CONNECTOR_ID_RE = /^[A-Za-z0-9._-]+$/;
-export function connectorSlug(connectorId: string): string {
-  if (typeof connectorId !== "string" || connectorId.length === 0) {
-    throw new Error(`[composio-connection] invalid connectorId: must be a non-empty string`);
-  }
-  const slug = connectorId.replace(/^@/, "").replace(/[/\\]/g, "-");
-  if (!CONNECTOR_ID_RE.test(slug) || slug === "." || slug === "..") {
-    throw new Error(
-      `[composio-connection] invalid connectorId "${connectorId}": ` +
-        `must contain only alphanumerics, dot, underscore, hyphen, and one optional @scope/ prefix`,
-    );
-  }
-  return slug;
-}
-
-/**
- * Absolute path to the per-connector composio credentials directory, under the
- * owner's credential root:
- *   - workspace: `workspaces/<wsId>/credentials/composio/<connector>/`
- *   - user:      `users/<userId>/credentials/composio/<connector>/`
- *
- * The workspace path routes through `WorkspaceContext` (its single definition
- * site, validates `wsId`). The user path is the identity-owned personal-
- * connector credential home, outside any workspace (mirrors the mcp-oauth
- * `{type:"user"}` arm): the `IdentityContext` constructor validates the userId,
- * and the `credentials/composio` subpath is joined onto that validated root — a
- * variable root, so `check:credential-paths` sees no literal `users/…/
- * credentials` to flag (the `composio` carve-out covers literal reconstruction).
+ * Absolute path to the per-connector Composio state directory. One thin wrapper
+ * over the kernel's single path-building site so this module never spells the
+ * layout itself.
  */
 export function composioConnectorDir(
   workDir: string,
   owner: ConnectorOwner,
   connectorId: string,
 ): string {
-  const slug = connectorSlug(connectorId);
-  if (owner.type === "workspace") {
-    return new WorkspaceContext({ wsId: owner.wsId, workDir }).getDataPath(
-      "credentials",
-      "composio",
-      slug,
-    );
-  }
-  const userRoot = new IdentityContext({ userId: owner.userId, workDir }).getDataPath("root");
-  return join(userRoot, "credentials", "composio", slug);
+  return brokeredConnectorDir(workDir, owner, COMPOSIO_PROVIDER_ID, connectorId);
 }
 
 /** Absolute path to `connection.json` for an (owner, connector). */
@@ -132,8 +95,9 @@ export function composioConnectionPath(
 /**
  * True iff a `connection.json` exists at the expected path for this
  * (owner, connector). Existence-only — does not parse or validate.
- * Used at platform boot to pick the right initial state for a Composio-
- * backed connector (`not_authenticated` vs ready-to-start).
+ * Backs the provider's `hasConnection` arm, which platform boot consults to
+ * pick a Composio-backed connector's initial state (`not_authenticated` vs
+ * ready-to-start).
  */
 export function hasPersistedComposioConnection(
   workDir: string,
@@ -230,13 +194,13 @@ export async function readComposioConnection(
 }
 
 /**
- * Delete `connection.json` for a (workspace, connector). Returns
- * `true` if the file existed and was removed, `false` if it didn't.
+ * Delete `connection.json` for an (owner, connector). Returns `true` if the
+ * file existed and was removed, `false` if it didn't.
  *
- * Called from `lifecycle.disconnect` for Composio-backed bundles —
- * the parallel of `revokeAndDeleteTokens` on the OAuth provider for
- * native bundles. Composio-side account deletion is handled
- * separately (in `composio-auth.ts`) so this module stays SDK-free.
+ * Called from the provider's `cleanup` arm — the parallel of
+ * `revokeAndDeleteTokens` on the OAuth provider for native bundles.
+ * Composio-side account deletion is a separate step (in `sdk.ts`) so this
+ * module stays SDK-free.
  */
 export async function deleteComposioConnection(
   workDir: string,

@@ -64,6 +64,14 @@ The kinds and what each asks of a *user* are documented once, in [Connectors →
   The in-image catalog (`src/connectors/curated/`) ships **DCR entries only** — it exists so a fresh install has a non-empty Browse with nothing to configure. Everything else, including `auth: static` and brokered entries, belongs in the directory `NB_CURATED_CATALOG_DIR` points at.
 </Aside>
 
+<Aside type="caution" title="A brokered entry must be in your catalog">
+  Installing a brokered connector spends your platform's broker credential to
+  create a connection on your account, so the install re-resolves the entry's
+  provider block from **your** catalog by id and discards whatever the caller
+  sent. A brokered entry the catalog does not publish is refused — which means a
+  brokered connector reaches your users only through `NB_CURATED_CATALOG_DIR`.
+</Aside>
+
 ### 2. Add the YAML entry
 
 ```yaml
@@ -180,7 +188,7 @@ NimbleBrain-specific fields under `_meta["ai.nimblebrain/connector"]`:
 | Field | Required | Description |
 |-------|----------|-------------|
 | `defaultScope` | recommended | `"workspace"` (shared identity) or `"user"` (per-user account). Defaults to `workspace`. `auth: composio` is workspace-scope only, and `auth: smithery` installs into a workspace only. |
-| `auth` | required for `remotes[]` | `"dcr"`, `"static"`, `"composio"`, `"smithery"`, or `"provider"` — see [auth kinds](/using/connectors/#the-auth-kinds). Defaults to `dcr`. |
+| `auth` | required for `remotes[]` | `"dcr"`, `"static"` or `"provider"` (the runtime-native kinds), or the id of a configured brokered provider — `"composio"` / `"smithery"` today. See [auth kinds](/using/connectors/#the-auth-kinds). Defaults to `dcr`. A brokered entry carries that provider's config **under a key of the same name** (`composio:`, `smithery:`), which is how the platform hands a provider its own coordinates without knowing their shape. |
 | `requiredScopes` | no | List of OAuth scope strings. |
 | `additionalAuthorizationParams` | no | Extra authorize-URL params (e.g. Google's `access_type: offline`). Reserved keys (`client_id`, `state`, `redirect_uri`, `response_type`, `code_challenge`, `code_challenge_method`, `scope`, etc.) are rejected. |
 | `operatorSetup` | required when `auth: static` | `{ portalUrl, hint, clientSecretKey }`. |

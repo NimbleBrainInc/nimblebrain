@@ -26,9 +26,10 @@ import {
   type TransportCredentialProvider,
 } from "../../../tools/credential-provider.ts";
 import { validateSmitheryConfig } from "./config.ts";
+import { SMITHERY_PROVIDER_ID } from "./id.ts";
 
 /** The credential-provider name a Smithery-installed ref selects. */
-export const SMITHERY_CREDENTIAL_PROVIDER = "smithery";
+export const SMITHERY_CREDENTIAL_PROVIDER = SMITHERY_PROVIDER_ID;
 
 /**
  * Attaches the platform-wide broker credential. Workspace-independent by design:

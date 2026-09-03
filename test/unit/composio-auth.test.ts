@@ -59,7 +59,7 @@ mock.module("@composio/core", () => ({
 }));
 
 import type { AppContext, AppEnv } from "../../src/api/types.ts";
-import { composioAuthRoutes } from "../../src/api/routes/composio-auth.ts";
+import { composioAuthRoutes } from "../../src/connectors/providers/composio/routes.ts";
 import {
   _clearAllConnectFlows,
   registerConnectFlow,
@@ -67,7 +67,7 @@ import {
 import {
   composioConnectionPath,
   readComposioConnection,
-} from "../../src/bundles/composio-connection.ts";
+} from "../../src/connectors/providers/composio/connection.ts";
 import { slugifyServerName } from "../../src/bundles/paths.ts";
 import { IdentityConnectorStore } from "../../src/identity/connector-store.ts";
 import { _resetComposioConfigForTest } from "../../src/connectors/providers/composio/config.ts";

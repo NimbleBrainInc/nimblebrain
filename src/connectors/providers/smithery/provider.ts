@@ -3,9 +3,9 @@
  *
  * This is provider #2, and its value is that it implements a **strict subset**
  * of the seam. Composio implements every arm (both auth brokers, findActive,
- * delete, its own callback routes); Smithery implements `createSession` and a
- * liveness `probe`. If the interface were secretly Composio-shaped, this file
- * could not exist without changing it.
+ * delete, hasConnection, its own callback routes); Smithery implements
+ * `createSession`, `cleanup` and a liveness `probe`. If the interface were
+ * secretly Composio-shaped, this file could not exist without changing it.
  *
  * What Smithery does NOT implement, and why — each is a genuine property of the
  * vendor, not an omission of convenience:
@@ -26,13 +26,10 @@
  *     Smithery supports both operations natively (`PUT` with `headers`, `GET`);
  *     the seam simply cannot address them yet. See the PR notes.
  *
- *   - `delete` — the seam's arm exists for a provider whose teardown the tool
- *     layer drives (Composio's API-key reconnect revokes the replaced account
- *     through it). Smithery's teardown is lifecycle-driven instead, on uninstall,
- *     and needs the namespace recorded on the ref — which the seam's
- *     `delete(id)` signature cannot carry. `cleanupSmitheryBundle` below is the
- *     one teardown path; a provider arm would be a second, namespace-blind copy
- *     of it that nothing calls.
+ *   - `delete` — the seam's arm takes a bare connection id, which cannot carry
+ *     the namespace a Smithery DELETE must target. Smithery's teardown is the
+ *     `cleanup` arm instead, which is handed the whole brokered ref and reads
+ *     the namespace and host recorded on it at install.
  *
  * The Connect API client is imported dynamically, mirroring the Composio
  * discipline: constructing the provider and holding it in the registry links
@@ -49,6 +46,8 @@
 
 import type { ConnectorOwner } from "../../../identity/connector-owner.ts";
 import type {
+  BrokeredCleanupResult,
+  BrokeredStateOptions,
   CreateManagedSessionOptions,
   ManagedConnectorProvider,
   ManagedSession,
@@ -56,6 +55,8 @@ import type {
 import type { SmitheryClientOptions } from "./client.ts";
 import { validateSmitheryConfig } from "./config.ts";
 import { SmitheryConnectionProbe } from "./connection-probe.ts";
+import { SMITHERY_PROVIDER_ID } from "./id.ts";
+import { SMITHERY_CREDENTIAL_PROVIDER } from "./transport-credential.ts";
 
 /**
  * Owner-namespaced identity Smithery keys connections on, carried as
@@ -78,17 +79,30 @@ function clientOptions(): SmitheryClientOptions {
 }
 
 /**
+ * Smithery's catalog block: one field, the registry qualified name
+ * (`nimblebrain/bassethound`). Read defensively — the value came off a YAML file
+ * or a registry response, so the declared type is a claim, not a fact.
+ */
+function serverFrom(config: Record<string, unknown>): string {
+  return typeof config.server === "string" ? config.server.trim() : "";
+}
+
+/**
  * Mint a hosted MCP session for one (owner, server) pair.
  *
- * `toolkit` carries the Smithery registry qualified name (`nimblebrain/bassethound`).
  * The upsert is idempotent, so a re-install re-uses the existing connection
- * rather than orphaning one. `authConfigId` is unused — Smithery has no
- * auth-config concept, which is why the seam makes it optional. `opts.tools` is
- * likewise ignored: a Smithery connection exposes the upstream server's own
- * surface and the Connect API takes no per-connection tool allowlist, so
- * honoring it would require filtering we cannot enforce at the broker.
+ * rather than orphaning one. Smithery has no auth-config concept and takes no
+ * per-connection tool allowlist — a connection exposes the upstream server's own
+ * surface — so its catalog block carries neither, which is exactly why the seam
+ * passes the block through opaquely instead of naming Composio's coordinates.
  */
 async function createSession(opts: CreateManagedSessionOptions): Promise<ManagedSession> {
+  const server = serverFrom(opts.config);
+  if (!server) {
+    throw new Error(
+      `Smithery install of "${opts.connectorId}": smithery config block is missing a \`server\`.`,
+    );
+  }
   const options = clientOptions();
   const {
     SmitheryConnectionNotReadyError,
@@ -97,11 +111,11 @@ async function createSession(opts: CreateManagedSessionOptions): Promise<Managed
     upsertSmitheryConnection,
   } = await import("./client.ts");
 
-  const connectionId = smitheryConnectionId(opts.userId, opts.toolkit);
+  const connectionId = smitheryConnectionId(opts.userId, server);
   const connection = await upsertSmitheryConnection(options, connectionId, {
-    server: opts.toolkit,
-    name: opts.toolkit,
-    metadata: { userId: opts.userId, server: opts.toolkit },
+    server,
+    name: server,
+    metadata: { userId: opts.userId, server },
   });
 
   const status = connection.status;
@@ -110,17 +124,17 @@ async function createSession(opts: CreateManagedSessionOptions): Promise<Managed
       status.state,
       status.setupUrl,
       status.state === "auth_required"
-        ? `Smithery connection for "${opts.toolkit}" needs authorization${
+        ? `Smithery connection for "${server}" needs authorization${
             status.setupUrl ? ` — complete it at ${status.setupUrl}` : ""
           }.`
-        : `Smithery connection for "${opts.toolkit}" needs configuration${
+        : `Smithery connection for "${server}" needs configuration${
             status.setupUrl ? ` — provide it at ${status.setupUrl}` : ""
           }.`,
     );
   }
   if (status?.state === "error") {
     throw new Error(
-      `Smithery connection for "${opts.toolkit}" is in an error state: ${
+      `Smithery connection for "${server}" is in an error state: ${
         status.message ?? "no detail supplied"
       }`,
     );
@@ -139,11 +153,30 @@ async function createSession(opts: CreateManagedSessionOptions): Promise<Managed
   return {
     type: "http",
     url: smitheryMcpUrl(options, connectionId),
+    credentialProvider: SMITHERY_CREDENTIAL_PROVIDER,
     // What the probe reads and uninstall deletes. Host and namespace travel with
     // the connection so a later config repoint can't point either at a different
     // broker or namespace than the one it was created at.
     providerRef: { connectionId, namespace: options.namespace, baseUrl: options.baseUrl },
   };
+}
+
+/**
+ * The coordinates `createSession` minted, read back off a brokered ref.
+ *
+ * Every field is required and `createSession` refuses to return a partial set,
+ * so a ref that reaches here without them was written by something other than
+ * this provider — `undefined`, and the caller declines to act rather than
+ * guessing at a connection to delete.
+ */
+function coordinatesFrom(
+  providerRef: Record<string, string> | undefined,
+): { connectionId: string; namespace: string; baseUrl: string } | undefined {
+  const connectionId = providerRef?.connectionId;
+  const namespace = providerRef?.namespace;
+  const baseUrl = providerRef?.baseUrl;
+  if (!connectionId || !namespace || !baseUrl) return undefined;
+  return { connectionId, namespace, baseUrl };
 }
 
 /**
@@ -158,29 +191,49 @@ export function createSmitheryProvider(): ManagedConnectorProvider {
   // reason the revalidator wiring in `server.ts` stays provider-agnostic.
   const { monitorEnabled } = validateSmitheryConfig();
   return {
-    id: "smithery",
+    id: SMITHERY_PROVIDER_ID,
     userId: smitheryUserId,
     createSession,
+    cleanup,
     ...(monitorEnabled ? { probe: () => new SmitheryConnectionProbe(clientOptions()) } : {}),
   };
 }
 
 /**
+ * The `cleanup` arm: delete the brokered connection. There is no local state to
+ * drop — Smithery stores credentials write-only on its side — so the broker
+ * delete IS the whole teardown, and `localDeleted` is always false.
+ *
+ * `namespace` and `baseUrl` come from the REF, not from current config, so a
+ * repointed config can't DELETE against the wrong host or namespace, where a 404
+ * would read as "already gone" and report success while the real connection
+ * survives.
+ */
+async function cleanup(opts: BrokeredStateOptions): Promise<BrokeredCleanupResult> {
+  const coords = coordinatesFrom(opts.brokered.providerRef);
+  if (!coords) {
+    return {
+      upstreamDeleted: false,
+      localDeleted: false,
+      lastError:
+        `Smithery ref for "${opts.brokered.connectorId}" carries no connection coordinates — ` +
+        "nothing to revoke.",
+    };
+  }
+  const { upstreamDeleted, lastError } = await cleanupSmitheryBundle(coords);
+  return { upstreamDeleted, localDeleted: false, ...(lastError ? { lastError } : {}) };
+}
+
+/**
  * Tear down a smithery-backed bundle's brokered connection.
  *
- * The lifecycle sibling of `cleanupComposioBundle`, and the reason it exists in
- * the same shape: uninstall-without-prior-disconnect is the realistic flow, and
- * without a teardown the connection — plus, for any OAuth-backed Smithery
- * connector, the user's upstream grant that Smithery holds — stays alive at the
- * broker forever with no revoke path in the product.
+ * The reason it exists at all: uninstall-without-prior-disconnect is the
+ * realistic flow, and without a teardown the connection — plus, for any
+ * OAuth-backed Smithery connector, the user's upstream grant that Smithery
+ * holds — stays alive at the broker forever with no revoke path in the product.
  *
- * Unlike Composio there is no local credential directory to clear: Smithery
- * stores credentials write-only on its side, so the broker delete IS the whole
- * teardown. `namespace` and `baseUrl` come from the ref — required, like the
- * connection id — so a repointed config can't DELETE against the wrong host or
- * namespace, where a 404 would read as "already gone" and report success while
- * the real connection survives.
- * Best-effort — never throws.
+ * Exported for its own direct tests; the runtime reaches it through the
+ * provider's `cleanup` arm. Best-effort — never throws.
  */
 export async function cleanupSmitheryBundle(opts: {
   connectionId: string;

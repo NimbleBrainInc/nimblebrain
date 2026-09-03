@@ -9,36 +9,34 @@
  * this workspace's user + the connector's auth config.
  *
  * This adapter is the ONLY place that knows Composio specifics in the
- * re-validation path: it reads `ref.composio.connectorId`, resolves the auth
- * config from the catalog, derives the Composio user id from the workspace, and
- * collapses Composio's four account statuses to the kernel's three-valued
- * verdict. The kernel (`ConnectionRevalidator`) sees only the verdict.
+ * re-validation path: it takes the stamped catalog id off the brokered ref,
+ * resolves the auth config from the catalog, derives the Composio user id from
+ * the workspace, and collapses Composio's four account statuses to the kernel's
+ * three-valued verdict. The kernel (`ConnectionRevalidator`) sees only the
+ * verdict.
  */
 
+import { brokeredRef } from "../../../bundles/brokered.ts";
 import type {
   ConnectionHealthProbe,
   ConnectionLiveness,
   ProbeTarget,
 } from "../../../bundles/connection-probe.ts";
-import type { BundleRef } from "../../../bundles/types.ts";
 import { log } from "../../../observability/log.ts";
 import type { ConnectorDirectory } from "../../../registries/directory.ts";
 import { composioAuthConfigId, validateComposioConfig } from "./config.ts";
+import { COMPOSIO_PROVIDER_ID } from "./id.ts";
 import { composioUserId, findActiveComposioConnection } from "./sdk.ts";
 
-function composioConnectorId(ref: BundleRef): string | undefined {
-  return "composio" in ref ? ref.composio?.connectorId : undefined;
-}
-
 export class ComposioConnectionProbe implements ConnectionHealthProbe {
-  readonly providerId = "composio";
+  readonly providerId = COMPOSIO_PROVIDER_ID;
 
   constructor(private readonly directory: ConnectorDirectory) {}
 
   async probe(target: ProbeTarget, signal: AbortSignal): Promise<ConnectionLiveness> {
     if (signal.aborted) return "indeterminate";
 
-    const connectorId = composioConnectorId(target.ref);
+    const connectorId = brokeredRef(target.ref)?.connectorId;
     if (!connectorId) return "indeterminate"; // dispatched here in error — not ours
 
     // Missing platform config can't distinguish "lost" from "can't check" —

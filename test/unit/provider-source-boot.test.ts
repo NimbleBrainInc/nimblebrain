@@ -3,6 +3,8 @@ import { bundleHasStaticAuth } from "../../src/bundles/bundle-auth.ts";
 import { WORKSPACE_PRINCIPAL_ID } from "../../src/bundles/connection.ts";
 import { BundleLifecycleManager } from "../../src/bundles/lifecycle.ts";
 import type { BundleRef } from "../../src/bundles/types.ts";
+import type { ManagedConnectorProvider } from "../../src/connectors/providers/managed-provider.ts";
+import { managedConnectorRegistryOf } from "../../src/connectors/providers/registry.ts";
 import type { EngineEvent, EventSink } from "../../src/engine/types.ts";
 
 class NoopSink implements EventSink {
@@ -63,27 +65,68 @@ describe("seedInstance — provider-auth fleet source", () => {
     expect(conn?.state).not.toBe("not_authenticated");
   });
 
-  // Regression guard for the asymmetry that bit the first cut of this fix:
-  // Composio bundles ALSO carry `header` auth, so `bundleHasStaticAuth` is true
-  // for them — but Composio still needs a per-user connect. The gates must check
-  // the composio marker FIRST. An UNCONNECTED composio connector (no persisted
-  // connection.json) must seed `not_authenticated`, not `running`, or the UI
-  // loses its Connect button and every tool call fails "not connected".
-  test("unconnected composio connector seeds not_authenticated (composio gate wins over static-auth)", () => {
+  // Regression guard for the asymmetry that bit the first cut of this fix: a
+  // brokered bundle ALSO carries static transport auth, so `bundleHasStaticAuth`
+  // is true for it — but its broker may still need a per-owner connect. The gate
+  // must ask the PROVIDER first. An unconnected brokered connector must seed
+  // `not_authenticated`, not `running`, or the UI loses its Connect button and
+  // every tool call fails "not connected".
+  //
+  // Tested through a fake provider, not a vendor: the kernel's contract is
+  // "ask whoever owns this ref", and that is what must hold for provider #3.
+  test("an unconnected brokered connector seeds not_authenticated (the provider's verdict wins over static-auth)", () => {
     const lifecycle = new BundleLifecycleManager(new NoopSink(), undefined);
-    const composioRef: BundleRef = {
-      url: "https://composio.test/mcp",
-      serverName: "gmail",
-      transport: {
-        type: "streamable-http",
-        auth: { type: "header", name: "x-api-key", value: "k" },
-      },
-      // Unique id so no connection.json exists under defaultWorkDir().
-      composio: { connectorId: "regression-unconnected-connector-xyz" },
-    };
-    lifecycle.seedInstance("gmail", "https://composio.test/mcp", composioRef, undefined, "ws_test");
+    lifecycle.setManagedConnectorRegistry(
+      managedConnectorRegistryOf([exampleBroker({ connected: false })]),
+    );
+    lifecycle.seedInstance("gmail", brokeredRef().url ?? "", brokeredRef(), undefined, "ws_test");
 
     const conn = lifecycle.getInstance("gmail", "ws_test")?.connections.get(WORKSPACE_PRINCIPAL_ID);
     expect(conn?.state).toBe("not_authenticated");
   });
+
+  test("a connected brokered connector seeds running", () => {
+    const lifecycle = new BundleLifecycleManager(new NoopSink(), undefined);
+    lifecycle.setManagedConnectorRegistry(
+      managedConnectorRegistryOf([exampleBroker({ connected: true })]),
+    );
+    lifecycle.seedInstance("gmail", brokeredRef().url ?? "", brokeredRef(), undefined, "ws_test");
+
+    const conn = lifecycle.getInstance("gmail", "ws_test")?.connections.get(WORKSPACE_PRINCIPAL_ID);
+    expect(conn?.state).toBe("running");
+  });
+
+  // A provider with nothing to connect per-owner omits `hasConnection`, and the
+  // generic static-auth check answers — the Smithery shape.
+  test("a brokered connector whose provider has no hasConnection falls back to static-auth", () => {
+    const lifecycle = new BundleLifecycleManager(new NoopSink(), undefined);
+    lifecycle.setManagedConnectorRegistry(managedConnectorRegistryOf([exampleBroker({})]));
+    lifecycle.seedInstance("gmail", brokeredRef().url ?? "", brokeredRef(), undefined, "ws_test");
+
+    const conn = lifecycle.getInstance("gmail", "ws_test")?.connections.get(WORKSPACE_PRINCIPAL_ID);
+    expect(conn?.state).toBe("running");
+  });
 });
+
+/** A brokered ref carrying static transport auth — the shape the gate must not mistake for "ready". */
+function brokeredRef(): BundleRef {
+  return {
+    url: "https://broker.test/session/abc/mcp",
+    serverName: "gmail",
+    transport: {
+      type: "streamable-http",
+      auth: { type: "header", name: "x-api-key", value: "k" },
+    },
+    brokered: { provider: "example-broker", connectorId: "com.example/gmail" },
+  };
+}
+
+/** A fake brokered provider. `connected` undefined ⇒ the provider omits `hasConnection`. */
+function exampleBroker(opts: { connected?: boolean }): ManagedConnectorProvider {
+  return {
+    id: "example-broker",
+    userId: (owner) => (owner.type === "workspace" ? owner.wsId : owner.userId),
+    createSession: async () => ({ type: "http", url: "https://broker.test/session/abc/mcp" }),
+    ...(opts.connected === undefined ? {} : { hasConnection: () => opts.connected === true }),
+  };
+}

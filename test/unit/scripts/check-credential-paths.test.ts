@@ -87,12 +87,16 @@ describe("check-credential-paths — isUserCredentialJoin", () => {
     expect(isUserCredentialJoin(call!)).toBe(false);
   });
 
-  test("does NOT match the sanctioned `users/<id>/credentials/composio/...` carve-out", () => {
+  // A brokered provider's home has no carve-out and must not get one:
+  // `brokeredConnectorDir` builds it from a VARIABLE provider segment onto a
+  // variable root, so it never appears here. Anything spelling it out literally
+  // is bypassing that single site.
+  test("DOES match a hand-built brokered credential path", () => {
     const src = parse(
       `const p = join(workDir, "users", userId, "credentials", "composio", connectorId);`,
     );
     const call = findFirst(src, ts.isCallExpression);
-    expect(isUserCredentialJoin(call!)).toBe(false);
+    expect(isUserCredentialJoin(call!)).toBe(true);
   });
 
   test("still matches a non-carve-out child of `users/<id>/credentials/`", () => {
@@ -152,12 +156,12 @@ describe("check-credential-paths — isUserCredentialStringLiteral", () => {
     expect(isUserCredentialStringLiteral(node!)).toBe(false);
   });
 
-  test("does NOT match the sanctioned `users/<id>/credentials/composio/...` carve-out", () => {
+  test("DOES match a hand-built brokered credential path literal", () => {
     const src = parse(
       `const p = "/work/users/user_abc/credentials/composio/com.slack-slack/connection.json";`,
     );
     const node = findFirst(src, ts.isStringLiteral);
-    expect(isUserCredentialStringLiteral(node!)).toBe(false);
+    expect(isUserCredentialStringLiteral(node!)).toBe(true);
   });
 
   test("does NOT match a string with /credentials/ but no /users/", () => {

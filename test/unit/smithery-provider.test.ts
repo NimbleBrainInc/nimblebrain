@@ -73,12 +73,13 @@ function stubFetch(status: number, body: unknown): { calls: Array<{ url: string;
 describe("SmitheryProvider — the interface subset (what validates the seam)", () => {
   beforeEach(configure);
 
-  it("implements createSession + probe, and NONE of the auth-broker or teardown arms", () => {
+  it("implements createSession + cleanup + probe, and NONE of the auth-broker arms", () => {
     const provider = createSmitheryProvider();
 
     expect(provider.id).toBe("smithery");
     expect(typeof provider.userId).toBe("function");
     expect(typeof provider.createSession).toBe("function");
+    expect(typeof provider.cleanup).toBe("function");
     expect(typeof provider.probe).toBe("function");
 
     // The asymmetry with Composio IS the validation: Smithery brokers OAuth
@@ -92,10 +93,12 @@ describe("SmitheryProvider — the interface subset (what validates the seam)", 
     // connector. See the seam findings.
     expect(provider.connectApiKey).toBeUndefined();
     expect(provider.findActive).toBeUndefined();
-    // Teardown is lifecycle-driven (`cleanupSmitheryBundle`, on uninstall) and
-    // needs the ref's namespace, which `delete(id)` cannot carry — a provider
-    // arm here would be a second, namespace-blind copy nothing calls.
+    // `delete(id)` cannot carry the namespace a Smithery DELETE must target;
+    // the `cleanup` arm, handed the whole brokered ref, is the teardown path.
     expect(provider.delete).toBeUndefined();
+    // Nothing to connect per-owner: a Smithery connector is usable the moment
+    // it is installed, so boot-state falls through to the generic check.
+    expect(provider.hasConnection).toBeUndefined();
   });
 
   it("registers alongside Composio in one registry, keyed by auth-kind", () => {
@@ -179,7 +182,8 @@ describe("SmitheryProvider.createSession", () => {
 
     const session = await createSmitheryProvider().createSession({
       userId: "ws_01abc",
-      toolkit: "nimblebrain/bassethound",
+      connectorId: "nimblebrain/bassethound",
+      config: { server: "nimblebrain/bassethound" },
     });
 
     expect(calls).toHaveLength(1);
@@ -216,7 +220,8 @@ describe("SmitheryProvider.createSession", () => {
     stubFetch(200, { connectionId: "c", status: { state: "disconnected" } });
     const session = await createSmitheryProvider().createSession({
       userId: "ws_01abc",
-      toolkit: "nimblebrain/bassethound",
+      connectorId: "nimblebrain/bassethound",
+      config: { server: "nimblebrain/bassethound" },
     });
     expect(session.url).toContain("/mcp");
   });
@@ -229,7 +234,8 @@ describe("SmitheryProvider.createSession", () => {
 
     const promise = createSmitheryProvider().createSession({
       userId: "ws_01abc",
-      toolkit: "nimblebrain/needs-oauth",
+      connectorId: "nimblebrain/needs-oauth",
+      config: { server: "nimblebrain/needs-oauth" },
     });
     await expect(promise).rejects.toThrow(/needs authorization.*auth\.smithery\.ai\/xyz/);
   });
@@ -247,7 +253,8 @@ describe("SmitheryProvider.createSession", () => {
 
     const promise = createSmitheryProvider().createSession({
       userId: "ws_01abc",
-      toolkit: "nimblebrain/needs-config",
+      connectorId: "nimblebrain/needs-config",
+      config: { server: "nimblebrain/needs-config" },
     });
     await expect(promise).rejects.toThrow(/needs configuration/);
   });
@@ -260,7 +267,8 @@ describe("SmitheryProvider.createSession", () => {
 
     const promise = createSmitheryProvider().createSession({
       userId: "ws_01abc",
-      toolkit: "nimblebrain/broken",
+      connectorId: "nimblebrain/broken",
+      config: { server: "nimblebrain/broken" },
     });
     await expect(promise).rejects.toThrow(/upstream refused the handshake/);
   });
@@ -270,7 +278,8 @@ describe("SmitheryProvider.createSession", () => {
 
     const promise = createSmitheryProvider().createSession({
       userId: "ws_01abc",
-      toolkit: "nimblebrain/bassethound",
+      connectorId: "nimblebrain/bassethound",
+      config: { server: "nimblebrain/bassethound" },
     });
     await expect(promise).rejects.toThrow(/404/);
   });

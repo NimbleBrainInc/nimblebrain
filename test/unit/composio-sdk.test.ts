@@ -101,7 +101,7 @@ const { mkdtempSync, rmSync } = await import("node:fs");
 const { tmpdir } = await import("node:os");
 const { join: joinPath } = await import("node:path");
 const { saveComposioConnection, hasPersistedComposioConnection } = await import(
-  "../../src/bundles/composio-connection.ts"
+  "../../src/connectors/providers/composio/connection.ts"
 );
 // The bouncer-config module also caches at process scope. Multi-tenant
 // safety tests need both caches reset to read freshly-set env vars.
@@ -580,7 +580,7 @@ describe("cleanupComposioBundle", () => {
 
     const result = await cleanupComposioBundle({
       workDir,
-      wsId: "ws_test",
+      owner: { type: "workspace", wsId: "ws_test" },
       connectorId: "com.google/gmail",
     });
 
@@ -606,7 +606,7 @@ describe("cleanupComposioBundle", () => {
 
     const result = await cleanupComposioBundle({
       workDir,
-      wsId: "ws_test",
+      owner: { type: "workspace", wsId: "ws_test" },
       connectorId: "com.google/gmail",
     });
 
@@ -634,7 +634,7 @@ describe("cleanupComposioBundle", () => {
 
     const result = await cleanupComposioBundle({
       workDir,
-      wsId: "ws_test",
+      owner: { type: "workspace", wsId: "ws_test" },
       connectorId: "com.google/gmail",
     });
 
@@ -657,7 +657,7 @@ describe("cleanupComposioBundle", () => {
     // No connection.json on disk → nothing to read or delete.
     const result = await cleanupComposioBundle({
       workDir,
-      wsId: "ws_test",
+      owner: { type: "workspace", wsId: "ws_test" },
       connectorId: "com.google/gmail",
     });
 
@@ -684,7 +684,7 @@ describe("cleanupComposioBundle", () => {
     // (The SDK delete swallows internally; the local delete should still succeed.)
     const result = await cleanupComposioBundle({
       workDir,
-      wsId: "ws_test",
+      owner: { type: "workspace", wsId: "ws_test" },
       connectorId: "com.google/gmail",
     });
     expect(result.upstreamDeleted).toBe(false);
