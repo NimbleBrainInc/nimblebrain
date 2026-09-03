@@ -240,7 +240,12 @@ export class FileCredentialStore implements CredentialStore {
       // still protects the contents.
     }
     const path = this.#filePath(scope, key);
-    const tmp = `${path}.tmp.${randomBytes(4).toString("hex")}`;
+    // Leading dot, so the temp name falls OUTSIDE the key grammar: a `put` that
+    // dies between write and rename leaves this file behind, and `list` filters
+    // by that grammar. `assertValidKey` refuses a key starting with a dot, so
+    // this can never collide with a real one, and keeping the key in the name
+    // keeps two concurrent puts on different keys from sharing a temp path.
+    const tmp = join(dir, `.${key}.tmp.${randomBytes(4).toString("hex")}`);
     await writeFile(tmp, value, { encoding: "utf-8", mode: 0o600 });
     await chmod(tmp, 0o600);
     await rename(tmp, path);

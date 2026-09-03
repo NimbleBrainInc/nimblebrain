@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, statSync } from "node:fs";
+import { mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { EngineEvent } from "../../src/engine/types.ts";
@@ -201,6 +201,22 @@ describe("list", () => {
     try {
       expect(await store.list(WS)).toEqual([]);
       expect(await store.list(INSTANCE)).toEqual([]);
+    } finally {
+      cleanup();
+    }
+  });
+
+  // The temp name a `put` writes to is dot-prefixed precisely so it falls
+  // outside the key grammar. Were it named `<key>.tmp.<hex>` the grammar would
+  // accept it, and a `put` killed between write and rename would leave an
+  // operator staring at a key that is not one.
+  test("a temp file left by a killed put is not listed as a key", async () => {
+    const { store, dir, cleanup } = freshStore();
+    try {
+      await store.put(WS, "acme.db_url", "v");
+      const secretsDir = join(dir, "workspaces", "ws_test", "credentials", "secrets");
+      writeFileSync(join(secretsDir, ".acme.db_url.tmp.a1b2c3d4"), "half-written");
+      expect((await store.list(WS)).map((k) => k.key)).toEqual(["acme.db_url"]);
     } finally {
       cleanup();
     }
