@@ -126,14 +126,18 @@ interface SourceState {
   /** Epoch ms the breaker closes. `0` when closed. */
   breakerOpenUntil: number;
   /**
-   * The `McpSource` instance the update hint was arranged on, if any.
+   * The `McpSource` instance the update hint was arranged on, if any, and the
+   * listener release that goes with it.
    *
    * Compared by identity rather than held as a boolean: a recovered connector
    * can be a *new* source object, and a hint arranged on the old one reaches
    * nobody. Re-arranging when the object changes is what keeps the subscription
-   * attached to the connection that actually exists.
+   * attached to the connection that actually exists — and releasing the old
+   * listener as part of that is what keeps a connector that flaps from leaving
+   * one dead listener per recovery on the source it flapped off.
    */
   hintSource?: McpSource;
+  releaseHint?: () => void;
 }
 
 /** A fixed-window poll allowance per workspace. */
@@ -179,8 +183,6 @@ export class NotificationPoller {
   readonly #inFlight = new Set<string>();
   /** Where the next tick resumes a workspace whose budget ran out mid-pass. */
   readonly #resumeAt = new Map<string, string>();
-  /** Update-hint unsubscribes, released on `stop()`. */
-  readonly #hintUnsubscribes: Array<() => void> = [];
 
   #timer: ReturnType<typeof setTimeout> | null = null;
   #sweeping = false;
@@ -228,13 +230,7 @@ export class NotificationPoller {
       clearTimeout(this.#timer);
       this.#timer = null;
     }
-    for (const unsubscribe of this.#hintUnsubscribes.splice(0)) {
-      try {
-        unsubscribe();
-      } catch {
-        // A listener set that is already gone is the outcome we wanted.
-      }
-    }
+    for (const state of this.#states.values()) releaseHint(state);
   }
 
   /**
@@ -244,6 +240,7 @@ export class NotificationPoller {
    * silently stops filling is the failure this loop exists to prevent.
    */
   async sweep(): Promise<void> {
+    if (this.#stopped) return;
     if (this.#sweeping) {
       log.debug("notify", "[notifications] previous sweep still running — skipping tick");
       return;
@@ -329,6 +326,11 @@ export class NotificationPoller {
         this.#resumeAt.get(wsId),
       );
       for (let i = 0; i < due.length; i++) {
+        // Re-checked per source, not only at the top of the sweep: a pass over
+        // a workspace with several outboxes outlives a `stop()` that lands
+        // mid-pass, and what it would go on to read is a transport the
+        // shutdown is closing.
+        if (this.#stopped) return;
         const target = due[i] as PollTarget;
         this.#arrangeUpdateHint(target);
         if (!this.#budget.take(wsId, this.#now())) {
@@ -365,7 +367,7 @@ export class NotificationPoller {
     }
     this.#inFlight.add(target.wsId);
     try {
-      await this.#pollSource(target);
+      await this.#pollSource(target, { hinted: true });
     } catch (err) {
       log.warn(
         `[notifications] hinted poll failed: ${err instanceof Error ? err.message : String(err)}`,
@@ -378,16 +380,22 @@ export class NotificationPoller {
 
   // -- one source --------------------------------------------------------
 
-  /** Read one outbox, chaining while the server says there is more. */
-  async #pollSource(target: PollTarget): Promise<void> {
+  /**
+   * Read one outbox, chaining while the server says there is more.
+   *
+   * `hinted` marks a read the runtime made because the server asked it to
+   * rather than because the cadence came round — see {@link #recordSuccess}.
+   */
+  async #pollSource(target: PollTarget, opts: { hinted?: boolean } = {}): Promise<void> {
     const state = this.#stateFor(target);
     for (let read = 0; read < MAX_CHAINED_READS; read++) {
+      if (this.#stopped) return;
       const outcome = await this.#readOnce(target);
       if (!outcome.ok) {
         this.#recordFailure(target, state);
         return;
       }
-      this.#recordSuccess(state, outcome);
+      this.#recordSuccess(state, outcome, opts.hinted === true);
       if (!outcome.hasMore) return;
       // `hasMore` means the batch was cut at `maxEvents`, so read again at
       // once — but out of the same allowance, because it is the same cost.
@@ -591,11 +599,22 @@ export class NotificationPoller {
    * the range the runtime will keep: the server knows whether it is watching
    * something, and the runtime knows what it is willing to pay, so the
    * recommendation wins inside the bound and the bound wins outside it.
+   *
+   * A **hinted** read snaps back whatever it finds, and never counts as an
+   * empty poll. The backoff exists to stop the runtime asking a quiet outbox
+   * on its own initiative; a read the server asked for is evidence the outbox
+   * is active, and charging it to the backoff would punish a server for being
+   * helpful — the one that pushes would end up read less often than the one
+   * that does not.
    */
-  #recordSuccess(state: SourceState, outcome: { events: number; nextPollMs?: number }): void {
+  #recordSuccess(
+    state: SourceState,
+    outcome: { events: number; nextPollMs?: number },
+    hinted: boolean,
+  ): void {
     state.failureStreak = 0;
     state.breakerOpenUntil = 0;
-    state.emptyStreak = outcome.events > 0 ? 0 : state.emptyStreak + 1;
+    state.emptyStreak = hinted || outcome.events > 0 ? 0 : state.emptyStreak + 1;
     const interval =
       outcome.nextPollMs !== undefined
         ? clampNextPollMs(outcome.nextPollMs, this.#config)
@@ -631,8 +650,10 @@ export class NotificationPoller {
   /** Drop state for sources that are no longer readable — keeps the map bounded. */
   #pruneStates(targets: readonly PollTarget[]): void {
     const live = new Set(targets.map(stateKey));
-    for (const key of this.#states.keys()) {
-      if (!live.has(key)) this.#states.delete(key);
+    for (const [key, state] of this.#states) {
+      if (live.has(key)) continue;
+      releaseHint(state);
+      this.#states.delete(key);
     }
     for (const wsId of this.#resumeAt.keys()) {
       if (!targets.some((target) => target.wsId === wsId)) this.#resumeAt.delete(wsId);
@@ -655,12 +676,12 @@ export class NotificationPoller {
   #arrangeUpdateHint(target: PollTarget): void {
     const state = this.#stateFor(target);
     if (state.hintSource === target.source) return;
+    releaseHint(state);
     state.hintSource = target.source;
-    const unsubscribe = target.source.subscribeResourceUpdated((uri) => {
+    state.releaseHint = target.source.subscribeResourceUpdated((uri) => {
       if (uri !== target.resource) return;
       void this.pollOnHint(target);
     });
-    this.#hintUnsubscribes.push(unsubscribe);
     void target.source.subscribeResourceUpdates(target.resource);
   }
 
@@ -711,6 +732,24 @@ export class NotificationPoller {
         }
       }),
     );
+  }
+}
+
+/**
+ * Release a source's update-hint listener, if it holds one.
+ *
+ * Tolerant of a listener set that is already gone — a source torn down before
+ * the poller stops is the ordinary shutdown order, not an error.
+ */
+function releaseHint(state: SourceState): void {
+  const release = state.releaseHint;
+  if (!release) return;
+  state.releaseHint = undefined;
+  state.hintSource = undefined;
+  try {
+    release();
+  } catch {
+    // Already released with the source it was attached to.
   }
 }
 

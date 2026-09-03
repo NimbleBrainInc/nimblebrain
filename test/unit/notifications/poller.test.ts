@@ -403,6 +403,34 @@ describe("truncated", () => {
   });
 });
 
+describe("stopping", () => {
+  test("a stopped poller reads nothing more", async () => {
+    const outbox = await fixture();
+    const poller = pollerOver([targetFor(outbox)]);
+
+    poller.stop();
+    await poller.sweep();
+
+    // Shutdown closes the transports this loop reads, so a sweep that outlived
+    // `stop()` would be reading a connection on its way out.
+    expect(outbox.reads).toHaveLength(0);
+  });
+
+  test("a stopped poller ignores a pushed hint", async () => {
+    const outbox = await fixture({ supportsSubscribe: true });
+    const poller = pollerOver([targetFor(outbox)]);
+    await poller.sweep();
+    await Bun.sleep(20);
+
+    poller.stop();
+    outbox.emit(fixtureEvent("evt_late"));
+    outbox.pushUpdate();
+    await Bun.sleep(50);
+
+    expect(eventIds()).toEqual([]);
+  });
+});
+
 describe("the update hint", () => {
   test("subscribes when the server serves subscriptions, and reads on the push", async () => {
     const outbox = await fixture({ supportsSubscribe: true });
@@ -419,6 +447,60 @@ describe("the update hint", () => {
     await Bun.sleep(50);
 
     expect(eventIds()).toEqual(["evt_pushed"]);
+  });
+
+  test("a push snaps the cadence back out of the empty-poll backoff", async () => {
+    const outbox = await fixture({ supportsSubscribe: true });
+    const poller = pollerOver([targetFor(outbox)], { intervalMs: 60_000 });
+
+    // Two empty reads leave the source due in four minutes.
+    await poller.sweep();
+    advance(120_000);
+    await poller.sweep();
+    expect(outbox.reads).toHaveLength(2);
+    await Bun.sleep(20);
+
+    // The push is itself evidence the outbox is active, so the streak resets
+    // even though the read it triggers finds nothing.
+    outbox.pushUpdate();
+    await Bun.sleep(50);
+    expect(outbox.reads).toHaveLength(3);
+
+    advance(60_000);
+    await poller.sweep();
+    expect(outbox.reads).toHaveLength(4);
+  });
+
+  test("releases the old listener when a connection is replaced", async () => {
+    const first = await fixture({ name: "outbox-flap", supportsSubscribe: true });
+    const second = await fixture({ name: "outbox-flap-2", supportsSubscribe: true });
+    // The same `(workspace, connector)` seen with a new source object — what a
+    // recovered connection looks like from here.
+    const target = targetFor(first);
+    const replaced: PollTarget = { ...target, source: second.source };
+    let current = target;
+    const poller = new NotificationPoller({
+      targets: async () => [current],
+      storeFor,
+      workspaceStore,
+      config: resolvePollConfig(),
+      now: () => clock,
+    });
+    teardown.push(async () => poller.stop());
+
+    await poller.sweep();
+    await Bun.sleep(20);
+    current = replaced;
+    advance(PAST_ANY_BACKOFF_MS);
+    await poller.sweep();
+    await Bun.sleep(20);
+
+    // A push on the connection that is gone must reach nobody — otherwise a
+    // connector that flaps leaves one live listener per recovery.
+    const before = second.reads.length;
+    first.pushUpdate();
+    await Bun.sleep(50);
+    expect(second.reads).toHaveLength(before);
   });
 
   test("sends no subscribe to a server that does not advertise one", async () => {
