@@ -17,8 +17,10 @@
  * doesn't reach outside web/, and the generated artifact is a normal
  * source file in version control.
  *
- * The generated tree is checked in. CI runs this script and verifies
- * `git diff --exit-code web/src/_generated/` to catch drift.
+ * The generated tree is checked in. `scripts/check-codegen.ts` runs
+ * after this script and fails on anything git reports under
+ * `web/src/_generated/` — including a file this generator emitted that
+ * was never added to git, which a diff over tracked paths cannot see.
  *
  * Run: `bun run codegen` (alias for this script — see package.json).
  */
@@ -75,8 +77,7 @@ function injectHeaders(dir: string, sourceRoot: string): void {
 // from `src/workspace/workspace-id-pattern.ts`. The web tier
 // (`web/src/lib/namespaced-tool.ts`) imports the generated copy and
 // constructs its own RegExp locally. CI's `check:codegen` step
-// (`git diff --exit-code web/src/_generated/`) catches drift between
-// the server source and the emitted copy.
+// catches drift between the server source and the emitted copy.
 //
 // Why we don't ship a `.d.ts` here: the web tier needs the actual
 // string values at runtime to validate workspace ids. `.d.ts` would
