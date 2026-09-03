@@ -183,7 +183,7 @@ NimbleBrain splits configuration across two files:
 - **`nimblebrain.json`** — instance-level settings (models, HTTP, logging, limits, feature flags). One file per deployment.
 - **`workspace.json`** — per-workspace settings (bundles, skill directories, optional model + identity overrides). One file per workspace under `<workDir>/workspaces/<ws-id>/`.
 
-This split is the workspace isolation boundary: two workspaces in the same deployment can install different bundles and agents without touching the instance config. See [Workspace Isolation](#workspace-isolation) below.
+This split is the workspace isolation boundary: two workspaces in the same deployment can install different bundles without touching the instance config. See [Workspace Isolation](#workspace-isolation) below.
 
 ### `nimblebrain.json` (instance config)
 
@@ -593,8 +593,8 @@ Placements with a `route` field get React Router routes in `App.tsx`. Routes fro
 ### Configuration Reference
 
 **Files:**
-- `nimblebrain.json` — instance config. Validated at startup against `src/config/nimblebrain-config.schema.json` (JSON Schema draft-07, AJV). Unknown keys warn; structural errors throw. Workspace-owned fields (`bundles`, `skillDirs`, `agents`, `preferences`, `home`, `noDefaultBundles`) are silently stripped on load. `identity` and `contextFile` are deprecated with a warning.
-- `<workDir>/workspaces/<wsId>/workspace.json` — per-workspace config. Owns `bundles`, `skillDirs`, `agents`, and optional `models` / `identity` overrides.
+- `nimblebrain.json` — instance config. Validated at startup against `src/config/nimblebrain-config.schema.json` (JSON Schema draft-07, AJV). Unknown keys warn; structural errors throw. Workspace-owned fields (`bundles`, `skillDirs`, `preferences`, `home`, `noDefaultBundles`) are silently stripped on load. `identity` and `contextFile` are deprecated with a warning.
+- `<workDir>/workspaces/<wsId>/workspace.json` — per-workspace config. Owns `bundles`, `skillDirs`, and optional `models` / `identity` overrides.
 - `<workDir>/instance.json` — auth configuration (OIDC or WorkOS adapter). Absence signals dev mode.
 
 **Config resolution** for `nimblebrain.json` (when no `--config` flag):

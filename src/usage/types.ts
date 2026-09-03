@@ -27,7 +27,6 @@ import type { LanguageModelV3Usage } from "@ai-sdk/provider";
  * call with no request scope at all (a detached fast-slot call or a background
  * job). Lives here rather than beside the counters so `api/metrics.ts` can name
  * the label type without importing the module that derives it.
- *
  */
 export type LlmCallOrigin = "chat" | "task" | "system";
 
