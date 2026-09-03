@@ -36,10 +36,12 @@ accepting it from a server would widen.**
   server volunteering "this result does not advance the loop" has only tightened
   the count against itself.
 - **Host-owned and stripped** when it widens trust. `hostOwnedMetaStripped`
-  (`src/tools/mcp-source.ts`) removes these from every result crossing a real
-  transport; only the in-memory arm carries them through (ADR-0022). The
-  infrastructure-error marker and the two skill markers are in this class, each
-  for a reason recorded where it is declared.
+  (`src/tools/mcp-source.ts`) removes these before a result reaches the engine.
+  How far the strip reaches is per key and follows the same test: a key the
+  platform's own sources legitimately emit is stripped off every real transport
+  and carried through the in-memory arm (ADR-0022); a key nothing should ever
+  send is stripped unconditionally. Each key's membership and its reach are
+  recorded where it is declared, which is the roster — this is the rule.
 
 The question — *does accepting this from a server widen anything?* — is asked per
 key, at the point the key is added. Nothing enforces it, which is why it is

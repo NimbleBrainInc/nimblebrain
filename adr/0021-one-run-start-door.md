@@ -31,6 +31,15 @@ begins only through the runtime's own entry points** — `chat` and `executeTask
 gate membership on the run's workspace, bind the tool registry for that
 workspace, and resolve the run's context budget. No tool starts a run.
 
+**A run-start door is not a principal-establishment door**, and the two are
+counted separately. This ADR counts the places a *run* begins — where an engine
+is constructed and a loop starts. The other count is of the places a *principal*
+is established before a tool is dispatched, which includes surfaces that start no
+run at all: an unattended single dispatch makes one tool call, builds no engine,
+and keeps no conversation, so it adds a principal door without adding a
+run-start one. A door on either axis owes the same gates; only this axis is what
+"one door" here means.
+
 **Delegation is not a kernel capability.** A sub-agent is a remote MCP server
 that happens to run an agent, and calling it is an ordinary tool call — routed
 through the same dispatch, subject to the same wall, the same personal-connector

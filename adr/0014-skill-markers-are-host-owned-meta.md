@@ -41,10 +41,11 @@ to itself over a linked-pair transport, where the bytes never leave the process 
 carries the markers through. That is what makes the platform's own skill tools
 able to emit them and nothing reachable over a network able to.
 
-The infrastructure-error marker is stripped by the same function for the same
-reason and unconditionally: the loop supervisor exempts calls carrying it from
-its strike count, and that supervisor is the only thing that removes a
-misbehaving tool from the model's toolset mid-run.
+Other keys ride the same strip, some of them unconditionally, because no source
+should send them at all. The infrastructure-error marker is one: the loop
+supervisor exempts calls carrying it from its strike count, and that supervisor
+is the only thing that removes a misbehaving tool from the model's toolset
+mid-run.
 
 ## Consequences
 

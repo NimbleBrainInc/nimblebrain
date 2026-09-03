@@ -27,10 +27,12 @@ that enter none while nothing says so.
 ## Decision
 
 **A skill's declared role — `loading-strategy` plus the selection signals it
-carries — determines its channel, by construction, in one place per decision.**
+carries — determines its channel, by construction. The role is read in one
+place per decision, and where a second reader exists it is a different
+lifecycle over the same rule, never a second rule.**
 
-`partitionSkillsByRole` (`src/skills/select.ts`) is the routing authority. It
-splits a pool into two disjoint sets on `loading-strategy` alone:
+`partitionSkillsByRole` (`src/skills/select.ts`) is the per-conversation routing
+authority. It splits a pool into two disjoint sets on `loading-strategy` alone:
 
 - **`always` → the context channel.** Composed into the system prompt every
   turn, sorted by priority. This is identity and voice: content that is wrong to
@@ -40,6 +42,14 @@ splits a pool into two disjoint sets on `loading-strategy` alone:
 
 The two sets are disjoint by construction, so a skill can never enter both and
 there is no downstream de-duplication to get wrong.
+
+The split is stated twice, deliberately and at different lifecycles.
+`partitionSkills` (`src/skills/loader.ts`) is the boot-time counterpart: it runs
+once over the raw on-disk cache and **keeps disabled `always` skills**, because
+the boot cache is the pool a later turn filters, not the pool a turn composes.
+`partitionSkillsByRole` is the per-turn router and drops them. Same split,
+different lifecycle — each function's doc comment warns against confusing it with
+the other, and the disabled-handling difference is the whole reason both exist.
 
 Within `dynamic`, the signals decide which capability channel reaches the skill,
 in this precedence:

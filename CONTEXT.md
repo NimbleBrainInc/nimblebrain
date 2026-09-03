@@ -204,6 +204,6 @@ Orchestrate over remote MCP:
 - [0027](adr/0027-persisted-state-names-the-credential-not-the-value.md) — persisted state names *what* credential it needs, never *where* the value lives
 - [0028](adr/0028-two-disjoint-health-loops.md) — two disjoint health loops: process liveness and credential liveness
 - [0029](adr/0029-long-running-tools-are-task-augmented-and-never-retried.md) — long-running tools are task-augmented; task calls never retry
-- [0030](adr/0030-consuming-resource-update-notifications.md) — *(proposed)* whether the host consumes resource-update notifications
+- [0030](adr/0030-consuming-resource-update-notifications.md) — *(proposed)* how far resource-update consumption generalizes
 - [0031](adr/0031-which-tool-annotations-the-consent-model-reads.md) — *(proposed)* which spec `ToolAnnotations` the consent model reads
 - [0032](adr/0032-provider-typed-ref-blocks-on-persisted-state.md) — *(proposed)* the provider-typed blocks on persisted connector state
