@@ -6,27 +6,27 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 
 describe("createRemoteTransport", () => {
-	test("default returns StreamableHTTPClientTransport", () => {
-		const t = createRemoteTransport(new URL("https://example.com/mcp"));
+	test("default returns StreamableHTTPClientTransport", async () => {
+		const t = await createRemoteTransport(new URL("https://example.com/mcp"));
 		expect(t).toBeInstanceOf(StreamableHTTPClientTransport);
 	});
 
-	test("type sse returns SSEClientTransport", () => {
-		const t = createRemoteTransport(new URL("https://example.com/sse"), {
+	test("type sse returns SSEClientTransport", async () => {
+		const t = await createRemoteTransport(new URL("https://example.com/sse"), {
 			type: "sse",
 		});
 		expect(t).toBeInstanceOf(SSEClientTransport);
 	});
 
-	test("type streamable-http returns StreamableHTTPClientTransport", () => {
-		const t = createRemoteTransport(new URL("https://example.com/mcp"), {
+	test("type streamable-http returns StreamableHTTPClientTransport", async () => {
+		const t = await createRemoteTransport(new URL("https://example.com/mcp"), {
 			type: "streamable-http",
 		});
 		expect(t).toBeInstanceOf(StreamableHTTPClientTransport);
 	});
 
-	test("bearer auth sets Authorization header", () => {
-		const t = createRemoteTransport(new URL("https://example.com/mcp"), {
+	test("bearer auth sets Authorization header", async () => {
+		const t = await createRemoteTransport(new URL("https://example.com/mcp"), {
 			auth: { type: "bearer", token: "sk-test-123" },
 		});
 		expect(t).toBeInstanceOf(StreamableHTTPClientTransport);
@@ -40,8 +40,8 @@ describe("createRemoteTransport", () => {
 		}
 	});
 
-	test("header auth sets custom header", () => {
-		const t = createRemoteTransport(new URL("https://example.com/mcp"), {
+	test("header auth sets custom header", async () => {
+		const t = await createRemoteTransport(new URL("https://example.com/mcp"), {
 			auth: { type: "header", name: "X-Api-Key", value: "key-123" },
 		});
 		expect(t).toBeInstanceOf(StreamableHTTPClientTransport);
@@ -53,15 +53,15 @@ describe("createRemoteTransport", () => {
 		}
 	});
 
-	test("no auth creates transport with empty headers", () => {
-		const t = createRemoteTransport(new URL("https://example.com/mcp"), {
+	test("no auth creates transport with empty headers", async () => {
+		const t = await createRemoteTransport(new URL("https://example.com/mcp"), {
 			auth: { type: "none" },
 		});
 		expect(t).toBeInstanceOf(StreamableHTTPClientTransport);
 	});
 
-	test("custom headers are merged into requestInit", () => {
-		const t = createRemoteTransport(new URL("https://example.com/mcp"), {
+	test("custom headers are merged into requestInit", async () => {
+		const t = await createRemoteTransport(new URL("https://example.com/mcp"), {
 			headers: { "X-Custom": "value", "X-Another": "other" },
 		});
 		expect(t).toBeInstanceOf(StreamableHTTPClientTransport);
@@ -74,8 +74,8 @@ describe("createRemoteTransport", () => {
 		}
 	});
 
-	test("custom headers and bearer auth are combined", () => {
-		const t = createRemoteTransport(new URL("https://example.com/mcp"), {
+	test("custom headers and bearer auth are combined", async () => {
+		const t = await createRemoteTransport(new URL("https://example.com/mcp"), {
 			headers: { "X-Custom": "value" },
 			auth: { type: "bearer", token: "tok-abc" },
 		});
@@ -89,8 +89,8 @@ describe("createRemoteTransport", () => {
 		}
 	});
 
-	test("reconnection options are passed to StreamableHTTPClientTransport", () => {
-		const t = createRemoteTransport(new URL("https://example.com/mcp"), {
+	test("reconnection options are passed to StreamableHTTPClientTransport", async () => {
+		const t = await createRemoteTransport(new URL("https://example.com/mcp"), {
 			reconnection: {
 				maxReconnectionDelay: 60000,
 				initialReconnectionDelay: 2000,
@@ -102,8 +102,8 @@ describe("createRemoteTransport", () => {
 		// throw if reconnectionOptions shape was wrong)
 	});
 
-	test("sessionId is passed to StreamableHTTPClientTransport", () => {
-		const t = createRemoteTransport(new URL("https://example.com/mcp"), {
+	test("sessionId is passed to StreamableHTTPClientTransport", async () => {
+		const t = await createRemoteTransport(new URL("https://example.com/mcp"), {
 			sessionId: "session-abc",
 		});
 		expect(t).toBeInstanceOf(StreamableHTTPClientTransport);
@@ -146,41 +146,41 @@ describe("createRemoteTransport — provider auth (minted)", () => {
 		},
 	};
 
-	test("throws when the connection has no workspaceId (fail loud, not a silent 401)", () => {
+	test("throws when the connection has no workspaceId (fail loud, not a silent 401)", async () => {
 		process.env.NB_FLEET_AUTHORIZER_ISSUER = "https://authz.test";
-		expect(() =>
+		await expect(
 			createRemoteTransport(new URL("https://artifacts.test/mcp"), mintedConfig),
-		).toThrow(/workspaceId/);
+		).rejects.toThrow(/workspaceId/);
 	});
 
-	test("throws a clear error on a provider auth with no config (fail loud, not a cryptic undefined read)", () => {
+	test("throws a clear error on a provider auth with no config (fail loud, not a cryptic undefined read)", async () => {
 		process.env.NB_FLEET_AUTHORIZER_ISSUER = "https://authz.test";
 		// A malformed workspace.json `{ type: "provider", provider: "minted" }` with
 		// no `config` (the TS type requires it; JSON config can omit it).
 		const noConfig = { auth: { type: "provider" as const, provider: "minted" } } as unknown as Parameters<
 			typeof createRemoteTransport
 		>[1];
-		expect(() =>
+		await expect(
 			createRemoteTransport(new URL("https://artifacts.test/mcp"), noConfig, undefined, {
 				workspaceId: "ws_smoke",
 			}),
-		).toThrow(/config object/);
+		).rejects.toThrow(/config object/);
 	});
 
-	test("throws when NB_FLEET_AUTHORIZER_ISSUER is unset", () => {
+	test("throws when NB_FLEET_AUTHORIZER_ISSUER is unset", async () => {
 		delete process.env.NB_FLEET_AUTHORIZER_ISSUER;
-		expect(() =>
+		await expect(
 			createRemoteTransport(new URL("https://artifacts.test/mcp"), mintedConfig, undefined, {
 				workspaceId: "ws_smoke",
 			}),
-		).toThrow(/NB_FLEET_AUTHORIZER_ISSUER/);
+		).rejects.toThrow(/NB_FLEET_AUTHORIZER_ISSUER/);
 	});
 
-	test("attaches a minting fetch and NO static Authorization when fully provisioned", () => {
-		process.env.NB_TENANT_ID = "hq";
+	test("attaches a minting fetch and NO static Authorization when fully provisioned", async () => {
+		process.env.NB_TENANT_ID = "tenant-a";
 		process.env.NB_MCP_AUTHORIZER_TENANT_KEY = randomBytes(32).toString("base64");
 		process.env.NB_FLEET_AUTHORIZER_ISSUER = "https://authz.test";
-		const t = createRemoteTransport(new URL("https://artifacts.test/mcp"), mintedConfig, undefined, {
+		const t = await createRemoteTransport(new URL("https://artifacts.test/mcp"), mintedConfig, undefined, {
 			workspaceId: "ws_smoke",
 		});
 		expect(t).toBeInstanceOf(StreamableHTTPClientTransport);

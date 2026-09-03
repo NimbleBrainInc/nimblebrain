@@ -340,6 +340,19 @@ export type EngineEventType =
   | "audit.auth_failure"
   | "audit.permission_denied"
   /**
+  /**
+   * A secret held in the credential store was revealed to a caller — presented
+   * as a header, exchanged at a token endpoint, handed to a provider SDK.
+   * Payload: { scope, key, caller, purpose } plus `workspaceId` / `userId` when
+   * the scope has one. NEVER the value.
+   *
+   * Emitted on the reveal rather than on the read that produced it, so the log
+   * records secrets that were used and not secrets that were probed for
+   * presence — and at most once per read, so a long-lived `fetch` wrapper
+   * presenting one secret does not write a line per request.
+   */
+  | "audit.credential_read"
+  /**
    * An unattended dispatch — one tool call made with no session, as a named
    * principal, from stored configuration — reached the door. Emitted once per
    * call, whatever the outcome, including the ones that never touch a registry:

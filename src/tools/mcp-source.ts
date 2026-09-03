@@ -648,7 +648,7 @@ export class McpSource implements ToolSource {
       // execute()'s catch branch — issue #116 root cause #2.
       stdioTransport.onclose = () => this.emitSourceCrashed("Stdio subprocess exited");
     } else if (this.mode.type === "remote") {
-      this.transport = createRemoteTransport(
+      this.transport = await createRemoteTransport(
         this.mode.url,
         this.mode.transportConfig,
         this.mode.authProvider,
@@ -735,7 +735,7 @@ export class McpSource implements ToolSource {
       // `rebuildRemoteTransport`.
       transport.onclose = undefined;
       await this.cleanupOnStartFailure();
-      this.rebuildRemoteTransport();
+      await this.rebuildRemoteTransport();
       this.client = this.buildClient();
       // Re-register inbound host-resources handlers on the rebuilt Client —
       // handler tables don't carry over from the prior instance.
@@ -853,11 +853,11 @@ export class McpSource implements ToolSource {
    * Caller must have cleaned up the previous transport via
    * `cleanupOnStartFailure()` first.
    */
-  private rebuildRemoteTransport(): void {
+  private async rebuildRemoteTransport(): Promise<void> {
     if (this.mode.type !== "remote") {
       throw new Error("[mcp-source] rebuildRemoteTransport called on non-remote mode");
     }
-    this.transport = createRemoteTransport(
+    this.transport = await createRemoteTransport(
       this.mode.url,
       this.mode.transportConfig,
       this.mode.authProvider,

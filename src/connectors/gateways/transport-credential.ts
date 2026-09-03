@@ -48,14 +48,15 @@ import { declaredGatewayConfigs, type GatewayConfig } from "../providers/config.
  * added here in the same change that registers it.
  *
  * That step is manual. The built-ins self-register from their own modules
- * (`minted` from the OAuth side, `composio` and `smithery` from theirs), so
- * there is no canonical list of them to derive this one from.
+ * (`minted` from the OAuth side, `composio` and `smithery` from theirs,
+ * `credential` from the secret store's), so there is no canonical list of them
+ * to derive this one from.
  * `gateway-credential.test.ts` asserts each name below against the constant its
  * built-in exports, which catches a rename — it cannot catch a fourth built-in,
  * because its cases are written out one per name. Add a built-in and you add a
  * row there as well as an entry here.
  */
-const RESERVED_NAMES = new Set(["minted", "composio", "smithery"]);
+const RESERVED_NAMES = new Set(["minted", "composio", "smithery", "credential"]);
 
 /**
  * The env var a gateway's key falls back to: the name upper-cased with every

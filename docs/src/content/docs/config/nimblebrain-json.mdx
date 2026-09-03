@@ -535,7 +535,7 @@ Smithery contributes **no callback routes**: it brokers OAuth on its own hosted 
 
 `apiKey` is the platform-wide Composio API key and the gate on registering the provider at all — without it (here or in `COMPOSIO_API_KEY`) the integration stays dormant.
 
-It is declarable because nothing persisted points at where it lives. A connector installed through Composio records `auth: { type: "provider", provider: "composio" }` in `workspace.json` — it names the credential it needs, not a place to find it — so the key never sits at rest and resolution stays the provider's own business. Connectors installed before that change carry a `${COMPOSIO_API_KEY}` environment reference and are mapped forward when they start, so both resolve identically with no operator action.
+It is declarable because nothing persisted points at where it lives. A connector installed through Composio records `auth: { type: "provider", provider: "composio" }` in `workspace.json` — it names the credential it needs, not a place to find it — so the key never sits at rest and resolution stays the provider's own business. Connectors installed before that change carry a `${COMPOSIO_API_KEY}` environment reference in their `auth` block and are mapped forward when they start, so both resolve identically with no operator action. The key itself may be a [credential reference](/config/secrets/) rather than a literal.
 
 <Aside type="note">
   **Which home to pick.** Both work; they suit different deployments.
