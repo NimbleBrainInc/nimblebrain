@@ -122,7 +122,7 @@ describe("web workspace-id regex stays in lockstep with the server (T012)", () =
   // `src/workspace/workspace-id-pattern.ts` via `bun run codegen`.
   // The test below pins the contract: the generated literal must match
   // the literal embedded in the source. CI's `check:codegen` catches
-  // drift via `git diff --exit-code web/src/_generated/`.
+  // drift, and a generated file absent from the tree along with it.
 
   test("imported pattern + flags equal the server's literal", () => {
     // These are the same string + flags the server compiles into its

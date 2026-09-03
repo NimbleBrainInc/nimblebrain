@@ -74,7 +74,7 @@
     "migrate:usage-ledger": "bun run scripts/backfill-usage-ledger.ts",
     "check:test-signatures": "bun run scripts/check-test-signatures.ts",
     "codegen": "bun run scripts/codegen-web-platform-schemas.ts",
-    "check:codegen": "bun run codegen && git diff --exit-code web/src/_generated/",
+    "check:codegen": "bun run codegen && ! git status --porcelain -uall web/src/_generated/ | grep .",
     "verify": "bun run verify:static && bun run verify:test-unit && bun run test:integration",
     "verify:static": "bun run format:check && bun run lint && bun run check && bun run check:web && bun run check:theme && bun run check:cycles && bun run check:bundle-transport && bun run check:workspace-paths && bun run check:conversation-paths && bun run check:personal-workspace-id && bun run check:tool-namespace && bun run check:workspace-splat-nesting && bun run check:credential-paths && bun run check:public-origin && bun run check:file-paths && bun run check:automation-paths && bun run check:code-style && bun run check:no-raw-console && bun run check:catalog-schema && bun run check:no-sentry-in-kernel && bun run check:usage-record && bun run check:test-signatures && bun run check:codegen",
     "verify:test-unit": "bun run test:unit && bun run test:web && bun run test:bundles",
