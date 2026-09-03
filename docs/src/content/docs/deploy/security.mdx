@@ -286,6 +286,53 @@ What is left to evaluate at install time is the **connection**:
 - **What it is granted.** OAuth scopes are declared on the catalog entry and shown on the consent screen. Credentials are workspace-scoped: a connector authorized in one workspace is not reachable from another.
 - **What its tools may do.** The per-connector permission table (Configure → Tools) is the place to disallow a tool the workspace should not expose to the agent.
 
+## How a tool call gets authorized
+
+Every tool call reaches a tool through one of three doors, and all three run the
+same gates. What differs is only where the caller's identity comes from.
+
+| Door | Who is calling | Where the workspace comes from |
+|---|---|---|
+| Chat and automation runs | The authenticated user, captured when the session opened | The conversation's own workspace, or the run's provenance workspace |
+| `/mcp` | The authenticated client's user | The `X-Workspace-Id` header, validated against that user's membership |
+| Unattended dispatch | A user id stored in workspace configuration by an admin | The workspace that configuration belongs to |
+
+The third is the one worth understanding, because it is the only one where
+nobody is present. It makes exactly one tool call — no model, no conversation,
+no follow-up — on behalf of a principal that a workspace admin's write recorded
+earlier. **The principal is never taken from a request**: there is no header, no
+body field, and no "act as" parameter that can name a different user, so the
+door cannot be pointed at someone by an incoming call.
+
+Before that call runs:
+
+- **The principal must be a current member of the workspace.** A user who has
+  since been removed does not get a denial — the call is *skipped* and recorded
+  as `owner_not_member`, and it starts working again by itself if they are added
+  back. This is the same rule that governs a scheduled automation whose owner
+  leaves.
+- **The tool must not be an authoring surface.** Creating or modifying
+  automations, authoring skills, and installing or disconnecting connectors are
+  all refused. Each one leaves something behind that fires again later, which is
+  how an unattended call could grow its own reach.
+- **The per-connector permission table applies**, exactly as it does in chat: a
+  tool set to *disallow* is refused here too.
+- **A personal connector needs its owner's grant** to the workspace. The
+  principal is a person, and the call runs on their credentials, so it gets no
+  exemption for being made by the platform.
+- **The workspace wall applies.** A call can only ever reach the one workspace
+  the configuration named; no tool name can address another.
+
+The call is bounded by a wall-clock timeout and a cap on the size of the result
+it may return, and it writes nothing — no conversation, no run record.
+
+**Every attempt is audited**, whatever the outcome. The workspace event log
+(`logs/workspace/<date>.jsonl` under the work directory, or under `logging.dir`
+when you set one) gets one
+`audit.unattended_dispatch` line per call carrying the principal, the workspace,
+the tool, the caller's own reason string, and the outcome. Since a dispatch
+leaves no transcript behind, this line is the record.
+
 ## Production checklist
 
 Use this checklist before exposing NimbleBrain to any network:

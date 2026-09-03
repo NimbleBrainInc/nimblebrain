@@ -18,6 +18,9 @@ const WORKSPACE_EVENTS = new Set<EngineEventType>([
   "http.error",
   "audit.auth_failure",
   "audit.permission_denied",
+  // A dispatch made from stored configuration has no session, no transcript and
+  // no run result — this line is the only place it appears.
+  "audit.unattended_dispatch",
   // Tool-list mutations are workspace-level signal: billing wants per-workspace
   // tool-usage rollups, policy hooks want to know what surface area tenants
   // are exercising. Volume is bounded by the LRU cap (typically 0-3 events
