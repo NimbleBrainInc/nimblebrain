@@ -6,6 +6,7 @@ import type { EventSink, ThinkingEffort } from "../engine/types.ts";
 import type { ContentPart, FileReference } from "../files/types.ts";
 import type { UserIdentity } from "../identity/provider.ts";
 import type { ProvidersConfig } from "../model/registry.ts";
+import type { NotificationsPollConfig } from "../notifications/poll-config.ts";
 import type { TokenUsage } from "../usage/types.ts";
 
 /** Model slot configuration. Each slot maps to a provider:model-id string. */
@@ -224,6 +225,18 @@ export interface RuntimeConfig {
     timezone?: string;
     /** Briefing cache TTL in minutes. Default: 5. */
     cacheTtlMinutes?: number;
+  };
+
+  /**
+   * Notifications — how the runtime reads the outboxes connectors declare.
+   *
+   * Only the poll's pacing is configurable. What an outbox contains, and who
+   * is allowed to declare one, are the server's and the operator's decisions
+   * respectively; what it *costs* is the runtime's, and this is where an
+   * operator moves that cost. See `src/notifications/poll-config.ts`.
+   */
+  notifications?: {
+    poll?: NotificationsPollConfig;
   };
 
   /** File context configuration. */
