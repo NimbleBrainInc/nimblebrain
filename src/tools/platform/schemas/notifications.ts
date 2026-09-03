@@ -165,9 +165,9 @@ export interface NotificationsMarkReadOutput {
 /**
  * Level a newly declared source is held to until an admin raises it.
  *
- * The declaration itself grants nothing (spec §4.2): a connector can put items
- * in the inbox by declaring an outbox, but a route above this ceiling does not
- * fire for it until a workspace admin says so. `info` is the floor of the
+ * Declaring an outbox grants nothing on its own: a connector can put items in
+ * the inbox by declaring one, but a route above this ceiling does not fire for
+ * it until a workspace admin says so. `info` is the floor of the
  * vocabulary, so the default is "nothing this source emits reaches a route that
  * asks for urgency".
  */
@@ -280,6 +280,16 @@ export type NotificationDeliverTarget = Static<typeof NotificationDeliverTarget>
 export const NOTIFICATION_ROUTE_MAX_DELIVER = 5;
 /** Most routes one workspace may hold. */
 export const NOTIFICATION_ROUTES_MAX = 50;
+/**
+ * Most sources one workspace may hold a ceiling for.
+ *
+ * The map lives on the workspace record, and the inbound-delivery door reads
+ * every workspace record in full on every delivery — a walk that stays cheap
+ * only because those records stay small. A ceiling is one entry per connector
+ * that ever declared an outbox, so this bound is far above any real workspace
+ * and exists to keep an unbounded key space off that path.
+ */
+export const NOTIFICATION_SOURCES_MAX = 200;
 
 /**
  * One route as the editor writes it.
@@ -287,8 +297,8 @@ export const NOTIFICATION_ROUTES_MAX = 50;
  * `createdBy` is absent by construction, not filtered: the schema is closed, so
  * a body carrying it — or an `as`, or any other principal-shaped field — is
  * refused by the validator before the handler runs. The principal a route
- * dispatches under is stamped from the authenticated identity (spec §4.4), and
- * a field the caller could set would be the impersonation this design forbids.
+ * dispatches under is stamped from the authenticated identity, and a field the
+ * caller could set would be the impersonation this design forbids.
  */
 export const NotificationRouteInput = Type.Object(
   {

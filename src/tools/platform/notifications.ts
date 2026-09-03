@@ -19,6 +19,7 @@ import { defineInProcessApp, type InProcessTool } from "../in-process-app.ts";
 import type { McpSource } from "../mcp-source.ts";
 import {
   NOTIFICATION_PLACEHOLDERS,
+  NOTIFICATION_SOURCES_MAX,
   type NotificationSourceView,
   NotificationsListInput,
   type NotificationsListOutput,
@@ -68,8 +69,8 @@ const MARK_READ_DESCRIPTION =
  * They are stripped from every LLM listing — chat and `/mcp` alike — while
  * staying callable by name, so the workspace settings surface reaches them and
  * no agent does. That is the design's own rule, not a precaution added here:
- * a route is written "only by a workspace admin through the settings surface;
- * never by a bundle, never by the agent" (spec §4.4). A route is a standing
+ * a route is written only by a workspace admin through the settings surface —
+ * never by a bundle, and never by the agent. A route is a standing
  * instruction to call a tool with a stored input under a stored principal, so
  * an agent that could author one could grant itself an unattended path to any
  * tool in the workspace — and an agent that could merely *read* the list could
@@ -333,6 +334,19 @@ export function createNotificationsSource(runtime: Runtime, eventSink: EventSink
         const auth = await requireAdmin();
         if (!auth.ok) return refuse(auth.reason);
         const { source, maxLevel } = input as unknown as NotificationsSetSourceLevelInput;
+        const stored = readNotificationsConfig(
+          await runtime.getWorkspaceStore().get(auth.wsId),
+        ).sources;
+        if (
+          stored &&
+          stored[source] === undefined &&
+          Object.keys(stored).length >= NOTIFICATION_SOURCES_MAX
+        ) {
+          return refuse(
+            `This workspace already holds ceilings for ${NOTIFICATION_SOURCES_MAX} sources, ` +
+              "which is the most it may hold. Lower an existing one instead of adding another.",
+          );
+        }
         return commit(
           auth.wsId,
           (current) => ({

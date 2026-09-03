@@ -18,9 +18,10 @@
 
 import { beforeEach, describe, expect, test } from "bun:test";
 import { isInternalTool } from "../../../../src/engine/types.ts";
-import type {
-  NotificationRouteInput,
-  NotificationsSettingsOutput,
+import {
+  NOTIFICATION_SOURCES_MAX,
+  type NotificationRouteInput,
+  type NotificationsSettingsOutput,
 } from "../../../../src/tools/platform/schemas/notifications.ts";
 import type { McpSource } from "../../../../src/tools/mcp-source.ts";
 import { createNotificationsSource } from "../../../../src/tools/platform/notifications.ts";
@@ -175,6 +176,23 @@ describe("the ceiling", () => {
     expect(runtime.workspaces.get(WS)?.notifications?.sources).toEqual({
       "precision-outbound": { maxLevel: "urgent" },
     });
+  });
+
+  test("stops admitting new sources at the cap, and still lets an existing one change", async () => {
+    // The map lives on the workspace record, and the inbound-delivery door
+    // reads every workspace record in full on every delivery. An uncapped key
+    // space there is a workspace degrading a path shared with every other one.
+    for (let i = 0; i < NOTIFICATION_SOURCES_MAX; i++) {
+      const res = await exec("set_source_level", { source: `src-${i}`, maxLevel: "info" });
+      expect(res.isError).toBe(false);
+    }
+    const overflow = await exec("set_source_level", { source: "one-too-many", maxLevel: "info" });
+    expect(overflow.isError).toBe(true);
+    expect(textOf(overflow)).toContain(String(NOTIFICATION_SOURCES_MAX));
+
+    // The cap bounds how many sources are held, not whether a held one moves.
+    const existing = await exec("set_source_level", { source: "src-0", maxLevel: "urgent" });
+    expect(existing.isError).toBe(false);
   });
 
   test("a ceiling whose connector is gone still shows, so it can still be lowered", async () => {

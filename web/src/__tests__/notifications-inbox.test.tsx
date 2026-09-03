@@ -38,7 +38,17 @@ const ReactDOMClient = await import("react-dom/client");
 const { act } = await import("react");
 const { MemoryRouter, Route, Routes } = await import("react-router-dom");
 const { NotificationsContext } = await import("../context/NotificationsContext");
+const { ShellProvider } = await import("../context/ShellContext");
 const { NotificationsPage } = await import("../pages/NotificationsPage");
+
+/** A placement the focused workspace mounts, as the shell reports one. */
+const CAMPAIGNS_PLACEMENT = {
+  serverName: "acme",
+  slot: "sidebar",
+  resourceUri: "ui://acme/campaigns",
+  priority: 10,
+  route: "campaigns",
+};
 
 function item(over: Partial<NotificationView> = {}): NotificationView {
   return {
@@ -57,7 +67,10 @@ function item(over: Partial<NotificationView> = {}): NotificationView {
 
 let unmount: (() => void) | null = null;
 
-async function mount(over: Partial<NotificationsValue> = {}): Promise<{
+async function mount(
+  over: Partial<NotificationsValue> = {},
+  placements: Array<Record<string, unknown>> = [],
+): Promise<{
   container: HTMLDivElement;
   markRead: ReturnType<typeof mock>;
 }> {
@@ -82,15 +95,25 @@ async function mount(over: Partial<NotificationsValue> = {}): Promise<{
         MemoryRouter,
         { initialEntries: ["/w/ws-outbound/notifications"] },
         React.createElement(
-          NotificationsContext.Provider,
-          { value },
+          ShellProvider,
+          {
+            value: {
+              forSlot: (slot: string) => (slot === "sidebar" ? placements : []),
+              mainRoutes: () => [],
+              shellWorkspaceId: "ws_outbound",
+            },
+          },
           React.createElement(
-            Routes,
-            null,
-            React.createElement(Route, {
-              path: "/w/:slug/notifications",
-              element: React.createElement(NotificationsPage),
-            }),
+            NotificationsContext.Provider,
+            { value },
+            React.createElement(
+              Routes,
+              null,
+              React.createElement(Route, {
+                path: "/w/:slug/notifications",
+                element: React.createElement(NotificationsPage),
+              }),
+            ),
           ),
         ),
       ),
@@ -142,6 +165,35 @@ describe("a link is a link only where the shell can open it", () => {
     expect(container.textContent).toContain("acme://campaigns/cmp_1");
     const anchors = Array.from(container.querySelectorAll("a"));
     expect(anchors.some((a) => (a.textContent ?? "").includes("Open"))).toBe(false);
+  });
+
+  test("a ui:// URI the workspace mounts becomes a link into that app", async () => {
+    const { container } = await mount(
+      { items: [item({ link: { resource: "ui://acme/campaigns" } })] },
+      [CAMPAIGNS_PLACEMENT],
+    );
+    await click(rows(container)[0]!);
+
+    const open = Array.from(container.querySelectorAll("a")).find((a) =>
+      (a.textContent ?? "").includes("Open"),
+    );
+    expect(open?.getAttribute("href")).toBe("/w/ws-outbound/app/campaigns");
+    // The raw URI is not also printed — the affordance replaces it.
+    expect(container.textContent).not.toContain("ui://acme/campaigns");
+  });
+
+  test("the same URI is text when this workspace mounts no such placement", async () => {
+    const { container } = await mount({
+      items: [item({ link: { resource: "ui://acme/campaigns" } })],
+    });
+    await click(rows(container)[0]!);
+
+    expect(container.textContent).toContain("ui://acme/campaigns");
+    expect(
+      Array.from(container.querySelectorAll("a")).some((a) =>
+        (a.textContent ?? "").includes("Open"),
+      ),
+    ).toBe(false);
   });
 
   test("an https URL is text too — the inbox is not a delivery vehicle for one", async () => {

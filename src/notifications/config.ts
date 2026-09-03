@@ -8,8 +8,8 @@
  * the agent.
  *
  * **The principal is the writer.** Every route carries `createdBy`, and a route
- * dispatches under that identity (spec §4.4) — so `createdBy` is stamped from
- * the authenticated caller on every write and can never arrive in a body. A
+ * dispatches under that identity — so `createdBy` is stamped from the
+ * authenticated caller on every write and can never arrive in a body. A
  * route rewritten by a second admin is re-stamped to that admin rather than
  * keeping the first one: an editor who could change a target while keeping
  * somebody else's principal could reach tools their own grants do not, which is
@@ -236,7 +236,12 @@ function unknownPlaceholders(value: unknown, found: Set<string> = new Set()): st
   } else if (Array.isArray(value)) {
     for (const item of value) unknownPlaceholders(item, found);
   } else if (value && typeof value === "object") {
-    for (const item of Object.values(value)) unknownPlaceholders(item, found);
+    // Entries, not values: a `{{…}}` used as a KEY is delivered as literally as
+    // one used as a value, so the check has to see both sides.
+    for (const [key, item] of Object.entries(value)) {
+      unknownPlaceholders(key, found);
+      unknownPlaceholders(item, found);
+    }
   }
   return [...found];
 }

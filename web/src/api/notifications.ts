@@ -18,6 +18,9 @@ import type {
   NotificationsMarkReadOutput,
   NotificationsSetRoutesInput,
   NotificationsSetSourceLevelInput,
+  // Imported as well as re-exported below, and both are load-bearing: the
+  // local binding types the return values here, and `export type … from`
+  // creates no local name.
   NotificationsSettingsOutput,
 } from "../_generated/platform-schemas/notifications";
 import { callTool } from "./client";
