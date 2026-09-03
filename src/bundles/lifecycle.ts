@@ -551,6 +551,7 @@ export class BundleLifecycleManager {
         bundleName: name,
         version: instance.version,
         type: instance.type,
+        installSource: instance.installSource,
         trustScore: instance.trustScore,
         ui: instance.ui,
         placements: instance.ui?.placements ?? null,
@@ -633,6 +634,7 @@ export class BundleLifecycleManager {
         bundleName: bundlePath,
         version: instance.version,
         type: instance.type,
+        installSource: instance.installSource,
         ui: instance.ui,
         placements: instance.ui?.placements ?? null,
       },
@@ -758,6 +760,7 @@ export class BundleLifecycleManager {
         bundleName: url,
         version: instance.version,
         type: instance.type,
+        installSource: instance.installSource,
         remote: true,
         ui: instance.ui,
         trustScore: instance.trustScore,
@@ -848,7 +851,7 @@ export class BundleLifecycleManager {
     // Step 5 — Emit event (data NOT deleted — step 6)
     this.eventSink.emit({
       type: "bundle.uninstalled",
-      data: { serverName, bundleName: nameOrPath, wsId },
+      data: { serverName, bundleName: nameOrPath, installSource: instance?.installSource, wsId },
     });
   }
 
@@ -2628,6 +2631,7 @@ export class BundleLifecycleManager {
         bundleName: instance.bundleName,
         version: instance.version,
         type: instance.type,
+        installSource: instance.installSource,
         trustScore: instance.trustScore,
         ui: instance.ui,
         placements: instance.ui?.placements ?? null,

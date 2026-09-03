@@ -171,7 +171,7 @@ describe("IdentityToolRouter — availableTools", () => {
         name: "crm__search",
         description: "search crm",
         inputSchema: { type: "object", properties: {} },
-        annotations: { ui: "card" },
+        meta: { ui: "card" },
       },
       {
         name: "conversations__list",

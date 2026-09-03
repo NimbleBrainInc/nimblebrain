@@ -140,7 +140,7 @@ export function createInstructionsSource(runtime: Runtime, eventSink: EventSink)
     {
       name: "write_instructions",
       description: WRITE_INSTRUCTIONS_DESCRIPTION,
-      annotations: { [INTERNAL_TOOL_ANNOTATION]: true },
+      meta: { [INTERNAL_TOOL_ANNOTATION]: true },
       inputSchema: InstructionsWriteInput,
       handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
         // A stale `scope` used to choose the file. The schema no longer declares

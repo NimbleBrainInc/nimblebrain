@@ -36,6 +36,12 @@ import { createEchoModel } from "../helpers/echo-model.ts";
 
 // ── In-process counter source ─────────────────────────────────────
 
+const COUNTER_OUTPUT_SCHEMA = {
+  type: "object",
+  properties: { count: { type: "number" }, echo: { type: "string" } },
+  required: ["count"],
+};
+
 function buildCounterSource(
   sourceName: string,
   toolName: string,
@@ -49,11 +55,21 @@ function buildCounterSource(
       type: "object",
       properties: { echo: { type: "string" } },
     },
+    // Every field the door forwards, so each can be asserted to arrive under
+    // its own name. A `destructiveHint` a caller never sees is a caller that
+    // cannot be careful with the call it is about to make.
+    annotations: { title: "Counter", destructiveHint: true },
+    meta: { "ai.nimblebrain/counter": true },
+    outputSchema: COUNTER_OUTPUT_SCHEMA,
+    // Declaring an `outputSchema` obliges every success to carry
+    // `structuredContent`; a result without it is rejected by the SDK client's
+    // cached validator and comes back `isError: true`.
     handler: async (input) => {
       count += 1;
       const echo = typeof input.echo === "string" ? input.echo : "";
       return {
         content: textContent(`[${sourceName}] call #${count}: ${echo}`),
+        structuredContent: { count, echo },
         isError: false,
       };
     },
@@ -341,6 +357,38 @@ describe("/mcp with a member X-Workspace-Id (walled to that workspace)", () => {
       expect(names).toContain("conversations__list");
       // …but never another workspace's tools.
       expect(names).not.toContain(personalToolName());
+    } finally {
+      await client.close();
+    }
+  });
+
+  it("tools/list forwards annotations, _meta and outputSchema under their own names", async () => {
+    const client = await createMcpClient({ workspace: SHARED_WS_ID });
+    try {
+      const listed = (await client.listTools()).tools.find((t) => t.name === sharedToolName());
+      expect(listed).toBeDefined();
+      expect(listed!.annotations).toEqual({ title: "Counter", destructiveHint: true });
+      expect(listed!._meta).toEqual({ "ai.nimblebrain/counter": true });
+      expect(listed!.outputSchema).toEqual(COUNTER_OUTPUT_SCHEMA);
+    } finally {
+      await client.close();
+    }
+  });
+
+  it("a declared outputSchema is honoured by the call it describes", async () => {
+    // The listing's `outputSchema` arms the SDK client's validator, so this
+    // asserts more than a field's presence: a tool that declared one and
+    // answered with text alone would come back `isError: true` here.
+    sharedSource.reset();
+    const client = await createMcpClient({ workspace: SHARED_WS_ID });
+    try {
+      await client.listTools();
+      const result = await client.callTool({
+        name: sharedToolName(),
+        arguments: { echo: "structured" },
+      });
+      expect(result.isError).toBeFalsy();
+      expect(result.structuredContent).toEqual({ count: 1, echo: "structured" });
     } finally {
       await client.close();
     }

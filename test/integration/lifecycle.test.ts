@@ -139,6 +139,10 @@ describe("BundleLifecycleManager — install local bundle", () => {
 		expect(eventTypes(sink)).toContain("bundle.installed");
 		const installEvent = sink.events.find((e) => e.type === "bundle.installed");
 		expect(installEvent!.data.serverName).toBe(instance.serverName);
+		// The install kind rides the event. Telemetry reports on this field —
+		// it has no other way to tell one install kind from another, and must
+		// not infer one from a bundle name or URL.
+		expect(installEvent!.data.installSource).toBe("local");
 
 		// Cleanup
 		await registry.removeSource(instance.serverName);
@@ -268,8 +272,10 @@ describe("BundleLifecycleManager — uninstall", () => {
 		const config = JSON.parse(readFileSync(configPath, "utf-8"));
 		expect(config.bundles).toHaveLength(0);
 
-		// Event emitted
+		// Event emitted, carrying the install kind telemetry reports on
 		expect(eventTypes(sink)).toContain("bundle.uninstalled");
+		const uninstallEvent = sink.events.find((e) => e.type === "bundle.uninstalled");
+		expect(uninstallEvent!.data.installSource).toBe("local");
 
 		// Instance no longer tracked (installLocal stores without wsId)
 		expect(lifecycle.getInstances().find(i => i.serverName === serverName)).toBeUndefined();

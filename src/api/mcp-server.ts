@@ -770,6 +770,10 @@ function createServer(
         // Feature gating + role visibility apply to the BARE tool name.
         .filter((t) => isToolEnabled(bareToolName(t.name), features))
         .filter((t) => isToolVisibleToRole(bareToolName(t.name), orgRole))
+        // Both spec metadata namespaces go out under their own names: `_meta`
+        // for host conventions, `annotations` for the spec's behavioural hints.
+        // A client that reads `destructiveHint` before spending the call can
+        // only do so if we forward what the upstream tool declared.
         .map((t) => ({
           name: t.name,
           description: t.description,
@@ -778,6 +782,17 @@ function createServer(
             properties?: Record<string, unknown>;
             required?: string[];
           },
+          ...(t.outputSchema
+            ? {
+                outputSchema: t.outputSchema as {
+                  type: "object";
+                  properties?: Record<string, unknown>;
+                  required?: string[];
+                },
+              }
+            : {}),
+          ...(t.annotations ? { annotations: t.annotations } : {}),
+          ...(t.meta ? { _meta: t.meta } : {}),
         })),
     };
   });
