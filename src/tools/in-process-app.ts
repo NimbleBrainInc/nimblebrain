@@ -146,10 +146,16 @@ export function defineInProcessApp(
   } = options;
 
   // Any of the four fields means this source serves resources. When ANY is
-  // active, advertise `listChanged` + `subscribe` so external clients (and
-  // the SDK) know they can watch for changes — even if the dynamic catalog
-  // is empty at this instant. Sources with no resource fields keep
+  // active, advertise `listChanged` — the server pushes
+  // `notifications/resources/list_changed` (McpSource.notifyResourceListChanged),
+  // so a client that watches for it gets one — even if the dynamic catalog is
+  // empty at this instant. Sources with no resource fields keep
   // `resources: undefined` to stay invisible to `resources/*` requests.
+  //
+  // `subscribe` is NOT advertised: no `resources/subscribe` handler is
+  // registered, so a conforming client that took the capability at its word
+  // would get method-not-found. A capability is a promise about what is
+  // served.
   const hasResources =
     resources.size > 0 ||
     (templates !== undefined && templates.length > 0) ||
@@ -168,7 +174,7 @@ export function defineInProcessApp(
           {
             capabilities: {
               tools: {},
-              resources: hasResources ? { listChanged: true, subscribe: true } : undefined,
+              resources: hasResources ? { listChanged: true } : undefined,
             },
             ...(instructions ? { instructions } : {}),
           },

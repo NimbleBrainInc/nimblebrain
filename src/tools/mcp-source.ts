@@ -1230,6 +1230,12 @@ export class McpSource implements ToolSource {
    * to clients that previously sent `resources/subscribe` for this URI. We
    * do not track subscriber lists here.
    *
+   * In-process servers do not advertise the `resources.subscribe` capability
+   * and register no `resources/subscribe` handler, so nothing subscribes and
+   * the SDK delivers this to no one today. It stays because it is the correct
+   * signal to emit at this seam; whether the host consumes resource updates —
+   * and therefore whether `subscribe` should be served — is an open decision.
+   *
    * No-op semantics match {@link notifyResourceListChanged}: only meaningful
    * for `inProcess` sources, drops silently between `stop()` and the next
    * `start()`. A client that missed the notification will see the new
