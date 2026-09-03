@@ -67,6 +67,7 @@ Each worktree gets its own isolated state, so two worktrees can run side-by-side
 ## Conventions
 
 - **Runtime:** Bun (not Node). Use `bun run`, `bun test`, `bunx`.
+- **Lockfiles are frozen everywhere except local dev.** CI, both Dockerfiles, and `install:bundles` pass `--frozen-lockfile` — bun does not do this on its own in CI, and without it CI tests a freshly-resolved tree while the image ships the locked one. A frozen install that fails means a `package.json` moved without its `bun.lock`: run `bun install` in that package dir and commit the lockfile. `bun run dev` and `build:bundles` stay unfrozen so adding a dependency locally still works.
 - **Module system:** ESM only. All imports use `.ts` extensions.
 - **Linting:** Biome (not ESLint/Prettier). Run `bun run lint`.
 - **Type checking:** `bunx tsc --noEmit`. Strict mode enabled.
