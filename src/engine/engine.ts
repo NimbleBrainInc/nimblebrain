@@ -646,17 +646,17 @@ function seedInjectedConnectorSkills(
 /**
  * Build the router-wide lookups the run needs. Uses ALL tools from the router
  * (not just the direct/surfaced subset passed to the LLM) because tiered
- * surfacing may proxy UI-annotated tools:
- *   - `toolAnnotations`: tool name → MCP annotations (UI metadata like resourceUri).
+ * surfacing may proxy tools whose `_meta` mounts a UI:
+ *   - `toolMeta`: tool name → the tool's `_meta` (UI metadata like resourceUri).
  *   - `allToolSchemaMap`: tool name → schema (used to resolve agent-promoted tools).
  */
 function buildToolLookups(allRouterTools: ToolSchema[]): {
-  toolAnnotations: Map<string, Record<string, unknown>>;
+  toolMeta: Map<string, Record<string, unknown>>;
   allToolSchemaMap: Map<string, ToolSchema>;
 } {
-  const toolAnnotations = new Map<string, Record<string, unknown>>();
+  const toolMeta = new Map<string, Record<string, unknown>>();
   for (const t of allRouterTools) {
-    if (t.annotations) toolAnnotations.set(t.name, t.annotations);
+    if (t.meta) toolMeta.set(t.name, t.meta);
   }
 
   const allToolSchemaMap = new Map<string, ToolSchema>();
@@ -664,7 +664,7 @@ function buildToolLookups(allRouterTools: ToolSchema[]): {
     allToolSchemaMap.set(t.name, t);
   }
 
-  return { toolAnnotations, allToolSchemaMap };
+  return { toolMeta, allToolSchemaMap };
 }
 
 /** Throw the abort reason if the run's signal is already aborted. */
@@ -916,7 +916,7 @@ function buildRunErrorData(runId: string, err: unknown): Record<string, unknown>
 interface ToolExecContext {
   config: EngineConfig;
   runId: string;
-  toolAnnotations: Map<string, Record<string, unknown>>;
+  toolMeta: Map<string, Record<string, unknown>>;
   connectorSkillCandidates: ConnectorSkillCandidate[];
   injectedConnectorSkills: Set<string>;
   /** Drained into history after this iteration's tool results. */
@@ -986,7 +986,7 @@ export class AgentEngine {
     const runId = crypto.randomUUID();
 
     const allRouterTools = await this.tools.availableTools();
-    const { toolAnnotations, allToolSchemaMap } = buildToolLookups(allRouterTools);
+    const { toolMeta, allToolSchemaMap } = buildToolLookups(allRouterTools);
 
     const directTools = [...tools];
     const directToolNames = new Set(directTools.map((t) => t.name));
@@ -1407,7 +1407,7 @@ export class AgentEngine {
         const toolExecContext: ToolExecContext = {
           config,
           runId,
-          toolAnnotations,
+          toolMeta,
           connectorSkillCandidates,
           injectedConnectorSkills,
           pendingOverlayDeliveries,
@@ -1993,9 +1993,9 @@ export class AgentEngine {
       };
     }
 
-    // Extract UI resourceUri from tool annotations if present
-    const ann = ctx.toolAnnotations.get(gatedCall.name);
-    const uiMeta = ann?.ui as Record<string, unknown> | undefined;
+    // Extract UI resourceUri from the tool's `_meta` if present
+    const meta = ctx.toolMeta.get(gatedCall.name);
+    const uiMeta = meta?.ui as Record<string, unknown> | undefined;
     const resourceUri = typeof uiMeta?.resourceUri === "string" ? uiMeta.resourceUri : undefined;
 
     // tool.start fires with the *pre-coercion* input on purpose:

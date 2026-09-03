@@ -28,7 +28,7 @@ export function createManageRegistriesTool(ctx: ManageRegistriesContext): InProc
   return {
     name: "manage_registries",
     description: "List and configure connector registries. Org admin gated for writes.",
-    annotations: { [INTERNAL_TOOL_ANNOTATION]: true },
+    meta: { [INTERNAL_TOOL_ANNOTATION]: true },
     inputSchema: {
       type: "object",
       properties: {
