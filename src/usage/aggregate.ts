@@ -4,7 +4,7 @@
  * Source of truth: the durable usage ledger (`src/usage/ledger.ts`), one line
  * per priced LLM call. It used to be `llm.response` events scanned out of
  * conversation JSONL files, which made usage a function of whether a
- * conversation file happened to exist — so task runs, delegated sub-agents, the
+ * conversation file happened to exist — so task runs, sub-agent runs, the
  * background briefing and archived workspaces all spent money this never saw.
  *
  * **There is exactly one reader, deliberately.** The codebase previously had
@@ -312,17 +312,15 @@ function groupKeyFor(record: LlmCallRecord, groupBy: UsageGroupBy, modelKey: str
       // dimension the schema calls "conversation".
       return conversationOf(record) ?? "none";
     case "turn":
-      // One assistant turn. A delegated sub-agent runs its own engine and so
-      // mints its own `runId`; keying on that alone would bill one turn as
-      // several rows, understating the turn the user actually took and putting
-      // sub-agent rows beside top-level ones with nothing to tell them apart.
-      // `parentRunId` is the TOP-LEVEL run at any depth — the delegate tracker
-      // only advances `currentRunId` for runs that have no parent
-      // (`runtime.ts:286`) — so preferring it rolls a whole delegation subtree
-      // onto the turn that spawned it.
+      // One assistant turn, which is one engine run.
+      //
+      // Legacy: a record written while a turn could spawn a sub-agent carries
+      // the spawning turn's id in `parentRunId` and the sub-agent's own in
+      // `runId`. Preferring `parentRunId` rolls those rows onto the turn that
+      // spawned them rather than billing one turn as several.
       //
       // The forked fast-slot calls (title, compaction, briefing) carry no
-      // engine run at all, and neither do records predating this field; both
+      // engine run at all, and neither do records predating `runId`; both
       // group under "none".
       return record.parentRunId ?? record.runId ?? "none";
     case "user":
@@ -638,9 +636,7 @@ function accumulateRecord(record: LlmCallRecord, sink: AggregationSink): void {
   addCost(sink.totals.cost, cost);
   sink.totals.llmMs += record.llmMs;
   // `conversationOf` / `taskRunOf` decide which of the two a record belongs to,
-  // so an automation is never counted as a conversation. This is what `origin`
-  // and `delegated` being orthogonal buys: a delegated call
-  // inside an automation is `task`, so it counts toward the run that spawned it.
+  // so an automation is never counted as a conversation.
   const conversationId = conversationOf(record);
   const taskRunId = taskRunOf(record);
   if (conversationId) sink.conversationIds.add(conversationId);

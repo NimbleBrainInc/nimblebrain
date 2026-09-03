@@ -370,11 +370,6 @@
           "description": "Enable the skill write surface via the nb__skills tools: create, update, delete, history, restore, set_status, and the conversation-scoped activate/deactivate. Default: true.",
           "default": true
         },
-        "delegation": {
-          "type": "boolean",
-          "description": "Enable multi-agent delegation via nb__delegate. Default: true.",
-          "default": true
-        },
         "toolDiscovery": {
           "type": "boolean",
           "description": "Enable tool search via nb__search scope=tools. Default: true.",

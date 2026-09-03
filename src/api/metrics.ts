@@ -87,8 +87,8 @@ export const httpRequestDurationSeconds = new Histogram({
  */
 export const llmTokensTotal = new Counter({
   name: "nb_llm_tokens_total",
-  help: "LLM tokens processed, by direction, cache kind, cache-write TTL tier, call source, origin, delegation, and model.",
-  labelNames: ["direction", "kind", "ttl", "source", "origin", "delegated", "model"] as const,
+  help: "LLM tokens processed, by direction, cache kind, cache-write TTL tier, call source, origin, and model.",
+  labelNames: ["direction", "kind", "ttl", "source", "origin", "model"] as const,
   registers: [metricsRegistry],
 });
 
@@ -121,9 +121,8 @@ export const llmTokensTotal = new Counter({
  *
  * Labels mirror the latency histograms (`source`, `origin`, `model`) rather
  * than the token counter's full set — `direction`/`kind`/`ttl` describe how the
- * provider billed a prompt, which a pre-flight estimate has no view of, and
- * `delegated` splits a sub-agent from its parent without changing how anything
- * tokenizes. Sum those away on the numerator before dividing.
+ * provider billed a prompt, which a pre-flight estimate has no view of. Sum
+ * those away on the numerator before dividing.
  */
 export const llmInputTokensEstimatedTotal = new Counter({
   name: "nb_llm_input_tokens_estimated_total",
@@ -134,7 +133,7 @@ export const llmInputTokensEstimatedTotal = new Counter({
 
 /**
  * LLM calls, by source (main loop vs forked fast-slot), origin (who the call
- * was for), delegation, and model.
+ * was for), and model.
  *
  * `source` and `origin` answer different questions and neither substitutes for
  * the other: `source="main"` covers interactive chat AND automation runs alike,
@@ -143,8 +142,8 @@ export const llmInputTokensEstimatedTotal = new Counter({
  */
 export const llmCallsTotal = new Counter({
   name: "nb_llm_calls_total",
-  help: "LLM calls, by source, origin, delegation, and model.",
-  labelNames: ["source", "origin", "delegated", "model"] as const,
+  help: "LLM calls, by source, origin, and model.",
+  labelNames: ["source", "origin", "model"] as const,
   registers: [metricsRegistry],
 });
 
@@ -448,9 +447,7 @@ export function recordLlmUsage(
   model: string,
   usage: UsageForMetrics,
   origin: LlmCallOrigin,
-  delegated: boolean,
 ): void {
-  const delegatedLabel = delegated ? "true" : "false";
   const cacheRead = usage.cacheReadTokens ?? 0;
   const cacheWrite = usage.cacheWriteTokens ?? 0;
   const fresh = Math.max(usage.inputTokens - cacheRead - cacheWrite, 0);
@@ -463,7 +460,7 @@ export function recordLlmUsage(
   // The attribution labels every series below shares. Built once so a new
   // bucket cannot be added with a partial label set — prom-client would mint it
   // as a separate series rather than error.
-  const base = { source, origin, delegated: delegatedLabel, model };
+  const base = { source, origin, model };
 
   llmCallsTotal.inc(base);
   if (fresh > 0)

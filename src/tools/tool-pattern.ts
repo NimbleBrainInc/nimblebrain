@@ -2,7 +2,7 @@
  * The single site where a tool-name glob is matched.
  *
  * There were two — `surfacing.ts::matchToolPattern` (`skill.allowedTools`,
- * `request.allowedTools`, `delegate(tools:)`) and `select.ts::toolMatches`
+ * `request.allowedTools`) and `select.ts::toolMatches`
  * (`skill.toolAffinity`). They read the SAME on-disk skill manifest against the
  * SAME tool names, and drifted the moment one was taught about the retired
  * `ws_<id>-` prefix and the other was not: a skill whose `toolAffinity` used the
@@ -30,8 +30,8 @@
  * tools — so honouring such a pattern against a marked name would GRANT
  * something its author could not have written. The sharp case is the bare
  * remainder: `ws_<id>-*` collapses to `*`, which otherwise matches every
- * connector the caller has granted, handing a delegated child the parent's own
- * credentials.
+ * connector the caller has granted, widening a scoping directive into the
+ * caller's own credentials.
  *
  * A pattern authored bare is untouched: a literal `*` still matches everything,
  * deliberately, and the skill validator warns about that one on its own.

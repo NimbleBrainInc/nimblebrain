@@ -182,7 +182,6 @@ function conversationEventToEntry(
     // Everything in a conversation log is chat spend by construction: a task run
     // writes no conversation, which is the defect being backfilled around.
     origin: "chat",
-    delegated: false,
     model: event.model,
     usage: event.usage,
     llmMs: 0,
@@ -250,7 +249,6 @@ function fromAutomationRuns(path: string): UsageLedgerEntry[] {
       ts,
       source: "main",
       origin: "task",
-      delegated: false,
       model: "unknown",
       usage: { inputTokens, outputTokens },
       llmMs: 0,

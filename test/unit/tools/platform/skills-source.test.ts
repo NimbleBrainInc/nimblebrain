@@ -278,8 +278,8 @@ describe("skills source — unattended-run wall", () => {
   };
 
   test("a mutation called inside an unattended run is refused at the source", async () => {
-    // Enforced at dispatch, not only by surfacing subtraction — a delegated
-    // sub-agent that was never shown the tool can still name it.
+    // Enforced at dispatch, not only by surfacing subtraction — a run that
+    // was never shown the tool can still name it.
     const src = await buildSource();
     const client = src.getClient()!;
     const result = await runWithRequestContext(

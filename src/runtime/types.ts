@@ -16,15 +16,6 @@ export interface ModelSlots {
   fast: string;
 }
 
-/** Named agent profile for multi-agent delegation via nb__delegate. */
-export interface AgentProfile {
-  description: string;
-  systemPrompt: string;
-  tools: string[];
-  maxIterations?: number;
-  model?: string;
-}
-
 export interface RuntimeConfig {
   /** Model provider configuration. */
   model?:
@@ -153,9 +144,6 @@ export interface RuntimeConfig {
     /** Host to bind to. Default: "127.0.0.1". */
     host?: string;
   };
-
-  /** Named agent profiles for multi-agent delegation. */
-  agents?: Record<string, AgentProfile>;
 
   /** Feature flags to enable/disable capabilities. All default to true. */
   features?: FeatureFlags;

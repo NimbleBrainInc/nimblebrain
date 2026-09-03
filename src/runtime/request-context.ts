@@ -1,7 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { ToolPromotionControls } from "../engine/types.ts";
 import type { UserIdentity } from "../identity/provider.ts";
-import type { AgentProfile, ModelSlots } from "./types.ts";
+import type { ModelSlots } from "./types.ts";
 
 /**
  * Per-request context threaded through AsyncLocalStorage.
@@ -38,11 +38,10 @@ export interface RequestContext {
    */
   workspaceId?: string;
   /**
-   * Agent profiles and model-slot overrides from `workspaceId`'s config,
-   * pre-loaded because the resolvers that read them (`agents` getter,
-   * `getModelSlots`) are synchronous and cannot await a workspace load.
+   * Model-slot overrides from `workspaceId`'s config, pre-loaded because the
+   * resolver that reads them (`getModelSlots`) is synchronous and cannot await
+   * a workspace load.
    */
-  workspaceAgents?: Record<string, AgentProfile> | null;
   workspaceModelOverride?: Partial<ModelSlots> | null;
   /**
    * Active conversation id when this context was created inside `runtime.chat()`.
@@ -95,9 +94,9 @@ export interface RequestContext {
    * True when this context belongs to an unattended run (`executeTask` — an
    * automation), false/undefined for interactive chat. Set once by the runtime
    * (never from caller input) and, because it rides the AsyncLocalStorage
-   * context, inherited by every delegated sub-agent at any depth. Consumers use
-   * it to bar the automation-authoring surface from a run that has no human
-   * present to confirm — a restriction, never an escalation, which is why it is
+   * context, inherited by every tool dispatched below it. Consumers use it to
+   * bar the automation-authoring surface from a run that has no human present
+   * to confirm — a restriction, never an escalation, which is why it is
    * safe for `IdentityToolRouter` to read at execute time even though identity
    * is not (see that module's trust-boundary note).
    */

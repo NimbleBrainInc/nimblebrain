@@ -16,13 +16,11 @@
  *      so shared `nb__*` handlers reading `requireWorkspaceId()` see the
  *      correct workspace on a cross-workspace dispatch.
  *
- * Two consumers today: the chat engine (`Runtime._chatInner`) and the
- * `nb__delegate` child engine (`DelegateContext.tools`). Both reach exactly
+ * The chat engine (`Runtime._chatInner`) is its consumer. It reaches exactly
  * one workspace's tools plus the caller's identity tools — the bound
  * `workspaceId`, never a cross-workspace union. Which of those reachable
- * tools start IMMEDIATELY VISIBLE (initial active schemas for the chat
- * surface, default initial active set for delegate) is a concern of the
- * CALLER, not the router — see `CLAUDE.md` § "Progressive disclosure". The
+ * tools start IMMEDIATELY VISIBLE (the initial active schemas) is a concern of
+ * the CALLER, not the router — see `CLAUDE.md` § "Progressive disclosure". The
  * router governs what's REACHABLE; the caller decides what's visible.
  *
  * Trust boundary: `identityId` is captured at construction time from the
@@ -95,8 +93,8 @@ export interface IdentityToolRouterOptions {
  * identity-routed call keeps the ambient workspace — every kernel identity
  * source (`files__*`, `automations__*`, `conversations__*`) owns
  * workspace-partitioned data and would otherwise have no workspace in scope
- * even when the chat set one. Workspace agent / model overrides ride along
- * unchanged so session-scoped reads keep working.
+ * even when the chat set one. Workspace model overrides ride along unchanged
+ * so session-scoped reads keep working.
  */
 function buildPerCallContext(
   outer: RequestContext | undefined,
@@ -106,7 +104,6 @@ function buildPerCallContext(
   return {
     identity: outer?.identity ?? null,
     ...(workspaceId !== undefined ? { workspaceId } : {}),
-    ...(outer?.workspaceAgents !== undefined ? { workspaceAgents: outer.workspaceAgents } : {}),
     ...(outer?.workspaceModelOverride !== undefined
       ? { workspaceModelOverride: outer.workspaceModelOverride }
       : {}),
@@ -118,16 +115,12 @@ function buildPerCallContext(
     // correlation id disappears from everything a tool call records.
     ...(outer?.runId !== undefined ? { runId: outer.runId } : {}),
     // The model the turn runs on rides the restamp so a tool asked what it is
-    // running on answers from the run rather than from config. A delegated
-    // sub-agent runs on its own model and overwrites this before its tools
-    // dispatch (see `delegate.ts`), so inheriting the parent's value here is
-    // the correct default rather than a leak.
+    // running on answers from the run rather than from config.
     ...(outer?.model !== undefined ? { model: outer.model } : {}),
     ...(outer?.toolPromotion !== undefined ? { toolPromotion: outer.toolPromotion } : {}),
-    // `unattended` rides the restamp so a tool dispatched from an unattended run
-    // — including a delegated sub-agent, which runs inside the parent call's
-    // restamped context — stays walled from the automation-authoring surface.
-    // Dropping it here would reopen the wall for anything below the top level.
+    // `unattended` rides the restamp so a tool dispatched from an unattended
+    // run stays walled from the automation-authoring surface. Dropping it here
+    // would reopen the wall for anything below the top level.
     ...(outer?.unattended !== undefined ? { unattended: outer.unattended } : {}),
   };
 }

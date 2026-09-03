@@ -15,8 +15,6 @@ import type { Skill } from "../skills/types.ts";
 import { createManageConnectorsTool } from "./connector-tools.ts";
 import { buildCoreResourceMap } from "./core-resources/index.ts";
 import { createCoreToolDefs } from "./core-source.ts";
-import type { DelegateContext } from "./delegate.ts";
-import { createDelegateTool } from "./delegate.ts";
 import { defineInProcessApp, type InProcessTool } from "./in-process-app.ts";
 import { McpSource } from "./mcp-source.ts";
 import { createManageToolsToolDefs } from "./platform/manage-tools.ts";
@@ -44,7 +42,7 @@ export type GetSkillsFn = () => { context: Skill[]; matchable: Skill[] };
 /**
  * Factory that creates the `nb` system source as an in-process MCP server.
  * Merges core platform tools (list_apps, get_config, etc.) with system tools
- * (search, delegate, etc.) into a single "nb" source.
+ * (search, status, etc.) into a single "nb" source.
  *
  * Returns a started, ready-to-use source. Async because the underlying
  * `McpSource.start()` runs the SDK initialize handshake over the linked
@@ -61,7 +59,10 @@ export async function createSystemTools(
   // dependency checks (removed in the manifest cutover). Keep the positional
   // slot stable so call-site arity holds.
   _lifecycle?: BundleLifecycleManager,
-  delegateCtx?: DelegateContext,
+  // Reserved slot — was the sub-agent spawn context for `nb__delegate`
+  // (removed: the kernel starts a run through one door). Keep the positional
+  // slot stable so every call site's arity holds.
+  _delegateCtx?: unknown,
   // skillDir + reloadSkills were here for the legacy `nb__manage_skill`
   // tool. Mutation now lives in the dedicated `nb__skills` source — keep
   // these slots reserved (typed `unknown`) so call-site arity stays stable
@@ -138,10 +139,6 @@ export async function createSystemTools(
   // act on it has to as well. See `createUseSkillToolDef`.
   if (runtime) {
     systemToolDefs.push(createUseSkillToolDef(runtime));
-  }
-
-  if (delegateCtx) {
-    systemToolDefs.push(createDelegateTool(delegateCtx));
   }
 
   if (manageUsersCtx) {

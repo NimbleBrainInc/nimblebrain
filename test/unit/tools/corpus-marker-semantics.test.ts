@@ -22,65 +22,19 @@
  *
  * | Seam | Marked names present? | Reachable by a bare pattern? |
  * |---|---|---|
- * | `Runtime.defaultActiveTools` (delegate default) | no | n/a |
- * | `IdentityToolRouter.availableTools` (reachable set) | yes | **no** — marked glob only |
+ * | `IdentityToolRouter.availableTools` (reachable set) | yes | n/a — not pattern-matched |
  * | `listToolsForWorkspace` (the wire surface) | yes | n/a — not pattern-matched |
- * | `toolNameMatchesPattern` (allowedTools, toolAffinity, delegate globs) | n/a | bare pattern yes, NORMALIZED pattern no |
+ * | `toolNameMatchesPattern` (allowedTools, toolAffinity) | n/a | bare pattern yes, NORMALIZED pattern no |
  * | `deriveDataChangedTarget` (SSE broadcast key) | yes, and NOT stripped | n/a — a marked name gets no broadcast |
  */
 
 import { describe, expect, test } from "bun:test";
 import { deriveDataChangedTarget } from "../../../src/api/events.ts";
 import { PERSONAL_CONNECTOR_PREFIX } from "../../../src/tools/identity-sources.ts";
-import { filterTools } from "../../../src/tools/surfacing.ts";
 import { toolNameMatchesPattern } from "../../../src/tools/tool-pattern.ts";
 
 const WORKSPACE_TOOL = "crm__search";
-const KERNEL_TOOL = "conversations__list";
 const MARKED_TOOL = `${PERSONAL_CONNECTOR_PREFIX}gmail__send`;
-
-/** The reachable corpus: workspace + kernel + the caller's granted connectors. */
-const REACHABLE = [WORKSPACE_TOOL, KERNEL_TOOL, MARKED_TOOL].map((name) => ({
-  name,
-  description: "",
-  inputSchema: {},
-})) as never[];
-
-/**
- * The delegate corpus rule, applied as `selectChildTools` applies it: a marked
- * name survives only if a glob that literally carries the marker matched it.
- */
-function delegateSelection(globs: string[]): string[] {
-  const marked = globs.filter((g) => g.startsWith(PERSONAL_CONNECTOR_PREFIX));
-  return filterTools(REACHABLE, globs)
-    .map((t: { name: string }) => t.name)
-    .filter(
-      (n) =>
-        !n.startsWith(PERSONAL_CONNECTOR_PREFIX) ||
-        marked.some((g) => toolNameMatchesPattern(n, g)),
-    );
-}
-
-describe("corpus: the delegate reachable set", () => {
-  test("a bare wildcard does NOT reach the parent's connectors", () => {
-    // The leak this file exists to prevent: `tools: ["*"]` handing a sub-agent
-    // the parent's own credentials. `Runtime.defaultActiveTools` documents the
-    // exclusion as "a decision, not an accident".
-    expect(delegateSelection(["*"])).toEqual([WORKSPACE_TOOL, KERNEL_TOOL]);
-  });
-
-  test("a bare suffix glob does NOT reach them either", () => {
-    expect(delegateSelection(["*__send"])).toEqual([]);
-  });
-
-  test("a marked glob DOES — the documented opt-in", () => {
-    expect(delegateSelection([`${PERSONAL_CONNECTOR_PREFIX}gmail__*`])).toEqual([MARKED_TOOL]);
-  });
-
-  test("a marked glob does not smuggle in workspace tools alongside", () => {
-    expect(delegateSelection([`${PERSONAL_CONNECTOR_PREFIX}*`])).toEqual([MARKED_TOOL]);
-  });
-});
 
 describe("seam: pattern matching", () => {
   test("a bare pattern reaches a marked name only when it is itself marked", () => {

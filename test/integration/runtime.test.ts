@@ -346,7 +346,7 @@ Greet with enthusiasm!
     const names = tools.map((t) => t.name).sort();
     // Verify system tools
     expect(names).toContain("nb__status");
-    expect(names).toContain("nb__delegate");
+    expect(names).toContain("nb__use_skill");
     expect(names).toContain("nb__search");
     expect(names).not.toContain("nb__manage_app");
     // Verify core tools (including internal ones — availableTools returns all)

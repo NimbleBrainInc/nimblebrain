@@ -41,7 +41,7 @@ async function readTotal(counter: Counter<any>): Promise<number> {
 
 describe("recordLlmUsage", () => {
   it("splits input into fresh/cache_read/cache_write and counts output + calls", async () => {
-    const base = { source: "compaction", origin: "system", delegated: "false", model: "tm-record" };
+    const base = { source: "compaction", origin: "system", model: "tm-record" };
     const fresh = { direction: "input", kind: "fresh", ttl: "none", ...base };
     const cr = { direction: "input", kind: "cache_read", ttl: "none", ...base };
     // 300 writes with no 1h split reported → all-1h (the conservative tier).
@@ -62,7 +62,6 @@ describe("recordLlmUsage", () => {
       "tm-record",
       { inputTokens: 1000, outputTokens: 50, cacheReadTokens: 600, cacheWriteTokens: 300 },
       "system",
-      false,
     );
 
     expect((await read(llmTokensTotal, fresh)) - before.fresh).toBe(100);
@@ -73,7 +72,7 @@ describe("recordLlmUsage", () => {
   });
 
   it("tiers cache_write into 1h/5m when the engine reports the 1h portion", async () => {
-    const base = { source: "main", origin: "chat", delegated: "false", model: "tm-ttl" };
+    const base = { source: "main", origin: "chat", model: "tm-ttl" };
     const cw1h = { direction: "input", kind: "cache_write", ttl: "1h", ...base };
     const cw5m = { direction: "input", kind: "cache_write", ttl: "5m", ...base };
     const before = { h: await read(llmTokensTotal, cw1h), m: await read(llmTokensTotal, cw5m) };
@@ -90,7 +89,6 @@ describe("recordLlmUsage", () => {
         cacheWrite1hTokens: 200,
       },
       "chat",
-      false,
     );
 
     expect((await read(llmTokensTotal, cw1h)) - before.h).toBe(200);

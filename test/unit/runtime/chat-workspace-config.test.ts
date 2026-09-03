@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { AgentProfile, ModelSlots } from "../../../src/runtime/types.ts";
+import type { ModelSlots } from "../../../src/runtime/types.ts";
 import type { Workspace } from "../../../src/workspace/types.ts";
 
 // ---------------------------------------------------------------------------
@@ -18,95 +18,6 @@ function makeWorkspace(overrides: Partial<Workspace> = {}): Workspace {
     ...overrides,
   };
 }
-
-// ---------------------------------------------------------------------------
-// Agent merging logic (mirrors delegateCtx.agents getter in runtime.ts)
-// ---------------------------------------------------------------------------
-
-function mergeAgents(
-  instanceAgents: Record<string, AgentProfile> | undefined,
-  workspaceAgents: Record<string, AgentProfile> | undefined,
-): Record<string, AgentProfile> | undefined {
-  if (workspaceAgents) {
-    return { ...(instanceAgents ?? {}), ...workspaceAgents };
-  }
-  return instanceAgents;
-}
-
-describe("workspace agent merging", () => {
-  const instanceAgents: Record<string, AgentProfile> = {
-    researcher: {
-      description: "Research agent",
-      systemPrompt: "You research things.",
-      tools: ["search__*"],
-      maxIterations: 8,
-    },
-    writer: {
-      description: "Writing agent",
-      systemPrompt: "You write things.",
-      tools: ["docs__*"],
-    },
-  };
-
-  test("workspace agents merge over instance agents", () => {
-    const wsAgents: Record<string, AgentProfile> = {
-      researcher: {
-        description: "Custom research agent",
-        systemPrompt: "You research with custom instructions.",
-        tools: ["custom_search__*"],
-        maxIterations: 5,
-      },
-    };
-
-    const merged = mergeAgents(instanceAgents, wsAgents);
-    expect(merged).toBeDefined();
-    // Workspace researcher overrides instance researcher
-    expect(merged!.researcher.description).toBe("Custom research agent");
-    expect(merged!.researcher.maxIterations).toBe(5);
-    // Instance writer is preserved
-    expect(merged!.writer.description).toBe("Writing agent");
-  });
-
-  test("workspace can add new agents not in instance config", () => {
-    const wsAgents: Record<string, AgentProfile> = {
-      analyst: {
-        description: "Data analyst",
-        systemPrompt: "You analyze data.",
-        tools: ["analytics__*"],
-      },
-    };
-
-    const merged = mergeAgents(instanceAgents, wsAgents);
-    expect(merged).toBeDefined();
-    expect(merged!.analyst.description).toBe("Data analyst");
-    expect(merged!.researcher.description).toBe("Research agent");
-    expect(merged!.writer.description).toBe("Writing agent");
-  });
-
-  test("no workspace agents returns instance agents unchanged", () => {
-    const merged = mergeAgents(instanceAgents, undefined);
-    expect(merged).toBe(instanceAgents);
-  });
-
-  test("workspace agents with no instance agents returns workspace agents", () => {
-    const wsAgents: Record<string, AgentProfile> = {
-      analyst: {
-        description: "Data analyst",
-        systemPrompt: "You analyze data.",
-        tools: [],
-      },
-    };
-
-    const merged = mergeAgents(undefined, wsAgents);
-    expect(merged).toBeDefined();
-    expect(merged!.analyst.description).toBe("Data analyst");
-  });
-
-  test("both undefined returns undefined", () => {
-    const merged = mergeAgents(undefined, undefined);
-    expect(merged).toBeUndefined();
-  });
-});
 
 // ---------------------------------------------------------------------------
 // Model slot merging logic (mirrors getModelSlots() in runtime.ts)
@@ -195,29 +106,19 @@ describe("workspace model slot merging", () => {
 // ---------------------------------------------------------------------------
 
 describe("workspace config applied in chat()", () => {
-  test("workspace with agents and models populates both fields", () => {
+  test("workspace with models populates the field", () => {
     const ws = makeWorkspace({
-      agents: {
-        coder: {
-          description: "Code agent",
-          systemPrompt: "You write code.",
-          tools: ["bash__*"],
-        },
-      },
       models: {
         default: "gpt-4o",
       },
     });
 
-    expect(ws.agents).toBeDefined();
-    expect(ws.agents!.coder.description).toBe("Code agent");
     expect(ws.models).toBeDefined();
     expect(ws.models!.default).toBe("gpt-4o");
   });
 
-  test("workspace with no agents/models leaves fields undefined", () => {
+  test("workspace with no models leaves the fields undefined", () => {
     const ws = makeWorkspace();
-    expect(ws.agents).toBeUndefined();
     expect(ws.models).toBeUndefined();
     expect(ws.skillDirs).toBeUndefined();
   });

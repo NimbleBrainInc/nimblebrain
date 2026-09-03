@@ -17,8 +17,8 @@ import { toolNameMatchesPattern } from "./tool-pattern.ts";
  *
  * By how the agent relates to a tool, it belongs in exactly one of:
  *   1. KERNEL-DIRECT — hot; the agent reaches for it unprompted (`nb__search`,
- *      `nb__manage_tools`, `nb__status`, `nb__delegate`, the files/conversations
- *      basics). Full schema in the always-cached prefix. `isKernelTool` below.
+ *      `nb__manage_tools`, `nb__status`, `nb__use_skill`, the
+ *      files/conversations basics). Full schema in the always-cached prefix. `isKernelTool` below.
  *   2. PROXIED — the agent needs it only occasionally. Discovered via
  *      `nb__search` and promoted on demand, so it stays OUT of the default
  *      prefix (Tier 2/3 here). Costs one prefix-bust per promote — worth it for

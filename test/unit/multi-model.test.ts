@@ -3,17 +3,13 @@ import { AgentEngine } from "../../src/engine/engine.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { StaticToolRouter } from "../../src/adapters/static-router.ts";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
-import { ToolRegistry } from "../../src/tools/registry.ts";
-import { createDelegateTool } from "../../src/tools/delegate.ts";
-import type { DelegateContext } from "../../src/tools/delegate.ts";
 import { textContent } from "../../src/engine/content-helpers.ts";
-import { buildModelResolver, buildRegistry } from "../../src/model/registry.ts";
+import { buildModelResolver } from "../../src/model/registry.ts";
 import type {
 	EngineConfig,
 	EngineEvent,
 	EventSink,
 } from "../../src/engine/types.ts";
-import type { AgentProfile } from "../../src/runtime/types.ts";
 import type { LanguageModelV3, LanguageModelV3Message } from "@ai-sdk/provider";
 
 const defaultConfig: EngineConfig = {
@@ -83,153 +79,7 @@ describe("multi-model routing", () => {
 		});
 	});
 
-	describe("agent profile model override via delegate", () => {
-		it("delegate resolves model from agent profile", async () => {
-			const capturedModels: string[] = [];
-			const echoModel = createEchoModel();
-
-			const ctx: DelegateContext = {
-				resolveModel: (modelString: string) => {
-					capturedModels.push(modelString);
-					return echoModel;
-				},
-				resolveSlot: (s: string) => s,
-				tools: new ToolRegistry(),
-				defaultActiveTools: async () => [],
-				events: new NoopEventSink(),
-				agents: {
-					researcher: {
-						description: "Research agent",
-						systemPrompt: "You research things.",
-						tools: [],
-						maxIterations: 5,
-						model: "anthropic:claude-sonnet-4-6",
-					},
-				},
-				getRemainingIterations: () => 10,
-				getParentRunId: () => "parent-run-1",
-				defaultModel: "test-default-model",
-				defaultMaxInputTokens: 500_000,
-				configMaxOutputTokens: 16_384,
-			};
-
-			const tool = createDelegateTool(ctx);
-			const result = await tool.handler({
-				task: "Find relevant papers",
-				agent: "researcher",
-			});
-
-			expect(result.isError).toBe(false);
-			expect(capturedModels).toContain("anthropic:claude-sonnet-4-6");
-		});
-
-		it("delegate falls back to defaultModel when profile has no model", async () => {
-			const capturedModels: string[] = [];
-			const echoModel = createEchoModel();
-
-			const ctx: DelegateContext = {
-				resolveModel: (modelString: string) => {
-					capturedModels.push(modelString);
-					return echoModel;
-				},
-				resolveSlot: (s: string) => s,
-				tools: new ToolRegistry(),
-				defaultActiveTools: async () => [],
-				events: new NoopEventSink(),
-				agents: {
-					writer: {
-						description: "Writing agent",
-						systemPrompt: "You write things.",
-						tools: [],
-					},
-				},
-				getRemainingIterations: () => 10,
-				getParentRunId: () => "parent-run-2",
-				defaultModel: "my-default-model",
-				defaultMaxInputTokens: 500_000,
-				configMaxOutputTokens: 16_384,
-			};
-
-			const tool = createDelegateTool(ctx);
-			await tool.handler({
-				task: "Write a summary",
-				agent: "writer",
-			});
-
-			expect(capturedModels).toContain("my-default-model");
-		});
-
-		it("different agent profiles resolve to different model strings", async () => {
-			const capturedModels: string[] = [];
-			const echoModel = createEchoModel();
-
-			const ctx: DelegateContext = {
-				resolveModel: (modelString: string) => {
-					capturedModels.push(modelString);
-					return echoModel;
-				},
-				resolveSlot: (s: string) => s,
-				tools: new ToolRegistry(),
-				defaultActiveTools: async () => [],
-				events: new NoopEventSink(),
-				agents: {
-					fast_agent: {
-						description: "Fast agent",
-						systemPrompt: "Be fast.",
-						tools: [],
-						model: "anthropic:claude-haiku-4-5-20251001",
-					},
-					smart_agent: {
-						description: "Smart agent",
-						systemPrompt: "Be thorough.",
-						tools: [],
-						model: "anthropic:claude-sonnet-4-6",
-					},
-				},
-				getRemainingIterations: () => 10,
-				getParentRunId: () => "parent-run-3",
-				defaultModel: "test-default",
-				defaultMaxInputTokens: 500_000,
-				configMaxOutputTokens: 16_384,
-			};
-
-			const tool = createDelegateTool(ctx);
-
-			await tool.handler({ task: "Quick lookup", agent: "fast_agent" });
-			await tool.handler({ task: "Deep analysis", agent: "smart_agent" });
-
-			expect(capturedModels[0]).toBe("anthropic:claude-haiku-4-5-20251001");
-			expect(capturedModels[1]).toBe("anthropic:claude-sonnet-4-6");
-		});
-	});
-
-	describe("default model fallback", () => {
-		it("delegate uses defaultModel when no agent profile specified", async () => {
-			const capturedModels: string[] = [];
-			const echoModel = createEchoModel();
-
-			const ctx: DelegateContext = {
-				resolveModel: (modelString: string) => {
-					capturedModels.push(modelString);
-					return echoModel;
-				},
-				resolveSlot: (s: string) => s,
-				tools: new ToolRegistry(),
-				defaultActiveTools: async () => [],
-				events: new NoopEventSink(),
-				getRemainingIterations: () => 10,
-				getParentRunId: () => "parent-run-4",
-				defaultModel: "claude-sonnet-4-5-20250929",
-				defaultMaxInputTokens: 500_000,
-				configMaxOutputTokens: 16_384,
-			};
-
-			const tool = createDelegateTool(ctx);
-			await tool.handler({ task: "Do something" });
-
-			expect(capturedModels).toContain("claude-sonnet-4-5-20250929");
-		});
-
+	describe("model resolution", () => {
 		it("engine run receives the model string in config", async () => {
 			const events: EngineEvent[] = [];
 			const sink: EventSink = {

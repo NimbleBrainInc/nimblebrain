@@ -11,7 +11,7 @@ import { McpSource } from "../../src/tools/mcp-source.ts";
 // validator then rejects them ("Input should be a valid list on parameter
 // to_recipients"). McpSource.execute coerces such misencodings against the
 // server's OWN advertised schema — the authoritative oracle and the one place
-// every caller path (agent loop, search-promoted tools, /mcp, delegate)
+// every caller path (agent loop, search-promoted tools, /mcp)
 // converges — before the request reaches the wire. These tests pin that the
 // coerced shape, not the model's raw string, is what gets dispatched.
 

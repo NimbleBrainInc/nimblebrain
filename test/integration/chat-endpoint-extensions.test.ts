@@ -23,7 +23,7 @@ function makeTool(name: string): ToolSchema {
 }
 
 function makeSystemTools(): ToolSchema[] {
-  return ["nb__search", "nb__delegate", "nb__status", "nb__set_preferences"].map(makeTool);
+  return ["nb__search", "nb__use_skill", "nb__status", "nb__set_preferences"].map(makeTool);
 }
 
 function makeSkill(opts: { allowedTools?: string[] } = {}): Skill {

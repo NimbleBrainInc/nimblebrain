@@ -15,7 +15,7 @@ function makeTool(name: string): ToolSchema {
 }
 
 function makeSystemTools(count = 4): ToolSchema[] {
-	const names = ["nb__search", "nb__delegate", "nb__status", "nb__set_preferences"];
+	const names = ["nb__search", "nb__use_skill", "nb__status", "nb__set_preferences"];
 	return names.slice(0, count).map(makeTool);
 }
 

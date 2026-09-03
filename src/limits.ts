@@ -41,11 +41,6 @@ export const DEFAULT_MAX_OUTPUT_TOKENS = 16_384;
  */
 export const DEFAULT_MAX_DIRECT_TOOLS = 30;
 
-// --- Delegation ---
-
-export const DEFAULT_CHILD_ITERATIONS = 5;
-export const MAX_CHILD_ITERATIONS = 10;
-
 // --- Automations ---
 
 /**
