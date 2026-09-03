@@ -8,8 +8,11 @@ name: Deploy Schemas
 #   - src/config/nimblebrain-config.schema.json -> /v1/nimblebrain-config.schema.json
 #   - src/bundles/schemas/host-manifest.schema.json -> /v1/nimblebrain-host.schema.json
 #     (the `ai.nimblebrain/host` _meta extension — how an MCP server declares
-#      its UI placement in the host shell; the same file the install gate
-#      validates against locally.)
+#      its UI placement in the host shell. PUBLISHED-ONLY: nothing in this repo
+#      validates against it, since the runtime reads that block from a catalog
+#      entry it already trusts rather than gating an install on it. It is the
+#      reference an author and their editor fetch, so it has no local guard
+#      keeping it in step with `HostManifestMeta` — change both together.)
 #
 # Auth: GitHub OIDC -> the `github-actions-schemas-deploy` IAM role (defined in
 # infra/terraform/shared). No long-lived AWS keys. The role's S3 write is scoped
