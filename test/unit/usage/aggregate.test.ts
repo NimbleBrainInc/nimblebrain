@@ -51,7 +51,6 @@ function writeCalls(
       ts: ev.ts,
       source: "main",
       origin: meta.origin ?? "chat",
-      delegated: false,
       model: ev.model,
       usage: ev.usage as UsageLedgerEntry["usage"],
       llmMs: ev.llmMs ?? 0,
@@ -611,7 +610,6 @@ function writeRecord(dir: string, fields: Partial<UsageLedgerEntry>): void {
     ts: "2026-04-10T12:00:00Z",
     source: "main",
     origin: "chat",
-    delegated: false,
     model: "claude-sonnet-4-5-20250929",
     usage: { inputTokens: 1000, outputTokens: 500 },
     llmMs: 200,
@@ -695,12 +693,12 @@ describe("the ledger's id split", () => {
     expect(report.totals.conversations).toBe(1);
   });
 
-  it("bills a delegated sub-agent to the turn that spawned it", async () => {
-    // A sub-agent runs its own engine and mints its own `runId`, so keying the
-    // dimension on that alone splits one turn into a row per agent — the
-    // parent understating what the turn cost, and children sitting beside
-    // top-level turns with nothing to tell them apart. `parentRunId` is the
-    // TOP-LEVEL run at any depth, so it rolls the whole subtree back up.
+  it("bills a legacy sub-agent record to the turn that spawned it", async () => {
+    // Records retained from when a turn could spawn a sub-agent carry the
+    // sub-agent's own `runId` and the spawning turn's `parentRunId`. Keying the
+    // dimension on `runId` alone would split one turn into a row per agent —
+    // the parent understating what the turn cost, and children sitting beside
+    // top-level turns with nothing to tell them apart.
     const dir = makeTmpDir();
     writeRecord(dir, { conversationId: "conv_d", runId: "turn-top" });
     writeRecord(dir, {

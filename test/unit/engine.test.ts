@@ -1123,11 +1123,11 @@ describe("AgentEngine", () => {
     expect(evictedNames).toHaveLength(0);
   });
 
-  // ── Nested-engine isolation (delegate sub-agent regression) ──────
+  // ── Nested-engine isolation ──────────────────────────────────────
 
   it("nested engine.run inside a parent run isolates promotion controls per engine", async () => {
-    // Regression: a sub-agent calling nb__manage_tools must mutate ITS OWN
-    // directTools, not the parent's. Without per-engine save/restore in
+    // Regression: an inner run calling nb__manage_tools must mutate ITS OWN
+    // directTools, not the outer run's. Without per-engine save/restore in
     // registerControls, AsyncLocalStorage propagates the parent's
     // reqCtx.toolPromotion into the child's frame and the child's
     // promotions silently mutate the parent.
@@ -1153,8 +1153,8 @@ describe("AgentEngine", () => {
       },
     };
 
-    // Outer toolset: nb__manage_tools (promotable) + a "delegate" tool
-    // that, when called, spawns an inner engine.run().
+    // Outer toolset: nb__manage_tools (promotable) + a tool that, when
+    // called, spawns an inner engine.run().
     const outerSchemas: ToolSchema[] = [
       { name: "nb__manage_tools", description: "Patch tool list", inputSchema: { type: "object", properties: {} } },
       { name: "spawn_child", description: "Run a child engine", inputSchema: { type: "object", properties: {} } },
@@ -1219,8 +1219,7 @@ describe("AgentEngine", () => {
     });
 
     // Build the inner engine inside the spawn_child handler. The inner
-    // engine uses the SAME factory (which is what production does via
-    // ctx.toolPromotion in delegate.ts). The save/restore in the factory
+    // engine uses the SAME factory. The save/restore in the factory
     // pops the parent's controls back into reqCtx when inner's run
     // finishes, so the outer can continue normally.
     let activeOuterControls: ToolPromotionControls | null = null;
@@ -1263,9 +1262,9 @@ describe("AgentEngine", () => {
         };
       }
       if (call.name === "spawn_child") {
-        // This is the equivalent of nb__delegate: spawn a fresh engine.run
-        // INSIDE the parent's request context. Without the per-engine
-        // toolPromotion factory, child's manage_tools would leak into outer.
+        // Spawn a fresh engine.run INSIDE the parent's request context.
+        // Without the per-engine toolPromotion factory, the child's
+        // manage_tools would leak into the outer run.
         const innerEngine = new AgentEngine(innerModel, innerRouter, {
           emit: (event) => events.push({ ...event, data: { ...event.data, scope: "inner" } }),
         });
@@ -1319,7 +1318,7 @@ describe("AgentEngine", () => {
           },
         },
         "",
-        [{ role: "user", content: [{ type: "text", text: "delegate something" }] }],
+        [{ role: "user", content: [{ type: "text", text: "spawn something" }] }],
         [outerSchemas[0]!, outerSchemas[1]!, outerSchemas[2]!],
       );
     });
@@ -2394,8 +2393,8 @@ describe("AgentEngine", () => {
   it("merges the final-step hint into a trailing user message on a single-iteration run", async () => {
     // maxIterations: 1 → iteration 0 IS the final iteration, and the tail is the
     // initial user prompt (a user message). This is the only path that exercises
-    // the merge branch (`...last.content` spread); it ships in delegated children
-    // and automations that cap iterations at 1.
+    // the merge branch (`...last.content` spread); it ships in automations that
+    // cap iterations at 1.
     let capturedPrompt: Array<{ role: string; content: unknown }> = [];
     const model = createMockModel((opts) => {
       capturedPrompt = opts.prompt as Array<{ role: string; content: unknown }>;

@@ -11,7 +11,7 @@
  *
  * That is not hypothetical. Usage was previously derived from a storage side
  * effect — a conversation file happening to exist — and four call paths that
- * did not write one (task runs, delegated sub-agents, background briefing
+ * did not write one (task runs, sub-agent runs, background briefing
  * refresh, archived workspaces) spent real money that no in-product surface
  * showed. `src/usage/record.ts` is the fix; this lint is what keeps it true.
  *

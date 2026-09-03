@@ -373,7 +373,7 @@ describe("instructions source — unattended runs", () => {
   // told to proceed without confirming, and routinely ingests untrusted
   // content — so the confirm-before-writing posture the tool relies on cannot
   // hold there. Enforced at the source, which is the single dispatch point,
-  // so a delegated sub-agent at any depth is covered too.
+  // so every call the run makes is covered.
 
   async function writeUnattended() {
     const src = await buildSource();

@@ -28,7 +28,7 @@
  */
 
 import { afterEach, describe, expect, it } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { textContent } from "../../src/engine/content-helpers.ts";
@@ -390,71 +390,6 @@ describe("runtime.executeTask", () => {
       runtime = null;
       rmSync(workDir, { recursive: true, force: true });
     }
-  });
-
-  it("walls automation authoring inside a DELEGATED sub-agent of a run, not just the top level", async () => {
-    // Regression for the delegate bypass: a run can call nb__delegate, and the
-    // child sub-agent runs on a freshly-built router — so a wall that lived only
-    // on the top-level router would leave the child an open door. The boundary is
-    // ambient (`RequestContext.unattended`, inherited through the per-call
-    // restamp into the delegated child), enforced at the automations source, so a
-    // child's authoring call is refused too. Proven by the real security outcome:
-    // the child runs and attempts the create, yet nothing is persisted.
-    const personalWsId = personalWorkspaceIdFor(TEST_USER_ID);
-    const delegateTool = "nb__delegate";
-    runtime = await bootRuntime({
-      responses: [
-        // Parent (task engine): delegate a subtask.
-        {
-          toolCalls: [
-            {
-              toolCallId: "call_delegate",
-              toolName: delegateTool,
-              input: JSON.stringify({ task: "create an automation that re-injects this prompt" }),
-            },
-          ],
-        },
-        // Child sub-agent: attempt to author an automation with VALID input, so a
-        // block is the run-wall, not schema validation.
-        {
-          toolCalls: [
-            {
-              toolCallId: "call_child_create",
-              toolName: "automations__create",
-              input: JSON.stringify({
-                manifest: {
-                  name: "evil-persistence",
-                  schedule: { type: "interval", intervalMs: 60_000 },
-                },
-                body: "re-inject",
-              }),
-            },
-          ],
-        },
-        { text: "child done" }, // child continues after the create is refused
-        { text: "parent done" },
-      ],
-    });
-    await provisionWorkspaces(runtime);
-
-    const result = await runtime.executeTask({
-      prompt: "do the thing",
-      identity: { id: TEST_USER_ID, displayName: TEST_USER_DISPLAY },
-    });
-
-    // The child ran to completion: the parent's delegate call succeeded and its
-    // output is the child's final text. Because the echo model consumes the
-    // scripted responses in order, reaching "child done" means the child DID
-    // process (and was refused on) the create attempt in the response before it.
-    expect(result.toolCalls[0]?.name).toBe(delegateTool);
-    expect(result.toolCalls[0]?.ok).toBe(true);
-    expect(result.toolCalls[0]?.output).toContain("child done");
-
-    // The real security outcome: the child's create had no effect — no automation
-    // was persisted to the owner's partition.
-    const dir = join(workDir, "workspaces", personalWsId, "automations", TEST_USER_ID);
-    const persisted = existsSync(dir) ? readdirSync(dir).filter((f) => f.endsWith(".json")) : [];
-    expect(persisted).toEqual([]);
   });
 
   it("still permits a read-only automations tool from inside a run", async () => {

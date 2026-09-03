@@ -1,12 +1,6 @@
 /**
- * The attribution seam: `origin` and `delegated` are derived from the ambient
- * request context and the emitting event, never from the caller.
- *
- * These assert the two orthogonality properties the label exists for. The one
- * that matters most is `origin: "task", delegated: true` — a sub-agent spawned
- * inside an automation is both, and an enum that collapsed them would file that
- * spend under `delegate` and drop it from the automation total, which is the
- * same shape as the defect the ledger exists to fix.
+ * The attribution seam: `origin` is derived from the ambient request context
+ * and the emitting event, never from the caller.
  *
  * Every test uses a model name unique to it and reads that series directly, so
  * nothing here resets the process-global registry that the rest of the suite
@@ -22,7 +16,6 @@ import { UsageLedger } from "../../../src/usage/ledger.ts";
 import { usageMonthOf, usageShardPath } from "../../../src/usage/paths.ts";
 import {
   clearUsageLedger,
-  isDelegated,
   originOf,
   recordLlmCall,
   setUsageLedger,
@@ -116,8 +109,7 @@ describe("each id in the ledger lands under its own name", () => {
   });
 
   test("the engine's run id lands in runId — the per-turn grain", () => {
-    // Read off the emitting event, where it already was; `parentRunId` beside
-    // it has the same referent, which is what makes the delegation tree join.
+    // Read off the emitting event, where it already was.
     const rec = fieldsFor({ identity: null, conversationId: "conv-42" }, { runId: "engine-run-7" });
     expect(rec.runId).toBe("engine-run-7");
     expect(rec.conversationId).toBe("conv-42");
@@ -150,51 +142,29 @@ describe("each id in the ledger lands under its own name", () => {
   });
 });
 
-describe("isDelegated", () => {
-  test("a parentRunId on the event means delegated", () => {
-    expect(isDelegated({ parentRunId: "run-1" })).toBe(true);
-  });
-
-  test("no event and no parentRunId mean not delegated", () => {
-    expect(isDelegated(undefined)).toBe(false);
-    expect(isDelegated({})).toBe(false);
-  });
-
-  test("an empty parentRunId is not delegation", () => {
-    // `DelegateTracker.currentRunId` initializes to "", so a null check alone
-    // would label a child that ran before any top-level run.start.
-    expect(isDelegated({ parentRunId: "" })).toBe(false);
-  });
-});
-
 describe("recordLlmCall", () => {
-  test("a delegated call inside an automation is task + delegated, not one or the other", async () => {
+  test("a run's own turn records task, and stays recoverable as automation spend", async () => {
     runWithRequestContext({ identity: null, runId: "run-7", unattended: true }, () => {
       recordLlmCall({
         source: "main",
         model: "test-model-a",
         usage: USAGE,
-        event: { parentRunId: "run-7" },
+        event: { runId: "engine-run-7" },
       });
     });
 
     const sample = await callSample({ model: "test-model-a" });
     expect(sample?.labels.origin).toBe("task");
-    expect(sample?.labels.delegated).toBe("true");
-    // The point of the split: this call is still recoverable as automation
-    // spend. Under a collapsed enum it would read `delegate` and vanish from
-    // the automation total.
     expect(sample?.labels.source).toBe("main");
   });
 
-  test("an interactive turn is chat + not delegated", async () => {
+  test("an interactive turn records chat", async () => {
     runWithRequestContext({ identity: null, conversationId: "conv-9" }, () => {
       recordLlmCall({ source: "main", model: "test-model-b", usage: USAGE, event: {} });
     });
 
     const sample = await callSample({ model: "test-model-b" });
     expect(sample?.labels.origin).toBe("chat");
-    expect(sample?.labels.delegated).toBe("false");
   });
 
   test("token counters carry the same attribution as the call counter", async () => {
@@ -206,7 +176,6 @@ describe("recordLlmCall", () => {
     expect(samples.length).toBeGreaterThan(0);
     for (const s of samples) {
       expect(s.labels.origin).toBe("task");
-      expect(s.labels.delegated).toBe("false");
     }
   });
 });
@@ -253,7 +222,6 @@ describe("origin follows the scope, whatever the source", () => {
 
     const sample = await callSample({ model: "test-model-c" });
     expect(sample?.labels.origin).toBe("system");
-    expect(sample?.labels.delegated).toBe("false");
   });
 });
 

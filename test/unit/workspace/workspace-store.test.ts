@@ -4,7 +4,6 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import type { AgentProfile } from "../../../src/runtime/types.ts";
 import type { Workspace } from "../../../src/workspace/types.ts";
 import { parseNamespacedToolName } from "../../../src/tools/namespace.ts";
 import {
@@ -248,44 +247,9 @@ describe("WorkspaceStore member management", () => {
   });
 });
 
-// ── Extended Fields (agents, skillDirs, models) ───────────────────
+// ── Extended Fields (skillDirs, models) ───────────────────
 
 describe("WorkspaceStore extended fields", () => {
-  test("workspace with agents persists and loads correctly", async () => {
-    const ws = await store.create("Agent Team");
-    const agents: Record<string, AgentProfile> = {
-      researcher: {
-        description: "Deep research agent",
-        systemPrompt: "You are a research agent.",
-        tools: ["search__*"],
-        maxIterations: 8,
-        model: "claude-sonnet-4-5-20250929",
-      },
-    };
-
-    const updated = await store.update(ws.id, { agents });
-    expect(updated).not.toBeNull();
-    expect(updated!.agents).toEqual(agents);
-
-    // Re-read from disk to confirm persistence
-    const loaded = await store.get(ws.id);
-    expect(loaded).not.toBeNull();
-    expect(loaded!.agents).toEqual(agents);
-    expect(loaded!.agents!.researcher.tools).toEqual(["search__*"]);
-  });
-
-  test("workspace with no agents omits the field", async () => {
-    const ws = await store.create("Plain");
-    const filePath = join(
-      workDir,
-      "workspaces",
-      ws.id,
-      "workspace.json",
-    );
-    const raw = JSON.parse(await readFile(filePath, "utf-8"));
-    expect(raw.agents).toBeUndefined();
-  });
-
   test("workspace models override saved and loaded correctly", async () => {
     const ws = await store.create("Model Team");
     const models = { default: "claude-sonnet-4-5-20250929", fast: "claude-haiku-3" };

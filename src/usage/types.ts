@@ -27,11 +27,6 @@ import type { LanguageModelV3Usage } from "@ai-sdk/provider";
  * call with no request scope at all (a detached fast-slot call or a background
  * job). Lives here rather than beside the counters so `api/metrics.ts` can name
  * the label type without importing the module that derives it.
- *
- * Deliberately does NOT carry a `delegate` member. Delegation is orthogonal —
- * a sub-agent spawned inside an automation is both delegated and unattended,
- * and folding the two into one enum files that call under `delegate` and drops
- * it from the automation total. It rides as its own boolean.
  */
 export type LlmCallOrigin = "chat" | "task" | "system";
 
@@ -78,10 +73,6 @@ export interface UsageLedgerEntry {
   source: string;
   /** Who the call was for, derived from the request scope. */
   origin: LlmCallOrigin;
-  /** Orthogonal to `origin` — a sub-agent inside an automation is both. */
-  delegated: boolean;
-  /** The originating top-level run, when delegated. Best-effort under concurrency. */
-  parentRunId?: string;
   /** Qualified, e.g. `nebius:zai-org/GLM-5.1`. The prefix is the provider. */
   model: string;
   usage: TokenUsage;
@@ -100,9 +91,6 @@ export interface UsageLedgerEntry {
    * which is one assistant turn. Present for chat and task alike; absent on
    * the forked fast-slot calls (title, compaction, briefing), which emit no
    * event and are not a turn of their own.
-   *
-   * Same referent as {@link parentRunId}, so the two compose into the
-   * delegation tree: a child's `parentRunId` is its parent's `runId`.
    */
   runId?: string;
   /**
@@ -124,6 +112,19 @@ export interface UsageLedgerEntry {
    * normalizes it; nothing else should read it.
    */
   sessionId?: string;
+  /**
+   * @deprecated Legacy read-only. Set on records written while the runtime
+   * could spawn a sub-agent from inside a turn: `delegated` marked such a
+   * call and `parentRunId` named the top-level run it belonged to. Neither is
+   * written any more — a run starts one way, and its calls carry `runId`.
+   *
+   * `aggregate.ts` still reads `parentRunId` so a retained record from that
+   * era rolls onto the turn that spawned it (see `retentionMonths`, default
+   * 24). Nothing else should read either field.
+   */
+  delegated?: boolean;
+  /** @deprecated Legacy read-only. See {@link delegated}. */
+  parentRunId?: string;
   /** Resolved unit prices. Absent when the catalog did not know the model. */
   rates?: UsageRates;
 }

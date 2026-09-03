@@ -76,9 +76,6 @@ export const SkillsLoadedPayload = Type.Object({
   totalTokens: Type.Number(),
   /** Engine-attached run id for debug/correlation. Set by engine.run(). */
   runId: Type.Optional(Type.String()),
-  /** Set by `delegate.ts` when forwarding a sub-run's skills.loaded out of
-   *  the spawned engine into the caller's sink. */
-  parentRunId: Type.Optional(Type.String()),
 });
 export type SkillsLoadedPayload = Static<typeof SkillsLoadedPayload>;
 
@@ -111,8 +108,6 @@ export const ContextAssembledPayload = Type.Object({
   headroomTokens: Type.Optional(Type.Number()),
   /** Engine-attached run id for debug/correlation. */
   runId: Type.Optional(Type.String()),
-  /** Set by `delegate.ts` when forwarding a sub-run's event. */
-  parentRunId: Type.Optional(Type.String()),
 });
 export type ContextAssembledPayload = Static<typeof ContextAssembledPayload>;
 

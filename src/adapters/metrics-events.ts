@@ -61,9 +61,9 @@ export class MetricsEventSink implements EventSink {
   private onLlmDone(data: EventData): void {
     const model = (data.model as string) ?? "unknown";
     const usage = data.usage as TokenUsage | undefined;
-    // `data` carries `parentRunId` on a delegated child's events; `recordLlmCall`
-    // reads it rather than being told, so a new spawn path cannot forget to say
-    // it delegated.
+    // `data` carries the engine's `runId`; `recordLlmCall` reads attribution
+    // off the event and the ambient request scope rather than being told, so a
+    // new call path cannot forget to say who it was for.
     if (usage)
       recordLlmCall({
         source: "main",
@@ -76,9 +76,7 @@ export class MetricsEventSink implements EventSink {
     // things depending on who is waiting: `chat` is a person watching a spinner,
     // `task` is an automation nobody is watching. Blended, a p99 says neither —
     // an alert on it fires the same for a slow overnight run as for a stalled
-    // user turn. `delegated` is deliberately not a label here: it splits a
-    // sub-agent from its parent, which does not change whether anyone is
-    // waiting, and it would double the series of a 12-bucket histogram.
+    // user turn.
     const origin = originOf();
     // Per-call latency for the p99 alert. `llmMs` is set on every llm.done
     // (engine measures it around the provider call); guard the type anyway.

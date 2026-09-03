@@ -11,7 +11,7 @@ describe("identity & workspace feature flags", () => {
 		});
 
 		it("defaults new flags to true when other flags are provided", () => {
-			const features = resolveFeatures({ delegation: false });
+			const features = resolveFeatures({ bundleDiscovery: false });
 			expect(features.userManagement).toBe(true);
 			expect(features.workspaceManagement).toBe(true);
 		});
@@ -33,7 +33,6 @@ describe("identity & workspace feature flags", () => {
 			});
 			expect(features.bundleManagement).toBe(true);
 			expect(features.skillManagement).toBe(true);
-			expect(features.delegation).toBe(true);
 			expect(features.toolDiscovery).toBe(true);
 			expect(features.bundleDiscovery).toBe(true);
 			expect(features.fileContext).toBe(true);

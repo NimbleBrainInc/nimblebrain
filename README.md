@@ -5,7 +5,7 @@
 [![Bun](https://img.shields.io/badge/runtime-Bun-f9f1e1?logo=bun)](https://bun.sh)
 [![MCP](https://img.shields.io/badge/protocol-MCP-8A2BE2)](https://modelcontextprotocol.io)
 
-A self-hosted platform for [MCP Apps](https://modelcontextprotocol.io/extensions/apps/overview) and agent automations. Install an MCP bundle and you get more than tools — you get an interactive UI in the sidebar with live agent-UI data sync, and the ability to run the agent on demand or on a cron schedule. Full [ext-apps](https://apps.extensions.modelcontextprotocol.io/api/) host support on top of an agentic loop with skill-driven prompt composition and multi-agent delegation.
+A self-hosted platform for [MCP Apps](https://modelcontextprotocol.io/extensions/apps/overview) and agent automations. Install an MCP bundle and you get more than tools — you get an interactive UI in the sidebar with live agent-UI data sync, and the ability to run the agent on demand or on a cron schedule. Full [ext-apps](https://apps.extensions.modelcontextprotocol.io/api/) host support on top of an agentic loop with skill-driven prompt composition.
 
 Ships as container images on GHCR (`ghcr.io/nimblebraininc/nimblebrain`, `ghcr.io/nimblebraininc/nimblebrain-web`). Also exposes itself as an MCP server via Streamable HTTP so external MCP clients can consume the aggregated toolset.
 
@@ -135,7 +135,6 @@ All system tools are prefixed with `nb__` (the `nb` source name + `__` separator
 | `nb__read_resource` | Read a `skill://` / `ui://` resource from an installed app's MCP server |
 | `nb__set_preferences` | Set user preferences (name, timezone, theme) |
 | `nb__manage_tools` | Promote/release tools in the active set |
-| `nb__delegate` | Spawn child agent for sub-tasks (multi-agent) |
 
 Additional internal tools (UI-only, hidden from LLM) are listed in [Architecture Reference](#internal-system-tools-ui-only-hidden-from-llm).
 
@@ -181,9 +180,9 @@ No connectors are installed by default. Platform capabilities (home, conversatio
 NimbleBrain splits configuration across two files:
 
 - **`nimblebrain.json`** — instance-level settings (models, HTTP, logging, limits, feature flags). One file per deployment.
-- **`workspace.json`** — per-workspace settings (bundles, skill directories, named agent profiles, optional model + identity overrides). One file per workspace under `<workDir>/workspaces/<ws-id>/`.
+- **`workspace.json`** — per-workspace settings (bundles, skill directories, optional model + identity overrides). One file per workspace under `<workDir>/workspaces/<ws-id>/`.
 
-This split is the workspace isolation boundary: two workspaces in the same deployment can install different bundles and agents without touching the instance config. See [Workspace Isolation](#workspace-isolation) below.
+This split is the workspace isolation boundary: two workspaces in the same deployment can install different bundles without touching the instance config. See [Workspace Isolation](#workspace-isolation) below.
 
 ### `nimblebrain.json` (instance config)
 
@@ -243,20 +242,12 @@ Each workspace has its own config at `<workDir>/workspaces/<ws-id>/workspace.jso
     { "path": "../mcp-servers/hello" }
   ],
   "skillDirs": ["./skills"],
-  "agents": {
-    "researcher": {
-      "description": "Research agent",
-      "systemPrompt": "You are a research agent...",
-      "tools": ["search__*"],
-      "maxIterations": 8
-    }
-  },
   "models": { "default": "anthropic:claude-opus-4-6" },
   "identity": { "name": "Acme Copilot" }
 }
 ```
 
-`bundles`, `skillDirs`, `agents`, and optional `models` / `identity` overrides live here, not in `nimblebrain.json`. Entries placed at the top level of `nimblebrain.json` are silently stripped on load — the runtime treats them as configuration errors rather than falling back to a global scope.
+`bundles`, `skillDirs`, and optional `models` / `identity` overrides live here, not in `nimblebrain.json`. Entries placed at the top level of `nimblebrain.json` are silently stripped on load — the runtime treats them as configuration errors rather than falling back to a global scope.
 
 ### Workspace Isolation
 
@@ -417,8 +408,7 @@ src/
 │   ├── routes/           Modular route files (auth, chat, bootstrap, etc.)
 │   └── middleware/        Hono middleware (CORS, etc.)
 ├── tools/                Tool definitions
-│   ├── system-tools.ts   System tools factory (search, manage, delegate)
-│   ├── delegate.ts       nb__delegate multi-agent tool
+│   ├── system-tools.ts   System tools factory (search, status, manage)
 │   ├── registry.ts       ToolRegistry (aggregates MCP sources)
 │   ├── workspace-mgmt-tools.ts  Workspace management tools
 │   ├── user-tools.ts     User management tools
@@ -516,10 +506,6 @@ When total tools ≤30, all are surfaced directly. Above 30 with no skill matche
 - **States**: starting → running, plus the auth states a remote connection has — `not_authenticated`, `pending_auth`, `reauth_required` — and `crashed` / `dead` / `stopped`
 - **Atomic writes**: config changes use write-temp-then-rename
 
-### Multi-Agent Delegation
-
-`nb__delegate` (`src/tools/delegate.ts`) spawns child `AgentEngine.run()` with a fixed safety preamble (or a named profile's system prompt) and filtered tools. Named agent profiles configured in `nimblebrain.json` under `agents`; an unknown profile name falls back to the default sub-agent rather than failing, and the `agent` parameter is advertised only when profiles are configured. Child iteration budget capped at `min(child.max, parent.remaining - 1)`. Multiple delegations in the same turn run concurrently via `Promise.all()`.
-
 ### MCP Tasks Client
 
 `src/engine/tasks.ts` detects `CreateTaskResult` from MCP tool calls. Polls `tasks/get` until terminal state (completed/failed/cancelled). Emits `tool.progress` events during polling. Cancels active tasks on engine abort.
@@ -604,8 +590,8 @@ Placements with a `route` field get React Router routes in `App.tsx`. Routes fro
 ### Configuration Reference
 
 **Files:**
-- `nimblebrain.json` — instance config. Validated at startup against `src/config/nimblebrain-config.schema.json` (JSON Schema draft-07, AJV). Unknown keys warn; structural errors throw. Workspace-owned fields (`bundles`, `skillDirs`, `agents`, `preferences`, `home`, `noDefaultBundles`) are silently stripped on load. `identity` and `contextFile` are deprecated with a warning.
-- `<workDir>/workspaces/<wsId>/workspace.json` — per-workspace config. Owns `bundles`, `skillDirs`, `agents`, and optional `models` / `identity` overrides.
+- `nimblebrain.json` — instance config. Validated at startup against `src/config/nimblebrain-config.schema.json` (JSON Schema draft-07, AJV). Unknown keys warn; structural errors throw. Workspace-owned fields (`bundles`, `skillDirs`, `preferences`, `home`, `noDefaultBundles`) are silently stripped on load. `identity` and `contextFile` are deprecated with a warning.
+- `<workDir>/workspaces/<wsId>/workspace.json` — per-workspace config. Owns `bundles`, `skillDirs`, and optional `models` / `identity` overrides.
 - `<workDir>/instance.json` — auth configuration (OIDC or WorkOS adapter). Absence signals dev mode.
 
 **Config resolution** for `nimblebrain.json` (when no `--config` flag):
@@ -634,7 +620,6 @@ All default to `true`. What `false` does depends on the flag: most withhold a to
 |------|----------|---------------------|
 | `bundleManagement` | Reserved — gates no tool today | None on the current tool set |
 | `skillManagement` | Create, edit, delete, and activate skills | `skills__create`, `skills__update`, `skills__delete`, `skills__activate`, `skills__deactivate`, `skills__history`, `skills__restore`, `skills__set_status` are never built |
-| `delegation` | Multi-agent delegation | `nb__delegate` is not registered |
 | `toolDiscovery` | Tool search | `nb__search` stays; `scope: "tools"` returns an error |
 | `bundleDiscovery` | Registry search | `nb__search` stays; `scope: "registry"` returns an error |
 | `fileContext` | File upload, serving, and context extraction | The file endpoints refuse (404, or 415 on a multipart upload) |
