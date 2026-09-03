@@ -462,11 +462,12 @@ the door never admits on it. The delivery id is never logged, because unlike a
 
 **Rotation** (`hooks__rotate_webhook { connector, vendor }`, workspace admin):
 mints a fresh id, keeps the outgoing one admissible for 24 h so in-flight
-redeliveries land, and calls the server's `register_tool` with the new URL. It **refuses when nothing was
-provisioned** — a connector that is not running cannot be handed a URL, and
-reporting a rotation that did not happen is worst exactly when this control is
-reached, which is after a URL has leaked. Cheap and routine otherwise: a control
-nobody reaches for because it loses data is not a control.
+redeliveries land, and calls the server's `register_tool` with the new URL. It
+**refuses when nothing was provisioned** — a connector that is not running
+cannot be handed a URL, and reporting a rotation that did not happen is worst
+exactly when this control is reached, which is after a URL has leaked. Cheap
+and routine otherwise: a control nobody reaches for because it loses data is
+not a control.
 
 **`hooks__list_webhooks` returns the address**, with which connector and route it
 feeds and whether the previous URL is still admissible — derived from
