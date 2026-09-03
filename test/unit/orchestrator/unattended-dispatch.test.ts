@@ -376,6 +376,32 @@ describe("dispatchUnattended — bounds", () => {
     expect(res.result).toBeUndefined();
   });
 
+  // The same cap, on a result that cannot be measured at all. An in-process
+  // source can hand back a BigInt or a cycle, and `JSON.stringify` throws on
+  // both — from outside the dispatch's `try`, so an unguarded measurement
+  // leaves by the one path the function rules out. Unmeasurable is over the
+  // cap: the caller must never hold something it did not agree to hold.
+  test("treats a result it cannot serialize as over the cap", async () => {
+    const crm = makeSpySource("crm", {
+      result: {
+        content: [{ type: "text", text: "ok" }],
+        structuredContent: { n: 1n },
+        isError: false,
+      },
+    });
+    const runtime = makeStubRuntime({
+      workDir,
+      members: [PRINCIPAL],
+      registries: new Map([[WS, [crm]]]),
+    });
+
+    const res = await call(runtime, "crm__search");
+
+    expect(res.outcome).toBe("error");
+    expect(res.classification).toBe("result_too_large");
+    expect(res.result).toBeUndefined();
+  });
+
   // The caller is a background sweep with nobody to show an exception to.
   test("returns an outcome when the tool throws, rather than throwing out", async () => {
     const crm = makeSpySource("crm", { throws: "upstream exploded" });
@@ -392,10 +418,12 @@ describe("dispatchUnattended — bounds", () => {
     expect(res.error).toContain("upstream exploded");
   });
 
-  // The other half of the same contract, and the one a caller can trip without
-  // any tool being involved: `IdentityToolRouter` validates its own arguments
-  // and throws. Construction is inside the dispatch's `try` so that throw
-  // becomes an outcome, and the source is never reached.
+  // The other half of the same contract, and the one with no tool in it at all:
+  // `IdentityToolRouter` validates its own arguments and throws. Gate 1 runs
+  // first and no workspace has an empty member, so what reaches this is a boot
+  // or configuration path that stamped an empty principal, not a caller naming
+  // one. Construction is inside the dispatch's `try` so that throw becomes an
+  // outcome, and the source is never reached.
   test("returns an outcome when the router rejects its own arguments", async () => {
     const crm = makeSpySource("crm");
     const runtime = makeStubRuntime({
