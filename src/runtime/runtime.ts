@@ -106,6 +106,11 @@ import { registerBuiltinCredentialProviders } from "../oauth/minted-credential-p
 import { requestIdentityAttrs, withSpan } from "../observability/index.ts";
 import { log } from "../observability/log.ts";
 import {
+  dispatchUnattended,
+  type UnattendedDispatchOptions,
+  type UnattendedDispatchResult,
+} from "../orchestrator/index.ts";
+import {
   isDisallowed,
   type PermissionOwner,
   PermissionStore,
@@ -1733,7 +1738,10 @@ export class Runtime {
     // any setup or tool binding. Thrown early so the scheduler records it as a
     // skipped run (self-heals if the owner is re-added); personal workspaces are
     // sole-member, so they never gate.
-    if (request.workspaceId && !(await this.isOwnerWorkspaceMember(request.workspaceId, ownerId))) {
+    if (
+      request.workspaceId &&
+      !(await this.isPrincipalWorkspaceMember(request.workspaceId, ownerId))
+    ) {
       throw new WorkspaceMembershipRevokedError(ownerId, request.workspaceId);
     }
 
@@ -2122,6 +2130,22 @@ export class Runtime {
       stopReason: result.stopReason,
       usage,
     };
+  }
+
+  /**
+   * One tool call, unattended, as a named principal, through the gates a
+   * session applies — the third door. See
+   * `src/orchestrator/unattended-dispatch.ts` for what it checks and in what
+   * order; this is the composition root handing it the runtime it routes
+   * against.
+   *
+   * Sibling of `chat()` and `executeTask()` in the same sense the door is a
+   * sibling of the other two: it is the entry point for work that arrives with
+   * no session behind it. Unlike them it runs no model and writes nothing —
+   * no conversation, no run record, no inbox item.
+   */
+  async dispatchUnattended(opts: UnattendedDispatchOptions): Promise<UnattendedDispatchResult> {
+    return dispatchUnattended(this, opts);
   }
 
   // ── chat / task turn helpers (shared setup) ──────────────────────
@@ -3615,15 +3639,20 @@ export class Runtime {
   }
 
   /**
-   * True if `ownerId` may currently act in `wsId`. Personal workspaces are
+   * True if `principalId` may currently act in `wsId`. Personal workspaces are
    * sole-member by construction (always true); shared workspaces require current
-   * membership. The shared "is this owner still allowed in this workspace" check
-   * behind both the conversation-resume gate and the automation-run gate.
+   * membership. The one "is this principal still allowed in this workspace"
+   * check behind every gate that asks it: the conversation-resume gate, the
+   * automation-run gate, and the unattended dispatch (ADR-0007).
+   *
+   * Public because the third of those lives outside this file
+   * (`src/orchestrator/unattended-dispatch.ts`) and must ask the same question
+   * the same way rather than reimplementing it against the store.
    */
-  private async isOwnerWorkspaceMember(wsId: string, ownerId: string): Promise<boolean> {
-    if (wsId === personalWorkspaceIdFor(ownerId)) return true;
+  async isPrincipalWorkspaceMember(wsId: string, principalId: string): Promise<boolean> {
+    if (wsId === personalWorkspaceIdFor(principalId)) return true;
     const ws = await this._workspaceStore.get(wsId);
-    return ws?.members.some((m) => m.userId === ownerId) ?? false;
+    return ws?.members.some((m) => m.userId === principalId) ?? false;
   }
 
   /**
@@ -3645,7 +3674,7 @@ export class Runtime {
     convWsId: string,
     ownerId: string,
   ): Promise<void> {
-    if (!(await this.isOwnerWorkspaceMember(convWsId, ownerId))) {
+    if (!(await this.isPrincipalWorkspaceMember(convWsId, ownerId))) {
       throw new ConversationWorkspaceAccessDeniedError(conversationId, ownerId, convWsId);
     }
   }
