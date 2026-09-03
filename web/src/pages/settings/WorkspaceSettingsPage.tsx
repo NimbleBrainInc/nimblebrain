@@ -45,6 +45,10 @@ export function WorkspaceSettingsPage() {
     },
     { id: "ws-connectors", label: "Connectors", to: `${base}/connectors`, minRole: "ws_member" },
     { id: "ws-skills", label: "Skills", to: `${base}/skills`, minRole: "ws_member" },
+    // Admin-only in the NAV, and separately admin-only in the tool. The nav gate
+    // decides whether the tab is worth showing; the tool decides whether a URL is
+    // returned. A hidden tab is not a permission.
+    { id: "ws-webhooks", label: "Webhooks", to: `${base}/webhooks`, minRole: "ws_admin" },
   ];
 
   return <SettingsShell title={workspace?.name ?? "Workspace"} items={items} />;

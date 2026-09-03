@@ -2,10 +2,12 @@ import { describe, expect, test } from "bun:test";
 import {
   HookContractError,
   hookPortForSource,
+  provisionHooks,
   verifyRegisterTool,
 } from "../../src/hooks/provisioning.ts";
+import { buildHookUrl } from "../../src/hooks/token.ts";
 import type { Tool, ToolResult } from "../../src/tools/types.ts";
-import type { HookDeclaration } from "../../src/hooks/types.ts";
+import type { HookDeclaration, HookRegistration } from "../../src/hooks/types.ts";
 
 const DECL: HookDeclaration = {
   vendor: "acme",
@@ -198,5 +200,73 @@ describe("hookPortForSource", () => {
   test("has no retrigger when the source has no tool-set signal", () => {
     const { port } = sourceServing(["set_webhook_url"]);
     expect(port.subscribeToolsChanged).toBeUndefined();
+  });
+});
+
+describe("provisionHooks", () => {
+  function harness() {
+    const ws: { hooks?: Record<string, HookRegistration> } = {};
+    const handed: Array<Record<string, unknown>> = [];
+    return {
+      handed,
+      get registrations() {
+        return Object.values(ws.hooks ?? {});
+      },
+      opts: {
+        store: {
+          get: async () => ws,
+          update: async (_id: string, patch: { hooks?: Record<string, HookRegistration> }) => {
+            ws.hooks = patch.hooks;
+            return ws;
+          },
+        },
+        wsId: "ws_outbound",
+        connector: "acme-mcp",
+        declarations: [DECL],
+        port: {
+          tools: async () => [tool()],
+          execute: async (_name: string, input: Record<string, unknown>) => {
+            handed.push(input);
+            return { content: [] } as ToolResult;
+          },
+        },
+      } as unknown as Parameters<typeof provisionHooks>[0],
+    };
+  }
+
+  test("hands the server a URL built from the id it just stored", async () => {
+    const h = harness();
+    const [result] = await provisionHooks(h.opts);
+    expect(result?.registered).toBe(true);
+    const stored = h.registrations[0];
+    expect(stored?.deliveryId).toBeTruthy();
+    // The address handed over has to be the one the door will admit, which is
+    // the stored id and nothing reconstructed alongside it.
+    expect(h.handed[0]?.url).toBe(buildHookUrl(stored?.deliveryId as string));
+  });
+
+  test("an unchanged reconcile re-hands the SAME URL, which is the self-heal", async () => {
+    // A server that lost its URL — reinstalled, restored, or that never recorded
+    // it — gets it back from an ordinary reconcile. Minting a fresh one here
+    // would retire a URL the vendor is delivering to, for no reason.
+    const h = harness();
+    await provisionHooks(h.opts);
+    const first = h.registrations[0]?.deliveryId;
+    await provisionHooks(h.opts);
+    expect(h.registrations[0]?.deliveryId).toBe(first as string);
+    expect(h.handed).toHaveLength(2);
+    expect(h.handed[1]?.url).toBe(h.handed[0]?.url);
+  });
+
+  test("a rotation mints a new URL and carries the old one into the grace window", async () => {
+    const h = harness();
+    await provisionHooks(h.opts);
+    const before = h.registrations[0]?.deliveryId;
+    await provisionHooks({ ...h.opts, rotate: true });
+    const after = h.registrations[0];
+    expect(after?.deliveryId).not.toBe(before as string);
+    expect(after?.prevDeliveryId).toBe(before as string);
+    expect(after?.rotatedAt).toBeTruthy();
+    expect(h.handed[1]?.url).toBe(buildHookUrl(after?.deliveryId as string));
   });
 });
