@@ -174,18 +174,25 @@ export async function dispatchUnattended(
   const startedAt = Date.now();
   const reason = opts.reason.slice(0, UNATTENDED_REASON_MAX);
   const audit = (res: UnattendedDispatchResult): UnattendedDispatchResult => {
-    runtime.getEventSink().emit({
-      type: "audit.unattended_dispatch",
-      data: {
-        principalId: opts.principalId,
-        workspaceId: opts.workspaceId,
-        tool: opts.tool,
-        reason,
-        outcome: res.outcome,
-        ...(res.classification !== undefined ? { classification: res.classification } : {}),
-        ms: Date.now() - startedAt,
-      },
-    });
+    try {
+      runtime.getEventSink().emit({
+        type: "audit.unattended_dispatch",
+        data: {
+          principalId: opts.principalId,
+          workspaceId: opts.workspaceId,
+          tool: opts.tool,
+          reason,
+          outcome: res.outcome,
+          ...(res.classification !== undefined ? { classification: res.classification } : {}),
+          ms: Date.now() - startedAt,
+        },
+      });
+    } catch {
+      // `MultiEventSink` fans out without a per-sink guard, so one sink throwing
+      // would leave this function by the one path it promises never to take.
+      // A lost audit line is worse than nothing and better than a sweep that
+      // stops; the sinks that matter here log their own write failures.
+    }
     return res;
   };
 
@@ -211,21 +218,16 @@ export async function dispatchUnattended(
     });
   }
 
-  const router = new IdentityToolRouter({
-    identityId: opts.principalId,
-    workspaceId: opts.workspaceId,
-    runtime,
-  });
-
   const timeoutMs = opts.timeoutMs ?? UNATTENDED_DISPATCH_TIMEOUT_MS;
   const controller = new AbortController();
   let timedOut = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
   // Abort AND race. The abort is what stops the work — `McpSource` forwards the
-  // signal to the SDK, which cancels the in-flight RPC. The race is what bounds
-  // the CALLER, because a source is free to ignore a signal (every in-process
-  // one does), and a background sweep that blocks forever on one tool is the
-  // failure this bound exists to prevent.
+  // signal to the SDK, which cancels the in-flight RPC, in-process and remote
+  // alike. The race is what bounds the CALLER: a source is free to ignore the
+  // signal, and one that honours it still cannot promise when it returns. A
+  // background sweep that blocks on a single tool is the failure this exists to
+  // prevent, and only the race prevents it.
   const deadline = new Promise<never>((_resolve, reject) => {
     timer = setTimeout(() => {
       timedOut = true;
@@ -236,6 +238,14 @@ export async function dispatchUnattended(
 
   let result: ToolResult;
   try {
+    // Constructed inside the `try` with the dispatch it serves: it validates its
+    // own arguments and throws, and this function's contract is that nothing
+    // leaves it as an exception.
+    const router = new IdentityToolRouter({
+      identityId: opts.principalId,
+      workspaceId: opts.workspaceId,
+      runtime,
+    });
     const dispatched = runWithRequestContext(
       {
         // The same partial identity a scheduled run carries (`{ id: ownerId }`):
@@ -263,8 +273,9 @@ export async function dispatchUnattended(
     result = await Promise.race([dispatched, deadline]);
   } catch (err) {
     // `IdentityToolRouter` renders every routing refusal as a result, so a
-    // throw here came out of the tool itself. The caller is a background loop:
-    // it gets an outcome, never an exception.
+    // throw here came out of the tool itself, the deadline, or the router's own
+    // argument validation. The caller is a background loop: it gets an outcome,
+    // never an exception.
     return audit({
       outcome: "error",
       classification: timedOut ? "timeout" : "tool_error",

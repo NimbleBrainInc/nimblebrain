@@ -311,10 +311,16 @@ Before that call runs:
   as `owner_not_member`, and it starts working again by itself if they are added
   back. This is the same rule that governs a scheduled automation whose owner
   leaves.
-- **The tool must not be an authoring surface.** Creating or modifying
+- **The tool must not widen the caller's own reach.** Creating or modifying
   automations, authoring skills, and installing or disconnecting connectors are
-  all refused. Each one leaves something behind that fires again later, which is
-  how an unattended call could grow its own reach.
+  all refused. A new automation fires again later as the same principal, a new
+  skill loads itself into their later sessions, and a new connector adds tools
+  and credentials that were not reachable before — so each is a way an
+  unattended call could come back with more than it started with. Writing a
+  workspace's custom instructions is refused for the same reason, by the same
+  rule that already refuses it inside a scheduled automation run. Ordinary
+  writes — sending a message, updating a record — are not refused; that is what
+  the door is for.
 - **The per-connector permission table applies**, exactly as it does in chat: a
   tool set to *disallow* is refused here too.
 - **A personal connector needs its owner's grant** to the workspace. The
