@@ -2,14 +2,14 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://schemas.nimblebrain.ai/v1/nimblebrain-host.schema.json",
   "title": "NimbleBrain Host Extension",
-  "description": "Schema for the `ai.nimblebrain/host` MCP `_meta` extension — how an MCP server declares its UI integration (placements, briefing) in the NimbleBrain host shell. Carried in the server's descriptor `_meta`, which for this host is the connector catalog's ServerDetail entry. The `ui://` app resources themselves are standard MCP Apps; this extension only declares where they are placed.",
+  "description": "Schema for the `ai.nimblebrain/host` MCP `_meta` extension — how an MCP server declares its UI integration (placements, briefing, notifications) in the NimbleBrain host shell. Carried in the server's descriptor `_meta`, which for this host is the connector catalog's ServerDetail entry. The `ui://` app resources themselves are standard MCP Apps; this extension only declares where they are placed.",
   "type": "object",
   "required": ["host_version"],
   "additionalProperties": true,
   "properties": {
     "host_version": {
       "type": "string",
-      "description": "Host extension contract version. Known values: \"1.0\", \"1.2\" (adds hooks). FORWARD-COMPATIBLE, and this tolerance is part of the contract: an unknown version is NOT rejected — the host parses the fields it understands and ignores the rest; unknown top-level keys validate and are ignored; an unknown or malformed placement slot drops only that placement, never the whole declaration. By convention hooks belongs to version \"1.2\" and up; this pairing is advisory and is not schema-enforced."
+      "description": "Host extension contract version. Known values: \"1.0\", \"1.1\" (introduced a host_capabilities block the host no longer reads), \"1.2\" (adds hooks), \"1.3\" (adds notifications). FORWARD-COMPATIBLE, and this tolerance is part of the contract: an unknown version is NOT rejected — the host parses the fields it understands and ignores the rest; unknown top-level keys validate and are ignored; an unknown or malformed placement slot drops only that placement, never the whole declaration. The version-to-block pairing is advisory and is not schema-enforced."
     },
     "name": {
       "type": "string",
@@ -51,6 +51,9 @@
         "$ref": "#/$defs/HookDeclaration"
       },
       "description": "Inbound event streams this server accepts, one entry per vendor. READ FROM A CATALOG CONNECTOR ONLY — the host resolves hooks from the operator-published connector catalog, never from an MCPB bundle manifest, because the route and registration tool decide where a delivery is sent and must come from operator-trusted metadata. Declaring hooks in an MCPB manifest has no effect. The host mints a capability URL per (workspace, connector, vendor) when the server is installed, hands it to the declared register_tool, and forwards deliveries to that URL verbatim to the declared route on this same server — body bytes unchanged, the vendor's own headers passed through. The host never parses a delivery body: signature verification, parsing, idempotency and state are entirely the server's. Declare host_version \"1.2\" alongside this block."
+    },
+    "notifications": {
+      "$ref": "#/$defs/NotificationsDeclaration"
     }
   },
   "$defs": {
@@ -86,6 +89,23 @@
             "type": "string"
           },
           "description": "Rename inbound headers before the forward, as { from: to }. The forward strips the header class a caller could use to assert identity (authorization, x-api-key, x-tenant-id, x-workspace-id, …) — the same class the fleet edge strips. A vendor that authenticates its deliveries on one of those headers cannot otherwise reach its own verifier, so declaring a rename moves the value to a header the strip list does not cover. A rename whose target is itself in the stripped class is ignored."
+        }
+      }
+    },
+    "NotificationsDeclaration": {
+      "type": "object",
+      "description": "The outbox this server exposes — one MCP resource the host reads on a schedule for facts nobody asked for (a domain went active, a reply landed). The host reads it as the RFC 6570 template <resource>{?cursor,maxEvents,maxAgeMs} and expects the MCP Triggers-and-Events poll result { events, cursor, truncated, hasMore, nextPollMs }. Declaring an outbox grants NO privilege: nothing is minted, no new token audience exists, and no path to a human is opened — a workspace admin's route does that. What it does impose is cost, a standing poll per (workspace, connector), which the host bounds with its own cadence floor, backoff and per-workspace budget. Declare host_version \"1.3\" alongside this block.",
+      "required": ["resource"],
+      "additionalProperties": false,
+      "properties": {
+        "resource": {
+          "type": "string",
+          "maxLength": 512,
+          "description": "The outbox resource URI, e.g. \"acme://notifications\". Must carry a scheme and must NOT carry a query string or a fragment: the host appends {?cursor,maxEvents,maxAgeMs} itself, so a server-supplied query would either be overwritten or produce two."
+        },
+        "description": {
+          "type": "string",
+          "description": "What the outbox carries. Operator-facing only — the host never acts on it."
         }
       }
     },

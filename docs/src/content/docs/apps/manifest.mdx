@@ -97,7 +97,6 @@ Each facet describes one piece of data to surface in the briefing:
 | `tool` | `string` | No | MCP tool to call at briefing time (e.g., `"tasks__count_due"`). |
 | `tool_input` | `object` | No | Arguments passed to the tool. |
 | `resource` | `string` | No | `briefing://` URI — the app computes its own summary and serves it as an MCP resource. |
-| `metric` | `"count" \| "sum" \| "list"` | No | Descriptive hint carried into the briefing prompt; the host computes nothing. |
 | `description` | `string` | No | Used when the facet declares neither `tool` nor `resource`, and as the fallback if resolution fails. |
 
 Each facet resolves via **one** of `tool` or `resource` — both answered by the
@@ -116,14 +115,12 @@ briefing:
       type: upcoming
       tool: tasks__count
       tool_input: { due: today, completed: false }
-      metric: count
       description: Tasks due today that aren't done
     - name: blocked_tasks
       label: Blocked
       type: attention
       tool: tasks__count
       tool_input: { column: blocked, status: active }
-      metric: count
       description: Tasks stuck in blocked column
 ```
 
