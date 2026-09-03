@@ -33,7 +33,7 @@ export class TestAuthAdapter implements IdentityProvider {
     authCodeFlow: false,
     tokenRefresh: false,
     managedUsers: false,
-      authorizationServer: false,
+    authorizationServer: false,
   };
 
   constructor(

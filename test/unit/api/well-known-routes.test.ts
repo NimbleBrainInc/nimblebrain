@@ -16,12 +16,18 @@ import { wellKnownRoutes } from "../../../src/api/routes/well-known.ts";
 /**
  * Build a minimal AppContext whose provider optionally declares an
  * authorization server — the only thing these routes read off it.
+ *
+ * `metadataUrl` is separately optional on the interface: an issuer that
+ * publishes no metadata document to proxy declares only its `issuer`. Pass
+ * `{ metadataUrl: false }` for that provider.
  */
-function makeCtx(issuerHost?: string): AppContext {
+function makeCtx(issuerHost?: string, opts: { metadataUrl?: boolean } = {}): AppContext {
   const authServer = issuerHost
     ? {
         issuer: `https://${issuerHost}`,
-        metadataUrl: `https://${issuerHost}/.well-known/oauth-authorization-server`,
+        ...(opts.metadataUrl === false
+          ? {}
+          : { metadataUrl: `https://${issuerHost}/.well-known/oauth-authorization-server` }),
       }
     : null;
 
@@ -44,8 +50,8 @@ function makeCtx(issuerHost?: string): AppContext {
   return { provider } as unknown as AppContext;
 }
 
-function createApp(issuerHost?: string) {
-  const ctx = makeCtx(issuerHost);
+function createApp(issuerHost?: string, opts: { metadataUrl?: boolean } = {}) {
+  const ctx = makeCtx(issuerHost, opts);
   const app = new Hono();
   app.route("/", wellKnownRoutes(ctx));
   return app;
@@ -168,5 +174,35 @@ describe("GET /.well-known/oauth-authorization-server", () => {
     expect(res.status).toBe(404);
     const body = await res.json();
     expect(body.error).toBe("MCP OAuth not configured");
+  });
+
+  it("returns 404 when the issuer publishes no metadata document to proxy", async () => {
+    // metadataUrl is optional on AuthorizationServer: an issuer with nothing to
+    // proxy still has to be discoverable through Protected Resource Metadata,
+    // so only the RFC 8414 proxy declines. It must decline without reaching the
+    // network — a bare fetch() of `undefined` would resolve against the test
+    // runner's own origin rather than 404.
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () => {
+      throw new Error("upstream must not be fetched when there is no metadataUrl");
+    }) as typeof fetch;
+
+    try {
+      const app = createApp("myapp.example.com", { metadataUrl: false });
+
+      const discovery = await app.request(
+        "http://api.example.com/.well-known/oauth-protected-resource",
+      );
+      expect(discovery.status).toBe(200);
+      expect((await discovery.json()).authorization_servers).toEqual([
+        "https://myapp.example.com",
+      ]);
+
+      const proxied = await app.request("/.well-known/oauth-authorization-server");
+      expect(proxied.status).toBe(404);
+      expect((await proxied.json()).error).toBe("MCP OAuth not configured");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 });
