@@ -100,6 +100,8 @@ import {
 } from "../model/catalog.ts";
 import { buildModelResolver, resolveModelString } from "../model/registry.ts";
 import { type ModelSlot, parseModelSlotRef } from "../model/slots.ts";
+import { NotificationStore } from "../notifications/store.ts";
+import type { NotificationsDeclaration } from "../notifications/types.ts";
 import { registerBuiltinCredentialProviders } from "../oauth/minted-credential-provider.ts";
 import { requestIdentityAttrs, withSpan } from "../observability/index.ts";
 import { log } from "../observability/log.ts";
@@ -159,6 +161,7 @@ import {
 import { McpSource } from "../tools/mcp-source.ts";
 import { isTaskForbiddenSkillTool } from "../tools/platform/skills.ts";
 import { SharedSourceRef, type ToolRegistry } from "../tools/registry.ts";
+import { APP_INSTRUCTIONS_URI } from "../tools/resource-schemes.ts";
 import { surfaceTools } from "../tools/surfacing.ts";
 import { createSystemTools } from "../tools/system-tools.ts";
 import type { ResourceData, Tool, ToolSource } from "../tools/types.ts";
@@ -3322,22 +3325,25 @@ export class Runtime {
     source: McpSource,
     serverName: string,
   ): Promise<string | undefined> {
-    // Reserved platform convention: `app://instructions`. A bundle that
-    // supports user-set custom instructions publishes its current overlay
-    // body at this URI; the platform reads it on every assembly and renders
-    // it inside `<app-custom-instructions>` containment in `formatAppsSection`.
+    // A bundle that supports user-set custom instructions publishes its current
+    // overlay body at this URI; the platform reads it on every assembly and
+    // renders it inside `<app-custom-instructions>` containment in
+    // `formatAppsSection`.
     //
-    // Why `app://` over `<serverName>://instructions`: the serverName is
+    // Why a fixed `app://` over `<serverName>://instructions`: the serverName is
     // platform-derived (e.g. `@nimblebraininc/synapse-collateral` →
     // `synapse-collateral`), not something a bundle author intuitively knows.
     // A fixed scheme means bundle authors just remember `app://instructions`
     // and the platform's name-derivation rules are not part of the contract.
+    // That makes the scheme the host's rather than the bundle's, which is why
+    // `tools/resource-schemes.ts` owns the URI and reserves it against an
+    // outbox declaring the same address.
     //
     // Resource-not-found returns `null` from `readResource` (the SDK's normal
     // not-found path); we treat any read error or empty body as "bundle does
     // not support / has none". Plain MCP servers (no opt-in) end up here.
     try {
-      const data = await source.readResource("app://instructions");
+      const data = await source.readResource(APP_INSTRUCTIONS_URI);
       const body = data?.text;
       const trimmedLen = typeof body === "string" ? body.trim().length : 0;
       // Visible under NB_DEBUG=mcp — confirms the platform fetched
@@ -3927,6 +3933,39 @@ export class Runtime {
   /** Get the WorkspaceStore instance. */
   getWorkspaceStore(): WorkspaceStore {
     return this._workspaceStore;
+  }
+
+  /**
+   * The notification inbox for one workspace.
+   *
+   * The single construction site, because a store is the write path as well as
+   * the read path: it emits `notification.created` on every item it accepts,
+   * and building one here is what guarantees that event reaches the runtime's
+   * own sink — the SSE stream and the workspace audit log both hang off it.
+   * Cheap (a validated path plus a sink reference) and stateless, so it is
+   * constructed per call rather than cached.
+   */
+  getNotificationStore(wsId: string): NotificationStore {
+    return new NotificationStore(this.getWorkspaceContext(wsId), {
+      eventSink: this.getEventSink(),
+    });
+  }
+
+  /**
+   * The outbox an installed connector declares, or `undefined` when it
+   * declares none.
+   *
+   * Resolved from the operator-published catalog the same way hook
+   * declarations are, and by the same slug rule the install used, so the two
+   * cannot disagree after a catalog edit. The poller reads this to decide
+   * which connectors it has anything to poll.
+   */
+  async getNotificationsDeclaration(
+    serverName: string,
+  ): Promise<NotificationsDeclaration | undefined> {
+    const entries = await this.getConnectorDirectory().catalogEntries();
+    const entry = entries.find((e) => slugifyServerName(e.id) === serverName);
+    return entry?.notifications;
   }
 
   /**

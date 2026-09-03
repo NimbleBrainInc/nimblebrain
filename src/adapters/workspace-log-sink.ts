@@ -25,6 +25,10 @@ const WORKSPACE_EVENTS = new Set<EngineEventType>([
   // per turn).
   "tool.promoted",
   "tool.released",
+  // The inbox prunes at 90 days; this line is what survives it. An item that
+  // reached a workspace and was routed to a human is the kind of thing an
+  // operator asks about long after the item itself is gone.
+  "notification.created",
 ]);
 
 export interface WorkspaceLogConfig {

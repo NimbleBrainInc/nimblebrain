@@ -188,6 +188,25 @@ export const ConnectorSkillInjectedPayload = Type.Object({
 });
 export type ConnectorSkillInjectedPayload = Static<typeof ConnectorSkillInjectedPayload>;
 
+export const NotificationCreatedPayload = Type.Object({
+  workspaceId: Type.String({
+    description: "The workspace whose inbox this landed in. Scopes the SSE fan-out.",
+  }),
+  id: Type.String({ description: "`<source>:<eventId>` — the notification's wire id." }),
+  seq: Type.Number({
+    description: "Monotonic position in the workspace's inbox; the `?after=` cursor.",
+  }),
+  source: Type.String({ description: "Connector server name the runtime stamped." }),
+  name: Type.String({ description: "The server's own event name." }),
+  level: Type.Union([Type.Literal("info"), Type.Literal("attention"), Type.Literal("urgent")]),
+  title: Type.String({
+    description: "One line of server-authored plain text, sanitized and capped on parse.",
+  }),
+  subject: Type.Optional(Type.String({ description: "What the item is about, for grouping." })),
+  receivedAt: Type.String({ description: "ISO 8601 instant the runtime wrote the item." }),
+});
+export type NotificationCreatedPayload = Static<typeof NotificationCreatedPayload>;
+
 // ── Discriminated event union ────────────────────────────────────────────
 //
 // Events with a typed payload are listed in the union below. Emitters
@@ -215,5 +234,6 @@ export const TypedEngineEvent = Type.Union([
     type: Type.Literal("connector.skill.injected"),
     data: ConnectorSkillInjectedPayload,
   }),
+  Type.Object({ type: Type.Literal("notification.created"), data: NotificationCreatedPayload }),
 ]);
 export type TypedEngineEvent = Static<typeof TypedEngineEvent>;

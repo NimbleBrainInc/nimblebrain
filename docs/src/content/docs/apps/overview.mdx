@@ -15,6 +15,7 @@ When you install a bundle, NimbleBrain:
 2. Discovers the server's tools and registers them in the tool registry.
 3. Reads `_meta["ai.nimblebrain/host"]` from `manifest.json` for UI metadata.
 4. Registers any UI placements in the shell layout (sidebar items, main views).
+5. Polls any declared [notification outbox](/apps/notifications) into the workspace's inbox.
 
 The agent accesses tools through the [tiered tool surfacing](/using/managing-apps) system. If the app declares UI metadata, users see the app in the sidebar and can interact with its views directly.
 
@@ -50,6 +51,7 @@ The type is stored on the `BundleInstance` and surfaced in the installed-apps li
 - **Tools** are available to the agent via tiered tool surfacing — directly when the tool count is low, otherwise discovered via `nb__search` (`scope: "tools"`) and invoked through the unified tool namespace.
 - **UI resources** are HTML pages served by the MCP server via the `ui://` protocol and proxied through `GET /v1/apps/:name/resources/:path`.
 - **The MCP App Bridge** provides a `postMessage` channel between iframes and the host for tool calls, navigation, and data sync.
+- **[Notifications](/apps/notifications)** are the fourth way an app reaches the host, and the only one that does not start with someone asking. An app declares an **outbox** — one resource holding facts it learned on its own, like a domain going active — and the host pulls from it on a schedule into a workspace inbox the agent can read and an operator can route to Slack, mail, or an agent run.
 
 ## Plain MCP bundle (tools only)
 

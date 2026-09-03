@@ -25,6 +25,8 @@ When you install a bundle that declares UI resources, NimbleBrain:
 
 The result: apps appear as native views inside NimbleBrain, with bidirectional communication to the agent and MCP tools.
 
+Tools, resources and UI all begin with someone asking. [Notifications](/apps/notifications) are the one thing an app contributes that does not: a server declares an **outbox** resource holding facts it learned on its own, the host pulls from it on its own schedule, and each event lands in the workspace's inbox — where the agent can read it, the shell renders it live, and an operator's route can carry it to Slack, mail, or an agent run. The server never learns the host's address and never holds a human's credential; it writes a row and exposes a resource.
+
 ## What MCP Apps can do
 
 MCP Apps excel at tasks where text-only tool results aren't enough:
@@ -118,5 +120,6 @@ import { CardGrid, LinkCard } from '@astrojs/starlight/components';
   <LinkCard title="MCP App Bridge" description="Full ext-apps protocol reference and NimbleBrain extensions" href="/apps/bridge" />
   <LinkCard title="App Overview" description="Architecture, app types, and manifest structure" href="/apps/overview" />
   <LinkCard title="UI Resources" description="Serve HTML from your MCP server via ui:// URIs" href="/apps/ui-resources" />
+  <LinkCard title="Notifications" description="Expose an outbox so facts your server learns on its own reach a human" href="/apps/notifications" />
   <LinkCard title="Hello World App" description="Build a complete MCP App from scratch" href="/apps/hello-world" />
 </CardGrid>
