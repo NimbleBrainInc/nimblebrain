@@ -42,3 +42,16 @@ export function serializePerWorkspace<T>(wsId: string, task: () => Promise<T>): 
   });
   return next;
 }
+
+/**
+ * Whether a write is currently queued or running for `wsId`.
+ *
+ * Read by the contention counter the notifications poller reports: an entry
+ * present when a cursor write arrives means that write waited on someone
+ * else's, which — hook reconciles being the only other frequent writer — is how
+ * the two are observed contending for the record they share. Diagnostic only;
+ * nothing branches on it.
+ */
+export function hasQueuedWorkspaceWrite(wsId: string): boolean {
+  return writeChains.has(wsId);
+}

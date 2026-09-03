@@ -9,7 +9,9 @@ import {
   validateRoutes,
   type WorkspaceNotificationsConfig,
 } from "../../notifications/config.ts";
+import { NotificationPoller } from "../../notifications/poller.ts";
 import type { NotificationRef, NotificationStore } from "../../notifications/store.ts";
+import { collectPollTargets } from "../../notifications/targets.ts";
 import { notificationId, parseNotificationId } from "../../notifications/types.ts";
 import { toNotificationView } from "../../notifications/view.ts";
 import { getRequestContext } from "../../runtime/request-context.ts";
@@ -46,8 +48,10 @@ import {
  *
  * The poller that fills the inbox lives here too, started in this factory and
  * stopped in a `source.stop()` wrapper the way the automations scheduler is.
- * Nothing starts one yet: every item in the inbox today got there through
- * {@link NotificationStore.append}.
+ * It reads every connector that declares an outbox and writes what it finds
+ * through {@link NotificationStore.append} — the same door a test fixture
+ * writes through, which is why the store's dedupe and its `notification.created`
+ * emission are the poller's too rather than a second copy.
  */
 
 const LIST_DESCRIPTION =
@@ -384,5 +388,36 @@ export function createNotificationsSource(runtime: Runtime, eventSink: EventSink
     },
   ];
 
-  return defineInProcessApp({ name: "notifications", version: "1.0.0", tools }, eventSink);
+  const source = defineInProcessApp({ name: "notifications", version: "1.0.0", tools }, eventSink);
+
+  // The poller is owned by this factory, not by the MCP server — the same
+  // arrangement the automations scheduler has, and for the same reason: a timer
+  // that outlives `Runtime.shutdown()` keeps a test process alive and keeps
+  // reading a tenant's connectors after the runtime holding them is gone.
+  //
+  // try/finally so the in-process transport always closes, even if `stop()`
+  // ever grows a path that throws. Today it clears a timer and releases
+  // listeners, and is benign; the asymmetry between "poller error" and "leaked
+  // transport" is what the guard is for.
+  const poller = new NotificationPoller({
+    targets: () =>
+      collectPollTargets(runtime.getLifecycle(), (serverName) =>
+        runtime.getNotificationsDeclaration(serverName),
+      ),
+    storeFor: (wsId) => runtime.getNotificationStore(wsId),
+    workspaceStore: runtime.getWorkspaceStore(),
+    config: runtime.getNotificationsPollConfig(),
+  });
+  poller.start();
+
+  const originalStop = source.stop.bind(source);
+  source.stop = async () => {
+    try {
+      poller.stop();
+    } finally {
+      await originalStop();
+    }
+  };
+
+  return source;
 }
