@@ -502,31 +502,7 @@ export class McpSource implements ToolSource {
 
     await this.initTransport();
 
-    // Advertise client-side tasks capability per MCP spec draft 2025-11-25:
-    // servers with `execution.taskSupport` on any tool see that this client
-    // honors task-augmented `tools/call` and will attach `params.task: {ttl}`
-    // when calling those tools. The engine then polls via tasks/get and
-    // retrieves via tasks/result instead of blocking the request.
-    //
-    // The `extensions` block carries NimbleBrain-namespaced vendor
-    // capabilities (e.g. `ai.nimblebrain/host-resources`) per the MCP
-    // extensions spec — https://modelcontextprotocol.io/extensions/overview.
-    // Bundles read these from their ClientCapabilities to opt into
-    // bundle→host resource reads. Phase 1 advertises the capability;
-    // handlers land in Phase 2.
-    this.client = new Client(
-      { name: "nimblebrain", version: "0.1.0" },
-      {
-        capabilities: {
-          tasks: {
-            requests: { tools: { call: {} } },
-            cancel: {},
-            list: {},
-          },
-          extensions: hostExtensions(),
-        },
-      },
-    );
+    this.client = this.buildClient();
     // Inbound host-resources handlers registered before connect so they're
     // ready the moment the bundle issues its first request. No-op for
     // in-process sources that don't pass a bundleContext.
@@ -952,6 +928,30 @@ export class McpSource implements ToolSource {
     }
   }
 
+  /**
+   * The client this source connects with, and the capabilities it claims.
+   * One builder, called on the initial start and again on the OAuth retry
+   * rebuild, so the two connections cannot claim different things.
+   *
+   * `tasks` says this client honors task-augmented `tools/call`: a server with
+   * `execution.taskSupport` on a tool sees that we will attach
+   * `params.task: {ttl}` rather than block the request, and that we can cancel
+   * what we started. Advertised because it is exercised — `startToolAsTask`
+   * opens the stream, `getTaskStatus` polls, `cancelTask` cancels. `tasks.list`
+   * is not: nothing here calls `listTasks`, and SEP-2663 removes `tasks/list`
+   * from the spec, so claiming it invited a server to expect a client that
+   * would never arrive.
+   *
+   * The task calls go through the SDK's `client.experimental.tasks` surface,
+   * which is where tasks live in SDK v1. SDK v2 moves them to an extension;
+   * the migration is a separate change, not a rename.
+   *
+   * The `extensions` block carries NimbleBrain-namespaced vendor capabilities
+   * (e.g. `ai.nimblebrain/host-resources`) per the MCP extensions spec —
+   * https://modelcontextprotocol.io/extensions/overview. Bundles read these
+   * from their ClientCapabilities to opt into bundle→host resource reads.
+   * Phase 1 advertises the capability; handlers land in Phase 2.
+   */
   private buildClient(): Client {
     return new Client(
       { name: "nimblebrain", version: "0.1.0" },
@@ -960,7 +960,6 @@ export class McpSource implements ToolSource {
           tasks: {
             requests: { tools: { call: {} } },
             cancel: {},
-            list: {},
           },
           extensions: hostExtensions(),
         },
