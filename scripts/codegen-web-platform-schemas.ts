@@ -17,10 +17,10 @@
  * doesn't reach outside web/, and the generated artifact is a normal
  * source file in version control.
  *
- * The generated tree is checked in. CI runs this script and then fails on
- * any reported change under `web/src/_generated/` — including a file that
- * is missing from the tree entirely, which is why the check reads
- * `git status --porcelain -uall` rather than a diff over tracked paths.
+ * The generated tree is checked in. `scripts/check-codegen.ts` runs
+ * after this script and fails on anything git reports under
+ * `web/src/_generated/` — including a file this generator emitted that
+ * was never added to git, which a diff over tracked paths cannot see.
  *
  * Run: `bun run codegen` (alias for this script — see package.json).
  */
