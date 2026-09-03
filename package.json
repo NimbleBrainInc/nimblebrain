@@ -44,7 +44,7 @@
     "dev:api": "bun --watch src/cli/index.ts serve -c .nimblebrain/nimblebrain.json",
     "dev:web": "cd web && bun run dev",
     "start": "bun run src/cli/index.ts serve",
-    "install:bundles": "for ui in src/bundles/*/ui; do [ -f \"$ui/package.json\" ] && (cd \"$ui\" && bun install --frozen-lockfile); done",
+    "install:bundles": "for ui in src/bundles/*/ui; do [ -f \"$ui/package.json\" ] || continue; (cd \"$ui\" && bun install --frozen-lockfile) || exit 1; done",
     "build:bundles": "for ui in src/bundles/*/ui; do [ -f \"$ui/package.json\" ] && (cd \"$ui\" && bun install && bun run build); done",
     "docs:install": "cd docs && bun install",
     "docs:dev": "cd docs && bun run dev",
