@@ -21,6 +21,7 @@ import { log } from "../observability/log.ts";
 import { ToolRegistry } from "../tools/registry.ts";
 import type { ToolSource } from "../tools/types.ts";
 import { mapWithConcurrency } from "../util/concurrency.ts";
+import { isHttpUrl } from "../util/url.ts";
 import type { Workspace } from "../workspace/types.ts";
 import type { WorkspaceStore } from "../workspace/workspace-store.ts";
 
@@ -63,6 +64,7 @@ function describeUnusableRef(ref: BundleRef): string {
   const legacy = ref as unknown as { name?: unknown; path?: unknown };
   if (typeof legacy.name === "string") return `legacy name: "${legacy.name}"`;
   if (typeof legacy.path === "string") return `legacy path: "${legacy.path}"`;
+  if (typeof ref.url === "string") return `unusable url: ${JSON.stringify(ref.url)}`;
   return `no url and no legacy key (keys: ${Object.keys(ref).join(", ") || "none"})`;
 }
 
@@ -86,22 +88,24 @@ export function buildProcessInventory(
       // `bun run migrate:user-creds` before deploying Stage 2 — see
       // the Stage 2 deploy runbook.
       assertBundleRefIsPostStage2(bundle);
-      // A row with no usable `url` is skipped, not thrown on. Boot reads
-      // every workspace's `bundles[]` in one pass before any per-entry
-      // containment, so throwing here takes the whole instance down over one
-      // bad row — a legacy `name:`/`path:` entry that predates the URL-only
-      // ref, or a `url: ""` that reached the store. Dropping just that entry
-      // is what makes the documented per-entry break ("that entry no longer
-      // starts") true, and the warn names the row so it can be fixed.
-      if (typeof bundle.url !== "string" || bundle.url.length === 0) {
+      // A row this build can neither name nor reach is skipped, not thrown on.
+      // Boot reads every workspace's `bundles[]` in one pass before any
+      // per-entry containment, so throwing here takes the whole instance down
+      // over one bad row — a legacy `name:`/`path:` entry that predates the
+      // URL-only ref, or a url that is blank or unparseable. Dropping just
+      // that entry is what makes the documented per-entry break ("that entry
+      // no longer starts") true, and the warn names the row so it can be
+      // fixed. `serverNameFromRef` is the single predicate: it returns null on
+      // exactly the rows nothing downstream could have used.
+      const serverName = serverNameFromRef(bundle);
+      if (serverName === null || !isHttpUrl(bundle.url)) {
         log.warn(
-          `[bundles] ${ws.id}: skipping a connector entry with no url — ` +
+          `[bundles] ${ws.id}: skipping a connector entry with no reachable url — ` +
             `${describeUnusableRef(bundle)}. A connector is addressed by URL; ` +
             "re-install it from the catalog against the server's endpoint.",
         );
         continue;
       }
-      const serverName = serverNameFromRef(bundle);
       const dataDir = resolveBundleDataDirForRef(workDir, ws.id, bundle);
 
       entries.push({

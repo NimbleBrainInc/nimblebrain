@@ -267,10 +267,10 @@ describe("V5: SSE events scoped by workspace", () => {
 // ── V6: Cross-workspace bundle instance isolation ───────────────
 //
 // Pins Runtime.getBundleInstancesForWorkspace against the class of leak
-// where two workspaces install the same bundle and the filter returns
+// where two workspaces install the same connector and the filter returns
 // cross-workspace instances because it only matched on serverName. Each
-// instance is its own object, so a leak in this method
-// surfaces another workspace's entity data (contacts, tasks, etc.) to
+// workspace holds its own instance and its own credentials, so a leak here
+// surfaces another workspace's connector — and everything it can reach — to
 // the caller's briefing/apps list.
 
 function makeFakeSource(name: string): ToolSource {

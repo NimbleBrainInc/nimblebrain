@@ -140,6 +140,11 @@ describe("buildProcessInventory", () => {
       { name: "@acme/echo" } as unknown as BundleRef,
       { path: "/opt/echo" } as unknown as BundleRef,
       { url: "" } as BundleRef,
+      // Blank-but-nonempty and unparseable urls: the first guard tested
+      // `length === 0`, so these still reached `getDataPath` and threw the
+      // whole-instance boot crash the guard existed to stop.
+      { url: "   " } as BundleRef,
+      { url: "..." } as BundleRef,
       crm(),
     ]);
 

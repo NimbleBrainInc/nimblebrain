@@ -2806,7 +2806,9 @@ async function handleListPersonalCatalog(
   const installed = await new IdentityConnectorStore({ workDir: ctx.runtime.getWorkDir() }).list(
     callerId,
   );
-  const installedServerNames = new Set(installed.map((ref) => serverNameFromRef(ref)));
+  const installedServerNames = new Set(
+    installed.map((ref) => serverNameFromRef(ref)).filter((n): n is string => n !== null),
+  );
 
   const catalog = entries.filter(
     (e) =>
@@ -2853,8 +2855,19 @@ async function handleListPersonalConnectors(
   const workDir = ctx.runtime.getWorkDir();
   const owner = { type: "user", userId: callerId } as const;
   const lifecycle = ctx.runtime.getLifecycle();
-  const connectors = refs.map((ref) => {
+  // Resolve names first, in their own pass: a stored row this build cannot
+  // name is dropped here rather than rendered under a name no Connect route
+  // resolves. Keeping it out of the projection below leaves that closure
+  // exactly as it was.
+  const named = refs.flatMap((ref) => {
     const serverName = serverNameFromRef(ref);
+    if (serverName !== null) return [{ ref, serverName }];
+    log.warn(
+      `[connectors] personal connector row names no server (url: ${JSON.stringify(ref.url)}) — omitted from the listing.`,
+    );
+    return [];
+  });
+  const connectors = named.map(({ ref, serverName }) => {
     const cat = byServerName.get(serverName);
     // Auth type + (for composio) the catalog connector id are read from the
     // stored ref, not the catalog — they're what the Connect route keys on and

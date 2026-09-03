@@ -5,6 +5,7 @@ import {
   isPersonalConnectorName,
   PERSONAL_CONNECTOR_PREFIX,
 } from "../tools/identity-sources.ts";
+import { isHttpUrl } from "../util/url.ts";
 import { WorkspaceContext } from "../workspace/context.ts";
 import type { BundleRef } from "./types.ts";
 
@@ -129,17 +130,28 @@ export function slugifyServerName(canonicalName: string): string {
 }
 
 /**
- * Resolve the lifecycle / registry key for a `BundleRef`. Single
- * authority for the install / boot / uninstall paths so the
- * registered source name matches what consumers later look up.
+ * Resolve the lifecycle / registry key for a `BundleRef`, or `null` when the
+ * row cannot name one. Single authority for the install / boot / uninstall
+ * paths so the registered source name matches what consumers later look up.
  *
  * Honors `ref.serverName` when present — that's the slugified canonical
- * reverse-DNS form set at install time from `ServerDetail.name`. Falls back
- * to `deriveServerName` only for legacy refs that predate canonical-form
- * persistence (pre-#195).
+ * reverse-DNS form set at install time from `ServerDetail.name`. Falls back to
+ * `deriveServerName` only for refs that predate canonical-form persistence
+ * (pre-#195), and only when the url is one this runtime could actually reach.
+ *
+ * **Nullable on purpose.** Every caller reads a row off disk, and disk holds
+ * rows this build's type no longer describes — a pre-URL `name:`/`path:`
+ * entry, or a url that is blank or unparseable. Returning `string` meant
+ * `deriveServerName(undefined)` threw from whichever reader touched the row
+ * first, which is a `TypeError` naming neither the workspace nor the row, in a
+ * caller that has no reason to expect one. The null makes the compiler name
+ * the set of readers instead, which is the same argument the URL-only
+ * `BundleRef` collapse rests on: put the invariant in the type and let it find
+ * the sites.
  */
-export function serverNameFromRef(ref: BundleRef): string {
-  return ref.serverName ?? deriveServerName(ref.url);
+export function serverNameFromRef(ref: BundleRef): string | null {
+  if (ref.serverName) return ref.serverName;
+  return isHttpUrl(ref.url) ? deriveServerName(ref.url) : null;
 }
 
 /**

@@ -57,6 +57,15 @@ export async function installBundleInWorkspace(
   const workDir = opts?.workDir ?? defaultWorkDir();
   const wsContext = new WorkspaceContext({ wsId, workDir });
   const serverName = serverNameFromRef(bundleRef);
+  if (serverName === null) {
+    // Install builds this ref from a catalog entry, so a null here is a
+    // caller bug rather than stale disk data — say so instead of failing
+    // later with a name nothing can look up.
+    throw new Error(
+      `[bundles] cannot install into "${wsId}": the connector ref names no server ` +
+        `(url: ${JSON.stringify(bundleRef.url)}).`,
+    );
+  }
   const dataDir = resolveBundleDataDirForRef(workDir, wsId, bundleRef);
 
   // Liveness, not membership: a registered-but-dead source (a retained

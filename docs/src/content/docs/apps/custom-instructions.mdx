@@ -26,7 +26,7 @@ The body is treated as Markdown. There's no schema; it's freeform user-set text.
 
 Everything except the URI convention and the prompt-side wrapping:
 
-- **Storage.** Where the body lives on disk (typically a file in your bundle's data dir).
+- **Storage.** Where the body lives, and how it is scoped. The platform hands your server no environment and no directory — it connects to a URL — so this is entirely yours: a path you configure, a row keyed on the workspace id the request carries, whatever fits how you run.
 - **The tool to write/clear.** Any name you want — `set_brand_voice`, `configure_assistant`, `update_conventions`, etc. The agent calls it; the user wires it from your settings UI.
 - **The editor UI.** Settings panel, modal, sidebar — your call. Validation, character cap, placeholder copy.
 - **Schema.** If you want typed config (brand voice + tone + persona as separate fields), serialize to Markdown for the resource body. Or publish multiple resources (e.g. `app://instructions/voice`, `app://instructions/persona`) — but only `app://instructions` flows into containment automatically.
@@ -42,9 +42,10 @@ Everything except the URI convention and the prompt-side wrapping:
 
 ```python title="server.py"
 from pathlib import Path
-import os
 
-INSTRUCTIONS_FILE = Path(os.environ.get("APP_STATE_DIR", "./workspace")) / "custom-instructions.md"
+# Your server's own storage, configured however you deploy it. Nothing is
+# injected by the platform.
+INSTRUCTIONS_FILE = Path("/var/lib/my-app") / "custom-instructions.md"
 
 @mcp.resource("app://instructions", mime_type="text/markdown")
 def custom_instructions() -> str:
