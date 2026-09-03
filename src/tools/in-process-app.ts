@@ -9,6 +9,7 @@ import {
   ListToolsRequestSchema,
   McpError,
   ReadResourceRequestSchema,
+  type ToolAnnotations,
 } from "@modelcontextprotocol/sdk/types.js";
 import type { PlacementDeclaration } from "../bundles/types.ts";
 import type { EventSink, ToolResult } from "../engine/types.ts";
@@ -22,18 +23,25 @@ import { validateToolInput } from "./validate-input.ts";
  * platform sources used pre-migration so authoring stays a function and a
  * JSON schema — no Zod adapter, no SDK boilerplate per tool.
  *
- * `annotations` is sent on the wire as the tool's `_meta` (free-form per
- * MCP). `McpSource.tools()` reads `_meta` back as `annotations` on the
- * client side, preserving round-trip semantics — including platform
- * conventions like `"ai.nimblebrain/internal": true` to hide a tool from
- * the agent's tool list.
+ * The two metadata fields are the two the MCP spec defines, and they are not
+ * interchangeable:
+ *
+ *  - `meta` goes on the wire as `_meta`, the free-form reverse-DNS namespace.
+ *    Platform conventions live here — `"ai.nimblebrain/internal": true` hides a
+ *    tool from the agent's tool list.
+ *  - `annotations` goes on the wire as `annotations`, the spec's closed set of
+ *    behavioural hints (`destructiveHint` and friends).
+ *
+ * `McpSource.tools()` reads both back under the same names on the client side.
  */
 export interface InProcessTool {
   name: string;
   description: string;
   inputSchema: Record<string, unknown>;
   handler: (input: Record<string, unknown>) => Promise<ToolResult>;
-  annotations?: Record<string, unknown>;
+  meta?: Record<string, unknown>;
+  annotations?: ToolAnnotations;
+  outputSchema?: Record<string, unknown>;
 }
 
 /**
@@ -181,8 +189,9 @@ export function defineInProcessApp(
         );
 
         // tools/list — translate InProcessTool[] into the MCP wire shape.
-        // Annotations ride on `_meta` (free-form by spec) so they survive
-        // round-trip and reach `McpSource.tools()` as `annotations`.
+        // Host conventions ride on `_meta` (free-form by spec); the spec's own
+        // hints ride on `annotations`. Both survive the round trip and reach
+        // `McpSource.tools()` under the same names.
         server.setRequestHandler(ListToolsRequestSchema, async () => ({
           tools: tools.map((t) => ({
             name: t.name,
@@ -192,7 +201,17 @@ export function defineInProcessApp(
               properties?: Record<string, unknown>;
               required?: string[];
             },
-            ...(t.annotations ? { _meta: t.annotations } : {}),
+            ...(t.outputSchema
+              ? {
+                  outputSchema: t.outputSchema as {
+                    type: "object";
+                    properties?: Record<string, unknown>;
+                    required?: string[];
+                  },
+                }
+              : {}),
+            ...(t.annotations ? { annotations: t.annotations } : {}),
+            ...(t.meta ? { _meta: t.meta } : {}),
           })),
         }));
 

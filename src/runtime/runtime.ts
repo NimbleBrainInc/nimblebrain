@@ -162,6 +162,7 @@ import { SharedSourceRef, type ToolRegistry } from "../tools/registry.ts";
 import { surfaceTools } from "../tools/surfacing.ts";
 import { createSystemTools } from "../tools/system-tools.ts";
 import type { ResourceData, Tool, ToolSource } from "../tools/types.ts";
+import { toToolSchema } from "../tools/types.ts";
 import { createProcessLedger, type UsageLedger } from "../usage/ledger.ts";
 import { clearUsageLedger, recordLlmCall, setUsageLedger } from "../usage/record.ts";
 import type { TokenUsage } from "../usage/types.ts";
@@ -721,14 +722,7 @@ export class Runtime {
           // delegate path, which currently delegates without any workspace
           // context. The workspace door simply contributes nothing.
           const identityTools = await rt.listIdentitySourceTools();
-          return identityTools
-            .filter((t) => identityToolVisible(t.name))
-            .map((t) => ({
-              name: t.name,
-              description: t.description,
-              inputSchema: t.inputSchema,
-              ...(t.annotations !== undefined ? { annotations: t.annotations } : {}),
-            }));
+          return identityTools.filter((t) => identityToolVisible(t.name)).map(toToolSchema);
         }
         const registry = rt.getRegistryForWorkspace(wsId);
         const [focusedTools, identityTools] = await Promise.all([
@@ -736,22 +730,8 @@ export class Runtime {
           rt.listIdentitySourceTools(),
         ]);
         return [
-          ...focusedTools
-            .filter((t) => workspaceToolVisible(t.name))
-            .map((t) => ({
-              name: t.name,
-              description: t.description,
-              inputSchema: t.inputSchema,
-              ...(t.annotations !== undefined ? { annotations: t.annotations } : {}),
-            })),
-          ...identityTools
-            .filter((t) => identityToolVisible(t.name))
-            .map((t) => ({
-              name: t.name,
-              description: t.description,
-              inputSchema: t.inputSchema,
-              ...(t.annotations !== undefined ? { annotations: t.annotations } : {}),
-            })),
+          ...focusedTools.filter((t) => workspaceToolVisible(t.name)).map(toToolSchema),
+          ...identityTools.filter((t) => identityToolVisible(t.name)).map(toToolSchema),
         ];
       },
       events,
@@ -1508,21 +1488,11 @@ export class Runtime {
       // own workspace; one copy of `nb__*`, not N.
       ...focusedTools
         .filter((t) => isToolVisibleToRole(t.name, requestIdentity.orgRole))
-        .map((t) => ({
-          name: t.name,
-          description: t.description,
-          inputSchema: t.inputSchema,
-          ...(t.annotations !== undefined ? { annotations: t.annotations } : {}),
-        })),
+        .map(toToolSchema),
       // Identity tools (conversations, …) — bare, owned by the user.
       ...identityTools
         .filter((t) => isToolVisibleToRole(t.name, requestIdentity.orgRole))
-        .map((t) => ({
-          name: t.name,
-          description: t.description,
-          inputSchema: t.inputSchema,
-          ...(t.annotations !== undefined ? { annotations: t.annotations } : {}),
-        })),
+        .map(toToolSchema),
     ];
 
     // Server-published skills, discovered and routed by declared strategy. This
@@ -2019,24 +1989,14 @@ export class Runtime {
             isToolVisibleToRole(t.name, requestIdentity.orgRole) &&
             !isTaskForbiddenSkillTool(t.name),
         )
-        .map((t) => ({
-          name: t.name,
-          description: t.description,
-          inputSchema: t.inputSchema,
-          ...(t.annotations !== undefined ? { annotations: t.annotations } : {}),
-        })),
+        .map(toToolSchema),
       ...identityTools
         .filter(
           (t) =>
             !isTaskForbiddenIdentityTool(t.name) &&
             isToolVisibleToRole(t.name, requestIdentity.orgRole),
         )
-        .map((t) => ({
-          name: t.name,
-          description: t.description,
-          inputSchema: t.inputSchema,
-          ...(t.annotations !== undefined ? { annotations: t.annotations } : {}),
-        })),
+        .map(toToolSchema),
     ];
     const { direct: tools, proxied } = surfaceTools(
       allTools,
@@ -3618,18 +3578,8 @@ export class Runtime {
       // brings the wire name back under that budget; the wall is unaffected,
       // because the workspace a call lands in comes from the session, never from
       // the name (see `routeToolCall`).
-      ...wsTools.map((t) => ({
-        name: t.name,
-        description: t.description,
-        inputSchema: t.inputSchema,
-        ...(t.annotations !== undefined ? { annotations: t.annotations } : {}),
-      })),
-      ...identityTools.map((t) => ({
-        name: t.name,
-        description: t.description,
-        inputSchema: t.inputSchema,
-        ...(t.annotations !== undefined ? { annotations: t.annotations } : {}),
-      })),
+      ...wsTools.map(toToolSchema),
+      ...identityTools.map(toToolSchema),
       // Personal connectors carry the reserved marker. With workspace tools now
       // bare, a workspace `gmail` and the caller's personal `gmail` would other-
       // wise be the same string — a collision install-time checks cannot prevent,
@@ -3718,12 +3668,7 @@ export class Runtime {
       }
       const bare = sep > 0 ? t.name.slice(sep + 2) : t.name;
       if (isDisallowed(policies[bare])) continue;
-      out.push({
-        name: t.name,
-        description: t.description,
-        inputSchema: t.inputSchema,
-        ...(t.annotations !== undefined ? { annotations: t.annotations } : {}),
-      });
+      out.push(toToolSchema(t));
     }
     return out;
   }

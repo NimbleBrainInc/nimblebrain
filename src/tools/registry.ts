@@ -13,6 +13,7 @@ import { splitInnerToolName } from "../util/tool-name.ts";
 import type { McpSource } from "./mcp-source.ts";
 import { rankToolSearchResults } from "./search-ranking.ts";
 import type { Tool, ToolSource } from "./types.ts";
+import { toToolSchema } from "./types.ts";
 
 /**
  * Structural check for "looks like an McpSource task-aware surface".
@@ -175,12 +176,7 @@ export class ToolRegistry implements ToolRouter {
         continue;
       }
       for (const tool of tools) {
-        all.push({
-          name: tool.name,
-          description: tool.description,
-          inputSchema: tool.inputSchema,
-          annotations: tool.annotations,
-        });
+        all.push(toToolSchema(tool));
       }
     }
     return all;

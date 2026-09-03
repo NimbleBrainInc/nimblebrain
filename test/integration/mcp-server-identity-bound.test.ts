@@ -49,6 +49,11 @@ function buildCounterSource(
       type: "object",
       properties: { echo: { type: "string" } },
     },
+    // The two spec metadata namespaces, so the door can be asserted to forward
+    // each under its own name. A `destructiveHint` a caller never sees is a
+    // caller that cannot be careful with the call it is about to make.
+    annotations: { title: "Counter", destructiveHint: true },
+    meta: { "ai.nimblebrain/counter": true },
     handler: async (input) => {
       count += 1;
       const echo = typeof input.echo === "string" ? input.echo : "";
@@ -341,6 +346,18 @@ describe("/mcp with a member X-Workspace-Id (walled to that workspace)", () => {
       expect(names).toContain("conversations__list");
       // …but never another workspace's tools.
       expect(names).not.toContain(personalToolName());
+    } finally {
+      await client.close();
+    }
+  });
+
+  it("tools/list forwards annotations and _meta under their own names", async () => {
+    const client = await createMcpClient({ workspace: SHARED_WS_ID });
+    try {
+      const listed = (await client.listTools()).tools.find((t) => t.name === sharedToolName());
+      expect(listed).toBeDefined();
+      expect(listed!.annotations).toEqual({ title: "Counter", destructiveHint: true });
+      expect(listed!._meta).toEqual({ "ai.nimblebrain/counter": true });
     } finally {
       await client.close();
     }

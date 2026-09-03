@@ -1272,6 +1272,13 @@ export class McpSource implements ToolSource {
    * shape. Does NOT read or write `cachedTools` — callers decide whether the
    * result seeds the memo ({@link tools}) or replaces it ({@link refreshTools}).
    * Concurrent callers share one round-trip via `toolsFetchInFlight`.
+   *
+   * Every spec-defined field a listing can carry comes across: `_meta` and
+   * `annotations` are separate namespaces and land in the separate fields of
+   * the same name, and `outputSchema` rides along. Dropping either annotation
+   * namespace here is silent — the server said something about the tool and the
+   * host simply never heard it, which is how a tool that declares
+   * `destructiveHint` gets treated like a read-only one.
    */
   private fetchToolList(): Promise<Tool[]> {
     if (this.toolsFetchInFlight) return this.toolsFetchInFlight;
@@ -1288,8 +1295,10 @@ export class McpSource implements ToolSource {
           name: `${this.name}__${t.name}`,
           description: t.description ?? "",
           inputSchema: (t.inputSchema ?? {}) as Record<string, unknown>,
+          outputSchema: t.outputSchema as Record<string, unknown> | undefined,
           source: `mcpb:${this.name}`,
-          annotations: t._meta as Record<string, unknown> | undefined,
+          meta: t._meta as Record<string, unknown> | undefined,
+          annotations: t.annotations,
           execution,
         };
       });

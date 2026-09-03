@@ -502,7 +502,7 @@ describe("surfaceTools — instructions write is internal", () => {
 		name: "instructions__write_instructions",
 		description: "Save workspace-wide custom instructions",
 		inputSchema: { type: "object", properties: {} },
-		annotations: { "ai.nimblebrain/internal": true },
+		meta: { "ai.nimblebrain/internal": true },
 	};
 
 	it("never surfaces direct or proxied, even in a bare workspace", () => {
@@ -615,7 +615,7 @@ describe("surfaceTools — internal annotation filtering", () => {
 			name: "nb__manage_identity",
 			description: "Internal identity tool",
 			inputSchema: { type: "object", properties: {} },
-			annotations: { "ai.nimblebrain/internal": true },
+			meta: { "ai.nimblebrain/internal": true },
 		};
 		const visibleTool = makeTool("nb__search");
 		const all = [internalTool, visibleTool];
@@ -632,7 +632,7 @@ describe("surfaceTools — internal annotation filtering", () => {
 			name: "nb__get_config",
 			description: "Internal config",
 			inputSchema: { type: "object", properties: {} },
-			annotations: { "ai.nimblebrain/internal": true },
+			meta: { "ai.nimblebrain/internal": true },
 		};
 		const tools = [...makeSystemTools(4), internalTool];
 

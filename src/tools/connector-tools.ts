@@ -263,7 +263,7 @@ export function createManageConnectorsTool(ctx: ManageConnectorsContext): InProc
     name: "manage_connectors",
     description:
       "List, install, and disconnect remote MCP connectors. Workspace connectors are shared by all members; user connectors are personal and follow you across workspaces.",
-    annotations: { [INTERNAL_TOOL_ANNOTATION]: true },
+    meta: { [INTERNAL_TOOL_ANNOTATION]: true },
     inputSchema: {
       type: "object",
       properties: {
