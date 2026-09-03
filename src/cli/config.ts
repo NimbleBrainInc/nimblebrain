@@ -157,7 +157,6 @@ function applyOverride(
 /** Delete workspace-owned fields; they now live in workspace.json and are ignored here. */
 function stripWorkspaceFields(fileConfig: FileConfig): void {
   delete fileConfig.bundles;
-  delete fileConfig.agents;
   delete fileConfig.skillDirs;
   delete fileConfig.preferences;
   delete fileConfig.home;
@@ -205,7 +204,7 @@ export function loadConfig(flags: CliFlags = {}): RuntimeConfig {
   stripWorkspaceFields(fileConfig);
   warnDeprecatedFields(fileConfig, configPath);
 
-  // CLI flags override file config — workspace-owned fields (bundles, agents,
+  // CLI flags override file config — workspace-owned fields (bundles,
   // skillDirs, preferences, home, noDefaultBundles) are intentionally omitted;
   // they were deleted above and now live in workspace.json.
   const config: RuntimeConfig = {

@@ -79,10 +79,8 @@ const DEFAULT_MAX_PARALLEL_TOOL_CALLS = 6;
  * "Per source" describes the grouping, not the enforcement, and the difference
  * is the part the name gets wrong. The bound lives in one `AgentEngine`
  * iteration, while an `McpSource` is long-lived and shared across every
- * conversation in its workspace — and `nb__delegate` gives each sub-agent a
- * fresh engine over the PARENT's router. Concurrent runs and sub-agents
- * therefore each get their own budget; this is not a global rate limit on the
- * source. Sizing guidance is in `docs/config/environment.mdx`.
+ * conversation in its workspace. Concurrent runs therefore each get their own
+ * budget; this is not a global rate limit on the source. Sizing guidance is in `docs/config/environment.mdx`.
  *
  * `NB_MAX_PARALLEL_TOOL_CALLS_PER_SOURCE` overrides the default.
  */
@@ -1898,8 +1896,7 @@ export class AgentEngine {
    * pairs positionally, is unaffected.
    *
    * In-process sources are bounded too. Every `nb__*` tool shares the `nb` key,
-   * so the cap covers 6 concurrent `nb__*` calls of any kind — including, but not
-   * limited to, `nb__delegate`.
+   * so the cap covers 6 concurrent `nb__*` calls of any kind.
    */
   private async executeToolCallsBounded(
     toolCalls: LanguageModelV3ToolCall[],

@@ -1,11 +1,11 @@
 ---
 title: workspace.json
-description: Per-workspace configuration — bundles, skill directories, named agent profiles, and optional overrides.
+description: Per-workspace configuration — bundles, skill directories, and optional overrides.
 ---
 
 import { Aside } from '@astrojs/starlight/components';
 
-Each workspace has its own config file at `<workDir>/workspaces/<wsId>/workspace.json`. This is where bundles, skill directories, named agent profiles, and optional model or identity overrides live — **not** in [`nimblebrain.json`](/config/nimblebrain-json).
+Each workspace has its own config file at `<workDir>/workspaces/<wsId>/workspace.json`. This is where bundles, skill directories, and optional model or identity overrides live — **not** in [`nimblebrain.json`](/config/nimblebrain-json).
 
 In dev mode (no [`instance.json`](/config/instance-json/), no auth configured) the runtime uses a single workspace with ID `_dev`, so you'll find its config at `<workDir>/workspaces/_dev/workspace.json`. Under auth, workspaces are created and managed via the `nb__manage_workspaces` tool or the HTTP API; their files are maintained by the runtime. Team workspace ids are opaque (`ws_<16-hex>`) and name-independent.
 
@@ -26,15 +26,6 @@ In dev mode (no [`instance.json`](/config/instance-json/), no auth configured) t
     { "path": "../mcp-servers/hello" }
   ],
   "skillDirs": ["./skills", "/opt/nimblebrain/skills"],
-  "agents": {
-    "researcher": {
-      "description": "Deep research agent with search tools",
-      "systemPrompt": "You are a research agent. Use search tools to find information.",
-      "tools": ["granola__*", "nb__*"],
-      "maxIterations": 8,
-      "model": "fast"
-    }
-  },
   "models": { "default": "anthropic:claude-opus-4-6" },
   "identity": "You are the Acme Product Copilot. Be concise. Prefer data-backed answers.",
   "createdAt": "2026-03-05T10:00:00.000Z",
@@ -54,7 +45,6 @@ In dev mode (no [`instance.json`](/config/instance-json/), no auth configured) t
 | `connectorsAllowList` | `string[]` | No | Per-workspace catalog allow-list. When set, only catalog entries whose id is in this array appear on the workspace's Connectors page. When unset, the full loaded catalog is visible. Filters the catalog UI only — already-installed bundles keep running regardless. |
 | `oauthOperatorApps` | `object` | No | Per-workspace OAuth app config for `auth: static` catalog entries. Keyed by catalog id (reverse-DNS `ServerDetail.name`, e.g. `"io.asana/mcp"`); each value carries the public `client_id` plus an audit trail. The matching `client_secret` lives in the workspace credential store, not here. See [Connectors Catalog → Where the secrets live](/config/connectors-catalog/#where-the-secrets-live). |
 | `skillDirs` | `string[]` | No | Directories scanned for skill markdown files, in addition to the built-in skills. |
-| `agents` | `object` | No | Named agent profiles available to `nb__delegate`. See [Agent Profiles](/config/agents). |
 | `models` | `object` | No | Per-workspace model slot overrides. Partial — missing slots inherit from `nimblebrain.json`. |
 | `identity` | `string` | No | Markdown prompt appended as a context skill for this workspace. |
 | `isPersonal` | `boolean` | No | `true` for a user's auto-provisioned personal workspace. Frozen post-create; never parse the id to infer it. |
@@ -96,5 +86,4 @@ Here the workspace uses Opus for `default` but still uses the instance default f
 
 - [`nimblebrain.json`](/config/nimblebrain-json) — instance-level config
 - [Bundle Configuration](/config/bundles) — bundle entry fields
-- [Agent Profiles](/config/agents) — the `agents` object structure
 - [Features](/config/features) — feature flags (set instance-wide, not per-workspace)

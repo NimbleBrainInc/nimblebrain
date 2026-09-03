@@ -210,7 +210,6 @@ Every NimbleBrain instance has these `nb__*` tools available:
 |------|-------------|
 | `nb__search` | Search installed tools (`scope: "tools"`) or the mpak registry (`scope: "registry"`) |
 | `nb__status` | Platform status; `scope: "bundles"` for per-app health, `scope: "skills"` for loaded skills, `scope: "config"` for model and limits |
-| `nb__delegate` | Spawn a child agent for sub-tasks (multi-agent delegation) |
 | `nb__read_resource` | Read an MCP resource by URI |
 | `manage_connectors` | List the connector catalog, install/disconnect remote MCP connectors per workspace or per user |
 | `manage_apps` | Org-level management of installed registry apps: list, check for updates, upgrade |
@@ -235,26 +234,6 @@ The threshold is configurable via `maxDirectTools` (default: 30).
 <Aside type="tip">
 When you have many bundles installed, the agent uses `nb__search` to find the right tool before calling it. You don't need to manage this — the bootstrap skill teaches the agent how to use meta-tools automatically.
 </Aside>
-
-### Multi-agent delegation
-
-The `nb__delegate` tool spawns a child `AgentEngine` run with a scoped system prompt and filtered tool set. Named agent profiles are configured in [`workspace.json`](/config/workspace-json):
-
-```json
-{
-  "agents": {
-    "researcher": {
-      "description": "Deep research agent",
-      "systemPrompt": "You are a research agent...",
-      "tools": ["websearch__*"],
-      "maxIterations": 8,
-      "model": "anthropic:claude-opus-4-6"
-    }
-  }
-}
-```
-
-The child agent's iteration budget is capped at `min(child.maxIterations, parent.remaining - 1)`. Multiple delegations in the same turn run concurrently.
 
 ## Conversations
 

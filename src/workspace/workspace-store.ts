@@ -492,7 +492,6 @@ export class WorkspaceStore {
         Workspace,
         | "name"
         | "bundles"
-        | "agents"
         | "skillDirs"
         | "models"
         | "identity"

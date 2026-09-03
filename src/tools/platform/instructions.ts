@@ -73,8 +73,8 @@ async function checkWritePermission(
   //
   // Enforced HERE, at the source, for the reason `createAutomationsSource`
   // gives for the same wall: this is the single dispatch point every caller
-  // funnels through, so it holds for the top-level run AND a delegated
-  // sub-agent at any depth. The tool is internal and never reaches the model's
+  // funnels through, so it holds for every call the run makes. The tool is
+  // internal and never reaches the model's
   // surface, so this is belt-and-braces rather than the primary barrier — it
   // costs one context read and closes the gap if the annotation is ever
   // dropped. `unattended` rides the ambient request context and survives the

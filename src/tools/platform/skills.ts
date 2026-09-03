@@ -235,14 +235,13 @@ const SKILLS_TASK_SAFE_TOOLS: ReadonlySet<string> = new Set([
  * Whether a `skills__*` wire name is barred from an unattended run.
  *
  * Two layers read this one predicate, the same split
- * {@link isTaskForbiddenIdentityTool} uses. Surfacing subtraction — in
- * `executeTask` for the run itself, and in the delegate default active set for
- * a sub-agent spawned inside one — keeps the model from being shown a tool it
- * cannot call. {@link createSkillsSource} refuses them at dispatch, so the
- * wall holds at any delegation depth and regardless of what was surfaced.
- * Surfacing is the courtesy; the source is the boundary.
+ * {@link isTaskForbiddenIdentityTool} uses. Surfacing subtraction in
+ * `executeTask` keeps the model from being shown a tool it cannot call.
+ * {@link createSkillsSource} refuses them at dispatch, so the wall holds
+ * regardless of what was surfaced. Surfacing is the courtesy; the source is the
+ * boundary.
  *
- * Both surfacing sites gate on `RequestContext.unattended` themselves; this
+ * The surfacing site gates on `RequestContext.unattended` itself; this
  * predicate answers only "is this name in the barred half", so a caller on a
  * path that also serves interactive chat must gate it.
  *
@@ -462,12 +461,11 @@ export function createSkillsSource(
     : tools;
 
   // Unattended-run wall. Enforced HERE, wrapping the assembled tool list,
-  // because this is the single dispatch point every caller funnels through —
-  // the top-level run AND a delegated sub-agent at any depth. `unattended`
-  // rides the ambient request context (set by `executeTask`, preserved across
-  // the per-call restamp), so the wall does not depend on which engine or
-  // router dispatched the call, or on the tool ever having been surfaced to
-  // the model. Same placement and reasoning as `createAutomationsSource` and
+  // because this is the single dispatch point every caller funnels through.
+  // `unattended` rides the ambient request context (set by `executeTask`,
+  // preserved across the per-call restamp), so the wall does not depend on
+  // which router dispatched the call, or on the tool ever having been surfaced
+  // to the model. Same placement and reasoning as `createAutomationsSource` and
   // `createInstructionsSource`.
   const walled: InProcessTool[] = enabled.map((tool) =>
     SKILLS_TASK_SAFE_TOOLS.has(tool.name)

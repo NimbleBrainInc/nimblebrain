@@ -80,14 +80,14 @@ describe("loadConfig", () => {
   it("loads features from config file", () => {
     const configPath = writeTestConfig("features.json", {
       features: {
-        delegation: false,
+        bundleDiscovery: false,
         workspaceManagement: false,
       },
     });
 
     const config = loadConfig({ config: configPath });
     expect(config.features).toEqual({
-      delegation: false,
+      bundleDiscovery: false,
       workspaceManagement: false,
     });
   });

@@ -16,7 +16,6 @@ Add a `features` object to your `nimblebrain.json`:
   "features": {
     "bundleManagement": true,
     "skillManagement": true,
-    "delegation": true,
     "toolDiscovery": true,
     "bundleDiscovery": true,
     "fileContext": true,
@@ -35,7 +34,6 @@ You only need to include flags you want to change. Omitted flags use their defau
 |------|---------|----------|---------------|
 | `bundleManagement` | `true` | Reserved. Previously gated the removed `nb__manage_app` tool. Kept as a stable operator knob; it gates no tool today. | — (reserved) |
 | `skillManagement` | `true` | Create, edit, delete, and activate user skills | `skills__create`, `skills__update`, `skills__delete`, `skills__activate`, `skills__deactivate`, `skills__history`, `skills__restore`, `skills__set_status` |
-| `delegation` | `true` | Multi-agent sub-task delegation | `nb__delegate` |
 | `toolDiscovery` | `true` | Search installed tools by keyword | `nb__search` (`scope: "tools"`) |
 | `bundleDiscovery` | `true` | Search registries for bundles | `nb__search` (`scope: "registry"`) |
 | `fileContext` | `true` | File upload and context extraction | File processing pipeline |
@@ -56,5 +54,5 @@ Tools not listed in the table above are never gated by feature flags. They regis
 Feature flags are enforced at tool registration. A gated tool whose flag is `false` is excluded at startup — it never appears in `tools/list` for the LLM, the web shell, or external MCP clients, and a direct call to it is rejected. `compaction` is enforced differently: it changes engine behavior at run start rather than gating a tool.
 
 <Aside type="tip">
-Use feature flags to lock down a production deployment. For example, disable `skillManagement` to prevent the agent from mutating skills, or disable `delegation` to forbid sub-agent fan-out, while leaving the rest of the platform intact.
+Use feature flags to lock down a production deployment. For example, disable `skillManagement` to prevent the agent from mutating skills, or disable `bundleDiscovery` to keep the agent out of the registry, while leaving the rest of the platform intact.
 </Aside>

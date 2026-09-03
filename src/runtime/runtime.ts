@@ -150,7 +150,6 @@ import { MAX_SKILL_BODY_CHARS, truncateMarkdownToBudget } from "../skills/trunca
 import type { Skill } from "../skills/types.ts";
 import { TelemetryManager } from "../telemetry/manager.ts";
 import { PostHogEventSink } from "../telemetry/posthog-sink.ts";
-import type { DelegateContext } from "../tools/delegate.ts";
 import {
   isIdentitySource,
   isTaskForbiddenIdentityTool,
@@ -273,40 +272,6 @@ class MultiEventSink implements EventSink {
   constructor(private sinks: EventSink[]) {}
   emit(event: EngineEvent): void {
     for (const sink of this.sinks) sink.emit(event);
-  }
-}
-
-/**
- * Tracks parent engine run state for delegate context.
- * Listens to engine events to maintain current runId and iteration count.
- */
-class DelegateTracker implements EventSink {
-  private currentRunId = "";
-  private currentIteration = 0;
-  private maxIterations = 10;
-
-  emit(event: EngineEvent): void {
-    if (event.type === "run.start") {
-      // Only track top-level runs (no parentRunId)
-      if (!event.data.parentRunId) {
-        this.currentRunId = event.data.runId as string;
-        this.maxIterations = event.data.maxIterations as number;
-        this.currentIteration = 0;
-      }
-    } else if (event.type === "llm.done") {
-      // Only track top-level LLM calls (no parentRunId)
-      if (!event.data.parentRunId) {
-        this.currentIteration++;
-      }
-    }
-  }
-
-  getParentRunId(): string {
-    return this.currentRunId;
-  }
-
-  getRemainingIterations(): number {
-    return this.maxIterations - this.currentIteration;
   }
 }
 
@@ -538,12 +503,10 @@ export class Runtime {
 
     const baseEvents = buildEventSink(config);
 
-    // Create delegate tracker and include it in the event pipeline
-    const delegateTracker = new DelegateTracker();
     // Always-on, observe-only Prometheus counters. Process-local: increments in
     // memory whether or not `/metrics` is scraped, so it's safe in a local
     // `bun run dev` with no Prometheus/k8s.
-    const sinkList: EventSink[] = [baseEvents, delegateTracker, new MetricsEventSink()];
+    const sinkList: EventSink[] = [baseEvents, new MetricsEventSink()];
     if (telemetryManager.isEnabled()) {
       sinkList.push(new PostHogEventSink(telemetryManager));
     }
@@ -630,176 +593,7 @@ export class Runtime {
     // `transformContext` is built per-request so the budget reflects
     // what the model actually sees on each call.
 
-    // Build delegate context for nb__delegate tool
-    const resolveSlot = (s: string): string => {
-      const slot = parseModelSlotRef(s);
-      if (slot) {
-        // Route to the same reader every other consumer uses. Resolving from
-        // `config.models` here instead would silently drop the per-request
-        // workspace override that `getModelSlots()` overlays — and this path
-        // now carries the *documented* bare spelling, so a second slot table
-        // would be the one most authors actually hit.
-        if (!rtHolder.rt) throw new Error("Runtime not initialized");
-        return rtHolder.rt.getModelSlot(slot);
-      }
-      return s;
-    };
-    const delegateCtx: DelegateContext = {
-      resolveModel: resolveModelFn,
-      resolveSlot,
-      // Child engine's per-call ToolRouter.
-      //
-      // Identity-bound when both an authenticated identity AND a workspace are
-      // in the request context (the chat / `/mcp` path): the child is walled to
-      // the SAME one workspace as the parent, exactly like the parent's router.
-      // It reaches that workspace's tools plus the caller's identity tools —
-      // never another workspace; `routeToolCall` denies any cross-workspace
-      // dispatch. (See `IdentityToolRouter`.)
-      //
-      // Falls back to the current workspace's registry when no identity or no
-      // workspace is in scope — CLI / dev paths construct delegateCtx without an
-      // authenticated identity, and the workspace registry's bare-name surface
-      // is what they expect.
-      //
-      // The child's INITIAL active set is governed by `defaultActiveTools`
-      // below, not by this router.
-      get tools() {
-        if (!rtHolder.rt) throw new Error("Runtime not initialized");
-        const identity = getRequestContext()?.identity;
-        const wsId = rtHolder.rt._currentWorkspaceId?.();
-        // Build the identity-bound router only when both an identity and a
-        // workspace are in scope; otherwise (CLI / dev) the bare workspace
-        // registry is what the caller expects.
-        if (!identity || !wsId) return rtHolder.rt.getRegistryForCurrentWorkspace();
-        return new IdentityToolRouter({
-          identityId: identity.id,
-          workspaceId: wsId,
-          runtime: rtHolder.rt,
-        });
-      },
-      // Default initial active set: focused-workspace tools + kernel identity
-      // tools, all bare. Mirrors `_chatInner`'s `allTools` composition so a
-      // child agent starts with the same default tool view the parent has.
-      // Globs in `tools: [...]` match against THIS set and the bound
-      // workspace's reachable set — see `DelegateContext.tools`. A legacy
-      // `ws_<id>-` glob is normalized to its bare form before matching.
-      //
-      // Deliberately EXCLUDES personal connectors (which `availableTools` does
-      // surface). A delegated child runs as the parent's exact identity, so a
-      // granted personal connector IS in the child's reachable set — but it is
-      // not in the child's *default* active set: a sub-agent gets one only when
-      // the parent explicitly opts it in via a `my_granola__*` glob — the MARKED
-      // form, because that is the name the connector surfaces under. A bare
-      // `granola__*` selects the workspace source of that name, if any, and
-      // never the personal connector. That is
-      // least-privilege for delegation, and it is a decision, not an accident —
-      // do not add personal connectors here to "make the sets consistent."
-      defaultActiveTools: async (): Promise<ToolSchema[]> => {
-        if (!rtHolder.rt) throw new Error("Runtime not initialized");
-        const rt = rtHolder.rt;
-        const wsId = rt._currentWorkspaceId?.();
-        const orgRole = getRequestContext()?.identity?.orgRole;
-        // In an unattended run the automations and skills sources deny their
-        // authoring surfaces at any delegation depth; keep both out of the
-        // child's default active set too, so the sub-agent isn't shown a tool
-        // it can't call. Two predicates because the surfaces arrive through
-        // different doors: automations is an identity source, skills is a
-        // workspace one.
-        //
-        // Gated on `unattended` on purpose. This path also builds the default
-        // set for a sub-agent delegated from ordinary chat, where both
-        // surfaces are legitimately available — an ungated filter would strip
-        // them from every delegation.
-        const unattended = getRequestContext()?.unattended === true;
-        const identityToolVisible = (name: string): boolean =>
-          isToolVisibleToRole(name, orgRole) && !(unattended && isTaskForbiddenIdentityTool(name));
-        const workspaceToolVisible = (name: string): boolean =>
-          isToolVisibleToRole(name, orgRole) && !(unattended && isTaskForbiddenSkillTool(name));
-        if (!wsId) {
-          // Dev / CLI path without a workspace in scope — return identity
-          // tools only. Hard-failing here would break the existing CLI
-          // delegate path, which currently delegates without any workspace
-          // context. The workspace door simply contributes nothing.
-          const identityTools = await rt.listIdentitySourceTools();
-          return identityTools
-            .filter((t) => identityToolVisible(t.name))
-            .map((t) => ({
-              name: t.name,
-              description: t.description,
-              inputSchema: t.inputSchema,
-              ...(t.annotations !== undefined ? { annotations: t.annotations } : {}),
-            }));
-        }
-        const registry = rt.getRegistryForWorkspace(wsId);
-        const [focusedTools, identityTools] = await Promise.all([
-          registry.availableTools(),
-          rt.listIdentitySourceTools(),
-        ]);
-        return [
-          ...focusedTools
-            .filter((t) => workspaceToolVisible(t.name))
-            .map((t) => ({
-              name: t.name,
-              description: t.description,
-              inputSchema: t.inputSchema,
-              ...(t.annotations !== undefined ? { annotations: t.annotations } : {}),
-            })),
-          ...identityTools
-            .filter((t) => identityToolVisible(t.name))
-            .map((t) => ({
-              name: t.name,
-              description: t.description,
-              inputSchema: t.inputSchema,
-              ...(t.annotations !== undefined ? { annotations: t.annotations } : {}),
-            })),
-        ];
-      },
-      events,
-      // Use getter so workspace agents override instance agents per-request.
-      // Workspace agents merge over (not replace) instance agents.
-      // Prefers AsyncLocalStorage context for concurrency safety.
-      get agents() {
-        const wsAgents = getRequestContext()?.workspaceAgents ?? null;
-        if (wsAgents) {
-          return { ...(config.agents ?? {}), ...wsAgents };
-        }
-        return config.agents;
-      },
-      getRemainingIterations: () => delegateTracker.getRemainingIterations(),
-      getParentRunId: () => delegateTracker.getParentRunId(),
-      // These two are accessors, not values: the object is built once at
-      // start(), and `set_model_config` patches live config afterwards, so an
-      // eager read serves the boot snapshot until the process restarts. Going
-      // through the runtime's own readers also puts the no-profile path on the
-      // same resolution as the named-slot path above — including `provider:`
-      // qualification and any per-request override, which a private copy of
-      // the fallback chain drops. The `config.*` fields below are still eager
-      // and carry the same hazard (#924).
-      get defaultModel() {
-        if (!rtHolder.rt) throw new Error("Runtime not initialized");
-        return rtHolder.rt.getDefaultModel();
-      },
-      get defaultMaxInputTokens() {
-        if (!rtHolder.rt) throw new Error("Runtime not initialized");
-        return rtHolder.rt.getMaxInputTokens();
-      },
-      // Raw operator config (may be undefined). Delegate resolves against
-      // the child's model at execution time so the resolved values fit
-      // the child's model rather than the parent's.
-      configMaxOutputTokens: config.maxOutputTokens,
-      configThinking: config.thinking,
-      configThinkingEffort: config.thinkingEffort,
-      configThinkingBudgetTokens: config.thinkingBudgetTokens,
-      // Per-engine isolation for tool promotion: child engines get their
-      // own controls installed in reqCtx (with save/restore) instead of
-      // inheriting the parent's via AsyncLocalStorage.
-      get toolPromotion() {
-        if (!rtHolder.rt) return undefined;
-        return rtHolder.rt.buildToolPromotionFactory();
-      },
-    };
-
-    // System tools (search, status, delegate). Skill mutation lives in the
+    // System tools (search, status, use_skill). Skill mutation lives in the
     // dedicated `nb__skills` source — registered separately via
     // `createPlatformSources`.
     // Use a late-bound holder so reloadSkills can reference `rt` after construction.
@@ -906,7 +700,7 @@ export class Runtime {
       config.configPath,
       gate,
       lifecycle,
-      delegateCtx,
+      undefined, // reserved slot — was the nb__delegate spawn context (removed)
       skillDirPath,
       boundReloadSkills,
       boundGetSkills,
@@ -1098,10 +892,10 @@ export class Runtime {
     identity: UserIdentity,
     convWsId: string,
   ): Promise<RequestContext> {
-    // Agent profiles + model overrides come from the workspace this session is
-    // bound to — the conversation's own. A workspace's agents and model slots
-    // are that workspace's configuration, and apply to every turn that runs in
-    // it regardless of who is chatting.
+    // Model overrides come from the workspace this session is bound to — the
+    // conversation's own. A workspace's model slots are that workspace's
+    // configuration, and apply to every turn that runs in it regardless of who
+    // is chatting.
     const boundWorkspace = await this._workspaceStore.get(convWsId);
     return {
       identity,
@@ -1109,7 +903,6 @@ export class Runtime {
       // its tools, its skills, its files, and its config. Not the client's
       // currently-focused workspace and not the caller's personal one.
       workspaceId: convWsId,
-      workspaceAgents: boundWorkspace?.agents ?? null,
       workspaceModelOverride: boundWorkspace?.models ?? null,
     };
   }
@@ -2301,9 +2094,8 @@ export class Runtime {
     const reqCtx: RequestContext = {
       identity: requestIdentity,
       // The run's provenance workspace — everything it reads, writes, and
-      // dispatches resolves here, including its agents + model overrides.
+      // dispatches resolves here, including its model overrides.
       workspaceId: workWsId,
-      workspaceAgents: (activeWorkspace ?? sessionWorkspace)?.agents ?? null,
       workspaceModelOverride: (activeWorkspace ?? sessionWorkspace)?.models ?? null,
       // The run's correlation id, carried as itself. A run persists a run
       // result, not a conversation, so `conversationId` stays unset and every
@@ -2311,9 +2103,9 @@ export class Runtime {
       runId,
       model: resolvedModelString,
       // Unattended run: bars the automation-authoring surface. Rides the ALS
-      // context (preserved across the per-call restamp), so a delegated sub-agent
-      // inherits it and the wall holds at any depth — enforced at the automations
-      // source, not per-router-construction. See `createAutomationsSource`.
+      // context and is preserved across the per-call restamp, so the wall holds
+      // at tool-dispatch depth — enforced at the automations source, not
+      // per-router-construction. See `createAutomationsSource`.
       unattended: true,
     };
     engineConfig.toolPromotion = this.buildToolPromotionFactory();
@@ -2950,18 +2742,17 @@ export class Runtime {
 
   /**
    * Build the engine-config `toolPromotion` factory for a single agent run.
-   * Both the top-level Runtime.chat() engine.run() AND any nested engine
-   * (e.g. delegate sub-agents) call this so each engine gets its OWN
-   * promotion controls installed in the request context for the lifetime
-   * of its run. The save/restore in `registerControls` lets nested engines
-   * stack: parent installs → child installs (saves parent) → child
-   * unregister restores parent → parent unregister deletes.
+   * Every `engine.run()` calls this so it gets its OWN promotion controls
+   * installed in the request context for the lifetime of that run. The
+   * save/restore in `registerControls` lets a nested run stack: outer
+   * installs → inner installs (saving the outer) → inner unregister restores
+   * the outer → outer unregister deletes.
    *
-   * Without this isolation, AsyncLocalStorage propagates the parent's
-   * `reqCtx.toolPromotion` into the child's frame; a sub-agent calling
-   * nb__manage_tools would silently mutate the parent's directTools and
-   * its own changes would never reach its own modelTools. See the
-   * regression test in test/unit/engine.test.ts.
+   * Without that isolation, AsyncLocalStorage propagates the outer run's
+   * `reqCtx.toolPromotion` into the inner frame, so an inner
+   * `nb__manage_tools` call would mutate the outer run's directTools while
+   * its own changes never reached its own modelTools. See the regression
+   * test in test/unit/engine.test.ts.
    */
   buildToolPromotionFactory(): NonNullable<EngineConfig["toolPromotion"]> {
     const features = this._features;

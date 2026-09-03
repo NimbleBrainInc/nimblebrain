@@ -48,7 +48,6 @@ NimbleBrain doesn't just run MCP servers — it **composes** them:
 - **Unified tool namespace** — Tools from all installed MCP servers are aggregated into a single registry. The agent discovers and calls tools across apps without knowing which server owns them.
 - **Skill-scoped filtering** — Each skill can restrict which tools are available via `allowed-tools` glob patterns. A "research" skill might only expose `websearch__*` tools, while a "database" skill exposes `postgres__*`.
 - **4-layer prompt composition** — System prompts are assembled from identity, core context, installed app metadata, and the matched skill — giving the agent awareness of all available capabilities.
-- **Multi-agent delegation** — The `nb__delegate` tool spawns child agents with scoped tools and prompts, enabling coordinated workflows across apps.
 - **Platform as MCP server** — The `/mcp` endpoint exposes NimbleBrain itself as a Streamable HTTP MCP server, so other hosts can compose it into their own tool chains.
 
 ## Key components
@@ -61,7 +60,7 @@ NimbleBrain doesn't just run MCP servers — it **composes** them:
 | **Bundles (Apps)** | MCP server bundles from the [mpak](https://mpak.dev) registry, local paths, or remote URLs |
 | **Skills** | Markdown files that compose the system prompt and scope tool access per task |
 | **`/mcp` Endpoint** | Exposes the platform as a Streamable HTTP MCP server for external clients |
-| **System Tools** | Built-in tools for discovery (`nb__search`/`nb__status`), multi-agent delegation (`nb__delegate`), and platform management (`manage_connectors`, `manage_apps`, `manage_workspaces`, `manage_users`) |
+| **System Tools** | Built-in tools for discovery (`nb__search`/`nb__status`) and platform management (`manage_connectors`, `manage_apps`, `manage_workspaces`, `manage_users`) |
 
 ## Who is it for?
 

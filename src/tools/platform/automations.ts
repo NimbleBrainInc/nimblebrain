@@ -219,11 +219,10 @@ export async function createAutomationsSource(
       // automation-authoring surface (create/update/delete/run, and any authoring
       // tool added later — the allowlist in `isTaskForbiddenIdentityTool` fails
       // closed). Enforced HERE, at the source, because it is the single dispatch
-      // point every caller funnels through — the top-level run AND a delegated
-      // sub-agent at any depth. `unattended` rides the ambient request context
-      // (set by `executeTask`, preserved across the per-call restamp), so this
-      // does not depend on which engine or router dispatched the call, or on the
-      // tool having been surfaced to the model.
+      // point every caller funnels through. `unattended` rides the ambient
+      // request context (set by `executeTask`, preserved across the per-call
+      // restamp), so this does not depend on which router dispatched the call,
+      // or on the tool having been surfaced to the model.
       if (
         getRequestContext()?.unattended &&
         isTaskForbiddenIdentityTool(`automations__${schema.name}`)

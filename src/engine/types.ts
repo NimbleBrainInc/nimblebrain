@@ -99,7 +99,7 @@ export interface ToolResult {
    * MCP convention (`io.modelcontextprotocol/...`, `ai.nimblebrain/...`).
    *
    * Forwarding lives at the two serialization boundaries, not per-source:
-   * `defineInProcessApp` (every in-process tool, incl. system tools + delegate)
+   * `defineInProcessApp` (every in-process tool, system tools included)
    * and `McpSource` (bundle results, inline + task paths). A direct `ToolSource`
    * that returns a `ToolResult` with no boundary in between carries `_meta`
    * natively — no forwarding needed. So any tool, in-process or

@@ -855,7 +855,7 @@ describe("search — feature flag gating", () => {
 	it("scope=tools returns error when toolDiscovery is disabled", async () => {
 		const registry = await makeRegistry();
 		const features = {
-			bundleManagement: true, skillManagement: true, delegation: true,
+			bundleManagement: true, skillManagement: true,
 			toolDiscovery: false, bundleDiscovery: true,
 			fileContext: true, userManagement: true, workspaceManagement: true,
 		};
@@ -872,7 +872,7 @@ describe("search — feature flag gating", () => {
 	it("scope=registry returns error when bundleDiscovery is disabled", async () => {
 		const registry = await makeRegistry();
 		const features = {
-			bundleManagement: true, skillManagement: true, delegation: true,
+			bundleManagement: true, skillManagement: true,
 			toolDiscovery: true, bundleDiscovery: false,
 			fileContext: true, userManagement: true, workspaceManagement: true,
 		};
@@ -889,7 +889,7 @@ describe("search — feature flag gating", () => {
 	it("scope=tools works when toolDiscovery is enabled", async () => {
 		const registry = await makeRegistry();
 		const features = {
-			bundleManagement: true, skillManagement: true, delegation: true,
+			bundleManagement: true, skillManagement: true,
 			toolDiscovery: true, bundleDiscovery: false,
 			fileContext: true, userManagement: true, workspaceManagement: true,
 		};

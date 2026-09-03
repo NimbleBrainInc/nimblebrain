@@ -1,6 +1,6 @@
 import type { BundleRef } from "../bundles/types.ts";
 import type { HookRegistration } from "../hooks/types.ts";
-import type { AgentProfile, ModelSlots } from "../runtime/types.ts";
+import type { ModelSlots } from "../runtime/types.ts";
 
 /** Workspace-level member roles. */
 export type WorkspaceRole = "admin" | "member";
@@ -53,8 +53,6 @@ export interface Workspace {
    */
   about?: string | null;
 
-  /** Named agent profiles for multi-agent delegation. */
-  agents?: Record<string, AgentProfile>;
   /** Additional skill directories to scan. */
   skillDirs?: string[];
   /** Optional model slot overrides for this workspace. */

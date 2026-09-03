@@ -70,7 +70,7 @@ describe("config schema validation", () => {
         features: {
           bundleManagement: true,
           skillManagement: false,
-          delegation: true,
+          bundleDiscovery: true,
         },
       }),
     ).toBe(true);

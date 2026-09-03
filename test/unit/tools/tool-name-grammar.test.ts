@@ -6,7 +6,7 @@
  * rather than a wrong label. `src/util/tool-name.ts` is the one decomposition;
  * this suite pins its contract and then pins that the two doors reachable
  * without a server — `ToolRegistry.execute` (the REST registry dispatch) and
- * `routeToolCall` via `IdentityToolRouter` (chat / delegate / `/mcp`) — resolve
+ * `routeToolCall` via `IdentityToolRouter` (chat / `/mcp`) — resolve
  * the same source and dispatch the same bare name for the same input.
  *
  * The `/mcp` and REST HTTP handlers read the same primitive; they are covered at

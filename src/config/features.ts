@@ -10,12 +10,11 @@ export interface FeatureFlags {
    * Reserved. Gated conversational bundle install/uninstall/configure via
    * `nb__manage_app`, which was removed (install/configure now live in the
    * Apps catalog + CLI). Kept as a stable operator config knob for the
-   * bundle-management tool the delegation model contemplates reintroducing
-   * (single tool, explicit workspace param, per-call admin auth).
+   * bundle-management tool a future design may reintroduce (single tool,
+   * explicit workspace param, per-call admin auth).
    */
   bundleManagement?: boolean;
   skillManagement?: boolean;
-  delegation?: boolean;
   toolDiscovery?: boolean;
   bundleDiscovery?: boolean;
   fileContext?: boolean;
@@ -37,7 +36,6 @@ export type ResolvedFeatures = Required<FeatureFlags>;
 const DEFAULTS: ResolvedFeatures = {
   bundleManagement: true,
   skillManagement: true,
-  delegation: true,
   toolDiscovery: true,
   bundleDiscovery: true,
   fileContext: true,
@@ -52,7 +50,6 @@ export function resolveFeatures(config?: FeatureFlags): ResolvedFeatures {
   return {
     bundleManagement: config.bundleManagement ?? true,
     skillManagement: config.skillManagement ?? true,
-    delegation: config.delegation ?? true,
     toolDiscovery: config.toolDiscovery ?? true,
     bundleDiscovery: config.bundleDiscovery ?? true,
     fileContext: config.fileContext ?? true,
@@ -69,7 +66,6 @@ export function resolveFeatures(config?: FeatureFlags): ResolvedFeatures {
  */
 export const FEATURE_TOOL_MAP: Record<string, keyof FeatureFlags> = {
   // Prefixed names (as seen by the LLM / MCP clients)
-  nb__delegate: "delegation",
   // Identity & workspace tools
   nb__manage_users: "userManagement",
   nb__manage_workspaces: "workspaceManagement",
@@ -86,7 +82,6 @@ export const FEATURE_TOOL_MAP: Record<string, keyof FeatureFlags> = {
   skills__restore: "skillManagement",
   skills__set_status: "skillManagement",
   // Unprefixed names (used during system tool registration)
-  delegate: "delegation",
   manage_users: "userManagement",
   manage_workspaces: "workspaceManagement",
 };
