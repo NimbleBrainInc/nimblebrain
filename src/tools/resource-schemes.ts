@@ -7,13 +7,15 @@ import { ARTIFACT_URI_SCHEME } from "../host-resources/artifacts/artifact-uri.ts
  * Two ways a capability's resource is reached, and the difference decides who
  * turns the capability on:
  *
- *   - **Recognition** — the runtime resolves the URI on its own, either by
- *     walking the workspace registry for a scheme its apps publish or by
- *     matching the scheme directly. Publishing a matching resource is enough,
- *     which is safe precisely because none of these costs the runtime anything
- *     standing: a skill is read when it is wanted, a UI renders when the agent
- *     asks, an overlay is composed on the next turn, an artifact or a file is
- *     fetched when a viewer opens it.
+ *   - **Recognition** — the runtime resolves the URI on its own: by walking the
+ *     workspace registry for a scheme its apps publish, by matching the scheme
+ *     directly, or by reading a fixed URI off every source. Publishing a
+ *     matching resource is enough, which is safe because none of these buys the
+ *     publisher anything it could not already have: a skill is read when it is
+ *     wanted, a UI renders when the agent asks, an overlay is composed on the
+ *     next turn, an artifact or a file is fetched when a viewer opens it, and
+ *     `app://instructions` only ever adds the publisher's own text to the
+ *     publisher's own entry in the prompt.
  *   - **Declaration** — the runtime reads a URI out of a server's manifest and
  *     treats it as an opaque string. Nothing undeclared is reached. That is how
  *     an outbox is reached, because an outbox costs a poll per
@@ -30,8 +32,15 @@ import { ARTIFACT_URI_SCHEME } from "../host-resources/artifacts/artifact-uri.ts
  * Two sets, because they answer different questions and do not coincide:
  * a set that governs a refusal has to be complete or the refusal is decorative,
  * while a set that renders prose has to match what the reader can actually
- * reach. `artifact://` and `files://` are host-resolved but unreachable through
- * `read_resource`, so they belong in the first and not the second.
+ * reach. `artifact://`, `files://` and `app://` are host-resolved but are not
+ * things to point `read_resource` at, so they belong in the first and not the
+ * second.
+ *
+ * Completeness is the property the refusal rests on, and a comment cannot hold
+ * it: `scripts/check-resource-schemes.ts` fails the build on a scheme spelled
+ * anywhere in `src/` that is in neither this set nor its explicit
+ * not-host-resolved allowlist. Adding a scheme is therefore a decision the
+ * build makes you record, in one of two places.
  */
 
 /**
@@ -40,7 +49,25 @@ import { ARTIFACT_URI_SCHEME } from "../host-resources/artifacts/artifact-uri.ts
  * Their home is here because no single module owns one: each is published as
  * resources by whichever in-process app serves them.
  */
-const APP_RESOURCE_SCHEMES = ["skill", "ui", "instructions"] as const;
+const REGISTRY_RESOURCE_SCHEMES = ["skill", "ui", "instructions"] as const;
+
+/**
+ * The `app://` scheme, and the single URI under it the runtime reads.
+ *
+ * `app://instructions` is a host convention rather than a bundle's own
+ * namespace, which is why it is named here and not by a subsystem: a bundle
+ * publishes its custom-instructions overlay at that exact URI and
+ * `Runtime.buildAppInfo` reads it off every bundle's source on every prompt
+ * assembly. A fixed scheme is the point — a bundle author cannot be expected to
+ * know the platform's server-name derivation, so the convention carries the
+ * name instead.
+ *
+ * It is the one recognized scheme that costs a read per bundle per assembly, so
+ * an outbox landing on it would be polled *and* rendered into the system
+ * prompt.
+ */
+const APP_URI_SCHEME = "app";
+export const APP_INSTRUCTIONS_URI = `${APP_URI_SCHEME}://instructions`;
 
 /**
  * Every scheme the runtime resolves itself, and so the closed set a declared
@@ -48,26 +75,30 @@ const APP_RESOURCE_SCHEMES = ["skill", "ui", "instructions"] as const;
  *
  * Composed rather than restated: `artifact` and `files` are taken from the
  * modules that own them, each of which already validates its own scheme as the
- * single authority for it. Adding a sixth means either extending
- * {@link APP_RESOURCE_SCHEMES} or importing the constant its owner exports —
- * never a third spelling of a scheme that already has a home.
+ * single authority for it. Adding a seventh means extending
+ * {@link REGISTRY_RESOURCE_SCHEMES}, importing the constant its owner exports, or —
+ * when the scheme has no owner but this module — declaring it here as `app` is
+ * declared. Never a second spelling of a scheme that already has a home.
  */
 export const RESERVED_RESOURCE_SCHEMES = [
-  ...APP_RESOURCE_SCHEMES,
+  ...REGISTRY_RESOURCE_SCHEMES,
   ARTIFACT_URI_SCHEME,
   FILE_URI_SCHEME,
+  APP_URI_SCHEME,
 ] as const;
 
 /**
  * The `read_resource`-reachable set, rendered for that tool's description
  * (`` `skill://`, `ui://` `` …).
  *
- * Deliberately not the reserved set: `artifact://` is intercepted before source
- * routing and `files://` belongs to an identity source that is composed into no
- * workspace registry, so `read_resource` reaches neither and must not advertise
- * them.
+ * Deliberately not the reserved set. `artifact://` is intercepted before source
+ * routing and `files://` belongs to an identity source composed into no
+ * workspace registry, so `read_resource` reaches neither. `app://instructions`
+ * it would reach — by asking each source in turn until one answers — but the
+ * answer is whichever bundle replies first, which is not an address worth
+ * handing the model.
  */
-export const READ_RESOURCE_SCHEMES_PROSE = APP_RESOURCE_SCHEMES.map(
+export const READ_RESOURCE_SCHEMES_PROSE = REGISTRY_RESOURCE_SCHEMES.map(
   (scheme) => `\`${scheme}://\``,
 ).join(", ");
 
@@ -79,6 +110,12 @@ export const READ_RESOURCE_SCHEMES_PROSE = APP_RESOURCE_SCHEMES.map(
  * lowercase spelling would be a check that reads as one.
  */
 export function isReservedResourceScheme(uri: string): boolean {
-  const scheme = uri.slice(0, uri.indexOf(":")).toLowerCase();
+  // A URI with no colon carries no scheme and so sits in none of them. Guarded
+  // explicitly because `indexOf` returns -1 and `slice(0, -1)` would drop the
+  // last character instead of yielding nothing, making `skills` answer for
+  // `skill`.
+  const colon = uri.indexOf(":");
+  if (colon < 0) return false;
+  const scheme = uri.slice(0, colon).toLowerCase();
   return (RESERVED_RESOURCE_SCHEMES as readonly string[]).includes(scheme);
 }

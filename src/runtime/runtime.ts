@@ -161,6 +161,7 @@ import {
 import { McpSource } from "../tools/mcp-source.ts";
 import { isTaskForbiddenSkillTool } from "../tools/platform/skills.ts";
 import { SharedSourceRef, type ToolRegistry } from "../tools/registry.ts";
+import { APP_INSTRUCTIONS_URI } from "../tools/resource-schemes.ts";
 import { surfaceTools } from "../tools/surfacing.ts";
 import { createSystemTools } from "../tools/system-tools.ts";
 import type { ResourceData, Tool, ToolSource } from "../tools/types.ts";
@@ -3364,22 +3365,25 @@ export class Runtime {
     source: McpSource,
     serverName: string,
   ): Promise<string | undefined> {
-    // Reserved platform convention: `app://instructions`. A bundle that
-    // supports user-set custom instructions publishes its current overlay
-    // body at this URI; the platform reads it on every assembly and renders
-    // it inside `<app-custom-instructions>` containment in `formatAppsSection`.
+    // A bundle that supports user-set custom instructions publishes its current
+    // overlay body at this URI; the platform reads it on every assembly and
+    // renders it inside `<app-custom-instructions>` containment in
+    // `formatAppsSection`.
     //
-    // Why `app://` over `<serverName>://instructions`: the serverName is
+    // Why a fixed `app://` over `<serverName>://instructions`: the serverName is
     // platform-derived (e.g. `@nimblebraininc/synapse-collateral` →
     // `synapse-collateral`), not something a bundle author intuitively knows.
     // A fixed scheme means bundle authors just remember `app://instructions`
     // and the platform's name-derivation rules are not part of the contract.
+    // That makes the scheme the host's rather than the bundle's, which is why
+    // `tools/resource-schemes.ts` owns the URI and reserves it against an
+    // outbox declaring the same address.
     //
     // Resource-not-found returns `null` from `readResource` (the SDK's normal
     // not-found path); we treat any read error or empty body as "bundle does
     // not support / has none". Plain MCP servers (no opt-in) end up here.
     try {
-      const data = await source.readResource("app://instructions");
+      const data = await source.readResource(APP_INSTRUCTIONS_URI);
       const body = data?.text;
       const trimmedLen = typeof body === "string" ? body.trim().length : 0;
       // Visible under NB_DEBUG=mcp — confirms the platform fetched

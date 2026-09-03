@@ -16,7 +16,10 @@ import {
   parseNotificationsDeclaration,
 } from "../../../src/notifications/declaration.ts";
 import { serverDetailToCatalogEntry } from "../../../src/registries/projection.ts";
-import { RESERVED_RESOURCE_SCHEMES } from "../../../src/tools/resource-schemes.ts";
+import {
+  isReservedResourceScheme,
+  RESERVED_RESOURCE_SCHEMES,
+} from "../../../src/tools/resource-schemes.ts";
 import type { ServerDetail } from "../../../src/connectors/server-detail.ts";
 
 /** A `HostManifestMeta` carrying whatever the caller wants under `notifications`. */
@@ -49,6 +52,16 @@ describe("parseNotificationsDeclaration", () => {
       ).toBeUndefined();
     },
   );
+
+  test("a bare string with no scheme is not a reserved one", () => {
+    // `indexOf(":")` is -1 with no colon and `slice(0, -1)` would drop the last
+    // character, so an unguarded predicate answers for `skill` when asked about
+    // `skills`. Nothing reaches it that way today — `isOutboxResource` runs
+    // first and requires a colon — but the predicate is exported and total.
+    expect(isReservedResourceScheme("skills")).toBe(false);
+    expect(isReservedResourceScheme("instructionsX")).toBe(false);
+    expect(isReservedResourceScheme("apps")).toBe(false);
+  });
 
   test("refuses a reserved scheme whatever its case", () => {
     // RFC 3986 schemes are case-insensitive, so refusing only the lowercase
