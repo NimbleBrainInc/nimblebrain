@@ -7,23 +7,14 @@ LABEL org.opencontainers.image.url="https://nimblebrain.ai"
 LABEL org.opencontainers.image.vendor="NimbleBrain"
 LABEL org.opencontainers.image.licenses="Apache-2.0"
 
-# Bun runtime + tools that Synapse bundles routinely shell out to.
-# `git` is required by any bundle that clones a repo at boot (e.g.
-# synapse-astro-editor). Without it, `subprocess.exec("git", ...)`
-# inside the bundle raises FileNotFoundError(2) and the boot phase
-# fails with no clear cause.
+# Bun runtime, plus the toolchain the in-image bundle UIs build with.
+# `git` and `curl` are used by the install steps below and by the health check.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl unzip git ca-certificates gnupg \
     && curl -fsSL https://deb.nodesource.com/setup_24.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && curl -fsSL https://bun.sh/install | BUN_INSTALL=/usr bash \
     && rm -rf /var/lib/apt/lists/*
-
-# mpak CLI — pin the version so `npm install -g` can't silently resolve to a
-# broken transitive set, and so Docker's layer cache invalidates when we bump.
-# Unpinned `install latest` combined with layer caching made it unclear which
-# version actually landed in a built image. Bump the pin to upgrade.
-RUN npm install -g @nimblebrain/mpak@0.4.1
 
 # Non-root user (UID 1000 matches K8s securityContext)
 RUN useradd -m -u 1000 nimblebrain

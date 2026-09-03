@@ -26,10 +26,9 @@
  *
  * Format: `ws_` prefix followed by 1–64 alphanumeric/underscore chars,
  * case-insensitive. Path-traversal segments (`..`, `/`), hyphens, and
- * whitespace are all rejected. The credential-store primitives in
- * `src/config/workspace-credentials.ts` rely on this regex as the
- * defense-in-depth against directory traversal under workspace-scoped
- * paths.
+ * whitespace are all rejected. `WorkspaceContext` and the credential
+ * stores rely on this regex as the defense-in-depth against directory
+ * traversal under workspace-scoped paths.
  */
 
 export const WORKSPACE_ID_PATTERN = "^ws_[a-z0-9_]{1,64}$";

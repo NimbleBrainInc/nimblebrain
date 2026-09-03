@@ -3,10 +3,10 @@
  * format every `ConnectorRegistry` returns.
  *
  * The platform stopped authoring its own discovery shape: a static
- * curated catalog now ships entries that conform to upstream
- * [`ServerDetail`](../../src/connectors/schemas/server.schema.json), and
- * `MpakSource` reads the same shape natively from mpak's `/v1/servers/...`
- * via the SDK. Consumers always see one type. The `_meta` extension
+ * curated catalog ships entries that conform to upstream
+ * [`ServerDetail`](../../src/connectors/schemas/server.schema.json), and any
+ * future HTTP-backed source reads the same shape natively. Consumers always
+ * see one type. The `_meta` extension
  * `ai.nimblebrain/connector` carries our platform-specific fields
  * (auth, operatorSetup, etc.) without polluting upstream-defined slots.
  *
@@ -81,7 +81,12 @@ export interface KeyValueInput extends Input {
   variables?: Record<string, Input>;
 }
 
-/** A package the server is distributed as (mpak bundle, npm pkg, etc.). */
+/**
+ * A package the server is distributed as (npm pkg, PyPI dist, etc.). Read for
+ * display and scope-matching only: a package is code to download and run, and
+ * this runtime installs nothing — an entry offering only packages is not
+ * installable here.
+ */
 export interface Package {
   registryType: string;
   identifier: string;
@@ -170,8 +175,8 @@ export interface SmitheryConnectorConfig {
  * pointers, recommended scope, search tags, and UI hints.
  *
  * Authored on entries we curate (loaded by `StaticSource` from the
- * curated catalog directory) and absent on mpak entries (the
- * projection leaves it undefined).
+ * curated catalog directory) and absent on entries from a registry that
+ * doesn't carry it (the projection leaves it undefined).
  */
 export interface NimbleBrainConnectorMeta {
   /**

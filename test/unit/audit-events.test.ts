@@ -213,7 +213,6 @@ describe("createPrivilegeHook audit emission", () => {
     const denyGate: ConfirmationGate = {
       supportsInteraction: true,
       confirm: async () => false,
-      promptConfigValue: async () => null,
     };
 
     const hook = createPrivilegeHook(denyGate, captureSink, { bundleManagement: true, skillManagement: true, toolDiscovery: true, bundleDiscovery: true, fileContext: true, userManagement: true, workspaceManagement: true });
@@ -255,7 +254,6 @@ describe("createPrivilegeHook audit emission", () => {
     const denyGate: ConfirmationGate = {
       supportsInteraction: true,
       confirm: async () => false,
-      promptConfigValue: async () => null,
     };
 
     const hook = createPrivilegeHook(denyGate, captureSink);

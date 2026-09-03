@@ -9,7 +9,7 @@ import { WorkspaceAppIconsContext, type WorkspaceAppIconsValue } from "./Workspa
  * quick-list and the workspace overview grid from a single fetch.
  *
  * The brand-icon resolution itself is server-side and centralized in
- * `manage_connectors` (`catalog.iconUrl ?? mpak ServerDetail.icons[0].src`,
+ * `manage_connectors` (`catalog.iconUrl`,
  * matched by package name) — see `src/tools/connector-tools.ts`. This
  * provider only caches the `serverName → iconUrl` projection so the UI
  * never re-implements that resolution or fans out duplicate fetches.
@@ -55,7 +55,7 @@ export function WorkspaceAppIconsProvider({
   // uninstalled. We intentionally do NOT refetch on
   // connection.state_changed: a single install drives the connection
   // through starting → pending_auth → running, but the icon for a row
-  // resolves from catalog/mpak metadata that's already present at
+  // resolves from catalog metadata that's already present at
   // bundle.installed time — connection state never changes it. Wiring
   // those transitions to refresh() turned one Install click into a
   // 3-4× manage_connectors burst (#317). bundle.installed /

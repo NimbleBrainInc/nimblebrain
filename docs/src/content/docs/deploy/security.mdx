@@ -270,21 +270,21 @@ curl -s https://your-host.example.com/.well-known/oauth-protected-resource | jq 
 
 If it still returns `http://`, walk the proxy chain to find where `X-Forwarded-Proto` is being stripped or overwritten.
 
-## Bundle trust
+## Connector trust
 
-MCP bundles run as subprocesses with access to the filesystem and network inside the container. Evaluate bundles before installing them.
+The runtime executes no connector code. A connector is a remote MCP server the
+platform connects to over HTTP, so nothing an operator installs runs inside the
+platform container, shares its filesystem, or sees its environment. That moves
+the supply-chain question to where it belongs: what the server's operator built
+and published, checked before the server is deployed, not by a process that also
+holds tenant credentials.
 
-### Trust score
+What is left to evaluate at install time is the **connection**:
 
-Each bundle in the mpak registry has an MTF (mpak Trust Framework) trust score from 0 to 100. The score is stored in `nimblebrain.json` alongside the bundle entry and displayed in the web UI's app list.
-
-### Bundle isolation
-
-Bundles run as child processes inside the platform container. They share the container's filesystem, network namespace, and user. To limit blast radius:
-
-- Use read-only bind mounts for configuration files (the default `docker-compose.yml` already does this with `:ro`)
-- Set specific environment variables per bundle in `nimblebrain.json` rather than passing broad credentials to the platform container
-- Review a bundle's manifest before installing it — check what tools it exposes and whether it requires network access
+- **Who runs the endpoint.** Install from a curated catalog you control ([Connectors Catalog](/config/connectors-catalog/)) rather than pasting arbitrary URLs; use `connectorsAllowList` to narrow what a given workspace may install at all.
+- **What it can reach.** Connector URLs are checked against the SSRF allowlist — loopback, RFC1918, and cloud-metadata hosts are refused unless `allowInsecureRemotes` is on. Leave it off outside development.
+- **What it is granted.** OAuth scopes are declared on the catalog entry and shown on the consent screen. Credentials are workspace-scoped: a connector authorized in one workspace is not reachable from another.
+- **What its tools may do.** The per-connector permission table (Configure → Tools) is the place to disallow a tool the workspace should not expose to the agent.
 
 ## Production checklist
 

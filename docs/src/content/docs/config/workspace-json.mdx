@@ -22,7 +22,7 @@ In dev mode (no [`instance.json`](/config/instance-json/), no auth configured) t
   ],
   "bundles": [
     { "name": "@nimblebraininc/ipinfo" },
-    { "name": "@nimblebraininc/granola", "env": { "API_KEY": "grn_..." }, "trustScore": 85 },
+    { "url": "https://mcp.granola.ai/mcp", "serverName": "ai-granola-mcp" },
     { "path": "../mcp-servers/hello" }
   ],
   "skillDirs": ["./skills", "/opt/nimblebrain/skills"],
@@ -56,7 +56,7 @@ In dev mode (no [`instance.json`](/config/instance-json/), no auth configured) t
 
 Bundles, tool registries, and conversation data are scoped to a workspace. Every tool handler resolves its workspace via `runtime.requireWorkspaceId()` before touching data.
 
-Two workspaces that install the same bundle spawn independent subprocesses. Each gets its own data directory at `<workDir>/workspaces/<wsId>/data/<bundle>/`, so entity data never crosses the workspace boundary. Sidebar placements, briefing facets, and the app list are filtered per workspace.
+Two workspaces that install the same server hold independent connections and independent credentials. Each gets its own host-side data directory at `<workDir>/workspaces/<wsId>/data/<serverName>/`, so nothing crosses the workspace boundary. Sidebar placements, briefing facets, and the app list are filtered per workspace.
 
 <Aside type="tip">
   You rarely edit `workspace.json` by hand under auth. Use `nb__manage_workspaces` (admin-only) to create workspaces and update membership; install bundles through the connectors catalog (`manage_connectors`) or the CLI; use the workspace-scoped skill tools to manage `skillDirs`.

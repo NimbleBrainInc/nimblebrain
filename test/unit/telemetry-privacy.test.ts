@@ -174,7 +174,6 @@ describe("Telemetry Privacy", () => {
           installSource: "registry",
           path: "/Users/john/bundles/tasks",
           ui: { name: "Tasks", icon: "tasks" },
-          trustScore: 85,
           version: "1.2.3",
           manifest: { name: "tasks" },
         },
@@ -260,7 +259,6 @@ describe("Telemetry Privacy", () => {
       emit(sink, "bundle.installed", {
         name: "@nimblebraininc/tasks",
         path: "/Users/john/bundles",
-        trustScore: 80,
       });
 
       emit(sink, "bundle.uninstalled", {
@@ -306,7 +304,6 @@ describe("Telemetry Privacy", () => {
       emit(sink, "bundle.installed", {
         name: "@nimblebraininc/tasks",
         bundleName: "@nimblebraininc/tasks",
-        trustScore: 90,
       });
 
       const captured = lastCaptured(client);
@@ -321,7 +318,6 @@ describe("Telemetry Privacy", () => {
       emit(sink, "bundle.installed", {
         name: "@nimblebraininc/tasks",
         path: "/Users/john/secret-project/bundle",
-        trustScore: 75,
       });
 
       const captured = lastCaptured(client);
@@ -406,7 +402,7 @@ describe("Telemetry Privacy", () => {
           { type: "run.start", data: { runId: "r1", toolNames: ["bash"] } },
           { type: "run.done", data: { runId: "r1", stopReason: "complete", inputTokens: 100, outputTokens: 50 } },
           { type: "run.error", data: { runId: "r2", error: new Error("fail") } },
-          { type: "bundle.installed", data: { name: "test", trustScore: 50 } },
+          { type: "bundle.installed", data: { name: "test" } },
           { type: "bundle.uninstalled", data: { name: "test" } },
         ];
 

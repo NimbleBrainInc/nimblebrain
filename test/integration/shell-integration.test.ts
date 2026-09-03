@@ -1,5 +1,5 @@
 import { describe, expect, it, afterAll, beforeAll } from "bun:test";
-import { mkdirSync, writeFileSync, rmSync, existsSync } from "node:fs";
+import { mkdirSync, rmSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Runtime } from "../../src/runtime/runtime.ts";
@@ -8,7 +8,7 @@ import { startServer } from "../../src/api/server.ts";
 import type { ServerHandle } from "../../src/api/server.ts";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import type { PlacementDeclaration } from "../../src/bundles/types.ts";
+import type { BundleRef, PlacementDeclaration } from "../../src/bundles/types.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
 
 // ---------------------------------------------------------------------------
@@ -44,81 +44,25 @@ afterAll(async () => {
 });
 
 // ---------------------------------------------------------------------------
-// Helper: create a bundle directory on disk
+// Helper: record a connector on the lifecycle, as the install path does
 // ---------------------------------------------------------------------------
 
-function createBundleOnDisk(
-	name: string,
-	opts?: {
-		placements?: PlacementDeclaration[];
-		primaryView?: boolean;
-	},
-): string {
-	const dir = join(testDir, `bundle-${name}-${Date.now()}`);
-	mkdirSync(dir, { recursive: true });
-
-	const nodeModulesPath = join(import.meta.dir, "../..", "node_modules");
-	const serverCode = `
-const { Server } = require("${nodeModulesPath}/@modelcontextprotocol/sdk/dist/cjs/server/index.js");
-const { StdioServerTransport } = require("${nodeModulesPath}/@modelcontextprotocol/sdk/dist/cjs/server/stdio.js");
-const { ListToolsRequestSchema, CallToolRequestSchema } = require("${nodeModulesPath}/@modelcontextprotocol/sdk/dist/cjs/types.js");
-
-async function main() {
-  const server = new Server(
-    { name: "${name}-test", version: "0.1.0" },
-    { capabilities: { tools: {} } },
-  );
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: [{ name: "ping", description: "Ping", inputSchema: { type: "object", properties: {} } }],
-  }));
-  server.setRequestHandler(CallToolRequestSchema, async () => ({
-    content: [{ type: "text", text: "pong" }],
-  }));
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
-}
-main();
-`;
-	writeFileSync(join(dir, "server.cjs"), serverCode);
-
-	const meta: Record<string, unknown> = {};
-	const uiBlock: Record<string, unknown> = {};
-
-	if (opts?.placements) {
-		uiBlock.placements = opts.placements;
-	}
-
-	if (opts?.primaryView) {
-		uiBlock.primaryView = { resourceUri: `ui://${name}/main` };
-	}
-
-	if (Object.keys(uiBlock).length > 0) {
-		meta["ai.nimblebrain/host"] = {
-			host_version: "1.0",
-			name: `${name} App`,
-			icon: `${name}-icon`,
-			...uiBlock,
-		};
-	}
-
-	const manifest = {
-		manifest_version: "0.4",
-		name: `@test/${name}`,
-		version: "1.0.0",
-		description: `${name} test bundle`,
-		author: { name: "Test Author" },
-		server: {
-			type: "node",
-			entry_point: "server.cjs",
-			mcp_config: {
-				command: "node",
-				args: ["${__dirname}/server.cjs"],
-			},
-		},
-		...(Object.keys(meta).length > 0 ? { _meta: meta } : {}),
+/**
+ * Seed one connector into the workspace and register whatever chrome it
+ * declares. Placements ride on the `BundleRef.ui` the install path copies from
+ * the operator-trusted catalog entry, so the shell surface needs no live
+ * source to render them.
+ */
+function installConnector(name: string, placements: PlacementDeclaration[]): string {
+	const ref: BundleRef = {
+		url: `https://${name}.example.com/mcp`,
+		serverName: name,
+		ui: { name: `${name} App`, icon: `${name}-icon`, placements },
 	};
-	writeFileSync(join(dir, "manifest.json"), JSON.stringify(manifest, null, 2));
-	return dir;
+	const lifecycle = runtime.getLifecycle();
+	lifecycle.seedInstance(name, ref.url, ref, undefined, TEST_WORKSPACE_ID);
+	lifecycle.notifyInstalled(name, TEST_WORKSPACE_ID);
+	return name;
 }
 
 // ---------------------------------------------------------------------------
@@ -136,21 +80,16 @@ async function createMcpClient(): Promise<Client> {
 }
 
 // =============================================================================
-// 1. Install app → /v1/shell shows placements → uninstall → gone
+// 1. Install connector → /v1/shell shows placements → uninstall → gone
 // =============================================================================
 
 describe("Install/uninstall → /v1/shell placement updates", () => {
-	it("install bundle with placements → GET /v1/shell includes them → uninstall → gone", async () => {
-		const placements: PlacementDeclaration[] = [
+	it("install connector with placements → GET /v1/shell includes them → uninstall → gone", async () => {
+		const devRegistry = runtime.getRegistryForWorkspace(TEST_WORKSPACE_ID);
+		const serverName = installConnector("tasks", [
 			{ slot: "sidebar.apps", resourceUri: "ui://tasks/nav", priority: 30, label: "Tasks" },
 			{ slot: "main", resourceUri: "ui://tasks/board", route: "tasks", label: "Task Board" },
-		];
-		const bundleDir = createBundleOnDisk("tasks", { placements });
-
-		// Install via lifecycle (direct API since POST /v1/apps/install needs mpak for named)
-		const devRegistry = runtime.getRegistryForWorkspace(TEST_WORKSPACE_ID);
-		const instance = await runtime.getLifecycle().installLocal(bundleDir, devRegistry, TEST_WORKSPACE_ID);
-		const serverName = instance.serverName;
+		]);
 
 		try {
 			// GET /v1/shell should now include the tasks placements
@@ -189,19 +128,15 @@ describe("Install/uninstall → /v1/shell placement updates", () => {
 });
 
 // =============================================================================
-// 2. Bundle with placements → appears in /v1/shell
+// 2. Connector with placements → appears in /v1/shell
 // =============================================================================
 
-describe("Bundle with placements → /v1/shell", () => {
-	it("bundle with main placement appears in /v1/shell", async () => {
-		const bundleDir = createBundleOnDisk("placedapp", {
-			placements: [
-				{ slot: "main", resourceUri: "ui://placedapp/main", label: "placedapp App", icon: "placedapp-icon", route: "placedapp" },
-			],
-		});
+describe("Connector with placements → /v1/shell", () => {
+	it("connector with main placement appears in /v1/shell", async () => {
 		const devRegistry = runtime.getRegistryForWorkspace(TEST_WORKSPACE_ID);
-		const instance = await runtime.getLifecycle().installLocal(bundleDir, devRegistry, TEST_WORKSPACE_ID);
-		const serverName = instance.serverName;
+		const serverName = installConnector("placedapp", [
+			{ slot: "main", resourceUri: "ui://placedapp/main", label: "placedapp App", icon: "placedapp-icon", route: "placedapp" },
+		]);
 
 		try {
 			const res = await fetch(`${baseUrl}/v1/shell`, { headers: { "X-Workspace-Id": TEST_WORKSPACE_ID } });

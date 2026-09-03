@@ -50,7 +50,7 @@
  *   gating, reference-resource hint) than role-based skill composition.
  *
  * NOTE: the exported names keep the `bundle`/`Bundle` prefix to bound the diff,
- * but a skill is a property of the MCP *server*, independent of the mpak
+ * but a skill is a property of the MCP *server*, independent of the
  * "bundle" packaging (which is being phased out).
  */
 

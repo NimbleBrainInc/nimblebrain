@@ -41,7 +41,7 @@ import { brokeredRef } from "./connection-probe.ts";
 import { serverNameFromRef } from "./paths.ts";
 import type { BundleRef, ConnectorSkillLockEntry } from "./types.ts";
 
-type ConnectorRef = Extract<BundleRef, { url: string }>;
+type ConnectorRef = BundleRef;
 
 export interface ConnectorSkillReconcileDeps {
   /** The overlay version every installed connector should track. */
@@ -87,7 +87,10 @@ export async function reconcileConnectorSkills(
     const nextBundles: BundleRef[] = [];
     for (const ref of ws.bundles) {
       if (!("url" in ref)) {
-        nextBundles.push(ref); // registry (`{name}`) / sideload (`{path}`) — no overlay
+        // Every ref carries a url by type. A row read off disk may predate
+        // that, and it has no source to bind an overlay to — carry it through
+        // untouched rather than reconciling something unreachable.
+        nextBundles.push(ref);
         continue;
       }
       const updated = await reconcileRef(ref, ws.id, deps, catalog);
@@ -112,6 +115,9 @@ async function reconcileRef(
   if (boundVersion === deps.pinnedVersion) return ref; // already current
 
   const serverName = serverNameFromRef(ref);
+  // A row this build cannot name has no source to bind an overlay to. Return
+  // it untouched rather than reconciling against a name nothing looks up.
+  if (serverName === null) return ref;
   const identity = await resolveIdentity(ref, serverName, deps, catalog);
   if (!identity) return ref;
 

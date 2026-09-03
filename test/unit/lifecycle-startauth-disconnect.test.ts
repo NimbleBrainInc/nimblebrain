@@ -39,7 +39,6 @@ function seedInstance(
     bundleName: "https://example.test/mcp",
     version: "remote",
     state: "starting",
-    trustScore: null,
     ui: null,
     briefing: null,
     type: "plain",

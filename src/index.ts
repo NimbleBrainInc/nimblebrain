@@ -17,13 +17,12 @@ export { StaticToolRouter } from "./adapters/static-router.ts";
 export { WorkspaceLogSink } from "./adapters/workspace-log-sink.ts";
 export type {
   BundleInstance,
-  BundleManifest,
   BundleRef,
   BundleState,
   BundleUiMeta,
 } from "./bundles/index.ts";
 // Bundles
-export { BundleLifecycleManager, resolveLocalBundle } from "./bundles/index.ts";
+export { BundleLifecycleManager } from "./bundles/index.ts";
 // Config
 export { getValidator, SCHEMA_PATH } from "./config/index.ts";
 export { EventSourcedConversationStore } from "./conversation/event-sourced-store.ts";

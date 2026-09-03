@@ -180,9 +180,9 @@ function warnDeprecatedFields(fileConfig: FileConfig, configPath: string): void 
 
 /** Resolve workDir (NB_WORK_DIR > file > flag default), absolutized at load. */
 function absoluteWorkDir(fileConfig: FileConfig, flags: CliFlags): string | undefined {
-  // Absolutize so the value survives crossing process boundaries (e.g. as
-  // `MPAK_WORKSPACE` to bundle subprocesses with a different cwd) without the
-  // two ends resolving against different bases. The undefined case is
+  // Absolutize so every derived path is anchored the same way regardless of
+  // the process's cwd, rather than resolving against different bases at
+  // different call sites. The undefined case is
   // preserved — `resolveWorkDir(config)` in runtime.ts falls back to
   // `DEFAULT_WORK_DIR`, which is already absolute.
   const raw =

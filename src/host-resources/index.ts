@@ -9,9 +9,7 @@ export {
   HOST_RESOURCES_CAPABILITY_V1,
   HOST_RESOURCES_MAX_READ_SIZE,
   hostExtensions,
-  hostProvidedCapabilityKeys,
 } from "./capability.ts";
-export { assertHostCapabilitiesAvailable, HostManifestGateError } from "./manifest-gate.ts";
 export { HOST_RESOURCES_LIST_METHOD, HOST_RESOURCES_READ_METHOD } from "./methods.ts";
 export type { HostResourcesRateLimit, RateLimitOptions } from "./rate-limit.ts";
 export { DEFAULT_BURST, DEFAULT_RATE_PER_SEC, TokenBucketRateLimit } from "./rate-limit.ts";

@@ -97,17 +97,20 @@ Get NimbleBrain running locally with Docker Compose. You need Docker and an [Ant
 
    The agent responds using its built-in platform capabilities. To give it domain-specific tools, install an app in the next step.
 
-5. **Install an app**
+5. **Install a connector**
 
-   Apps come from two places: the in-app **connectors catalog** (remote MCP connectors with point-and-click OAuth) and the **mpak registry** (MCP server bundles).
+   A connector is a remote MCP server the platform connects to. Open the
+   **connectors catalog** from workspace settings to browse and install one in
+   the UI, with point-and-click OAuth.
 
-   Open the connectors catalog from workspace settings to browse and install connectors directly in the UI. You can also drive installs by chatting with the agent — it uses the `manage_connectors` tool to list the catalog and install a connector, and `manage_apps` to manage registry apps across the org:
+   You can also drive installs by chatting with the agent — it uses the
+   `manage_connectors` tool to list the catalog and install:
 
    ```
    List the available connectors and install one for me
    ```
 
-   Once an app is installed and running, its tools join the agent's namespace. Ask the agent to use them in plain language.
+   Once a connector is connected, its tools join the agent's namespace. Ask the agent to use them in plain language.
 
 </Steps>
 
@@ -118,5 +121,5 @@ import { CardGrid, LinkCard } from '@astrojs/starlight/components';
 <CardGrid>
   <LinkCard title="Installation" description="All install methods: Docker Compose or from source, plus auth setup" href="/installation" />
   <LinkCard title="Core Concepts" description="Understand the agent loop, bundles, skills, and tools" href="/concepts" />
-  <LinkCard title="Installing Apps" description="Browse and install MCP bundles from the mpak registry" href="/using/installing-apps" />
+  <LinkCard title="Connectors" description="Browse the catalog and connect a remote MCP server" href="/using/connectors" />
 </CardGrid>

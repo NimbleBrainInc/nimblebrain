@@ -124,7 +124,6 @@ describe("lifecycle.startAuth — interactive-flow failure is surfaced, not swal
       bundleName: ref.url,
       version: "remote",
       state: "starting",
-      trustScore: null,
       ui: null,
       briefing: null,
       type: "plain",

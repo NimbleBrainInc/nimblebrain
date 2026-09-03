@@ -75,14 +75,14 @@ function composioEntry(): DirectoryEntry {
   };
 }
 
-function mpakEntry(): DirectoryEntry {
+function unsupportedEntry(): DirectoryEntry {
   return {
     id: "dev.example/tool",
     registryId: "bundled-static",
     registryType: "static",
     name: "Some Tool",
-    description: "An mpak bundle",
-    install: { kind: "mpak-bundle", package: "@example/tool" },
+    description: "A pasted-URL entry (the direct-url kind, not yet supported)",
+    install: { kind: "direct-url", url: "https://tool.example.com/mcp" },
   };
 }
 
@@ -245,7 +245,7 @@ describe("manage_connectors.install scope:identity — DCR personal-connector in
   });
 
   test("rejects a non-remote-oauth entry — personal connectors are remote MCP connections", async () => {
-    const result = await h.tool.handler({ action: "install", entry: mpakEntry(), scope: "identity" });
+    const result = await h.tool.handler({ action: "install", entry: unsupportedEntry(), scope: "identity" });
     expect(result.isError).toBe(true);
     expect(resultText(result)).toMatch(/remote MCP connection/i);
     // Nothing written to the identity plane.

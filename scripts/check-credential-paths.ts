@@ -5,7 +5,7 @@
  *
  * Stage 2 moved workspace-shared credentials onto the workspace at
  * `{workDir}/workspaces/<wsId>/credentials/...`, reached only through
- * `WorkspaceContext` or the primitives in `src/config/workspace-credentials.ts`.
+ * `WorkspaceContext` or `FileCredentialStore`.
  * A hand-built `join(..., "users", X, "credentials", ...)` is a regression: a
  * shared-connector credential would land off the workspace.
  *
@@ -242,8 +242,8 @@ async function main(): Promise<void> {
     console.error(
       "Workspace-shared credentials live at `workspaces/<wsId>/credentials/...` — route",
     );
-    console.error("through `WorkspaceContext` (`runtime.getWorkspaceContext(wsId)`) or the");
-    console.error("primitives in `src/config/workspace-credentials.ts`.");
+    console.error("through `WorkspaceContext` (`runtime.getWorkspaceContext(wsId)`) or");
+    console.error("`FileCredentialStore`.");
     console.error("The ONLY user-scoped exception is a personal connector's OAuth tokens at");
     console.error('`users/<userId>/credentials/mcp-oauth/<serverName>/` (the {type:"user"} arm).');
     console.error(

@@ -121,9 +121,9 @@ export function readStaticServers(path: string): ServerDetail[] {
  *   1. this source's `ServerDetail` schema + name-dedup checks;
  *   2. `validateServerDetailSafety` at the directory boundary — unsafe
  *      icon/docs/portal URL, reserved OAuth param;
- *   3. the directory's projection returning null — `packages` and
- *      `remotes` are both optional in `ServerDetail`, so an entry with
- *      neither is schema-valid, safety-clean, and still not installable.
+ *   3. the directory's projection returning null — `remotes` is optional in
+ *      `ServerDetail`, so an entry without one is schema-valid, safety-clean,
+ *      and still not installable by this runtime.
  *
  * Stages 2 and 3 delegate to the functions the directory itself calls,
  * so this reports the runtime's decisions rather than restating its
@@ -137,13 +137,9 @@ export function readStaticServers(path: string): ServerDetail[] {
  * imports this module, so the edge would be a cycle. Tracked as a
  * follow-up.
  *
- * Two stages are deliberately not covered. The scope filter
+ * One stage is deliberately not covered: the scope filter
  * (`applyScopeFilter`) is registry configuration, not a property of the
- * catalog file, so it is not this gate's business. `catalogEntries`'
- * own null-projection drops an entry with no `remotes`, which is the
- * shape of that record rather than a fault in the entry: it carries the
- * remote connection's `url`, so a packages-only entry has none to build
- * and joins the installed-bundle views through `iconByPackage` instead.
+ * catalog file, so it is not this gate's business.
  *
  * `scripts/check-catalog-schema.ts` is the CLI over this. A path that
  * does not exist is itself a diagnostic: a gate pointed at the wrong
@@ -171,7 +167,7 @@ export function validateStaticCatalog(path: string): CatalogDiagnostic[] {
         source,
         index,
         name: detail.name,
-        message: `${tag} dropped at the directory boundary — not installable: needs \`packages\` or \`remotes\``,
+        message: `${tag} dropped at the directory boundary — not installable: needs a \`remotes\` entry (this runtime connects to remote MCP servers; it does not acquire \`packages\`)`,
       });
     }
   }
@@ -324,7 +320,7 @@ function appendValidatedServers(
     // Defense-in-depth (URL scheme allowlist + reserved OAuth params)
     // runs uniformly at the directory boundary in
     // `validateServerDetailSafety` — every source is scrubbed there
-    // regardless of provenance, so non-curated mpak entries get the
+    // regardless of provenance, so non-curated entries get the
     // same protection static does.
     seenNames.add(detail.name);
     out.push({ detail, source, index: i });

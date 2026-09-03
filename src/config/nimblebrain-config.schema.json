@@ -119,32 +119,17 @@
       "additionalProperties": false
     },
     "bundles": {
-      "description": "Bundle configurations. Each entry specifies a bundle by name (mpak registry), local path, or remote URL.",
+      "description": "Connector configurations. Each entry is one remote MCP server, addressed by URL.",
       "type": "array",
       "items": {
         "type": "object",
+        "required": ["url"],
         "properties": {
-          "name": {
-            "type": "string",
-            "description": "Bundle name from mpak registry (e.g., @nimblebraininc/echo)."
-          },
-          "path": { "type": "string", "description": "Local filesystem path to bundle directory." },
           "url": { "type": "string", "description": "Remote MCP server URL." },
           "serverName": {
             "type": "string",
-            "description": "Override server name for remote bundles."
+            "description": "Server name to register the connector under."
           },
-          "env": {
-            "type": "object",
-            "additionalProperties": { "type": "string" },
-            "description": "Environment variables passed to the bundle process."
-          },
-          "allowedEnv": {
-            "type": "array",
-            "items": { "type": "string" },
-            "description": "Host env vars this bundle may access."
-          },
-          "trustScore": { "type": ["number", "null"], "description": "MTF trust score (0-100)." },
           "transport": {
             "type": "object",
             "description": "Remote transport configuration.",
@@ -182,7 +167,7 @@
           },
           "ui": {
             "type": ["object", "null"],
-            "description": "UI metadata extracted from manifest."
+            "description": "UI metadata from the catalog entry's host `_meta` block."
           }
         }
       }
@@ -190,7 +175,7 @@
     "allowInsecureRemotes": {
       "type": "boolean",
       "default": false,
-      "description": "Allow HTTP (non-TLS) remote bundle connections. Dev only."
+      "description": "Allow HTTP (non-TLS) remote connector connections. Dev only."
     },
     "models": {
       "type": "object",

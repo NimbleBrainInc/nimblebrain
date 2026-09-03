@@ -1,23 +1,20 @@
 /**
- * BriefingCollector — reads briefing facet declarations from installed bundles
- * and resolves them into structured data for the BriefingGenerator.
+ * BriefingCollector — reads briefing facet declarations from installed
+ * connectors and resolves them into structured data for the BriefingGenerator.
  *
  * Resolution order per facet:
- *   1. entity  → read entity JSON files from disk, count/sample by timestamps
- *   2. resource → readResource() on the app's MCP server
- *   3. tool    → callTool() via the tool registry
+ *   1. resource → readResource() on the app's MCP server
+ *   2. tool     → callTool() via the tool registry
  *
- * Only one of entity/resource/tool per facet. Falls back to description string.
+ * Only one of resource/tool per facet. Falls back to description string. Both
+ * go over MCP: a facet is answered by the server that declared it, never by
+ * the runtime reading that server's files.
  */
 
-import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
-import sift from "sift";
 import type { BriefingBlock, BriefingFacet, BundleInstance } from "../bundles/types.ts";
 import { McpSource } from "../tools/mcp-source.ts";
 import type { ToolRegistry } from "../tools/registry.ts";
 import type { ToolSource } from "../tools/types.ts";
-import { debugBriefing } from "./briefing-debug.ts";
 
 /** Result of resolving a single facet. */
 export interface FacetResult {
@@ -48,8 +45,8 @@ export interface BriefingContext {
 const PRIORITY_ORDER: Record<string, number> = { high: 0, medium: 1, low: 2 };
 
 /**
- * Collect briefing data from installed bundle manifests.
- * Each bundle with a briefing block in _meta["ai.nimblebrain/host"] contributes facets.
+ * Collect briefing data from installed connectors.
+ * Each connector with a briefing block in _meta["ai.nimblebrain/host"] contributes facets.
  */
 export async function collectBriefingFacets(
   instances: BundleInstance[],
@@ -80,14 +77,12 @@ export async function collectBriefingFacets(
   for (const { instance, briefing } of appsWithBriefing) {
     const appName = instance.ui?.name ?? instance.bundleName;
     const appRoute = instance.ui?.placements?.[0]?.route ?? null;
-    const entityDataRoot = instance.entityDataRoot ?? null;
 
     const facetPromises = briefing.facets.map((facet) =>
       resolveFacet(facet, {
         appName,
         appCategory: undefined,
         appRoute,
-        entityDataRoot,
         registry,
         period,
         serverName: instance.serverName,
@@ -109,8 +104,6 @@ interface ResolveContext {
   appName: string;
   appCategory?: string;
   appRoute: string | null;
-  /** Full path to the entity data root (e.g., {dataDir}/{namespace}/data). */
-  entityDataRoot: string | null;
   registry: ToolRegistry;
   period: { since: string; until: string };
   serverName: string;
@@ -126,11 +119,6 @@ async function resolveFacet(facet: BriefingFacet, ctx: ResolveContext): Promise<
   };
 
   try {
-    if (facet.entity && ctx.entityDataRoot) {
-      const data = resolveEntityFacet(facet, ctx.entityDataRoot, ctx.period);
-      return { ...base, data, ok: true };
-    }
-
     if (facet.resource) {
       const data = await resolveResourceFacet(facet, ctx.registry, ctx.serverName);
       return { ...base, data, ok: true };
@@ -151,77 +139,6 @@ async function resolveFacet(facet: BriefingFacet, ctx: ResolveContext): Promise<
     const msg = err instanceof Error ? err.message : String(err);
     return { ...base, data: `Error resolving ${facet.name}: ${msg}`, ok: false };
   }
-}
-
-/**
- * Resolve an entity facet by reading JSON files from disk.
- * Counts entities and samples recent ones based on created_at/updated_at.
- */
-function resolveEntityFacet(
-  facet: BriefingFacet,
-  entityDataRoot: string,
-  period: { since: string },
-): string {
-  // Entity files live at {entityDataRoot}/{plural}/*.json. For
-  // missing-dir / missing-entity-dir cases we return the same
-  // "0 matching ... (0 total)" shape an empty-but-present directory
-  // would produce, so the LLM's "skip empty or zero facets" prompt
-  // rule treats all three cases uniformly. Absolute filesystem paths
-  // stay out of the facet payload — operators can re-enable
-  // visibility with NB_DEBUG_BRIEFING for diagnostics.
-  if (!existsSync(entityDataRoot)) {
-    debugBriefing(
-      () => `collector entity=${facet.entity} entityDataRoot missing: ${entityDataRoot}`,
-    );
-    return `0 matching ${facet.entity} entities (0 total)`;
-  }
-
-  // Find the entity directory — try common pluralization
-  const entityDir = findEntityDir(entityDataRoot, facet.entity!);
-  if (!entityDir) {
-    debugBriefing(
-      () => `collector entity=${facet.entity} no matching plural dir under ${entityDataRoot}`,
-    );
-    return `0 matching ${facet.entity} entities (0 total)`;
-  }
-
-  // Read all entity files
-  const files = readdirSync(entityDir).filter((f) => f.endsWith(".json"));
-  const today = new Date().toISOString().slice(0, 10);
-  const now = new Date().toISOString();
-
-  // Resolve query variables and build sift filter
-  const vars = { "period.since": period.since, today, now };
-  const resolvedQuery = facet.query ? resolveQueryVars(facet.query, vars) : {};
-  const filter = sift(resolvedQuery);
-
-  let total = 0;
-  let matchingCount = 0;
-  const samples: Array<Record<string, unknown>> = [];
-
-  for (const file of files) {
-    try {
-      const raw = readFileSync(join(entityDir, file), "utf-8");
-      const entity = JSON.parse(raw) as Record<string, unknown>;
-      total++;
-
-      if (filter(entity)) {
-        matchingCount++;
-        if (samples.length < 5) {
-          samples.push(summarizeEntity(entity, facet.entity!));
-        }
-      }
-    } catch {
-      // Skip malformed files
-    }
-  }
-
-  const parts: string[] = [];
-  parts.push(`${matchingCount} matching ${facet.entity} entities (${total} total)`);
-  if (samples.length > 0) {
-    parts.push(`Matching: ${JSON.stringify(samples)}`);
-  }
-  return parts.join(". ");
 }
 
 /**
@@ -265,79 +182,4 @@ async function resolveToolFacet(facet: BriefingFacet, registry: ToolRegistry): P
       .slice(0, 2000); // Limit to prevent token explosion
   }
   return JSON.stringify(result).slice(0, 2000);
-}
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/** Find the entity directory — tries exact plural, +s, +es, +ies. */
-function findEntityDir(dataDir: string, entityName: string): string | null {
-  const candidates = [
-    `${entityName}s`,
-    `${entityName}es`,
-    entityName.replace(/y$/, "ies"),
-    entityName,
-  ];
-
-  const dirs = readdirSync(dataDir);
-  for (const candidate of candidates) {
-    if (dirs.includes(candidate)) {
-      const path = join(dataDir, candidate);
-      return path;
-    }
-  }
-  return null;
-}
-
-// ---------------------------------------------------------------------------
-// Query variable resolver — walks a MongoDB-style query object and replaces
-// "${var}" strings with runtime values before passing to sift.
-// ---------------------------------------------------------------------------
-
-function resolveQueryVars(
-  query: Record<string, unknown>,
-  vars: Record<string, string>,
-): Record<string, unknown> {
-  const resolved: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(query)) {
-    if (typeof value === "string" && value.startsWith("${") && value.endsWith("}")) {
-      const varName = value.slice(2, -1);
-      resolved[key] = vars[varName] ?? value;
-    } else if (value !== null && typeof value === "object" && !Array.isArray(value)) {
-      resolved[key] = resolveQueryVars(value as Record<string, unknown>, vars);
-    } else {
-      resolved[key] = value;
-    }
-  }
-  return resolved;
-}
-
-/** Extract key fields from an entity for sampling (limit tokens). */
-function summarizeEntity(entity: Record<string, unknown>, _type: string): Record<string, unknown> {
-  const summary: Record<string, unknown> = {};
-
-  // Always include these if present
-  const keyFields = [
-    "id",
-    "name",
-    "title",
-    "status",
-    "stage",
-    "priority",
-    "severity",
-    "value",
-    "type",
-  ];
-  for (const field of keyFields) {
-    if (entity[field] !== undefined) {
-      summary[field] = entity[field];
-    }
-  }
-
-  // Include timestamps
-  if (entity.created_at) summary.created_at = entity.created_at;
-  if (entity.updated_at) summary.updated_at = entity.updated_at;
-
-  return summary;
 }

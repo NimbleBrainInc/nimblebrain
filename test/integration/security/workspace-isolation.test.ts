@@ -267,10 +267,10 @@ describe("V5: SSE events scoped by workspace", () => {
 // ── V6: Cross-workspace bundle instance isolation ───────────────
 //
 // Pins Runtime.getBundleInstancesForWorkspace against the class of leak
-// where two workspaces install the same bundle and the filter returns
+// where two workspaces install the same connector and the filter returns
 // cross-workspace instances because it only matched on serverName. Each
-// instance carries its own entityDataRoot, so a leak in this method
-// surfaces another workspace's entity data (contacts, tasks, etc.) to
+// workspace holds its own instance and its own credentials, so a leak here
+// surfaces another workspace's connector — and everything it can reach — to
 // the caller's briefing/apps list.
 
 function makeFakeSource(name: string): ToolSource {
@@ -293,8 +293,8 @@ function makeFakeSource(name: string): ToolSource {
   };
 }
 
-describe("V6: getBundleInstancesForWorkspace — two workspaces, same bundle", () => {
-  it("returns only the caller's instance; each carries its own entityDataRoot", async () => {
+describe("V6: getBundleInstancesForWorkspace — two workspaces, same connector", () => {
+  it("returns only the caller's instance", async () => {
     const wsStore = runtime.getWorkspaceStore();
     const wsA = await wsStore.create("Isolation A", `iso_a_${Date.now()}`);
     const wsB = await wsStore.create("Isolation B", `iso_b_${Date.now()}`);
@@ -302,21 +302,17 @@ describe("V6: getBundleInstancesForWorkspace — two workspaces, same bundle", (
     await runtime.ensureWorkspaceRegistry(wsB.id);
 
     const serverName = `leakcheck_${Date.now()}`;
-    const ref: BundleRef = { name: `@test/${serverName}` };
+    const ref: BundleRef = { url: `https://${serverName}.example.com/mcp`, serverName };
     const meta = {
-      manifestName: `@test/${serverName}`,
+      manifestName: `ai.nimblebrain/${serverName}`,
       version: "1.0.0",
       ui: { name: "Leak Check", icon: "bug" } as BundleUiMeta,
       briefing: null as BriefingBlock | null,
-      type: "upjack" as const,
-      upjackNamespace: "apps/leakcheck",
     };
 
     const lifecycle = runtime.getLifecycle();
-    const dataDirA = `/tmp/${wsA.id}/data`;
-    const dataDirB = `/tmp/${wsB.id}/data`;
-    lifecycle.seedInstance(serverName, ref.name, ref, meta, wsA.id, dataDirA);
-    lifecycle.seedInstance(serverName, ref.name, ref, meta, wsB.id, dataDirB);
+    lifecycle.seedInstance(serverName, ref.url, ref, meta, wsA.id);
+    lifecycle.seedInstance(serverName, ref.url, ref, meta, wsB.id);
 
     // Register a source with the same serverName in each workspace registry.
     // This is the visibility condition that the pre-fix filter used alone —
@@ -334,12 +330,8 @@ describe("V6: getBundleInstancesForWorkspace — two workspaces, same bundle", (
 
     expect(instA.wsId).toBe(wsA.id);
     expect(instB.wsId).toBe(wsB.id);
-
-    expect(instA.entityDataRoot).toBe(`${dataDirA}/apps/leakcheck/data`);
-    expect(instB.entityDataRoot).toBe(`${dataDirB}/apps/leakcheck/data`);
-
-    // Distinct data roots — a leak would make one equal to the other.
-    expect(instA.entityDataRoot).not.toBe(instB.entityDataRoot);
+    // Distinct instances — a leak would hand one workspace the other's.
+    expect(instA).not.toBe(instB);
 
     // Unscoped snapshot still holds both (confirms the bug was reachable
     // from a serverName-only filter over lifecycle.getInstances()).
@@ -349,21 +341,20 @@ describe("V6: getBundleInstancesForWorkspace — two workspaces, same bundle", (
     expect(allWithServer).toHaveLength(2);
   });
 
-  it("returns nothing for a workspace that has the bundle in its lifecycle but not its registry", async () => {
+  it("returns nothing for a workspace that has the connector in its lifecycle but not its registry", async () => {
     const wsStore = runtime.getWorkspaceStore();
     const ws = await wsStore.create("Orphan", `orphan_${Date.now()}`);
     await runtime.ensureWorkspaceRegistry(ws.id);
 
     const serverName = `orphan_${Date.now()}`;
-    const ref: BundleRef = { name: `@test/${serverName}` };
+    const ref: BundleRef = { url: `https://${serverName}.example.com/mcp`, serverName };
     const meta = {
-      manifestName: `@test/${serverName}`,
+      manifestName: `ai.nimblebrain/${serverName}`,
       version: "1.0.0",
       ui: null,
       briefing: null as BriefingBlock | null,
-      type: "plain" as const,
     };
-    runtime.getLifecycle().seedInstance(serverName, ref.name, ref, meta, ws.id, `/tmp/${ws.id}/data`);
+    runtime.getLifecycle().seedInstance(serverName, ref.url, ref, meta, ws.id);
     // Deliberately do NOT add the source to the registry.
 
     expect(runtime.getBundleInstancesForWorkspace(ws.id)).toHaveLength(0);

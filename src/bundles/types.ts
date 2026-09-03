@@ -1,4 +1,3 @@
-import type { UserConfigFieldDef } from "../config/workspace-credentials.ts";
 import type { HookDeclaration } from "../hooks/types.ts";
 import type { NotificationsDeclaration } from "../notifications/types.ts";
 import type { Connection } from "./connection.ts";
@@ -97,132 +96,114 @@ export interface ConnectorSkillLockEntry {
   path: string;
 }
 
-/** Reference to a bundle — by name (mpak cache), local path, or remote URL. */
-export type BundleRef =
-  | {
-      name: string;
-      /**
-       * Canonical reverse-DNS server name from the source `ServerDetail.name`
-       * (e.g. `dev.mpak.nimblebraininc/echo`). When present, used as the
-       * lifecycle / route key directly. When absent (legacy installs),
-       * `serverNameFromRef` falls back to `deriveServerName(name)` → short
-       * slug for backward compat.
-       */
-      serverName?: string;
-      env?: Record<string, string>;
-      allowedEnv?: string[];
-      trustScore?: number | null;
-      ui?: BundleUiMeta | null;
-      /** Materialized connector-skill overlays bound to this bundle. */
-      skillsLock?: ConnectorSkillLockEntry[];
-    }
-  | {
-      path: string;
-      serverName?: string;
-      env?: Record<string, string>;
-      allowedEnv?: string[];
-      trustScore?: number | null;
-      ui?: BundleUiMeta | null;
-      /** Materialized connector-skill overlays bound to this bundle. */
-      skillsLock?: ConnectorSkillLockEntry[];
-    }
-  | {
-      url: string;
-      serverName?: string;
-      transport?: RemoteTransportConfig;
-      trustScore?: number | null;
-      ui?: BundleUiMeta | null;
-      /** Materialized connector-skill overlays bound to this bundle. */
-      skillsLock?: ConnectorSkillLockEntry[];
-      /**
-       * OAuth identity scope for this URL bundle. `"workspace"` is the
-       * only legal value: one identity per `(workspace, server)`, shared
-       * across workspace members. Personal connectors bind to the owning
-       * user's personal workspace (`personalWorkspaceIdFor(userId)`).
-       */
-      oauthScope?: "workspace";
-      /**
-       * Opt in to the headless authorize-redirect probe. Default false.
-       * Set only for bundles whose OAuth provider 302s straight to our
-       * callback with a code (Reboot's `Anonymous` dev provider). MUST stay
-       * false for normal interactive providers — a server-side `/authorize`
-       * probe spins up a vendor auth session bound to our PKCE challenge
-       * before the user acts and makes the vendor reject the user's real
-       * code (`invalid_code`). See `headlessAuthProbe` in
-       * `WorkspaceOAuthProvider`.
-       */
-      headlessAuthProbe?: boolean;
-      /**
-       * Pre-registered OAuth client config. Required for vendors that don't
-       * support Dynamic Client Registration (RFC 7591) — Gmail, Outlook,
-       * HubSpot, Asana, Zoom Marketplace user-OAuth apps. Operator pre-
-       * registers an app in the vendor's developer portal, gets back a
-       * `client_id` (and usually a `client_secret`), and points this field
-       * at it.
-       *
-       * When present, the OAuth provider skips DCR — `clientInformation()`
-       * returns the static client; `saveClientInformation()` is a no-op.
-       * `clientSecret` is NEVER inline — it's a reference into the
-       * credential store, resolved per-request so the secret doesn't sit
-       * in workspace.json. Operators configure the secret in the web UI
-       * (the workspace's Connections settings).
-       *
-       * Omit for vendors that DO support DCR (Granola, Notion). DCR is the
-       * default path; static config is the opt-in.
-       */
-      oauthClient?: OAuthClientConfig;
-      /**
-       * OAuth scopes the bundle requests. Threaded into the provider's
-       * `clientMetadata.scope` so the authorize URL carries the right
-       * `scope=` param. Surfaces the requested permissions on the review
-       * surface (admin reading workspace.json sees what the bundle asks
-       * for) and lets the same MCP server be installed at different
-       * permission levels (e.g., Gmail read-only vs. read+send).
-       *
-       * Omit to use server defaults — correct for DCR servers that derive
-       * scopes automatically (Granola, Notion).
-       */
-      scopes?: string[];
-      /**
-       * Extra query params appended to the authorize URL. Covers Google's
-       * `access_type=offline` + `prompt=consent` (needed for refresh-token
-       * issuance) and any vendor-specific parameter. Static strings only —
-       * no template interpolation.
-       *
-       * **Reserved keys rejected at config load** (`client_id`,
-       * `redirect_uri`, `response_type`, `state`, `code_challenge`,
-       * `code_challenge_method`, `scope`) so config can't override
-       * security-critical params the provider sets itself.
-       */
-      additionalAuthorizationParams?: Record<string, string>;
-      /**
-       * Composio-backed connectors carry the catalog id forward so the
-       * lifecycle's boot-time state check can probe the right
-       * `connection.json` (under `credentials/composio/<connectorId>/`
-       * rather than `credentials/mcp-oauth/<serverName>/tokens.json`).
-       * Set at install time by `handleInstallRemoteOAuth`'s composio
-       * branch. Undefined for dcr/static OAuth bundles.
-       */
-      composio?: { connectorId: string };
-      /**
-       * Smithery-backed connectors carry four coordinates, each load-bearing:
-       * `connectorId` resolves the catalog entry (the persisted url is a
-       * per-install session URL that misses the url→catalog map, same as
-       * Composio); `connectionId` is what the liveness probe reads and what
-       * teardown deletes at the broker; `namespace` pins the probe and the
-       * delete to the namespace the connection was CREATED in, so repointing
-       * `connectors.providers.smithery.namespace` can't make either act on the
-       * wrong one. Set at
-       * install time by `handleInstallRemoteOAuth`'s smithery branch. Undefined
-       * for every other auth kind.
-       */
-      smithery?: {
-        connectorId: string;
-        connectionId: string;
-        namespace: string;
-        baseUrl: string;
-      };
-    };
+/**
+ * Reference to a remote MCP server. One shape: a URL plus the transport,
+ * OAuth and skills-lock fields that describe how to reach it and who it
+ * speaks as. The runtime connects to servers; it does not acquire, verify,
+ * or execute their code, so there is no by-name or by-path variant.
+ */
+export type BundleRef = {
+  url: string;
+  /**
+   * Canonical reverse-DNS server name from the source `ServerDetail.name`
+   * (e.g. `com.stripe/mcp`), slugified. When present, used as the
+   * lifecycle / route key directly. When absent (legacy installs),
+   * `serverNameFromRef` falls back to `deriveServerName(url)`.
+   */
+  serverName?: string;
+  transport?: RemoteTransportConfig;
+  ui?: BundleUiMeta | null;
+  /** Materialized connector-skill overlays bound to this bundle. */
+  skillsLock?: ConnectorSkillLockEntry[];
+  /**
+   * OAuth identity scope for this URL bundle. `"workspace"` is the
+   * only legal value: one identity per `(workspace, server)`, shared
+   * across workspace members. Personal connectors bind to the owning
+   * user's personal workspace (`personalWorkspaceIdFor(userId)`).
+   */
+  oauthScope?: "workspace";
+  /**
+   * Opt in to the headless authorize-redirect probe. Default false.
+   * Set only for bundles whose OAuth provider 302s straight to our
+   * callback with a code (Reboot's `Anonymous` dev provider). MUST stay
+   * false for normal interactive providers — a server-side `/authorize`
+   * probe spins up a vendor auth session bound to our PKCE challenge
+   * before the user acts and makes the vendor reject the user's real
+   * code (`invalid_code`). See `headlessAuthProbe` in
+   * `WorkspaceOAuthProvider`.
+   */
+  headlessAuthProbe?: boolean;
+  /**
+   * Pre-registered OAuth client config. Required for vendors that don't
+   * support Dynamic Client Registration (RFC 7591) — Gmail, Outlook,
+   * HubSpot, Asana, Zoom Marketplace user-OAuth apps. Operator pre-
+   * registers an app in the vendor's developer portal, gets back a
+   * `client_id` (and usually a `client_secret`), and points this field
+   * at it.
+   *
+   * When present, the OAuth provider skips DCR — `clientInformation()`
+   * returns the static client; `saveClientInformation()` is a no-op.
+   * `clientSecret` is NEVER inline — it's a reference into the
+   * credential store, resolved per-request so the secret doesn't sit
+   * in workspace.json. Operators configure the secret in the web UI
+   * (the workspace's Connections settings).
+   *
+   * Omit for vendors that DO support DCR (Granola, Notion). DCR is the
+   * default path; static config is the opt-in.
+   */
+  oauthClient?: OAuthClientConfig;
+  /**
+   * OAuth scopes the bundle requests. Threaded into the provider's
+   * `clientMetadata.scope` so the authorize URL carries the right
+   * `scope=` param. Surfaces the requested permissions on the review
+   * surface (admin reading workspace.json sees what the bundle asks
+   * for) and lets the same MCP server be installed at different
+   * permission levels (e.g., Gmail read-only vs. read+send).
+   *
+   * Omit to use server defaults — correct for DCR servers that derive
+   * scopes automatically (Granola, Notion).
+   */
+  scopes?: string[];
+  /**
+   * Extra query params appended to the authorize URL. Covers Google's
+   * `access_type=offline` + `prompt=consent` (needed for refresh-token
+   * issuance) and any vendor-specific parameter. Static strings only —
+   * no template interpolation.
+   *
+   * **Reserved keys rejected at config load** (`client_id`,
+   * `redirect_uri`, `response_type`, `state`, `code_challenge`,
+   * `code_challenge_method`, `scope`) so config can't override
+   * security-critical params the provider sets itself.
+   */
+  additionalAuthorizationParams?: Record<string, string>;
+  /**
+   * Composio-backed connectors carry the catalog id forward so the
+   * lifecycle's boot-time state check can probe the right
+   * `connection.json` (under `credentials/composio/<connectorId>/`
+   * rather than `credentials/mcp-oauth/<serverName>/tokens.json`).
+   * Set at install time by `handleInstallRemoteOAuth`'s composio
+   * branch. Undefined for dcr/static OAuth bundles.
+   */
+  composio?: { connectorId: string };
+  /**
+   * Smithery-backed connectors carry four coordinates, each load-bearing:
+   * `connectorId` resolves the catalog entry (the persisted url is a
+   * per-install session URL that misses the url→catalog map, same as
+   * Composio); `connectionId` is what the liveness probe reads and what
+   * teardown deletes at the broker; `namespace` pins the probe and the
+   * delete to the namespace the connection was CREATED in, so repointing
+   * `connectors.providers.smithery.namespace` can't make either act on the
+   * wrong one. Set at
+   * install time by `handleInstallRemoteOAuth`'s smithery branch. Undefined
+   * for every other auth kind.
+   */
+  smithery?: {
+    connectorId: string;
+    connectionId: string;
+    namespace: string;
+    baseUrl: string;
+  };
+};
 
 /**
  * Config for a pre-registered OAuth client (Track A — alternative to DCR).
@@ -281,39 +262,6 @@ export type BundleState =
    */
   | "reauth_required";
 
-/** MCP server config — how to spawn the process. */
-export interface McpConfig {
-  command: string;
-  args?: string[];
-  env?: Record<string, string>;
-}
-
-/**
- * MCPB manifest.json — supports v0.3 and v0.4 formats.
- *
- * Both versions nest mcp_config under `server`:
- *   { "server": { "type": "python", "mcp_config": { "command": "python", ... } } }
- *
- * See: https://github.com/modelcontextprotocol/mcpb/tree/main/schemas
- */
-export interface BundleManifest {
-  manifest_version?: string;
-  name: string;
-  version: string;
-  description?: string;
-  author?: { name: string; email?: string; url?: string };
-  server: {
-    type: "python" | "node" | "binary" | "uv";
-    entry_point?: string;
-    mcp_config: McpConfig;
-  };
-  /** Per-bundle credential schema. Fields are resolved at startup against the
-   *  workspace credential store and `mcp_config.env` env aliases — see
-   *  `resolveUserConfig` and `substituteUserConfigFromEnv` in `startup.ts`. */
-  user_config?: Record<string, UserConfigFieldDef>;
-  _meta?: Record<string, unknown>;
-}
-
 /** Host manifest metadata at _meta["ai.nimblebrain/host"]. */
 export interface HostManifestMeta {
   host_version: "1.0" | "1.1" | "1.2" | "1.3";
@@ -327,23 +275,6 @@ export interface HostManifestMeta {
   placements?: PlacementDeclaration[];
   primaryView?: { resourceUri: string };
   briefing?: BriefingBlock;
-  /**
-   * NimbleBrain host capabilities this bundle requires or prefers. Keys are
-   * vendor-namespaced extension keys (e.g. `"ai.nimblebrain/host-resources"`)
-   * matching the platform's `ClientCapabilities.extensions` advertisement.
-   * Each value declares the bundle's requirements for that capability.
-   *
-   * Entries with `required: true` cause install to fail if the platform
-   * does not advertise the capability. Entries with `required: false` (or
-   * omitted) are prefers-but-adapts — bundles use the SDK's availability
-   * check at runtime and fall back gracefully (e.g. structured tool error
-   * teaching the agent to retry with inline content).
-   *
-   * This field belongs to `host_version: "1.1"` by convention. The host
-   * is forward-compatible and does not reject a version/field mismatch —
-   * nothing in the JSON Schema binds the two.
-   */
-  host_capabilities?: Record<string, HostCapabilityRequirement>;
   /**
    * Inbound event streams this server accepts, one per vendor. The runtime
    * mints a capability URL per `(workspace, connector, vendor)` at install and
@@ -374,15 +305,6 @@ export interface HostManifestMeta {
   notifications?: NotificationsDeclaration;
 }
 
-/** Bundle's requirement against one NimbleBrain host capability. */
-export interface HostCapabilityRequirement {
-  /**
-   * When true, the platform must advertise this capability in
-   * ClientCapabilities.extensions or install is refused. Default: false.
-   */
-  required?: boolean;
-}
-
 /** Briefing declaration — how this app contributes to the daily briefing. */
 export interface BriefingBlock {
   priority?: "high" | "medium" | "low";
@@ -390,19 +312,18 @@ export interface BriefingBlock {
 }
 
 /** A single briefing facet — one dimension of summary data.
- *  Resolved via one of: entity (disk query), resource (MCP resource read), or tool (MCP tool call). */
+ *  Resolved via one of: resource (MCP resource read) or tool (MCP tool call).
+ *  Both answers come from the server that declared the facet, over MCP. */
 export interface BriefingFacet {
   name: string;
   label: string;
   type: "attention" | "upcoming" | "activity" | "delta" | "kpi";
-  entity?: string;
   resource?: string;
   tool?: string;
   tool_input?: Record<string, unknown>;
-  query?: Record<string, unknown>;
-  metric?: "count" | "sum" | "list";
-  field?: string;
-  highlight?: string;
+  /** Shown when the facet declares neither `tool` nor `resource`, and when
+   *  resolution fails. The only facet field besides label/type the briefing
+   *  reads — see `buildUserPayload` in `services/briefing-generator.ts`. */
   description?: string;
 }
 
@@ -412,28 +333,18 @@ export interface BundleInstance {
   serverName: string;
   /** Scoped manifest name (e.g. "@nimblebraininc/ipinfo"). Used for identity/display. */
   bundleName: string;
-  /** The config key used to find this bundle in nimblebrain.json (name, path, or url value). */
+  /** The config key used to find this bundle in nimblebrain.json (the url value). */
   configKey?: string;
-  /**
-   * How this bundle was installed. Distinguishes registry bundles (which can be
-   * version-checked / upgraded against mpak) from local dev copies and remote
-   * URL connectors. `check_updates` / `upgrade` apply only to `"registry"`.
-   */
-  installSource?: "registry" | "local" | "remote";
   /** Version from manifest. */
   version: string;
   /** Human-readable description from the manifest. */
   description?: string;
   /** Current lifecycle state. */
   state: BundleState;
-  /** MTF trust score from mpak (0-100), or null if unavailable. */
-  trustScore: number | null;
   /** UI placement metadata from _meta["ai.nimblebrain/host"]. */
   ui: BundleUiMeta | null;
   /** Briefing metadata from _meta["ai.nimblebrain/host"].briefing. */
   briefing: BriefingBlock | null;
-  /** Whether this is an Upjack app or plain MCP server. */
-  type: "upjack" | "plain";
   /**
    * Workspace that owns this instance. Required — every bundle instance
    * belongs to exactly one workspace. Global/platform sources are
@@ -441,36 +352,29 @@ export interface BundleInstance {
    * so they never reach this type.
    */
   wsId: string;
-  /** Absolute path to the entity data root (e.g., {wsDir}/data/{bundle}/apps/crm/data). Resolved at startup. */
-  entityDataRoot?: string;
   /**
    * OAuth identity scope for URL bundles. `"workspace"` is the only legal
    * value — one shared identity per `(workspace, server)`. Personal
    * connectors are workspace-scoped to the user's personal workspace
-   * (`personalWorkspaceIdFor(userId)`). Undefined for non-URL bundles.
+   * (`personalWorkspaceIdFor(userId)`).
    */
   oauthScope?: "workspace";
   /**
-   * Per-principal Connections for URL bundles. Each entry is one
-   * (bundle, principal) tuple owning an McpSource and its OAuth state
-   * machine. For workspace-scoped bundles this map has exactly one entry
-   * keyed `WORKSPACE_PRINCIPAL_ID` ("_workspace"); for member-scoped
-   * (Step 3) it lazily grows with one entry per active member.
+   * Per-principal Connections. Each entry is one (bundle, principal)
+   * tuple owning an McpSource and its OAuth state machine. For
+   * workspace-scoped bundles this map has exactly one entry keyed
+   * `WORKSPACE_PRINCIPAL_ID` ("_workspace"); for member-scoped (Step 3)
+   * it lazily grows with one entry per active member.
    *
    * `state` above is a derived summary of these — see
    * `summarizeConnectionState` in `connection.ts` and the rules
    * documented there. Updated by lifecycle on every connection transition.
-   *
-   * Empty / undefined for non-URL bundles (stdio, in-process); they never
-   * speak OAuth.
    */
   connections?: Map<string, Connection>;
   /**
-   * Original `BundleRef` for URL bundles, retained on the instance so
-   * lifecycle can reconstruct sources on-demand. Carries the URL,
-   * transport config, oauthClient and scopes. Undefined for non-URL
-   * bundles — named/local bundles don't need to spawn additional
-   * sources after boot.
+   * Original `BundleRef`, retained on the instance so lifecycle can
+   * reconstruct sources on-demand. Carries the URL, transport config,
+   * oauthClient and scopes.
    */
   ref?: BundleRef;
 }
@@ -484,9 +388,6 @@ export interface LocalBundleMeta {
   description?: string;
   ui: BundleUiMeta | null;
   briefing: BriefingBlock | null;
-  type: "upjack" | "plain";
-  /** Upjack namespace from manifest (e.g., "apps/crm"). */
-  upjackNamespace?: string;
 }
 
 /** Result from starting a bundle source — includes the actual registered source name. */
@@ -494,14 +395,6 @@ export interface StartBundleResult {
   meta: LocalBundleMeta | null;
   /** The actual source name registered in the ToolRegistry. */
   sourceName: string;
-  /**
-   * Raw bundle manifest, populated when one was read during startup
-   * (local-path and named-registry bundles). Null for remote bundles, where
-   * the platform discovers tools over the wire and has no local manifest.
-   * Lifecycle callers use this instead of re-reading the manifest, so there
-   * is one source of truth for bundle metadata per startup.
-   */
-  manifest: BundleManifest | null;
 }
 
 /** App info returned by GET /v1/apps. */
@@ -510,8 +403,6 @@ export interface AppInfo {
   bundleName: string;
   version: string;
   status: BundleState;
-  type: "upjack" | "plain";
   toolCount: number;
-  trustScore: number;
   ui: BundleUiMeta | null;
 }

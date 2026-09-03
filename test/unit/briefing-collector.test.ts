@@ -1,140 +1,100 @@
 /**
- * briefing-collector — covers the canonical empty-facet string contract.
+ * briefing-collector — covers the resolution contract now that every facet is
+ * answered over MCP.
  *
- * `resolveEntityFacet` (private to briefing-collector.ts) returns
- * `"0 matching ${entity} entities (0 total)"` for missing-dir and
- * missing-entity-dir cases — the same shape an empty-but-present
- * directory produces, so the LLM's "skip empty or zero facets" prompt
- * rule treats all three uniformly. If the format drifts, missing-dir
- * facets become content the LLM narrates back to the user, which is
- * the regression class that triggered the "no data yet" briefing on
- * workspaces full of data.
- *
- * Tests go through `collectBriefingFacets` (the public API) rather
- * than poking the private resolver directly.
+ * A facet names a `resource` or a `tool` on the server that declared it; the
+ * host asks that server. There is no host-side disk query, so a facet with
+ * neither falls back to its `description` rather than the host inventing a
+ * count from files it happens to be able to read.
  */
 import { describe, expect, it } from "bun:test";
-import {
-	type BriefingContext,
-	collectBriefingFacets,
-} from "../../src/services/briefing-collector.ts";
-import type { BundleInstance } from "../../src/bundles/types.ts";
+import { type BriefingContext, collectBriefingFacets } from "../../src/services/briefing-collector.ts";
+import type { BriefingFacet, BundleInstance } from "../../src/bundles/types.ts";
 import type { ToolRegistry } from "../../src/tools/registry.ts";
 
-/** Minimal ToolRegistry stub — entity facets never call it. */
-function stubRegistry(): ToolRegistry {
+/** Registry stub recording the tool call a `tool` facet makes. */
+function stubRegistry(calls: Array<{ name: string; input: unknown }> = []): ToolRegistry {
 	return {
 		getSources: () => [],
-		execute: async () => ({ content: [], isError: false }),
+		execute: async (call: { name: string; input: unknown }) => {
+			calls.push({ name: call.name, input: call.input });
+			return { content: [{ type: "text", text: "7 open" }], isError: false };
+		},
 	} as unknown as ToolRegistry;
 }
 
-function makeInstance(overrides: Partial<BundleInstance> = {}): BundleInstance {
+function makeInstance(facets: BriefingFacet[]): BundleInstance {
 	return {
-		serverName: "synapse-crm",
-		bundleName: "@nimblebraininc/synapse-crm",
+		serverName: "crm",
+		bundleName: "crm",
 		version: "0.0.0",
 		state: "running",
-		trustScore: null,
 		ui: { name: "CRM", icon: "users", placements: [] },
-		briefing: {
-			priority: "medium",
-			facets: [
-				{
-					name: "overdue",
-					label: "Overdue",
-					type: "attention",
-					entity: "interaction",
-				},
-			],
-		},
-		type: "upjack",
+		briefing: { priority: "medium", facets },
 		wsId: "ws_test",
-		...overrides,
 	} as BundleInstance;
 }
 
 const period = { since: "2026-04-13T00:00:00Z", until: "2026-04-14T00:00:00Z" };
 
-describe("briefing-collector empty-facet contract", () => {
-	it("emits canonical zero-pattern when entityDataRoot directory is missing", async () => {
-		// entityDataRoot points at a path that doesn't exist on disk.
-		// The collector should not leak the filesystem path into the
-		// returned data string — it should normalize to the same
-		// "0 matching ... (0 total)" shape an empty-but-present dir
-		// would produce.
-		const instance = makeInstance({
-			entityDataRoot: "/tmp/__nb_briefing_collector_does_not_exist__/data",
-		});
-
-		const ctx: BriefingContext = await collectBriefingFacets(
-			[instance],
-			stubRegistry(),
-			period,
-		);
-
-		expect(ctx.facets).toHaveLength(1);
-		const f = ctx.facets[0];
-		expect(f).toBeDefined();
-		// biome-ignore lint/style/noNonNullAssertion: presence asserted above
-		expect(f!.ok).toBe(true);
-		// biome-ignore lint/style/noNonNullAssertion: presence asserted above
-		expect(f!.data).toBe("0 matching interaction entities (0 total)");
-		// biome-ignore lint/style/noNonNullAssertion: presence asserted above
-		expect(f!.data).not.toContain("/tmp/"); // no path leak
-	});
-
-	it("emits canonical zero-pattern when entity plural dir is missing", async () => {
-		// entityDataRoot exists but contains no `interactions/` (or
-		// any other plural variant) subdirectory. Use /tmp itself as a
-		// directory that exists but doesn't host the entity plural we
-		// ask for. /tmp may contain unrelated files; the collector
-		// should still return the canonical zero shape.
-		const instance = makeInstance({
-			entityDataRoot: "/tmp",
-			briefing: {
-				priority: "medium",
-				facets: [
-					{
-						name: "obscure",
-						label: "Obscure",
-						type: "activity",
-						entity: "wibblywobbly", // no /tmp/wibblywobblys etc. plural will exist
-					},
-				],
+describe("briefing-collector facet resolution", () => {
+	it("resolves a tool facet by calling the declared tool", async () => {
+		const calls: Array<{ name: string; input: unknown }> = [];
+		const instance = makeInstance([
+			{
+				name: "open_deals",
+				label: "Open deals",
+				type: "kpi",
+				tool: "crm__count_deals",
+				tool_input: { stage: "open" },
 			},
-		});
+		]);
 
 		const ctx: BriefingContext = await collectBriefingFacets(
 			[instance],
-			stubRegistry(),
+			stubRegistry(calls),
 			period,
 		);
 
 		expect(ctx.facets).toHaveLength(1);
-		const f = ctx.facets[0];
-		// biome-ignore lint/style/noNonNullAssertion: presence asserted above
-		expect(f!.data).toBe("0 matching wibblywobbly entities (0 total)");
+		expect(ctx.facets[0]?.ok).toBe(true);
+		expect(ctx.facets[0]?.data).toBe("7 open");
+		expect(calls).toEqual([{ name: "crm__count_deals", input: { stage: "open" } }]);
 	});
 
-	it("emits the recognizable zero-count prefix", async () => {
-		// Locks the literal "0 matching ... " prefix the empty-facet
-		// string starts with. Downstream readers (LLM prompt rule, any
-		// future emptiness check) rely on a `^\d+ matching` shape with
-		// N=0 to recognize empty facets without parsing further.
-		const instance = makeInstance({
-			entityDataRoot: "/tmp/__nb_briefing_collector_does_not_exist__/data",
-		});
+	it("falls back to the facet description when neither resource nor tool is declared", async () => {
+		const instance = makeInstance([
+			{
+				name: "overdue",
+				label: "Overdue",
+				type: "attention",
+				description: "Nothing overdue.",
+			},
+		]);
 
 		const ctx = await collectBriefingFacets([instance], stubRegistry(), period);
 
-		const f = ctx.facets[0];
-		expect(f).toBeDefined();
-		// biome-ignore lint/style/noNonNullAssertion: presence asserted above
-		const m = f!.data.match(/^(\d+)\s+matching/);
-		expect(m).not.toBeNull();
-		// biome-ignore lint/style/noNonNullAssertion: regex match asserted above
-		expect(m![1]).toBe("0");
+		expect(ctx.facets[0]?.ok).toBe(true);
+		expect(ctx.facets[0]?.data).toBe("Nothing overdue.");
 	});
 
+	it("reports a facet with no data source and no description without throwing", async () => {
+		const instance = makeInstance([{ name: "mystery", label: "Mystery", type: "activity" }]);
+
+		const ctx = await collectBriefingFacets([instance], stubRegistry(), period);
+
+		expect(ctx.facets[0]?.ok).toBe(true);
+		expect(ctx.facets[0]?.data).toBe("Mystery: no data source configured");
+	});
+
+	it("skips connectors that are not running", async () => {
+		const instance = makeInstance([
+			{ name: "x", label: "X", type: "kpi", tool: "crm__x" },
+		]);
+		instance.state = "dead";
+
+		const ctx = await collectBriefingFacets([instance], stubRegistry(), period);
+
+		expect(ctx.facets).toEqual([]);
+	});
 });

@@ -1,19 +1,17 @@
 import { NoopEventSink } from "../adapters/noop-events.ts";
 import type { BundleLifecycleManager } from "../bundles/lifecycle.ts";
-import type { BundleManifest } from "../bundles/types.ts";
 import { isToolEnabled, type ResolvedFeatures } from "../config/features.ts";
 import type { ConfirmationGate } from "../config/privilege.ts";
-import type { ServerDetail } from "../connectors/server-detail.ts";
 import { textContent } from "../engine/content-helpers.ts";
 import type { EventSink, ToolPromotionControls, ToolResult, ToolSchema } from "../engine/types.ts";
 import { isInternalTool, NON_ADVANCING_META_KEY } from "../engine/types.ts";
 import { log } from "../observability/log.ts";
+import type { DirectoryEntry } from "../registries/types.ts";
 import { getRequestContext } from "../runtime/request-context.ts";
 import type { Runtime } from "../runtime/runtime.ts";
 import type { SelectedSkill } from "../skills/select.ts";
 import { approxTokens } from "../skills/tokens.ts";
 import type { Skill } from "../skills/types.ts";
-import { createManageAppsTool } from "./app-tools.ts";
 import { createManageConnectorsTool } from "./connector-tools.ts";
 import { buildCoreResourceMap } from "./core-resources/index.ts";
 import { createCoreToolDefs } from "./core-source.ts";
@@ -76,12 +74,11 @@ export async function createSystemTools(
   eventSink?: EventSink,
   features?: ResolvedFeatures,
   runtime?: Runtime,
-  // Reserved slot — was the mpak SDK home for the legacy searchBundles
-  // discovery path. Registry search now goes through
-  // ConnectorDirectory.servers() (Browse's own cached, scoped fetch), which
-  // manages its own client. Keep the positional slot stable so every call
-  // site's arity holds.
-  _mpakHome?: string,
+  // Reserved slot — was a registry-SDK home for a legacy bundle-discovery
+  // path. Registry search now goes through ConnectorDirectory.servers()
+  // (Browse's own cached, scoped fetch). Keep the positional slot stable so
+  // every call site's arity holds.
+  _reservedRegistryHome?: string,
   manageUsersCtx?: ManageUsersContext,
   manageWorkspacesCtx?: ManageWorkspacesContext,
   manageMembersCtx?: ManageMembersContext,
@@ -100,14 +97,14 @@ export async function createSystemTools(
     {
       name: "search",
       description:
-        "Search installed tools by keyword (scope: tools) or the mpak registry for bundles to install (scope: registry). Returns matches as a list; to call a matched tool, activate it first with nb__manage_tools.",
+        "Search installed tools by keyword (scope: tools) or the connector registries for servers to install (scope: registry). Returns matches as a list; to call a matched tool, activate it first with nb__manage_tools.",
       inputSchema: {
         type: "object",
         properties: {
           scope: {
             type: "string",
             enum: ["tools", "registry"],
-            description: "Search installed tools or the mpak registry for new bundles.",
+            description: "Search installed tools or the connector registries for new servers.",
           },
           query: {
             type: "string",
@@ -175,15 +172,6 @@ export async function createSystemTools(
     );
     systemToolDefs.push(
       createManageRegistriesTool({
-        runtime,
-        getIdentity: manageWorkspacesCtx.getIdentity,
-      }),
-    );
-    // Org-scoped app version management (org_admin). Separate from the
-    // per-workspace `manage_connectors` because an app's version is global
-    // (shared name-keyed mpak cache) — see app-tools.ts.
-    systemToolDefs.push(
-      createManageAppsTool({
         runtime,
         getIdentity: manageWorkspacesCtx.getIdentity,
       }),
@@ -443,13 +431,8 @@ async function buildBundleStatusEntry(
   if (query && !serverName.toLowerCase().includes(query)) return null;
 
   const toolCount = await safeToolCount(source);
-  const manifest = await readManifestForSource(serverName);
 
-  const lines: string[] = [];
-  lines.push(`**${manifest?.name ?? serverName}**`);
-  if (manifest?.version) lines.push(`  Version: ${manifest.version}`);
-  if (manifest?.description) lines.push(`  Description: ${manifest.description}`);
-  if (manifest?.author?.name) lines.push(`  Author: ${manifest.author.name}`);
+  const lines: string[] = [`**${serverName}**`];
   // Omit the Tools line when enumeration failed — a dead source's true tool
   // count is unknowable here (the memo is cleared on teardown), and rendering
   // `Tools: 0` would read as "empty connector" rather than "down".
@@ -730,34 +713,6 @@ function formatSkillDetail(skill: Skill): string {
   return lines.join("\n");
 }
 
-/** Read a cached manifest by server name, trying common mpak cache paths. */
-async function readManifestForSource(serverName: string): Promise<BundleManifest | null> {
-  try {
-    const { existsSync, readFileSync, readdirSync } = require("node:fs");
-    const { join } = require("node:path");
-    const { homedir } = require("node:os");
-    const cacheDir = join(homedir(), ".mpak", "cache");
-    if (!existsSync(cacheDir)) return null;
-
-    // Find a cache entry whose name ends with the server name
-    // e.g., serverName "granola" matches "nimblebraininc-granola"
-    const entries = readdirSync(cacheDir) as string[];
-    const match = entries.find(
-      (e: string) =>
-        e === serverName ||
-        e.endsWith(`-${serverName}`) ||
-        e.replace(/-/g, "").includes(serverName.replace(/-/g, "")),
-    );
-    if (!match) return null;
-
-    const manifestPath = join(cacheDir, match, "manifest.json");
-    if (!existsSync(manifestPath)) return null;
-    return JSON.parse(readFileSync(manifestPath, "utf-8")) as BundleManifest;
-  } catch {
-    return null;
-  }
-}
-
 function formatUptime(ms: number): string {
   const seconds = Math.floor(ms / 1000);
   if (seconds < 60) return `${seconds}s`;
@@ -768,31 +723,28 @@ function formatUptime(ms: number): string {
 }
 
 /**
- * Keyword match over an mpak `ServerDetail` set for agent registry search.
+ * Keyword match over the projected directory for agent registry search.
  * Empty query returns everything; otherwise every whitespace-separated term
- * must appear (case-insensitive) in the name, title, description, or a
- * package identifier.
+ * must appear (case-insensitive) in the id, name, description, or a tag.
+ *
+ * Matches over `DirectoryEntry`, not the raw `ServerDetail`, because that is
+ * the set a caller can act on: the projection is what drops an entry this
+ * runtime cannot install. Matching pre-projection would let the agent find —
+ * and try to install — a server the catalog already refused, and would match
+ * it on a package identifier that names code nothing here downloads.
  *
  * NOTE: this is DELIBERATELY a different matcher from the web Browse search
  * box, not a port of it. Browse OR-matches the whole query as one literal
  * substring across name/description/tags; this AND-matches each term across
  * more fields — better precision for an agent narrowing to a specific
- * bundle. They are not meant to return identical sets. No shared backend
- * matcher exists; if you change the field set here, that divergence is
- * expected, not a bug.
+ * connector. They are not meant to return identical sets, only to run over
+ * the same underlying entries. No shared backend matcher exists.
  */
-function matchServersByQuery(servers: ServerDetail[], query: string): ServerDetail[] {
+function matchEntriesByQuery(entries: DirectoryEntry[], query: string): DirectoryEntry[] {
   const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
-  if (terms.length === 0) return servers;
-  return servers.filter((s) => {
-    const hay = [
-      s.name,
-      s.title ?? "",
-      s.description,
-      ...(s.packages ?? []).map((p) => p.identifier),
-    ]
-      .join(" ")
-      .toLowerCase();
+  if (terms.length === 0) return entries;
+  return entries.filter((e) => {
+    const hay = [e.id, e.name, e.description, ...(e.tags ?? [])].join(" ").toLowerCase();
     return terms.every((t) => hay.includes(t));
   });
 }
@@ -822,72 +774,56 @@ function checkSearchScopeGate(scope: string, features?: ResolvedFeatures): ToolR
     return { content: textContent("Tool discovery is disabled."), isError: true };
   }
   if (scope === "registry" && features && !features.bundleDiscovery) {
-    return { content: textContent("Bundle discovery is disabled."), isError: true };
+    return { content: textContent("Registry discovery is disabled."), isError: true };
   }
   return null;
 }
 
-/** `search` scope=registry — keyword-match mpak bundles from the connector directory. */
+/** `search` scope=registry — keyword-match installable entries from the connector directory. */
 async function searchRegistry(runtime: Runtime | undefined, query: string): Promise<ToolResult> {
   try {
     // Route agent discovery through the SAME method Browse uses —
-    // ConnectorDirectory.servers(). It fetches every enabled source,
-    // applies each registry's OWN scopes per-source (so mixed-scope
-    // multi-registry configs filter exactly as Browse does), runs
-    // the icon/URL safety scrub, caches, and aggregates errors. We
-    // take just the mpak-sourced bundles and keyword-match them. One
-    // method, not two parallel fetch/filter paths, so the scope
-    // filtering can't drift.
+    // ConnectorDirectory.list(). It fetches every enabled source, applies
+    // each registry's OWN scopes per-source (so mixed-scope multi-registry
+    // configs filter exactly as Browse does), runs the icon/URL safety scrub,
+    // projects, dedups, caches, and aggregates errors. One method, not two
+    // parallel fetch/filter paths, so the sets cannot drift — and the
+    // projection is load-bearing here, not incidental: it is what drops an
+    // entry this runtime cannot install, so the agent is never shown a
+    // connector whose install would be refused downstream.
     //
     // No runtime (non-agent/test paths) ⇒ no directory ⇒ no results;
     // the production agent always has one.
     const directory = runtime?.getConnectorDirectory();
-    const aggregated = directory ? await directory.servers() : null;
-    const mpakBundles = (aggregated?.servers ?? [])
-      .filter((s) => s.source.type === "mpak")
-      .map((s) => s.detail);
-    const results = matchServersByQuery(mpakBundles, query);
+    const aggregated = directory ? await directory.list() : null;
+    const results = matchEntriesByQuery(aggregated?.entries ?? [], query);
     if (results.length === 0) {
-      // Distinguish "registry unreachable" from "no such bundle".
-      // servers() aggregates per-source fetch failures into `errors`
-      // instead of throwing, so an mpak outage (5xx / timeout / DNS)
-      // yields zero bundles silently. If an mpak source errored and we
-      // got nothing back, surface a failure — matching the
-      // pre-refactor throw — rather than telling the agent the bundle
-      // doesn't exist.
-      const mpakIds = new Set(
-        (await runtime?.getRegistryStore().list())
-          ?.filter((r) => r.type === "mpak")
-          .map((r) => r.id),
-      );
-      // `mpakBundles.length === 0` is global across all mpak rows:
-      // with multiple mpak registries where one is up (returning
-      // bundles) and the down one held the queried bundle, this
-      // reports "No bundles found" rather than a failure. Acceptable —
-      // it matches Browse's partial-results semantics, and a single
-      // mpak registry is the norm.
-      const mpakDown =
-        mpakBundles.length === 0 &&
-        (aggregated?.errors ?? []).some((e) => mpakIds.has(e.registryId));
-      if (mpakDown)
+      // Distinguish "registry unreachable" from "no such server".
+      // list() aggregates a source failure into `errors` instead of throwing,
+      // so an outage yields zero entries silently. If a source errored and we
+      // got nothing back at all, surface a failure rather than telling the
+      // agent the server doesn't exist. With several registries where one is
+      // up and the down one held the queried entry, this reports "no servers
+      // found" — matching Browse's partial-results semantics.
+      if ((aggregated?.entries ?? []).length === 0 && (aggregated?.errors ?? []).length > 0) {
         return {
-          content: textContent(`Failed to search mpak registry for "${query}".`),
+          content: textContent(`Failed to search the connector registries for "${query}".`),
           isError: true,
         };
+      }
       return {
-        content: textContent(`No bundles found for "${query}".`),
+        content: textContent(`No servers found for "${query}".`),
         isError: false,
       };
     }
     const lines = [`Found ${results.length} result(s) for "${query}":\n`];
     for (const r of results) {
-      const id = r.packages?.[0]?.identifier ?? r.name;
-      lines.push(`- **${id}** ${r.version} [bundle]: ${r.description ?? ""}`);
+      lines.push(`- **${r.id}** (${r.name}): ${r.description ?? ""}`);
     }
     return { content: textContent(lines.join("\n")), isError: false };
   } catch {
     return {
-      content: textContent(`Failed to search mpak registry for "${query}".`),
+      content: textContent(`Failed to search the connector registries for "${query}".`),
       isError: true,
     };
   }

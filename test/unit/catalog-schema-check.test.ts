@@ -173,7 +173,7 @@ describe("validateStaticCatalog", () => {
     expect(diagnostics[0]?.message).toContain("not installable");
   });
 
-  test("a packages-only entry is installable — no remote required", () => {
+  test("a packages-only entry is not installable — this runtime acquires nothing", () => {
     const { remotes, ...pkgOnly } = VALID_ENTRY;
     writeCatalog("catalog.json", [
       {
@@ -188,7 +188,9 @@ describe("validateStaticCatalog", () => {
         ],
       },
     ]);
-    expect(validateStaticCatalog(dir)).toEqual([]);
+    const diagnostics = validateStaticCatalog(dir);
+    expect(diagnostics).toHaveLength(1);
+    expect(diagnostics[0]?.message).toContain("not installable");
   });
 
   test("a bad remote transport is caught by the schema, before installability", () => {

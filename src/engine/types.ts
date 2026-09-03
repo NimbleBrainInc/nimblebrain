@@ -288,7 +288,6 @@ export type EngineEventType =
   | "context.length_continuation"
   | "bundle.installed"
   | "bundle.uninstalled"
-  | "bundle.upgraded"
   /**
    * Per-principal connection state change for a remote URL bundle.
    * Payload: { wsId, serverName, principalId, state, authorizationUrl? }.
