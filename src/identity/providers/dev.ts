@@ -34,6 +34,8 @@ export class DevIdentityProvider implements IdentityProvider {
     authCodeFlow: false,
     tokenRefresh: false,
     managedUsers: false,
+    // Dev mode has no auth at all, so nothing to discover.
+    authorizationServer: false,
   };
 
   private initialized = false;

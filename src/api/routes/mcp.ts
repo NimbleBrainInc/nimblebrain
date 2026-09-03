@@ -1,6 +1,5 @@
 import { Hono } from "hono";
 import { createMiddleware } from "hono/factory";
-import type { WorkosIdentityProvider } from "../../identity/providers/workos.ts";
 import {
   type AuthMiddlewareOptions,
   authenticateRequest,
@@ -15,8 +14,8 @@ import { type AppContext, type AuthEnv, apiError } from "../types.ts";
  * Build the WWW-Authenticate header value for MCP OAuth discovery.
  *
  * When an MCP client receives this header on a 401, it fetches the
- * resource_metadata URL to discover the AuthKit authorization server
- * and initiates the OAuth flow automatically.
+ * resource_metadata URL to discover the authorization server and
+ * initiates the OAuth flow automatically.
  */
 function mcpWwwAuthenticate(req: Request): string {
   const url = new URL(req.url);
@@ -33,21 +32,19 @@ function mcpWwwAuthenticate(req: Request): string {
   ].join(", ");
 }
 
-/** Check if AuthKit MCP OAuth is configured on the provider. */
-function hasAuthkitOAuth(ctx: AppContext): boolean {
-  return !!(
-    ctx.provider &&
-    "getAuthkitDomain" in ctx.provider &&
-    (ctx.provider as WorkosIdentityProvider).getAuthkitDomain()
-  );
+/** Whether this instance has an authorization server for MCP clients to discover. */
+function hasMcpOAuth(ctx: AppContext): boolean {
+  const provider = ctx.provider;
+  if (!provider?.capabilities.authorizationServer) return false;
+  return provider.authorizationServer?.() != null;
 }
 
 /**
  * MCP-specific auth middleware.
  *
  * Like requireAuth, but returns WWW-Authenticate header with resource_metadata
- * on 401 so MCP clients can discover the AuthKit authorization server and
- * initiate the OAuth flow automatically.
+ * on 401 so MCP clients can discover the authorization server and initiate
+ * the OAuth flow automatically.
  */
 function requireMcpAuth(options: AuthMiddlewareOptions, ctx: AppContext) {
   return createMiddleware<AuthEnv>(async (c, next) => {
@@ -55,7 +52,7 @@ function requireMcpAuth(options: AuthMiddlewareOptions, ctx: AppContext) {
 
     if (isAuthError(result)) {
       // Attach WWW-Authenticate header for MCP OAuth discovery
-      if (result.status === 401 && hasAuthkitOAuth(ctx)) {
+      if (result.status === 401 && hasMcpOAuth(ctx)) {
         return apiError(401, "unauthorized", "Authentication required for MCP", undefined, {
           "WWW-Authenticate": mcpWwwAuthenticate(c.req.raw),
         });
@@ -98,7 +95,7 @@ export function mcpRoutes(ctx: AppContext) {
           "unauthorized",
           "Authentication required for MCP",
           undefined,
-          hasAuthkitOAuth(ctx) ? { "WWW-Authenticate": mcpWwwAuthenticate(c.req.raw) } : undefined,
+          hasMcpOAuth(ctx) ? { "WWW-Authenticate": mcpWwwAuthenticate(c.req.raw) } : undefined,
         );
       }
 

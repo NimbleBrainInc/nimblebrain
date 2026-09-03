@@ -1713,7 +1713,7 @@ export function handleLogout(): Response {
   // Clear nb_session for both SameSite modes (covers Strict and Lax)
   res.headers.append("Set-Cookie", "nb_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0");
   res.headers.append("Set-Cookie", "nb_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0");
-  // Clear WorkOS refresh token
+  // Clear the provider refresh token
   res.headers.append("Set-Cookie", "nb_refresh=; HttpOnly; SameSite=Lax; Path=/v1/auth; Max-Age=0");
   return res;
 }

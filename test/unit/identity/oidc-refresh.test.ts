@@ -137,6 +137,7 @@ function refreshProvider(
       authCodeFlow: true,
       tokenRefresh: opts?.tokenRefresh ?? true,
       managedUsers: true,
+      authorizationServer: false,
     },
     verifyRequest: async () => null,
     refreshToken,

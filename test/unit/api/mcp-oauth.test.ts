@@ -15,29 +15,28 @@ import { TransientAuthError } from "../../../src/identity/provider.ts";
 
 // ── Test helpers ──────────────────────────────────────────────────
 
-/** Build a minimal AppContext with an auth-requiring provider that has AuthKit configured. */
-function makeCtx(opts: { authkitDomain?: string; verify?: () => Promise<null> } = {}): AppContext {
+/**
+ * Build a minimal AppContext with an auth-requiring provider that optionally
+ * declares an authorization server — the only thing the 401 challenge reads.
+ */
+function makeCtx(opts: { issuer?: string; verify?: () => Promise<null> } = {}): AppContext {
   const verifyRequest = opts.verify ?? (async () => null);
-  const provider = opts.authkitDomain
-    ? {
-        capabilities: { authCodeFlow: true, tokenRefresh: true, managedUsers: true },
-        verifyRequest, // default: always reject — simulates unauthenticated
-        listUsers: async () => [],
-        createUser: async () => {
-          throw new Error("not implemented");
-        },
-        deleteUser: async () => false,
-        getAuthkitDomain: () => opts.authkitDomain,
-      }
-    : {
-        capabilities: { authCodeFlow: true, tokenRefresh: true, managedUsers: true },
-        verifyRequest,
-        listUsers: async () => [],
-        createUser: async () => {
-          throw new Error("not implemented");
-        },
-        deleteUser: async () => false,
-      };
+  const authServer = opts.issuer ? { issuer: opts.issuer } : null;
+  const provider = {
+    capabilities: {
+      authCodeFlow: true,
+      tokenRefresh: true,
+      managedUsers: true,
+      authorizationServer: authServer !== null,
+    },
+    verifyRequest, // default: always reject — simulates unauthenticated
+    listUsers: async () => [],
+    createUser: async () => {
+      throw new Error("not implemented");
+    },
+    deleteUser: async () => false,
+    authorizationServer: () => authServer,
+  };
 
   return {
     provider,
@@ -53,7 +52,7 @@ function makeCtx(opts: { authkitDomain?: string; verify?: () => Promise<null> } 
   } as unknown as AppContext;
 }
 
-function createApp(opts: { authkitDomain?: string; verify?: () => Promise<null> } = {}) {
+function createApp(opts: { issuer?: string; verify?: () => Promise<null> } = {}) {
   const ctx = makeCtx(opts);
   const app = new Hono();
   app.route("/", mcpRoutes(ctx));
@@ -63,8 +62,8 @@ function createApp(opts: { authkitDomain?: string; verify?: () => Promise<null> 
 // ── WWW-Authenticate header tests ────────────────────────────────
 
 describe("MCP OAuth WWW-Authenticate header", () => {
-  it("returns WWW-Authenticate with correct format when AuthKit is configured", async () => {
-    const app = createApp({ authkitDomain: "myapp" });
+  it("returns WWW-Authenticate with correct format when an authorization server is declared", async () => {
+    const app = createApp({ issuer: "https://myapp.authkit.app" });
     const res = await app.request("/mcp", {
       method: "POST",
       headers: {
@@ -87,7 +86,7 @@ describe("MCP OAuth WWW-Authenticate header", () => {
   });
 
   it("resource_metadata URL derives from the request origin", async () => {
-    const app = createApp({ authkitDomain: "myapp" });
+    const app = createApp({ issuer: "https://myapp.authkit.app" });
     const res = await app.request("http://custom-host.example.com/mcp", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -103,7 +102,7 @@ describe("MCP OAuth WWW-Authenticate header", () => {
   });
 
   it("honors X-Forwarded-Proto when behind a TLS-terminating proxy", async () => {
-    const app = createApp({ authkitDomain: "myapp" });
+    const app = createApp({ issuer: "https://myapp.authkit.app" });
     // Simulates ALB → pod: pod sees HTTP, but ALB sets X-Forwarded-Proto: https
     // The Host header stays as the public host (ALB forwards it verbatim).
     const res = await app.request("http://hq.example.com/mcp", {
@@ -123,7 +122,7 @@ describe("MCP OAuth WWW-Authenticate header", () => {
     );
   });
 
-  it("does not include WWW-Authenticate when AuthKit is not configured", async () => {
+  it("does not include WWW-Authenticate when no authorization server is declared", async () => {
     const app = createApp({});
     const res = await app.request("/mcp", {
       method: "POST",
@@ -143,7 +142,7 @@ describe("MCP OAuth WWW-Authenticate header", () => {
 describe("MCP auth — transient unavailability", () => {
   it("answers 503 without WWW-Authenticate when verification is unavailable", async () => {
     const app = createApp({
-      authkitDomain: "myapp",
+      issuer: "https://myapp.authkit.app",
       verify: async () => {
         throw new TransientAuthError("jwks_unavailable", "boom");
       },

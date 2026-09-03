@@ -5,6 +5,7 @@ import { ensureUserWorkspace } from "../../workspace/provisioning.ts";
 import type { WorkspaceStore } from "../../workspace/workspace-store.ts";
 import type { WorkosAuth } from "../instance.ts";
 import type {
+  AuthorizationServer,
   CreateUserInput,
   CreateUserResult,
   IdentityProvider,
@@ -197,11 +198,8 @@ function resolveWorkosRedirectUri(explicit: string | undefined): string {
  * source of truth for users.
  */
 export class WorkosIdentityProvider implements IdentityProvider {
-  readonly capabilities: ProviderCapabilities = {
-    authCodeFlow: true,
-    tokenRefresh: true,
-    managedUsers: true,
-  };
+  /** Assigned in the constructor: `authorizationServer` depends on config. */
+  readonly capabilities: ProviderCapabilities;
 
   private workos: WorkOS;
   private clientId: string;
@@ -253,6 +251,13 @@ export class WorkosIdentityProvider implements IdentityProvider {
     this.adminRoleSlugs = normalizeAdminRoleSlugs(config.adminRoleSlugs);
     this.userStore = userStore ?? null;
     this.workspaceStore = workspaceStore;
+    this.capabilities = {
+      authCodeFlow: true,
+      tokenRefresh: true,
+      managedUsers: true,
+      // AuthKit is the authorization server; without a domain there is none.
+      authorizationServer: this.authkitOrigin() !== null,
+    };
   }
 
   // ── IdentityProvider interface ──────────────────────────────────
@@ -283,7 +288,7 @@ export class WorkosIdentityProvider implements IdentityProvider {
     // Route verification based on issuer: AuthKit MCP OAuth vs WorkOS User Management.
     // Both branches route their rejections through reject() so failures carry the
     // same reason field and severity — one reason-keyed view covers both issuers.
-    const authkitIssuer = this.authkitDomain ? `https://${this.authkitDomain}.authkit.app` : null;
+    const authkitIssuer = this.authkitOrigin();
     const identity =
       authkitIssuer && payload.iss === authkitIssuer
         ? await this.verifyAuthkitToken(parsed, payload.sub)
@@ -792,9 +797,22 @@ export class WorkosIdentityProvider implements IdentityProvider {
     await this.syncLocalProfile(workosUser.id, { email: workosUser.email, displayName, orgRole });
   }
 
-  /** The AuthKit domain, if configured. Used by well-known route handlers. */
-  getAuthkitDomain(): string | undefined {
-    return this.authkitDomain;
+  /**
+   * AuthKit, when this instance is configured for it — the authorization
+   * server external MCP clients discover and obtain tokens from.
+   */
+  authorizationServer(): AuthorizationServer | null {
+    const origin = this.authkitOrigin();
+    if (!origin) return null;
+    return {
+      issuer: origin,
+      metadataUrl: `${origin}/.well-known/oauth-authorization-server`,
+    };
+  }
+
+  /** AuthKit's origin, or null when no AuthKit domain is configured. */
+  private authkitOrigin(): string | null {
+    return this.authkitDomain ? `https://${this.authkitDomain}.authkit.app` : null;
   }
 
   private async getAuthkitJwks(): Promise<JwksKey[] | null> {
