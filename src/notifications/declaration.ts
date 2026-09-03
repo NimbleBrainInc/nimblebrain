@@ -80,8 +80,9 @@ function dropDeclaration(reason: string): undefined {
  * A single resource cannot mean two things to the same reader: the runtime
  * would poll `ui://acme/notifications` as an outbox *and* resolve it as an app
  * surface, and whichever won would be an accident of ordering. The server's own
- * namespace is where an outbox belongs, and the reserved set has one home
- * (`tools/resource-schemes.ts`).
+ * namespace is where an outbox belongs, and the closed set of schemes the
+ * runtime resolves itself is assembled in one place
+ * (`tools/resource-schemes.ts`), from the modules that own each one.
  *
  * Louder than a malformed block, deliberately. A malformed declaration is a
  * server that is visibly broken; this one is a server that looks entirely

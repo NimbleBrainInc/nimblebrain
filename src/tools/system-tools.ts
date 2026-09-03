@@ -25,7 +25,7 @@ import { createManageToolsToolDefs } from "./platform/manage-tools.ts";
 import { createUseSkillToolDef } from "./platform/skills.ts";
 import type { ToolRegistry } from "./registry.ts";
 import { createManageRegistriesTool } from "./registry-tools.ts";
-import { RESERVED_RESOURCE_SCHEMES_PROSE } from "./resource-schemes.ts";
+import { READ_RESOURCE_SCHEMES_PROSE } from "./resource-schemes.ts";
 import { rankToolSearchResults } from "./search-ranking.ts";
 import { createManageUsersTool, type ManageUsersContext } from "./user-tools.ts";
 import {
@@ -240,7 +240,7 @@ function createReadResourceTool(getRegistry: () => ToolRegistry): InProcessTool 
     name: "read_resource",
     description:
       "Read a resource published by an installed app or by the platform. Use this when an app's instructions tell you to load a specific resource, or when you need to inspect platform-published context (e.g. saved overlay instructions). Supported URI schemes include " +
-      `${RESERVED_RESOURCE_SCHEMES_PROSE}, and any bundle-published scheme matching the bundle's source name. ` +
+      `${READ_RESOURCE_SCHEMES_PROSE}, and any bundle-published scheme matching the bundle's source name. ` +
       "Pass the full URI; the content comes back as text in the tool result.",
     inputSchema: {
       type: "object",
@@ -248,7 +248,7 @@ function createReadResourceTool(getRegistry: () => ToolRegistry): InProcessTool 
         uri: {
           type: "string",
           description:
-            "Resource URI to read (e.g. skill://myapp/SKILL.md, ui://myapp/guide, instructions://workspace, <bundle>://instructions).",
+            "The full URI to read, scheme included (e.g. skill://myapp/SKILL.md, <bundle>://instructions).",
         },
       },
       required: ["uri"],
