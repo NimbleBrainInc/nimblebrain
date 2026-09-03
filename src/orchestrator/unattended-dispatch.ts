@@ -21,8 +21,9 @@
  *      A non-member is `skipped`, not denied — the same classification and the
  *      same self-healing-on-re-add semantics a scheduled run gets, and it
  *      happens before the registry is touched at all.
- *   2. **The name**, against the unattended policy — the authoring surfaces
- *      whose effect would outlive the call (`src/tools/unattended-policy.ts`).
+ *   2. **The name**, against the unattended policy — the surfaces that would
+ *      grow the principal's future capability
+ *      (`src/tools/unattended-policy.ts`).
  *   3. **The router**, built for `(principalId, workspaceId)` exactly as a
  *      session builds it, so the wall (ADR-0005), `assertToolAllowed`, the
  *      personal-connector grant (ADR-0006) and `INTERNAL_TOOL_ANNOTATION`
