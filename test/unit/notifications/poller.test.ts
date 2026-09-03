@@ -14,7 +14,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { NoopEventSink } from "../../../src/adapters/noop-events.ts";
-import { readCursor } from "../../../src/notifications/cursors.ts";
+import { readCursor, writeCursor } from "../../../src/notifications/cursors.ts";
 import { resolvePollConfig } from "../../../src/notifications/poll-config.ts";
 import { NotificationPoller, type PollTarget } from "../../../src/notifications/poller.ts";
 import { NotificationStore } from "../../../src/notifications/store.ts";
@@ -153,9 +153,7 @@ describe("a sweep", () => {
     // this, and the store's dedupe on `(source, eventId)` is what absorbs it.
     const replayed = outbox.reads[1]?.cursor;
     expect(replayed).toBeDefined();
-    await workspaceStore.update(wsId, {
-      notifications: { cursors: { "fixture-outbox": replayed as string } },
-    });
+    await writeCursor(workspaceStore, wsId, "fixture-outbox", replayed as string);
     advance(PAST_ANY_BACKOFF_MS);
     await poller.sweep();
 

@@ -1,9 +1,13 @@
 /**
- * The cursor lives on the workspace record beside `hooks` and takes the same
- * lock. Two properties matter here and nowhere else:
+ * The cursor shares the workspace record with `hooks`, and shares the
+ * `notifications` block itself with the source ceilings and routes an admin
+ * writes. Three properties matter here and nowhere else:
  *
  *   - a cursor write and a hooks write cannot lose each other, because
- *     `WorkspaceStore.update` patches a snapshot it read itself; and
+ *     `WorkspaceStore.update` patches a snapshot it read itself;
+ *   - a cursor write and a settings write cannot lose each other either, for
+ *     the same reason one field deeper — they go through one reader and one
+ *     writer of the whole block; and
  *   - uninstalling a connector drops its position, so a reinstall bootstraps.
  */
 
@@ -12,6 +16,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { updateRegistrations } from "../../../src/hooks/registrations.ts";
+import {
+  readNotificationsConfig,
+  updateNotificationsConfig,
+} from "../../../src/notifications/config.ts";
 import { clearCursor, readCursor, writeCursor } from "../../../src/notifications/cursors.ts";
 import { WorkspaceStore } from "../../../src/workspace/workspace-store.ts";
 
@@ -41,6 +49,8 @@ describe("readCursor", () => {
   });
 
   test("ignores a stored value that is not a non-empty string", async () => {
+    // A cursor the runtime cannot hand back verbatim is not a position;
+    // dropping it bootstraps that connector, which loses nothing it had.
     await store.update(wsId, { notifications: { cursors: { acme: "" } } });
     expect(readCursor(await record(), "acme")).toBeUndefined();
   });
@@ -100,6 +110,52 @@ describe("writeCursor", () => {
     const ws = await record();
     expect(readCursor(ws, "acme")).toBe("cur_1");
     expect(ws.hooks?.["acme/vendor"]?.kid).toBe("kid_1");
+  });
+});
+
+describe("the block has two authors and one home", () => {
+  /** A settings write, exactly as the admin-facing tools make one. */
+  async function writeSettings() {
+    await updateNotificationsConfig(store, wsId, (current) => ({
+      ...current,
+      sources: { acme: { maxLevel: "urgent" } },
+      routes: [
+        {
+          id: "rt_1",
+          createdBy: "usr_admin",
+          match: { source: "acme" },
+          deliver: [{ kind: "tool", tool: "slack__send_message", input: { text: "{{title}}" } }],
+        },
+      ],
+    }));
+  }
+
+  test("a settings write does not drop the poller's cursors", async () => {
+    // `WorkspaceStore.update` replaces a patched field whole, so a settings
+    // write that re-derived only `sources` and `routes` would persist an empty
+    // `cursors` — and every connector would silently replay from bootstrap.
+    await writeCursor(store, wsId, "acme", "cur_1");
+    await writeSettings();
+
+    expect(readCursor(await record(), "acme")).toBe("cur_1");
+  });
+
+  test("a cursor write does not drop the operator's settings", async () => {
+    await writeSettings();
+    await writeCursor(store, wsId, "acme", "cur_1");
+
+    const config = readNotificationsConfig(await record());
+    expect(config.sources?.acme?.maxLevel).toBe("urgent");
+    expect(config.routes?.[0]?.id).toBe("rt_1");
+    expect(config.cursors?.acme).toBe("cur_1");
+  });
+
+  test("the two racing on one workspace do not lose each other", async () => {
+    await Promise.all([writeSettings(), writeCursor(store, wsId, "acme", "cur_1")]);
+
+    const config = readNotificationsConfig(await record());
+    expect(config.routes?.[0]?.id).toBe("rt_1");
+    expect(config.cursors?.acme).toBe("cur_1");
   });
 });
 
