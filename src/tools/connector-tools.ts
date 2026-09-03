@@ -37,6 +37,7 @@ import { ensureHooks, stopWatchingHooks } from "../hooks/reconcile.ts";
 import type { ConnectorOwner } from "../identity/connector-owner.ts";
 import { IdentityConnectorStore } from "../identity/connector-store.ts";
 import type { UserIdentity } from "../identity/provider.ts";
+import { clearCursor } from "../notifications/cursors.ts";
 import { log } from "../observability/log.ts";
 import type { PermissionOwner } from "../permissions/permission-store.ts";
 import type { ConnectorCatalogEntry } from "../registries/projection.ts";
@@ -2480,6 +2481,12 @@ async function handleUninstall(
     // one. It is what keeps a later reinstall from resurrecting a key id whose
     // URL has been in the wild the whole time.
     await revokeHooksForConnector(ctx.runtime.getWorkspaceStore(), wsId, serverName);
+    // And reset the outbox position. The cursor is the emitting server's own
+    // opaque value, carrying an epoch it may reset while the connector is gone,
+    // so a reinstall resuming from a stale one would ask a question its outbox
+    // can no longer answer. Bootstrap costs only what was emitted while nobody
+    // was installed to receive it.
+    await clearCursor(ctx.runtime.getWorkspaceStore(), wsId, serverName);
     // And drop the tool-set watch, whose closure would otherwise hold a source
     // nothing routes to any more.
     stopWatchingHooks(wsId, serverName);

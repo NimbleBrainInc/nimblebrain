@@ -501,6 +501,40 @@
       },
       "additionalProperties": false
     },
+    "notifications": {
+      "description": "Notifications — how the runtime reads the outboxes connectors declare. Only the poll's pacing is configurable: what an outbox carries is the emitting server's decision and who may declare one is the operator's, while what the poll costs is the runtime's.",
+      "type": "object",
+      "properties": {
+        "poll": {
+          "description": "Pacing for the outbox poll. Cadence is per (workspace, connector) and adaptive: consecutive empty polls double the interval up to maxIntervalMs, and a poll that returns events snaps back to intervalMs. A server may recommend its own cadence with nextPollMs, honoured between a fixed 15s floor and maxIntervalMs.",
+          "type": "object",
+          "properties": {
+            "intervalMs": {
+              "type": "number",
+              "description": "Base cadence per source, in milliseconds. Floored at the fixed 15000 ms poll floor. Default: 60000 (60s).",
+              "default": 60000
+            },
+            "maxIntervalMs": {
+              "type": "number",
+              "description": "Backoff ceiling in milliseconds — the slowest an idle source is read, and the interval an open circuit breaker half-opens on. Never resolves below intervalMs. Default: 300000 (5 min).",
+              "default": 300000
+            },
+            "maxEvents": {
+              "type": "number",
+              "description": "Events requested per read. A server that cuts the batch at this size answers hasMore, and the runtime reads again at once within the budget. Capped at 1000. Default: 100.",
+              "default": 100
+            },
+            "budgetPerMinute": {
+              "type": "number",
+              "description": "Polls allowed per workspace per minute, across every connector in it. Sources beyond the budget are deferred to the next tick in round-robin order, never starved. The default derives from the edge limiter: a quarter of a tenant's 120 rpm, at three requests per poll (a reconnect costs initialize + initialized + the read). Default: 10.",
+              "default": 10
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
     "files": {
       "description": "File context configuration for workspace file uploads.",
       "type": "object",

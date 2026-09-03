@@ -67,6 +67,7 @@ Each worktree gets its own isolated state, so two worktrees can run side-by-side
 ## Conventions
 
 - **Runtime:** Bun (not Node). Use `bun run`, `bun test`, `bunx`.
+- **Lockfiles are frozen everywhere except local dev.** CI, both Dockerfiles, and `install:bundles` pass `--frozen-lockfile` — bun does not do this on its own in CI, and without it CI tests a freshly-resolved tree while the image ships the locked one. A frozen install that fails means a `package.json` moved without its `bun.lock`: run `bun install` in that package dir and commit the lockfile. `bun run dev` and `build:bundles` stay unfrozen so adding a dependency locally still works.
 - **Module system:** ESM only. All imports use `.ts` extensions.
 - **Linting:** Biome (not ESLint/Prettier). Run `bun run lint`.
 - **Type checking:** `bunx tsc --noEmit`. Strict mode enabled.
@@ -291,7 +292,7 @@ Namespaces (`src/observability/log.ts`):
 | `mcp` | McpSource construction; per-call dispatch showing `taskSupport` / `path=task-augmented\|inline` / cached tool count | "Why is my tool going inline vs task-augmented?" "Is my tool cache populated?" |
 | `sse` | Every `tool.progress` / `tool.done` entering the runtime sink wrap; every `data.changed` broadcast with client count | "Are progress events reaching the SSE layer?" "Are broadcasts happening, to how many clients?" |
 | `auth` | Identity-provider verify rejections at debug volume (the routine, self-healing reasons `no_token` / `token_expired`). Anomalous reasons — `org_mismatch`, `bad_signature`, `jwks_unavailable`, etc. — log at `warn` and need no flag. | "Why is a user being 401'd / involuntarily logged out?" |
-| `notify` | Notification envelopes and outbox declarations dropped at parse, with the field that failed | "Why is this connector's event not in the inbox?" |
+| `notify` | Notification envelopes, outbox declarations and poll results dropped at parse, with the field that failed; sweeps skipped because a workspace is already being read | "Why is this connector's event not in the inbox?" |
 
 Add a namespace by calling `log.debug("ns", "message")` (from `src/observability/log.ts`). Keep this table and the `log.ts` doc comment in sync.
 

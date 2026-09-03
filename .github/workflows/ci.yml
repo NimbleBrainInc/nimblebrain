@@ -24,6 +24,13 @@ env:
 # for what "verify" means. If a job needs a new check, add it to the matching
 # verify subscript in package.json so local `bun run verify` stays in parity.
 
+# Every install here is `--frozen-lockfile`. Bun does NOT enable that in CI on
+# its own, so a bare `bun install` resolves the ranges afresh and silently
+# rewrites the lockfile — meaning CI would test one dependency tree while the
+# image built from `Dockerfile` (which does install frozen) shipped another.
+# Frozen makes the lockfile the single description of what was tested, and turns
+# a manifest/lockfile mismatch into a red PR instead of a broken build on main.
+
 # Every job restores bun's package cache (`~/.bun/install/cache`) before its
 # first `bun install`. Uncached, each job fetches and extracts its whole
 # dependency set on every run, and an extract that fails mid-download reddens
@@ -66,9 +73,9 @@ jobs:
             ${{ runner.os }}-bun-${{ github.job }}-
             ${{ runner.os }}-bun-
       - name: Install dependencies
-        run: bun install
+        run: bun install --frozen-lockfile
       - name: Install web dependencies
-        run: cd web && bun install
+        run: cd web && bun install --frozen-lockfile
       - name: Verify (static)
         run: bun run verify:static
 
@@ -91,9 +98,9 @@ jobs:
             ${{ runner.os }}-bun-${{ github.job }}-
             ${{ runner.os }}-bun-
       - name: Install dependencies
-        run: bun install
+        run: bun install --frozen-lockfile
       - name: Install web dependencies
-        run: cd web && bun install
+        run: cd web && bun install --frozen-lockfile
       # Bundle UI deps must be installed so each bundle's co-located tests
       # (e.g. the automations markdown sanitizer contract) can resolve their
       # own npm dependencies (marked, dompurify, happy-dom). `test:bundles`
@@ -132,7 +139,7 @@ jobs:
             ${{ runner.os }}-bun-${{ github.job }}-
             ${{ runner.os }}-bun-
       - name: Install root dependencies only
-        run: bun install
+        run: bun install --frozen-lockfile
       - name: Unit tests must pass on root deps alone
         run: bun run test:unit
 
@@ -155,7 +162,7 @@ jobs:
             ${{ runner.os }}-bun-${{ github.job }}-
             ${{ runner.os }}-bun-
       - name: Install dependencies
-        run: bun install
+        run: bun install --frozen-lockfile
       - name: Integration tests
         run: bun run test:integration
 

@@ -100,6 +100,7 @@ import {
 } from "../model/catalog.ts";
 import { buildModelResolver, resolveModelString } from "../model/registry.ts";
 import { type ModelSlot, parseModelSlotRef } from "../model/slots.ts";
+import { type ResolvedPollConfig, resolvePollConfig } from "../notifications/poll-config.ts";
 import { NotificationStore } from "../notifications/store.ts";
 import type { NotificationsDeclaration } from "../notifications/types.ts";
 import { registerBuiltinCredentialProviders } from "../oauth/minted-credential-provider.ts";
@@ -4999,6 +5000,17 @@ export class Runtime {
   /** Get the structured log directory path. */
   getLogDir(): string {
     return this.config.logging?.dir ?? join(resolveWorkDir(this.config), "logs");
+  }
+
+  /**
+   * The poll pacing, resolved from `notifications.poll` with the documented
+   * defaults and clamps applied. Read once, when the notifications source
+   * builds the poller — the cadence is a boot-time decision, and a loop that
+   * re-read it per tick would let a config reload change a running source's
+   * backoff mid-streak.
+   */
+  getNotificationsPollConfig(): ResolvedPollConfig {
+    return resolvePollConfig(this.config.notifications?.poll);
   }
 
   /** Get the resolved work directory path. */
