@@ -21,6 +21,7 @@ import {
   SKILL_ACTIVATED_META_KEY,
   SKILL_SUPPRESSION_META_KEY,
   type ToolResult,
+  UNATTENDED_META_KEY,
 } from "../engine/types.ts";
 import {
   HOST_RESOURCES_LIST_METHOD,
@@ -31,6 +32,7 @@ import {
 } from "../host-resources/index.ts";
 import { requestIdentityAttrs, withSpan } from "../observability/index.ts";
 import { log } from "../observability/log.ts";
+import { getRequestContext } from "../runtime/request-context.ts";
 import { coerceInputForSchema } from "./coerce-input.ts";
 import { promoteHiddenErrors } from "./promote-hidden-errors.ts";
 import { createRemoteTransport } from "./remote-transport.ts";
@@ -1972,7 +1974,7 @@ export class McpSource implements ToolSource {
     signal?: AbortSignal,
   ): Promise<ToolResult> {
     const result = await this.client?.callTool(
-      { name: toolName, arguments: args },
+      { name: toolName, arguments: args, ...unattendedCallMeta() },
       undefined,
       signal ? { signal } : undefined,
     );
@@ -2099,7 +2101,7 @@ export class McpSource implements ToolSource {
     // through correctly. See `@modelcontextprotocol/sdk` `protocol.js:654`
     // and `experimental/tasks/client.js:67`.
     const stream = client.experimental.tasks.callToolStream(
-      { name: toolName, arguments: args },
+      { name: toolName, arguments: args, ...unattendedCallMeta() },
       undefined,
       {
         signal: abortController.signal,
@@ -2967,6 +2969,11 @@ function infraErrorMeta(): { _meta: Record<string, unknown> } {
  * is stripped from every source that crosses a real transport; only in-process
  * sources (`inProcess: true` — the `nb` system source, whose `use_skill` tool
  * legitimately emits it) carry it through.
+ *
+ * `UNATTENDED_META_KEY` is stripped unconditionally, in-process included. The
+ * host stamps it on the REQUEST to say who is calling; nothing downstream reads
+ * it off a result, so a copy coming back is at best noise and at worst a
+ * provenance claim made by the party being asked about.
  */
 function hostOwnedMetaStripped(
   meta: Record<string, unknown> | undefined,
@@ -2986,7 +2993,28 @@ function hostOwnedMetaStripped(
     const { [SKILL_SUPPRESSION_META_KEY]: _droppedSuppression, ...rest } = out;
     out = rest;
   }
+  if (UNATTENDED_META_KEY in out) {
+    const { [UNATTENDED_META_KEY]: _droppedUnattended, ...rest } = out;
+    out = rest;
+  }
   return out;
+}
+
+/**
+ * The `_meta` an unattended dispatch stamps on its outbound `tools/call`, or
+ * nothing at all — which is every chat turn and every scheduled run, since only
+ * `dispatchUnattended` sets the reason.
+ *
+ * Spread into the call params so a source that never sees one sends `_meta`
+ * exactly as it did before. Read from the ambient request context rather than
+ * threaded through `execute`, because `ToolSource.execute` takes the tool's
+ * input and nothing else — and this is metadata about the CALLER, which is what
+ * the context is for.
+ */
+function unattendedCallMeta(): { _meta?: Record<string, unknown> } {
+  const reason = getRequestContext()?.unattendedReason;
+  if (reason === undefined) return {};
+  return { _meta: { [UNATTENDED_META_KEY]: reason } };
 }
 
 /** Extract a human-readable message from an unknown throw. */

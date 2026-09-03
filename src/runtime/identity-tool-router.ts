@@ -29,12 +29,15 @@
  */
 
 import type { ToolCall, ToolResult, ToolRouter, ToolSchema } from "../engine/types.ts";
+// Imported from the two modules rather than from `../orchestrator/index.ts`:
+// the barrel also exports `dispatchUnattended`, which composes THIS router, and
+// going through it would close a cycle for no gain.
+import { mapOrchestratorErrorToToolResult } from "../orchestrator/error-mapping.ts";
 import {
-  mapOrchestratorErrorToToolResult,
   type OrchestratorRuntime,
   type RoutedToolCall,
   routeToolCall,
-} from "../orchestrator/index.ts";
+} from "../orchestrator/route.ts";
 import { assertToolAllowed } from "../permissions/assert-tool-allowed.ts";
 import type { PermissionOwner } from "../permissions/permission-store.ts";
 import { splitInnerToolName } from "../util/tool-name.ts";
@@ -122,6 +125,10 @@ function buildPerCallContext(
     // run stays walled from the automation-authoring surface. Dropping it here
     // would reopen the wall for anything below the top level.
     ...(outer?.unattended !== undefined ? { unattended: outer.unattended } : {}),
+    // Rides the restamp for the same reason `unattended` does: the outbound
+    // `_meta` stamp is read at dispatch depth, below this rebuild, so dropping
+    // it here would erase the provenance from every call the door makes.
+    ...(outer?.unattendedReason !== undefined ? { unattendedReason: outer.unattendedReason } : {}),
   };
 }
 

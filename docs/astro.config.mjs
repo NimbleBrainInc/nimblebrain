@@ -100,6 +100,7 @@ export default defineConfig({
                   { label: 'File Context', slug: 'using/file-context' },
                   { label: 'Skills', slug: 'using/skills' },
                   { label: 'Automations', slug: 'using/automations' },
+                  { label: 'Notifications', slug: 'using/notifications' },
                 ],
               },
               {

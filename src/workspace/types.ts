@@ -1,5 +1,6 @@
 import type { BundleRef } from "../bundles/types.ts";
 import type { HookRegistration } from "../hooks/types.ts";
+import type { WorkspaceNotificationsConfig } from "../notifications/config.ts";
 import type { ModelSlots } from "../runtime/types.ts";
 
 /** Workspace-level member roles. */
@@ -109,6 +110,20 @@ export interface Workspace {
    * process is busy. See `src/hooks/types.ts`.
    */
   hooks?: Record<string, HookRegistration>;
+
+  /**
+   * Notification source ceilings and delivery routes for this workspace.
+   *
+   * Beside `hooks` for the same reasons and with the same shape of lifecycle:
+   * operator-plane, workspace-scoped, and read on the path that dispatches. It
+   * is the operator's half of the notifications contract — a connector declares
+   * an outbox and gains nothing by it, and what an admin writes here is what
+   * decides whether anything it emits reaches a person.
+   *
+   * Every route carries the identity that wrote it, because that is the
+   * principal it dispatches under. See `src/notifications/config.ts`.
+   */
+  notifications?: WorkspaceNotificationsConfig;
 }
 
 /** Per-workspace operator-supplied OAuth app credentials, public side. */
