@@ -7,5 +7,4 @@ export declare const HooksListInput: import("@sinclair/typebox").TObject<{}>;
 export declare const HooksRotateInput: import("@sinclair/typebox").TObject<{
     connector: import("@sinclair/typebox").TString;
     vendor: import("@sinclair/typebox").TString;
-    confirm: import("@sinclair/typebox").TString;
 }>;
