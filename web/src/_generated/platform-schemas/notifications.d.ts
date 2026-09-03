@@ -32,9 +32,8 @@ export declare const NotificationsMarkReadInput: import("@sinclair/typebox").TOb
 }>;
 export type NotificationsMarkReadInput = Static<typeof NotificationsMarkReadInput>;
 /**
- * The wire shape of one inbox item — the agent's tool and the web inbox's REST
- * route return the same projection, so the two can never disagree about what
- * an item is.
+ * The wire shape of one inbox item — what `notifications__list` returns, and
+ * the only projection of a stored record that leaves the runtime.
  *
  * It is a flattening of the stored record, not a subset with a policy in it:
  * the presentation block is resolved with its defaults applied and the
