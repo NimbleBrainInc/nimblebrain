@@ -7,6 +7,10 @@ import { Aside } from '@astrojs/starlight/components';
 
 NimbleBrain reads host metadata from the `_meta["ai.nimblebrain/host"]` key on your server's catalog entry — the upstream MCP registry [`ServerDetail`](https://github.com/modelcontextprotocol/registry) record an operator adds to the [connectors catalog](/config/connectors-catalog/). This is where you declare your app's name, icon, placements (sidebar items, main views, and settings sections), and briefing facets.
 
+The block has a published JSON Schema at
+[`schemas.nimblebrain.ai/v1/nimblebrain-host.schema.json`](https://schemas.nimblebrain.ai/v1/nimblebrain-host.schema.json)
+— point your editor's `$schema` at it for completion and validation while authoring.
+
 <Aside type="note">
   The runtime reads this block from the catalog entry, not from a package it
   downloads: it connects to remote MCP servers and never acquires or executes a
