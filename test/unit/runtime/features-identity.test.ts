@@ -111,7 +111,7 @@ describe("identity & workspace feature flags", () => {
 						name: "test__secret",
 						description: "Secret tool",
 						inputSchema: {},
-						annotations: { "ai.nimblebrain/internal": true },
+						meta: { "ai.nimblebrain/internal": true },
 					},
 					"admin",
 					features,

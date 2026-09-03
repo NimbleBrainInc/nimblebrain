@@ -145,7 +145,7 @@ export function createHooksSource(runtime: Runtime, eventSink: EventSink): McpSo
         "Every inbound delivery URL this workspace holds, with the address itself, " +
         "which connector and vendor it is for, when it was created and last rotated. " +
         "Workspace admin only. Read-only.",
-      annotations: { [INTERNAL_TOOL_ANNOTATION]: true },
+      meta: { [INTERNAL_TOOL_ANNOTATION]: true },
       inputSchema: HooksListInput,
       handler: async (): Promise<ToolResult> => {
         const auth = await adminWorkspace(runtime);
@@ -187,7 +187,7 @@ export function createHooksSource(runtime: Runtime, eventSink: EventSink): McpSo
         "which re-registers it with the vendor. The previous URL keeps working for a " +
         "grace window so deliveries already in flight are not lost, then stops. " +
         "Workspace admin only.",
-      annotations: { [INTERNAL_TOOL_ANNOTATION]: true },
+      meta: { [INTERNAL_TOOL_ANNOTATION]: true },
       inputSchema: HooksRotateInput,
       handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
         const auth = await adminWorkspace(runtime);

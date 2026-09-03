@@ -9,6 +9,7 @@ import {
   ListToolsRequestSchema,
   McpError,
   ReadResourceRequestSchema,
+  type ToolAnnotations,
 } from "@modelcontextprotocol/sdk/types.js";
 import type { PlacementDeclaration } from "../bundles/types.ts";
 import type { EventSink, ToolResult } from "../engine/types.ts";
@@ -22,18 +23,33 @@ import { validateToolInput } from "./validate-input.ts";
  * platform sources used pre-migration so authoring stays a function and a
  * JSON schema — no Zod adapter, no SDK boilerplate per tool.
  *
- * `annotations` is sent on the wire as the tool's `_meta` (free-form per
- * MCP). `McpSource.tools()` reads `_meta` back as `annotations` on the
- * client side, preserving round-trip semantics — including platform
- * conventions like `"ai.nimblebrain/internal": true` to hide a tool from
- * the agent's tool list.
+ * The two metadata fields are the two the MCP spec defines, and they are not
+ * interchangeable:
+ *
+ *  - `meta` goes on the wire as `_meta`, the free-form reverse-DNS namespace.
+ *    Platform conventions live here — `"ai.nimblebrain/internal": true` hides a
+ *    tool from the agent's tool list.
+ *  - `annotations` goes on the wire as `annotations`, the spec's closed set of
+ *    behavioural hints (`destructiveHint` and friends).
+ *
+ * `McpSource.tools()` reads both back under the same names on the client side.
+ *
+ * `outputSchema` is a promise, not a label: declaring one obligates `handler`
+ * to return `structuredContent` on every success. The SDK client caches a
+ * validator per declaring tool at `tools/list` and rejects a result without it,
+ * which surfaces as `isError: true` on the tool's own call rather than as
+ * anything naming the schema. A tool that returns text alone declares nothing.
  */
 export interface InProcessTool {
   name: string;
   description: string;
   inputSchema: Record<string, unknown>;
   handler: (input: Record<string, unknown>) => Promise<ToolResult>;
-  annotations?: Record<string, unknown>;
+  meta?: Record<string, unknown>;
+  annotations?: ToolAnnotations;
+  /** See the note on {@link InProcessTool}: this obliges `handler` to return
+   * `structuredContent`. */
+  outputSchema?: Record<string, unknown>;
 }
 
 /**
@@ -146,10 +162,16 @@ export function defineInProcessApp(
   } = options;
 
   // Any of the four fields means this source serves resources. When ANY is
-  // active, advertise `listChanged` + `subscribe` so external clients (and
-  // the SDK) know they can watch for changes — even if the dynamic catalog
-  // is empty at this instant. Sources with no resource fields keep
+  // active, advertise `listChanged` — the server pushes
+  // `notifications/resources/list_changed` (McpSource.notifyResourceListChanged),
+  // so a client that watches for it gets one — even if the dynamic catalog is
+  // empty at this instant. Sources with no resource fields keep
   // `resources: undefined` to stay invisible to `resources/*` requests.
+  //
+  // `subscribe` is NOT advertised: no `resources/subscribe` handler is
+  // registered, so a conforming client that took the capability at its word
+  // would get method-not-found. A capability is a promise about what is
+  // served.
   const hasResources =
     resources.size > 0 ||
     (templates !== undefined && templates.length > 0) ||
@@ -168,15 +190,16 @@ export function defineInProcessApp(
           {
             capabilities: {
               tools: {},
-              resources: hasResources ? { listChanged: true, subscribe: true } : undefined,
+              resources: hasResources ? { listChanged: true } : undefined,
             },
             ...(instructions ? { instructions } : {}),
           },
         );
 
         // tools/list — translate InProcessTool[] into the MCP wire shape.
-        // Annotations ride on `_meta` (free-form by spec) so they survive
-        // round-trip and reach `McpSource.tools()` as `annotations`.
+        // Host conventions ride on `_meta` (free-form by spec); the spec's own
+        // hints ride on `annotations`. Both survive the round trip and reach
+        // `McpSource.tools()` under the same names.
         server.setRequestHandler(ListToolsRequestSchema, async () => ({
           tools: tools.map((t) => ({
             name: t.name,
@@ -186,7 +209,17 @@ export function defineInProcessApp(
               properties?: Record<string, unknown>;
               required?: string[];
             },
-            ...(t.annotations ? { _meta: t.annotations } : {}),
+            ...(t.outputSchema
+              ? {
+                  outputSchema: t.outputSchema as {
+                    type: "object";
+                    properties?: Record<string, unknown>;
+                    required?: string[];
+                  },
+                }
+              : {}),
+            ...(t.annotations ? { annotations: t.annotations } : {}),
+            ...(t.meta ? { _meta: t.meta } : {}),
           })),
         }));
 

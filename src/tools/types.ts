@@ -1,4 +1,5 @@
-import type { ToolResult } from "../engine/types.ts";
+import type { ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
+import type { ToolResult, ToolSchema } from "../engine/types.ts";
 
 /** A tool with source tracking. Extends ToolSchema with a source field. */
 export interface Tool {
@@ -6,8 +7,30 @@ export interface Tool {
   description: string;
   inputSchema: Record<string, unknown>;
   source: string; // "mcpb:leadgen" | "connector:slack" | "inline"
-  /** MCP tool annotations (_meta). Includes UI metadata like resourceUri. */
-  annotations?: Record<string, unknown>;
+  /**
+   * The tool's `_meta` — MCP's free-form, reverse-DNS-keyed namespace. Carries
+   * host conventions like `ai.nimblebrain/internal` and the UI metadata
+   * (`resourceUri`) the engine reads to mount an inline panel.
+   *
+   * Distinct from {@link Tool.annotations}, which is the spec's own closed set
+   * of behavioural hints. Both travel; neither is the other.
+   */
+  meta?: Record<string, unknown>;
+  /**
+   * MCP `annotations` (`ToolAnnotations`) — the spec's behavioural hints:
+   * `title`, `readOnlyHint`, `destructiveHint`, `idempotentHint`,
+   * `openWorldHint`.
+   *
+   * Hints, per the spec, and from an untrusted server: a `destructiveHint` is
+   * what the tool *says* about itself, so read it to be more careful, never to
+   * relax a check.
+   */
+  annotations?: ToolAnnotations;
+  /**
+   * MCP `outputSchema` — the JSON Schema a tool's `structuredContent` conforms
+   * to when it declares one.
+   */
+  outputSchema?: Record<string, unknown>;
   /**
    * Tool-level execution metadata from the MCP spec (draft 2025-11-25).
    *
@@ -24,6 +47,27 @@ export interface Tool {
    */
   execution?: {
     taskSupport?: "optional" | "required" | "forbidden";
+  };
+}
+
+/**
+ * Project a tool onto the {@link ToolSchema} the engine, tiered surfacing and
+ * the `/mcp` door consume: everything the MCP listing declared, and nothing
+ * else. Handed a registry {@link Tool}, it drops the host-side routing fields
+ * (`source`, `execution`) none of those callers read.
+ *
+ * One projection, so a field a listing carries reaches every caller at once.
+ * When each caller spelled its own fields out, `annotations` and `outputSchema`
+ * reached none of them.
+ */
+export function toToolSchema(t: ToolSchema): ToolSchema {
+  return {
+    name: t.name,
+    description: t.description,
+    inputSchema: t.inputSchema,
+    ...(t.meta !== undefined ? { meta: t.meta } : {}),
+    ...(t.annotations !== undefined ? { annotations: t.annotations } : {}),
+    ...(t.outputSchema !== undefined ? { outputSchema: t.outputSchema } : {}),
   };
 }
 

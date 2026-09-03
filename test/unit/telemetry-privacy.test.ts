@@ -169,8 +169,9 @@ describe("Telemetry Privacy", () => {
         allowed: new Set(["source", "has_ui", "trust_score", ...COMMON_KEYS]),
         engineType: "bundle.installed",
         emitData: {
-          name: "@nimblebraininc/tasks",
+          serverName: "tasks",
           bundleName: "@nimblebraininc/tasks",
+          installSource: "registry",
           path: "/Users/john/bundles/tasks",
           ui: { name: "Tasks", icon: "tasks" },
           trustScore: 85,
@@ -183,7 +184,9 @@ describe("Telemetry Privacy", () => {
         allowed: new Set(["source", ...COMMON_KEYS]),
         engineType: "bundle.uninstalled",
         emitData: {
-          name: "@nimblebraininc/tasks",
+          serverName: "tasks",
+          bundleName: "@nimblebraininc/tasks",
+          installSource: "registry",
           path: "/Users/john/bundles/tasks",
           version: "1.2.3",
         },

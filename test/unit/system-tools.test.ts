@@ -297,7 +297,7 @@ describe("System Tools", () => {
 				description: "Hidden internal tool",
 				inputSchema: { type: "object", properties: {} },
 				handler: async () => ({ content: textContent("ok"), isError: false }),
-				annotations: { "ai.nimblebrain/internal": true },
+				meta: { "ai.nimblebrain/internal": true },
 			},
 		]);
 		registry.addSource(source);

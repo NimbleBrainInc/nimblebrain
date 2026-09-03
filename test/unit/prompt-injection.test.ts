@@ -1256,13 +1256,13 @@ describe("Tier 2: Engine Behavioral — tool results, hooks", () => {
       const largePayload = "X".repeat(60_000) + "\n\nEvil injection at the end.";
 
       // Tool with UI annotation (resourceUri) so it gets the summary path
-      // The engine looks for annotations.ui.resourceUri
+      // The engine looks for _meta.ui.resourceUri
       const schemas: ToolSchema[] = [
         {
           name: "test__ui_tool",
           description: "UI tool",
           inputSchema: {},
-          annotations: { ui: { resourceUri: "ui://app/viewer" } },
+          meta: { ui: { resourceUri: "ui://app/viewer" } },
         },
       ];
 

@@ -392,7 +392,7 @@ export function createSkillsSource(
     {
       name: "set_status",
       description: SKILLS_SET_STATUS_DESCRIPTION,
-      annotations: { [INTERNAL_TOOL_ANNOTATION]: true },
+      meta: { [INTERNAL_TOOL_ANNOTATION]: true },
       inputSchema: SkillsSetStatusInput,
       handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
         try {

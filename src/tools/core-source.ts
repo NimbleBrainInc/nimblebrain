@@ -653,7 +653,7 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
     {
       name: "list_apps",
       description: "List installed apps/bundles with status, tool count, and trust scores.",
-      annotations: { [INTERNAL_TOOL_ANNOTATION]: true },
+      meta: { [INTERNAL_TOOL_ANNOTATION]: true },
       inputSchema: {
         type: "object",
         properties: {},
@@ -680,7 +680,7 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
       name: "get_config",
       description:
         "Get current runtime configuration: default model, configured providers, and limits.",
-      annotations: { [INTERNAL_TOOL_ANNOTATION]: true },
+      meta: { [INTERNAL_TOOL_ANNOTATION]: true },
       inputSchema: {
         type: "object",
         properties: {},
@@ -747,7 +747,7 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
       name: "version",
       description:
         "Get platform version info: agent version and all dependency versions from package.json.",
-      annotations: { [INTERNAL_TOOL_ANNOTATION]: true },
+      meta: { [INTERNAL_TOOL_ANNOTATION]: true },
       inputSchema: {
         type: "object",
         properties: {},
@@ -776,7 +776,7 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
       name: "set_model_config",
       description:
         "Update model selection and runtime limits. Writes atomically to nimblebrain.overrides.json (preserved across deploys). Does not allow changing API keys or secrets.",
-      annotations: { [INTERNAL_TOOL_ANNOTATION]: true },
+      meta: { [INTERNAL_TOOL_ANNOTATION]: true },
       inputSchema: {
         type: "object",
         properties: {
@@ -1030,7 +1030,7 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
       name: "manage_identity",
       description:
         "Write or reset the workspace agent personality override. Only workspace admins or org admins can modify.",
-      annotations: { [INTERNAL_TOOL_ANNOTATION]: true },
+      meta: { [INTERNAL_TOOL_ANNOTATION]: true },
       inputSchema: {
         type: "object",
         properties: {
@@ -1110,7 +1110,7 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
       name: "workspace_info",
       description:
         "Get workspace metadata: platform version, telemetry status, and install ID. Used by the web client on startup.",
-      annotations: { [INTERNAL_TOOL_ANNOTATION]: true },
+      meta: { [INTERNAL_TOOL_ANNOTATION]: true },
       inputSchema: {
         type: "object",
         properties: {},
@@ -1205,7 +1205,7 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
       name: "briefing",
       description:
         "Generate a personalized activity briefing for the workspace using the fast model slot. Returns a summary of recent activity, upcoming items, and anything needing attention. May take a few seconds.",
-      annotations: { [INTERNAL_TOOL_ANNOTATION]: true },
+      meta: { [INTERNAL_TOOL_ANNOTATION]: true },
       inputSchema: {
         type: "object",
         properties: {

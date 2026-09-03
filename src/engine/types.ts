@@ -1,5 +1,9 @@
 import type { LanguageModelV3Message } from "@ai-sdk/provider";
-import type { ContentBlock, TextContent } from "@modelcontextprotocol/sdk/types.js";
+import type {
+  ContentBlock,
+  TextContent,
+  ToolAnnotations,
+} from "@modelcontextprotocol/sdk/types.js";
 import type { TokenUsage } from "../usage/types.ts";
 
 export type { ContentBlock, TextContent };
@@ -76,8 +80,30 @@ export interface ToolSchema {
   name: string;
   description: string;
   inputSchema: Record<string, unknown>;
-  /** MCP tool annotations (_meta). Includes UI metadata like resourceUri. */
-  annotations?: Record<string, unknown>;
+  /**
+   * The tool's `_meta` — MCP's free-form, reverse-DNS-keyed namespace. Carries
+   * host conventions like `ai.nimblebrain/internal` and the UI metadata
+   * (`resourceUri`) the engine reads to mount an inline panel.
+   *
+   * Distinct from {@link ToolSchema.annotations}, which is the spec's own
+   * closed set of behavioural hints. Both travel; neither is the other.
+   */
+  meta?: Record<string, unknown>;
+  /**
+   * MCP `annotations` (`ToolAnnotations`) — the spec's behavioural hints:
+   * `title`, `readOnlyHint`, `destructiveHint`, `idempotentHint`,
+   * `openWorldHint`.
+   *
+   * Hints, per the spec, and from an untrusted server: a `destructiveHint` is
+   * what the tool *says* about itself, so read it to be more careful, never to
+   * relax a check.
+   */
+  annotations?: ToolAnnotations;
+  /**
+   * MCP `outputSchema` — the JSON Schema a tool's `structuredContent` conforms
+   * to when it declares one.
+   */
+  outputSchema?: Record<string, unknown>;
 }
 
 export interface ToolCall {
@@ -176,9 +202,9 @@ export const INFRA_ERROR_META_KEY = "ai.nimblebrain/infra-error";
  */
 export const INTERNAL_TOOL_ANNOTATION = "ai.nimblebrain/internal";
 
-/** True when a tool carries {@link INTERNAL_TOOL_ANNOTATION}. */
-export function isInternalTool(tool: { annotations?: Record<string, unknown> }): boolean {
-  return Boolean(tool.annotations?.[INTERNAL_TOOL_ANNOTATION]);
+/** True when a tool carries {@link INTERNAL_TOOL_ANNOTATION} in its `_meta`. */
+export function isInternalTool(tool: { meta?: Record<string, unknown> }): boolean {
+  return Boolean(tool.meta?.[INTERNAL_TOOL_ANNOTATION]);
 }
 
 export interface ToolPromotionResult {
@@ -280,6 +306,20 @@ export type EngineEventType =
   | "file.deleted"
   | "bridge.tool.call"
   | "bridge.tool.done"
+  /**
+   * A notification a connector emitted reached a workspace's inbox. Emitted
+   * once per item, after the durable write — the inbox is the guarantee and
+   * everything downstream of it is best-effort. Payload:
+   * { workspaceId, id, seq, source, name, level, title, subject?, receivedAt }.
+   */
+  | "notification.created"
+  /**
+   * A route target for a notification did not deliver, with its retries spent.
+   * Carries the same coordinates as the delivery-ledger row it accompanies, so
+   * a failed post is visible instead of silent. Payload:
+   * { workspaceId, id, routeId, target, attempts, error }.
+   */
+  | "notification.delivery_failed"
   | "http.error"
   | "audit.auth_failure"
   | "audit.permission_denied";

@@ -6,7 +6,7 @@
  * - Rejection of expired tokens
  * - Rejection of tokens with wrong issuer
  * - Fallback to WorkOS JWKS path when authkitDomain is not configured
- * - getAuthkitDomain() behavior
+ * - authorizationServer() discovery metadata
  */
 
 import { mkdtempSync } from "node:fs";
@@ -186,17 +186,22 @@ function makeRequest(token: string): Request {
   });
 }
 
-// ── getAuthkitDomain ─────────────────────────────────────────────
+// ── authorizationServer ──────────────────────────────────────────
 
-describe("getAuthkitDomain", () => {
-  it("returns configured domain", () => {
+describe("authorizationServer", () => {
+  it("advertises the AuthKit issuer and its metadata document", () => {
     const { provider } = createProvider();
-    expect(provider.getAuthkitDomain()).toBe("testapp");
+    expect(provider.capabilities.authorizationServer).toBe(true);
+    expect(provider.authorizationServer()).toEqual({
+      issuer: "https://testapp.authkit.app",
+      metadataUrl: "https://testapp.authkit.app/.well-known/oauth-authorization-server",
+    });
   });
 
-  it("returns undefined when not configured", () => {
+  it("is not an authorization server when no AuthKit domain is configured", () => {
     const { provider } = createProvider({ authkitDomain: undefined });
-    expect(provider.getAuthkitDomain()).toBeUndefined();
+    expect(provider.capabilities.authorizationServer).toBe(false);
+    expect(provider.authorizationServer()).toBeNull();
   });
 });
 

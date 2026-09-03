@@ -534,7 +534,7 @@ describe("AgentEngine", () => {
         name: "internal__secret",
         description: "Internal secret tool",
         inputSchema: { type: "object", properties: {} },
-        annotations: { "ai.nimblebrain/internal": true },
+        meta: { "ai.nimblebrain/internal": true },
       },
     ];
 
@@ -1347,7 +1347,7 @@ describe("AgentEngine", () => {
     void activeInnerControls;
   });
 
-  it("includes resourceUri in tool events when tool has UI annotations", async () => {
+  it("includes resourceUri in tool events when the tool carries UI metadata in _meta", async () => {
     let callCount = 0;
     const model = createMockModel(() => {
       callCount++;
@@ -1372,7 +1372,7 @@ describe("AgentEngine", () => {
         name: "app__render",
         description: "Render with UI",
         inputSchema: {},
-        annotations: { ui: { resourceUri: "ui://app/viewer" } },
+        meta: { ui: { resourceUri: "ui://app/viewer" } },
       },
     ];
 
@@ -3152,7 +3152,7 @@ describe("audience filtering", () => {
         name: "test__render",
         description: "Render",
         inputSchema: {},
-        annotations: { ui: { resourceUri: "ui://test/viewer" } },
+        meta: { ui: { resourceUri: "ui://test/viewer" } },
       },
     ];
 

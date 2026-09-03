@@ -1,3 +1,4 @@
+import type { BundleInstance } from "../bundles/types.ts";
 import type { EngineEvent, EventSink } from "../engine/types.ts";
 import type { TelemetryManager } from "./manager.ts";
 
@@ -26,17 +27,23 @@ function createRunMetrics(): RunMetrics {
   };
 }
 
+/** Install kinds a bundle event can report, plus the fallback for one that reports none. */
+type BundleSource = NonNullable<BundleInstance["installSource"]> | "unknown";
+
 /**
- * Detect bundle source from event data.
- * - Has a `url` property -> "remote"
- * - Name starts with "@" -> "mpak"
- * - Otherwise -> "local"
+ * Read the install kind off a bundle event.
+ *
+ * The value is `BundleInstance.installSource`, stamped by the lifecycle at
+ * install time and carried on the event — a closed enum of three, not something
+ * inferred from a bundle name or URL. Inferring it would put a name string in
+ * front of this file, whose contract is to never read one.
+ *
+ * `"unknown"` covers an event from a code path that has no instance to read
+ * (an uninstall that resolved no instance).
  */
-function detectSource(data: Record<string, unknown>): "mpak" | "local" | "remote" {
-  if (typeof data.url === "string") return "remote";
-  const name = data.name as string | undefined;
-  if (name?.startsWith("@")) return "mpak";
-  return "local";
+function readSource(data: Record<string, unknown>): BundleSource {
+  const source = data.installSource;
+  return source === "registry" || source === "local" || source === "remote" ? source : "unknown";
 }
 
 /** Handles one engine event: accumulates per-run metrics or captures a telemetry event. */
@@ -162,9 +169,9 @@ export class PostHogEventSink implements EventSink {
     if (runId) this.runs.delete(runId);
   }
 
-  /** Capture bundle.installed with detected source, UI presence, and trust score. */
+  /** Capture bundle.installed with the reported install kind, UI presence, and trust score. */
   private captureBundleInstalled(data: Record<string, unknown>): void {
-    const source = detectSource(data);
+    const source = readSource(data);
     this.telemetry.capture("bundle.installed", {
       source,
       has_ui: Boolean(data.ui),
@@ -172,10 +179,10 @@ export class PostHogEventSink implements EventSink {
     });
   }
 
-  /** Capture bundle.uninstalled with the detected source. */
+  /** Capture bundle.uninstalled with the reported install kind. */
   private captureBundleUninstalled(data: Record<string, unknown>): void {
     this.telemetry.capture("bundle.uninstalled", {
-      source: detectSource(data),
+      source: readSource(data),
     });
   }
 }

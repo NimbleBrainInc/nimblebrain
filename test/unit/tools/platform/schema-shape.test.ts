@@ -27,6 +27,7 @@ import { createConversationsSource } from "../../../../src/tools/platform/conver
 import { createFilesSource } from "../../../../src/tools/platform/files.ts";
 import { createAutomationsSource } from "../../../../src/tools/platform/automations.ts";
 import { createInstructionsSource } from "../../../../src/tools/platform/instructions.ts";
+import { createNotificationsSource } from "../../../../src/tools/platform/notifications.ts";
 import { createSkillsSource } from "../../../../src/tools/platform/skills.ts";
 
 // ── Minimal Runtime stub ─────────────────────────────────────────────────
@@ -68,6 +69,7 @@ const SOURCES = [
   { name: "files", factory: createFilesSource },
   { name: "conversations", factory: createConversationsSource },
   { name: "automations", factory: createAutomationsSource },
+  { name: "notifications", factory: createNotificationsSource },
 ] as const;
 
 // ── Schema walker ────────────────────────────────────────────────────────

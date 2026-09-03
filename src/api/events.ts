@@ -106,6 +106,13 @@ const SSE_ROUTES: Partial<Record<EngineEventType, SseRoute>> = {
   // Field name is `workspaceId` (not `wsId`) — see handlers.ts emit sites.
   "bridge.tool.call": { scope: "workspace", wsIdField: "workspaceId" },
   "bridge.tool.done": { scope: "workspace", wsIdField: "workspaceId" },
+  // Inbox — workspace-scoped on `workspaceId`, the field the notification
+  // store stamps. A connector's notification is readable by whoever can reach
+  // that connector's tools, so fanning one out without its workspace would
+  // hand one workspace's business to its neighbours. Missing the field drops
+  // the event at the boundary below, which is the fail-closed answer.
+  "notification.created": { scope: "workspace", wsIdField: "workspaceId" },
+  "notification.delivery_failed": { scope: "workspace", wsIdField: "workspaceId" },
 };
 
 /**

@@ -35,6 +35,7 @@ function createMockProvider(store: UserStore): IdentityProvider {
       authCodeFlow: false,
       tokenRefresh: false,
       managedUsers: false,
+      authorizationServer: false,
     },
     async verifyRequest(): Promise<UserIdentity | null> {
       return null;

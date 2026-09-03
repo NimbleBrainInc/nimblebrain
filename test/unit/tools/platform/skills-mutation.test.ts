@@ -940,7 +940,7 @@ describe("durable status is set_status only", () => {
     const tools = await src.tools();
     const setStatus = tools.find((t) => t.name.endsWith("set_status"));
     expect(setStatus).toBeDefined();
-    expect(isInternalTool(setStatus as { annotations?: Record<string, unknown> })).toBe(true);
+    expect(isInternalTool(setStatus as { meta?: Record<string, unknown> })).toBe(true);
 
     const { direct, proxied } = surfaceTools(tools, null, { maxDirectTools: 1000 });
     expect([...direct, ...proxied].some((t) => t.name.endsWith("set_status"))).toBe(false);

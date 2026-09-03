@@ -17,6 +17,7 @@
 
 import { afterEach, describe, expect, test } from "bun:test";
 import {
+  EmptyResultSchema,
   ResourceListChangedNotificationSchema,
   ResourceUpdatedNotificationSchema,
 } from "@modelcontextprotocol/sdk/types.js";
@@ -254,6 +255,33 @@ describe("McpSource — resource notifications", () => {
     expect(received).toHaveLength(1);
     expect(received[0]!.method).toBe("notifications/resources/updated");
     expect(received[0]!.params?.uri).toBe("foo://bar");
+  });
+
+  test("advertises resources.listChanged and does NOT advertise resources.subscribe", async () => {
+    // A capability is a promise about what is served. `listChanged` is served
+    // — `notifyResourceListChanged` pushes the notification (above). There is
+    // no `resources/subscribe` handler anywhere in `src/`, so advertising
+    // `subscribe` would send a conforming client into method-not-found.
+    source = await buildResourceSource("capabilities");
+    const client = source.getClient();
+    const resources = client!.getServerCapabilities()?.resources;
+
+    expect(resources?.listChanged).toBe(true);
+    expect(resources?.subscribe).toBeUndefined();
+  });
+
+  test("resources/subscribe is method-not-found — which is why it is not advertised", async () => {
+    source = await buildResourceSource("subscribe-unserved");
+    const client = source.getClient();
+
+    // Issued raw, bypassing the client's own capability assertion, to show
+    // the server end really has no handler.
+    await expect(
+      client!.request(
+        { method: "resources/subscribe", params: { uri: "instructions://workspace" } },
+        EmptyResultSchema,
+      ),
+    ).rejects.toThrow(/Method not found/i);
   });
 
   test("notify methods are no-ops on a never-started source", () => {

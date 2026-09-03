@@ -92,7 +92,7 @@ describe("ToolRegistry invalid-tool-name suggestions", () => {
 				{
 					name: "write_instructions",
 					description: "Save workspace-wide custom instructions",
-					annotations: { [INTERNAL_TOOL_ANNOTATION]: true },
+					meta: { [INTERNAL_TOOL_ANNOTATION]: true },
 					inputSchema: { type: "object", properties: {} },
 					handler: async () => ({ content: textContent("ok"), isError: false }),
 				},
