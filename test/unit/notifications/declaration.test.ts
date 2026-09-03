@@ -16,6 +16,7 @@ import {
   parseNotificationsDeclaration,
 } from "../../../src/notifications/declaration.ts";
 import { serverDetailToCatalogEntry } from "../../../src/registries/projection.ts";
+import { RESERVED_RESOURCE_SCHEMES } from "../../../src/tools/resource-schemes.ts";
 import type { ServerDetail } from "../../../src/connectors/server-detail.ts";
 
 /** A `HostManifestMeta` carrying whatever the caller wants under `notifications`. */
@@ -34,6 +35,34 @@ describe("parseNotificationsDeclaration", () => {
   test("description is optional", () => {
     expect(parseNotificationsDeclaration(metaWith({ resource: "acme://notifications" }))).toEqual({
       resource: "acme://notifications",
+    });
+  });
+
+  test.each([...RESERVED_RESOURCE_SCHEMES])(
+    "refuses an outbox declared under the reserved %s:// scheme",
+    (scheme) => {
+      // One resource cannot mean two things to the same reader: the runtime
+      // would poll it as an outbox and resolve it as a skill / app surface /
+      // overlay, and whichever won would be an accident of ordering.
+      expect(
+        parseNotificationsDeclaration(metaWith({ resource: `${scheme}://acme/notifications` })),
+      ).toBeUndefined();
+    },
+  );
+
+  test("refuses a reserved scheme whatever its case", () => {
+    // RFC 3986 schemes are case-insensitive, so refusing only the lowercase
+    // spelling would be a check that reads as one without being one.
+    expect(
+      parseNotificationsDeclaration(metaWith({ resource: "UI://acme/notifications" })),
+    ).toBeUndefined();
+  });
+
+  test("a server's own namespace is what an outbox uses, at any path", () => {
+    // Scheme and path are both the server's; the runtime parses neither. A
+    // path other than `notifications` is as valid.
+    expect(parseNotificationsDeclaration(metaWith({ resource: "acme://inbox" }))).toEqual({
+      resource: "acme://inbox",
     });
   });
 

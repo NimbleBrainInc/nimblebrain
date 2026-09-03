@@ -1,5 +1,6 @@
 import type { HostManifestMeta } from "../bundles/types.ts";
 import { log } from "../observability/log.ts";
+import { isReservedResourceScheme } from "../tools/resource-schemes.ts";
 import type { NotificationsDeclaration } from "./types.ts";
 
 /**
@@ -43,6 +44,9 @@ export function parseNotificationsDeclaration(
   if (typeof entry.resource !== "string" || !isOutboxResource(entry.resource)) {
     return dropDeclaration(`resource ${JSON.stringify(entry.resource)} is not an outbox URI`);
   }
+  if (isReservedResourceScheme(entry.resource)) {
+    return dropReservedScheme(entry.resource);
+  }
   const decl: NotificationsDeclaration = { resource: entry.resource };
   if (typeof entry.description === "string") decl.description = entry.description;
   return decl;
@@ -67,5 +71,28 @@ export function isOutboxResource(resource: string): boolean {
 
 function dropDeclaration(reason: string): undefined {
   log.debug("notify", `[notifications] dropping malformed declaration: ${reason}`);
+  return undefined;
+}
+
+/**
+ * Refuse an outbox declared in a scheme this runtime already interprets.
+ *
+ * A single resource cannot mean two things to the same reader: the runtime
+ * would poll `ui://acme/notifications` as an outbox *and* resolve it as an app
+ * surface, and whichever won would be an accident of ordering. The server's own
+ * namespace is where an outbox belongs, and the reserved set has one home
+ * (`tools/resource-schemes.ts`).
+ *
+ * Louder than a malformed block, deliberately. A malformed declaration is a
+ * server that is visibly broken; this one is a server that looks entirely
+ * correct and will simply never be polled, which is the failure that costs days
+ * before anyone thinks to check. The connector is unaffected — its tools serve
+ * as they did, and only the outbox is declined.
+ */
+function dropReservedScheme(resource: string): undefined {
+  log.warn(
+    `[notifications] refusing outbox ${JSON.stringify(resource)}: its scheme is one this ` +
+      "runtime already interprets. Declare the outbox in the server's own namespace.",
+  );
   return undefined;
 }
