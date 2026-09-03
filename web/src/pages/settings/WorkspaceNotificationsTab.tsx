@@ -403,6 +403,19 @@ function TargetEditor({
   onRemove?: () => void;
 }) {
   const placeholders = (settings?.placeholders ?? []).map((p) => `{{${p}}}`).join(", ");
+  // A route can outlive the thing it names — the connector was uninstalled, the
+  // automation deleted. Dropping the stored value from the picker would silently
+  // rewrite the route to "nothing" the next time anyone pressed Save, so the
+  // gone target stays selectable and says what it is. Saving it is refused,
+  // which is the reader's cue to change or remove it.
+  const toolOptions = withCurrent(
+    settings?.deliverableTools ?? [],
+    target.kind === "tool" ? target.tool : "",
+  );
+  const automationOptions = withCurrentAutomation(
+    settings?.automations ?? [],
+    target.kind === "agent" ? target.automation : "",
+  );
   return (
     <div className="rounded-sm bg-muted/40 p-3 space-y-2" data-testid="route-target">
       <div className="flex flex-wrap items-end gap-3">
@@ -434,9 +447,9 @@ function TargetEditor({
                 onChange={(e) => onChange({ ...target, tool: e.target.value })}
               >
                 <option value="">Choose a tool…</option>
-                {(settings?.deliverableTools ?? []).map((name) => (
-                  <option key={name} value={name}>
-                    {name}
+                {toolOptions.map(({ value, label }) => (
+                  <option key={value} value={value}>
+                    {label}
                   </option>
                 ))}
               </Select>
@@ -450,9 +463,9 @@ function TargetEditor({
                 onChange={(e) => onChange({ ...target, automation: e.target.value })}
               >
                 <option value="">Choose an automation…</option>
-                {(settings?.automations ?? []).map((a) => (
-                  <option key={a.id} value={a.id}>
-                    {a.name}
+                {automationOptions.map(({ value, label }) => (
+                  <option key={value} value={value}>
+                    {label}
                   </option>
                 ))}
               </Select>
@@ -488,6 +501,32 @@ function TargetEditor({
 }
 
 // -- helpers --------------------------------------------------------------
+
+interface Option {
+  value: string;
+  label: string;
+}
+
+/** The workspace's tools, plus a stored one it no longer has. */
+function withCurrent(available: readonly string[], current: string): Option[] {
+  const options = available.map((value) => ({ value, label: value }));
+  if (current && !available.includes(current)) {
+    options.unshift({ value: current, label: `${current} — no longer installed` });
+  }
+  return options;
+}
+
+/** The caller's automations, plus a stored one that is gone. */
+function withCurrentAutomation(
+  available: readonly { id: string; name: string }[],
+  current: string,
+): Option[] {
+  const options = available.map((a) => ({ value: a.id, label: a.name }));
+  if (current && !available.some((a) => a.id === current)) {
+    options.unshift({ value: current, label: `${current} — no longer available` });
+  }
+  return options;
+}
 
 /** Drop the keys an "any" selection cleared, so an empty match stays empty. */
 function prune(match: NotificationRouteMatch): NotificationRouteMatch {
