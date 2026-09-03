@@ -13,12 +13,6 @@ export const HooksRotateInput = Type.Object(
       description: "Vendor slug of the stream, as the connector declared it.",
       pattern: "^[a-zA-Z0-9_-]+$",
     }),
-    confirm: Type.String({
-      description:
-        "Must equal the vendor slug. A rotation retires the URL the vendor is " +
-        "delivering to once its grace window closes, so the caller names what it is " +
-        "about to disrupt rather than confirming a generic prompt.",
-    }),
   },
-  { required: ["connector", "vendor", "confirm"], additionalProperties: false },
+  { required: ["connector", "vendor"], additionalProperties: false },
 );

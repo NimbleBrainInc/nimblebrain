@@ -108,7 +108,6 @@ async function rotate(): Promise<{ isError?: boolean; text: string }> {
   const res = await source.execute("rotate_webhook", {
     connector: "acme-billing-mcp",
     vendor: "acme",
-    confirm: "acme",
   });
   return {
     isError: res.isError,
@@ -160,6 +159,20 @@ describe("the grace window the page reports is the one the door enforces", () =>
   });
 });
 
+describe("a registration that predates delivery ids", () => {
+  test("reports no URL rather than one the door would refuse", async () => {
+    // buildHookUrl on a missing id yields an address ending in "undefined" —
+    // copyable, plausible, and admitted nowhere. The door already refuses this
+    // record; the page has to say the same thing, or an admin pastes a dead
+    // address into a vendor console and gets no error from anyone.
+    const { deliveryId: _dropped, ...stale } = reg();
+    runtime.seed("admin", { "acme-billing-mcp:acme": stale as never });
+    const webhooks = (await list()).webhooks as Array<Record<string, unknown>>;
+    expect(webhooks[0]?.url).toBeNull();
+    expect(JSON.stringify(webhooks)).not.toContain("undefined");
+  });
+});
+
 describe("reading a delivery URL", () => {
   test("an admin gets the full address, which is what makes the page useful", async () => {
     runtime.seed("admin", { "acme-billing-mcp:acme": reg() });
@@ -192,25 +205,11 @@ describe("reading a delivery URL", () => {
 });
 
 describe("rotation refuses before it acts", () => {
-  test("a confirm that does not name the vendor is refused", async () => {
-    runtime.seed("admin", { "acme-billing-mcp:acme": reg() });
-    const res = await source.execute("rotate_webhook", {
-      connector: "acme-billing-mcp",
-      vendor: "acme",
-      confirm: "yes",
-    });
-    // Refused BEFORE reconcile — the fake throws if rotation is reached, so a
-    // passing test is also proof nothing was rotated.
-    expect(res.isError).toBe(true);
-    expect((res.content?.[0] as { text?: string } | undefined)?.text).toContain("acme");
-  });
-
-  test("a member cannot rotate even with the right confirm", async () => {
+  test("a member cannot rotate", async () => {
     runtime.seed("member", { "acme-billing-mcp:acme": reg() });
     const res = await source.execute("rotate_webhook", {
       connector: "acme-billing-mcp",
       vendor: "acme",
-      confirm: "acme",
     });
     expect(res.isError).toBe(true);
   });
@@ -220,7 +219,6 @@ describe("rotation refuses before it acts", () => {
     const res = await source.execute("rotate_webhook", {
       connector: "acme-billing-mcp",
       vendor: "acme",
-      confirm: "acme",
     });
     expect(res.isError).toBe(true);
   });
