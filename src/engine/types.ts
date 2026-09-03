@@ -279,6 +279,20 @@ export type EngineEventType =
   | "file.deleted"
   | "bridge.tool.call"
   | "bridge.tool.done"
+  /**
+   * A notification a connector emitted reached a workspace's inbox. Emitted
+   * once per item, after the durable write — the inbox is the guarantee and
+   * everything downstream of it is best-effort. Payload:
+   * { workspaceId, id, seq, source, name, level, title, subject?, receivedAt }.
+   */
+  | "notification.created"
+  /**
+   * A route target for a notification did not deliver, with its retries spent.
+   * Carries the same coordinates as the delivery-ledger row it accompanies, so
+   * a failed post is visible instead of silent. Payload:
+   * { workspaceId, id, routeId, target, attempts, error }.
+   */
+  | "notification.delivery_failed"
   | "http.error"
   | "audit.auth_failure"
   | "audit.permission_denied";

@@ -65,6 +65,7 @@ class MultiUserAuthAdapter implements IdentityProvider {
     authCodeFlow: false,
     tokenRefresh: false,
     managedUsers: false,
+    authorizationServer: false,
   };
 
   constructor(private readonly tokens: Record<string, UserIdentity>) {}

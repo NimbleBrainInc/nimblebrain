@@ -28,6 +28,8 @@ import {
 } from "../connectors/server-detail.ts";
 import { parseHookDeclarations } from "../hooks/declaration.ts";
 import type { HookDeclaration } from "../hooks/types.ts";
+import { parseNotificationsDeclaration } from "../notifications/declaration.ts";
+import type { NotificationsDeclaration } from "../notifications/types.ts";
 import { validateAdditionalAuthorizationParams } from "../util/oauth-params.ts";
 import { isHttpUrl } from "../util/url.ts";
 import type { DirectoryEntry, RegistryType } from "./types.ts";
@@ -200,6 +202,20 @@ export interface ConnectorCatalogEntry {
    * attached. Absent for connectors that declare no hooks.
    */
   hooks?: HookDeclaration[];
+  /**
+   * The outbox the server declares in
+   * `ServerDetail._meta["ai.nimblebrain/host"].notifications` — the resource
+   * the runtime polls for facts nobody asked for.
+   *
+   * Carried from the catalog entry beside `hooks` because that is where the
+   * host extension is published today, but for a weaker reason than `hooks`
+   * has. A hook declaration must be operator-trusted because it chooses where
+   * a delivery is sent with a platform token attached. This one grants no
+   * privilege — no mint, no new audience, no path to a human — so a server's
+   * own `initialize` result is a legitimate future source for it. Absent for
+   * connectors that declare no outbox.
+   */
+  notifications?: NotificationsDeclaration;
 }
 
 /**
@@ -216,6 +232,7 @@ export function serverDetailToCatalogEntry(s: ServerDetail): ConnectorCatalogEnt
   const meta = getNimbleBrainConnectorMeta(s);
   const ui = hostMetaToUiMeta(getNimbleBrainHostMeta(s));
   const hooks = parseHookDeclarations(getNimbleBrainHostMeta(s));
+  const notifications = parseNotificationsDeclaration(getNimbleBrainHostMeta(s));
   // The "interactive" chip is cosmetic catalog metadata (no runtime behavior). Derive
   // it from whether the connector renders a VALID UI: an explicit connector flag OR a
   // placement that survives `sanitizePlacements` (the same check registration uses).
@@ -237,6 +254,7 @@ export function serverDetailToCatalogEntry(s: ServerDetail): ConnectorCatalogEnt
     ...(meta?.personal === true ? { personal: true } : {}),
     ...(ui ? { ui } : {}),
     ...(hooks.length > 0 ? { hooks } : {}),
+    ...(notifications ? { notifications } : {}),
   };
 }
 

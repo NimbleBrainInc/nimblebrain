@@ -293,7 +293,12 @@ describe("Auth flow", () => {
 
     // Create a simple mock provider for the adapter mode test
     const mockProvider: IdentityProvider = {
-      capabilities: { authCodeFlow: false, tokenRefresh: false, managedUsers: false },
+      capabilities: {
+        authCodeFlow: false,
+        tokenRefresh: false,
+        managedUsers: false,
+        authorizationServer: false,
+      },
       async verifyRequest(): Promise<null> { return null; },
       async listUsers(): Promise<User[]> { return []; },
       async createUser(data): Promise<CreateUserResult> {

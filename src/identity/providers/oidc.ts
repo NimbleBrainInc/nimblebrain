@@ -137,6 +137,8 @@ export class OidcIdentityProvider implements IdentityProvider {
     authCodeFlow: false,
     tokenRefresh: false,
     managedUsers: false,
+    // Verifies tokens minted elsewhere; this runtime is not the issuer.
+    authorizationServer: false,
   };
 
   private issuer: string;

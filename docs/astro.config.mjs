@@ -137,6 +137,7 @@ export default defineConfig({
               { label: 'Manifest Reference', slug: 'apps/manifest' },
               { label: 'Synapse SDK', slug: 'apps/synapse' },
               { label: 'Tool Results & Content Routing', slug: 'apps/tool-results' },
+              { label: 'Notifications', slug: 'apps/notifications' },
               { label: 'MCP App Bridge', slug: 'apps/bridge' },
               { label: 'UI Resources', slug: 'apps/ui-resources' },
               { label: 'Theming', slug: 'apps/theming' },

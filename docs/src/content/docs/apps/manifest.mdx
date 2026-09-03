@@ -48,13 +48,14 @@ servers:
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `host_version` | `string` | Yes | Host extension contract version: `"1.0"`, `"1.1"`, or `"1.2"`. `1.2` adds `hooks` — set the version that matches the newest block you declare. |
+| `host_version` | `string` | Yes | Host extension contract version: `"1.0"`, `"1.1"`, `"1.2"`, or `"1.3"`. `1.2` adds `hooks` and `1.3` adds `notifications` — set the version that matches the newest block you declare. |
 | `name` | `string` | Recommended | Display name shown in the sidebar and app list. Without a `name` the host surfaces no UI for the connector, so it's required in practice for any app with a presence in the shell. |
 | `icon` | `string` | No | [Lucide icon](https://lucide.dev/icons) name in kebab-case (e.g., `"database"`, `"message-square"`, `"hand"`). Defaults to `""`. |
 | `category` | `string` | No | Reserved, free-form string. Not currently consumed by the host — declare it only as forward-looking metadata. |
 | `placements` | `PlacementDeclaration[]` | No | Shell layout placement declarations — sidebar items, main views, and settings sections. See [Placements](/apps/placements). |
 | `briefing` | `object` | No | Daily briefing contribution. See [briefing](#briefing-object) below. |
 | `hooks` | `HookDeclaration[]` | No | Inbound event streams your server accepts from a vendor over plain HTTPS. Declare `host_version: "1.2"` alongside it. See [hooks](#hooks-inbound-webhooks) below. |
+| `notifications` | `object` | No | The outbox your server exposes — one resource the host polls for facts nobody asked for. Declare `host_version: "1.3"` alongside it. See [notifications](#notifications-the-outbox) below and the full guide at [Notifications](/apps/notifications). |
 
 ### Settings sections
 
@@ -228,6 +229,37 @@ rename:
 | Retries | None from the host — a single forward attempt. Your vendor's own retry, plus whatever reconciliation you poll for, is the durability story |
 | Rotation | An operator can rotate a URL at any time; the previous one keeps working for 24 hours so in-flight redeliveries land. Your `register_tool` is called again with the new URL |
 | Correlation | No key id reaches you — the platform adds no header of its own. An operator correlates a delivery to the URL it arrived on through the platform's own logs, so you do not need to record one |
+
+## `notifications`: the outbox
+
+Your server learns things nobody asked it for — a domain it ordered went active,
+a reply landed. Declaring a `notifications` block tells the host which resource
+to read for those, on a schedule the host paces.
+
+```json
+"_meta": {
+  "ai.nimblebrain/host": {
+    "host_version": "1.3",
+    "notifications": {
+      "resource": "acme://notifications",
+      "description": "Domain lifecycle, campaign replies, bounce and suppression events."
+    }
+  }
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `resource` | `string` | Yes | The outbox resource URI. Must carry a scheme; must **not** carry a query string or fragment — the host appends `{?cursor,maxEvents,maxAgeMs}` itself. |
+| `description` | `string` | No | What the outbox carries. Operator-facing; the host never acts on it. |
+
+Declaring an outbox grants your server nothing: no URL is minted, no new token
+audience exists, and no path to a human is opened — a workspace admin's route
+does that. What it costs is a standing poll, which the host bounds with its own
+cadence and per-workspace budget.
+
+The resource shape, the poll result, the event envelope, and what the host reads
+and never reads are all on the [Notifications](/apps/notifications) page.
 
 ## Registering your main view
 

@@ -1,4 +1,5 @@
 import type { HookDeclaration } from "../hooks/types.ts";
+import type { NotificationsDeclaration } from "../notifications/types.ts";
 import type { Connection } from "./connection.ts";
 
 /**
@@ -263,7 +264,7 @@ export type BundleState =
 
 /** Host manifest metadata at _meta["ai.nimblebrain/host"]. */
 export interface HostManifestMeta {
-  host_version: "1.0" | "1.1" | "1.2";
+  host_version: "1.0" | "1.1" | "1.2" | "1.3";
   name?: string;
   icon?: string;
   /**
@@ -287,6 +288,21 @@ export interface HostManifestMeta {
    * thing this door exists not to do. See `src/hooks/types.ts`.
    */
   hooks?: HookDeclaration[];
+  /**
+   * The outbox this server exposes: one MCP resource the runtime reads on a
+   * schedule for facts nobody asked for. Belongs to `host_version: "1.3"`.
+   *
+   * Unlike {@link hooks}, declaring one grants no privilege. A hook
+   * declaration decides where this runtime sends a delivery with a freshly
+   * minted platform token attached, which is why it is read only from
+   * operator-published metadata; an outbox declaration buys a poll the runtime
+   * paces and content in an inbox nobody is obliged to read. That is why its
+   * provenance can widen later to the server's own `initialize` result, where
+   * a hook declaration's cannot.
+   *
+   * See `src/notifications/types.ts`.
+   */
+  notifications?: NotificationsDeclaration;
 }
 
 /** Briefing declaration — how this app contributes to the daily briefing. */

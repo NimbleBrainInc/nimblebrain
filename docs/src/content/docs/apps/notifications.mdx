@@ -1,0 +1,361 @@
+---
+title: Notifications
+description: Expose an outbox so facts your server learns on its own reach the inbox, the agent, and — through an operator's route — a human.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Your server learns things nobody asked it for. A domain it ordered goes active
+twenty minutes after the call that ordered it returned. A reply lands on a
+campaign. A bounce arrives at three in the morning.
+
+A tool result cannot carry those: it only exists while the agent is mid-call. A
+**notification** can. You write the fact into a small table of your own, expose
+that table as one MCP resource, and declare it in your manifest. The host reads
+it on a schedule, writes every event into the workspace's inbox, and — where an
+operator has written a route — delivers it to Slack, mail, or an agent run.
+
+You need no NimbleBrain SDK for any of this. An outbox is a resource, an event
+is a JSON object, and both are shown in full below.
+
+<Aside type="note" title="Notifications are for facts nobody asked for">
+"The job you asked for finished" is not one. That is an [MCP
+Task](https://modelcontextprotocol.io/specification/2025-11-25/basic/utilities/tasks),
+which the host already polls as a client — see [long-running
+tools](/apps/tool-results). Reach for a notification when something happened
+that no in-flight call is waiting on.
+</Aside>
+
+## Why an outbox and not a callback
+
+The obvious design is the mirror of the [inbound hooks door](/apps/manifest#hooks-inbound-webhooks):
+the host hands you a URL and you POST to it. Two things decide against it.
+
+**Direction of control.** Under a callback, your server chooses when to spend a
+tenant's runtime. One tenant runs one process, and on a shared fleet one bug in
+one server can wake every tenant at once. Under a pull the host decides, paces
+itself, and batches forty bounces into one read.
+
+**You store nothing about the host.** No callback URL, no rotation story, no
+registration tool. Your server does not know the host exists — which is also
+what makes the same outbox readable by any MCP host that wants it.
+
+The cost is honest: latency is one poll interval, not one network hop. If you
+need sub-second delivery, this is the wrong primitive.
+
+## Declare the outbox
+
+One block in `_meta["ai.nimblebrain/host"]`, with `host_version: "1.3"`:
+
+```json title="manifest.json"
+"_meta": {
+  "ai.nimblebrain/host": {
+    "host_version": "1.3",
+    "notifications": {
+      "resource": "acme://notifications",
+      "description": "Domain lifecycle, campaign replies, bounce and suppression events."
+    }
+  }
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `resource` | `string` | Yes | The outbox resource URI, read by the host as an opaque string. **Scheme and path are both yours** — `acme://inbox` and `acme://events` are as valid as the example above; the host derives no meaning from either half. Three rules bind. It must carry a scheme. It must **not** carry a query string or a fragment, because the host appends its own query parameters and one of yours would be overwritten. And its scheme must not be one the host resolves itself — `skill://`, `ui://`, `instructions://`, `artifact://`, `files://`, `app://` — because a single resource cannot mean two things to the same reader; such a declaration is refused and the outbox is not polled. |
+| `description` | `string` | No | What the outbox carries. Operator-facing; the host never acts on it. |
+
+One outbox per server, carrying every event name you emit. The host filters;
+you do not need a resource per event type.
+
+Declaring an outbox **grants your server nothing**. No URL is minted, no token
+audience is created, and no path to a human is opened — that is a route, and
+only a workspace admin writes one. What it does impose is a standing poll, which
+the host bounds with its own cadence, backoff, and per-workspace budget.
+
+That cost is why the host polls **only what is declared**, and why there is no
+scheme to name your outbox after. A host that found outboxes by matching a URI
+pattern would be granting itself that poll on any server that happened to
+publish the right shape, which turns an opt-in into an opt-out. Schemes the host
+*does* resolve on its own — `skill://`, `ui://`, `instructions://`, `artifact://`,
+`files://`, `app://` — are the ones that buy you nothing by publishing them: it
+reads a skill when it wants one, renders a UI when the agent asks, fetches an
+artifact or a file when a viewer opens it, and reads your own
+`app://instructions` overlay into your own entry in the prompt.
+
+## Serve the outbox
+
+The host reads your resource as the RFC 6570 template
+`<resource>{?cursor,maxEvents,maxAgeMs}`. A read with no query is the bootstrap.
+
+| Parameter | Meaning |
+|---|---|
+| `cursor` | Opaque, **server-issued**, and echoed back to you. Return events strictly after it. Absent or `null` means "start from now": answer with no events and a fresh cursor, so a first read never dumps your backlog. |
+| `maxEvents` | Ceiling on how many events to return in this batch. |
+| `maxAgeMs` | The host's own replay bound. Honour the **later** of the cursor's position and `now − maxAgeMs`, so a very stale cursor cannot pull an unbounded history. |
+
+Answer with the poll result:
+
+```jsonc
+{
+  "events": [ /* EventOccurrence, oldest first */ ],
+  "cursor": "opaque-position-after-the-last-event",
+  "truncated": false,
+  "hasMore": false,
+  "nextPollMs": 60000
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `events` | The batch, **oldest first**. |
+| `cursor` | The position after the last event returned. The host stores it per `(workspace, connector)` and sends it back next time. |
+| `truncated` | `true` when delivery started later than the supplied cursor and events were skipped — the honest way to say "you missed some", rather than pretending a gap is not there. |
+| `hasMore` | `true` when the batch was cut at `maxEvents`. The host polls again immediately, within its budget. |
+| `nextPollMs` | Your recommendation for when to be read next. Honoured inside the host's own floor and ceiling. Shorten it while you are watching something change; lengthen it when an upstream API is rate-limiting you. Omit it for "no opinion". |
+
+Both `truncated` and `hasMore` default to `false` and `nextPollMs` is optional,
+so the minimum correct answer is `{ "events": [...], "cursor": "..." }`.
+
+Delivery is **at-least-once**. The host dedupes on `(source, eventId)`, so a
+repeated event is a no-op there — but pick `eventId` from a stable upstream id
+where one exists, rather than minting a new one per read, or the dedupe has
+nothing to work with.
+
+<Aside type="tip" title="The read is a fine place to do work">
+Nothing says the outbox has to be a passive `SELECT`. A server watching
+something that changes without telling it — a domain going from pending to
+active at a registrar — can refresh those rows inside the read, diff them, emit
+the transition, and return it in the same response. The poll becomes your tick,
+and you need no background loop of your own.
+</Aside>
+
+## The event envelope
+
+One event is an `EventOccurrence`: four required fields, an optional cursor, and
+an optional `_meta`.
+
+```jsonc
+{
+  "eventId": "evt_01J8...",             // required; unique to your server; the idempotency key
+  "name": "domain.active",              // required; your own dotted, lower-case name
+  "timestamp": "2026-09-01T18:42:10Z",  // required; ISO 8601
+  "data": {                             // required; your structured payload, opaque to the host
+    "campaign_id": "cmp_8f2a",
+    "provider": "acme-registrar"
+  },
+  "cursor": "…",                        // optional; the position after this event
+  "_meta": {
+    "ai.nimblebrain/notification": {    // optional; everything the host renders and matches on
+      "subject": "acme-outreach.test",
+      "level": "attention",
+      "title": "acme-outreach.test is active",
+      "body": "DNS propagated. Two mailboxes can now be created on it.",
+      "link": { "resource": "acme://campaigns/cmp_8f2a" }
+    }
+  }
+}
+```
+
+### The four standard fields
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `eventId` | `string` | Yes | Unique within your server, and the idempotency key. Use the upstream id where one exists. |
+| `name` | `string` | Yes | Your own event name, dotted and lower-case by convention. The host matches it as a string and never enumerates names, so you do not register it anywhere — but keep it free of whitespace, or a route's glob and a log line both become ambiguous. |
+| `timestamp` | `string` | Yes | ISO 8601, when the fact happened. Normalized by the host. |
+| `data` | `object` | Yes | Your structured payload. Opaque to the host and forwarded verbatim to the agent, the way a tool result's `structuredContent` is. |
+
+### The `ai.nimblebrain/notification` block
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `subject` | `string` | No | What the item is about — free text, used for grouping. |
+| `level` | `"info" \| "attention" \| "urgent"` | No | Advisory urgency. Default `info`. The inbox sorts by it and a route may match on it as a **minimum**; nothing treats it as authority. |
+| `title` | `string` | No | One line of **plain text**. Defaults to `name`. |
+| `body` | `string` | No | Short **plain text**. Never rendered as markdown. |
+| `link.resource` | `string` | No | Where to go. A URI with a scheme; the host resolves nothing from it. |
+
+An event with **no `_meta` block at all is still a notification** — `title`
+falls back to `name` and `level` to `info`. The four standard fields are your
+contract with the wider ecosystem; this block is your contract with this host,
+and it is additive.
+
+`title` and `body` are plain text on every surface that shows them, so the host
+strips control characters and caps them (title 200 characters, body 2000). Send
+prose, not escape sequences.
+
+<Aside type="caution" title="There is no `link.tool`, and no `actions[]`">
+Deliberately. A server naming a tool and an input that a UI renders as a button
+is where an envelope stops being presentation and starts being instruction.
+Fields the block does not define are dropped rather than honoured, so sending
+them does nothing.
+</Aside>
+
+## What the host reads, and what it never reads
+
+The host reads **the four standard fields and its own `_meta` block**. That is
+the whole list.
+
+It never reads `data`. Not a field of it, not to route on, not to render. Your
+payload reaches the agent verbatim and the agent interprets it; no kernel code
+knows what `campaign_id` means, and nothing about your event names is registered
+anywhere. This is what makes a third-party server's outbox work identically to a
+first-party one.
+
+Three fields on the stored item are the host's, and you cannot set them however
+you spell them in your payload: `source` (your connector's server name),
+`workspaceId`, and `receivedAt`. It also stamps a `seq` that counts one
+workspace's inbox.
+
+A malformed event is dropped on its own — a bad timestamp or an invented level
+costs that one event, never the batch and never the poll. It is worth checking
+your own output once against the table above; there is no error channel back to
+you.
+
+## Levels, and why a new source starts quiet
+
+Every workspace carries a **per-source level ceiling**, and a newly declared
+source starts at `info`. Since a route matches on level as a minimum, a route
+looking for `attention` or above does not fire for your server until a workspace
+admin raises your ceiling.
+
+That is the grant. Declaring an outbox costs the operator a poll; reaching a
+human's phone is a second, separate decision they make on purpose. Emit the
+level you honestly mean and let the ceiling do its job — an outbox where
+everything is `urgent` gets its ceiling left where it is.
+
+## Examples
+
+Neither example imports anything from NimbleBrain. An outbox is a resource that
+returns JSON.
+
+### Python (FastMCP)
+
+```python
+from datetime import datetime, timezone
+from fastmcp import FastMCP
+
+mcp = FastMCP("acme")
+
+@mcp.resource("acme://notifications")
+def notifications(cursor: str | None = None, maxEvents: int = 100, maxAgeMs: int | None = None) -> dict:
+    # A first read bootstraps from "now": no events, a fresh cursor.
+    if cursor is None:
+        return {"events": [], "cursor": current_position(), "truncated": False, "hasMore": False}
+
+    rows = read_outbox_after(cursor, limit=maxEvents, max_age_ms=maxAgeMs)
+    events = [
+        {
+            "eventId": row.id,
+            "name": row.name,
+            "timestamp": row.occurred_at.astimezone(timezone.utc).isoformat(),
+            "data": row.payload,
+            "_meta": {
+                "ai.nimblebrain/notification": {
+                    "subject": row.subject,
+                    "level": row.level,
+                    "title": row.title,
+                    "body": row.body,
+                }
+            },
+        }
+        for row in rows
+    ]
+    return {
+        "events": events,
+        "cursor": rows[-1].position if rows else cursor,
+        "truncated": False,
+        "hasMore": len(rows) == maxEvents,
+        # Ask to be read sooner while something is still changing.
+        "nextPollMs": 15000 if has_pending_work() else 60000,
+    }
+```
+
+Write the row in the same transaction as the state change it describes, so a
+rolled-back change cannot leave an event claiming it happened:
+
+```python
+def claim_domain(conn, workspace_id: str, domain: str) -> None:
+    with conn.begin():
+        conn.execute(insert_domain(workspace_id, domain))
+        conn.execute(insert_outbox_row(
+            workspace_id=workspace_id,
+            name="domain.registered",
+            subject=domain,
+            level="info",
+            title=f"{domain} registered",
+            payload={"domain": domain},
+        ))
+```
+
+### TypeScript
+
+```ts
+import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
+
+const server = new McpServer({ name: "acme", version: "1.0.0" });
+
+server.registerResource(
+  "notifications",
+  new ResourceTemplate("acme://notifications{?cursor,maxEvents,maxAgeMs}", { list: undefined }),
+  { description: "Domain lifecycle, campaign replies, bounces." },
+  async (uri, { cursor, maxEvents, maxAgeMs }) => {
+    const limit = Number(maxEvents ?? 100);
+    const result = cursor
+      ? await readOutboxAfter(String(cursor), limit, maxAgeMs ? Number(maxAgeMs) : undefined)
+      : { rows: [], position: await currentPosition() };
+
+    return {
+      contents: [
+        {
+          uri: uri.href,
+          mimeType: "application/json",
+          text: JSON.stringify({
+            events: result.rows.map((row) => ({
+              eventId: row.id,
+              name: row.name,
+              timestamp: row.occurredAt.toISOString(),
+              data: row.payload,
+              _meta: {
+                "ai.nimblebrain/notification": {
+                  subject: row.subject,
+                  level: row.level,
+                  title: row.title,
+                  body: row.body,
+                },
+              },
+            })),
+            cursor: result.position,
+            truncated: false,
+            hasMore: result.rows.length === limit,
+          }),
+        },
+      ],
+    };
+  },
+);
+```
+
+## Where the events end up
+
+1. The host reads your outbox under the workspace identity it already uses for
+   your tools, so your handler authorizes the read exactly as it authorizes a
+   tool call.
+2. Every event is written to that workspace's inbox — durably, and before
+   anything else happens. That write is the guarantee; everything after it is
+   best-effort.
+3. The web client renders it live, and replays what it missed after a reconnect.
+4. The agent reads it with `notifications__list`, framed as untrusted data from
+   a connector — newest first, or oldest first to walk forward through a
+   backlog.
+5. If an operator has written a route that matches, the host delivers it — a
+   Slack message, a mail, an agent run — as the admin who wrote the route.
+
+## Related
+
+- [Manifest Reference](/apps/manifest) — the `notifications` block in context.
+- [Inbound webhooks](/apps/manifest#hooks-inbound-webhooks) — the other
+  direction: a vendor delivering to you.
+- [MCP Triggers and Events](https://github.com/modelcontextprotocol/experimental-ext-triggers-events)
+  — the working-group design this envelope and poll result mirror field for
+  field, so adopting the extension later is a change of carrier, not of shape.
