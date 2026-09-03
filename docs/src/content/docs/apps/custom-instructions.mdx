@@ -44,7 +44,7 @@ Everything except the URI convention and the prompt-side wrapping:
 from pathlib import Path
 import os
 
-INSTRUCTIONS_FILE = Path(os.environ.get("MPAK_WORKSPACE", "./workspace")) / "custom-instructions.md"
+INSTRUCTIONS_FILE = Path(os.environ.get("APP_STATE_DIR", "./workspace")) / "custom-instructions.md"
 
 @mcp.resource("app://instructions", mime_type="text/markdown")
 def custom_instructions() -> str:

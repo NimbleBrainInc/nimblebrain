@@ -822,7 +822,7 @@ async function handleListInstalled(
   const workDir = ctx.runtime.getWorkDir();
   const credStore = new FileCredentialStore(workDir);
   // One directory instance per request — its memoized `servers()`
-  // means catalogByUrl + iconByPackage share a single fetch even
+  // means catalogByUrl + catalogByIdMap share a single fetch even
   // though they're called separately. Reaching for the lookup tables
   // (rather than the raw catalog list + manual map-build) keeps the
   // construction concern inside the facade.
@@ -2496,9 +2496,14 @@ async function stripUninstalledBundleEntry(
 ): Promise<void> {
   const wsAfter = await ctx.runtime.getWorkspaceStore().get(wsId);
   if (!wsAfter) return;
-  const filtered = wsAfter.bundles.filter(
-    (b) => (b.serverName ?? deriveServerName(b.url)) !== serverName,
-  );
+  // `deriveServerName` needs a string; a legacy or malformed row has no `url`,
+  // and throwing here would fail the uninstall of a *different*, healthy
+  // connector. Such a row matches nothing, so it is retained untouched.
+  const filtered = wsAfter.bundles.filter((b) => {
+    if (b.serverName) return b.serverName !== serverName;
+    if (typeof b.url !== "string" || b.url.length === 0) return true;
+    return deriveServerName(b.url) !== serverName;
+  });
   if (filtered.length !== wsAfter.bundles.length) {
     await ctx.runtime.getWorkspaceStore().update(wsId, { bundles: filtered });
   }

@@ -2,11 +2,11 @@ import { NoopEventSink } from "../adapters/noop-events.ts";
 import type { BundleLifecycleManager } from "../bundles/lifecycle.ts";
 import { isToolEnabled, type ResolvedFeatures } from "../config/features.ts";
 import type { ConfirmationGate } from "../config/privilege.ts";
-import type { ServerDetail } from "../connectors/server-detail.ts";
 import { textContent } from "../engine/content-helpers.ts";
 import type { EventSink, ToolPromotionControls, ToolResult, ToolSchema } from "../engine/types.ts";
 import { isInternalTool, NON_ADVANCING_META_KEY } from "../engine/types.ts";
 import { log } from "../observability/log.ts";
+import type { DirectoryEntry } from "../registries/types.ts";
 import { getRequestContext } from "../runtime/request-context.ts";
 import type { Runtime } from "../runtime/runtime.ts";
 import type { SelectedSkill } from "../skills/select.ts";
@@ -723,31 +723,28 @@ function formatUptime(ms: number): string {
 }
 
 /**
- * Keyword match over a `ServerDetail` set for agent registry search.
+ * Keyword match over the projected directory for agent registry search.
  * Empty query returns everything; otherwise every whitespace-separated term
- * must appear (case-insensitive) in the name, title, description, or a
- * package identifier.
+ * must appear (case-insensitive) in the id, name, description, or a tag.
+ *
+ * Matches over `DirectoryEntry`, not the raw `ServerDetail`, because that is
+ * the set a caller can act on: the projection is what drops an entry this
+ * runtime cannot install. Matching pre-projection would let the agent find —
+ * and try to install — a server the catalog already refused, and would match
+ * it on a package identifier that names code nothing here downloads.
  *
  * NOTE: this is DELIBERATELY a different matcher from the web Browse search
  * box, not a port of it. Browse OR-matches the whole query as one literal
  * substring across name/description/tags; this AND-matches each term across
  * more fields — better precision for an agent narrowing to a specific
- * bundle. They are not meant to return identical sets. No shared backend
- * matcher exists; if you change the field set here, that divergence is
- * expected, not a bug.
+ * connector. They are not meant to return identical sets, only to run over
+ * the same underlying entries. No shared backend matcher exists.
  */
-function matchServersByQuery(servers: ServerDetail[], query: string): ServerDetail[] {
+function matchEntriesByQuery(entries: DirectoryEntry[], query: string): DirectoryEntry[] {
   const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
-  if (terms.length === 0) return servers;
-  return servers.filter((s) => {
-    const hay = [
-      s.name,
-      s.title ?? "",
-      s.description,
-      ...(s.packages ?? []).map((p) => p.identifier),
-    ]
-      .join(" ")
-      .toLowerCase();
+  if (terms.length === 0) return entries;
+  return entries.filter((e) => {
+    const hay = [e.id, e.name, e.description, ...(e.tags ?? [])].join(" ").toLowerCase();
     return terms.every((t) => hay.includes(t));
   });
 }
@@ -782,36 +779,33 @@ function checkSearchScopeGate(scope: string, features?: ResolvedFeatures): ToolR
   return null;
 }
 
-/** `search` scope=registry — keyword-match servers from the connector directory. */
+/** `search` scope=registry — keyword-match installable entries from the connector directory. */
 async function searchRegistry(runtime: Runtime | undefined, query: string): Promise<ToolResult> {
   try {
     // Route agent discovery through the SAME method Browse uses —
-    // ConnectorDirectory.servers(). It fetches every enabled source,
-    // applies each registry's OWN scopes per-source (so mixed-scope
-    // multi-registry configs filter exactly as Browse does), runs the
-    // icon/URL safety scrub, caches, and aggregates errors. One method,
-    // not two parallel fetch/filter paths, so the scope filtering can't
-    // drift — and every enabled source is searched, with no source-type
-    // filter narrowing the agent's view to a subset of what Browse shows.
+    // ConnectorDirectory.list(). It fetches every enabled source, applies
+    // each registry's OWN scopes per-source (so mixed-scope multi-registry
+    // configs filter exactly as Browse does), runs the icon/URL safety scrub,
+    // projects, dedups, caches, and aggregates errors. One method, not two
+    // parallel fetch/filter paths, so the sets cannot drift — and the
+    // projection is load-bearing here, not incidental: it is what drops an
+    // entry this runtime cannot install, so the agent is never shown a
+    // connector whose install would be refused downstream.
     //
     // No runtime (non-agent/test paths) ⇒ no directory ⇒ no results;
     // the production agent always has one.
     const directory = runtime?.getConnectorDirectory();
-    const aggregated = directory ? await directory.servers() : null;
-    const results = matchServersByQuery(
-      (aggregated?.servers ?? []).map((s) => s.detail),
-      query,
-    );
+    const aggregated = directory ? await directory.list() : null;
+    const results = matchEntriesByQuery(aggregated?.entries ?? [], query);
     if (results.length === 0) {
       // Distinguish "registry unreachable" from "no such server".
-      // servers() aggregates per-source fetch failures into `errors`
-      // instead of throwing, so an outage (5xx / timeout / DNS) yields
-      // zero entries silently. If a source errored and we got nothing
-      // back at all, surface a failure rather than telling the agent the
-      // server doesn't exist. With several registries where one is up and
-      // the down one held the queried entry, this reports "no servers
+      // list() aggregates a source failure into `errors` instead of throwing,
+      // so an outage yields zero entries silently. If a source errored and we
+      // got nothing back at all, surface a failure rather than telling the
+      // agent the server doesn't exist. With several registries where one is
+      // up and the down one held the queried entry, this reports "no servers
       // found" — matching Browse's partial-results semantics.
-      if ((aggregated?.servers ?? []).length === 0 && (aggregated?.errors ?? []).length > 0) {
+      if ((aggregated?.entries ?? []).length === 0 && (aggregated?.errors ?? []).length > 0) {
         return {
           content: textContent(`Failed to search the connector registries for "${query}".`),
           isError: true,
@@ -824,7 +818,7 @@ async function searchRegistry(runtime: Runtime | undefined, query: string): Prom
     }
     const lines = [`Found ${results.length} result(s) for "${query}":\n`];
     for (const r of results) {
-      lines.push(`- **${r.name}** ${r.version}: ${r.description ?? ""}`);
+      lines.push(`- **${r.id}** (${r.name}): ${r.description ?? ""}`);
     }
     return { content: textContent(lines.join("\n")), isError: false };
   } catch {

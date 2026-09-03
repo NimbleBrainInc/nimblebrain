@@ -24,7 +24,7 @@ NimbleBrain looks for the config file in this order, stopping at the first match
 If no config file exists at the resolved path, NimbleBrain auto-creates a minimal default file (`{ "$schema": …, "version": "1" }`) as long as the parent directory exists.
 
 <Aside type="caution">
-  `NB_WORK_DIR` does **not** drive config-file discovery. It sets the `workDir` runtime value (where conversations, logs, and workspaces are stored) and is forwarded to bundle subprocesses, but the config file is located by the order above. To point at a specific config file, use `--config`.
+  `NB_WORK_DIR` does **not** drive config-file discovery. It sets the `workDir` runtime value (where conversations, logs, and workspaces are stored), but the config file is located by the order above. To point at a specific config file, use `--config`.
 </Aside>
 
 ### The override file

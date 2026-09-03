@@ -4,6 +4,7 @@ import { INTERNAL_TOOL_ANNOTATION, type ToolResult } from "../engine/types.ts";
 import type { UserIdentity } from "../identity/provider.ts";
 import { ORG_ADMIN_ROLES } from "../identity/types.ts";
 import type { UserStore } from "../identity/user.ts";
+import { isHttpUrl } from "../util/url.ts";
 import { canWriteWorkspaceScoped } from "../workspace/authz.ts";
 import { PersonalWorkspaceInvariantError } from "../workspace/errors.ts";
 import type { WorkspaceMember } from "../workspace/types.ts";
@@ -17,11 +18,37 @@ import type { InProcessTool } from "./in-process-app.ts";
  * operator-catalog territory, set by the install path, never by a caller.
  */
 function toBundleRef(b: Record<string, unknown>): BundleRef {
-  const url = String(b.url ?? "");
+  // The JSON Schema requires `url` but admits any string, including "". A row
+  // that reaches the store without a reachable URL is a connector nothing can
+  // connect to, and every reader downstream has to defend against it — so it
+  // is refused at the boundary that creates it. Same protocol allowlist the
+  // install path applies, for the same reason.
+  const url = typeof b.url === "string" ? b.url.trim() : "";
+  if (!isHttpUrl(url)) {
+    throw new Error(
+      `Connector url must be an http(s) URL (got ${url === "" ? "an empty value" : `"${url}"`}).`,
+    );
+  }
   return {
     url,
     ...(typeof b.serverName === "string" && b.serverName ? { serverName: b.serverName } : {}),
   };
+}
+
+/**
+ * Map the tool's connector rows to refs, or report the first unusable one.
+ *
+ * `toBundleRef` throws so `create` — which maps inside its own try — gets the
+ * refusal for free. `update` builds its patch before that try (the
+ * nothing-to-update check needs the built patch), so it comes through here and
+ * turns the refusal into a tool error rather than an unhandled throw.
+ */
+function toBundleRefs(rows: Array<Record<string, unknown>>): BundleRef[] | { error: string } {
+  try {
+    return rows.map(toBundleRef);
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : String(err) };
+  }
 }
 
 // ── Types ─────────────────────────────────────────────────────────
@@ -366,8 +393,9 @@ async function handleUpdate(
   const patch: Record<string, unknown> = {};
   if (input.name !== undefined) patch.name = String(input.name);
   if (input.bundles !== undefined) {
-    const bundles = input.bundles as Array<Record<string, unknown>>;
-    patch.bundles = bundles.map(toBundleRef);
+    const refs = toBundleRefs(input.bundles as Array<Record<string, unknown>>);
+    if (!Array.isArray(refs)) return { content: textContent(refs.error), isError: true };
+    patch.bundles = refs;
   }
 
   if (Object.keys(patch).length === 0) {

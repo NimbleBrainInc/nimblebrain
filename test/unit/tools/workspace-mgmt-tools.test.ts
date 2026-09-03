@@ -270,10 +270,10 @@ describe("nb__manage_workspaces", () => {
       expect(updated.workspace.name).toBe("Updated");
     });
 
-    test("updates workspace bundles", async () => {
+    test("updates workspace connectors", async () => {
       const createResult = await tool.handler({
         action: "create",
-        name: "Bundle Update",
+        name: "Connector Update",
       });
       const created = parseResult(createResult) as { workspace: { id: string } };
 
@@ -281,16 +281,38 @@ describe("nb__manage_workspaces", () => {
         action: "update",
         workspaceId: created.workspace.id,
         bundles: [
-          { name: "@nimblebraininc/echo" },
-          { name: "@nimblebraininc/bash" },
+          { url: "https://echo.example.com/mcp", serverName: "echo" },
+          { url: "https://bash.example.com/mcp", serverName: "bash" },
         ],
       });
 
       expect(updateResult.isError).toBe(false);
       const updated = parseResult(updateResult) as {
-        workspace: { bundles: Array<{ name: string }> };
+        workspace: { bundles: Array<{ url: string }> };
       };
       expect(updated.workspace.bundles).toHaveLength(2);
+      expect(updated.workspace.bundles[0]?.url).toBe("https://echo.example.com/mcp");
+    });
+
+    test("refuses a connector row with no reachable url", async () => {
+      // The schema requires `url` but admits any string. A row that reaches the
+      // store without a reachable URL is a connector nothing can connect to,
+      // and every reader downstream would have to defend against it — so it is
+      // refused at the boundary that creates it. Covers the empty string and
+      // the legacy by-name shape.
+      const created = parseResult(
+        await tool.handler({ action: "create", name: "Bad Rows" }),
+      ) as { workspace: { id: string } };
+
+      for (const bad of [{ url: "" }, { name: "@nimblebraininc/echo" }, { url: "ftp://x/mcp" }]) {
+        const result = await tool.handler({
+          action: "update",
+          workspaceId: created.workspace.id,
+          bundles: [bad],
+        });
+        expect(result.isError).toBe(true);
+        expect(extractText(result)).toContain("http(s) URL");
+      }
     });
 
     test("requires workspaceId", async () => {

@@ -597,8 +597,7 @@ const NIMBLEBRAIN_LOGO_URI = "https://static.nimblebrain.ai/logos/nimblebrain/li
  *                          ACL that protects `tokens.json` next to it.
  *
  * Directory is created with mode 0o700; files are written 0o600 via an
- * atomic rename pattern (write to tmp, chmod, rename). Same discipline as
- * `src/config/workspace-credentials.ts`.
+ * atomic rename pattern (write to tmp, chmod, rename).
  *
  * For Reboot's `Anonymous` dev OAuth (rbt dev): the authorization URL
  * returned by the server is ALREADY our own callback URL with

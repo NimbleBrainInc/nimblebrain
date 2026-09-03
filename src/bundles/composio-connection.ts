@@ -25,9 +25,8 @@
  * silently rejects every connection made through the other. The
  * callback rejects a failed connect before it ever writes this file.
  *
- * Security posture mirrors workspace-credentials.ts: 0o700 directory,
- * 0o600 file, atomic temp+rename writes, wsId validated against
- * WORKSPACE_ID_RE before any path is built.
+ * Security posture: 0o700 directory, 0o600 file, atomic temp+rename
+ * writes, wsId validated against WORKSPACE_ID_RE before any path is built.
  */
 
 import { existsSync } from "node:fs";
@@ -70,8 +69,7 @@ export interface ComposioConnection {
  *
  * Catalog entries name connectors with reverse-DNS dots and slashes
  * (`com.google/gmail`). Those translate into filesystem-unsafe path
- * components; we slug to `[A-Za-z0-9._-]+` matching the same pattern
- * used by `bundleSlug` in workspace-credentials.ts. Validation is
+ * components; we slug to `[A-Za-z0-9._-]+`. Validation is
  * tight: anything that would escape the connector directory or shell
  * out throws. Better to fail loud than to silently write to an
  * unexpected path.
@@ -175,8 +173,8 @@ export async function saveComposioConnection(
   try {
     await chmod(dir, 0o700);
   } catch {
-    // Best-effort directory hardening — the file is 0o600 explicitly.
-    // Mirror workspace-credentials.ts's policy of not aborting here.
+    // Best-effort directory hardening — the file is 0o600 explicitly, so a
+    // failed chmod on the parent is not worth aborting the write for.
   }
   const filePath = composioConnectionPath(workDir, owner, connectorId);
   await atomicWriteFile(filePath, `${JSON.stringify(connection, null, 2)}\n`, 0o600);

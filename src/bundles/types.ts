@@ -305,10 +305,9 @@ export interface BriefingFacet {
   resource?: string;
   tool?: string;
   tool_input?: Record<string, unknown>;
-  /** Descriptive only — carried through to the briefing prompt, not computed by the host. */
-  metric?: "count" | "sum" | "list";
-  field?: string;
-  highlight?: string;
+  /** Shown when the facet declares neither `tool` nor `resource`, and when
+   *  resolution fails. The only facet field besides label/type the briefing
+   *  reads — see `buildUserPayload` in `services/briefing-generator.ts`. */
   description?: string;
 }
 

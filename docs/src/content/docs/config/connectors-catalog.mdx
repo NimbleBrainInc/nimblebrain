@@ -173,7 +173,7 @@ Top-level fields come from upstream `ServerDetail`:
 | `version` | yes | Semver string. |
 | `icons[].src` | yes | Absolute http(s) URL. `javascript:` / `data:` / `file:` are rejected at the directory boundary. |
 | `remotes[]` | for OAuth connectors | List of remote transports. First entry drives the install. `type` is `streamable-http` or `sse`. |
-| `packages[]` | for stdio bundles | List of installable packages. `identifier` is the scoped npm name (e.g. `@nimblebraininc/echo`). |
+| `packages[]` | never | Downloadable distributions. Read for display and scope-matching only — this runtime installs no code, so an entry offering **only** `packages[]` is not installable and is dropped from Browse. |
 
 NimbleBrain-specific fields under `_meta["ai.nimblebrain/connector"]`:
 

@@ -182,7 +182,7 @@ For inline or compact views, send `ui/notifications/size-changed` messages to te
 
 ## Built-in views use the same path
 
-NimbleBrain's own surfaces — the home dashboard, conversation list, files, and automations — use the exact same `ui://` pattern as third-party apps. There is no separate "core" code path. Each built-in is an **in-process MCP bundle**: it runs inside the platform process (over an in-memory transport) and registers `ui://` resources just like a subprocess bundle would.
+NimbleBrain's own surfaces — the home dashboard, conversation list, files, and automations — use the exact same `ui://` pattern as third-party apps. There is no separate "core" code path. Each built-in is an **in-process MCP server**: it runs inside the platform process (over an in-memory transport) and registers `ui://` resources just like a remote connector does.
 
 When the resource proxy receives a request for a built-in's view, it calls `resources/read` on that in-process bundle through the same dispatch path it uses for any other server:
 

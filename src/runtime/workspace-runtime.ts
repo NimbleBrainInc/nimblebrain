@@ -55,6 +55,18 @@ export interface ProcessInventoryEntry {
 // ---------------------------------------------------------------------------
 
 /**
+ * Name an unusable `bundles[]` row for an operator, without assuming its shape.
+ * A legacy row carries `name:` or `path:` where `url` should be; a malformed
+ * one carries neither.
+ */
+function describeUnusableRef(ref: BundleRef): string {
+  const legacy = ref as unknown as { name?: unknown; path?: unknown };
+  if (typeof legacy.name === "string") return `legacy name: "${legacy.name}"`;
+  if (typeof legacy.path === "string") return `legacy path: "${legacy.path}"`;
+  return `no url and no legacy key (keys: ${Object.keys(ref).join(", ") || "none"})`;
+}
+
+/**
  * Build a flat process inventory from a list of workspaces.
  *
  * For each workspace, iterates its declared connectors and produces one
@@ -74,6 +86,21 @@ export function buildProcessInventory(
       // `bun run migrate:user-creds` before deploying Stage 2 — see
       // the Stage 2 deploy runbook.
       assertBundleRefIsPostStage2(bundle);
+      // A row with no usable `url` is skipped, not thrown on. Boot reads
+      // every workspace's `bundles[]` in one pass before any per-entry
+      // containment, so throwing here takes the whole instance down over one
+      // bad row — a legacy `name:`/`path:` entry that predates the URL-only
+      // ref, or a `url: ""` that reached the store. Dropping just that entry
+      // is what makes the documented per-entry break ("that entry no longer
+      // starts") true, and the warn names the row so it can be fixed.
+      if (typeof bundle.url !== "string" || bundle.url.length === 0) {
+        log.warn(
+          `[bundles] ${ws.id}: skipping a connector entry with no url — ` +
+            `${describeUnusableRef(bundle)}. A connector is addressed by URL; ` +
+            "re-install it from the catalog against the server's endpoint.",
+        );
+        continue;
+      }
       const serverName = serverNameFromRef(bundle);
       const dataDir = resolveBundleDataDirForRef(workDir, ws.id, bundle);
 

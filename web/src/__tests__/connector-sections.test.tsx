@@ -392,7 +392,7 @@ describe("OperatorOAuthSection", () => {
 
 // BundleConfigSection was deleted in the header-action redesign.
 // Bundle credentials are now triggered from a top-right Configure
-// button on ConnectorDetailPage that opens BundleCredentialsModal
+// affordances on ConnectorDetailPage
 // directly. The modal owns its own Clear-configuration affordance,
 // so the inline section had no remaining job.
 

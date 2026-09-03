@@ -269,7 +269,7 @@ describe("V5: SSE events scoped by workspace", () => {
 // Pins Runtime.getBundleInstancesForWorkspace against the class of leak
 // where two workspaces install the same bundle and the filter returns
 // cross-workspace instances because it only matched on serverName. Each
-// instance carries its own entityDataRoot, so a leak in this method
+// instance is its own object, so a leak in this method
 // surfaces another workspace's entity data (contacts, tasks, etc.) to
 // the caller's briefing/apps list.
 

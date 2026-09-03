@@ -131,6 +131,36 @@ describe("buildProcessInventory", () => {
     expect(salesEntries).toHaveLength(3);
   });
 
+  it("skips a row with no usable url instead of aborting the whole inventory", () => {
+    // Boot reads every workspace's `bundles[]` in one pass before any
+    // per-entry containment, so a throw here takes the instance down over one
+    // bad row. Both reachable shapes are covered: a legacy `name:`/`path:`
+    // entry predating the URL-only ref, and a `url: ""` that reached the store.
+    const ws = makeWorkspace("ws_mixed", "Mixed", [
+      { name: "@acme/echo" } as unknown as BundleRef,
+      { path: "/opt/echo" } as unknown as BundleRef,
+      { url: "" } as BundleRef,
+      crm(),
+    ]);
+
+    const entries = buildProcessInventory([ws], WORK_DIR);
+
+    // The healthy row survives; the three unusable ones are dropped, not thrown on.
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.serverName).toBe("crm");
+  });
+
+  it("one workspace's bad row does not cost another workspace its connectors", () => {
+    const broken = makeWorkspace("ws_broken", "Broken", [
+      { name: "@acme/echo" } as unknown as BundleRef,
+    ]);
+    const healthy = makeWorkspace("ws_healthy", "Healthy", [crm()]);
+
+    const entries = buildProcessInventory([broken, healthy], WORK_DIR);
+
+    expect(entries.map((e) => e.wsId)).toEqual(["ws_healthy"]);
+  });
+
   it("no global connector state leaks between workspaces", () => {
     const bundles = [crm()];
     const ws1 = makeWorkspace("ws_a", "A", bundles);

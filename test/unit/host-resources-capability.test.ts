@@ -59,7 +59,7 @@ describe("hostExtensions", () => {
   it("emits exactly the keyed object form expected by MCP ClientCapabilities.extensions", () => {
     // The shape is `Record<vendorKey, capabilityPayload>` — mirrors how the
     // platform advertises every extension and how the bundle's
-    // host_capabilities declares its requirements.
+    // a server probes at runtime for what it needs.
     expect(hostExtensions()).toEqual({
       [HOST_RESOURCES_CAPABILITY_KEY]: HOST_RESOURCES_CAPABILITY_V1,
     });

@@ -989,12 +989,33 @@ describe("search — scope: registry", () => {
 		return systemTools.execute("search", { scope: "registry", query });
 	}
 
-	it("renders an in-scope server as **<name>** <version>", async () => {
+	it("renders an in-scope server as **<id>** (<name>)", async () => {
 		const result = await search(runtimeWithCatalog(["ai.nimblebrain"]), "ipinfo");
 		expect(result.isError).toBe(false);
 		const text = extractText(result.content);
 		expect(text).toContain("ai.nimblebrain/ipinfo");
-		expect(text).toContain("1.0.0");
+		expect(text).toContain("IP geolocation");
+	});
+
+	it("does not surface a packages-only entry — Browse drops it as not installable", async () => {
+		// The agent's registry view is the projected directory, so it can never
+		// find (and try to install) a server the catalog already refused. Matching
+		// pre-projection also matched on `packages[].identifier`, naming code this
+		// runtime does not download.
+		const result = await search(
+			runtimeWithCatalog(undefined, [
+				{
+					name: "com.acme/cli",
+					description: "A downloadable CLI",
+					version: "1.0.0",
+					packages: [
+						{ registryType: "npm", identifier: "@acme/cli", transport: { type: "stdio" } },
+					],
+				},
+			]),
+			"acme",
+		);
+		expect(extractText(result.content)).toContain("No servers found");
 	});
 
 	it("drops servers from other publishers even when the name matches", async () => {

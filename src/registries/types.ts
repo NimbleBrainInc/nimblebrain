@@ -3,7 +3,7 @@
  * configurable set of sources (curated YAML, a future upstream MCP
  * registry, etc.) through one facade — `ConnectorDirectory`. Clients
  * never construct sources or aggregate them by hand; they ask the
- * directory for `list()`, `catalogByUrl()`, `iconByPackage()`, etc.,
+ * directory for `list()`, `catalogByUrl()`, `catalogById()`, etc.,
  * and uniform behavior (scope filtering, error aggregation,
  * projection, dedup) lives in one place.
  *

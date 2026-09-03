@@ -180,28 +180,6 @@ export class ConnectorDirectory {
     return new Map(entries.map((e) => [e.id, e]));
   }
 
-  /**
-   * Lookup table for installed-stdio bundle icons. Keyed by package
-   * identifier (npm-style scoped name, e.g. `@nimblebraininc/echo`)
-   * since stdio bundles don't carry a remote URL — the directory's
-   * package field is the natural join key.
-   */
-  async iconByPackage(): Promise<Map<string, string>> {
-    const { servers } = await this.servers();
-    const out = new Map<string, string>();
-    for (const { detail } of servers) {
-      const iconUrl = detail.icons?.[0]?.src;
-      if (!iconUrl) continue;
-      for (const pkg of detail.packages ?? []) {
-        // First write wins — same package shouldn't appear twice across
-        // sources, but if an operator points two registries at
-        // overlapping data, iteration order pins the result.
-        if (!out.has(pkg.identifier)) out.set(pkg.identifier, iconUrl);
-      }
-    }
-    return out;
-  }
-
   /** Drop the per-instance memoization. Test / admin escape hatch. */
   resetCache(): void {
     this.cache = null;
