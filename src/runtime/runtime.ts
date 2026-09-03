@@ -153,10 +153,18 @@ import type { Skill } from "../skills/types.ts";
 import { TelemetryManager } from "../telemetry/manager.ts";
 import { PostHogEventSink } from "../telemetry/posthog-sink.ts";
 import {
+  type CredentialStore,
+  FileCredentialStore,
+  requireCredentialStore,
+  setCredentialStore,
+} from "../tools/credential-store.ts";
+import { registerCredentialTransportCredentialProvider } from "../tools/credential-transport-credential.ts";
+import {
   isIdentitySource,
   isTaskForbiddenIdentityTool,
   personalConnectorWireName,
 } from "../tools/identity-sources.ts";
+import { resolveInstanceCredentialRefs } from "../tools/instance-credentials.ts";
 import { McpSource } from "../tools/mcp-source.ts";
 import { isTaskForbiddenSkillTool } from "../tools/platform/skills.ts";
 import { SharedSourceRef, type ToolRegistry } from "../tools/registry.ts";
@@ -316,6 +324,7 @@ export class Runtime {
   private _userStore: UserStore;
   private _workspaceStore: WorkspaceStore;
   private _permissionStore: PermissionStore | null = null;
+  private _credentialStore: CredentialStore | null = null;
   private _registryStore: RegistryStore | null = null;
   private _managedConnectorRegistry: ManagedConnectorRegistry | null = null;
   private _identityProvider: IdentityProvider | null;
@@ -449,7 +458,35 @@ export class Runtime {
   }
 
   /** Create and start a runtime from config. */
-  static async start(config: RuntimeConfig): Promise<Runtime> {
+  static async start(declaredConfig: RuntimeConfig): Promise<Runtime> {
+    // The secrets door, opened before anything reads config, because config is
+    // read THROUGH it. `nimblebrain.json` may point at an instance-scope secret
+    // rather than carry one (`{ ref: "credential", key }`), and the readers of
+    // those fields are synchronous and cache on first call — `buildRegistry`
+    // instantiates provider SDKs eagerly, the managed-provider configs memoize.
+    // So every reference is dereferenced once, here, into the `config` every
+    // later line reads; `declaredConfig` is the raw form and nothing below
+    // should reach for it.
+    //
+    // The sink comes first in turn: the store audits every reveal through it,
+    // and the first reveal happens inside the dereference on the last line.
+    // `workDir` is the one field that cannot itself be a reference — the store
+    // lives under it — so reading it off the raw config is not an ordering bug.
+    //
+    // This is the single construction of the credential store. It is installed
+    // for the leaf readers (`remote-transport.ts` resolving a header, the
+    // static-OAuth-client resolver) and handed to the runtime below, so there is
+    // one instance, one sink, and one audit trail.
+    const workDir = resolveWorkDir(declaredConfig);
+    const telemetryManager = TelemetryManager.create({
+      workDir,
+      enabled: declaredConfig.telemetry?.enabled,
+    });
+    const events = buildRuntimeEventSink(declaredConfig, telemetryManager);
+    const credentialStore = new FileCredentialStore(workDir, { eventSink: events });
+    setCredentialStore(credentialStore);
+    let config = await resolveInstanceCredentialRefs(declaredConfig);
+
     // Register built-in transport credential providers (e.g. `minted`) at the
     // ONE composition root every entry point shares — serve, the no-subcommand
     // TUI/headless boot, and the automation runner all reach here before
@@ -493,28 +530,13 @@ export class Runtime {
     const usageLedger = createProcessLedger(resolveWorkDir(config), config.usage?.ledger);
     setUsageLedger(usageLedger);
 
-    const telemetryManager = TelemetryManager.create({
-      workDir: resolveWorkDir(config),
-      enabled: config.telemetry?.enabled,
-    });
-
-    // Load identity stores early — before bundle startup
-    const workDir = resolveWorkDir(config);
+    // Load identity stores early — before bundle startup. `instance.json` goes
+    // through the same dereference as `nimblebrain.json` (inside
+    // `loadInstanceConfig`), so the IdP key may be a reference too.
     const instanceConfig = await loadInstanceConfig(workDir);
     const userStore = new UserStore(workDir);
     const workspaceStore = new WorkspaceStore(workDir);
     const identityProvider = createIdentityProvider(instanceConfig, userStore, workspaceStore);
-
-    const baseEvents = buildEventSink(config);
-
-    // Always-on, observe-only Prometheus counters. Process-local: increments in
-    // memory whether or not `/metrics` is scraped, so it's safe in a local
-    // `bun run dev` with no Prometheus/k8s.
-    const sinkList: EventSink[] = [baseEvents, new MetricsEventSink()];
-    if (telemetryManager.isEnabled()) {
-      sinkList.push(new PostHogEventSink(telemetryManager));
-    }
-    const events: EventSink = new MultiEventSink(sinkList);
 
     // Mint the scoped internal-API auth token (the internal-API bearer checked
     // in auth-middleware). Rotated on every runtime restart — never persisted.
@@ -677,6 +699,17 @@ export class Runtime {
       getWorkspaceId,
     );
     rtHolder.rt = rt;
+
+    // The runtime shares the store `start` opened above rather than building a
+    // second one — same instance, same sink, same audit trail.
+    rt._credentialStore = credentialStore;
+    // The `credential` transport credential resolves a secret from the
+    // connection's workspace, so it can only be registered once the store is
+    // installed — which is why it is not in `registerBuiltinCredentialProviders`
+    // with `minted` at the top of `start`. Still ahead of
+    // `startWorkspaceBundles`, which is the ordering that matters: an
+    // unregistered provider name fails a boot-started source outright.
+    registerCredentialTransportCredentialProvider();
 
     // Hooks reconcile. A connection reaching `running` is the one moment both
     // halves are available — a live source to hand a minted URL to, and a
@@ -3722,6 +3755,29 @@ export class Runtime {
   }
 
   /**
+   * The credential store — the one door every secret goes through.
+   *
+   * Sibling to `getNotificationStore` below and for the same reason: a store
+   * that emits events has to be built where the sink is, so it is built at the
+   * composition root and handed out here, never constructed by a caller. One
+   * construction site is what makes the `CredentialStore` interface a real swap
+   * point for an encrypted backend rather than an aspiration — with the seven
+   * ad-hoc constructions it replaced, the interface's promise of a swap
+   * "without touching any caller" was not true.
+   *
+   * `start` assigns the store it opened; the fall-through reads the module
+   * handle, which is the same instance, and covers a `Runtime` reached by any
+   * other path.
+   *
+   * The scope (`instance` / `workspace` / `user`) is an argument to each call
+   * rather than baked into the handle: one store serves all three, and a caller
+   * that has to name the owner cannot accidentally read a pooled one.
+   */
+  getCredentialStore(): CredentialStore {
+    return this._credentialStore ?? requireCredentialStore();
+  }
+
+  /**
    * The notification inbox for one workspace.
    *
    * The single construction site, because a store is the write path as well as
@@ -5183,6 +5239,25 @@ function buildEventSink(config: RuntimeConfig): EventSink {
     sinks.push(new WorkspaceLogSink({ dir: logDir, retentionDays }));
   }
   return sinks.length > 0 ? new MultiEventSink(sinks) : new NoopEventSink();
+}
+
+/**
+ * The runtime's event sink: the boot sink above, the always-on Prometheus
+ * counters, and the telemetry sink when telemetry is enabled.
+ *
+ * Assembled in one function because `start` needs it before it reads any config
+ * field — the credential store audits every reveal through it, and the first
+ * reveal happens while `start` is still dereferencing the instance credential
+ * references in `nimblebrain.json`. The Prometheus sink is process-local
+ * (increments in memory whether or not `/metrics` is scraped), so it is safe in
+ * a local `bun run dev` with no Prometheus.
+ */
+function buildRuntimeEventSink(config: RuntimeConfig, telemetry: TelemetryManager): EventSink {
+  const sinks: EventSink[] = [buildEventSink(config), new MetricsEventSink()];
+  if (telemetry.isEnabled()) {
+    sinks.push(new PostHogEventSink(telemetry));
+  }
+  return new MultiEventSink(sinks);
 }
 
 function buildSkills(config: RuntimeConfig): {

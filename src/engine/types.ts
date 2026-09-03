@@ -321,7 +321,19 @@ export type EngineEventType =
   | "notification.delivery_failed"
   | "http.error"
   | "audit.auth_failure"
-  | "audit.permission_denied";
+  | "audit.permission_denied"
+  /**
+   * A secret held in the credential store was revealed to a caller — presented
+   * as a header, exchanged at a token endpoint, handed to a provider SDK.
+   * Payload: { scope, key, caller, purpose } plus `workspaceId` / `userId` when
+   * the scope has one. NEVER the value.
+   *
+   * Emitted on the reveal rather than on the read that produced it, so the log
+   * records secrets that were used and not secrets that were probed for
+   * presence — and at most once per read, so a long-lived `fetch` wrapper
+   * presenting one secret does not write a line per request.
+   */
+  | "audit.credential_read";
 
 /**
  * Generic event envelope. Per-event-type payload schemas are declared in

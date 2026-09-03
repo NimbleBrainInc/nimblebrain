@@ -18,6 +18,10 @@ const WORKSPACE_EVENTS = new Set<EngineEventType>([
   "http.error",
   "audit.auth_failure",
   "audit.permission_denied",
+  // Every secret the platform presents on a tenant's behalf, by scope and key.
+  // The workspace log is where an operator answers "what read this key, and
+  // when" — the question a credential store exists to be able to answer.
+  "audit.credential_read",
   // Tool-list mutations are workspace-level signal: billing wants per-workspace
   // tool-usage rollups, policy hooks want to know what surface area tenants
   // are exercising. Volume is bounded by the LRU cap (typically 0-3 events

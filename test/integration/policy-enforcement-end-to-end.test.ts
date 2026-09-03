@@ -121,6 +121,7 @@ async function buildHarness(): Promise<Harness> {
   const ctx: ManageConnectorsContext = {
     runtime: {
       getWorkDir: () => workDir,
+      getCredentialStore: () => credStore,
       getWorkspaceStore: () => workspaceStore,
       getRegistryStore: () => registryStore,
       getPermissionStore: () => permissionStore,

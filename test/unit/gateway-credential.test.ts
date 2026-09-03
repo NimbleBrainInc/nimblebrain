@@ -11,6 +11,7 @@ import {
 import { MINTED_PROVIDER } from "../../src/oauth/minted-credential-provider.ts";
 import { COMPOSIO_CREDENTIAL_PROVIDER } from "../../src/connectors/providers/composio/transport-credential.ts";
 import { SMITHERY_CREDENTIAL_PROVIDER } from "../../src/connectors/providers/smithery/transport-credential.ts";
+import { CREDENTIAL_PROVIDER } from "../../src/tools/credential-transport-credential.ts";
 import {
   _resetCredentialProvidersForTest,
   getCredentialProvider,
@@ -49,6 +50,7 @@ describe("reserved names cover every built-in credential provider", () => {
     ["minted", MINTED_PROVIDER],
     ["composio", COMPOSIO_CREDENTIAL_PROVIDER],
     ["smithery", SMITHERY_CREDENTIAL_PROVIDER],
+    ["credential", CREDENTIAL_PROVIDER],
   ])("a gateway may not claim %s", (_label, builtinName) => {
     const sentinel = { credentialFor: () => ({ headers: { Authorization: "Bearer builtin" } }) };
     registerCredentialProvider(builtinName, sentinel);

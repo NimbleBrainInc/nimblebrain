@@ -116,6 +116,7 @@ async function buildHarness(opts: { sessionWsId: string | null } = { sessionWsId
 
   const runtime = {
     getWorkDir: () => workDir,
+    getCredentialStore: () => new FileCredentialStore(workDir),
     getWorkspaceStore: () => workspaceStore,
     getWorkspaceContext: (id: string) => new WorkspaceContext({ wsId: id, workDir }),
     getRegistryStore: () => registryStore,

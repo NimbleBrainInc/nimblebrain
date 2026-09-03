@@ -26,8 +26,8 @@
           "description": "Model provider."
         },
         "apiKey": {
-          "type": "string",
-          "description": "Anthropic API key. Falls back to ANTHROPIC_API_KEY env var."
+          "oneOf": [{ "type": "string" }, { "$ref": "#/$defs/credentialRef" }],
+          "description": "Anthropic API key. Falls back to ANTHROPIC_API_KEY env var. May instead be a credential reference — { \"ref\": \"credential\", \"key\": \"<key>\" } — resolved from the instance scope of the credential store at startup, so the value never sits in this file. See /config/secrets/."
         }
       },
       "additionalProperties": false
@@ -39,7 +39,10 @@
         "anthropic": {
           "type": "object",
           "properties": {
-            "apiKey": { "type": "string" },
+            "apiKey": {
+              "oneOf": [{ "type": "string" }, { "$ref": "#/$defs/credentialRef" }],
+              "description": "Provider API key. May instead be a credential reference — { \"ref\": \"credential\", \"key\": \"<key>\" } — resolved from the instance scope of the credential store at startup, so the value never sits in this file. See /config/secrets/."
+            },
             "promptCaching": { "type": "boolean", "default": true },
             "models": {
               "type": "array",
@@ -52,7 +55,10 @@
         "openai": {
           "type": "object",
           "properties": {
-            "apiKey": { "type": "string" },
+            "apiKey": {
+              "oneOf": [{ "type": "string" }, { "$ref": "#/$defs/credentialRef" }],
+              "description": "Provider API key. May instead be a credential reference — { \"ref\": \"credential\", \"key\": \"<key>\" } — resolved from the instance scope of the credential store at startup, so the value never sits in this file. See /config/secrets/."
+            },
             "baseURL": { "type": "string" },
             "organization": { "type": "string" },
             "models": {
@@ -66,7 +72,10 @@
         "google": {
           "type": "object",
           "properties": {
-            "apiKey": { "type": "string" },
+            "apiKey": {
+              "oneOf": [{ "type": "string" }, { "$ref": "#/$defs/credentialRef" }],
+              "description": "Provider API key. May instead be a credential reference — { \"ref\": \"credential\", \"key\": \"<key>\" } — resolved from the instance scope of the credential store at startup, so the value never sits in this file. See /config/secrets/."
+            },
             "models": {
               "type": "array",
               "items": { "type": "string" },
@@ -80,8 +89,8 @@
           "description": "Nebius Token Factory — OpenAI-compatible gateway for open-weight models. Reference models as nebius:<model-id>.",
           "properties": {
             "apiKey": {
-              "type": "string",
-              "description": "Nebius API key. Falls back to NEBIUS_API_KEY env var."
+              "oneOf": [{ "type": "string" }, { "$ref": "#/$defs/credentialRef" }],
+              "description": "Nebius API key. Falls back to NEBIUS_API_KEY env var. May instead be a credential reference — { \"ref\": \"credential\", \"key\": \"<key>\" } — resolved from the instance scope of the credential store at startup, so the value never sits in this file. See /config/secrets/."
             },
             "baseURL": {
               "type": "string",
@@ -100,8 +109,8 @@
           "description": "xAI (Grok). Reference models as xai:<model-id>, e.g. xai:grok-4.5.",
           "properties": {
             "apiKey": {
-              "type": "string",
-              "description": "xAI API key. Falls back to XAI_API_KEY env var."
+              "oneOf": [{ "type": "string" }, { "$ref": "#/$defs/credentialRef" }],
+              "description": "xAI API key. Falls back to XAI_API_KEY env var. May instead be a credential reference — { \"ref\": \"credential\", \"key\": \"<key>\" } — resolved from the instance scope of the credential store at startup, so the value never sits in this file. See /config/secrets/."
             },
             "baseURL": {
               "type": "string",
@@ -139,9 +148,15 @@
                 "type": "object",
                 "properties": {
                   "type": { "type": "string", "enum": ["bearer", "header", "none", "provider"] },
-                  "token": { "type": "string" },
+                  "token": {
+                    "oneOf": [{ "type": "string" }, { "$ref": "#/$defs/credentialRef" }],
+                    "description": "Bearer token (auth.type=bearer). May instead be a credential reference — { \"ref\": \"credential\", \"key\": \"<key>\" } — resolved from the connection's own workspace scope on every connect, so rotating the key needs no config edit. See /config/secrets/."
+                  },
                   "name": { "type": "string" },
-                  "value": { "type": "string" },
+                  "value": {
+                    "oneOf": [{ "type": "string" }, { "$ref": "#/$defs/credentialRef" }],
+                    "description": "Header value (auth.type=header). May instead be a credential reference — { \"ref\": \"credential\", \"key\": \"<key>\" } — resolved from the connection's own workspace scope on every connect, so rotating the key needs no config edit. See /config/secrets/."
+                  },
                   "provider": {
                     "type": "string",
                     "description": "Credential provider name (auth.type=provider), e.g. \"minted\"."
@@ -153,7 +168,13 @@
                 },
                 "required": ["type"]
               },
-              "headers": { "type": "object", "additionalProperties": { "type": "string" } },
+              "headers": {
+                "type": "object",
+                "additionalProperties": {
+                  "oneOf": [{ "type": "string" }, { "$ref": "#/$defs/credentialRef" }]
+                },
+                "description": "Arbitrary outgoing headers. Each value is a literal or a credential reference. May instead be a credential reference — { \"ref\": \"credential\", \"key\": \"<key>\" } — resolved from the connection's own workspace scope on every connect, so rotating the key needs no config edit. See /config/secrets/."
+              },
               "reconnection": {
                 "type": "object",
                 "properties": {
@@ -416,8 +437,8 @@
               "type": "object",
               "properties": {
                 "apiKey": {
-                  "type": "string",
-                  "description": "Platform-wide Composio API key — the broker credential, and the gate on registering the provider at all. Falls back to COMPOSIO_API_KEY. A secret in a mounted config file is the operator's call; the env fallback remains the better posture for most deployments."
+                  "oneOf": [{ "type": "string" }, { "$ref": "#/$defs/credentialRef" }],
+                  "description": "Platform-wide Composio API key — the broker credential, and the gate on registering the provider at all. Falls back to COMPOSIO_API_KEY. A secret in a mounted config file is the operator's call; the env fallback remains the better posture for most deployments. May instead be a credential reference — { \"ref\": \"credential\", \"key\": \"<key>\" } — resolved from the instance scope of the credential store at startup, so the value never sits in this file. See /config/secrets/."
                 },
                 "authConfigs": {
                   "type": "object",
@@ -441,8 +462,8 @@
               "type": "object",
               "properties": {
                 "apiKey": {
-                  "type": "string",
-                  "description": "Platform-wide Smithery API key. Falls back to SMITHERY_API_KEY. Its presence (with a namespace) is the gate on registering the provider at all."
+                  "oneOf": [{ "type": "string" }, { "$ref": "#/$defs/credentialRef" }],
+                  "description": "Platform-wide Smithery API key. Falls back to SMITHERY_API_KEY. Its presence (with a namespace) is the gate on registering the provider at all. May instead be a credential reference — { \"ref\": \"credential\", \"key\": \"<key>\" } — resolved from the instance scope of the credential store at startup, so the value never sits in this file. See /config/secrets/."
                 },
                 "namespace": {
                   "type": "string",
@@ -470,8 +491,8 @@
             "type": "object",
             "properties": {
               "apiKey": {
-                "type": "string",
-                "description": "The gateway's account-wide API key. Falls back to <NAME>_API_KEY (name upper-cased, non-alphanumerics to underscore), so `mcp360` reads MCP360_API_KEY."
+                "oneOf": [{ "type": "string" }, { "$ref": "#/$defs/credentialRef" }],
+                "description": "The gateway's account-wide API key. Falls back to <NAME>_API_KEY (name upper-cased, non-alphanumerics to underscore), so `mcp360` reads MCP360_API_KEY. May instead be a credential reference — { \"ref\": \"credential\", \"key\": \"<key>\" } — resolved from the instance scope of the credential store at startup, so the value never sits in this file. See /config/secrets/."
               }
             },
             "additionalProperties": false
@@ -505,6 +526,22 @@
           "default": 204800
         }
       },
+      "additionalProperties": false
+    }
+  },
+  "$defs": {
+    "credentialRef": {
+      "type": "object",
+      "description": "A pointer into the credential store instead of a literal secret. The key names a secret set out of band — `manage_connectors set_secret` for a workspace, the file layout for the instance — so nothing about where the value lives appears in config, which is what lets the storage backend change without a config migration.",
+      "properties": {
+        "ref": { "const": "credential" },
+        "key": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$",
+          "description": "Credential-store key, dotted-namespace form, e.g. acme.db_url."
+        }
+      },
+      "required": ["ref", "key"],
       "additionalProperties": false
     }
   }
