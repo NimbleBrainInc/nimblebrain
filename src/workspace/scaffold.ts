@@ -4,11 +4,13 @@ import { join } from "node:path";
 /**
  * Subdirectories created inside every workspace.
  *
- * `conversations/` is intentionally absent: conversation logs are not
- * pre-scaffolded. The `conversations` `WorkspaceScope` resolves under
- * `workspaces/<wsId>/conversations/<ownerId>/`, where each log is written
- * lazily on first write. No live code writes a flat top-level
- * `{workDir}/conversations/` dir.
+ * Not every `WorkspaceScope` appears here. A scope whose store creates its own
+ * directory on first write is deliberately absent, because pre-scaffolding it
+ * would leave an empty dir in every workspace that never uses the feature:
+ * `conversations/` (resolves under `<wsId>/conversations/<ownerId>/`, one log
+ * per conversation) and `notifications/` (one JSONL per day, written when a
+ * connector first emits) are both that shape. No live code writes a flat
+ * top-level `{workDir}/conversations/` dir.
  */
 export const WORKSPACE_DIRS = ["data", "credentials", "skills", "files"] as const;
 

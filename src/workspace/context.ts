@@ -46,6 +46,10 @@ import { WORKSPACE_ID_RE } from "./workspace-store.ts";
  *   - `connector-skills` — materialized connector overlays; a SIBLING of
  *     `skills/`, never read by the authored-skill loader
  *   - `files`            — uploaded files / file context
+ *   - `notifications`    — the inbox: daily JSONL of notifications pulled from
+ *     this workspace's connectors. Workspace-level, with no owner
+ *     sub-partition: ownership follows the connector that produced an item, so
+ *     anyone who can reach that connector's tools can read what it said.
  *
  * `root` returns the workspace root itself (`workspaces/{wsId}/`); it is
  * the parent of every other scope and most callers should prefer a
@@ -58,7 +62,8 @@ export type WorkspaceScope =
   | "conversations"
   | "skills"
   | "connector-skills"
-  | "files";
+  | "files"
+  | "notifications";
 
 const SUBPATH_FORBIDDEN_RE = /\0/;
 
