@@ -3784,6 +3784,38 @@ export class Runtime {
   }
 
   /**
+   * The connectors installed in one workspace that declare an outbox.
+   *
+   * The set the poller has anything to read from, and the set the settings
+   * surface offers a ceiling for — one derivation rather than two, so the page
+   * can never show a source the poller ignores. Resolved from the
+   * operator-published catalog by the same slug rule the install used, and
+   * intersected with the workspace's own registry so another workspace's
+   * connectors are not in the answer.
+   */
+  async listNotificationSources(
+    wsId: string,
+  ): Promise<Array<{ source: string; label: string; description?: string }>> {
+    const registry = await this.ensureWorkspaceRegistry(wsId);
+    const installed = new Set(registry.sourceNames());
+    const entries = await this.getConnectorDirectory().catalogEntries();
+    const out: Array<{ source: string; label: string; description?: string }> = [];
+    for (const entry of entries) {
+      if (!entry.notifications) continue;
+      const source = slugifyServerName(entry.id);
+      if (!installed.has(source)) continue;
+      out.push({
+        source,
+        label: entry.name,
+        ...(entry.notifications.description
+          ? { description: entry.notifications.description }
+          : {}),
+      });
+    }
+    return out.sort((a, b) => a.source.localeCompare(b.source));
+  }
+
+  /**
    * Dependencies the hooks reconcile needs, assembled from the runtime's own
    * stores.
    *
