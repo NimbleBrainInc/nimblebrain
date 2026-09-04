@@ -26,8 +26,8 @@ usefulness by invalidating the prefix it sits in.
 
 **The catalog lists what CAN be activated. It never encodes what IS loaded.**
 
-`collectActivatableSkills` (`src/skills/catalog.ts`) merges the three
-activatable pools — the conversation tiers' `dynamic` skills, the focused
+`collectActivatableSkills` (`src/skills/catalog.ts`) merges the activatable
+pools — the conversation tiers' `dynamic` skills, the focused
 workspace's `dynamic` server skills, and the curated connector overlays — into
 one deterministic list, and `toCatalogEntries` projects each to name plus
 description and nothing else.

@@ -25,20 +25,27 @@ servers.
 
 ## Decision
 
-**The kernel constructs an engine only at its own composition root, and a run
-begins only through the runtime's own entry points** — `chat` and `executeTask`
-(`src/runtime/runtime.ts`), which are the two surfaces that resolve identity,
-gate membership on the run's workspace, bind the tool registry for that
-workspace, and resolve the run's context budget. No tool starts a run.
+**One door establishes every agent run, and everything that wakes the agent
+describes its run to that door rather than building one.** `Runtime.startRun`
+(`src/runtime/runtime.ts`) owns what every run needs regardless of what triggered
+it: the membership re-check for the workspace the run acts in, the active tool
+set and the prompt composed over it, the model's budgets, the event-sink chain,
+the engine, and the request context it runs under. A trigger — a chat turn, a
+cron tick, an operator's manual run, an embedded caller — supplies a
+specification and gets a handle back. No tool starts a run.
 
-**A run-start door is not a principal-establishment door**, and the two are
-counted separately. This ADR counts the places a *run* begins — where an engine
-is constructed and a loop starts. The other count is of the places a *principal*
-is established before a tool is dispatched, which includes surfaces that start no
-run at all: an unattended single dispatch makes one tool call, builds no engine,
-and keeps no conversation, so it adds a principal door without adding a
-run-start one. A door on either axis owes the same gates; only this axis is what
-"one door" here means.
+What the door deliberately does **not** own is what a caller's own resource
+means: resolving a conversation, returning its id, generating a title,
+persisting a run result. Those stay with the caller that has a resource to keep,
+which is what lets the door be one door without becoming everything.
+
+**A run-start door is not a principal-establishment door.** This ADR is about
+where a *run* is established — an engine and a loop. A separate question is
+where a *principal* is established before a tool is dispatched, and that
+includes surfaces which start no run at all: an unattended single dispatch makes
+one tool call, builds no engine, and keeps no conversation, so it is a door on
+the second axis and not on this one. Both axes owe the same gates for the same
+reason; only the first is what "one door" means here.
 
 **Delegation is not a kernel capability.** A sub-agent is a remote MCP server
 that happens to run an agent, and calling it is an ordinary tool call — routed
@@ -49,11 +56,15 @@ its behalf: no in-kernel run tracker, no agent-profile configuration on the
 workspace record, no feature flag, no parent-run plumbing threaded through the
 engine's events, the metrics labels, and the usage ledger.
 
-`executeTask` is a second entry point, not a second door: it starts a one-shot
-run rather than a conversation turn, and it performs the same gates —
-notably a provenance-membership check, because an automation fires as its owner
-into the workspace it was created in and membership there is validated at
-create rather than per run.
+The gates are asserted at the door, not by each caller, and the membership
+re-check is the one that shows why that matters. A run that *continues*
+something established earlier — a resumed conversation, an automation authored
+weeks ago — was membership-validated when that thing was created, and creation
+time is precisely the check that goes stale. Asserting it once at the door means
+a since-removed owner stops acting immediately, on every path, including paths
+that do not exist yet (ADR-0007). Callers differ only in how they render the
+refusal: the scheduler classifies it as skipped rather than failed, so an
+automation self-heals if its owner is re-added.
 
 ## Consequences
 
@@ -65,10 +76,11 @@ create rather than per run.
   was cheaper on both, and that cost is the price of the boundary.
 - The kernel has no notion of a run's parent. Attribution across an agent that
   called another agent is the calling tool's problem, not the ledger's.
-- The two entry points share substantial setup, currently by duplication rather
-  than by a shared substrate. That duplication is a maintenance cost and a place
-  the two can drift; the gates themselves are the part that must not, and they
-  are the part each performs explicitly.
+- An invariant asserted at the door holds for every way of waking the agent,
+  including ways not yet written. Two callers each re-implementing it would hold
+  it only until the third forgot — which is the same argument this ADR makes
+  against a `delegate` tool that re-runs the gates itself, applied to the
+  runtime's own callers rather than to a tool.
 
 ## Alternatives considered
 

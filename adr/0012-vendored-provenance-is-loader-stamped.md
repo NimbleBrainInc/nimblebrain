@@ -33,8 +33,8 @@ The on-disk schema's `origin` union is `chat | admin | connector | import`
 file declaring it fails validation and the skill is dropped. The in-memory
 `SkillProvenance` union includes it, because that is where the value lives.
 
-`markVendored` (`src/skills/loader.ts`) applies it, and only the two loaders that
-read the package's own `core/` and `builtin/` directories call it. It never
+`markVendored` (`src/skills/loader.ts`) applies it, and the only callers are the
+loaders that read the package's own source-tree directories. It never
 overwrites: a skill that already declares a provenance keeps it, so the stamp
 cannot launder an authored file that happens to sit in one of those paths.
 
