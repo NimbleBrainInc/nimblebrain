@@ -28,6 +28,10 @@ import { startBundleSource } from "../../src/bundles/startup.ts";
 import { ToolRegistry } from "../../src/tools/registry.ts";
 import { McpSource } from "../../src/tools/mcp-source.ts";
 import type { BundleRef } from "../../src/bundles/types.ts";
+import {
+	installTestCredentialStore,
+	resetTestCredentialStore,
+} from "../helpers/credential-store.ts";
 
 // ---------------------------------------------------------------------------
 // Shared helpers
@@ -117,10 +121,14 @@ describe("Remote integration: config → validate → load → tools", () => {
 
 	beforeEach(() => {
 		ensureTestDir();
+		// This block drives `startBundleSource` without a Runtime, so nothing has
+		// installed the store the OAuth provider reads its records through.
+		installTestCredentialStore(testDir);
 		mockServer = startMockRemoteServer(3);
 	});
 
 	afterEach(() => {
+		resetTestCredentialStore();
 		mockServer?.close();
 	});
 

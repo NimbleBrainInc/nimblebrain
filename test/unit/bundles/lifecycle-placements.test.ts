@@ -1,9 +1,16 @@
-import { describe, expect, it } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import type { EngineEvent, EventSink } from "../../../src/engine/types.ts";
 import { BundleLifecycleManager } from "../../../src/bundles/lifecycle.ts";
 import { PlacementRegistry } from "../../../src/runtime/placement-registry.ts";
 import { ToolRegistry } from "../../../src/tools/registry.ts";
 import type { BundleRef, PlacementDeclaration } from "../../../src/bundles/types.ts";
+import {
+	installTestCredentialStore,
+	resetTestCredentialStore,
+} from "../../helpers/credential-store.ts";
 
 /**
  * Placements ride on the connector's `BundleRef.ui`, copied there at install
@@ -16,6 +23,20 @@ import type { BundleRef, PlacementDeclaration } from "../../../src/bundles/types
 const WS = "ws_test";
 const URL = "https://echo.example.com/mcp";
 const SERVER = "echo";
+
+// `seedInstance` derives the boot Connection state from persisted credentials,
+// which the credential store answers — so these cases need one installed.
+let workDir: string;
+
+beforeEach(() => {
+	workDir = mkdtempSync(join(tmpdir(), "nb-placements-"));
+	installTestCredentialStore(workDir);
+});
+
+afterEach(() => {
+	resetTestCredentialStore();
+	rmSync(workDir, { recursive: true, force: true });
+});
 
 function makeEventCollector(): EventSink & { events: EngineEvent[] } {
 	const events: EngineEvent[] = [];
@@ -30,16 +51,13 @@ function refWithUi(placements?: PlacementDeclaration[]): BundleRef {
 	};
 }
 
-function seedAndNotify(
-	lifecycle: BundleLifecycleManager,
-	ref: BundleRef,
-): void {
-	lifecycle.seedInstance(SERVER, URL, ref, undefined, WS);
+async function seedAndNotify(lifecycle: BundleLifecycleManager, ref: BundleRef): Promise<void> {
+	await lifecycle.seedInstance(SERVER, URL, ref, undefined, WS);
 	lifecycle.notifyInstalled(SERVER, WS);
 }
 
 describe("BundleLifecycleManager — placement registration on install", () => {
-	it("a connector declaring placements registers them in PlacementRegistry", () => {
+	it("a connector declaring placements registers them in PlacementRegistry", async () => {
 		const placements: PlacementDeclaration[] = [
 			{ slot: "sidebar.apps", resourceUri: "ui://echo/nav", priority: 30, label: "Echo" },
 			{ slot: "main", resourceUri: "ui://echo/board", route: "echo", label: "Echo Board" },
@@ -49,7 +67,7 @@ describe("BundleLifecycleManager — placement registration on install", () => {
 		const lifecycle = new BundleLifecycleManager(sink, undefined);
 		lifecycle.setPlacementRegistry(pr);
 
-		seedAndNotify(lifecycle, refWithUi(placements));
+		await seedAndNotify(lifecycle, refWithUi(placements));
 
 		const instance = lifecycle.getInstance(SERVER, WS)!;
 		expect(instance.ui?.placements).toHaveLength(2);
@@ -68,18 +86,18 @@ describe("BundleLifecycleManager — placement registration on install", () => {
 		expect(installEvent!.data.placements).toHaveLength(2);
 	});
 
-	it("a connector with UI but no placements registers none", () => {
+	it("a connector with UI but no placements registers none", async () => {
 		const pr = new PlacementRegistry();
 		const lifecycle = new BundleLifecycleManager(makeEventCollector(), undefined);
 		lifecycle.setPlacementRegistry(pr);
 
-		seedAndNotify(lifecycle, refWithUi());
+		await seedAndNotify(lifecycle, refWithUi());
 
 		expect(lifecycle.getInstance(SERVER, WS)!.ui?.placements).toBeUndefined();
 		expect(pr.forWorkspace(WS)).toHaveLength(0);
 	});
 
-	it("a spoofed placement is dropped, and the valid siblings survive", () => {
+	it("a spoofed placement is dropped, and the valid siblings survive", async () => {
 		// Placements persist RAW on the ref, so `registerPlacements` sanitizes at
 		// registration. Fail-closed per-placement: one bad entry does not take
 		// the rest of the declaration with it.
@@ -87,7 +105,7 @@ describe("BundleLifecycleManager — placement registration on install", () => {
 		const lifecycle = new BundleLifecycleManager(makeEventCollector(), undefined);
 		lifecycle.setPlacementRegistry(pr);
 
-		seedAndNotify(
+		await seedAndNotify(
 			lifecycle,
 			refWithUi([
 				{ slot: "sidebar.apps", resourceUri: "ui://echo/nav", priority: 30 },
@@ -107,7 +125,7 @@ describe("BundleLifecycleManager — placement unregistration on uninstall", () 
 		const lifecycle = new BundleLifecycleManager(makeEventCollector(), undefined);
 		lifecycle.setPlacementRegistry(pr);
 
-		seedAndNotify(
+		await seedAndNotify(
 			lifecycle,
 			refWithUi([{ slot: "sidebar.apps", resourceUri: "ui://echo/nav", priority: 30 }]),
 		);

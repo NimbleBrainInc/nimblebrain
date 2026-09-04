@@ -1,10 +1,14 @@
 import { createHash } from "node:crypto";
-import { mkdtempSync, readFileSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { beforeEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import type { OAuthClientInformationFull } from "@modelcontextprotocol/sdk/shared/auth.js";
 import { WorkspaceOAuthProvider } from "../../src/tools/workspace-oauth-provider.ts";
+import {
+  installTestCredentialStore,
+  resetTestCredentialStore,
+} from "../helpers/credential-store.ts";
 
 /**
  * Concurrency contract for `WorkspaceOAuthProvider`.
@@ -75,6 +79,11 @@ describe("WorkspaceOAuthProvider — concurrent auth() coalesce", () => {
 
   beforeEach(() => {
     workDir = mkdtempSync(join(tmpdir(), "nb-oauth-concurrency-test-"));
+    installTestCredentialStore(workDir);
+  });
+
+  afterEach(() => {
+    resetTestCredentialStore();
   });
 
   it("state() returns the same value across concurrent callers", () => {
@@ -89,8 +98,8 @@ describe("WorkspaceOAuthProvider — concurrent auth() coalesce", () => {
     const p = makeProvider(workDir);
     p.state(); // create pendingFlow
     // Three concurrent saves with different verifiers — only the first
-    // should land on disk; the rest are no-ops so the verifier paired
-    // with the captured URL stays on disk.
+    // should land; the rest are no-ops so the verifier paired with the
+    // captured URL is the one that stays.
     await Promise.all([
       p.saveCodeVerifier("verifier-A"),
       p.saveCodeVerifier("verifier-B"),
@@ -109,8 +118,6 @@ describe("WorkspaceOAuthProvider — concurrent auth() coalesce", () => {
       p.saveClientInformation(b),
       p.saveClientInformation(c),
     ]);
-    const onDisk = JSON.parse(readFileSync(join(workDir, "workspaces", "ws_test", "credentials", "mcp-oauth", "test-srv", "client.json"), "utf8"));
-    expect(onDisk.client_id).toBe("client-A");
     const fresh = makeProvider(workDir);
     expect((await fresh.clientInformation())?.client_id).toBe("client-A");
   });
@@ -243,15 +250,17 @@ describe("WorkspaceOAuthProvider — concurrent auth() coalesce", () => {
     expect(captured.length).toBe(1);
     const capturedUrl = new URL(captured[0]!);
 
-    // The captured URL's PKCE challenge matches the disk verifier — what
+    // The captured URL's PKCE challenge matches the stored verifier — what
     // makes the eventual exchange succeed.
     expect(capturedUrl.searchParams.get("code_challenge")).toBe(
       pkceChallenge(await p.codeVerifier()),
     );
 
-    // The captured URL's client_id matches the disk client.json — what
+    // The captured URL's client_id matches the stored client record — what
     // makes the vendor accept the exchange (code was issued for THIS client).
-    const diskClient = JSON.parse(readFileSync(join(workDir, "workspaces", "ws_test", "credentials", "mcp-oauth", "test-srv", "client.json"), "utf8"));
-    expect(capturedUrl.searchParams.get("client_id")).toBe(diskClient.client_id);
+    // Read through a fresh provider so the assertion goes through persistence,
+    // not this one's in-memory cache.
+    const stored = await makeProvider(workDir).clientInformation();
+    expect(capturedUrl.searchParams.get("client_id")).toBe(stored?.client_id);
   });
 });

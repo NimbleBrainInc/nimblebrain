@@ -824,7 +824,7 @@ export class Runtime {
     lifecycle.setWorkspaceRegistries(workspaceRegistries);
 
     // Seed lifecycle instances for workspace bundles.
-    seedWorkspaceBundleInstances(lifecycle, placementRegistry, workspaceBundleEntries);
+    await seedWorkspaceBundleInstances(lifecycle, placementRegistry, workspaceBundleEntries);
 
     // Reconcile connector-skill overlays to the pinned version. Overlays bind
     // only at connector install, and the pin is deploy-time config — so boot
@@ -5053,14 +5053,14 @@ function registerPlatformPlacements(
  * ref reaches `seedInstance` only via `buildProcessInventory` and throws
  * `LegacyOAuthScopeError` there.
  */
-function seedWorkspaceBundleInstances(
+async function seedWorkspaceBundleInstances(
   lifecycle: BundleLifecycleManager,
   placementRegistry: PlacementRegistry,
   entries: ProcessInventoryEntry[],
-): void {
+): Promise<void> {
   for (const entry of entries) {
     const { serverName: sn, bundle: ref, meta, wsId, startError } = entry;
-    lifecycle.seedInstance(sn, ref.url, ref, meta ?? undefined, wsId, startError);
+    await lifecycle.seedInstance(sn, ref.url, ref, meta ?? undefined, wsId, startError);
 
     const instance = lifecycle.getInstance(sn, wsId);
     if (instance?.ui?.placements && instance.ui.placements.length > 0) {

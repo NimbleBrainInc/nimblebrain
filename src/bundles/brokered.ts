@@ -106,7 +106,7 @@ export function connectorSlug(value: string): string {
  * The workspace path routes through `WorkspaceContext` (its single definition
  * site, which validates `wsId`). The user path is the identity-owned
  * personal-connector credential home, outside any workspace (mirroring the
- * mcp-oauth `{type:"user"}` arm): the `IdentityContext` constructor validates
+ * OAuth records' `{type:"user"}` scope): the `IdentityContext` constructor validates
  * the userId, and the `credentials/<provider>` subpath is joined onto that
  * validated root — a variable root, so `check:credential-paths` sees no literal
  * `users/…/credentials` to flag.

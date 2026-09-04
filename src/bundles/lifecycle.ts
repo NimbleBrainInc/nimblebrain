@@ -20,10 +20,11 @@ import {
   removeConnectorSkillsForServer,
 } from "../skills/connector-skill-store.ts";
 import { personalConnectorWireName } from "../tools/identity-sources.ts";
+import { hasMcpOAuthTokens, McpOAuthRecords } from "../tools/mcp-oauth-records.ts";
 import { McpSource } from "../tools/mcp-source.ts";
 import { ToolRegistry } from "../tools/registry.ts";
 import type { ToolSource } from "../tools/types.ts";
-import { mcpOAuthDir, WorkspaceOAuthProvider } from "../tools/workspace-oauth-provider.ts";
+import { WorkspaceOAuthProvider } from "../tools/workspace-oauth-provider.ts";
 import { validateAdditionalAuthorizationParams } from "../util/oauth-params.ts";
 import { WorkspaceContext } from "../workspace/context.ts";
 import { resolveWorkspaceDisplayName } from "../workspace/workspace-store.ts";
@@ -37,7 +38,6 @@ import {
 } from "./connection.ts";
 import { sanitizePlacements } from "./defaults.ts";
 import { resolveStaticOAuthClient, type StaticOAuthClient } from "./oauth-static-client.ts";
-import { hasPersistedWorkspaceOAuthTokens } from "./oauth-tokens.ts";
 import { defaultWorkDir, deriveServerName, validateServerName } from "./paths.ts";
 import { consumePendingAuth } from "./pending-auth-buffer.ts";
 import {
@@ -542,7 +542,7 @@ export class BundleLifecycleManager {
 
   /**
    * Best-effort teardown of a connector's workspace-scoped credentials on
-   * uninstall: the mcp-oauth state dir, and — for a brokered connector — the
+   * uninstall: the OAuth records, and — for a brokered connector — the
    * provider's upstream connection plus its credential dir. Credentials are
    * config, not data; data dirs are preserved. Every step is guarded so one
    * failure can't sink the others.
@@ -557,17 +557,17 @@ export class BundleLifecycleManager {
     // `NB_WORK_DIR`. Clearing the wrong root leaves every credential behind.
     // Same rule as `seedUrlConnectionState`.
     const workDir = this.resolvedWorkDir ?? defaultWorkDir();
-    // Drop the OAuth state dir as defense-in-depth. Uninstall normally follows
-    // a `disconnect` (which invalidates "all" including client.json), but a
+    // Drop the OAuth records as defense-in-depth. Uninstall normally follows a
+    // `disconnect` (which invalidates "all" including the client record), but a
     // leftover from a partial earlier disconnect shouldn't survive an
-    // uninstall. Worst case the dir is already gone; rmSync with `force` is a
-    // no-op then.
+    // uninstall. Worst case the keys are already gone; `deleteAll` is a no-op
+    // then.
     try {
-      const oauthDir = new WorkspaceContext({
-        wsId: instance.wsId,
+      await new McpOAuthRecords({
+        owner: { type: "workspace", wsId: instance.wsId },
+        serverName,
         workDir,
-      }).getDataPath("credentials", "mcp-oauth", serverName);
-      rmSync(oauthDir, { recursive: true, force: true });
+      }).deleteAll();
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       process.stderr.write(
@@ -581,7 +581,7 @@ export class BundleLifecycleManager {
    * Tear down a brokered bundle's provider-side state on uninstall: the
    * provider revokes its connection (and any upstream grant the broker holds)
    * and drops whatever it keeps locally, then the kernel removes the connector's
-   * credential directory to match the mcp-oauth posture.
+   * credential directory to match the OAuth-records posture.
    *
    * Without this, uninstall-without-prior-disconnect — the realistic flow, since
    * users don't disconnect first — would leak local disk state and leave the
@@ -1212,7 +1212,7 @@ export class BundleLifecycleManager {
       );
     }
 
-    // A brokered bundle's credentials do not live in our `mcp-oauth` directory —
+    // A brokered bundle's credentials are not among our OAuth records —
     // the broker holds them — so disconnect asks the provider to tear its
     // connection down instead. Same `cleanup` arm uninstall uses: revoke the
     // upstream connection (the vendor's OAuth tokens go with it) and drop the
@@ -1519,7 +1519,7 @@ export class BundleLifecycleManager {
    *      `IdentityConnectorStore`. No URL record ⇒ `undefined` (not installed).
    *   3. Start it through the shared `startBundleSource` path, bound to the
    *      `{type:"user"}` owner so OAuth credentials resolve under
-   *      `users/<userId>/credentials/mcp-oauth/`, and return it.
+   *      user credential scope, and return it.
    *
    * Per-pod and reactive, like the workspace self-heal — a fresh pod starts the
    * source on its own first call, idempotently (`hasSource` short-circuit).
@@ -1590,7 +1590,7 @@ export class BundleLifecycleManager {
   /**
    * Full teardown of a personal (identity-plane) connector — the identity sibling
    * of `uninstall` (workspace). Stops + drops the source from the user's registry,
-   * deletes the identity credentials (mcp-oauth always; the brokered credential
+   * deletes the identity credentials (the OAuth records always; the brokered credential
    * dir too when it's a brokered connector), and removes the install record from
    * `IdentityConnectorStore`. Grant revocation is the caller's job (permission
    * store), exactly as `handleUninstall` drops tool permissions after
@@ -1634,10 +1634,15 @@ export class BundleLifecycleManager {
       await registry.removeSource(serverName);
     }
 
-    // 2. Delete identity credentials. mcp-oauth for every personal connector;
-    //    the provider's credential dir additionally when the ref carries a
-    //    brokered marker.
-    clearIdentityConnectorCredentials(workDir, userId, serverName, brokeredRef(ref ?? undefined));
+    // 2. Delete identity credentials. The OAuth records for every personal
+    //    connector; the provider's credential dir additionally when the ref
+    //    carries a brokered marker.
+    await clearIdentityConnectorCredentials(
+      workDir,
+      userId,
+      serverName,
+      brokeredRef(ref ?? undefined),
+    );
 
     // 3. Remove the install record — the user-visible "disconnected" state.
     await store.remove(userId, serverName);
@@ -1966,7 +1971,7 @@ export class BundleLifecycleManager {
    * `oauthScope: "user"` records — see the deploy runbook at
    * the Stage 2 deploy runbook.
    */
-  seedInstance(
+  async seedInstance(
     serverName: string,
     bundleName: string,
     ref: BundleRef,
@@ -1976,7 +1981,7 @@ export class BundleLifecycleManager {
      *  Set only by the boot seeder; makes the seeded Connection `dead` instead
      *  of the auth-derived state. */
     startError?: string,
-  ): void {
+  ): Promise<void> {
     // Track A: validate authorize-URL params at the seed boundary.
     // Catches reserved-key collisions (client_id, state, PKCE, scope, etc.)
     // before they break OAuth flows at runtime.
@@ -1988,7 +1993,7 @@ export class BundleLifecycleManager {
       `${serverName}|${wsId}`,
       buildSeededInstance(serverName, bundleName, ref, manifestMeta, wsId),
     );
-    this.seedUrlConnectionState(serverName, wsId, ref, startError);
+    await this.seedUrlConnectionState(serverName, wsId, ref, startError);
   }
 
   /**
@@ -2007,12 +2012,12 @@ export class BundleLifecycleManager {
    *      clicks Connect to initiate OAuth.
    *   4. Auth present and source.start() succeeded → record `running`.
    */
-  private seedUrlConnectionState(
+  private async seedUrlConnectionState(
     serverName: string,
     wsId: string,
     ref: BundleRef,
     startError?: string,
-  ): void {
+  ): Promise<void> {
     const pendingAuthUrl = consumePendingAuth(wsId, serverName);
     if (pendingAuthUrl) {
       this.recordConnectionStateChange(serverName, wsId, "_workspace", "reauth_required", {
@@ -2052,7 +2057,8 @@ export class BundleLifecycleManager {
     // above on `startError` — so `running` is accurate.
     const hasAuth =
       brokeredConnectionPresent(this.managedConnectors, ref, wsId, workDir) ??
-      (bundleHasStaticAuth(ref) || hasPersistedWorkspaceOAuthTokens(workDir, wsId, serverName));
+      (bundleHasStaticAuth(ref) ||
+        (await hasMcpOAuthTokens(workDir, { type: "workspace", wsId }, serverName)));
     if (!hasAuth) {
       this.recordConnectionStateChange(serverName, wsId, "_workspace", "not_authenticated");
     } else {
@@ -2066,23 +2072,23 @@ export class BundleLifecycleManager {
 // ---------------------------------------------------------------------------
 
 /**
- * Remove a personal connector's local credential homes: the mcp-oauth dir every
+ * Remove a personal connector's local credentials: the OAuth records every
  * personal connector has, plus the provider's credential dir when the ref is
  * brokered. Best-effort and independently guarded — a failure on one must not
  * skip the other, and `force` makes a never-connected connector a no-op.
  */
-function clearIdentityConnectorCredentials(
+async function clearIdentityConnectorCredentials(
   workDir: string,
   userId: string,
   serverName: string,
   brokered: BrokeredRef | undefined,
-): void {
+): Promise<void> {
   const owner: ConnectorOwner = { type: "user", userId };
   try {
-    rmSync(mcpOAuthDir(workDir, owner, serverName), { recursive: true, force: true });
+    await new McpOAuthRecords({ owner, serverName, workDir }).deleteAll();
   } catch (err) {
     log.warn(
-      `[lifecycle] failed to clear identity mcp-oauth for ${userId}|${serverName}: ${
+      `[lifecycle] failed to clear identity OAuth records for ${userId}|${serverName}: ${
         err instanceof Error ? err.message : String(err)
       }`,
     );

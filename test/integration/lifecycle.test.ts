@@ -14,8 +14,22 @@ import { startBundleSource } from "../../src/bundles/startup.ts";
 import type { BundleRef } from "../../src/bundles/types.ts";
 import { ToolRegistry } from "../../src/tools/registry.ts";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
+import {
+	installTestCredentialStore,
+	resetTestCredentialStore,
+} from "../helpers/credential-store.ts";
 
 const testDir = join(tmpdir(), `nimblebrain-lifecycle-${Date.now()}`);
+
+// Every path here reaches `seedInstance`, which derives the boot Connection
+// state from the OAuth token record — a key in the credential store.
+beforeEach(() => {
+	installTestCredentialStore(testDir);
+});
+
+afterEach(() => {
+	resetTestCredentialStore();
+});
 
 function setupTestDir() {
 	if (existsSync(testDir)) rmSync(testDir, { recursive: true });
@@ -123,7 +137,7 @@ async function connectAndSeed(
 		allowInsecureRemotes: true,
 		wsId: WS,
 	});
-	lifecycle.seedInstance(SERVER_NAME, url, ref, meta ?? undefined, WS);
+	await lifecycle.seedInstance(SERVER_NAME, url, ref, meta ?? undefined, WS);
 	return ref;
 }
 
@@ -280,10 +294,10 @@ describe("BundleLifecycleManager — start and stop", () => {
 // ---------------------------------------------------------------------------
 
 describe("BundleLifecycleManager — instance tracking", () => {
-	it("seedInstance records the ref's UI and derives the connection state", () => {
+	it("seedInstance records the ref's UI and derives the connection state", async () => {
 		const lifecycle = new BundleLifecycleManager(makeEventCollector(), undefined);
 
-		lifecycle.seedInstance(
+		await lifecycle.seedInstance(
 			"ipinfo",
 			"https://ipinfo.example.com/mcp",
 			{
@@ -304,10 +318,10 @@ describe("BundleLifecycleManager — instance tracking", () => {
 		expect(lifecycle.getInstances()).toHaveLength(1);
 	});
 
-	it("seedInstance prefers the manifest name over the config label", () => {
+	it("seedInstance prefers the manifest name over the config label", async () => {
 		const lifecycle = new BundleLifecycleManager(makeEventCollector(), undefined);
 
-		lifecycle.seedInstance(
+		await lifecycle.seedInstance(
 			"crm",
 			"https://crm.example.com/mcp",
 			{ url: "https://crm.example.com/mcp", serverName: "crm" },
@@ -330,7 +344,7 @@ describe("BundleLifecycleManager — instance tracking", () => {
 		expect(instance.wsId).toBe("ws_eng");
 	});
 
-	it("seedInstance retains the ref so a source can be reconstructed on demand", () => {
+	it("seedInstance retains the ref so a source can be reconstructed on demand", async () => {
 		const lifecycle = new BundleLifecycleManager(makeEventCollector(), undefined);
 		const ref: BundleRef = {
 			url: "https://crm.example.com/mcp",
@@ -338,7 +352,7 @@ describe("BundleLifecycleManager — instance tracking", () => {
 			scopes: ["read"],
 		};
 
-		lifecycle.seedInstance("crm", ref.url, ref, undefined, "ws_eng");
+		await lifecycle.seedInstance("crm", ref.url, ref, undefined, "ws_eng");
 
 		expect(lifecycle.getInstance("crm", "ws_eng")?.ref).toEqual(ref);
 	});

@@ -9,7 +9,6 @@
 import { join } from "node:path";
 import { brokeredConnectionPresent, bundleHasStaticAuth } from "../bundles/bundle-auth.ts";
 import { assertBundleRefIsPostStage2 } from "../bundles/lifecycle.ts";
-import { hasPersistedWorkspaceOAuthTokens } from "../bundles/oauth-tokens.ts";
 import { resolveBundleDataDirForRef, serverNameFromRef } from "../bundles/paths.ts";
 import { setPendingAuth } from "../bundles/pending-auth-buffer.ts";
 import type { BundleMcpDeps } from "../bundles/startup.ts";
@@ -21,6 +20,7 @@ import {
 } from "../connectors/providers/registry.ts";
 import type { EventSink } from "../engine/types.ts";
 import { log } from "../observability/log.ts";
+import { hasMcpOAuthTokens } from "../tools/mcp-oauth-records.ts";
 import { ToolRegistry } from "../tools/registry.ts";
 import type { ToolSource } from "../tools/types.ts";
 import { mapWithConcurrency } from "../util/concurrency.ts";
@@ -170,16 +170,17 @@ type UrlBundleRef = BundleRef;
  * carry their own credential and mint/present on demand — boot-start them. Only
  * OAuth bundles gate on persisted tokens.
  */
-function urlBundleHasBootAuth(
+async function urlBundleHasBootAuth(
   managedConnectors: ManagedConnectorRegistry,
   bundle: UrlBundleRef,
   wsId: string,
   serverName: string,
   workDir: string,
-): boolean {
+): Promise<boolean> {
   return (
     brokeredConnectionPresent(managedConnectors, bundle, wsId, workDir) ??
-    (bundleHasStaticAuth(bundle) || hasPersistedWorkspaceOAuthTokens(workDir, wsId, serverName))
+    (bundleHasStaticAuth(bundle) ||
+      (await hasMcpOAuthTokens(workDir, { type: "workspace", wsId }, serverName)))
   );
 }
 
@@ -329,7 +330,13 @@ export async function startWorkspaceBundles(
     // `oauthScope: "user"` literal was deleted). Personal connectors
     // bind to the owning user's personal workspace at install time.
     if (
-      !urlBundleHasBootAuth(managedConnectors, entry.bundle, entry.wsId, entry.serverName, workDir)
+      !(await urlBundleHasBootAuth(
+        managedConnectors,
+        entry.bundle,
+        entry.wsId,
+        entry.serverName,
+        workDir,
+      ))
     ) {
       log.info(
         `[bundles] Skipping boot start for URL bundle "${entry.serverName}" — no tokens yet (state: not_authenticated)`,
