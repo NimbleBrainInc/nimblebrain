@@ -16,16 +16,16 @@ it belongs in an MCP server, a Synapse app, or upstream MCP — not the runtime.
 
 1. **Manage skills** — discover, compose, and apply `SKILL.md`-format guidance
    into the agent's prompt without busting the prompt cache. *(Domain terms:
-   skill, role/channel, the two planes. ADRs: batch 2 / backlog.)*
+   skill, role/channel, catalog, provenance. ADRs 0009–0019.)*
 2. **Orchestrate over remote MCP servers** — treat every tool/resource provider
    (a directly-addressed server, a gateway-brokered one, a Synapse app) as an
    interchangeable MCP source through one boundary, and keep those connections
    healthy. The runtime connects; it does not acquire, verify, or execute a
-   server's code. *(Domain
-   terms: source, connection, recovery. ADRs: 0005 + batch 2.)*
+   server's code. *(Domain terms: source, connection, brokered connector, task
+   augmentation. ADRs 0005, 0020–0032.)*
 3. **Provide secure RBAC** — isolate everything behind the workspace boundary,
    private to its owner by default, with no ambient cross-scope authority.
-   *(Domain terms below; ADRs 0001–0007 — this is the fully-worked domain.)*
+   *(Domain terms below; ADRs 0001–0008.)*
 
 ## Domain glossary
 
@@ -94,16 +94,76 @@ runtime stamps `source`, `workspaceId`, `receivedAt` and a per-workspace
 monotonic `seq`; a server can set none of them. The runtime reads the envelope
 fields it defined and never the server's opaque `data`.
 
-### Source / Connection *(golden rule #2 — glossary stub)*
-An MCP source is any tool/resource provider behind the MCP boundary; a
-connection is the supervised transport to a remote one. Recovery splits
-connection-health from application-outcome classification. *Full terms +
-decisions land with the MCP-orchestration ADR batch.*
+### Source
+Any tool/resource provider behind the MCP boundary. Every source is one
+`McpSource` over one transport union (ADR-0022): a remote server over HTTPS, or
+one of the kernel's own capabilities — conversations, files, automations,
+skills — served by a real MCP server on an in-memory linked-pair transport. The
+platform's own capabilities are MCP servers to themselves, so nothing above the
+source can tell them apart.
 
-### Skill *(golden rule #1 — glossary stub)*
-A `SKILL.md`-format unit of guidance; its role determines its prompt channel,
-and it loads without mutating the cached prompt prefix. *Full terms + decisions
-land with the skills ADR batch.*
+The runtime **connects**; it does not acquire, verify, or execute a server's
+code (ADR-0020). A persisted reference is a URL plus how to reach it and who it
+speaks as, and discovery is a catalog of published `ServerDetail` entries behind
+one source interface.
+
+The transport arm is also a trust boundary: in-memory means the bytes never left
+the process, which is what host-owned `_meta` markers are conditioned on
+(ADR-0014, ADR-0024).
+
+### Connection
+The supervised link to a remote source, carrying the
+`(serverName, workspaceId, principalId, ref)` tuple. Two disjoint loops watch it
+(ADR-0028): **process liveness** (`HealthMonitor` — is the transport up? restart
+it, indefinitely, because an outage self-heals) and **credential liveness**
+(`ConnectionRevalidator` — did the upstream authorization lapse? flip to
+reauth-required and stop, because only a human can fix it). Neither loop
+concludes anything about the other's question.
+
+A connection's secret is named, never inlined: persisted state carries a
+credential reference resolved through one store (ADR-0027).
+
+### Brokered connector
+A connector whose auth *and* hosted MCP session come from a third party.
+`ManagedConnectorProvider` is the seam, and it owns the **auth-and-session broker
+role only — never invocation** (ADR-0026); the session it returns is an ordinary
+remote source. `dcr` and `static` are runtime-native and stay outside the seam.
+
+### Task augmentation
+How a long-running tool call is made without holding a socket open. A server
+marks a tool `execution.taskSupport`; the runtime attaches a task, polls the
+stream, and can cancel (ADR-0029). The retry policy inverts with it: an inline
+call is re-issued once on a transport error, and a task call is **never**
+retried — it has already created server-side state, so replaying it would
+duplicate the side effect.
+
+### Skill
+A unit of guidance in the Agent Skills format. The file is the standard,
+unmodified, with the runtime's own configuration nested under
+`metadata.nimblebrain` and validated by one schema (ADR-0009). A skill comes off
+the filesystem, off an MCP server's `skill://…/SKILL.md` resource (a peer, not a
+lesser kind — ADR-0011), or from a curated connector overlay (ADR-0013).
+
+### Role / channel
+A skill's declared `loading-strategy`, and the prompt channel that follows from
+it (ADR-0010). `always` composes into the system prompt every turn. `dynamic`
+reaches the model by tool-affinity (selected once at turn start), by an explicit
+trigger phrase (matched per message, the deterministic must-fire channel), or —
+carrying neither — by the catalog. The sets are disjoint by construction, so a
+skill is never in two channels, and one predicate answers "how would this skill
+load?" for every read surface.
+
+### Catalog
+The model-facing index of activatable skills: name and description only, sorted
+and deduplicated (ADR-0015). It lists what **can** be activated and never what
+**is** loaded, so its bytes move only on install and authoring events and the
+cached prompt prefix holds.
+
+### Provenance
+Who authored a skill. `chat`, `admin`, `connector`, and `import` are audit facts
+written to disk. `vendored` is not: it is the trust marker for platform-shipped
+skills, stamped in memory at load on the platform's own source-tree directories
+and absent from the on-disk schema, so a file cannot forge it (ADR-0012).
 
 ## Decisions
 
@@ -117,3 +177,33 @@ The decision log is `adr/`. Foundational (secure RBAC):
 - [0006](adr/0006-personal-connector-use-requires-a-grant.md) — personal-connector use in a shared workspace requires a grant
 - [0007](adr/0007-offboarding-revokes-active-use.md) — offboarding revokes active use; ownership is necessary, not sufficient
 - [0008](adr/0008-notifications-are-pulled-and-routed-by-the-operator.md) — notifications are pulled into a workspace inbox and routed by the operator
+
+Manage skills:
+
+- [0009](adr/0009-skills-are-the-agent-skills-standard-plus-a-nested-runtime-block.md) — a skill is the Agent Skills standard plus one nested runtime block
+- [0010](adr/0010-role-decides-the-channel.md) — a skill's role decides its prompt channel
+- [0011](adr/0011-a-server-published-skill-is-a-peer-of-a-filesystem-skill.md) — a server-published skill is a peer of a filesystem skill
+- [0012](adr/0012-vendored-provenance-is-loader-stamped.md) — vendored provenance is loader-stamped, never on disk
+- [0013](adr/0013-connector-overlays-are-curated-pinned-and-reconciled-at-boot.md) — connector overlays: one curated repo, pinned, content-addressed, reconciled at boot
+- [0014](adr/0014-skill-markers-are-host-owned-meta.md) — skill activation and suppression markers are host-owned `_meta`
+- [0015](adr/0015-the-catalog-lists-what-can-be-activated.md) — the catalog lists what can be activated, never what is loaded
+- [0016](adr/0016-binding-home-for-connector-and-skill.md) — *(proposed)* where the connector↔skill binding lives
+- [0017](adr/0017-retiring-the-trigger-matcher.md) — *(proposed)* whether the trigger matcher retires
+- [0018](adr/0018-skill-channels-and-the-cache-breakpoints.md) — *(proposed)* where each skill channel sits relative to the cache breakpoints
+- [0019](adr/0019-scope-precedence-when-two-skills-share-a-name.md) — *(proposed)* scope precedence when two skills share a name
+
+Orchestrate over remote MCP:
+
+- [0020](adr/0020-the-runtime-connects-it-does-not-acquire.md) — the runtime orchestrates over remote MCP; it does not acquire or execute a server's code
+- [0021](adr/0021-one-run-start-door.md) — one run-start door; delegation is not a kernel capability
+- [0022](adr/0022-one-source-type-over-one-transport-union.md) — every source is one `McpSource` over one transport union
+- [0023](adr/0023-client-capability-advertisement.md) — the client advertises `tasks` and `extensions`, and nothing it does not serve
+- [0024](adr/0024-private-extensions-live-under-one-reverse-dns-namespace.md) — private extensions live under `ai.nimblebrain/*`, and reuse the spec's schemas
+- [0025](adr/0025-hook-declarations-come-from-the-operator-trusted-catalog.md) — hook declarations come from operator-trusted catalog metadata
+- [0026](adr/0026-a-brokered-provider-owns-auth-and-session-only.md) — a brokered provider owns auth-and-session only, never invocation
+- [0027](adr/0027-persisted-state-names-the-credential-not-the-value.md) — persisted state names *what* credential it needs, never *where* the value lives
+- [0028](adr/0028-two-disjoint-health-loops.md) — two disjoint health loops: process liveness and credential liveness
+- [0029](adr/0029-long-running-tools-are-task-augmented-and-never-retried.md) — long-running tools are task-augmented; task calls never retry
+- [0030](adr/0030-consuming-resource-update-notifications.md) — *(proposed)* how far resource-update consumption generalizes
+- [0031](adr/0031-which-tool-annotations-the-consent-model-reads.md) — *(proposed)* which spec `ToolAnnotations` the consent model reads
+- [0032](adr/0032-provider-typed-ref-blocks-on-persisted-state.md) — *(proposed)* the provider-typed blocks on persisted connector state
