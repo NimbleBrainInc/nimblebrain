@@ -708,7 +708,7 @@ describe("manage_connectors.install (composio-auth)", () => {
 // ── scope: "identity" — personal Composio connector ──────────────────
 //
 // The identity-plane sibling of the workspace install above. Same wiring
-// (`buildComposioWiring` bound to `{type:"user"}`), but the ref lands in
+// (`buildBrokeredWiring` bound to `{type:"user"}`), but the ref lands in
 // `users/<id>/connectors.json` — not any workspace — and carries NO oauthScope
 // (identity refs are user-owned structurally). Unlike the workspace path, the
 // identity install does NOT eager-start, so the fake session URL is never dialed
@@ -813,7 +813,7 @@ describe("manage_connectors.install scope:identity (composio personal connector)
     expect(sc.alreadyInstalled).toBe(true);
     expect(sc.scope).toBe("identity");
 
-    // The dedup short-circuits BEFORE buildComposioWiring — exactly one upstream
+    // The dedup short-circuits BEFORE buildBrokeredWiring — exactly one upstream
     // session was ever created, so none is orphaned.
     expect(createCalls).toBe(1);
 

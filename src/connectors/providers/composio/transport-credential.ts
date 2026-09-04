@@ -118,9 +118,10 @@ function isLegacyEnvTemplateAuth(auth: RemoteTransportConfig["auth"]): boolean {
  * sent verbatim — a literal `${COMPOSIO_API_KEY}` the vendor rejects. Left
  * unmapped deliberately: no such ref exists (Composio returns only
  * `x-api-key`), and it fails loudly at the vendor rather than silently.
- * `scrubComposioHeaders` keeps its drop branch because writing a key-bearing
- * header would put a secret at rest. If one is ever found in the field, drop it
- * here rather than resolving it — that is what a fresh install now does.
+ * `provider.ts`'s `scrubSessionHeaders` keeps its drop branch because writing a
+ * key-bearing header would put a secret at rest. If one is ever found in the
+ * field, drop it here rather than resolving it — that is what a fresh install
+ * now does.
  */
 export function composioTransportConfig(
   config: RemoteTransportConfig | undefined,
