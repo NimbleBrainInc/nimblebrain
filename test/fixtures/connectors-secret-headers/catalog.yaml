@@ -1,0 +1,50 @@
+# Test fixture — a catalog entry that authenticates as ITSELF (a minted service
+# token) and carries the WORKSPACE's own secret on a named header. Not shipped.
+#
+# The shape under test is the two-credential one: `providerAuth` says who is
+# calling, `secretHeaders` says what that caller may open. A service reading a
+# customer-owned database needs both — the platform must know which workspace
+# is asking, and the connection must carry a credential only that workspace
+# holds. Neither value is in this file; the header names a KEY.
+servers:
+  - name: com.acme/db-query
+    title: Acme DB Query
+    description: Read-only queries against the workspace's own database
+    version: "1.0.0"
+    remotes:
+      - type: streamable-http
+        url: https://mcp.acme.test/mcp
+    _meta:
+      ai.nimblebrain/connector:
+        auth: provider
+        providerAuth:
+          provider: minted
+          config:
+            audience: mcp-fleet
+            scope: mcp:invoke
+        secretHeaders:
+          X-Db-Url:
+            ref: credential
+            key: acme.db_url
+        tags: [database]
+
+  # A miscurated entry: the value is the secret rather than a reference to one.
+  # Install must refuse it — a catalog file is configuration in git, and a secret
+  # written here is the copy the credential store exists to remove.
+  - name: com.acme/db-query-literal
+    title: Acme DB Query (miscurated)
+    description: Carries a literal where a credential reference belongs
+    version: "1.0.0"
+    remotes:
+      - type: streamable-http
+        url: https://mcp.acme.test/literal/mcp
+    _meta:
+      ai.nimblebrain/connector:
+        auth: provider
+        providerAuth:
+          provider: minted
+          config:
+            audience: mcp-fleet
+            scope: mcp:invoke
+        secretHeaders:
+          X-Db-Url: postgres://literal.acme.test/db

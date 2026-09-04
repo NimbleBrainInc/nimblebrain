@@ -22,6 +22,7 @@ import { join } from "node:path";
 import Ajv, { type ValidateFunction } from "ajv";
 import addFormats from "ajv-formats";
 import type { HostManifestMeta } from "../bundles/types.ts";
+import type { CredentialRef } from "../tools/credential-ref.ts";
 import type { ConnectorAuthKind } from "./auth-kind.ts";
 
 /** Optional sized icon. Upstream Icon definition. */
@@ -237,6 +238,25 @@ export interface NimbleBrainConnectorMeta {
    * `transport.auth`. NEVER derived from tenant input.
    */
   providerAuth?: { provider: string; config: Record<string, unknown> };
+  /**
+   * Secrets the WORKSPACE owns, bound to outgoing request headers — a customer's
+   * own database URL, an API key the customer holds. Each value is a
+   * {@link CredentialRef} into that workspace's credential store, so one catalog
+   * entry installs into two workspaces and each sends its own value, and rotation
+   * is a `put` on the key rather than a catalog change.
+   *
+   * Only references are accepted, never a literal: a catalog file is operator-
+   * authored configuration in git, and a secret written there is exactly the copy
+   * the credential store exists to prevent.
+   *
+   * This is NOT how the connection authenticates — `providerAuth` is. A fleet
+   * entry keeps `provider: "minted"` (the identity the edge verifies) and carries
+   * the customer's secret here, because the two answer different questions: who
+   * is calling, and what that caller may open. Copied verbatim from the trusted
+   * catalog entry into the BundleRef's `transport.headers`, where the transport
+   * resolves each reference per connection at the connection's workspace scope.
+   */
+  secretHeaders?: Record<string, CredentialRef>;
   /** Optional OAuth scopes the bundle requests. */
   requiredScopes?: string[];
   /** Optional extra authorize-URL params (e.g. Google's access_type=offline). */
