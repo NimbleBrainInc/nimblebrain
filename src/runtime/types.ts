@@ -6,6 +6,7 @@ import type { EventSink, ThinkingEffort } from "../engine/types.ts";
 import type { ContentPart, FileReference } from "../files/types.ts";
 import type { UserIdentity } from "../identity/provider.ts";
 import type { ProvidersConfig } from "../model/registry.ts";
+import type { NotificationsPollConfig } from "../notifications/poll-config.ts";
 import type { TokenUsage } from "../usage/types.ts";
 import type { RunTrigger } from "./run-spec.ts";
 
@@ -227,6 +228,18 @@ export interface RuntimeConfig {
     cacheTtlMinutes?: number;
   };
 
+  /**
+   * Notifications — how the runtime reads the outboxes connectors declare.
+   *
+   * Only the poll's pacing is configurable. What an outbox contains, and who
+   * is allowed to declare one, are the server's and the operator's decisions
+   * respectively; what it *costs* is the runtime's, and this is where an
+   * operator moves that cost. See `src/notifications/poll-config.ts`.
+   */
+  notifications?: {
+    poll?: NotificationsPollConfig;
+  };
+
   /** File context configuration. */
   files?: {
     maxFileSize?: number;
@@ -401,10 +414,13 @@ export interface TaskRequest {
   /** The task description. Goes in as the user message. */
   prompt: string;
   /**
-   * What woke the agent, recorded on the run at the door. `schedule` is an
-   * automations cron tick, `manual` an operator pressing Run now; the default
-   * `api` covers a caller driving the runtime directly (embedded, CLI, evals).
-   * `chat` is not reachable here — that trigger has its own door.
+   * What woke the agent. `schedule` is an automations cron tick, `manual` an
+   * operator pressing Run now; the default `api` covers a caller driving the
+   * runtime directly (embedded, CLI, evals). `chat` is not reachable here —
+   * that trigger has its own door.
+   *
+   * The door stamps it on the run's `agent.turn` span, which is where a
+   * scheduled run is told apart from an operator's one after the fact.
    */
   trigger?: Exclude<RunTrigger, "chat">;
   /**

@@ -52,8 +52,8 @@ export interface TaskFnRequest {
   prompt: string;
   /**
    * What woke the agent, in the runtime's vocabulary: a cron tick is a
-   * `schedule`, an operator's Run now is `manual`. The run-start door records
-   * it on the run.
+   * `schedule`, an operator's Run now is `manual`. The run-start door stamps it
+   * on the run's `agent.turn` span.
    */
   trigger?: "schedule" | "manual";
   model?: string;

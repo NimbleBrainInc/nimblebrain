@@ -100,6 +100,7 @@ describe("WorkspaceLogSink", () => {
       "http.error",
       "audit.auth_failure",
       "audit.permission_denied",
+      "audit.credential_read",
     ];
 
     for (const type of workspaceTypes) {

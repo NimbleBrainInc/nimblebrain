@@ -20,6 +20,7 @@ export function toNotificationView(item: Notification): NotificationView {
     timestamp: item.envelope.timestamp,
     receivedAt: item.receivedAt,
     ...(item.readAt ? { readAt: item.readAt } : {}),
+    ...(item.deliveries.length > 0 ? { deliveries: item.deliveries } : {}),
     data: item.envelope.data,
   };
 }

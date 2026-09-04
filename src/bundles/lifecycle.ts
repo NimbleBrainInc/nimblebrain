@@ -15,7 +15,6 @@ import {
   materializeConnectorSkill,
   removeConnectorSkillsForServer,
 } from "../skills/connector-skill-store.ts";
-import { FileCredentialStore } from "../tools/credential-store.ts";
 import { personalConnectorWireName } from "../tools/identity-sources.ts";
 import { McpSource } from "../tools/mcp-source.ts";
 import { ToolRegistry } from "../tools/registry.ts";
@@ -37,6 +36,7 @@ import {
   WORKSPACE_PRINCIPAL_ID,
 } from "./connection.ts";
 import { sanitizePlacements } from "./defaults.ts";
+import { resolveStaticOAuthClient, type StaticOAuthClient } from "./oauth-static-client.ts";
 import { hasPersistedWorkspaceOAuthTokens } from "./oauth-tokens.ts";
 import { defaultWorkDir, deriveServerName, validateServerName } from "./paths.ts";
 import { consumePendingAuth } from "./pending-auth-buffer.ts";
@@ -55,13 +55,6 @@ import type {
   BundleUiMeta,
   ConnectorSkillLockEntry,
 } from "./types.ts";
-
-/** Resolved pre-registered OAuth client (Track A), with the secret dereferenced to a string. */
-type StaticOAuthClient = {
-  clientId: string;
-  clientSecret?: string;
-  tokenEndpointAuthMethod?: "none" | "client_secret_post" | "client_secret_basic";
-};
 
 /** Manifest-derived metadata `seedInstance` accepts for a bundle it is seeding,
  *  running or not. */
@@ -845,7 +838,11 @@ export class BundleLifecycleManager {
     // + scopes + additionalAuthorizationParams). Dereferences the client
     // secret from the workspace credential store when present.
     const ref = instance.ref;
-    const staticClient = await resolveStaticClientConfig(ref, wsId, serverName, opts.workDir);
+    const staticClient = await resolveStaticOAuthClient({
+      ref,
+      wsId,
+      serverName,
+    });
 
     // Construct provider with our pending-auth callback. The callback
     // fires synchronously inside `redirectToAuthorization` BEFORE the
@@ -2089,39 +2086,6 @@ function buildSeededInstance(
     // Needed to reconstruct McpSources on-demand (URL, transport config,
     // oauthClient + scopes). Stored as an opaque copy.
     ref: { ...ref },
-  };
-}
-
-/**
- * Resolve a URL bundle's pre-registered OAuth client (Track A) for `startAuth`,
- * dereferencing the client secret from the workspace credential store when
- * present. Returns undefined when the bundle has no static client (DCR path).
- */
-async function resolveStaticClientConfig(
-  ref: BundleRef,
-  wsId: string,
-  serverName: string,
-  workDir: string,
-): Promise<StaticOAuthClient | undefined> {
-  if (!ref.oauthClient) return undefined;
-  let resolvedSecret: string | undefined;
-  if (ref.oauthClient.clientSecret) {
-    const secretStore = new FileCredentialStore(workDir);
-    const wrapped = await secretStore.get(wsId, ref.oauthClient.clientSecret.key);
-    if (!wrapped) {
-      throw new Error(
-        `[lifecycle] OAuth client_secret not found at credential key "${ref.oauthClient.clientSecret.key}" for ${serverName} — ` +
-          `configure it in the workspace's Connections settings (web UI)`,
-      );
-    }
-    resolvedSecret = wrapped.reveal();
-  }
-  return {
-    clientId: ref.oauthClient.clientId,
-    ...(resolvedSecret ? { clientSecret: resolvedSecret } : {}),
-    ...(ref.oauthClient.tokenEndpointAuthMethod
-      ? { tokenEndpointAuthMethod: ref.oauthClient.tokenEndpointAuthMethod }
-      : {}),
   };
 }
 

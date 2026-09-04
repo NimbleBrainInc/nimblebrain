@@ -133,7 +133,7 @@ export function buildForwardHeaders(opts: {
  */
 export async function forwardDelivery(opts: ForwardOptions): Promise<Response> {
   const target = resolveForwardUrl(opts.baseUrl, opts.route);
-  const credential = resolveTransportCredential(opts.transport, opts.workspaceId);
+  const credential = await resolveTransportCredential(opts.transport, opts.workspaceId);
   // No static headers and no minting fetch means this connection has no
   // credential a non-MCP caller can present: it authenticates interactively,
   // and that credential lives inside the SDK transport and is user-bound. Refuse

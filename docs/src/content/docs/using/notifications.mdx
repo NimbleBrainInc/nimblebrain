@@ -1,0 +1,185 @@
+---
+title: Notifications
+description: The workspace inbox — what your connectors report on their own, the level ceiling that holds each one, and the routes that send an item somewhere else.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Most of what a connector tells you, it tells you because you asked: you call a
+tool, it answers. Some things it learns on its own. A domain it ordered goes
+active twenty minutes later. A reply lands on a campaign. A bounce arrives at
+three in the morning.
+
+Those arrive as **notifications**. A connector records them in its own outbox,
+the runtime reads that outbox on a schedule, and every item lands in the
+workspace's **inbox** — visible to anyone who can reach that connector's tools,
+and readable by the agent when you ask it what has come in.
+
+Nothing leaves the workspace on its own. Sending an item to Slack, to mail, or
+into an agent run is a **route**, and a workspace admin writes it.
+
+## The inbox
+
+Open **Inbox** under the workspace in the left navigation. The count beside it is
+how many items nobody has read yet.
+
+![The workspace inbox, with one item expanded to show its body, event name and raw connector data](../../../assets/guide/notifications-inbox.png)
+
+Items are grouped by urgency and then by arrival: `urgent` and `attention` sort
+above `info`, and within a level the newest is first. Each row carries:
+
+| | |
+|---|---|
+| **Title** | One line the connector wrote. Bold while unread. |
+| **Source** | The connector that emitted it — the same name its tools carry. |
+| **Timestamp** | When the connector says the fact happened. The expanded row also shows when this runtime received it. |
+| **Subject** | What the item is about, when the connector says. Free text, used for grouping. |
+| **Level** | `info`, `attention` or `urgent`. Advisory — the connector chose it. |
+
+Open a row to see the **body** and the event name. Opening an item marks it read;
+**Mark all read** clears the rest.
+
+<Aside type="caution" title="Everything in the inbox is content a connector wrote">
+Titles, subjects and bodies are text from a third-party server, and the platform
+renders them as text: no formatting, no markup, and no clickable link built out
+of a URL a connector supplied. A **Linked resource** is shown so you can read it
+and decide; it becomes a link only where the platform itself can open it. Treat
+what an item says the way you would treat an email from outside your
+organization — as a report, not an instruction.
+</Aside>
+
+Under **Show details** is the connector's own structured payload, as raw JSON.
+The runtime never reads a field of it; it is passed through untouched, and shown
+here so you can see what the connector actually sent.
+
+The inbox holds 90 days. The view shows the most recent 100 items; ask the agent
+for older ones ("what notifications came in last month from acme?") and it walks
+the backlog forward.
+
+### Live updates
+
+The inbox updates itself while it is open, and re-reads the list whenever the
+event stream reconnects — the stream does not replay what it missed, so the
+re-read is what keeps a tab left open through a restart from showing a stale
+list.
+
+## Sources and the level ceiling
+
+**Settings → Notifications** lists every connector in the workspace that
+declares an outbox, with the level ceiling it is held to. Workspace admins only.
+
+![The notifications settings tab, showing the source ceiling control and the route editor](../../../assets/guide/notifications-settings.png)
+
+A newly declared source starts at **`info`**. Because a route matches on level as
+a *minimum*, a route looking for `attention` or above never fires for that source
+until an admin raises its ceiling. That is deliberate: installing a connector
+that declares an outbox costs you a poll and some inbox rows, and it should not
+also be a decision to let that connector reach your phone. Raising the ceiling is
+the second, separate decision.
+
+Lowering a ceiling does not hide anything — every item still lands in the inbox
+at the level the connector chose. The ceiling decides only how high an item may
+reach a **route**.
+
+A ceiling you set for a connector that has since been removed stays listed, so
+you can still see and lower it. Re-installing the connector lands straight back
+on it.
+
+## Routes
+
+A route says: when a notification matches, deliver it there.
+
+<Aside type="caution" title="Routes are saved but not executed in this version">
+The editor stores, validates and lists routes, and nothing dispatches them yet.
+The notice at the top of the settings tab says so, and disappears in the version
+that turns them on. The inbox and the ceilings work now.
+</Aside>
+
+### Match
+
+All three parts are optional, and an empty match is every notification the
+workspace receives — legal, and rarely what you want.
+
+| Field | Means |
+|---|---|
+| **Source** | Exactly one connector. Omit for any. |
+| **Event name** | A glob over the event name the connector chose, e.g. `domain.*`. Omit for any. The names are the connector's own; its documentation lists them. |
+| **Minimum level** | `attention` also matches `urgent`. Omit for any level. |
+
+### Deliver to a tool
+
+Pick any tool installed in this workspace and give it the arguments its own
+schema expects, as a JSON object. A tool the workspace does not have is refused
+when you save.
+
+Four placeholders are replaced with the notification's fields:
+
+| Placeholder | Value |
+|---|---|
+| `{{title}}` | The item's one-line title. |
+| `{{body}}` | Its body, if the connector wrote one. |
+| `{{subject}}` | What it is about, if the connector said. |
+| `{{link.resource}}` | The linked resource URI, if the connector supplied one. |
+
+```json
+{
+  "channel": "#outbound",
+  "text": "{{title}}\n{{body}}\n{{link.resource}}"
+}
+```
+
+Those four are the whole list. There is no placeholder for the connector's
+`data` payload, because the runtime does not read it. Any other `{{…}}` is
+refused when you save rather than delivered as literal braces in somebody's
+Slack channel.
+
+### Deliver to an automation
+
+Pick one of your [automations](/using/automations) and the route wakes it, handing
+it the matched notifications as its input.
+
+### Who a route runs as
+
+Every route carries an author, and it dispatches under that person's identity —
+their workspace membership, their connector grants, their audit trail. The
+editor shows it as **Dispatches as**.
+
+The author is stamped from whoever saved the route; it cannot be supplied, and
+there is no field for delivering "as" somebody else. Saving replaces the
+workspace's whole route list and stamps you as the author of every route in it,
+including ones you did not change. That is the safe direction: an admin who
+could edit another admin's route while keeping their principal could reach tools
+their own grants do not.
+
+If a route's author later leaves the workspace, the route stops firing rather
+than dispatching as nobody. Re-adding them restores it.
+
+## The delivery ledger
+
+Once a route has tried to deliver an item, the expanded row shows one line per
+target: what it aimed at, whether it delivered, and the last error if it did
+not. Items with nothing tried show nothing.
+
+That ledger is the point of routing being visible at all. A notification that
+reached the inbox and never reached the Slack channel it was routed to looks
+exactly like one nobody routed, unless the attempt was recorded.
+
+## What the agent sees
+
+The agent reads the inbox when you ask it to, through `notifications__list`, and
+can mark items read. It is framed as untrusted content from a connector — the
+same footing as any tool result.
+
+Inbox content is **not** injected into the agent's context on its own. Nothing a
+connector emits reaches a conversation unless somebody asked for it.
+
+The settings on this page are operator configuration and the agent cannot reach
+them: it cannot raise a ceiling and it cannot author a route.
+
+## Related
+
+- [Notifications for app authors](/apps/notifications) — declaring an outbox,
+  the event envelope, and the levels, from the connector's side.
+- [Workspaces](/using/workspaces) — who can see and configure what.
+- [Automations](/using/automations) — what a route can wake.
+- [workspace.json](/config/workspace-json) — where the ceilings and routes are stored.

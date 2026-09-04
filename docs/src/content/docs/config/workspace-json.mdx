@@ -44,6 +44,7 @@ In dev mode (no [`instance.json`](/config/instance-json/), no auth configured) t
 | `bundles` | `array` | Yes | MCP bundles installed in this workspace. See [Bundle Configuration](/config/bundles). |
 | `connectorsAllowList` | `string[]` | No | Per-workspace catalog allow-list. When set, only catalog entries whose id is in this array appear on the workspace's Connectors page. When unset, the full loaded catalog is visible. Filters the catalog UI only — already-installed bundles keep running regardless. |
 | `oauthOperatorApps` | `object` | No | Per-workspace OAuth app config for `auth: static` catalog entries. Keyed by catalog id (reverse-DNS `ServerDetail.name`, e.g. `"io.asana/mcp"`); each value carries the public `client_id` plus an audit trail. The matching `client_secret` lives in the workspace credential store, not here. See [Connectors Catalog → Where the secrets live](/config/connectors-catalog/#where-the-secrets-live). |
+| `notifications` | `object` | No | Notification source ceilings and delivery routes. `notifications.sources` maps a connector's server name to `{ "maxLevel": "info" \| "attention" \| "urgent" }` — the highest level that source's items may reach a route at, defaulting to `info` for a source nobody has raised. `notifications.routes` is an array of `{ id, createdBy, match, deliver }`. Written only by a workspace admin through **Settings → Notifications**; see [Notifications](/using/notifications). |
 | `skillDirs` | `string[]` | No | Directories scanned for skill markdown files, in addition to the built-in skills. |
 | `models` | `object` | No | Per-workspace model slot overrides. Partial — missing slots inherit from `nimblebrain.json`. |
 | `identity` | `string` | No | Markdown prompt appended as a context skill for this workspace. |
@@ -51,6 +52,41 @@ In dev mode (no [`instance.json`](/config/instance-json/), no auth configured) t
 | `ownerUserId` | `string` | When `isPersonal` | Owner of a personal workspace. Required when `isPersonal: true`, forbidden otherwise. |
 | `createdAt` | `string` (ISO 8601) | Yes | Timestamp, maintained by the runtime. |
 | `updatedAt` | `string` (ISO 8601) | Yes | Timestamp, maintained by the runtime. |
+
+## Notification ceilings and routes
+
+`notifications` holds the operator half of the notifications contract: which of the workspace's connectors may report how loudly, and where a matching item goes. Both are edited under **Settings → Notifications** — see [Notifications](/using/notifications) for what each field means to an operator.
+
+```json
+{
+  "notifications": {
+    "sources": {
+      "acme": { "maxLevel": "attention" }
+    },
+    "cursors": {
+      "acme": "eyJlIjoiZXBfMDFqOCIsImQiOjQyfQ"
+    },
+    "routes": [
+      {
+        "id": "rt_9f3c1a0b7d24",
+        "createdBy": "usr_alex01",
+        "match": { "source": "acme", "name": "domain.*", "level": "attention" },
+        "deliver": [
+          {
+            "kind": "tool",
+            "tool": "slack__send_message",
+            "input": { "channel": "#outbound", "text": "{{title}}\n{{body}}" }
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+`createdBy` is the identity a route dispatches under — its workspace membership, its connector grants, its audit trail. The runtime stamps it from whoever saved the route; it is refused if a caller supplies it, and there is no field for delivering as anybody else. A route whose author is no longer a member is skipped rather than dispatched as nobody.
+
+The block also carries a third key, `cursors`, which is **not** operator configuration: it is where the [outbox poll](/config/nimblebrain-json/#notifications) recorded how far it has read in each connector's outbox, one opaque server-issued token per connector. Nothing edits it by hand, and the settings surface neither shows nor touches it. Deleting an entry is safe but pointless — the next read starts from "now" rather than replaying, and uninstalling a connector removes its entry for you.
 
 ## Workspace isolation
 
