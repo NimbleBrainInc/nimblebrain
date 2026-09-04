@@ -30,6 +30,7 @@ import type {
   ServerDetail,
   SmitheryConnectorConfig,
 } from "../connectors/server-detail.ts";
+import type { CredentialRef } from "../tools/credential-ref.ts";
 
 /**
  * Registry kind, keyed into the directory's source-factory map. Open on
@@ -158,6 +159,15 @@ export interface RemoteOAuthInstall {
    * input. That is what keeps a self-installable platform connector safe.
    */
   providerAuth?: { provider: string; config: Record<string, unknown> };
+  /**
+   * Workspace-owned secrets bound to outgoing headers, as credential references
+   * (see `NimbleBrainConnectorMeta.secretHeaders`). Operator-authored in the
+   * catalog and re-read from the trusted entry at install, then copied verbatim
+   * into the BundleRef's `transport.headers` — a caller-supplied value is
+   * discarded, because a forged header name would let a workspace admin decide
+   * what a fleet-trusted connection sends.
+   */
+  secretHeaders?: Record<string, CredentialRef>;
 }
 
 /**

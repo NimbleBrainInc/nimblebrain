@@ -31,6 +31,7 @@ import { parseHookDeclarations } from "../hooks/declaration.ts";
 import type { HookDeclaration } from "../hooks/types.ts";
 import { parseNotificationsDeclaration } from "../notifications/declaration.ts";
 import type { NotificationsDeclaration } from "../notifications/types.ts";
+import type { CredentialRef } from "../tools/credential-ref.ts";
 import { validateAdditionalAuthorizationParams } from "../util/oauth-params.ts";
 import { isHttpUrl } from "../util/url.ts";
 import type { DirectoryEntry, RegistryType } from "./types.ts";
@@ -69,6 +70,7 @@ function connectorMetaAuthFields(meta: NimbleBrainConnectorMeta | undefined): {
   composio?: ComposioConnectorConfig;
   smithery?: SmitheryConnectorConfig;
   providerAuth?: { provider: string; config: Record<string, unknown> };
+  secretHeaders?: Record<string, CredentialRef>;
 } {
   const auth = meta?.auth ?? "dcr";
   // A brokered entry's config block travels under the key naming its provider,
@@ -85,6 +87,7 @@ function connectorMetaAuthFields(meta: NimbleBrainConnectorMeta | undefined): {
     ...(meta?.operatorSetup ? { operatorSetup: meta.operatorSetup } : {}),
     ...(brokered ? { [auth]: brokered } : {}),
     ...(meta?.providerAuth ? { providerAuth: meta.providerAuth } : {}),
+    ...(meta?.secretHeaders ? { secretHeaders: meta.secretHeaders } : {}),
   };
 }
 
@@ -189,6 +192,13 @@ export interface ConnectorCatalogEntry {
    * install, never derived from tenant input.
    */
   providerAuth?: { provider: string; config: Record<string, unknown> };
+  /**
+   * Workspace-owned secrets bound to outgoing headers, as credential references
+   * — see `NimbleBrainConnectorMeta.secretHeaders`. Operator-authored, and read
+   * back from THIS entry at install (the caller's copy is discarded) for the
+   * same reason `ui` and `hooks` are.
+   */
+  secretHeaders?: Record<string, CredentialRef>;
   tags?: string[];
   interactive?: boolean;
   docsUrl?: string;
