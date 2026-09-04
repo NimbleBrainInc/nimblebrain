@@ -5,7 +5,13 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { BundleLifecycleManager, ConnectorBusyError } from "../../src/bundles/lifecycle.ts";
 import { IdentityConnectorStore } from "../../src/identity/connector-store.ts";
 import type { EngineEvent, EventSink } from "../../src/engine/types.ts";
+import { requireCredentialStore } from "../../src/tools/credential-store.ts";
+import { mcpOAuthKey } from "../../src/tools/mcp-oauth-records.ts";
 import { _clearAll, peekFlowOwner } from "../../src/tools/oauth-flow-registry.ts";
+import {
+  installTestCredentialStore,
+  resetTestCredentialStore,
+} from "../helpers/credential-store.ts";
 
 /**
  * Integration: `startIdentityAuth` — the interactive OAuth flow that connects a
@@ -98,10 +104,16 @@ class CapturingSink implements EventSink {
 
 const USER_ID = "usr_alice";
 const SERVER = "granola";
+const USER_SCOPE = { kind: "user", userId: USER_ID } as const;
 
-/** Path to the DCR client under the caller's identity credential root. */
-function clientJsonPath(workDir: string): string {
-  return join(workDir, "users", USER_ID, "credentials", "mcp-oauth", SERVER, "client.json");
+/** Whether a DCR client registration is stored at the caller's identity scope. */
+async function clientRecordStored(): Promise<boolean> {
+  return (
+    (await requireCredentialStore().get(USER_SCOPE, mcpOAuthKey(SERVER, "client"), {
+      caller: "test",
+      purpose: "assert",
+    })) !== null
+  );
 }
 
 /**
@@ -139,6 +151,7 @@ describe("lifecycle.startIdentityAuth — interactive OAuth for a personal conne
 
   beforeEach(async () => {
     workDir = mkdtempSync(join(tmpdir(), "nb-identity-oauth-"));
+    installTestCredentialStore(workDir);
     mock = startMockAuthServer();
     lifecycle = new BundleLifecycleManager(new CapturingSink(), undefined, /* allowInsecure */ true);
     // The connector is installed on the caller's identity — no workspace.
@@ -151,6 +164,7 @@ describe("lifecycle.startIdentityAuth — interactive OAuth for a personal conne
 
   afterEach(() => {
     _clearAll();
+    resetTestCredentialStore();
     mock.stop();
   });
 
@@ -168,18 +182,9 @@ describe("lifecycle.startIdentityAuth — interactive OAuth for a personal conne
     // The flow is owned by the USER, so the callback lands on /profile/connectors.
     expect(peekFlowOwner(state as string)).toEqual({ kind: "user", userId: USER_ID });
 
-    // The OAuth client (DCR) was registered under the user's identity credential
-    // root — `users/<id>/credentials/mcp-oauth/<server>/` — outside any workspace.
-    const clientJson = join(
-      workDir,
-      "users",
-      USER_ID,
-      "credentials",
-      "mcp-oauth",
-      SERVER,
-      "client.json",
-    );
-    expect(existsSync(clientJson)).toBe(true);
+    // The OAuth client (DCR) was registered at the user's credential scope —
+    // outside any workspace.
+    expect(await clientRecordStored()).toBe(true);
     // And NOT under any workspace tree.
     expect(existsSync(join(workDir, "workspaces"))).toBe(false);
   }, 20_000);
@@ -206,7 +211,7 @@ describe("lifecycle.startIdentityAuth — interactive OAuth for a personal conne
   it("rejects a second concurrent Connect as busy — one auth chain, no DCR clobber", async () => {
     // Two simultaneous Connects: one claims the shared start gate; the other
     // finds it held and is rejected `ConnectorBusyError`. The loser must NOT
-    // spawn a rival auth() chain that would clobber client.json / verifier.json.
+    // spawn a rival auth() chain that would clobber the client / verifier records.
     const a = lifecycle.startIdentityAuth(SERVER, USER_ID, { workDir, allowInsecureRemotes: true });
     const b = lifecycle.startIdentityAuth(SERVER, USER_ID, { workDir, allowInsecureRemotes: true });
     const settled = await Promise.allSettled([a, b]);
@@ -220,8 +225,8 @@ describe("lifecycle.startIdentityAuth — interactive OAuth for a personal conne
       (fulfilled[0] as PromiseFulfilledResult<{ authorizationUrl: string }>).value.authorizationUrl,
     ).toContain("/authorize");
 
-    // Exactly one DCR client under the identity root (one auth chain, no clobber).
-    expect(existsSync(clientJsonPath(workDir))).toBe(true);
+    // Exactly one DCR client at the identity scope (one auth chain, no clobber).
+    expect(await clientRecordStored()).toBe(true);
   }, 20_000);
 
   it("a busy rejection does not poison the gate — a later Connect recovers", async () => {
@@ -255,16 +260,7 @@ describe("lifecycle.startIdentityAuth — interactive OAuth for a personal conne
     // The dispatch joined the interactive (pending) source rather than getting
     // nothing or a rival source.
     expect(dispatchSource?.name).toBe(SERVER);
-    const clientJson = join(
-      workDir,
-      "users",
-      USER_ID,
-      "credentials",
-      "mcp-oauth",
-      SERVER,
-      "client.json",
-    );
-    expect(existsSync(clientJson)).toBe(true);
+    expect(await clientRecordStored()).toBe(true);
   }, 20_000);
 
   it("isIdentityConnectorRunning reflects the user registry (same-pod state probe)", async () => {

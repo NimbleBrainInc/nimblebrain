@@ -41,9 +41,9 @@ import type { Workspace } from "../workspace/types.ts";
 import { type CredentialRef, isCredentialRef } from "./credential-ref.ts";
 import type { CredentialStore } from "./credential-store.ts";
 import type { InProcessTool } from "./in-process-app.ts";
+import { hasMcpOAuthTokens } from "./mcp-oauth-records.ts";
 import { McpSource } from "./mcp-source.ts";
 import type { Tool, ToolSource } from "./types.ts";
-import { hasMcpOAuthTokens } from "./workspace-oauth-provider.ts";
 
 /**
  * `manage_connectors` tool — single surface for the Connectors UI
@@ -1625,7 +1625,7 @@ async function handleInstallRemoteOAuth(
 
   // Dedup (which self-heals an orphaned workspace.json entry) short-circuits
   // before any expensive wiring so a re-click doesn't burn a brokered session.
-  const dupResult = handleDuplicateInstall(
+  const dupResult = await handleDuplicateInstall(
     ctx,
     wsId,
     ws,
@@ -1674,7 +1674,7 @@ async function handleInstallRemoteOAuth(
   if (skillsLock.length > 0) ref.skillsLock = skillsLock;
   await ctx.runtime.getWorkspaceStore().update(wsId, { bundles: [...ws.bundles, ref] });
   const wsRegistry = ctx.runtime.getRegistryForWorkspace(wsId);
-  lifecycle.seedInstance(serverName, action.url, ref, undefined, wsId);
+  await lifecycle.seedInstance(serverName, action.url, ref, undefined, wsId);
   lifecycle.notifyInstalled(serverName, wsId);
 
   // Static-credential URL bundles authenticate without an MCP-side OAuth flow,
@@ -2076,7 +2076,7 @@ function buildRemoteBundleRef(
  * never equals the catalog placeholder `action.url`. Falls back to URL match
  * for legacy bundles persisted before slugify-on-install (no `serverName` field).
  */
-function handleDuplicateInstall(
+async function handleDuplicateInstall(
   ctx: ManageConnectorsContext,
   wsId: string,
   ws: Workspace,
@@ -2084,7 +2084,7 @@ function handleDuplicateInstall(
   action: RemoteOAuthInstall,
   serverName: string,
   isPersonalTarget: boolean,
-): ToolResult | null {
+): Promise<ToolResult | null> {
   const lifecycle = ctx.runtime.getLifecycle();
   const dup = ws.bundles.find((b) => {
     if (!("url" in b)) return false;
@@ -2098,7 +2098,7 @@ function handleDuplicateInstall(
   // alreadyInstalled — the latter would skip seedInstance and fail the next
   // OAuth initiate.
   if (!lifecycle.getInstance(dupServerName, wsId)) {
-    lifecycle.seedInstance(dupServerName, action.url, dup, undefined, wsId);
+    await lifecycle.seedInstance(dupServerName, action.url, dup, undefined, wsId);
     lifecycle.notifyInstalled(dupServerName, wsId);
     return {
       content: textContent(`Reattached "${entry.name}" (recovered orphan entry).`),
@@ -2761,54 +2761,56 @@ async function handleListPersonalConnectors(
     );
     return [];
   });
-  const connectors = named.map(({ ref, serverName }) => {
-    const cat = byServerName.get(serverName);
-    // Auth kind + (for a brokered connector) the catalog connector id are read
-    // from the stored ref, not the catalog — they're what the Connect route keys
-    // on and must survive a catalog entry being renamed or removed. The brokered
-    // marker is stamped at install by `buildRemoteBundleRef`; its absence means
-    // DCR.
-    const brokered = brokeredRef(ref);
-    // Connected = authenticated, derived from PERSISTED credentials (tokens.json
-    // for DCR, whatever the provider records for a brokered one) — which survive
-    // a pod restart — OR the source already warm in this pod. Presence, NOT
-    // validity: token expiry/revocation detection is the deferred reauth slice.
-    // Persistence matters because `isIdentityConnectorRunning` is same-pod-only:
-    // on a fresh pod an authed connector would otherwise report
-    // `not_authenticated` and offer a Connect that then fails (it's already
-    // authed). The agent lazy-starts the source from these same credentials, so
-    // an authed-but-cold connector is genuinely usable.
-    const authed = brokered
-      ? (ctx.runtime
-          .getManagedConnectorRegistry()
-          .get(brokered.provider)
-          ?.hasConnection?.({ owner, brokered, workDir }) ?? false)
-      : hasMcpOAuthTokens(workDir, owner, serverName);
-    return {
-      serverName,
-      displayName: cat?.name ?? serverName,
-      description: cat?.description ?? null,
-      // Brand icon from the operator-trusted catalog (same source the "Add a
-      // connector" picker renders), so an installed connector shows its icon too.
-      ...(cat?.iconUrl ? { iconUrl: cat.iconUrl } : {}),
-      // The Connect route differs by auth: DCR keys on serverName
-      // (`/v1/mcp-auth/initiate-identity`); a brokered connector keys on the
-      // catalog connector id and goes through its provider's own initiate route.
-      // The profile UI branches on this.
-      auth: brokered ? brokered.provider : "dcr",
-      ...(brokered ? { connectorId: brokered.connectorId } : {}),
-      // `authed` carries the common case; the warmth check is a deliberate
-      // backstop, not redundancy — `warm` doesn't strictly imply `authed` (creds
-      // can be deleted after the source warms), and it also catches a future
-      // personal-connector auth type whose creds this `authed` derivation doesn't
-      // yet know to look for. A live source is genuinely serving ⇒ `running`.
-      state:
-        authed || lifecycle.isIdentityConnectorRunning(callerId, serverName)
-          ? ("running" as const)
-          : ("not_authenticated" as const),
-      grantedWorkspaces: grantsByConnector[serverName] ?? [],
-    };
-  });
+  const connectors = await Promise.all(
+    named.map(async ({ ref, serverName }) => {
+      const cat = byServerName.get(serverName);
+      // Auth kind + (for a brokered connector) the catalog connector id are read
+      // from the stored ref, not the catalog — they're what the Connect route keys
+      // on and must survive a catalog entry being renamed or removed. The brokered
+      // marker is stamped at install by `buildRemoteBundleRef`; its absence means
+      // DCR.
+      const brokered = brokeredRef(ref);
+      // Connected = authenticated, derived from PERSISTED credentials (the stored
+      // token record for DCR, whatever the provider records for a brokered one) — which survive
+      // a pod restart — OR the source already warm in this pod. Presence, NOT
+      // validity: token expiry/revocation detection is the deferred reauth slice.
+      // Persistence matters because `isIdentityConnectorRunning` is same-pod-only:
+      // on a fresh pod an authed connector would otherwise report
+      // `not_authenticated` and offer a Connect that then fails (it's already
+      // authed). The agent lazy-starts the source from these same credentials, so
+      // an authed-but-cold connector is genuinely usable.
+      const authed = brokered
+        ? (ctx.runtime
+            .getManagedConnectorRegistry()
+            .get(brokered.provider)
+            ?.hasConnection?.({ owner, brokered, workDir }) ?? false)
+        : await hasMcpOAuthTokens(workDir, owner, serverName);
+      return {
+        serverName,
+        displayName: cat?.name ?? serverName,
+        description: cat?.description ?? null,
+        // Brand icon from the operator-trusted catalog (same source the "Add a
+        // connector" picker renders), so an installed connector shows its icon too.
+        ...(cat?.iconUrl ? { iconUrl: cat.iconUrl } : {}),
+        // The Connect route differs by auth: DCR keys on serverName
+        // (`/v1/mcp-auth/initiate-identity`); a brokered connector keys on the
+        // catalog connector id and goes through its provider's own initiate route.
+        // The profile UI branches on this.
+        auth: brokered ? brokered.provider : "dcr",
+        ...(brokered ? { connectorId: brokered.connectorId } : {}),
+        // `authed` carries the common case; the warmth check is a deliberate
+        // backstop, not redundancy — `warm` doesn't strictly imply `authed` (creds
+        // can be deleted after the source warms), and it also catches a future
+        // personal-connector auth type whose creds this `authed` derivation doesn't
+        // yet know to look for. A live source is genuinely serving ⇒ `running`.
+        state:
+          authed || lifecycle.isIdentityConnectorRunning(callerId, serverName)
+            ? ("running" as const)
+            : ("not_authenticated" as const),
+        grantedWorkspaces: grantsByConnector[serverName] ?? [],
+      };
+    }),
+  );
   return {
     content: textContent(`${connectors.length} personal connector(s).`),
     structuredContent: { connectors },

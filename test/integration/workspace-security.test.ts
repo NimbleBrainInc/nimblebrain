@@ -307,7 +307,7 @@ describe("Workspace security: same bundle installed in two workspaces", () => {
     expect(pr.forWorkspace("ws_eng").filter((e) => e.wsId === "ws_eng")).toHaveLength(2);
   });
 
-  test("BundleLifecycleManager: seeding the same connector in two workspaces keeps them distinct", () => {
+  test("BundleLifecycleManager: seeding the same connector in two workspaces keeps them distinct", async () => {
     const events: EngineEvent[] = [];
     const sink: EventSink = { emit: (e) => events.push(e) };
     const lifecycle = new BundleLifecycleManager(sink, undefined);
@@ -320,8 +320,8 @@ describe("Workspace security: same bundle installed in two workspaces", () => {
       briefing: null as BriefingBlock | null,
     };
 
-    lifecycle.seedInstance("crm", ref.url, ref, meta, "ws_eng");
-    lifecycle.seedInstance("crm", ref.url, ref, meta, "ws_mkt");
+    await lifecycle.seedInstance("crm", ref.url, ref, meta, "ws_eng");
+    await lifecycle.seedInstance("crm", ref.url, ref, meta, "ws_mkt");
 
     const eng = lifecycle.getInstance("crm", "ws_eng");
     const mkt = lifecycle.getInstance("crm", "ws_mkt");

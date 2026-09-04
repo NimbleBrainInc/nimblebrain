@@ -23,6 +23,10 @@ import {
 import type { Runtime } from "../../src/runtime/runtime.ts";
 import { ensureUserWorkspace } from "../../src/workspace/provisioning.ts";
 import { personalWorkspaceIdFor, WorkspaceStore } from "../../src/workspace/workspace-store.ts";
+import {
+  installTestCredentialStore,
+  resetTestCredentialStore,
+} from "../helpers/credential-store.ts";
 
 const ALICE: UserIdentity = {
   id: "usr_alice",
@@ -47,6 +51,9 @@ async function buildHarness(opts: {
   connectorRunning?: boolean;
 }): Promise<Harness> {
   const workDir = mkdtempSync(join(tmpdir(), "nb-connector-grants-"));
+  // `list_personal_connectors` derives `authed` from the OAuth token record,
+  // which the credential store answers.
+  installTestCredentialStore(workDir);
   const store = new PermissionStore(workDir);
   const workspaceStore = new WorkspaceStore(workDir);
   await workspaceStore.create("Helix", SHARED_WS.slice(3));
@@ -98,6 +105,7 @@ function sc(result: { structuredContent?: unknown }): {
 describe("manage_connectors — personal-connector grants", () => {
   let h: Harness;
   afterEach(() => {
+    resetTestCredentialStore();
     if (h) rmSync(h.workDir, { recursive: true, force: true });
   });
 
@@ -197,6 +205,7 @@ describe("manage_connectors — personal-connector grants", () => {
 describe("manage_connectors — personal-connector permissions (identity scope)", () => {
   let h: Harness;
   afterEach(() => {
+    resetTestCredentialStore();
     if (h) rmSync(h.workDir, { recursive: true, force: true });
   });
 

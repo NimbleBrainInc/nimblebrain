@@ -1,7 +1,14 @@
-import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { BundleLifecycleManager } from "../../src/bundles/lifecycle.ts";
 import type { BundleInstance, BundleRef } from "../../src/bundles/types.ts";
 import type { EngineEvent, EventSink } from "../../src/engine/types.ts";
+import {
+  installTestCredentialStore,
+  resetTestCredentialStore,
+} from "../helpers/credential-store.ts";
 
 /**
  * Coverage for the unified `lifecycle.startAuth` and `lifecycle.disconnect`
@@ -51,7 +58,21 @@ function seedInstance(
   return instance;
 }
 
-const OPTS = { workDir: "/tmp/nb-test", callbackUrl: "http://localhost/callback" };
+let workDir: string;
+let OPTS: { workDir: string; callbackUrl: string };
+
+// `disconnect` revokes through a real `WorkspaceOAuthProvider`, whose records
+// are keys in the credential store — so these cases need one installed.
+beforeEach(() => {
+  workDir = mkdtempSync(join(tmpdir(), "nb-startauth-"));
+  installTestCredentialStore(workDir);
+  OPTS = { workDir, callbackUrl: "http://localhost/callback" };
+});
+
+afterEach(() => {
+  resetTestCredentialStore();
+  rmSync(workDir, { recursive: true, force: true });
+});
 
 describe("BundleLifecycleManager.startAuth — validation & idempotence", () => {
   let sink: CapturingSink;

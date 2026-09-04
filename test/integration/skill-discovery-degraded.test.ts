@@ -387,7 +387,13 @@ describe("degraded skill discovery", () => {
       transport: { type: "streamable-http" },
       oauthScope: "workspace",
     } as unknown as BundleRef;
-    lifecycle.seedInstance(GHOST_NAME, "@nimblebraininc/ghost", ref, undefined, TEST_WORKSPACE_ID);
+    await lifecycle.seedInstance(
+      GHOST_NAME,
+      "@nimblebraininc/ghost",
+      ref,
+      undefined,
+      TEST_WORKSPACE_ID,
+    );
     const warn = spyOn(log, "warn").mockImplementation(() => {});
     try {
       const seeded = lifecycle.getInstances().find((i) => i.serverName === GHOST_NAME);

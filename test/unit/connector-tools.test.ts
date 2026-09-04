@@ -11,7 +11,7 @@ import { RegistryStore } from "../../src/registries/registry-store.ts";
 import { CONNECTOR_FIXTURE_DIR } from "../helpers/connector-fixtures.ts";
 import type { DirectoryEntry } from "../../src/registries/types.ts";
 import type { Runtime } from "../../src/runtime/runtime.ts";
-import { FileCredentialStore } from "../../src/tools/credential-store.ts";
+import type { CredentialStore } from "../../src/tools/credential-store.ts";
 import {
   createManageConnectorsTool,
   deriveConnectorStatus,
@@ -21,6 +21,7 @@ import { ToolRegistry } from "../../src/tools/registry.ts";
 import { WorkspaceContext } from "../../src/workspace/context.ts";
 import { ensureUserWorkspace } from "../../src/workspace/provisioning.ts";
 import { personalWorkspaceIdFor, WorkspaceStore } from "../../src/workspace/workspace-store.ts";
+import { installTestCredentialStore } from "../helpers/credential-store.ts";
 
 /** Read metadata every store read now carries; the audit trail is asserted in credential-store.test.ts. */
 const TEST_READ = { caller: "test", purpose: "assert the store holds what the handler wrote" };
@@ -37,7 +38,7 @@ const TEST_READ = { caller: "test", purpose: "assert the store holds what the ha
  *
  * The handlers only touch a small slice of `Runtime`: `getWorkspaceStore`,
  * `getWorkDir`, `getRegistryStore`, `getLifecycle`, `getRegistryForWorkspace`.
- * We build a thin stub around real WorkspaceStore / FileCredentialStore /
+ * We build a thin stub around real WorkspaceStore / CredentialStore /
  * RegistryStore / BundleLifecycleManager / ToolRegistry instances —
  * sufficient to drive the production code without spinning up a full
  * `Runtime.start()` (which would pull in identity, model, transport, etc.).
@@ -121,7 +122,7 @@ interface Harness {
   workDir: string;
   wsId: string;
   workspaceStore: WorkspaceStore;
-  credStore: FileCredentialStore;
+  credStore: CredentialStore;
   registryStore: RegistryStore;
   lifecycle: BundleLifecycleManager;
   workspaceRegistry: ToolRegistry;
@@ -147,7 +148,10 @@ function buildHarness(opts: { adminId?: string } = {}): Harness {
   const workDir = mkdtempSync(join(tmpdir(), "nb-connector-tools-"));
   const wsId = "ws_acme";
   const workspaceStore = new WorkspaceStore(workDir);
-  const credStore = new FileCredentialStore(workDir);
+  // Installed process-wide as well as handed to the stub runtime: the OAuth
+  // records the install path seeds Connection state from reach the store
+  // through `requireCredentialStore()`, exactly as they do in production.
+  const credStore = installTestCredentialStore(workDir);
   // Pre-seed registries.json so RegistryStore.list() reads it instead of
   // auto-seeding the production defaults, and point the bundled-static row
   // at the fixture catalog (tests look up real catalog ids like DROPBOX_ID).
@@ -1055,7 +1059,7 @@ describe("manage_connectors.set_permissions", () => {
   // with no gate at all (#748) — reachable through `/mcp` and the agent, not
   // just the settings UI, which is why the fix is here and not in the client.
   test("a workspace member cannot set workspace tool policy", async () => {
-    seedConnector(h);
+    await seedConnector(h);
     const tool = buildTool(h, NON_ADMIN_USER);
     const result = await tool.handler({
       action: "set_permissions",
@@ -1074,7 +1078,7 @@ describe("manage_connectors.set_permissions", () => {
   test("a workspace admin can", async () => {
     // The negative above is worthless without this: a handler that refused
     // everyone would satisfy it.
-    seedConnector(h);
+    await seedConnector(h);
     const tool = buildTool(h, ADMIN_USER);
     const result = await tool.handler({
       action: "set_permissions",
@@ -1101,8 +1105,8 @@ const STUB_URL = "https://ipinfo.example.com/mcp";
  * production lifecycle does — only `list_installed` needs a registered
  * ToolSource.
  */
-function seedConnector(h: Harness): void {
-  h.lifecycle.seedInstance(
+async function seedConnector(h: Harness): Promise<void> {
+  await h.lifecycle.seedInstance(
     STUB_SERVER_NAME,
     STUB_URL,
     { url: STUB_URL, serverName: STUB_SERVER_NAME },
@@ -1147,7 +1151,7 @@ describe("manage_connectors.uninstall", () => {
   beforeEach(async () => {
     h = buildHarness();
     await provisionWorkspace(h);
-    seedConnector(h);
+    await seedConnector(h);
     // Mirror what the install path writes to workspace.json.
     await h.workspaceStore.update(h.wsId, {
       bundles: [{ url: STUB_URL, serverName: STUB_SERVER_NAME }],
@@ -1201,7 +1205,7 @@ describe("manage_connectors.disconnect", () => {
   beforeEach(async () => {
     h = buildHarness();
     await provisionWorkspace(h);
-    seedConnector(h);
+    await seedConnector(h);
   });
 
   afterEach(() => {

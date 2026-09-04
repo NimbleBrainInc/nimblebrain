@@ -210,7 +210,14 @@ describe("uninstall → broker teardown wiring", () => {
           },
         },
       };
-      lifecycle.seedInstance("ai-bassethound-mcp", ref.url, ref, undefined, "ws_test", workDir);
+      await lifecycle.seedInstance(
+        "ai-bassethound-mcp",
+        ref.url,
+        ref,
+        undefined,
+        "ws_test",
+        workDir,
+      );
 
       await lifecycle.uninstall("ai-bassethound-mcp", new ToolRegistry(), "ws_test");
 

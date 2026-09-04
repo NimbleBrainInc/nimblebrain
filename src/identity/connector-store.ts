@@ -14,10 +14,10 @@ import { IdentityContext } from "./context.ts";
  * workspace they belong to and grantable into shared rooms. Its *metadata*
  * — what to start (URL, transport, UI, connector-skill overlays) — lives
  * here, at `users/<userId>/connectors.json`. Its *credentials* live
- * separately at `users/<userId>/credentials/mcp-oauth/<serverName>/`
- * (the `WorkspaceOAuthProvider` `{ type: "user" }` arm), mirroring the
- * workspace split (metadata in `workspace.json`, tokens under
- * `workspaces/<wsId>/credentials/mcp-oauth/`).
+ * separately, in the credential store at user scope (the
+ * `WorkspaceOAuthProvider` `{ type: "user" }` arm), mirroring the workspace
+ * split (metadata in `workspace.json`, secrets in the store at workspace
+ * scope).
  *
  * Ownership is **structural**: a ref stored here is user-owned by virtue of
  * its location, not a field on the ref. Refs carry no `oauthScope` — the

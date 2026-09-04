@@ -103,7 +103,7 @@ function assertSafeSubpathSegment(segment: string, scope: WorkspaceScope): void 
       `[workspace-context] absolute subpath "${segment}" is not allowed; pass relative segments`,
     );
   }
-  // Splitting on `/` lets callers pass `"mcp-oauth/google"` as one segment
+  // Splitting on `/` lets callers pass `"secrets/google"` as one segment
   // for convenience; we still need to reject `..` anywhere in that split.
   for (const part of segment.split("/")) {
     if (part === "" || part === "." || part === "..") {
@@ -160,7 +160,7 @@ export class WorkspaceContext {
    *
    *   ctx.getDataPath("root")                                  → workspaces/ws_x
    *   ctx.getDataPath("conversations")                          → workspaces/ws_x/conversations
-   *   ctx.getDataPath("credentials", "mcp-oauth", "google")     → .../credentials/mcp-oauth/google
+   *   ctx.getDataPath("credentials", "secrets")                 → .../credentials/secrets
    *   ctx.getDataPath("data", deriveBundleDataDir(name))        → .../data/{slug}
    *
    * Subpath segments are validated against path traversal, embedded null

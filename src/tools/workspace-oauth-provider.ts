@@ -1,7 +1,4 @@
 import { createHash, randomBytes } from "node:crypto";
-import { existsSync } from "node:fs";
-import { chmod, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
-import { join } from "node:path";
 import {
   type OAuthClientProvider,
   selectClientAuthMethod,
@@ -20,6 +17,7 @@ import { buildTenantAssertion } from "../oauth/fleet-assertion.ts";
 import { log } from "../observability/log.ts";
 import { validateAdditionalAuthorizationParams } from "../util/oauth-params.ts";
 import type { WorkspaceContext } from "../workspace/context.ts";
+import { McpOAuthRecords } from "./mcp-oauth-records.ts";
 import { type FlowOwner, register as registerInteractiveFlow } from "./oauth-flow-registry.ts";
 
 /**
@@ -73,19 +71,18 @@ export class BackgroundReauthRequiredError extends Error {
  *
  *   - `{ type: "workspace", wsId }` — credentials shared by every member
  *     of the workspace. One DCR'd client identity represents
- *     "NimbleBrain on behalf of `<wsId>`". Tokens persist under
- *     `<workDir>/workspaces/<wsId>/credentials/mcp-oauth/<server>/`.
+ *     "NimbleBrain on behalf of `<wsId>`". Records persist at workspace
+ *     credential scope.
  *
  *   - `{ type: "user", userId }` — credentials owned by a single user,
  *     visible across every workspace they're a member of. The user's
- *     personal Granola / Gmail / etc. Tokens persist under
- *     `<workDir>/users/<userId>/credentials/mcp-oauth/<server>/` —
- *     entirely outside the workspace tree, so leaving a workspace does
- *     not orphan the credentials.
+ *     personal Granola / Gmail / etc. Records persist at user credential
+ *     scope — entirely outside the workspace tree, so leaving a workspace
+ *     does not orphan the credentials.
  *
- * Both shapes share the same on-disk file layout under their root:
- * `client.json` (DCR client info), `tokens.json` (access + refresh),
- * `verifier.json` (PKCE), `identity.json` (OIDC claims when issued).
+ * Either way the owner maps to a `CredentialScope` and the four records
+ * (client, tokens, verifier, identity) are four keys in it. See
+ * {@link McpOAuthRecords}.
  */
 export type OAuthOwnerContext = ConnectorOwner;
 
@@ -111,23 +108,15 @@ export interface WorkspaceOAuthProviderOptions {
   serverName: string;
   workDir: string;
   /**
-   * Workspace-bound context to derive the on-disk path from. Optional;
-   * when present AND `owner.type === "workspace"`, the provider asserts
-   * `workspaceContext.workspaceId === owner.wsId` and resolves the
-   * credential directory through `workspaceContext.getDataPath(...)`
-   * instead of reconstructing `workspaces/{wsId}/credentials/mcp-oauth/...`
-   * from `workDir`. This is the preferred path for new construction sites
-   * — it removes one independent place that builds workspace-scoped paths.
-   * The classic `(owner, workDir)` construction remains valid for user-
-   * scoped owners and for legacy call sites pending migration in
-   * a follow-up migration.
+   * Workspace-bound context, optional. It no longer decides where anything
+   * lands — the credential store resolves the owner's scope itself — but when
+   * present the provider asserts `workspaceContext.workspaceId ===
+   * owner.wsId`, so a caller cannot pair a context bound to ws_A with
+   * `owner: {type: "workspace", wsId: ws_B}`.
    *
    * When `workspaceContext` is provided AND `owner.type !== "workspace"`,
-   * construction throws — user-scope owners store tokens under
-   * `users/{userId}/...`, outside any workspace, so pairing them with a
-   * workspace context is a category error. Construction with a
-   * user-scoped owner and no `workspaceContext` is fine (the legacy
-   * `workDir`-derivation path applies).
+   * construction throws — a user-scope owner's records live outside any
+   * workspace, so pairing them with a workspace context is a category error.
    */
   workspaceContext?: WorkspaceContext;
   /** Absolute callback URL — must match the /v1/mcp-auth/callback route. */
@@ -514,42 +503,6 @@ function assertSafeOwnerId(ownerId: string): void {
   }
 }
 
-/**
- * The OAuth credential dir for a connector: `<owner-root>/credentials/mcp-oauth/
- * <serverName>/` — `workspaces/<wsId>/…` for a workspace owner, `users/<userId>/…`
- * for a user (the identity-owned personal-connector home, outside any workspace;
- * see AGENTS.md "Credentials live with their owner"). THE single construction of
- * this path: the provider constructor writes here and the disconnect teardown
- * removes here, both through this helper — so connect and teardown can't drift.
- * `assertSafeOwnerId` on the owner id + server name (path-security in depth).
- * Because `ownerSegment` is a variable, `check:credential-paths` /
- * `check:workspace-paths` can't flag either literal without false-positiving the
- * other — this is the one audited site both lint headers document.
- */
-export function mcpOAuthDir(workDir: string, owner: OAuthOwnerContext, serverName: string): string {
-  const ownerSegment = owner.type === "workspace" ? "workspaces" : "users";
-  const ownerId = owner.type === "workspace" ? owner.wsId : owner.userId;
-  assertSafeOwnerId(ownerId);
-  assertSafeOwnerId(serverName);
-  return join(workDir, ownerSegment, ownerId, "credentials", "mcp-oauth", serverName);
-}
-
-/**
- * Whether an (owner, serverName) has persisted OAuth tokens on disk — i.e. the
- * connector completed its Connect flow at least once. Presence only (survives a
- * pod restart), NOT validity: token expiry / revocation detection is the reauth
- * slice's job. The DCR sibling of `hasPersistedComposioConnection` — used to
- * render "connected" for an authed connector whose source isn't warm in the
- * current pod, so the profile doesn't offer a spurious re-Connect.
- */
-export function hasMcpOAuthTokens(
-  workDir: string,
-  owner: OAuthOwnerContext,
-  serverName: string,
-): boolean {
-  return existsSync(join(mcpOAuthDir(workDir, owner, serverName), "tokens.json"));
-}
-
 interface Deferred<T> {
   promise: Promise<T>;
   resolve: (value: T) => void;
@@ -583,21 +536,26 @@ const NIMBLEBRAIN_CLIENT_URI = "https://nimblebrain.ai";
 const NIMBLEBRAIN_LOGO_URI = "https://static.nimblebrain.ai/logos/nimblebrain/light-128.png";
 
 /**
- * File-backed OAuthClientProvider scoped to a `(workspace, serverName)`
- * pair. Persistence layout:
+ * OAuthClientProvider scoped to an `(owner, serverName)` pair. It owns the
+ * OAuth state machine; {@link McpOAuthRecords} owns where the four records it
+ * persists live — the credential store, at the owner's scope, under the keys
+ * `mcpOAuthKey` builds:
  *
- *   <workDir>/workspaces/<wsId>/credentials/mcp-oauth/<serverName>/
- *     ├── client.json    — DCR result (OAuthClientInformationFull)
- *     ├── tokens.json    — OAuthTokens (access + refresh)
- *     └── verifier.json  — PKCE verifier. Overwritten by `saveCodeVerifier`
- *                          on the next flow; explicitly removed only when
- *                          `invalidateCredentials("verifier" | "all")` is
- *                          called. Persists at mode 0o600 between flows;
- *                          read access is gated by the same filesystem
- *                          ACL that protects `tokens.json` next to it.
+ *   mcp-oauth.<serverName>.client     — DCR result (OAuthClientInformationFull),
+ *                                       carrying a `client_secret` for a
+ *                                       confidential client
+ *   mcp-oauth.<serverName>.tokens     — OAuthTokens (access + refresh)
+ *   mcp-oauth.<serverName>.verifier   — PKCE verifier. Overwritten by
+ *                                       `saveCodeVerifier` on the next flow;
+ *                                       explicitly removed only when
+ *                                       `invalidateCredentials("verifier" |
+ *                                       "all")` is called
+ *   mcp-oauth.<serverName>.identity   — OIDC claims from an `id_token`
  *
- * Directory is created with mode 0o700; files are written 0o600 via an
- * atomic rename pattern (write to tmp, chmod, rename).
+ * A token is a secret of the same class as a client secret, so it lives behind
+ * the same door: atomic writes, mode, and audit are the store's, not this
+ * class's, and an encrypted backend reaches these records by changing nothing
+ * here.
  *
  * For Reboot's `Anonymous` dev OAuth (rbt dev): the authorization URL
  * returned by the server is ALREADY our own callback URL with
@@ -612,15 +570,11 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
   private readonly ownerDisplayName?: string;
   private readonly serverName: string;
   /**
-   * Single root directory for all credential files for this (owner,
-   * server) tuple. `client.json`, `tokens.json`, `verifier.json`, and
-   * `identity.json` all live directly under this. The previous
-   * `clientDir` / `tokenDir` split (where workspace-shared `client.json`
-   * sat outside the per-member token dir) is gone — each owner manages
-   * its own DCR registration. For workspace-scope that's still one
-   * shared client per workspace; for user-scope it's per-user.
+   * This connection's four records, at the owner's credential scope. Each
+   * owner manages its own DCR registration: for workspace scope that is one
+   * shared client per workspace, for user scope one per user.
    */
-  private readonly dataDir: string;
+  private readonly records: McpOAuthRecords;
   private readonly callbackUrl: string;
   /** Canonical form of `callbackUrl` for self-match comparison. */
   private readonly canonicalCallback: string;
@@ -663,7 +617,7 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
    * to {@link fleetTokenAuth} only when `fleetAuthorizerOrigin` is pinned.
    */
   addClientAuthentication?: NonNullable<OAuthClientProvider["addClientAuthentication"]>;
-  /** Cached DCR result + tokens to avoid redundant disk reads within a flow. */
+  /** Cached DCR result + tokens to avoid redundant store reads within a flow. */
   private cachedClientInfo: OAuthClientInformationFull | null = null;
   private cachedTokens: OAuthTokens | null = null;
   /**
@@ -672,10 +626,10 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
    * first `saveClientInformation()` call. Concurrent `clientInformation()`
    * callers await this instead of independently returning undefined and
    * causing the SDK to do parallel DCRs whose results overwrite each
-   * other's `client.json`. Without coalescing here, the URL we capture in
+   * other's client record. Without coalescing here, the URL we capture in
    * `redirectToAuthorization` can carry one DCR's `client_id` while
-   * `client.json` on disk holds another's — vendor issues the code for
-   * the URL's client, we exchange with disk's client, vendor returns
+   * the stored record holds another's — vendor issues the code for
+   * the URL's client, we exchange with the stored client, vendor returns
    * `invalid_code`. DCR runs BEFORE `state()` in the SDK's auth() flow,
    * so the `pendingFlow`-keyed coalesce (state/verifier/url) can't cover
    * it — DCR needs its own coalesce slot. Cleared after first save.
@@ -697,9 +651,9 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
    * triggers `auth()` on this provider, so `state()` / `saveCodeVerifier`
    * / `redirectToAuthorization` run 2–3× concurrently for one logical
    * connect. Without coalescing, each run generates fresh PKCE,
-   * overwrites `verifier.json`, and captures a new auth URL — the user
+   * overwrites the verifier record, and captures a new auth URL — the user
    * opens the FIRST URL, vendor binds the code to challenge #1, exchange
-   * uses verifier #N from disk, vendor returns `invalid_code`. These
+   * uses verifier #N from the store, vendor returns `invalid_code`. These
    * fields let the first concurrent call claim the flow and subsequent
    * calls observe the claim and no-op, so all callers share one PKCE
    * pair and one auth URL. The check-then-claim is synchronous (no
@@ -760,28 +714,18 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
       this.addClientAuthentication = this.fleetTokenAuth;
     }
 
-    // Resolve the per-owner storage root. Two construction modes:
-    //
-    //   1. Workspace-scoped owner WITH a `workspaceContext`: the typed
-    //      handle owns the workspace's path layout. We assert the context
-    //      matches the declared owner (so a caller can't pair a context
-    //      bound to ws_A with `owner: {type: "workspace", wsId: ws_B}`)
-    //      and derive `dataDir` through `getDataPath` so the workspace
-    //      directory structure stays defined in one place.
-    //
-    //   2. Workspace-scoped owner WITHOUT a context, or user-scoped owner:
-    //      legacy `<workDir>/<scope-dir>/<id>/credentials/mcp-oauth/<server>/`
-    //      construction. Stays valid until Task 008 migrates the rest of
-    //      the construction sites.
-    //
-    // Owner-id and server-name both pass through `assertSafeOwnerId` in
-    // both branches. In the workspaceContext branch the server-name is
-    // additionally validated by `getDataPath`'s subpath check; in the
-    // legacy branch we explicitly validate it here so the two modes
-    // share the same defense (callers pre-validate via
-    // `validateServerName` / `slugifyServerName`, but this is the
-    // security-critical path component — verify in depth).
+    // Owner id and server name both compose into a credential-store key, and
+    // the server name additionally into the legacy dir the records object
+    // migrates from. Callers pre-validate (`validateServerName` /
+    // `slugifyServerName`), but these are the security-critical components —
+    // verify in depth, at the boundary.
     assertSafeOwnerId(opts.serverName);
+    assertSafeOwnerId(opts.owner.type === "workspace" ? opts.owner.wsId : opts.owner.userId);
+    // A `workspaceContext` no longer decides where anything lands — the store
+    // resolves the owner's scope on its own — but pairing one with a
+    // user-scoped owner is still a category error worth refusing, and a
+    // context bound to ws_A alongside `owner: {wsId: ws_B}` is a caller bug
+    // whichever of the two would have won.
     if (opts.workspaceContext) {
       if (opts.owner.type !== "workspace") {
         throw new Error(
@@ -795,15 +739,12 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
             `owner.wsId="${opts.owner.wsId}" but workspaceContext.workspaceId="${opts.workspaceContext.workspaceId}".`,
         );
       }
-      assertSafeOwnerId(opts.owner.wsId);
-      this.dataDir = opts.workspaceContext.getDataPath("credentials", "mcp-oauth", opts.serverName);
-    } else {
-      // No `WorkspaceContext` handle — build the owner's mcp-oauth dir through the
-      // shared `mcpOAuthDir` helper (workspace-no-context or user owner). Same
-      // construction the disconnect teardown uses, so connect and teardown can't
-      // drift; the helper carries the `assertSafeOwnerId` checks + the lint story.
-      this.dataDir = mcpOAuthDir(opts.workDir, opts.owner, opts.serverName);
     }
+    this.records = new McpOAuthRecords({
+      owner: opts.owner,
+      serverName: opts.serverName,
+      workDir: opts.workDir,
+    });
   }
 
   // ── OAuthClientProvider interface ─────────────────────────────────
@@ -890,7 +831,7 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
     // Track A: pre-registered (static) client takes precedence over
     // any persisted DCR registration. Returning the static info each
     // call (rather than caching it) is fine — the values come from
-    // construction-time options, not disk.
+    // construction-time options, not the store.
     if (this.staticClient) {
       const info: OAuthClientInformationFull = {
         client_id: this.staticClient.clientId,
@@ -901,7 +842,7 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
       };
       return info;
     }
-    // Candidate registration: prefer the in-memory cache, else read disk. The
+    // Candidate registration: prefer the in-memory cache, else read the store. The
     // SAME decision applies to both — a cached client can itself be a
     // previously-honored DRIFTED client (set on the silent/background path
     // below), so the cached path must run the drift/interactive decision too,
@@ -909,16 +850,19 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
     // scope: every member authenticates as the same NimbleBrain OAuth client.)
     const data =
       this.cachedClientInfo ??
-      (await this.readJson<OAuthClientInformationFull>(this.dataDir, "client.json"));
+      (await this.records.read<OAuthClientInformationFull>("client", {
+        caller: "oauth:client",
+        purpose: `client authentication for ${this.serverName}`,
+      }));
     if (data) {
       const resolved = await this.resolveStoredClient(data);
       if (resolved) return resolved;
     }
-    // No usable client info on disk → SDK will DCR. Coalesce concurrent
+    // No usable client info stored → SDK will DCR. Coalesce concurrent
     // callers so only ONE DCR happens; second caller awaits the first's
     // result instead of triggering its own parallel DCR (which would
-    // overwrite the first's client.json and decouple URL-captured
-    // client_id from disk-stored client_id — root cause of `invalid_code`
+    // overwrite the first's client record and decouple URL-captured
+    // client_id from the stored client_id — root cause of `invalid_code`
     // on the exchange).
     if (this.dcrInFlight) return this.dcrInFlight.promise;
     // Abort guard: if the lifecycle has already aborted (e.g. 15s startAuth
@@ -962,9 +906,9 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
   }
 
   /**
-   * Decide the fate of a stored DCR `client.json`: return it to honor the
+   * Decide the fate of a stored DCR client record: return it to honor the
    * registration, or `null` to discard it so the SDK re-registers (DCR).
-   * Performs the discard side effects (cache clear + unlink) inline.
+   * Performs the discard side effects (cache clear + delete) inline.
    */
   private async resolveStoredClient(
     data: OAuthClientInformationFull,
@@ -976,7 +920,7 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
         `[oauth] ${this.serverName} stored client has no usable redirect_uris — discarding so the next flow re-registers`,
       );
       this.cachedClientInfo = null;
-      await this.unlinkIfExists(this.dataDir, "client.json");
+      await this.records.delete("client");
       return null;
     }
     if (this.redirectUriMatchesCurrent(data) || !this.interactiveAuthAllowed) {
@@ -1009,14 +953,14 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
       }, current=${this.callbackUrl}) — re-registering for the current host`,
     );
     this.cachedClientInfo = null;
-    await this.unlinkIfExists(this.dataDir, "client.json");
+    await this.records.delete("client");
     return null;
   }
 
   /**
-   * Structural validity of a stored DCR `client.json`: it must carry at least
+   * Structural validity of a stored DCR client record: it must carry at least
    * one `redirect_uri` to be usable at /authorize. A missing / empty / non-array
-   * value is corrupt on-disk state — unusable, so the caller re-registers.
+   * value is corrupt persisted state — unusable, so the caller re-registers.
    *
    * This intentionally does NOT compare against the current `callbackUrl`: a
    * host that drifted from the registered value is NOT a reason to discard a
@@ -1054,7 +998,7 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
     // Track A: pre-registered clients are immutable from the SDK's
     // perspective — DCR is the only path that calls saveClientInformation,
     // and we don't run DCR when staticClient is set. No-op here so a
-    // stray SDK call doesn't overwrite the static client to disk.
+    // stray SDK call doesn't persist the static client.
     if (this.staticClient) {
       log.debug(
         "mcp",
@@ -1066,11 +1010,11 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
     // requests each independently 401, trigger their own auth() flow, and
     // do their own DCR — N concurrent saveClientInformation calls follow,
     // each with a DIFFERENT freshly-registered client_id. Without
-    // first-writer-wins, the last save overwrites disk + cache, but the
+    // first-writer-wins, the last save overwrites the record + cache, but the
     // URL captured in `redirectToAuthorization` (which the user opens) was
     // built using a DIFFERENT call's client_id. Vendor issues the code
-    // for URL-client, we exchange with disk-client, vendor returns
-    // `invalid_code`. First-wins ensures both the disk and the captured
+    // for URL-client, we exchange with the stored client, vendor returns
+    // `invalid_code`. First-wins ensures both the record and the captured
     // URL use the SAME client_id (the first DCR's), because subsequent
     // SDK calls' `clientInformation()` returns the first-coalesced value
     // (via `dcrInFlight`) instead of triggering a parallel DCR. Sync
@@ -1078,7 +1022,7 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
     const isFirstSave = !this.cachedClientInfo;
     if (isFirstSave) {
       this.cachedClientInfo = info;
-      await this.writeJson(this.dataDir, "client.json", info);
+      await this.records.write("client", info);
     }
     // Release any callers blocked in `clientInformation()` awaiting this
     // DCR. They receive the first save's info (whether we wrote it just
@@ -1090,9 +1034,21 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
     }
   }
 
-  async tokens(): Promise<OAuthTokens | undefined> {
+  /**
+   * The persisted token pair, or `undefined`.
+   *
+   * `purpose` is what the audit line says the read was for. The SDK's call is
+   * `"transport"`: one `tokens()` serves both presenting the access token and
+   * exchanging the refresh token, and which of the two follows is decided
+   * inside the SDK, after the read — so a separate `"refresh"` purpose would be
+   * a guess. `revokeAndDeleteTokens` passes `"revoke"`, which it does know.
+   */
+  async tokens(purpose: "transport" | "revoke" = "transport"): Promise<OAuthTokens | undefined> {
     if (this.cachedTokens) return this.cachedTokens;
-    const data = await this.readJson<OAuthTokens>(this.dataDir, "tokens.json");
+    const data = await this.records.read<OAuthTokens>("tokens", {
+      caller: "oauth:tokens",
+      purpose: `${purpose} ${this.serverName}`,
+    });
     if (data) this.cachedTokens = data;
     return data ?? undefined;
   }
@@ -1104,7 +1060,7 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
     // that went reauth_required, reconnected, then expired again would never
     // re-signal (the guard stays latched for the provider's lifetime).
     this.authLostNotified = false;
-    await this.writeJson(this.dataDir, "tokens.json", tokens);
+    await this.records.write("tokens", tokens);
 
     // Connector OAuth health — redacted (booleans + lifetime only, never token
     // values). A token response carrying no refresh_token means the connection
@@ -1139,7 +1095,7 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
     // OIDC identity capture (best-effort). When the AS returns an
     // id_token alongside the tokens — Google, Microsoft, and Zoom all
     // do; many other OAuth 2.1 servers do too — parse the JWT payload
-    // and store the relevant identity claims to identity.json so the
+    // and store the relevant identity claims so the
     // Connections page can show "Connected as <email>". No signature
     // verification: TLS to the token endpoint is the trust anchor for
     // this token, and we treat the result as informational (not used
@@ -1150,7 +1106,7 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
       try {
         const claims = parseIdTokenClaims(idToken);
         if (claims) {
-          await this.writeJson(this.dataDir, "identity.json", claims);
+          await this.records.write("identity", claims);
         }
       } catch (err) {
         log.debug(
@@ -1192,42 +1148,45 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
 
   /**
    * Read the captured OIDC identity claims for this principal. Returns
-   * `null` when no `identity.json` exists (no id_token was issued, or
+   * `null` when no identity record exists (no id_token was issued, or
    * the bundle predates id_token capture). Used by the Connections
    * page to show "Connected as <email>".
    */
   async identity(): Promise<{ sub?: string; email?: string; name?: string } | null> {
-    return await this.readJson<{ sub?: string; email?: string; name?: string }>(
-      this.dataDir,
-      "identity.json",
-    );
+    return await this.records.read<{ sub?: string; email?: string; name?: string }>("identity", {
+      caller: "oauth:identity",
+      purpose: `display the connected account for ${this.serverName}`,
+    });
   }
 
   async saveCodeVerifier(codeVerifier: string): Promise<void> {
     // Coalesce concurrent SDK `auth()` invocations. The SDK calls this
     // after `startAuthorization` generates a fresh PKCE pair — if N
     // concurrent auth() calls run on this provider, each calls us with
-    // its own verifier and the last writer to disk wins. The user has
+    // its own verifier and the last writer wins. The user has
     // already been committed to the FIRST flow's auth URL (returned by
     // the first state() / redirectToAuthorization), so its challenge is
-    // what the vendor stored. Overwriting verifier.json with a later
+    // what the vendor stored. Overwriting the verifier record with a later
     // call's value desynchronizes verifier from challenge → vendor
     // returns `invalid_code` on exchange.
     //
     // Claim the slot synchronously (no `await` between check and set) so
-    // JS single-threading makes the first-writer-wins atomic. The disk
-    // write that follows is best-effort — even if it races with another
+    // JS single-threading makes the first-writer-wins atomic. The
+    // persisted write that follows is best-effort — even if it races with another
     // tick, the in-memory claim is the source of truth for which
     // verifier is part of this flow.
     if (this.pendingFlow) {
       if (this.pendingFlow.verifier) return; // already claimed by an earlier concurrent auth()
       this.pendingFlow.verifier = codeVerifier;
     }
-    await this.writeJson(this.dataDir, "verifier.json", { codeVerifier });
+    await this.records.write("verifier", { codeVerifier });
   }
 
   async codeVerifier(): Promise<string> {
-    const data = await this.readJson<{ codeVerifier: string }>(this.dataDir, "verifier.json");
+    const data = await this.records.read<{ codeVerifier: string }>("verifier", {
+      caller: "oauth:verifier",
+      purpose: `PKCE code exchange for ${this.serverName}`,
+    });
     if (!data) throw new Error("PKCE code verifier missing — OAuth flow corrupted");
     return data.codeVerifier;
   }
@@ -1421,7 +1380,7 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
   /**
    * PKCE coupling guard. `saveCodeVerifier` and `redirectToAuthorization` are
    * decoupled in time — different concurrent auth() chains can win each race
-   * independently. If chain A's verifier is on disk but chain B's URL captures
+   * independently. If chain A's verifier is the stored one but chain B's URL captures
    * (different `code_challenge`), the user opens URL_B → vendor binds the code
    * to challenge_B → exchange POSTs verifier_A → vendor rejects. To preserve
    * PKCE correctness we let ONLY the chain whose verifier matches this URL's
@@ -1444,7 +1403,7 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
     const urlChallenge = url.searchParams.get("code_challenge");
     if (urlChallenge && urlChallenge !== expectedChallenge) {
       // This auth() chain's URL is built from a DIFFERENT verifier than the one
-      // we kept on disk. Throw without capturing — wait for the matching chain's
+      // we kept. Throw without capturing — wait for the matching chain's
       // redirectToAuthorization to win the capture.
       throw new UnauthorizedError(
         `Interactive OAuth: this chain's PKCE doesn't match the claimed verifier — deferring to matching chain.`,
@@ -1604,7 +1563,7 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
   ): Promise<void> {
     if (scope === "all" || scope === "client") {
       this.cachedClientInfo = null;
-      await this.unlinkIfExists(this.dataDir, "client.json");
+      await this.records.delete("client");
       // Release any in-flight DCR coalesce so the SDK's post-invalidate
       // retry path can do a FRESH DCR. Without this, the retry's
       // clientInformation() would await the stale `dcrInFlight` promise
@@ -1617,14 +1576,14 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
     }
     if (scope === "all" || scope === "tokens") {
       this.cachedTokens = null;
-      await this.unlinkIfExists(this.dataDir, "tokens.json");
-      // identity.json is bound 1:1 with tokens — when tokens go, the
+      await this.records.delete("tokens");
+      // The identity record is bound 1:1 with tokens — when tokens go, the
       // captured identity is no longer meaningful (the user might
       // re-auth as someone else next time).
-      await this.unlinkIfExists(this.dataDir, "identity.json");
+      await this.records.delete("identity");
     }
     if (scope === "all" || scope === "verifier") {
-      await this.unlinkIfExists(this.dataDir, "verifier.json");
+      await this.records.delete("verifier");
     }
     // 'discovery' is SDK-internal metadata; we don't persist it.
   }
@@ -1654,7 +1613,7 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
    *
    * Order of operations:
    *
-   *   1. Read tokens off disk + read DCR client info (or static client
+   *   1. Read the stored tokens + DCR client info (or static client
    *      from `oauthClient` / cached in-memory).
    *   2. Discover the AS's `revocation_endpoint` via the well-known
    *      OAuth metadata path: `<server-origin>/.well-known/oauth-authorization-server`.
@@ -1668,11 +1627,11 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
    *      RFC 7009 says revoke both access + refresh in one call when
    *      revoking a refresh token (servers SHOULD cascade); we revoke
    *      whichever we have, refresh first when present.
-   *   4. Delete tokens.json + verifier.json + identity.json locally.
+   *   4. Delete the local tokens / verifier / identity records.
    *
    * Returns a structured result indicating which steps succeeded —
    * callers should log but not fail-the-whole-disconnect on partial
-   * success: the local files are gone, the upstream may have stale
+   * success: the local records are gone, the upstream may have stale
    * refresh tokens for at most their natural expiry. Best-effort is
    * the right discipline here.
    *
@@ -1694,7 +1653,7 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
     const fetcher: typeof fetch = signal
       ? (((input, init) => baseFetcher(input, { ...init, signal })) as typeof fetch)
       : baseFetcher;
-    const tokens = await this.tokens();
+    const tokens = await this.tokens("revoke");
     const clientInfo = await this.clientInformation();
     const result: {
       revoked: { access?: boolean; refresh?: boolean };
@@ -1719,15 +1678,15 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
 
     if (!clientInfo) {
       // `clientInformation()` returned undefined despite tokens being
-      // present — the canonical cause is drift detection unlinking
-      // `client.json` on this very call. Without a client_id we can't
+      // present — the canonical cause is drift detection discarding
+      // the client record on this very call. Without a client_id we can't
       // authenticate the RFC 7009 POST, so we skip upstream revoke and
       // fall through to local cleanup. AS-side tokens stay valid until
       // their natural expiry. Logged so operators reading audit trails
       // understand why a particular disconnect didn't revoke.
       log.warn(
         `[oauth] ${this.serverName} skipping upstream revoke — no client info available ` +
-          `(likely DCR redirect_uri drift just discarded client.json). Local tokens still cleaned.`,
+          `(likely DCR redirect_uri drift just discarded the client record). Local tokens still cleaned.`,
       );
     }
 
@@ -1737,7 +1696,7 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
 
     // Always clear local state regardless of upstream revocation result.
     // `all` is broader than the literal "tokens" the method name implies,
-    // and intentional: leaving the cached DCR `client.json` behind across
+    // and intentional: leaving the cached DCR client record behind across
     // a deliberate disconnect/reconnect is the well-trodden bug path. If the
     // tenant's canonical origin changes between a disconnect and the next
     // reconnect (e.g. a custom domain is added so `publicOrigin()` /
@@ -1878,57 +1837,6 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
       log.warn(
         `[oauth] ${this.serverName} revocation failed: ${result.error} (continuing with local cleanup)`,
       );
-    }
-  }
-
-  // ── File I/O helpers ──────────────────────────────────────────────
-  //
-  // All disk operations are parameterized by directory so the same atomic-
-  // write discipline serves both the workspace-shared `clientDir` and the
-  // per-principal `tokenDir`. The DCR registration goes to one; tokens +
-  // verifier + identity to the other; invalidateCredentials targets each
-  // explicitly.
-
-  private async ensureDir(dir: string): Promise<void> {
-    await mkdir(dir, { recursive: true, mode: 0o700 });
-    try {
-      await chmod(dir, 0o700);
-    } catch {
-      // mkdir succeeded; chmod failure is non-fatal (file mode 0o600 still
-      // protects the contents). A permissive parent leaks existence of
-      // credentials via directory listings but not their values.
-    }
-  }
-
-  private async readJson<T>(dir: string, name: string): Promise<T | null> {
-    const path = join(dir, name);
-    if (!existsSync(path)) return null;
-    try {
-      const raw = await readFile(path, "utf-8");
-      return JSON.parse(raw) as T;
-    } catch (err) {
-      log.debug("mcp", `[oauth] failed to read ${path}: ${String(err)}`);
-      return null;
-    }
-  }
-
-  private async writeJson(dir: string, name: string, value: unknown): Promise<void> {
-    await this.ensureDir(dir);
-    const path = join(dir, name);
-    const tmp = `${path}.tmp.${randomBytes(4).toString("hex")}`;
-    const content = JSON.stringify(value, null, 2);
-    await writeFile(tmp, content, { encoding: "utf-8", mode: 0o600 });
-    await chmod(tmp, 0o600);
-    await rename(tmp, path);
-  }
-
-  private async unlinkIfExists(dir: string, name: string): Promise<void> {
-    const path = join(dir, name);
-    if (!existsSync(path)) return;
-    try {
-      await unlink(path);
-    } catch {
-      // ignore — file may have been removed concurrently
     }
   }
 }

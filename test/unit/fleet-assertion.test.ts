@@ -7,6 +7,10 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { buildTenantAssertion } from "../../src/oauth/fleet-assertion.ts";
 import { signEnvelope, verifyEnvelopeAsTenant } from "../../src/oauth/envelope.ts";
 import { WorkspaceOAuthProvider } from "../../src/tools/workspace-oauth-provider.ts";
+import {
+  installTestCredentialStore,
+  resetTestCredentialStore,
+} from "../helpers/credential-store.ts";
 
 // Cross-implementation drift guard. This wire is shared verbatim with the
 // authorizer that verifies the assertion, which asserts it accepts it. Here we
@@ -83,6 +87,11 @@ describe("WorkspaceOAuthProvider.addClientAuthentication", () => {
   let workDir: string;
   beforeEach(() => {
     workDir = mkdtempSync(join(tmpdir(), "nb-fleet-test-"));
+    installTestCredentialStore(workDir);
+  });
+
+  afterEach(() => {
+    resetTestCredentialStore();
   });
 
   function provider(fleetAuthorizerIssuer?: string) {

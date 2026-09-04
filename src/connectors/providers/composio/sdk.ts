@@ -467,8 +467,8 @@ export async function deleteComposioConnectedAccount(opts: {
  *
  * Why both layers in one function: the alternative is two function
  * calls in every teardown path, each guarded by its own try/catch.
- * That recipe got mis-followed once already (uninstall had only the
- * `mcp-oauth` rmSync and missed composio entirely — see the QA
+ * That recipe got mis-followed once already (uninstall cleared only the
+ * OAuth records and missed composio entirely — see the QA
  * review that prompted this helper). One function, one canonical
  * cleanup recipe, one seam arm.
  */

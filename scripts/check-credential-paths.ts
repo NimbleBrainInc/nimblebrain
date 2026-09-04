@@ -9,14 +9,15 @@
  * A hand-built `join(..., "users", X, "credentials", ...)` is a regression: a
  * shared-connector credential would land off the workspace.
  *
- * The exception is the identity plane's personal-connector OAuth home. A
- * **personal connector** (a user's own remote MCP connection, reachable across
- * their workspaces) owns its credentials outside any workspace, so leaving one
- * never orphans them:
- *   - `users/<userId>/credentials/mcp-oauth/<serverName>/` — the `{type:"user"}`
- *     WorkspaceOAuthProvider arm (OAuth tokens for a DCR/static connector).
- * That exact shape is allowed; every other `users/<id>/credentials/...` stays
- * banned.
+ * The one exception is the identity plane's PRE-STORE personal-connector OAuth
+ * home, `users/<userId>/credentials/mcp-oauth/<serverName>/`. Nothing writes
+ * there: an OAuth connection's records are keys in the credential store at the
+ * owner's scope, and `legacyMcpOAuthDir` (`src/tools/mcp-oauth-records.ts`) is
+ * the only site that still names the directory, so it can import an
+ * installation that predates the store and delete what it imported. That exact
+ * shape is allowed; every other `users/<id>/credentials/...` stays banned. When
+ * no deployment can still be carrying those files, the helper goes and this
+ * carve-out goes with it.
  *
  * A BROKERED provider's home — `users/<userId>/credentials/<provider>/<connector>/`
  * — needs no carve-out and must not get one. `brokeredConnectorDir`
@@ -30,12 +31,12 @@
  *   - Template / string literals containing `users/<...>/credentials/`.
  *
  * What it allows:
- *   - `users/<id>/credentials/mcp-oauth/...` — the identity-connector OAuth home.
+ *   - `users/<id>/credentials/mcp-oauth/...` — the legacy import root.
  *   - A `// lint-ok:credential-path` marker on the line immediately above the
  *     construction, for the rare case the typed helper genuinely doesn't apply.
  *
- * Blind spot, by design: `WorkspaceOAuthProvider` builds BOTH owners' paths
- * through one `join(workDir, ownerSegment, ownerId, "credentials", ...)` where
+ * Blind spot, by design: `legacyMcpOAuthDir` builds BOTH owners' paths through
+ * one `join(workDir, ownerSegment, ownerId, "credentials", ...)` where
  * `ownerSegment` is a *variable* (`"workspaces"` | `"users"`). The AST matchers
  * can't flag the "users" case there without false-positiving the workspace
  * case, so that single audited constructor is intentionally invisible to this
@@ -55,10 +56,9 @@ const ALLOW_MARKER = "lint-ok:credential-path";
 
 /**
  * Matches a banned `users/<id>/credentials/…` path, EXCEPT the one sanctioned
- * identity-connector home, where a personal connector's OAuth tokens live
- * (owned by the user, outside any workspace):
- *   - `users/<id>/credentials/mcp-oauth/…` — the `{type:"user"}`
- *     WorkspaceOAuthProvider arm (OAuth tokens for a DCR/static connector).
+ * shape — the pre-store personal-connector OAuth home that
+ * `legacyMcpOAuthDir` reads to import and then deletes:
+ *   - `users/<id>/credentials/mcp-oauth/…`
  * The negative lookahead is the whole carve-out: a bare `credentials` dir or any
  * child outside it is still a regression — including a brokered provider's own
  * home, which is reachable only through `brokeredConnectorDir` and therefore
@@ -121,9 +121,9 @@ export function isUserCredentialJoin(node: ts.CallExpression): boolean {
     if (!isLiteralSegment(args[i], "users") || !isLiteralSegment(args[i + 2], "credentials")) {
       continue;
     }
-    // Carve-out: the sanctioned identity-owned personal-connector OAuth home
-    // (`mcp-oauth`, the `{type:"user"}` WorkspaceOAuthProvider arm). Everything
-    // else under `users/<id>/credentials/` stays banned. Keep this in sync with
+    // Carve-out: the pre-store personal-connector OAuth home (`mcp-oauth`),
+    // which only the legacy import reads. Everything else under
+    // `users/<id>/credentials/` stays banned. Keep this in sync with
     // `USER_CREDENTIAL_PATH_RE`.
     if (isLiteralSegment(args[i + 3], "mcp-oauth")) {
       continue;
@@ -244,8 +244,10 @@ async function main(): Promise<void> {
     );
     console.error("through `WorkspaceContext` (`runtime.getWorkspaceContext(wsId)`) or");
     console.error("`FileCredentialStore`.");
-    console.error("The ONLY user-scoped exception is a personal connector's OAuth tokens at");
-    console.error('`users/<userId>/credentials/mcp-oauth/<serverName>/` (the {type:"user"} arm).');
+    console.error("The ONLY user-scoped exception is the pre-store OAuth home at");
+    console.error(
+      "`users/<userId>/credentials/mcp-oauth/<serverName>/`, read by the legacy import.",
+    );
     console.error(
       `Other legitimate exceptions (rare) require a // ${ALLOW_MARKER} comment on the line above.`,
     );

@@ -147,10 +147,9 @@ interface StartBundleOpts {
   /**
    * Identity owner for a personal connector. When set, the URL bundle's OAuth
    * credentials bind to the user (the `WorkspaceOAuthProvider` `{type:"user"}`
-   * arm) and live at `users/<userId>/credentials/mcp-oauth/<serverName>/`,
-   * outside any workspace. Mutually exclusive with `workspaceContext` / `wsId`
-   * — a personal connector belongs to no workspace — so it relies on
-   * `workDir` (defaulted) rather than a workspace context for the path root.
+   * arm) and live in the credential store at user scope, outside any
+   * workspace. Mutually exclusive with `workspaceContext` / `wsId` — a
+   * personal connector belongs to no workspace.
    *
    * Honored ONLY on the URL-bundle path (a personal connector is a remote MCP
    * connection). A named/local ref ignores it and falls through to the
@@ -243,8 +242,7 @@ function warnUnrecognizedUrlAuthType(ref: BundleRef, serverName: string): void {
 
 /**
  * The `{type:"user"}` arm of {@link buildUrlOAuthProvider} — a personal
- * connector's OAuth provider. Credentials live at
- * `users/<userId>/credentials/mcp-oauth/<serverName>/`, derived from `workDir`
+ * connector's OAuth provider. Credentials live in the store at user scope,
  * with no `workspaceContext`. Static-client (non-DCR) resolution is
  * workspace-scoped and not wired for personal connectors here; the DCR /
  * provider auth paths apply.
@@ -283,12 +281,11 @@ async function buildUserOAuthProvider(
 /**
  * Build the OAuth provider for a URL bundle, or `undefined` when it carries
  * static auth (no OAuth). Owner-generic: an `opts.identityOwner` yields the
- * `{type:"user"}` arm (credentials under `users/<userId>/…`, see
+ * `{type:"user"}` arm (credentials at user scope, see
  * {@link buildUserOAuthProvider}); otherwise a `wsContext` is REQUIRED and yields
- * the workspace-scoped provider (tokens under
- * `workspaces/<wsId>/credentials/mcp-oauth/<serverName>/`). The workspace id is
- * never defaulted — a silent `ws_default` fallback would pool OAuth tokens across
- * tenants.
+ * the workspace-scoped provider (tokens at that workspace's credential scope).
+ * The workspace id is never defaulted — a silent `ws_default` fallback would
+ * pool OAuth tokens across tenants.
  */
 export async function buildUrlOAuthProvider(
   ref: BundleRef,
@@ -301,8 +298,8 @@ export async function buildUrlOAuthProvider(
   if (bundleHasStaticAuth(ref)) return undefined;
 
   // Personal connector (identity owner): OAuth credentials bind to the user, at
-  // users/<userId>/credentials/mcp-oauth/<serverName>/ — the {type:"user"} arm,
-  // outside any workspace. Mutually exclusive with the workspace branch below.
+  // user credential scope — the {type:"user"} arm, outside any workspace.
+  // Mutually exclusive with the workspace branch below.
   if (opts?.identityOwner) {
     return buildUserOAuthProvider(
       ref,

@@ -341,7 +341,7 @@ describe("example-broker — cleanup on uninstall", () => {
 
   test("uninstall calls the provider's cleanup and clears its credential directory", async () => {
     const ref = installedRef();
-    h.lifecycle.seedInstance("com-example-widgets", ref.url ?? "", ref, undefined, h.wsId);
+    await h.lifecycle.seedInstance("com-example-widgets", ref.url ?? "", ref, undefined, h.wsId);
 
     // Provider-owned local state, at the directory rule the kernel owns.
     const dir = brokeredConnectorDir(
@@ -369,11 +369,11 @@ describe("example-broker — boot-state derivation", () => {
     /* h cleaned by the outer afterEach */
   });
 
-  test("an unconnected connector seeds not_authenticated despite static transport auth", () => {
+  test("an unconnected connector seeds not_authenticated despite static transport auth", async () => {
     calls = noCalls();
     h = buildHarness(exampleBroker(calls, { connectedLeases: new Set() }));
     const ref = installedRef();
-    h.lifecycle.seedInstance("com-example-widgets", ref.url ?? "", ref, undefined, h.wsId);
+    await h.lifecycle.seedInstance("com-example-widgets", ref.url ?? "", ref, undefined, h.wsId);
 
     const conn = h.lifecycle
       .getInstance("com-example-widgets", h.wsId)
@@ -381,13 +381,13 @@ describe("example-broker — boot-state derivation", () => {
     expect(conn?.state).toBe("not_authenticated");
   });
 
-  test("a connected connector seeds running", () => {
+  test("a connected connector seeds running", async () => {
     calls = noCalls();
     h = buildHarness(
       exampleBroker(calls, { connectedLeases: new Set(["acme.sprockets.ws:ws_test"]) }),
     );
     const ref = installedRef();
-    h.lifecycle.seedInstance("com-example-widgets", ref.url ?? "", ref, undefined, h.wsId);
+    await h.lifecycle.seedInstance("com-example-widgets", ref.url ?? "", ref, undefined, h.wsId);
 
     const conn = h.lifecycle
       .getInstance("com-example-widgets", h.wsId)

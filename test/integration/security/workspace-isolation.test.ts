@@ -311,8 +311,8 @@ describe("V6: getBundleInstancesForWorkspace — two workspaces, same connector"
     };
 
     const lifecycle = runtime.getLifecycle();
-    lifecycle.seedInstance(serverName, ref.url, ref, meta, wsA.id);
-    lifecycle.seedInstance(serverName, ref.url, ref, meta, wsB.id);
+    await lifecycle.seedInstance(serverName, ref.url, ref, meta, wsA.id);
+    await lifecycle.seedInstance(serverName, ref.url, ref, meta, wsB.id);
 
     // Register a source with the same serverName in each workspace registry.
     // This is the visibility condition that the pre-fix filter used alone —
@@ -354,7 +354,7 @@ describe("V6: getBundleInstancesForWorkspace — two workspaces, same connector"
       ui: null,
       briefing: null as BriefingBlock | null,
     };
-    runtime.getLifecycle().seedInstance(serverName, ref.url, ref, meta, ws.id);
+    await runtime.getLifecycle().seedInstance(serverName, ref.url, ref, meta, ws.id);
     // Deliberately do NOT add the source to the registry.
 
     expect(runtime.getBundleInstancesForWorkspace(ws.id)).toHaveLength(0);

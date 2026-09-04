@@ -92,7 +92,6 @@ import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import { IdentityConnectorStore } from "../../src/identity/connector-store.ts";
 import type { UserIdentity } from "../../src/identity/provider.ts";
 import type { Runtime } from "../../src/runtime/runtime.ts";
-import { FileCredentialStore } from "../../src/tools/credential-store.ts";
 import {
   createManageConnectorsTool,
   type ManageConnectorsContext,
@@ -110,6 +109,10 @@ import {
   hasPersistedComposioConnection,
   saveComposioConnection,
 } from "../../src/connectors/providers/composio/connection.ts";
+import {
+  installTestCredentialStore,
+  resetTestCredentialStore,
+} from "../helpers/credential-store.ts";
 
 // ── Catalog fixture ─────────────────────────────────────────────────
 //
@@ -156,6 +159,7 @@ interface Harness {
 
 function buildHarness(): Harness {
   const workDir = mkdtempSync(join(tmpdir(), "nb-composio-install-"));
+  const credStore = installTestCredentialStore(workDir);
   const wsId = "ws_test";
   const workspaceStore = new WorkspaceStore(workDir);
 
@@ -214,7 +218,7 @@ function buildHarness(): Harness {
 
   const runtime = {
     getWorkDir: () => workDir,
-    getCredentialStore: () => new FileCredentialStore(workDir),
+    getCredentialStore: () => credStore,
     getWorkspaceStore: () => workspaceStore,
     getRegistryStore: () => registryStore,
     getConnectorDirectory: () => new ConnectorDirectory(registryStore),
@@ -283,6 +287,7 @@ afterEach(() => {
     else process.env[k] = SAVED_ENV[k];
   }
   _resetComposioConfigForTest();
+  resetTestCredentialStore();
   rmSync(h.workDir, { recursive: true, force: true });
   // The declared block is a module singleton — leaving one installed leaks
   // this file's connector config into whatever runs next in the process.

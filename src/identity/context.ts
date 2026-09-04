@@ -106,7 +106,7 @@ export class IdentityContext {
     }
     // A userId is a single path segment, never a sub-path — reject `/`
     // outright (the segment validator tolerates `/` for convenience
-    // subpaths like `mcp-oauth/google`, which is wrong for an id).
+    // subpaths like `data/google`, which is wrong for an id).
     if (opts.userId.includes("/")) {
       throw new Error(`[identity-context] userId must not contain "/": "${opts.userId}"`);
     }

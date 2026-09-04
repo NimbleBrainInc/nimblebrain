@@ -22,8 +22,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NoopEventSink } from "../../../src/adapters/noop-events.ts";
 import { BundleLifecycleManager } from "../../../src/bundles/lifecycle.ts";
-import { workspaceOAuthDir } from "../../../src/bundles/oauth-tokens.ts";
 import type { BundleRef } from "../../../src/bundles/types.ts";
+import { legacyMcpOAuthDir, McpOAuthRecords } from "../../../src/tools/mcp-oauth-records.ts";
+import {
+  installTestCredentialStore,
+  resetTestCredentialStore,
+} from "../../helpers/credential-store.ts";
 
 const WS = "ws_probe";
 const SERVER = "remote-thing";
@@ -35,6 +39,7 @@ let priorEnv: string | undefined;
 beforeEach(() => {
   configuredWorkDir = mkdtempSync(join(tmpdir(), "nb-configured-"));
   defaultishWorkDir = mkdtempSync(join(tmpdir(), "nb-default-"));
+  installTestCredentialStore(configuredWorkDir);
   priorEnv = process.env.NB_WORK_DIR;
   // The divergence under test: `defaultWorkDir()` resolves here, the runtime's
   // configured workDir is elsewhere.
@@ -42,6 +47,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  resetTestCredentialStore();
   if (priorEnv === undefined) delete process.env.NB_WORK_DIR;
   else process.env.NB_WORK_DIR = priorEnv;
   rmSync(configuredWorkDir, { recursive: true, force: true });
@@ -56,9 +62,18 @@ function urlBundle(): BundleRef {
   } as BundleRef;
 }
 
-/** Write a tokens.json under `root`, marking the connector as authenticated there. */
+/**
+ * Plant a pre-store `tokens.json` under `root`, marking the connector as
+ * authenticated there.
+ *
+ * The legacy file is what still has a *root* to get wrong: the credential
+ * store is constructed once, at the composition root, against the runtime's
+ * resolved workDir, so the store leg of the probe cannot address the wrong
+ * tree. The legacy import leg takes a `workDir` argument, and that argument is
+ * what these cases pin.
+ */
 function writeTokens(root: string): void {
-  const dir = workspaceOAuthDir(root, WS, SERVER);
+  const dir = legacyMcpOAuthDir(root, { type: "workspace", wsId: WS }, SERVER);
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, "tokens.json"), JSON.stringify({ access_token: "t" }));
 }
@@ -70,7 +85,7 @@ function writeTokens(root: string): void {
  * instance, so reading state back would test the instance registry rather than
  * the probe. Capturing the call tests the decision, which is the unit here.
  */
-function seededState(mgr: BundleLifecycleManager): string | undefined {
+async function seededState(mgr: BundleLifecycleManager): Promise<string | undefined> {
   let seen: string | undefined;
   (mgr as unknown as { recordConnectionStateChange: unknown }).recordConnectionStateChange = (
     _server: string,
@@ -80,29 +95,32 @@ function seededState(mgr: BundleLifecycleManager): string | undefined {
   ): void => {
     seen = state;
   };
-  (mgr as unknown as { seedUrlConnectionState: (s: string, w: string, r: BundleRef) => void })
-    .seedUrlConnectionState(SERVER, WS, urlBundle());
+  await (
+    mgr as unknown as {
+      seedUrlConnectionState: (s: string, w: string, r: BundleRef) => Promise<void>;
+    }
+  ).seedUrlConnectionState(SERVER, WS, urlBundle());
   return seen;
 }
 
-test("seeds from the configured workDir, not NB_WORK_DIR", () => {
+test("seeds from the configured workDir, not NB_WORK_DIR", async () => {
   const mgr = new BundleLifecycleManager(new NoopEventSink(), undefined);
   mgr.setWorkDir(configuredWorkDir);
 
   // Connected: the tokens exist under the workDir the runtime resolved.
   writeTokens(configuredWorkDir);
 
-  expect(seededState(mgr)).toBe("running");
+  expect(await seededState(mgr)).toBe("running");
 });
 
-test("still seeds not_authenticated when no tokens exist anywhere", () => {
+test("still seeds not_authenticated when no tokens exist anywhere", async () => {
   const mgr = new BundleLifecycleManager(new NoopEventSink(), undefined);
   mgr.setWorkDir(configuredWorkDir);
 
-  expect(seededState(mgr)).toBe("not_authenticated");
+  expect(await seededState(mgr)).toBe("not_authenticated");
 });
 
-test("tokens under NB_WORK_DIR alone do not count as connected", () => {
+test("tokens under NB_WORK_DIR alone do not count as connected", async () => {
   // The inverse of the first case, and the one that pins the direction: a
   // probe reading `defaultWorkDir()` would call this connected. It is not —
   // nothing the runtime writes lives there under this config.
@@ -111,5 +129,18 @@ test("tokens under NB_WORK_DIR alone do not count as connected", () => {
 
   writeTokens(defaultishWorkDir);
 
-  expect(seededState(mgr)).toBe("not_authenticated");
+  expect(await seededState(mgr)).toBe("not_authenticated");
+});
+
+test("tokens already in the credential store seed running with no legacy file", async () => {
+  const mgr = new BundleLifecycleManager(new NoopEventSink(), undefined);
+  mgr.setWorkDir(configuredWorkDir);
+
+  await new McpOAuthRecords({
+    owner: { type: "workspace", wsId: WS },
+    serverName: SERVER,
+    workDir: configuredWorkDir,
+  }).write("tokens", { access_token: "t" });
+
+  expect(await seededState(mgr)).toBe("running");
 });
