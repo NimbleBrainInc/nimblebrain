@@ -1121,10 +1121,10 @@ async function handleInstallIdentity(
   // before any wiring.
   // An unconfigured broker is a deploy problem, not an unsupported plane —
   // say which before the capability gate turns it into "not supported here".
-  if (isBrokeredAuthKind(entry.install.auth) && !providerFor(ctx, entry.install.auth)) {
+  const brokerProvider = providerFor(ctx, entry.install.auth);
+  if (isBrokeredAuthKind(entry.install.auth) && !brokerProvider) {
     return errResult(brokerNotConfiguredMessage(entry.name, entry.install.auth));
   }
-  const brokerProvider = providerFor(ctx, entry.install.auth);
   if (!identityInstallableAuth(ctx, entry.install.auth)) {
     return errResult(
       `"${entry.name}" uses "${entry.install.auth}" auth, which isn't supported for personal ` +
@@ -1565,9 +1565,10 @@ async function handleInstallRemoteOAuth(
   // Host UI placement (sidebar app, etc.) is SERVER-authored metadata. Resolve
   // it from the operator-trusted catalog by id — never the caller-supplied
   // entry — so a forged entry can't inject host chrome. Cached by the directory
-  // facade. Undefined when the id isn't a known catalog connector or it declares
-  // no UI. Placements are re-validated at registration (`sanitizePlacements`).
-  const trustedUi = (await ctx.runtime.getConnectorDirectory().catalogById(entry.id))?.ui;
+  // facade. Undefined when the id isn't a known catalog connector. Placements
+  // are re-validated at registration (`sanitizePlacements`).
+  const trusted = await ctx.runtime.getConnectorDirectory().catalogById(entry.id);
+  const trustedUi = trusted?.ui;
 
   // serverName is the slugified canonical reverse-DNS form — opaque,
   // URL-safe, filesystem-safe, collision-free by construction. See
@@ -1614,7 +1615,14 @@ async function handleInstallRemoteOAuth(
   // into the workspace's `connector-skills/` store, NEVER the system prompt.
   const skillsLock = await lifecycle.syncBoundSkills(
     connectorSkillIdentityFrom(
-      action.composio?.toolkit,
+      // From the operator-trusted catalog entry, NEVER the caller's action: the
+      // identity is interpolated into the overlay fetch path, so a field the
+      // caller controls chooses which repository is read. `action` carries the
+      // caller's own object for every auth kind the install does not re-resolve
+      // (`parseDirectoryEntry` strips no unknown install fields), which is
+      // exactly the provenance this must not depend on. Same source
+      // `connector-skill-reconcile` reads it from.
+      trusted?.composio?.toolkit,
       // Derive the overlay identity from the canonical reverse-DNS name
       // (`com.dropbox/mcp` → `dropbox`), NOT the slugified serverName
       // (`com-dropbox-mcp`) — the slug has no dotted structure to split on, so

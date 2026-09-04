@@ -55,6 +55,7 @@ import type {
 import type { SmitheryClientOptions } from "./client.ts";
 import { validateSmitheryConfig } from "./config.ts";
 import { SmitheryConnectionProbe } from "./connection-probe.ts";
+import { smitheryCoordinatesFrom } from "./coordinates.ts";
 import { SMITHERY_PROVIDER_ID } from "./id.ts";
 import { SMITHERY_CREDENTIAL_PROVIDER } from "./transport-credential.ts";
 
@@ -162,24 +163,6 @@ async function createSession(opts: CreateManagedSessionOptions): Promise<Managed
 }
 
 /**
- * The coordinates `createSession` minted, read back off a brokered ref.
- *
- * Every field is required and `createSession` refuses to return a partial set,
- * so a ref that reaches here without them was written by something other than
- * this provider — `undefined`, and the caller declines to act rather than
- * guessing at a connection to delete.
- */
-function coordinatesFrom(
-  providerRef: Record<string, string> | undefined,
-): { connectionId: string; namespace: string; baseUrl: string } | undefined {
-  const connectionId = providerRef?.connectionId;
-  const namespace = providerRef?.namespace;
-  const baseUrl = providerRef?.baseUrl;
-  if (!connectionId || !namespace || !baseUrl) return undefined;
-  return { connectionId, namespace, baseUrl };
-}
-
-/**
  * Build the Smithery `ManagedConnectorProvider`. Called only when Smithery is
  * configured (`buildManagedConnectorRegistry`), so the API key and namespace are
  * both set.
@@ -210,7 +193,7 @@ export function createSmitheryProvider(): ManagedConnectorProvider {
  * survives.
  */
 async function cleanup(opts: BrokeredStateOptions): Promise<BrokeredCleanupResult> {
-  const coords = coordinatesFrom(opts.brokered.providerRef);
+  const coords = smitheryCoordinatesFrom(opts.brokered.providerRef);
   if (!coords) {
     return {
       upstreamDeleted: false,

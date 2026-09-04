@@ -50,6 +50,21 @@ export {
 export interface ManagedSession {
   type: "http" | "sse";
   url: string;
+  /**
+   * Extra request headers the runtime persists on the ref's transport, verbatim.
+   *
+   * **A provider MUST NOT return a header carrying its broker credential** — not
+   * the credential header itself, and not a copy of the value inlined under
+   * another name. The runtime writes these into `workspace.json` as-is and
+   * cannot check the rule for you: which header holds the secret, and what the
+   * secret is, are the provider's own details. The credential's one channel is
+   * `credentialProvider` below, which attaches it at transport-build time so
+   * neither the value nor the name of the variable holding it is ever at rest.
+   *
+   * Scrubbing belongs in the provider, at the boundary where the vendor's
+   * response is first read (Composio's `createSession` does it; Smithery returns
+   * no headers at all).
+   */
   headers?: Record<string, string>;
   /**
    * Opaque provider-scoped coordinates identifying the thing just minted. The

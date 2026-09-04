@@ -26,28 +26,8 @@ import type {
 } from "../../../bundles/connection-probe.ts";
 import { log } from "../../../observability/log.ts";
 import type { SmitheryClientOptions } from "./client.ts";
+import { smitheryCoordinatesFrom } from "./coordinates.ts";
 import { SMITHERY_PROVIDER_ID } from "./id.ts";
-
-/**
- * Read the coordinates a smithery install recorded in its brokered ref's opaque
- * `providerRef`.
- *
- * Host and namespace come from the REF, never from current config: the ref's
- * session URL bakes both in at install and keeps working if an operator later
- * repoints them, so a config-reading probe would 404 a perfectly healthy
- * connection and false-flip it. `createSession` refuses to return a partial set,
- * so an incomplete ref was written by something else — decline rather than guess.
- */
-function markerFrom(
-  target: ProbeTarget,
-): { connectionId: string; namespace: string; baseUrl: string } | undefined {
-  const providerRef = brokeredRef(target.ref)?.providerRef;
-  const connectionId = providerRef?.connectionId;
-  const namespace = providerRef?.namespace;
-  const baseUrl = providerRef?.baseUrl;
-  if (!connectionId || !namespace || !baseUrl) return undefined;
-  return { connectionId, namespace, baseUrl };
-}
 
 export class SmitheryConnectionProbe implements ConnectionHealthProbe {
   readonly providerId = SMITHERY_PROVIDER_ID;
@@ -55,7 +35,7 @@ export class SmitheryConnectionProbe implements ConnectionHealthProbe {
   constructor(private readonly options: SmitheryClientOptions) {}
 
   async probe(target: ProbeTarget, signal: AbortSignal): Promise<ConnectionLiveness> {
-    const marker = markerFrom(target);
+    const marker = smitheryCoordinatesFrom(brokeredRef(target.ref)?.providerRef);
     if (!marker) return "indeterminate";
 
     try {

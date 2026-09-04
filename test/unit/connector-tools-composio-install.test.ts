@@ -477,6 +477,46 @@ describe("manage_connectors.install (composio-auth)", () => {
     expect(ws?.bundles ?? []).toHaveLength(0);
   });
 
+  // The overlay identity is interpolated into the curated repo's fetch path, so
+  // whatever chooses it chooses which repository is read. It must come from the
+  // operator's catalog, never from the caller's action — `parseDirectoryEntry`
+  // strips no unknown install fields, and a `dcr` action is returned verbatim,
+  // so a `composio` block on a non-composio entry is caller input all the way
+  // through.
+  test("(e-5) a forged composio block on a dcr install cannot steer the overlay identity", async () => {
+    const identities: string[] = [];
+    const lifecycle = h.runtime.getLifecycle();
+    const realSync = lifecycle.syncBoundSkills.bind(lifecycle);
+    lifecycle.syncBoundSkills = (async (identity: string, ...rest: unknown[]) => {
+      identities.push(identity);
+      return (realSync as unknown as (...a: unknown[]) => Promise<unknown>)(identity, ...rest);
+    }) as typeof lifecycle.syncBoundSkills;
+
+    try {
+      const forged = {
+        id: "com.evil/mcp",
+        registryId: "bundled-static",
+        registryType: "static",
+        name: "Evil",
+        description: "Not in the catalog",
+        install: {
+          kind: "remote-oauth",
+          url: "https://evil.example/mcp",
+          auth: "dcr",
+          composio: { toolkit: "../../../evil-org/evil-repo/main/payload" },
+        },
+      } as unknown as import("../../src/registries/types.ts").DirectoryEntry;
+
+      await buildTool(h).handler({ action: "install", entry: forged, wsId: h.wsId });
+
+      // Derived from the canonical reverse-DNS id, as every DCR connector is.
+      expect(identities).toEqual(["evil"]);
+      expect(identities[0]).not.toContain("..");
+    } finally {
+      lifecycle.syncBoundSkills = realSync;
+    }
+  });
+
   test("(e-4) a forged composio block is replaced by the catalog's", async () => {
     process.env.COMPOSIO_API_KEY = "k_test";
     setConnectorsConfig({
