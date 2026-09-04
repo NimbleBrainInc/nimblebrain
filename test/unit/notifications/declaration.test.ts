@@ -154,3 +154,65 @@ describe("the catalog carries the declaration to the install path", () => {
     expect(entry?.notifications).toBeUndefined();
   });
 });
+
+/**
+ * The published schema and this module state one rule, so they have to agree.
+ *
+ * `host-manifest.schema.json` is what a bundle author validates against before
+ * shipping — it is the only place the rule can reach the one person who can fix
+ * a bad declaration. `isOutboxResource` is what the runtime enforces at install
+ * time, where a failure is a debug log and an outbox that is simply never
+ * polled. Two statements of one rule, on opposite sides of the moment it
+ * matters, is exactly the shape that drifts; these pin them together.
+ */
+describe("the schema and the parser state the same rule", () => {
+  const schema = require("../../../src/bundles/schemas/host-manifest.schema.json");
+  const resource = schema.$defs.NotificationsDeclaration.properties.resource;
+
+  test("the reserved-scheme constraint names exactly the schemes the runtime resolves", () => {
+    // Derived, not eyeballed: the schema carries a copy of a set that grows —
+    // it went from five to six when `app://` was added — so the copy is pinned
+    // to the constant rather than trusted to be re-read.
+    const spelled = resource.not.pattern.replace(/^\^\(\?:/, "").replace(/\):$/, "").split("|");
+    expect(spelled.sort()).toEqual([...RESERVED_RESOURCE_SCHEMES].sort());
+  });
+
+  test("the schema's pattern admits exactly what the parser admits", () => {
+    const pattern = new RegExp(resource.pattern);
+    const corpus = [
+      "acme://notifications",
+      "acme://inbox",
+      "acme:notifications",
+      "acme:/notifications",
+      "po://notifications",
+      "urn:x:y",
+      "ACME://x",
+      "acme://a/b",
+      "notifications",
+      "://notifications",
+      "9lives://x",
+      "acme_x://notifications",
+      "acme://notifications?since=1",
+      "acme://notifications#top",
+      "ac?me://notifications",
+      "acme://note ifications",
+      "acme://a\tb",
+      "",
+    ];
+    for (const candidate of corpus) {
+      // maxLength is the schema's alone; the parser's length check is the same
+      // number and is not what this compares.
+      expect({ candidate, schema: pattern.test(candidate) }).toEqual({
+        candidate,
+        schema: isOutboxResource(candidate),
+      });
+    }
+  });
+
+  test("a URI over the schema's maxLength is refused by the parser too", () => {
+    expect(resource.maxLength).toBe(512);
+    const fill = resource.maxLength - "acme://".length;
+    expect(isOutboxResource(`acme://${"a".repeat(fill)}`)).toBe(true);
+    expect(isOutboxResource(`acme://${"a".repeat(fill + 1)}`)).toBe(false);
+  });
+});
