@@ -167,7 +167,8 @@ describe("BundleLifecycleManager.disconnect — symmetric teardown", () => {
         sink,
       ),
     );
-    lifecycle.setWorkspaceRegistries(new Map([["ws_test", registry]]));
+    const registries = new Map([["ws_test", registry]]);
+    lifecycle.bindWorkspaceRegistries(() => registries);
     lifecycle.recordConnectionStateChange("granola", "ws_test", "_workspace", "running");
     sink.events = [];
 

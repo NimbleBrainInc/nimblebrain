@@ -820,8 +820,10 @@ export class Runtime {
 
     // Wire the workspace registries into lifecycle so workspace-scope
     // startAuth / disconnect / install can add+remove sources without
-    // each route having to thread the registry through.
-    lifecycle.setWorkspaceRegistries(workspaceRegistries);
+    // each route having to thread the registry through. The accessor, not the
+    // map: `ensureWorkspaceRegistry` keeps adding to whatever `rt` holds, and
+    // the lifecycle has to see those workspaces too.
+    lifecycle.bindWorkspaceRegistries(() => rt.getWorkspaceRegistries());
 
     // Seed lifecycle instances for workspace bundles.
     await seedWorkspaceBundleInstances(lifecycle, placementRegistry, workspaceBundleEntries);

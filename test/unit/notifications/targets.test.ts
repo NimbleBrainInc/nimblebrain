@@ -64,12 +64,12 @@ let registries: Map<string, ToolRegistry>;
 beforeEach(() => {
   lifecycle = new BundleLifecycleManager(new NoopEventSink(), undefined);
   registries = new Map();
-  lifecycle.setWorkspaceRegistries(registries);
+  lifecycle.bindWorkspaceRegistries(() => registries);
 });
 
 /**
  * A workspace's registry, created on demand — the way `Runtime` does it, by
- * adding to the map the lifecycle was handed rather than handing it a new one.
+ * adding to the map the lifecycle reads rather than handing it a new one.
  * Every workspace here is therefore provisioned the post-boot way.
  */
 function registryFor(wsId: string): ToolRegistry {
@@ -151,17 +151,16 @@ describe("collectPollTargets", () => {
     expect(targets[0]?.source).toBe(reconnected);
   });
 
-  test("a workspace provisioned after boot is polled like a boot-time one", async () => {
-    // The lifecycle holds the runtime's registries map by reference, so when a
-    // workspace it never wires the map is added to it (which is what
-    // `Runtime.ensureWorkspaceRegistry` does for a workspace created after
-    // boot) that workspace's sources resolve like any other. Against a copy
-    // taken at wiring time, every connector in it is skipped, silently.
-    const bootTime = new Map<string, ToolRegistry>();
-    lifecycle.setWorkspaceRegistries(bootTime);
-    registries = bootTime;
+  test("the registries are asked for on every sweep, not captured at wiring time", async () => {
+    // A workspace can be provisioned at any point after the wiring —
+    // `ensureWorkspaceRegistry` adds its registry to whatever map the runtime
+    // holds — and the lifecycle has to poll its connectors like any other.
+    // Asking the runtime each time is what makes that true for any way the map
+    // can move, so this exercises the harder one: replaced wholesale between
+    // the two workspaces. Against a reference captured at wiring time, or a
+    // copy of the contents, `ws_provisioned_later` is skipped silently.
     await boot("acme", { wsId: "ws_at_boot" });
-    lifecycle.setWorkspaceRegistries(bootTime); // the one wiring Runtime does
+    registries = new Map(registries);
     await boot("acme", { wsId: "ws_provisioned_later" });
 
     const targets = await collectPollTargets(lifecycle, declaresOutbox);
