@@ -6,7 +6,7 @@ import {
 } from "../../src/bundles/connection.ts";
 
 function conn(state: Connection["state"]): Connection {
-  return { principalId: "p", state, source: null };
+  return { principalId: "p", state };
 }
 
 describe("summarizeConnectionState", () => {

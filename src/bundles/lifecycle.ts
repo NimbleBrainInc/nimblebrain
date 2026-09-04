@@ -22,7 +22,7 @@ import {
 import { personalConnectorWireName } from "../tools/identity-sources.ts";
 import { hasMcpOAuthTokens, McpOAuthRecords } from "../tools/mcp-oauth-records.ts";
 import { McpSource } from "../tools/mcp-source.ts";
-import { ToolRegistry } from "../tools/registry.ts";
+import { SharedSourceRef, ToolRegistry } from "../tools/registry.ts";
 import type { ToolSource } from "../tools/types.ts";
 import { WorkspaceOAuthProvider } from "../tools/workspace-oauth-provider.ts";
 import { validateAdditionalAuthorizationParams } from "../util/oauth-params.ts";
@@ -715,7 +715,7 @@ export class BundleLifecycleManager {
     wsId: string,
     principalId: string,
     newState: ConnectionState,
-    opts?: { authorizationUrl?: string; lastError?: string; source?: McpSource | null },
+    opts?: { authorizationUrl?: string; lastError?: string },
   ): void {
     // Release the OAuth-flow coalesce slot on any TERMINAL transition — ABOVE the
     // instance lookup so an instance removed mid-flight (uninstall / re-key) still
@@ -739,7 +739,6 @@ export class BundleLifecycleManager {
     const next: Connection = {
       principalId,
       state: newState,
-      source: opts?.source !== undefined ? opts.source : (existing?.source ?? null),
       // Authorization URL is only meaningful while pending_auth — clear it
       // on any other transition so a stale URL can't leak into /initiate.
       authorizationUrl:
@@ -979,9 +978,7 @@ export class BundleLifecycleManager {
           "retry the connection",
       );
     }
-    this.recordConnectionStateChange(serverName, wsId, principalId, "starting", {
-      source,
-    });
+    this.recordConnectionStateChange(serverName, wsId, principalId, "starting");
 
     // Arm interactive OAuth for THIS user-initiated start only. The
     // `interactiveAuthAllowed` flag gates whether a start may drive a browser
@@ -1243,7 +1240,6 @@ export class BundleLifecycleManager {
       });
       await this.teardownConnectionSource(serverName, wsId, principalId);
       this.recordConnectionStateChange(serverName, wsId, principalId, "not_authenticated", {
-        source: null,
         authorizationUrl: undefined,
       });
       return {
@@ -1274,7 +1270,6 @@ export class BundleLifecycleManager {
     await this.teardownConnectionSource(serverName, wsId, principalId);
 
     this.recordConnectionStateChange(serverName, wsId, principalId, "not_authenticated", {
-      source: null,
       authorizationUrl: undefined,
     });
 
@@ -1307,27 +1302,35 @@ export class BundleLifecycleManager {
           "Stage 2 cut the legacy user-scope path.",
       );
     }
-    const instance = this.instances.get(`${serverName}|${wsId}`);
-    const conn = instance?.connections?.get(principalId);
-    if (conn?.source) {
-      try {
-        await conn.source.stop();
-      } catch (err) {
-        // Best-effort: a failing stop shouldn't block the teardown
-        // (we're going to drop the source anyway). Surface for
-        // operator visibility — a stuck-source pattern is worth
-        // catching even if individual occurrences are benign.
-        log.warn(
-          `[lifecycle] source.stop() failed for ${serverName}|${wsId}|${principalId}: ${
-            err instanceof Error ? err.message : String(err)
-          }`,
-        );
-      }
-    }
+    // `removeSource` calls `stop()` on the way out, so the registry entry is
+    // both the handle and the teardown. There is no second reference to stop.
     const registry = this.registriesByWs.get(wsId);
     if (registry?.hasSource(serverName)) {
       await registry.removeSource(serverName);
     }
+  }
+
+  /**
+   * The live `McpSource` behind one workspace connection, or `null`.
+   *
+   * The registry is where a source lives — this reads it back through the same
+   * `(wsId, serverName)` key the connection record carries, so a consumer never
+   * holds a reference across a reconnect. `adoptSource` replaces the entry
+   * wholesale when a source is re-established (boot self-heal, Reconnect,
+   * `tryRecoverSource`), and a reference captured before that points at the
+   * stopped predecessor.
+   *
+   * `null` distinguishes two cases a caller usually wants to treat alike and
+   * must not confuse with a bad state: the workspace has no registry (a
+   * lifecycle constructed outside `Runtime.start`), or the name resolves to
+   * nothing — an install whose eager start failed, an uninstall in flight.
+   * Neither is a reason to start anything here; a source's own recovery
+   * machinery owns that.
+   */
+  connectionSource(serverName: string, wsId: string): McpSource | null {
+    const source = this.registriesByWs.get(wsId)?.getSource(serverName);
+    const unwrapped = source instanceof SharedSourceRef ? source.unwrap() : source;
+    return unwrapped instanceof McpSource ? unwrapped : null;
   }
 
   /**

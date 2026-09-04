@@ -123,6 +123,13 @@ concludes anything about the other's question.
 A connection's secret is named, never inlined: persisted state carries a
 credential reference resolved through one store (ADR-0027).
 
+A connection records **state, not the handle**. The `McpSource` lives in the
+workspace's registry, addressed by the `(workspaceId, serverName)` the
+connection is already keyed on, and a consumer that needs it resolves it there
+each time. `running` therefore means one thing — the credential is good and a
+source is registered — and a reconnect, which replaces the source object
+wholesale, cannot leave a second reference pointing at the predecessor.
+
 ### Brokered connector
 A connector whose auth *and* hosted MCP session come from a third party.
 `ManagedConnectorProvider` is the seam, and it owns the **auth-and-session broker

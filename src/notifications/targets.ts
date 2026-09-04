@@ -16,6 +16,14 @@ import type { NotificationsDeclaration } from "./types.ts";
  *   - **Its connection is `running`.** Not `starting`, not `reauth_required`,
  *     not `crashed`. A source in any other state either has no credential or is
  *     already being recovered by machinery that owns that job.
+ *   - **And the workspace registry holds its source.** `running` says the
+ *     credential is good; the registry is where the handle lives, and it is
+ *     read on every sweep rather than captured once. A source is replaced
+ *     wholesale on each reconnect, so a target built from a held reference
+ *     would keep reading the stopped predecessor. The two questions are
+ *     separable and a registry miss is not a state to correct here — an
+ *     install whose eager start failed reads `running` and resolves to
+ *     nothing, and the poller's job is to skip it, not to start it.
  *   - **Under the workspace principal.** A per-user connection authenticates as
  *     a person; an outbox belongs to the workspace that installed the
  *     connector, and reading one as a member would file the workspace's
@@ -53,14 +61,16 @@ export async function collectPollTargets(
   const targets: PollTarget[] = [];
   for (const instance of lifecycle.getInstances()) {
     const connection = instance.connections?.get(WORKSPACE_PRINCIPAL_ID);
-    if (!connection || connection.state !== "running" || !connection.source) continue;
+    if (!connection || connection.state !== "running") continue;
+    const source = lifecycle.connectionSource(instance.serverName, instance.wsId);
+    if (!source) continue;
     const declaration = await resolve(instance.serverName);
     if (!declaration) continue;
     targets.push({
       wsId: instance.wsId,
       serverName: instance.serverName,
       resource: declaration.resource,
-      source: connection.source,
+      source,
     });
   }
   return targets;
