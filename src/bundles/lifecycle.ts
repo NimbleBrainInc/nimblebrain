@@ -1335,12 +1335,17 @@ export class BundleLifecycleManager {
 
   /**
    * Map of `wsId` → `ToolRegistry` for the workspace. Required so
-   * `startAuth` / `disconnect` can wire workspace-scope sources into the
-   * registry without callers having to thread the registry through every
-   * lifecycle entry point. Set once at platform boot via
-   * `setWorkspaceRegistries`; never mutated afterward.
+   * `startAuth` / `disconnect` / `connectionSource` can reach a workspace's
+   * sources without callers having to thread the registry through every
+   * lifecycle entry point.
+   *
+   * **The runtime's own map, held by reference, not a copy.** A workspace
+   * provisioned after boot has its registry added to that map directly
+   * (`Runtime.ensureWorkspaceRegistry`), so a copy taken at boot would never
+   * see it — and every lifecycle path that resolves a source through here
+   * would answer "no registry" for a workspace that has one.
    */
-  private readonly registriesByWs = new Map<string, ToolRegistry>();
+  private registriesByWs = new Map<string, ToolRegistry>();
 
   /**
    * Map of `userId` → `ToolRegistry` holding that user's started personal
@@ -1408,10 +1413,11 @@ export class BundleLifecycleManager {
    * after the workspace bundle boot loop has constructed the registries.
    * Allows `startAuth` (workspace-scope) to add/remove sources without
    * the route handler having to thread a registry argument.
+   *
+   * The caller's map is adopted, not copied — see `registriesByWs`.
    */
   setWorkspaceRegistries(registries: Map<string, ToolRegistry>): void {
-    this.registriesByWs.clear();
-    for (const [wsId, registry] of registries) this.registriesByWs.set(wsId, registry);
+    this.registriesByWs = registries;
   }
 
   /**

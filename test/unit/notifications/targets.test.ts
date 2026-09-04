@@ -67,13 +67,16 @@ beforeEach(() => {
   lifecycle.setWorkspaceRegistries(registries);
 });
 
+/**
+ * A workspace's registry, created on demand — the way `Runtime` does it, by
+ * adding to the map the lifecycle was handed rather than handing it a new one.
+ * Every workspace here is therefore provisioned the post-boot way.
+ */
 function registryFor(wsId: string): ToolRegistry {
   const existing = registries.get(wsId);
   if (existing) return existing;
   const registry = new ToolRegistry();
   registries.set(wsId, registry);
-  // `setWorkspaceRegistries` copies the map, so re-wire after each addition.
-  lifecycle.setWorkspaceRegistries(registries);
   return registry;
 }
 
@@ -146,6 +149,24 @@ describe("collectPollTargets", () => {
 
     expect(targets).toHaveLength(1);
     expect(targets[0]?.source).toBe(reconnected);
+  });
+
+  test("a workspace provisioned after boot is polled like a boot-time one", async () => {
+    // The lifecycle holds the runtime's registries map by reference, so when a
+    // workspace it never wires the map is added to it (which is what
+    // `Runtime.ensureWorkspaceRegistry` does for a workspace created after
+    // boot) that workspace's sources resolve like any other. Against a copy
+    // taken at wiring time, every connector in it is skipped, silently.
+    const bootTime = new Map<string, ToolRegistry>();
+    lifecycle.setWorkspaceRegistries(bootTime);
+    registries = bootTime;
+    await boot("acme", { wsId: "ws_at_boot" });
+    lifecycle.setWorkspaceRegistries(bootTime); // the one wiring Runtime does
+    await boot("acme", { wsId: "ws_provisioned_later" });
+
+    const targets = await collectPollTargets(lifecycle, declaresOutbox);
+
+    expect(targets.map((t) => t.wsId).sort()).toEqual(["ws_at_boot", "ws_provisioned_later"]);
   });
 
   test("a connector whose source is not registered is not a target", async () => {
