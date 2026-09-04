@@ -188,6 +188,8 @@ export class NotificationPoller {
   #sweeping = false;
   #stopped = false;
   #lastSummaryAt = 0;
+  /** Targets the last sweep found, so only a change in the count is logged. */
+  #lastTargetCount: number | null = null;
   /** Counters for the periodic summary line, reset when it is logged. */
   #pulledSinceSummary = 0;
   #reconnectsSinceSummary = 0;
@@ -248,6 +250,7 @@ export class NotificationPoller {
     this.#sweeping = true;
     try {
       const targets = await this.#deps.targets();
+      this.#noteTargetCount(targets.length);
       const byWorkspace = groupByWorkspace(targets);
       this.#budget.prune(new Set(byWorkspace.keys()));
       this.#pruneStates(targets);
@@ -690,6 +693,28 @@ export class NotificationPoller {
   #defer(count: number): void {
     notificationsPollDeferredTotal.inc(count);
     this.#deferredSinceSummary += count;
+  }
+
+  /**
+   * How many outboxes this sweep may read, said once and again on every change.
+   *
+   * The ten-minute summary already carries this number as `sources` — a state
+   * is created for every due target, and every target is due on its first
+   * sweep — but only as a level, ten minutes late, that an operator has to
+   * diff across two lines to watch move. This says it one poll interval after
+   * a boot, which is when the question gets asked: `targets=0` on a pod where
+   * a connector declaring an outbox is installed means the declaration or its
+   * source is not reaching the collector, and `targets=3` over a quiet inbox
+   * means the outboxes are being read and are empty.
+   *
+   * Logged on transition rather than per sweep because the count is steady for
+   * the life of a pod in the ordinary case, and a line every tick would be
+   * noise nobody reads.
+   */
+  #noteTargetCount(count: number): void {
+    if (count === this.#lastTargetCount) return;
+    this.#lastTargetCount = count;
+    log.info(`[notifications] targets=${count}`);
   }
 
   /**
