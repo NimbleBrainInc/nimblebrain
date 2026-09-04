@@ -468,7 +468,7 @@ describe("E2E: install app -> tool call via API", () => {
 		wsRegistry.addSource(taskSource);
 
 		// Seed lifecycle instance to match the registered source
-		runtime.getLifecycle().seedInstance("tasks", "@nimblebraininc/tasks", {
+		await runtime.getLifecycle().seedInstance("tasks", "@nimblebraininc/tasks", {
 			name: "@nimblebraininc/tasks",
 			ui: {
 				name: "Task Manager",
@@ -546,7 +546,7 @@ describe("E2E: tool call via API -> SSE data.changed event", () => {
 		]);
 		const wsRegistry = runtime.getRegistryForWorkspace(TEST_WORKSPACE_ID);
 		wsRegistry.addSource(notesSource);
-		runtime.getLifecycle().seedInstance("notes", "@test/notes", {
+		await runtime.getLifecycle().seedInstance("notes", "@test/notes", {
 			name: "@test/notes",
 		}, undefined, TEST_WORKSPACE_ID);
 

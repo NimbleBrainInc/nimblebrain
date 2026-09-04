@@ -1059,7 +1059,7 @@ describe("manage_connectors.set_permissions", () => {
   // with no gate at all (#748) — reachable through `/mcp` and the agent, not
   // just the settings UI, which is why the fix is here and not in the client.
   test("a workspace member cannot set workspace tool policy", async () => {
-    seedConnector(h);
+    await seedConnector(h);
     const tool = buildTool(h, NON_ADMIN_USER);
     const result = await tool.handler({
       action: "set_permissions",
@@ -1078,7 +1078,7 @@ describe("manage_connectors.set_permissions", () => {
   test("a workspace admin can", async () => {
     // The negative above is worthless without this: a handler that refused
     // everyone would satisfy it.
-    seedConnector(h);
+    await seedConnector(h);
     const tool = buildTool(h, ADMIN_USER);
     const result = await tool.handler({
       action: "set_permissions",
@@ -1105,8 +1105,8 @@ const STUB_URL = "https://ipinfo.example.com/mcp";
  * production lifecycle does — only `list_installed` needs a registered
  * ToolSource.
  */
-function seedConnector(h: Harness): void {
-  h.lifecycle.seedInstance(
+async function seedConnector(h: Harness): Promise<void> {
+  await h.lifecycle.seedInstance(
     STUB_SERVER_NAME,
     STUB_URL,
     { url: STUB_URL, serverName: STUB_SERVER_NAME },
@@ -1151,7 +1151,7 @@ describe("manage_connectors.uninstall", () => {
   beforeEach(async () => {
     h = buildHarness();
     await provisionWorkspace(h);
-    seedConnector(h);
+    await seedConnector(h);
     // Mirror what the install path writes to workspace.json.
     await h.workspaceStore.update(h.wsId, {
       bundles: [{ url: STUB_URL, serverName: STUB_SERVER_NAME }],
@@ -1205,7 +1205,7 @@ describe("manage_connectors.disconnect", () => {
   beforeEach(async () => {
     h = buildHarness();
     await provisionWorkspace(h);
-    seedConnector(h);
+    await seedConnector(h);
   });
 
   afterEach(() => {

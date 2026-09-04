@@ -84,12 +84,12 @@ export function assertSafeServerName(name: string): void {
  * <serverName>/`, holding `tokens.json` / `verifier.json` / `client.json` /
  * `identity.json` as plaintext.
  *
- * Nothing writes here any more. It exists so {@link McpOAuthRecords} can import
- * an installation that predates the store and then delete what it imported —
- * the whole of the migration, with no maintenance window and no script. When no
- * deployment can still be carrying these files, this function and every caller
- * of it go, and the `mcp-oauth` carve-out in `check:credential-paths` goes with
- * them.
+ * Nothing writes here any more. It exists so {@link McpOAuthRecords} can carry
+ * an installation that predates the store across and then delete what it no
+ * longer needs — the whole of the migration, with no maintenance window and no
+ * script. When no deployment can still be carrying these files, this function
+ * and every caller of it go, and the `mcp-oauth` carve-out in
+ * `check:credential-paths` goes with them.
  */
 export function legacyMcpOAuthDir(
   workDir: string,
@@ -112,8 +112,9 @@ export function legacyMcpOAuthDir(
  * `<T>` on {@link read} is the caller's assertion about what it wrote, exactly
  * as it was when these were files.
  *
- * Reads import a legacy file on first touch (see {@link legacyMcpOAuthDir}), so
- * an existing installation crosses over on its next use with nothing to run.
+ * A legacy file is retired on the record's first touch (see
+ * {@link legacyMcpOAuthDir}) — imported by a read, superseded by a write — so an
+ * existing installation crosses over on its next use with nothing to run.
  */
 export class McpOAuthRecords {
   readonly #scope: CredentialScope;
@@ -173,13 +174,20 @@ export class McpOAuthRecords {
     );
   }
 
-  /** Set or replace a record. */
+  /**
+   * Set or replace a record, and retire the legacy file it supersedes.
+   *
+   * A record whose first touch is a write — `verifier`, which `saveCodeVerifier`
+   * sets before anything reads it — would never reach {@link read}'s import, so
+   * without this its plaintext file outlives the value it held.
+   */
   async write(record: McpOAuthRecord, value: unknown): Promise<void> {
     await this.#resolveStore().put(
       this.#scope,
       mcpOAuthKey(this.#serverName, record),
       JSON.stringify(value, null, 2),
     );
+    await this.#removeLegacyFile(record);
   }
 
   /** Remove a record. No-op if absent. */

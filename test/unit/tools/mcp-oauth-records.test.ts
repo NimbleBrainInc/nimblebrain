@@ -161,6 +161,21 @@ describe("McpOAuthRecords — legacy import", () => {
     ).toEqual({ access_token: "current" });
   });
 
+  test("a write retires the legacy file it supersedes — the record read never reaches", async () => {
+    // `saveCodeVerifier` sets the verifier before anything reads it, so the
+    // import in `read` never runs for this record. The plaintext file has to go
+    // on the write instead, or it outlives the value it held.
+    const path = plantLegacy(WS, "example-provider", "verifier", { codeVerifier: "old" });
+
+    await records(WS, "example-provider").write("verifier", { codeVerifier: "new" });
+
+    expect(existsSync(path)).toBe(false);
+    expect(existsSync(legacyMcpOAuthDir(workDir, WS, "example-provider"))).toBe(false);
+    expect(
+      await records(WS, "example-provider").read("verifier", { caller: "test", purpose: "assert" }),
+    ).toEqual({ codeVerifier: "new" });
+  });
+
   test("a user-scope legacy file imports to user scope", async () => {
     plantLegacy(USER, "example-provider", "tokens", { access_token: "legacy" });
 

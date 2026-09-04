@@ -56,9 +56,15 @@ describe("seedInstance — provider-auth fleet source", () => {
   // agent never saw its tools, and the UI showed a "Connect" button that would
   // spin a bogus OAuth flow against a server with no OAuth. It must seed
   // `running` (auto-connected) instead.
-  test("seeds running, not not_authenticated", () => {
+  test("seeds running, not not_authenticated", async () => {
     const lifecycle = new BundleLifecycleManager(new NoopSink(), undefined);
-    lifecycle.seedInstance("web", "https://web.svc.test/mcp", providerRef(), undefined, "ws_test");
+    await lifecycle.seedInstance(
+      "web",
+      "https://web.svc.test/mcp",
+      providerRef(),
+      undefined,
+      "ws_test",
+    );
 
     const conn = lifecycle.getInstance("web", "ws_test")?.connections.get(WORKSPACE_PRINCIPAL_ID);
     expect(conn?.state).toBe("running");
@@ -74,23 +80,35 @@ describe("seedInstance — provider-auth fleet source", () => {
   //
   // Tested through a fake provider, not a vendor: the kernel's contract is
   // "ask whoever owns this ref", and that is what must hold for provider #3.
-  test("an unconnected brokered connector seeds not_authenticated (the provider's verdict wins over static-auth)", () => {
+  test("an unconnected brokered connector seeds not_authenticated (the provider's verdict wins over static-auth)", async () => {
     const lifecycle = new BundleLifecycleManager(new NoopSink(), undefined);
     lifecycle.setManagedConnectorRegistry(
       managedConnectorRegistryOf([exampleBroker({ connected: false })]),
     );
-    lifecycle.seedInstance("gmail", brokeredRef().url ?? "", brokeredRef(), undefined, "ws_test");
+    await lifecycle.seedInstance(
+      "gmail",
+      brokeredRef().url ?? "",
+      brokeredRef(),
+      undefined,
+      "ws_test",
+    );
 
     const conn = lifecycle.getInstance("gmail", "ws_test")?.connections.get(WORKSPACE_PRINCIPAL_ID);
     expect(conn?.state).toBe("not_authenticated");
   });
 
-  test("a connected brokered connector seeds running", () => {
+  test("a connected brokered connector seeds running", async () => {
     const lifecycle = new BundleLifecycleManager(new NoopSink(), undefined);
     lifecycle.setManagedConnectorRegistry(
       managedConnectorRegistryOf([exampleBroker({ connected: true })]),
     );
-    lifecycle.seedInstance("gmail", brokeredRef().url ?? "", brokeredRef(), undefined, "ws_test");
+    await lifecycle.seedInstance(
+      "gmail",
+      brokeredRef().url ?? "",
+      brokeredRef(),
+      undefined,
+      "ws_test",
+    );
 
     const conn = lifecycle.getInstance("gmail", "ws_test")?.connections.get(WORKSPACE_PRINCIPAL_ID);
     expect(conn?.state).toBe("running");
@@ -98,10 +116,16 @@ describe("seedInstance — provider-auth fleet source", () => {
 
   // A provider with nothing to connect per-owner omits `hasConnection`, and the
   // generic static-auth check answers — the Smithery shape.
-  test("a brokered connector whose provider has no hasConnection falls back to static-auth", () => {
+  test("a brokered connector whose provider has no hasConnection falls back to static-auth", async () => {
     const lifecycle = new BundleLifecycleManager(new NoopSink(), undefined);
     lifecycle.setManagedConnectorRegistry(managedConnectorRegistryOf([exampleBroker({})]));
-    lifecycle.seedInstance("gmail", brokeredRef().url ?? "", brokeredRef(), undefined, "ws_test");
+    await lifecycle.seedInstance(
+      "gmail",
+      brokeredRef().url ?? "",
+      brokeredRef(),
+      undefined,
+      "ws_test",
+    );
 
     const conn = lifecycle.getInstance("gmail", "ws_test")?.connections.get(WORKSPACE_PRINCIPAL_ID);
     expect(conn?.state).toBe("running");

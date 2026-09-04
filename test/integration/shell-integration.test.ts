@@ -53,14 +53,17 @@ afterAll(async () => {
  * the operator-trusted catalog entry, so the shell surface needs no live
  * source to render them.
  */
-function installConnector(name: string, placements: PlacementDeclaration[]): string {
+async function installConnector(
+	name: string,
+	placements: PlacementDeclaration[],
+): Promise<string> {
 	const ref: BundleRef = {
 		url: `https://${name}.example.com/mcp`,
 		serverName: name,
 		ui: { name: `${name} App`, icon: `${name}-icon`, placements },
 	};
 	const lifecycle = runtime.getLifecycle();
-	lifecycle.seedInstance(name, ref.url, ref, undefined, TEST_WORKSPACE_ID);
+	await lifecycle.seedInstance(name, ref.url, ref, undefined, TEST_WORKSPACE_ID);
 	lifecycle.notifyInstalled(name, TEST_WORKSPACE_ID);
 	return name;
 }
@@ -86,7 +89,7 @@ async function createMcpClient(): Promise<Client> {
 describe("Install/uninstall → /v1/shell placement updates", () => {
 	it("install connector with placements → GET /v1/shell includes them → uninstall → gone", async () => {
 		const devRegistry = runtime.getRegistryForWorkspace(TEST_WORKSPACE_ID);
-		const serverName = installConnector("tasks", [
+		const serverName = await installConnector("tasks", [
 			{ slot: "sidebar.apps", resourceUri: "ui://tasks/nav", priority: 30, label: "Tasks" },
 			{ slot: "main", resourceUri: "ui://tasks/board", route: "tasks", label: "Task Board" },
 		]);
@@ -134,7 +137,7 @@ describe("Install/uninstall → /v1/shell placement updates", () => {
 describe("Connector with placements → /v1/shell", () => {
 	it("connector with main placement appears in /v1/shell", async () => {
 		const devRegistry = runtime.getRegistryForWorkspace(TEST_WORKSPACE_ID);
-		const serverName = installConnector("placedapp", [
+		const serverName = await installConnector("placedapp", [
 			{ slot: "main", resourceUri: "ui://placedapp/main", label: "placedapp App", icon: "placedapp-icon", route: "placedapp" },
 		]);
 

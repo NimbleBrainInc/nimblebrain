@@ -110,7 +110,7 @@ async function buildHarness(): Promise<Harness> {
   // bundle ref + lifecycle.seedInstance) is exercised in
   // connector-tools.test.ts; here we focus on the gate→enforcement
   // boundary.
-  lifecycle.seedInstance(
+  await lifecycle.seedInstance(
     "mock",
     "mock",
     { url: "https://mock.test/", serverName: "mock" },
