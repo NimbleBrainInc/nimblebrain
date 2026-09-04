@@ -24,27 +24,34 @@ where the value is kept.
 
 ## Decision
 
-**Persisted connection state carries a credential reference, not a credential,
-and not a location.** The reference is `{ ref: "credential", key: "..." }`
-(`OAuthClientConfig`, `src/bundles/types.ts`) — a key in the workspace's
-credential namespace and nothing more. Nothing in the record says whether that
-key resolves from a file, an envelope-encrypted blob, or a cloud secret manager.
+**Config carries references; the store holds values.** A persisted record names
+the key it needs and says nothing about where that value lives — not whether it
+resolves from a file, an envelope-encrypted blob, or a cloud secret manager. The
+reference shape is a leaf module (`src/tools/credential-ref.ts`) that the config
+types and the store both import and that imports nothing itself, so the two
+cannot disagree about what a reference is. Anywhere a reference is accepted a
+literal is still valid: a reference is the option, not the requirement, because
+a self-host operator with one key in a file they already trust should not have
+to run a CLI to boot.
 
 **Every secret goes through one store.** `CredentialStore`
-(`src/tools/credential-store.ts`) is the interface: `get`, `put`, `delete`, keyed
-by `(workspaceId, key)`. The interface is the boundary between call sites and the
+(`src/tools/credential-store.ts`) is the boundary between call sites and the
 backend, and it promises an opaque secret store rather than a file store — so a
-managed deployment swaps in an encrypted implementation, with a per-workspace key
-in a KMS, without touching a single caller. The self-host implementation is
-plaintext on disk at mode 0600 via atomic temp-and-rename, in a directory created
-0700, and is honest about being secure-enough-for-trusted-local-disk rather than
+managed deployment swaps in an encrypted implementation, with a per-scope key in
+a KMS, without touching a single caller. A key is resolved within a **scope**
+rather than against one hardcoded partition, so instance-wide, workspace, and
+per-user secrets are the same mechanism at three scopes rather than three
+stores. The self-host implementation is plaintext on disk under its scope's
+root, written 0600 via atomic temp-and-rename into a directory created 0700, and
+is honest about being secure-enough-for-trusted-local-disk rather than
 SaaS-grade.
 
-**Resolved values are wrapped, not bare.** `get` returns `Redacted<string>`, so a
-secret that reaches a logger or a stack trace renders as a placeholder. Code that
-needs the actual value calls `.reveal()` at the boundary where it is used — an
-HTTP header, a token-endpoint exchange — which makes every point of exposure a
-visible call rather than an accident of formatting.
+**Resolved values are wrapped, not bare.** A resolved secret comes back as a
+`Redacted<string>`, so one that reaches a logger or a stack trace renders as a
+placeholder. Code that needs the actual value reveals it at the boundary where
+it is used — an HTTP header, a token-endpoint exchange — which makes every point
+of exposure a visible call rather than an accident of formatting, and gives the
+store one place that knows a secret was *presented* rather than merely read.
 
 **Keys are validated as keys.** A credential key becomes a path component, so it
 is constrained to a dotted-namespace shape and rejects traversal.
@@ -68,9 +75,14 @@ operator-published catalog metadata, never tenant input.
 - Rotating a secret is a `put` under the same key. Nothing that references it
   changes, and nothing has to be found and updated.
 - The store is the chokepoint every secret read passes through, which is what
-  makes a per-read audit trail a property of one implementation rather than a
-  discipline every call site has to keep. The self-host implementation does not
-  emit one; the interface is where it lands.
+  lets the audit trail be a property of one implementation rather than a
+  discipline every call site has to keep. **The audit fires on `reveal()`, not
+  on the read that produced it** — so the log records secrets that were
+  *presented*, not secrets that were looked up, and once per resolved secret
+  however many times its value is presented. That distinction is what keeps a
+  surface probing for a configured secret on every row it renders from burying
+  the real uses, and it is only expressible because the wrapper is the thing
+  that knows about presentation.
 - The self-host backend is plaintext on disk. Anyone with the disk has the
   secrets. That is stated rather than obscured, and it is the swap point rather
   than the design.
