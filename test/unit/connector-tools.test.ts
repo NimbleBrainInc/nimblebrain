@@ -22,6 +22,9 @@ import { WorkspaceContext } from "../../src/workspace/context.ts";
 import { ensureUserWorkspace } from "../../src/workspace/provisioning.ts";
 import { personalWorkspaceIdFor, WorkspaceStore } from "../../src/workspace/workspace-store.ts";
 
+/** Read metadata every store read now carries; the audit trail is asserted in credential-store.test.ts. */
+const TEST_READ = { caller: "test", purpose: "assert the store holds what the handler wrote" };
+
 /**
  * Coverage for the new actions on `manage_connectors` introduced with
  * static-auth (operator-configured OAuth apps):
@@ -169,6 +172,7 @@ function buildHarness(opts: { adminId?: string } = {}): Harness {
 
   const runtime = {
     getWorkDir: () => workDir,
+    getCredentialStore: () => credStore,
     getWorkspaceStore: () => workspaceStore,
     getWorkspaceContext: (id: string) => new WorkspaceContext({ wsId: id, workDir }),
     getRegistryStore: () => registryStore,
@@ -258,6 +262,8 @@ interface StructuredResult {
     operatorConfigured?: boolean;
   }>;
   errors?: Array<{ registryId: string; message: string }>;
+  key?: string;
+  keys?: Array<{ key: string; updatedAt: string }>;
 }
 
 function structured(result: { structuredContent?: unknown }): StructuredResult {
@@ -310,7 +316,7 @@ describe("manage_connectors.setup_operator", () => {
     expect(ws?.oauthOperatorApps?.[DROPBOX_ID]?.clientId).toBe("cid-public");
     expect(ws?.oauthOperatorApps?.[DROPBOX_ID]?.configuredBy).toBe(ADMIN_USER.id);
 
-    const wrapped = await h.credStore.get(h.wsId, DROPBOX_SECRET_KEY);
+    const wrapped = await h.credStore.get({ kind: "workspace", wsId: h.wsId }, DROPBOX_SECRET_KEY, TEST_READ);
     expect(wrapped?.reveal()).toBe("sec-private");
   });
 
@@ -333,7 +339,7 @@ describe("manage_connectors.setup_operator", () => {
     expect(second.isError).toBe(false);
     const ws = await h.workspaceStore.get(h.wsId);
     expect(ws?.oauthOperatorApps?.[DROPBOX_ID]?.clientId).toBe("cid-v2");
-    const wrapped = await h.credStore.get(h.wsId, DROPBOX_SECRET_KEY);
+    const wrapped = await h.credStore.get({ kind: "workspace", wsId: h.wsId }, DROPBOX_SECRET_KEY, TEST_READ);
     expect(wrapped?.reveal()).toBe("sec-v2");
   });
 
@@ -431,7 +437,7 @@ describe("manage_connectors.setup_operator", () => {
     ).rejects.toThrow("simulated workspace.json failure");
     h.workspaceStore.update = original;
 
-    const wrapped = await h.credStore.get(h.wsId, DROPBOX_SECRET_KEY);
+    const wrapped = await h.credStore.get({ kind: "workspace", wsId: h.wsId }, DROPBOX_SECRET_KEY, TEST_READ);
     expect(wrapped).toBeNull();
   });
 
@@ -465,7 +471,7 @@ describe("manage_connectors.setup_operator", () => {
     // Credential store now holds the new secret (the put already
     // landed before the failure) — but it's NOT been deleted, because
     // there was a prior valid secret under the same key.
-    const wrapped = await h.credStore.get(h.wsId, DROPBOX_SECRET_KEY);
+    const wrapped = await h.credStore.get({ kind: "workspace", wsId: h.wsId }, DROPBOX_SECRET_KEY, TEST_READ);
     expect(wrapped?.reveal()).toBe("sec-v2");
   });
 });
@@ -557,7 +563,7 @@ describe("manage_connectors.remove_operator_setup", () => {
 
     const ws = await h.workspaceStore.get(h.wsId);
     expect(ws?.oauthOperatorApps?.[DROPBOX_ID]).toBeUndefined();
-    const wrapped = await h.credStore.get(h.wsId, DROPBOX_SECRET_KEY);
+    const wrapped = await h.credStore.get({ kind: "workspace", wsId: h.wsId }, DROPBOX_SECRET_KEY, TEST_READ);
     expect(wrapped).toBeNull();
   });
 
@@ -1330,5 +1336,103 @@ describe("manage_connectors.install — personal workspace is connectors-only", 
     // the outcome, it is never the personal-workspace rejection.
     const text = (result.content?.[0] as { text?: string })?.text ?? "";
     expect(text).not.toMatch(PERSONAL_MSG);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────
+// set_secret / delete_secret / list_secret_keys
+// ─────────────────────────────────────────────────────────────────────
+
+describe("manage_connectors workspace secrets", () => {
+  let h: Harness;
+
+  beforeEach(async () => {
+    h = buildHarness();
+    await provisionWorkspace(h);
+  });
+
+  afterEach(() => {
+    rmSync(h.workDir, { recursive: true, force: true });
+  });
+
+  test("an admin can set a secret, and the value lands in the workspace scope", async () => {
+    const tool = buildTool(h, ADMIN_USER);
+    const result = await tool.handler({
+      action: "set_secret",
+      key: "acme.db_url",
+      value: "postgres://tenant-a",
+    });
+    expect(result.isError).toBe(false);
+    expect(structured(result).key).toBe("acme.db_url");
+    const wrapped = await h.credStore.get(
+      { kind: "workspace", wsId: h.wsId },
+      "acme.db_url",
+      TEST_READ,
+    );
+    expect(wrapped?.reveal()).toBe("postgres://tenant-a");
+  });
+
+  test("a non-admin member is refused", async () => {
+    const tool = buildTool(h, NON_ADMIN_USER);
+    for (const action of ["set_secret", "delete_secret", "list_secret_keys"]) {
+      const result = await tool.handler({ action, key: "acme.db_url", value: "v" });
+      expect(result.isError).toBe(true);
+      expect(structured(result).error).toBe("permission_denied");
+    }
+  });
+
+  test("setting the same key again rotates it", async () => {
+    const tool = buildTool(h, ADMIN_USER);
+    await tool.handler({ action: "set_secret", key: "acme.db_url", value: "v1" });
+    await tool.handler({ action: "set_secret", key: "acme.db_url", value: "v2" });
+    const wrapped = await h.credStore.get(
+      { kind: "workspace", wsId: h.wsId },
+      "acme.db_url",
+      TEST_READ,
+    );
+    expect(wrapped?.reveal()).toBe("v2");
+  });
+
+  test("a blank value is refused — an empty secret would resolve to an empty header", async () => {
+    const tool = buildTool(h, ADMIN_USER);
+    const result = await tool.handler({ action: "set_secret", key: "acme.db_url", value: "   " });
+    expect(result.isError).toBe(true);
+    expect((result.content?.[0] as { text?: string })?.text).toMatch(/delete_secret/);
+  });
+
+  test("an invalid key is refused with the grammar, not a filesystem error", async () => {
+    const tool = buildTool(h, ADMIN_USER);
+    const result = await tool.handler({ action: "set_secret", key: "../evil", value: "v" });
+    expect(result.isError).toBe(true);
+    expect((result.content?.[0] as { text?: string })?.text).toMatch(/invalid key/);
+  });
+
+  test("listing returns keys and timestamps and never a value", async () => {
+    const tool = buildTool(h, ADMIN_USER);
+    await tool.handler({ action: "set_secret", key: "acme.db_url", value: "supersecret" });
+    await tool.handler({ action: "set_secret", key: "acme.api_key", value: "othersecret" });
+    const result = await tool.handler({ action: "list_secret_keys" });
+    expect(structured(result).keys?.map((k) => k.key)).toEqual(["acme.api_key", "acme.db_url"]);
+    expect(JSON.stringify(result)).not.toContain("supersecret");
+    expect(JSON.stringify(result)).not.toContain("othersecret");
+  });
+
+  test("delete removes it and is idempotent", async () => {
+    const tool = buildTool(h, ADMIN_USER);
+    await tool.handler({ action: "set_secret", key: "acme.db_url", value: "v" });
+    expect((await tool.handler({ action: "delete_secret", key: "acme.db_url" })).isError).toBe(
+      false,
+    );
+    expect((await tool.handler({ action: "delete_secret", key: "acme.db_url" })).isError).toBe(
+      false,
+    );
+    expect(structured(await tool.handler({ action: "list_secret_keys" })).keys).toEqual([]);
+  });
+
+  test("no workspace in scope means no secret action at all", async () => {
+    const tool = buildTool(h, ADMIN_USER, null);
+    const result = await tool.handler({ action: "list_secret_keys" });
+    expect(result.isError).toBe(true);
+    expect((result.content?.[0] as { text?: string })?.text).toMatch(/Workspace context required/);
   });
 });

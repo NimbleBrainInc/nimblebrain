@@ -27,6 +27,7 @@ import { createConversationsSource } from "../../../../src/tools/platform/conver
 import { createFilesSource } from "../../../../src/tools/platform/files.ts";
 import { createAutomationsSource } from "../../../../src/tools/platform/automations.ts";
 import { createInstructionsSource } from "../../../../src/tools/platform/instructions.ts";
+import { resolvePollConfig } from "../../../../src/notifications/poll-config.ts";
 import { createNotificationsSource } from "../../../../src/tools/platform/notifications.ts";
 import { createSkillsSource } from "../../../../src/tools/platform/skills.ts";
 
@@ -58,6 +59,12 @@ function makeRuntimeStub(workDir: string): unknown {
     // Automations source registers a domain-context getter at construction.
     // Capture-and-discard for the lint test — we never invoke handlers.
     registerAutomationsContext: () => {},
+    // The notifications source builds its poller at construction. It is
+    // stopped with the source in `afterEach`, and with no instances to
+    // enumerate its sweep has nothing to read.
+    getLifecycle: () => ({ getInstances: () => [] }),
+    getNotificationsDeclaration: async () => undefined,
+    getNotificationsPollConfig: () => resolvePollConfig(),
   };
 }
 

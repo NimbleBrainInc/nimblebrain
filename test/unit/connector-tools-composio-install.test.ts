@@ -214,6 +214,7 @@ function buildHarness(): Harness {
 
   const runtime = {
     getWorkDir: () => workDir,
+    getCredentialStore: () => new FileCredentialStore(workDir),
     getWorkspaceStore: () => workspaceStore,
     getRegistryStore: () => registryStore,
     getConnectorDirectory: () => new ConnectorDirectory(registryStore),

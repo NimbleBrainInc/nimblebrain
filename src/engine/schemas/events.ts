@@ -202,6 +202,28 @@ export const NotificationCreatedPayload = Type.Object({
 });
 export type NotificationCreatedPayload = Static<typeof NotificationCreatedPayload>;
 
+export const UnattendedDispatchPayload = Type.Object({
+  principalId: Type.String({
+    description: "The user the call ran as — supplied by in-process config, never by a request.",
+  }),
+  workspaceId: Type.String({ description: "The one workspace the call was walled to." }),
+  tool: Type.String({ description: "The bare `<source>__<tool>` name the caller asked for." }),
+  reason: Type.String({
+    description: "The caller's own short opaque string (e.g. `route:rt_…`). Opaque to the host.",
+  }),
+  outcome: Type.Union([
+    Type.Literal("ok"),
+    Type.Literal("denied"),
+    Type.Literal("skipped"),
+    Type.Literal("error"),
+  ]),
+  classification: Type.Optional(
+    Type.String({ description: "Why, for every outcome but `ok`. Absent on success." }),
+  ),
+  ms: Type.Number({ description: "Wall-clock time the dispatch took, including the gates." }),
+});
+export type UnattendedDispatchPayload = Static<typeof UnattendedDispatchPayload>;
+
 // ── Discriminated event union ────────────────────────────────────────────
 //
 // Events with a typed payload are listed in the union below. Emitters
@@ -230,5 +252,9 @@ export const TypedEngineEvent = Type.Union([
     data: ConnectorSkillInjectedPayload,
   }),
   Type.Object({ type: Type.Literal("notification.created"), data: NotificationCreatedPayload }),
+  Type.Object({
+    type: Type.Literal("audit.unattended_dispatch"),
+    data: UnattendedDispatchPayload,
+  }),
 ]);
 export type TypedEngineEvent = Static<typeof TypedEngineEvent>;

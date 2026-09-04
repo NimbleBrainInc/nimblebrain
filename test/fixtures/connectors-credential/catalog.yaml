@@ -1,0 +1,23 @@
+# Test fixture — a catalog entry that authenticates with the WORKSPACE's own
+# secret via the built-in `credential` credential provider. Not shipped.
+#
+# The shape under test: one operator-published entry, installed into two
+# workspaces, where each connection presents a different customer-owned secret
+# and neither `workspace.json` holds a value. `providerAuth.config` names a
+# credential-store KEY — meaningless outside the workspace that set it.
+servers:
+  - name: com.acme/db
+    title: Acme DB
+    description: Query the workspace's own Acme database
+    version: "1.0.0"
+    remotes:
+      - type: streamable-http
+        url: https://mcp.acme.test/mcp
+    _meta:
+      ai.nimblebrain/connector:
+        auth: provider
+        providerAuth:
+          provider: credential
+          config:
+            key: acme.db_url
+        tags: [database]

@@ -47,7 +47,7 @@ RUN set -e; \
     pids=""; \
     for ui in src/bundles/*/ui; do \
       [ -f "$ui/package.json" ] || continue; \
-      ( cd "$ui" && bun install && bun run build && rm -rf node_modules \
+      ( cd "$ui" && bun install --frozen-lockfile && bun run build && rm -rf node_modules \
         || { echo "ERROR: bundle UI build failed: $ui" >&2; exit 1; } ) & \
       pids="$pids $!"; \
     done; \

@@ -1,4 +1,5 @@
 import { timingSafeEqual } from "node:crypto";
+import { serializePerWorkspace } from "../workspace/serialize.ts";
 import type { Workspace } from "../workspace/types.ts";
 import type { WorkspaceStore } from "../workspace/workspace-store.ts";
 import { HOOK_ROTATION_GRACE_MS, type HookRegistration } from "./types.ts";
@@ -120,6 +121,13 @@ export function listRegistrations(ws: Pick<Workspace, "hooks">): HookRegistratio
  * `mutate` receives the current map (a copy) and returns the next one, or
  * `null` to leave the record untouched — so a no-op revoke costs no write and
  * no `updatedAt` churn.
+ *
+ * The whole read-through-write runs inside `serializePerWorkspace`, which every
+ * writer of a workspace record shares — see its doc for why the lock is keyed by
+ * workspace rather than by field. It also closes the `rotate_hook`-vs-reconcile
+ * window that `ensureHooks` leaves open by bypassing the flight for a rotation:
+ * the two can still run concurrently, but they can no longer interleave inside
+ * the write.
  */
 export async function updateRegistrations(
   store: WorkspaceStore,
@@ -134,46 +142,6 @@ export async function updateRegistrations(
     await store.update(wsId, { hooks: next });
     return next;
   });
-}
-
-/**
- * One write at a time per workspace.
- *
- * The critical section is the whole read-through-write, not the write alone:
- * `WorkspaceStore.update` re-reads the record and replaces `hooks` wholesale,
- * so two callers that both read an empty map each write a map containing only
- * their own entry, and the second erases the first. Holding the section across
- * the read is what makes a concurrent mutation see the previous one's result.
- *
- * In-process only, which is the same assumption `singleFlight` in `reconcile.ts`
- * already makes and is sufficient while a tenant runs one runtime pod — the
- * `replicas > 1` prerequisites in `AGENTS.md` are unmet, and clustering this
- * state belongs to that project rather than to a lock.
- *
- * It also closes the `rotate_hook`-vs-reconcile window that `ensureHooks`
- * leaves open by bypassing the flight for a rotation: the two can still run
- * concurrently, but they can no longer interleave inside the write.
- */
-const writeChains = new Map<string, Promise<unknown>>();
-
-function serializePerWorkspace<T>(wsId: string, task: () => Promise<T>): Promise<T> {
-  const prior = writeChains.get(wsId) ?? Promise.resolve();
-  // `then(task, task)` so a failed predecessor does not cancel the queue — one
-  // caller's error must not strand every writer behind it.
-  const next = prior.then(task, task);
-  // The stored tail swallows settlement so a rejection here is never unhandled;
-  // the real outcome reaches the caller through `next`.
-  const tail = next.then(
-    () => undefined,
-    () => undefined,
-  );
-  writeChains.set(wsId, tail);
-  void tail.then(() => {
-    // Drop the entry only when nobody queued behind us, so the map does not
-    // grow one permanent promise per workspace for the life of the process.
-    if (writeChains.get(wsId) === tail) writeChains.delete(wsId);
-  });
-  return next;
 }
 
 /**

@@ -6,17 +6,14 @@ import { fleetIssuerOption } from "../oauth/fleet-assertion.ts";
 import { mcpAuthCallbackUrl } from "../oauth/mcp-callback-url.ts";
 import { isMintedFleetSource } from "../oauth/minted-credential-provider.ts";
 import { log } from "../observability/log.ts";
-import { FileCredentialStore } from "../tools/credential-store.ts";
 import { personalConnectorWireName } from "../tools/identity-sources.ts";
 import { type BundleMcpContext, McpSource } from "../tools/mcp-source.ts";
 import type { ToolRegistry } from "../tools/registry.ts";
-import {
-  WorkspaceOAuthProvider,
-  type WorkspaceOAuthProviderOptions,
-} from "../tools/workspace-oauth-provider.ts";
+import { WorkspaceOAuthProvider } from "../tools/workspace-oauth-provider.ts";
 import { WorkspaceContext } from "../workspace/context.ts";
 import { resolveWorkspaceDisplayName } from "../workspace/workspace-store.ts";
 import { bundleHasStaticAuth } from "./bundle-auth.ts";
+import { resolveStaticOAuthClient } from "./oauth-static-client.ts";
 import { defaultWorkDir, deriveServerName, validateServerName } from "./paths.ts";
 import { notifyConnectionRunning } from "./pending-auth-buffer.ts";
 import type { BundleRef, RemoteTransportConfig, StartBundleResult } from "./types.ts";
@@ -245,46 +242,6 @@ function warnUnrecognizedUrlAuthType(ref: BundleRef, serverName: string): void {
 }
 
 /**
- * Resolve a URL bundle's pre-registered OAuth client (Track A), dereferencing
- * the client secret from the workspace credential store when present. Returns
- * undefined when the bundle has no static client config (DCR path).
- */
-async function resolveStaticOAuthClient(
-  ref: BundleRef,
-  wsId: string,
-  workDir: string,
-): Promise<WorkspaceOAuthProviderOptions["staticClient"] | undefined> {
-  // Track A: resolve pre-registered client config when present. The
-  // oauthClient.clientSecret is a reference into the workspace
-  // credential store; we resolve it to a string here so the provider
-  // can stamp it into clientInformation()'s response. The catalog
-  // boundary already enforced that the secret reference is well-
-  // formed; here we just dereference it. Errors abort the boot of
-  // this bundle (the connection enters dead) — user can fix the
-  // credential and restart.
-  if (!ref.oauthClient) return undefined;
-  let resolvedSecret: string | undefined;
-  if (ref.oauthClient.clientSecret) {
-    const secretStore = new FileCredentialStore(workDir);
-    const wrapped = await secretStore.get(wsId, ref.oauthClient.clientSecret.key);
-    if (!wrapped) {
-      throw new Error(
-        `[bundles] OAuth client_secret not found at credential key "${ref.oauthClient.clientSecret.key}" — ` +
-          `configure it in the workspace's Connections settings (web UI)`,
-      );
-    }
-    resolvedSecret = wrapped.reveal();
-  }
-  return {
-    clientId: ref.oauthClient.clientId,
-    ...(resolvedSecret ? { clientSecret: resolvedSecret } : {}),
-    ...(ref.oauthClient.tokenEndpointAuthMethod
-      ? { tokenEndpointAuthMethod: ref.oauthClient.tokenEndpointAuthMethod }
-      : {}),
-  };
-}
-
-/**
  * The `{type:"user"}` arm of {@link buildUrlOAuthProvider} — a personal
  * connector's OAuth provider. Credentials live at
  * `users/<userId>/credentials/mcp-oauth/<serverName>/`, derived from `workDir`
@@ -387,7 +344,11 @@ export async function buildUrlOAuthProvider(
     );
   }
 
-  const staticClient = await resolveStaticOAuthClient(ref, wsId, workDir);
+  const staticClient = await resolveStaticOAuthClient({
+    ref,
+    wsId,
+    serverName,
+  });
 
   // Boot path is workspace-scope only — user-scope bundles aren't
   // started at boot (they're loaded into a workspace's registry

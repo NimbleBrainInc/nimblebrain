@@ -1,5 +1,6 @@
 import type { HookDeclaration } from "../hooks/types.ts";
 import type { NotificationsDeclaration } from "../notifications/types.ts";
+import type { CredentialRef, CredentialValue } from "../tools/credential-ref.ts";
 import type { Connection } from "./connection.ts";
 
 /**
@@ -47,9 +48,16 @@ export interface BundleUiMeta {
 /** Transport configuration for remote MCP servers (url-based bundles). */
 export interface RemoteTransportConfig {
   type?: "streamable-http" | "sse";
-  auth?:
-    | { type: "bearer"; token: string }
-    | { type: "header"; name: string; value: string }
+  auth?: /**
+   * A static credential the connection presents on every request. `token` /
+   * `value` accept the secret inline, or a `{ ref: "credential", key }`
+   * pointer resolved at the connection's WORKSPACE scope — the same shape
+   * `oauthClient.clientSecret` uses, so `workspace.json` holds one kind of
+   * reference and not two. A reference is re-resolved per connection, which
+   * is what makes rotating a key a `put` rather than a config edit.
+   */
+    | { type: "bearer"; token: CredentialValue }
+    | { type: "header"; name: string; value: CredentialValue }
     | { type: "none" }
     /**
      * Non-interactive machine-plane auth produced by a named credential
@@ -69,7 +77,13 @@ export interface RemoteTransportConfig {
      * workspace dimension is the connection's own workspace.
      */
     | { type: "provider"; provider: string; config: Record<string, unknown> };
-  headers?: Record<string, string>;
+  /**
+   * Arbitrary outgoing headers. Each value is a literal or a
+   * `{ ref: "credential", key }` pointer resolved at the connection's workspace
+   * scope, so a vendor that wants its key in a custom header needs no second
+   * mechanism.
+   */
+  headers?: Record<string, CredentialValue>;
   reconnection?: {
     maxReconnectionDelay?: number;
     initialReconnectionDelay?: number;
@@ -227,7 +241,7 @@ export interface OAuthClientConfig {
    * Configured in the web UI (the workspace's Connections settings).
    * Omit for public PKCE-only clients (rare for pre-registered).
    */
-  clientSecret?: { ref: "credential"; key: string };
+  clientSecret?: CredentialRef;
   /**
    * Token endpoint auth method. Defaults to "none" (PKCE-only public
    * client) when `clientSecret` is absent; "client_secret_post" is the
