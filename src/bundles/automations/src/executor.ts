@@ -50,6 +50,12 @@ function truncate(text: string): string {
 export interface TaskFnRequest {
   /** The task description. Goes in as the user message. */
   prompt: string;
+  /**
+   * What woke the agent, in the runtime's vocabulary: a cron tick is a
+   * `schedule`, an operator's Run now is `manual`. The run-start door stamps it
+   * on the run's `agent.turn` span.
+   */
+  trigger?: "schedule" | "manual";
   model?: string;
   maxIterations?: number;
   maxInputTokens?: number;
@@ -145,7 +151,11 @@ export function containsRecursiveTool(allowedTools: string[] | undefined): strin
   return null;
 }
 
-function buildRequest(automation: Automation, ctx?: ExecutorContext): TaskFnRequest {
+function buildRequest(
+  automation: Automation,
+  trigger: AutomationRunTrigger,
+  ctx?: ExecutorContext,
+): TaskFnRequest {
   const offending = containsRecursiveTool(automation.allowedTools);
   if (offending !== null) {
     throw new Error(
@@ -160,6 +170,10 @@ function buildRequest(automation: Automation, ctx?: ExecutorContext): TaskFnRequ
   // goes in as the plain task description, not wrapped or prefixed here.
   const req: TaskFnRequest = {
     prompt: automation.prompt,
+    // The scheduler's vocabulary is per-automation ("scheduled" runs vs. a
+    // "manual" one); the runtime's is per-run and spans every door. One name
+    // each way, translated at the boundary rather than aliased on both sides.
+    trigger: trigger === "manual" ? "manual" : "schedule",
     metadata: {
       source: "automation",
       automationId: automation.id,
@@ -553,7 +567,7 @@ export function createDirectExecutor(
 
     try {
       const data = await taskFn({
-        ...buildRequest(automation, ctx),
+        ...buildRequest(automation, trigger, ctx),
         signal: runController.signal,
       });
       const run = mapResultToRun(automation, startedAt, data);

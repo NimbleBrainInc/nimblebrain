@@ -8,6 +8,7 @@ import type { UserIdentity } from "../identity/provider.ts";
 import type { ProvidersConfig } from "../model/registry.ts";
 import type { NotificationsPollConfig } from "../notifications/poll-config.ts";
 import type { TokenUsage } from "../usage/types.ts";
+import type { RunTrigger } from "./run-spec.ts";
 
 /** Model slot configuration. Each slot maps to a provider:model-id string. */
 export interface ModelSlots {
@@ -412,6 +413,16 @@ export interface ChatResult {
 export interface TaskRequest {
   /** The task description. Goes in as the user message. */
   prompt: string;
+  /**
+   * What woke the agent. `schedule` is an automations cron tick, `manual` an
+   * operator pressing Run now; the default `api` covers a caller driving the
+   * runtime directly (embedded, CLI, evals). `chat` is not reachable here —
+   * that trigger has its own door.
+   *
+   * The door stamps it on the run's `agent.turn` span, which is where a
+   * scheduled run is told apart from an operator's one after the fact.
+   */
+  trigger?: Exclude<RunTrigger, "chat">;
   /**
    * Identity the task runs under. Resolution mirrors `ChatRequest.identity`:
    * if an identity provider is configured, this MUST be set; in dev mode
