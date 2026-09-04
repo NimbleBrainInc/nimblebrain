@@ -38,6 +38,7 @@ import { validateAdditionalAuthorizationParams } from "../util/oauth-params.ts";
 import { isHttpUrl } from "../util/url.ts";
 import { canWriteWorkspaceScoped } from "../workspace/authz.ts";
 import type { Workspace } from "../workspace/types.ts";
+import { type CredentialRef, isCredentialRef } from "./credential-ref.ts";
 import type { CredentialStore } from "./credential-store.ts";
 import type { InProcessTool } from "./in-process-app.ts";
 import { hasMcpOAuthTokens } from "./mcp-oauth-records.ts";
@@ -1786,6 +1787,34 @@ interface BrokeredWiring {
 }
 
 /**
+ * Check an operator-authored `secretHeaders` block before it becomes transport
+ * config: every value must be a `{ ref: "credential", key }` pointer.
+ *
+ * A literal here would be a secret at rest in a catalog file, which is the copy
+ * the credential store exists to remove — so it is refused rather than passed
+ * through. Refusing at install (and naming the header) beats dropping the entry
+ * silently: a connection missing the header reaches the service and fails there,
+ * where the cause is a driver error rather than a catalog typo.
+ */
+function validateSecretHeaders(
+  entryName: string,
+  secretHeaders: Record<string, CredentialRef> | undefined,
+): { headers?: Record<string, CredentialRef> } | { error: string } {
+  if (!secretHeaders) return {};
+  for (const [name, value] of Object.entries(secretHeaders)) {
+    if (!isCredentialRef(value)) {
+      return {
+        error:
+          `"${entryName}" declares secretHeaders["${name}"] as something other than ` +
+          'a credential reference. Every value must be { ref: "credential", key } — ' +
+          "a catalog entry names the secret, it never carries one.",
+      };
+    }
+  }
+  return { headers: secretHeaders };
+}
+
+/**
  * Cheap up-front entry-shape validation. Two kinds of entry have their
  * security-critical fields re-resolved from the SERVER-trusted catalog by id,
  * with the caller's discarded:
@@ -1820,7 +1849,20 @@ async function validateRemoteOAuthInstall(
         error: `"${entry.name}" is not a recognized platform connector — refusing a provider-auth install from an unverified entry.`,
       };
     }
-    return { action: { ...action, url: trusted.url, providerAuth: trusted.providerAuth } };
+    const secretHeaders = validateSecretHeaders(entry.name, trusted.secretHeaders);
+    if ("error" in secretHeaders) return secretHeaders;
+    return {
+      action: {
+        ...action,
+        url: trusted.url,
+        providerAuth: trusted.providerAuth,
+        // Read back from the trusted entry, never the caller's: the header NAME
+        // decides what a fleet-trusted connection sends, and the key decides
+        // which of the workspace's secrets it sends. A forged pair is a workspace
+        // admin choosing both.
+        ...(secretHeaders.headers ? { secretHeaders: secretHeaders.headers } : {}),
+      },
+    };
   }
   if (isBrokeredAuthKind(action.auth)) {
     const trusted = await ctx.runtime.getConnectorDirectory().catalogById(entry.id);
@@ -1987,6 +2029,13 @@ function buildRemoteBundleRef(
               provider: action.providerAuth.provider,
               config: action.providerAuth.config,
             },
+            // The workspace's own secrets, as references. They ride alongside the
+            // provider credential rather than replacing it: `auth` is how the
+            // connection proves who is calling, these are what that caller may
+            // open. The transport resolves each one per connection at the
+            // connection's workspace scope, so two workspaces installing this
+            // same entry send different values and a rotation is a `put`.
+            ...(action.secretHeaders ? { headers: action.secretHeaders } : {}),
           }
         : { type: action.transportType }),
     // Post-Stage-2: every ref's oauthScope is "workspace". The install targets
