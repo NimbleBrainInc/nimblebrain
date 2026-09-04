@@ -698,13 +698,14 @@ export class NotificationPoller {
   /**
    * How many outboxes this sweep may read, said once and again on every change.
    *
-   * The summary line's `sources` counts what has actually been read and lands
-   * once every ten minutes, so until two of those windows pass an operator
-   * cannot tell a connector that declares no outbox from one that declares an
-   * outbox the poller cannot see. This answers that on the first sweep after a
-   * boot: `targets=0` alongside a connector known to declare an outbox means
-   * the declaration or the source is not reaching the collector, which is a
-   * different fault from a poller that is reading and finding nothing.
+   * The ten-minute summary already carries this number as `sources` — a state
+   * is created for every due target, and every target is due on its first
+   * sweep — but only as a level, ten minutes late, that an operator has to
+   * diff across two lines to watch move. This says it one poll interval after
+   * a boot, which is when the question gets asked: `targets=0` on a pod where
+   * a connector declaring an outbox is installed means the declaration or its
+   * source is not reaching the collector, and `targets=3` over a quiet inbox
+   * means the outboxes are being read and are empty.
    *
    * Logged on transition rather than per sweep because the count is steady for
    * the life of a pod in the ordinary case, and a line every tick would be
