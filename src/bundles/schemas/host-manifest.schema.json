@@ -101,6 +101,8 @@
         "resource": {
           "type": "string",
           "maxLength": 512,
+          "pattern": "^[a-zA-Z][a-zA-Z0-9+.\\-]*:[^\\s?#]*$",
+          "not": { "pattern": "^(?:skill|ui|instructions|artifact|files|app):" },
           "description": "The outbox resource URI, e.g. \"acme://notifications\". Scheme and path are both the server's own. Three rules bind. It must carry a scheme. It must NOT carry a query string or a fragment, because the host appends {?cursor,maxEvents,maxAgeMs} itself and a server-supplied query would either be overwritten or produce two. And its scheme must not be one the host resolves itself — skill://, ui://, instructions://, artifact://, files://, app:// — because a single resource cannot mean two things to the same reader; such a declaration is refused and the outbox is never polled."
         },
         "description": {
