@@ -3,12 +3,18 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import type { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
-import type { CallToolResult, CreateTaskResult, Task } from "@modelcontextprotocol/sdk/types.js";
+import type {
+  CallToolResult,
+  CreateTaskResult,
+  ServerCapabilities,
+  Task,
+} from "@modelcontextprotocol/sdk/types.js";
 import {
   CallToolResultSchema,
   ListResourcesRequestSchema,
   McpError,
   ReadResourceRequestSchema,
+  ResourceUpdatedNotificationSchema,
   ToolListChangedNotificationSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
@@ -435,6 +441,25 @@ export class McpSource implements ToolSource {
   private readonly toolsChangedListeners = new Set<() => void>();
 
   /**
+   * Listeners notified when the server pushes
+   * `notifications/resources/updated` for a resource this source subscribed
+   * to. The notifications poller registers one and treats it as "read this
+   * outbox now" — a latency hint, never the delivery: the poll runs on its own
+   * cadence whether or not one ever arrives.
+   */
+  private readonly resourceUpdatedListeners = new Set<(uri: string) => void>();
+
+  /**
+   * Resource URIs this source has asked the server to push updates for.
+   *
+   * Kept because a subscription belongs to a *connection*: an idle-close or a
+   * HealthMonitor restart builds a new Client, and the server has no record of
+   * the old one's subscribe. Re-issued after every successful connect, which is
+   * also why the set survives `stop()` — the next `start()` is what re-arms it.
+   */
+  private readonly subscribedResourceUris = new Set<string>();
+
+  /**
    * `eventSink` is REQUIRED, not optional. Emitted events include
    * `tool.progress` during task-augmented calls — when those events reach
    * the runtime sink wrap in `src/api/server.ts`, they turn into SSE
@@ -513,6 +538,9 @@ export class McpSource implements ToolSource {
     // connect so a notification arriving immediately after `initialize` isn't
     // dropped.
     this.registerToolsChangedHandler(this.client);
+    // Same reason, for `resources/updated`: a server that pushes one the
+    // instant it answers `initialize` must not find the handler missing.
+    this.registerResourceUpdatedHandler(this.client);
 
     // Timeout MCP handshake — remote gets shorter timeout (15s vs 30s)
     const CONNECT_TIMEOUT = this.mode.type === "remote" ? 15_000 : 30_000;
@@ -540,6 +568,9 @@ export class McpSource implements ToolSource {
     // and a fresh idle-close right after an out-of-band heal is never wrongly gated.
     this.lastReconnectFailedAt = null;
     this.startedAt = Date.now();
+    // Re-arm resource subscriptions on the new connection. Fire-and-forget:
+    // a hint that fails to re-establish costs latency, never correctness.
+    this.resubscribeResources();
 
     // Now that start has succeeded, wire transport close-detection.
     // Closes from this point on indicate a real mid-session disconnect
@@ -617,7 +648,7 @@ export class McpSource implements ToolSource {
       // execute()'s catch branch — issue #116 root cause #2.
       stdioTransport.onclose = () => this.emitSourceCrashed("Stdio subprocess exited");
     } else if (this.mode.type === "remote") {
-      this.transport = createRemoteTransport(
+      this.transport = await createRemoteTransport(
         this.mode.url,
         this.mode.transportConfig,
         this.mode.authProvider,
@@ -704,12 +735,13 @@ export class McpSource implements ToolSource {
       // `rebuildRemoteTransport`.
       transport.onclose = undefined;
       await this.cleanupOnStartFailure();
-      this.rebuildRemoteTransport();
+      await this.rebuildRemoteTransport();
       this.client = this.buildClient();
       // Re-register inbound host-resources handlers on the rebuilt Client —
       // handler tables don't carry over from the prior instance.
       this.registerBundleHandlers(this.client);
       this.registerToolsChangedHandler(this.client);
+      this.registerResourceUpdatedHandler(this.client);
       // Re-arm crash detection for the retry: cleanupOnStartFailure set
       // `stopping = true` to suppress its own teardown noise; we need it false
       // again before the new transport's onclose can fire usefully. If this
@@ -730,6 +762,7 @@ export class McpSource implements ToolSource {
       // (tracked separately). The right long-term shape is to converge this
       // path onto the bottom seam instead of early-returning.
       this.emitToolsChanged();
+      this.resubscribeResources();
     } catch (retryErr) {
       await this.cleanupOnStartFailure();
       throw retryErr;
@@ -820,11 +853,11 @@ export class McpSource implements ToolSource {
    * Caller must have cleaned up the previous transport via
    * `cleanupOnStartFailure()` first.
    */
-  private rebuildRemoteTransport(): void {
+  private async rebuildRemoteTransport(): Promise<void> {
     if (this.mode.type !== "remote") {
       throw new Error("[mcp-source] rebuildRemoteTransport called on non-remote mode");
     }
-    this.transport = createRemoteTransport(
+    this.transport = await createRemoteTransport(
       this.mode.url,
       this.mode.transportConfig,
       this.mode.authProvider,
@@ -1064,6 +1097,115 @@ export class McpSource implements ToolSource {
     }
   }
 
+  /**
+   * Register the client-side handler for `notifications/resources/updated`.
+   *
+   * Called once per Client lifecycle, beside {@link registerToolsChangedHandler}
+   * and for the same reason: handler tables do not carry across SDK Client
+   * instances, so a source that reconnected would go quiet with nothing to say
+   * it had.
+   *
+   * The handler fans the URI out and does nothing else. What an update *means*
+   * belongs to whoever subscribed — for the notifications poller it means "read
+   * this outbox now", and a handler that decided that here would bind this
+   * transport-level seam to one consumer.
+   */
+  private registerResourceUpdatedHandler(client: Client): void {
+    client.setNotificationHandler(ResourceUpdatedNotificationSchema, (notification) => {
+      const uri = notification.params?.uri;
+      if (typeof uri === "string") this.emitResourceUpdated(uri);
+    });
+  }
+
+  /**
+   * Ask the server to push `notifications/resources/updated` for one URI, and
+   * report whether it will.
+   *
+   * Returns `false` — without sending anything — when the server did not
+   * advertise `resources.subscribe` in its `initialize` result. Declared
+   * capabilities are authoritative per spec, so probing past them would mean
+   * every tools-only server pays a round trip to be told `Method not found`,
+   * once per source per connect.
+   *
+   * Idempotent per URI in the sense that matters: the URI is remembered and
+   * re-subscribed after every reconnect, so a caller subscribes once and the
+   * source keeps the promise across restarts.
+   */
+  async subscribeResourceUpdates(uri: string): Promise<boolean> {
+    if (this.getServerCapabilities()?.resources?.subscribe !== true) return false;
+    const client = this.client;
+    if (!client) return false;
+    try {
+      await client.subscribeResource({ uri });
+    } catch (err) {
+      log.debug(
+        "mcp",
+        `[${this.name}] resources/subscribe(${uri}) failed — ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+      return false;
+    }
+    this.subscribedResourceUris.add(uri);
+    return true;
+  }
+
+  /**
+   * Listen for `notifications/resources/updated`. Returns an unsubscribe
+   * function. The listener receives every subscribed URI this source is pushed,
+   * so a caller watching one resource filters on it.
+   */
+  subscribeResourceUpdated(listener: (uri: string) => void): () => void {
+    this.resourceUpdatedListeners.add(listener);
+    return () => {
+      this.resourceUpdatedListeners.delete(listener);
+    };
+  }
+
+  /**
+   * Re-issue every tracked `resources/subscribe` on a freshly connected client.
+   *
+   * Fire-and-forget by design: a subscription is a latency hint, so failing to
+   * re-establish one costs a slower first read and nothing else. Blocking a
+   * connect on it would let a server's subscribe handler decide whether the
+   * source comes up.
+   */
+  private resubscribeResources(): void {
+    if (this.subscribedResourceUris.size === 0) return;
+    for (const uri of this.subscribedResourceUris) {
+      void this.subscribeResourceUpdates(uri);
+    }
+  }
+
+  /** Fan out a resource-updated signal to subscribers, isolating failures. */
+  private emitResourceUpdated(uri: string): void {
+    for (const listener of this.resourceUpdatedListeners) {
+      try {
+        listener(uri);
+      } catch (err) {
+        log.debug(
+          "mcp",
+          `[${this.name}] resourceUpdated listener threw — ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
+    }
+  }
+
+  /**
+   * Capabilities the server declared in its `initialize` result, or `undefined`
+   * before the handshake completes and after `stop()`.
+   *
+   * Exposed so a caller can honour the spec's rule that declared capabilities
+   * are authoritative — `listResources` already reads them through the client
+   * for exactly that reason — without reaching through {@link getClient}, which
+   * hands out the whole SDK surface for what is one read.
+   */
+  getServerCapabilities(): ServerCapabilities | undefined {
+    return this.client?.getServerCapabilities();
+  }
+
   /** Check if the transport is still connected. */
   isAlive(): boolean {
     return this.transport !== null && this.client !== null && !this.dead;
@@ -1231,11 +1373,13 @@ export class McpSource implements ToolSource {
    * to clients that previously sent `resources/subscribe` for this URI. We
    * do not track subscriber lists here.
    *
-   * In-process servers do not advertise the `resources.subscribe` capability
-   * and register no `resources/subscribe` handler, so nothing subscribes and
-   * the SDK delivers this to no one today. It stays because it is the correct
-   * signal to emit at this seam; whether the host consumes resource updates —
-   * and therefore whether `subscribe` should be served — is an open decision.
+   * The host DOES consume the inbound direction of this signal — see
+   * {@link subscribeResourceUpdates} — but `defineInProcessApp` advertises no
+   * `resources.subscribe` capability and registers no `resources/subscribe`
+   * handler, so a platform built-in emitting one reaches nobody. A source that
+   * wants to be subscribed to builds its own server (the notifications
+   * poller's test fixture does) rather than gaining the capability here, where
+   * every built-in would claim a promise none of them serves.
    *
    * No-op semantics match {@link notifyResourceListChanged}: only meaningful
    * for `inProcess` sources, drops silently between `stop()` and the next

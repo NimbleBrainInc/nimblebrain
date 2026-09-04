@@ -25,6 +25,7 @@ import {
 } from "../../../../src/tools/platform/schemas/notifications.ts";
 import type { McpSource } from "../../../../src/tools/mcp-source.ts";
 import { createNotificationsSource } from "../../../../src/tools/platform/notifications.ts";
+import { resolvePollConfig } from "../../../../src/notifications/poll-config.ts";
 import { runWithRequestContext } from "../../../../src/runtime/request-context.ts";
 import type { Workspace } from "../../../../src/workspace/types.ts";
 
@@ -66,6 +67,22 @@ class FakeRuntime {
   }
   getAutomationsContext() {
     return { definitions: () => new Map(this.automations.map((a) => [a.id, a])) };
+  }
+
+  // The source also builds the outbox poller at construction. With no lifecycle
+  // instances there is nothing for it to read, which is what these tests want:
+  // they are about the settings door, and the loop has its own suite.
+  getLifecycle() {
+    return { getInstances: () => [] };
+  }
+  async getNotificationsDeclaration() {
+    return undefined;
+  }
+  getNotificationsPollConfig() {
+    return resolvePollConfig();
+  }
+  getNotificationStore() {
+    throw new Error("these tests write no notifications");
   }
 
   seed(role: "admin" | "member"): void {

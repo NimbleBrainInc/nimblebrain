@@ -109,7 +109,7 @@ describe("registration happens at the composition root", () => {
     const { createRemoteTransport } = await import("../../src/tools/remote-transport.ts");
     registerComposioCredentialProvider();
 
-    const transport = createRemoteTransport(
+    const transport = await createRemoteTransport(
       new URL("https://composio.test/mcp"),
       composioTransportConfig(LEGACY_AUTH),
       undefined,
@@ -132,14 +132,14 @@ describe("registration happens at the composition root", () => {
 
     // The end-to-end path a boot-start takes: persisted legacy ref → forward map
     // → transport. Previously threw "provider \"composio\" is not registered".
-    expect(() =>
+    await expect(
       createRemoteTransport(
         new URL("https://composio.test/mcp"),
         composioTransportConfig(LEGACY_AUTH),
         undefined,
         {},
       ),
-    ).not.toThrow();
+    ).resolves.toBeDefined();
   });
 });
 
@@ -192,8 +192,8 @@ describe("the transport's own SSRF posture, not just the URL gate's", () => {
   // gate; this covers the transport's.
   const IN_CLUSTER = "http://composio-session.mcp-shared.svc.cluster.local/mcp";
 
-  function guardedFetchFor(provider: string): (u: string) => Promise<unknown> {
-    const transport = createRemoteTransport(new URL(IN_CLUSTER), {
+  async function guardedFetchFor(provider: string): Promise<(u: string) => Promise<unknown>> {
+    const transport = await createRemoteTransport(new URL(IN_CLUSTER), {
       type: "streamable-http",
       auth: { type: "provider", provider, config: {} },
     } as never);
@@ -206,6 +206,7 @@ describe("the transport's own SSRF posture, not just the URL gate's", () => {
     process.env.COMPOSIO_API_KEY = "k_env";
     registerComposioCredentialProvider();
 
-    await expect(guardedFetchFor("composio")(IN_CLUSTER)).rejects.toThrow(/HTTPS|http/i);
+    const guarded = await guardedFetchFor("composio");
+    await expect(guarded(IN_CLUSTER)).rejects.toThrow(/HTTPS|http/i);
   });
 });

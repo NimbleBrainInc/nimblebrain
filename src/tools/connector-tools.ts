@@ -37,6 +37,7 @@ import { ensureHooks, stopWatchingHooks } from "../hooks/reconcile.ts";
 import type { ConnectorOwner } from "../identity/connector-owner.ts";
 import { IdentityConnectorStore } from "../identity/connector-store.ts";
 import type { UserIdentity } from "../identity/provider.ts";
+import { clearCursor } from "../notifications/cursors.ts";
 import { log } from "../observability/log.ts";
 import type { PermissionOwner } from "../permissions/permission-store.ts";
 import type { ConnectorCatalogEntry } from "../registries/projection.ts";
@@ -46,7 +47,7 @@ import { validateAdditionalAuthorizationParams } from "../util/oauth-params.ts";
 import { isHttpUrl } from "../util/url.ts";
 import { canWriteWorkspaceScoped } from "../workspace/authz.ts";
 import type { Workspace } from "../workspace/types.ts";
-import { FileCredentialStore } from "./credential-store.ts";
+import type { CredentialStore } from "./credential-store.ts";
 import type { InProcessTool } from "./in-process-app.ts";
 import { McpSource } from "./mcp-source.ts";
 import type { Tool, ToolSource } from "./types.ts";
@@ -215,6 +216,9 @@ export function createManageConnectorsTool(ctx: ManageConnectorsContext): InProc
             "list_personal_catalog",
             "grant_connector",
             "revoke_connector",
+            "set_secret",
+            "delete_secret",
+            "list_secret_keys",
           ],
           description: "Action to perform.",
         },
@@ -263,6 +267,16 @@ export function createManageConnectorsTool(ctx: ManageConnectorsContext): InProc
           description:
             "For connect_api_key: map of the connector's declared Composio field key → value (e.g. api_key, subdomain); handed to Composio and never persisted by the platform.",
           additionalProperties: { type: "string" },
+        },
+        key: {
+          type: "string",
+          description:
+            'Credential-store key (required for set_secret and delete_secret). Dotted-namespace form, e.g. `acme.db_url`. This is the name a connector\'s config references with `{ ref: "credential", key }`.',
+        },
+        value: {
+          type: "string",
+          description:
+            "The secret (set_secret only). Stored in the workspace credential store and never returned by any action — `list_secret_keys` reports keys and timestamps only. Setting an existing key replaces it, which is how a key is rotated.",
         },
       },
       required: ["action"],
@@ -324,6 +338,12 @@ export function createManageConnectorsTool(ctx: ManageConnectorsContext): InProc
           return handleGrantConnector(ctx, args.callerId, args.serverName, args.grantTargetWsId);
         case "revoke_connector":
           return handleRevokeConnector(ctx, args.callerId, args.serverName, args.grantTargetWsId);
+        case "set_secret":
+          return handleSetSecret(ctx, args.wsId, args.identity, args.key, args.value);
+        case "delete_secret":
+          return handleDeleteSecret(ctx, args.wsId, args.identity, args.key);
+        case "list_secret_keys":
+          return handleListSecretKeys(ctx, args.wsId, args.identity);
         default:
           return errResult(`Unknown action "${args.action}".`);
       }
@@ -357,6 +377,15 @@ interface DispatchArgs {
   installWsId: string | undefined;
   /** Explicit grant/revoke target workspace (input `wsId`, no header fallback). */
   grantTargetWsId: string | null;
+  /** Credential-store key for the secret actions. */
+  key: string;
+  /**
+   * Secret value for `set_secret`. NOT trimmed here: leading/trailing
+   * whitespace can be part of a secret, and the one thing a store must not do is
+   * quietly hand back something other than what was set. `set_secret` rejects a
+   * value that is *only* whitespace instead.
+   */
+  value: string;
 }
 
 /** Coerce the raw tool input + request context into typed dispatch args. */
@@ -397,6 +426,8 @@ function resolveDispatchArgs(
       input.wsId !== undefined && String(input.wsId).trim() !== ""
         ? String(input.wsId).trim()
         : null,
+    key: str(input.key).trim(),
+    value: str(input.value),
   };
 }
 
@@ -462,12 +493,15 @@ async function handleListDirectory(
   // per static-auth entry) on every load — N+1 and growing with the
   // catalog.
   const ws = wsId ? await ctx.runtime.getWorkspaceStore().get(wsId) : null;
-  const credStore = wsId ? new FileCredentialStore(ctx.runtime.getWorkDir()) : null;
+  const credStore = wsId ? ctx.runtime.getCredentialStore() : null;
   const isOperatorConfigured =
     wsId && ws && credStore
       ? async (catalogId: string, clientSecretKey: string): Promise<boolean> => {
           if (!ws.oauthOperatorApps?.[catalogId]?.clientId) return false;
-          const secret = await credStore.get(wsId, clientSecretKey);
+          const secret = await credStore.get({ kind: "workspace", wsId }, clientSecretKey, {
+            caller: "connector-tools:list_directory",
+            purpose: "report whether operator OAuth setup is complete",
+          });
           return secret !== null;
         }
       : undefined;
@@ -587,7 +621,7 @@ interface InstalledEntryDeps {
    *  catalog match, rather than one disk read per installed connector. */
   ws: Workspace | null;
   registry: ReturnType<Runtime["getRegistryForWorkspace"]>;
-  credStore: FileCredentialStore;
+  credStore: CredentialStore;
   catalogByUrl: Map<string, ConnectorCatalogEntry>;
   catalogById: Map<string, ConnectorCatalogEntry>;
   resolveUserLabel: (userId: string) => Promise<string | undefined>;
@@ -683,7 +717,7 @@ async function applyRemoteConnectionState(
   ref: BundleRef,
   url: string,
   cat: ConnectorCatalogEntry | undefined,
-  credStore: FileCredentialStore,
+  credStore: CredentialStore,
   wsId: string,
 ): Promise<void> {
   entry.url = url;
@@ -694,7 +728,11 @@ async function applyRemoteConnectionState(
   if (conn?.lastError) entry.lastError = conn.lastError;
   const oauthClient = (ref as { oauthClient?: { clientSecret?: { key: string } } }).oauthClient;
   if (oauthClient?.clientSecret) {
-    const wrapped = await credStore.get(wsId, oauthClient.clientSecret.key);
+    // A presence probe, not a use: `get` without a `reveal` writes no audit line.
+    const wrapped = await credStore.get({ kind: "workspace", wsId }, oauthClient.clientSecret.key, {
+      caller: "connector-tools:list_installed",
+      purpose: "report whether operator OAuth setup is complete",
+    });
     if (!wrapped) entry.missingOperatorSetup = true;
   }
 }
@@ -819,8 +857,7 @@ async function handleListInstalled(
   onlyServerName?: string,
 ): Promise<ToolResult> {
   const lifecycle = ctx.runtime.getLifecycle();
-  const workDir = ctx.runtime.getWorkDir();
-  const credStore = new FileCredentialStore(workDir);
+  const credStore = ctx.runtime.getCredentialStore();
   // One directory instance per request — its memoized `servers()`
   // means catalogByUrl + catalogByIdMap share a single fetch even
   // though they're called separately. Reaching for the lookup tables
@@ -2087,8 +2124,11 @@ async function loadStaticOAuthClient(
       __err: `"${entry.name}" needs operator setup before install. Configure the OAuth app at ${setup.portalUrl} and use Set up.`,
     };
   }
-  const credStore = new FileCredentialStore(ctx.runtime.getWorkDir());
-  const secret = await credStore.get(wsId, setup.clientSecretKey);
+  const credStore = ctx.runtime.getCredentialStore();
+  const secret = await credStore.get({ kind: "workspace", wsId }, setup.clientSecretKey, {
+    caller: "connector-tools:install",
+    purpose: `verify operator client_secret is seeded for ${entry.name}`,
+  });
   if (!secret) {
     return {
       __err: `Operator client_secret for "${entry.name}" is missing — re-run Set up to seed it.`,
@@ -2441,6 +2481,12 @@ async function handleUninstall(
     // one. It is what keeps a later reinstall from resurrecting a key id whose
     // URL has been in the wild the whole time.
     await revokeHooksForConnector(ctx.runtime.getWorkspaceStore(), wsId, serverName);
+    // And reset the outbox position. The cursor is the emitting server's own
+    // opaque value, carrying an epoch it may reset while the connector is gone,
+    // so a reinstall resuming from a stale one would ask a question its outbox
+    // can no longer answer. Bootstrap costs only what was emitted while nobody
+    // was installed to receive it.
+    await clearCursor(ctx.runtime.getWorkspaceStore(), wsId, serverName);
     // And drop the tool-set watch, whose closure would otherwise hold a source
     // nothing routes to any more.
     stopWatchingHooks(wsId, serverName);
@@ -3108,9 +3154,13 @@ async function handleSetupOperator(
   // back. The reverse case (workspace.json fails after the credential
   // landed) needs explicit rollback so we don't leave an orphan
   // secret pointing at a clientId that was never recorded.
-  const credStore = new FileCredentialStore(ctx.runtime.getWorkDir());
-  const hadPriorSecret = (await credStore.get(wsId, clientSecretKey)) !== null;
-  await credStore.put(wsId, clientSecretKey, clientSecret.trim());
+  const credStore = ctx.runtime.getCredentialStore();
+  const hadPriorSecret =
+    (await credStore.get({ kind: "workspace", wsId }, clientSecretKey, {
+      caller: "connector-tools:setup_operator",
+      purpose: "decide whether a failed workspace.json write may roll the secret back",
+    })) !== null;
+  await credStore.put({ kind: "workspace", wsId }, clientSecretKey, clientSecret.trim());
 
   // Stamp the public clientId + audit trail into workspace.json.
   const apps: NonNullable<Workspace["oauthOperatorApps"]> = { ...(ws.oauthOperatorApps ?? {}) };
@@ -3139,7 +3189,7 @@ async function persistOperatorApp(
   ctx: ManageConnectorsContext,
   wsId: string,
   apps: NonNullable<Workspace["oauthOperatorApps"]>,
-  credStore: FileCredentialStore,
+  credStore: CredentialStore,
   clientSecretKey: string,
   hadPriorSecret: boolean,
 ): Promise<void> {
@@ -3148,7 +3198,7 @@ async function persistOperatorApp(
   } catch (err) {
     if (!hadPriorSecret) {
       try {
-        await credStore.delete(wsId, clientSecretKey);
+        await credStore.delete({ kind: "workspace", wsId }, clientSecretKey);
       } catch {
         // best-effort
       }
@@ -3211,13 +3261,121 @@ async function handleRemoveOperatorSetup(
 
   const clientSecretKey = entry.operatorSetup?.clientSecretKey;
   if (clientSecretKey) {
-    const credStore = new FileCredentialStore(ctx.runtime.getWorkDir());
-    await credStore.delete(wsId, clientSecretKey).catch(() => {});
+    const credStore = ctx.runtime.getCredentialStore();
+    await credStore.delete({ kind: "workspace", wsId }, clientSecretKey).catch(() => {});
   }
 
   return {
     content: textContent(`Removed OAuth app config for "${entry.name}".`),
     structuredContent: { ok: true, catalogId },
+    isError: false,
+  };
+}
+
+// ── Workspace secrets ───────────────────────────────────────────────
+//
+// The operator surface on the credential store's WORKSPACE scope: seed a key,
+// remove one, list what is set. Instance scope is deliberately absent — those
+// are the deployment's own keys (LLM providers, brokers, the IdP) and belong to
+// whoever can edit `nimblebrain.json` or reach the CLI, not to a workspace admin
+// with a chat session.
+//
+// No action returns a value, ever. `list_secret_keys` answers "is it set, and
+// when was it last written" because that is the whole of what an operator needs
+// to know a reference will resolve; returning the secret would put every
+// workspace's keys one tool call from a conversation transcript.
+
+/** Resolve and admin-gate the workspace a secret action targets. */
+async function requireSecretAdmin(
+  ctx: ManageConnectorsContext,
+  wsId: string | null,
+  identity: UserIdentity | null,
+  verb: string,
+): Promise<{ wsId: string } | ToolResult> {
+  if (!wsId) return errResult("Workspace context required.");
+  if (!identity) return errResult("Authentication required.");
+  const ws = await ctx.runtime.getWorkspaceStore().get(wsId);
+  if (!ws) return errResult(`Workspace "${wsId}" not found.`);
+  if (!isWorkspaceAdmin(ws, identity)) {
+    return {
+      content: textContent(`Workspace admin role required to ${verb} workspace secrets.`),
+      structuredContent: { error: "permission_denied" },
+      isError: true,
+    };
+  }
+  return { wsId };
+}
+
+/**
+ * `set_secret` — write a workspace secret, creating or replacing it.
+ *
+ * Replacing is the rotation path: a `put` on the same key is picked up by the
+ * next connection that resolves a reference to it, with no config edit and no
+ * restart. So there is no separate `rotate_secret` action; there is nothing for
+ * it to do that this does not.
+ */
+async function handleSetSecret(
+  ctx: ManageConnectorsContext,
+  wsId: string | null,
+  identity: UserIdentity | null,
+  key: string,
+  value: string,
+): Promise<ToolResult> {
+  const gate = await requireSecretAdmin(ctx, wsId, identity, "set");
+  if ("content" in gate) return gate;
+  if (!key) return errResult("key is required.");
+  if (value.trim() === "") {
+    return errResult(
+      "value is required. To remove a secret use delete_secret — storing a blank " +
+        "value would make a reference resolve to an empty header instead of failing.",
+    );
+  }
+  try {
+    await ctx.runtime.getCredentialStore().put({ kind: "workspace", wsId: gate.wsId }, key, value);
+  } catch (err) {
+    return errResult(err instanceof Error ? err.message : String(err));
+  }
+  return {
+    content: textContent(`Stored secret "${key}".`),
+    structuredContent: { ok: true, key },
+    isError: false,
+  };
+}
+
+/** `delete_secret` — remove a workspace secret. Idempotent; absent is not an error. */
+async function handleDeleteSecret(
+  ctx: ManageConnectorsContext,
+  wsId: string | null,
+  identity: UserIdentity | null,
+  key: string,
+): Promise<ToolResult> {
+  const gate = await requireSecretAdmin(ctx, wsId, identity, "delete");
+  if ("content" in gate) return gate;
+  if (!key) return errResult("key is required.");
+  try {
+    await ctx.runtime.getCredentialStore().delete({ kind: "workspace", wsId: gate.wsId }, key);
+  } catch (err) {
+    return errResult(err instanceof Error ? err.message : String(err));
+  }
+  return {
+    content: textContent(`Removed secret "${key}".`),
+    structuredContent: { ok: true, key },
+    isError: false,
+  };
+}
+
+/** `list_secret_keys` — which keys this workspace has set, and when each was written. */
+async function handleListSecretKeys(
+  ctx: ManageConnectorsContext,
+  wsId: string | null,
+  identity: UserIdentity | null,
+): Promise<ToolResult> {
+  const gate = await requireSecretAdmin(ctx, wsId, identity, "list");
+  if ("content" in gate) return gate;
+  const keys = await ctx.runtime.getCredentialStore().list({ kind: "workspace", wsId: gate.wsId });
+  return {
+    content: textContent(`${keys.length} secret${keys.length === 1 ? "" : "s"} set.`),
+    structuredContent: { keys },
     isError: false,
   };
 }

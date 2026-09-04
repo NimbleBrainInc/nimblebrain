@@ -57,10 +57,36 @@ export interface NotificationRoute {
   deliver: NotificationDeliverTarget[];
 }
 
-/** The `notifications` block on a workspace record. */
+/**
+ * The `notifications` block on a workspace record.
+ *
+ * Two halves with different authors and one home. `sources` and `routes` are
+ * the operator's, written from the settings surface. `cursors` is the poller's,
+ * written on its own schedule.
+ *
+ * They share this type rather than sitting in two blocks because they share a
+ * record, and `WorkspaceStore.update` replaces a patched field whole: a writer
+ * that re-derived only its own half would persist an empty one for the other.
+ * One type, one reader ({@link readNotificationsConfig}), one writer
+ * ({@link updateNotificationsConfig}) — so neither half can drop the other's.
+ */
 export interface WorkspaceNotificationsConfig {
   sources?: Record<string, NotificationSourceSetting>;
   routes?: NotificationRoute[];
+  /**
+   * Where the poller has read up to in each connector's outbox, keyed by the
+   * connector's MCP source name.
+   *
+   * The value is the emitting server's own opaque cursor: the runtime hands it
+   * back verbatim on the next read and never parses, compares or synthesizes
+   * one. An absent entry means "never read", which is the bootstrap — a first
+   * read with no cursor returns no events and establishes the position — so
+   * dropping a cursor loses nothing and replays nothing.
+   *
+   * Not operator-facing: it is machine state, and the settings surface neither
+   * shows nor edits it. See `src/notifications/cursors.ts`.
+   */
+  cursors?: Record<string, string>;
 }
 
 /** Longest serialized `input` one tool target may carry. */
@@ -89,6 +115,7 @@ export function readNotificationsConfig(
   return {
     ...(readSources(block.sources) ? { sources: readSources(block.sources) } : {}),
     ...(readRoutes(block.routes) ? { routes: readRoutes(block.routes) } : {}),
+    ...(readCursors(block.cursors) ? { cursors: readCursors(block.cursors) } : {}),
   };
 }
 
@@ -254,6 +281,23 @@ function readSources(raw: unknown): Record<string, NotificationSourceSetting> | 
     const level = (entry as { maxLevel?: unknown }).maxLevel;
     if (typeof level !== "string" || !isLevel(level)) continue;
     out[source] = { maxLevel: level };
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+/**
+ * The stored cursors, dropping any entry that is not a non-empty string.
+ *
+ * A cursor the runtime cannot hand back verbatim is not a position: sending it
+ * would ask the server a question in a shape it never issued, and dropping it
+ * bootstraps that connector instead, which loses nothing it had.
+ */
+function readCursors(raw: unknown): Record<string, string> | undefined {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const out: Record<string, string> = {};
+  for (const [source, cursor] of Object.entries(raw as Record<string, unknown>)) {
+    if (typeof cursor !== "string" || cursor.length === 0) continue;
+    out[source] = cursor;
   }
   return Object.keys(out).length > 0 ? out : undefined;
 }

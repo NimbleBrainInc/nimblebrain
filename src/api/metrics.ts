@@ -483,3 +483,88 @@ export function recordLlmUsage(
       usage.outputTokens,
     );
 }
+
+// ---------------------------------------------------------------------------
+// Notifications — the outbox poll.
+//
+// The poll is a standing cost the runtime pays on a tenant's behalf, so these
+// answer "what does it cost" rather than "what did it carry": duration, how
+// often a read had to revive an idle-closed transport first, and how often the
+// budget pushed work to the next tick. `source` is the connector's MCP source
+// name, bucketed through the same `SAFE_SOURCE` guard the crash counter uses,
+// so a malformed name cannot mint an unbounded series. No workspace label —
+// one pod per tenant, and a workspace label would be client-unbounded.
+// ---------------------------------------------------------------------------
+
+/** Envelopes read off a connector's outbox and admitted by the parser. */
+export const notificationsPulledTotal = new Counter({
+  name: "nb_notifications_pulled_total",
+  help: "Notification envelopes pulled from a connector's outbox, by source.",
+  labelNames: ["source"] as const,
+  registers: [metricsRegistry],
+});
+
+/**
+ * Wall-clock of one outbox read, including any on-demand reconnect it had to
+ * do first. Buckets run out to 30s because a poll that had to re-`initialize`
+ * a remote connector is the slow case this exists to make visible.
+ */
+export const notificationsPollSeconds = new Histogram({
+  name: "nb_notifications_poll_seconds",
+  help: "Duration of one notification outbox read, in seconds.",
+  labelNames: ["source"] as const,
+  buckets: [0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30],
+  registers: [metricsRegistry],
+});
+
+/**
+ * Polls that found the transport torn down and revived it before reading.
+ *
+ * The sizing rule in the notifications design budgets three edge requests per
+ * poll on the assumption that a reconnect costs `initialize` + `initialized` +
+ * the read. A rate near zero means the assumption is pessimistic and the
+ * budget can be widened; a rate near one means idle-close is the steady state.
+ */
+export const notificationsPollReconnectsTotal = new Counter({
+  name: "nb_notifications_poll_reconnects_total",
+  help: "Outbox polls that had to reconnect a torn-down transport first, by source.",
+  labelNames: ["source"] as const,
+  registers: [metricsRegistry],
+});
+
+/**
+ * Sources a tick left unpolled because the workspace's poll budget was spent.
+ *
+ * Unlabelled by source deliberately: deferral is a property of the workspace's
+ * budget, and the sources it defers rotate, so attributing it to whichever one
+ * happened to be last in the rotation would read as a fault of that connector.
+ */
+export const notificationsPollDeferredTotal = new Counter({
+  name: "nb_notifications_poll_deferred_total",
+  help: "Outbox polls deferred to a later tick because the workspace poll budget was spent.",
+  registers: [metricsRegistry],
+});
+
+/**
+ * Polls answered `truncated: true` — the outbox dropped undelivered events to
+ * stay under its row cap, so the inbox has a hole. Any nonzero rate is a real
+ * data-loss signal and belongs on a dashboard next to the emitting server's
+ * own cap metric.
+ */
+export const notificationsTruncatedTotal = new Counter({
+  name: "nb_notifications_truncated_total",
+  help: "Outbox polls that reported a gap (truncated), by source.",
+  labelNames: ["source"] as const,
+  registers: [metricsRegistry],
+});
+
+/**
+ * The `source` label for one connector, bucketed to "other" when the name is
+ * not one the label charset admits. Exported so every notification metric
+ * sanitizes identically — `SAFE_SOURCE` is the same guard `recordBundleCrash`
+ * applies, and two copies of that decision is how one call site comes to mint
+ * the unbounded series the guard exists to prevent.
+ */
+export function notificationSourceLabel(source: string | undefined): string {
+  return source && SAFE_SOURCE.test(source) ? source : "other";
+}

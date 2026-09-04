@@ -1,5 +1,6 @@
 import { readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { resolveInstanceCredentialRefs } from "../tools/instance-credentials.ts";
 
 const INSTANCE_FILE = "instance.json";
 
@@ -220,7 +221,12 @@ export async function loadInstanceConfig(workDir: string): Promise<InstanceConfi
     throw new Error(`instance.json: failed to parse JSON in ${filePath}`);
   }
 
-  return validateInstanceConfig(raw);
+  // Dereference credential references BEFORE validation: `apiKey` and its
+  // neighbours are validated as strings, so a `{ ref: "credential", key }`
+  // reaching the validator would be rejected as a mistyped field rather than
+  // resolved. Same instance scope and same rule as `nimblebrain.json` — any
+  // string field here may be a reference instead.
+  return validateInstanceConfig(await resolveInstanceCredentialRefs(raw));
 }
 
 /**

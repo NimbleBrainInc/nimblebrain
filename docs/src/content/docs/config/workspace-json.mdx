@@ -63,6 +63,9 @@ In dev mode (no [`instance.json`](/config/instance-json/), no auth configured) t
     "sources": {
       "acme": { "maxLevel": "attention" }
     },
+    "cursors": {
+      "acme": "eyJlIjoiZXBfMDFqOCIsImQiOjQyfQ"
+    },
     "routes": [
       {
         "id": "rt_9f3c1a0b7d24",
@@ -82,6 +85,8 @@ In dev mode (no [`instance.json`](/config/instance-json/), no auth configured) t
 ```
 
 `createdBy` is the identity a route dispatches under — its workspace membership, its connector grants, its audit trail. The runtime stamps it from whoever saved the route; it is refused if a caller supplies it, and there is no field for delivering as anybody else. A route whose author is no longer a member is skipped rather than dispatched as nobody.
+
+The block also carries a third key, `cursors`, which is **not** operator configuration: it is where the [outbox poll](/config/nimblebrain-json/#notifications) recorded how far it has read in each connector's outbox, one opaque server-issued token per connector. Nothing edits it by hand, and the settings surface neither shows nor touches it. Deleting an entry is safe but pointless — the next read starts from "now" rather than replaying, and uninstalling a connector removes its entry for you.
 
 ## Workspace isolation
 
