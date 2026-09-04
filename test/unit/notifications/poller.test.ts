@@ -12,7 +12,7 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { NoopEventSink } from "../../../src/adapters/noop-events.ts";
 import { readCursor, writeCursor } from "../../../src/notifications/cursors.ts";
 import { resolvePollConfig } from "../../../src/notifications/poll-config.ts";
@@ -509,5 +509,64 @@ describe("the update hint", () => {
     await Bun.sleep(20);
 
     expect(outbox.subscriptions).toEqual([]);
+  });
+});
+
+describe("the target count line", () => {
+  /** Every `[notifications] targets=` line written while `run` executed. */
+  async function targetLines(run: () => Promise<void>): Promise<string[]> {
+    const lines: string[] = [];
+    const spy = spyOn(console, "error").mockImplementation((...args: unknown[]) => {
+      const line = String(args[0]);
+      if (line.includes("targets=")) lines.push(line);
+    });
+    try {
+      await run();
+    } finally {
+      spy.mockRestore();
+    }
+    return lines;
+  }
+
+  test("says the count on the first sweep, including when it is zero", async () => {
+    const poller = pollerOver([]);
+    const lines = await targetLines(() => poller.sweep());
+
+    // A poller that selects nothing is otherwise silent until the ten-minute
+    // summary, which is two windows too late to tell "nothing declared" from
+    // "declared and invisible".
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain("targets=0");
+  });
+
+  test("repeats only on a change", async () => {
+    const outbox = await fixture();
+    let targets: PollTarget[] = [];
+    const poller = new NotificationPoller({
+      targets: async () => targets,
+      storeFor,
+      workspaceStore,
+      config: resolvePollConfig(),
+      now: () => clock,
+    });
+    teardown.push(async () => poller.stop());
+
+    const lines = await targetLines(async () => {
+      await poller.sweep();
+      // A steady fleet is the ordinary case; a line per tick would be noise.
+      advance(PAST_ANY_BACKOFF_MS);
+      await poller.sweep();
+      targets = [targetFor(outbox)];
+      advance(PAST_ANY_BACKOFF_MS);
+      await poller.sweep();
+      targets = [];
+      advance(PAST_ANY_BACKOFF_MS);
+      await poller.sweep();
+    });
+
+    expect(lines).toHaveLength(3);
+    expect(lines[0]).toContain("targets=0");
+    expect(lines[1]).toContain("targets=1");
+    expect(lines[2]).toContain("targets=0");
   });
 });

@@ -188,6 +188,8 @@ export class NotificationPoller {
   #sweeping = false;
   #stopped = false;
   #lastSummaryAt = 0;
+  /** Targets the last sweep found, so only a change in the count is logged. */
+  #lastTargetCount: number | null = null;
   /** Counters for the periodic summary line, reset when it is logged. */
   #pulledSinceSummary = 0;
   #reconnectsSinceSummary = 0;
@@ -248,6 +250,7 @@ export class NotificationPoller {
     this.#sweeping = true;
     try {
       const targets = await this.#deps.targets();
+      this.#noteTargetCount(targets.length);
       const byWorkspace = groupByWorkspace(targets);
       this.#budget.prune(new Set(byWorkspace.keys()));
       this.#pruneStates(targets);
@@ -690,6 +693,27 @@ export class NotificationPoller {
   #defer(count: number): void {
     notificationsPollDeferredTotal.inc(count);
     this.#deferredSinceSummary += count;
+  }
+
+  /**
+   * How many outboxes this sweep may read, said once and again on every change.
+   *
+   * The summary line's `sources` counts what has actually been read and lands
+   * once every ten minutes, so until two of those windows pass an operator
+   * cannot tell a connector that declares no outbox from one that declares an
+   * outbox the poller cannot see. This answers that on the first sweep after a
+   * boot: `targets=0` alongside a connector known to declare an outbox means
+   * the declaration or the source is not reaching the collector, which is a
+   * different fault from a poller that is reading and finding nothing.
+   *
+   * Logged on transition rather than per sweep because the count is steady for
+   * the life of a pod in the ordinary case, and a line every tick would be
+   * noise nobody reads.
+   */
+  #noteTargetCount(count: number): void {
+    if (count === this.#lastTargetCount) return;
+    this.#lastTargetCount = count;
+    log.info(`[notifications] targets=${count}`);
   }
 
   /**

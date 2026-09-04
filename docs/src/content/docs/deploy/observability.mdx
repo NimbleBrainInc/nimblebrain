@@ -139,6 +139,8 @@ Both are per-process and hold their state in memory, so both carry the same prer
   `replicas: 1` is the supported topology for both loops. At `replicas > 1` each pod would run its own copy: the revalidator would re-probe connections whose state another pod owns, and the poller would read every outbox once per pod and race the same stored cursor. Making either safe needs per-tenant leader election, which is not built. Keep the platform at a single replica — the same conclusion the [session store](#multi-replica-session-storage) reaches for its own reasons.
 </Aside>
 
+To confirm the poller found anything after a restart, look for `[notifications] targets=N` — it is logged on the first sweep and again whenever the count changes, so `targets=0` on a pod where an app declaring an outbox is installed means the declaration is not reaching the poller, which is a different fault from an outbox that is being read and is empty.
+
 ## Health and readiness probes
 
 The platform serves a liveness/readiness endpoint at `GET /v1/health`. It is unauthenticated and returns the build identity plus the state of each installed bundle:
