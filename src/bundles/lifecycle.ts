@@ -22,7 +22,7 @@ import {
 import { personalConnectorWireName } from "../tools/identity-sources.ts";
 import { hasMcpOAuthTokens, McpOAuthRecords } from "../tools/mcp-oauth-records.ts";
 import { McpSource } from "../tools/mcp-source.ts";
-import { ToolRegistry } from "../tools/registry.ts";
+import { SharedSourceRef, ToolRegistry } from "../tools/registry.ts";
 import type { ToolSource } from "../tools/types.ts";
 import { WorkspaceOAuthProvider } from "../tools/workspace-oauth-provider.ts";
 import { validateAdditionalAuthorizationParams } from "../util/oauth-params.ts";
@@ -56,6 +56,9 @@ import type {
   BundleUiMeta,
   ConnectorSkillLockEntry,
 } from "./types.ts";
+
+/** What an unbound lifecycle reads: no workspace has a registry. */
+const NO_WORKSPACE_REGISTRIES: ReadonlyMap<string, ToolRegistry> = new Map();
 
 /** Manifest-derived metadata `seedInstance` accepts for a bundle it is seeding,
  *  running or not. */
@@ -715,7 +718,7 @@ export class BundleLifecycleManager {
     wsId: string,
     principalId: string,
     newState: ConnectionState,
-    opts?: { authorizationUrl?: string; lastError?: string; source?: McpSource | null },
+    opts?: { authorizationUrl?: string; lastError?: string },
   ): void {
     // Release the OAuth-flow coalesce slot on any TERMINAL transition — ABOVE the
     // instance lookup so an instance removed mid-flight (uninstall / re-key) still
@@ -739,7 +742,6 @@ export class BundleLifecycleManager {
     const next: Connection = {
       principalId,
       state: newState,
-      source: opts?.source !== undefined ? opts.source : (existing?.source ?? null),
       // Authorization URL is only meaningful while pending_auth — clear it
       // on any other transition so a stale URL can't leak into /initiate.
       authorizationUrl:
@@ -953,7 +955,7 @@ export class BundleLifecycleManager {
     // Wire the new source into the workspace registry BEFORE start so
     // any tool call during the flow finds it (and gets a "starting" /
     // "pending_auth" structured error instead of "no source").
-    const registry = this.registriesByWs.get(wsId);
+    const registry = this.workspaceRegistries().get(wsId);
     // `teardownConnectionSource` above already dropped any prior source under
     // this name, so the name is free and the eviction half of `adoptSource` is
     // not what this call is for. What it IS for is the return value: `false`
@@ -979,9 +981,7 @@ export class BundleLifecycleManager {
           "retry the connection",
       );
     }
-    this.recordConnectionStateChange(serverName, wsId, principalId, "starting", {
-      source,
-    });
+    this.recordConnectionStateChange(serverName, wsId, principalId, "starting");
 
     // Arm interactive OAuth for THIS user-initiated start only. The
     // `interactiveAuthAllowed` flag gates whether a start may drive a browser
@@ -1243,7 +1243,6 @@ export class BundleLifecycleManager {
       });
       await this.teardownConnectionSource(serverName, wsId, principalId);
       this.recordConnectionStateChange(serverName, wsId, principalId, "not_authenticated", {
-        source: null,
         authorizationUrl: undefined,
       });
       return {
@@ -1274,7 +1273,6 @@ export class BundleLifecycleManager {
     await this.teardownConnectionSource(serverName, wsId, principalId);
 
     this.recordConnectionStateChange(serverName, wsId, principalId, "not_authenticated", {
-      source: null,
       authorizationUrl: undefined,
     });
 
@@ -1307,45 +1305,65 @@ export class BundleLifecycleManager {
           "Stage 2 cut the legacy user-scope path.",
       );
     }
-    const instance = this.instances.get(`${serverName}|${wsId}`);
-    const conn = instance?.connections?.get(principalId);
-    if (conn?.source) {
-      try {
-        await conn.source.stop();
-      } catch (err) {
-        // Best-effort: a failing stop shouldn't block the teardown
-        // (we're going to drop the source anyway). Surface for
-        // operator visibility — a stuck-source pattern is worth
-        // catching even if individual occurrences are benign.
-        log.warn(
-          `[lifecycle] source.stop() failed for ${serverName}|${wsId}|${principalId}: ${
-            err instanceof Error ? err.message : String(err)
-          }`,
-        );
-      }
-    }
-    const registry = this.registriesByWs.get(wsId);
+    // `removeSource` calls `stop()` on the way out, so the registry entry is
+    // both the handle and the teardown. There is no second reference to stop.
+    const registry = this.workspaceRegistries().get(wsId);
     if (registry?.hasSource(serverName)) {
       await registry.removeSource(serverName);
     }
   }
 
   /**
-   * Map of `wsId` → `ToolRegistry` for the workspace. Required so
-   * `startAuth` / `disconnect` can wire workspace-scope sources into the
-   * registry without callers having to thread the registry through every
-   * lifecycle entry point. Set once at platform boot via
-   * `setWorkspaceRegistries`; never mutated afterward.
+   * The live `McpSource` behind one workspace connection, or `null`.
+   *
+   * The registry is where a source lives — this reads it back through the same
+   * `(wsId, serverName)` key the connection record carries, so a consumer never
+   * holds a reference across a reconnect. `adoptSource` replaces the entry
+   * wholesale when a source is re-established (boot self-heal, Reconnect,
+   * `tryRecoverSource`), and a reference captured before that points at the
+   * stopped predecessor.
+   *
+   * `null` distinguishes two cases a caller usually wants to treat alike and
+   * must not confuse with a bad state: the workspace has no registry (a
+   * lifecycle constructed outside `Runtime.start`), or the name resolves to
+   * nothing — an install whose eager start failed, an uninstall in flight.
+   * Neither is a reason to start anything here; a source's own recovery
+   * machinery owns that.
    */
-  private readonly registriesByWs = new Map<string, ToolRegistry>();
+  connectionSource(serverName: string, wsId: string): McpSource | null {
+    const source = this.workspaceRegistries().get(wsId)?.getSource(serverName);
+    const unwrapped = source instanceof SharedSourceRef ? source.unwrap() : source;
+    return unwrapped instanceof McpSource ? unwrapped : null;
+  }
+
+  /**
+   * The runtime's `wsId` → `ToolRegistry` map, **asked for on every read**.
+   * Required so `startAuth` / `disconnect` / `connectionSource` can reach a
+   * workspace's sources without callers having to thread the registry through
+   * every lifecycle entry point.
+   *
+   * A registry is added to that map whenever a workspace is provisioned
+   * (`Runtime.ensureWorkspaceRegistry`), including long after boot, so what
+   * the lifecycle needs is the map the runtime holds *now*. Neither a copy of
+   * its contents nor a reference captured at wiring time is that: each is a
+   * second thing to keep equal to the first, and a workspace the lifecycle
+   * cannot see is one whose connectors are never polled and never torn down.
+   *
+   * Asking is the same rule `connectionSource` applies one level down —
+   * resolve at the point of use and there is nothing to go stale. Unbound
+   * until `bindWorkspaceRegistries`: a lifecycle constructed outside
+   * `Runtime.start` reads an empty map and answers "no registry" everywhere.
+   */
+  private workspaceRegistries: () => ReadonlyMap<string, ToolRegistry> = () =>
+    NO_WORKSPACE_REGISTRIES;
 
   /**
    * Map of `userId` → `ToolRegistry` holding that user's started personal
-   * connectors — the owner-keyed sibling of `registriesByWs`. Reuses the same
+   * connectors — the owner-keyed sibling of `workspaceRegistries`. Reuses the same
    * `ToolRegistry` type and `startBundleSource` path; only the owner (identity)
    * and credential root (`users/<userId>/...`) differ. Created lazily on first
    * `getIdentityConnectorSource` for a user, per-pod in-memory (same clustering
-   * posture as `registriesByWs`).
+   * posture as `workspaceRegistries`).
    */
   private readonly registriesByUser = new Map<string, ToolRegistry>();
 
@@ -1382,7 +1400,7 @@ export class BundleLifecycleManager {
    *
    * Per-pod by design, and correct under `replicas > 1` — do NOT move it
    * to Redis/`SessionRegistry`. It guards a per-pod in-memory registry
-   * repair: `registriesByWs` is process-local and its sources are
+   * repair: a workspace registry is process-local and its sources are
    * process-bound transports (see the "MCP Session Architecture" two-layer
    * model — transports "never serialize, never share across processes").
    * A source missing from this pod's registry says nothing about another
@@ -1401,14 +1419,17 @@ export class BundleLifecycleManager {
   private static readonly RECOVERY_COOLDOWN_MS = 30_000;
 
   /**
-   * Wire the per-workspace registries map. Called once by `Runtime.start`
-   * after the workspace bundle boot loop has constructed the registries.
-   * Allows `startAuth` (workspace-scope) to add/remove sources without
+   * Bind the lifecycle to the runtime's per-workspace registries. Called once
+   * by `Runtime.start` after the workspace bundle boot loop has constructed
+   * them. Allows `startAuth` (workspace-scope) to add/remove sources without
    * the route handler having to thread a registry argument.
+   *
+   * Takes an accessor rather than the map so that what the runtime holds and
+   * what the lifecycle reads cannot be two different things — see
+   * `workspaceRegistries`.
    */
-  setWorkspaceRegistries(registries: Map<string, ToolRegistry>): void {
-    this.registriesByWs.clear();
-    for (const [wsId, registry] of registries) this.registriesByWs.set(wsId, registry);
+  bindWorkspaceRegistries(resolve: () => ReadonlyMap<string, ToolRegistry>): void {
+    this.workspaceRegistries = resolve;
   }
 
   /**
@@ -1474,7 +1495,7 @@ export class BundleLifecycleManager {
    * failures; callers should decide whether to swallow or surface.
    */
   async ensureSourceRegistered(serverName: string, wsId: string, workDir: string): Promise<void> {
-    const wsRegistry = this.registriesByWs.get(wsId);
+    const wsRegistry = this.workspaceRegistries().get(wsId);
     if (!wsRegistry) {
       throw new Error(`[lifecycle] no registry for workspace "${wsId}"`);
     }
@@ -1884,7 +1905,7 @@ export class BundleLifecycleManager {
    * of `UnknownToolSource` and a vanished connector.
    */
   async tryRecoverSource(serverName: string, wsId: string, workDir: string): Promise<boolean> {
-    const wsRegistry = this.registriesByWs.get(wsId);
+    const wsRegistry = this.workspaceRegistries().get(wsId);
     if (!wsRegistry) return false;
     // Liveness, not membership. A boot-failed source stays REGISTERED so it
     // remains visible and HealthMonitor can heal it — so `hasSource` would say

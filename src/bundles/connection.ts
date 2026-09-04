@@ -1,4 +1,3 @@
-import type { McpSource } from "../tools/mcp-source.ts";
 import type { BundleState } from "./types.ts";
 
 /**
@@ -50,21 +49,31 @@ export const WORKSPACE_PRINCIPAL_ID = "_workspace";
 export type ConnectionState = BundleState;
 
 /**
- * Operational state for one (bundle, principal) tuple. Owns the McpSource
- * that holds the Client, Transport, and auth provider for this principal.
+ * Operational state for one (bundle, principal) tuple.
  *
  * The Connection is the unit that transitions through OAuth states
  * (starting → pending_auth → running). The BundleInstance.state is a
  * summary derived from the connection map — for workspace-scoped bundles
  * (only mode in Step 1) it equals the single Connection's state.
+ *
+ * **A Connection records state; it does not hold the handle.** The McpSource
+ * lives in the workspace's `ToolRegistry`, addressed by the same
+ * `(wsId, serverName)` this record is already keyed on, and a consumer that
+ * needs it asks `BundleLifecycleManager.connectionSource`. Holding a second
+ * reference here would be a copy governed by nothing: a source is replaced
+ * wholesale on every reconnect (`adoptSource` swaps the registry entry and
+ * stops the predecessor), and every path that records a state would have to
+ * remember to re-record the pointer too.
+ *
+ * So `running` means one thing: this principal's credential is good and its
+ * source is registered. Whether the transport is up this instant is a separate
+ * question, and the registry answers it.
  */
 export interface Connection {
   /** Principal id this Connection authenticates as. WORKSPACE_PRINCIPAL_ID for workspace-scope. */
   principalId: string;
   /** Current state. Updated by lifecycle, never directly by the McpSource. */
   state: ConnectionState;
-  /** The MCP Client/Transport for this principal. Null while uninitialized. */
-  source: McpSource | null;
   /**
    * Authorization URL to send the user's browser to. Populated only while
    * `state === "pending_auth"`. Read by `/v1/mcp-auth/initiate` to issue

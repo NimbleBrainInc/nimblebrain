@@ -5,6 +5,8 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { BundleLifecycleManager } from "../../src/bundles/lifecycle.ts";
 import type { BundleInstance, BundleRef } from "../../src/bundles/types.ts";
 import type { EngineEvent, EventSink } from "../../src/engine/types.ts";
+import { McpSource } from "../../src/tools/mcp-source.ts";
+import { ToolRegistry } from "../../src/tools/registry.ts";
 import {
   installTestCredentialStore,
   resetTestCredentialStore,
@@ -153,10 +155,20 @@ describe("BundleLifecycleManager.disconnect — symmetric teardown", () => {
     ).rejects.toThrow(/missing URL ref/);
   });
 
-  test("transitions Connection to not_authenticated and emits state_changed", async () => {
+  test("transitions Connection to not_authenticated, drops the source, emits state_changed", async () => {
     const instance = seedInstance(lifecycle, "granola", "ws_test", "workspace", {
       url: "https://example.test/mcp",
     });
+    const registry = new ToolRegistry();
+    registry.addSource(
+      new McpSource(
+        "granola",
+        { type: "remote", url: new URL("https://example.test/mcp") },
+        sink,
+      ),
+    );
+    const registries = new Map([["ws_test", registry]]);
+    lifecycle.bindWorkspaceRegistries(() => registries);
     lifecycle.recordConnectionStateChange("granola", "ws_test", "_workspace", "running");
     sink.events = [];
 
@@ -164,13 +176,15 @@ describe("BundleLifecycleManager.disconnect — symmetric teardown", () => {
     // the network revoke is a no-op and the local delete is best-effort
     // idempotent. We don't assert on those return fields here (they're
     // exercised in workspace-oauth-provider.test.ts); we care about the
-    // lifecycle's own contract: state transition + source teardown.
+    // lifecycle's own contract: state transition + source teardown. The
+    // registry is where the source lives, so its emptiness IS the teardown —
+    // there is no second reference on the connection to check.
     await lifecycle.disconnect("granola", "ws_test", "_workspace", {
       workDir: "/tmp/nb-test-disconnect",
     });
 
     expect(instance.connections!.get("_workspace")!.state).toBe("not_authenticated");
-    expect(instance.connections!.get("_workspace")!.source).toBeNull();
+    expect(lifecycle.connectionSource("granola", "ws_test")).toBeNull();
 
     const stateEvents = sink.byType("connection.state_changed");
     expect(stateEvents.length).toBeGreaterThanOrEqual(1);
