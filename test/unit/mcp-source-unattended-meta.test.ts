@@ -16,7 +16,7 @@
 import { describe, expect, it } from "bun:test";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import type { EventSink } from "../../src/engine/types.ts";
-import { UNATTENDED_META_KEY } from "../../src/engine/types.ts";
+import { SKILL_ACTIVATED_META_KEY, UNATTENDED_META_KEY } from "../../src/engine/types.ts";
 import { runWithRequestContext } from "../../src/runtime/request-context.ts";
 import { McpSource } from "../../src/tools/mcp-source.ts";
 
@@ -33,12 +33,14 @@ interface Harness {
  * `execute()` resolves without a live `start()`; no `execution` field keeps it
  * on the inline (non-task) dispatch path.
  */
-function buildSource(resultMeta?: Record<string, unknown>): Harness {
-  const source = new McpSource(
-    "crm",
-    { type: "stdio", spawn: { command: "echo", args: [], env: {} } },
-    noopSink,
-  );
+function buildSource(
+  resultMeta?: Record<string, unknown>,
+  mode: ConstructorParameters<typeof McpSource>[1] = {
+    type: "stdio",
+    spawn: { command: "echo", args: [], env: {} },
+  },
+): Harness {
+  const source = new McpSource("crm", mode, noopSink);
 
   let captured: Record<string, unknown> | undefined;
   const fakeClient = {
@@ -117,5 +119,21 @@ describe("McpSource — the unattended marker on the way in", () => {
     );
 
     expect(result._meta).toEqual({});
+  });
+
+  // The reach that separates this key from the skill markers. Theirs is
+  // conditioned on crossing a real transport, because the in-process `nb` source
+  // legitimately emits one; this one asserts something about the CALLER, which
+  // no source is in a position to claim, so the strip has no `inProcess` guard.
+  // Adding one here would let the platform's own source forge a provenance.
+  it("strips it from an in-process source too, while a skill marker survives", async () => {
+    const { source } = buildSource(
+      { [UNATTENDED_META_KEY]: "route:echoed", [SKILL_ACTIVATED_META_KEY]: "soul" },
+      { type: "inProcess", createServer: async () => { throw new Error("unused"); } },
+    );
+
+    const result = await source.execute("search", {});
+
+    expect(result._meta).toEqual({ [SKILL_ACTIVATED_META_KEY]: "soul" });
   });
 });
