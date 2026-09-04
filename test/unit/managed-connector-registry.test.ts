@@ -288,18 +288,33 @@ describe("smithery baseUrl validation", () => {
   });
 });
 
-describe("Composio asserts authConfigId at its own boundary", () => {
-  it("throws when the seam omits it — the field the seam made optional", async () => {
+describe("Composio reads its own nouns out of the opaque catalog block", () => {
+  it("rejects a block with no toolkit — the kernel never looks inside", async () => {
     process.env.COMPOSIO_API_KEY = "k_test";
     _resetComposioConfigForTest();
 
     const provider = buildManagedConnectorRegistry().get("composio");
-    // `authConfigId` is optional at the seam because Smithery has no such
-    // concept. Composio requires one, so it must reject the omission itself —
-    // without this the vendor call would bind a toolkit to `undefined`.
     await expect(
-      provider?.createSession({ userId: "ws_01abc", toolkit: "gmail" }),
-    ).rejects.toThrow(/requires an authConfigId/);
+      provider?.createSession({ userId: "ws_01abc", connectorId: "com.google/gmail", config: {} }),
+    ).rejects.toThrow(/missing a `toolkit`/);
+  });
+
+  it("requires an auth config id for the toolkit — a coordinate only Composio has", async () => {
+    process.env.COMPOSIO_API_KEY = "k_test";
+    _resetComposioConfigForTest();
+
+    const provider = buildManagedConnectorRegistry().get("composio");
+    // The seam carries no `authConfigId`: a provider that keys a session on a
+    // server slug alone has no such concept. Composio resolves and requires one
+    // at its own boundary — without this the vendor call would bind a toolkit to
+    // `undefined`.
+    await expect(
+      provider?.createSession({
+        userId: "ws_01abc",
+        connectorId: "com.google/gmail",
+        config: { toolkit: "gmail" },
+      }),
+    ).rejects.toThrow(/auth config id for the "gmail" toolkit/);
   });
 });
 

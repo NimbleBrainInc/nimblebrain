@@ -1,12 +1,6 @@
 import { mcpAuthCallbackUrl } from "../api/routes/mcp-auth.ts";
-import {
-  type ComposioConnection,
-  hasPersistedComposioConnection,
-  readComposioConnection,
-  saveComposioConnection,
-} from "../bundles/composio-connection.ts";
+import { brokeredRef } from "../bundles/brokered.ts";
 import { WORKSPACE_PRINCIPAL_ID } from "../bundles/connection.ts";
-import { brokeredRef } from "../bundles/connection-probe.ts";
 import { sanitizePlacements } from "../bundles/defaults.ts";
 import {
   deriveServerName,
@@ -15,21 +9,18 @@ import {
   slugifyServerName,
 } from "../bundles/paths.ts";
 import { startBundleSource } from "../bundles/startup.ts";
-import type { BundleInstance, BundleRef, RemoteTransportConfig } from "../bundles/types.ts";
-import {
-  composioAuthConfigId,
-  validateComposioConfig,
-} from "../connectors/providers/composio/config.ts";
-import { COMPOSIO_CREDENTIAL_PROVIDER } from "../connectors/providers/composio/transport-credential.ts";
+import type {
+  BrokeredRef,
+  BundleInstance,
+  BundleRef,
+  RemoteTransportConfig,
+} from "../bundles/types.ts";
+import { brokeredCatalogConfig, isBrokeredAuthKind } from "../connectors/auth-kind.ts";
 import type {
   ManagedConnectorProvider,
   ManagedSession,
 } from "../connectors/providers/managed-provider.ts";
-import { SMITHERY_CREDENTIAL_PROVIDER } from "../connectors/providers/smithery/transport-credential.ts";
-import {
-  type ComposioConnectorConfig,
-  connectorSkillIdentityFrom,
-} from "../connectors/server-detail.ts";
+import { connectorSkillIdentityFrom } from "../connectors/server-detail.ts";
 import { textContent } from "../engine/content-helpers.ts";
 import { INTERNAL_TOOL_ANNOTATION, type ToolResult } from "../engine/types.ts";
 import { HookContractError, revokeHooksForConnector } from "../hooks/provisioning.ts";
@@ -84,33 +75,53 @@ export interface ManageConnectorsContext {
 }
 
 /**
- * The registered Composio managed-connector provider, or undefined when
- * Composio isn't configured. All Composio dispatch (userId derivation, session
- * create, API-key connect, connected-account delete) routes through this — the
- * tool never imports `sdk.ts` directly, so the vendor stays behind the seam.
+ * The managed-connector provider that owns `auth`, or undefined when `auth` is
+ * runtime-native or no provider is registered for it.
+ *
+ * ONE lookup for every brokered vendor. All brokered dispatch — userId
+ * derivation, session create, API-key connect, teardown, boot-state — routes
+ * through the provider this returns, so the tool layer imports no vendor module
+ * and gains no arm when a provider is added.
  */
-function composioProvider(ctx: ManageConnectorsContext): ManagedConnectorProvider | undefined {
-  return ctx.runtime.getManagedConnectorRegistry().get("composio");
+function providerFor(
+  ctx: ManageConnectorsContext,
+  auth: string,
+): ManagedConnectorProvider | undefined {
+  if (!isBrokeredAuthKind(auth)) return undefined;
+  return ctx.runtime.getManagedConnectorRegistry().get(auth);
 }
-
-/** Error surfaced when a Composio dispatch arm is reached but no Composio provider is registered. */
-const COMPOSIO_NOT_CONFIGURED = "Composio integration is not configured.";
 
 /**
- * The registered Smithery managed-connector provider, or undefined when
- * Smithery isn't configured. Smithery dispatch (userId derivation, session
- * create) routes through this — the tool never imports the Connect client
- * directly, so the broker stays behind the seam.
+ * Whether a connector with this auth kind can install on the identity plane.
+ *
+ * The rule is a capability, not a vendor list: DCR, or a brokered connector
+ * whose provider brokers an interactive connect (`initiate`) and can therefore
+ * complete auth for one user. `static` reads a workspace-scoped operator secret
+ * and `provider` mints a platform credential; both are workspace/platform-bound,
+ * and their identity variants are a separate slice.
+ *
+ * The install gate and the picker's filter both call this, so they cannot drift.
  */
-function smitheryProvider(ctx: ManageConnectorsContext): ManagedConnectorProvider | undefined {
-  return ctx.runtime.getManagedConnectorRegistry().get("smithery");
+function identityInstallableAuth(ctx: ManageConnectorsContext, auth: string): boolean {
+  return auth === "dcr" || providerFor(ctx, auth)?.initiate !== undefined;
 }
 
-/** Error surfaced when a Smithery dispatch arm is reached but no Smithery provider is registered. */
-const SMITHERY_NOT_CONFIGURED =
-  "Smithery integration is not configured. Set SMITHERY_API_KEY in the platform env, " +
-  "declare connectors.providers.smithery.namespace, " +
-  "and restart the API.";
+/**
+ * The operator-facing message for a brokered connector whose provider this
+ * deployment has not configured. Names the config path generically because it
+ * IS generic: every provider's block is `connectors.providers.<id>`.
+ */
+function brokerNotConfiguredMessage(entryName: string, auth: string): string {
+  // Every provider resolves its settings from `connectors.providers.<id>` and
+  // its credential from `<ID>_API_KEY` as the one env fallback (see
+  // `providers/registry.ts`), so naming both is generic, not a per-vendor case.
+  const envVar = `${auth.toUpperCase().replace(/[^A-Z0-9]/g, "_")}_API_KEY`;
+  return (
+    `"${entryName}" is brokered by "${auth}", which is not configured on this platform. ` +
+    `Declare connectors.providers.${auth} in nimblebrain.json (or set ${envVar} in the ` +
+    "platform env) and restart the API."
+  );
+}
 
 /** Inputs to {@link deriveConnectorStatus}. Subset of InstalledEntry's
  *  shape so the helper has a small, testable surface. */
@@ -865,9 +876,9 @@ async function handleListInstalled(
   // construction concern inside the facade.
   const directory = ctx.runtime.getConnectorDirectory();
   const catalogByUrl = await directory.catalogByUrl();
-  // O(1) catalog lookups for composio-backed bundles whose persisted
-  // `ref.url` is a per-install Composio session URL and therefore
-  // misses `catalogByUrl`. Built once per request.
+  // O(1) catalog lookups for brokered bundles whose persisted `ref.url` is a
+  // per-install session URL and therefore misses `catalogByUrl`. Built once per
+  // request.
   const catalogById = await directory.catalogByIdMap();
   const installed: InstalledEntry[] = [];
 
@@ -1110,16 +1121,16 @@ async function personalConnectorCollisionGuard(
  * PERSONAL connector on the caller's own identity (`users/<id>/connectors.json`),
  * not into any workspace. The identity-plane sibling of `handleInstallRemoteOAuth`.
  *
- * DCR and composio install here. `dcr` (standard dynamic-client-registration
- * OAuth) authenticates via the interactive Connect flow
- * (`POST /v1/mcp-auth/initiate-identity` → `startIdentityAuth`). `composio` binds
- * the Composio-side identity to the caller (`{type:"user"}`, not a workspace) and
- * connects via `POST /v1/composio-auth/initiate-identity`; its only owner-scoped
- * state is the `composioUserId` + an opaque `connectedAccountId` (the API key is
- * platform-global). `static` reads an operator client secret from the workspace
- * credential store and `provider` carries a platform/fleet auth class — both
- * workspace/platform-bound and rejected here (their identity variants are a
- * separate slice).
+ * DCR and interactive-connect brokered connectors install here. `dcr` (standard
+ * dynamic-client-registration OAuth) authenticates via the interactive Connect
+ * flow (`POST /v1/mcp-auth/initiate-identity` → `startIdentityAuth`). A brokered
+ * connector binds the broker-side identity to the caller (`{type:"user"}`, not a
+ * workspace); its only owner-scoped state is the provider's namespaced user id
+ * plus an opaque connection pointer (the broker credential is platform-global),
+ * and the connect round-trip runs through the provider's own callback routes.
+ * `static` reads an operator client secret from the workspace credential store
+ * and `provider` carries a platform/fleet auth class — both workspace/platform-
+ * bound and rejected here (their identity variants are a separate slice).
  */
 async function handleInstallIdentity(
   ctx: ManageConnectorsContext,
@@ -1137,23 +1148,37 @@ async function handleInstallIdentity(
     );
   }
 
-  // Gate: only DCR + composio install on the identity plane today. Fail fast
-  // before any wiring (a composio session, a static credential read, a provider
-  // re-resolve) for an auth type we reject here anyway. static/provider are
-  // workspace/platform-bound.
-  if (entry.install.auth !== "dcr" && entry.install.auth !== "composio") {
+  // Gate: a personal connector must be one the CALLER can complete a connect
+  // for. That is DCR, or a brokered connector whose provider brokers an
+  // interactive connect (`initiate`) — the capability, not a vendor name, so a
+  // third provider that brokers OAuth qualifies without editing this line and
+  // one that does not (Smithery, whose setup lives on its own hosted page) is
+  // refused. `static` reads a workspace-scoped operator secret and `provider`
+  // mints a platform credential; both are workspace/platform-bound. Fail fast,
+  // before any wiring.
+  // An unconfigured broker is a deploy problem, not an unsupported plane —
+  // say which before the capability gate turns it into "not supported here".
+  const brokerProvider = providerFor(ctx, entry.install.auth);
+  if (isBrokeredAuthKind(entry.install.auth) && !brokerProvider) {
+    return errResult(brokerNotConfiguredMessage(entry.name, entry.install.auth));
+  }
+  if (!identityInstallableAuth(ctx, entry.install.auth)) {
     return errResult(
       `"${entry.name}" uses "${entry.install.auth}" auth, which isn't supported for personal ` +
-        `connectors yet — only standard OAuth (DCR) and Composio connectors can install on your ` +
-        `identity today. Install it into a shared workspace instead.`,
+        `connectors yet — only standard OAuth (DCR) and brokered connectors that support an ` +
+        `interactive connect can install on your identity today. Install it into a shared ` +
+        `workspace instead.`,
     );
   }
 
-  // The gate above narrowed to dcr|composio. `validateComposioInstall` (below)
-  // covers the composio prerequisites; static/provider — the only other things
-  // `validateRemoteOAuthInstall` checks — are already rejected. The action shape
-  // is validated upstream by `parseDirectoryEntry`.
-  const action = entry.install;
+  // `validateRemoteOAuthInstall` re-resolves a brokered entry's block from the
+  // trusted catalog — the same bound the workspace path applies, and the reason
+  // the caller's own block never reaches `createSession`. static/provider are
+  // already rejected above. The action shape is validated upstream by
+  // `parseDirectoryEntry`.
+  const validated = await validateRemoteOAuthInstall(ctx, entry, entry.install);
+  if ("error" in validated) return errResult(validated.error);
+  const action = validated.action;
 
   const serverName = slugifyServerName(entry.id);
 
@@ -1175,10 +1200,10 @@ async function handleInstallIdentity(
 
   // Idempotency (identity side): if this connector is already installed on the
   // caller's identity, short-circuit BEFORE any wiring — a re-install must not
-  // mint a fresh Composio session and orphan the prior one. The workspace path
+  // mint a fresh brokered session and orphan the prior one. The workspace path
   // guards the same way (`handleDuplicateInstall`, before `resolveInstallWiring`).
   // `add` upserts, so the record survives either way; this just defers the
-  // session-create and keeps the contract idempotent (composio and DCR alike).
+  // session-create and keeps the contract idempotent (brokered and DCR alike).
   const existing = await new IdentityConnectorStore({
     workDir: ctx.runtime.getWorkDir(),
   }).get(callerId, serverName);
@@ -1208,40 +1233,31 @@ async function handleInstallIdentity(
   // catalog by id, never the caller's entry (a forged entry can't inject chrome).
   const trustedUi = (await ctx.runtime.getConnectorDirectory().catalogById(entry.id))?.ui;
 
-  // Resolve install wiring, owner-generic. DCR carries none (no session, no client
-  // secret). Composio creates the upstream session bound to the caller's identity
-  // (`{type:"user"}`, not a workspace) and returns the per-install session URL +
-  // a transport naming the `composio` credential provider — the same wiring the
-  // workspace path builds via `resolveInstallWiring`, owner-swapped.
-  let composioWiring: BrokeredWiring | undefined;
-  if (action.auth === "composio") {
-    const composioErr = validateComposioInstall(action, entry.name);
-    if (composioErr) return errResult(composioErr);
-    const provider = composioProvider(ctx);
-    if (!provider) return errResult(COMPOSIO_NOT_CONFIGURED);
-    const wiring = await buildComposioWiring(
-      provider,
+  // Resolve install wiring, owner-generic. DCR carries none (no session, no
+  // client secret). A brokered connector creates the upstream session bound to
+  // the caller's identity (`{type:"user"}`, not a workspace) and returns the
+  // per-install session URL plus a transport naming its credential provider —
+  // the same wiring the workspace path builds via `resolveInstallWiring`,
+  // owner-swapped.
+  let brokeredWiring: BrokeredWiring | undefined;
+  if (brokerProvider) {
+    const wiring = await buildBrokeredWiring(
+      brokerProvider,
       action,
       { type: "user", userId: callerId },
+      entry.id,
       entry.name,
     );
     if ("__err" in wiring) return errResult(wiring.__err);
-    composioWiring = wiring;
+    brokeredWiring = wiring;
   }
 
   // Strip the `oauthScope: "workspace"` literal `buildRemoteBundleRef` stamps for
   // the workspace path — an identity ref is user-owned structurally, by its
   // location in `connectors.json`, and carries no scope field (see
-  // `IdentityConnectorStore`). The composio marker (`{composio:{connectorId}}`),
-  // when present, rides the ref so the Connect route and list handler key on it.
-  const ref = buildRemoteBundleRef(
-    action,
-    serverName,
-    entry.id,
-    trustedUi,
-    composioWiring,
-    undefined,
-  );
+  // `IdentityConnectorStore`). The brokered marker, when present, rides the ref
+  // so the Connect route and list handler key on it.
+  const ref = buildRemoteBundleRef(action, serverName, trustedUi, brokeredWiring, undefined);
   delete (ref as { oauthScope?: "workspace" }).oauthScope;
 
   // The connector-skill overlay (`syncBoundSkills`) is workspace-keyed; the
@@ -1253,7 +1269,7 @@ async function handleInstallIdentity(
 
   // No eager-start: a connector has no live credentials until the user completes
   // the interactive Connect flow — DCR via `POST /v1/mcp-auth/initiate-identity`
-  // (`startIdentityAuth`), composio via `POST /v1/composio-auth/initiate-identity`.
+  // (`startIdentityAuth`), a brokered one via that provider's own initiate route.
   // Both callbacks start the source into the user registry
   // (`getIdentityConnectorSource`) when the browser returns. Install only persists
   // the record.
@@ -1289,20 +1305,24 @@ async function findSharedWorkspaceInstall(
 }
 
 /**
- * `connect_api_key` — authenticate an already-installed Composio connector
- * whose toolkit uses a non-redirect (API-key) auth scheme. The API-key sibling
- * of the OAuth `/v1/composio-auth/initiate` route: there is no browser
- * redirect, so it's a tool action, not a route (no state cookie, no callback —
- * the two reasons that path stays a route). The web shell renders a form from
- * the connector's declared `composio.fields` and submits the values here.
+ * `connect_api_key` — authenticate an already-installed brokered connector
+ * whose upstream takes a key rather than a browser redirect. The non-redirect
+ * sibling of a provider's OAuth connect route: there is no redirect, so it's a
+ * tool action, not a route (no state cookie, no callback — the two reasons that
+ * path stays a route). The web shell renders a form from the connector's
+ * declared fields and submits the values here.
+ *
+ * The tool owns authorization, source registration and connection state. What
+ * the fields MEAN — which are required, how they reach the broker, what gets
+ * recorded — is the provider's, behind `connectApiKey`.
  *
  * Trust posture (mirrors the OAuth path):
- *  - The connector, its field declarations, and its auth-config env all come
- *    from the SERVER-trusted catalog (`catalogById`), never the caller. The
- *    only caller input is the connectorId and the field *values*.
- *  - Field values are handed to Composio and NEVER persisted by the platform —
- *    `connection.json` keeps only the opaque `connectedAccountId`, exactly like
- *    the OAuth path. We don't custody the user's key.
+ *  - The connector and its field declarations come from the SERVER-trusted
+ *    catalog (`catalogById`), never the caller. The only caller input is the
+ *    connectorId and the field *values*.
+ *  - Field values are handed to the broker and NEVER persisted by the platform —
+ *    the provider keeps only an opaque pointer, exactly like the OAuth path. We
+ *    don't custody the user's key.
  *  - Membership-gated: the workspace-scoped tool routing already authorized the
  *    caller as a member of `wsId` (the same level as the OAuth connect route's
  *    `requireWorkspace`). Install — which widens the workspace surface — is
@@ -1322,50 +1342,24 @@ async function handleConnectApiKey(
   const ws = await ctx.runtime.getWorkspaceStore().get(wsId);
   if (!ws) return errResult(`Workspace "${wsId}" not found.`);
 
-  const connector = await loadComposioApiKeyConnector(ctx, catalogId);
-  if ("error" in connector) return errResult(connector.error);
-  const { entry, composio } = connector;
-
-  // Validate submitted values against the declared fields: every required field
-  // present and non-empty; unknown keys rejected (default-deny). Only declared
-  // keys are forwarded to Composio. This runs before any config gate — field
-  // shape is caller-error, independent of whether the broker is configured.
-  const collected = collectApiKeyFields(composio, catalogId, rawFields);
-  if ("error" in collected) return errResult(collected.error);
-  const { values } = collected;
-
-  // Config gate: resolves the per-connector auth-config id and asserts the
-  // platform broker key is present (the "not configured" surface callers see).
-  const gate = resolveComposioApiKeyCredentials(entry.name, composio);
-  if ("error" in gate) return errResult(gate.error);
-  const { authConfigId } = gate;
-
-  // The key being present means Composio is configured, so the provider is
-  // registered; resolve it for the broker calls. The broker credential is the
-  // provider's own detail — only the per-connector data crosses the seam.
-  const provider = composioProvider(ctx);
-  if (!provider?.connectApiKey) return errResult(COMPOSIO_NOT_CONFIGURED);
-  // Capture the narrowed method now — the intervening awaits below would widen a
-  // property re-read back to optional.
-  const connectApiKey = provider.connectApiKey;
+  const resolved = await resolveApiKeyConnector(ctx, catalogId);
+  if ("error" in resolved) return errResult(resolved.error);
+  const { entry, config, provider, connectApiKey } = resolved;
 
   const serverName = slugifyServerName(catalogId);
   const owner: ConnectorOwner = { type: "workspace", wsId };
-  const userId = provider.userId(owner);
-  const lifecycle = ctx.runtime.getLifecycle();
   const workDir = ctx.runtime.getWorkDir();
+  const brokered: BrokeredRef = { provider: entry.auth, connectorId: catalogId };
+  const lifecycle = ctx.runtime.getLifecycle();
 
-  // Capture any prior connected account up front: it both gates the rotation
-  // case below and is the id we revoke after a successful replace. We can't
-  // adopt-existing like the OAuth path — an API-key re-submit may carry a
-  // rotated key, so the old account is REPLACED, not reused.
-  const prior = await readComposioConnection(workDir, owner, catalogId);
-
-  // Authz: a FIRST connect (no prior) is member-level, matching the OAuth
-  // connect route. But a RE-CONNECT/rotation replaces and revokes the shared
-  // credential every member's agent runs under — destructive like `disconnect`,
-  // which is admin-gated. So gate only the rotation case on workspace admin.
-  if (prior?.connectedAccountId && !isWorkspaceAdmin(ws, identity)) {
+  // Authz: a FIRST connect is member-level, matching the OAuth connect route.
+  // But a RE-CONNECT/rotation replaces and revokes the shared credential every
+  // member's agent runs under — destructive like `disconnect`, which is
+  // admin-gated. So gate only the rotation case on workspace admin. A provider
+  // with no `hasConnection` cannot distinguish the two and gets the member-level
+  // treatment its own connect semantics imply.
+  const alreadyConnected = provider.hasConnection?.({ owner, brokered, workDir }) ?? false;
+  if (alreadyConnected && !isWorkspaceAdmin(ws, identity)) {
     return {
       content: textContent(
         "Workspace admin role required to replace an already-connected connector's credential.",
@@ -1378,31 +1372,29 @@ async function handleConnectApiKey(
   const regError = await registerApiKeySource(lifecycle, serverName, wsId, workDir, ws, catalogId);
   if (regError) return errResult(regError);
 
-  const connected = await performComposioApiKeyConnect(
-    connectApiKey,
-    { userId, authConfigId, fields: values },
-    catalogId,
-    wsId,
-  );
+  let connected: { status: string } | { error: string };
+  try {
+    connected = await connectApiKey({
+      owner,
+      workDir,
+      connectorId: catalogId,
+      config,
+      fields: stringFields(rawFields),
+    });
+  } catch (err) {
+    // A THROW is a broker failure — genericize it so a rejected credential never
+    // echoes back what was submitted. A returned `{ error }` is the provider's
+    // own caller/operator-facing message and passes through verbatim.
+    const msg = err instanceof Error ? err.message : String(err);
+    log.warn(`[connect_api_key] ${entry.auth} connect failed for ${catalogId} in ${wsId}: ${msg}`);
+    return errResult(
+      "Could not connect with the provided credentials. Check the key (and any " +
+        "region / subdomain) and try again.",
+    );
+  }
   if ("error" in connected) return errResult(connected.error);
 
-  const connection: ComposioConnection = {
-    connectedAccountId: connected.connectedAccountId,
-    toolkit: composio.toolkit,
-    userId,
-    connectedAt: new Date().toISOString(),
-    status: connected.status,
-  };
-  await saveComposioConnection(workDir, owner, catalogId, connection);
   lifecycle.recordConnectionStateChange(serverName, wsId, WORKSPACE_PRINCIPAL_ID, "running");
-
-  await revokeReplacedComposioAccount(
-    provider,
-    prior,
-    connected.connectedAccountId,
-    catalogId,
-    wsId,
-  );
 
   return {
     content: textContent(`Connected ${entry.name}.`),
@@ -1411,125 +1403,63 @@ async function handleConnectApiKey(
   };
 }
 
-type ComposioConfig = NonNullable<ConnectorCatalogEntry["composio"]>;
-type ComposioApiKeyFields = NonNullable<ComposioConfig["fields"]>;
+/**
+ * Narrow a wire payload to string values. Anything else is dropped rather than
+ * coerced — the provider validates what remains against its own declaration, and
+ * a non-string arriving where a credential field is expected is a caller bug the
+ * provider's "required" check surfaces by name.
+ */
+function stringFields(raw: Record<string, unknown>): Record<string, string> {
+  const fields: Record<string, string> = {};
+  for (const [k, v] of Object.entries(raw)) {
+    if (typeof v === "string") fields[k] = v;
+  }
+  return fields;
+}
 
 /**
- * Fetch + validate the catalog entry named by `connect_api_key`: it must be a
- * Composio-backed connector whose toolkit uses the non-redirect API-key auth
- * scheme. Returns the narrowed composio block on success.
+ * Resolve everything `connect_api_key` needs about the target: the trusted
+ * catalog entry, the provider that brokers it, its opaque catalog block, and the
+ * provider's narrowed `connectApiKey` arm.
+ *
+ * The arm is captured here rather than re-read at the call site because the
+ * intervening awaits would widen an optional property back to `undefined`.
  */
-async function loadComposioApiKeyConnector(
+async function resolveApiKeyConnector(
   ctx: ManageConnectorsContext,
   catalogId: string,
-): Promise<{ entry: ConnectorCatalogEntry; composio: ComposioConfig } | { error: string }> {
+): Promise<
+  | {
+      entry: ConnectorCatalogEntry;
+      config: Record<string, unknown>;
+      provider: ManagedConnectorProvider;
+      connectApiKey: NonNullable<ManagedConnectorProvider["connectApiKey"]>;
+    }
+  | { error: string }
+> {
   const entry = await ctx.runtime.getConnectorDirectory().catalogById(catalogId);
   if (!entry) return { error: `Connector "${catalogId}" not in catalog.` };
-  if (entry.auth !== "composio" || !entry.composio) {
-    return { error: `Connector "${catalogId}" is not Composio-backed (auth=${entry.auth}).` };
-  }
-  if (entry.composio.authScheme !== "API_KEY") {
+  const config = brokeredCatalogConfig(entry);
+  if (!config) return { error: `Connector "${catalogId}" is not brokered (auth=${entry.auth}).` };
+  const provider = providerFor(ctx, entry.auth);
+  if (!provider) return { error: brokerNotConfiguredMessage(entry.name, entry.auth) };
+  const connectApiKey = provider.connectApiKey;
+  if (!connectApiKey) {
     return {
-      error: `Connector "${catalogId}" does not use API-key auth (authScheme=${
-        entry.composio.authScheme ?? "OAUTH2"
-      }). Use the OAuth connect flow instead.`,
+      error:
+        `"${entry.name}" is brokered by "${entry.auth}", which has no API-key connect. ` +
+        "Use its own Connect flow instead.",
     };
   }
-  return { entry, composio: entry.composio };
+  return { entry, config, provider, connectApiKey };
 }
 
 /**
- * Coerce declared API-key fields to trimmed string values. Every required field
- * must be present and non-empty; blank optional fields are skipped.
- */
-function coerceApiKeyValues(
-  declared: ComposioApiKeyFields,
-  rawFields: Record<string, unknown>,
-): { values: Record<string, string> } | { error: string } {
-  const values: Record<string, string> = {};
-  for (const field of declared) {
-    const raw = rawFields[field.key];
-    const value = typeof raw === "string" ? raw.trim() : "";
-    if (!value) {
-      if (field.required !== false) {
-        return { error: `Field "${field.key}" (${field.title}) is required.` };
-      }
-      continue;
-    }
-    values[field.key] = value;
-  }
-  return { values };
-}
-
-/**
- * Validate submitted API-key values against the connector's declared fields: at
- * least one field declared, unknown keys rejected (default-deny), required
- * fields present. Only declared keys are forwarded to Composio.
- */
-function collectApiKeyFields(
-  composio: ComposioConfig,
-  catalogId: string,
-  rawFields: Record<string, unknown>,
-): { values: Record<string, string> } | { error: string } {
-  const declared = composio.fields ?? [];
-  if (declared.length === 0) {
-    return { error: `Connector "${catalogId}" declares no API-key fields to collect.` };
-  }
-  const declaredKeys = new Set(declared.map((f) => f.key));
-  for (const key of Object.keys(rawFields)) {
-    if (!declaredKeys.has(key)) {
-      return { error: `Unknown field "${key}" for connector "${catalogId}".` };
-    }
-  }
-  return coerceApiKeyValues(declared, rawFields);
-}
-
-/** Operator-facing message for a Composio install attempted with no broker credential configured. */
-function composioUnconfiguredMessage(entryName: string): string {
-  return (
-    `"${entryName}" requires a platform-wide Composio broker credential. Set ` +
-    "connectors.providers.composio.apiKey in nimblebrain.json (or COMPOSIO_API_KEY " +
-    "in the platform env) and restart the API."
-  );
-}
-
-/**
- * Resolve the platform Composio credentials for an API-key connect: the broker
- * credential and the connector's auth-config id, both from the provider config.
- * Missing values are a deploy-time error; surface a clear (non-secret) message.
- */
-function resolveComposioApiKeyCredentials(
-  entryName: string,
-  composio: ComposioConnectorConfig,
-): { apiKey: string; authConfigId: string } | { error: string } {
-  const { apiKey } = validateComposioConfig();
-  if (!apiKey) {
-    return { error: composioUnconfiguredMessage(entryName) };
-  }
-  const authConfigId = composioAuthConfigId(composio.toolkit);
-  if (!authConfigId) {
-    return { error: composioAuthConfigMessage(entryName, composio.toolkit) };
-  }
-  return { apiKey, authConfigId };
-}
-
-/**
- * The operator-facing message for a toolkit with no auth-config id. Names the
- * config path to set, not the internals of how it is resolved.
- */
-function composioAuthConfigMessage(entryName: string, toolkit: string): string {
-  return (
-    `"${entryName}" requires an auth config id for the "${toolkit}" toolkit. ` +
-    "Create the auth config in the Composio dashboard, then set " +
-    `connectors.providers.composio.authConfigs.${toolkit} in nimblebrain.json.`
-  );
-}
-
-/**
- * Bring the MCP source online before connection.json is persisted (the OAuth
- * adopt path's ordering invariant, so boot-state derivation stays honest). A
- * connector with no ref yet has never been installed, so this doubles as the
- * "install first" guard. Returns an error string, or null on success.
+ * Bring the MCP source online before the provider records the connection (the
+ * OAuth adopt path's ordering invariant, so boot-state derivation stays
+ * honest). A connector with no ref yet has never been installed, so this
+ * doubles as the "install first" guard. Returns an error string, or null on
+ * success.
  */
 async function registerApiKeySource(
   lifecycle: ReturnType<Runtime["getLifecycle"]>,
@@ -1556,53 +1486,6 @@ async function registerApiKeySource(
           "Try Disconnect, then Connect again."
       : `Connector "${catalogId}" must be installed before connecting. ` +
           "Install it, then submit the API key.";
-  }
-}
-
-/**
- * Hand the key(s) to Composio and verify the connection reaches ACTIVE. On
- * failure the SDK helper deletes the half-created account; surface a generic
- * message and never echo the submitted values.
- */
-async function performComposioApiKeyConnect(
-  connectApiKey: NonNullable<ManagedConnectorProvider["connectApiKey"]>,
-  params: { userId: string; authConfigId: string; fields: Record<string, string> },
-  catalogId: string,
-  wsId: string,
-): Promise<{ connectedAccountId: string; status: string } | { error: string }> {
-  try {
-    return await connectApiKey(params);
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    log.warn(`[connect_api_key] Composio connect failed for ${catalogId} in ${wsId}: ${msg}`);
-    return {
-      error:
-        "Could not connect with the provided credentials. Check the key (and any " +
-        "region / subdomain) and try again.",
-    };
-  }
-}
-
-/**
- * Rotation cleanup: revoke the account just replaced so a rotated-away key stops
- * being authorized at Composio and orphans don't accumulate. Runs after the new
- * account is persisted. Best-effort — deleteComposioConnectedAccount never
- * throws; on failure the prior key may linger at Composio until removed there.
- */
-async function revokeReplacedComposioAccount(
-  provider: ManagedConnectorProvider,
-  prior: ComposioConnection | null,
-  newAccountId: string,
-  catalogId: string,
-  wsId: string,
-): Promise<void> {
-  if (!prior?.connectedAccountId || prior.connectedAccountId === newAccountId) return;
-  const revoked = (await provider.delete?.(prior.connectedAccountId)) ?? false;
-  if (!revoked) {
-    log.warn(
-      `[connect_api_key] could not revoke the replaced Composio account for ${catalogId} ` +
-        `in ${wsId}; the prior key may remain authorized until removed at Composio`,
-    );
   }
 }
 
@@ -1690,7 +1573,7 @@ function areAdditionalAuthParamsValid(additionalParams: unknown): boolean {
  * dispatcher (the request's active workspace). Every workspace — personal
  * or shared — is a valid target: install, boot-state derivation, and
  * disconnect cleanup are all keyed purely on `wsId`, so the credential
- * layout under `credentials/composio/<connectorId>/` works identically
+ * layout under `credentials/<provider>/<connectorId>/` works identically
  * regardless of the target's `isPersonal` flag. Static-auth entries
  * require operator OAuth client config persisted under
  * `workspace.json#oauthOperatorApps[entry.id]` + the matching
@@ -1707,11 +1590,11 @@ async function handleInstallRemoteOAuth(
   }
 
   // Cheap entry-shape validation up front (fail fast, no IO beyond the catalog
-  // lookup a `provider` install needs). For `provider` entries the security-
-  // critical fields are re-resolved from the server-trusted catalog and the
-  // caller's discarded. The expensive remote work — Composio session create,
-  // operator credential read — is deferred until after the dedup check so a
-  // duplicate-install click doesn't burn an upstream Composio session.
+  // lookup a `provider` or brokered install needs), which also re-resolves those
+  // entries' security-critical fields from the server-trusted catalog. The
+  // expensive remote work — the brokered session create, the operator credential
+  // read — is deferred until after the dedup check so a duplicate-install click
+  // doesn't burn an upstream session.
   const validated = await validateRemoteOAuthInstall(ctx, entry, entry.install);
   if ("error" in validated) return errResult(validated.error);
   const action = validated.action;
@@ -1719,9 +1602,10 @@ async function handleInstallRemoteOAuth(
   // Host UI placement (sidebar app, etc.) is SERVER-authored metadata. Resolve
   // it from the operator-trusted catalog by id — never the caller-supplied
   // entry — so a forged entry can't inject host chrome. Cached by the directory
-  // facade. Undefined when the id isn't a known catalog connector or it declares
-  // no UI. Placements are re-validated at registration (`sanitizePlacements`).
-  const trustedUi = (await ctx.runtime.getConnectorDirectory().catalogById(entry.id))?.ui;
+  // facade. Undefined when the id isn't a known catalog connector. Placements
+  // are re-validated at registration (`sanitizePlacements`).
+  const trusted = await ctx.runtime.getConnectorDirectory().catalogById(entry.id);
+  const trustedUi = trusted?.ui;
 
   // serverName is the slugified canonical reverse-DNS form — opaque,
   // URL-safe, filesystem-safe, collision-free by construction. See
@@ -1739,7 +1623,7 @@ async function handleInstallRemoteOAuth(
   const isPersonalTarget = ws.isPersonal === true;
 
   // Dedup (which self-heals an orphaned workspace.json entry) short-circuits
-  // before any expensive wiring so a re-click doesn't burn a Composio session.
+  // before any expensive wiring so a re-click doesn't burn a brokered session.
   const dupResult = handleDuplicateInstall(
     ctx,
     wsId,
@@ -1757,7 +1641,6 @@ async function handleInstallRemoteOAuth(
   const ref = buildRemoteBundleRef(
     action,
     serverName,
-    entry.id,
     trustedUi,
     wiring.brokeredWiring,
     wiring.staticOAuthClient,
@@ -1769,7 +1652,14 @@ async function handleInstallRemoteOAuth(
   // into the workspace's `connector-skills/` store, NEVER the system prompt.
   const skillsLock = await lifecycle.syncBoundSkills(
     connectorSkillIdentityFrom(
-      action.auth === "composio" ? action.composio?.toolkit : undefined,
+      // From the operator-trusted catalog entry, NEVER the caller's action: the
+      // identity is interpolated into the overlay fetch path, so a field the
+      // caller controls chooses which repository is read. `action` carries the
+      // caller's own object for every auth kind the install does not re-resolve
+      // (`parseDirectoryEntry` strips no unknown install fields), which is
+      // exactly the provenance this must not depend on. Same source
+      // `connector-skill-reconcile` reads it from.
+      trusted?.composio?.toolkit,
       // Derive the overlay identity from the canonical reverse-DNS name
       // (`com.dropbox/mcp` → `dropbox`), NOT the slugified serverName
       // (`com-dropbox-mcp`) — the slug has no dotted structure to split on, so
@@ -1793,7 +1683,7 @@ async function handleInstallRemoteOAuth(
   // here. Eager-start is a UX optimization; a failure returns a warning, not an
   // error, because the install itself has still succeeded.
   let startWarning: string | undefined;
-  if (action.auth === "composio" || action.auth === "smithery" || action.auth === "provider") {
+  if (isBrokeredAuthKind(action.auth) || action.auth === "provider") {
     startWarning = await eagerStartRemoteSource(ctx, ref, wsRegistry, wsId, entry, action);
   }
 
@@ -1880,9 +1770,9 @@ async function provisionDeclaredHooks(
 // The resolution is one surface each rather than a guard in both.
 
 /**
- * What a brokered provider (Composio, Smithery) produces at install time: the
- * minted session URL, the transport that reaches it, and any marker the
- * provider needs persisted on the BundleRef for later liveness probing.
+ * What a brokered provider produces at install time: the minted session URL,
+ * the transport that reaches it, and the coordinates the runtime persists on
+ * the BundleRef so the probe and teardown can name the session later.
  *
  * The broker credential never appears here. The transport names a credential
  * PROVIDER (`auth: { type: "provider", provider }`), which attaches the secret
@@ -1892,45 +1782,34 @@ async function provisionDeclaredHooks(
 interface BrokeredWiring {
   url: string;
   transport: RemoteTransportConfig;
-  smithery?: { connectorId: string; connectionId: string; namespace: string; baseUrl: string };
+  brokered: BrokeredRef;
 }
 
 /**
- * Composio-auth install prerequisites: the catalog entry's composio block, the
- * platform broker credential, and the toolkit's declared auth-config id.
- * Returns an error string, or null when the install isn't composio-auth or
- * every prerequisite is present.
- */
-function validateComposioInstall(action: RemoteOAuthInstall, entryName: string): string | null {
-  if (action.auth !== "composio") return null;
-  if (!action.composio) {
-    return `"${entryName}" is composio-auth but missing composio config block.`;
-  }
-  if (!validateComposioConfig().apiKey) {
-    return composioUnconfiguredMessage(entryName);
-  }
-  if (!composioAuthConfigId(action.composio.toolkit)) {
-    return composioAuthConfigMessage(entryName, action.composio.toolkit);
-  }
-  return null;
-}
-
-/**
- * Cheap up-front entry-shape validation. For `auth: "provider"` the security-
- * critical fields (url + providerAuth) are re-resolved from the SERVER-trusted
- * catalog by id and the caller's discarded — a provider install mints a
- * fleet-trusted, workspace-scoped service token and ships it to the entry's URL,
- * so a workspace admin could otherwise forge an entry with an arbitrary url +
- * audience/scope and exfiltrate a fleet token or reach an in-cluster `.svc` the
- * SSRF guard protects. Returns the (possibly-rewritten) action, or an error.
+ * Cheap up-front entry-shape validation. Two kinds of entry have their
+ * security-critical fields re-resolved from the SERVER-trusted catalog by id,
+ * with the caller's discarded:
+ *
+ *   - `auth: "provider"` mints a fleet-trusted, workspace-scoped service token
+ *     and ships it to the entry's URL, so a workspace admin could otherwise
+ *     forge an entry with an arbitrary url + audience/scope and exfiltrate a
+ *     fleet token or reach an in-cluster `.svc` the SSRF guard protects.
+ *   - **every brokered entry** spends the PLATFORM's broker credential to
+ *     create a connection at the operator's account, so the target the provider
+ *     is pointed at must come from the operator-published catalog. Otherwise a
+ *     workspace admin forges an entry naming any server the broker can reach and
+ *     gets a pre-authenticated, eager-started MCP source charged to the
+ *     operator. This check IS the bound: a provider may have no incidental one
+ *     (Composio happens to need a per-toolkit auth-config id declared first;
+ *     Smithery needs nothing).
+ *
+ * Returns the (possibly-rewritten) action, or an error.
  */
 async function validateRemoteOAuthInstall(
   ctx: ManageConnectorsContext,
   entry: DirectoryEntry,
   action: RemoteOAuthInstall,
 ): Promise<{ action: RemoteOAuthInstall } | { error: string }> {
-  const composioErr = validateComposioInstall(action, entry.name);
-  if (composioErr) return { error: composioErr };
   if (action.auth === "static" && !action.operatorSetup) {
     return { error: `"${entry.name}" is static-auth but missing operatorSetup config.` };
   }
@@ -1943,161 +1822,97 @@ async function validateRemoteOAuthInstall(
     }
     return { action: { ...action, url: trusted.url, providerAuth: trusted.providerAuth } };
   }
-  // Smithery is the same threat as `provider` and needs the same treatment: the
-  // install spends the PLATFORM's broker credential to create a connection at
-  // the operator's Smithery account, so the target server must come from the
-  // operator-published catalog, never from the caller. Otherwise a workspace
-  // admin forges an entry naming any registry server and gets a
-  // pre-authenticated, eager-started MCP source charged to the operator's
-  // account. Unlike Composio there is no incidental bound (no per-toolkit
-  // auth-config id that must be declared first), so this check IS the bound.
-  if (action.auth === "smithery") {
+  if (isBrokeredAuthKind(action.auth)) {
     const trusted = await ctx.runtime.getConnectorDirectory().catalogById(entry.id);
-    if (!trusted || trusted.auth !== "smithery" || !trusted.smithery?.server?.trim()) {
+    const config = trusted?.auth === action.auth ? brokeredCatalogConfig(trusted) : undefined;
+    if (!config) {
       return {
-        error: `"${entry.name}" is not a recognized Smithery connector — refusing a smithery-auth install from an unverified entry.`,
+        error:
+          `"${entry.name}" is not a recognized "${action.auth}" connector — ` +
+          "refusing a brokered install from an unverified entry.",
       };
     }
-    return { action: { ...action, smithery: trusted.smithery } };
+    // Replace the caller's block with the operator-published one, under the key
+    // the convention puts it at, so the wiring below reads a trusted value.
+    return { action: { ...action, [action.auth]: config } as RemoteOAuthInstall };
   }
   return { action };
 }
 
 /**
- * Scrub the Composio session's response headers for persistence: the credential
- * is attached at transport-build time by the `composio` credential provider, so
- * any header carrying it — the `x-api-key` itself, or a copy inlined elsewhere —
- * is dropped rather than persisted. Nothing written to workspace.json references
- * the secret, by value or by name.
+ * Brokered MCP wiring: ask the provider for a session and shape the result into
+ * a persistable ref + transport. Called only on the fresh-install branch —
+ * gating it on dedup means a re-click on an installed connector doesn't mint a
+ * second upstream session and orphan the prior one.
  *
- * The non-`x-api-key` branch guards a response shape we do not control: the
- * vendor could return the broker key embedded in some other header, and this
- * function is the last step before the value is persisted. Dropping is lossier
- * than the rewrite it replaces — that header is discarded rather than kept with
- * a resolvable placeholder — but keeping it would mean re-persisting an env
- * reference, which is what this seam removes. No live impact: Composio returns
- * only `x-api-key` today.
+ * Nothing here is vendor-shaped. The catalog block goes in opaque, the session
+ * comes back naming its own credential provider and carrying its own opaque
+ * coordinates, and both are persisted verbatim.
  */
-function scrubComposioHeaders(
-  headers: Record<string, string> | undefined,
-  apiKey: string,
-): Record<string, string> {
-  const extraHeaders: Record<string, string> = {};
-  for (const [k, v] of Object.entries(headers ?? {})) {
-    if (k.toLowerCase() === "x-api-key") continue;
-    if (apiKey && v.includes(apiKey)) continue;
-    extraHeaders[k] = v;
-  }
-  return extraHeaders;
-}
-
-/**
- * Composio MCP wiring (session URL + transport). Called only on the fresh-install
- * branch — gating it on dedup means a re-click on an installed connector doesn't
- * initiate a new upstream Composio session and orphan the prior one.
- *
- * The persisted transport names the `composio` credential provider rather than
- * carrying the key or an env reference to it, so the secret never sits at rest
- * AND resolution stays the provider's own business — which is what lets the
- * broker credential be declared in `nimblebrain.json` instead of the env.
- */
-async function buildComposioWiring(
-  provider: ManagedConnectorProvider,
-  action: RemoteOAuthInstall,
-  owner: ConnectorOwner,
-  entryName: string,
-): Promise<BrokeredWiring | { __err: string }> {
-  if (action.auth !== "composio" || !action.composio) {
-    // Unreachable — guards above ensure the shape. Typed for the caller's
-    // narrowing convenience.
-    return { __err: "composio wiring requested for non-composio install" };
-  }
-  const userId = provider.userId(owner);
-  let sessionMcp: { type: "http" | "sse"; url: string; headers?: Record<string, string> };
-  try {
-    sessionMcp = await provider.createSession({
-      userId,
-      toolkit: action.composio.toolkit,
-      authConfigId: composioAuthConfigId(action.composio.toolkit),
-      ...(action.composio.tools && action.composio.tools.length > 0
-        ? { tools: action.composio.tools }
-        : {}),
-    });
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return { __err: `Composio session creation failed for "${entryName}": ${msg}` };
-  }
-  const { apiKey } = validateComposioConfig();
-  const extraHeaders = scrubComposioHeaders(sessionMcp.headers, apiKey);
-  return {
-    url: sessionMcp.url,
-    transport: {
-      type: sessionMcp.type === "sse" ? "sse" : "streamable-http",
-      auth: { type: "provider", provider: COMPOSIO_CREDENTIAL_PROVIDER, config: {} },
-      ...(Object.keys(extraHeaders).length > 0 ? { headers: extraHeaders } : {}),
-    },
-  };
-}
-
-/**
- * Smithery MCP wiring (brokered session URL + transport + Authorization
- * template). Called only on the fresh-install branch, matching the Composio
- * discipline — a re-click on an installed connector must not re-upsert the
- * broker connection.
- *
- * The connection id is derived deterministically from (owner, server) inside the
- * provider, so the marker persisted here is a cache for the liveness probe, not
- * a source of truth.
- */
-async function buildSmitheryWiring(
+async function buildBrokeredWiring(
   provider: ManagedConnectorProvider,
   action: RemoteOAuthInstall,
   owner: ConnectorOwner,
   entryId: string,
   entryName: string,
 ): Promise<BrokeredWiring | { __err: string }> {
-  if (action.auth !== "smithery" || !action.smithery) {
-    // Unreachable — guards above ensure the shape. Typed for the caller's
-    // narrowing convenience.
-    return { __err: "smithery wiring requested for non-smithery install" };
+  const config = brokeredCatalogConfig(action);
+  if (!config) {
+    // Unreachable — `validateRemoteOAuthInstall` re-resolves the block from the
+    // trusted catalog and refuses when there is none. Typed for narrowing.
+    return { __err: `"${entryName}" is missing its "${action.auth}" config block.` };
   }
-  const server = action.smithery.server;
-  const userId = provider.userId(owner);
-  let sessionMcp: ManagedSession;
+  let session: ManagedSession;
   try {
-    sessionMcp = await provider.createSession({ userId, toolkit: server });
+    session = await provider.createSession({
+      userId: provider.userId(owner),
+      connectorId: entryId,
+      config,
+    });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    return { __err: `Smithery session creation failed for "${entryName}": ${msg}` };
+    return { __err: `${action.auth} session creation failed for "${entryName}": ${msg}` };
   }
 
-  // An absent coordinate is a seam-contract violation, not a benign default:
-  // an empty connectionId still leaves `ref.smithery` truthy, so the revalidator
-  // would claim the connector and answer `indeterminate` forever while uninstall
-  // silently skipped teardown. Fail the install instead.
-  const connectionId = sessionMcp.providerRef?.connectionId ?? "";
-  const namespace = sessionMcp.providerRef?.namespace ?? "";
-  const baseUrl = sessionMcp.providerRef?.baseUrl ?? "";
-  if (!connectionId || !namespace || !baseUrl) {
+  // A coordinate the provider NAMED but left blank is worse than one it omitted:
+  // the ref still reads as brokered, so the revalidator claims it and answers
+  // `indeterminate` forever while uninstall silently skips teardown. Key-agnostic
+  // by necessity — the kernel does not know which coordinates this provider
+  // needs, only that a named one must carry a value.
+  for (const [key, value] of Object.entries(session.providerRef ?? {})) {
+    if (value) continue;
     return {
       __err:
-        `Smithery session for "${entryName}" returned no connection coordinates — ` +
+        `${action.auth} session for "${entryName}" returned an empty "${key}" coordinate — ` +
         "refusing to persist a connector the revalidator and uninstall cannot address.",
     };
   }
 
   return {
-    url: sessionMcp.url,
+    url: session.url,
     transport: {
-      type: sessionMcp.type === "sse" ? "sse" : "streamable-http",
-      // Name the credential, don't point at where it lives: the `smithery`
-      // credential provider attaches the bearer at transport-build time, so
-      // neither the secret nor an env var's NAME lands in workspace.json.
-      auth: { type: "provider", provider: SMITHERY_CREDENTIAL_PROVIDER, config: {} },
+      type: session.type === "sse" ? "sse" : "streamable-http",
+      // Name the credential, don't point at where it lives: the provider's
+      // registered transport-credential attaches the secret at transport-build
+      // time, so neither it nor an env var's NAME lands in workspace.json.
+      ...(session.credentialProvider
+        ? {
+            auth: {
+              type: "provider" as const,
+              provider: session.credentialProvider,
+              config: {},
+            },
+          }
+        : {}),
+      ...(session.headers && Object.keys(session.headers).length > 0
+        ? { headers: session.headers }
+        : {}),
     },
-    // The provider hands back the coordinates it minted; the tool layer stores
-    // them verbatim and never parses the broker's id format itself.
-    smithery: { connectorId: entryId, connectionId, namespace, baseUrl },
+    brokered: {
+      provider: action.auth,
+      connectorId: entryId,
+      ...(session.providerRef ? { providerRef: session.providerRef } : {}),
+    },
   };
 }
 
@@ -2138,14 +1953,13 @@ async function loadStaticOAuthClient(
 }
 
 /**
- * Build the BundleRef from the resolved wiring (composio session URL +
+ * Build the BundleRef from the resolved wiring (a brokered session URL +
  * transport, or static client credentials). Constructed on the fresh-install
  * branch only; the dedup branches re-use the existing persisted ref.
  */
 function buildRemoteBundleRef(
   action: RemoteOAuthInstall,
   serverName: string,
-  entryId: string,
   trustedUi: ConnectorCatalogEntry["ui"],
   brokeredWiring: BrokeredWiring | undefined,
   staticOAuthClient: { clientId: string; clientSecretKey: string } | undefined,
@@ -2160,9 +1974,9 @@ function buildRemoteBundleRef(
     // credential class here: provider + config are copied VERBATIM from the
     // (operator-authored) catalog entry — never tenant input — which is what
     // makes a self-installable platform connector safe. That provenance is
-    // specific to THIS branch: the composio branch above also yields provider
-    // auth, but from a vendor session response, so `provider` auth alone is not
-    // a catalog-provenance signal (see `isMintedFleetSource`).
+    // specific to THIS branch: a brokered session also yields provider auth,
+    // but from a broker's session response, so `provider` auth alone is not a
+    // catalog-provenance signal (see `isMintedFleetSource`).
     transport:
       brokeredWiring?.transport ??
       (action.auth === "provider" && action.providerAuth
@@ -2190,13 +2004,11 @@ function buildRemoteBundleRef(
           },
         }
       : {}),
-    // Composio marker — carries the catalog id so the lifecycle's boot-time
-    // state derivation can probe the right `connection.json` path under
-    // `credentials/composio/<connectorId>/`.
-    ...(action.auth === "composio" ? { composio: { connectorId: entryId } } : {}),
-    // Smithery marker — the derived broker connection coordinates, so the
-    // liveness probe can read the connection's status directly.
-    ...(brokeredWiring?.smithery ? { smithery: brokeredWiring.smithery } : {}),
+    // Brokered marker: who brokered this install, which catalog entry it came
+    // from (the persisted url is a per-install session URL, so a url→catalog
+    // lookup misses), and the provider's own opaque coordinates for its probe
+    // and teardown.
+    ...(brokeredWiring ? { brokered: brokeredWiring.brokered } : {}),
     // Host UI placement from the operator-trusted catalog (see `trustedUi`).
     // Persisted on the ref so the placement survives restarts; the lifecycle
     // registers + re-validates it via `startBundleSource` → `instance.ui`.
@@ -2211,8 +2023,8 @@ function buildRemoteBundleRef(
  *
  * Dedups primarily on `serverName` — the canonical lifecycle key, derived from
  * `entry.id` and stable across installs. Matching on `b.url` would miss
- * composio-backed bundles whose persisted `b.url` is the per-install session URL
- * and never equals the catalog placeholder `action.url`. Falls back to URL match
+ * brokered bundles whose persisted `b.url` is the per-install session URL and
+ * never equals the catalog placeholder `action.url`. Falls back to URL match
  * for legacy bundles persisted before slugify-on-install (no `serverName` field).
  */
 function handleDuplicateInstall(
@@ -2269,10 +2081,10 @@ function handleDuplicateInstall(
 }
 
 /**
- * Resolve the fresh-install wiring for a remote-OAuth entry: the Composio
- * session (composio-auth) or the operator OAuth client (static-auth). Deferred
- * until after dedup so a duplicate-install click never burns a Composio session
- * or reads the credential. Returns `{}` for auth kinds needing neither.
+ * Resolve the fresh-install wiring for a remote-OAuth entry: the brokered
+ * session, or the operator OAuth client (static-auth). Deferred until after
+ * dedup so a duplicate-install click never mints a brokered session or reads
+ * the credential. Returns `{}` for auth kinds needing neither.
  */
 async function resolveInstallWiring(
   ctx: ManageConnectorsContext,
@@ -2287,22 +2099,10 @@ async function resolveInstallWiring(
     }
   | { error: string }
 > {
-  if (action.auth === "composio") {
-    const provider = composioProvider(ctx);
-    if (!provider) return { error: COMPOSIO_NOT_CONFIGURED };
-    const brokeredWiring = await buildComposioWiring(
-      provider,
-      action,
-      { type: "workspace", wsId },
-      entry.name,
-    );
-    if ("__err" in brokeredWiring) return { error: brokeredWiring.__err };
-    return { brokeredWiring };
-  }
-  if (action.auth === "smithery") {
-    const provider = smitheryProvider(ctx);
-    if (!provider) return { error: SMITHERY_NOT_CONFIGURED };
-    const brokeredWiring = await buildSmitheryWiring(
+  if (isBrokeredAuthKind(action.auth)) {
+    const provider = providerFor(ctx, action.auth);
+    if (!provider) return { error: brokerNotConfiguredMessage(entry.name, action.auth) };
+    const brokeredWiring = await buildBrokeredWiring(
       provider,
       action,
       { type: "workspace", wsId },
@@ -2321,7 +2121,7 @@ async function resolveInstallWiring(
 }
 
 /**
- * Eager-start a freshly-installed static-credential source (composio / provider)
+ * Eager-start a freshly-installed static-credential source (brokered / provider)
  * so the tool list is available immediately, rather than waiting for the next
  * platform boot. Returns a warning string on failure — the install itself has
  * still succeeded (BundleRef persisted, seedInstance run), and the next Connect
@@ -2829,14 +2629,13 @@ async function handleSetPermissions(
 /**
  * `list_personal_catalog` — the curated set of connectors offered for PERSONAL
  * (identity-plane) connection: operator-flagged `personal` connectors, narrowed
- * to what `handleInstallIdentity` will actually accept (DCR + composio
- * remote-oauth), minus the ones the caller already installed on their identity.
- * The read behind the profile "Add a connector" picker.
+ * to what `handleInstallIdentity` will actually accept, minus the ones the
+ * caller already installed on their identity. The read behind the profile "Add a
+ * connector" picker.
  *
- * The auth predicate MUST stay in lockstep with `handleInstallIdentity`'s gate
- * (static/provider are workspace/platform-bound and rejected there), so the
- * offered set is a subset of the acceptable set — the picker can never present a
- * connector the install then refuses.
+ * Both sides read the same predicate ({@link identityInstallableAuth}), so the
+ * offered set is a subset of the acceptable set by construction — the picker can
+ * never present a connector the install then refuses.
  */
 async function handleListPersonalCatalog(
   ctx: ManageConnectorsContext,
@@ -2861,7 +2660,7 @@ async function handleListPersonalCatalog(
       e.personal === true &&
       e.install.kind === "remote-oauth" &&
       // Lockstep with handleInstallIdentity's gate — offered ⊆ acceptable.
-      (e.install.auth === "dcr" || e.install.auth === "composio") &&
+      identityInstallableAuth(ctx, e.install.auth) &&
       !installedServerNames.has(slugifyServerName(e.id)),
   );
 
@@ -2915,23 +2714,26 @@ async function handleListPersonalConnectors(
   });
   const connectors = named.map(({ ref, serverName }) => {
     const cat = byServerName.get(serverName);
-    // Auth type + (for composio) the catalog connector id are read from the
-    // stored ref, not the catalog — they're what the Connect route keys on and
-    // must survive a catalog entry being renamed or removed. The composio marker
-    // (`{composio:{connectorId}}`) is stamped at install by `buildRemoteBundleRef`;
-    // its absence means DCR.
-    const composioMarker = (ref as { composio?: { connectorId: string } }).composio;
+    // Auth kind + (for a brokered connector) the catalog connector id are read
+    // from the stored ref, not the catalog — they're what the Connect route keys
+    // on and must survive a catalog entry being renamed or removed. The brokered
+    // marker is stamped at install by `buildRemoteBundleRef`; its absence means
+    // DCR.
+    const brokered = brokeredRef(ref);
     // Connected = authenticated, derived from PERSISTED credentials (tokens.json
-    // for DCR, connection.json for composio) — which survive a pod restart — OR
-    // the source already warm in this pod. Presence, NOT validity: token
-    // expiry/revocation detection is the deferred reauth slice. Persistence
-    // matters because `isIdentityConnectorRunning` is same-pod-only: on a fresh
-    // pod an authed connector would otherwise report `not_authenticated` and offer
-    // a Connect that then fails (it's already authed). The agent lazy-starts the
-    // source from these same credentials, so an authed-but-cold connector is
-    // genuinely usable.
-    const authed = composioMarker
-      ? hasPersistedComposioConnection(workDir, owner, composioMarker.connectorId)
+    // for DCR, whatever the provider records for a brokered one) — which survive
+    // a pod restart — OR the source already warm in this pod. Presence, NOT
+    // validity: token expiry/revocation detection is the deferred reauth slice.
+    // Persistence matters because `isIdentityConnectorRunning` is same-pod-only:
+    // on a fresh pod an authed connector would otherwise report
+    // `not_authenticated` and offer a Connect that then fails (it's already
+    // authed). The agent lazy-starts the source from these same credentials, so
+    // an authed-but-cold connector is genuinely usable.
+    const authed = brokered
+      ? (ctx.runtime
+          .getManagedConnectorRegistry()
+          .get(brokered.provider)
+          ?.hasConnection?.({ owner, brokered, workDir }) ?? false)
       : hasMcpOAuthTokens(workDir, owner, serverName);
     return {
       serverName,
@@ -2941,10 +2743,11 @@ async function handleListPersonalConnectors(
       // connector" picker renders), so an installed connector shows its icon too.
       ...(cat?.iconUrl ? { iconUrl: cat.iconUrl } : {}),
       // The Connect route differs by auth: DCR keys on serverName
-      // (`/v1/mcp-auth/initiate-identity`); composio keys on the connectorId
-      // (`/v1/composio-auth/initiate-identity`). The profile UI branches on this.
-      auth: composioMarker ? ("composio" as const) : ("dcr" as const),
-      ...(composioMarker ? { connectorId: composioMarker.connectorId } : {}),
+      // (`/v1/mcp-auth/initiate-identity`); a brokered connector keys on the
+      // catalog connector id and goes through its provider's own initiate route.
+      // The profile UI branches on this.
+      auth: brokered ? brokered.provider : "dcr",
+      ...(brokered ? { connectorId: brokered.connectorId } : {}),
       // `authed` carries the common case; the warmth check is a deliberate
       // backstop, not redundancy — `warm` doesn't strictly imply `authed` (creds
       // can be deleted after the source warms), and it also catches a future

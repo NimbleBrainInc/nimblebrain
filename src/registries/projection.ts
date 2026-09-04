@@ -18,6 +18,7 @@
 
 import { hostMetaToUiMeta, sanitizePlacements } from "../bundles/defaults.ts";
 import type { BundleUiMeta } from "../bundles/types.ts";
+import { brokeredCatalogConfig, type ConnectorAuthKind } from "../connectors/auth-kind.ts";
 import {
   type ComposioConnectorConfig,
   getNimbleBrainConnectorMeta,
@@ -49,7 +50,7 @@ export interface ProjectionContext {
  * they diverged once (#462) and nothing structural stopped it. Spreading
  * this single result into both call sites makes drift impossible: there is
  * one derivation, so the directory and the catalog can never disagree on
- * `auth` / scopes / params / operatorSetup / composio / providerAuth.
+ * `auth` / scopes / params / operatorSetup / the brokered block / providerAuth.
  *
  * The catalog-only fields (`tags`, `interactive`, `docsUrl`) are NOT here:
  * they don't belong on the directory entry's `install` action (the
@@ -61,7 +62,7 @@ export interface ProjectionContext {
  * shape both sites previously inlined.
  */
 function connectorMetaAuthFields(meta: NimbleBrainConnectorMeta | undefined): {
-  auth: "dcr" | "static" | "composio" | "smithery" | "provider";
+  auth: ConnectorAuthKind;
   requiredScopes?: string[];
   additionalAuthorizationParams?: Record<string, string>;
   operatorSetup?: { portalUrl: string; hint: string; clientSecretKey: string };
@@ -69,15 +70,20 @@ function connectorMetaAuthFields(meta: NimbleBrainConnectorMeta | undefined): {
   smithery?: SmitheryConnectorConfig;
   providerAuth?: { provider: string; config: Record<string, unknown> };
 } {
+  const auth = meta?.auth ?? "dcr";
+  // A brokered entry's config block travels under the key naming its provider,
+  // carried through by that same key. One spread for every provider, so a third
+  // one is published without a line here — the install path reads it back with
+  // the same accessor and hands it to that provider opaquely.
+  const brokered = brokeredCatalogConfig(meta);
   return {
-    auth: meta?.auth ?? "dcr",
+    auth,
     ...(meta?.requiredScopes ? { requiredScopes: meta.requiredScopes } : {}),
     ...(meta?.additionalAuthorizationParams
       ? { additionalAuthorizationParams: meta.additionalAuthorizationParams }
       : {}),
     ...(meta?.operatorSetup ? { operatorSetup: meta.operatorSetup } : {}),
-    ...(meta?.composio ? { composio: meta.composio } : {}),
-    ...(meta?.smithery ? { smithery: meta.smithery } : {}),
+    ...(brokered ? { [auth]: brokered } : {}),
     ...(meta?.providerAuth ? { providerAuth: meta.providerAuth } : {}),
   };
 }
@@ -160,15 +166,19 @@ export interface ConnectorCatalogEntry {
   iconUrl?: string;
   /** Remote MCP server URL — the value that goes into the bundle `url`. */
   url: string;
-  auth: "dcr" | "static" | "composio" | "smithery" | "provider";
+  /**
+   * Runtime-native kind, or the id of the brokered provider that owns this
+   * connector. See `NimbleBrainConnectorMeta.auth`.
+   */
+  auth: ConnectorAuthKind;
   requiredScopes?: string[];
   additionalAuthorizationParams?: Record<string, string>;
   operatorSetup?: { portalUrl: string; hint: string; clientSecretKey: string };
   /**
-   * Composio-specific config for `auth: "composio"` entries. The
-   * platform reads these to call `composio.create()` at install
-   * time and to look up the toolkit slug when persisting
-   * `connection.json`. Absent on dcr/static entries.
+   * A brokered entry's provider config block, carried under the key naming its
+   * provider — the convention `brokeredCatalogConfig` reads. The two typed
+   * fields document the shapes we ship; the install path never reads either by
+   * name, it hands whichever block `auth` names to that provider.
    */
   composio?: ComposioConnectorConfig;
   smithery?: SmitheryConnectorConfig;

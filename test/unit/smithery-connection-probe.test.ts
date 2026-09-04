@@ -9,7 +9,6 @@
  */
 
 import { afterEach, describe, expect, it } from "bun:test";
-import { brokeredRef } from "../../src/bundles/connection-probe.ts";
 import type { ProbeTarget } from "../../src/bundles/connection-probe.ts";
 import type { BundleRef } from "../../src/bundles/types.ts";
 import { SmitheryConnectionProbe } from "../../src/connectors/providers/smithery/connection-probe.ts";
@@ -26,13 +25,31 @@ function refWithMarker(): BundleRef {
     url: "https://api.smithery.ai/connect/test-ns/nb-x/mcp",
     serverName: "ai-bassethound-mcp",
     oauthScope: "workspace",
+    brokered: {
+      provider: "smithery",
+      connectorId: "ai.bassethound/mcp",
+      providerRef: {
+        connectionId: "nb-x",
+        namespace: "test-ns",
+        baseUrl: "https://api.smithery.ai",
+      },
+    },
+  };
+}
+
+/** The pre-`brokered` shape still on disk for an install made by an older runtime. */
+function legacyRefWithMarker(): BundleRef {
+  return {
+    url: "https://api.smithery.ai/connect/test-ns/nb-x/mcp",
+    serverName: "ai-bassethound-mcp",
+    oauthScope: "workspace",
     smithery: {
       connectorId: "ai.bassethound/mcp",
       connectionId: "nb-x",
       namespace: "test-ns",
       baseUrl: "https://api.smithery.ai",
     },
-  } as BundleRef;
+  } as unknown as BundleRef;
 }
 
 function targetOf(ref: BundleRef): ProbeTarget {
@@ -51,41 +68,6 @@ async function verdictFor(status: number, body: unknown) {
   stubFetch(status, body);
   return new SmitheryConnectionProbe(OPTIONS).probe(targetOf(refWithMarker()), new AbortController().signal);
 }
-
-describe("brokeredRef — catalog-id recovery", () => {
-  // Every brokered install persists a per-install session URL, so a url→catalog
-  // lookup misses and this stamped id is the only way back to the entry. Without
-  // it the connector renders as the slug with a letter avatar and every
-  // catalog-gated Configure section goes dark.
-  it("recovers the catalog id from a smithery ref", () => {
-    expect(brokeredRef(refWithMarker())?.connectorId).toBe("ai.bassethound/mcp");
-  });
-
-  it("recovers the catalog id from a composio ref (no regression)", () => {
-    const composio = {
-      url: "https://backend.composio.dev/v3/mcp/session-xyz",
-      serverName: "com-google-gmail",
-      composio: { connectorId: "com.google/gmail" },
-    } as unknown as BundleRef;
-    expect(brokeredRef(composio)?.connectorId).toBe("com.google/gmail");
-  });
-
-  it("returns undefined for a runtime-native ref — url match is its only path", () => {
-    const dcr = { url: "https://mcp.notion.com/mcp", serverName: "com-notion-mcp" } as BundleRef;
-    expect(brokeredRef(dcr)).toBeNull();
-    expect(brokeredRef(undefined)).toBeNull();
-  });
-});
-
-describe("brokeredRef — probe dispatch", () => {
-  it("routes a smithery-marked ref to the smithery probe", () => {
-    expect(brokeredRef(refWithMarker())?.providerId).toBe("smithery");
-  });
-
-  it("leaves an unmarked ref unowned", () => {
-    expect(brokeredRef({ url: "https://x/mcp", serverName: "x" } as BundleRef)).toBeNull();
-  });
-});
 
 describe("SmitheryConnectionProbe — liveness mapping", () => {
   it("reports live for a connected connection", async () => {
@@ -186,9 +168,31 @@ describe("SmitheryConnectionProbe — liveness mapping", () => {
     expect(requested).not.toContain("repointed.example");
   });
 
-  it("reports indeterminate for a ref carrying no smithery marker", async () => {
+  it("reports indeterminate for a ref carrying no brokered marker", async () => {
     const probe = new SmitheryConnectionProbe(OPTIONS);
     const bare = { url: "https://x/mcp", serverName: "x" } as BundleRef;
     expect(await probe.probe(targetOf(bare), new AbortController().signal)).toBe("indeterminate");
+  });
+
+  // The read-side shim: an install made before refs shared one shape keeps
+  // probing, with no config edit and no rewrite of what is on disk.
+  it("probes a legacy per-vendor ref through the shim", async () => {
+    let requested = "";
+    globalThis.fetch = (async (input: string | URL | Request) => {
+      requested = String(input);
+      return new Response(JSON.stringify({ connectionId: "nb-x", status: { state: "connected" } }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }) as typeof fetch;
+
+    const probe = new SmitheryConnectionProbe(OPTIONS);
+    const verdict = await probe.probe(
+      targetOf(legacyRefWithMarker()),
+      new AbortController().signal,
+    );
+
+    expect(verdict).toBe("live");
+    expect(requested).toContain("https://api.smithery.ai/connect/test-ns/nb-x");
   });
 });

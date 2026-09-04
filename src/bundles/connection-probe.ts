@@ -14,11 +14,11 @@
  * poll and how to map the verdict to connection state; the probe (an adapter,
  * not the kernel) owns *how to ask this vendor*.
  *
- * The PROBE is genuinely pluggable — Composio and Smithery both implement this
- * interface without the revalidator changing. The `auth-kind` taxonomy it
- * dispatches on is not: adding a provider still means teaching an open-coded
- * enum in a dozen places across the kernel (see `brokeredRef` below).
- * Don't read "generic seam" as "drop-in".
+ * The PROBE is genuinely pluggable, and so is what it dispatches on: a probe is
+ * selected by the `provider` on the install's `brokered` ref (`./brokered.ts`),
+ * which is a registered provider id, not a member of a closed enum. Adding a
+ * provider adds a folder under `src/connectors/providers/` and a line in the
+ * registry builder; nothing here changes.
  */
 
 import type { BundleRef } from "./types.ts";
@@ -40,9 +40,9 @@ export type ConnectionLiveness = "live" | "credential_lost" | "indeterminate";
 /**
  * What the kernel hands a probe: the connection identity it owns, nothing
  * provider-shaped. `ref` is the bundle's kernel install reference — a probe
- * reads only its OWN provider's sub-field from it (the Composio probe reads
- * `ref.composio.connectorId`). Carrying the ref keeps the probe from having to
- * call back into the lifecycle to recover vendor specifics.
+ * reads it through `brokeredRef()` and takes only the `connectorId` and its own
+ * opaque `providerRef` from the result. Carrying the ref keeps the probe from
+ * having to call back into the lifecycle to recover vendor specifics.
  */
 export interface ProbeTarget {
   readonly serverName: string;
@@ -57,8 +57,10 @@ export interface ProbeTarget {
  * transport. One probe per provider.
  */
 export interface ConnectionHealthProbe {
-  /** Stable provider id this probe answers for. For dispatch + logs only; the
-   *  revalidator never branches on its value. Must match `brokeredRef`. */
+  /** Stable provider id this probe answers for — the same id its
+   *  `ManagedConnectorProvider` registers under, which is what a brokered ref's
+   *  `provider` field names. For dispatch + logs only; the revalidator never
+   *  branches on its value. */
   readonly providerId: string;
   /**
    * Check one connection's upstream credential. MUST NOT throw — map any
@@ -66,39 +68,4 @@ export interface ConnectionHealthProbe {
    * the abort signal (the sweep is cancellable).
    */
   probe(target: ProbeTarget, signal: AbortSignal): Promise<ConnectionLiveness>;
-}
-
-/**
- * Map a bundle's install ref to the brokered provider that owns it, and to the
- * catalog id that provider stamped at install.
- *
- * ONE enumeration of the brokered kinds, deliberately. Two consumers need
- * different halves of the same fact — the revalidator dispatches on
- * `providerId`, while the connector read surfaces and the skill-overlay
- * reconcile resolve `connectorId` (every brokered install persists a per-install
- * session URL, so a url→catalog lookup misses and the stamped id is the only way
- * back to the entry). Splitting them into two functions meant two provider lists
- * to keep in sync by hand, and a third provider added to one but not the other
- * silently loses either probe dispatch or catalog resolution.
- *
- * Returns null for a runtime-native ref (plain OAuth or stdio) — those use the
- * transport-level `UnauthorizedError` path and resolve their catalog entry by
- * URL, so neither consumer needs anything here.
- */
-export interface BrokeredRef {
-  /** Stable provider id, for probe dispatch and logs. */
-  providerId: string;
-  /** The catalog entry id the install stamped on the ref. */
-  connectorId: string;
-}
-
-export function brokeredRef(ref: BundleRef | undefined): BrokeredRef | null {
-  if (!ref) return null;
-  if ("composio" in ref && ref.composio) {
-    return { providerId: "composio", connectorId: ref.composio.connectorId };
-  }
-  if ("smithery" in ref && ref.smithery) {
-    return { providerId: "smithery", connectorId: ref.smithery.connectorId };
-  }
-  return null;
 }

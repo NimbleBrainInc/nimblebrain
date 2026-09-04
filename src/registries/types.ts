@@ -24,6 +24,7 @@
  *     Locked. Operator overrides via `NB_REGISTRIES` JSON.
  */
 
+import type { ConnectorAuthKind } from "../connectors/auth-kind.ts";
 import type {
   ComposioConnectorConfig,
   ServerDetail,
@@ -132,20 +133,22 @@ export interface RemoteOAuthInstall {
    * the handshake.
    */
   transportType: "streamable-http" | "sse";
-  auth: "dcr" | "static" | "composio" | "smithery" | "provider";
+  /**
+   * Runtime-native kind, or the id of the brokered provider that owns this
+   * connector. See `NimbleBrainConnectorMeta.auth`.
+   */
+  auth: ConnectorAuthKind;
   requiredScopes?: string[];
   additionalAuthorizationParams?: Record<string, string>;
   operatorSetup?: { portalUrl: string; hint: string; clientSecretKey: string };
   /**
-   * Required for `auth: "composio"`. Names the Composio toolkit and
-   * the env var holding the auth-config id. See
-   * {@link ComposioConnectorConfig} for the canonical shape.
+   * A brokered entry's provider config block, carried under the key naming its
+   * provider. The install path reads whichever block `auth` names via
+   * `brokeredCatalogConfig` and hands it to that provider verbatim; these two
+   * typed fields document the shapes we ship rather than enumerating what is
+   * accepted.
    */
   composio?: ComposioConnectorConfig;
-  /**
-   * Required for `auth: "smithery"`. Names the Smithery registry server the
-   * brokered connection targets. See {@link SmitheryConnectorConfig}.
-   */
   smithery?: SmitheryConnectorConfig;
   /**
    * Required for `auth: "provider"`. Names the credential provider and its

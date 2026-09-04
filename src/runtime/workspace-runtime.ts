@@ -7,8 +7,7 @@
  */
 
 import { join } from "node:path";
-import { bundleHasStaticAuth } from "../bundles/bundle-auth.ts";
-import { hasPersistedComposioConnection } from "../bundles/composio-connection.ts";
+import { brokeredConnectionPresent, bundleHasStaticAuth } from "../bundles/bundle-auth.ts";
 import { assertBundleRefIsPostStage2 } from "../bundles/lifecycle.ts";
 import { hasPersistedWorkspaceOAuthTokens } from "../bundles/oauth-tokens.ts";
 import { resolveBundleDataDirForRef, serverNameFromRef } from "../bundles/paths.ts";
@@ -16,6 +15,10 @@ import { setPendingAuth } from "../bundles/pending-auth-buffer.ts";
 import type { BundleMcpDeps } from "../bundles/startup.ts";
 import { startBundleSource } from "../bundles/startup.ts";
 import type { BundleRef, LocalBundleMeta } from "../bundles/types.ts";
+import {
+  type ManagedConnectorRegistry,
+  managedConnectorRegistryOf,
+} from "../connectors/providers/registry.ts";
 import type { EventSink } from "../engine/types.ts";
 import { log } from "../observability/log.ts";
 import { ToolRegistry } from "../tools/registry.ts";
@@ -161,26 +164,23 @@ type UrlBundleRef = BundleRef;
 /**
  * Whether a boot-time URL bundle already has credentials to auto-start with.
  *
- * Composio bundles carry static auth but STILL need a per-user connect, so they
- * route to the composio probe (checked FIRST — they're also static-auth by
- * transport, but must not skip the connect gate). Other static-auth sources
- * (provider / bearer / header) carry their own credential and mint/present on
- * demand — boot-start them. Only OAuth bundles gate on persisted tokens.
+ * A brokered bundle carries static auth but may STILL need a per-owner connect,
+ * so its provider is asked FIRST — it is static-auth by transport, but must not
+ * skip the connect gate. Other static-auth sources (provider / bearer / header)
+ * carry their own credential and mint/present on demand — boot-start them. Only
+ * OAuth bundles gate on persisted tokens.
  */
 function urlBundleHasBootAuth(
+  managedConnectors: ManagedConnectorRegistry,
   bundle: UrlBundleRef,
   wsId: string,
   serverName: string,
   workDir: string,
 ): boolean {
-  if (bundle.composio) {
-    return hasPersistedComposioConnection(
-      workDir,
-      { type: "workspace", wsId },
-      bundle.composio.connectorId,
-    );
-  }
-  return bundleHasStaticAuth(bundle) || hasPersistedWorkspaceOAuthTokens(workDir, wsId, serverName);
+  return (
+    brokeredConnectionPresent(managedConnectors, bundle, wsId, workDir) ??
+    (bundleHasStaticAuth(bundle) || hasPersistedWorkspaceOAuthTokens(workDir, wsId, serverName))
+  );
 }
 
 /**
@@ -257,9 +257,16 @@ export async function startWorkspaceBundles(
      * `recordConnectionStateChange(... "reauth_required")`.
      */
     onAuthLost?: (wsId: string, serverName: string) => void;
+    /**
+     * The configured brokered providers. A brokered bundle's boot readiness is
+     * its provider's to answer (`hasConnection`); with none passed, every
+     * bundle falls back to the generic static-auth / persisted-token check.
+     */
+    managedConnectors?: ManagedConnectorRegistry;
   },
 ): Promise<{ registries: Map<string, ToolRegistry>; entries: ProcessInventoryEntry[] }> {
   const workDir = opts?.workDir ?? join(process.env.NB_WORK_DIR ?? "", ".nimblebrain");
+  const managedConnectors = opts?.managedConnectors ?? managedConnectorRegistryOf([]);
   const workspaces = await workspaceStore.list();
   const inventory = buildProcessInventory(workspaces, workDir);
 
@@ -314,15 +321,16 @@ export async function startWorkspaceBundles(
     // authenticated yet. `seedInstance` consults the same token check to
     // set state.
     //
-    // Composio-backed bundles use a parallel credential namespace
-    // (`credentials/composio/<connectorId>/connection.json`) so the
-    // probe has to read the right artifact — mirrors the discriminator
-    // in `lifecycle.seedInstance`.
+    // A brokered bundle's readiness is its provider's answer, not a token file
+    // — mirrors the discriminator in `lifecycle.seedUrlConnectionState`, which
+    // consumes the same predicate.
     //
     // Stage 2: every URL bundle is workspace-scoped (the legacy
     // `oauthScope: "user"` literal was deleted). Personal connectors
     // bind to the owning user's personal workspace at install time.
-    if (!urlBundleHasBootAuth(entry.bundle, entry.wsId, entry.serverName, workDir)) {
+    if (
+      !urlBundleHasBootAuth(managedConnectors, entry.bundle, entry.wsId, entry.serverName, workDir)
+    ) {
       log.info(
         `[bundles] Skipping boot start for URL bundle "${entry.serverName}" — no tokens yet (state: not_authenticated)`,
       );

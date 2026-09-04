@@ -714,6 +714,11 @@ export class Runtime {
     );
     rtHolder.rt = rt;
 
+    // Brokered teardown and boot-state derivation dispatch through the
+    // configured providers; without this the lifecycle can only do the kernel's
+    // half (remove the credential directory, apply the generic auth check).
+    lifecycle.setManagedConnectorRegistry(rt.getManagedConnectorRegistry());
+
     // The runtime shares the store `start` opened above rather than building a
     // second one — same instance, same sink, same audit trail.
     rt._credentialStore = credentialStore;
@@ -793,6 +798,9 @@ export class Runtime {
         // a platform restart doesn't silently drop the capability for
         // already-installed bundles.
         getBundleMcpDeps: bundleMcpDepsFactory,
+        // A brokered bundle's boot readiness is its provider's answer, not a
+        // token file — the same predicate `seedUrlConnectionState` consumes.
+        managedConnectors: rt.getManagedConnectorRegistry(),
         // Late-bound: a boot-started connection that loses auth mid-session
         // fires this on a post-boot tool call, by which point `rt.lifecycle`
         // is constructed. Flip the Connection to reauth_required so the UI

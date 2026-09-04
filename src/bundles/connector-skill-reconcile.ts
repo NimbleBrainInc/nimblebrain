@@ -37,7 +37,7 @@ import { resolveConnectorSkillsConfig } from "../config/connector-skills.ts";
 import { connectorSkillIdentityFrom } from "../connectors/server-detail.ts";
 import { log } from "../observability/log.ts";
 import type { ConnectorCatalogEntry } from "../registries/projection.ts";
-import { brokeredRef } from "./connection-probe.ts";
+import { brokeredRef } from "./brokered.ts";
 import { serverNameFromRef } from "./paths.ts";
 import type { BundleRef, ConnectorSkillLockEntry } from "./types.ts";
 

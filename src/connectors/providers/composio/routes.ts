@@ -1,35 +1,29 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { type Context, Hono } from "hono";
+import { requireAuth } from "../../../api/middleware/auth.ts";
+import { requireWorkspace } from "../../../api/middleware/workspace.ts";
 import {
-  type ComposioConnection,
-  saveComposioConnection,
-} from "../../bundles/composio-connection.ts";
-import { WORKSPACE_PRINCIPAL_ID } from "../../bundles/connection.ts";
-import { slugifyServerName } from "../../bundles/paths.ts";
-import {
-  composioAuthConfigId,
-  validateComposioConfig,
-} from "../../connectors/providers/composio/config.ts";
-import {
-  consumeConnectFlow,
-  registerConnectFlow,
-} from "../../connectors/providers/composio/connect-flow-registry.ts";
+  profileConnectorsUrl,
+  workspaceConnectorsUrl,
+} from "../../../api/routes/connectors-redirect.ts";
+import { SUCCESS_PAGE_CSP, successPageHtml } from "../../../api/routes/oauth-success-page.ts";
+import { type AppContext, type AppEnv, apiError } from "../../../api/types.ts";
+import { WORKSPACE_PRINCIPAL_ID } from "../../../bundles/connection.ts";
+import { slugifyServerName } from "../../../bundles/paths.ts";
+import { type ConnectorOwner, connectorOwnerKey } from "../../../identity/connector-owner.ts";
+import { IdentityConnectorStore } from "../../../identity/connector-store.ts";
+import { log } from "../../../observability/log.ts";
+import type { ConnectorCatalogEntry } from "../../../registries/projection.ts";
+import { composioAuthConfigId, validateComposioConfig } from "./config.ts";
+import { consumeConnectFlow, registerConnectFlow } from "./connect-flow-registry.ts";
+import { type ComposioConnection, saveComposioConnection } from "./connection.ts";
 import {
   COMPOSIO_CALLBACK_PATH,
   composioCallbackUrl,
   composioUserId,
   findActiveComposioConnection,
   initiateComposioConnection,
-} from "../../connectors/providers/composio/sdk.ts";
-import { type ConnectorOwner, connectorOwnerKey } from "../../identity/connector-owner.ts";
-import { IdentityConnectorStore } from "../../identity/connector-store.ts";
-import { log } from "../../observability/log.ts";
-import type { ConnectorCatalogEntry } from "../../registries/projection.ts";
-import { requireAuth } from "../middleware/auth.ts";
-import { requireWorkspace } from "../middleware/workspace.ts";
-import { type AppContext, type AppEnv, apiError } from "../types.ts";
-import { profileConnectorsUrl, workspaceConnectorsUrl } from "./connectors-redirect.ts";
-import { SUCCESS_PAGE_CSP, successPageHtml } from "./oauth-success-page.ts";
+} from "./sdk.ts";
 
 /**
  * OAuth integration routes for connectors backed by Composio as a

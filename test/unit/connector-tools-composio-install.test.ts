@@ -109,7 +109,7 @@ import {
   composioConnectorDir,
   hasPersistedComposioConnection,
   saveComposioConnection,
-} from "../../src/bundles/composio-connection.ts";
+} from "../../src/connectors/providers/composio/connection.ts";
 
 // ── Catalog fixture ─────────────────────────────────────────────────
 //
@@ -177,9 +177,39 @@ function buildHarness(): Harness {
       ],
     }),
   );
-  writeFileSync(join(workDir, "empty-catalog.yaml"), "servers: []\n");
+  // The catalog must PUBLISH the entry: a brokered install is permitted only
+  // for a connector the operator's own catalog names, so an empty catalog now
+  // (correctly) rejects every one. Mirrors a real deployment pointing
+  // NB_CURATED_CATALOG_DIR at its brokered entries.
+  writeFileSync(
+    join(workDir, "empty-catalog.yaml"),
+    [
+      "servers:",
+      `  - name: ${GMAIL_ID}`,
+      "    title: Gmail",
+      "    description: Read, send, and draft mail",
+      '    version: "1.0.0"',
+      "    remotes:",
+      "      - type: streamable-http",
+      `        url: ${GMAIL_URL}`,
+      "    _meta:",
+      "      ai.nimblebrain/connector:",
+      "        auth: composio",
+      "        composio:",
+      "          toolkit: gmail",
+      "",
+    ].join("\n"),
+  );
   const registryStore = new RegistryStore(workDir);
   const lifecycle = new BundleLifecycleManager(new NoopEventSink(), undefined);
+  // What Runtime wires at startup. Delegating rather than snapshotting because
+  // these tests move `COMPOSIO_API_KEY` between cases, and a snapshot taken at
+  // harness-build time would answer for the wrong config.
+  lifecycle.setManagedConnectorRegistry({
+    get: (id) => buildManagedConnectorRegistry().get(id),
+    has: (id) => buildManagedConnectorRegistry().has(id),
+    list: () => buildManagedConnectorRegistry().list(),
+  });
   const workspaceRegistry = new ToolRegistry();
 
   const runtime = {
@@ -274,16 +304,17 @@ describe("manage_connectors.install (composio-auth)", () => {
     await tool.handler({ action: "install", entry: gmailEntry(), wsId: h.wsId });
     const ws = await h.workspaceStore.get(h.wsId);
     return ws?.bundles.find(
-      (b): b is Extract<BundleRef, { url: string }> => "url" in b && "composio" in b,
+      (b): b is Extract<BundleRef, { url: string }> => "url" in b && b.brokered !== undefined,
     );
   }
 
-  test("(a) persists ref.composio.connectorId on the BundleRef", async () => {
+  test("(a) persists the brokered marker on the BundleRef", async () => {
     process.env.COMPOSIO_API_KEY = "k_test";
 
     const installed = await installAndReadPersistedRef();
     expect(installed).toBeDefined();
-    expect(installed?.composio?.connectorId).toBe(GMAIL_ID);
+    expect(installed?.brokered?.provider).toBe("composio");
+    expect(installed?.brokered?.connectorId).toBe(GMAIL_ID);
   });
 
   test("(a-2) the declared authConfigs entry reaches Composio", async () => {
@@ -429,23 +460,82 @@ describe("manage_connectors.install (composio-auth)", () => {
     expect(ws?.bundles ?? []).toHaveLength(0);
   });
 
-  test("(e-3) errResult when entry.install lacks the composio config block", async () => {
+  test("(e-3) refuses a composio entry the trusted catalog doesn't publish", async () => {
     process.env.COMPOSIO_API_KEY = "k_test";
 
-    const malformed = gmailEntry();
-    // Strip the composio block while keeping auth: composio. This
-    // would only happen on a malformed catalog entry, but the handler
-    // should fail loudly rather than try to use undefined fields.
-    if (malformed.install.kind === "remote-oauth") {
-      delete (malformed.install as { composio?: unknown }).composio;
-    }
+    const forged = gmailEntry();
+    forged.id = "attacker.example/forged";
 
     const tool = buildTool(h);
-    const result = await tool.handler({ action: "install", entry: malformed, wsId: h.wsId });
+    const result = await tool.handler({ action: "install", entry: forged, wsId: h.wsId });
 
     expect(result.isError).toBe(true);
     const text = (result.content?.[0] as { text?: string } | undefined)?.text ?? "";
-    expect(text.toLowerCase()).toContain("composio");
+    expect(text).toContain('not a recognized "composio" connector');
+    // The broker was never asked, so no session exists at the operator's account.
+    expect(composioCalls.createConfig).toBeUndefined();
+    const ws = await h.workspaceStore.get(h.wsId);
+    expect(ws?.bundles ?? []).toHaveLength(0);
+  });
+
+  // The overlay identity is interpolated into the curated repo's fetch path, so
+  // whatever chooses it chooses which repository is read. It must come from the
+  // operator's catalog, never from the caller's action — `parseDirectoryEntry`
+  // strips no unknown install fields, and a `dcr` action is returned verbatim,
+  // so a `composio` block on a non-composio entry is caller input all the way
+  // through.
+  test("(e-5) a forged composio block on a dcr install cannot steer the overlay identity", async () => {
+    const identities: string[] = [];
+    const lifecycle = h.runtime.getLifecycle();
+    const realSync = lifecycle.syncBoundSkills.bind(lifecycle);
+    lifecycle.syncBoundSkills = (async (identity: string, ...rest: unknown[]) => {
+      identities.push(identity);
+      return (realSync as unknown as (...a: unknown[]) => Promise<unknown>)(identity, ...rest);
+    }) as typeof lifecycle.syncBoundSkills;
+
+    try {
+      const forged = {
+        id: "com.evil/mcp",
+        registryId: "bundled-static",
+        registryType: "static",
+        name: "Evil",
+        description: "Not in the catalog",
+        install: {
+          kind: "remote-oauth",
+          url: "https://evil.example/mcp",
+          auth: "dcr",
+          composio: { toolkit: "../../../evil-org/evil-repo/main/payload" },
+        },
+      } as unknown as import("../../src/registries/types.ts").DirectoryEntry;
+
+      await buildTool(h).handler({ action: "install", entry: forged, wsId: h.wsId });
+
+      // Derived from the canonical reverse-DNS id, as every DCR connector is.
+      expect(identities).toEqual(["evil"]);
+      expect(identities[0]).not.toContain("..");
+    } finally {
+      lifecycle.syncBoundSkills = realSync;
+    }
+  });
+
+  test("(e-4) a forged composio block is replaced by the catalog's", async () => {
+    process.env.COMPOSIO_API_KEY = "k_test";
+    setConnectorsConfig({
+      providers: { composio: { authConfigs: { gmail: "ac_gmail", exfil: "ac_exfil" } } },
+    });
+    _resetComposioConfigForTest();
+
+    // The caller keeps the published id — what it forges is the toolkit the
+    // platform's broker credential would be spent on.
+    const forged = gmailEntry();
+    if (forged.install.kind === "remote-oauth") {
+      (forged.install as { composio: { toolkit: string } }).composio.toolkit = "exfil";
+    }
+
+    await buildTool(h).handler({ action: "install", entry: forged, wsId: h.wsId });
+
+    const config = composioCalls.createConfig as { toolkits?: string[] } | undefined;
+    expect(config?.toolkits).toEqual(["gmail"]);
   });
 
   test("(f) self-heal: orphan composio bundle (workspace.json row but no lifecycle instance) is reattached without re-running createComposioSession or duplicating", async () => {
@@ -565,10 +655,10 @@ describe("manage_connectors.install (composio-auth)", () => {
     // and the post-T008 workspace scope.
     const personalWs = await h.workspaceStore.get(personalWsId);
     const installed = personalWs?.bundles.find(
-      (b): b is Extract<BundleRef, { url: string }> => "url" in b && "composio" in b,
+      (b): b is Extract<BundleRef, { url: string }> => "url" in b && b.brokered !== undefined,
     );
     expect(installed).toBeDefined();
-    expect(installed?.composio?.connectorId).toBe(GMAIL_ID);
+    expect(installed?.brokered?.connectorId).toBe(GMAIL_ID);
     expect(installed?.oauthScope).toBe("workspace");
   });
 
@@ -618,7 +708,7 @@ describe("manage_connectors.install (composio-auth)", () => {
 // ── scope: "identity" — personal Composio connector ──────────────────
 //
 // The identity-plane sibling of the workspace install above. Same wiring
-// (`buildComposioWiring` bound to `{type:"user"}`), but the ref lands in
+// (`buildBrokeredWiring` bound to `{type:"user"}`), but the ref lands in
 // `users/<id>/connectors.json` — not any workspace — and carries NO oauthScope
 // (identity refs are user-owned structurally). Unlike the workspace path, the
 // identity install does NOT eager-start, so the fake session URL is never dialed
@@ -644,7 +734,8 @@ describe("manage_connectors.install scope:identity (composio personal connector)
     expect(refs).toHaveLength(1);
     const ref = refs[0] as Extract<BundleRef, { url: string }>;
     expect(ref.url).toBe("https://composio.test/mcp/session_test");
-    expect(ref.composio?.connectorId).toBe(GMAIL_ID);
+    expect(ref.brokered?.provider).toBe("composio");
+    expect(ref.brokered?.connectorId).toBe(GMAIL_ID);
     // Identity refs are user-owned structurally — no oauthScope literal.
     expect((ref as { oauthScope?: unknown }).oauthScope).toBeUndefined();
 
@@ -722,7 +813,7 @@ describe("manage_connectors.install scope:identity (composio personal connector)
     expect(sc.alreadyInstalled).toBe(true);
     expect(sc.scope).toBe("identity");
 
-    // The dedup short-circuits BEFORE buildComposioWiring — exactly one upstream
+    // The dedup short-circuits BEFORE buildBrokeredWiring — exactly one upstream
     // session was ever created, so none is orphaned.
     expect(createCalls).toBe(1);
 

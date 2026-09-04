@@ -1,9 +1,13 @@
 import { existsSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { resolveConnectorSkillsConfig } from "../config/connector-skills.ts";
-import { cleanupComposioBundle } from "../connectors/providers/composio/sdk.ts";
-import { cleanupSmitheryBundle } from "../connectors/providers/smithery/provider.ts";
+import type { ManagedConnectorProvider } from "../connectors/providers/managed-provider.ts";
+import {
+  type ManagedConnectorRegistry,
+  managedConnectorRegistryOf,
+} from "../connectors/providers/registry.ts";
 import type { EventSink } from "../engine/types.ts";
+import type { ConnectorOwner } from "../identity/connector-owner.ts";
 import { IdentityConnectorStore } from "../identity/connector-store.ts";
 import { fleetIssuerOption } from "../oauth/fleet-assertion.ts";
 import { mcpAuthCallbackUrl } from "../oauth/mcp-callback-url.ts";
@@ -23,12 +27,8 @@ import { mcpOAuthDir, WorkspaceOAuthProvider } from "../tools/workspace-oauth-pr
 import { validateAdditionalAuthorizationParams } from "../util/oauth-params.ts";
 import { WorkspaceContext } from "../workspace/context.ts";
 import { resolveWorkspaceDisplayName } from "../workspace/workspace-store.ts";
-import { bundleHasStaticAuth } from "./bundle-auth.ts";
-import {
-  composioConnectorDir,
-  connectorSlug,
-  hasPersistedComposioConnection,
-} from "./composio-connection.ts";
+import { brokeredConnectorDir, brokeredRef } from "./brokered.ts";
+import { brokeredConnectionPresent, bundleHasStaticAuth } from "./bundle-auth.ts";
 import {
   type Connection,
   type ConnectionState,
@@ -49,6 +49,7 @@ import {
 } from "./startup.ts";
 import type {
   BriefingBlock,
+  BrokeredRef,
   BundleInstance,
   BundleRef,
   BundleState,
@@ -246,6 +247,18 @@ export class BundleLifecycleManager {
    */
   private resolvedWorkDir: string | null = null;
 
+  /**
+   * The configured brokered providers, wired by Runtime after construction.
+   *
+   * Empty until wired, which is the honest default for a minimal/test runtime
+   * that configures no broker: with no provider registered, brokered teardown
+   * and boot-state derivation fall back to what the kernel can do alone
+   * (removing the credential directory; the generic auth check). A lifecycle
+   * that IS running brokered connectors but was never handed the registry would
+   * silently skip upstream revocation, so the skip is logged where it happens.
+   */
+  private managedConnectors: ManagedConnectorRegistry = managedConnectorRegistryOf([]);
+
   constructor(
     private eventSink: EventSink,
     private configPath: string | undefined,
@@ -260,6 +273,34 @@ export class BundleLifecycleManager {
   /** Wire the runtime's resolved work directory (called by Runtime after construction). */
   setWorkDir(workDir: string): void {
     this.resolvedWorkDir = workDir;
+  }
+
+  /** Wire the configured managed-connector providers (called by Runtime after construction). */
+  setManagedConnectorRegistry(registry: ManagedConnectorRegistry): void {
+    this.managedConnectors = registry;
+  }
+
+  /**
+   * The provider that owns this ref's brokered install, plus the ref itself.
+   * `undefined` for a runtime-native ref, or for a brokered one whose provider
+   * this deployment has not configured — the latter is logged, because it is
+   * the case where a teardown or a probe silently does less than it should.
+   */
+  private brokeredProvider(
+    ref: BundleRef | undefined,
+    context: string,
+  ): { provider: ManagedConnectorProvider; brokered: BrokeredRef } | undefined {
+    const brokered = brokeredRef(ref);
+    if (!brokered) return undefined;
+    const provider = this.managedConnectors.get(brokered.provider);
+    if (!provider) {
+      log.warn(
+        `[lifecycle] ${context}: no "${brokered.provider}" managed-connector provider is ` +
+          `registered — skipping its half for ${brokered.connectorId}`,
+      );
+      return undefined;
+    }
+    return { provider, brokered };
   }
 
   /** Set the PlacementRegistry (called by Runtime after construction). */
@@ -501,16 +542,21 @@ export class BundleLifecycleManager {
 
   /**
    * Best-effort teardown of a connector's workspace-scoped credentials on
-   * uninstall: the mcp-oauth state dir, and — for Composio-backed connectors —
-   * the upstream connected account plus its local connector dir. Credentials
-   * are config, not data; data dirs are preserved. Every step is guarded so
-   * one failure can't sink the others.
+   * uninstall: the mcp-oauth state dir, and — for a brokered connector — the
+   * provider's upstream connection plus its credential dir. Credentials are
+   * config, not data; data dirs are preserved. Every step is guarded so one
+   * failure can't sink the others.
    */
   private async cleanupBundleCredentials(
     instance: BundleInstance,
     serverName: string,
   ): Promise<void> {
-    const workDir = defaultWorkDir();
+    // The runtime's resolved workDir, not `defaultWorkDir()` — install and the
+    // OAuth callback wrote under `runtime.getWorkDir()`, and the two diverge
+    // exactly when an operator sets `workDir` in `nimblebrain.json` without
+    // `NB_WORK_DIR`. Clearing the wrong root leaves every credential behind.
+    // Same rule as `seedUrlConnectionState`.
+    const workDir = this.resolvedWorkDir ?? defaultWorkDir();
     // Drop the OAuth state dir as defense-in-depth. Uninstall normally follows
     // a `disconnect` (which invalidates "all" including client.json), but a
     // leftover from a partial earlier disconnect shouldn't survive an
@@ -528,70 +574,63 @@ export class BundleLifecycleManager {
         `[lifecycle] Failed to clear OAuth state for ${serverName} in ${instance.wsId}: ${msg}\n`,
       );
     }
-    const composioRef =
-      instance.ref && "composio" in instance.ref ? instance.ref.composio : undefined;
-    if (composioRef) {
-      await this.cleanupComposioCredentials(instance, serverName, composioRef.connectorId, workDir);
-    }
-    // Smithery holds the connection (and any upstream grant) entirely on its
-    // side, so there is no local credential dir to clear — the broker delete is
-    // the whole teardown. Same reason as Composio's: uninstall without a prior
-    // disconnect is the realistic flow, and skipping this orphans the
-    // connection at the broker forever.
-    const smitheryRef =
-      instance.ref && "smithery" in instance.ref ? instance.ref.smithery : undefined;
-    if (smitheryRef?.connectionId) {
-      const { lastError } = await cleanupSmitheryBundle({
-        connectionId: smitheryRef.connectionId,
-        namespace: smitheryRef.namespace,
-        baseUrl: smitheryRef.baseUrl,
-      });
-      if (lastError) {
-        process.stderr.write(
-          `[lifecycle] Failed to revoke Smithery connection for "${serverName}" in ${instance.wsId}: ${lastError}\n`,
-        );
-      }
-    }
+    await this.cleanupBrokeredState(instance, serverName, workDir);
   }
 
   /**
-   * Revoke a Composio-backed bundle's upstream connected account and drop its
-   * local connector credential dir. Composio bundles use a parallel credential
-   * namespace (`composio/<connectorId>/connection.json`) AND hold upstream state
-   * at Composio (the connected account with the vendor's OAuth tokens); the
-   * mcp-oauth teardown touches neither. Without this, uninstall-without-prior-
-   * disconnect (the realistic flow — users don't disconnect first) would leak
-   * local disk state and leave the upstream account ACTIVE forever.
-   * `cleanupComposioBundle` runs the same revoke-then-delete pair `disconnect`
-   * uses; the rmSync removes the now-empty connector subdirectory to match the
-   * mcp-oauth posture. Best-effort — each step is guarded.
+   * Tear down a brokered bundle's provider-side state on uninstall: the
+   * provider revokes its connection (and any upstream grant the broker holds)
+   * and drops whatever it keeps locally, then the kernel removes the connector's
+   * credential directory to match the mcp-oauth posture.
+   *
+   * Without this, uninstall-without-prior-disconnect — the realistic flow, since
+   * users don't disconnect first — would leak local disk state and leave the
+   * upstream connection alive at the broker forever, with no revoke path left in
+   * the product once the ref naming it is gone. Best-effort: each step is
+   * guarded, and `cleanup` never throws by contract.
    */
-  private async cleanupComposioCredentials(
+  private async cleanupBrokeredState(
     instance: BundleInstance,
     serverName: string,
-    connectorId: string,
     workDir: string,
   ): Promise<void> {
-    try {
-      await cleanupComposioBundle({ workDir, wsId: instance.wsId, connectorId });
-    } catch (err) {
-      // cleanupComposioBundle never throws by contract; guard anyway so an SDK
-      // exception can't sink the uninstall.
-      const msg = err instanceof Error ? err.message : String(err);
-      process.stderr.write(
-        `[lifecycle] Failed to revoke Composio bundle "${serverName}" in ${instance.wsId}: ${msg}\n`,
-      );
+    const brokered = brokeredRef(instance.ref);
+    if (!brokered) return;
+    const owner: ConnectorOwner = { type: "workspace", wsId: instance.wsId };
+
+    const resolved = this.brokeredProvider(instance.ref, "uninstall");
+    if (resolved?.provider.cleanup) {
+      try {
+        const { lastError } = await resolved.provider.cleanup({ owner, brokered, workDir });
+        if (lastError) {
+          process.stderr.write(
+            `[lifecycle] Failed to revoke the ${brokered.provider} connection for "${serverName}" ` +
+              `in ${instance.wsId}: ${lastError}\n`,
+          );
+        }
+      } catch (err) {
+        // `cleanup` never throws by contract; guard anyway so a provider bug
+        // can't sink the uninstall.
+        const msg = err instanceof Error ? err.message : String(err);
+        process.stderr.write(
+          `[lifecycle] Failed to revoke the ${brokered.provider} connection for "${serverName}" ` +
+            `in ${instance.wsId}: ${msg}\n`,
+        );
+      }
     }
+
+    // The directory rule is the kernel's, so removing it is too — and it runs
+    // whether or not a provider was registered to revoke upstream.
     try {
-      const composioDir = new WorkspaceContext({
-        wsId: instance.wsId,
-        workDir,
-      }).getDataPath("credentials", "composio", connectorSlug(connectorId));
-      rmSync(composioDir, { recursive: true, force: true });
+      rmSync(brokeredConnectorDir(workDir, owner, brokered.provider, brokered.connectorId), {
+        recursive: true,
+        force: true,
+      });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       process.stderr.write(
-        `[lifecycle] Failed to clear composio dir for ${serverName} in ${instance.wsId}: ${msg}\n`,
+        `[lifecycle] Failed to clear the ${brokered.provider} credential dir for ${serverName} ` +
+          `in ${instance.wsId}: ${msg}\n`,
       );
     }
   }
@@ -1173,23 +1212,34 @@ export class BundleLifecycleManager {
       );
     }
 
-    // Composio-backed bundles use a parallel credential namespace —
-    // OAuth tokens live at Composio, not in our `mcp-oauth` directory.
-    // `cleanupComposioBundle` runs the same two-step teardown that
-    // uninstall uses: revoke the Composio-side connected account
-    // (vendor OAuth tokens go with it) + delete the local
-    // `connection.json` so a subsequent Connect can't short-circuit
-    // on a stale ACTIVE account. Single helper, two callers.
+    // A brokered bundle's credentials do not live in our `mcp-oauth` directory —
+    // the broker holds them — so disconnect asks the provider to tear its
+    // connection down instead. Same `cleanup` arm uninstall uses: revoke the
+    // upstream connection (the vendor's OAuth tokens go with it) and drop the
+    // provider's local record, so a subsequent Connect can't short-circuit on a
+    // stale active account.
     //
-    // Composio doesn't differentiate access from refresh — one
-    // delete call revokes both at the upstream vendor. Reporting
-    // `{ access }` only (not faking `refresh`) keeps the return
-    // shape honest about what we know.
-    if (ref.composio) {
-      const { upstreamDeleted, localDeleted, lastError } = await cleanupComposioBundle({
+    // ONLY for a provider that can re-establish what it just destroyed. A broker
+    // that offers no reconnect (`initiate` / `connectApiKey`) would turn
+    // disconnect into a one-way door — `createSession` runs on fresh install
+    // only, behind the dedupe check, so the connector could never be reconnected,
+    // only uninstalled and reinstalled. Those fall through to the generic path
+    // below, which drops the local source and records `not_authenticated`
+    // without destroying anything upstream; their teardown belongs on uninstall,
+    // where reinstall genuinely re-mints the connection.
+    //
+    // A broker doesn't necessarily differentiate access from refresh — one
+    // delete may revoke both at the upstream vendor. Reporting `{ access }` only
+    // (not faking `refresh`) keeps the return shape honest about what we know.
+    const brokeredTarget = this.brokeredProvider(ref, "disconnect");
+    const canReconnect =
+      brokeredTarget?.provider.initiate !== undefined ||
+      brokeredTarget?.provider.connectApiKey !== undefined;
+    if (brokeredTarget?.provider.cleanup && canReconnect) {
+      const { upstreamDeleted, localDeleted, lastError } = await brokeredTarget.provider.cleanup({
+        owner: { type: "workspace", wsId },
+        brokered: brokeredTarget.brokered,
         workDir: opts.workDir,
-        wsId,
-        connectorId: ref.composio.connectorId,
       });
       await this.teardownConnectionSource(serverName, wsId, principalId);
       this.recordConnectionStateChange(serverName, wsId, principalId, "not_authenticated", {
@@ -1202,15 +1252,6 @@ export class BundleLifecycleManager {
         ...(lastError ? { revokeError: lastError } : {}),
       };
     }
-
-    // Smithery deliberately has NO disconnect branch. Deleting the brokered
-    // connection here would be a one-way door: `createSession` runs only on a
-    // fresh install (it sits behind the dedupe check), and Smithery contributes
-    // no reconnect route of its own — so a disconnected connector could never be
-    // reconnected, only uninstalled and reinstalled. Teardown belongs on
-    // uninstall, where reinstall genuinely re-mints the connection; disconnect
-    // falls through to the generic path below, which drops the local source and
-    // records `not_authenticated` without destroying anything upstream.
 
     const provider = new WorkspaceOAuthProvider({
       owner: { type: "workspace", wsId },
@@ -1549,21 +1590,22 @@ export class BundleLifecycleManager {
   /**
    * Full teardown of a personal (identity-plane) connector — the identity sibling
    * of `uninstall` (workspace). Stops + drops the source from the user's registry,
-   * deletes the identity credentials (mcp-oauth always; the composio connection
-   * dir too when it's a composio connector), and removes the install record from
+   * deletes the identity credentials (mcp-oauth always; the brokered credential
+   * dir too when it's a brokered connector), and removes the install record from
    * `IdentityConnectorStore`. Grant revocation is the caller's job (permission
    * store), exactly as `handleUninstall` drops tool permissions after
    * `lifecycle.uninstall`. Each teardown step is best-effort so a partial failure
    * still reaches the install-record removal — the user-visible "it's gone".
    *
    * Upstream token revocation is NOT performed here — for a DCR connector the
-   * vendor's OAuth grant (RFC 7009) and for a composio connector the connected
-   * account both stay live at the vendor until they expire; we only delete the
+   * vendor's OAuth grant (RFC 7009) and for a brokered connector the broker-side
+   * connection both stay live at the vendor until they expire; we only delete the
    * LOCAL credentials, so the platform forgets them. The workspace `uninstall`
-   * DOES revoke upstream (`revokeUrlBundleTokens` for DCR, `cleanupComposioBundle`
-   * for composio), but both are workspace-keyed; owner-aware upstream revocation
-   * for both auth types rolls into the connection-state / reauth slice. This is a
-   * known asymmetry with `uninstall`. A user who wants the vendor-side grant gone
+   * DOES revoke upstream (`revokeUrlBundleTokens` for DCR, the provider's
+   * `cleanup` arm for a brokered one) — a known asymmetry with this method, and
+   * one the seam no longer blocks: `cleanup` takes an owner, so closing it is a
+   * call, deliberately left to the connection-state / reauth slice rather than
+   * changing teardown semantics here. A user who wants the vendor-side grant gone
    * meanwhile can revoke it in the vendor's own authorized-apps list.
    */
   async uninstallIdentityConnector(
@@ -1573,8 +1615,8 @@ export class BundleLifecycleManager {
   ): Promise<void> {
     const { workDir } = opts;
     const store = new IdentityConnectorStore({ workDir });
-    // Read the ref BEFORE removing it — its composio marker decides whether to
-    // also clear the composio connection dir.
+    // Read the ref BEFORE removing it — its brokered marker decides whether
+    // there is also a provider credential dir to clear.
     const ref = await store.get(userId, serverName);
 
     // 1. Stop + drop the running source from the user's registry (if warm).
@@ -1592,37 +1634,10 @@ export class BundleLifecycleManager {
       await registry.removeSource(serverName);
     }
 
-    // 2. Delete identity credentials. mcp-oauth for every personal connector; the
-    //    composio connection dir additionally when the ref carries a composio
-    //    marker. Best-effort (force: a never-connected connector has no dir).
-    try {
-      rmSync(mcpOAuthDir(workDir, { type: "user", userId }, serverName), {
-        recursive: true,
-        force: true,
-      });
-    } catch (err) {
-      log.warn(
-        `[lifecycle] failed to clear identity mcp-oauth for ${userId}|${serverName}: ${
-          err instanceof Error ? err.message : String(err)
-        }`,
-      );
-    }
-    const connectorId = (ref as { composio?: { connectorId: string } } | null)?.composio
-      ?.connectorId;
-    if (connectorId) {
-      try {
-        rmSync(composioConnectorDir(workDir, { type: "user", userId }, connectorId), {
-          recursive: true,
-          force: true,
-        });
-      } catch (err) {
-        log.warn(
-          `[lifecycle] failed to clear identity composio dir for ${userId}|${serverName}: ${
-            err instanceof Error ? err.message : String(err)
-          }`,
-        );
-      }
-    }
+    // 2. Delete identity credentials. mcp-oauth for every personal connector;
+    //    the provider's credential dir additionally when the ref carries a
+    //    brokered marker.
+    clearIdentityConnectorCredentials(workDir, userId, serverName, brokeredRef(ref ?? undefined));
 
     // 3. Remove the install record — the user-visible "disconnected" state.
     await store.remove(userId, serverName);
@@ -2024,26 +2039,20 @@ export class BundleLifecycleManager {
     // connector at boot, however many are actually connected. See
     // `resolvedWorkDir`.
     const workDir = this.resolvedWorkDir ?? defaultWorkDir();
-    // Composio-backed connectors live in a parallel credential namespace — the
-    // user-presence signal is `credentials/composio/<connectorId>/connection.json`,
-    // not the mcp-oauth tokens.json. Bundles carry the catalog id forward on
-    // `ref.composio.connectorId` so this probe is local; we don't need the
-    // catalog to derive the path. Composio bundles carry static auth but STILL
-    // need a per-user connect, so they route to the composio probe (check
-    // FIRST). Other static-auth sources (provider / bearer / header) carry their
-    // own credential and auto-connect — no interactive Connect step — so they
-    // must not seed `not_authenticated` (which the UI renders as a "Connect"
-    // button that would spin a bogus OAuth flow). Reaching here means boot-start
-    // either succeeded or was never attempted — a failure returned above on
-    // `startError` — so `running` is accurate.
+    // A brokered connector's readiness is its provider's to answer, and it is
+    // asked FIRST: a brokered bundle carries static transport auth but may still
+    // need a per-owner connect, so the generic static-auth check below would
+    // seed `running` for an unconnected one and lose its Connect button. A
+    // provider with no `hasConnection` has nothing to connect per-owner and
+    // falls through. Other static-auth sources (provider / bearer / header)
+    // carry their own credential and auto-connect — no interactive Connect step
+    // — so they must not seed `not_authenticated` (which the UI renders as a
+    // "Connect" button that would spin a bogus OAuth flow). Reaching here means
+    // boot-start either succeeded or was never attempted — a failure returned
+    // above on `startError` — so `running` is accurate.
     const hasAuth =
-      "composio" in ref && ref.composio
-        ? hasPersistedComposioConnection(
-            workDir,
-            { type: "workspace", wsId },
-            ref.composio.connectorId,
-          )
-        : bundleHasStaticAuth(ref) || hasPersistedWorkspaceOAuthTokens(workDir, wsId, serverName);
+      brokeredConnectionPresent(this.managedConnectors, ref, wsId, workDir) ??
+      (bundleHasStaticAuth(ref) || hasPersistedWorkspaceOAuthTokens(workDir, wsId, serverName));
     if (!hasAuth) {
       this.recordConnectionStateChange(serverName, wsId, "_workspace", "not_authenticated");
     } else {
@@ -2055,6 +2064,42 @@ export class BundleLifecycleManager {
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
+
+/**
+ * Remove a personal connector's local credential homes: the mcp-oauth dir every
+ * personal connector has, plus the provider's credential dir when the ref is
+ * brokered. Best-effort and independently guarded — a failure on one must not
+ * skip the other, and `force` makes a never-connected connector a no-op.
+ */
+function clearIdentityConnectorCredentials(
+  workDir: string,
+  userId: string,
+  serverName: string,
+  brokered: BrokeredRef | undefined,
+): void {
+  const owner: ConnectorOwner = { type: "user", userId };
+  try {
+    rmSync(mcpOAuthDir(workDir, owner, serverName), { recursive: true, force: true });
+  } catch (err) {
+    log.warn(
+      `[lifecycle] failed to clear identity mcp-oauth for ${userId}|${serverName}: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
+  }
+  if (!brokered) return;
+  try {
+    rmSync(brokeredConnectorDir(workDir, owner, brokered.provider, brokered.connectorId), {
+      recursive: true,
+      force: true,
+    });
+  } catch (err) {
+    log.warn(
+      `[lifecycle] failed to clear the identity ${brokered.provider} dir for ` +
+        `${userId}|${serverName}: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+}
 
 /**
  * Build the `BundleInstance` `seedInstance` records.

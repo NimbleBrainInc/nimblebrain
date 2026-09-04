@@ -1,3 +1,6 @@
+import type { ManagedConnectorRegistry } from "../connectors/providers/registry.ts";
+import type { ConnectorOwner } from "../identity/connector-owner.ts";
+import { brokeredRef } from "./brokered.ts";
 import type { BundleRef } from "./types.ts";
 
 /**
@@ -24,16 +27,45 @@ const STATIC_AUTH_TYPES: readonly string[] = ["bearer", "header", "provider"];
  * (`startup.ts`): the two boot gates (`workspace-runtime.ts` boot-start,
  * `lifecycle.ts` `seedInstance`) consume the same predicate so all three agree.
  *
- * CAUTION: Composio-backed bundles also carry static auth (`provider` today,
- * `header` on refs predating the credential-provider seam), so this returns true
- * for them too — correct for `startup.ts`
- * (Composio never uses the OAuth provider). But Composio STILL needs a per-user
- * connect, so the two boot gates MUST check the Composio marker FIRST and only
- * fall back to this predicate for non-Composio url bundles. Otherwise an
- * unconnected Composio connector seeds `running` and loses its Connect button.
+ * CAUTION: brokered bundles also carry static auth (`provider` today, `header`
+ * on refs predating the credential-provider seam), so this returns true for them
+ * too — correct for `startup.ts` (a broker never uses the OAuth provider). But a
+ * broker may STILL need a per-owner connect, so the two boot gates must ask
+ * {@link brokeredConnectionPresent} FIRST and fall back to this predicate only
+ * when it declines to answer. Otherwise an unconnected brokered connector seeds
+ * `running` and loses its Connect button.
  */
 export function bundleHasStaticAuth(ref: BundleRef): boolean {
   return (
     "url" in ref && !!ref.transport?.auth && STATIC_AUTH_TYPES.includes(ref.transport.auth.type)
   );
+}
+
+/**
+ * Whether a brokered bundle's owner has completed the per-owner connect its
+ * provider requires — the question `bundleHasStaticAuth` cannot answer, asked of
+ * the only thing that can.
+ *
+ * Three-valued on purpose. `undefined` means "not a question for a provider" —
+ * the ref is runtime-native, its provider is not registered here, or that
+ * provider has nothing to connect per-owner — and the caller falls back to the
+ * generic static-auth / persisted-token check. `true` / `false` is the
+ * provider's own verdict and wins.
+ *
+ * Shared by both boot gates (`workspace-runtime.ts` boot-start and
+ * `lifecycle.ts` `seedUrlConnectionState`) so they cannot disagree about which
+ * connectors are ready — they have before.
+ */
+export function brokeredConnectionPresent(
+  managedConnectors: ManagedConnectorRegistry,
+  ref: BundleRef,
+  wsId: string,
+  workDir: string,
+): boolean | undefined {
+  const brokered = brokeredRef(ref);
+  if (!brokered) return undefined;
+  const hasConnection = managedConnectors.get(brokered.provider)?.hasConnection;
+  if (!hasConnection) return undefined;
+  const owner: ConnectorOwner = { type: "workspace", wsId };
+  return hasConnection({ owner, brokered, workDir });
 }
