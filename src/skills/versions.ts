@@ -95,19 +95,31 @@ export function versionFilePath(livePath: string, version: string): string | nul
  * Copy the live file (if any) into `_versions/` before a destructive write.
  * Returns the new version id, or null when there was nothing to snapshot.
  *
- * Two snapshots of the same skill within one millisecond collide on filename
- * and the second overwrites the first — losing an intermediate version, since
- * the live file changed between them. Millisecond resolution makes that narrow
- * (it needs two mutations of one skill inside the same tick) and it costs the
- * middle state, never the caller's own prior content. Disambiguating the name
- * is the fix if it ever stops being narrow.
+ * A stamp is only millisecond-resolution, so two mutations of one skill inside
+ * the same tick want the same filename — and a plain `copyFileSync` would let
+ * the second overwrite the first, losing the state in between. Taking the next
+ * free millisecond instead keeps every snapshot, and keeps the stamp ordering
+ * honest: the file written second sorts second, which is what makes "newest
+ * first" in {@link listSkillVersions} mean newest rather than whichever write
+ * happened to land last.
+ *
+ * The walk terminates because each existing file occupies exactly one stamp,
+ * so a directory holding n snapshots of this skill yields a free slot within
+ * n + 1 steps. Advancing the recorded instant by a few milliseconds is the
+ * price, and nothing reads `savedAt` at that resolution.
  */
 export function snapshotSkillVersion(livePath: string): string | null {
   if (!existsSync(livePath)) return null;
   const dir = versionsDirFor(livePath);
   mkdirSync(dir, { recursive: true });
-  const version = toStamp(new Date().toISOString());
-  copyFileSync(livePath, join(dir, `${baseNameFor(livePath)}.${version}.md`));
+  const base = baseNameFor(livePath);
+  let at = Date.now();
+  let version = toStamp(new Date(at).toISOString());
+  while (existsSync(join(dir, `${base}.${version}.md`))) {
+    at += 1;
+    version = toStamp(new Date(at).toISOString());
+  }
+  copyFileSync(livePath, join(dir, `${base}.${version}.md`));
   return version;
 }
 
