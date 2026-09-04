@@ -151,7 +151,7 @@ import {
   mergeScopedSkills,
   partitionSkills,
 } from "../skills/loader.ts";
-import { SkillMatcher } from "../skills/matcher.ts";
+import { type SkillMatch, SkillMatcher } from "../skills/matcher.ts";
 import { partitionSkillsByRole, type SelectedSkill, selectLayer3Skills } from "../skills/select.ts";
 import { approxTokens } from "../skills/tokens.ts";
 import { MAX_SKILL_BODY_CHARS, truncateMarkdownToBudget } from "../skills/truncate.ts";
@@ -201,6 +201,14 @@ import {
   runWithRequestContext,
 } from "./request-context.ts";
 import { type BufferedRunEvent, RunBus } from "./run-bus.ts";
+import type {
+  RunComposition,
+  RunConversationBinding,
+  RunHandle,
+  RunSpec,
+  UserResourceLinkPart,
+  UserTextPart,
+} from "./run-spec.ts";
 import { buildSkillsLoadedPayload, collectLoadedSkills } from "./skills-loaded-payload.ts";
 import type {
   ChatRequest,
@@ -1001,8 +1009,12 @@ export class Runtime {
         throw new ConversationAccessDeniedError(request.conversationId, ownerId);
       }
       // Second authz gate (resume): the owner must still be a member of the
-      // conversation's workspace — runs before `begin`, so a removed member never
-      // reserves a run. Mirrors the `chat()` path; reads stay owner-gated.
+      // conversation's workspace. This is an ADMISSION check, ahead of the bus
+      // reservation — `startRun` holds the gate itself, but by then this door
+      // has already answered the HTTP request with a conversation id and
+      // detached, so a refusal there would surface as an error frame on the
+      // stream rather than a 403. Refuse before `begin` mutates shared run
+      // state. Reads stay owner-gated.
       if (existing) {
         await this.assertOwnerIsWorkspaceMember(request.conversationId, convWsId, ownerId);
       }
@@ -1112,16 +1124,10 @@ export class Runtime {
   }
 
   private async _chatInner(request: ChatRequest, requestSink?: EventSink): Promise<ChatResult> {
-    // Identity-bound chat session, walled to one workspace.
-    //
-    // The chat surface has no session-level `workspaceId` field; the focused
-    // workspace arrives per request (`request.workspaceId`). Tool reach is
-    // exactly that one workspace's tools plus the caller's identity tools —
-    // never a cross-workspace union — and each tool call routes via the
-    // orchestrator, which denies any other workspace. Single-workspace reads
-    // (focused app, overlays, skills) and the workspace-owned stores all bind
-    // to the conversation's own workspace — the one workspace the request is
-    // bound to.
+    // The chat door. It resolves WHOSE run this is and WHICH conversation it
+    // belongs to, then hands a `RunSpec` to `startRun` — the establishment
+    // sequence itself (membership, tools, prompt, budget, sinks, engine) lives
+    // there and is shared with every other trigger.
     //
     // Identity resolution rules (strict, no `??` fallbacks anywhere):
     //   - When an identity provider is configured (production / `instance.json`):
@@ -1132,13 +1138,10 @@ export class Runtime {
     //     gated on `!this._identityProvider` so the same path can't
     //     silently degrade production into "owned by usr_default."
     //
-    // Note: `_chatInner` performs the identity check BEFORE any IO so a
-    // bad-state call rejects synchronously (acceptance criterion: identity
-    // required).
-    // Owner resolution is the shared identity rule (production requires an
-    // identity; dev falls back to DEV_IDENTITY) — see `resolveRequestOwnerId`.
-    // The same rule resolves files for the REST upload/serve handlers and the
-    // host-resources resolver, so an upload and its rehydration share a store.
+    // The check runs BEFORE any IO so a bad-state call rejects synchronously
+    // (acceptance criterion: identity required). The same rule resolves files
+    // for the REST upload/serve handlers and the host-resources resolver, so an
+    // upload and its rehydration share a store.
     const ownerId = resolveRequestOwnerId(request.identity, this._identityProvider !== null);
     const requestIdentity = request.identity ?? DEV_IDENTITY;
 
@@ -1152,31 +1155,24 @@ export class Runtime {
     // (`request.workspaceId`, REQUIRED on the HTTP chat door so it's always
     // present there), or the caller's personal workspace when absent — the
     // embedded / dev path only (`?? sessionWsId`) — and stays there for its
-    // whole life. On resume the workspace
-    // is read from the conversation's own path via the locator (authoritative),
-    // NOT from the request header — so a conversation answered while you're
-    // focused elsewhere still resolves its own tools, skills, apps, files, and
-    // workspace context. The conversation is a sealed container; the focused
-    // workspace only decides where a NEW chat is born.
-    const requestWsId = request.workspaceId ?? sessionWsId;
+    // whole life. On resume the workspace is read from the conversation's own
+    // path via the locator (authoritative), NOT from the request header — so a
+    // conversation answered while you're focused elsewhere still resolves its
+    // own tools, skills, apps, files, and workspace context. The conversation
+    // is a sealed container; the focused workspace only decides where a NEW
+    // chat is born.
+    //
     // `convWsId` is authoritative: on a cross-workspace resume `resolveChatStore`
-    // relocates to the workspace the conversation actually lives in. Every
-    // workspace-scoped surface below (`toolsWsId`, skills, apps, overlays, file
-    // partition) keys off it, not the request header — otherwise a resumed chat
-    // leaks the focused workspace's tools/context into another workspace's thread.
+    // relocates to the workspace the conversation actually lives in. It is what
+    // the run is walled to AND what its prompt narrates — a conversation in a
+    // personal workspace is narrated like any other, since a personal workspace
+    // is just a workspace.
+    const requestWsId = request.workspaceId ?? sessionWsId;
     const { store, convWsId } = await this.resolveChatStore(
       request.conversationId,
       requestWsId,
       ownerId,
     );
-    // Narrate the conversation's OWN workspace — personal or shared alike. A
-    // personal workspace is just a workspace (JIT-provisioned at login), so it's
-    // named in the prompt like any other when the conversation lives there. A
-    // sealed conversation narrates its own workspace from wherever it's viewed.
-    // `formatNoWorkspaceContext()` (compose.ts) is reserved for genuinely
-    // workspace-less contexts — an external `/mcp` call with no `X-Workspace-Id`;
-    // the chat door requires a workspace, so it never reaches that branch.
-    const narratedWsId = convWsId;
 
     const turnCtx = await this.buildTurnContext(requestIdentity, convWsId);
 
@@ -1198,148 +1194,529 @@ export class Runtime {
 
     // Resume an existing conversation only if the caller owns it (the ownerId
     // check is the ONLY barrier between users and each other's conversations —
-    // it runs in the load-bearing chat path, not just at a higher layer), and
-    // requires CURRENT membership of the conversation's workspace on resume.
+    // it runs in the load-bearing chat path, not just at a higher layer).
     // Inside the turn's context, because `makeCreateOpts` resolves the model
     // binding and the tint that lets a person's preference outrank the org
     // default reads identity from there. See `buildTurnContext`.
-    const conversation = await runWithRequestContext(turnCtx, () =>
-      this.loadOrCreateConversation(request, store, makeCreateOpts, ownerId, convWsId),
+    const { conversation, resumed } = await runWithRequestContext(turnCtx, () =>
+      this.loadOrCreateConversation(request, store, makeCreateOpts, ownerId),
     );
 
-    // The turn's context, built here because the conversation it belongs to is
-    // now known. Three sites run inside it: the history fold, `engine.run`, and
-    // the auto-title. The first and last are forked outside the engine's own
-    // wrap, and both spend tokens on this conversation's behalf — a call that
-    // records spend with no conversation in scope is spend no per-conversation
-    // surface can account for, the defect `src/usage/record.ts` prevents.
-    //
-    // The scope decides more than attribution: `getModelSlot` reads
-    // `workspaceModelOverride` off it, so a call inside resolves the bound
-    // workspace's slots and a call outside resolves the instance-configured
-    // ones. Adding a forked call below means wrapping it too — the surrounding
-    // code is NOT in this context by default.
     // The conversation's binding wins over both the request override and the
     // configured slot: a conversation runs on one model for its life, so a
-    // slot change retargets new conversations only. `makeCreateOpts` above carries
-    // the pin, so a conversation created on this path is already bound and
-    // this reads back what it was born with. Absent only on legacy records
+    // slot change retargets new conversations only. `makeCreateOpts` above
+    // carries the pin, so a conversation created on this path is already bound
+    // and this reads back what it was born with. Absent only on legacy records
     // predating the binding, which resolve from current config as before.
-    //
-    // Resolved here rather than at first use because `reqCtx` below carries it:
-    // `nb__status` answers "what model is this" from the context, so the turn's
-    // model has to be known before the context that reports it is built.
     const resolvedModelString =
       conversation.model ??
       runWithRequestContext(turnCtx, () => this.resolveRequestModelString(request.model));
 
-    const reqCtx: RequestContext = {
-      ...turnCtx,
-      conversationId: conversation.id,
+    const handle = await this.startRun({
+      trigger: "chat",
+      principal: { identity: requestIdentity, ownerId },
+      workspaceId: convWsId,
+      briefingWorkspaceId: convWsId,
+      conversation: { store, conversation, resumed },
+      input: {
+        content: buildUserMessageContent(request),
+        // The message's author, absent when a dev-mode caller sent no identity.
+        ...(request.identity?.id ? { userId: request.identity.id } : {}),
+        ...(request.fileRefs?.length ? { fileRefs: request.fileRefs } : {}),
+        // A chat matches trigger phrases against what the person actually typed
+        // — not the assembled content blocks, which carry upload placeholders.
+        matchOn: request.message,
+        ...(request.allowedTools ? { allowedTools: request.allowedTools } : {}),
+        ...(request.appContext ? { appContext: request.appContext } : {}),
+      },
+      budget: {
+        ...(request.maxIterations !== undefined ? { maxIterations: request.maxIterations } : {}),
+      },
       model: resolvedModelString,
-    };
+      ...(request.signal ? { signal: request.signal } : {}),
+      ...(requestSink ? { sink: requestSink } : {}),
+      // An aborted chat turn has already persisted everything it did to the
+      // conversation log, and the caller (`startTurn`) tells cancel from error
+      // by reading the signal it owns.
+      onAbort: "throw",
+    });
 
-    // Build the user message (text + `resource_link` attachment blocks) and
-    // append it to the conversation log.
-    const userContent = buildUserMessageContent(request);
-    await this.appendUserMessage(store, conversation, userContent, request);
-
-    // Every workspace-scoped surface below — the skill pool, the briefing, the
-    // tool set — keys off the conversation's own workspace (`convWsId`, resolved
-    // above), so a resumed chat stays sealed to its workspace regardless of the
-    // `/w/:slug` currently being viewed.
-
-    // Per-request skill pool. The boot-time `this.skillMatcher` only ever scans
-    // org-tier dirs (`config.skillDirs` + `globalSkillDir`), never
-    // `workspaces/<id>/skills/` or `users/<id>/skills/`, so those tiers could
-    // never trigger-match. The merged conversation pool — org + workspace +
-    // user, which already folds in the boot matchable + builtin skills (see
-    // `loadConversationSkills`) — is a superset of the boot set, so the
-    // workspace/user tiers fire too.
+    // Fire-and-forget title generation on the first turn (decoupled from the
+    // turn lifecycle; best-effort). Broadcasts `conversation.title` on the global
+    // SSE — routed to the right conversation by `conversationId` — so delivery is
+    // reliable after the turn ends and across tabs.
     //
-    // The pool is computed ONCE here and threaded into `selectRequestLayer3`
-    // below so the disk read happens a single time per turn. `userId` is
-    // hoisted from its later definition site for this reason; keep it a single
-    // definition (the layer-3 call reuses it).
-    const userId = requestIdentity.id;
-    // Partition the conversation pool by ROLE once: `context` skills (every tier)
-    // compose into the always-on Layer 0/1 channel; `capability` skills feed the
-    // conditional channels (keyword matcher + tool-affinity Layer 3). Disjoint by
-    // `type`, so nothing is injected twice — no downstream de-dup.
-    const conversationPool = this.loadConversationSkills(convWsId, userId);
-    // Conversation-scoped suppression, applied to the POOLS rather than to the
-    // channel routers. `partitionSkillsByRole` and `selectLayer3Skills` read
-    // the durable `manifest.status` and that logic is correct — a skill the
-    // operator retired stays off everywhere. This is the other axis: "not for
-    // this task", held in this conversation's own event log, so it steers one
-    // conversation without editing a file every other conversation reads.
-    //
-    // EVERY pool that can reach composition is filtered, not just this one:
-    // the bundle pool below and the connector overlays too. `suppressibleSkillNames`
-    // builds the mute's validation set from the same union, so a name the tool
-    // accepts is always a name some filter here will act on.
-    const suppressed = collectSuppressedSkillNames(await store.readEvents(conversation.id));
-    const { context: poolContext, capability: poolCapability } = partitionSkillsByRole(
-      withoutSuppressed(conversationPool, suppressed),
+    // Inside the RUN's context even though it outlives the run: the summarizer
+    // call it forks bills this conversation, and the context is what carries
+    // that attribution — plus the workspace's `models.fast` override, which
+    // decides the model it bills. AsyncLocalStorage propagates into the detached
+    // promise, so the scope holds after this function returns.
+    runWithRequestContext(handle.context, () =>
+      this.maybeGenerateTitle(conversation, request, store, handle.output, sessionWsId),
     );
 
-    // The workspace BRIEFING (apps + workspace overlay + "## Workspace" block
-    // + workspace persona) reflects the conversation's own workspace
-    // (`narratedWsId` = `convWsId`) — personal or shared alike. Deterministic +
-    // workspace-scoped (same for every member of that workspace).
-    const { apps, liveOverlays } = await this.buildWorkspaceBriefing(narratedWsId);
+    return {
+      response: handle.output,
+      conversationId: conversation.id,
+      skillName: handle.skillName,
+      toolCalls: handle.toolCalls,
+      stopReason: handle.stopReason,
+      usage: handle.usage,
+    };
+  }
 
-    // Build focusedApp/appState/focusedServerName when the request is scoped to a
-    // specific app (§7 app-aware chat), resolved in the SAME single workspace the
-    // session's tools are bound to (`convWsId`).
+  /**
+   * Unattended agent execution. Sibling door to `chat()` for scheduled
+   * automations, operator-run automations, eval runs, and embedded callers.
+   *
+   * Contract differences vs. `chat()`:
+   *  - Each call is a one-shot run that produces a deliverable, not a
+   *    conversation: nothing is persisted to a conversation store, there is no
+   *    resume, and no concurrency lock (a re-entrant scheduler tick on the same
+   *    automation is two runs, which is the correct semantic — each tick is its
+   *    own run).
+   *  - The prompt goes in as a plain user message — no content parts, no file
+   *    refs, and no trigger matching: a task description is not a phrase a skill
+   *    should claim. Layer 3 (bundle workflow guidance) still applies based on
+   *    the active tool set.
+   *  - The system prompt is composed in task mode, prepending `TASK_IDENTITY`
+   *    so the model produces a deliverable rather than a conversational reply.
+   *    The runtime owns this framing — bundles cannot spoof it by wrapping the
+   *    user message.
+   *  - `workspaceId` is optional: present → that workspace's tool scope +
+   *    briefing; absent → the run is housed in the owner's personal workspace
+   *    (its tools + identity tools) and narrates no workspace. Either way the
+   *    run is walled to one workspace.
+   *  - An abort returns what the run accomplished instead of throwing: nothing
+   *    else records this run's events, so silent abandonment would lose them.
+   */
+  async executeTask(request: TaskRequest, requestSink?: EventSink): Promise<TaskResult> {
+    // Identity resolution mirrors chat(): in production an identity provider
+    // populates this; in dev mode we fall back to DEV_IDENTITY. Scheduler
+    // callers pass `{ id: automation.ownerId }` as a minimal identity.
+    const ownerId = resolveRequestOwnerId(request.identity, this._identityProvider !== null);
+    const requestIdentity = request.identity ?? DEV_IDENTITY;
+
+    // The owner's personal workspace — where an unfocused run is housed. Its
+    // registry has to exist before anything resolves against it.
+    const sessionWsId = await this.prepareSessionWorkspace(requestIdentity);
+
+    // The run's single working workspace: the focused workspace, or the personal
+    // one when unfocused. Tool scope, skill/bundle scope, connector overlays,
+    // model slots, and file provenance all key off this one id. Only a focused
+    // run narrates a workspace; an unfocused one is walled to the personal
+    // workspace without being about it, so `TASK_IDENTITY` carries the framing.
+    const focusedWsId = request.workspaceId;
+
+    const handle = await this.startRun({
+      // An automation fires as `schedule` (a cron tick) or `manual` (Run now);
+      // anything driving the runtime directly is `api`.
+      trigger: request.trigger ?? "api",
+      principal: { identity: requestIdentity, ownerId },
+      workspaceId: focusedWsId ?? sessionWsId,
+      ...(focusedWsId ? { briefingWorkspaceId: focusedWsId } : {}),
+      input: {
+        content: [{ type: "text", text: request.prompt }],
+        userId: requestIdentity.id,
+        ...(request.allowedTools ? { allowedTools: request.allowedTools } : {}),
+      },
+      budget: {
+        ...(request.maxIterations !== undefined ? { maxIterations: request.maxIterations } : {}),
+        // The UI exposes a per-automation `maxInputTokens`; honoring it here is
+        // what makes that setting take effect.
+        ...(request.maxInputTokens !== undefined ? { maxInputTokens: request.maxInputTokens } : {}),
+      },
+      model: this.resolveRequestModelString(request.model),
+      ...(request.signal ? { signal: request.signal } : {}),
+      ...(requestSink ? { sink: requestSink } : {}),
+      onAbort: "partial",
+    });
+
+    // The deliverable (output), the activity log (toolCalls), and the usage go
+    // back to the caller, which persists the run result under `runId`.
+    return {
+      output: handle.output,
+      runId: handle.runId,
+      toolCalls: handle.toolCalls,
+      stopReason: handle.stopReason,
+      usage: handle.usage,
+    };
+  }
+
+  /**
+   * The run-start door — the one place an agent run is established.
+   *
+   * Every trigger describes its run as a {@link RunSpec} and comes through
+   * here: chat, an automations cron tick, an operator's Run now, an embedded
+   * caller. What the door owns, once, for all of them:
+   *
+   *  - the membership re-check for the workspace the run acts in;
+   *  - the active tool set (workspace tools + identity tools, role-filtered,
+   *    surfaced) and the prompt composed over it;
+   *  - the model's output ceiling, thinking budget, and message budget;
+   *  - the event-sink chain and its per-call workspace attribution;
+   *  - the engine, and the request context it runs under.
+   *
+   * What it does NOT own is what the *caller's* resource means: resolving a
+   * conversation, telling the client its id, generating a title, persisting a
+   * run result. Those stay with the door that has a resource to keep.
+   *
+   * The value of one door is that an invariant asserted here holds for every
+   * way of waking the agent, including ways that do not exist yet — where two
+   * doors each re-implementing it hold it only until the third forgets.
+   */
+  async startRun(spec: RunSpec): Promise<RunHandle> {
+    const { ownerId } = spec.principal;
+    const binding = spec.conversation;
+    // A run with a person in the loop. The only axis `trigger` decides: it
+    // keeps the durable-authoring tools an unattended run must not reach, and
+    // frames the prompt as a conversation rather than a deliverable.
+    const attended = spec.trigger === "chat";
+
+    // ── The gate ────────────────────────────────────────────────────────────
+    // Current membership of the workspace the run acts in, for every run that
+    // CONTINUES something established earlier — a resumed conversation, an
+    // automation authored weeks ago. Their workspace was membership-validated
+    // when they were created, and that is precisely the check that goes stale:
+    // without this, a member offboarded from the workspace keeps acting in it,
+    // through its tools and its connectors, for as long as the resource lives.
+    //
+    // A run that establishes its own resource skips it. The workspace a new
+    // conversation is born in is the one the caller's own door just validated
+    // (`requireWorkspace` on `/v1/chat*`), and the conversation is sealed to
+    // that workspace from here on — re-checking would be the same check twice.
+    //
+    // ADR-0007 puts this at session establishment on every door. This IS the
+    // door, so the invariant holds by construction rather than by each caller
+    // remembering to re-implement it. It runs before the opening message is
+    // written and before any tool is bound, so a refused run touches nothing.
+    // Personal workspaces are sole-member by construction and never gate.
+    //
+    // The two refusals differ because the callers' contracts do, not because
+    // the check does: a chat resume is a 403 to a person; an automation run is
+    // a SKIPPED run the scheduler retries, self-healing the moment the owner is
+    // re-added.
+    if (
+      (!binding || binding.resumed) &&
+      !(await this.isPrincipalWorkspaceMember(spec.workspaceId, ownerId))
+    ) {
+      throw binding
+        ? new ConversationWorkspaceAccessDeniedError(
+            binding.conversation.id,
+            ownerId,
+            spec.workspaceId,
+          )
+        : new WorkspaceMembershipRevokedError(ownerId, spec.workspaceId);
+    }
+
+    // The run's correlation anchor, stamped on the request context for audit
+    // and file correlation and returned to the caller.
+    const runId = `run_${crypto.randomUUID().slice(0, 12)}`;
+
+    const { workWorkspace, activeWorkspace } = await this.resolveRunWorkspaces(spec);
+    const briefingWsId = spec.briefingWorkspaceId;
+    const reqCtx = buildRunContext(spec, runId, workWorkspace, attended);
+
+    // ── The opening message ─────────────────────────────────────────────────
+    // A run with a conversation appends it to the log and reads the whole
+    // history back; a one-shot run's input IS the message. Appending here,
+    // after the gate, is what keeps a refused resume from writing to a log it
+    // may no longer act in.
+    const userMessage = buildOpeningMessage(spec.input);
+    if (binding) await binding.store.append(binding.conversation, userMessage);
+
+    const composed = await this.composeRun(spec, { attended, briefingWsId, activeWorkspace });
+    const { tools, skill, systemPrompt, stableSystem, volatileHead } = composed;
+
+    // ── The budget ──────────────────────────────────────────────────────────
+    // Resolved against the run's model so the cap fits that model's own
+    // ceiling. `maxOutputTokens` is not an input to `resolveThinking` — it
+    // reaches the engine on EngineConfig, which is the only layer that knows
+    // whether the provider meters thinking in tokens at all.
+    const resolvedMaxOutputTokens = resolveMaxOutputTokens({
+      configValue: this.config.maxOutputTokens,
+      model: spec.model,
+    });
+    const resolvedThinking = resolveThinking({
+      configMode: this.config.thinking,
+      configEffort: this.config.thinkingEffort,
+      configBudgetTokens: this.config.thinkingBudgetTokens,
+      model: spec.model,
+    });
+    // Compose the per-call message budget from the model's actual context
+    // window minus the static per-call overhead. The configured value is
+    // treated as a CAP — never a target. Per-run override beats config beats
+    // default. See `src/runtime/resolve-message-budget.ts`.
+    const messageBudget = resolveMessageBudget({
+      model: spec.model,
+      configMaxInputTokens: spec.budget.maxInputTokens ?? this.getMaxInputTokens(),
+      systemPrompt,
+      tools,
+      maxOutputTokens: resolvedMaxOutputTokens,
+    });
+
+    // ── The messages ────────────────────────────────────────────────────────
+    const effectiveHistory = await this.resolveRunHistory(
+      binding,
+      userMessage,
+      reqCtx,
+      messageBudget.budget,
+    );
+
+    // Files are workspace-owned: rehydrate a `files://` URI from the workspace
+    // the run acts in, under the owner's partition — never another workspace's
+    // store. On a cross-workspace resume that is the conversation's workspace,
+    // not the request header; they differ, and reading from the header would
+    // miss the attachment entirely. For a one-shot run this is a pass-through
+    // unless the prompt carries file refs, run for shape consistency with the
+    // engine's message contract.
+    const fileStore = this.getWorkspaceFileStore(spec.workspaceId, ownerId);
+    const messages = await rehydrateUserResources(effectiveHistory, fileStore, {
+      model: spec.model,
+      maxExtractedTextSize: this.getFilesConfig().maxExtractedTextSize,
+    });
+
+    const perRequestHooks = this.buildRunHooks(spec, binding, messageBudget.budget);
+
+    // Build pre-emit run telemetry tied to the engine's runId. The engine fires
+    // these immediately after `run.start` and before any LLM call so the log
+    // records what the prompt looked like for this run — even if the LLM call
+    // fails or the process is killed. Reports every loading mechanism, not just
+    // tool-affinity: the trigger match and the always-on context skills
+    // (persona + org/workspace/user + bundle always-on; vendored core excluded).
+    const skillsLoaded = buildSkillsLoadedPayload(
+      collectLoadedSkills({
+        toolAffinity: composed.selectedLayer3,
+        trigger: composed.skillMatch,
+        alwaysOn: composed.alwaysOnSkills,
+      }),
+    );
+    const contextAssembled = buildContextAssembledPayload({
+      systemPrompt,
+      activeTools: tools,
+      messages,
+      skillsLoaded,
+    });
+
+    // Evict the volatile head onto the latest user message so a per-run change
+    // (date, app/focused-app state, matched skill) no longer rewrites the
+    // 1h-cached system prefix. Telemetry above counts every segment via
+    // `systemPrompt`; the prepend runs after it, so history isn't double-counted.
+    // Falls back to folding the head into the system string when there's no user
+    // message to carry it (keeps the content, forgoes the cache win).
+    const engineSystem = resolveEngineSystem(messages, stableSystem, volatileHead);
+
+    const engineConfig = this.buildTurnEngineConfig({
+      model: spec.model,
+      requestMaxIterations: spec.budget.maxIterations,
+      maxInputTokens: messageBudget.budget,
+      maxOutputTokens: resolvedMaxOutputTokens,
+      thinking: resolvedThinking,
+      hooks: perRequestHooks,
+      skillsLoaded,
+      contextAssembled,
+      connectorSkillCandidates: composed.connectorSkillCandidates,
+      // From the UN-rehydrated history — this is what makes surface-ONCE hold
+      // across turns. A fresh one-shot run has a single user message and no
+      // prior history, so its set is empty.
+      alreadyInjectedConnectorSkills: this.collectInjectedConnectorSkills(effectiveHistory),
+      signal: spec.signal,
+    });
+
+    // The per-run usage accumulator is joined to the sink chain only where an
+    // abort must still report — see {@link createPartialRunAccumulator}.
+    const partial = createPartialRunAccumulator();
+    const sinks = this.buildRunSinks(spec, binding, partial.sink);
+
+    // ── The engine ──────────────────────────────────────────────────────────
+    // The engine's tool router is identity-bound but WALLED to one workspace.
+    // It lists tools via `listToolsForWorkspace(workspaceId)` (the run's
+    // workspace + identity tools) and dispatches each call through the
+    // orchestrator (`routeToolCall`), which enforces the wall and constructs a
+    // fresh `WorkspaceContext` from the parsed wsId. The hot path does NOT read
+    // `runtime.requireWorkspaceId()` — per-call scope comes from the routed
+    // namespace.
+    //
+    // The per-event sink is a wrapper around the run's sinks that stamps
+    // `workspaceId` (resolved from the namespace) onto `tool.progress` /
+    // `tool.done` events — the audit-attribution contract. We can't compute the
+    // field from `requireWorkspaceId()` because it doesn't exist at the session
+    // level anymore; we store the (call.id → wsId) mapping at dispatch time and
+    // read it when the event fires.
+    const perCallWorkspaceMap = new Map<string, string>();
+    const engineSink = new MultiEventSink(
+      sinks.map((inner) => this._wrapSinkWithWorkspaceAttribution(inner, perCallWorkspaceMap)),
+    );
+    const identityToolRouter = this._buildIdentityToolRouter({
+      identityId: ownerId,
+      workspaceId: spec.workspaceId,
+      perCallWorkspaceMap,
+    });
+    const engine = new AgentEngine(this.resolveModelFn(spec.model), identityToolRouter, engineSink);
+
+    // Tool handlers that need the per-call workspace must come through a
+    // `WorkspaceContext` constructed by the orchestrator, NOT via
+    // `runtime.requireWorkspaceId()` — that reads the ambient context's
+    // `workspaceId`, which is the right answer for session-scoped reads
+    // (overlays, file store) and the wrong one for per-call data. Per-call
+    // handlers should take a `WorkspaceContext` argument from the dispatch
+    // path instead. T008 (credential rebinding) tightens this further.
+    engineConfig.toolPromotion = this.buildToolPromotionFactory();
+
+    // Tell the client its conversation id (and the model it is bound to)
+    // immediately, so conversation list UIs can refresh before the first token.
+    if (binding) {
+      this.emitChatStart(
+        spec.sink,
+        binding.conversation.id,
+        !binding.resumed,
+        binding.conversation.model,
+      );
+    }
+
+    const conversationId = binding?.conversation.id ?? null;
+    const skillName = skill?.manifest.name ?? null;
+
+    // Root span for the run — the common chokepoint for every entry point.
+    // Opened inside runWithRequestContext so the verified identity is in scope;
+    // the llm.call and tool.dispatch spans nest under it.
+    let result: EngineResult;
+    try {
+      result = await runWithRequestContext(reqCtx, () =>
+        withSpan(
+          "agent.turn",
+          { "llm.model": spec.model, "run.trigger": spec.trigger, ...requestIdentityAttrs() },
+          () => engine.run(engineConfig, engineSystem, messages, tools),
+        ),
+      );
+    } catch (err) {
+      // Non-abort errors are genuine failures — rethrow so the caller records a
+      // real failure. An abort is only recoverable where the door asked for it:
+      // a run with no conversation has nothing else holding its events, so
+      // returning what it accomplished (tagged `aborted`, letting the caller
+      // classify timeout-vs-cancel from its own signal) beats abandonment.
+      if (!isReportableAbort(spec, engineConfig.signal)) throw err;
+      return {
+        runId,
+        conversationId,
+        context: reqCtx,
+        output: "",
+        skillName,
+        toolCalls: partial.toolCalls,
+        stopReason: "aborted",
+        usage: partial.usage(spec.model),
+      };
+    }
+
+    return {
+      runId,
+      conversationId,
+      context: reqCtx,
+      output: result.output,
+      skillName,
+      toolCalls: result.toolCalls,
+      stopReason: result.stopReason,
+      usage: {
+        ...result.usage,
+        model: spec.model,
+        llmMs: result.llmMs,
+        iterations: result.iterations,
+      },
+    };
+  }
+
+  // ── run-start door helpers ───────────────────────────────────────
+
+  /**
+   * The prompt a run reasons with, and the tool surface it reasons over.
+   *
+   * One phase, because the two are a cycle otherwise: the matched skill's
+   * `allowed-tools` feeds `surfaceTools`, and the surfaced set is what
+   * tool-affinity Layer 3 selection reads. Splitting discovery (registry only)
+   * from selection (needs the toolset) breaks it.
+   *
+   * Every pool it reads is read exactly once — the filesystem skill tiers, the
+   * workspace's server-published bundle skills, and the connector-overlay store
+   * — and threaded into the selectors, so a run pays one disk pass per pool.
+   */
+  private async composeRun(
+    spec: RunSpec,
+    ctx: {
+      attended: boolean;
+      briefingWsId: string | undefined;
+      activeWorkspace: Workspace | null;
+    },
+  ): Promise<RunComposition> {
+    const { attended, briefingWsId, activeWorkspace } = ctx;
+    const { identity } = spec.principal;
+    const binding = spec.conversation;
+
+    // Conversation-scoped skill suppression, applied to the POOLS rather than
+    // to the channel routers. `partitionSkillsByRole` and `selectLayer3Skills`
+    // read the durable `manifest.status` and that logic is correct — a skill the
+    // operator retired stays off everywhere. This is the other axis: "not for
+    // this task", held in one conversation's own event log, so it steers that
+    // conversation without editing a file every other conversation reads. A
+    // one-shot run has no log to hold a mute, so its set is empty and every
+    // filter below is the identity.
+    //
+    // EVERY pool that can reach composition is filtered — the conversation
+    // pool, the bundle pool, and the connector overlays. `suppressibleSkillNames`
+    // builds the mute's validation set from the same union, so a name the tool
+    // accepts is always a name some filter here will act on.
+    const suppressed = binding
+      ? collectSuppressedSkillNames(await binding.store.readEvents(binding.conversation.id))
+      : new Set<string>();
+
+    // The briefing (installed apps + the instruction overlays) describes the
+    // workspace the prompt narrates; empty for a run that narrates none.
+    const { apps, liveOverlays } = await this.buildWorkspaceBriefing(briefingWsId);
+
+    // App scoping (§7 app-aware chat), resolved in the SAME single workspace
+    // the run's tools are bound to.
     let focusedApp: FocusedAppInfo | undefined;
     let appState: AppStateInfo | undefined;
     let focusedServerName: string | undefined;
     let focusedSkillUri: string | undefined;
-    if (request.appContext) {
+    if (spec.input.appContext) {
       ({ focusedApp, appState, focusedServerName, focusedSkillUri } = await this.resolveFocusedApp(
-        request.appContext,
-        convWsId,
+        spec.input.appContext,
+        spec.workspaceId,
       ));
     }
 
-    // Tool surfacing. A session reaches exactly ONE workspace: the conversation's
-    // own (`convWsId`). The ACTIVE set the model sees is that workspace's tools
-    // (one copy of the platform `nb__*` tools + that workspace's apps) plus the
-    // caller's identity tools. There is no cross-workspace union. `nb__search`'s
-    // corpus (`listDiscoverableTools`) is this same workspace, so progressive
-    // disclosure operates WITHIN the workspace (a workspace with more tools than
-    // the active cap), not across workspaces. Role-based visibility
-    // (`isToolVisibleToRole`) and surface-tier tiering (`surfaceTools`) apply to
-    // this set. A conversation in the personal workspace uses it as the
-    // workspace — the same silent bridge used for session reads.
-    const toolsWsId = convWsId;
-    const toolsRegistry = await this.ensureWorkspaceRegistry(toolsWsId);
-    const [focusedTools, identityTools] = await Promise.all([
-      toolsRegistry.availableTools(),
-      this.listIdentitySourceTools(),
-    ]);
-    const allTools: ToolSchema[] = [
-      // Workspace tools, bare. The orchestrator routes them into the session's
-      // own workspace; one copy of `nb__*`, not N.
-      ...focusedTools
-        .filter((t) => isToolVisibleToRole(t.name, requestIdentity.orgRole))
-        .map(toToolSchema),
-      // Identity tools (conversations, …) — bare, owned by the user.
-      ...identityTools
-        .filter((t) => isToolVisibleToRole(t.name, requestIdentity.orgRole))
-        .map(toToolSchema),
-    ];
+    // ── The tool set ────────────────────────────────────────────────────────
+    const allTools = await this.listRunTools(spec.workspaceId, identity, attended);
+
+    // ── The skill pools ─────────────────────────────────────────────────────
+    // Per-run skill pool. The boot-time `this.skillMatcher` only ever scans
+    // org-tier dirs (`config.skillDirs` + `globalSkillDir`), never
+    // `workspaces/<id>/skills/` or `users/<id>/skills/`, so those tiers could
+    // never trigger-match. The merged pool — org + workspace + user, which
+    // already folds in the boot matchable + builtin skills (see
+    // `loadConversationSkills`) — is a superset of the boot set, so the
+    // workspace/user tiers fire too.
+    //
+    // Partitioned by ROLE once: `context` skills (every tier) compose into the
+    // always-on Layer 0/1 channel; `capability` skills feed the conditional
+    // channels (keyword matcher + tool-affinity Layer 3). Disjoint by `type`,
+    // so nothing is injected twice — no downstream de-dup. Computed ONCE and
+    // threaded into `selectRequestLayer3` below, so the disk read happens a
+    // single time per run.
+    const userId = identity.id;
+    const { context: poolContext, capability: poolCapability } = partitionSkillsByRole(
+      withoutSuppressed(this.loadConversationSkills(spec.workspaceId, userId), suppressed),
+    );
 
     // Server-published skills, discovered and routed by declared strategy. This
     // runs HERE — after the workspace registry exists (`ensureWorkspaceRegistry`
     // above; discovery reads it and silently yields nothing without it), and
-    // before the matcher — because the turn is a cycle otherwise: the matched
+    // before the matcher — because the run is a cycle otherwise: the matched
     // skill feeds `surfaceTools`, whose output is the active toolset that
     // tool-affinity selection needs. Splitting discovery (registry only) from
     // selection (needs the toolset) breaks it. The partition is threaded into
-    // `selectRequestLayer3` below, so discovery still happens once per turn.
-    const bundlePoolRaw = await this.discoverBundleSkillsByRole(convWsId, {
+    // `selectRequestLayer3` below, so discovery still happens once per run.
+    const bundlePoolRaw = await this.discoverBundleSkillsByRole(spec.workspaceId, {
       // Exclude only the ONE skill `<app-guide>` carries, resolved above — not
       // the entered server (its other skills must still route by strategy), and
       // not a same-pathed skill published by any other server.
@@ -1354,68 +1731,61 @@ export class Runtime {
       capability: withoutSuppressed(bundlePoolRaw.capability, suppressed),
     };
 
-    // Per-request trigger match, over the conversation pool AND the workspace's
+    // Per-run trigger match, over the run's pool AND the workspace's
     // server-published skills. A connector's skill declares `triggers` in the
     // same frontmatter field a filesystem skill does, so it gets the same
     // deterministic (must-fire) channel — which is the point: a phrase fires
     // whether or not the publishing server's tools survived progressive
     // disclosure into the active set, where tool-affinity alone would not.
     //
-    // Pool order is load-bearing: `match()` returns the FIRST hit and at most one
-    // skill per message, so a workspace-authored skill wins a phrase a connector
-    // also claims. The tenant's own authoring beats a vendor's.
-    const requestMatcher = new SkillMatcher();
-    requestMatcher.load([...poolCapability, ...bundlePool.capability]);
+    // Pool order is load-bearing: `match()` returns the FIRST hit and at most
+    // one skill per message, so a workspace-authored skill wins a phrase a
+    // connector also claims. The tenant's own authoring beats a vendor's.
+    let skillMatch: SkillMatch | null = null;
+    if (spec.input.matchOn !== undefined) {
+      const requestMatcher = new SkillMatcher();
+      requestMatcher.load([...poolCapability, ...bundlePool.capability]);
+      skillMatch = requestMatcher.match(spec.input.matchOn);
+    }
     // The trigger match drives both prompt composition (`skill`, the matched
     // Skill) and load telemetry (`skillMatch`, which also carries the phrase).
-    const skillMatch = requestMatcher.match(request.message);
     const skill = skillMatch?.skill ?? null;
 
     // `focusedServerName` (the BARE source name that
     // `surfaceTools.focusedServerName` matches) is computed in `resolveFocusedApp`.
     // A fired phrase reaches here, but only bites when the matched skill declares
     // `allowed-tools` — that is the one input `surfaceTools` reads off it, and it
-    // moves the tools block, which precedes the messages and is the request's most
+    // moves the tools block, which precedes the messages and is the run's most
     // expensive cache bust. `synthesizeBundleSkill` stamps no `allowedTools`, so a
     // server-published skill firing does not move the block; a workspace-authored
     // one that declares the field always could, before and after this.
     const { direct: tools, proxied } = surfaceTools(
       allTools,
       skill,
-      buildSurfaceOptions(focusedServerName, request.allowedTools),
+      buildSurfaceOptions(focusedServerName, spec.input.allowedTools),
     );
 
-    // Per-user preferences from the authenticated identity. We already
-    // hard-error if no identity above, so reads here are unconditional.
-    const prefs = buildPromptPrefs(requestIdentity);
-
-    // The prompt narrates the conversation's own workspace — the same one whose
-    // apps + house rules the briefing above describes — so the prose, the app
-    // list, and the persona all agree. `narratedWsId` is always the
-    // conversation's workspace (personal or shared), so this loads a real, named
-    // workspace and compose always renders the "## Workspace" block.
-    const activeWorkspace = await this._workspaceStore.get(narratedWsId);
-    const workspaceContext = buildWorkspaceContext(narratedWsId, activeWorkspace);
+    // Per-user preferences from the authenticated identity.
+    const prefs = buildPromptPrefs(identity);
+    const workspaceContext = buildWorkspaceContext(briefingWsId, activeWorkspace);
 
     // Skill selection over the pools gathered above. Server-published skills
     // route by the strategy they DECLARE: `dynamic` ones join tool-affinity
     // Layer 3 (loading when the bundle's tools are surfaced, no `appContext`
     // scoping required); `always` ones (`bundleContext`) compose into the
-    // always-on context channel below, the same reliable every-turn path
+    // always-on context channel below, the same reliable every-run path
     // filesystem `always` skills use.
     //
-    // Workspace-tier skills follow the conversation's own workspace (`convWsId`),
-    // matching the briefing / apps / overlay surfaces. A conversation in the
-    // personal workspace reads the identity's personal scope, consistent with
-    // the rest of personal-workspace reads. Both precomputed pools are threaded
-    // in — the conversation-skill disk read and the bundle discovery each happen
-    // once per turn, not twice.
+    // Workspace-tier skills follow the run's own workspace, matching the
+    // briefing / apps / overlay surfaces. Both precomputed pools are threaded
+    // in — the skill disk read and the bundle discovery each happen once per
+    // run, not twice.
     const {
       context: bundleContext,
       capability: bundleCapability,
       layer3: selectedLayer3,
     } = await this.selectRequestLayer3({
-      wsId: convWsId,
+      wsId: spec.workspaceId,
       userId,
       activeToolNames: tools.map((t) => t.name),
       capabilityPool: poolCapability,
@@ -1428,461 +1798,7 @@ export class Runtime {
 
     // Always-on context channel: the `always` skills across every tier
     // (core/builtin/org + workspace + user) plus the always-on bundle skills,
-    // then the workspace identity/persona override when the conversation's
-    // workspace sets one.
-    const requestContextSkills = withIdentityOverride(
-      [...poolContext, ...bundleContext],
-      activeWorkspace?.identity,
-    );
-    const layer3Entries: Layer3SkillEntry[] = selectedLayer3.map((s) => ({
-      name: s.skill.manifest.name,
-      body: s.skill.body,
-      scope: s.skill.manifest.scope ?? "org",
-      ...(s.skill.sourcePath ? { sourcePath: s.skill.sourcePath } : {}),
-      loadedBy: s.loadedBy,
-      reason: s.reason,
-    }));
-
-    // Skill catalog + surface-once candidates share one read of the
-    // workspace's connector-overlay store — the pools are all computed above
-    // on this request path already; no second discovery pass. The catalog is
-    // name+description only (never load state), so the stable segment's bytes
-    // move only on install/authoring events.
-    const connectorOverlayCandidates = candidatesWithoutSuppressed(
-      this.loadConnectorSkillCandidates(convWsId),
-      suppressed,
-    );
-    const skillCatalog = toCatalogEntries(
-      collectActivatableSkills({
-        fsCapability: poolCapability,
-        bundleCapability,
-        connectorCandidates: connectorOverlayCandidates,
-      }),
-    );
-
-    const { stableSystem, volatileHead } = composeSystemSegments(
-      requestContextSkills,
-      skill,
-      apps,
-      focusedApp,
-      appState,
-      prefs,
-      proxied.length > 0,
-      workspaceContext,
-      liveOverlays,
-      layer3Entries,
-      "chat",
-      skillCatalog,
-    );
-    // Budget + telemetry size counts every segment: the volatile head still
-    // consumes context even though it now rides the latest user message instead
-    // of the cached system block (the prepend happens after telemetry, below).
-    const systemPrompt = foldVolatileHead(stableSystem, volatileHead);
-
-    // Load history and rehydrate any supported `resource_link` blocks
-    // (attached files persisted as URI references) into AI SDK V3 `file`
-    // parts with bytes loaded from the workspace FileStore. This is the seam
-    // where the storage shape (URI references) meets the model-call
-    // shape (inline bytes) — see `src/files/rehydrate.ts`.
-    const history = await store.history(conversation);
-    // Files are workspace-owned: rehydrate a `files://` URI from the
-    // conversation's AUTHORITATIVE workspace (`convWsId` from `resolveChatStore`,
-    // the same workspace the upload landed in) under the owner's partition —
-    // never another workspace's store. On a cross-workspace resume this is the
-    // conversation's workspace, not the request header — they differ, and reading
-    // from the header would miss the attachment entirely.
-    const fileStore = this.getWorkspaceFileStore(convWsId, ownerId);
-
-    // Resolved against the request's model so the cap fits that model's own
-    // ceiling. It is not an input to resolveThinking — it reaches the engine on
-    // EngineConfig, which is the only layer that knows whether the provider
-    // meters thinking in tokens at all.
-    const resolvedMaxOutputTokens = resolveMaxOutputTokens({
-      configValue: this.config.maxOutputTokens,
-      model: resolvedModelString,
-    });
-
-    const resolvedThinking = resolveThinking({
-      configMode: this.config.thinking,
-      configEffort: this.config.thinkingEffort,
-      configBudgetTokens: this.config.thinkingBudgetTokens,
-      model: resolvedModelString,
-    });
-
-    // Compose the per-call message budget from the model's actual context
-    // window minus the static per-call overhead. `configMaxInputTokens`
-    // is treated as a CAP — never a target. See
-    // `src/runtime/resolve-message-budget.ts`.
-    const configMaxInputTokens = this.getMaxInputTokens();
-    const messageBudget = resolveMessageBudget({
-      model: resolvedModelString,
-      configMaxInputTokens,
-      systemPrompt,
-      tools,
-      maxOutputTokens: resolvedMaxOutputTokens,
-    });
-
-    // History compaction: when the conversation has outgrown its
-    // budget, fold the oldest turns into a summary so the prefix re-anchors
-    // once here instead of windowing — and busting the cache — every turn.
-    // No-op unless `features.compaction` is on and the store is event-sourced;
-    // best-effort, so a summarizer failure falls back to the full history.
-    //
-    // Plan/persist compaction on the RAW (un-rehydrated) history, then
-    // rehydrate the result exactly once — rehydration inlines file bytes,
-    // which the ts-keyed compaction estimate and summarizer transcript must
-    // not see. NOTE: because the trigger estimate runs pre-rehydration, large
-    // file extractions aren't counted toward the threshold, so compaction can
-    // under-fire relative to true prompt size; the overflow windowing path
-    // below still bounds the hard context limit.
-    const compactedHistory = await runWithRequestContext(reqCtx, () =>
-      this.maybeCompactHistory(store, conversation.id, history, messageBudget.budget),
-    );
-    // The RAW (un-rehydrated) history the engine reasons about: the compacted
-    // form when compaction fired, else the full history. Rehydration inlines
-    // file bytes exactly once below; connector-injection detection reads this
-    // un-rehydrated form (rehydrate strips the synthetic marker's metadata).
-    const effectiveHistory = compactedHistory ?? history;
-    const messages = await rehydrateUserResources(effectiveHistory, fileStore, {
-      model: resolvedModelString,
-      maxExtractedTextSize: this.getFilesConfig().maxExtractedTextSize,
-    });
-
-    // Per-request hooks: inherit `beforeToolCall` from the runtime-level hooks;
-    // compose `transformContext` here so the windowing budget is the one we just
-    // resolved for THIS call.
-    //
-    // `rewriteHistory` folds the history the loop itself grows, against the same
-    // budget the check above used — but in memory, for this turn only, because
-    // the region a turn grows carries no timestamps to key a persisted fold on.
-    // Installed only when compaction is on: `transformContext` below walks the
-    // history every iteration regardless, so what the gate saves is the second
-    // walk, not the estimate itself. See `runtime/mid-turn-compaction.ts`.
-    const perRequestHooks: EngineHooks = {
-      ...this.hooks,
-      transformContext: buildTransformContext(
-        messageBudget.budget,
-        getProviderFromModel(resolvedModelString),
-      ),
-      ...(this.config.features?.compaction
-        ? {
-            rewriteHistory: buildMidTurnCompaction({
-              budget: messageBudget.budget,
-              summarize: (folded, signal) =>
-                this.summarizeForMidTurnFold(store, conversation.id, folded, signal),
-            }),
-          }
-        : {}),
-    };
-
-    // Build pre-emit run telemetry tied to the engine's runId. The engine fires
-    // these immediately after `run.start` and before any LLM call so the conv
-    // log records what the prompt looked like for this turn — even if the LLM
-    // call fails or the process is killed. Reports every loading mechanism, not
-    // just tool-affinity: the trigger match and the always-on context skills
-    // (persona + org/workspace/user + bundle always-on; vendored core excluded).
-    const skillsLoaded = buildSkillsLoadedPayload(
-      collectLoadedSkills({
-        toolAffinity: selectedLayer3,
-        trigger: skillMatch,
-        alwaysOn: requestContextSkills,
-      }),
-    );
-    const contextAssembled = buildContextAssembledPayload({
-      systemPrompt,
-      activeTools: tools,
-      messages,
-      skillsLoaded,
-    });
-
-    // Evict the volatile head onto the latest user message so a per-turn change
-    // (date, app/focused-app state, matched skill) no longer rewrites the
-    // 1h-cached system prefix. Telemetry above counts every segment via
-    // `systemPrompt`; the prepend runs after it, so history isn't double-counted.
-    // Falls back to folding the head into the system string when there's no user
-    // message to carry it (keeps the content, forgoes the cache win).
-    const engineSystem = resolveEngineSystem(messages, stableSystem, volatileHead);
-
-    const engineConfig = this.buildTurnEngineConfig({
-      model: resolvedModelString,
-      requestMaxIterations: request.maxIterations,
-      maxInputTokens: messageBudget.budget,
-      maxOutputTokens: resolvedMaxOutputTokens,
-      thinking: resolvedThinking,
-      hooks: perRequestHooks,
-      skillsLoaded,
-      contextAssembled,
-      // Connector-skill overlays for the conversation's own workspace — surfaced
-      // once into history by the engine on a matching connector tool call, never
-      // into the system prefix. Same workspace scoping as the layer-3 pool
-      // (`connectorOverlayCandidates` is the read the skill catalog shared).
-      // Merge SEP-2640 bundle skills as candidates too, so a server's skill is
-      // delivered mid-turn when its tools are progressively disclosed (promotion),
-      // not only at turn-start via <layer3-skill> (which misses mid-turn promotion).
-      // `selectedLayer3` subtracts the ones this turn already composed — they are
-      // in the prompt, so delivering them again would pay for the body twice.
-      connectorSkillCandidates: [
-        ...connectorOverlayCandidates,
-        ...this.toBundleSkillCandidates(bundleCapability, selectedLayer3),
-      ],
-      // From the UN-rehydrated history — this is what makes surface-ONCE hold
-      // across turns on the real chat path.
-      alreadyInjectedConnectorSkills: this.collectInjectedConnectorSkills(effectiveHistory),
-      signal: request.signal,
-    });
-
-    // Conversations are workspace-owned: `store` (from `resolveChatStore`) is the
-    // per-call workspace event store, and is both the active event sink for this
-    // turn's engine events and a member of the per-request sink chain.
-    store.setActiveConversation(conversation.id);
-
-    // Build per-request sink chain. The engine itself returns cumulative
-    // usage and llmMs in its EngineResult — no need for a side-channel
-    // metrics collector.
-    const sinks: EventSink[] = requestSink
-      ? [requestSink, this.defaultEvents]
-      : [this.defaultEvents];
-    sinks.push(store);
-
-    const model = engineConfig.model;
-    const resolvedModel = this.resolveModelFn(model);
-
-    // The engine's tool router is identity-bound but WALLED to one workspace.
-    // It lists tools via `listToolsForWorkspace(workspaceId)` (the focused
-    // workspace + identity tools) and dispatches each call through the
-    // orchestrator (`routeToolCall`), which enforces the wall and constructs a
-    // fresh `WorkspaceContext` from the parsed wsId. The chat hot path does NOT
-    // read `runtime.requireWorkspaceId()` — per-call scope comes from the
-    // routed namespace.
-    //
-    // The per-event sink is a wrapper around the request's sinks that
-    // stamps `workspaceId` (resolved from the namespace) onto
-    // `tool.progress` / `tool.done` events — the audit-attribution
-    // contract. We can't compute the field from `requireWorkspaceId()`
-    // because it doesn't exist at the chat-session level anymore; we
-    // store the (call.id → wsId) mapping at dispatch time and read it
-    // when the event fires.
-    const perCallWorkspaceMap = new Map<string, string>();
-    const wrappedSinks: EventSink[] = sinks.map((inner) =>
-      this._wrapSinkWithWorkspaceAttribution(inner, perCallWorkspaceMap),
-    );
-    const engineSink = new MultiEventSink(wrappedSinks);
-    const identityToolRouter = this._buildIdentityToolRouter({
-      identityId: ownerId,
-      workspaceId: toolsWsId,
-      perCallWorkspaceMap,
-    });
-    const engine = new AgentEngine(resolvedModel, identityToolRouter, engineSink);
-
-    // Tool handlers that need the per-call workspace must come through a
-    // `WorkspaceContext` constructed by the orchestrator, NOT via
-    // `runtime.requireWorkspaceId()` — that reads the ambient context's
-    // `workspaceId`, which is the right answer for session-scoped reads
-    // (overlays, file store) and the wrong one for per-call data. Per-call
-    // handlers should take a `WorkspaceContext` argument from the dispatch
-    // path instead. T008 (credential rebinding) tightens this further.
-    engineConfig.toolPromotion = this.buildToolPromotionFactory();
-
-    // Emit chat.start so the client knows the conversation ID immediately and
-    // conversation list UIs can refresh.
-    this.emitChatStart(requestSink, conversation.id, !request.conversationId, conversation.model);
-
-    // Root span for the agent turn — the common chokepoint for both the HTTP
-    // and CLI entry points. Opened inside runWithRequestContext so the verified
-    // identity is in scope; the llm.call and tool.dispatch spans nest under it.
-    const result = await runWithRequestContext(reqCtx, () =>
-      withSpan("agent.turn", { "llm.model": model, ...requestIdentityAttrs() }, () =>
-        engine.run(engineConfig, engineSystem, messages, tools),
-      ),
-    );
-
-    const usage: TurnUsage = {
-      ...result.usage,
-      model,
-      llmMs: result.llmMs,
-      iterations: result.iterations,
-    };
-
-    // The workspace event store persisted the engine events (including the
-    // assistant turn) via emit() as they streamed, so there is no separate
-    // assistant-message append here.
-
-    // Fire-and-forget title generation on the first turn (decoupled from the
-    // turn lifecycle; best-effort). Broadcasts `conversation.title` on the global
-    // SSE — routed to the right conversation by `conversationId` — so delivery is
-    // reliable after the turn ends and across tabs.
-    // Inside the turn's context even though it outlives the turn: the summarizer
-    // call it forks bills this conversation, and the context is what carries that
-    // attribution. AsyncLocalStorage propagates into the detached promise, so the
-    // scope holds after this function returns.
-    runWithRequestContext(reqCtx, () =>
-      this.maybeGenerateTitle(conversation, request, store, result.output, sessionWsId),
-    );
-
-    return {
-      response: result.output,
-      conversationId: conversation.id,
-      skillName: skill?.manifest.name ?? null,
-      toolCalls: result.toolCalls,
-      stopReason: result.stopReason,
-      usage,
-    };
-  }
-
-  /**
-   * Unattended agent execution. Sibling primitive to `chat()` for
-   * scheduled automations, eval runs, and future webhook-triggered jobs.
-   *
-   * Contract differences vs. `chat()`:
-   *  - Each call writes a FRESH conversation; no resume, no concurrency
-   *    lock (a re-entrant scheduler tick on the same automation creates
-   *    two conversations, which is the correct semantic — each tick is
-   *    its own task run).
-   *  - The prompt goes in as a plain user message — no content parts,
-   *    no file refs, no skill matching from prompt. Layer 3 (bundle
-   *    workflow guidance) still applies based on the active tool set.
-   *  - The system prompt is composed with `mode: "task"`, prepending
-   *    `TASK_IDENTITY` so the model produces a deliverable rather than a
-   *    conversational reply. The runtime owns this framing — bundles
-   *    cannot spoof it by wrapping the user message.
-   *  - `workspaceId` is optional: present → that workspace's tool scope +
-   *    briefing; absent → the session (personal) workspace's tools + identity
-   *    tools, no briefing layer. Either way the task is walled to one workspace.
-   *  - No title generation, no `chat.start` SSE emit.
-   *
-   * NOTE (intentional duplication): much of the setup below mirrors
-   * `_chatInner()`. The clean extraction (`_agentInvoke` substrate +
-   * thin `chat()` / `executeTask()` siblings) is tracked as a planned
-   * follow-up — see #334. Doing the extraction here would touch ~500
-   * LOC of the most-trafficked code path in the runtime in the same PR
-   * as the UI work, multiplying regression risk for the chat surface.
-   * Shipped pragmatically; extracted properly in #334.
-   */
-  async executeTask(request: TaskRequest, requestSink?: EventSink): Promise<TaskResult> {
-    // Identity resolution mirrors chat(): in production an identity provider
-    // populates this; in dev mode we fall back to DEV_IDENTITY. Scheduler
-    // callers pass `{ id: automation.ownerId }` as a minimal identity.
-    const ownerId = resolveRequestOwnerId(request.identity, this._identityProvider !== null);
-    const requestIdentity = request.identity ?? DEV_IDENTITY;
-
-    // Provenance membership gate. An automation fires AS its owner, walled to its
-    // provenance workspace (`request.workspaceId`). Membership there is validated
-    // at create, NOT per run — so a since-removed owner would otherwise keep
-    // acting in a workspace they left (its tools/connectors). Deny the run before
-    // any setup or tool binding. Thrown early so the scheduler records it as a
-    // skipped run (self-heals if the owner is re-added); personal workspaces are
-    // sole-member, so they never gate.
-    if (
-      request.workspaceId &&
-      !(await this.isPrincipalWorkspaceMember(request.workspaceId, ownerId))
-    ) {
-      throw new WorkspaceMembershipRevokedError(ownerId, request.workspaceId);
-    }
-
-    // Session workspace (personal) — used for the silent dispatch reqCtx,
-    // file store, and the workspace-agents / model overrides lookup. Never
-    // narrated by the task prompt; the prompt only mentions the focused
-    // workspace if one is set.
-    const sessionWsId = await this.prepareSessionWorkspace(requestIdentity);
-    // A task is a one-shot run, not a conversation: it produces a deliverable
-    // (the caller — the automations bundle — persists the run result), so
-    // nothing is written to a conversation store and there is no resume path.
-    // `runId` is the run's traceability anchor: stamped on the request context
-    // for audit/file correlation and returned to the caller as the id under
-    // which it persists the result.
-    const runId = `run_${crypto.randomUUID().slice(0, 12)}`;
-    const sessionWorkspace = await this._workspaceStore.get(sessionWsId);
-
-    // Workspace briefing (apps + overlays + workspace context). Same shape
-    // as chat: gated on `focusedWsId`. When absent the briefing layers are
-    // empty and `TASK_IDENTITY` is the dominant framing.
-    const focusedWsId = request.workspaceId;
-    const { apps, liveOverlays } = await this.buildWorkspaceBriefing(focusedWsId);
-
-    // The task's single working workspace: the focused workspace, or the personal
-    // (session) workspace when unfocused. Tool scope, skill/bundle scope,
-    // connector overlays, and file provenance all key off this one id.
-    const workWsId = focusedWsId ?? sessionWsId;
-
-    // Tool surfacing. The task is walled to one workspace: active set = the
-    // focused workspace's tools (or the session/personal workspace if no focus)
-    // + identity tools. `nb__search`'s corpus is that same workspace — no
-    // cross-workspace reach.
-    //
-    // A task run is unattended and can ingest untrusted content, so both
-    // authoring surfaces are subtracted: it must not rewrite/spawn/fire
-    // automations (`isTaskForbiddenIdentityTool`, on the identity tools), nor
-    // author a skill (`isTaskForbiddenSkillTool`, on the workspace tools — a
-    // skill is durable guidance that loads itself into later conversations).
-    // Chat keeps both — that path has a human in the loop. Neither filter needs
-    // an `unattended` check here; this method IS the unattended path.
-    const toolsRegistry = await this.ensureWorkspaceRegistry(workWsId);
-    const [focusedTools, identityTools] = await Promise.all([
-      toolsRegistry.availableTools(),
-      this.listIdentitySourceTools(),
-    ]);
-    const allTools: ToolSchema[] = [
-      ...focusedTools
-        .filter(
-          (t) =>
-            isToolVisibleToRole(t.name, requestIdentity.orgRole) &&
-            !isTaskForbiddenSkillTool(t.name),
-        )
-        .map(toToolSchema),
-      ...identityTools
-        .filter(
-          (t) =>
-            !isTaskForbiddenIdentityTool(t.name) &&
-            isToolVisibleToRole(t.name, requestIdentity.orgRole),
-        )
-        .map(toToolSchema),
-    ];
-    const { direct: tools, proxied } = surfaceTools(
-      allTools,
-      null,
-      buildSurfaceOptions(undefined, request.allowedTools),
-    );
-
-    const prefs = buildPromptPrefs(requestIdentity);
-
-    const activeWorkspace = await this.resolveTaskActiveWorkspace(
-      focusedWsId,
-      sessionWsId,
-      sessionWorkspace,
-    );
-    const workspaceContext = buildWorkspaceContext(focusedWsId, activeWorkspace);
-
-    // Layer 3 selection — bundle workflow guidance still applies based on
-    // the active tool set. No `excludeSkill` (tasks don't have appContext, so
-    // no skill is composed through a second channel).
-    //
-    // Workspace-tier skills follow the FOCUSED workspace, falling back
-    // to the session (personal) workspace only when the task has no
-    // focus. This mirrors `_chatInner`; tasks scheduled against a shared
-    // workspace were silently dropping every `loading_strategy: always` skill
-    // in that workspace before this parity fix.
-    const userId = requestIdentity.id;
-    // Partition by role (same as `_chatInner`): context → Layer 0/1; capability
-    // → conditional Layer 3. Disjoint by `type`, so no skill injects twice.
-    const conversationPool = this.loadConversationSkills(workWsId, userId);
-    const { context: poolContext, capability: poolCapability } =
-      partitionSkillsByRole(conversationPool);
-    // Discover + route the FOCUSED workspace's bundle skills by declared strategy
-    // (the wall — never across the owner's other workspaces). `always` bundle
-    // skills land in `bundleContext` (context channel every turn); `dynamic` ones
-    // feed tool-affinity Layer 3. Mirrors `_chatInner`.
-    const {
-      context: bundleContext,
-      capability: bundleCapability,
-      layer3: selectedLayer3,
-    } = await this.selectRequestLayer3({
-      wsId: workWsId,
-      userId,
-      activeToolNames: tools.map((t) => t.name),
-      capabilityPool: poolCapability,
-    });
-    // Always-on context channel (conversation-tier + always-on bundle skills)
-    // plus the workspace identity/persona override when the focused workspace
+    // then the workspace identity/persona override when the narrated workspace
     // sets one.
     const requestContextSkills = withIdentityOverride(
       [...poolContext, ...bundleContext],
@@ -1897,11 +1813,16 @@ export class Runtime {
       reason: s.reason,
     }));
 
-    // Skill catalog + surface-once candidates share one read of the
-    // workspace's connector-overlay store — mirrors `_chatInner`. Task runs
-    // get the same catalog: an unattended run benefits from on-demand
-    // guidance at least as much as a chat.
-    const connectorOverlayCandidates = this.loadConnectorSkillCandidates(workWsId);
+    // Skill catalog + surface-once candidates share one read of the workspace's
+    // connector-overlay store — the pools are all computed above on this path
+    // already; no second discovery pass. The catalog is name+description only
+    // (never load state), so the stable segment's bytes move only on
+    // install/authoring events. An unattended run gets the same catalog: it
+    // benefits from on-demand guidance at least as much as a chat.
+    const connectorOverlayCandidates = candidatesWithoutSuppressed(
+      this.loadConnectorSkillCandidates(spec.workspaceId),
+      suppressed,
+    );
     const skillCatalog = toCatalogEntries(
       collectActivatableSkills({
         fsCapability: poolCapability,
@@ -1910,259 +1831,194 @@ export class Runtime {
       }),
     );
 
-    // Compose with mode: "task" — prepends TASK_IDENTITY before core skills.
+    // Task mode prepends TASK_IDENTITY so an unattended run produces a
+    // deliverable rather than a conversational reply. The runtime owns that
+    // framing — a bundle cannot spoof it by wrapping the user message.
     const { stableSystem, volatileHead } = composeSystemSegments(
       requestContextSkills,
-      null, // no matched skill (task mode doesn't match on prompt)
+      skill,
       apps,
-      undefined, // no focusedApp
-      undefined, // no appState
+      focusedApp,
+      appState,
       prefs,
       proxied.length > 0,
       workspaceContext,
       liveOverlays,
       layer3Entries,
-      "task",
+      attended ? "chat" : "task",
       skillCatalog,
     );
+    // Budget + telemetry size counts every segment: the volatile head still
+    // consumes context even though it now rides the latest user message instead
+    // of the cached system block (the prepend happens after telemetry, below).
     const systemPrompt = foldVolatileHead(stableSystem, volatileHead);
 
-    // Model resolution — mirrors chat (alias slot + qualification).
-    const resolvedModelString = this.resolveRequestModelString(request.model);
-
-    // The task's single input message — no conversation, no history, no resume.
-    // Rehydration below is a pass-through for shape consistency with the engine's
-    // message contract (it only does work if the prompt carries file refs). The
-    // file store is anchored to the run's provenance workspace (`workWsId` — the
-    // request workspace, or the owner's personal workspace when unfocused).
-    const fileStore = this.getWorkspaceFileStore(workWsId, ownerId);
-    const taskMessages: StoredMessage[] = [
-      {
-        role: "user",
-        content: [{ type: "text", text: request.prompt }],
-        timestamp: new Date().toISOString(),
-        userId: requestIdentity.id,
-      },
-    ];
-
-    const resolvedMaxOutputTokens = resolveMaxOutputTokens({
-      configValue: this.config.maxOutputTokens,
-      model: resolvedModelString,
-    });
-    const resolvedThinking = resolveThinking({
-      configMode: this.config.thinking,
-      configEffort: this.config.thinkingEffort,
-      configBudgetTokens: this.config.thinkingBudgetTokens,
-      model: resolvedModelString,
-    });
-    // Per-request override beats config beats default. The UI exposes a
-    // per-automation `maxInputTokens` field; honoring it here makes that
-    // setting actually take effect. Chat (_chatInner) has the same field
-    // on ChatRequest but currently ignores it in favor of config-only —
-    // tracked as #335 (parallel scoped fix to bring chat into semantic
-    // consistency with task).
-    const configMaxInputTokens = request.maxInputTokens ?? this.getMaxInputTokens();
-    const messageBudget = resolveMessageBudget({
-      model: resolvedModelString,
-      configMaxInputTokens,
-      systemPrompt,
+    return {
       tools,
-      maxOutputTokens: resolvedMaxOutputTokens,
-    });
-
-    // No compaction. A task OPENS on a single message, but its loop grows one
-    // the same way a chat turn's does, so the reason is not size — it is that
-    // both folds bill their summarizer call to a conversation, and a task run
-    // isn't persisted as one. Extending mid-turn folding here needs somewhere
-    // to put that cost first.
-    const messages = await rehydrateUserResources(taskMessages, fileStore, {
-      model: resolvedModelString,
-      maxExtractedTextSize: this.getFilesConfig().maxExtractedTextSize,
-    });
-
-    const perRequestHooks: EngineHooks = {
-      ...this.hooks,
-      transformContext: buildTransformContext(
-        messageBudget.budget,
-        getProviderFromModel(resolvedModelString),
-      ),
-    };
-
-    // Task mode matches no trigger (no prompt-driven match), so telemetry
-    // reports tool-affinity + the always-on context skills (vendored excluded).
-    const skillsLoaded = buildSkillsLoadedPayload(
-      collectLoadedSkills({
-        toolAffinity: selectedLayer3,
-        trigger: null,
-        alwaysOn: requestContextSkills,
-      }),
-    );
-    const contextAssembled = buildContextAssembledPayload({
-      systemPrompt,
-      activeTools: tools,
-      messages,
-      skillsLoaded,
-    });
-
-    // Evict the volatile head onto the latest user message so a per-turn change
-    // (date, app/focused-app state, matched skill) no longer rewrites the
-    // 1h-cached system prefix. Telemetry above counts every segment via
-    // `systemPrompt`; the prepend runs after it, so history isn't double-counted.
-    // Falls back to folding the head into the system string when there's no user
-    // message to carry it (keeps the content, forgoes the cache win).
-    const engineSystem = resolveEngineSystem(messages, stableSystem, volatileHead);
-
-    const engineConfig = this.buildTurnEngineConfig({
-      model: resolvedModelString,
-      requestMaxIterations: request.maxIterations,
-      maxInputTokens: messageBudget.budget,
-      maxOutputTokens: resolvedMaxOutputTokens,
-      thinking: resolvedThinking,
-      hooks: perRequestHooks,
-      skillsLoaded,
-      contextAssembled,
-      // Connector-skill overlays — same focused-workspace scoping as the
-      // layer-3 pool; surfaced once into history, never the system prefix.
-      // Bundle skills (SEP-2640) join as candidates so a promoted server's skill
-      // surfaces mid-turn, not only at turn-start. `selectedLayer3` subtracts the
-      // ones this run already composed — a task pays the same double otherwise.
+      hasProxiedTools: proxied.length > 0,
+      skill,
+      skillMatch,
+      selectedLayer3,
+      alwaysOnSkills: requestContextSkills,
       connectorSkillCandidates: [
         ...connectorOverlayCandidates,
         ...this.toBundleSkillCandidates(bundleCapability, selectedLayer3),
       ],
-      // A fresh task has a single user message and no prior history, so no
-      // connector skill has been injected yet — the set is empty.
-      alreadyInjectedConnectorSkills: this.collectInjectedConnectorSkills(taskMessages),
-      signal: request.signal,
-    });
-
-    // No conversation store: a task run isn't persisted as a chat. The sinks are
-    // the optional per-request sink, the default telemetry events, and the usage
-    // accumulator below.
-    const sinks: EventSink[] = requestSink
-      ? [requestSink, this.defaultEvents]
-      : [this.defaultEvents];
-
-    // Per-run usage accumulator. The engine returns its cumulative usage only
-    // on a clean exit; on an abort it throws and discards it (engine.ts run.error
-    // path). But `executeTask`'s contract (see `TaskResult` docstring) promises a
-    // result on completion "including timeout" — silent abandonment is the worst
-    // failure mode. So we mirror the engine's per-call accounting from the events
-    // it emits (same llm.done/tool.done shape PostHogEventSink reads) and retain
-    // it across the throw, letting a timed-out automation report the work it
-    // actually did instead of 0/0/0/0. Drops with the process — a real SIGKILL
-    // still reports zero (the persisted run result is the post-mortem).
-    const partial = { inputTokens: 0, outputTokens: 0, iterations: 0, llmMs: 0 };
-    const partialToolCalls: TaskResult["toolCalls"] = [];
-    const usageAccumulator: EventSink = {
-      emit(event: EngineEvent): void {
-        const { type, data } = event;
-        if (type === "llm.done") {
-          partial.iterations += 1;
-          partial.llmMs += (data.llmMs as number) ?? 0;
-          const usage = (data.usage ?? {}) as { inputTokens?: number; outputTokens?: number };
-          partial.inputTokens += usage.inputTokens ?? 0;
-          partial.outputTokens += usage.outputTokens ?? 0;
-        } else if (type === "tool.done") {
-          // `errorReason` is intentionally absent here: this accumulator only
-          // feeds the abort/timeout path, which always returns
-          // `stopReason: "aborted"` (never "complete"), so the automations
-          // de-masker's `status === "success"` guard never reads it. (The
-          // `tool.done` event doesn't carry `errorReason` either — no point
-          // threading it through for a path that can't de-mask.)
-          partialToolCalls.push({
-            id: (data.id as string) ?? "",
-            name: (data.name as string) ?? "",
-            input: {},
-            output: (data.output as string) ?? "",
-            ok: (data.ok as boolean) ?? false,
-            ms: (data.ms as number) ?? 0,
-          });
-        }
-      },
+      stableSystem,
+      volatileHead,
+      systemPrompt,
     };
-    sinks.push(usageAccumulator);
+  }
 
-    const model = engineConfig.model;
-    const resolvedModel = this.resolveModelFn(model);
-    const perCallWorkspaceMap = new Map<string, string>();
-    const wrappedSinks: EventSink[] = sinks.map((inner) =>
-      this._wrapSinkWithWorkspaceAttribution(inner, perCallWorkspaceMap),
-    );
-    const engineSink = new MultiEventSink(wrappedSinks);
-    const identityToolRouter = this._buildIdentityToolRouter({
-      identityId: ownerId,
-      workspaceId: workWsId,
-      perCallWorkspaceMap,
-    });
-    const engine = new AgentEngine(resolvedModel, identityToolRouter, engineSink);
-
-    const reqCtx: RequestContext = {
-      identity: requestIdentity,
-      // The run's provenance workspace — everything it reads, writes, and
-      // dispatches resolves here, including its model overrides.
-      workspaceId: workWsId,
-      workspaceModelOverride: (activeWorkspace ?? sessionWorkspace)?.models ?? null,
-      // The run's correlation id, carried as itself. A run persists a run
-      // result, not a conversation, so `conversationId` stays unset and every
-      // reader asking for the current conversation correctly gets nothing.
-      runId,
-      model: resolvedModelString,
-      // Unattended run: bars the automation-authoring surface. Rides the ALS
-      // context and is preserved across the per-call restamp, so the wall holds
-      // at tool-dispatch depth — enforced at the automations source, not
-      // per-router-construction. See `createAutomationsSource`.
-      unattended: true,
-    };
-    engineConfig.toolPromotion = this.buildToolPromotionFactory();
-
-    let result: EngineResult;
-    try {
-      result = await runWithRequestContext(reqCtx, () =>
-        engine.run(engineConfig, engineSystem, messages, tools),
-      );
-    } catch (err) {
-      // Non-abort errors are genuine failures — rethrow so the caller
-      // records a real failure. An abort (wall-clock timeout or external
-      // cancel from the automations executor) is NOT a failure to be
-      // discarded: honor the `TaskResult` contract and return what the run
-      // accomplished before it was stopped, tagged `stopReason: "aborted"`
-      // so the caller classifies timeout-vs-cancel from its own signal.
-      if (!engineConfig.signal?.aborted) throw err;
-      return {
-        output: "",
-        runId,
-        toolCalls: partialToolCalls,
-        stopReason: "aborted",
-        usage: {
-          inputTokens: partial.inputTokens,
-          outputTokens: partial.outputTokens,
-          cacheReadTokens: 0,
-          cacheWriteTokens: 0,
-          reasoningTokens: 0,
-          model,
-          llmMs: partial.llmMs,
-          iterations: partial.iterations,
-        },
-      };
+  /**
+   * The run's event-sink chain.
+   *
+   * The engine returns cumulative usage and llmMs in its `EngineResult`, so the
+   * clean path needs no side-channel metrics collector; the partial accumulator
+   * joins only for a run whose caller must still be told what happened after an
+   * abort.
+   */
+  private buildRunSinks(
+    spec: RunSpec,
+    binding: RunConversationBinding | undefined,
+    partialSink: EventSink,
+  ): EventSink[] {
+    const sinks: EventSink[] = spec.sink ? [spec.sink, this.defaultEvents] : [this.defaultEvents];
+    if (binding) {
+      // Conversations are workspace-owned: the conversation's event store is
+      // both the active sink for this run's engine events (it persists the
+      // assistant turn as it streams, so there is no separate append after) and
+      // a member of the chain.
+      binding.store.setActiveConversation(binding.conversation.id);
+      sinks.push(binding.store);
     }
+    if (spec.onAbort === "partial") sinks.push(partialSink);
+    return sinks;
+  }
 
-    const usage: TurnUsage = {
-      ...result.usage,
-      model,
-      llmMs: result.llmMs,
-      iterations: result.iterations,
+  /**
+   * The two workspaces a run resolves against.
+   *
+   * The workspace a run ACTS in owns its model slots, its tools, and its file
+   * partition; the workspace it is FOCUSED on is the one the prompt narrates
+   * (apps, overlays, persona, the "## Workspace" block). They are the same
+   * workspace except for an unfocused run, which is housed in the owner's
+   * personal workspace without being about it — so it narrates nothing and
+   * takes that workspace's slots.
+   */
+  private async resolveRunWorkspaces(
+    spec: RunSpec,
+  ): Promise<{ workWorkspace: Workspace | null; activeWorkspace: Workspace | null }> {
+    const workWorkspace = await this._workspaceStore.get(spec.workspaceId);
+    const briefingWsId = spec.briefingWorkspaceId;
+    if (!briefingWsId) return { workWorkspace, activeWorkspace: null };
+    if (briefingWsId === spec.workspaceId) return { workWorkspace, activeWorkspace: workWorkspace };
+    return { workWorkspace, activeWorkspace: await this._workspaceStore.get(briefingWsId) };
+  }
+
+  /**
+   * The ACTIVE tool set for a run: the workspace's tools (one copy of the
+   * platform `nb__*` tools + that workspace's apps) plus the caller's identity
+   * tools, all bare. There is no cross-workspace union — the orchestrator
+   * routes each call into the run's own workspace and denies any other, and
+   * `nb__search`'s corpus is that same workspace, so progressive disclosure
+   * operates WITHIN it.
+   *
+   * An unattended run can ingest untrusted content with nobody watching, so
+   * both durable-authoring surfaces are subtracted: it must not rewrite, spawn,
+   * or fire automations (`isTaskForbiddenIdentityTool`), nor author a skill
+   * (`isTaskForbiddenSkillTool` — durable guidance that would load itself into
+   * later conversations). An attended run keeps both; there is a human in the
+   * loop. Neither filter needs its own `unattended` check — `attended` is the
+   * one axis the run's trigger decides.
+   */
+  private async listRunTools(
+    wsId: string,
+    identity: UserIdentity,
+    attended: boolean,
+  ): Promise<ToolSchema[]> {
+    const registry = await this.ensureWorkspaceRegistry(wsId);
+    const [workspaceTools, identityTools] = await Promise.all([
+      registry.availableTools(),
+      this.listIdentitySourceTools(),
+    ]);
+    const visible = (name: string) => isToolVisibleToRole(name, identity.orgRole);
+    return [
+      ...workspaceTools
+        .filter((t) => visible(t.name) && (attended || !isTaskForbiddenSkillTool(t.name)))
+        .map(toToolSchema),
+      ...identityTools
+        .filter((t) => visible(t.name) && (attended || !isTaskForbiddenIdentityTool(t.name)))
+        .map(toToolSchema),
+    ];
+  }
+
+  /**
+   * The RAW (un-rehydrated) history the engine reasons about.
+   *
+   * A run with a conversation loads the log and, when it has outgrown its
+   * budget, folds the oldest turns into a summary so the prefix re-anchors once
+   * here instead of windowing — and busting the cache — every turn. No-op
+   * unless `features.compaction` is on and the store is event-sourced;
+   * best-effort, so a summarizer failure falls back to the full history.
+   *
+   * Compaction plans and persists on the RAW history: rehydration inlines file
+   * bytes, which the ts-keyed estimate and the summarizer transcript must not
+   * see. NOTE that because the trigger estimate runs pre-rehydration, large file
+   * extractions aren't counted toward the threshold, so compaction can
+   * under-fire relative to true prompt size; the overflow windowing in
+   * `transformContext` still bounds the hard context limit.
+   *
+   * A one-shot run OPENS on a single message and its loop grows one the same way
+   * a chat turn's does, so what it lacks is not size — it is that both folds
+   * bill their summarizer call to a conversation, and a one-shot run isn't
+   * persisted as one. Extending folding to it needs somewhere to put that cost
+   * first.
+   */
+  private async resolveRunHistory(
+    binding: RunConversationBinding | undefined,
+    opening: StoredMessage,
+    reqCtx: RequestContext,
+    budget: number,
+  ): Promise<StoredMessage[]> {
+    if (!binding) return [opening];
+    const history = await binding.store.history(binding.conversation);
+    const compacted = await runWithRequestContext(reqCtx, () =>
+      this.maybeCompactHistory(binding.store, binding.conversation.id, history, budget),
+    );
+    return compacted ?? history;
+  }
+
+  /**
+   * Per-run engine hooks: `beforeToolCall` inherited from the runtime-level
+   * hooks, `transformContext` composed here so the windowing budget is the one
+   * resolved for THIS run.
+   *
+   * `rewriteHistory` folds the history the loop itself grows, against the same
+   * budget — but in memory, for this run only, because the region a run grows
+   * carries no timestamps to key a persisted fold on. Installed only when
+   * compaction is on AND there is a conversation to bill the summarizer to:
+   * `transformContext` walks the history every iteration regardless, so what the
+   * gate saves is the second walk, not the estimate itself. See
+   * `runtime/mid-turn-compaction.ts`.
+   */
+  private buildRunHooks(
+    spec: RunSpec,
+    binding: RunConversationBinding | undefined,
+    budget: number,
+  ): EngineHooks {
+    const base: EngineHooks = {
+      ...this.hooks,
+      transformContext: buildTransformContext(budget, getProviderFromModel(spec.model)),
     };
-
-    // No conversation to persist — the deliverable (output), the activity log
-    // (toolCalls), and the usage are returned to the caller, which persists the
-    // run result. Nothing is written to a conversation store.
+    if (!this.config.features?.compaction || !binding) return base;
     return {
-      output: result.output,
-      runId,
-      toolCalls: result.toolCalls,
-      stopReason: result.stopReason,
-      usage,
+      ...base,
+      rewriteHistory: buildMidTurnCompaction({
+        budget,
+        summarize: (folded, signal) =>
+          this.summarizeForMidTurnFold(binding.store, binding.conversation.id, folded, signal),
+      }),
     };
   }
 
@@ -2254,33 +2110,29 @@ export class Runtime {
   /**
    * Resolve (owning) or create the conversation for a chat turn.
    *
-   * Enforces the ownerId privacy gate and the resume workspace-membership gate
-   * in the same order as the inline path, and preserves request metadata onto a
+   * Enforces the ownerId privacy gate and preserves request metadata onto a
    * resumed conversation. The disambiguation between "doesn't exist" (→ create)
    * and "exists but isn't yours" (→ throw) matters: silently creating a new
    * conversation for a foreign id would mask a takeover attempt as a normal flow.
+   *
+   * `resumed` says which of those happened, and the run-start door reads it: a
+   * run that CONTINUES a conversation re-checks membership of its workspace,
+   * where one that just created it inherits the check its caller's door made.
    */
   private async loadOrCreateConversation(
     request: ChatRequest,
     store: EventSourcedConversationStore,
     makeCreateOpts: () => CreateConversationOptions,
     ownerId: string,
-    convWsId: string,
-  ): Promise<Conversation> {
+  ): Promise<{ conversation: Conversation; resumed: boolean }> {
     let conversation: Conversation;
+    let resumed = false;
     if (request.conversationId) {
       const existing = await store.load(request.conversationId);
       if (existing && existing.ownerId !== ownerId) {
         throw new ConversationAccessDeniedError(request.conversationId, ownerId);
       }
-      // Resume requires CURRENT membership of the conversation's workspace — not
-      // just ownership. Resuming binds tools/skills/apps to `convWsId`, so a
-      // member offboarded from that workspace must not be able to continue acting
-      // in it (reads stay owner-gated). New conversations skip this: `convWsId` is
-      // the focused workspace, already membership-validated at the door.
-      if (existing) {
-        await this.assertOwnerIsWorkspaceMember(request.conversationId, convWsId, ownerId);
-      }
+      resumed = existing !== null;
       conversation = existing ?? (await store.create(makeCreateOpts()));
     } else {
       conversation = await store.create(makeCreateOpts());
@@ -2290,7 +2142,7 @@ export class Runtime {
     if (request.metadata && !conversation.metadata) {
       conversation.metadata = request.metadata;
     }
-    return conversation;
+    return { conversation, resumed };
   }
 
   /**
@@ -2384,22 +2236,6 @@ export class Runtime {
       focusedServerName,
       ...(focusedSkillUri ? { focusedSkillUri } : {}),
     };
-  }
-
-  /** Append the turn's user message (content + optional userId + file metadata) to the store. */
-  private async appendUserMessage(
-    store: EventSourcedConversationStore,
-    conversation: Conversation,
-    content: Array<UserTextPart | UserResourceLinkPart>,
-    request: ChatRequest,
-  ): Promise<void> {
-    await store.append(conversation, {
-      role: "user",
-      content,
-      timestamp: new Date().toISOString(),
-      ...(request.identity?.id ? { userId: request.identity.id } : {}),
-      ...(request.fileRefs?.length ? { metadata: { files: request.fileRefs } } : {}),
-    });
   }
 
   /**
@@ -2539,21 +2375,6 @@ export class Runtime {
       // between iterations and forwards it down to every tool call.
       ...(opts.signal ? { signal: opts.signal } : {}),
     };
-  }
-
-  /**
-   * The focused workspace record for a task run: the already-loaded session
-   * workspace when the task is focused on it, a fresh load for any other focused
-   * workspace, or `null` for an unfocused task.
-   */
-  private async resolveTaskActiveWorkspace(
-    focusedWsId: string | undefined,
-    sessionWsId: string,
-    sessionWorkspace: Workspace | null,
-  ): Promise<Workspace | null> {
-    if (!focusedWsId) return null;
-    if (focusedWsId === sessionWsId) return sessionWorkspace;
-    return this._workspaceStore.get(focusedWsId);
   }
 
   // ── Stage 2 (T006) — identity-bound chat helpers ─────────────────
@@ -3676,10 +3497,11 @@ export class Runtime {
    * True if `principalId` may currently act in `wsId`. Personal workspaces are
    * sole-member by construction (always true); shared workspaces require current
    * membership. The one "is this principal still allowed in this workspace"
-   * check behind every gate that asks it: the conversation-resume gate, the
-   * automation-run gate, and the unattended dispatch (ADR-0007).
+   * check behind every gate that asks it: the run-start door (`startRun`, for a
+   * conversation resume and an automation run alike) and the unattended
+   * dispatch (ADR-0007).
    *
-   * Public because the third of those lives outside this file
+   * Public because the second of those lives outside this file
    * (`src/orchestrator/unattended-dispatch.ts`) and must ask the same question
    * the same way rather than reimplementing it against the store.
    */
@@ -3690,18 +3512,17 @@ export class Runtime {
   }
 
   /**
-   * Resume authorization — the second gate, after ownership. A conversation is
-   * sealed to its workspace (`convWsId`): on resume the session's tools, skills,
-   * apps, and context all resolve there. So resuming as a non-member would hand
-   * someone offboarded from that workspace its tools — ambient authority into a
-   * workspace they were removed from. Require CURRENT membership of the
-   * conversation's workspace to RESUME (reads stay owner-gated — a removed member
-   * can still read their own authored conversation).
+   * Resume authorization for the DETACHED start, ahead of the bus reservation.
    *
-   * This is a per-RESUME check (once per conversation load), not the per-call
-   * membership scan the wall forbids — it lands at session establishment, exactly
-   * where the wall says the workspace must be membership-validated. Personal
-   * workspaces are sole-member by construction, so they never gate.
+   * The gate itself is `startRun`'s. This exists because `startTurn` answers its
+   * HTTP request with a conversation id and detaches before the run begins, so a
+   * refusal raised there would reach the caller as an error frame on the stream
+   * instead of a 403 — and would already have flipped the conversation to active
+   * on the `RunBus`. Same predicate, asked earlier, so the refusal lands where a
+   * person can see it and nothing shared has moved.
+   *
+   * Reads stay owner-gated: a removed member can still read their own authored
+   * conversation. Personal workspaces are sole-member and never gate.
    */
   private async assertOwnerIsWorkspaceMember(
     conversationId: string,
@@ -5443,15 +5264,125 @@ function resolveEngineSystem(
   return stableSystem;
 }
 
-/** A user-message text content block. */
-type UserTextPart = { type: "text"; text: string };
-/** A user-message MCP `resource_link` attachment block. */
-type UserResourceLinkPart = {
-  type: "resource_link";
-  uri: string;
-  mimeType: string;
-  name: string;
-};
+/**
+ * The request context a run executes under.
+ *
+ * Three sites run inside it — the history fold, `engine.run`, and (via
+ * {@link RunHandle.context}) whatever the caller forks after — and each spends
+ * tokens on the run's behalf. A call that records spend with no run in scope is
+ * spend no per-run surface can account for, the defect `src/usage/record.ts`
+ * prevents.
+ *
+ * The scope decides more than attribution: `getModelSlot` reads
+ * `workspaceModelOverride` off it, so a call inside resolves the acting
+ * workspace's slots and a call outside resolves the instance-configured ones.
+ * Forking a call means wrapping it too — surrounding code is NOT in this
+ * context by default.
+ */
+function buildRunContext(
+  spec: RunSpec,
+  runId: string,
+  workWorkspace: Workspace | null,
+  attended: boolean,
+): RequestContext {
+  return {
+    identity: spec.principal.identity,
+    workspaceId: spec.workspaceId,
+    workspaceModelOverride: workWorkspace?.models ?? null,
+    model: spec.model,
+    // A run's correlation anchor is its conversation when it has one and its
+    // run id when it doesn't, so every reader asking for the current
+    // conversation of a one-shot run correctly gets nothing.
+    ...(spec.conversation ? { conversationId: spec.conversation.conversation.id } : { runId }),
+    // Unattended runs bar the automation-authoring surface at tool-dispatch
+    // depth. Rides the ALS context and is preserved across the per-call
+    // restamp, so the wall is enforced at the automations source rather than
+    // per-router-construction. See `createAutomationsSource`.
+    ...(attended ? {} : { unattended: true }),
+  };
+}
+
+/**
+ * Whether a thrown run should be reported as an aborted result rather than
+ * rethrown: the door asked for it, and the engine really did stop on the
+ * signal. Everything else is a genuine failure the caller has to see.
+ */
+function isReportableAbort(spec: RunSpec, signal: AbortSignal | undefined): boolean {
+  return spec.onAbort === "partial" && signal?.aborted === true;
+}
+
+/** The user message a run opens on, in stored form. */
+function buildOpeningMessage(input: RunSpec["input"]): StoredMessage {
+  return {
+    role: "user",
+    content: input.content,
+    timestamp: new Date().toISOString(),
+    ...(input.userId ? { userId: input.userId } : {}),
+    ...(input.fileRefs?.length ? { metadata: { files: input.fileRefs } } : {}),
+  };
+}
+
+/**
+ * An event sink that mirrors the engine's per-call accounting, for a run whose
+ * caller promises a result on completion "including timeout".
+ *
+ * The engine returns its cumulative usage only on a clean exit; on an abort it
+ * throws and discards it (engine.ts `run.error` path). A run with nothing else
+ * persisting its events therefore has to reconstruct the totals from the events
+ * it emitted — the same `llm.done` / `tool.done` shape `PostHogEventSink` reads
+ * — and retain them across the throw, so a timed-out automation reports the work
+ * it actually did instead of 0/0/0/0. Drops with the process: a real SIGKILL
+ * still reports zero, and the persisted run result is the post-mortem.
+ */
+function createPartialRunAccumulator(): {
+  sink: EventSink;
+  toolCalls: RunHandle["toolCalls"];
+  usage: (model: string) => TurnUsage;
+} {
+  const totals = { inputTokens: 0, outputTokens: 0, iterations: 0, llmMs: 0 };
+  const toolCalls: RunHandle["toolCalls"] = [];
+  const sink: EventSink = {
+    emit(event: EngineEvent): void {
+      const { type, data } = event;
+      if (type === "llm.done") {
+        totals.iterations += 1;
+        totals.llmMs += (data.llmMs as number) ?? 0;
+        const usage = (data.usage ?? {}) as { inputTokens?: number; outputTokens?: number };
+        totals.inputTokens += usage.inputTokens ?? 0;
+        totals.outputTokens += usage.outputTokens ?? 0;
+      } else if (type === "tool.done") {
+        // `errorReason` is intentionally absent here: this accumulator only
+        // feeds the abort/timeout path, which always returns
+        // `stopReason: "aborted"` (never "complete"), so the automations
+        // de-masker's `status === "success"` guard never reads it. (The
+        // `tool.done` event doesn't carry `errorReason` either — no point
+        // threading it through for a path that can't de-mask.)
+        toolCalls.push({
+          id: (data.id as string) ?? "",
+          name: (data.name as string) ?? "",
+          input: {},
+          output: (data.output as string) ?? "",
+          ok: (data.ok as boolean) ?? false,
+          ms: (data.ms as number) ?? 0,
+        });
+      }
+    },
+  };
+  return {
+    sink,
+    toolCalls,
+    usage: (model) => ({
+      inputTokens: totals.inputTokens,
+      outputTokens: totals.outputTokens,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      reasoningTokens: 0,
+      model,
+      llmMs: totals.llmMs,
+      iterations: totals.iterations,
+    }),
+  };
+}
 
 /**
  * Build a user message's content blocks: the text message plus any
