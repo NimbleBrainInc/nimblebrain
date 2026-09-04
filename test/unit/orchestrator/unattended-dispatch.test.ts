@@ -79,11 +79,14 @@ interface StubOpts {
   /** Every workspace whose registry was asked for, in order. */
   registryLookups?: string[];
   events?: EngineEvent[];
+  /** Sink that fails to write — for the audit-emit guard. */
+  sinkThrows?: boolean;
 }
 
 function makeStubRuntime(opts: StubOpts): UnattendedDispatchRuntime {
   const sink: EventSink = {
     emit(event: EngineEvent): void {
+      if (opts.sinkThrows) throw new Error("workspace log is unwritable");
       opts.events?.push(event);
     },
   };
@@ -210,8 +213,8 @@ describe("dispatchUnattended — the unattended subtraction", () => {
   });
 
   // The skills half of the same allowlist. A skill is durable guidance that
-  // loads itself into later conversations, so authoring one is exactly the
-  // "effect outlives the call" shape the policy refuses.
+  // loads itself into the principal's later sessions, so authoring one grows
+  // exactly the capability the policy refuses to let a dispatch acquire.
   test("denies skills__create but allows skills__read", async () => {
     const skills = makeSpySource("skills");
     const runtime = makeStubRuntime({
@@ -373,6 +376,32 @@ describe("dispatchUnattended — bounds", () => {
     expect(res.result).toBeUndefined();
   });
 
+  // The same cap, on a result that cannot be measured at all. An in-process
+  // source can hand back a BigInt or a cycle, and `JSON.stringify` throws on
+  // both — from outside the dispatch's `try`, so an unguarded measurement
+  // leaves by the one path the function rules out. Unmeasurable is over the
+  // cap: the caller must never hold something it did not agree to hold.
+  test("treats a result it cannot serialize as over the cap", async () => {
+    const crm = makeSpySource("crm", {
+      result: {
+        content: [{ type: "text", text: "ok" }],
+        structuredContent: { n: 1n },
+        isError: false,
+      },
+    });
+    const runtime = makeStubRuntime({
+      workDir,
+      members: [PRINCIPAL],
+      registries: new Map([[WS, [crm]]]),
+    });
+
+    const res = await call(runtime, "crm__search");
+
+    expect(res.outcome).toBe("error");
+    expect(res.classification).toBe("result_too_large");
+    expect(res.result).toBeUndefined();
+  });
+
   // The caller is a background sweep with nobody to show an exception to.
   test("returns an outcome when the tool throws, rather than throwing out", async () => {
     const crm = makeSpySource("crm", { throws: "upstream exploded" });
@@ -387,6 +416,34 @@ describe("dispatchUnattended — bounds", () => {
     expect(res.outcome).toBe("error");
     expect(res.classification).toBe("tool_error");
     expect(res.error).toContain("upstream exploded");
+  });
+
+  // The other half of the same contract, and the one with no tool in it at all:
+  // `IdentityToolRouter` validates its own arguments and throws. Gate 1 runs
+  // first and no workspace has an empty member, so what reaches this is a boot
+  // or configuration path that stamped an empty principal, not a caller naming
+  // one. Construction is inside the dispatch's `try` so that throw becomes an
+  // outcome, and the source is never reached.
+  test("returns an outcome when the router rejects its own arguments", async () => {
+    const crm = makeSpySource("crm");
+    const runtime = makeStubRuntime({
+      workDir,
+      members: [""],
+      registries: new Map([[WS, [crm]]]),
+    });
+
+    const res = await dispatchUnattended(runtime, {
+      principalId: "",
+      workspaceId: WS,
+      tool: "crm__search",
+      input: {},
+      reason: REASON,
+    });
+
+    expect(res.outcome).toBe("error");
+    expect(res.classification).toBe("tool_error");
+    expect(res.error).toContain("identityId");
+    expect(crm.calls).toHaveLength(0);
   });
 });
 
@@ -516,5 +573,27 @@ describe("dispatchUnattended — audit", () => {
     await call(runtime, "crm__search", { reason: "r".repeat(1_000) });
 
     expect(String(events[0]?.data.reason).length).toBe(200);
+  });
+
+  // `MultiEventSink` fans out to its sinks without a per-sink guard, so a sink
+  // that cannot write would otherwise leave the dispatch by the one path it
+  // promises never to take. The audit line is lost; the sweep is not, and the
+  // call it was auditing still returns its result.
+  test("returns the call's outcome even when the sink cannot write the line", async () => {
+    const crm = makeSpySource("crm", {
+      result: { content: [{ type: "text", text: "found 3" }], isError: false },
+    });
+    const runtime = makeStubRuntime({
+      workDir,
+      members: [PRINCIPAL],
+      registries: new Map([[WS, [crm]]]),
+      sinkThrows: true,
+    });
+
+    const res = await call(runtime, "crm__search");
+
+    expect(res.outcome).toBe("ok");
+    expect(res.result?.content).toEqual([{ type: "text", text: "found 3" }]);
+    expect(crm.calls).toHaveLength(1);
   });
 });
