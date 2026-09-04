@@ -211,9 +211,11 @@ export const INFRA_ERROR_META_KEY = "ai.nimblebrain/infra-error";
  *
  * Host-owned in the same sense as {@link INFRA_ERROR_META_KEY}: it asserts
  * something about the CALLER, and only the host is in a position to know it. So
- * it is stripped from any RESULT arriving over the wire — a bundle echoing it
- * back would be claiming a provenance it cannot have, and the audit line, not
- * the result, is where that provenance is recorded.
+ * it is stripped from every RESULT, in-process sources included — unlike the
+ * skill markers, whose strip is conditioned on crossing a real transport.
+ * Nothing downstream reads it off a result, so a copy coming back is at best
+ * noise and at worst a provenance claim made by the party being asked about,
+ * and the audit line, not the result, is where that provenance is recorded.
  */
 export const UNATTENDED_META_KEY = "ai.nimblebrain/unattended";
 
