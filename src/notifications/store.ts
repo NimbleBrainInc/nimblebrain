@@ -258,8 +258,11 @@ export class NotificationStore {
   }
 
   /**
-   * Write delivery-ledger rows onto one item, replacing any row that already
-   * names the same `(routeId, target)`.
+   * Write delivery-ledger rows onto one item, replacing any row with the same
+   * identity — `(routeId, target, index)`, the slot in the route's `deliver`
+   * list rather than the name it points at. One route may name a tool twice
+   * with different arguments, and those are two deliveries that fail
+   * independently.
    *
    * Through the store rather than beside it, so `notifications__list` and the
    * SSE consumers read one record: a ledger held anywhere else would be a
@@ -284,7 +287,8 @@ export class NotificationStore {
       const merged = [...(item.deliveries ?? [])];
       for (const row of rows) {
         const at = merged.findIndex(
-          (old) => old.routeId === row.routeId && old.target === row.target,
+          (old) =>
+            old.routeId === row.routeId && old.target === row.target && old.index === row.index,
         );
         if (at === -1) merged.push(row);
         else merged[at] = row;

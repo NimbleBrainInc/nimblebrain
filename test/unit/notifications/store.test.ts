@@ -243,6 +243,7 @@ describe("the delivery ledger", () => {
   const row = (over: Record<string, unknown> = {}) => ({
     routeId: "rt_1",
     target: "slack__send_message",
+    index: 0,
     kind: "tool" as const,
     attempts: 1,
     outcome: "pending" as const,
@@ -250,7 +251,7 @@ describe("the delivery ledger", () => {
     ...over,
   });
 
-  test("writes rows onto an item and replaces one that names the same target", () => {
+  test("writes rows onto an item and replaces one with the same identity", () => {
     const store = storeFor(WS_A);
     store.append("acme", envelope());
     const ref = { source: "acme", eventId: "evt_01" };
@@ -262,6 +263,21 @@ describe("the delivery ledger", () => {
     expect(stored).toHaveLength(2);
     expect(stored[0]).toMatchObject({ routeId: "rt_1", outcome: "delivered", attempts: 2 });
     expect(stored[1]).toMatchObject({ routeId: "rt_2", outcome: "pending" });
+  });
+
+  test("the slot is part of the identity — one tool named twice keeps two rows", () => {
+    const store = storeFor(WS_A);
+    store.append("acme", envelope());
+    const ref = { source: "acme", eventId: "evt_01" };
+
+    store.recordDeliveries(ref, [row({ index: 0 }), row({ index: 1 })]);
+    store.recordDeliveries(ref, [row({ index: 1, outcome: "delivered" })]);
+
+    const stored = storeFor(WS_A).get("acme", "evt_01")?.deliveries ?? [];
+    expect(stored.map((r) => [r.index, r.outcome])).toEqual([
+      [0, "pending"],
+      [1, "delivered"],
+    ]);
   });
 
   test("a ref naming nothing here answers rather than throwing", () => {

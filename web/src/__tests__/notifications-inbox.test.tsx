@@ -247,6 +247,7 @@ describe("the delivery ledger", () => {
             {
               routeId: "rt_1",
               target: "slack__send_message",
+              index: 0,
               kind: "tool",
               attempts: 3,
               outcome: "failed",
@@ -276,6 +277,7 @@ describe("the delivery ledger", () => {
             {
               routeId: "rt_1",
               target: "auto_triage",
+              index: 0,
               kind: "agent",
               attempts: 0,
               outcome: "deferred",

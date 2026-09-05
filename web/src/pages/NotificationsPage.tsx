@@ -295,7 +295,10 @@ function DeliveryLedger({ rows }: { rows: DeliveryRecord[] }) {
       <p className="text-xs font-semibold">Delivery</p>
       <ul className="space-y-1">
         {rows.map((row) => (
-          <li key={`${row.routeId}:${row.target}`} className="text-xs text-muted-foreground">
+          <li
+            key={`${row.routeId}:${row.index}:${row.target}`}
+            className="text-xs text-muted-foreground"
+          >
             <span className="font-mono text-foreground/80">{row.target}</span>{" "}
             <span className={cn(OUTCOME_CLASS[row.outcome])}>{OUTCOME_LABEL[row.outcome]}</span>
             {row.attempts > 1 ? ` after ${row.attempts} attempts` : null}

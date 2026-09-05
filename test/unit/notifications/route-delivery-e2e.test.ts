@@ -249,6 +249,7 @@ describe("a connector's fact reaching a Slack channel", () => {
       {
         routeId: "rt_outbound_slack",
         target: "slack__send_message",
+        index: 0,
         kind: "tool",
         attempts: 1,
         outcome: "delivered",

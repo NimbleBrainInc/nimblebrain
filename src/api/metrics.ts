@@ -593,7 +593,7 @@ export const notificationsDeliveredTotal = new Counter({
  */
 export const notificationsRoutesMatchedTotal = new Counter({
   name: "nb_notifications_routes_matched_total",
-  help: "Notifications matched by at least one route target, by source.",
+  help: "Route matches against a notification — one per matching route, by source.",
   labelNames: ["source"] as const,
   registers: [metricsRegistry],
 });

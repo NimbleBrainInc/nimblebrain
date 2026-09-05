@@ -87,6 +87,8 @@ interface ResolvedTarget {
   kind: "tool" | "agent";
   /** The tool's wire name, or the automation's id. */
   name: string;
+  /** Its position in the route's `deliver` list. Half of a ledger row's identity. */
+  index: number;
   input?: Record<string, unknown>;
 }
 
@@ -96,6 +98,8 @@ interface PendingAttempt {
   ref: NotificationRef;
   routeId: string;
   target: string;
+  /** Position in the route's `deliver` list — the half of the identity a name cannot carry. */
+  index: number;
   attempts: number;
   dueAt: number;
 }
@@ -234,6 +238,7 @@ export class RouteDispatcher {
         ref: { source: item.source, eventId: item.envelope.eventId },
         routeId: row.routeId,
         target: row.target,
+        index: rowIndex(row),
         attempts: row.attempts,
         dueAt: Number.isFinite(due) ? due : this.#now(),
       });
@@ -273,17 +278,22 @@ export class RouteDispatcher {
   async sweepRetries(): Promise<void> {
     const now = this.#now();
     const due = [...this.#pending.values()].filter((entry) => entry.dueAt <= now);
-    for (const entry of due) {
-      if (this.#stopped) return;
+    // Queued first, awaited together. Each workspace's chain still runs its own
+    // one at a time; awaiting inside the loop instead would put one workspace's
+    // hung delivery in front of every other workspace's due retry, and hold the
+    // tick's re-arm behind it too.
+    const running = due.map((entry) => {
       this.#pending.delete(pendingKeyOf(entry));
-      await this.#enqueue(entry.wsId, async () => {
+      return this.#enqueue(entry.wsId, async () => {
+        if (this.#stopped) return;
         try {
           await this.#retry(entry);
         } catch (err) {
           log.warn(`[notifications] route retry failed: ${errorText(err)}`, { wsId: entry.wsId });
         }
       });
-    }
+    });
+    await Promise.all(running);
   }
 
   /**
@@ -395,6 +405,7 @@ export class RouteDispatcher {
     const row: DeliveryRecord = {
       routeId: route.id,
       target: target.name,
+      index: target.index,
       kind: "tool",
       attempts,
       outcome,
@@ -413,6 +424,7 @@ export class RouteDispatcher {
         ref,
         routeId: route.id,
         target: target.name,
+        index: target.index,
         attempts,
         dueAt: this.#now() + retryDelayMs(attempts),
       };
@@ -442,10 +454,12 @@ export class RouteDispatcher {
       this.#closeAbandoned(entry, item, "the route was changed or removed before the retry ran");
       return;
     }
-    const target = route.deliver
-      .map(resolveTarget)
-      .find((candidate) => candidate.kind === "tool" && candidate.name === entry.target);
-    if (!target) {
+    // By slot, and then confirmed by name. A re-saved route can put a
+    // different tool in this position, and firing it because the position still
+    // exists would deliver a message the stored rule does not ask for.
+    const slot = route.deliver[entry.index];
+    const target = slot ? resolveTarget(slot, entry.index) : undefined;
+    if (!target || target.kind !== "tool" || target.name !== entry.target) {
       this.#closeAbandoned(entry, item, "the route no longer delivers to this target");
       return;
     }
@@ -461,6 +475,7 @@ export class RouteDispatcher {
     const row: DeliveryRecord = {
       routeId: entry.routeId,
       target: entry.target,
+      index: entry.index,
       kind: "tool",
       attempts: entry.attempts,
       outcome: "failed",
@@ -591,7 +606,9 @@ function matchTargets(routes: readonly NotificationRoute[], item: Notification):
   for (const route of routes) {
     if (!routeMatches(route, item, level)) continue;
     notificationsRoutesMatchedTotal.inc({ source: notificationSourceLabel(item.source) });
-    for (const target of route.deliver) out.push({ route, target: resolveTarget(target) });
+    for (const [index, target] of route.deliver.entries()) {
+      out.push({ route, target: resolveTarget(target, index) });
+    }
   }
   return out;
 }
@@ -610,6 +627,7 @@ function seedRows(matched: readonly MatchedTarget[], at: string): DeliveryRecord
       ? {
           routeId: route.id,
           target: target.name,
+          index: target.index,
           kind: "agent",
           attempts: 0,
           outcome: "deferred",
@@ -619,6 +637,7 @@ function seedRows(matched: readonly MatchedTarget[], at: string): DeliveryRecord
       : {
           routeId: route.id,
           target: target.name,
+          index: target.index,
           kind: "tool",
           attempts: 0,
           outcome: "pending",
@@ -653,10 +672,22 @@ export function routeMatches(
 }
 
 /** Flatten a stored target's union into the shape the ledger and the call need. */
-function resolveTarget(target: NotificationDeliverTarget): ResolvedTarget {
+function resolveTarget(target: NotificationDeliverTarget, index: number): ResolvedTarget {
   return target.kind === "agent"
-    ? { kind: "agent", name: target.automation }
-    : { kind: "tool", name: target.tool, ...(target.input ? { input: target.input } : {}) };
+    ? { kind: "agent", name: target.automation, index }
+    : { kind: "tool", name: target.tool, index, ...(target.input ? { input: target.input } : {}) };
+}
+
+/**
+ * A stored row's slot, defaulting to the first.
+ *
+ * A record read back off disk is an untrusted input, and a row written before
+ * the slot was part of the identity carries no index. There are none in the
+ * wild — no released version dispatched a route — so this is a total read of
+ * the field rather than a migration.
+ */
+function rowIndex(row: DeliveryRecord): number {
+  return Number.isInteger(row.index) ? row.index : 0;
 }
 
 /**
@@ -704,7 +735,14 @@ function errorText(err: unknown): string {
 
 /** The identity of one ledger row, across a restart. */
 function pendingKey(wsId: string, item: Notification, row: DeliveryRecord): string {
-  return JSON.stringify([wsId, item.source, item.envelope.eventId, row.routeId, row.target]);
+  return JSON.stringify([
+    wsId,
+    item.source,
+    item.envelope.eventId,
+    row.routeId,
+    row.target,
+    rowIndex(row),
+  ]);
 }
 
 function pendingKeyOf(entry: PendingAttempt): string {
@@ -714,5 +752,6 @@ function pendingKeyOf(entry: PendingAttempt): string {
     entry.ref.eventId,
     entry.routeId,
     entry.target,
+    entry.index,
   ]);
 }

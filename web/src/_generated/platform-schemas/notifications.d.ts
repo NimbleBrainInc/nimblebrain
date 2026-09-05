@@ -61,9 +61,12 @@ export type DeliveryOutcome = "pending" | "delivered" | "deferred" | "denied" | 
  * was routed to looks identical to one nobody routed, unless the attempt is
  * recorded.
  *
- * One row per `(routeId, target)`, which is also its identity — a route that
- * names the same tool twice is one row, because two attempts at the same call
- * with the same input are one delivery.
+ * A row's identity is `(routeId, target, index)` — the **slot** in the route's
+ * `deliver` list, not the name it points at. A route may legitimately name one
+ * tool twice with different arguments ("post to #outbound and to #alerts"),
+ * and those are two deliveries that can fail independently; keying on the name
+ * alone would let the second overwrite the first and report a message that
+ * never landed as delivered.
  *
  * It lives in this directory rather than in `src/notifications/` because it
  * crosses to the web on `NotificationView`, and this is the one directory the
@@ -74,6 +77,8 @@ export interface DeliveryRecord {
     routeId: string;
     /** What the route aimed at — a tool name, or an automation id. */
     target: string;
+    /** Position in the route's `deliver` list. Part of the row's identity. */
+    index: number;
     /** Which kind of target `target` names. */
     kind: "tool" | "agent";
     attempts: number;
@@ -301,7 +306,12 @@ export interface NotificationSourceView {
 export interface NotificationRouteDisabled {
     /** One line an admin can act on. */
     reason: string;
-    /** ISO 8601 instant the runtime last observed the condition. */
+    /**
+     * ISO 8601 instant the runtime FIRST observed the condition since the note
+     * was last cleared. Re-observing it does not move the timestamp: the note is
+     * re-derived on every matching notification, and rewriting the operator
+     * record each time would put it on the delivery path.
+     */
     at: string;
 }
 /** One stored route, with the principal it dispatches under. */

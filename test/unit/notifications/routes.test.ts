@@ -171,6 +171,7 @@ describe("matching", () => {
       {
         routeId: "rt_slack",
         target: TOOL,
+        index: 0,
         kind: "tool",
         attempts: 1,
         outcome: "delivered",
@@ -554,6 +555,90 @@ describe("restart", () => {
 
 // -- agent targets ---------------------------------------------------------
 
+describe("a route naming one tool twice", () => {
+  /**
+   * "Post to #outbound and to #alerts" is one route with two targets that
+   * happen to share a tool. They are two deliveries and they fail
+   * independently, so a ledger keyed on the tool NAME would let the second
+   * overwrite the first — reporting a message that never landed as delivered,
+   * and losing its retry on the next restart.
+   */
+  function twoChannels(): Record<string, unknown> {
+    return {
+      id: "rt_fanout",
+      createdBy: AUTHOR,
+      match: {},
+      deliver: [
+        { kind: "tool", tool: TOOL, input: { channel: "#outbound" } },
+        { kind: "tool", tool: TOOL, input: { channel: "#alerts" } },
+      ],
+    };
+  }
+
+  test("keeps a row per slot, so one failure is not hidden by the other's success", async () => {
+    answers = [
+      { outcome: "error", classification: "tool_error", error: "outbound is archived" },
+      { outcome: "ok" },
+    ];
+    await configure({ routes: [twoChannels()] });
+    const item = seed();
+    await dispatcher().onItem(wsId, item);
+
+    expect(calls.map((c) => c.input.channel)).toEqual(["#outbound", "#alerts"]);
+    expect(ledger(item)).toHaveLength(2);
+    expect(ledger(item)[0]).toMatchObject({ index: 0, outcome: "pending", attempts: 1 });
+    expect(ledger(item)[1]).toMatchObject({ index: 1, outcome: "delivered" });
+  });
+
+  test("the failed slot is on disk, so a restart resumes exactly it", async () => {
+    answers = [
+      { outcome: "error", classification: "tool_error", error: "outbound is archived" },
+      { outcome: "ok" },
+    ];
+    await configure({ routes: [twoChannels()] });
+    const item = seed();
+    const first = dispatcher();
+    await first.onItem(wsId, item);
+    first.stop();
+
+    calls = [];
+    answers = [{ outcome: "ok" }];
+    const second = dispatcher();
+    await second.resume();
+    advance(61_000);
+    await second.sweepRetries();
+
+    expect(calls.map((c) => c.input.channel)).toEqual(["#outbound"]);
+    expect(ledger(item).map((row) => row.outcome)).toEqual(["delivered", "delivered"]);
+  });
+
+  test("a slot that now holds a different tool is closed, not fired", async () => {
+    answers = [{ outcome: "error", classification: "tool_error", error: "down" }];
+    await configure({ routes: [twoChannels()] });
+    const item = seed();
+    const disp = dispatcher();
+    await disp.onItem(wsId, item);
+
+    // The admin rewrote the route: slot 0 now names something else entirely.
+    await configure({
+      routes: [
+        {
+          id: "rt_fanout",
+          createdBy: AUTHOR,
+          match: {},
+          deliver: [{ kind: "tool", tool: "mail__send", input: {} }],
+        },
+      ],
+    });
+    calls = [];
+    advance(61_000);
+    await disp.sweepRetries();
+
+    expect(calls).toHaveLength(0);
+    expect(ledger(item)[0]).toMatchObject({ outcome: "failed", classification: "route_changed" });
+  });
+});
+
 describe("an agent target", () => {
   test("records deferred/awaiting_wake and calls nothing", async () => {
     await configure({
@@ -574,6 +659,7 @@ describe("an agent target", () => {
       {
         routeId: "rt_triage",
         target: "auto_triage",
+        index: 0,
         kind: "agent",
         attempts: 0,
         outcome: "deferred",
