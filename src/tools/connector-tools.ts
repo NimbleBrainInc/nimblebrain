@@ -20,7 +20,7 @@ import type {
   ManagedConnectorProvider,
   ManagedSession,
 } from "../connectors/providers/managed-provider.ts";
-import { connectorSkillIdentityFrom } from "../connectors/server-detail.ts";
+import { connectorSkillIdentityFrom, type SecretHeaderRef } from "../connectors/server-detail.ts";
 import { textContent } from "../engine/content-helpers.ts";
 import { INTERNAL_TOOL_ANNOTATION, type ToolResult } from "../engine/types.ts";
 import { HookContractError, revokeHooksForConnector } from "../hooks/provisioning.ts";
@@ -31,8 +31,11 @@ import type { UserIdentity } from "../identity/provider.ts";
 import { clearCursor } from "../notifications/cursors.ts";
 import { log } from "../observability/log.ts";
 import type { PermissionOwner } from "../permissions/permission-store.ts";
-import type { ConnectorCatalogEntry } from "../registries/projection.ts";
-import type { DirectoryEntry, RemoteOAuthInstall } from "../registries/types.ts";
+import type {
+  ConnectorCatalogEntry,
+  DirectoryEntry,
+  RemoteOAuthInstall,
+} from "../registries/types.ts";
 import type { Runtime } from "../runtime/runtime.ts";
 import { validateAdditionalAuthorizationParams } from "../util/oauth-params.ts";
 import { isHttpUrl } from "../util/url.ts";
@@ -1795,12 +1798,18 @@ interface BrokeredWiring {
  * through. Refusing at install (and naming the header) beats dropping the entry
  * silently: a connection missing the header reaches the service and fails there,
  * where the cause is a driver error rather than a catalog typo.
+ *
+ * Returns the bare reference, dropping the entry's optional `label` / `help`.
+ * Those exist so the install dialog can ask a person a readable question; the
+ * transport resolves a key, so carrying them into `workspace.json` would put
+ * display copy in persisted connection config for nothing to read.
  */
 function validateSecretHeaders(
   entryName: string,
-  secretHeaders: Record<string, CredentialRef> | undefined,
+  secretHeaders: Record<string, SecretHeaderRef> | undefined,
 ): { headers?: Record<string, CredentialRef> } | { error: string } {
   if (!secretHeaders) return {};
+  const headers: Record<string, CredentialRef> = {};
   for (const [name, value] of Object.entries(secretHeaders)) {
     if (!isCredentialRef(value)) {
       return {
@@ -1810,8 +1819,9 @@ function validateSecretHeaders(
           "a catalog entry names the secret, it never carries one.",
       };
     }
+    headers[name] = { ref: "credential", key: value.key };
   }
-  return { headers: secretHeaders };
+  return { headers };
 }
 
 /**

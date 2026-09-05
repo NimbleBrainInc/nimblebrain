@@ -8,16 +8,16 @@ import {
   initiateMcpOAuth,
   installConnector,
   listDirectory,
+  type RemoteOAuthInstall,
 } from "../../api/client";
 import { ComposioApiKeyModal } from "../../components/connectors/ComposioApiKeyModal";
 import { ConnectorIcon } from "../../components/connectors/ConnectorIcon";
 import { OperatorSetupModal } from "../../components/connectors/OperatorSetupModal";
+import { SecretHeadersModal } from "../../components/connectors/SecretHeadersModal";
 import { Button } from "../../components/ui/button";
 import { useCanWriteActiveWorkspace } from "../../hooks/useScopedRole";
 import { installCompletesWithoutSignIn } from "../../lib/connector-auth-flow.ts";
-
-/** The remote-OAuth variant of a directory entry's install descriptor. */
-type RemoteOAuthInstall = Extract<DirectoryEntry["install"], { kind: "remote-oauth" }>;
+import { type SecretHeaderField, secretHeaderFields } from "../../lib/secret-headers";
 
 /**
  * Connector directory — what's available to install. The Browse page
@@ -43,6 +43,14 @@ export function ConnectorBrowsePage() {
   const [apiKeyModal, setApiKeyModal] = useState<{
     entry: DirectoryEntry;
     serverName: string;
+  } | null>(null);
+  // A connector declaring `secretHeaders` needs its values BEFORE the install:
+  // an `auth: "provider"` entry eager-starts at install, and a start with an
+  // unresolvable reference fails with CredentialNotFoundError. Collecting
+  // afterwards would show the user that failure and then ask them to fix it.
+  const [secretsModal, setSecretsModal] = useState<{
+    entry: DirectoryEntry;
+    fields: SecretHeaderField[];
   } | null>(null);
 
   // Installing a connector writes workspace-owned state, so this is the
@@ -178,7 +186,7 @@ export function ConnectorBrowsePage() {
   // and its connect step can't land in different workspaces. (The prior
   // target-picker let them diverge, which surfaced as "Bundle not
   // installed" on Connect.)
-  const onInstall = async (entry: DirectoryEntry) => {
+  const runInstall = async (entry: DirectoryEntry) => {
     setLoadError(null);
     setBusyId(`${entry.registryId}::${entry.id}`);
     try {
@@ -193,6 +201,20 @@ export function ConnectorBrowsePage() {
       setLoadError(err instanceof Error ? err.message : String(err));
       setBusyId(null);
     }
+  };
+
+  // Install, asking for the entry's declared workspace secrets first when it has
+  // any. Cancelling the dialog installs nothing, which is the honest outcome: a
+  // connector that cannot reach its upstream was never added, so there is no
+  // dead row on the Connectors list and nothing to clean up.
+  const onInstall = async (entry: DirectoryEntry) => {
+    const fields = secretHeaderFields(entry.install);
+    if (fields.length > 0) {
+      setLoadError(null);
+      setSecretsModal({ entry, fields });
+      return;
+    }
+    await runInstall(entry);
   };
 
   return (
@@ -268,6 +290,20 @@ export function ConnectorBrowsePage() {
         />
       )}
 
+      {secretsModal && (
+        <SecretHeadersModal
+          connectorName={secretsModal.entry.name}
+          fields={secretsModal.fields}
+          open={true}
+          onClose={() => setSecretsModal(null)}
+          onStored={async () => {
+            const entry = secretsModal.entry;
+            setSecretsModal(null);
+            await runInstall(entry);
+          }}
+        />
+      )}
+
       {apiKeyModal && apiKeyModal.entry.install.kind === "remote-oauth" && (
         <ComposioApiKeyModal
           catalogId={apiKeyModal.entry.id}
@@ -327,6 +363,10 @@ function DirectoryCard({
 }) {
   const isStaticAuth = entry.install.kind === "remote-oauth" && entry.install.auth === "static";
   const operatorReady = entry.operatorConfigured === true;
+  // Say it on the card, not once the dialog appears. `operatorConfigured` already
+  // distinguishes a static-auth entry that is ready from one that is not; this is
+  // the same disclosure for the other thing an install can ask for.
+  const secretCount = secretHeaderFields(entry.install).length;
 
   return (
     <div className="flex flex-col gap-3 p-4 border border-border/60 rounded-sm bg-background h-full">
@@ -339,7 +379,14 @@ function DirectoryCard({
           </p>
         </div>
       </div>
-      <div className="mt-auto flex items-end justify-end">
+      <div className="mt-auto flex items-end justify-between gap-2">
+        {secretCount > 0 ? (
+          <span className="text-2xs text-muted-foreground border border-border/60 rounded-sm px-1.5 py-0.5">
+            {secretCount === 1 ? "Needs a credential" : `Needs ${secretCount} credentials`}
+          </span>
+        ) : (
+          <span />
+        )}
         <CardAction
           busy={busy}
           canManage={canManage}

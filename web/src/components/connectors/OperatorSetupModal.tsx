@@ -1,5 +1,9 @@
 import { useEffect, useRef, useState } from "react";
-import { type DirectoryEntry, getOAuthRedirectUri, setupConnectorOperator } from "../../api/client";
+import {
+  getOAuthRedirectUri,
+  type RemoteOAuthInstall,
+  setupConnectorOperator,
+} from "../../api/client";
 import { safeHostname } from "../../lib/safe-url";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
@@ -16,6 +20,27 @@ import { Input } from "../ui/input";
  * destination for one task. The vendor portal link is the only
  * meaningful navigation; everything else stays in the modal.
  */
+
+/**
+ * The three things this modal needs of a connector: which catalog entry to
+ * write the OAuth app against, what to call it, and where the vendor's
+ * developer portal is.
+ *
+ * Narrower than a `DirectoryEntry` on purpose. Browse has a real one; the
+ * Configure page and the status hero do not, and asking them for one made each
+ * synthesize a plausible-looking entry with invented registry ids and a missing
+ * `transportType` — objects that would be wrong if anything ever read the rest
+ * of them.
+ */
+export interface OperatorSetupTarget {
+  /** Catalog entry id — what `setup_operator` writes against. */
+  id: string;
+  /** Display name, for the dialog's title. */
+  name: string;
+  /** Vendor portal + hint + the key the client secret is stored at. */
+  operatorSetup?: RemoteOAuthInstall["operatorSetup"];
+}
+
 export function OperatorSetupModal({
   entry,
   initialClientId,
@@ -23,7 +48,7 @@ export function OperatorSetupModal({
   onClose,
   onSaved,
 }: {
-  entry: DirectoryEntry;
+  entry: OperatorSetupTarget;
   /** Pre-fill for the rotate case. Empty string for first-time setup. */
   initialClientId?: string;
   open: boolean;
@@ -100,8 +125,7 @@ export function OperatorSetupModal({
 
   if (!open) return null;
 
-  const operatorSetup =
-    entry.install.kind === "remote-oauth" ? entry.install.operatorSetup : undefined;
+  const operatorSetup = entry.operatorSetup;
   if (!operatorSetup) return null;
 
   const isEdit = !!initialClientId;

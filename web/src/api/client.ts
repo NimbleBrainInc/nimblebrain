@@ -1,4 +1,14 @@
 import type { McpUiResourceMeta } from "@modelcontextprotocol/ext-apps";
+import type {
+  ComposioConnectField,
+  ComposioConnectorConfig,
+  SecretHeaderRef,
+} from "../_generated/connector-registry/connectors/server-detail";
+import type {
+  ConnectorCatalogEntry,
+  DirectoryEntry,
+  RemoteOAuthInstall,
+} from "../_generated/connector-registry/registries/types";
 import type { ToolInput } from "../_generated/platform-schemas/catalog";
 import { addAuthBreadcrumb, captureLogout, setSentryWorkspace } from "../sentry";
 import type {
@@ -640,54 +650,6 @@ export async function initiateComposioOAuth(
 }
 
 /**
- * Connectors catalog entry — one card on Settings → Connectors.
- * Mirrors the server-side `ConnectorCatalogEntry` shape.
- */
-/**
- * One field collected from the user when connecting a non-redirect
- * (API-key) Composio connector. `key` is the Composio connection-field
- * name, sent verbatim; the value is handed to Composio at connect time
- * and never persisted by the platform. `sensitive` → render password.
- */
-export interface ComposioField {
-  key: string;
-  title: string;
-  description?: string;
-  sensitive?: boolean;
-  required?: boolean;
-  placeholder?: string;
-}
-
-/** Composio connector config carried on catalog + directory entries. */
-export interface ComposioConfig {
-  toolkit: string;
-  tools?: string[];
-  /** Defaults to OAUTH2 (the redirect flow). API_KEY connectors collect `fields`. */
-  authScheme?: "OAUTH2" | "API_KEY";
-  fields?: ComposioField[];
-}
-
-export interface ConnectorCatalogEntry {
-  id: string;
-  name: string;
-  description: string;
-  /** Optional brand icon URL — omitted when the entry ships no icon; the UI falls back to a letter-avatar. */
-  iconUrl?: string;
-  url: string;
-  auth: "dcr" | "static" | "composio" | "smithery" | "provider";
-  requiredScopes?: string[];
-  additionalAuthorizationParams?: Record<string, string>;
-  operatorSetup?: { portalUrl: string; hint: string; clientSecretKey: string };
-  /** Composio-backed connectors: toolkit slug + auth-config env var + optional tool allowlist. */
-  composio?: ComposioConfig;
-  tags?: string[];
-  /** When true, the connector exposes a UI surface — render the "Interactive" badge. */
-  interactive?: boolean;
-  /** Optional connector-specific docs URL surfaced on the Configure page. */
-  docsUrl?: string;
-}
-
-/**
  * Per-workspace installed view. Returns every connector visible in the
  * workspace. Personal connectors live in the caller's personal workspace.
  *
@@ -980,44 +942,67 @@ export async function installPersonalConnector(
   return unwrapStructured(result, "install");
 }
 
+/**
+ * One key the workspace has set, and when it was last written. Deliberately no
+ * value: `list_secret_keys` does not return one, and a "show current value"
+ * affordance would be a new way out of the store for one cosmetic gain.
+ */
+export interface WorkspaceSecretKey {
+  key: string;
+  updatedAt: string;
+}
+
+/**
+ * Write a workspace secret, creating or replacing it. Replacing IS the rotation
+ * path — the next connection that resolves a reference to this key picks the new
+ * value up, with no restart and no config edit.
+ *
+ * The shell calls the tool over `/v1/tools/call` like every other connector
+ * action. That is not "setting it in the chat": the value goes from the input to
+ * the credential store over one request. Typing it into a conversation is what
+ * puts it in a transcript, a model's context, and whatever that conversation is
+ * persisted to, which is the whole reason this function exists.
+ *
+ * ws_admin gated server-side.
+ */
+export async function setWorkspaceSecret(key: string, value: string): Promise<{ ok: boolean }> {
+  const result = await callTool("nb", "manage_connectors", { action: "set_secret", key, value });
+  return unwrapStructured(result, "set_secret");
+}
+
+/** Which keys this workspace has set, and when each was written. Never values. */
+export async function listWorkspaceSecretKeys(): Promise<{ keys: WorkspaceSecretKey[] }> {
+  const result = await callTool("nb", "manage_connectors", { action: "list_secret_keys" });
+  return unwrapStructured(result, "list_secret_keys");
+}
+
+/**
+ * The connector-directory wire shapes, as the server declares them.
+ *
+ * These are re-exports, not declarations. The web shell held its own copies of
+ * `DirectoryEntry` and `ConnectorCatalogEntry` and they drifted — `providerAuth`
+ * and `secretHeaders` rode the wire for a release with neither field on the
+ * client, so a whole credential class was invisible to the UI and nothing in the
+ * build noticed. The `_generated/connector-registry` tree comes from
+ * `src/registries/types.ts` via `bun run codegen`, and `check:codegen` fails CI
+ * when the server type moves without a regen.
+ *
+ * `ComposioConfig` / `ComposioField` keep their shell-side names because the
+ * components read better for it; the shapes are the server's.
+ */
+export type {
+  ComposioConnectField as ComposioField,
+  ComposioConnectorConfig as ComposioConfig,
+  ConnectorCatalogEntry,
+  DirectoryEntry,
+  RemoteOAuthInstall,
+  SecretHeaderRef,
+};
+
 export interface ConnectorTool {
   name: string;
   description: string;
   inputSchema: Record<string, unknown>;
-}
-
-/**
- * One row in the Browse directory — uniform shape across registry
- * sources. The `install` discriminator drives the install-button behavior
- * in the UI.
- */
-export interface DirectoryEntry {
-  id: string;
-  registryId: string;
-  registryType: string;
-  name: string;
-  description: string;
-  iconUrl?: string;
-  tags?: string[];
-  /** Offered for personal (identity-plane) connection — the profile Connectors set. */
-  personal?: boolean;
-  /**
-   * Static-auth entries: true when the workspace has both clientId and
-   * client_secret configured. Undefined for entries where operator
-   * setup doesn't apply (DCR remote-oauth, direct-url).
-   */
-  operatorConfigured?: boolean;
-  install:
-    | {
-        kind: "remote-oauth";
-        url: string;
-        auth: "dcr" | "static" | "composio" | "smithery" | "provider";
-        requiredScopes?: string[];
-        additionalAuthorizationParams?: Record<string, string>;
-        operatorSetup?: { portalUrl: string; hint: string; clientSecretKey: string };
-        composio?: ComposioConfig;
-      }
-    | { kind: "direct-url"; url: string };
 }
 
 export interface DirectoryResult {

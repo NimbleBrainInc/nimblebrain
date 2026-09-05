@@ -9,6 +9,7 @@ import { ConnectorStatusHero } from "../../components/connectors/ConnectorStatus
 import { OAuthConnectionSection } from "../../components/connectors/OAuthConnectionSection";
 import { OperatorOAuthSection } from "../../components/connectors/OperatorOAuthSection";
 import { ToolPermissionsTable } from "../../components/connectors/ToolPermissionsTable";
+import { WorkspaceSecretsSection } from "../../components/connectors/WorkspaceSecretsSection";
 import { useCanWriteActiveWorkspace } from "../../hooks/useScopedRole";
 
 /**
@@ -161,6 +162,7 @@ export function ConnectorDetailPage() {
       <div className="space-y-6">
         <OAuthConnectionSection installed={installed} canManage={canManage} onChanged={refresh} />
         <OperatorOAuthSection installed={installed} canManage={canManage} onChanged={refresh} />
+        <WorkspaceSecretsSection installed={installed} canManage={canManage} />
         <ToolPermissionsTable serverName={installed.serverName} canManage={canManage} />
       </div>
     </div>

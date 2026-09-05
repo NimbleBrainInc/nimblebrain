@@ -13,7 +13,7 @@ import { slugifyServerName } from "../../../bundles/paths.ts";
 import { type ConnectorOwner, connectorOwnerKey } from "../../../identity/connector-owner.ts";
 import { IdentityConnectorStore } from "../../../identity/connector-store.ts";
 import { log } from "../../../observability/log.ts";
-import type { ConnectorCatalogEntry } from "../../../registries/projection.ts";
+import type { ConnectorCatalogEntry } from "../../../registries/types.ts";
 import { composioAuthConfigId, validateComposioConfig } from "./config.ts";
 import { consumeConnectFlow, registerConnectFlow } from "./connect-flow-registry.ts";
 import { type ComposioConnection, saveComposioConnection } from "./connection.ts";
