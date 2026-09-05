@@ -16,6 +16,7 @@
 // ---------------------------------------------------------------------------
 
 import type { WorkspaceInfo } from "../../context/WorkspaceContext";
+import type { ScopedRole } from "../../hooks/useScopedRole";
 import type { PlacementEntry } from "../../types";
 
 export type SourceId = "workspaces" | "apps" | "actions";
@@ -84,8 +85,14 @@ export interface CommandSourceContext {
   apps: PlacementEntry[];
   /** Brand icon URL for an app's server name, or undefined for letter fallback. */
   iconForApp: (serverName: string) => string | undefined;
-  /** Signed-in user's org role, for gating org-admin-only actions. */
-  orgRole?: string;
+  /**
+   * The signed-in user's effective role, already resolved by `useScopedRole`.
+   * Gates compare it with `roleAtLeast`, so the palette answers "may this user
+   * reach this surface" with the same vocabulary and the same helper as the
+   * `RouteGuard` standing behind each destination. Absent until the session
+   * loads, which `roleAtLeast(… ?? "none", …)` reads as no access.
+   */
+  scopedRole?: ScopedRole;
   /**
    * True when the current route is a workspace route (`/w/:slug`). Chat lives
    * only inside a workspace, so the chat action gates on this — NOT on
