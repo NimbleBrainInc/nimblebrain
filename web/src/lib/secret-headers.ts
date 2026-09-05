@@ -5,12 +5,15 @@ import type { DirectoryEntry, SecretHeaderRef } from "../api/client";
  *
  * The declaration is `{ "X-Db-Url": { ref: "credential", key: "acme.db_url" } }`
  * — a header name and a store key, neither of which is a label. `label` here is
- * the entry's own when it set one and a derivation from the key otherwise;
- * `header` is carried only so the dialog can be keyed and the UI can say which
- * connection field a value is for.
+ * the entry's own when it set one and a derivation from the key otherwise.
+ *
+ * The header name is not shown anywhere: it answers a question the person
+ * pasting a credential is not asking. It stays on the field as the row's
+ * identity, which is the one thing distinct per row even when two headers
+ * reference the same store key.
  */
 export interface SecretHeaderField {
-  /** Outgoing header the value is bound to. Display + React key only. */
+  /** Outgoing header the value is bound to. Row identity, not display. */
   header: string;
   /** Credential-store key the value is written to. */
   key: string;
