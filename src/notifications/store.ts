@@ -286,9 +286,16 @@ export class NotificationStore {
       if (!item) continue;
       const merged = [...(item.deliveries ?? [])];
       for (const row of rows) {
+        // `?? 0` on both sides, not one: a stored record is an untrusted input
+        // again by the time it is read back, and a row missing its slot must
+        // compare the same way here as it does where the retry index is
+        // rebuilt — otherwise one reader treats it as slot 0 and the other
+        // appends a duplicate beside it.
         const at = merged.findIndex(
           (old) =>
-            old.routeId === row.routeId && old.target === row.target && old.index === row.index,
+            old.routeId === row.routeId &&
+            old.target === row.target &&
+            (old.index ?? 0) === (row.index ?? 0),
         );
         if (at === -1) merged.push(row);
         else merged[at] = row;
