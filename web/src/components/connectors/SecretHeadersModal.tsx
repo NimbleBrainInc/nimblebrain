@@ -61,7 +61,7 @@ export function SecretHeadersModal({
       description={
         mode === "rotate"
           ? "Replaces what this workspace has stored. Takes effect on the next request."
-          : "Stored in this workspace and never shown again."
+          : "Stored in this workspace, never shown again, and never part of a conversation."
       }
       fields={modalFields}
       submitLabel={mode === "rotate" ? "Replace" : "Save and install"}
