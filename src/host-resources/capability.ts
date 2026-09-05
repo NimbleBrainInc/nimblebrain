@@ -10,9 +10,8 @@
  * `ai.nimblebrain/resources/{read,list}` extension methods or fall back to
  * inline-content tool arguments.
  *
- * Phase 1 advertises the capability and gates installs on
- * `host_capabilities` entries marked `required: true`. Inbound request
- * handlers ship in Phase 2.
+ * The platform advertises this capability on every MCP initialize; a server
+ * decides at runtime whether to use it.
  *
  * Each operation is declared as an object (not a bare boolean) so future
  * sub-fields (`read.range`, `read.unit`, `list.filter`, etc.) slot in without
@@ -63,16 +62,6 @@ export const HOST_RESOURCES_CAPABILITY_V1: HostResourcesCapability = {
   },
   schemes: ["files"],
 };
-
-/**
- * Keys of all host-provided capabilities this platform build advertises.
- * Used by the install-time manifest gate to validate the keys in a
- * bundle's `_meta["ai.nimblebrain/host"].host_capabilities` block (the
- * subset with `required: true`).
- */
-export function hostProvidedCapabilityKeys(): readonly string[] {
-  return [HOST_RESOURCES_CAPABILITY_KEY];
-}
 
 /**
  * Payload added to ClientCapabilities.extensions in McpSource initialize.

@@ -125,10 +125,10 @@ export const AUTOMATIONS_TASK_SAFE_TOOLS: ReadonlySet<string> = new Set([
  *
  * The boundary is enforced ambiently: the automations source refuses these
  * tools whenever `RequestContext.unattended` is set (see
- * `createAutomationsSource`), and that flag is inherited by a delegated
- * sub-agent at any depth — not only the top-level run. Surfacing subtraction in
- * `executeTask` / the delegate default set keeps them out of the model's view;
- * this predicate is the shared policy both layers read.
+ * `createAutomationsSource`), and that flag rides the request context down to
+ * every tool the run dispatches. Surfacing subtraction in `executeTask` keeps
+ * them out of the model's view; this predicate is the shared policy both layers
+ * read.
  * `executor.ts::containsRecursiveTool` is a separate, narrower guard on
  * operator/bundle-authored `allowedTools`.
  */

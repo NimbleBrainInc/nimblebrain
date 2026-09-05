@@ -1,11 +1,11 @@
 ---
 title: workspace.json
-description: Per-workspace configuration — bundles, skill directories, named agent profiles, and optional overrides.
+description: Per-workspace configuration — bundles, skill directories, and optional overrides.
 ---
 
 import { Aside } from '@astrojs/starlight/components';
 
-Each workspace has its own config file at `<workDir>/workspaces/<wsId>/workspace.json`. This is where bundles, skill directories, named agent profiles, and optional model or identity overrides live — **not** in [`nimblebrain.json`](/config/nimblebrain-json).
+Each workspace has its own config file at `<workDir>/workspaces/<wsId>/workspace.json`. This is where bundles, skill directories, and optional model or identity overrides live — **not** in [`nimblebrain.json`](/config/nimblebrain-json).
 
 In dev mode (no [`instance.json`](/config/instance-json/), no auth configured) the runtime uses a single workspace with ID `_dev`, so you'll find its config at `<workDir>/workspaces/_dev/workspace.json`. Under auth, workspaces are created and managed via the `nb__manage_workspaces` tool or the HTTP API; their files are maintained by the runtime. Team workspace ids are opaque (`ws_<16-hex>`) and name-independent.
 
@@ -22,19 +22,10 @@ In dev mode (no [`instance.json`](/config/instance-json/), no auth configured) t
   ],
   "bundles": [
     { "name": "@nimblebraininc/ipinfo" },
-    { "name": "@nimblebraininc/granola", "env": { "API_KEY": "grn_..." }, "trustScore": 85 },
+    { "url": "https://mcp.granola.ai/mcp", "serverName": "ai-granola-mcp" },
     { "path": "../mcp-servers/hello" }
   ],
   "skillDirs": ["./skills", "/opt/nimblebrain/skills"],
-  "agents": {
-    "researcher": {
-      "description": "Deep research agent with search tools",
-      "systemPrompt": "You are a research agent. Use search tools to find information.",
-      "tools": ["granola__*", "nb__*"],
-      "maxIterations": 8,
-      "model": "fast"
-    }
-  },
   "models": { "default": "anthropic:claude-opus-4-6" },
   "identity": "You are the Acme Product Copilot. Be concise. Prefer data-backed answers.",
   "createdAt": "2026-03-05T10:00:00.000Z",
@@ -53,8 +44,8 @@ In dev mode (no [`instance.json`](/config/instance-json/), no auth configured) t
 | `bundles` | `array` | Yes | MCP bundles installed in this workspace. See [Bundle Configuration](/config/bundles). |
 | `connectorsAllowList` | `string[]` | No | Per-workspace catalog allow-list. When set, only catalog entries whose id is in this array appear on the workspace's Connectors page. When unset, the full loaded catalog is visible. Filters the catalog UI only — already-installed bundles keep running regardless. |
 | `oauthOperatorApps` | `object` | No | Per-workspace OAuth app config for `auth: static` catalog entries. Keyed by catalog id (reverse-DNS `ServerDetail.name`, e.g. `"io.asana/mcp"`); each value carries the public `client_id` plus an audit trail. The matching `client_secret` lives in the workspace credential store, not here. See [Connectors Catalog → Where the secrets live](/config/connectors-catalog/#where-the-secrets-live). |
+| `notifications` | `object` | No | Notification source ceilings and delivery routes. `notifications.sources` maps a connector's server name to `{ "maxLevel": "info" \| "attention" \| "urgent" }` — the highest level that source's items may reach a route at, defaulting to `info` for a source nobody has raised. `notifications.routes` is an array of `{ id, createdBy, match, deliver }`. Written only by a workspace admin through **Settings → Notifications**; see [Notifications](/using/notifications). |
 | `skillDirs` | `string[]` | No | Directories scanned for skill markdown files, in addition to the built-in skills. |
-| `agents` | `object` | No | Named agent profiles available to `nb__delegate`. See [Agent Profiles](/config/agents). |
 | `models` | `object` | No | Per-workspace model slot overrides. Partial — missing slots inherit from `nimblebrain.json`. |
 | `identity` | `string` | No | Markdown prompt appended as a context skill for this workspace. |
 | `isPersonal` | `boolean` | No | `true` for a user's auto-provisioned personal workspace. Frozen post-create; never parse the id to infer it. |
@@ -62,11 +53,46 @@ In dev mode (no [`instance.json`](/config/instance-json/), no auth configured) t
 | `createdAt` | `string` (ISO 8601) | Yes | Timestamp, maintained by the runtime. |
 | `updatedAt` | `string` (ISO 8601) | Yes | Timestamp, maintained by the runtime. |
 
+## Notification ceilings and routes
+
+`notifications` holds the operator half of the notifications contract: which of the workspace's connectors may report how loudly, and where a matching item goes. Both are edited under **Settings → Notifications** — see [Notifications](/using/notifications) for what each field means to an operator.
+
+```json
+{
+  "notifications": {
+    "sources": {
+      "acme": { "maxLevel": "attention" }
+    },
+    "cursors": {
+      "acme": "eyJlIjoiZXBfMDFqOCIsImQiOjQyfQ"
+    },
+    "routes": [
+      {
+        "id": "rt_9f3c1a0b7d24",
+        "createdBy": "usr_alex01",
+        "match": { "source": "acme", "name": "domain.*", "level": "attention" },
+        "deliver": [
+          {
+            "kind": "tool",
+            "tool": "slack__send_message",
+            "input": { "channel": "#outbound", "text": "{{title}}\n{{body}}" }
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+`createdBy` is the identity a route dispatches under — its workspace membership, its connector grants, its audit trail. The runtime stamps it from whoever saved the route; it is refused if a caller supplies it, and there is no field for delivering as anybody else. A route whose author is no longer a member is skipped rather than dispatched as nobody.
+
+The block also carries a third key, `cursors`, which is **not** operator configuration: it is where the [outbox poll](/config/nimblebrain-json/#notifications) recorded how far it has read in each connector's outbox, one opaque server-issued token per connector. Nothing edits it by hand, and the settings surface neither shows nor touches it. Deleting an entry is safe but pointless — the next read starts from "now" rather than replaying, and uninstalling a connector removes its entry for you.
+
 ## Workspace isolation
 
 Bundles, tool registries, and conversation data are scoped to a workspace. Every tool handler resolves its workspace via `runtime.requireWorkspaceId()` before touching data.
 
-Two workspaces that install the same bundle spawn independent subprocesses. Each gets its own data directory at `<workDir>/workspaces/<wsId>/data/<bundle>/`, so entity data never crosses the workspace boundary. Sidebar placements, briefing facets, and the app list are filtered per workspace.
+Two workspaces that install the same server hold independent connections and independent credentials. Each gets its own host-side data directory at `<workDir>/workspaces/<wsId>/data/<serverName>/`, so nothing crosses the workspace boundary. Sidebar placements, briefing facets, and the app list are filtered per workspace.
 
 <Aside type="tip">
   You rarely edit `workspace.json` by hand under auth. Use `nb__manage_workspaces` (admin-only) to create workspaces and update membership; install bundles through the connectors catalog (`manage_connectors`) or the CLI; use the workspace-scoped skill tools to manage `skillDirs`.
@@ -96,5 +122,4 @@ Here the workspace uses Opus for `default` but still uses the instance default f
 
 - [`nimblebrain.json`](/config/nimblebrain-json) — instance-level config
 - [Bundle Configuration](/config/bundles) — bundle entry fields
-- [Agent Profiles](/config/agents) — the `agents` object structure
 - [Features](/config/features) — feature flags (set instance-wide, not per-workspace)

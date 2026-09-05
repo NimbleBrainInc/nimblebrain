@@ -73,7 +73,7 @@ import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import {
   readComposioConnection,
   saveComposioConnection,
-} from "../../src/bundles/composio-connection.ts";
+} from "../../src/connectors/providers/composio/connection.ts";
 import { BundleLifecycleManager } from "../../src/bundles/lifecycle.ts";
 import { slugifyServerName } from "../../src/bundles/paths.ts";
 import { _resetComposioConfigForTest } from "../../src/connectors/providers/composio/config.ts";
@@ -340,46 +340,9 @@ describe("manage_connectors.connect_api_key", () => {
     rmSync(h.workDir, { recursive: true, force: true });
   });
 
-  test("rejects an unknown field key (default-deny)", async () => {
-    const tool = buildTool(h);
-    const r = await tool.handler({
-      action: "connect_api_key",
-      catalogId: POSTHOG_ID,
-      fields: { api_key: "x", subdomain: "us", bogus: "y" },
-    });
-    expect(r.isError).toBe(true);
-    expect(JSON.stringify(r)).toContain("Unknown field");
-    expect(JSON.stringify(r)).toContain("bogus");
-    // Never reached Composio.
-    expect(apiKeyCalls.initiateArgs.length).toBe(0);
-  });
-
-  test("rejects a missing required field", async () => {
-    const tool = buildTool(h);
-    const r = await tool.handler({
-      action: "connect_api_key",
-      catalogId: POSTHOG_ID,
-      fields: { subdomain: "us" }, // api_key missing
-    });
-    expect(r.isError).toBe(true);
-    expect(JSON.stringify(r)).toContain("api_key");
-    expect(apiKeyCalls.initiateArgs.length).toBe(0);
-  });
-
-  test("rejects a non-API_KEY composio connector", async () => {
-    const tool = buildTool(h);
-    const r = await tool.handler({
-      action: "connect_api_key",
-      catalogId: GMAIL_ID, // authScheme defaults to OAUTH2
-      fields: { api_key: "x" },
-    });
-    expect(r.isError).toBe(true);
-    expect(JSON.stringify(r)).toContain("does not use API-key auth");
-    expect(apiKeyCalls.initiateArgs.length).toBe(0);
-  });
-
   test("surfaces an operator-config error when COMPOSIO_API_KEY is unset", async () => {
-    // Valid fields → field validation passes → reaches the env check.
+    // No broker credential ⇒ no registered provider ⇒ the tool refuses before
+    // reaching anything Composio-shaped, naming the config it needs.
     const tool = buildTool(h);
     const r = await tool.handler({
       action: "connect_api_key",
@@ -485,6 +448,71 @@ describe("manage_connectors.connect_api_key — lifecycle tail", () => {
   });
   afterEach(() => {
     rmSync(workDir, { recursive: true, force: true });
+  });
+
+  // The declared fields are the PROVIDER's schema, so these checks live inside
+  // Composio's `connectApiKey` rather than in the tool. Each still proves the
+  // decisive property: the broker is never called with a shape the connector
+  // did not declare, and the message is surfaced verbatim (the seam's
+  // returned-`{error}` channel), not genericized like a broker failure.
+  test("rejects an unknown field key (default-deny)", async () => {
+    process.env.COMPOSIO_API_KEY = "k_test";
+    setConnectorsConfig({ providers: { composio: { authConfigs: { posthog: "ac_posthog" } } } });
+    _resetComposioConfigForTest();
+
+    const ctx = stubCtx({ workDir, wsId: WS, entry: POSTHOG_ENTRY });
+    const r = await createManageConnectorsTool(ctx).handler({
+      action: "connect_api_key",
+      catalogId: POSTHOG_ID,
+      fields: { api_key: "x", subdomain: "us", bogus: "y" },
+    });
+
+    expect(r.isError).toBe(true);
+    expect(JSON.stringify(r)).toContain("Unknown field");
+    expect(JSON.stringify(r)).toContain("bogus");
+    expect(apiKeyCalls.initiateArgs.length).toBe(0);
+  });
+
+  test("rejects a missing required field", async () => {
+    process.env.COMPOSIO_API_KEY = "k_test";
+    setConnectorsConfig({ providers: { composio: { authConfigs: { posthog: "ac_posthog" } } } });
+    _resetComposioConfigForTest();
+
+    const ctx = stubCtx({ workDir, wsId: WS, entry: POSTHOG_ENTRY });
+    const r = await createManageConnectorsTool(ctx).handler({
+      action: "connect_api_key",
+      catalogId: POSTHOG_ID,
+      fields: { subdomain: "us" }, // api_key missing
+    });
+
+    expect(r.isError).toBe(true);
+    expect(JSON.stringify(r)).toContain("api_key");
+    expect(apiKeyCalls.initiateArgs.length).toBe(0);
+  });
+
+  test("rejects a connector whose scheme is not API-key", async () => {
+    process.env.COMPOSIO_API_KEY = "k_test";
+    setConnectorsConfig({ providers: { composio: { authConfigs: { gmail: "ac_gmail" } } } });
+    _resetComposioConfigForTest();
+
+    const oauthEntry = {
+      id: GMAIL_ID,
+      name: "Gmail",
+      description: "Mail (via Composio)",
+      url: "https://backend.composio.dev/v3/mcp",
+      auth: "composio" as const,
+      composio: { toolkit: "gmail" }, // authScheme defaults to OAUTH2
+    };
+    const ctx = stubCtx({ workDir, wsId: WS, entry: oauthEntry });
+    const r = await createManageConnectorsTool(ctx).handler({
+      action: "connect_api_key",
+      catalogId: GMAIL_ID,
+      fields: { api_key: "x" },
+    });
+
+    expect(r.isError).toBe(true);
+    expect(JSON.stringify(r)).toContain("does not use API-key auth");
+    expect(apiKeyCalls.initiateArgs.length).toBe(0);
   });
 
   test("happy path writes connection.json and records running state", async () => {

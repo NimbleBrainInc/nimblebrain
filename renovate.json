@@ -1,0 +1,109 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+  "timezone": "Pacific/Honolulu",
+  "schedule": ["before 6am on monday"],
+  "dependencyDashboard": true,
+  "prConcurrentLimit": 6,
+  "prHourlyLimit": 2,
+  "minimumReleaseAge": "14 days",
+  "lockFileMaintenance": {
+    "enabled": true,
+    "schedule": ["before 6am on the first day of the month"]
+  },
+  "major": {
+    "dependencyDashboardApproval": true
+  },
+  "vulnerabilityAlerts": {
+    "labels": ["security"],
+    "schedule": ["at any time"],
+    "minimumReleaseAge": null,
+    "dependencyDashboardApproval": false
+  },
+  "packageRules": [
+    {
+      "description": "Layer 1 — one PR per manifest area for the non-major long tail. Later rules override these for packages that span more than one area.",
+      "matchUpdateTypes": ["minor", "patch"],
+      "matchFileNames": ["package.json"],
+      "groupName": "runtime dependencies"
+    },
+    {
+      "matchUpdateTypes": ["minor", "patch"],
+      "matchFileNames": ["web/package.json"],
+      "groupName": "web dependencies"
+    },
+    {
+      "matchUpdateTypes": ["minor", "patch"],
+      "matchFileNames": ["src/bundles/*/ui/package.json"],
+      "groupName": "bundle ui dependencies"
+    },
+    {
+      "description": "docs/ is a standalone package gated by its own workflow (docs-ci.yml), so its updates land on their own.",
+      "matchFileNames": ["docs/package.json"],
+      "groupName": "docs site"
+    },
+    {
+      "description": "Layer 2 — packages installed in more than one manifest. Nothing here is a workspace, so a split bump leaves two manifests disagreeing at runtime with no check to catch it.",
+      "matchPackageNames": ["@nimblebrain/synapse"],
+      "groupName": "synapse sdk"
+    },
+    {
+      "matchPackageNames": [
+        "react",
+        "react-dom",
+        "@types/react",
+        "@types/react-dom"
+      ],
+      "groupName": "react"
+    },
+    {
+      "description": "The AI SDK core and its providers release in lockstep against a shared LanguageModelV3 surface.",
+      "matchPackageNames": ["ai", "@ai-sdk/**"],
+      "groupName": "ai sdk"
+    },
+    {
+      "matchPackageNames": ["@opentelemetry/**"],
+      "groupName": "opentelemetry"
+    },
+    {
+      "description": "The runtime and the web bridge both speak this protocol; they cannot be on different versions of it.",
+      "matchPackageNames": ["@modelcontextprotocol/**"],
+      "groupName": "mcp sdk"
+    },
+    {
+      "matchPackageNames": ["@sentry/**"],
+      "groupName": "sentry"
+    },
+    {
+      "matchPackageNames": ["posthog-node", "posthog-js"],
+      "groupName": "posthog"
+    },
+    {
+      "matchPackageNames": ["@sinclair/typebox"],
+      "groupName": "typebox"
+    },
+    {
+      "description": "Build toolchain shared by web/ and every bundle UI.",
+      "matchPackageNames": [
+        "vite",
+        "@vitejs/plugin-react",
+        "vite-plugin-singlefile",
+        "typescript",
+        "happy-dom",
+        "@biomejs/biome",
+        "tailwindcss",
+        "@tailwindcss/vite"
+      ],
+      "groupName": "frontend toolchain"
+    },
+    {
+      "matchManagers": ["github-actions"],
+      "groupName": "github actions"
+    },
+    {
+      "description": "`latest` tracks whatever bun is installed and is not a version to pin.",
+      "matchPackageNames": ["@types/bun"],
+      "enabled": false
+    }
+  ]
+}

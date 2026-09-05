@@ -1,13 +1,55 @@
+import type { BundleRef } from "../bundles/types.ts";
 import { textContent } from "../engine/content-helpers.ts";
 import { INTERNAL_TOOL_ANNOTATION, type ToolResult } from "../engine/types.ts";
 import type { UserIdentity } from "../identity/provider.ts";
 import { ORG_ADMIN_ROLES } from "../identity/types.ts";
 import type { UserStore } from "../identity/user.ts";
+import { isHttpUrl } from "../util/url.ts";
 import { canWriteWorkspaceScoped } from "../workspace/authz.ts";
 import { PersonalWorkspaceInvariantError } from "../workspace/errors.ts";
 import type { WorkspaceMember } from "../workspace/types.ts";
 import type { WorkspaceStore } from "../workspace/workspace-store.ts";
 import type { InProcessTool } from "./in-process-app.ts";
+
+/**
+ * Project one tool-supplied connector row onto a `BundleRef`. Only the URL and
+ * an optional explicit `serverName` are accepted from tool input: every other
+ * field on a ref (transport, OAuth client, broker coordinates) is
+ * operator-catalog territory, set by the install path, never by a caller.
+ */
+function toBundleRef(b: Record<string, unknown>): BundleRef {
+  // The JSON Schema requires `url` but admits any string, including "". A row
+  // that reaches the store without a reachable URL is a connector nothing can
+  // connect to, and every reader downstream has to defend against it — so it
+  // is refused at the boundary that creates it. Same protocol allowlist the
+  // install path applies, for the same reason.
+  const url = typeof b.url === "string" ? b.url.trim() : "";
+  if (!isHttpUrl(url)) {
+    throw new Error(
+      `Connector url must be an http(s) URL (got ${url === "" ? "an empty value" : `"${url}"`}).`,
+    );
+  }
+  return {
+    url,
+    ...(typeof b.serverName === "string" && b.serverName ? { serverName: b.serverName } : {}),
+  };
+}
+
+/**
+ * Map the tool's connector rows to refs, or report the first unusable one.
+ *
+ * `toBundleRef` throws so `create` — which maps inside its own try — gets the
+ * refusal for free. `update` builds its patch before that try (the
+ * nothing-to-update check needs the built patch), so it comes through here and
+ * turns the refusal into a tool error rather than an unhandled throw.
+ */
+function toBundleRefs(rows: Array<Record<string, unknown>>): BundleRef[] | { error: string } {
+  try {
+    return rows.map(toBundleRef);
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : String(err) };
+  }
+}
 
 // ── Types ─────────────────────────────────────────────────────────
 
@@ -42,7 +84,7 @@ export function createManageWorkspacesTool(ctx: ManageWorkspacesContext): InProc
     name: "manage_workspaces",
     description:
       "Manage workspaces and their members. Workspace CRUD and claim_admin require org admin. Member management requires workspace admin membership. claim_admin lets an org admin seat themselves as admin of a shared workspace that has no admin member, to recover one that would otherwise be unmanageable. Conversation sharing was removed in Stage 1 of the cross-workspace refactor and returns in Stage 4 with policy-gated primitives.",
-    annotations: { [INTERNAL_TOOL_ANNOTATION]: true },
+    meta: { [INTERNAL_TOOL_ANNOTATION]: true },
     inputSchema: {
       type: "object",
       properties: {
@@ -79,11 +121,13 @@ export function createManageWorkspacesTool(ctx: ManageWorkspacesContext): InProc
           items: {
             type: "object",
             properties: {
-              name: { type: "string" },
-              path: { type: "string" },
+              url: { type: "string" },
+              serverName: { type: "string" },
             },
+            required: ["url"],
           },
-          description: "Bundle references (optional for create and update).",
+          description:
+            "Connector references — the remote MCP endpoint URL, optionally with the server name to register it under (optional for create and update).",
         },
         userId: {
           type: "string",
@@ -212,14 +256,11 @@ async function handleCreate(
       workspace = await ctx.workspaceStore.addMember(workspace.id, identity.id, "admin");
     }
 
-    // If bundles were provided, update the workspace with them
+    // If connectors were provided, update the workspace with them
     if (bundles && bundles.length > 0) {
-      const bundleRefs = bundles.map((b) => {
-        if (b.name) return { name: String(b.name) };
-        if (b.path) return { path: String(b.path) };
-        return { name: String(b.name ?? "") };
+      const updated = await ctx.workspaceStore.update(workspace.id, {
+        bundles: bundles.map(toBundleRef),
       });
-      const updated = await ctx.workspaceStore.update(workspace.id, { bundles: bundleRefs });
       if (updated) workspace = updated;
     }
 
@@ -352,12 +393,9 @@ async function handleUpdate(
   const patch: Record<string, unknown> = {};
   if (input.name !== undefined) patch.name = String(input.name);
   if (input.bundles !== undefined) {
-    const bundles = input.bundles as Array<Record<string, unknown>>;
-    patch.bundles = bundles.map((b) => {
-      if (b.name) return { name: String(b.name) };
-      if (b.path) return { path: String(b.path) };
-      return { name: String(b.name ?? "") };
-    });
+    const refs = toBundleRefs(input.bundles as Array<Record<string, unknown>>);
+    if (!Array.isArray(refs)) return { content: textContent(refs.error), isError: true };
+    patch.bundles = refs;
   }
 
   if (Object.keys(patch).length === 0) {

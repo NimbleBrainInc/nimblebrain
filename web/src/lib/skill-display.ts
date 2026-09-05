@@ -33,7 +33,7 @@ export function nameFromSkillId(id: string): string {
 
 /**
  * Strip the leading mechanism word from a load reason for the compact ledger
- * head — `tool-affinity matched mpak__*` → `matched mpak__*`,
+ * head — `tool-affinity matched docs__*` → `matched docs__*`,
  * `trigger matched "deploy"` → `matched "deploy"`, `always-on` unchanged. The
  * full verbatim reason still shows in the drawer.
  */

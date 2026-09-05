@@ -1,5 +1,6 @@
 import {
   llmErrorsTotal,
+  llmInputTokensEstimatedTotal,
   llmRequestDurationSeconds,
   llmTtftSeconds,
   recordBundleCrash,
@@ -8,7 +9,7 @@ import {
 } from "../api/metrics.ts";
 import type { EngineEvent, EngineEventType, EventSink } from "../engine/types.ts";
 import { log } from "../observability/log.ts";
-import { recordLlmCall } from "../usage/record.ts";
+import { originOf, recordLlmCall } from "../usage/record.ts";
 import type { TokenUsage } from "../usage/types.ts";
 
 /** Payload envelope carried by every engine event (`EngineEvent.data`). */
@@ -60,9 +61,9 @@ export class MetricsEventSink implements EventSink {
   private onLlmDone(data: EventData): void {
     const model = (data.model as string) ?? "unknown";
     const usage = data.usage as TokenUsage | undefined;
-    // `data` carries `parentRunId` on a delegated child's events; `recordLlmCall`
-    // reads it rather than being told, so a new spawn path cannot forget to say
-    // it delegated.
+    // `data` carries the engine's `runId`; `recordLlmCall` reads attribution
+    // off the event and the ambient request scope rather than being told, so a
+    // new call path cannot forget to say who it was for.
     if (usage)
       recordLlmCall({
         source: "main",
@@ -71,18 +72,40 @@ export class MetricsEventSink implements EventSink {
         ...(typeof data.llmMs === "number" ? { llmMs: data.llmMs } : {}),
         event: data,
       });
+    // Both latency histograms carry `origin` because latency means different
+    // things depending on who is waiting: `chat` is a person watching a spinner,
+    // `task` is an automation nobody is watching. Blended, a p99 says neither —
+    // an alert on it fires the same for a slow overnight run as for a stalled
+    // user turn.
+    const origin = originOf();
     // Per-call latency for the p99 alert. `llmMs` is set on every llm.done
     // (engine measures it around the provider call); guard the type anyway.
     const llmMs = data.llmMs;
     if (typeof llmMs === "number") {
-      llmRequestDurationSeconds.observe({ source: "main", model }, llmMs / 1000);
+      llmRequestDurationSeconds.observe({ source: "main", model, origin }, llmMs / 1000);
     }
     // Time-to-first-token (connect + prefill), the prefill-vs-decode
     // discriminator. Absent when the call emitted no output part — skip rather
     // than record a misleading 0.
     const ttftMs = data.ttftMs;
     if (typeof ttftMs === "number") {
-      llmTtftSeconds.observe({ source: "main", model }, ttftMs / 1000);
+      llmTtftSeconds.observe({ source: "main", model, origin }, ttftMs / 1000);
+    }
+    // Pre-flight estimate for this call. Its counterpart is the input side of
+    // `nb_llm_tokens_total`; dividing actual by estimated gives the estimator's
+    // drift, which is what the windowing budget is silently subject to.
+    //
+    // Both sides of that ratio must move together or not at all. The actual
+    // side records nothing for a zero input — `recordLlmUsage` gates every
+    // per-kind increment on `> 0`, and the adapter skips it entirely without
+    // usage — so recording an estimate there would advance the denominator
+    // alone. That biases the ratio toward 1.0 or below, which reads as "no
+    // drift": the one direction this metric exists to rule out. A stream that
+    // ends without a finish part reaches exactly that state, leaving the usage
+    // totals at their zero initializers.
+    const estimated = data.estimatedInputTokens;
+    if (typeof estimated === "number" && estimated > 0 && (usage?.inputTokens ?? 0) > 0) {
+      llmInputTokensEstimatedTotal.inc({ source: "main", model, origin }, estimated);
     }
   }
 

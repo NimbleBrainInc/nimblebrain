@@ -18,6 +18,8 @@ import { ToolRegistry } from "../../src/tools/registry.ts";
 import { WorkspaceContext } from "../../src/workspace/context.ts";
 import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
 import { CONNECTOR_FIXTURE_DIR } from "../helpers/connector-fixtures.ts";
+import { buildManagedConnectorRegistry } from "../../src/connectors/providers/registry.ts";
+import { _resetComposioConfigForTest } from "../../src/connectors/providers/composio/config.ts";
 
 /**
  * Integration coverage for `manage_connectors.install` with `scope: "identity"`
@@ -75,14 +77,14 @@ function composioEntry(): DirectoryEntry {
   };
 }
 
-function mpakEntry(): DirectoryEntry {
+function unsupportedEntry(): DirectoryEntry {
   return {
     id: "dev.example/tool",
     registryId: "bundled-static",
     registryType: "static",
     name: "Some Tool",
-    description: "An mpak bundle",
-    install: { kind: "mpak-bundle", package: "@example/tool" },
+    description: "A pasted-URL entry (the direct-url kind, not yet supported)",
+    install: { kind: "direct-url", url: "https://tool.example.com/mcp" },
   };
 }
 
@@ -158,6 +160,7 @@ async function buildHarness(): Promise<Harness> {
       },
     }),
     getAllowInsecureRemotes: () => false,
+    getManagedConnectorRegistry: () => buildManagedConnectorRegistry(),
   } as unknown as Runtime;
 
   const ctx: ManageConnectorsContext = {
@@ -245,7 +248,7 @@ describe("manage_connectors.install scope:identity — DCR personal-connector in
   });
 
   test("rejects a non-remote-oauth entry — personal connectors are remote MCP connections", async () => {
-    const result = await h.tool.handler({ action: "install", entry: mpakEntry(), scope: "identity" });
+    const result = await h.tool.handler({ action: "install", entry: unsupportedEntry(), scope: "identity" });
     expect(result.isError).toBe(true);
     expect(resultText(result)).toMatch(/remote MCP connection/i);
     // Nothing written to the identity plane.
@@ -275,11 +278,12 @@ describe("manage_connectors.install scope:identity — DCR personal-connector in
     expect(await new IdentityConnectorStore({ workDir: h.workDir }).list(USER.id)).toHaveLength(0);
   });
 
-  test("admits a composio entry at the gate — fails on the missing prerequisite, not the auth type", async () => {
-    // Deterministically drive the no-key path: composio passes the gate, then
-    // `validateComposioInstall` rejects because COMPOSIO_API_KEY is unset. (The
-    // happy path — a real session + persisted ref — lives in the unit suite,
-    // which mocks the Composio SDK.)
+  test("names the unconfigured broker rather than refusing the auth type", async () => {
+    // Deterministically drive the no-key path: with COMPOSIO_API_KEY unset no
+    // provider is registered, so the install refuses with the deploy-config
+    // message — NOT the "not supported on this plane" gate, which is what a
+    // configured Composio would pass. (The happy path — a real session + a
+    // persisted ref — lives in the unit suite, which mocks the Composio SDK.)
     const savedKey = process.env.COMPOSIO_API_KEY;
     delete process.env.COMPOSIO_API_KEY;
     try {
@@ -289,9 +293,9 @@ describe("manage_connectors.install scope:identity — DCR personal-connector in
         scope: "identity",
       });
       expect(result.isError).toBe(true);
-      // NOT the old gate rejection — composio is no longer refused by auth type.
+      // NOT the plane gate — composio is not refused by auth type.
       expect(resultText(result)).not.toMatch(/isn't supported for personal connectors yet/i);
-      // It got past the gate and hit the platform prerequisite check.
+      // It named the missing deploy config instead.
       expect(resultText(result)).toMatch(/COMPOSIO_API_KEY/);
       // A prerequisite failure persists nothing to the identity plane.
       expect(await new IdentityConnectorStore({ workDir: h.workDir }).list(USER.id)).toHaveLength(0);
@@ -359,14 +363,38 @@ describe("manage_connectors.install scope:identity — DCR personal-connector in
 
 describe("manage_connectors.list_personal_catalog — the curated personal-connect set", () => {
   let h: Harness;
+  let savedComposioKey: string | undefined;
   beforeEach(async () => {
+    // The picker offers a brokered connector only when its provider is
+    // registered and brokers an interactive connect — offered ⊆ acceptable, so
+    // it can never present one the install then refuses.
+    savedComposioKey = process.env.COMPOSIO_API_KEY;
+    process.env.COMPOSIO_API_KEY = "k_test";
+    _resetComposioConfigForTest();
     h = await buildHarness();
   });
   afterEach(() => {
+    if (savedComposioKey === undefined) delete process.env.COMPOSIO_API_KEY;
+    else process.env.COMPOSIO_API_KEY = savedComposioKey;
+    _resetComposioConfigForTest();
     rmSync(h.workDir, { recursive: true, force: true });
   });
 
-  test("offers personal DCR + composio connectors; excludes non-personal and static", async () => {
+  test("withholds a brokered connector whose provider is unconfigured", async () => {
+    delete process.env.COMPOSIO_API_KEY;
+    _resetComposioConfigForTest();
+
+    const result = await h.tool.handler({ action: "list_personal_catalog" });
+    const ids = (result.structuredContent as { catalog: Array<{ id: string }> }).catalog.map(
+      (e) => e.id,
+    );
+    // Granola (dcr) is unaffected; Asana's broker is not configured here, and an
+    // offer the install would refuse is worse than no offer.
+    expect(ids).toContain("ai.granola/mcp");
+    expect(ids).not.toContain("io.asana/mcp");
+  });
+
+  test("offers personal DCR + brokered connectors; excludes non-personal and static", async () => {
     const result = await h.tool.handler({ action: "list_personal_catalog" });
     expect(result.isError).toBe(false);
     const sc = result.structuredContent as {
@@ -375,13 +403,13 @@ describe("manage_connectors.list_personal_catalog — the curated personal-conne
     const ids = sc.catalog.map((e) => e.id);
     // Granola: dcr + personal → offered.
     expect(ids).toContain("ai.granola/mcp");
-    // Asana: composio + personal → offered (the widened gate).
+    // Asana: composio + personal, and the broker is configured → offered.
     expect(ids).toContain("io.asana/mcp");
     // Notion: dcr but NOT flagged personal → excluded.
     expect(ids).not.toContain("com.notion/mcp");
     // Dropbox: flagged personal but static → excluded; static stays workspace-bound.
     expect(ids).not.toContain("com.dropbox/mcp");
-    // Everything offered is a DCR or composio remote MCP connection — lockstep
+    // Everything offered is a DCR or brokered remote MCP connection — lockstep
     // with the install gate.
     for (const e of sc.catalog) expect(["dcr", "composio"]).toContain(e.install.auth);
   });

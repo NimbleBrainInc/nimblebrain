@@ -50,6 +50,12 @@ function truncate(text: string): string {
 export interface TaskFnRequest {
   /** The task description. Goes in as the user message. */
   prompt: string;
+  /**
+   * What woke the agent, in the runtime's vocabulary: a cron tick is a
+   * `schedule`, an operator's Run now is `manual`. The run-start door stamps it
+   * on the run's `agent.turn` span.
+   */
+  trigger?: "schedule" | "manual";
   model?: string;
   maxIterations?: number;
   maxInputTokens?: number;
@@ -145,7 +151,11 @@ export function containsRecursiveTool(allowedTools: string[] | undefined): strin
   return null;
 }
 
-function buildRequest(automation: Automation, ctx?: ExecutorContext): TaskFnRequest {
+function buildRequest(
+  automation: Automation,
+  trigger: AutomationRunTrigger,
+  ctx?: ExecutorContext,
+): TaskFnRequest {
   const offending = containsRecursiveTool(automation.allowedTools);
   if (offending !== null) {
     throw new Error(
@@ -160,6 +170,10 @@ function buildRequest(automation: Automation, ctx?: ExecutorContext): TaskFnRequ
   // goes in as the plain task description, not wrapped or prefixed here.
   const req: TaskFnRequest = {
     prompt: automation.prompt,
+    // The scheduler's vocabulary is per-automation ("scheduled" runs vs. a
+    // "manual" one); the runtime's is per-run and spans every door. One name
+    // each way, translated at the boundary rather than aliased on both sides.
+    trigger: trigger === "manual" ? "manual" : "schedule",
     metadata: {
       source: "automation",
       automationId: automation.id,
@@ -229,6 +243,47 @@ const UNREACHABLE_CONNECTOR_REASONS = new Set([
   "reauth_required",
 ]);
 
+/**
+ * Minimum calls to one tool before an all-failing streak counts as abandoned
+ * work rather than ordinary probing. Mirrors the engine supervisor's
+ * `DEFAULT_MAX_REPEATS`: below that threshold the supervisor itself treats
+ * repeats as exploration, and a run record that disagreed with the guard about
+ * what "stuck" means would flag healthy runs. Duplicated rather than imported
+ * to keep this bundle off runtime internals (see `TaskFnRequest`); the two are
+ * a deliberate pair, so move them together.
+ */
+const ABANDONED_TOOL_MIN_CALLS = 3;
+
+/**
+ * Tools the run called repeatedly and never once got a success from.
+ *
+ * A failed tool call is not by itself a failed run: an agent that probes a
+ * wrong argument shape and then corrects it is working properly, and marking
+ * that red would make the status useless. The discriminator is whether the tool
+ * EVER succeeded. In the run that motivated this, `list_meetings` failed three
+ * times on a bad date argument and then succeeded on the fourth — healthy, and
+ * not flagged here. `log_interaction` was called fourteen times and never once
+ * succeeded; every interaction the automation existed to record was lost, and
+ * the run still reported `success`.
+ *
+ * Names only, deduplicated, in first-call order.
+ */
+function abandonedTools(toolCalls: TaskFnResult["toolCalls"]): string[] {
+  if (!Array.isArray(toolCalls)) return [];
+  const total = new Map<string, number>();
+  const failed = new Map<string, number>();
+  for (const tc of toolCalls) {
+    const name = typeof tc.name === "string" ? tc.name : "(unknown tool)";
+    total.set(name, (total.get(name) ?? 0) + 1);
+    if (tc.ok !== true) failed.set(name, (failed.get(name) ?? 0) + 1);
+  }
+  const names: string[] = [];
+  for (const [name, calls] of total) {
+    if (calls >= ABANDONED_TOOL_MIN_CALLS && failed.get(name) === calls) names.push(name);
+  }
+  return names;
+}
+
 /** Tool-call entries (loosely typed in `TaskFnResult`) whose routing failed. */
 function unreachableConnectorCalls(toolCalls: TaskFnResult["toolCalls"]): string[] {
   if (!Array.isArray(toolCalls)) return [];
@@ -251,21 +306,29 @@ function mapResultToRun(
   const stopReason = data.stopReason as AutomationRun["stopReason"];
   let status: AutomationRun["status"] = mapStopReasonToStatus(stopReason);
 
-  // De-mask the silent connector failure: when the model reports `complete`,
-  // the run would otherwise be a green `success` — even if a tool call hit a
-  // connector that couldn't be routed (missing, disconnected, or in another
-  // workspace the owner can't reach). The agent commonly "completes" by
-  // documenting the gap instead of doing the work, which is precisely the
-  // failure operators reported (a standup summary that never reached Teams,
-  // recorded as success). A connector-unreachable call means the automation
-  // did not actually do its job: downgrade to `failure` and name the tool(s)
-  // so the run list shows it instead of burying it in the conversation.
+  // De-mask the silently-failed run. `stopReason: "complete"` only says the
+  // MODEL decided it was done, and a model that cannot do the work commonly
+  // "completes" by documenting the gap and writing a deliverable anyway — so
+  // taking it at face value paints runs green that did none of their job. Two
+  // signals in the tool calls contradict a green status, checked most-specific
+  // first:
+  //
+  //   1. A call that could not be ROUTED (`unreachableConnectorCalls`) — the
+  //      connector is missing, disconnected, or in an unreachable workspace.
+  //   2. A tool that routed fine and then FAILED every single call
+  //      (`abandonedTools`) — nothing it was responsible for happened.
+  //
+  // Either downgrades to `failure` and names the tool(s), so the run list shows
+  // it instead of burying it in the conversation. Both are attempted-call
+  // signals: a required tool the model never tries at all still produces
+  // nothing to catch here, and needs the model to self-report the gap.
   //
   // Only overrides an otherwise-`success` run; a run already classified
   // failure/timeout keeps its (stronger) status.
   let error: string | undefined;
   if (status === "success") {
     const unreachable = unreachableConnectorCalls(data.toolCalls);
+    const abandoned = abandonedTools(data.toolCalls);
     if (unreachable.length > 0) {
       status = "failure";
       const unique = [...new Set(unreachable)];
@@ -273,6 +336,16 @@ function mapResultToRun(
         `Connector unavailable during run: ${unique.length} tool call type(s) could not be ` +
         `routed (${unique.join(", ")}). The required connector is missing, disconnected, or ` +
         `in a workspace this automation cannot reach — the run did not complete its intended action.`;
+    } else if (abandoned.length > 0) {
+      // The connector case above is the more specific diagnosis, so it wins the
+      // message when both hold. This is the general one: the call routed to a
+      // reachable tool that then failed every single time.
+      status = "failure";
+      error =
+        `Tool never succeeded during run: ${abandoned.join(", ")}. Every call to ` +
+        `${abandoned.length === 1 ? "this tool" : "these tools"} failed, so the work ` +
+        `${abandoned.length === 1 ? "it was" : "they were"} responsible for did not happen — ` +
+        `the model finished and wrote a deliverable anyway.`;
     }
   }
 
@@ -494,7 +567,7 @@ export function createDirectExecutor(
 
     try {
       const data = await taskFn({
-        ...buildRequest(automation, ctx),
+        ...buildRequest(automation, trigger, ctx),
         signal: runController.signal,
       });
       const run = mapResultToRun(automation, startedAt, data);

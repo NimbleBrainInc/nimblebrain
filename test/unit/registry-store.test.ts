@@ -28,24 +28,17 @@ function freshStore(): { store: RegistryStore; dir: string; cleanup: () => void 
 }
 
 describe("RegistryStore", () => {
-  test("seeds bundled-static + mpak defaults on first read", async () => {
+  test("seeds the bundled-static default on first read", async () => {
     const { store, cleanup } = freshStore();
     try {
       const all = await store.list();
-      expect(all.length).toBe(2);
+      expect(all.length).toBe(1);
       const bundled = all.find((r) => r.id === "bundled-static");
-      const mpak = all.find((r) => r.id === "mpak");
       expect(bundled?.enabled).toBe(true);
       expect(bundled?.locked).toBe(true);
       expect(bundled?.type).toBe("static");
       // Defaults to the minimal in-image curated catalog directory.
       expect(bundled?.url).toMatch(/connectors\/curated$/);
-      expect(mpak?.enabled).toBe(true);
-      // Seeded mpak row carries no `url` — the SDK owns its default host.
-      expect(mpak?.url).toBeUndefined();
-      // Narrow-by-default: first install sees only NimbleBrain-curated
-      // bundles. Operators broaden by editing the row.
-      expect(mpak?.scopes).toEqual(["nimblebraininc"]);
     } finally {
       cleanup();
     }
@@ -78,10 +71,10 @@ describe("RegistryStore", () => {
   test("persists changes across instances (file-backed)", async () => {
     const { store, dir, cleanup } = freshStore();
     try {
-      await store.update("mpak", { enabled: false });
+      await store.update("bundled-static", { name: "Renamed catalog" });
       const second = new RegistryStore(dir);
       const all = await second.list();
-      expect(all.find((r) => r.id === "mpak")?.enabled).toBe(false);
+      expect(all.find((r) => r.id === "bundled-static")?.name).toBe("Renamed catalog");
     } finally {
       cleanup();
     }
@@ -154,7 +147,6 @@ describe("RegistryStore", () => {
             locked: true,
             url,
           },
-          { id: "mpak", name: "mpak.dev", type: "mpak", enabled: true },
         ],
       }),
     );

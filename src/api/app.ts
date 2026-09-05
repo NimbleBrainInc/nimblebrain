@@ -12,6 +12,7 @@ import { chatRoutes } from "./routes/chat.ts";
 import { conversationEventRoutes } from "./routes/conversation-events.ts";
 import { eventRoutes } from "./routes/events.ts";
 import { healthRoutes } from "./routes/health.ts";
+import { hooksRoutes } from "./routes/hooks.ts";
 import { mcpRoutes } from "./routes/mcp.ts";
 import { mcpAuthRoutes } from "./routes/mcp-auth.ts";
 import { metricsRoutes } from "./routes/metrics.ts";
@@ -62,6 +63,16 @@ export function createApp(
     const providerRoutes = provider.routes?.(ctx);
     if (providerRoutes) app.route("/", providerRoutes);
   }
+
+  // Inbound vendor webhooks. Unauthenticated by design for the same reason the
+  // callbacks above are — a vendor's POST cannot carry a platform token — and
+  // mounted in this same block so that constraint stays visible in one place.
+  // The credential is the sealed capability in the path; everything under
+  // `/v1/hooks/` that does not open one 404s. Returns null (mounts nothing)
+  // when no hook key is provisioned, so a deployment without the capability
+  // answers an honest router 404 rather than an internal config gate.
+  const hooks = hooksRoutes(ctx);
+  if (hooks) app.route("/", hooks);
 
   // MCP routes BEFORE other authenticated routes — prevents other sub-app
   // wildcard middleware from intercepting /mcp requests. Hono runs use("*")

@@ -4,10 +4,13 @@ import { describe, expect, test } from "bun:test";
 import { resolveFeatures } from "../../src/config/features.ts";
 import {
   COMPOSIO_PROVIDER_CONFIG_KEYS,
+  GATEWAY_CONFIG_KEYS,
   SMITHERY_PROVIDER_CONFIG_KEYS,
   CONNECTORS_CONFIG_KEYS,
   MANAGED_PROVIDER_KEYS,
 } from "../../src/connectors/providers/config.ts";
+import { MODEL_SLOTS } from "../../src/model/slots.ts";
+import { NOTIFICATIONS_POLL_CONFIG_KEYS } from "../../src/notifications/poll-config.ts";
 
 /**
  * Drift guard: the published config schema must stay in lockstep with the
@@ -37,11 +40,18 @@ const schema = JSON.parse(
 ) as {
   properties: {
     features: SchemaObject;
+    models: SchemaObject;
+    notifications: SchemaObject & {
+      properties: { poll: SchemaObject };
+    };
     connectors: SchemaObject & {
       properties: {
         providers: SchemaObject & {
           properties: { composio: SchemaObject };
         };
+        // Gateway names are operator-chosen, so the map itself is open and the
+        // per-gateway object under `additionalProperties` is what is closed.
+        gateways: { additionalProperties: SchemaObject };
       };
     };
   };
@@ -73,6 +83,13 @@ describe("config schema ↔ feature flags", () => {
   expectLockstep("features", schema.properties.features, Object.keys(resolveFeatures()));
 });
 
+describe("config schema ↔ model slots", () => {
+  // `MODEL_SLOTS` is the runtime's list of role names, and `scripts/dev-worktree.ts`
+  // seeds a `models` block against the schema's copy of it. Without this, a slot
+  // added to the runtime leaves the schema behind and the seed cannot use it.
+  expectLockstep("models", schema.properties.models, [...MODEL_SLOTS]);
+});
+
 describe("config schema ↔ managed-connector provider config", () => {
   // The key lists come from `Record<keyof Required<T>, true>` maps in
   // `providers/config.ts`, so a field added to one of those interfaces is a
@@ -91,4 +108,26 @@ describe("config schema ↔ managed-connector provider config", () => {
     connectors.properties.providers.properties.smithery,
     SMITHERY_PROVIDER_CONFIG_KEYS,
   );
+  // Not the `gateways` map — its keys are gateway names, so it is deliberately
+  // open. The closed object is one gateway's own block.
+  expectLockstep(
+    "connectors.gateways.<name>",
+    connectors.properties.gateways.additionalProperties,
+    GATEWAY_CONFIG_KEYS,
+  );
+});
+
+describe("config schema ↔ notification poll config", () => {
+  // The key list is `resolvePollConfig()`'s own output, so a fifth knob added
+  // to the runtime is a failure here until the published schema declares it —
+  // and a knob declared here with nothing resolving it is a dead one an editor
+  // would still offer.
+  expectLockstep(
+    "notifications.poll",
+    schema.properties.notifications.properties.poll,
+    NOTIFICATIONS_POLL_CONFIG_KEYS,
+  );
+  // The parent carries exactly one member today; declaring it keeps a future
+  // `notifications.<something>` from landing in the schema alone.
+  expectLockstep("notifications", schema.properties.notifications, ["poll"]);
 });

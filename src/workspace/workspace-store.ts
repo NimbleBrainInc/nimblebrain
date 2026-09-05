@@ -492,11 +492,12 @@ export class WorkspaceStore {
         Workspace,
         | "name"
         | "bundles"
-        | "agents"
         | "skillDirs"
         | "models"
         | "identity"
         | "oauthOperatorApps"
+        | "hooks"
+        | "notifications"
         | "about"
       >
     >,

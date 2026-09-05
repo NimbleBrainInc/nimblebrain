@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { getValidator } from "../../src/config/index.ts";
 import type { BundleState, AppInfo, HostManifestMeta, BundleUiMeta } from "../../src/bundles/types.ts";
-import type { AgentProfile, RuntimeConfig } from "../../src/runtime/types.ts";
+import type { RuntimeConfig } from "../../src/runtime/types.ts";
 import type { EngineEventType } from "../../src/engine/types.ts";
 
 describe("JSON Schema validation", () => {
@@ -18,13 +18,12 @@ describe("JSON Schema validation", () => {
 	it("accepts bundles in config", () => {
 		// bundles is a valid top-level config field
 		expect(isValid({ bundles: [] })).toBe(true);
-		expect(isValid({ bundles: [{ name: "@test/echo" }] })).toBe(true);
 		expect(isValid({ bundles: [{ url: "https://example.com/mcp" }] })).toBe(true);
+		expect(isValid({ bundles: [{ name: "@test/echo" }] })).toBe(false);
 	});
 
-	it("rejects workspace-owned fields (agents, skillDirs, etc.)", () => {
+	it("rejects workspace-owned fields (skillDirs, etc.)", () => {
 		// These fields are not part of nimblebrain.json schema
-		expect(isValid({ agents: {} })).toBe(false);
 		expect(isValid({ skillDirs: [] })).toBe(false);
 		expect(isValid({ skills: [] })).toBe(false);
 		expect(isValid({ noDefaultBundles: true })).toBe(false);
@@ -57,7 +56,7 @@ describe("JSON Schema validation", () => {
 			isValid({
 				features: {
 					bundleManagement: true,
-					delegation: false,
+					bundleDiscovery: false,
 				},
 			}),
 		).toBe(true);
@@ -70,31 +69,6 @@ describe("BundleState type", () => {
 		expect(states).toHaveLength(5);
 		// Verify uniqueness
 		expect(new Set(states).size).toBe(5);
-	});
-});
-
-describe("AgentProfile type", () => {
-	it("has correct required and optional fields", () => {
-		// Required fields only
-		const minimal: AgentProfile = {
-			description: "test",
-			systemPrompt: "test prompt",
-			tools: ["*"],
-		};
-		expect(minimal.description).toBe("test");
-		expect(minimal.maxIterations).toBeUndefined();
-		expect(minimal.model).toBeUndefined();
-
-		// All fields
-		const full: AgentProfile = {
-			description: "test",
-			systemPrompt: "test prompt",
-			tools: ["rfpsearch__*"],
-			maxIterations: 5,
-			model: "claude-sonnet-4-5-20250929",
-		};
-		expect(full.maxIterations).toBe(5);
-		expect(full.model).toBe("claude-sonnet-4-5-20250929");
 	});
 });
 
@@ -137,9 +111,7 @@ describe("AppInfo type", () => {
 			bundleName: "@nimblebraininc/tasks",
 			version: "1.2.0",
 			status: "running",
-			type: "upjack",
 			toolCount: 12,
-			trustScore: 92,
 			ui: {
 				name: "Tasks",
 				icon: "✓",
@@ -157,9 +129,7 @@ describe("AppInfo type", () => {
 			bundleName: "@nimblebraininc/weather",
 			version: "0.3.0",
 			status: "running",
-			type: "plain",
 			toolCount: 3,
-			trustScore: 78,
 			ui: null,
 		};
 		expect(app.ui).toBeNull();

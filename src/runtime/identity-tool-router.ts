@@ -16,13 +16,11 @@
  *      so shared `nb__*` handlers reading `requireWorkspaceId()` see the
  *      correct workspace on a cross-workspace dispatch.
  *
- * Two consumers today: the chat engine (`Runtime._chatInner`) and the
- * `nb__delegate` child engine (`DelegateContext.tools`). Both reach exactly
+ * The chat engine (`Runtime._chatInner`) is its consumer. It reaches exactly
  * one workspace's tools plus the caller's identity tools — the bound
  * `workspaceId`, never a cross-workspace union. Which of those reachable
- * tools start IMMEDIATELY VISIBLE (initial active schemas for the chat
- * surface, default initial active set for delegate) is a concern of the
- * CALLER, not the router — see `CLAUDE.md` § "Progressive disclosure". The
+ * tools start IMMEDIATELY VISIBLE (the initial active schemas) is a concern of
+ * the CALLER, not the router — see `CLAUDE.md` § "Progressive disclosure". The
  * router governs what's REACHABLE; the caller decides what's visible.
  *
  * Trust boundary: `identityId` is captured at construction time from the
@@ -31,14 +29,18 @@
  */
 
 import type { ToolCall, ToolResult, ToolRouter, ToolSchema } from "../engine/types.ts";
+// Imported from the two modules rather than from `../orchestrator/index.ts`:
+// the barrel also exports `dispatchUnattended`, which composes THIS router, and
+// going through it would close a cycle for no gain.
+import { mapOrchestratorErrorToToolResult } from "../orchestrator/error-mapping.ts";
 import {
-  mapOrchestratorErrorToToolResult,
   type OrchestratorRuntime,
   type RoutedToolCall,
   routeToolCall,
-} from "../orchestrator/index.ts";
+} from "../orchestrator/route.ts";
 import { assertToolAllowed } from "../permissions/assert-tool-allowed.ts";
 import type { PermissionOwner } from "../permissions/permission-store.ts";
+import { splitInnerToolName } from "../util/tool-name.ts";
 import {
   getRequestContext,
   type RequestContext,
@@ -94,8 +96,8 @@ export interface IdentityToolRouterOptions {
  * identity-routed call keeps the ambient workspace — every kernel identity
  * source (`files__*`, `automations__*`, `conversations__*`) owns
  * workspace-partitioned data and would otherwise have no workspace in scope
- * even when the chat set one. Workspace agent / model overrides ride along
- * unchanged so session-scoped reads keep working.
+ * even when the chat set one. Workspace model overrides ride along unchanged
+ * so session-scoped reads keep working.
  */
 function buildPerCallContext(
   outer: RequestContext | undefined,
@@ -105,42 +107,28 @@ function buildPerCallContext(
   return {
     identity: outer?.identity ?? null,
     ...(workspaceId !== undefined ? { workspaceId } : {}),
-    ...(outer?.workspaceAgents !== undefined ? { workspaceAgents: outer.workspaceAgents } : {}),
     ...(outer?.workspaceModelOverride !== undefined
       ? { workspaceModelOverride: outer.workspaceModelOverride }
       : {}),
     ...(outer?.conversationId !== undefined ? { conversationId: outer.conversationId } : {}),
+    // `runId` rides the restamp for the same reason `conversationId` does: it
+    // is what correlates a task run's work, and the usage ledger and telemetry
+    // read it at tool-dispatch depth. This list is an allowlist — a field not
+    // named here is silently absent below the top level, which is how a run's
+    // correlation id disappears from everything a tool call records.
+    ...(outer?.runId !== undefined ? { runId: outer.runId } : {}),
     // The model the turn runs on rides the restamp so a tool asked what it is
-    // running on answers from the run rather than from config. A delegated
-    // sub-agent runs on its own model and overwrites this before its tools
-    // dispatch (see `delegate.ts`), so inheriting the parent's value here is
-    // the correct default rather than a leak.
+    // running on answers from the run rather than from config.
     ...(outer?.model !== undefined ? { model: outer.model } : {}),
     ...(outer?.toolPromotion !== undefined ? { toolPromotion: outer.toolPromotion } : {}),
-    // `unattended` rides the restamp so a tool dispatched from an unattended run
-    // — including a delegated sub-agent, which runs inside the parent call's
-    // restamped context — stays walled from the automation-authoring surface.
-    // Dropping it here would reopen the wall for anything below the top level.
+    // `unattended` rides the restamp so a tool dispatched from an unattended
+    // run stays walled from the automation-authoring surface. Dropping it here
+    // would reopen the wall for anything below the top level.
     ...(outer?.unattended !== undefined ? { unattended: outer.unattended } : {}),
-  };
-}
-
-/**
- * Split `<source>__<tool>` into its source prefix and bare tool name, on the
- * FIRST `__`. A local mirror of `tools/namespace.ts::splitInnerToolName`
- * (byte-identical logic) — a `src/runtime/` module may not import `src/tools/`
- * (the `check:cycles` layering rule), so the canonical helper can't be shared
- * here. Keep the two in sync.
- */
-function splitInnerToolName(innerName: string): {
-  sourcePrefix: string;
-  bareToolName: string;
-} {
-  const sepIndex = innerName.indexOf("__");
-  if (sepIndex < 0) return { sourcePrefix: innerName, bareToolName: innerName };
-  return {
-    sourcePrefix: innerName.slice(0, sepIndex),
-    bareToolName: innerName.slice(sepIndex + 2),
+    // Rides the restamp for the same reason `unattended` does: the outbound
+    // `_meta` stamp is read at dispatch depth, below this rebuild, so dropping
+    // it here would erase the provenance from every call the door makes.
+    ...(outer?.unattendedReason !== undefined ? { unattendedReason: outer.unattendedReason } : {}),
   };
 }
 
@@ -208,8 +196,8 @@ export class IdentityToolRouter implements ToolRouter {
 
     // `routed.toolName` is the inner `<source>__<tool>` form (the namespace
     // primitive only strips the `ws_<id>-` prefix). `ToolSource.execute` takes
-    // the bare local tool name (no source prefix) — mirroring
-    // `ToolRegistry.execute`'s contract.
+    // the bare local tool name (no source prefix), decomposed through the one
+    // grammar every door shares (`src/util/tool-name.ts`).
     const { sourcePrefix, bareToolName } = splitInnerToolName(routed.toolName);
 
     const denied = await this.connectorPermissionDenial(routed, sourcePrefix, bareToolName);

@@ -277,10 +277,15 @@ export function SkillsBrowser(props: SkillsBrowserProps) {
     [fetchSkills],
   );
 
+  // `set_status`, not `activate`/`deactivate`: those two now mute a skill for a
+  // single conversation, which is what an agent means by them. This toggle is
+  // the durable one — the skill's file, read by every conversation and every
+  // workspace — so it is deliberately the surface a human is looking at while
+  // they flip it, and the tool behind it is internal (the model cannot call it).
   const handleToggle = useCallback(
     async (skill: ListedSkill) => {
-      const tool = skill.status === "active" ? "deactivate" : "activate";
-      await runMutation(tool, { id: skill.id });
+      const status = skill.status === "active" ? "disabled" : "active";
+      await runMutation("set_status", { id: skill.id, status });
     },
     [runMutation],
   );
@@ -326,7 +331,10 @@ export function SkillsBrowser(props: SkillsBrowserProps) {
       if (editingId) {
         await runMutation(
           "update",
-          { id: editingId, manifest: advancedOverrides, body: patch.body },
+          // `replace`: this editor is a full-document textarea, so what it
+          // holds IS the intended body. `append` would double the skill on
+          // every save. An agent adding a single rule wants the other mode.
+          { id: editingId, manifest: advancedOverrides, body: patch.body, body_mode: "replace" },
           () => {
             setView("list");
             setEditingId(null);

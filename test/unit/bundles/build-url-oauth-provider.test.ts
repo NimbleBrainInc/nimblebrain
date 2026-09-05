@@ -1,18 +1,27 @@
-import { describe, expect, it } from "bun:test";
-import { mkdtempSync, readFileSync } from "node:fs";
+import { afterEach, describe, expect, it } from "bun:test";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildUrlOAuthProvider } from "../../../src/bundles/startup.ts";
 import type { BundleRef } from "../../../src/bundles/types.ts";
+import { mcpOAuthKey } from "../../../src/tools/mcp-oauth-records.ts";
 import { WorkspaceContext } from "../../../src/workspace/context.ts";
+import {
+  installTestCredentialStore,
+  resetTestCredentialStore,
+} from "../../helpers/credential-store.ts";
 
 /**
  * The owner dimension of the URL-bundle OAuth provider builder. A personal
  * connector installs with an `identityOwner`, which must produce the
- * `{type:"user"}` provider (credentials under `users/<id>/...`, no workspace)
- * — the identity arm of the same start path — while the existing workspace
- * path is untouched.
+ * `{type:"user"}` provider (credentials at user scope, no workspace) — the
+ * identity arm of the same start path — while the existing workspace path is
+ * untouched.
  */
+
+afterEach(() => {
+  resetTestCredentialStore();
+});
 
 const noop = (): void => {};
 
@@ -24,8 +33,9 @@ function urlRef(extra: Partial<Extract<BundleRef, { url: string }>> = {}): Extra
 }
 
 describe("buildUrlOAuthProvider — owner dimension", () => {
-  it('identityOwner → a {type:"user"} provider whose tokens land under users/<id>/', async () => {
+  it('identityOwner → a {type:"user"} provider whose tokens land at user scope', async () => {
     const workDir = mkdtempSync(join(tmpdir(), "nb-buop-user-"));
+    const store = installTestCredentialStore(workDir);
     const provider = await buildUrlOAuthProvider(
       urlRef(),
       "granola",
@@ -36,22 +46,19 @@ describe("buildUrlOAuthProvider — owner dimension", () => {
     expect(provider).toBeDefined();
     expect(provider?.getOwner()).toEqual({ type: "user", userId: "usr_alice" });
 
-    // The credential root is the identity plane, not any workspace.
+    // The credential scope is the identity plane, not any workspace.
     await provider?.saveTokens({ access_token: "t", token_type: "Bearer" });
-    const path = join(
-      workDir,
-      "users",
-      "usr_alice",
-      "credentials",
-      "mcp-oauth",
-      "granola",
-      "tokens.json",
+    const stored = await store.get(
+      { kind: "user", userId: "usr_alice" },
+      mcpOAuthKey("granola", "tokens"),
+      { caller: "test", purpose: "assert" },
     );
-    expect(JSON.parse(readFileSync(path, "utf-8"))).toMatchObject({ access_token: "t" });
+    expect(JSON.parse(stored?.reveal() ?? "null")).toMatchObject({ access_token: "t" });
   });
 
   it('workspace context (no identityOwner) → a {type:"workspace"} provider (path unchanged)', async () => {
     const workDir = mkdtempSync(join(tmpdir(), "nb-buop-ws-"));
+    installTestCredentialStore(workDir);
     const provider = await buildUrlOAuthProvider(
       urlRef(),
       "granola",
@@ -67,6 +74,7 @@ describe("buildUrlOAuthProvider — owner dimension", () => {
     // branch is evaluated first, so ownership can never silently fall through
     // to the workspace.
     const workDir = mkdtempSync(join(tmpdir(), "nb-buop-prec-"));
+    installTestCredentialStore(workDir);
     const provider = await buildUrlOAuthProvider(
       urlRef(),
       "granola",

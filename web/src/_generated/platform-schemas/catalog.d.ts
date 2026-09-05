@@ -31,11 +31,7 @@ export declare const PlatformToolCatalog: {
         readonly read: {
             readonly input: import("@sinclair/typebox").TObject<{
                 id: import("@sinclair/typebox").TString;
-            }>;
-        };
-        readonly active_for: {
-            readonly input: import("@sinclair/typebox").TObject<{
-                conversation_id: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+                version: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
             }>;
         };
         readonly loading_log: {
@@ -55,7 +51,6 @@ export declare const PlatformToolCatalog: {
                     description: import("@sinclair/typebox").TString;
                     loadingStrategy: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"always" | "dynamic">>;
                     priority: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
-                    status: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"active" | "disabled">>;
                     toolAffinity: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
                     triggers: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
                     allowedTools: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
@@ -70,12 +65,12 @@ export declare const PlatformToolCatalog: {
                     description: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
                     loadingStrategy: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"always" | "dynamic">>;
                     priority: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
-                    status: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"active" | "disabled">>;
                     toolAffinity: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
                     triggers: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
                     allowedTools: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
                 }>>;
                 body: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+                body_mode: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TLiteral<"append">, import("@sinclair/typebox").TLiteral<"replace">]>>;
             }>;
         };
         readonly delete: {
@@ -111,14 +106,13 @@ export declare const PlatformToolCatalog: {
                 period: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"day" | "week" | "month" | "all">>;
                 from: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
                 to: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-                groupBy: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TUnsafe<"model" | "user" | "day" | "conversation" | "origin" | "provider">, import("@sinclair/typebox").TArray<import("@sinclair/typebox").TUnsafe<"model" | "user" | "day" | "conversation" | "origin" | "provider">>]>>;
+                groupBy: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TUnsafe<"model" | "user" | "day" | "conversation" | "turn" | "origin" | "provider">, import("@sinclair/typebox").TArray<import("@sinclair/typebox").TUnsafe<"model" | "user" | "day" | "conversation" | "turn" | "origin" | "provider">>]>>;
             }>;
         };
     };
     readonly instructions: {
         readonly write_instructions: {
             readonly input: import("@sinclair/typebox").TObject<{
-                scope: import("@sinclair/typebox").TUnsafe<"org" | "workspace">;
                 body: import("@sinclair/typebox").TString;
             }>;
         };
@@ -200,6 +194,8 @@ export declare const PlatformToolCatalog: {
             readonly input: import("@sinclair/typebox").TObject<{
                 enabled: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TBoolean>;
                 source: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"user" | "agent" | "bundle">>;
+                limit: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TInteger>;
+                cursor: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
             }>;
         };
         readonly status: {
@@ -240,7 +236,7 @@ export declare const PlatformToolCatalog: {
         };
         readonly get: {
             readonly input: import("@sinclair/typebox").TObject<{
-                id: import("@sinclair/typebox").TString;
+                id: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
                 expand: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"metadata" | "messages" | "full">>;
                 limit: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
             }>;
@@ -253,13 +249,13 @@ export declare const PlatformToolCatalog: {
         };
         readonly update: {
             readonly input: import("@sinclair/typebox").TObject<{
-                id: import("@sinclair/typebox").TString;
+                id: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
                 title: import("@sinclair/typebox").TString;
             }>;
         };
         readonly fork: {
             readonly input: import("@sinclair/typebox").TObject<{
-                id: import("@sinclair/typebox").TString;
+                id: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
                 atMessage: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
             }>;
         };
@@ -270,8 +266,54 @@ export declare const PlatformToolCatalog: {
         };
         readonly export: {
             readonly input: import("@sinclair/typebox").TObject<{
-                id: import("@sinclair/typebox").TString;
+                id: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
                 format: import("@sinclair/typebox").TUnsafe<"markdown" | "json">;
+            }>;
+        };
+    };
+    readonly notifications: {
+        readonly list: {
+            readonly input: import("@sinclair/typebox").TObject<{
+                unreadOnly: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TBoolean>;
+                level: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"attention" | "info" | "urgent">>;
+                source: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+                after: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
+                order: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"desc" | "asc">>;
+                limit: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
+            }>;
+        };
+        readonly mark_read: {
+            readonly input: import("@sinclair/typebox").TObject<{
+                ids: import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>;
+            }>;
+        };
+        readonly settings: {
+            readonly input: import("@sinclair/typebox").TObject<{}>;
+        };
+        readonly set_source_level: {
+            readonly input: import("@sinclair/typebox").TObject<{
+                source: import("@sinclair/typebox").TString;
+                maxLevel: import("@sinclair/typebox").TUnsafe<"attention" | "info" | "urgent">;
+            }>;
+        };
+        readonly set_routes: {
+            readonly input: import("@sinclair/typebox").TObject<{
+                routes: import("@sinclair/typebox").TArray<import("@sinclair/typebox").TObject<{
+                    id: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+                    match: import("@sinclair/typebox").TObject<{
+                        source: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+                        name: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+                        level: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"attention" | "info" | "urgent">>;
+                    }>;
+                    deliver: import("@sinclair/typebox").TArray<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TObject<{
+                        kind: import("@sinclair/typebox").TLiteral<"tool">;
+                        tool: import("@sinclair/typebox").TString;
+                        input: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<Record<string, unknown>>>;
+                    }>, import("@sinclair/typebox").TObject<{
+                        kind: import("@sinclair/typebox").TLiteral<"agent">;
+                        automation: import("@sinclair/typebox").TString;
+                    }>]>>;
+                }>>;
             }>;
         };
     };
@@ -307,6 +349,7 @@ export declare const PlatformToolCatalog: {
                     description: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
                 }>;
                 body: import("@sinclair/typebox").TString;
+                encoding: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"base64" | "text">>;
             }>;
         };
         readonly info: {

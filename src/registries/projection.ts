@@ -18,6 +18,7 @@
 
 import { hostMetaToUiMeta, sanitizePlacements } from "../bundles/defaults.ts";
 import type { BundleUiMeta } from "../bundles/types.ts";
+import { brokeredCatalogConfig, type ConnectorAuthKind } from "../connectors/auth-kind.ts";
 import {
   type ComposioConnectorConfig,
   getNimbleBrainConnectorMeta,
@@ -26,6 +27,11 @@ import {
   type ServerDetail,
   type SmitheryConnectorConfig,
 } from "../connectors/server-detail.ts";
+import { parseHookDeclarations } from "../hooks/declaration.ts";
+import type { HookDeclaration } from "../hooks/types.ts";
+import { parseNotificationsDeclaration } from "../notifications/declaration.ts";
+import type { NotificationsDeclaration } from "../notifications/types.ts";
+import type { CredentialRef } from "../tools/credential-ref.ts";
 import { validateAdditionalAuthorizationParams } from "../util/oauth-params.ts";
 import { isHttpUrl } from "../util/url.ts";
 import type { DirectoryEntry, RegistryType } from "./types.ts";
@@ -45,7 +51,7 @@ export interface ProjectionContext {
  * they diverged once (#462) and nothing structural stopped it. Spreading
  * this single result into both call sites makes drift impossible: there is
  * one derivation, so the directory and the catalog can never disagree on
- * `auth` / scopes / params / operatorSetup / composio / providerAuth.
+ * `auth` / scopes / params / operatorSetup / the brokered block / providerAuth.
  *
  * The catalog-only fields (`tags`, `interactive`, `docsUrl`) are NOT here:
  * they don't belong on the directory entry's `install` action (the
@@ -57,24 +63,31 @@ export interface ProjectionContext {
  * shape both sites previously inlined.
  */
 function connectorMetaAuthFields(meta: NimbleBrainConnectorMeta | undefined): {
-  auth: "dcr" | "static" | "composio" | "smithery" | "provider";
+  auth: ConnectorAuthKind;
   requiredScopes?: string[];
   additionalAuthorizationParams?: Record<string, string>;
   operatorSetup?: { portalUrl: string; hint: string; clientSecretKey: string };
   composio?: ComposioConnectorConfig;
   smithery?: SmitheryConnectorConfig;
   providerAuth?: { provider: string; config: Record<string, unknown> };
+  secretHeaders?: Record<string, CredentialRef>;
 } {
+  const auth = meta?.auth ?? "dcr";
+  // A brokered entry's config block travels under the key naming its provider,
+  // carried through by that same key. One spread for every provider, so a third
+  // one is published without a line here — the install path reads it back with
+  // the same accessor and hands it to that provider opaquely.
+  const brokered = brokeredCatalogConfig(meta);
   return {
-    auth: meta?.auth ?? "dcr",
+    auth,
     ...(meta?.requiredScopes ? { requiredScopes: meta.requiredScopes } : {}),
     ...(meta?.additionalAuthorizationParams
       ? { additionalAuthorizationParams: meta.additionalAuthorizationParams }
       : {}),
     ...(meta?.operatorSetup ? { operatorSetup: meta.operatorSetup } : {}),
-    ...(meta?.composio ? { composio: meta.composio } : {}),
-    ...(meta?.smithery ? { smithery: meta.smithery } : {}),
+    ...(brokered ? { [auth]: brokered } : {}),
     ...(meta?.providerAuth ? { providerAuth: meta.providerAuth } : {}),
+    ...(meta?.secretHeaders ? { secretHeaders: meta.secretHeaders } : {}),
   };
 }
 
@@ -86,7 +99,7 @@ function connectorMetaAuthFields(meta: NimbleBrainConnectorMeta | undefined): {
  *   - `description`   ← `ServerDetail.description`
  *   - `iconUrl`       ← `ServerDetail.icons[0].src` (theme-aware picker is a follow-up)
  *   - `tags`          ← `_meta.ai.nimblebrain/connector.tags`
- *   - `install`       ← derived from `packages[]` (mpak-bundle) or `remotes[]` (remote-oauth)
+ *   - `install`       ← derived from `remotes[]` (remote-oauth)
  *
  * Returns null if the entry isn't installable (no packages, no remotes,
  * or unsupported transport — e.g. an SSE-only remote when we don't ship
@@ -116,17 +129,14 @@ export function projectServerDetailToDirectoryEntry(
 }
 
 /**
- * Decide which installable variant to surface. Bundles take precedence:
- * the MCP registry spec allows entries to advertise both packages and
- * remotes (a vendor that ships both a bundled CLI and a hosted endpoint),
- * but our Browse install dispatcher is single-action — pick the local
- * one because it's reproducible and doesn't depend on vendor uptime.
+ * Decide which installable variant to surface. Only `remotes[]` is
+ * installable: the runtime orchestrates over remote MCP and never acquires,
+ * verifies, or executes server code, so an entry advertising only
+ * `packages[]` — a downloadable bundle — projects as not installable and is
+ * dropped from Browse. An entry advertising both (a vendor shipping a CLI
+ * and a hosted endpoint) surfaces its remote.
  */
 function deriveInstall(s: ServerDetail): DirectoryEntry["install"] | null {
-  const pkg = s.packages?.[0];
-  if (pkg) {
-    return { kind: "mpak-bundle", package: pkg.identifier };
-  }
   const remote = s.remotes?.[0];
   if (remote && (remote.type === "streamable-http" || remote.type === "sse")) {
     return {
@@ -159,15 +169,19 @@ export interface ConnectorCatalogEntry {
   iconUrl?: string;
   /** Remote MCP server URL — the value that goes into the bundle `url`. */
   url: string;
-  auth: "dcr" | "static" | "composio" | "smithery" | "provider";
+  /**
+   * Runtime-native kind, or the id of the brokered provider that owns this
+   * connector. See `NimbleBrainConnectorMeta.auth`.
+   */
+  auth: ConnectorAuthKind;
   requiredScopes?: string[];
   additionalAuthorizationParams?: Record<string, string>;
   operatorSetup?: { portalUrl: string; hint: string; clientSecretKey: string };
   /**
-   * Composio-specific config for `auth: "composio"` entries. The
-   * platform reads these to call `composio.create()` at install
-   * time and to look up the toolkit slug when persisting
-   * `connection.json`. Absent on dcr/static entries.
+   * A brokered entry's provider config block, carried under the key naming its
+   * provider — the convention `brokeredCatalogConfig` reads. The two typed
+   * fields document the shapes we ship; the install path never reads either by
+   * name, it hands whichever block `auth` names to that provider.
    */
   composio?: ComposioConnectorConfig;
   smithery?: SmitheryConnectorConfig;
@@ -178,6 +192,13 @@ export interface ConnectorCatalogEntry {
    * install, never derived from tenant input.
    */
   providerAuth?: { provider: string; config: Record<string, unknown> };
+  /**
+   * Workspace-owned secrets bound to outgoing headers, as credential references
+   * — see `NimbleBrainConnectorMeta.secretHeaders`. Operator-authored, and read
+   * back from THIS entry at install (the caller's copy is discarded) for the
+   * same reason `ui` and `hooks` are.
+   */
+  secretHeaders?: Record<string, CredentialRef>;
   tags?: string[];
   interactive?: boolean;
   docsUrl?: string;
@@ -191,6 +212,30 @@ export interface ConnectorCatalogEntry {
    * for connectors that declare no UI.
    */
   ui?: BundleUiMeta;
+  /**
+   * Inbound event streams the server declares in
+   * `ServerDetail._meta["ai.nimblebrain/host"].hooks`. Carried here from the
+   * operator-trusted catalog for the same reason `ui` is: the install path must
+   * read a route and a registration tool from metadata the OPERATOR published,
+   * never from the caller-supplied entry — a forged route would choose where
+   * this runtime sends a delivery, with a freshly minted platform token
+   * attached. Absent for connectors that declare no hooks.
+   */
+  hooks?: HookDeclaration[];
+  /**
+   * The outbox the server declares in
+   * `ServerDetail._meta["ai.nimblebrain/host"].notifications` — the resource
+   * the runtime polls for facts nobody asked for.
+   *
+   * Carried from the catalog entry beside `hooks` because that is where the
+   * host extension is published today, but for a weaker reason than `hooks`
+   * has. A hook declaration must be operator-trusted because it chooses where
+   * a delivery is sent with a platform token attached. This one grants no
+   * privilege — no mint, no new audience, no path to a human — so a server's
+   * own `initialize` result is a legitimate future source for it. Absent for
+   * connectors that declare no outbox.
+   */
+  notifications?: NotificationsDeclaration;
 }
 
 /**
@@ -206,6 +251,8 @@ export function serverDetailToCatalogEntry(s: ServerDetail): ConnectorCatalogEnt
   const iconUrl = s.icons?.[0]?.src;
   const meta = getNimbleBrainConnectorMeta(s);
   const ui = hostMetaToUiMeta(getNimbleBrainHostMeta(s));
+  const hooks = parseHookDeclarations(getNimbleBrainHostMeta(s));
+  const notifications = parseNotificationsDeclaration(getNimbleBrainHostMeta(s));
   // The "interactive" chip is cosmetic catalog metadata (no runtime behavior). Derive
   // it from whether the connector renders a VALID UI: an explicit connector flag OR a
   // placement that survives `sanitizePlacements` (the same check registration uses).
@@ -226,15 +273,17 @@ export function serverDetailToCatalogEntry(s: ServerDetail): ConnectorCatalogEnt
     ...(meta?.docsUrl ? { docsUrl: meta.docsUrl } : {}),
     ...(meta?.personal === true ? { personal: true } : {}),
     ...(ui ? { ui } : {}),
+    ...(hooks.length > 0 ? { hooks } : {}),
+    ...(notifications ? { notifications } : {}),
   };
 }
 
 /**
  * Defense-in-depth safety check on a `ServerDetail` regardless of which
- * source emitted it. Runs at the directory boundary so mpak-published
+ * source emitted it. Runs at the directory boundary so registry-published
  * entries are scrubbed identically to bundled-static / NB_REGISTRIES
  * static entries — pre-fix only static-source ran this check, so a
- * malicious mpak publisher (or any non-curated mpak scope) could ship
+ * malicious publisher on a non-curated registry could ship
  * `_meta.docsUrl: "javascript:..."` and the Configure page would render
  * it as a clickable `<a href>`. `target="_blank" rel="noopener noreferrer"`
  * does NOT block `javascript:` URI execution.

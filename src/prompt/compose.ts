@@ -21,7 +21,6 @@ export type ContainmentTag =
   | "app-description"
   | "app-guide"
   | "app-state"
-  | "org-instructions"
   | "workspace-instructions"
   | "layer3-skill"
   | "connector-skill"
@@ -107,7 +106,6 @@ export type TracedLayerKind =
   | "user_prefs"
   | "current_date"
   | "workspace_context"
-  | "org_overlay"
   | "workspace_overlay"
   | "layer3_skills"
   | "skill_catalog"
@@ -125,7 +123,7 @@ export interface TracedSubItem {
   source: string;
   /** Bundle attribution when known. Drives the `bundle` filter. */
   bundle?: string;
-  /** Free-form metadata appropriate to the kind (skill scope, app trustScore, etc.). */
+  /** Free-form metadata appropriate to the kind (skill scope, app UI descriptor, etc.). */
   metadata?: Record<string, unknown>;
 }
 
@@ -231,7 +229,6 @@ export interface PromptAppInfo {
    * say over how the agent should behave when using this bundle.
    */
   customInstructions?: string;
-  trustScore: number;
   ui: { name: string } | null;
 }
 
@@ -241,9 +238,7 @@ export interface PromptAppInfo {
  * leaving no marker tag in the assembled prompt.
  */
 export interface OverlayLayers {
-  /** Org-level overlay (Phase 3 — slot reserved; Phase 1 callers pass `""`). */
-  org?: string;
-  /** Workspace-level overlay (Phase 2 — slot reserved; Phase 1 callers pass `""`). */
+  /** Workspace-level overlay. Empty or absent skips the layer entirely. */
   workspace?: string;
 }
 
@@ -273,7 +268,6 @@ export interface FocusedAppInfo {
   /** URI of a reference resource with detailed tool catalog / error recovery.
    *  When set, a hint is appended after the app guide telling the agent where to find it. */
   referenceResourceUri?: string;
-  trustScore: number;
 }
 
 /** App state entry from the bridge's appStateStore. */
@@ -281,7 +275,6 @@ export interface AppStateInfo {
   state: Record<string, unknown>;
   summary?: string;
   updatedAt: string;
-  trustScore: number;
 }
 
 /** User preferences injected into the system prompt so the agent knows
@@ -388,7 +381,7 @@ export function composeSystemPromptTraced(
   // Layer 1.6: Participants section — removed in Stage 1 (single-owner
   // conversations). Returns in Stage 4 with policy-gated sharing.
 
-  // Layers 1.7 → 4, in prompt order: workspace context, org/workspace overlays,
+  // Layers 1.7 → 4, in prompt order: workspace context, workspace overlay,
   // Layer 3 skills, installed apps, app state, focused app, matched skill.
   layers.push(...workspaceContextLayers(workspaceContext));
   layers.push(...overlayLayers(overlays));
@@ -397,7 +390,7 @@ export function composeSystemPromptTraced(
   layers.push(...appsLayers(apps, hasProxiedTools));
   layers.push(...appStateLayers(appState));
   layers.push(...focusedAppLayers(focusedApp));
-  layers.push(...matchedSkillLayers(matchedSkill));
+  layers.push(...matchedSkillLayers(matchedSkill, layer3Skills));
 
   // Stamp the volatility tier from the layer kind (single source of truth for
   // the stable/volatile classification — see `composeSystemSegments`).
@@ -593,19 +586,14 @@ function workspaceContextLayers(workspaceContext?: WorkspaceContext): PendingLay
   ];
 }
 
-/** Layer 1.8: org- and workspace-tier instruction overlays, each skipped when blank. */
+/**
+ * Layer 1.8: the workspace instruction overlay, skipped when blank.
+ *
+ * Workspace-tier only. Org-wide standing guidance is an org-tier skill, which
+ * reaches every workspace through the layer-3 channel below.
+ */
 function overlayLayers(overlays?: OverlayLayers): PendingLayer[] {
   const layers: PendingLayer[] = [];
-  if (overlays?.org && overlays.org.trim().length > 0) {
-    const text = formatScopeOverlay("Organization Instructions", overlays.org);
-    layers.push({
-      kind: "org_overlay",
-      id: "instructions://org",
-      source: "org-tier instruction overlay",
-      text,
-      tokens: approxTokens(text),
-    });
-  }
   if (overlays?.workspace && overlays.workspace.trim().length > 0) {
     const text = formatScopeOverlay("Workspace Instructions", overlays.workspace);
     layers.push({
@@ -703,7 +691,6 @@ function appsLayers(apps?: PromptAppInfo[], hasProxiedTools?: boolean): PendingL
           hasInstructions: !!app.instructions,
           hasCustomInstructions:
             !!app.customInstructions && app.customInstructions.trim().length > 0,
-          trustScore: app.trustScore,
           ui: app.ui,
         },
       })),
@@ -747,9 +734,54 @@ function focusedAppLayers(focusedApp?: FocusedAppInfo): PendingLayer[] {
   ];
 }
 
-/** Layer 4: matched skill (legacy SkillMatcher path), wrapped in <skill-instructions> containment. */
-function matchedSkillLayers(matchedSkill?: Skill | null): PendingLayer[] {
+/**
+ * Identity for a skill across composition channels: BOTH its source and its
+ * manifest name, because neither alone identifies one.
+ *
+ * A server-published skill's `sourcePath` is the publishing server's own
+ * `skill://<segment>/SKILL.md` URI, which carries no server qualifier — two
+ * connectors that each publish a skill named `usage` produce two distinct skills
+ * at one identical path. On a source-only key they collapse, and suppressing a
+ * channel on that key drops a body the other channel never carried. The manifest
+ * name disambiguates them: `connectorSkillManifestName` embeds the server. For a
+ * filesystem skill the pair adds nothing (path→name is 1:1), so the key only ever
+ * splits identities that were wrongly merged.
+ */
+function skillKey(sourcePath: string | undefined, name: string): string {
+  return `${sourcePath ?? ""}|${name}`;
+}
+
+/**
+ * Layer 4: matched skill (the `SkillMatcher` trigger path), wrapped in
+ * <skill-instructions> containment.
+ *
+ * Skipped when Layer 3 already composed the same skill. One `dynamic` skill can
+ * reach a turn through both channels — a tool-affinity glob matched an active
+ * tool AND a trigger phrase matched the message — and injecting it twice spends
+ * the tokens twice while handing the model one body under two framings. Layer 3
+ * wins, the precedence `collectLoadedSkills` reports the load under. The
+ * trigger's must-fire guarantee holds: the body is in the prompt either way, and
+ * the match still narrows the direct tool set via the skill's `allowed-tools`.
+ * That guarantee rests entirely on {@link skillKey} being an identity — a key
+ * that merges two skills converts this suppression into a silent drop.
+ *
+ * The de-dup preserves presence, not POSITION. `matched_skill` is volatile and
+ * rides the latest user message; `layer3_skills` is stable and sits in the cached
+ * system prefix. A both-channel skill therefore moves out of the recency slot
+ * into the prefix. Paying for the body twice to buy recency is the worse trade,
+ * and the ledger already calls such a load `tool_affinity`.
+ *
+ * This overlap has always been reachable for a filesystem skill declaring both
+ * fields. For a server-published skill it is the ordinary case, because
+ * synthesis stamps `toolAffinity: ["<server>__*"]` on every one.
+ */
+function matchedSkillLayers(
+  matchedSkill?: Skill | null,
+  layer3Skills?: Layer3SkillEntry[],
+): PendingLayer[] {
   if (!matchedSkill?.body) return [];
+  const matchedKey = skillKey(matchedSkill.sourcePath, matchedSkill.manifest.name);
+  if ((layer3Skills ?? []).some((e) => skillKey(e.sourcePath, e.name) === matchedKey)) return [];
   const text = wrapContained("skill-instructions", matchedSkill.body);
   return [
     {
@@ -845,8 +877,7 @@ function formatAppsSection(apps: PromptAppInfo[], hasProxiedTools?: boolean): st
     // can carry one; `app.name` is a slug unless an operator hand-sets
     // `ref.serverName`. Sanitized together because the line is shared.
     const uiLabel = app.ui ? `has UI: ${sanitizeLineField(app.ui.name)}` : "no UI";
-    const trustLabel = app.trustScore != null ? ` — MTF Score: ${app.trustScore}` : "";
-    lines.push(`- ${sanitizeLineField(app.name)} (${uiLabel})${trustLabel}`);
+    lines.push(`- ${sanitizeLineField(app.name)} (${uiLabel})`);
     if (app.description) {
       lines.push(wrapContained("app-description", app.description));
     }
@@ -947,18 +978,16 @@ function formatAppStateSection(appState: AppStateInfo): string | null {
 }
 
 /**
- * Format a top-level instruction overlay (org- or workspace-scope).
+ * Format the top-level workspace instruction overlay.
  *
- * Each overlay sits in a containment tag whose name matches its scope, so
- * a debug reader can attribute the body to its source. The escape pattern
- * matches `<app-instructions>` — any literal closing tag inside the body
- * is rewritten to `&lt;/...>` before wrapping, defending against prompt
- * injection from a writer who tries to break out of containment.
+ * The body sits in a containment tag, so a debug reader can attribute it to
+ * its source. The escape pattern matches `<app-instructions>` — any literal
+ * closing tag inside the body is rewritten to `&lt;/...>` before wrapping,
+ * defending against prompt injection from a writer who tries to break out of
+ * containment.
  */
 function formatScopeOverlay(heading: string, body: string): string {
-  const tag: ContainmentTag =
-    heading === "Organization Instructions" ? "org-instructions" : "workspace-instructions";
-  return `## ${heading}\n\n${wrapContained(tag, body)}`;
+  return `## ${heading}\n\n${wrapContained("workspace-instructions", body)}`;
 }
 
 /**

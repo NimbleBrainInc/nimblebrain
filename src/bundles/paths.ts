@@ -1,21 +1,19 @@
-import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
-import { log } from "../observability/log.ts";
 import {
   isIdentitySource,
   isPersonalConnectorName,
   PERSONAL_CONNECTOR_PREFIX,
 } from "../tools/identity-sources.ts";
+import { isHttpUrl } from "../util/url.ts";
 import { WorkspaceContext } from "../workspace/context.ts";
-import { resolveLocalBundle } from "./resolve.ts";
 import type { BundleRef } from "./types.ts";
 
 /**
  * Resolved default workDir for callers that don't have the RuntimeConfig in
  * hand. Reads `NB_WORK_DIR` from env, falls back to `~/.nimblebrain`, then
- * `resolve()`s the result so the value crossing a process boundary (as
- * `MPAK_WORKSPACE` / `UPJACK_ROOT`) is absolute and cwd-independent.
+ * `resolve()`s the result so every derived path is absolute and
+ * cwd-independent.
  *
  * The cli config-load path absolutizes its workDir at the same boundary;
  * this is the env-only fallback for the bundle lifecycle methods that
@@ -101,9 +99,9 @@ export function deriveServerName(name: string): string {
 
 /**
  * Slugify a canonical `ServerDetail.name` (reverse-DNS form, e.g.
- * `com.stripe/mcp`, `dev.mpak.nimblebraininc/echo`,
- * `ai.nimblebrain/echo`) into a single-segment, URL-safe, filesystem-
- * safe identifier used as the `serverName` everywhere downstream.
+ * `com.stripe/mcp`, `ai.nimblebrain/echo`) into a single-segment,
+ * URL-safe, filesystem-safe identifier used as the `serverName`
+ * everywhere downstream.
  *
  * Rule: namespace-preserving — collapses both the slash and the
  * dotted reverse-DNS segments into dashes so the FULL identifier
@@ -114,9 +112,8 @@ export function deriveServerName(name: string): string {
  *   `app.linear/mcp`               → `app-linear-mcp`
  *   `com.acme.crm/mcp`             → `com-acme-crm-mcp`
  *   `com.foobar.crm/mcp`           → `com-foobar-crm-mcp`
- *   `dev.mpak.nimblebraininc/echo` → `dev-mpak-nimblebraininc-echo`
  *   `ai.nimblebrain/echo`          → `ai-nimblebrain-echo`
- *   `@nimblebraininc/echo`         → `nimblebraininc-echo`
+ *   `@acme/echo`                   → `acme-echo`
  *
  * Two distinct canonical names always produce two distinct slugs
  * because the FULL namespace is preserved — the `crm` collisions
@@ -133,32 +130,39 @@ export function slugifyServerName(canonicalName: string): string {
 }
 
 /**
- * Resolve the lifecycle / registry key for a `BundleRef`. Single
- * authority for the install / boot / uninstall paths so the
- * registered source name matches what consumers later look up.
+ * Resolve the lifecycle / registry key for a `BundleRef`, or `null` when the
+ * row cannot name one. Single authority for the install / boot / uninstall
+ * paths so the registered source name matches what consumers later look up.
  *
- * All three ref variants honor `ref.serverName` first when present —
- * that's the slugified canonical reverse-DNS form set at install time
- * from `ServerDetail.name`. Falls back to `deriveServerName` only for
- * legacy refs that predate canonical-form persistence (pre-#195).
+ * Honors `ref.serverName` when present — that's the slugified canonical
+ * reverse-DNS form set at install time from `ServerDetail.name`. Falls back to
+ * `deriveServerName` only for refs that predate canonical-form persistence
+ * (pre-#195), and only when the url is one this runtime could actually reach.
+ *
+ * **Nullable on purpose.** Every caller reads a row off disk, and disk holds
+ * rows this build's type no longer describes — a pre-URL `name:`/`path:`
+ * entry, or a url that is blank or unparseable. Returning `string` meant
+ * `deriveServerName(undefined)` threw from whichever reader touched the row
+ * first, which is a `TypeError` naming neither the workspace nor the row, in a
+ * caller that has no reason to expect one. The null makes the compiler name
+ * the set of readers instead, which is the same argument the URL-only
+ * `BundleRef` collapse rests on: put the invariant in the type and let it find
+ * the sites.
  */
-export function serverNameFromRef(ref: BundleRef): string {
-  if ("name" in ref) return ref.serverName ?? deriveServerName(ref.name);
-  if ("path" in ref) return ref.serverName ?? deriveServerName(ref.path);
-  return ref.serverName ?? deriveServerName(ref.url);
+export function serverNameFromRef(ref: BundleRef): string | null {
+  if (ref.serverName) return ref.serverName;
+  return isHttpUrl(ref.url) ? deriveServerName(ref.url) : null;
 }
 
 /**
  * Derive a safe directory name for per-bundle data isolation.
  * Uses the full scoped name to avoid collisions (e.g., @foo/tasks vs @bar/tasks).
- * Matches the mpak cache convention: @scope/name → scope-name.
  *
  * Case is preserved — the unsafe-char strip uses `/gi` and there is no
  * `toLowerCase()`. This diverges intentionally from `slugifyServerName`
  * above: server names are URL-routable identifiers and must be lowercase;
- * dataDir slugs only need to round-trip on the filesystem, so preserving
- * the caller's casing keeps `path:` bundle dirs visually traceable back
- * to their source. Don't "consolidate" the two functions.
+ * dataDir slugs only need to round-trip on the filesystem. Don't
+ * "consolidate" the two functions.
  */
 export function deriveBundleDataDir(name: string): string {
   return name
@@ -172,79 +176,17 @@ export function deriveBundleDataDir(name: string): string {
 /**
  * Canonical entry point for the bundle-data-dir contract:
  *
- *   <workDir>/workspaces/<wsId>/data/<slug-of-manifest.name>/
+ *   <workDir>/workspaces/<wsId>/data/<slug-of-serverName>/
  *
- * The slug source is ALWAYS the bundle's manifest name — its stable
- * identity, not the way you happen to be locating its source code
- * (filesystem path, npm-scoped registry name, or URL). Every call site
- * that needs to know where a bundle's data lives must route through
- * here, so the launch path (which sets `MPAK_WORKSPACE` for the
- * subprocess) and the reader path (briefing collector, lifecycle
- * seeding, etc.) cannot drift onto different slugs for the same bundle.
- *
- * Resolution per ref shape:
- *   - `name:`  → `ref.name` is the canonical manifest name by contract.
- *                No disk read needed.
- *   - `path:`  → reads `<path>/manifest.json` and uses `manifest.name`.
- *                Falls back to a path-derived slug + warn only when the
- *                manifest can't be read (bundle source missing/broken).
- *   - `url:`   → uses persisted `ref.serverName` (the slugified
- *                canonical name set at install time from
- *                `ServerDetail.name`). Remote bundles have no on-disk
- *                manifest; this is the stable identity we hold.
- *
- * Synchronous on purpose: path-bundle manifests are local files and
- * boot already does a lot of sync fs work. Making this async would
- * push `Promise<>` through the inventory build for no real win.
+ * The slug source is the persisted `serverName` — the slugified canonical
+ * name set at install time from `ServerDetail.name`. A remote server has no
+ * on-disk manifest, so this is the stable identity the platform holds for it.
+ * Every call site that needs to know where a bundle's host-side data lives
+ * routes through here so the readers cannot drift onto different slugs.
  */
-export function resolveBundleDataDirForRef(
-  workDir: string,
-  wsId: string,
-  ref: BundleRef,
-  configDir?: string,
-): string {
-  const slugSource = readBundleSlugSource(ref, configDir);
+export function resolveBundleDataDirForRef(workDir: string, wsId: string, ref: BundleRef): string {
   return new WorkspaceContext({ wsId, workDir }).getDataPath(
     "data",
-    deriveBundleDataDir(slugSource),
+    deriveBundleDataDir(ref.serverName ?? ref.url),
   );
-}
-
-function readBundleSlugSource(ref: BundleRef, configDir: string | undefined): string {
-  if ("name" in ref) return ref.name;
-  if ("path" in ref) {
-    const bundleDir = resolveLocalBundle(ref.path, configDir);
-    if (!bundleDir) {
-      // Bundle path doesn't resolve at all (missing / moved / typo). Distinct
-      // failure mode from "found the dir but its manifest is broken", so it
-      // gets its own single message — no double-warn.
-      log.warn(
-        `[bundles] Local bundle path not found: ${ref.path} ` +
-          `(falling back to path-derived dataDir slug — subprocess will fail to start)`,
-      );
-      return ref.path;
-    }
-    try {
-      const raw = JSON.parse(readFileSync(join(bundleDir, "manifest.json"), "utf-8")) as {
-        name?: unknown;
-      };
-      if (typeof raw.name === "string" && raw.name.length > 0) return raw.name;
-      log.warn(
-        `[bundles] Manifest at ${ref.path} has no usable "name" field — ` +
-          `falling back to path-derived dataDir slug`,
-      );
-    } catch (err) {
-      // Single, fully-attributed message: include the error AND the
-      // fallback decision in one line so the operator gets the whole story
-      // without scanning two adjacent warns to correlate them.
-      log.warn(
-        `[bundles] Failed to read manifest from ${ref.path} — ` +
-          `falling back to path-derived dataDir slug (bundle subprocess will likely fail to start): ${
-            err instanceof Error ? err.message : String(err)
-          }`,
-      );
-    }
-    return ref.path;
-  }
-  return ref.serverName ?? ref.url;
 }

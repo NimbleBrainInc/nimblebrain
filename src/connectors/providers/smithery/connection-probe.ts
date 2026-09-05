@@ -18,6 +18,7 @@
  * failures there. Never throws.
  */
 
+import { brokeredRef } from "../../../bundles/brokered.ts";
 import type {
   ConnectionHealthProbe,
   ConnectionLiveness,
@@ -25,36 +26,16 @@ import type {
 } from "../../../bundles/connection-probe.ts";
 import { log } from "../../../observability/log.ts";
 import type { SmitheryClientOptions } from "./client.ts";
-
-/**
- * Read the Smithery marker a smithery-auth install persists on its BundleRef.
- *
- * Host and namespace come from the REF, never from current config: the ref's
- * session URL bakes both in at install and keeps working if an operator later
- * repoints them, so a config-reading probe would 404 a perfectly healthy
- * connection and false-flip it. Every coordinate is required on the type and
- * the install refuses to persist without them, so there is no partially-written
- * shape to defend against.
- */
-function markerFrom(
-  target: ProbeTarget,
-): { connectionId: string; namespace: string; baseUrl: string } | undefined {
-  const ref = target.ref;
-  if (!("smithery" in ref) || !ref.smithery?.connectionId) return undefined;
-  return {
-    connectionId: ref.smithery.connectionId,
-    namespace: ref.smithery.namespace,
-    baseUrl: ref.smithery.baseUrl,
-  };
-}
+import { smitheryCoordinatesFrom } from "./coordinates.ts";
+import { SMITHERY_PROVIDER_ID } from "./id.ts";
 
 export class SmitheryConnectionProbe implements ConnectionHealthProbe {
-  readonly providerId = "smithery";
+  readonly providerId = SMITHERY_PROVIDER_ID;
 
   constructor(private readonly options: SmitheryClientOptions) {}
 
   async probe(target: ProbeTarget, signal: AbortSignal): Promise<ConnectionLiveness> {
-    const marker = markerFrom(target);
+    const marker = smitheryCoordinatesFrom(brokeredRef(target.ref)?.providerRef);
     if (!marker) return "indeterminate";
 
     try {

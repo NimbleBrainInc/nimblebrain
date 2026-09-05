@@ -3,10 +3,10 @@
  * format every `ConnectorRegistry` returns.
  *
  * The platform stopped authoring its own discovery shape: a static
- * curated catalog now ships entries that conform to upstream
- * [`ServerDetail`](../../src/connectors/schemas/server.schema.json), and
- * `MpakSource` reads the same shape natively from mpak's `/v1/servers/...`
- * via the SDK. Consumers always see one type. The `_meta` extension
+ * curated catalog ships entries that conform to upstream
+ * [`ServerDetail`](../../src/connectors/schemas/server.schema.json), and any
+ * future HTTP-backed source reads the same shape natively. Consumers always
+ * see one type. The `_meta` extension
  * `ai.nimblebrain/connector` carries our platform-specific fields
  * (auth, operatorSetup, etc.) without polluting upstream-defined slots.
  *
@@ -22,6 +22,8 @@ import { join } from "node:path";
 import Ajv, { type ValidateFunction } from "ajv";
 import addFormats from "ajv-formats";
 import type { HostManifestMeta } from "../bundles/types.ts";
+import type { CredentialRef } from "../tools/credential-ref.ts";
+import type { ConnectorAuthKind } from "./auth-kind.ts";
 
 /** Optional sized icon. Upstream Icon definition. */
 export interface Icon {
@@ -81,7 +83,12 @@ export interface KeyValueInput extends Input {
   variables?: Record<string, Input>;
 }
 
-/** A package the server is distributed as (mpak bundle, npm pkg, etc.). */
+/**
+ * A package the server is distributed as (npm pkg, PyPI dist, etc.). Read for
+ * display and scope-matching only: a package is code to download and run, and
+ * this runtime installs nothing — an entry offering only packages is not
+ * installable here.
+ */
 export interface Package {
   registryType: string;
   identifier: string;
@@ -170,28 +177,38 @@ export interface SmitheryConnectorConfig {
  * pointers, recommended scope, search tags, and UI hints.
  *
  * Authored on entries we curate (loaded by `StaticSource` from the
- * curated catalog directory) and absent on mpak entries (the
- * projection leaves it undefined).
+ * curated catalog directory) and absent on entries from a registry that
+ * doesn't carry it (the projection leaves it undefined).
  */
 export interface NimbleBrainConnectorMeta {
   /**
-   * OAuth flow type for remote services.
+   * How this connector authenticates. Either a runtime-native kind — the
+   * runtime is the OAuth client or credential holder — or the id of a
+   * registered brokered provider.
    *
+   * Runtime-native ({@link RUNTIME_NATIVE_AUTH_KINDS}):
    * - `dcr`: dynamic client registration (RFC 7591). Provider issues
    *   a client at first use; no operator setup.
    * - `static`: pre-registered OAuth client. Operator provides
    *   `clientId` + `clientSecret` from the vendor's developer portal.
-   * - `composio`: Composio aggregator holds the vendor's tokens.
-   *   Platform persists only an opaque `connectedAccountId` per
-   *   workspace. Required: the `composio` block below.
-   * - `smithery`: Smithery brokers the connection and hosts the MCP
-   *   session. Platform persists only the derived connection id.
-   *   Required: the `smithery` block below.
    * - `provider`: a platform-managed connector whose credential is produced
    *   server-side by a named credential provider (no user/operator OAuth, no
    *   per-user secret). Required: the `providerAuth` block below.
+   *
+   * Anything else names a **brokered** provider (`composio`, `smithery`) — a
+   * third party that holds the upstream credential and hosts the MCP session.
+   * It is validated against the registered providers when the install runs, not
+   * against a literal union here: a deployment that has not configured a
+   * broker still shows its connectors in Browse and refuses at install, rather
+   * than having them vanish depending on deploy config.
+   *
+   * **A brokered entry carries its provider's config block under the key
+   * naming that provider** — `composio:` / `smithery:` below. That convention
+   * is what lets the install path hand a provider its own coordinates without
+   * knowing what they are; the two typed blocks are documentation of the shapes
+   * we ship, not an enumeration the runtime enforces.
    */
-  auth?: "dcr" | "static" | "composio" | "smithery" | "provider";
+  auth?: ConnectorAuthKind;
   /** Required for `auth: "static"`: where the operator creates the OAuth app. */
   operatorSetup?: {
     portalUrl: string;
@@ -199,7 +216,7 @@ export interface NimbleBrainConnectorMeta {
     clientSecretKey: string;
   };
   /**
-   * Required for `auth: "composio"`. See {@link ComposioConnectorConfig}
+   * Composio's block, for `auth: "composio"`. See {@link ComposioConnectorConfig}
    * for the full shape (toolkit, tools, authScheme, fields).
    *
    * The MCP URL and headers are obtained from Composio's session API at
@@ -208,7 +225,7 @@ export interface NimbleBrainConnectorMeta {
    */
   composio?: ComposioConnectorConfig;
   /**
-   * Required for `auth: "smithery"`. See {@link SmitheryConnectorConfig}.
+   * Smithery's block, for `auth: "smithery"`. See {@link SmitheryConnectorConfig}.
    *
    * The MCP URL and headers come from Smithery's Connect API at install time —
    * operators name the registry server, not an endpoint.
@@ -221,6 +238,25 @@ export interface NimbleBrainConnectorMeta {
    * `transport.auth`. NEVER derived from tenant input.
    */
   providerAuth?: { provider: string; config: Record<string, unknown> };
+  /**
+   * Secrets the WORKSPACE owns, bound to outgoing request headers — a customer's
+   * own database URL, an API key the customer holds. Each value is a
+   * {@link CredentialRef} into that workspace's credential store, so one catalog
+   * entry installs into two workspaces and each sends its own value, and rotation
+   * is a `put` on the key rather than a catalog change.
+   *
+   * Only references are accepted, never a literal: a catalog file is operator-
+   * authored configuration in git, and a secret written there is exactly the copy
+   * the credential store exists to prevent.
+   *
+   * This is NOT how the connection authenticates — `providerAuth` is. A fleet
+   * entry keeps `provider: "minted"` (the identity the edge verifies) and carries
+   * the customer's secret here, because the two answer different questions: who
+   * is calling, and what that caller may open. Copied verbatim from the trusted
+   * catalog entry into the BundleRef's `transport.headers`, where the transport
+   * resolves each reference per connection at the connection's workspace scope.
+   */
+  secretHeaders?: Record<string, CredentialRef>;
   /** Optional OAuth scopes the bundle requests. */
   requiredScopes?: string[];
   /** Optional extra authorize-URL params (e.g. Google's access_type=offline). */

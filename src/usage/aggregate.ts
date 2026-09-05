@@ -4,7 +4,7 @@
  * Source of truth: the durable usage ledger (`src/usage/ledger.ts`), one line
  * per priced LLM call. It used to be `llm.response` events scanned out of
  * conversation JSONL files, which made usage a function of whether a
- * conversation file happened to exist — so task runs, delegated sub-agents, the
+ * conversation file happened to exist — so task runs, sub-agent runs, the
  * background briefing and archived workspaces all spent money this never saw.
  *
  * **There is exactly one reader, deliberately.** The codebase previously had
@@ -88,6 +88,21 @@ export interface ModelUsage {
   cacheHitRate?: number;
 }
 
+/**
+ * How much of a dimension's breakdown was returned, when the cap bound.
+ *
+ * Present per dimension only when rows were dropped, so its absence means the
+ * breakdown is complete. `totals` is unaffected either way — it is accumulated
+ * from every record, not from these rows — so this reports a narrower VIEW,
+ * never missing spend.
+ */
+export interface BreakdownTruncation {
+  /** Rows in the response: the {@link MAX_BREAKDOWN_ROWS} costliest. */
+  returned: number;
+  /** Rows the dimension has in full. */
+  total: number;
+}
+
 export interface BreakdownEntry {
   key: string;
   tokens: TokenBreakdown;
@@ -136,6 +151,13 @@ export interface UsageReport {
   models: ModelUsage[];
   breakdown: BreakdownEntry[];
   breakdowns: Partial<Record<UsageGroupBy, BreakdownEntry[]>>;
+  /**
+   * Dimensions whose breakdown hit {@link MAX_BREAKDOWN_ROWS}. Absent when
+   * every breakdown is complete, so a consumer that ignores it still reads a
+   * complete report correctly and a partial one is never silently mistaken for
+   * the whole set.
+   */
+  truncatedBreakdowns?: Partial<Record<UsageGroupBy, BreakdownTruncation>>;
 }
 
 interface BreakdownAccumulator {
@@ -253,12 +275,54 @@ function normalizeGroupBys(groupBy: string | string[]): UsageGroupBy[] {
   return [...new Set(valid.length > 0 ? valid : fallback)];
 }
 
+// ── Legacy `sessionId` normalization ─────────────────────────────────────
+//
+// Records written before the id split carry one `sessionId` holding either a
+// conversation or an automation run, told apart by `origin`. Records written
+// since carry `conversationId` / `taskRunId` under their own names. Both shapes
+// are in the retention window at once, so every read goes through these two
+// helpers rather than touching either field directly.
+//
+// These are the whole compatibility surface, and they expire: when the oldest
+// retained month postdates the split (see `retentionMonths`, default 24), no
+// record on disk has `sessionId` and both `?? legacy` arms become dead code.
+
+/** The chat conversation a record belongs to, new shape or old. */
+function conversationOf(record: LlmCallRecord): string | undefined {
+  if (record.conversationId) return record.conversationId;
+  // Legacy: `sessionId` was a conversation only when the call was not a task.
+  return record.origin === "task" ? undefined : record.sessionId;
+}
+
+/** The automation run a record belongs to, new shape or old. */
+function taskRunOf(record: LlmCallRecord): string | undefined {
+  if (record.taskRunId) return record.taskRunId;
+  // Legacy: `sessionId` was an automation run only when the call was a task.
+  return record.origin === "task" ? record.sessionId : undefined;
+}
+
 function groupKeyFor(record: LlmCallRecord, groupBy: UsageGroupBy, modelKey: string): string {
   switch (groupBy) {
     case "model":
       return modelKey;
     case "conversation":
-      return record.sessionId ?? "unknown";
+      // A task run has no conversation, so it groups under "none" rather than
+      // contributing its run id to a conversation breakdown — which is what the
+      // undiscriminated `sessionId` read did, putting `run_…` rows in a
+      // dimension the schema calls "conversation".
+      return conversationOf(record) ?? "none";
+    case "turn":
+      // One assistant turn, which is one engine run.
+      //
+      // Legacy: a record written while a turn could spawn a sub-agent carries
+      // the spawning turn's id in `parentRunId` and the sub-agent's own in
+      // `runId`. Preferring `parentRunId` rolls those rows onto the turn that
+      // spawned them rather than billing one turn as several.
+      //
+      // The forked fast-slot calls (title, compaction, briefing) carry no
+      // engine run at all, and neither do records predating `runId`; both
+      // group under "none".
+      return record.parentRunId ?? record.runId ?? "none";
     case "user":
       return record.userId ?? "unknown";
     case "origin":
@@ -299,10 +363,51 @@ function emptyBreakdownEntry(key: string): BreakdownEntry {
   };
 }
 
+/**
+ * Most rows any one breakdown returns.
+ *
+ * Sized so a full report stays a few hundred KB rather than tens of MB: at the
+ * ~0.85 KB a row serializes to, this is ~210 KB. Every low-cardinality
+ * dimension (`user`, `model`, `origin`, `provider`) sits far below it and is
+ * unaffected; it binds only on the id-keyed ones.
+ */
+export const MAX_BREAKDOWN_ROWS = 250;
+
+/**
+ * Widest window, in days, that `day` grouping will zero-fill.
+ *
+ * A year of daily points is already more than a chart reads; past that the
+ * empty days are noise, and the row count stops being a property of the data
+ * and becomes one of whatever `from` the caller sent.
+ */
+export const MAX_ZERO_FILL_DAYS = 366;
+
+/**
+ * Inclusive day count of a resolved range.
+ *
+ * An endpoint that will not parse counts as infinitely wide, so a caller who
+ * sends one gets the fill skipped rather than attempted. `from` and `to` are
+ * unvalidated strings off the wire and this is the only thing standing between
+ * one of them and a fill loop, so it fails closed: the safe answer to "how wide
+ * is this window" when the window is unreadable is "too wide".
+ *
+ * Nothing downstream depends on that today — the fill loop parses the same
+ * string, so an unreadable endpoint stops it immediately, and the range filter
+ * upstream has already dropped every record, leaving the whole report empty.
+ * That makes the disposition unobservable through `aggregateUsage` and untested
+ * on purpose. It is here so the guard's correctness is a property of the guard
+ * rather than a coincidence of how two other call sites happen to fail.
+ */
+function rangeDays(range: { from: string; to: string }): number {
+  const from = Date.parse(`${range.from}T00:00:00Z`);
+  const to = Date.parse(`${range.to}T00:00:00Z`);
+  if (Number.isNaN(from) || Number.isNaN(to)) return Number.POSITIVE_INFINITY;
+  return Math.floor((to - from) / 86_400_000) + 1;
+}
+
 function finalizeBreakdown(
   map: Map<string, BreakdownAccumulator>,
   groupBy: UsageGroupBy,
-  period: string,
   range: { from: string; to: string },
 ): BreakdownEntry[] {
   const breakdown: BreakdownEntry[] = [...map.entries()]
@@ -318,10 +423,52 @@ function finalizeBreakdown(
     }))
     .sort((a, b) => a.key.localeCompare(b.key));
 
-  // For day grouping over a bounded period, zero-fill missing days so the
-  // chart and table show the full window rather than only days with activity.
-  // Skipped for `all` — the range can span years and noise outweighs signal.
-  if (groupBy !== "day" || period === "all") return breakdown;
+  // Cap the rows. `conversation` and `turn` are keyed on ids the ledger mints
+  // per thread and per turn, so their cardinality grows with every turn the
+  // tenant ever takes — over the retention window that is tens of thousands of
+  // rows, and the whole report is serialized twice (the text the model reads
+  // and the structured copy) before anything trims it. The engine bounds what
+  // reaches the MODEL at `MAX_TOOL_RESULT_CHARS`, but the full string is built
+  // in the process first and the unbounded copy is what gets persisted to the
+  // conversation record, so the ceiling has to be here rather than downstream.
+  //
+  // Top-N by cost, because the question a breakdown answers is where the money
+  // went; the rows dropped are the cheapest ones. `totals` is accumulated from
+  // every record independently of this, so capping loses no spend from the
+  // report — only rows from one view of it, and `truncatedBreakdowns` says so.
+  //
+  // `day` is exempt because it is zero-filled below to a contiguous series that
+  // a capped set would put holes in. Its own ceiling is the zero-fill guard,
+  // which stops filling once the window is too wide to be a chart — without
+  // that, `day` is the one dimension whose row count follows the requested
+  // RANGE rather than anything the tenant did.
+  if (groupBy !== "day" && breakdown.length > MAX_BREAKDOWN_ROWS) {
+    return [...breakdown]
+      .sort((a, b) => b.cost.total - a.cost.total)
+      .slice(0, MAX_BREAKDOWN_ROWS)
+      .sort((a, b) => a.key.localeCompare(b.key));
+  }
+
+  // For day grouping over a window narrow enough to read, zero-fill missing
+  // days so the chart and table show the whole window rather than only the days
+  // with activity.
+  //
+  // The guard is on the RANGE, not on how the range was asked for. `period` is
+  // not the only thing that sets it: `from` overrides the period entirely
+  // (`resolveDateRange`) and is an unvalidated string off the wire, so a
+  // `from` predating the ledger walks one row per calendar day from then to
+  // today — tens of thousands of rows from a single stored record, serialized
+  // in full and persisted unbounded to the conversation record. Testing
+  // `period === "all"` only caught the one spelling of a wide window that goes
+  // through `period`, which is why this is a width test: it subsumes `all`
+  // (2020-01-01 to today is far past the ceiling) and covers every other way a
+  // caller can ask for one.
+  //
+  // Skipping the fill is not truncation — every day with activity is still
+  // returned, so nothing is dropped and there is nothing to report. What is
+  // lost is the empty days, which is exactly the noise the window was too wide
+  // to be showing.
+  if (groupBy !== "day" || rangeDays(range) > MAX_ZERO_FILL_DAYS) return breakdown;
 
   const byKey = new Map(breakdown.map((e) => [e.key, e]));
   const filled: BreakdownEntry[] = [];
@@ -488,14 +635,12 @@ function accumulateRecord(record: LlmCallRecord, sink: AggregationSink): void {
   addTokens(sink.totals.tokens, tokens);
   addCost(sink.totals.cost, cost);
   sink.totals.llmMs += record.llmMs;
-  // A task run stamps its run id into `sessionId`, so the two counts have to be
-  // split by origin or an automation would be reported as a conversation. This
-  // is what `origin` and `delegated` being orthogonal buys: a delegated call
-  // inside an automation is `task`, so it counts toward the run that spawned it.
-  if (record.sessionId) {
-    if (record.origin === "task") sink.runIds.add(record.sessionId);
-    else sink.conversationIds.add(record.sessionId);
-  }
+  // `conversationOf` / `taskRunOf` decide which of the two a record belongs to,
+  // so an automation is never counted as a conversation.
+  const conversationId = conversationOf(record);
+  const taskRunId = taskRunOf(record);
+  if (conversationId) sink.conversationIds.add(conversationId);
+  if (taskRunId) sink.runIds.add(taskRunId);
   // Unpriced is not free. A line the catalog cannot price contributes tokens
   // and zero dollars, and this is the count that says the dollar figure is
   // incomplete rather than the spend being zero.
@@ -516,13 +661,10 @@ function accumulateRecord(record: LlmCallRecord, sink: AggregationSink): void {
     addTokens(bucket.tokens, tokens);
     addCost(bucket.cost, cost);
     bucket.llmCalls++;
-    // Same split as `totals`, for the same reason: a task run stamps its run id
-    // into `sessionId`, so folding the two here would report an automation as a
-    // conversation in every breakdown row while the totals said otherwise.
-    if (record.sessionId) {
-      if (record.origin === "task") bucket.runIds.add(record.sessionId);
-      else bucket.sids.add(record.sessionId);
-    }
+    // Same split as `totals`, through the same two helpers, so a breakdown row
+    // cannot report an automation as a conversation while the totals disagree.
+    if (conversationId) bucket.sids.add(conversationId);
+    if (taskRunId) bucket.runIds.add(taskRunId);
     if (!priced) bucket.unpricedCalls++;
   }
 }
@@ -582,10 +724,29 @@ export async function aggregateUsage(
     })
     .sort((a, b) => b.cost.total - a.cost.total);
   const breakdowns: Partial<Record<UsageGroupBy, BreakdownEntry[]>> = {};
+  const truncatedBreakdowns: Partial<Record<UsageGroupBy, BreakdownTruncation>> = {};
   for (const [dimension, map] of sink.breakdownMaps) {
-    breakdowns[dimension] = finalizeBreakdown(map, dimension, period, range);
+    const rows = finalizeBreakdown(map, dimension, range);
+    breakdowns[dimension] = rows;
+    // `map.size` is the pre-cap key count. Compared only off `day`, whose row
+    // count can exceed it by design once the zero-fill has run.
+    if (dimension !== "day" && map.size > rows.length) {
+      truncatedBreakdowns[dimension] = { returned: rows.length, total: map.size };
+    }
   }
   const breakdown = breakdowns[groupBys[0]!] ?? [];
 
-  return { period: range, totals, models, breakdown, breakdowns };
+  return {
+    period: range,
+    totals,
+    // Before the rows, deliberately. The report is serialized in key order and
+    // the engine head-truncates what the model sees at `MAX_TOOL_RESULT_CHARS`;
+    // emitted after a capped breakdown this lands tens of thousands of
+    // characters past the cut, so the one consumer that needs to know the rows
+    // are partial is the one consumer that would never see it.
+    ...(Object.keys(truncatedBreakdowns).length > 0 ? { truncatedBreakdowns } : {}),
+    models,
+    breakdown,
+    breakdowns,
+  };
 }

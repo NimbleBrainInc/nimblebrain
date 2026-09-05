@@ -1,24 +1,12 @@
 import type { EngineHooks, EventSink, ToolCall } from "../engine/types.ts";
 import type { ResolvedFeatures } from "./features.ts";
 
-/** Field descriptor from a bundle's user_config manifest section. */
-export interface ConfigField {
-  key: string;
-  title?: string;
-  description?: string;
-  sensitive?: boolean;
-  required?: boolean;
-}
-
-/** Gate for confirming privileged tool calls and prompting for config values. */
+/** Gate for confirming privileged tool calls. */
 export interface ConfirmationGate {
   readonly supportsInteraction: boolean;
 
   /** Returns true if user approves, false to deny. */
   confirm(description: string, details: Record<string, unknown>): Promise<boolean>;
-
-  /** Prompt for a bundle config value — masked if sensitive, saved via ConfigManager. */
-  promptConfigValue(field: ConfigField): Promise<string | null>;
 }
 
 /**
@@ -63,8 +51,16 @@ const PRIVILEGE_CANDIDATES: PrivilegeEntry[] = [
 
 /**
  * Build the set of privileged tool entries, only including those whose
- * feature is enabled. Disabled features mean the tool doesn't exist —
- * no need to gate it.
+ * feature is enabled. A disabled feature means the tool does not exist, so
+ * there is nothing left to confirm.
+ *
+ * That premise is enforced elsewhere and is load-bearing HERE: skipping the
+ * confirmation for a tool that is still callable would drop the prompt and
+ * leave the call. It holds because a feature-disabled tool is never built into
+ * its source — `createSkillsSource` (`src/tools/platform/skills.ts`) and
+ * `createSystemTools` (`src/tools/system-tools.ts`) both filter on
+ * `isToolEnabled` at construction. Anything that starts constructing a
+ * feature-gated tool unconditionally has to gate it here too.
  */
 function buildPrivilegedTools(features?: ResolvedFeatures): Map<string, PrivilegeEntry> {
   const candidates = features
@@ -108,8 +104,5 @@ export class NoopConfirmationGate implements ConfirmationGate {
   readonly supportsInteraction = false;
   async confirm(): Promise<boolean> {
     return true;
-  }
-  async promptConfigValue(): Promise<string | null> {
-    return null;
   }
 }

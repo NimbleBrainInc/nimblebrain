@@ -7,20 +7,24 @@
  */
 
 import { join } from "node:path";
-import { bundleHasStaticAuth } from "../bundles/bundle-auth.ts";
-import { hasPersistedComposioConnection } from "../bundles/composio-connection.ts";
+import { brokeredConnectionPresent, bundleHasStaticAuth } from "../bundles/bundle-auth.ts";
 import { assertBundleRefIsPostStage2 } from "../bundles/lifecycle.ts";
-import { hasPersistedWorkspaceOAuthTokens } from "../bundles/oauth-tokens.ts";
 import { resolveBundleDataDirForRef, serverNameFromRef } from "../bundles/paths.ts";
 import { setPendingAuth } from "../bundles/pending-auth-buffer.ts";
 import type { BundleMcpDeps } from "../bundles/startup.ts";
 import { startBundleSource } from "../bundles/startup.ts";
 import type { BundleRef, LocalBundleMeta } from "../bundles/types.ts";
+import {
+  type ManagedConnectorRegistry,
+  managedConnectorRegistryOf,
+} from "../connectors/providers/registry.ts";
 import type { EventSink } from "../engine/types.ts";
 import { log } from "../observability/log.ts";
+import { hasMcpOAuthTokens } from "../tools/mcp-oauth-records.ts";
 import { ToolRegistry } from "../tools/registry.ts";
 import type { ToolSource } from "../tools/types.ts";
 import { mapWithConcurrency } from "../util/concurrency.ts";
+import { isHttpUrl } from "../util/url.ts";
 import type { Workspace } from "../workspace/types.ts";
 import type { WorkspaceStore } from "../workspace/workspace-store.ts";
 
@@ -55,17 +59,28 @@ export interface ProcessInventoryEntry {
 // ---------------------------------------------------------------------------
 
 /**
+ * Name an unusable `bundles[]` row for an operator, without assuming its shape.
+ * A legacy row carries `name:` or `path:` where `url` should be; a malformed
+ * one carries neither.
+ */
+function describeUnusableRef(ref: BundleRef): string {
+  const legacy = ref as unknown as { name?: unknown; path?: unknown };
+  if (typeof legacy.name === "string") return `legacy name: "${legacy.name}"`;
+  if (typeof legacy.path === "string") return `legacy path: "${legacy.path}"`;
+  if (typeof ref.url === "string") return `unusable url: ${JSON.stringify(ref.url)}`;
+  return `no url and no legacy key (keys: ${Object.keys(ref).join(", ") || "none"})`;
+}
+
+/**
  * Build a flat process inventory from a list of workspaces.
  *
- * For each workspace, iterates its declared bundles and produces one
- * ProcessInventoryEntry per (workspace, bundle) pair. The `dataDir`
- * is workspace-scoped via `resolveBundleDataDirForRef` (which keys the
- * slug on `manifest.name`, reading it from disk for path bundles).
+ * For each workspace, iterates its declared connectors and produces one
+ * ProcessInventoryEntry per (workspace, connector) pair. The `dataDir` is
+ * workspace-scoped via `resolveBundleDataDirForRef`.
  */
 export function buildProcessInventory(
   workspaces: Workspace[],
   workDir: string,
-  configDir?: string,
 ): ProcessInventoryEntry[] {
   const entries: ProcessInventoryEntry[] = [];
 
@@ -76,11 +91,25 @@ export function buildProcessInventory(
       // `bun run migrate:user-creds` before deploying Stage 2 — see
       // the Stage 2 deploy runbook.
       assertBundleRefIsPostStage2(bundle);
+      // A row this build can neither name nor reach is skipped, not thrown on.
+      // Boot reads every workspace's `bundles[]` in one pass before any
+      // per-entry containment, so throwing here takes the whole instance down
+      // over one bad row — a legacy `name:`/`path:` entry that predates the
+      // URL-only ref, or a url that is blank or unparseable. Dropping just
+      // that entry is what makes the documented per-entry break ("that entry
+      // no longer starts") true, and the warn names the row so it can be
+      // fixed. `serverNameFromRef` is the single predicate: it returns null on
+      // exactly the rows nothing downstream could have used.
       const serverName = serverNameFromRef(bundle);
-      // Slug is keyed on `manifest.name` (read here for path bundles) so the
-      // launch-path data dir and the seedInstance / briefing reader-path
-      // data dir cannot disagree.
-      const dataDir = resolveBundleDataDirForRef(workDir, ws.id, bundle, configDir);
+      if (serverName === null || !isHttpUrl(bundle.url)) {
+        log.warn(
+          `[bundles] ${ws.id}: skipping a connector entry with no reachable url — ` +
+            `${describeUnusableRef(bundle)}. A connector is addressed by URL; ` +
+            "re-install it from the catalog against the server's endpoint.",
+        );
+        continue;
+      }
+      const dataDir = resolveBundleDataDirForRef(workDir, ws.id, bundle);
 
       entries.push({
         wsId: ws.id,
@@ -130,31 +159,29 @@ export function createWorkspaceRegistry(
 // ---------------------------------------------------------------------------
 
 /** URL bundle variant of `BundleRef` (the remote-connector shape). */
-type UrlBundleRef = Extract<BundleRef, { url: string }>;
+type UrlBundleRef = BundleRef;
 
 /**
  * Whether a boot-time URL bundle already has credentials to auto-start with.
  *
- * Composio bundles carry static auth but STILL need a per-user connect, so they
- * route to the composio probe (checked FIRST — they're also static-auth by
- * transport, but must not skip the connect gate). Other static-auth sources
- * (provider / bearer / header) carry their own credential and mint/present on
- * demand — boot-start them. Only OAuth bundles gate on persisted tokens.
+ * A brokered bundle carries static auth but may STILL need a per-owner connect,
+ * so its provider is asked FIRST — it is static-auth by transport, but must not
+ * skip the connect gate. Other static-auth sources (provider / bearer / header)
+ * carry their own credential and mint/present on demand — boot-start them. Only
+ * OAuth bundles gate on persisted tokens.
  */
-function urlBundleHasBootAuth(
+async function urlBundleHasBootAuth(
+  managedConnectors: ManagedConnectorRegistry,
   bundle: UrlBundleRef,
   wsId: string,
   serverName: string,
   workDir: string,
-): boolean {
-  if (bundle.composio) {
-    return hasPersistedComposioConnection(
-      workDir,
-      { type: "workspace", wsId },
-      bundle.composio.connectorId,
-    );
-  }
-  return bundleHasStaticAuth(bundle) || hasPersistedWorkspaceOAuthTokens(workDir, wsId, serverName);
+): Promise<boolean> {
+  return (
+    brokeredConnectionPresent(managedConnectors, bundle, wsId, workDir) ??
+    (bundleHasStaticAuth(bundle) ||
+      (await hasMcpOAuthTokens(workDir, { type: "workspace", wsId }, serverName)))
+  );
 }
 
 /**
@@ -184,7 +211,6 @@ function unstartedUrlBundleEntry(
       version: "remote",
       ui: bundle.ui ?? null,
       briefing: null,
-      type: "plain" as const,
     },
     ...(startError ? { startError } : {}),
   };
@@ -210,7 +236,6 @@ export async function startWorkspaceBundles(
   // can emit `tool.progress` events that reach the SSE broadcast layer.
   // Pass `new NoopEventSink()` only if intentionally discarding events.
   eventSink: EventSink,
-  configDir: string | undefined,
   opts?: {
     allowInsecureRemotes?: boolean;
     workDir?: string;
@@ -233,11 +258,18 @@ export async function startWorkspaceBundles(
      * `recordConnectionStateChange(... "reauth_required")`.
      */
     onAuthLost?: (wsId: string, serverName: string) => void;
+    /**
+     * The configured brokered providers. A brokered bundle's boot readiness is
+     * its provider's to answer (`hasConnection`); with none passed, every
+     * bundle falls back to the generic static-auth / persisted-token check.
+     */
+    managedConnectors?: ManagedConnectorRegistry;
   },
 ): Promise<{ registries: Map<string, ToolRegistry>; entries: ProcessInventoryEntry[] }> {
   const workDir = opts?.workDir ?? join(process.env.NB_WORK_DIR ?? "", ".nimblebrain");
+  const managedConnectors = opts?.managedConnectors ?? managedConnectorRegistryOf([]);
   const workspaces = await workspaceStore.list();
-  const inventory = buildProcessInventory(workspaces, workDir, configDir);
+  const inventory = buildProcessInventory(workspaces, workDir);
 
   // Group inventory by workspace
   const byWorkspace = new Map<string, ProcessInventoryEntry[]>();
@@ -290,17 +322,21 @@ export async function startWorkspaceBundles(
     // authenticated yet. `seedInstance` consults the same token check to
     // set state.
     //
-    // Composio-backed bundles use a parallel credential namespace
-    // (`credentials/composio/<connectorId>/connection.json`) so the
-    // probe has to read the right artifact — mirrors the discriminator
-    // in `lifecycle.seedInstance`.
+    // A brokered bundle's readiness is its provider's answer, not a token file
+    // — mirrors the discriminator in `lifecycle.seedUrlConnectionState`, which
+    // consumes the same predicate.
     //
     // Stage 2: every URL bundle is workspace-scoped (the legacy
     // `oauthScope: "user"` literal was deleted). Personal connectors
     // bind to the owning user's personal workspace at install time.
     if (
-      "url" in entry.bundle &&
-      !urlBundleHasBootAuth(entry.bundle, entry.wsId, entry.serverName, workDir)
+      !(await urlBundleHasBootAuth(
+        managedConnectors,
+        entry.bundle,
+        entry.wsId,
+        entry.serverName,
+        workDir,
+      ))
     ) {
       log.info(
         `[bundles] Skipping boot start for URL bundle "${entry.serverName}" — no tokens yet (state: not_authenticated)`,
@@ -310,12 +346,8 @@ export async function startWorkspaceBundles(
     }
 
     try {
-      const result = await startBundleSource(entry.bundle, wsRegistry, eventSink, configDir, {
+      const result = await startBundleSource(entry.bundle, wsRegistry, eventSink, {
         allowInsecureRemotes: opts?.allowInsecureRemotes,
-        dataDir: entry.dataDir,
-        // Thread workspace id + work dir so the named-bundle path can
-        // resolve `user_config` from the workspace credential store before
-        // prepareServer validates it.
         wsId: entry.wsId,
         workDir,
         // URL bundles that hit interactive OAuth fire this BEFORE
@@ -326,7 +358,7 @@ export async function startWorkspaceBundles(
         // Connection in `pending_auth`. Without this, the pending_auth
         // signal would be silently dropped and the UI banner would
         // never appear for boot-time bundles.
-        onInteractiveAuthRequired: (authorizationUrl) => {
+        onInteractiveAuthRequired: (authorizationUrl: string) => {
           setPendingAuth(entry.wsId, entry.serverName, authorizationUrl);
         },
         // Mid-session auth loss fires post-boot (a tool call), so the

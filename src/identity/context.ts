@@ -17,11 +17,14 @@ import { join } from "node:path";
  * identity, which is the actual scope of the data.
  *
  * What this does NOT own:
- *   - **Credentials.** Per Stage 2, a user's personal credentials live in
- *     their personal workspace (`ws_user_<userId>/credentials/...`), reached
- *     through that workspace's `WorkspaceContext` — not here. Keeping
- *     credentials out of the identity context preserves the single
- *     credential-path convention `check:credential-paths` enforces.
+ *   - **Credential access.** A workspace-shared connector's credentials live
+ *     under that workspace (`workspaces/<wsId>/credentials/...`), reached
+ *     through its `WorkspaceContext`. An identity-owned credential — a personal
+ *     connector's OAuth records, and the `user` scope of the credential store —
+ *     hangs under this context's root, but the store is the only thing that
+ *     builds those paths, so there is no credential accessor here. That is what
+ *     keeps the single credential-path convention `check:credential-paths`
+ *     enforces from acquiring a second entry point.
  *   - **Conversations.** Conversations are top-level + ownership-authorized
  *     (`{workDir}/conversations/{convId}.jsonl`, `ownerId === userId`), not
  *     under a per-user directory. Reach them via `runtime.findConversation`,
@@ -103,7 +106,7 @@ export class IdentityContext {
     }
     // A userId is a single path segment, never a sub-path — reject `/`
     // outright (the segment validator tolerates `/` for convenience
-    // subpaths like `mcp-oauth/google`, which is wrong for an id).
+    // subpaths like `data/google`, which is wrong for an id).
     if (opts.userId.includes("/")) {
       throw new Error(`[identity-context] userId must not contain "/": "${opts.userId}"`);
     }

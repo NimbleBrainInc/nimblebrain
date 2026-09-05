@@ -40,6 +40,8 @@
  *   - `mcp` — McpSource construction, dispatch decisions (task-augmented vs inline)
  *   - `sse` — Runtime event sink → SSE broadcast (tool.progress, data.changed)
  *   - `auth` — identity-provider verify rejections (routine reasons: no_token, token_expired)
+ *   - `notify` — notification envelopes, outbox declarations and poll results
+ *     dropped at parse, and sweeps the poller skipped
  *
  * Keep this list in sync with the CLAUDE.md "Debug Logging" section so it's
  * discoverable without reading source.

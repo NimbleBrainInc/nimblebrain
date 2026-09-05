@@ -5,12 +5,10 @@ import {
   type InstalledConnector,
   uninstallConnector,
 } from "../../api/client";
-import { BundleCredentialsModal } from "../../components/connectors/BundleCredentialsModal";
 import { ConnectorStatusHero } from "../../components/connectors/ConnectorStatusHero";
 import { OAuthConnectionSection } from "../../components/connectors/OAuthConnectionSection";
 import { OperatorOAuthSection } from "../../components/connectors/OperatorOAuthSection";
 import { ToolPermissionsTable } from "../../components/connectors/ToolPermissionsTable";
-import { Button } from "../../components/ui/button";
 import { useCanWriteActiveWorkspace } from "../../hooks/useScopedRole";
 
 /**
@@ -23,11 +21,8 @@ import { useCanWriteActiveWorkspace } from "../../hooks/useScopedRole";
  *     fades to just the title block when ready.
  *
  *   - The action bar (top-right) groups secondary management
- *     affordances: Docs, Configure (when stdio bundle has a
- *     `user_config` schema and status is ready — the hero owns
- *     `needs_setup`), and Uninstall. Putting Configure here instead
- *     of as another inline section keeps the page body focused on
- *     status + connection state + tool permissions, with all
+ *     affordances: Docs and Uninstall, keeping the page body focused
+ *     on status + connection state + tool permissions with all
  *     "manage this connector" entry points in one consistent place.
  *
  *   - Tool permissions render inline as the page's primary content
@@ -47,7 +42,6 @@ export function ConnectorDetailPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [acting, setActing] = useState<string | null>(null);
-  const [configureModalOpen, setConfigureModalOpen] = useState(false);
   // Two-step uninstall: first click arms the button (label changes
   // to "Click again to confirm"), second click runs. Replaces
   // window.confirm() — that gets suppressed by browsers after a
@@ -117,18 +111,6 @@ export function ConnectorDetailPage() {
 
   const cat = installed.catalog;
 
-  // Header-level Configure affordance. Visible when:
-  //   - the user can manage this connector
-  //   - the bundle declares a user_config schema (anything to set)
-  //   - the status isn't `needs_setup` — when it is, the hero owns
-  //     the primary CTA and a duplicate header button would
-  //     double-count the prompt
-  const showHeaderConfigure =
-    canManage &&
-    !!installed.userConfig &&
-    Object.keys(installed.userConfig.schema).length > 0 &&
-    installed.status !== "needs_setup";
-
   return (
     <div className="max-w-3xl mx-auto space-y-8">
       {/* Action bar — back link on the left, secondary management
@@ -147,16 +129,6 @@ export function ConnectorDetailPage() {
             >
               Docs ↗
             </a>
-          )}
-          {showHeaderConfigure && (
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => setConfigureModalOpen(true)}
-            >
-              Configure
-            </Button>
           )}
           {canManage && (
             <button
@@ -185,26 +157,12 @@ export function ConnectorDetailPage() {
 
       {error && <p className="text-xs text-destructive">{error}</p>}
 
-      {/* Settings surfaces. Each renders only when its content is
-          present. Bundle config is no longer a section — the
-          Configure button in the header above opens the same modal. */}
+      {/* Settings surfaces. Each renders only when its content is present. */}
       <div className="space-y-6">
         <OAuthConnectionSection installed={installed} canManage={canManage} onChanged={refresh} />
         <OperatorOAuthSection installed={installed} canManage={canManage} onChanged={refresh} />
         <ToolPermissionsTable serverName={installed.serverName} canManage={canManage} />
       </div>
-
-      {configureModalOpen && (
-        <BundleCredentialsModal
-          installed={installed}
-          open={configureModalOpen}
-          onClose={() => setConfigureModalOpen(false)}
-          onSaved={() => {
-            setConfigureModalOpen(false);
-            refresh();
-          }}
-        />
-      )}
     </div>
   );
 }

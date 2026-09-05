@@ -88,12 +88,12 @@ async function click(el: HTMLElement): Promise<void> {
 const ONE: SkillsLoadedContext = {
   skills: [
     {
-      id: "skills/mpak-guide.md",
-      name: "mpak-guide",
+      id: "skills/docs-guide.md",
+      name: "docs-guide",
       scope: "workspace",
       tokens: 1200,
       loadedBy: "tool_affinity",
-      reason: "tool-affinity matched mpak__*",
+      reason: "tool-affinity matched docs__*",
     },
   ],
   totalTokens: 1200,
@@ -130,9 +130,9 @@ describe("LedgerLine", () => {
     mounted = await mount(ONE);
     const head = mounted.head();
     expect(head.getAttribute("aria-expanded")).toBe("false");
-    expect(head.textContent).toContain("Using mpak-guide");
+    expect(head.textContent).toContain("Using docs-guide");
     // The `tool-affinity ` mechanism prefix is stripped for the compact head.
-    expect(head.textContent).toContain("matched mpak__*");
+    expect(head.textContent).toContain("matched docs__*");
     expect(head.textContent).not.toContain("tool-affinity matched");
     // No drawer until expanded.
     expect(byClass(mounted.container, "disclosure__body")).toHaveLength(0);
@@ -171,10 +171,10 @@ describe("LedgerLine", () => {
     expect(rows).toHaveLength(2);
 
     // Row 1: a filesystem skill names its tier, verbatim reason kept in title.
-    expect(first(rows[0]!, "ledger-line__row-name")?.textContent).toBe("mpak-guide");
+    expect(first(rows[0]!, "ledger-line__row-name")?.textContent).toBe("docs-guide");
     expect(first(rows[0]!, "ledger-scope--workspace")?.textContent).toBe("workspace");
     expect(first(rows[0]!, "ledger-line__row-detail")?.getAttribute("title")).toBe(
-      "tool-affinity matched mpak__*",
+      "tool-affinity matched docs__*",
     );
     expect(first(rows[0]!, "ledger-line__row-tok")?.textContent).toBe("1.2k tok");
 

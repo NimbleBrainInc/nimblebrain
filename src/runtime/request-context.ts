@@ -1,7 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { ToolPromotionControls } from "../engine/types.ts";
 import type { UserIdentity } from "../identity/provider.ts";
-import type { AgentProfile, ModelSlots } from "./types.ts";
+import type { ModelSlots } from "./types.ts";
 
 /**
  * Per-request context threaded through AsyncLocalStorage.
@@ -38,21 +38,42 @@ export interface RequestContext {
    */
   workspaceId?: string;
   /**
-   * Agent profiles and model-slot overrides from `workspaceId`'s config,
-   * pre-loaded because the resolvers that read them (`agents` getter,
-   * `getModelSlots`) are synchronous and cannot await a workspace load.
+   * Model-slot overrides from `workspaceId`'s config, pre-loaded because the
+   * resolver that reads them (`getModelSlots`) is synchronous and cannot await
+   * a workspace load.
    */
-  workspaceAgents?: Record<string, AgentProfile> | null;
   workspaceModelOverride?: Partial<ModelSlots> | null;
   /**
    * Active conversation id when this context was created inside `runtime.chat()`.
-   * Tools that ask "what's happening in the current conversation" (e.g.
-   * `skills__active_for`) read this when their input omits an explicit id.
+   * Tools that ask "what's happening in the current conversation" (the
+   * `conversations__*` tools) read this when their input omits an explicit id.
    * Optional / undefined when the context is created outside a chat (REST tool
-   * calls, MCP server requests, background jobs); tools must error explicitly
-   * rather than silently falling back to the wrong conversation.
+   * calls, MCP server requests, background jobs, task runs); tools must error
+   * explicitly rather than silently falling back to the wrong conversation.
+   *
+   * **A value here is always a real, loadable conversation id.** An unattended
+   * run carries {@link runId} instead — see there for why the two are separate
+   * fields rather than one correlation id wearing whichever name fits.
    */
   conversationId?: string;
+  /**
+   * Correlation id of the unattended run this context belongs to
+   * (`executeTask`). Undefined in a chat.
+   *
+   * Separate from {@link conversationId} because a run has no conversation:
+   * `executeTask` persists a run result, not a chat. Carrying the run id in
+   * `conversationId` made one field answer two questions, and every consumer
+   * had to know which caller populated it — which five of the nine readers
+   * did not. They looked the id up as a conversation and got a miss: a tool
+   * reporting `Conversation not found: run_…`, a dedupe check reading a
+   * conversation that does not exist, and a skill an automation created
+   * persisting `origin: "chat"` with a run id attached.
+   *
+   * A reader wanting "the conversation" reads `conversationId` and correctly
+   * gets nothing in a run. A reader wanting "what correlates this work" —
+   * the usage ledger, telemetry — reads this.
+   */
+  runId?: string;
   /**
    * The model this turn is actually running on, already resolved and
    * provider-qualified.
@@ -73,13 +94,25 @@ export interface RequestContext {
    * True when this context belongs to an unattended run (`executeTask` — an
    * automation), false/undefined for interactive chat. Set once by the runtime
    * (never from caller input) and, because it rides the AsyncLocalStorage
-   * context, inherited by every delegated sub-agent at any depth. Consumers use
-   * it to bar the automation-authoring surface from a run that has no human
-   * present to confirm — a restriction, never an escalation, which is why it is
+   * context, inherited by every tool dispatched below it. Consumers use it to
+   * bar the automation-authoring surface from a run that has no human present
+   * to confirm — a restriction, never an escalation, which is why it is
    * safe for `IdentityToolRouter` to read at execute time even though identity
    * is not (see that module's trust-boundary note).
    */
   unattended?: boolean;
+  /**
+   * The caller's own short opaque string identifying WHAT made an unattended
+   * dispatch — `"route:rt_…"` for a notification route. Set only by
+   * `dispatchUnattended`; absent in a chat and in a scheduled run, which have
+   * a conversation and a run id to be identified by.
+   *
+   * Two readers, and they are the whole of it: the audit line, and the
+   * outbound `_meta` stamp under `UNATTENDED_META_KEY` so a bundle can tell a
+   * configuration-fired call from a chat turn. The host never parses it — a
+   * caller may put anything short in here, and the value decides nothing.
+   */
+  unattendedReason?: string;
 }
 
 const storage = new AsyncLocalStorage<RequestContext>();

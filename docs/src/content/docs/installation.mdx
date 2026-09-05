@@ -68,7 +68,7 @@ Docker Compose runs the platform and web UI as two containers. This is the recom
      internal:
    ```
 
-   The platform image is built on `python:3.13-slim` and bundles Bun, Node.js 24, and the mpak CLI — the toolchain MCP server bundles shell out to at runtime. The runtime working directory inside the container is `/data` (set via `NB_WORK_DIR`), so the config mount lands at `/data/nimblebrain.json`.
+   The platform image runs on Bun. Connectors are remote MCP servers, so nothing you install runs inside this container. The runtime working directory inside the container is `/data` (set via `NB_WORK_DIR`), so the config mount lands at `/data/nimblebrain.json`.
 
 4. **Start the services**
 

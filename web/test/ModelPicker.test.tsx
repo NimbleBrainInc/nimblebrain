@@ -27,6 +27,13 @@ import {
  * conversation. A control that simply stopped responding would read as broken.
  */
 
+/** Three providers, given in the order `toPickerModels` would emit them. */
+const MULTI: PickerModel[] = [
+  { id: "anthropic:claude-sonnet-5", name: "Claude Sonnet 5", provider: "anthropic" },
+  { id: "openai:gpt-5", name: "GPT-5", provider: "openai" },
+  { id: "xai:grok-4-5", name: "Grok 4.5", provider: "xai" },
+];
+
 const MODELS: PickerModel[] = [
   { id: "anthropic:claude-sonnet-5", name: "Claude Sonnet 5", provider: "anthropic" },
   { id: "anthropic:claude-haiku-4-5", name: "Claude Haiku 4.5", provider: "anthropic" },
@@ -119,6 +126,25 @@ describe("toPickerModels", () => {
     }).map((m) => m.id);
     // No undated sibling on offer: dropping this would remove the model.
     expect(ids).toEqual(["anthropic:claude-opus-4-9-20260401"]);
+  });
+
+  it("orders each provider's models into one contiguous run", () => {
+    // Real names from the live catalog, chosen because sorting them by name
+    // alone interleaves the vendors: Gemini, GPT-5, Nano Banana puts an OpenAI
+    // model between two Google ones. Provider first keeps a run whole.
+    const models = toPickerModels({
+      google: [
+        { id: "gemini-3-flash", name: "Gemini 3 Flash" },
+        { id: "nano-banana-2-lite", name: "Nano Banana 2 Lite" },
+      ],
+      openai: [{ id: "gpt-5", name: "GPT-5" }],
+    });
+    expect(models.map((m) => m.provider)).toEqual(["google", "google", "openai"]);
+    expect(models.map((m) => m.name)).toEqual([
+      "Gemini 3 Flash",
+      "Nano Banana 2 Lite",
+      "GPT-5",
+    ]);
   });
 
   it("keeps a moving pointer that is a model in its own right", () => {
@@ -230,6 +256,59 @@ describe("before the first message", () => {
     const view = openPicker();
     fireEvent.change(view.getByLabelText("Search models"), { target: { value: "zzz" } });
     expect(view.getByText(/No model matches/)).toBeDefined();
+  });
+});
+
+describe("with more than one provider", () => {
+  function openMulti() {
+    const view = mount(
+      <ModelPicker models={MULTI} selected="anthropic:claude-sonnet-5" onSelect={() => {}} />,
+    );
+    fireEvent.click(view.getByRole("button", { name: /Sonnet 5/ }));
+    return view;
+  }
+
+  it("heads each provider's run with its name", () => {
+    const view = openMulti();
+    // Nothing on a row says who serves it — "Grok 4.5" and "GPT-5" are family
+    // names, not vendors — so the header is the only place the vendor appears.
+    expect(view.getByRole("group", { name: "Anthropic" })).toBeDefined();
+    expect(view.getByRole("group", { name: "OpenAI" })).toBeDefined();
+    expect(view.getByRole("group", { name: "xAI" })).toBeDefined();
+  });
+
+  it("keeps every option reachable from one keyboard walk", () => {
+    const view = openMulti();
+    const search = view.getByLabelText("Search models");
+    // Grouping is a drawing decision; the highlight still indexes one list, so
+    // three ArrowDowns from the first row wrap back to it.
+    const ids = view.getAllByRole("option").map((o) => o.id);
+    for (const expected of [ids[1], ids[2], ids[0]]) {
+      fireEvent.keyDown(search, { key: "ArrowDown" });
+      expect(search.getAttribute("aria-activedescendant")).toBe(expected);
+    }
+  });
+
+  it("drops a group the filter emptied", () => {
+    const view = openMulti();
+    fireEvent.change(view.getByLabelText("Search models"), { target: { value: "grok" } });
+    expect(view.queryByRole("group", { name: "xAI" })).not.toBeNull();
+    expect(view.queryByRole("group", { name: "Anthropic" })).toBeNull();
+  });
+
+  it("heads nothing when one provider is all there is", () => {
+    // The common deployment. A single header labelling the whole list names
+    // nothing the list does not already imply.
+    const view = mount(
+      <ModelPicker
+        models={MULTI.filter((m) => m.provider === "anthropic")}
+        selected="anthropic:claude-sonnet-5"
+        onSelect={() => {}}
+      />,
+    );
+    fireEvent.click(view.getByRole("button", { name: /Sonnet 5/ }));
+    expect(view.queryAllByRole("group")).toHaveLength(0);
+    expect(view.queryAllByRole("option")).toHaveLength(1);
   });
 });
 

@@ -9,13 +9,13 @@ import { type Static } from "@sinclair/typebox";
  * guard (`src/usage/aggregate.ts`) all derive from this array
  * so a new dimension is added in exactly one place.
  */
-export declare const USAGE_GROUP_BYS: readonly ["day", "conversation", "model", "user", "origin", "provider"];
+export declare const USAGE_GROUP_BYS: readonly ["day", "conversation", "turn", "model", "user", "origin", "provider"];
 export declare const UsageReportInput: import("@sinclair/typebox").TObject<{
     scope: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"user" | "org">>;
     period: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"day" | "week" | "month" | "all">>;
     from: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     to: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-    groupBy: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TUnsafe<"model" | "user" | "day" | "conversation" | "origin" | "provider">, import("@sinclair/typebox").TArray<import("@sinclair/typebox").TUnsafe<"model" | "user" | "day" | "conversation" | "origin" | "provider">>]>>;
+    groupBy: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TUnsafe<"model" | "user" | "day" | "conversation" | "turn" | "origin" | "provider">, import("@sinclair/typebox").TArray<import("@sinclair/typebox").TUnsafe<"model" | "user" | "day" | "conversation" | "turn" | "origin" | "provider">>]>>;
 }>;
 export type UsageReportInput = Static<typeof UsageReportInput>;
 export type UsageGroupBy = (typeof USAGE_GROUP_BYS)[number];
@@ -84,4 +84,15 @@ export interface UsageReportOutput {
     models: UsageModelEntry[];
     breakdown: UsageBreakdownEntry[];
     breakdowns: Partial<Record<UsageGroupBy, UsageBreakdownEntry[]>>;
+    /**
+     * Dimensions whose breakdown was capped at the costliest rows, with how many
+     * rows exist in full. Absent when every breakdown is complete — so its
+     * presence is the signal that a row list is a top-N view and must not be
+     * read as the whole set. `totals` is unaffected: it counts every record,
+     * capped rows included, so no spend is missing from the report.
+     */
+    truncatedBreakdowns?: Partial<Record<UsageGroupBy, {
+        returned: number;
+        total: number;
+    }>>;
 }

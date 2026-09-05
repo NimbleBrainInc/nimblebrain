@@ -18,8 +18,7 @@
  *   - `join(workDir, "workspaces")` (no wsId) — the parent directory
  *     itself, which is correct in scope-classification code.
  *   - Sites inside the implementation files that DEFINE the layout
- *     (`src/workspace/context.ts`, `src/workspace/workspace-store.ts`,
- *     `src/config/workspace-credentials.ts`, and
+ *     (`src/workspace/context.ts`, `src/workspace/workspace-store.ts`, and
  *     `src/conversation/paths.ts` for the workspace-owned
  *     `workspaces/<wsId>/conversations/...` subtree) — those are the
  *     source of truth and the lint shouldn't fight itself.
@@ -47,7 +46,6 @@ const ALLOWED_FILES = new Set(
   [
     "workspace/context.ts",
     "workspace/workspace-store.ts",
-    "config/workspace-credentials.ts",
     // Defines the `workspaces/<wsId>/conversations/...` workspace-owned conversation
     // layout — the one sanctioned site that hand-builds that subtree.
     "conversation/paths.ts",

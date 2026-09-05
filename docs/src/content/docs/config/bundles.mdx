@@ -1,57 +1,21 @@
 ---
-title: Bundle Configuration
-description: Configure named, local, and remote MCP bundles in workspace.json.
+title: Connector Configuration
+description: Configure a workspace's remote MCP connectors in workspace.json.
 ---
 
 import { Tabs, TabItem, Aside } from '@astrojs/starlight/components';
 
-The `bundles` array lives in [`workspace.json`](/config/workspace-json/), **not** `nimblebrain.json`. Each workspace declares its own bundles; a `bundles` array placed at the top level of `nimblebrain.json` is silently stripped on load. This page documents the shape of a single bundle entry — the same shape whether the entry was written by hand, by the connectors install flow, or by the CLI.
+The `bundles` array lives in [`workspace.json`](/config/workspace-json/), **not** `nimblebrain.json`. Each workspace declares its own connectors; a `bundles` array placed at the top level of `nimblebrain.json` is silently stripped on load. This page documents the shape of a single entry — the same shape whether it was written by hand, by the connectors install flow, or by the CLI.
 
-Each entry references a bundle from a registry by name, a local directory by path, or a remote MCP server by URL.
+Every entry is one remote MCP server, addressed by URL. The runtime orchestrates over remote MCP: it connects to a URL with a credential, and does not download, verify, or execute a server's code. There is no by-name or by-path entry, and nothing runs as a subprocess of the platform.
 
-NimbleBrain ships with no MCP bundles by default. Platform capabilities (home, conversations, files, settings, usage, automations) are built in as in-process tool sources — install bundles to give a workspace domain-specific tools.
+NimbleBrain ships with no connectors by default. Platform capabilities (home, conversations, files, settings, usage, automations) are built in as in-process tool sources — install connectors to give a workspace domain-specific tools.
 
 <Aside type="note">
-  Bundles are workspace-scoped. Two workspaces that install the same bundle spawn independent subprocesses with separate data directories. See [`workspace.json`](/config/workspace-json/) for where the array lives and how workspaces are managed.
+  Connectors are workspace-scoped. Two workspaces that install the same server hold independent credentials and independent connection state. See [`workspace.json`](/config/workspace-json/) for where the array lives and how workspaces are managed.
 </Aside>
 
-## Bundle types
-
-Every bundle entry must include exactly one of `name`, `path`, or `url`.
-
-### Named bundles (registry)
-
-Install a bundle from a registered registry (mpak by default) by its scoped name.
-
-```json
-{
-  "bundles": [
-    { "name": "@nimblebraininc/tasks" },
-    { "name": "@nimblebraininc/postgres" }
-  ]
-}
-```
-
-NimbleBrain downloads the bundle, reads its manifest, spawns the MCP server process, and registers its tools.
-
-### Local bundles (path)
-
-Point to a bundle directory on the local filesystem. Paths are resolved relative to the config file location.
-
-```json
-{
-  "bundles": [
-    { "path": "../mcp-servers/hello" },
-    { "path": "/opt/bundles/my-custom-server" }
-  ]
-}
-```
-
-The directory must contain a valid MCPB `manifest.json` with an `mcp_config` section that tells NimbleBrain how to spawn the server process.
-
-### Remote bundles (url)
-
-Connect to an MCP server running at a remote URL. You must provide a `serverName` for display and tool namespacing.
+## The entry shape
 
 ```json
 {
@@ -68,44 +32,24 @@ Connect to an MCP server running at a remote URL. You must provide a `serverName
 }
 ```
 
-Remote bundles do not download or spawn a local process. Instead, NimbleBrain connects to the server over HTTP using the specified transport configuration.
-
-## Common fields
-
-These fields apply to all bundle types.
-
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `env` | `object` | `{}` | Environment variables passed to the bundle process. Each key-value pair is a string. |
-| `allowedEnv` | `string[]` | `[]` | Names of host environment variables to pass through to the bundle process, on top of the safe default allowlist. `NB_API_KEY` and `NB_INTERNAL_TOKEN` are always denied. |
-| `trustScore` | `number \| null` | `null` | MTF trust score (0--100) recorded at install time. Set automatically by the install flow. |
-| `ui` | `object \| null` | `null` | UI metadata from the bundle manifest. Set automatically at install time. |
-
-### Passing environment variables
-
-Use `env` to inject secrets or configuration into a bundle process:
-
-```json
-{
-  "bundles": [
-    {
-      "name": "@nimblebraininc/postgres",
-      "env": {
-        "DATABASE_URL": "postgres://localhost:5432/mydb",
-        "PG_MAX_CONNECTIONS": "10"
-      }
-    }
-  ]
-}
-```
+| `url` | `string` | — | **Required.** The remote MCP endpoint. |
+| `serverName` | `string` | derived from `url` | The name the server registers under. Tools reach the agent as `<serverName>__<tool>`, so this is the stable identity every other surface looks the connector up by. Set automatically at install from the catalog entry's canonical id. |
+| `transport` | `object` | `{ "type": "streamable-http" }` | How to reach the server. See [Remote transport configuration](#remote-transport-configuration). |
+| `ui` | `object \| null` | `null` | Host UI metadata, copied from the operator-trusted catalog entry at install. |
+| `oauthScope` | `"workspace"` | `"workspace"` | Identity scope for the connection. One identity per (workspace, server), shared by the workspace's members. |
+| `scopes` | `string[]` | — | OAuth scopes to request. Omit for servers that derive their own (DCR). |
+| `oauthClient` | `object` | — | Pre-registered OAuth client for vendors without Dynamic Client Registration. `clientSecret` is a reference into the credential store, never an inline value — see [Credentials](/config/credentials/). |
+| `additionalAuthorizationParams` | `object` | — | Extra query params for the authorize URL (e.g. Google's `access_type=offline`). Reserved OAuth keys are rejected at config load. |
 
 <Aside type="tip">
-  For sensitive values (API keys, tokens, connection strings), don't put them in `env` here. Set them from [workspace settings in the web UI](/config/credentials/) or a host env var that matches the bundle's `mcp_config.env` declaration — see [Credentials](/config/credentials/) for the full picture.
+  Don't hand-write an `auth.token` for a service the catalog can connect over OAuth — install it from Browse instead, and the tokens land in the workspace credential store rather than in `workspace.json`. Inline static auth is for a server you operate yourself.
 </Aside>
 
 ### UI metadata
 
-The `ui` field is populated automatically when you install a bundle that declares UI metadata in its manifest. You do not need to set this manually.
+The `ui` field is populated automatically when you install a connector whose catalog entry declares UI metadata. You do not need to set this manually.
 
 ```json
 {
@@ -123,11 +67,11 @@ The `ui` field is populated automatically when you install a bundle that declare
 |-------|------|-------------|
 | `ui.name` | `string` | Human-readable app name shown in the sidebar. |
 | `ui.icon` | `string` | Emoji or icon identifier. |
-| `ui.placements` | `array` | Placement declarations (each a `slot` plus a `ui://` resource URI) that register the app's views. |
+| `ui.placements` | `array` | Placement declarations (each a `slot` plus a `ui://` resource URI) that register the app's views. Re-validated at every registration, so a malformed one is dropped rather than rendered. |
 
 ## Remote transport configuration
 
-Remote bundles accept a `transport` object that controls how NimbleBrain connects to the server.
+The `transport` object controls how NimbleBrain connects to the server.
 
 ```json
 {
@@ -212,20 +156,11 @@ Control how NimbleBrain handles dropped connections to remote servers.
 
 ## Complete example
 
-A `workspace.json` `bundles` array with all three bundle types:
-
 ```json
 {
   "id": "ws_product",
   "name": "Product",
   "bundles": [
-    {
-      "name": "@nimblebraininc/postgres",
-      "env": { "DATABASE_URL": "postgres://localhost:5432/mydb" }
-    },
-    {
-      "path": "./my-local-server"
-    },
     {
       "url": "https://mcp.example.com/mcp",
       "serverName": "example-remote",
@@ -239,6 +174,11 @@ A `workspace.json` `bundles` array with all three bundle types:
           "maxReconnectionDelay": 10000
         }
       }
+    },
+    {
+      "url": "https://mcp.granola.ai/mcp",
+      "serverName": "ai-granola-mcp",
+      "oauthScope": "workspace"
     }
   ]
 }

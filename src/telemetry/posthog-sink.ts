@@ -26,19 +26,6 @@ function createRunMetrics(): RunMetrics {
   };
 }
 
-/**
- * Detect bundle source from event data.
- * - Has a `url` property -> "remote"
- * - Name starts with "@" -> "mpak"
- * - Otherwise -> "local"
- */
-function detectSource(data: Record<string, unknown>): "mpak" | "local" | "remote" {
-  if (typeof data.url === "string") return "remote";
-  const name = data.name as string | undefined;
-  if (name?.startsWith("@")) return "mpak";
-  return "local";
-}
-
 /** Handles one engine event: accumulates per-run metrics or captures a telemetry event. */
 type EventHandler = (data: Record<string, unknown>, runId: string | undefined) => void;
 
@@ -162,20 +149,16 @@ export class PostHogEventSink implements EventSink {
     if (runId) this.runs.delete(runId);
   }
 
-  /** Capture bundle.installed with detected source, UI presence, and trust score. */
+  /** Capture bundle.installed with UI presence. Every connector is remote. */
   private captureBundleInstalled(data: Record<string, unknown>): void {
-    const source = detectSource(data);
     this.telemetry.capture("bundle.installed", {
-      source,
+      source: "remote",
       has_ui: Boolean(data.ui),
-      trust_score: (data.trustScore as number) ?? 0,
     });
   }
 
-  /** Capture bundle.uninstalled with the detected source. */
-  private captureBundleUninstalled(data: Record<string, unknown>): void {
-    this.telemetry.capture("bundle.uninstalled", {
-      source: detectSource(data),
-    });
+  /** Capture bundle.uninstalled. */
+  private captureBundleUninstalled(_data: Record<string, unknown>): void {
+    this.telemetry.capture("bundle.uninstalled", { source: "remote" });
   }
 }

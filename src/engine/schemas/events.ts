@@ -76,9 +76,6 @@ export const SkillsLoadedPayload = Type.Object({
   totalTokens: Type.Number(),
   /** Engine-attached run id for debug/correlation. Set by engine.run(). */
   runId: Type.Optional(Type.String()),
-  /** Set by `delegate.ts` when forwarding a sub-run's skills.loaded out of
-   *  the spawned engine into the caller's sink. */
-  parentRunId: Type.Optional(Type.String()),
 });
 export type SkillsLoadedPayload = Static<typeof SkillsLoadedPayload>;
 
@@ -111,8 +108,6 @@ export const ContextAssembledPayload = Type.Object({
   headroomTokens: Type.Optional(Type.Number()),
   /** Engine-attached run id for debug/correlation. */
   runId: Type.Optional(Type.String()),
-  /** Set by `delegate.ts` when forwarding a sub-run's event. */
-  parentRunId: Type.Optional(Type.String()),
 });
 export type ContextAssembledPayload = Static<typeof ContextAssembledPayload>;
 
@@ -188,6 +183,47 @@ export const ConnectorSkillInjectedPayload = Type.Object({
 });
 export type ConnectorSkillInjectedPayload = Static<typeof ConnectorSkillInjectedPayload>;
 
+export const NotificationCreatedPayload = Type.Object({
+  workspaceId: Type.String({
+    description: "The workspace whose inbox this landed in. Scopes the SSE fan-out.",
+  }),
+  id: Type.String({ description: "`<source>:<eventId>` — the notification's wire id." }),
+  seq: Type.Number({
+    description: "Monotonic position in the workspace's inbox; the `?after=` cursor.",
+  }),
+  source: Type.String({ description: "Connector server name the runtime stamped." }),
+  name: Type.String({ description: "The server's own event name." }),
+  level: Type.Union([Type.Literal("info"), Type.Literal("attention"), Type.Literal("urgent")]),
+  title: Type.String({
+    description: "One line of server-authored plain text, sanitized and capped on parse.",
+  }),
+  subject: Type.Optional(Type.String({ description: "What the item is about, for grouping." })),
+  receivedAt: Type.String({ description: "ISO 8601 instant the runtime wrote the item." }),
+});
+export type NotificationCreatedPayload = Static<typeof NotificationCreatedPayload>;
+
+export const UnattendedDispatchPayload = Type.Object({
+  principalId: Type.String({
+    description: "The user the call ran as — supplied by in-process config, never by a request.",
+  }),
+  workspaceId: Type.String({ description: "The one workspace the call was walled to." }),
+  tool: Type.String({ description: "The bare `<source>__<tool>` name the caller asked for." }),
+  reason: Type.String({
+    description: "The caller's own short opaque string (e.g. `route:rt_…`). Opaque to the host.",
+  }),
+  outcome: Type.Union([
+    Type.Literal("ok"),
+    Type.Literal("denied"),
+    Type.Literal("skipped"),
+    Type.Literal("error"),
+  ]),
+  classification: Type.Optional(
+    Type.String({ description: "Why, for every outcome but `ok`. Absent on success." }),
+  ),
+  ms: Type.Number({ description: "Wall-clock time the dispatch took, including the gates." }),
+});
+export type UnattendedDispatchPayload = Static<typeof UnattendedDispatchPayload>;
+
 // ── Discriminated event union ────────────────────────────────────────────
 //
 // Events with a typed payload are listed in the union below. Emitters
@@ -214,6 +250,11 @@ export const TypedEngineEvent = Type.Union([
   Type.Object({
     type: Type.Literal("connector.skill.injected"),
     data: ConnectorSkillInjectedPayload,
+  }),
+  Type.Object({ type: Type.Literal("notification.created"), data: NotificationCreatedPayload }),
+  Type.Object({
+    type: Type.Literal("audit.unattended_dispatch"),
+    data: UnattendedDispatchPayload,
   }),
 ]);
 export type TypedEngineEvent = Static<typeof TypedEngineEvent>;

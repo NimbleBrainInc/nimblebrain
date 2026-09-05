@@ -73,11 +73,11 @@ function makeSource(name: string, toolNames: string[]): ToolSource {
 
 // Two workspaces
 const wsEng = makeWorkspace("ws_eng", "Engineering", [
-  { name: "@nimblebraininc/crm" },
+  { url: "https://crm.example.com/mcp", serverName: "crm" },
 ]);
 
 const wsMkt = makeWorkspace("ws_mkt", "Marketing", [
-  { name: "@nimblebraininc/dropbox" },
+  { url: "https://dropbox.example.com/mcp", serverName: "dropbox" },
 ]);
 
 // Sources
@@ -307,33 +307,29 @@ describe("Workspace security: same bundle installed in two workspaces", () => {
     expect(pr.forWorkspace("ws_eng").filter((e) => e.wsId === "ws_eng")).toHaveLength(2);
   });
 
-  test("BundleLifecycleManager: seeding the same bundle in two workspaces keeps them distinct", () => {
+  test("BundleLifecycleManager: seeding the same connector in two workspaces keeps them distinct", async () => {
     const events: EngineEvent[] = [];
     const sink: EventSink = { emit: (e) => events.push(e) };
     const lifecycle = new BundleLifecycleManager(sink, undefined);
 
-    const ref: BundleRef = { name: "@nimblebraininc/crm" };
+    const ref: BundleRef = { url: "https://crm.example.com/mcp", serverName: "crm" };
     const meta = {
-      manifestName: "@nimblebraininc/crm",
+      manifestName: "ai.nimblebrain/crm",
       version: "1.0.0",
       ui: { name: "CRM", icon: "cards" } as BundleUiMeta,
       briefing: null as BriefingBlock | null,
-      type: "upjack" as const,
-      upjackNamespace: "apps/crm",
     };
 
-    lifecycle.seedInstance("crm", "@nimblebraininc/crm", ref, meta, "ws_eng", "/data/ws_eng/data/crm");
-    lifecycle.seedInstance("crm", "@nimblebraininc/crm", ref, meta, "ws_mkt", "/data/ws_mkt/data/crm");
+    await lifecycle.seedInstance("crm", ref.url, ref, meta, "ws_eng");
+    await lifecycle.seedInstance("crm", ref.url, ref, meta, "ws_mkt");
 
     const eng = lifecycle.getInstance("crm", "ws_eng");
     const mkt = lifecycle.getInstance("crm", "ws_mkt");
 
     expect(eng?.wsId).toBe("ws_eng");
     expect(mkt?.wsId).toBe("ws_mkt");
-    expect(eng?.entityDataRoot).toContain("ws_eng");
-    expect(mkt?.entityDataRoot).toContain("ws_mkt");
-    // Distinct objects — one workspace's data root must not be the other's
-    expect(eng?.entityDataRoot).not.toBe(mkt?.entityDataRoot);
+    // Distinct objects — one workspace's instance must not be the other's.
+    expect(eng).not.toBe(mkt);
     // The unscoped snapshot exposes both — the bug was that a serverName-only
     // filter would return both when asked for one workspace's instances.
     expect(lifecycle.getInstances()).toHaveLength(2);

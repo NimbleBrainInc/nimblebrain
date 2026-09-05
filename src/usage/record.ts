@@ -4,16 +4,16 @@
  * Every call path that spends tokens goes through here. A new one that does not
  * is invisible to cost accounting by construction — which is the defect this
  * module exists to prevent, and which the runtime has already hit four times
- * (task runs, delegated sub-agents, background briefing refresh, and archived
+ * (task runs, sub-agent runs, background briefing refresh, and archived
  * workspaces all spent money no in-product surface showed).
  *
  * Two rules hold this together:
  *
- *  1. **Attribution is derived, never asserted.** `origin` and `delegated` come
- *     from the ambient request context and the emitting event, not from the
- *     caller. A caller that names its own origin is a caller that can be wrong
- *     about it, and the wrongness is silent — a mislabeled call still increments
- *     a counter, it just increments the wrong one.
+ *  1. **Attribution is derived, never asserted.** `origin` comes from the
+ *     ambient request context, not from the caller. A caller that names its own
+ *     origin is a caller that can be wrong about it, and the wrongness is
+ *     silent — a mislabeled call still increments a counter, it just increments
+ *     the wrong one.
  *  2. **`recordLlmUsage` is reachable only from here**, enforced by
  *     `scripts/check-usage-record.ts`. That is what makes rule 1 structural
  *     rather than a convention someone has to remember.
@@ -64,10 +64,10 @@ export function clearUsageLedger(owned: UsageLedger): void {
 /**
  * Who this call was for, from the ambient request context alone.
  *
- * `unattended` is checked first and wins outright: an automation's context also
- * carries a `conversationId` (`executeTask` stamps the run id there so files the
- * run creates stay traceable), so testing for a conversation first would file
- * every automation call under `chat`.
+ * `unattended` is checked first and wins outright. A run carries `runId` and no
+ * `conversationId`, so the conversation test alone would already answer
+ * `system` rather than `chat` — but the flag is the direct question and does not
+ * depend on which other fields a context happens to hold.
  *
  * `system` is the honest answer for a call with no request scope — a detached
  * fast-slot call, or a background job. It is not a fallback for "we could not
@@ -80,26 +80,11 @@ export function originOf(): LlmCallOrigin {
 }
 
 /**
- * Whether this call belongs to a delegated sub-agent.
- *
- * Orthogonal to `originOf()` on purpose — a sub-agent spawned inside an
- * automation is both delegated and unattended. `ChildEventSink` stamps
- * `parentRunId` onto every event a child run emits, so presence is the signal.
- *
- * Empty-string-safe: `DelegateTracker.currentRunId` initializes to `""`, so a
- * truthiness check rather than a null check keeps a child that somehow ran
- * before any top-level `run.start` from being labeled with an empty parent.
- */
-export function isDelegated(data: Record<string, unknown> | undefined): boolean {
-  return typeof data?.parentRunId === "string" && data.parentRunId.length > 0;
-}
-
-/**
  * Record one priced LLM call.
  *
  * `event` is the emitting engine event's `data` payload, when there is one —
- * it supplies `parentRunId`. The forked fast-slot calls (title, compaction,
- * briefing) emit no event, so they omit it and are never delegated.
+ * it supplies `runId`, the per-turn grain. The forked fast-slot calls (title,
+ * compaction, briefing) emit no event, so they omit it and carry no run.
  *
  * Note that omitting the event says nothing about `origin`, which comes from
  * whatever scope the call runs in — not from its `source`. A turn's own forked
@@ -124,12 +109,10 @@ export function recordLlmCall(args: {
   event?: Record<string, unknown>;
 }): void {
   const origin = originOf();
-  const delegated = isDelegated(args.event);
-  recordLlmUsage(args.source, args.model, args.usage, origin, delegated);
+  recordLlmUsage(args.source, args.model, args.usage, origin);
   if (!ledger) return;
 
   const ctx = getRequestContext();
-  const parentRunId = args.event?.parentRunId;
   // Rates are resolved at write time so a past call keeps costing what it cost.
   // Absent when the catalog does not know the model, which the reader reports
   // as unpriced rather than as zero.
@@ -138,14 +121,23 @@ export function recordLlmCall(args: {
     ts: new Date().toISOString(),
     source: args.source,
     origin,
-    delegated,
     model: args.model,
     usage: args.usage,
     llmMs: args.llmMs ?? 0,
-    ...(delegated && typeof parentRunId === "string" ? { parentRunId } : {}),
     ...(ctx?.identity?.id ? { userId: ctx.identity.id } : {}),
     ...(ctx?.workspaceId ? { workspaceId: ctx.workspaceId } : {}),
-    ...(ctx?.conversationId ? { sessionId: ctx.conversationId } : {}),
+    // Each id under its own name, so no reader has to consult `origin` to learn
+    // what it is holding. `runId` is the engine's, and it is the only one of the
+    // three that is per-TURN, so it is what makes "what did this turn cost"
+    // answerable at all.
+    //
+    // `sessionId` is deliberately not written any more. It held a
+    // conversation-or-run union discriminated by `origin`; the three fields
+    // here say the same things without the discriminator, and say one more.
+    // `aggregate.ts` still reads the old field for records already on disk.
+    ...(ctx?.conversationId ? { conversationId: ctx.conversationId } : {}),
+    ...(ctx?.runId ? { taskRunId: ctx.runId } : {}),
+    ...(typeof args.event?.runId === "string" ? { runId: args.event.runId } : {}),
     ...(rates ? { rates } : {}),
   };
   ledger.append(entry);

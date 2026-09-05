@@ -15,6 +15,7 @@ import {
 
 interface SdkCalls {
   listImpl: (q: unknown) => Promise<{ items?: Array<{ id?: unknown; status?: unknown }> }>;
+  linkImpl: (...args: unknown[]) => Promise<unknown>;
   initiateImpl: (...args: unknown[]) => Promise<unknown>;
   deleteImpl: (id: string) => Promise<void>;
   createImpl: (...args: unknown[]) => Promise<unknown>;
@@ -22,10 +23,19 @@ interface SdkCalls {
   ctorArgs: Array<{ apiKey: string; baseURL?: string }>;
   /** Last-seen `composio.create()` config — verify direct_tools, allowlist. */
   lastCreateConfig: unknown;
+  /**
+   * Which redirect/non-redirect SDK calls ran, in order. The auth arms must not
+   * cross: `link` is Composio's hosted flow (works for managed OAuth, which
+   * `initiate` is retired for, and collects the auth config's required
+   * connection-initiation fields), `initiate` is the non-OAuth API-key path the
+   * retirement excludes.
+   */
+  calls: string[];
 }
 
 const sdkCalls: SdkCalls = {
   listImpl: async () => ({ items: [] }),
+  linkImpl: async () => ({ redirectUrl: "https://composio.test/link", id: "ca_default" }),
   initiateImpl: async () => ({ redirectUrl: "https://composio.test/link", id: "ca_default" }),
   deleteImpl: async () => undefined,
   createImpl: async () => ({
@@ -34,6 +44,7 @@ const sdkCalls: SdkCalls = {
   }),
   ctorArgs: [],
   lastCreateConfig: undefined,
+  calls: [],
 };
 
 mock.module("@composio/core", () => ({
@@ -51,7 +62,14 @@ mock.module("@composio/core", () => ({
   Composio: class {
     connectedAccounts = {
       list: (q: unknown) => sdkCalls.listImpl(q),
-      initiate: (...args: unknown[]) => sdkCalls.initiateImpl(...args),
+      link: (...args: unknown[]) => {
+        sdkCalls.calls.push("link");
+        return sdkCalls.linkImpl(...args);
+      },
+      initiate: (...args: unknown[]) => {
+        sdkCalls.calls.push("initiate");
+        return sdkCalls.initiateImpl(...args);
+      },
       delete: (id: string) => sdkCalls.deleteImpl(id),
     };
     constructor(opts: { apiKey: string; baseURL?: string }) {
@@ -70,6 +88,7 @@ const sdk = await import("../../src/connectors/providers/composio/sdk.ts");
 const {
   cleanupComposioBundle,
   composioUserId,
+  connectComposioApiKey,
   createComposioSession,
   deleteComposioConnectedAccount,
   findActiveComposioConnection,
@@ -82,7 +101,7 @@ const { mkdtempSync, rmSync } = await import("node:fs");
 const { tmpdir } = await import("node:os");
 const { join: joinPath } = await import("node:path");
 const { saveComposioConnection, hasPersistedComposioConnection } = await import(
-  "../../src/bundles/composio-connection.ts"
+  "../../src/connectors/providers/composio/connection.ts"
 );
 // The bouncer-config module also caches at process scope. Multi-tenant
 // safety tests need both caches reset to read freshly-set env vars.
@@ -105,8 +124,10 @@ beforeEach(() => {
   _resetComposioConfigForTest();
   _resetBouncerModeForTest();
   sdkCalls.ctorArgs.length = 0;
+  sdkCalls.calls.length = 0;
   sdkCalls.lastCreateConfig = undefined;
   sdkCalls.listImpl = async () => ({ items: [] });
+  sdkCalls.linkImpl = async () => ({ redirectUrl: "https://composio.test/link", id: "ca_x" });
   sdkCalls.initiateImpl = async () => ({ redirectUrl: "https://composio.test/link", id: "ca_x" });
   sdkCalls.deleteImpl = async () => undefined;
   sdkCalls.createImpl = async () => ({
@@ -223,7 +244,7 @@ describe("initiateComposioConnection", () => {
   });
 
   test("returns redirect URL + connectedAccountId from the SDK response", async () => {
-    sdkCalls.initiateImpl = async () => ({
+    sdkCalls.linkImpl = async () => ({
       redirectUrl: "https://connect.composio.dev/link/lk_42",
       id: "ca_pending",
     });
@@ -239,7 +260,7 @@ describe("initiateComposioConnection", () => {
 
   test("passes allowMultiple: true (belt-and-suspenders against race)", async () => {
     let capturedOpts: unknown;
-    sdkCalls.initiateImpl = async (_userId, _ac, opts) => {
+    sdkCalls.linkImpl = async (_userId, _ac, opts) => {
       capturedOpts = opts;
       return { redirectUrl: "https://x", id: "ca_x" };
     };
@@ -253,7 +274,7 @@ describe("initiateComposioConnection", () => {
   });
 
   test("falls back to redirectUri / id field names (SDK shape variation)", async () => {
-    sdkCalls.initiateImpl = async () => ({
+    sdkCalls.linkImpl = async () => ({
       redirectUri: "https://x.test/auth",
       connectedAccountId: "ca_alt",
     });
@@ -267,7 +288,7 @@ describe("initiateComposioConnection", () => {
   });
 
   test("throws cleanly when Composio omits redirect URL", async () => {
-    sdkCalls.initiateImpl = async () => ({ id: "ca_x" });
+    sdkCalls.linkImpl = async () => ({ id: "ca_x" });
     await expect(
       initiateComposioConnection({
         apiKey: "k_test",
@@ -276,6 +297,73 @@ describe("initiateComposioConnection", () => {
         callbackUrl: "https://nb.test/cb",
       }),
     ).rejects.toThrow(/missing redirect URL/);
+  });
+
+  // The two auth arms call different SDK entry points, and swapping them is
+  // silent until it reaches a real Composio account. `initiate` on the redirect
+  // arm is 400 for a Composio-managed OAuth auth config (retired) and 400 again
+  // for any auth config declaring a required connection-initiation field, since
+  // only the hosted page collects those. `link` on the API-key arm has nowhere
+  // to put the user's key. Pin the split.
+  test("redirect arm calls the hosted link, never the retired initiate", async () => {
+    await initiateComposioConnection({
+      apiKey: "k_test",
+      userId: "ws_x",
+      authConfigId: "ac_x",
+      callbackUrl: "https://nb.test/cb",
+    });
+    expect(sdkCalls.calls).toEqual(["link"]);
+  });
+
+  // `link()` reports every failure as one constant message and hangs the vendor's
+  // response body off `.cause`. Callers log `err.message`, so an unfolded cause
+  // turns a 400 naming the auth config's missing field into "Failed to create
+  // connected account link" — the detail this bug was found through in the first
+  // place.
+  test("folds the vendor's error detail into the thrown message", async () => {
+    sdkCalls.linkImpl = async () => {
+      throw new Error("Failed to create connected account link", {
+        cause: new Error(
+          'Request failed 400: {"error":{"slug":"ConnectedAccount_MissingRequiredFields"}}',
+        ),
+      });
+    };
+    await expect(
+      initiateComposioConnection({
+        apiKey: "k_test",
+        userId: "ws_x",
+        authConfigId: "ac_x",
+        callbackUrl: "https://nb.test/cb",
+      }),
+    ).rejects.toThrow(/ConnectedAccount_MissingRequiredFields/);
+  });
+
+  test("passes through an error carrying no cause (the timeout path)", async () => {
+    sdkCalls.linkImpl = async () => {
+      throw new Error("[composio] connectedAccounts.link timed out after 10s");
+    };
+    await expect(
+      initiateComposioConnection({
+        apiKey: "k_test",
+        userId: "ws_x",
+        authConfigId: "ac_x",
+        callbackUrl: "https://nb.test/cb",
+      }),
+    ).rejects.toThrow(/timed out after 10s$/);
+  });
+
+  test("API-key arm stays on initiate — the retirement excludes non-OAuth schemes", async () => {
+    sdkCalls.initiateImpl = async () => ({
+      id: "ca_key",
+      waitForConnection: async () => ({ id: "ca_key", status: "ACTIVE" }),
+    });
+    await connectComposioApiKey({
+      apiKey: "k_test",
+      userId: "ws_x",
+      authConfigId: "ac_x",
+      fields: { api_key: "secret" },
+    });
+    expect(sdkCalls.calls).toEqual(["initiate"]);
   });
 });
 
@@ -492,7 +580,7 @@ describe("cleanupComposioBundle", () => {
 
     const result = await cleanupComposioBundle({
       workDir,
-      wsId: "ws_test",
+      owner: { type: "workspace", wsId: "ws_test" },
       connectorId: "com.google/gmail",
     });
 
@@ -518,7 +606,7 @@ describe("cleanupComposioBundle", () => {
 
     const result = await cleanupComposioBundle({
       workDir,
-      wsId: "ws_test",
+      owner: { type: "workspace", wsId: "ws_test" },
       connectorId: "com.google/gmail",
     });
 
@@ -546,7 +634,7 @@ describe("cleanupComposioBundle", () => {
 
     const result = await cleanupComposioBundle({
       workDir,
-      wsId: "ws_test",
+      owner: { type: "workspace", wsId: "ws_test" },
       connectorId: "com.google/gmail",
     });
 
@@ -569,7 +657,7 @@ describe("cleanupComposioBundle", () => {
     // No connection.json on disk → nothing to read or delete.
     const result = await cleanupComposioBundle({
       workDir,
-      wsId: "ws_test",
+      owner: { type: "workspace", wsId: "ws_test" },
       connectorId: "com.google/gmail",
     });
 
@@ -596,7 +684,7 @@ describe("cleanupComposioBundle", () => {
     // (The SDK delete swallows internally; the local delete should still succeed.)
     const result = await cleanupComposioBundle({
       workDir,
-      wsId: "ws_test",
+      owner: { type: "workspace", wsId: "ws_test" },
       connectorId: "com.google/gmail",
     });
     expect(result.upstreamDeleted).toBe(false);

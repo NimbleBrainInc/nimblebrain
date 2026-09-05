@@ -5,11 +5,26 @@ import { McpSource } from "../../src/tools/mcp-source.ts";
 /**
  * `listResources` is the best-effort discovery probe SEP-2640 skill loading rides
  * on: it enumerates `resources/list`, follows pagination up to a page cap, and
- * never routes a failure through session recovery. It returns `{ resources, ok }`
- * — `ok: false` flags an enumeration that couldn't complete cleanly (a transport
- * error mid-list, or a torn-down client), so the caller declines to cache it as a
- * stable "no skills". Only a genuine successful response — a clean empty page or a
- * cap-hit — is `ok: true`.
+ * never routes a failure through session recovery. It returns
+ * `{ resources, ok, truncated }`:
+ *
+ * - `ok: false` — the enumeration couldn't complete (transport error mid-list,
+ *   or a torn-down client), so the caller declines to cache it as a stable
+ *   "no skills".
+ * - `truncated: true` — every call SUCCEEDED but the page cap stopped the walk
+ *   with a cursor outstanding, so later resources exist and were not seen. It
+ *   rides alongside `ok: true` precisely because a caller checking only `ok`
+ *   would cache a short list as the complete answer.
+ *
+ * A server advertising no `resources` capability short-circuits to a clean
+ * empty result — it has none, which is not a failure. Absent capabilities are
+ * "unknown", not "none", and are probed normally.
+ */
+/**
+ * The real SDK `Client` always has `getServerCapabilities`, so a stub that
+ * omits it is an incomplete double rather than a case production can reach.
+ * Default it to a resources-capable server — what every test here is about —
+ * and let a test that cares state its own.
  */
 function makeSource(client: unknown): McpSource {
   const source = new McpSource(
@@ -17,18 +32,54 @@ function makeSource(client: unknown): McpSource {
     { type: "remote", url: new URL("http://localhost:0/mcp") },
     new NoopEventSink(),
   );
-  (source as unknown as { client: unknown }).client = client;
+  const stub =
+    client && typeof client === "object" && !("getServerCapabilities" in client)
+      ? { getServerCapabilities: () => ({ resources: {} }), ...client }
+      : client;
+  (source as unknown as { client: unknown }).client = stub;
   return source;
 }
 
 describe("McpSource.listResources", () => {
   it("returns ok:false when the client is torn down (transient — retry, don't cache empty)", async () => {
-    expect(await makeSource(null).listResources()).toEqual({ resources: [], ok: false });
+    expect(await makeSource(null).listResources()).toEqual({ resources: [], ok: false, truncated: false });
   });
 
   it("treats a clean empty enumeration as ok (genuinely no resources)", async () => {
     const source = makeSource({ listResources: async () => ({ resources: [] }) });
-    expect(await source.listResources()).toEqual({ resources: [], ok: true });
+    expect(await source.listResources()).toEqual({ resources: [], ok: true, truncated: false });
+  });
+
+  it("short-circuits a server that advertises no resources capability", async () => {
+    // Every tools-only server is this case, including the platform's own
+    // in-process sources. Probing them throws `Method not found`, which reads
+    // as a transport failure — a permanent false positive on the degraded
+    // signal, plus a wasted round trip per source per discovery.
+    let probed = false;
+    const source = makeSource({
+      getServerCapabilities: () => ({ tools: {} }),
+      listResources: async () => {
+        probed = true;
+        return { resources: [] };
+      },
+    });
+    expect(await source.listResources()).toEqual({ resources: [], ok: true, truncated: false });
+    expect(probed).toBe(false);
+  });
+
+  it("probes a server whose capabilities are unknown rather than assuming none", async () => {
+    // Answering "complete, nothing here" on a guess is the silent skip the
+    // degraded signal exists to make impossible.
+    let probed = false;
+    const source = makeSource({
+      getServerCapabilities: () => undefined,
+      listResources: async () => {
+        probed = true;
+        return { resources: [] };
+      },
+    });
+    expect(await source.listResources()).toEqual({ resources: [], ok: true, truncated: false });
+    expect(probed).toBe(true);
   });
 
   it("follows pagination across pages via nextCursor (ok)", async () => {
@@ -56,7 +107,7 @@ describe("McpSource.listResources", () => {
         throw new Error("transport blip");
       },
     });
-    expect(await source.listResources()).toEqual({ resources: [], ok: false });
+    expect(await source.listResources()).toEqual({ resources: [], ok: false, truncated: false });
   });
 
   it("reports ok:false with the partial collected on a mid-pagination failure", async () => {
@@ -85,6 +136,7 @@ describe("McpSource.listResources", () => {
     try {
       const out = await source.listResources();
       expect(out.ok).toBe(true); // bounded success, not an error
+      expect(out.truncated).toBe(true); // ...but flagged short: callers must not cache it as complete
       expect(out.resources).toHaveLength(10); // one per capped page
       expect(spy.mock.calls.some((c) => String(c[0]).includes("page cap"))).toBe(true);
     } finally {

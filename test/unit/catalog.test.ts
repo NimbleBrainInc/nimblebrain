@@ -208,7 +208,6 @@ describe("getAvailableModels", () => {
 		const result = getAvailableModels({ google: {}, openai: {} });
 		expect(result.google.some((m) => m.id === "gemini-2.5-flash-preview-tts")).toBe(false);
 		expect(result.google.some((m) => m.id === "gemini-omni-flash-preview")).toBe(false);
-		expect(result.openai.some((m) => m.id === "gpt-image-2")).toBe(false);
 	});
 
 	it("excludes embedding models, which the text check alone lets through", () => {
@@ -571,29 +570,43 @@ describe("xai effort support", () => {
 		expect(xaiSupportedEfforts("xai:grok-4.20-0309-non-reasoning")).toBeUndefined();
 	});
 
+	it("excludes the multi-agent model, which chat completions refuses", () => {
+		expect(getModel("xai", "grok-4.20-multi-agent-0309")).toBeUndefined();
+	});
+});
+
+describe("catalog artifact invariants", () => {
 	it("keeps every model's max output under its context window", () => {
 		// xAI publishes no max-output cap and accepts max_tokens up to the full
 		// window, which upstream reports as output == context. Any such model
 		// resolves a zero message budget and fails every turn, so sync-models
-		// caps the whole provider by rule.
+		// caps any model whose output meets or exceeds its context, whoever ships it.
 		//
 		// Asserted over the catalog rather than a list of ids: enumerating the
-		// two models that need it today would pass unchanged on the next Grok
-		// that arrives the same way, which is the case worth catching.
+		// models that need it today would pass unchanged on the next one that
+		// arrives the same way, which is the case worth catching.
 		//
-		// This checks the shipped artifact. The rule that produces it is tested
-		// in sync-models.test.ts — this one stays green if the rule is deleted,
-		// because the committed data is already capped.
-		const models = listModels("xai");
-		expect(models.length).toBeGreaterThan(0);
-		for (const m of models) {
-			expect(m.limits.output, `${m.id} output must be under its context`).toBeLessThan(
-				m.limits.context,
-			);
+		// Every provider, not just xai. The cap is a rule about the data, and the
+		// committed artifact carries it applied to google and openai entries too.
+		//
+		// This checks the shipped artifact, and it is the only thing that does:
+		// no CI job regenerates or diffs `catalog-data.json`, so a hand-edit or a
+		// resync that reintroduces the shape is caught here or nowhere. The rule
+		// that produces it is tested separately in sync-models.test.ts.
+		let checked = 0;
+		for (const provider of listProviders()) {
+			for (const m of listModels(provider)) {
+				checked++;
+				expect(
+					m.limits.context,
+					`${provider}:${m.id} must declare a context window`,
+				).toBeGreaterThan(0);
+				expect(
+					m.limits.output,
+					`${provider}:${m.id} output must be under its context`,
+				).toBeLessThan(m.limits.context);
+			}
 		}
-	});
-
-	it("excludes the multi-agent model, which chat completions refuses", () => {
-		expect(getModel("xai", "grok-4.20-multi-agent-0309")).toBeUndefined();
+		expect(checked).toBeGreaterThan(0);
 	});
 });

@@ -6,15 +6,14 @@ describe("resolveFeatures", () => {
 		const features = resolveFeatures();
 		expect(features.bundleManagement).toBe(true);
 		expect(features.skillManagement).toBe(true);
-		expect(features.delegation).toBe(true);
 		expect(features.toolDiscovery).toBe(true);
 		expect(features.bundleDiscovery).toBe(true);
 		expect(features.compaction).toBe(true);
 	});
 
 	it("merges partial config correctly", () => {
-		const features = resolveFeatures({ delegation: false });
-		expect(features.delegation).toBe(false);
+		const features = resolveFeatures({ bundleDiscovery: false });
+		expect(features.bundleDiscovery).toBe(false);
 		expect(features.bundleManagement).toBe(true);
 		expect(features.skillManagement).toBe(true);
 		expect(features.toolDiscovery).toBe(true);
@@ -23,10 +22,25 @@ describe("resolveFeatures", () => {
 });
 
 describe("isToolEnabled", () => {
-	it("returns false for nb__delegate when delegation is disabled", () => {
-		const features = resolveFeatures({ delegation: false });
-		expect(isToolEnabled("nb__delegate", features)).toBe(false);
+	it("gates the whole skill surface, reads and writes alike, on skillManagement", () => {
+		const features = resolveFeatures({ skillManagement: false });
+		// `restore` writes and `history` reads the mutation surface's audit
+		// trail; either one live in a deployment that turned skill management
+		// off is the operator kill switch failing to switch something off.
+		for (const tool of [
+			"skills__create",
+			"skills__update",
+			"skills__delete",
+			"skills__activate",
+			"skills__deactivate",
+			"skills__history",
+			"skills__restore",
+			"skills__set_status",
+		]) {
+			expect(isToolEnabled(tool, features)).toBe(false);
+		}
 	});
+
 
 	it("returns true for nb__status (not feature-gated)", () => {
 		const features = resolveFeatures();

@@ -37,6 +37,7 @@ function createMockProvider(validToken: string, identity: UserIdentity): Identit
       authCodeFlow: false,
       tokenRefresh: false,
       managedUsers: false,
+      authorizationServer: false,
     },
     async verifyRequest(req: Request): Promise<UserIdentity | null> {
       const auth = req.headers.get("authorization");

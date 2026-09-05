@@ -5,44 +5,57 @@ import type { FetchLike, Transport } from "@modelcontextprotocol/sdk/shared/tran
 import type { RemoteTransportConfig } from "../bundles/types.ts";
 import { isMintedFleetSource } from "../oauth/minted-credential-provider.ts";
 import { getCredentialProvider } from "./credential-provider.ts";
+import { type CredentialValue, isCredentialRef } from "./credential-ref.ts";
+import { type CredentialScope, resolveCredentialValue } from "./credential-store.ts";
 import { createOAuthRefreshFetch } from "./oauth-refresh-fetch.ts";
 import { createSsrfGuardedFetch } from "./ssrf-guarded-fetch.ts";
 
 /**
- * Resolve `${ENV_VAR}` placeholders against `process.env`.
+ * Build the outgoing header map (arbitrary + static auth), dereferencing any
+ * `{ ref: "credential", key }` against the connection's own workspace.
  *
- * Used so catalog entries (and runtime BundleRef values) can carry
- * secret references like `${COMPOSIO_API_KEY}` without persisting the
- * actual secret to `workspace.json`. Substitution happens at transport
- * construction time so the resolved string is held only on the in-
- * memory `Transport` instance.
+ * Workspace scope is not a parameter: a connection belongs to exactly one
+ * workspace, and that is the only scope a tenant-editable `workspace.json` may
+ * reach. A reference with no workspace in scope is refused rather than resolved
+ * somewhere else — the alternative is a header silently filled from another
+ * tenant's key.
  *
- * Variables are matched against `[A-Z_][A-Z0-9_]*` — the conventional
- * shell env-var shape. Unknown / unset variables collapse to empty
- * string (mirrors `substituteUserConfigFromEnv` in
- * `src/bundles/startup.ts`); the underlying transport will surface a
- * concrete auth error from the vendor rather than a generic host
- * error, which is more actionable.
+ * Resolution happens per transport build, so rotating a key is a `put` and the
+ * next connection carries the new value with no config edit and no restart.
  */
-export function resolveEnvTemplate(value: string): string {
-  return value.replace(/\$\{([A-Z_][A-Z0-9_]*)\}/g, (_, key: string) => process.env[key] ?? "");
-}
+async function buildRequestHeaders(
+  config?: RemoteTransportConfig,
+  workspaceId?: string,
+): Promise<Record<string, string>> {
+  const scope: CredentialScope | undefined = workspaceId
+    ? { kind: "workspace", wsId: workspaceId }
+    : undefined;
 
-/** Build the outgoing header map (arbitrary + static auth) with `${ENV_VAR}` resolved in one pass. */
-function buildRequestHeaders(config?: RemoteTransportConfig): Record<string, string> {
-  const headers: Record<string, string> = { ...(config?.headers ?? {}) };
+  /** Dereference one header value, naming the header in the audit trail. */
+  const resolve = async (value: CredentialValue, headerName: string): Promise<string> => {
+    if (!isCredentialRef(value)) return value;
+    if (!scope) {
+      throw new Error(
+        `[remote-transport] header "${headerName}" references credential ` +
+          `"${value.key}" but the connection has no workspace; a credential ` +
+          "reference resolves only at the connection's own workspace scope",
+      );
+    }
+    return resolveCredentialValue(value, scope, {
+      caller: "transport:header",
+      purpose: `outbound MCP request header ${headerName}`,
+    });
+  };
 
-  if (config?.auth?.type === "bearer") {
-    headers.Authorization = `Bearer ${config.auth.token}`;
-  } else if (config?.auth?.type === "header") {
-    headers[config.auth.name] = config.auth.value;
+  const headers: Record<string, string> = {};
+  for (const [name, value] of Object.entries(config?.headers ?? {})) {
+    headers[name] = await resolve(value, name);
   }
 
-  // Single resolution pass over all headers (auth-derived + arbitrary): the
-  // regex is narrow enough that literal `${...}` strings outside the env-var
-  // shape pass through unchanged.
-  for (const [k, v] of Object.entries(headers)) {
-    headers[k] = resolveEnvTemplate(v);
+  if (config?.auth?.type === "bearer") {
+    headers.Authorization = `Bearer ${await resolve(config.auth.token, "Authorization")}`;
+  } else if (config?.auth?.type === "header") {
+    headers[config.auth.name] = await resolve(config.auth.value, config.auth.name);
   }
 
   return headers;
@@ -75,6 +88,32 @@ function applyProviderAuth(
     for (const [k, v] of Object.entries(credential.headers)) headers[k] = v;
   }
   return credential.fetch;
+}
+
+/**
+ * The credential one connection presents, resolved from its transport config:
+ * static headers plus, for `provider` auth, the fetch wrapper that mints and
+ * re-mints a token per request.
+ *
+ * Exported because the MCP transport is no longer the only thing that calls a
+ * connector's server. The hooks door forwards an inbound vendor delivery to a
+ * route the SAME connector declared, and it must present the SAME credential —
+ * resolving it a second way is how the two drift into disagreeing about how a
+ * connection authenticates.
+ *
+ * `authProvider` (interactive OAuth) is deliberately NOT part of this: it lives
+ * inside the SDK transport and is user-bound, so there is nothing here to hand
+ * a non-MCP caller. A caller that needs a credential and gets neither `headers`
+ * nor `fetch` back is looking at an interactive-OAuth connection and must
+ * refuse rather than send an unauthenticated request.
+ */
+export async function resolveTransportCredential(
+  config: RemoteTransportConfig | undefined,
+  workspaceId?: string,
+): Promise<{ headers: Record<string, string>; fetch?: FetchLike }> {
+  const headers = await buildRequestHeaders(config, workspaceId);
+  const fetch = applyProviderAuth(config, headers, workspaceId);
+  return fetch ? { headers, fetch } : { headers };
 }
 
 /** OAuth provider applies only when no static auth is configured — static auth is the explicit contract. */
@@ -123,18 +162,15 @@ function buildReconnectionOptions(config?: RemoteTransportConfig) {
  * not support. When attached, the MCP SDK handles discovery (RFC 9728),
  * dynamic client registration (RFC 7591), PKCE, and token refresh.
  *
- * **`${ENV_VAR}` template substitution** applies to every value in the
- * outgoing header map — both `config.auth` (bearer token / header
- * value) AND arbitrary entries in `config.headers`. Broad-scope by
- * design: a Composio-style connector might want a custom header like
- * `X-Vendor-Trace: ${NB_TENANT_ID}` resolved at transport build time,
- * not just the API-key auth value. The regex (`[A-Z_][A-Z0-9_]*`)
- * is narrow enough that literal `${...}` strings outside that shape
- * pass through unchanged. Unset variables collapse to empty string;
- * the underlying vendor surfaces a concrete error rather than a
- * generic platform 500.
+ * **Credential references** apply to every value in the outgoing header map —
+ * `config.auth`'s bearer token / header value AND arbitrary entries in
+ * `config.headers`. A value may be the secret itself or
+ * `{ ref: "credential", key }`, dereferenced from the connection's workspace
+ * scope on each build. A reference whose key is unset throws with the key and
+ * scope named, rather than sending a blank header and reading the vendor's 401
+ * a hop later.
  */
-export function createRemoteTransport(
+export async function createRemoteTransport(
   url: URL,
   config?: RemoteTransportConfig,
   authProvider?: OAuthClientProvider,
@@ -148,8 +184,8 @@ export function createRemoteTransport(
      *  Defaults to false (production posture). */
     allowInsecure?: boolean;
   },
-): Transport {
-  const headers = buildRequestHeaders(config);
+): Promise<Transport> {
+  const headers = await buildRequestHeaders(config, opts?.workspaceId);
   const mintingFetch = applyProviderAuth(config, headers, opts?.workspaceId);
   const effectiveAuthProvider = selectAuthProvider(config, authProvider);
   const transportFetch = selectTransportFetch(mintingFetch, effectiveAuthProvider);

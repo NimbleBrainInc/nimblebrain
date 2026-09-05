@@ -6,7 +6,9 @@ import type { EventSink, ThinkingEffort } from "../engine/types.ts";
 import type { ContentPart, FileReference } from "../files/types.ts";
 import type { UserIdentity } from "../identity/provider.ts";
 import type { ProvidersConfig } from "../model/registry.ts";
+import type { NotificationsPollConfig } from "../notifications/poll-config.ts";
 import type { TokenUsage } from "../usage/types.ts";
+import type { RunTrigger } from "./run-spec.ts";
 
 /** Model slot configuration. Each slot maps to a provider:model-id string. */
 export interface ModelSlots {
@@ -14,15 +16,6 @@ export interface ModelSlots {
   default: string;
   /** Cheap/fast model for briefings, auto-title, and both history folds. */
   fast: string;
-}
-
-/** Named agent profile for multi-agent delegation via nb__delegate. */
-export interface AgentProfile {
-  description: string;
-  systemPrompt: string;
-  tools: string[];
-  maxIterations?: number;
-  model?: string;
 }
 
 export interface RuntimeConfig {
@@ -154,9 +147,6 @@ export interface RuntimeConfig {
     host?: string;
   };
 
-  /** Named agent profiles for multi-agent delegation. */
-  agents?: Record<string, AgentProfile>;
-
   /** Feature flags to enable/disable capabilities. All default to true. */
   features?: FeatureFlags;
 
@@ -236,6 +226,18 @@ export interface RuntimeConfig {
     timezone?: string;
     /** Briefing cache TTL in minutes. Default: 5. */
     cacheTtlMinutes?: number;
+  };
+
+  /**
+   * Notifications — how the runtime reads the outboxes connectors declare.
+   *
+   * Only the poll's pacing is configurable. What an outbox contains, and who
+   * is allowed to declare one, are the server's and the operator's decisions
+   * respectively; what it *costs* is the runtime's, and this is where an
+   * operator moves that cost. See `src/notifications/poll-config.ts`.
+   */
+  notifications?: {
+    poll?: NotificationsPollConfig;
   };
 
   /** File context configuration. */
@@ -411,6 +413,16 @@ export interface ChatResult {
 export interface TaskRequest {
   /** The task description. Goes in as the user message. */
   prompt: string;
+  /**
+   * What woke the agent. `schedule` is an automations cron tick, `manual` an
+   * operator pressing Run now; the default `api` covers a caller driving the
+   * runtime directly (embedded, CLI, evals). `chat` is not reachable here —
+   * that trigger has its own door.
+   *
+   * The door stamps it on the run's `agent.turn` span, which is where a
+   * scheduled run is told apart from an operator's one after the fact.
+   */
+  trigger?: Exclude<RunTrigger, "chat">;
   /**
    * Identity the task runs under. Resolution mirrors `ChatRequest.identity`:
    * if an identity provider is configured, this MUST be set; in dev mode

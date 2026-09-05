@@ -14,34 +14,42 @@
  * `<VENDOR>_API_KEY` env var; every other setting comes from the block.
  */
 
+import { isRuntimeNativeAuthKind } from "../auth-kind.ts";
 import { validateComposioConfig } from "./composio/config.ts";
 import { createComposioProvider } from "./composio/provider.ts";
-import type { ConnectorAuthKind, ManagedConnectorProvider } from "./managed-provider.ts";
+import type { ManagedConnectorProvider } from "./managed-provider.ts";
 import { validateSmitheryConfig } from "./smithery/config.ts";
 import { createSmitheryProvider } from "./smithery/provider.ts";
 
-/** Read-only lookup of the configured brokered providers, keyed by `auth-kind`. */
+/** Read-only lookup of the configured brokered providers, keyed by `auth` kind. */
 export interface ManagedConnectorRegistry {
   /** The provider owning `id`, or undefined when none is configured for it. */
-  get(id: ConnectorAuthKind): ManagedConnectorProvider | undefined;
+  get(id: string): ManagedConnectorProvider | undefined;
   /** Whether a provider is registered for `id`. */
-  has(id: ConnectorAuthKind): boolean;
+  has(id: string): boolean;
   /** Every registered provider, for wiring that fans out over all of them (routes, probes). */
   list(): ManagedConnectorProvider[];
 }
 
 class MapManagedConnectorRegistry implements ManagedConnectorRegistry {
-  private readonly providers = new Map<ConnectorAuthKind, ManagedConnectorProvider>();
+  private readonly providers = new Map<string, ManagedConnectorProvider>();
 
   constructor(providers: readonly ManagedConnectorProvider[]) {
-    for (const provider of providers) this.providers.set(provider.id, provider);
+    for (const provider of providers) {
+      if (isRuntimeNativeAuthKind(provider.id)) {
+        throw new Error(
+          `[managed-connectors] provider id "${provider.id}" collides with a runtime-native auth kind`,
+        );
+      }
+      this.providers.set(provider.id, provider);
+    }
   }
 
-  get(id: ConnectorAuthKind): ManagedConnectorProvider | undefined {
+  get(id: string): ManagedConnectorProvider | undefined {
     return this.providers.get(id);
   }
 
-  has(id: ConnectorAuthKind): boolean {
+  has(id: string): boolean {
     return this.providers.has(id);
   }
 

@@ -1,94 +1,65 @@
 ---
 title: Manifest Reference
-description: Complete reference for the _meta["ai.nimblebrain/host"] manifest extension.
+description: Complete reference for the _meta["ai.nimblebrain/host"] host-metadata extension.
 ---
 
 import { Aside } from '@astrojs/starlight/components';
 
-NimbleBrain reads host metadata from the `_meta["ai.nimblebrain/host"]` key in your MCPB `manifest.json`. This is where you declare your app's name, icon, placements (sidebar items, main views, and settings sections), and briefing facets.
+NimbleBrain reads host metadata from the `_meta["ai.nimblebrain/host"]` key on your server's catalog entry — the upstream MCP registry [`ServerDetail`](https://github.com/modelcontextprotocol/registry) record an operator adds to the [connectors catalog](/config/connectors-catalog/). This is where you declare your app's name, icon, placements (sidebar items, main views, and settings sections), and briefing facets.
 
-## Full manifest structure
+The block has a published JSON Schema at
+[`schemas.nimblebrain.ai/v1/nimblebrain-host.schema.json`](https://schemas.nimblebrain.ai/v1/nimblebrain-host.schema.json)
+— point your editor's `$schema` at it for completion and validation while authoring.
 
-```json title="manifest.json"
-{
-  "manifest_version": "0.4",
-  "name": "@myorg/my-app",
-  "version": "1.0.0",
-  "description": "My NimbleBrain app",
-  "author": {
-    "name": "My Org",
-    "email": "dev@myorg.com",
-    "url": "https://myorg.com"
-  },
-  "server": {
-    "type": "python",
-    "mcp_config": {
-      "command": "python",
-      "args": ["-m", "my_app.server"]
-    }
-  },
-  "_meta": {
-    "ai.nimblebrain/host": {
-      "host_version": "1.0",
-      "name": "My App",
-      "icon": "database",
-      "placements": [
-        {
-          "slot": "main",
-          "resourceUri": "ui://dashboard",
-          "priority": 50,
-          "label": "My App",
-          "icon": "database",
-          "route": "my-app",
-          "size": "full"
-        },
-        {
-          "slot": "settings",
-          "resourceUri": "ui://settings",
-          "label": "My App",
-          "icon": "settings"
-        }
-      ]
-    }
-  }
-}
+<Aside type="note">
+  The runtime reads this block from the catalog entry, not from a package it
+  downloads: it connects to remote MCP servers and never acquires or executes a
+  server's code. If you also ship an [MCPB](https://github.com/modelcontextprotocol/mcpb)
+  `manifest.json` for other hosts, keep the same `_meta` block there — it is the
+  same extension, read from wherever that host reads its metadata.
+</Aside>
+
+## Full catalog entry
+
+```yaml title="catalog/my-app.yaml"
+servers:
+  - name: com.myorg/my-app
+    description: My NimbleBrain app
+    version: "1.0.0"
+    remotes:
+      - type: streamable-http
+        url: https://my-app.myorg.com/mcp
+    _meta:
+      ai.nimblebrain/host:
+        host_version: "1.0"
+        name: My App
+        icon: database
+        placements:
+          - slot: main
+            resourceUri: ui://dashboard
+            priority: 50
+            label: My App
+            icon: database
+            route: my-app
+            size: full
+          - slot: settings
+            resourceUri: ui://settings
+            label: My App
+            icon: settings
 ```
-
-## MCPB base fields
-
-These fields are defined by the [MCPB specification](https://github.com/modelcontextprotocol/mcpb). NimbleBrain supports both v0.3 and v0.4 formats.
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `manifest_version` | `string` | No | MCPB spec version (`"0.3"` or `"0.4"`). |
-| `name` | `string` | Yes | Scoped package name (e.g., `@myorg/my-app`). |
-| `version` | `string` | Yes | Semver version string. |
-| `description` | `string` | No | Human-readable description. |
-| `author` | `object` | No | Author info: `name`, `email`, `url`. |
-| `server.type` | `string` | Yes | Runtime type: `"python"`, `"node"`, `"binary"`, or `"uv"`. |
-| `server.entry_point` | `string` | No | Entry point file path. |
-| `server.mcp_config` | `McpConfig` | Yes | Spawn configuration (see below). |
-| `_meta` | `object` | No | Extension metadata. NimbleBrain reads `_meta["ai.nimblebrain/host"]`. |
-
-### McpConfig
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `command` | `string` | Yes | Executable to run (`"python"`, `"node"`, etc.). |
-| `args` | `string[]` | No | Command-line arguments. Use `${__dirname}` for the bundle directory. |
-| `env` | `Record<string, string>` | No | Environment variables passed to the process. |
 
 ## Host metadata: `_meta["ai.nimblebrain/host"]`
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `host_version` | `string` | Yes | Host extension contract version: `"1.0"` or `"1.1"`. `1.1` is the version that adds the `host_capabilities` block — set it when you declare that block. |
-| `name` | `string` | Recommended | Display name shown in the sidebar and app list. Without a `name` the host surfaces no UI for the bundle, so it's required in practice for any app with a presence in the shell. |
+| `host_version` | `string` | Yes | Host extension contract version: `"1.0"`, `"1.1"`, `"1.2"`, or `"1.3"`. `1.2` adds `hooks` and `1.3` adds `notifications` — set the version that matches the newest block you declare. |
+| `name` | `string` | Recommended | Display name shown in the sidebar and app list. Without a `name` the host surfaces no UI for the connector, so it's required in practice for any app with a presence in the shell. |
 | `icon` | `string` | No | [Lucide icon](https://lucide.dev/icons) name in kebab-case (e.g., `"database"`, `"message-square"`, `"hand"`). Defaults to `""`. |
 | `category` | `string` | No | Reserved, free-form string. Not currently consumed by the host — declare it only as forward-looking metadata. |
 | `placements` | `PlacementDeclaration[]` | No | Shell layout placement declarations — sidebar items, main views, and settings sections. See [Placements](/apps/placements). |
 | `briefing` | `object` | No | Daily briefing contribution. See [briefing](#briefing-object) below. |
-| `host_capabilities` | `object` | No | NimbleBrain host capabilities this bundle requires or prefers. Declare `host_version: "1.1"` alongside it. See [Host Capabilities](/apps/host-capabilities). |
+| `hooks` | `HookDeclaration[]` | No | Inbound event streams your server accepts from a vendor over plain HTTPS. Declare `host_version: "1.2"` alongside it. See [hooks](#hooks-inbound-webhooks) below. |
+| `notifications` | `object` | No | The outbox your server exposes — one resource the host polls for facts nobody asked for. Declare `host_version: "1.3"` alongside it. See [notifications](#notifications-the-outbox) below and the full guide at [Notifications](/apps/notifications). |
 
 ### Settings sections
 
@@ -107,7 +78,7 @@ The `resourceUri` points at the `ui://` page that renders the settings HTML; `la
 
 ### `briefing` object
 
-Apps can contribute to the daily briefing on the Home dashboard by declaring a `briefing` block. The platform reads entity data from disk and presents a business-language summary.
+Apps can contribute to the daily briefing on the Home dashboard by declaring a `briefing` block. Each facet names a tool or a resource on **your** server; the host asks your server for the answer and presents a business-language summary. It never reads your data itself.
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
@@ -123,50 +94,34 @@ Each facet describes one piece of data to surface in the briefing:
 | `name` | `string` | Yes | Unique identifier (kebab-case). |
 | `label` | `string` | Yes | Human-readable label (e.g., "Pipeline", "Blocked tasks"). |
 | `type` | `string` | Yes | How this facet is treated: `"attention"` (needs action now), `"upcoming"` (coming soon), `"activity"` (something happened), `"delta"` (state changed), `"kpi"` (headline number). |
-| `entity` | `string` | No | Upjack entity to query. Reads JSON files from the entity data directory. |
-| `query` | `object` | No | MongoDB-style filter (powered by [sift.js](https://github.com/crcn/sift.js)). Supports `$eq`, `$ne`, `$gt`, `$gte`, `$lt`, `$lte`, `$in`, `$exists`. String values like `"${today}"` are resolved at runtime. |
-| `tool` | `string` | No | MCP tool to call at briefing time (e.g., `"newsapi__search_news"`). |
+| `tool` | `string` | No | MCP tool to call at briefing time (e.g., `"tasks__count_due"`). |
 | `tool_input` | `object` | No | Arguments passed to the tool. |
-| `resource` | `string` | No | `briefing://` URI — the app computes its own summary via MCP resource. |
-| `metric` | `"count" \| "sum" \| "list"` | No | Aggregation hint. |
-| `description` | `string` | No | Fallback description if data can't be resolved. |
+| `resource` | `string` | No | `briefing://` URI — the app computes its own summary and serves it as an MCP resource. |
+| `description` | `string` | No | Used when the facet declares neither `tool` nor `resource`, and as the fallback if resolution fails. |
 
-Each facet resolves via **one** of `entity`, `tool`, or `resource`.
-
-**Query variables** resolved at runtime:
-
-| Variable | Value |
-|----------|-------|
-| `${today}` | Current date as `YYYY-MM-DD` |
-| `${now}` | Current ISO timestamp |
-| `${period.since}` | Start of the briefing period (24 hours ago) |
+Each facet resolves via **one** of `tool` or `resource` — both answered by the
+server that declared the facet, over MCP. There is no host-side disk query: the
+runtime holds no copy of your data, so a count it could compute would be a
+guess.
 
 **Example:**
 
-```json
-"briefing": {
-  "priority": "medium",
-  "facets": [
-    {
-      "name": "due_today",
-      "label": "Due today",
-      "type": "upcoming",
-      "entity": "task",
-      "query": { "due_date": "${today}", "completed_at": null },
-      "metric": "count",
-      "description": "Tasks due today that aren't done"
-    },
-    {
-      "name": "blocked_tasks",
-      "label": "Blocked",
-      "type": "attention",
-      "entity": "task",
-      "query": { "column": "blocked", "status": "active" },
-      "metric": "count",
-      "description": "Tasks stuck in blocked column"
-    }
-  ]
-}
+```yaml
+briefing:
+  priority: medium
+  facets:
+    - name: due_today
+      label: Due today
+      type: upcoming
+      tool: tasks__count
+      tool_input: { due: today, completed: false }
+      description: Tasks due today that aren't done
+    - name: blocked_tasks
+      label: Blocked
+      type: attention
+      tool: tasks__count
+      tool_input: { column: blocked, status: active }
+      description: Tasks stuck in blocked column
 ```
 
 ### `PlacementDeclaration`
@@ -182,6 +137,130 @@ Each entry in the `placements` array:
 | `icon` | `string` | No | — | Lucide icon name (kebab-case). Falls back to `CircleDot` if unset or unrecognized. |
 | `route` | `string` | No | — | Route path for `"main"` slot placements. Registers as `/app/<route>`. |
 | `size` | `"compact" \| "full" \| "auto"` | No | — | Size hint for the slot renderer. |
+
+
+## `hooks`: inbound webhooks
+
+A vendor that delivers events to a webhook URL — a payment processor, a campaign
+platform, a CRM — cannot carry a NimbleBrain token, so it cannot call your server
+directly. Declaring a `hooks` entry asks the host for a URL that it will accept
+those deliveries on and forward to you.
+
+```json
+"_meta": {
+  "ai.nimblebrain/host": {
+    "host_version": "1.2",
+    "hooks": [
+      {
+        "vendor": "acme",
+        "route": "/ingest/acme",
+        "register_tool": "set_webhook_url",
+        "description": "Order events: created, paid, refunded"
+      }
+    ]
+  }
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `vendor` | `string` | Yes | Slug for the vendor, lowercase alphanumeric with internal hyphens. Appears in the minted URL. One entry per vendor. |
+| `route` | `string` | Yes | Absolute path **on your own server** that deliveries are forwarded to. Must stay on your origin: no `//host`, no `..`, no scheme. |
+| `register_tool` | `string` | Yes | A tool on your server that the host calls with `{ vendor, url }` — both strings — to hand you the minted URL. |
+| `description` | `string` | No | What the stream carries. Shown to operators; the host never acts on it. |
+| `header_renames` | `object` | No | `{ from: to }` header renames applied before the forward. See [signature headers](#signature-headers) below. |
+
+### What happens
+
+1. **At install**, the host mints a URL for exactly one `(workspace, connector, vendor)` and calls your `register_tool` with it. Store it, and register it with the vendor.
+2. **On delivery**, the host verifies the URL, then forwards the request to your `route` — **body bytes unchanged**, the vendor's own headers passed through — arriving with the same `x-tenant-id` / `x-workspace-id` identity headers a tool call gets.
+3. **Your server answers**, and the host returns your status code to the vendor unchanged. Answer `2xx` once you have durably recorded the delivery; answer `5xx` only when you want the vendor to retry.
+
+The host never parses a delivery body. Signature verification, parsing, idempotency, and state are entirely yours.
+
+### Your `register_tool` must accept `{ vendor, url }`
+
+The host checks this against your advertised `tools/list` **at install time**. If
+the tool is missing or does not accept both arguments, **no URL is minted for any
+of your streams** and the operator is shown a warning naming the offending
+declaration — the connector still installs, and its tools still work. A stream
+whose registration tool is wrong would otherwise fail silently, months later, at
+a vendor nobody is watching.
+
+The check re-runs every time the connection is (re)established **and** every time
+your advertised tool set changes, so fixing the manifest and reconnecting
+provisions the streams without a reinstall.
+
+Your tools do not have to be ready the moment the host connects. A server that
+advertises nothing yet is not a contract failure — nothing is minted, nothing is
+reported wrong, and the streams provision as soon as your tool list appears.
+
+```python
+@mcp.tool()
+def set_webhook_url(vendor: str, url: str) -> dict:
+    ...
+```
+
+### Signature headers
+
+Your vendor's own headers reach you — `Stripe-Signature`, `X-Acme-Signature`,
+whatever it uses — so you can verify the delivery came from the vendor and not
+merely from someone holding the URL. **Verify them.** Possession of the URL
+proves only that the host should forward the request to you for this workspace;
+it does not prove who sent it.
+
+One class of header does **not** reach you: anything a caller could use to assert
+identity — `Authorization`, `X-Api-Key`, `X-Tenant-Id`, `X-Workspace-Id`,
+`X-User-Id`, and **everything under the reserved `X-NB-*` prefix**. These are
+stripped, because the only identity on a forwarded delivery must be the one the
+platform verified. If your vendor signs on one of those headers, declare a
+rename:
+
+```json
+{ "vendor": "acme", "route": "/ingest/acme", "register_tool": "set_webhook_url",
+  "header_renames": { "authorization": "x-acme-signature" } }
+```
+
+### Limits
+
+| | |
+|---|---|
+| Body size | 256 KiB; larger deliveries are refused with `413` before reaching you |
+| Method | `POST` only |
+| Retries | None from the host — a single forward attempt. Your vendor's own retry, plus whatever reconciliation you poll for, is the durability story |
+| Rotation | An operator can rotate a URL at any time; the previous one keeps working for 24 hours so in-flight redeliveries land. Your `register_tool` is called again with the new URL |
+| Correlation | No key id reaches you — the platform adds no header of its own. An operator correlates a delivery to the URL it arrived on through the platform's own logs, so you do not need to record one |
+
+## `notifications`: the outbox
+
+Your server learns things nobody asked it for — a domain it ordered went active,
+a reply landed. Declaring a `notifications` block tells the host which resource
+to read for those, on a schedule the host paces.
+
+```json
+"_meta": {
+  "ai.nimblebrain/host": {
+    "host_version": "1.3",
+    "notifications": {
+      "resource": "acme://notifications",
+      "description": "Domain lifecycle, campaign replies, bounce and suppression events."
+    }
+  }
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `resource` | `string` | Yes | The outbox resource URI. Must carry a scheme; must **not** carry a query string or fragment — the host appends `{?cursor,maxEvents,maxAgeMs}` itself. |
+| `description` | `string` | No | What the outbox carries. Operator-facing; the host never acts on it. |
+
+Declaring an outbox grants your server nothing: no URL is minted, no new token
+audience exists, and no path to a human is opened — a workspace admin's route
+does that. What it costs is a standing poll, which the host bounds with its own
+cadence and per-workspace budget.
+
+The resource shape, the poll result, the event envelope, and what the host reads
+and never reads are all on the [Notifications](/apps/notifications) page.
 
 ## Registering your main view
 
@@ -219,51 +298,38 @@ If the icon name is not recognized, `CircleDot` is used as the default fallback.
 
 ## Minimal example (UI app)
 
-The smallest manifest that registers a UI view:
+The smallest catalog entry that registers a UI view:
 
-```json title="manifest.json"
-{
-  "name": "@myorg/hello",
-  "version": "0.1.0",
-  "server": {
-    "type": "node",
-    "mcp_config": {
-      "command": "node",
-      "args": ["${__dirname}/dist/index.js"]
-    }
-  },
-  "_meta": {
-    "ai.nimblebrain/host": {
-      "host_version": "1.0",
-      "name": "Hello",
-      "icon": "hand",
-      "placements": [
-        {
-          "slot": "main",
-          "resourceUri": "ui://index",
-          "route": "hello",
-          "label": "Hello"
-        }
-      ]
-    }
-  }
-}
+```yaml title="catalog/hello.yaml"
+servers:
+  - name: com.myorg/hello
+    description: Says hello
+    version: "0.1.0"
+    remotes:
+      - type: streamable-http
+        url: https://hello.myorg.com/mcp
+    _meta:
+      ai.nimblebrain/host:
+        host_version: "1.0"
+        name: Hello
+        icon: hand
+        placements:
+          - slot: main
+            resourceUri: ui://index
+            route: hello
+            label: Hello
 ```
 
 ## Minimal example (tools only)
 
-No `_meta` needed for tools-only bundles:
+No `_meta` needed for a tools-only server:
 
-```json title="manifest.json"
-{
-  "name": "@myorg/calculator",
-  "version": "1.0.0",
-  "server": {
-    "type": "python",
-    "mcp_config": {
-      "command": "python",
-      "args": ["-m", "calculator.server"]
-    }
-  }
-}
+```yaml title="catalog/calculator.yaml"
+servers:
+  - name: com.myorg/calculator
+    description: Arithmetic
+    version: "1.0.0"
+    remotes:
+      - type: streamable-http
+        url: https://calculator.myorg.com/mcp
 ```

@@ -8,9 +8,9 @@ import { Tabs, TabItem, Aside } from '@astrojs/starlight/components';
 NimbleBrain splits configuration into two files:
 
 - **`nimblebrain.json`** — instance-level settings (models, HTTP, logging, limits, feature flags). One file per deployment. **This page.**
-- **`workspace.json`** — per-workspace settings (bundles, skill directories, named agent profiles, optional model + identity overrides). See [`workspace.json`](/config/workspace-json).
+- **`workspace.json`** — per-workspace settings (bundles, skill directories, optional model + identity overrides). See [`workspace.json`](/config/workspace-json).
 
-Top-level `bundles`, `skillDirs`, `agents`, `home`, and `preferences` entries in `nimblebrain.json` are silently stripped at load — they belong in `workspace.json` now. See [workspace configuration](/config/workspace-json) for where they live.
+Top-level `bundles`, `skillDirs`, `home`, and `preferences` entries in `nimblebrain.json` are silently stripped at load — they belong in `workspace.json` now. See [workspace configuration](/config/workspace-json) for where they live.
 
 ## Config resolution
 
@@ -24,7 +24,7 @@ NimbleBrain looks for the config file in this order, stopping at the first match
 If no config file exists at the resolved path, NimbleBrain auto-creates a minimal default file (`{ "$schema": …, "version": "1" }`) as long as the parent directory exists.
 
 <Aside type="caution">
-  `NB_WORK_DIR` does **not** drive config-file discovery. It sets the `workDir` runtime value (where conversations, logs, and workspaces are stored) and is forwarded to bundle subprocesses, but the config file is located by the order above. To point at a specific config file, use `--config`.
+  `NB_WORK_DIR` does **not** drive config-file discovery. It sets the `workDir` runtime value (where conversations, logs, and workspaces are stored), but the config file is located by the order above. To point at a specific config file, use `--config`.
 </Aside>
 
 ### The override file
@@ -59,7 +59,6 @@ A sibling `nimblebrain.overrides.json` next to the resolved config file is **dee
   "features": {
     "bundleManagement":    true,
     "skillManagement":     true,
-    "delegation":          true,
     "toolDiscovery":       true,
     "bundleDiscovery":     true,
     "fileContext":         true,
@@ -71,6 +70,15 @@ A sibling `nimblebrain.overrides.json` next to the resolved config file is **dee
   "connectors": {
     "providers": {
       "composio": { "monitorEnabled": true }
+    }
+  },
+
+  "notifications": {
+    "poll": {
+      "intervalMs":      60000,
+      "maxIntervalMs":   300000,
+      "maxEvents":       100,
+      "budgetPerMinute": 10
     }
   },
 
@@ -110,13 +118,14 @@ A sibling `nimblebrain.overrides.json` next to the resolved config file is **dee
 | `http` | `object` | `{ "port": 27247, "host": "127.0.0.1" }` | HTTP server config. Omit for programmatic-only use. |
 | `features` | `object` | all `true` | Feature flags. See [Feature Flags](/config/features). |
 | `connectors` | `object` | — | Managed-connector provider settings (Composio). See [connectors](#connectors). |
+| `notifications` | `object` | — | Pacing for the notification outbox poll. See [notifications](#notifications). |
 | `files` | `object` | — | File upload limits. See [files](#files). |
 | `allowInsecureRemotes` | `boolean` | `false` | Allow HTTP (non-TLS) remote bundle connections. Dev only. |
 | `telemetry` | `object` | `{ "enabled": true }` | Anonymous usage telemetry. See [telemetry](#telemetry). |
 | `workDir` | `string` | `"~/.nimblebrain"` | Working directory for runtime state (conversations, logs, workspaces). |
 
 <Aside type="note">
-  **Workspace-owned fields** — `bundles`, `skillDirs`, `agents`, `home`, `preferences`, `noDefaultBundles` — are silently stripped if placed at the top level. They live in [`workspace.json`](/config/workspace-json). A top-level `skills` array is a **legacy** field and is silently stripped too; skill directories belong in `workspace.json` as `skillDirs`.
+  **Workspace-owned fields** — `bundles`, `skillDirs`, `home`, `preferences`, `noDefaultBundles` — are silently stripped if placed at the top level. They live in [`workspace.json`](/config/workspace-json). A top-level `skills` array is a **legacy** field and is silently stripped too; skill directories belong in `workspace.json` as `skillDirs`.
 
   **Deprecated fields** — `identity` and `contextFile` are ignored with a warning. Use a skill with `type: "context"` instead.
 </Aside>
@@ -203,7 +212,7 @@ The `models` object declares two role-based slots. Each value is a `provider:mod
 | `default` | Chat, general requests, most tool-using turns |
 | `fast` | Conversation titles, the home briefing, and both history folds — end-of-turn compaction and the mid-turn fold. Cheap/fast workloads, but still needs a large context window: see below |
 
-A workspace can override individual slots via `workspace.json → models`. When a `nb__delegate` call or agent profile specifies a slot name (e.g. `"model": "fast"`), it's resolved against these slots. `"alias:fast"` is the same reference written explicitly; both spellings resolve identically.
+A workspace can override individual slots via `workspace.json → models`. When a per-request model specifies a slot name (e.g. `"model": "fast"`), it's resolved against these slots. `"alias:fast"` is the same reference written explicitly; both spellings resolve identically.
 
 A bare model string that is **neither** a slot name nor a model in the catalog is passed through to the provider unchanged, with `anthropic:` prepended — the deliberate fallback for pinned or bespoke ids served under their own name (for example through an OpenAI-compatible proxy). That means a typo here is not rejected at config load; it fails at the provider on the first call that uses the slot, reporting a model you did not configure.
 
@@ -216,8 +225,7 @@ the change; conversations already under way keep running on the model they began
 on. Start a new conversation to pick up the new slot.
 
 The binding is the main chat model only. Auxiliary work always follows the
-current slots: title generation and history compaction take `fast`, and a
-`nb__delegate` call takes whatever slot it names.
+current slots: title generation and history compaction take `fast`.
 
 Precedence for a chat turn, highest first:
 
@@ -231,7 +239,7 @@ Conversations created before this behavior existed carry no binding and resolve
 from the current slot on every turn, as they did before.
 
 <Aside type="caution">
-  Don't put a **small-context** model in the `fast` slot. A `fast` request (via `nb__delegate` or a `"model": "fast"` override) carries the **same tool surface as a normal request** — it isn't slimmed down for being "fast" — so its message budget is capped by the model's headroom: `context − systemPrompt − toolSchemas − maxOutputTokens − safetyMargin` (a lower `maxInputTokens` caps it further). On a connector-heavy workspace, a model with a ~40k window can be left with almost no room for conversation history — in the worst case the window keeps only the anchor (the first turn) and the last atomic group, dropping the middle of the thread, so the agent loses mid-conversation context. Worse, a single large tool result (a file read or web fetch) can push even that minimal window past the model's context, so the provider rejects the request outright. Prefer a `fast` model with generous context (≥128k); for a `nb__delegate` call you can instead narrow the child's tool surface with `tools: [...]` globs.
+  Don't put a **small-context** model in the `fast` slot. A `fast` request (via a `"model": "fast"` override) carries the **same tool surface as a normal request** — it isn't slimmed down for being "fast" — so its message budget is capped by the model's headroom: `context − systemPrompt − toolSchemas − maxOutputTokens − safetyMargin` (a lower `maxInputTokens` caps it further). On a connector-heavy workspace, a model with a ~40k window can be left with almost no room for conversation history — in the worst case the window keeps only the anchor (the first turn) and the last atomic group, dropping the middle of the thread, so the agent loses mid-conversation context. Worse, a single large tool result (a file read or web fetch) can push even that minimal window past the model's context, so the provider rejects the request outright. Prefer a `fast` model with generous context (≥128k).
 
   The history folds want the same headroom for a different reason. A fold summarizes a conversation grown against the **main** model's window, so a `fast` model with a smaller one has less room to read what it is summarizing — the call is bounded to the summarizer's own context to keep it from overflowing, and a small window buys a worse summary or none at all.
 </Aside>
@@ -498,7 +506,7 @@ The probe's **sweep cadence is not here.** One revalidator serves every provider
 
 #### Per-toolkit auth configs
 
-Every `auth: composio` connector needs an auth config created in the Composio dashboard ([how](/deploy/composio/#3-create-one-auth-config-per-toolkit-in-composio)). Its `ac_…` id varies per Composio account, so it cannot live in the catalog, which is shared across deployments.
+Every `auth: composio` connector needs an auth config created in the Composio dashboard ([how](/gateways/composio/#3-create-one-auth-config-per-toolkit-in-composio)). Its `ac_…` id varies per Composio account, so it cannot live in the catalog, which is shared across deployments.
 
 ```jsonc
 "authConfigs": { "gmail": "ac_xxxxxxxx", "posthog": "ac_yyyyyyyy" }
@@ -527,7 +535,7 @@ Smithery contributes **no callback routes**: it brokers OAuth on its own hosted 
 
 `apiKey` is the platform-wide Composio API key and the gate on registering the provider at all — without it (here or in `COMPOSIO_API_KEY`) the integration stays dormant.
 
-It is declarable because nothing persisted points at where it lives. A connector installed through Composio records `auth: { type: "provider", provider: "composio" }` in `workspace.json` — it names the credential it needs, not a place to find it — so the key never sits at rest and resolution stays the provider's own business. Connectors installed before that change carry a `${COMPOSIO_API_KEY}` environment reference and are mapped forward when they start, so both resolve identically with no operator action.
+It is declarable because nothing persisted points at where it lives. A connector installed through Composio records `auth: { type: "provider", provider: "composio" }` in `workspace.json` — it names the credential it needs, not a place to find it — so the key never sits at rest and resolution stays the provider's own business. Connectors installed before that change carry a `${COMPOSIO_API_KEY}` environment reference in their `auth` block and are mapped forward when they start, so both resolve identically with no operator action. The key itself may be a [credential reference](/config/secrets/) rather than a literal.
 
 <Aside type="note">
   **Which home to pick.** Both work; they suit different deployments.
@@ -543,6 +551,79 @@ It is declarable because nothing persisted points at where it lives. A connector
 Settings resolve from this block only — there is no environment fallback for them. The **broker credential** is the exception: `apiKey` also reads `COMPOSIO_API_KEY` / `SMITHERY_API_KEY`, because a secret has a legitimate home in the environment. One value, one source, with that single documented exception.
 
 `NB_TENANT_ID` is likewise not part of this block. It is a deployment identity, stays env-only, and is still required when the OAuth bouncer is configured.
+
+## notifications
+
+An app can declare an **outbox** — one resource carrying facts it recorded that
+nobody asked for, such as a domain going active or a reply landing. The runtime
+reads each declared outbox on a schedule and writes what it finds to the
+workspace's notification inbox. What an outbox carries is the app's decision and
+who may declare one is yours; what the poll *costs* is the runtime's, and this
+block is where you move it.
+
+```json
+{
+  "notifications": {
+    "poll": {
+      "intervalMs":      60000,
+      "maxIntervalMs":   300000,
+      "maxEvents":       100,
+      "budgetPerMinute": 10
+    }
+  }
+}
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `poll.intervalMs` | `integer` (ms) | `60000` | Base cadence per `(workspace, connector)`. Floored at the fixed 15,000 ms poll floor. |
+| `poll.maxIntervalMs` | `integer` (ms) | `300000` | Backoff ceiling — the slowest an idle outbox is read, and the interval an open circuit breaker half-opens on. Never resolves below `intervalMs`. |
+| `poll.maxEvents` | `integer` | `100` | Events requested per read. Capped at 1000. |
+| `poll.budgetPerMinute` | `integer` | `10` | Polls allowed per workspace per minute, across every connector in it. |
+
+Nothing here is required: a deployment that sets no block polls at these
+defaults, and one where no app declares an outbox polls nothing at all.
+
+### The cadence is adaptive, and an app may recommend one
+
+Each outbox is read on its own schedule, not on a fleet-wide tick:
+
+- Consecutive reads that return no events **double** the interval, up to
+  `maxIntervalMs`. A read that returns events snaps straight back to
+  `intervalMs`.
+- An answer carrying `nextPollMs` is honoured, clamped between a fixed 15-second
+  floor and `maxIntervalMs`. An app watching something that is about to change
+  asks to be read sooner this way; one that is rate-limited upstream asks to be
+  read less.
+- An answer carrying `hasMore: true` means the batch was cut at `maxEvents`, and
+  the runtime reads again immediately — out of the same budget, because it is
+  the same cost.
+- An outbox that fails three reads in a row is read once per `maxIntervalMs`
+  until it answers, rather than on every tick.
+
+The 15-second floor is not configurable. It bounds how much of a tenant's
+request budget a standing background loop can consume, and an app that wants to
+be read faster than that wants a push rather than a poll.
+
+### The budget, and why the default is what it is
+
+`budgetPerMinute` is a per-workspace allowance, not a global one. The default is
+derived rather than picked: the poll may take about a quarter of a tenant's
+request rate, and one poll costs up to three requests when it has to re-establish
+an idle-closed connection first — so the allowance buys a third as many polls as
+requests.
+
+When a workspace's allowance runs out mid-pass, the connectors it did not reach
+are deferred to the next tick and the pass **resumes with them**. A workspace
+with more outboxes than budget reads all of them, more slowly — it never reads
+the first few forever.
+
+<Aside type="caution">
+  The poller runs in every replica, so `replicas: 1` is the supported topology —
+  the same prerequisite the connection revalidator carries. Two replicas would
+  read the same outbox twice and race the same stored position. See
+  [Observability](/deploy/observability/#background-loops).
+</Aside>
 
 ## files
 
@@ -598,7 +679,7 @@ NimbleBrain validates `nimblebrain.json` at startup against the [JSON Schema (dr
 
 - **Unknown keys** produce a warning on stderr and are ignored.
 - **Structural errors** (wrong types, missing required fields) throw an error and prevent startup.
-- **Workspace-owned and legacy keys** (`bundles`, `skillDirs`, `agents`, `home`, `preferences`, `noDefaultBundles`, and the legacy `skills`) are silently stripped — no warning.
+- **Workspace-owned and legacy keys** (`bundles`, `skillDirs`, `home`, `preferences`, `noDefaultBundles`, and the legacy `skills`) are silently stripped — no warning.
 - The **override file** (`nimblebrain.overrides.json`) is validated structurally, but unknown-key warnings are suppressed for it. Every key `set_model_config` writes is in the published schema; the suppression is for version drift, since the file is preserved across deploys and can outlive the schema of whichever image reads it.
 - **Deprecated keys** (`identity`, `contextFile`) produce a warning pointing at context skills.
 

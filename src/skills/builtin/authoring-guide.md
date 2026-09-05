@@ -2,7 +2,7 @@
 name: authoring-guide
 description: Guide for authoring NimbleBrain platform skills (voice, workflow, personal, tool routing). Use when creating, modifying, customizing, deleting, or managing a skill — its behavior, triggers, priority, scope, or allowed-tools. Vendored content shipped with the nb__skills bundle.
 metadata:
-  version: "1.1.0"
+  version: "1.2.0"
   nimblebrain:
     loading-strategy: dynamic
     priority: 25
@@ -30,12 +30,33 @@ competes for context window space, and so does this guide.
 Skills are created and managed through the `nb__skills` tools:
 
 - `skills__create` — write a new skill at org / workspace / user scope
-- `skills__update` — patch manifest fields and/or replace the body
+- `skills__update` — patch manifest fields and/or change the body. Not `status`:
+  that is the durable off switch and it is refused here
 - `skills__delete` — remove a skill (snapshots to `_versions/` first)
-- `skills__activate` / `skills__deactivate` — flip `status` without deleting
+- `skills__activate` / `skills__deactivate` — mute or un-mute a skill for THIS
+  conversation. Nothing is written; other conversations and workspaces are
+  unaffected. You cannot turn a skill off permanently — that is the user's call,
+  in Skills settings. If they ask for it, say so rather than muting and
+  reporting it done.
 - `skills__list` / `skills__read` — inspect what exists before changing anything
+- `skills__history` / `skills__restore` — list past versions and put one back
 
 Always `skills__list` before mutating so you know what you're working with.
+
+## Changing a body: say which you mean
+
+`skills__update` will not guess. Passing `body` without `body_mode` is an error,
+because the two intents destroy different things when guessed wrong:
+
+- **`body_mode: "append"`** — adds your text after what is already there. This is
+  what "add a rule to this skill" means. Reach for it by default.
+- **`body_mode: "replace"`** — overwrites the entire body. **Everything not in
+  `body` is gone from the live file.** Only correct when you are rewriting the
+  whole skill, and you should have read it first.
+
+If a replace turns out to have discarded something, it is recoverable:
+`skills__history` lists the snapshots taken before each write, `skills__read`
+with a `version` shows one, and `skills__restore` puts it back.
 
 ## The three layers
 
@@ -172,8 +193,9 @@ Standard top-level: `name` (lowercase + hyphens, ≤64) and `description`.
 Optional: `license`, and `allowed-tools` (a space-separated string of tools
 the skill may **call** — distinct from `tool-affinity`, which is *when to
 load*). NimbleBrain config nests under `metadata.nimblebrain`:
-`loading-strategy` (required), `priority`, `status`, `tool-affinity`,
-`triggers`.
+`loading-strategy` (required), `priority`, `tool-affinity`, `triggers`. Not
+`status` — you cannot create or edit a skill's durable on/off state; a new
+skill is always active.
 
 A valid dynamic workflow skill:
 

@@ -56,14 +56,13 @@ describe("boot-start failure — seeding an installed-but-not-running URL bundle
     lifecycle = new BundleLifecycleManager(sink, undefined);
   });
 
-  test("seedInstance_withStartError_recordsDeadNotRunning", () => {
-    lifecycle.seedInstance(
+  test("seedInstance_withStartError_recordsDeadNotRunning", async () => {
+    await lifecycle.seedInstance(
       SERVER,
       "http://mcp-memory.mcp-shared.svc.cluster.local/mcp",
       fleetRef(),
       undefined,
       WS,
-      undefined,
       'Streamable HTTP error: Error POSTing to endpoint: {"error":"bad_gateway"}',
     );
 
@@ -72,10 +71,10 @@ describe("boot-start failure — seeding an installed-but-not-running URL bundle
     expect(connection?.lastError).toContain("bad_gateway");
   });
 
-  test("seedInstance_withoutStartError_stillRecordsRunning", () => {
+  test("seedInstance_withoutStartError_stillRecordsRunning", async () => {
     // The static-auth bundle auto-connects, so a clean boot must still land on
     // `running` — the failure branch must not swallow the happy path.
-    lifecycle.seedInstance(
+    await lifecycle.seedInstance(
       SERVER,
       "http://mcp-memory.mcp-shared.svc.cluster.local/mcp",
       fleetRef(),
@@ -86,17 +85,16 @@ describe("boot-start failure — seeding an installed-but-not-running URL bundle
     expect(connectionOf(lifecycle)?.state).toBe("running");
   });
 
-  test("seedInstance_withStartError_keepsInstanceAndRefForRecovery", () => {
+  test("seedInstance_withStartError_keepsInstanceAndRefForRecovery", async () => {
     // `tryRecoverSource` resolves the URL ref off the seeded instance and
     // declines when there isn't one. Dropping the entry is what made the old
     // failure permanent, so the instance surviving IS the recovery precondition.
-    lifecycle.seedInstance(
+    await lifecycle.seedInstance(
       SERVER,
       "http://mcp-memory.mcp-shared.svc.cluster.local/mcp",
       fleetRef(),
       undefined,
       WS,
-      undefined,
       "connect ECONNREFUSED",
     );
 
@@ -105,14 +103,13 @@ describe("boot-start failure — seeding an installed-but-not-running URL bundle
     expect(instance?.ref && "url" in instance.ref).toBe(true);
   });
 
-  test("seedInstance_withStartError_emitsStateChangeCarryingTheError", () => {
-    lifecycle.seedInstance(
+  test("seedInstance_withStartError_emitsStateChangeCarryingTheError", async () => {
+    await lifecycle.seedInstance(
       SERVER,
       "http://mcp-memory.mcp-shared.svc.cluster.local/mcp",
       fleetRef(),
       undefined,
       WS,
-      undefined,
       "connect ECONNREFUSED",
     );
 

@@ -1,12 +1,12 @@
 /**
  * Observability test: a synthesized bundle skill must show up in the
  * `skills.loaded` event payload with the right id, scope, and loadedBy
- * values so downstream consumers (SkillsPopover, skills__active_for,
+ * values so downstream consumers (SkillsPopover, skills__loading_log,
  * skills__loading_log) can render and filter it.
  *
  * This is a thin guardrail — drift between the synthesizer's manifest
  * shape and the payload builder's field selection would break web display
- * (no scope chip), tool output (active_for missing the entry), and event
+ * (no scope chip), tool output (loading_log missing the entry), and event
  * log replay.
  */
 
@@ -37,7 +37,7 @@ describe("skills.loaded payload — bundle skill entry", () => {
     // `id` is the sourcePath — the discovered SKILL.md URI tells operators where
     // this came from.
     expect(entry.id).toBe("skill://collateral/SKILL.md");
-    // `scope: bundle` so web (amber chip) and active_for filtering work.
+    // `scope: bundle` so web (amber chip) and loading_log filtering work.
     expect(entry.scope).toBe("bundle");
     // Layer 3 — selected via tool affinity, not vendored Layer 1.
     expect(entry.layer).toBe(3);

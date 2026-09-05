@@ -96,21 +96,17 @@ export const SkillsReadInput = Type.Object(
     id: Type.String({
       description: "Skill identifier — filesystem path or `skill://` URI.",
     }),
+    version: Type.Optional(
+      Type.String({
+        description:
+          "Read a historical snapshot instead of the live file. Version ids come " +
+          "from `skills__history`. Omit for the current body.",
+      }),
+    ),
   },
   { required: ["id"] },
 );
 export type SkillsReadInput = Static<typeof SkillsReadInput>;
-
-export const SkillsActiveForInput = Type.Object({
-  conversation_id: Type.Optional(
-    Type.String({
-      description:
-        "Conversation id whose loaded-skill state is being inspected. " +
-        "Optional inside a chat — defaults to the current conversation.",
-    }),
-  ),
-});
-export type SkillsActiveForInput = Static<typeof SkillsActiveForInput>;
 
 export const SkillsLoadingLogInput = Type.Object({
   conversation_id: Type.Optional(
@@ -136,10 +132,17 @@ export const SkillsLoadingLogInput = Type.Object({
 });
 export type SkillsLoadingLogInput = Static<typeof SkillsLoadingLogInput>;
 
+// Create: ManifestFields minus `status`, for the reason `UpdateManifestFields`
+// gives below. A skill born disabled is worse than a disabled edit, not better:
+// the tier merge dedups by NAME before the active-status filter runs, so a
+// lower-tier skill created disabled takes the name and is then dropped — and
+// the same-named org skill it shadowed composes nowhere at all.
+const { status: _statusNotCreatable, ...CreateManifestFields } = ManifestFields;
+
 export const SkillsCreateInput = Type.Object(
   {
     scope: ScopeWritable,
-    manifest: Type.Object(ManifestFields, {
+    manifest: Type.Object(CreateManifestFields, {
       required: ["name", "description"],
       description: "YAML frontmatter for the skill file. Identity + selection metadata.",
     }),
@@ -151,15 +154,24 @@ export const SkillsCreateInput = Type.Object(
 );
 export type SkillsCreateInput = Static<typeof SkillsCreateInput>;
 
-// Update: partial of ManifestFields minus `name` — renames are not patchable
-// via update (the name is the filename; the path-derived id would drift).
+// Update: partial of ManifestFields minus `name` and `status`.
+//
+// `name` is not patchable because it IS the filename — the path-derived id
+// would drift out from under the caller.
+//
+// `status` is not patchable because it is the DURABLE off switch, shared by
+// every conversation that loads the skill and every workspace the user
+// touches. `set_status` is its one door, and that door is internal so only the
+// settings UI reaches it; leaving a second, model-visible way in through a
+// `manifest` patch would hand the agent back exactly the capability the mute
+// exists to take away from it.
+//
 // All fields optional (omitted fields keep their current values), unlike
 // create where name + description are required.
 const UpdateManifestFields = {
   description: Type.Optional(ManifestFields.description),
   loadingStrategy: ManifestFields.loadingStrategy,
   priority: ManifestFields.priority,
-  status: ManifestFields.status,
   toolAffinity: ManifestFields.toolAffinity,
   triggers: ManifestFields.triggers,
   allowedTools: ManifestFields.allowedTools,
@@ -174,12 +186,43 @@ export const SkillsUpdateInput = Type.Object(
       }),
     ),
     body: Type.Optional(
-      Type.String({ description: "New markdown body. Omit to keep the current body." }),
+      Type.String({
+        description:
+          "Markdown to add or write. Omit to keep the current body. " +
+          "When present, `body_mode` is REQUIRED — this tool will not guess " +
+          "between adding to the skill and overwriting it.",
+      }),
+    ),
+    body_mode: Type.Optional(
+      Type.Union([Type.Literal("append"), Type.Literal("replace")], {
+        description:
+          "`append` adds `body` after the current content (use this to add a rule). " +
+          "`replace` overwrites the whole body. Required whenever `body` is given.",
+      }),
     ),
   },
   { required: ["id"] },
 );
 export type SkillsUpdateInput = Static<typeof SkillsUpdateInput>;
+
+export const SkillsHistoryInput = Type.Object(
+  {
+    id: Type.String({ description: "Filesystem path returned by `skills__list`." }),
+  },
+  { required: ["id"] },
+);
+export type SkillsHistoryInput = Static<typeof SkillsHistoryInput>;
+
+export const SkillsRestoreInput = Type.Object(
+  {
+    id: Type.String({ description: "Filesystem path returned by `skills__list`." }),
+    version: Type.String({
+      description: "Version id from `skills__history`. Its body becomes the live body.",
+    }),
+  },
+  { required: ["id", "version"] },
+);
+export type SkillsRestoreInput = Static<typeof SkillsRestoreInput>;
 
 const IdOnlyInput = Type.Object(
   {
@@ -191,10 +234,38 @@ const IdOnlyInput = Type.Object(
 export const SkillsDeleteInput = IdOnlyInput;
 export type SkillsDeleteInput = Static<typeof SkillsDeleteInput>;
 
-export const SkillsActivateInput = IdOnlyInput;
+export const SkillsSetStatusInput = Type.Object(
+  {
+    id: Type.String({ description: "Filesystem path returned by `skills__list`." }),
+    status: Type.Union([Type.Literal("active"), Type.Literal("disabled")], {
+      description: "Durable status written to the skill's frontmatter.",
+    }),
+  },
+  { required: ["id", "status"] },
+);
+export type SkillsSetStatusInput = Static<typeof SkillsSetStatusInput>;
+
+/**
+ * The mute pair takes a skill NAME, not a path. `IdOnlyInput`'s description
+ * says "filesystem path", which sends the model down the `update`/`delete`
+ * shape — and a bundle-published skill has no path at all, so a basename
+ * fallback cannot rescue it.
+ */
+const SkillNameInput = Type.Object(
+  {
+    id: Type.String({
+      description:
+        "Skill name, exactly as `skills__list` or the Skill Catalog reports it " +
+        "(e.g. `house-voice`, `bundle:<server>:<skill>`). Not a filesystem path.",
+    }),
+  },
+  { required: ["id"] },
+);
+
+export const SkillsActivateInput = SkillNameInput;
 export type SkillsActivateInput = Static<typeof SkillsActivateInput>;
 
-export const SkillsDeactivateInput = IdOnlyInput;
+export const SkillsDeactivateInput = SkillNameInput;
 export type SkillsDeactivateInput = Static<typeof SkillsDeactivateInput>;
 
 // Static schema by design: a per-request name enum would vary the tools block
@@ -300,30 +371,6 @@ export interface SkillDetail {
 
 /** `SkillsReadOutput` is the detail itself — no wrapper envelope. */
 export type SkillsReadOutput = SkillDetail;
-
-/**
- * Single entry in the `skills__active_for` response — one currently-
- * active layer-3 skill for the named conversation, with provenance for
- * why it loaded.
- */
-export interface ActiveSkillEntry {
-  id: string;
-  /**
-   * The loading mechanism's layer: `0` = always-on context, `3` = tool-affinity,
-   * `4` = trigger match. Historical events only carried `3`.
-   */
-  layer: 0 | 3 | 4;
-  scope: SkillScope;
-  tokens: number;
-  /** The loading mechanism: always-on context, tool-affinity, or trigger match. */
-  loadedBy: "always" | "tool_affinity" | "trigger";
-  reason: string;
-}
-
-export interface SkillsActiveForOutput {
-  active: ActiveSkillEntry[];
-  conversationId: string;
-}
 
 /**
  * `nb__use_skill` result. `loaded` delivers the skill (body rides the result's

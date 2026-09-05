@@ -1,8 +1,8 @@
 /**
- * Which workspace supplies a chat turn's agent profiles and model overrides.
+ * Which workspace supplies a chat turn's model overrides.
  *
- * These are workspace configuration (`workspace.json`'s `agents` / `models`),
- * and they apply to every turn that runs in that workspace regardless of who is
+ * They are workspace configuration (`workspace.json`'s `models`), and they
+ * apply to every turn that runs in that workspace regardless of who is
  * chatting. The alternative — reading them off the caller's PERSONAL workspace
  * — is what forced a second workspace onto every request, because it made a
  * chat in a shared workspace depend on a workspace it was not bound to.
@@ -30,7 +30,6 @@ const TEST_USER_ID = "usr_cfg";
 const SHARED_WS_ID = "ws_cfgshared00000";
 
 interface Observation {
-  agentNames: string[];
   fastModel: string | undefined;
 }
 
@@ -42,10 +41,7 @@ function buildProbe(): { observations: Observation[]; source: ReturnType<typeof 
     inputSchema: { type: "object", properties: {} },
     handler: async () => {
       const ctx = getRequestContext();
-      observations.push({
-        agentNames: Object.keys(ctx?.workspaceAgents ?? {}),
-        fastModel: ctx?.workspaceModelOverride?.fast,
-      });
+      observations.push({ fastModel: ctx?.workspaceModelOverride?.fast });
       return { content: textContent("observed"), isError: false };
     },
   };
@@ -66,7 +62,7 @@ afterEach(async () => {
   if (workDir) rmSync(workDir, { recursive: true, force: true });
 });
 
-it("a chat in a shared workspace uses THAT workspace's agents and model overrides, not the caller's personal ones", async () => {
+it("a chat in a shared workspace uses THAT workspace's model overrides, not the caller's personal ones", async () => {
   workDir = mkdtempSync(join(tmpdir(), "nb-chat-cfg-"));
   mkdirSync(workDir, { recursive: true });
 
@@ -92,22 +88,16 @@ it("a chat in a shared workspace uses THAT workspace's agents and model override
   // The shared workspace the chat runs in — its config is the one that must apply.
   await wsStore.create("Shared", SHARED_WS_ID.slice(3));
   await wsStore.addMember(SHARED_WS_ID, TEST_USER_ID, "admin");
-  await wsStore.update(SHARED_WS_ID, {
-    agents: { sharedAgent: { description: "shared", systemPrompt: "shared" } },
-    models: { fast: "anthropic:shared-fast-model" },
-  });
+  await wsStore.update(SHARED_WS_ID, { models: { fast: "anthropic:shared-fast-model" } });
 
   // The caller's personal workspace, deliberately configured DIFFERENTLY. If
-  // the config source regressed to the personal workspace, these names appear.
+  // the config source regressed to the personal workspace, this value appears.
   const personalWsId = personalWorkspaceIdFor(TEST_USER_ID);
   await wsStore.create("Personal", personalWsId.slice(3), {
     isPersonal: true,
     ownerUserId: TEST_USER_ID,
   });
-  await wsStore.update(personalWsId, {
-    agents: { personalAgent: { description: "personal", systemPrompt: "personal" } },
-    models: { fast: "anthropic:personal-fast-model" },
-  });
+  await wsStore.update(personalWsId, { models: { fast: "anthropic:personal-fast-model" } });
 
   const sharedReg = await runtime.ensureWorkspaceRegistry(SHARED_WS_ID);
   sharedReg.addSource(probe.source);
@@ -119,7 +109,5 @@ it("a chat in a shared workspace uses THAT workspace's agents and model override
   });
 
   expect(probe.observations).toHaveLength(1);
-  expect(probe.observations[0]?.agentNames).toEqual(["sharedAgent"]);
-  expect(probe.observations[0]?.agentNames).not.toContain("personalAgent");
   expect(probe.observations[0]?.fastModel).toBe("anthropic:shared-fast-model");
 });

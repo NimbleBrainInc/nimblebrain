@@ -185,7 +185,11 @@ describe("disabled org context rule stops injecting", () => {
   });
 
   it("drops the rule from the prompt AND the status surface once toggled Off", async () => {
-    const off = await callToolAsDev("skills__deactivate", { id: rulePath });
+    // `set_status` is the DURABLE toggle — what the settings page calls, and
+    // what this test is about. The agent's `deactivate` mutes for a single
+    // conversation and writes nothing, so it would not drop the rule from the
+    // status surface at all.
+    const off = await callToolAsDev("skills__set_status", { id: rulePath, status: "disabled" });
     expect(off.isError).toBe(false);
 
     await runtime.chat({ workspaceId: TEST_WORKSPACE_ID, message: "what is 2 + 2?" });

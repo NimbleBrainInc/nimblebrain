@@ -28,11 +28,12 @@ import { log } from "../observability/log.ts";
 import { formatConnectorSkillBlock } from "../prompt/compose.ts";
 import { toolMatches } from "../skills/select.ts";
 import { coerceInputForSchema } from "../tools/coerce-input.ts";
-import { bareToolName, splitInnerToolName } from "../tools/namespace.ts";
+import { bareToolName } from "../tools/namespace.ts";
 import { validateToolInput } from "../tools/validate-input.ts";
 import type { TokenUsage } from "../usage/types.ts";
 import { addUsage, emptyUsage, tokenUsageFromV3 } from "../usage/types.ts";
 import { mapWithConcurrency } from "../util/concurrency.ts";
+import { splitInnerToolName } from "../util/tool-name.ts";
 import {
   boundToolResultForModel,
   estimateContentSize,
@@ -45,6 +46,7 @@ import { isContextOverflowError } from "./context-overflow.ts";
 import { withRetry } from "./retry.ts";
 import type { ConnectorSkillInjectedPayload } from "./schemas/events.ts";
 import { createRunSupervisor, type RunSupervisor, type SupervisorVerdict } from "./supervisor.ts";
+import { estimateMessageTokens, estimateToolDescriptionTokens } from "./token-estimate.ts";
 import { toolSchemaForLlm } from "./tool-schema-for-llm.ts";
 import {
   CONNECTOR_SKILL_SYNTHETIC,
@@ -58,6 +60,7 @@ import {
   type ResolvedThinking,
   SKILL_ACTIVATED_META_KEY,
   SKILL_ACTIVATED_SYNTHETIC,
+  SKILL_SUPPRESSION_META_KEY,
   type StopReason,
   type ThinkingEffort,
   type ToolCall,
@@ -76,10 +79,8 @@ const DEFAULT_MAX_PARALLEL_TOOL_CALLS = 6;
  * "Per source" describes the grouping, not the enforcement, and the difference
  * is the part the name gets wrong. The bound lives in one `AgentEngine`
  * iteration, while an `McpSource` is long-lived and shared across every
- * conversation in its workspace — and `nb__delegate` gives each sub-agent a
- * fresh engine over the PARENT's router. Concurrent runs and sub-agents
- * therefore each get their own budget; this is not a global rate limit on the
- * source. Sizing guidance is in `docs/config/environment.mdx`.
+ * conversation in its workspace. Concurrent runs therefore each get their own
+ * budget; this is not a global rate limit on the source. Sizing guidance is in `docs/config/environment.mdx`.
  *
  * `NB_MAX_PARALLEL_TOOL_CALLS_PER_SOURCE` overrides the default.
  */
@@ -643,17 +644,17 @@ function seedInjectedConnectorSkills(
 /**
  * Build the router-wide lookups the run needs. Uses ALL tools from the router
  * (not just the direct/surfaced subset passed to the LLM) because tiered
- * surfacing may proxy UI-annotated tools:
- *   - `toolAnnotations`: tool name → MCP annotations (UI metadata like resourceUri).
+ * surfacing may proxy tools whose `_meta` mounts a UI:
+ *   - `toolMeta`: tool name → the tool's `_meta` (UI metadata like resourceUri).
  *   - `allToolSchemaMap`: tool name → schema (used to resolve agent-promoted tools).
  */
 function buildToolLookups(allRouterTools: ToolSchema[]): {
-  toolAnnotations: Map<string, Record<string, unknown>>;
+  toolMeta: Map<string, Record<string, unknown>>;
   allToolSchemaMap: Map<string, ToolSchema>;
 } {
-  const toolAnnotations = new Map<string, Record<string, unknown>>();
+  const toolMeta = new Map<string, Record<string, unknown>>();
   for (const t of allRouterTools) {
-    if (t.annotations) toolAnnotations.set(t.name, t.annotations);
+    if (t.meta) toolMeta.set(t.name, t.meta);
   }
 
   const allToolSchemaMap = new Map<string, ToolSchema>();
@@ -661,7 +662,7 @@ function buildToolLookups(allRouterTools: ToolSchema[]): {
     allToolSchemaMap.set(t.name, t);
   }
 
-  return { toolAnnotations, allToolSchemaMap };
+  return { toolMeta, allToolSchemaMap };
 }
 
 /** Throw the abort reason if the run's signal is already aborted. */
@@ -913,7 +914,7 @@ function buildRunErrorData(runId: string, err: unknown): Record<string, unknown>
 interface ToolExecContext {
   config: EngineConfig;
   runId: string;
-  toolAnnotations: Map<string, Record<string, unknown>>;
+  toolMeta: Map<string, Record<string, unknown>>;
   connectorSkillCandidates: ConnectorSkillCandidate[];
   injectedConnectorSkills: Set<string>;
   /** Drained into history after this iteration's tool results. */
@@ -983,7 +984,7 @@ export class AgentEngine {
     const runId = crypto.randomUUID();
 
     const allRouterTools = await this.tools.availableTools();
-    const { toolAnnotations, allToolSchemaMap } = buildToolLookups(allRouterTools);
+    const { toolMeta, allToolSchemaMap } = buildToolLookups(allRouterTools);
 
     const directTools = [...tools];
     const directToolNames = new Set(directTools.map((t) => t.name));
@@ -1190,7 +1191,7 @@ export class AgentEngine {
         // over-budget history into a summary — see `runtime/mid-turn-compaction`).
         await this.applyHistoryRewrite(history, iteration, config);
 
-        // Drop any tool the supervisor has tripped this run and build the
+        // Drop any tool the supervisor currently has tripped and build the
         // per-iteration model toolset + schema lookup.
         const { modelTools, toolSchemaMap } = this.buildIterationTools(directTools, supervisor);
 
@@ -1216,6 +1217,12 @@ export class AgentEngine {
         );
 
         const callProvider = getProviderFromModel(config.model);
+        // Pre-flight estimate of the prompt the provider is actually sent, in
+        // the same units the windowing budget is enforced in. Set inside
+        // `callOnce` so an overflow re-window updates it, and read at
+        // `llm.done` alongside the provider's reported usage — the pair is
+        // what makes estimator drift measurable instead of inferred.
+        let estimatedInputTokens = 0;
         const callOnce = (msgs: LanguageModelV3Message[]) => {
           // Provider-scoped prompt-cache policy: places the rolling step-anchor
           // + tail breakpoints (Anthropic) so the growing prefix is read back,
@@ -1234,6 +1241,12 @@ export class AgentEngine {
             messages: msgs,
             tools: modelTools,
           });
+          // `cachedPrompt` is the full prompt array (system message +
+          // messages), so this covers everything billed as input except the
+          // provider's own per-request overhead.
+          estimatedInputTokens =
+            cachedPrompt.reduce((sum, m) => sum + estimateMessageTokens(m), 0) +
+            cachedTools.reduce((sum, t) => sum + estimateToolDescriptionTokens(t), 0);
           return withRetry(
             () =>
               callModel(
@@ -1314,6 +1327,12 @@ export class AgentEngine {
             // prefill), distinct from `llmMs` (whole round-trip incl. decode).
             // Absent when the call emitted no output part.
             ttftMs: response.ttftMs,
+            // The pre-flight estimate for this same call. Paired with
+            // `usage.inputTokens`, it is the estimator's error on real
+            // traffic — the signal a calibrated budget would learn from, and
+            // the one that separates an under-counting estimator from
+            // windowing that returned over budget.
+            estimatedInputTokens,
             finishReason: lastFinishReason,
           },
         });
@@ -1386,7 +1405,7 @@ export class AgentEngine {
         const toolExecContext: ToolExecContext = {
           config,
           runId,
-          toolAnnotations,
+          toolMeta,
           connectorSkillCandidates,
           injectedConnectorSkills,
           pendingOverlayDeliveries,
@@ -1573,10 +1592,11 @@ export class AgentEngine {
 
   /**
    * Build the per-iteration model toolset and name→schema lookup. Filters out
-   * any tool the supervisor has tripped this run: removing the tool from the
-   * model's toolset is more reliable than telling the model "do not call this
-   * tool" via prose — the model literally can't call a tool that isn't in its
-   * list. Other tools remain available so the run can recover.
+   * any tool the supervisor currently has tripped: withholding the tool from
+   * the model's toolset is more reliable than telling the model "do not call
+   * this tool" via prose, because it isn't there to pick. Other tools remain
+   * available so the run can recover. Rebuilt every iteration from a fresh
+   * `snapshot()`, so a tool the supervisor un-trips comes back on its own.
    */
   private buildIterationTools(
     directTools: ToolSchema[],
@@ -1810,6 +1830,27 @@ export class AgentEngine {
   }
 
   /**
+   * Turn a {@link SKILL_SUPPRESSION_META_KEY} marker into a persisted
+   * `skill.suppression` event. Mirrors {@link recordSkillActivation}: only the
+   * engine knows the runId, and only the conversation log outlives the run.
+   *
+   * Unlike an activation, this is NOT added to the run's injected set — that
+   * set exists to stop a body being delivered twice, and a suppression
+   * delivers nothing. Suppressing then re-activating a skill in one run must
+   * both take effect, in order.
+   */
+  private recordSkillSuppression(result: ToolResult, runId: string): void {
+    const raw = result._meta?.[SKILL_SUPPRESSION_META_KEY];
+    if (!raw || typeof raw !== "object") return;
+    const marker = raw as { skillName?: unknown; suppressed?: unknown };
+    if (typeof marker.skillName !== "string" || marker.skillName.length === 0) return;
+    this.events.emit({
+      type: "skill.suppression",
+      data: { runId, skillName: marker.skillName, suppressed: marker.suppressed === true },
+    });
+  }
+
+  /**
    * Emit `tool.progress` when a tool result was bounded for model context.
    * `outputText` (full) is persisted for the UI and the record; `modelOutput`
    * (bounded) is what enters the prompt. The message differs for inline-UI
@@ -1855,8 +1896,7 @@ export class AgentEngine {
    * pairs positionally, is unaffected.
    *
    * In-process sources are bounded too. Every `nb__*` tool shares the `nb` key,
-   * so the cap covers 6 concurrent `nb__*` calls of any kind — including, but not
-   * limited to, `nb__delegate`.
+   * so the cap covers 6 concurrent `nb__*` calls of any kind.
    */
   private async executeToolCallsBounded(
     toolCalls: LanguageModelV3ToolCall[],
@@ -1950,9 +1990,9 @@ export class AgentEngine {
       };
     }
 
-    // Extract UI resourceUri from tool annotations if present
-    const ann = ctx.toolAnnotations.get(gatedCall.name);
-    const uiMeta = ann?.ui as Record<string, unknown> | undefined;
+    // Extract UI resourceUri from the tool's `_meta` if present
+    const meta = ctx.toolMeta.get(gatedCall.name);
+    const uiMeta = meta?.ui as Record<string, unknown> | undefined;
     const resourceUri = typeof uiMeta?.resourceUri === "string" ? uiMeta.resourceUri : undefined;
 
     // tool.start fires with the *pre-coercion* input on purpose:
@@ -2021,9 +2061,9 @@ export class AgentEngine {
 
     // Supervisor sees the post-hook, post-A.3-normalization result.
     // On a trip, the replacement directive flows downstream in place
-    // of the original tool result. The tripped tool is filtered out
-    // of `modelTools` on subsequent iterations (see buildIterationTools),
-    // so the model can't call it again regardless of what the directive says.
+    // of the original tool result. While it stays tripped the tool is
+    // withheld from `modelTools` on subsequent iterations (see
+    // buildIterationTools), so the model is not offered it again.
     const verdict = ctx.supervisor.observe(gatedCall, hookedResult);
     const finalResult = verdict.type === "synth" ? verdict.replacement : hookedResult;
 
@@ -2056,6 +2096,7 @@ export class AgentEngine {
     const resourceLinks = extractResourceLinks(finalResult.content);
 
     this.recordSkillActivation(ctx, gatedCall, finalResult);
+    this.recordSkillSuppression(finalResult, ctx.runId);
 
     this.events.emit({
       type: "tool.done",

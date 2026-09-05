@@ -75,10 +75,10 @@ Remaining fields vary by event type — they are the event's payload, written in
 
 Only workspace-level events are written to this log; conversation streaming events (`text.delta`, `tool.start`, and the like) are not.
 
-**Bundle lifecycle** — `bundle.installed`, `bundle.uninstalled`, `bundle.upgraded`. Track connectors entering, leaving, and upgrading in the workspace.
+**Connector lifecycle** — `bundle.installed`, `bundle.uninstalled`. Track connectors entering and leaving the workspace.
 
 ```json
-{"ts":"2026-03-25T14:30:00.123Z","event":"bundle.installed","wsId":"ws_product","serverName":"postgres","bundleName":"@nimblebraininc/postgres","version":"1.2.0","trustScore":92}
+{"ts":"2026-03-25T14:30:00.123Z","event":"bundle.installed","wsId":"ws_product","serverName":"com-example-postgres","bundleName":"https://mcp.example.com/mcp","version":"remote (12 tools)"}
 ```
 
 **`data.changed`** — A tool mutated workspace data. Carries the `server` and `tool` that wrote, and `source: "agent"` when emitted from the agent's tool dispatch.
@@ -121,6 +121,12 @@ Only workspace-level events are written to this log; conversation streaming even
 
 ```json
 {"ts":"2026-03-25T14:30:06.000Z","event":"audit.permission_denied","tool":"tasks__delete","action":"delete","target":"task-42"}
+```
+
+**`audit.credential_read`** — A secret in the [credential store](/config/secrets/) was presented to a remote service. Carries the `scope` (`instance`, `workspace:<wsId>`, `user:<userId>`), the `key`, the `caller` (which code path), the `purpose`, and `workspaceId` / `userId` when the scope has one. Never the value. Emitted when a secret is *used*, not when its presence is probed.
+
+```json
+{"ts":"2026-03-25T14:30:07.000Z","event":"audit.credential_read","scope":"workspace:ws_a1b2c3d4e5f60718","key":"acme.db_url","caller":"transport:provider:credential","purpose":"authenticate remote MCP request as workspace ws_a1b2c3d4e5f60718","workspaceId":"ws_a1b2c3d4e5f60718"}
 ```
 
 ## Querying logs

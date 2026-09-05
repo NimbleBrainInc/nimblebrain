@@ -85,7 +85,7 @@ describe("WorkspaceAppIconsProvider — SSE refetch surface (#317)", () => {
     await waitFor(() => expect(mockGetInstalled).toHaveBeenCalledTimes(1));
 
     // A bundle install drives the connection through starting → pending_auth →
-    // running. Icons resolve from catalog/mpak metadata available at
+    // running. Icons resolve from catalog metadata available at
     // bundle.installed time and do NOT depend on connection state, so none of
     // these transitions should re-hit manage_connectors. Pre-fix the provider
     // wired onConnectionStateChanged → refresh(), turning one click into a

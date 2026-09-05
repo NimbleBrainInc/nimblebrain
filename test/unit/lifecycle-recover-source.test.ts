@@ -46,7 +46,6 @@ function seedInstance(lifecycle: BundleLifecycleManager, serverName: string, ref
     bundleName: "https://example.test/mcp",
     version: "remote",
     state: "starting",
-    trustScore: null,
     ui: null,
     briefing: null,
     type: "plain",
@@ -79,7 +78,8 @@ describe("BundleLifecycleManager.tryRecoverSource", () => {
   beforeEach(() => {
     lifecycle = new BundleLifecycleManager(new CapturingSink(), undefined);
     registry = new ToolRegistry();
-    lifecycle.setWorkspaceRegistries(new Map([[WS, registry]]));
+    const registries = new Map([[WS, registry]]);
+    lifecycle.bindWorkspaceRegistries(() => registries);
   });
 
   test("returns true (and never re-spawns) when the source is already registered", async () => {

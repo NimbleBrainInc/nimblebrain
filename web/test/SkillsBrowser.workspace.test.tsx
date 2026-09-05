@@ -59,7 +59,7 @@ const SKILLS_FIXTURE = [
     priority: 30,
     tokens: 50,
     source: { path: "/tmp/skills/org/voice.md" },
-    toolAffinity: ["mpak__*"],
+    toolAffinity: ["docs__*"],
     loading: { wouldLoad: true, mechanism: "tool_affinity" },
   },
   {
@@ -569,7 +569,7 @@ describe("SkillsBrowser with surface='workspace' — composition list", () => {
     // The org tier is visible at rest, so its tool-affinity row renders the
     // mechanism's mono glob branch (`<span className="font-mono">`) too.
     expect(text).toContain("On tool match");
-    expect(text).toContain("mpak__*");
+    expect(text).toContain("docs__*");
   });
 
   test("scope renders as a token-driven tick, never a ledger label or raw hex", async () => {
@@ -617,8 +617,10 @@ describe("SkillsBrowser with surface='workspace' — composition list", () => {
     });
 
     // The toggle fired...
+    // The durable toggle: `set_status`, not the agent's conversation-scoped
+    // `activate`/`deactivate`.
     const toggleCall = callToolCalls.find(
-      (c) => c.server === "skills" && (c.tool === "activate" || c.tool === "deactivate"),
+      (c) => c.server === "skills" && c.tool === "set_status",
     );
     expect(toggleCall).toBeDefined();
     // ...and the row stayed collapsed.
@@ -647,7 +649,7 @@ describe("SkillsBrowser with surface='workspace' — composition list", () => {
       await Promise.resolve();
     });
 
-    expect(callToolCalls.some((c) => c.tool === "activate" || c.tool === "deactivate")).toBe(false);
+    expect(callToolCalls.some((c) => c.tool === "set_status")).toBe(false);
   });
 
   test("the segment filter narrows the list to a single tier", async () => {

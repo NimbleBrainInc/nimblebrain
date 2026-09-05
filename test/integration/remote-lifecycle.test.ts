@@ -1,5 +1,5 @@
 import { describe, expect, it, afterAll, afterEach, beforeEach } from "bun:test";
-import { mkdirSync, writeFileSync, readFileSync, rmSync, existsSync } from "node:fs";
+import { mkdirSync, rmSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
@@ -8,8 +8,6 @@ import {
 	ListToolsRequestSchema,
 	CallToolRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
-import type { EngineEvent, EventSink } from "../../src/engine/types.ts";
-import { BundleLifecycleManager } from "../../src/bundles/lifecycle.ts";
 import { ToolRegistry } from "../../src/tools/registry.ts";
 import { deriveServerName } from "../../src/bundles/paths.ts";
 import { startBundleSource } from "../../src/bundles/startup.ts";
@@ -26,20 +24,6 @@ function setupTestDir() {
 afterAll(() => {
 	if (existsSync(testDir)) rmSync(testDir, { recursive: true });
 });
-
-function makeEventCollector(): EventSink & { events: EngineEvent[] } {
-	const events: EngineEvent[] = [];
-	return {
-		events,
-		emit(event: EngineEvent) {
-			events.push(event);
-		},
-	};
-}
-
-function eventTypes(collector: { events: EngineEvent[] }): string[] {
-	return collector.events.map((e) => e.type);
-}
 
 // ---------------------------------------------------------------------------
 // Helper: spin up a real MCP server over Streamable HTTP
@@ -121,178 +105,19 @@ function startMockRemoteServer(toolCount = 2): MockRemoteServer {
 }
 
 // ---------------------------------------------------------------------------
-// installRemote tests
-// ---------------------------------------------------------------------------
-
-describe("BundleLifecycleManager — installRemote", () => {
-	let mockServer: MockRemoteServer;
-
-	beforeEach(() => {
-		setupTestDir();
-		mockServer = startMockRemoteServer(3);
-	});
-
-	afterEach(() => {
-		mockServer?.close();
-	});
-
-	it("installs a remote bundle: source registered, config updated, event emitted", async () => {
-		const configPath = join(testDir, "nimblebrain.json");
-		writeFileSync(configPath, JSON.stringify({ bundles: [] }, null, 2));
-
-		const registry = new ToolRegistry();
-		const sink = makeEventCollector();
-		const lifecycle = new BundleLifecycleManager(sink, configPath, true);
-
-		const instance = await lifecycle.installRemote(
-			mockServer.url,
-			"remote-echo",
-			registry,
-			"ws_test",
-		);
-
-		// Source registered in registry
-		expect(registry.hasSource("remote-echo")).toBe(true);
-
-		// Instance state is running
-		expect(instance.state).toBe("running");
-		expect(instance.version).toBe("remote (3 tools)");
-		expect(instance.type).toBe("plain");
-		expect(instance.bundleName).toBe(mockServer.url);
-
-		// Config file updated
-		const config = JSON.parse(readFileSync(configPath, "utf-8"));
-		expect(config.bundles).toHaveLength(1);
-		expect(config.bundles[0].url).toBe(mockServer.url);
-		expect(config.bundles[0].serverName).toBe("remote-echo");
-
-		// Event emitted with remote: true
-		expect(eventTypes(sink)).toContain("bundle.installed");
-		const installEvent = sink.events.find((e) => e.type === "bundle.installed");
-		expect(installEvent!.data.serverName).toBe("remote-echo");
-		expect(installEvent!.data.remote).toBe(true);
-
-		// Cleanup
-		await registry.removeSource("remote-echo");
-	}, 15_000);
-
-	it("installs with transport config and trust score", async () => {
-		const configPath = join(testDir, "nimblebrain-transport.json");
-		writeFileSync(configPath, JSON.stringify({ bundles: [] }, null, 2));
-
-		const registry = new ToolRegistry();
-		const sink = makeEventCollector();
-		const lifecycle = new BundleLifecycleManager(sink, configPath, true);
-
-		const instance = await lifecycle.installRemote(
-			mockServer.url,
-			"remote-echo",
-			registry,
-			"ws_test",
-			{ type: "streamable-http" },
-			{ name: "Remote Echo", icon: "cloud" },
-			85,
-		);
-
-		expect(instance.trustScore).toBe(85);
-		expect(instance.ui?.name).toBe("Remote Echo");
-
-		// Config includes transport and trustScore
-		const config = JSON.parse(readFileSync(configPath, "utf-8"));
-		expect(config.bundles[0].transport).toEqual({ type: "streamable-http" });
-		expect(config.bundles[0].trustScore).toBe(85);
-		expect(config.bundles[0].ui.name).toBe("Remote Echo");
-
-		await registry.removeSource("remote-echo");
-	}, 15_000);
-
-	it("does not duplicate config entries on repeated install", async () => {
-		const configPath = join(testDir, "nimblebrain-dedup.json");
-		writeFileSync(configPath, JSON.stringify({ bundles: [] }, null, 2));
-
-		const registry = new ToolRegistry();
-		const sink = makeEventCollector();
-		const lifecycle = new BundleLifecycleManager(sink, configPath, true);
-
-		await lifecycle.installRemote(mockServer.url, "remote-echo", registry, "ws_test");
-		await registry.removeSource("remote-echo");
-		await lifecycle.installRemote(mockServer.url, "remote-echo", registry, "ws_test");
-
-		const config = JSON.parse(readFileSync(configPath, "utf-8"));
-		expect(config.bundles).toHaveLength(1);
-
-		await registry.removeSource("remote-echo");
-	}, 15_000);
-});
-
-// ---------------------------------------------------------------------------
-// Failed remote connection
-// ---------------------------------------------------------------------------
-
-describe("BundleLifecycleManager — remote connection failure", () => {
-	beforeEach(setupTestDir);
-
-	it("failed remote connection throws (not fatal to startup via allSettled)", async () => {
-		const registry = new ToolRegistry();
-		const sink = makeEventCollector();
-		const lifecycle = new BundleLifecycleManager(sink, undefined, true);
-
-		let error: Error | null = null;
-		try {
-			await lifecycle.installRemote(
-				"http://127.0.0.1:1/mcp", // port 1 — connection refused
-				"bad-remote",
-				registry,
-				"ws_test",
-			);
-		} catch (e) {
-			error = e as Error;
-		}
-
-		expect(error).not.toBeNull();
-		// Source should not be registered
-		expect(registry.hasSource("bad-remote")).toBe(false);
-		// No install event emitted
-		expect(eventTypes(sink)).not.toContain("bundle.installed");
-	}, 20_000);
-});
-
-// ---------------------------------------------------------------------------
 // Startup with url entries in config (startBundleSource)
 // ---------------------------------------------------------------------------
 
 describe("startBundleSource — remote url entries", () => {
 	let mockServer: MockRemoteServer;
-	let prevMpakHome: string | undefined;
 
 	beforeEach(() => {
 		setupTestDir();
 		mockServer = startMockRemoteServer(2);
-
-		// Isolate mpak so an unresolvable `{ name }` ref fails fast and
-		// offline. Without this, resolving a name cache-misses and the SDK
-		// fetches the public registry (https://registry.mpak.dev); under a
-		// slow CI network that round-trip blows the test's 15s budget and
-		// flakes. Point the registry at a closed local port so the lookup
-		// returns ECONNREFUSED immediately instead of hanging.
-		const mpakHome = join(testDir, "mpak-home");
-		mkdirSync(mpakHome, { recursive: true });
-		writeFileSync(
-			join(mpakHome, "config.json"),
-			JSON.stringify({
-				version: "1.0.0",
-				lastUpdated: new Date(0).toISOString(),
-				registryUrl: "http://127.0.0.1:1",
-			}),
-		);
-		prevMpakHome = process.env.MPAK_HOME;
-		process.env.MPAK_HOME = mpakHome;
 	});
 
 	afterEach(() => {
 		mockServer?.close();
-		if (prevMpakHome === undefined) delete process.env.MPAK_HOME;
-		else process.env.MPAK_HOME = prevMpakHome;
 	});
 
 	it("starts a remote bundle from a url BundleRef", async () => {
@@ -302,12 +127,14 @@ describe("startBundleSource — remote url entries", () => {
 			serverName: "startup-remote",
 		};
 
-		const meta = await startBundleSource(ref, registry, new NoopEventSink(), undefined, { allowInsecureRemotes: true, wsId: "ws_test" });
+		const meta = await startBundleSource(ref, registry, new NoopEventSink(), {
+			allowInsecureRemotes: true,
+			wsId: "ws_test",
+		});
 
 		expect(meta).not.toBeNull();
 		expect(meta.meta).not.toBeNull();
 		expect(meta.meta!.version).toBe("remote (2 tools)");
-		expect(meta.meta!.type).toBe("plain");
 		expect(registry.hasSource("startup-remote")).toBe(true);
 
 		// Tools are available
@@ -323,7 +150,10 @@ describe("startBundleSource — remote url entries", () => {
 			url: mockServer.url,
 		};
 
-		const meta = await startBundleSource(ref, registry, new NoopEventSink(), undefined, { allowInsecureRemotes: true, wsId: "ws_test" });
+		const meta = await startBundleSource(ref, registry, new NoopEventSink(), {
+			allowInsecureRemotes: true,
+			wsId: "ws_test",
+		});
 		expect(meta).not.toBeNull();
 
 		// deriveServerName on a URL will produce something like "mcp"
@@ -342,7 +172,10 @@ describe("startBundleSource — remote url entries", () => {
 
 		// startBundleSource throws — but callers use allSettled
 		const results = await Promise.allSettled([
-			startBundleSource(ref, registry, new NoopEventSink(), undefined, { allowInsecureRemotes: true, wsId: "ws_test" }),
+			startBundleSource(ref, registry, new NoopEventSink(), {
+				allowInsecureRemotes: true,
+				wsId: "ws_test",
+			}),
 		]);
 
 		expect(results[0]!.status).toBe("rejected");
@@ -363,7 +196,7 @@ describe("startBundleSource — remote url entries", () => {
 		};
 
 		await expect(
-			startBundleSource(ref, registry, new NoopEventSink(), undefined, {
+			startBundleSource(ref, registry, new NoopEventSink(), {
 				allowInsecureRemotes: true,
 				// wsId intentionally omitted
 			}),
@@ -383,7 +216,7 @@ describe("startBundleSource — remote url entries", () => {
 			transport: { type: "streamable-http", auth: { type: "bearer", token: "t" } },
 		};
 
-		const meta = await startBundleSource(ref, registry, new NoopEventSink(), undefined, {
+		const meta = await startBundleSource(ref, registry, new NoopEventSink(), {
 			allowInsecureRemotes: true,
 			// wsId intentionally omitted — allowed here
 		});
@@ -393,27 +226,4 @@ describe("startBundleSource — remote url entries", () => {
 		await registry.removeSource("static-auth");
 	}, 15_000);
 
-	it("handles mix of name, path, and url entries via allSettled", async () => {
-		const registry = new ToolRegistry();
-
-		// Only url ref will succeed; name/path refs will fail (no mpak, no local bundle)
-		const refs: BundleRef[] = [
-			{ name: "@nonexistent/bundle" },
-			{ path: "/nonexistent/path" },
-			{ url: mockServer.url, serverName: "mix-remote" },
-		];
-
-		const results = await Promise.allSettled(
-			refs.map((ref) => startBundleSource(ref, registry, new NoopEventSink(), undefined, { allowInsecureRemotes: true, wsId: "ws_test" })),
-		);
-
-		// First two fail, third succeeds
-		expect(results[0]!.status).toBe("rejected");
-		expect(results[1]!.status).toBe("rejected");
-		expect(results[2]!.status).toBe("fulfilled");
-
-		expect(registry.hasSource("mix-remote")).toBe(true);
-
-		await registry.removeSource("mix-remote");
-	}, 15_000);
 });

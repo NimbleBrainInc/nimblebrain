@@ -1,5 +1,7 @@
 import type { BundleRef } from "../bundles/types.ts";
-import type { AgentProfile, ModelSlots } from "../runtime/types.ts";
+import type { HookRegistration } from "../hooks/types.ts";
+import type { WorkspaceNotificationsConfig } from "../notifications/config.ts";
+import type { ModelSlots } from "../runtime/types.ts";
 
 /** Workspace-level member roles. */
 export type WorkspaceRole = "admin" | "member";
@@ -52,8 +54,6 @@ export interface Workspace {
    */
   about?: string | null;
 
-  /** Named agent profiles for multi-agent delegation. */
-  agents?: Record<string, AgentProfile>;
   /** Additional skill directories to scan. */
   skillDirs?: string[];
   /** Optional model slot overrides for this workspace. */
@@ -93,6 +93,37 @@ export interface Workspace {
    * `manage_connectors.remove_operator_setup`.
    */
   oauthOperatorApps?: Record<string, OAuthOperatorAppConfig>;
+
+  /**
+   * Inbound-webhook registrations for this workspace, keyed
+   * `"<connector>/<vendor>"`.
+   *
+   * Beside `oauthOperatorApps` because it is the same kind of record:
+   * operator-plane, workspace-scoped, with a lifecycle related to but not
+   * identical to a bundle install. It holds the current and previous key ids
+   * for each minted URL and the route each forwards to — **never a token**,
+   * which the runtime does not store and must not reconstruct on demand.
+   *
+   * Living here also keeps the delivery path to ONE read: the door must load
+   * this record anyway to resolve `bundles[]` into a forward target, and the
+   * handler is the one thing in the runtime that must never be the reason the
+   * process is busy. See `src/hooks/types.ts`.
+   */
+  hooks?: Record<string, HookRegistration>;
+
+  /**
+   * Notification source ceilings and delivery routes for this workspace.
+   *
+   * Beside `hooks` for the same reasons and with the same shape of lifecycle:
+   * operator-plane, workspace-scoped, and read on the path that dispatches. It
+   * is the operator's half of the notifications contract — a connector declares
+   * an outbox and gains nothing by it, and what an admin writes here is what
+   * decides whether anything it emits reaches a person.
+   *
+   * Every route carries the identity that wrote it, because that is the
+   * principal it dispatches under. See `src/notifications/config.ts`.
+   */
+  notifications?: WorkspaceNotificationsConfig;
 }
 
 /** Per-workspace operator-supplied OAuth app credentials, public side. */

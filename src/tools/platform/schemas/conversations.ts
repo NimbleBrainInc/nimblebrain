@@ -28,24 +28,32 @@ export const ConversationsListInput = Type.Object({
 // caller-supplied coordinate. Same contract as `files__*`.
 export type ConversationsListInput = Static<typeof ConversationsListInput>;
 
-export const ConversationsGetInput = Type.Object(
-  {
-    id: Type.String({ description: "Conversation ID." }),
-    expand: Type.Optional(
-      StringEnum(["metadata", "messages", "full"] as const, {
-        description:
-          'How much of the conversation to return. "metadata" returns just metadata (no messages). "messages" (default) returns metadata + the most recent `limit` messages, capped by a content-size guard. "full" returns every message — use only when you genuinely need the entire transcript; long conversations can run hundreds of thousands of tokens.',
-      }),
-    ),
-    limit: Type.Optional(
-      Type.Number({
-        description:
-          'Max messages to return when expand is "messages" (the default mode). Counted from the end of the conversation. Default: 20. Ignored when expand is "metadata" or "full".',
-      }),
-    ),
-  },
-  { required: ["id"] },
-);
+/**
+ * Description shared by every tool that addresses one conversation.
+ *
+ * `id` is optional on all of them: an agent inside a chat has no way to learn
+ * its own conversation id, so requiring one made the current conversation the
+ * only one these tools could not reach. Omitted, it resolves from the request
+ * context.
+ */
+const CONVERSATION_ID_DESCRIPTION =
+  'Conversation ID. Omit it (or pass "current") to address the conversation this call is happening inside; required from outside a chat.';
+
+export const ConversationsGetInput = Type.Object({
+  id: Type.Optional(Type.String({ description: CONVERSATION_ID_DESCRIPTION })),
+  expand: Type.Optional(
+    StringEnum(["metadata", "messages", "full"] as const, {
+      description:
+        'How much of the conversation to return. "metadata" returns just metadata (no messages). "messages" (default) returns metadata + the most recent `limit` messages, capped by a content-size guard. "full" returns every message — use only when you genuinely need the entire transcript; long conversations can run hundreds of thousands of tokens.',
+    }),
+  ),
+  limit: Type.Optional(
+    Type.Number({
+      description:
+        'Max messages to return when expand is "messages" (the default mode). Counted from the end of the conversation. Default: 20. Ignored when expand is "metadata" or "full".',
+    }),
+  ),
+});
 export type ConversationsGetInput = Static<typeof ConversationsGetInput>;
 
 export const ConversationsSearchInput = Type.Object(
@@ -61,22 +69,21 @@ export type ConversationsSearchInput = Static<typeof ConversationsSearchInput>;
 
 export const ConversationsUpdateInput = Type.Object(
   {
-    id: Type.String({ description: "Conversation ID." }),
+    id: Type.Optional(Type.String({ description: CONVERSATION_ID_DESCRIPTION })),
     title: Type.String({ description: "New title for the conversation." }),
   },
-  { required: ["id", "title"] },
+  { required: ["title"] },
 );
 export type ConversationsUpdateInput = Static<typeof ConversationsUpdateInput>;
 
-export const ConversationsForkInput = Type.Object(
-  {
-    id: Type.String({ description: "Source conversation ID." }),
-    atMessage: Type.Optional(
-      Type.Number({ description: "Message index to fork at. Default: all messages." }),
-    ),
-  },
-  { required: ["id"] },
-);
+export const ConversationsForkInput = Type.Object({
+  id: Type.Optional(
+    Type.String({ description: `Source conversation. ${CONVERSATION_ID_DESCRIPTION}` }),
+  ),
+  atMessage: Type.Optional(
+    Type.Number({ description: "Message index to fork at. Default: all messages." }),
+  ),
+});
 export type ConversationsForkInput = Static<typeof ConversationsForkInput>;
 
 export const ConversationsStatsInput = Type.Object({
@@ -90,9 +97,9 @@ export type ConversationsStatsInput = Static<typeof ConversationsStatsInput>;
 
 export const ConversationsExportInput = Type.Object(
   {
-    id: Type.String({ description: "Conversation ID." }),
+    id: Type.Optional(Type.String({ description: CONVERSATION_ID_DESCRIPTION })),
     format: StringEnum(["markdown", "json"] as const, { description: "Export format." }),
   },
-  { required: ["id", "format"] },
+  { required: ["format"] },
 );
 export type ConversationsExportInput = Static<typeof ConversationsExportInput>;

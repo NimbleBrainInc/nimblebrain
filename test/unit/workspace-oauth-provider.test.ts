@@ -1,24 +1,37 @@
-import { mkdtempSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { beforeEach, describe, expect, it, spyOn } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import type {
   OAuthClientInformationFull,
   OAuthTokens,
 } from "@modelcontextprotocol/sdk/shared/auth.js";
 import { log } from "../../src/observability/log.ts";
+import { requireCredentialStore } from "../../src/tools/credential-store.ts";
+import { mcpOAuthKey } from "../../src/tools/mcp-oauth-records.ts";
 import { WorkspaceOAuthProvider } from "../../src/tools/workspace-oauth-provider.ts";
 import { WorkspaceContext } from "../../src/workspace/context.ts";
+import {
+  installTestCredentialStore,
+  resetTestCredentialStore,
+} from "../helpers/credential-store.ts";
 
 // Bun.serve-based cases (headless single-hop, headless multi-hop, interactive
 // 302, interactive 200, SSRF block) live in
 // `test/integration/workspace-oauth-provider.test.ts`, per AGENTS.md:
 // "If a test calls Runtime.start(), startServer(), Bun.serve(), or
 //  spawnSync(), it belongs in test/integration/."
-// This unit file covers file-IO roundtrips and `awaitPendingFlow` guards
-// that don't need a real HTTP target.
+// This unit file covers record roundtrips through the credential store and
+// `awaitPendingFlow` guards that don't need a real HTTP target.
 
 const CALLBACK = "http://localhost:27247/v1/mcp-auth/callback";
+
+/** The store the provider actually wrote through — asserted against directly. */
+const store = () => requireCredentialStore();
+
+afterEach(() => {
+  resetTestCredentialStore();
+});
 
 function makeProvider(workDir: string, serverName = "test-srv"): WorkspaceOAuthProvider {
   return new WorkspaceOAuthProvider({
@@ -29,11 +42,12 @@ function makeProvider(workDir: string, serverName = "test-srv"): WorkspaceOAuthP
   });
 }
 
-describe("WorkspaceOAuthProvider — file I/O roundtrips", () => {
+describe("WorkspaceOAuthProvider — record roundtrips", () => {
   let workDir: string;
 
   beforeEach(() => {
     workDir = mkdtempSync(join(tmpdir(), "nb-oauth-test-"));
+    installTestCredentialStore(workDir);
   });
 
   it("roundtrips client information via files", async () => {
@@ -151,22 +165,20 @@ describe("WorkspaceOAuthProvider — file I/O roundtrips", () => {
     expect(await p.clientInformation()).toBeDefined();
   });
 
-  it("files are written under <workDir>/workspaces/<wsId>/credentials/mcp-oauth/<serverName>/", async () => {
+  it("records land in the credential store at the owner's scope, and nothing under credentials/mcp-oauth/", async () => {
     const p = makeProvider(workDir, "my-server");
     const tokens: OAuthTokens = { access_token: "a", token_type: "Bearer" };
     await p.saveTokens(tokens);
 
-    const expectedPath = join(
-      workDir,
-      "workspaces",
-      "ws_test",
-      "credentials",
-      "mcp-oauth",
-      "my-server",
-      "tokens.json",
+    const stored = await store().get(
+      { kind: "workspace", wsId: "ws_test" },
+      mcpOAuthKey("my-server", "tokens"),
+      { caller: "test", purpose: "assert" },
     );
-    const onDisk = JSON.parse(readFileSync(expectedPath, "utf-8"));
-    expect(onDisk).toEqual(tokens);
+    expect(JSON.parse(stored?.reveal() ?? "null")).toEqual(tokens);
+    expect(existsSync(join(workDir, "workspaces", "ws_test", "credentials", "mcp-oauth"))).toBe(
+      false,
+    );
   });
 
   it("awaitPendingFlow without state() throws (no active flow)", async () => {
@@ -180,6 +192,7 @@ describe("WorkspaceOAuthProvider — user-scoped persistence", () => {
 
   beforeEach(() => {
     workDir = mkdtempSync(join(tmpdir(), "nb-oauth-user-"));
+    installTestCredentialStore(workDir);
   });
 
   function userProvider(userId: string, serverName = "test-srv"): WorkspaceOAuthProvider {
@@ -200,35 +213,27 @@ describe("WorkspaceOAuthProvider — user-scoped persistence", () => {
     expect(() => userProvider("a".repeat(129))).toThrow(/invalid owner id/);
   });
 
-  it("tokens land under users/<userId>/ — entirely outside the workspaces tree", async () => {
+  it("tokens land at user scope — entirely outside the workspaces tree", async () => {
     const a = userProvider("usr_alice", "granola");
     const tokens: OAuthTokens = { access_token: "alice-token", token_type: "Bearer" };
     await a.saveTokens(tokens);
 
-    const userPath = join(
-      workDir,
-      "users",
-      "usr_alice",
-      "credentials",
-      "mcp-oauth",
-      "granola",
-      "tokens.json",
-    );
-    expect(JSON.parse(readFileSync(userPath, "utf-8"))).toEqual(tokens);
+    const key = mcpOAuthKey("granola", "tokens");
+    const atUser = await store().get({ kind: "user", userId: "usr_alice" }, key, {
+      caller: "test",
+      purpose: "assert",
+    });
+    expect(JSON.parse(atUser?.reveal() ?? "null")).toEqual(tokens);
 
-    // Per-user tokens MUST NOT live under workspaces/. The whole point of
-    // user scope is "not workspace-bound" — leaking a tokens.json into
-    // the workspace tree would orphan it on workspace deletion.
-    const workspaceLevelPath = join(
-      workDir,
-      "workspaces",
-      "ws_test",
-      "credentials",
-      "mcp-oauth",
-      "granola",
-      "tokens.json",
-    );
-    expect(() => readFileSync(workspaceLevelPath)).toThrow();
+    // Per-user tokens MUST NOT live at workspace scope. The whole point of
+    // user scope is "not workspace-bound" — a token landing in the workspace
+    // tree would be orphaned on workspace deletion.
+    expect(
+      await store().get({ kind: "workspace", wsId: "ws_test" }, key, {
+        caller: "test",
+        purpose: "assert",
+      }),
+    ).toBeNull();
   });
 
   it("two users store tokens independently — neither sees the other's", async () => {
@@ -244,7 +249,7 @@ describe("WorkspaceOAuthProvider — user-scoped persistence", () => {
     expect((await b2.tokens())?.access_token).toBe("bob-token");
   });
 
-  it("client.json is per-user — each user's DCR registration is independent", async () => {
+  it("the client record is per-user — each user's DCR registration is independent", async () => {
     // Each user manages their own OAuth client identity ("Alice's
     // NimbleBrain client", "Bob's NimbleBrain client") rather than
     // sharing a workspace-level registration. This is correct OAuth
@@ -263,23 +268,19 @@ describe("WorkspaceOAuthProvider — user-scoped persistence", () => {
     };
     await b.saveClientInformation(bobInfo);
 
-    // Each user's client.json is read back independently.
+    // Each user's client record is read back independently.
     const a2 = userProvider("usr_alice", "granola");
     const b2 = userProvider("usr_bob", "granola");
     expect((await a2.clientInformation())?.client_id).toBe("cid-alice");
     expect((await b2.clientInformation())?.client_id).toBe("cid-bob");
 
-    // On disk: each lives under its own user directory.
-    const aPath = join(
-      workDir,
-      "users",
-      "usr_alice",
-      "credentials",
-      "mcp-oauth",
-      "granola",
-      "client.json",
+    // In the store: each lives at its own user scope.
+    const stored = await store().get(
+      { kind: "user", userId: "usr_alice" },
+      mcpOAuthKey("granola", "client"),
+      { caller: "test", purpose: "assert" },
     );
-    expect(JSON.parse(readFileSync(aPath, "utf-8"))).toEqual(aliceInfo);
+    expect(JSON.parse(stored?.reveal() ?? "null")).toEqual(aliceInfo);
   });
 
   it("invalidateCredentials('tokens') only clears the calling user's tokens", async () => {
@@ -310,6 +311,7 @@ describe("WorkspaceOAuthProvider — Track A: pre-registered client + scopes + e
 
   beforeEach(() => {
     workDir = mkdtempSync(join(tmpdir(), "nb-oauth-trackA-"));
+    installTestCredentialStore(workDir);
   });
 
   it("clientInformation returns the static client when staticClient is set; saveClientInformation is a no-op", async () => {
@@ -331,7 +333,7 @@ describe("WorkspaceOAuthProvider — Track A: pre-registered client + scopes + e
       redirect_uris: [CALLBACK],
     });
 
-    // Stray DCR-style save MUST NOT overwrite client.json.
+    // Stray DCR-style save MUST NOT overwrite the stored client record.
     await p.saveClientInformation({
       client_id: "should-not-persist",
       redirect_uris: [CALLBACK],
@@ -339,17 +341,14 @@ describe("WorkspaceOAuthProvider — Track A: pre-registered client + scopes + e
     const stillStatic = await p.clientInformation();
     expect(stillStatic?.client_id).toBe("static-cid");
 
-    // No client.json on disk either.
-    const onDiskPath = join(
-      workDir,
-      "workspaces",
-      "ws_test",
-      "credentials",
-      "mcp-oauth",
-      "hubspot",
-      "client.json",
-    );
-    expect(() => readFileSync(onDiskPath)).toThrow();
+    // Nothing persisted either.
+    expect(
+      await store().get(
+        { kind: "workspace", wsId: "ws_test" },
+        mcpOAuthKey("hubspot", "client"),
+        { caller: "test", purpose: "assert" },
+      ),
+    ).toBeNull();
   });
 
   it("clientMetadata.scope reflects the configured scopes (space-joined per RFC 6749)", () => {
@@ -526,6 +525,7 @@ describe("WorkspaceOAuthProvider — revokeAndDeleteTokens", () => {
 
   beforeEach(() => {
     workDir = mkdtempSync(join(tmpdir(), "nb-oauth-rev-"));
+    installTestCredentialStore(workDir);
   });
 
   /** Build a fake fetch that records calls + returns programmable responses. */
@@ -699,7 +699,7 @@ describe("WorkspaceOAuthProvider — revokeAndDeleteTokens", () => {
     expect(await p2.clientInformation()).toBeUndefined();
   });
 
-  it("captures OIDC id_token claims to identity.json on saveTokens", async () => {
+  it("captures OIDC id_token claims to the identity record on saveTokens", async () => {
     const p = new WorkspaceOAuthProvider({
       owner: { type: "workspace", wsId: "ws_test" },
       serverName: "google",
@@ -745,7 +745,7 @@ describe("WorkspaceOAuthProvider — revokeAndDeleteTokens", () => {
     expect(await p.identity()).toBeNull();
   });
 
-  it("invalidateCredentials('tokens') also removes identity.json", async () => {
+  it("invalidateCredentials('tokens') also removes the identity record", async () => {
     const p = new WorkspaceOAuthProvider({
       owner: { type: "workspace", wsId: "ws_test" },
       serverName: "google",
@@ -861,9 +861,10 @@ describe("WorkspaceOAuthProvider — WorkspaceContext construction (Stage 0)", (
 
   beforeEach(() => {
     workDir = mkdtempSync(join(tmpdir(), "nb-oauth-ctx-test-"));
+    installTestCredentialStore(workDir);
   });
 
-  it("derives the same dataDir whether constructed via workDir alone or workspaceContext", async () => {
+  it("resolves the same records whether constructed via workDir alone or workspaceContext", async () => {
     const ctx = new WorkspaceContext({ wsId: "ws_test", workDir });
     const viaLegacy = new WorkspaceOAuthProvider({
       owner: { type: "workspace", wsId: "ws_test" },
@@ -879,7 +880,7 @@ describe("WorkspaceOAuthProvider — WorkspaceContext construction (Stage 0)", (
       workspaceContext: ctx,
     });
     // Functional check: write through one, read through the other. If the
-    // two constructors agree on dataDir they'll see each other's files.
+    // two constructors agree on the scope they'll see each other's records.
     await viaLegacy.saveTokens({ access_token: "a", token_type: "Bearer", refresh_token: "r" });
     const seenByContext = await viaContext.tokens();
     expect(seenByContext).toEqual({
@@ -937,6 +938,7 @@ describe("WorkspaceOAuthProvider — notifyAuthLost (mid-session auth loss)", ()
 
   beforeEach(() => {
     workDir = mkdtempSync(join(tmpdir(), "nb-oauth-authlost-"));
+    installTestCredentialStore(workDir);
   });
 
   const TOKENS: OAuthTokens = { access_token: "a", token_type: "bearer" };
@@ -1010,6 +1012,7 @@ describe("WorkspaceOAuthProvider — redacted OAuth health logging", () => {
 
   beforeEach(() => {
     workDir = mkdtempSync(join(tmpdir(), "nb-oauth-health-"));
+    installTestCredentialStore(workDir);
   });
 
   it("warns when a token exchange returns NO refresh_token (the non-refreshable connector)", async () => {

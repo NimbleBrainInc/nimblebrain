@@ -21,6 +21,7 @@ import {
   SkillsLoadedPayload,
   SkillUpdatedPayload,
   ToolPromotionChangedPayload,
+  UnattendedDispatchPayload,
 } from "../../src/engine/schemas/events.ts";
 import { buildContextAssembledPayload } from "../../src/runtime/runtime.ts";
 import { buildSkillsLoadedPayload } from "../../src/runtime/skills-loaded-payload.ts";
@@ -143,9 +144,40 @@ describe("event schemas — accept representative payloads", () => {
       }),
     ).toBe(true);
   });
+
+  test("audit.unattended_dispatch — full payload, and without the optional classification", () => {
+    const denied = {
+      principalId: "usr_route_author",
+      workspaceId: "ws_helix",
+      tool: "slack__send_message",
+      reason: "route:rt_outbound_slack",
+      outcome: "denied" as const,
+      classification: "tool_permission_denied",
+      ms: 4,
+    };
+    expect(Value.Check(UnattendedDispatchPayload, denied)).toBe(true);
+
+    const { classification: _omitted, ...ok } = { ...denied, outcome: "ok" as const };
+    expect(Value.Check(UnattendedDispatchPayload, ok)).toBe(true);
+  });
 });
 
 describe("event schemas — reject malformed payloads", () => {
+  // `outcome` is the field a route ledger branches on, so an emitter inventing
+  // a fifth value has to be a schema failure rather than a silent pass-through.
+  test("audit.unattended_dispatch — rejects an outcome outside the four", () => {
+    expect(
+      Value.Check(UnattendedDispatchPayload, {
+        principalId: "usr_1",
+        workspaceId: "ws_helix",
+        tool: "crm__search",
+        reason: "route:rt_1",
+        outcome: "retried",
+        ms: 1,
+      }),
+    ).toBe(false);
+  });
+
   test("skills.loaded — rejects entry missing contentHash", () => {
     const payload = {
       skills: [

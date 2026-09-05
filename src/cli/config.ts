@@ -157,7 +157,6 @@ function applyOverride(
 /** Delete workspace-owned fields; they now live in workspace.json and are ignored here. */
 function stripWorkspaceFields(fileConfig: FileConfig): void {
   delete fileConfig.bundles;
-  delete fileConfig.agents;
   delete fileConfig.skillDirs;
   delete fileConfig.preferences;
   delete fileConfig.home;
@@ -181,9 +180,9 @@ function warnDeprecatedFields(fileConfig: FileConfig, configPath: string): void 
 
 /** Resolve workDir (NB_WORK_DIR > file > flag default), absolutized at load. */
 function absoluteWorkDir(fileConfig: FileConfig, flags: CliFlags): string | undefined {
-  // Absolutize so the value survives crossing process boundaries (e.g. as
-  // `MPAK_WORKSPACE` to bundle subprocesses with a different cwd) without the
-  // two ends resolving against different bases. The undefined case is
+  // Absolutize so every derived path is anchored the same way regardless of
+  // the process's cwd, rather than resolving against different bases at
+  // different call sites. The undefined case is
   // preserved — `resolveWorkDir(config)` in runtime.ts falls back to
   // `DEFAULT_WORK_DIR`, which is already absolute.
   const raw =
@@ -205,7 +204,7 @@ export function loadConfig(flags: CliFlags = {}): RuntimeConfig {
   stripWorkspaceFields(fileConfig);
   warnDeprecatedFields(fileConfig, configPath);
 
-  // CLI flags override file config — workspace-owned fields (bundles, agents,
+  // CLI flags override file config — workspace-owned fields (bundles,
   // skillDirs, preferences, home, noDefaultBundles) are intentionally omitted;
   // they were deleted above and now live in workspace.json.
   const config: RuntimeConfig = {

@@ -15,6 +15,7 @@ import {
   parseSkillMarkdown,
   synthesizeBundleSkill,
 } from "../../../src/skills/bundle-skills.ts";
+import { SkillMatcher } from "../../../src/skills/matcher.ts";
 import { partitionSkillsByRole, selectLayer3Skills } from "../../../src/skills/select.ts";
 
 describe("isSkillEntrypointUri", () => {
@@ -77,6 +78,45 @@ describe("parseSkillMarkdown", () => {
     const parsed = parseSkillMarkdown("skill://bad/SKILL.md", raw);
     expect(parsed.loadingStrategy).toBeUndefined();
     expect(parsed.priority).toBeUndefined();
+  });
+
+  // The blocker this half of #977 removes: `triggers` is the same
+  // `metadata.nimblebrain` field the filesystem loader reads, so identical
+  // frontmatter must not behave differently by origin. It parsed fine before and
+  // the field was silently dropped on the floor.
+  test("reads declared triggers from metadata.nimblebrain", () => {
+    const raw =
+      "---\nname: capture\ndescription: Capture corrections.\n" +
+      "metadata:\n  nimblebrain:\n    loading-strategy: dynamic\n" +
+      '    triggers:\n      - "that is wrong"\n      - "actually we"\n---\n\nBody.';
+    const parsed = parseSkillMarkdown("skill://capture/SKILL.md", raw);
+    expect(parsed.triggers).toEqual(["that is wrong", "actually we"]);
+  });
+
+  test("leaves triggers undefined when none are declared", () => {
+    const raw = "---\nname: usage\ndescription: Tool usage.\n---\n\nBody.";
+    expect(parseSkillMarkdown("skill://usage/SKILL.md", raw).triggers).toBeUndefined();
+  });
+
+  // A discovered skill is authored by an arbitrary MCP server, so the read is
+  // lenient — but a blank trigger substring-matches EVERY message, which would
+  // make one malformed connector skill fire on every turn in the workspace.
+  test("drops non-string and blank triggers, and a non-array declaration", () => {
+    const mixed =
+      "---\nname: messy\ndescription: Messy.\n" +
+      "metadata:\n  nimblebrain:\n    triggers:\n" +
+      '      - "real phrase"\n      - ""\n      - "   "\n      - 7\n---\n\nBody.';
+    expect(parseSkillMarkdown("skill://messy/SKILL.md", mixed).triggers).toEqual(["real phrase"]);
+
+    const notAnArray =
+      "---\nname: messy\ndescription: Messy.\n" +
+      "metadata:\n  nimblebrain:\n    triggers: just a string\n---\n\nBody.";
+    expect(parseSkillMarkdown("skill://messy/SKILL.md", notAnArray).triggers).toBeUndefined();
+
+    const allBlank =
+      "---\nname: messy\ndescription: Messy.\n" +
+      'metadata:\n  nimblebrain:\n    triggers:\n      - " "\n---\n\nBody.';
+    expect(parseSkillMarkdown("skill://messy/SKILL.md", allBlank).triggers).toBeUndefined();
   });
 });
 
@@ -189,6 +229,74 @@ describe("synthesizeBundleSkill", () => {
     });
     expect(skill.manifest.loadingStrategy).toBe("dynamic");
     expect(skill.manifest.priority).toBe(60);
+  });
+
+  test("stamps declared triggers alongside tool-affinity, so both channels reach it", () => {
+    const skill = synthesizeBundleSkill({
+      serverName: "ai-nimblebrain-foo-mcp",
+      skillName: "capture",
+      description: "Capture corrections.",
+      body: "# Capture",
+      uri: "skill://capture/SKILL.md",
+      triggers: ["that is wrong"],
+    });
+    expect(skill.manifest.triggers).toEqual(["that is wrong"]);
+    // Affinity is still stamped — triggers are additive, not a replacement.
+    expect(skill.manifest.toolAffinity).toEqual(["ai-nimblebrain-foo-mcp__*"]);
+  });
+
+  test("omits triggers entirely when none are declared", () => {
+    const skill = synthesizeBundleSkill({
+      serverName: "foo",
+      skillName: "foo",
+      description: "",
+      body: "x",
+      uri: "skill://foo/SKILL.md",
+    });
+    expect(skill.manifest.triggers).toBeUndefined();
+  });
+});
+
+describe("SkillMatcher over synthesized bundle skills", () => {
+  const capture = synthesizeBundleSkill({
+    serverName: "ai-nimblebrain-foo-mcp",
+    skillName: "capture",
+    description: "Capture corrections.",
+    body: "# Capture",
+    uri: "skill://capture/SKILL.md",
+    triggers: ["that is wrong"],
+  });
+
+  test("fires on a declared phrase, case-insensitively", () => {
+    const matcher = new SkillMatcher();
+    matcher.load([capture]);
+    const hit = matcher.match("Actually That Is Wrong — we do not target dentists");
+    expect(hit?.skill.manifest.name).toBe("bundle:ai-nimblebrain-foo-mcp:capture");
+    expect(hit?.trigger).toBe("that is wrong");
+  });
+
+  test("does not fire on a message that names no phrase", () => {
+    const matcher = new SkillMatcher();
+    matcher.load([capture]);
+    expect(matcher.match("draft the onboarding plan")).toBeNull();
+  });
+
+  // `SkillMatcher.load()` filters to `dynamic`, so triggers on an `always` bundle
+  // skill are inert by construction — it already composes every turn. Part of the
+  // measured "zero trigger fires" was this filter, not the channel.
+  test("an `always` bundle skill is never matchable, triggers or not", () => {
+    const alwaysOn = synthesizeBundleSkill({
+      serverName: "foo",
+      skillName: "guide",
+      description: "",
+      body: "x",
+      uri: "skill://guide/SKILL.md",
+      loadingStrategy: "always",
+      triggers: ["that is wrong"],
+    });
+    const matcher = new SkillMatcher();
+    matcher.load([alwaysOn]);
+    expect(matcher.match("that is wrong")).toBeNull();
   });
 });
 

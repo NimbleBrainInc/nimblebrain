@@ -29,7 +29,6 @@ function entry(over: Partial<UsageLedgerEntry> = {}): UsageLedgerEntry {
     ts: "2026-04-10T12:00:00Z",
     source: "main",
     origin: "chat",
-    delegated: false,
     model: "anthropic:claude-sonnet-4-5-20250929",
     usage: { inputTokens: 10, outputTokens: 5 },
     llmMs: 1,

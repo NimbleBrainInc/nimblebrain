@@ -173,6 +173,33 @@ describe("WorkspaceLogSink audit events", () => {
     expect(records[0]!.event).toBe("audit.permission_denied");
     expect(records[0]!.tool).toBe("skills__create");
   });
+
+  // An unattended dispatch writes no conversation and no run result, so this
+  // line is its only trace — and the security page points operators at this log
+  // to find it. A type missing from `WORKSPACE_EVENTS` is dropped silently,
+  // which would leave that page describing a file with nothing in it.
+  it("persists audit.unattended_dispatch events", () => {
+    const sink = new WorkspaceLogSink({ dir });
+    sink.emit({
+      type: "audit.unattended_dispatch",
+      data: {
+        principalId: "usr_route_author",
+        workspaceId: "ws_helix",
+        tool: "slack__send_message",
+        reason: "route:rt_outbound_slack",
+        outcome: "denied",
+        classification: "tool_permission_denied",
+        ms: 4,
+      },
+    });
+
+    const records = readLogRecords(join(dir, "workspace"));
+    expect(records).toHaveLength(1);
+    expect(records[0]!.event).toBe("audit.unattended_dispatch");
+    expect(records[0]!.principalId).toBe("usr_route_author");
+    expect(records[0]!.reason).toBe("route:rt_outbound_slack");
+    expect(records[0]!.outcome).toBe("denied");
+  });
 });
 
 // ── WorkspaceLogSink: retention cleanup ──────────────────────────
@@ -213,10 +240,9 @@ describe("createPrivilegeHook audit emission", () => {
     const denyGate: ConfirmationGate = {
       supportsInteraction: true,
       confirm: async () => false,
-      promptConfigValue: async () => null,
     };
 
-    const hook = createPrivilegeHook(denyGate, captureSink, { bundleManagement: true, skillManagement: true, delegation: true, toolDiscovery: true, bundleDiscovery: true, fileContext: true, userManagement: true, workspaceManagement: true });
+    const hook = createPrivilegeHook(denyGate, captureSink, { bundleManagement: true, skillManagement: true, toolDiscovery: true, bundleDiscovery: true, fileContext: true, userManagement: true, workspaceManagement: true });
 
     const result = await hook({
       id: "call_1",
@@ -255,7 +281,6 @@ describe("createPrivilegeHook audit emission", () => {
     const denyGate: ConfirmationGate = {
       supportsInteraction: true,
       confirm: async () => false,
-      promptConfigValue: async () => null,
     };
 
     const hook = createPrivilegeHook(denyGate, captureSink);

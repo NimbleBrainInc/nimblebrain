@@ -146,10 +146,10 @@ describe("UC-W4: Same app, different workspaces", () => {
     if (workDir) rmSync(workDir, { recursive: true, force: true });
   });
 
-  test("same bundle in two workspaces produces separate inventory entries", () => {
+  test("same connector in two workspaces produces separate inventory entries", () => {
     workDir = makeTmpDir();
 
-    const crmBundle = { name: "@nimblebraininc/crm" };
+    const crmBundle = { url: "https://crm.example.com/mcp", serverName: "crm" };
 
     const engineering: Workspace = {
       id: "ws_engineering",
@@ -254,7 +254,7 @@ describe("UC-W6: Workspace admin manages bundles", () => {
 
     // Admin adds bundles via update
     const updated = await wsStore.update(eng.id, {
-      bundles: [{ name: "@nimblebraininc/crm" }],
+      bundles: [{ url: "https://crm.example.com/mcp", serverName: "crm" }],
     });
     expect(updated).not.toBeNull();
     expect(updated!.bundles).toHaveLength(1);
@@ -293,7 +293,12 @@ describe("Auth flow", () => {
 
     // Create a simple mock provider for the adapter mode test
     const mockProvider: IdentityProvider = {
-      capabilities: { authCodeFlow: false, tokenRefresh: false, managedUsers: false },
+      capabilities: {
+        authCodeFlow: false,
+        tokenRefresh: false,
+        managedUsers: false,
+        authorizationServer: false,
+      },
       async verifyRequest(): Promise<null> { return null; },
       async listUsers(): Promise<User[]> { return []; },
       async createUser(data): Promise<CreateUserResult> {

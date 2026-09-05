@@ -135,6 +135,52 @@ describe("SseEventManager — routing table", () => {
     expect(wsB.events).toEqual([]);
   });
 
+  test("notification.created reaches the item's workspace only", async () => {
+    const wsA = collect(mgr.addClient("ws_a"));
+    const wsB = collect(mgr.addClient("ws_b"));
+    released.push(wsA.release, wsB.release);
+
+    mgr.emit({
+      type: "notification.created",
+      data: {
+        workspaceId: "ws_a",
+        id: "acme:evt_01",
+        seq: 1,
+        source: "acme",
+        name: "domain.active",
+        level: "attention",
+        title: "acme-outreach.test is active",
+        receivedAt: "2026-09-01T18:42:11.000Z",
+      },
+    });
+    await flush();
+
+    expect(wsA.events).toEqual(["notification.created"]);
+    expect(wsB.events).toEqual([]);
+  });
+
+  test("notification.* without workspaceId is dropped, not fanned out", async () => {
+    const wsA = collect(mgr.addClient("ws_a"));
+    const wsB = collect(mgr.addClient("ws_b"));
+    released.push(wsA.release, wsB.release);
+
+    // The inbox is per workspace and a notification carries a connector's own
+    // words, so an unscoped one would put one workspace's business in front of
+    // its neighbours. The router refuses rather than guessing.
+    mgr.emit({
+      type: "notification.created",
+      data: { id: "acme:evt_01", seq: 1, source: "acme" } as Record<string, unknown>,
+    });
+    mgr.emit({
+      type: "notification.delivery_failed",
+      data: { id: "acme:evt_01", routeId: "rt_1" } as Record<string, unknown>,
+    });
+    await flush();
+
+    expect(wsA.events).toEqual([]);
+    expect(wsB.events).toEqual([]);
+  });
+
   test("global-scope events reach all clients regardless of workspace", async () => {
     const wsA = collect(mgr.addClient("ws_a"));
     const wsB = collect(mgr.addClient("ws_b"));

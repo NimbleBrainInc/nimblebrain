@@ -145,7 +145,6 @@ test("an unpriced line reports its tokens and is counted, not billed as zero", a
     ts: new Date().toISOString(),
     source: "main",
     origin: "task",
-    delegated: false,
     model: "unknown",
     usage: { inputTokens: 1_000_000, outputTokens: 500_000 },
     llmMs: 0,

@@ -7,6 +7,7 @@ import {
   bundleUnhealthy,
   llmCallsTotal,
   llmErrorsTotal,
+  llmInputTokensEstimatedTotal,
   llmRequestDurationSeconds,
   llmTokensTotal,
   llmTtftSeconds,
@@ -17,6 +18,7 @@ import {
   toolPromotionsTotal,
 } from "../../src/api/metrics.ts";
 import type { BundleHealth } from "../../src/tools/health-monitor.ts";
+import { runWithRequestContext } from "../../src/runtime/request-context.ts";
 
 // Read one label-series value off a counter. Tests use deltas (read → act →
 // read) rather than reset(), so they're robust to the shared process-global
@@ -39,7 +41,7 @@ async function readTotal(counter: Counter<any>): Promise<number> {
 
 describe("recordLlmUsage", () => {
   it("splits input into fresh/cache_read/cache_write and counts output + calls", async () => {
-    const base = { source: "compaction", origin: "system", delegated: "false", model: "tm-record" };
+    const base = { source: "compaction", origin: "system", model: "tm-record" };
     const fresh = { direction: "input", kind: "fresh", ttl: "none", ...base };
     const cr = { direction: "input", kind: "cache_read", ttl: "none", ...base };
     // 300 writes with no 1h split reported → all-1h (the conservative tier).
@@ -60,7 +62,6 @@ describe("recordLlmUsage", () => {
       "tm-record",
       { inputTokens: 1000, outputTokens: 50, cacheReadTokens: 600, cacheWriteTokens: 300 },
       "system",
-      false,
     );
 
     expect((await read(llmTokensTotal, fresh)) - before.fresh).toBe(100);
@@ -71,7 +72,7 @@ describe("recordLlmUsage", () => {
   });
 
   it("tiers cache_write into 1h/5m when the engine reports the 1h portion", async () => {
-    const base = { source: "main", origin: "chat", delegated: "false", model: "tm-ttl" };
+    const base = { source: "main", origin: "chat", model: "tm-ttl" };
     const cw1h = { direction: "input", kind: "cache_write", ttl: "1h", ...base };
     const cw5m = { direction: "input", kind: "cache_write", ttl: "5m", ...base };
     const before = { h: await read(llmTokensTotal, cw1h), m: await read(llmTokensTotal, cw5m) };
@@ -88,7 +89,6 @@ describe("recordLlmUsage", () => {
         cacheWrite1hTokens: 200,
       },
       "chat",
-      false,
     );
 
     expect((await read(llmTokensTotal, cw1h)) - before.h).toBe(200);
@@ -311,6 +311,38 @@ describe("bundle unhealthy gauge", () => {
 });
 
 describe("LLM latency + error metrics", () => {
+  // Cumulative count in one bucket of the round-trip histogram, for a model
+  // label-series. Absent bucket reads 0, so a delta stays meaningful whether or
+  // not the boundary exists.
+  async function readBucket(le: number, model: string): Promise<number> {
+    const metric = await llmRequestDurationSeconds.get();
+    for (const s of metric.values) {
+      if (
+        // biome-ignore lint/suspicious/noExplicitAny: prom-client value shape.
+        (s as any).metricName === "nb_llm_request_duration_seconds_bucket" &&
+        s.labels.model === model &&
+        s.labels.le === le
+      ) {
+        return s.value;
+      }
+    }
+    return 0;
+  }
+
+  it("test_llm_latency_histogram_resolves_calls_beyond_two_minutes", async () => {
+    const model = "tm-long-tail";
+    const before180 = await readBucket(180, model);
+    const before300 = await readBucket(300, model);
+
+    llmRequestDurationSeconds.labels("main", model, "chat").observe(240);
+
+    // A 240s call falls past the 180s boundary and lands at 300s. Without a
+    // finite bucket out there it reaches only `+Inf`, and `histogram_quantile`
+    // pegs the p99 at the top finite boundary instead of the real tail.
+    expect((await readBucket(180, model)) - before180).toBe(0);
+    expect((await readBucket(300, model)) - before300).toBe(1);
+  });
+
   // Read a histogram's _sum / _count for a label-series. prom-client emits the
   // aggregate as sibling series named `<name>_sum` / `<name>_count`.
   async function readHistogram(
@@ -392,6 +424,46 @@ describe("LLM latency + error metrics", () => {
     expect((await readTtft("count", labels)) - before).toBe(0);
   });
 
+  // The point of the `origin` label is that a p99 can separate a person waiting
+  // from an automation nobody is watching. A label that is present but always
+  // the same value would satisfy a shape assertion and still answer nothing, so
+  // these drive the two origins through the real derivation (the request
+  // context) rather than asserting the label exists.
+  it("test_latency_histograms_carry_origin_task_for_unattended_runs", async () => {
+    const sink = new MetricsEventSink();
+    const labels = { source: "main", model: "tm-origin-task", origin: "task" };
+    const beforeLatency = await readHistogram("count", labels);
+    const beforeTtft = await readTtft("count", labels);
+    runWithRequestContext({ identity: null, unattended: true }, () => {
+      sink.emit({
+        type: "llm.done",
+        data: { runId: "r1", model: "tm-origin-task", llmMs: 90000, ttftMs: 1200 },
+      });
+    });
+    expect((await readHistogram("count", labels)) - beforeLatency).toBe(1);
+    expect((await readTtft("count", labels)) - beforeTtft).toBe(1);
+  });
+
+  it("test_latency_histograms_carry_origin_chat_for_interactive_runs", async () => {
+    const sink = new MetricsEventSink();
+    const labels = { source: "main", model: "tm-origin-chat", origin: "chat" };
+    const beforeLatency = await readHistogram("count", labels);
+    const beforeTtft = await readTtft("count", labels);
+    runWithRequestContext({ identity: null, conversationId: "conv-1" }, () => {
+      sink.emit({
+        type: "llm.done",
+        data: { runId: "r1", model: "tm-origin-chat", llmMs: 3000, ttftMs: 800 },
+      });
+    });
+    expect((await readHistogram("count", labels)) - beforeLatency).toBe(1);
+    expect((await readTtft("count", labels)) - beforeTtft).toBe(1);
+    // And the same model under the other origin stayed empty — the two are
+    // genuinely separable, which is the whole reason for the label.
+    expect(
+      await readHistogram("count", { source: "main", model: "tm-origin-chat", origin: "task" }),
+    ).toBe(0);
+  });
+
   it("test_llm_error_increments_errors_counter_with_model", async () => {
     const sink = new MetricsEventSink();
     const labels = { source: "main", model: "tm-err" };
@@ -405,5 +477,103 @@ describe("LLM latency + error metrics", () => {
     const before = await readTotal(llmErrorsTotal);
     sink.emit({ type: "llm.done", data: { runId: "r1", model: "tm-err", llmMs: 100 } });
     expect((await readTotal(llmErrorsTotal)) - before).toBe(0);
+  });
+});
+
+describe("estimate-vs-actual instrumentation", () => {
+  it("test_llm_done_records_estimated_input_tokens", async () => {
+    const sink = new MetricsEventSink();
+    const labels = { source: "main", model: "tm-est" };
+    const before = await read(llmInputTokensEstimatedTotal, labels);
+
+    sink.emit({
+      type: "llm.done",
+      data: {
+        runId: "r-est",
+        model: "tm-est",
+        // A real llm.done always carries usage; the estimate is only recorded
+        // when its counterpart on the actual side is too.
+        usage: { inputTokens: 800_000, outputTokens: 10, cacheReadTokens: 0, cacheWriteTokens: 0 },
+        estimatedInputTokens: 512_000,
+      },
+    });
+
+    expect((await read(llmInputTokensEstimatedTotal, labels)) - before).toBe(512_000);
+  });
+
+  // The whole point of the counter is to be divided by the actual input-token
+  // counter. Both must move on the same call, or the ratio silently compares
+  // different populations.
+  it("test_llm_done_records_estimate_and_actual_on_the_same_call", async () => {
+    const sink = new MetricsEventSink();
+    const model = "tm-ratio";
+    const actualLabels = { direction: "input", kind: "fresh", source: "main", model };
+    const estLabels = { source: "main", model };
+    const beforeActual = await read(llmTokensTotal, actualLabels);
+    const beforeEst = await read(llmInputTokensEstimatedTotal, estLabels);
+
+    sink.emit({
+      type: "llm.done",
+      data: {
+        runId: "r-ratio",
+        model,
+        usage: { inputTokens: 800_000, outputTokens: 10, cacheReadTokens: 0, cacheWriteTokens: 0 },
+        estimatedInputTokens: 500_000,
+      },
+    });
+
+    const actual = (await read(llmTokensTotal, actualLabels)) - beforeActual;
+    const estimated = (await read(llmInputTokensEstimatedTotal, estLabels)) - beforeEst;
+    expect(actual).toBe(800_000);
+    expect(estimated).toBe(500_000);
+    // 1.6x — the estimator drift this instrumentation exists to make visible.
+    expect(actual / estimated).toBeCloseTo(1.6, 5);
+  });
+
+  // The actual side records nothing for a zero input, so recording an estimate
+  // there would advance the denominator alone and pull actual/estimated toward
+  // zero — indistinguishable from "the estimator is fine", which is the one
+  // conclusion this metric must never manufacture.
+  it("test_llm_done_with_zero_actual_records_no_estimate", async () => {
+    const sink = new MetricsEventSink();
+    const before = await readTotal(llmInputTokensEstimatedTotal);
+
+    sink.emit({
+      type: "llm.done",
+      data: {
+        runId: "r-zero-actual",
+        model: "tm-zero-actual",
+        // A stream that ends without a finish part leaves the usage totals at
+        // their zero initializers.
+        usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 },
+        estimatedInputTokens: 400_000,
+      },
+    });
+
+    expect(await readTotal(llmInputTokensEstimatedTotal)).toBe(before);
+  });
+
+  it("test_llm_done_without_usage_records_no_estimate", async () => {
+    const sink = new MetricsEventSink();
+    const before = await readTotal(llmInputTokensEstimatedTotal);
+    // No usage at all: the actual counter is skipped wholesale upstream.
+    sink.emit({
+      type: "llm.done",
+      data: { runId: "r-no-usage", model: "tm-no-usage", estimatedInputTokens: 400_000 },
+    });
+    expect(await readTotal(llmInputTokensEstimatedTotal)).toBe(before);
+  });
+
+  it("test_llm_done_without_estimate_records_nothing", async () => {
+    const sink = new MetricsEventSink();
+    const before = await readTotal(llmInputTokensEstimatedTotal);
+    // A zero estimate is not a real measurement — recording it would drag the
+    // ratio toward infinity rather than leaving the series untouched.
+    sink.emit({ type: "llm.done", data: { runId: "r-none", model: "tm-none" } });
+    sink.emit({
+      type: "llm.done",
+      data: { runId: "r-zero", model: "tm-zero", estimatedInputTokens: 0 },
+    });
+    expect(await readTotal(llmInputTokensEstimatedTotal)).toBe(before);
   });
 });

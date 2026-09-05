@@ -78,7 +78,6 @@ describe("startWorkspaceBundles — unreachable URL bundle at boot", () => {
       [],
       null,
       new NoopEventSink(),
-      undefined,
       { workDir, allowInsecureRemotes: true },
     );
 
@@ -196,7 +195,7 @@ describe("startWorkspaceBundles — unreachable URL bundle at boot", () => {
     const origInfo = log.info;
     log.info = (msg: string) => lines.push(msg);
     try {
-      await startWorkspaceBundles(store, [], null, new NoopEventSink(), undefined, {
+      await startWorkspaceBundles(store, [], null, new NoopEventSink(), {
         workDir,
         allowInsecureRemotes: true,
       });
@@ -210,30 +209,6 @@ describe("startWorkspaceBundles — unreachable URL bundle at boot", () => {
     // The line reports the count and the tally, and promises nothing about
     // recovery — which is a different subsystem's business.
     expect(summary).not.toContain("retried");
-  }, 30_000);
-
-  test("failedNamedBundle_isDroppedNotKept", async () => {
-    // The asymmetry is deliberate. Only a URL ref reaches
-    // `seedUrlConnectionState`, and `buildSeededInstance` hardcodes
-    // `state: "running"` — so keeping a named bundle's entry would seed a
-    // permanently *running* instance for a dead bundle. Pins the invariant
-    // against a future edit that "unifies" the two branches.
-    const store = new WorkspaceStore(workDir);
-    const ws = await store.create("Fleet");
-    await store.update(ws.id, {
-      bundles: [{ name: "@nimblebrain/does-not-exist" } as unknown as BundleRef],
-    });
-
-    const { entries } = await startWorkspaceBundles(
-      store,
-      [],
-      null,
-      new NoopEventSink(),
-      undefined,
-      { workDir, allowInsecureRemotes: true },
-    );
-
-    expect(entries.find((e) => e.serverName.includes("does-not-exist"))).toBeUndefined();
   }, 30_000);
 
   test("failedUrlBundle_isRegisteredButNotLive", async () => {
@@ -251,7 +226,6 @@ describe("startWorkspaceBundles — unreachable URL bundle at boot", () => {
       [],
       null,
       new NoopEventSink(),
-      undefined,
       { workDir, allowInsecureRemotes: true },
     );
 
@@ -279,7 +253,6 @@ describe("startWorkspaceBundles — unreachable URL bundle at boot", () => {
       [],
       null,
       new NoopEventSink(),
-      undefined,
       { workDir, allowInsecureRemotes: true },
     );
     const registry = registries.get(ws.id);
@@ -293,7 +266,6 @@ describe("startWorkspaceBundles — unreachable URL bundle at boot", () => {
         { url: "http://127.0.0.1:1/mcp", serverName: "still-down" },
         registry as ToolRegistry,
         new NoopEventSink(),
-        undefined,
         { allowInsecureRemotes: true, wsId: ws.id, workDir, keepRegisteredOnStartFailure: true },
       ),
     ]);

@@ -23,6 +23,7 @@
 import { ArrowRight, ChevronRight, Home, Plus } from "lucide-react";
 import { useCallback, useMemo } from "react";
 import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
+import { useNotifications } from "../../context/NotificationsContext";
 import { useShellContext } from "../../context/ShellContext";
 import { useWorkspaceAppIcons } from "../../context/WorkspaceAppIconsContext";
 import { useWorkspaceContext, type WorkspaceInfo } from "../../context/WorkspaceContext";
@@ -305,6 +306,7 @@ function WorkspaceAvatarButton({
 function WorkspaceContents({ workspace, focused }: { workspace: WorkspaceInfo; focused: boolean }) {
   const shell = useShellContext();
   const { iconFor, connectorCount } = useWorkspaceAppIcons();
+  const { unread } = useNotifications();
   const slug = toSlug(workspace.id);
 
   // Identity views (Conversations / Automations / Files): the bare-"sidebar"
@@ -339,6 +341,17 @@ function WorkspaceContents({ workspace, focused }: { workspace: WorkspaceInfo; f
           end
         />
       ))}
+
+      {/* The inbox sits with the identity views, not under Apps: it belongs to
+          the workspace rather than to any connector, and the count is the
+          FOCUSED workspace's unread — a collapsed node omits it so one
+          workspace's number never appears on another's row mid-collapse. */}
+      <NestedNavLink
+        to={`/w/${slug}/notifications`}
+        icon="bell"
+        label="Inbox"
+        count={focused ? unread : undefined}
+      />
 
       {shownApps.length > 0 && (
         <>

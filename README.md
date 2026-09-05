@@ -5,7 +5,7 @@
 [![Bun](https://img.shields.io/badge/runtime-Bun-f9f1e1?logo=bun)](https://bun.sh)
 [![MCP](https://img.shields.io/badge/protocol-MCP-8A2BE2)](https://modelcontextprotocol.io)
 
-A self-hosted platform for [MCP Apps](https://modelcontextprotocol.io/extensions/apps/overview) and agent automations. Install an MCP bundle and you get more than tools — you get an interactive UI in the sidebar with live agent-UI data sync, and the ability to run the agent on demand or on a cron schedule. Full [ext-apps](https://apps.extensions.modelcontextprotocol.io/api/) host support on top of an agentic loop with skill-driven prompt composition and multi-agent delegation.
+A self-hosted platform for [MCP Apps](https://modelcontextprotocol.io/extensions/apps/overview) and agent automations. Install an MCP bundle and you get more than tools — you get an interactive UI in the sidebar with live agent-UI data sync, and the ability to run the agent on demand or on a cron schedule. Full [ext-apps](https://apps.extensions.modelcontextprotocol.io/api/) host support on top of an agentic loop with skill-driven prompt composition.
 
 Ships as container images on GHCR (`ghcr.io/nimblebraininc/nimblebrain`, `ghcr.io/nimblebraininc/nimblebrain-web`). Also exposes itself as an MCP server via Streamable HTTP so external MCP clients can consume the aggregated toolset.
 
@@ -30,7 +30,7 @@ To build from source instead of pulling (e.g. when developing against local chan
 ### Option 2: Local development
 
 ```bash
-# Prerequisites: Bun (https://bun.sh), mpak CLI (https://mpak.dev), Node.js 22+
+# Prerequisites: Bun (https://bun.sh), Node.js 22+
 export ANTHROPIC_API_KEY=sk-ant-...
 
 bun install
@@ -131,11 +131,10 @@ All system tools are prefixed with `nb__` (the `nb` source name + `__` separator
 | Tool | Purpose |
 |-----------|---------|
 | `nb__status` | Platform status: overview, bundles, skills, or config (scope param) |
-| `nb__search` | Unified search: installed tools or mpak registry (scope param) |
+| `nb__search` | Unified search: installed tools or the connector registries (scope param) |
 | `nb__read_resource` | Read a `skill://` / `ui://` resource from an installed app's MCP server |
 | `nb__set_preferences` | Set user preferences (name, timezone, theme) |
 | `nb__manage_tools` | Promote/release tools in the active set |
-| `nb__delegate` | Spawn child agent for sub-tasks (multi-agent) |
 
 Additional internal tools (UI-only, hidden from LLM) are listed in [Architecture Reference](#internal-system-tools-ui-only-hidden-from-llm).
 
@@ -165,26 +164,25 @@ Two categories of skills:
 - **Core** (`src/skills/core/`) — always injected into the system prompt (e.g., `bootstrap.md` teaches meta-tool usage)
 - **User-matchable** — loaded from `src/skills/builtin/` (currently empty), `~/.nimblebrain/skills/`, and config-specified directories
 
-### Bundles
+### Connectors
 
-Bundles are [MCPB](https://github.com/modelcontextprotocol/mcpb)-format MCP servers. They can be:
+A connector is a remote MCP server the platform connects to over Streamable HTTP
+or SSE. The runtime orchestrates over remote MCP: it holds a URL and a
+credential, and never downloads, verifies, or executes a server's code — so
+supply-chain review lives where a server is built and published, not in a process
+that also holds tenant credentials. Every connector is aggregated into the same
+unified tool namespace by the `ToolRegistry`.
 
-- **Named** — downloaded and cached via `mpak run @scope/name`
-- **Local** — resolved from a path on disk
-- **Remote** — connected via Streamable HTTP or SSE transport (distributed MCP servers)
-
-Local and named bundles spawn as subprocesses communicating via stdio (MCP JSON-RPC 2.0). Remote bundles connect over HTTP. All three types are aggregated into the same unified tool namespace by the `ToolRegistry`.
-
-No MCP bundles are installed by default. Platform capabilities (home, conversations, files, settings, usage, automations) are built in as inline tool sources (see `src/tools/platform/`). Install bundles explicitly via the mpak registry or a local path. Tool visibility follows the tiered surfacing rules described under [Tiered Tool Surfacing](#tiered-tool-surfacing).
+No connectors are installed by default. Platform capabilities (home, conversations, files, settings, usage, automations) are built in as inline tool sources (see `src/tools/platform/`). Install connectors from the connectors catalog. Tool visibility follows the tiered surfacing rules described under [Tiered Tool Surfacing](#tiered-tool-surfacing).
 
 ## Configuration
 
 NimbleBrain splits configuration across two files:
 
 - **`nimblebrain.json`** — instance-level settings (models, HTTP, logging, limits, feature flags). One file per deployment.
-- **`workspace.json`** — per-workspace settings (bundles, skill directories, named agent profiles, optional model + identity overrides). One file per workspace under `<workDir>/workspaces/<ws-id>/`.
+- **`workspace.json`** — per-workspace settings (bundles, skill directories, optional model + identity overrides). One file per workspace under `<workDir>/workspaces/<ws-id>/`.
 
-This split is the workspace isolation boundary: two workspaces in the same deployment can install different bundles and agents without touching the instance config. See [Workspace Isolation](#workspace-isolation) below.
+This split is the workspace isolation boundary: two workspaces in the same deployment can install different bundles without touching the instance config. See [Workspace Isolation](#workspace-isolation) below.
 
 ### `nimblebrain.json` (instance config)
 
@@ -244,20 +242,12 @@ Each workspace has its own config at `<workDir>/workspaces/<ws-id>/workspace.jso
     { "path": "../mcp-servers/hello" }
   ],
   "skillDirs": ["./skills"],
-  "agents": {
-    "researcher": {
-      "description": "Research agent",
-      "systemPrompt": "You are a research agent...",
-      "tools": ["search__*"],
-      "maxIterations": 8
-    }
-  },
   "models": { "default": "anthropic:claude-opus-4-6" },
   "identity": { "name": "Acme Copilot" }
 }
 ```
 
-`bundles`, `skillDirs`, `agents`, and optional `models` / `identity` overrides live here, not in `nimblebrain.json`. Entries placed at the top level of `nimblebrain.json` are silently stripped on load — the runtime treats them as configuration errors rather than falling back to a global scope.
+`bundles`, `skillDirs`, and optional `models` / `identity` overrides live here, not in `nimblebrain.json`. Entries placed at the top level of `nimblebrain.json` are silently stripped on load — the runtime treats them as configuration errors rather than falling back to a global scope.
 
 ### Workspace Isolation
 
@@ -392,8 +382,7 @@ src/
 │   ├── types.ts          RuntimeConfig, ChatRequest, ChatResult
 │   ├── tools.ts          filterTools (skill-scoped tool filtering)
 │   ├── features.ts       Feature flags resolution and tool gating
-│   ├── env-filter.ts     Bundle env var allowlist/filter
-│   └── workspace-runtime.ts  Per-workspace bundle spawning
+│   └── workspace-runtime.ts  Per-workspace connector startup
 ├── identity/             Authentication adapters
 │   ├── provider.ts       IdentityProvider interface, UserIdentity type
 │   ├── providers/dev.ts  Dev mode (no auth)
@@ -419,8 +408,7 @@ src/
 │   ├── routes/           Modular route files (auth, chat, bootstrap, etc.)
 │   └── middleware/        Hono middleware (CORS, etc.)
 ├── tools/                Tool definitions
-│   ├── system-tools.ts   System tools factory (search, manage, delegate)
-│   ├── delegate.ts       nb__delegate multi-agent tool
+│   ├── system-tools.ts   System tools factory (search, status, manage)
 │   ├── registry.ts       ToolRegistry (aggregates MCP sources)
 │   ├── workspace-mgmt-tools.ts  Workspace management tools
 │   ├── user-tools.ts     User management tools
@@ -474,7 +462,7 @@ docker compose up
 
 Images are published to GHCR on every release:
 
-- `ghcr.io/nimblebraininc/nimblebrain-runtime` — runtime (Bun + Python 3.13 + Node 22 + mpak). Also published as `ghcr.io/nimblebraininc/nimblebrain` (transitional alias).
+- `ghcr.io/nimblebraininc/nimblebrain-runtime` — runtime (Bun; Node 24 builds the in-image bundle UIs). Also published as `ghcr.io/nimblebraininc/nimblebrain` (transitional alias).
 - `ghcr.io/nimblebraininc/nimblebrain-web` — Caddy serving the SPA, proxying `/v1/*` to the platform
 
 Each release is tagged with the version (e.g. `v1.2.3`) and the short git SHA. Stable releases also move `:latest` forward; pre-releases (e.g. `v0.4.0-beta.1`) do not. Pin to a version tag in production. Pass `--build` to `docker compose` to build from source instead.
@@ -497,7 +485,7 @@ When total tools ≤30, all are surfaced directly. Above 30 with no skill matche
 
 | Tool | What it does |
 |------|-------------|
-| `nb__list_apps` | List installed apps with status, tools, trust scores |
+| `nb__list_apps` | List installed apps with status and tools |
 | `nb__get_config` | Get runtime configuration (providers, model, limits) |
 | `nb__set_model_config` | Update model selection and runtime limits (admin only) |
 | `nb__manage_identity` | Write or reset workspace agent identity override (admin only) |
@@ -507,21 +495,16 @@ When total tools ≤30, all are surfaced directly. Above 30 with no skill matche
 | `nb__manage_users` | Create, update, delete, or list users (admin only) |
 | `nb__manage_workspaces` | Workspace CRUD + member management (admin only) |
 | `nb__manage_registries` | List and configure connector registries (admin only) |
-| `nb__manage_apps` | Org-global app-version management: list, check, upgrade (admin only) |
 | `nb__manage_connectors` | Browse, install, configure, and disconnect connectors |
 
-### Bundle Lifecycle
+### Connector Lifecycle
 
-`BundleLifecycleManager` (`src/bundles/lifecycle.ts`) tracks bundle states:
+`BundleLifecycleManager` (`src/bundles/lifecycle.ts`) tracks connector states:
 
-- **Install**: mpak download → read manifest → extract UI metadata from `_meta["ai.nimblebrain/host"]` → record trust score → spawn MCP server → register → atomic config write → emit event
-- **Uninstall**: check protected → stop server → remove source → atomic config removal → emit event (data NOT deleted)
-- **States**: starting → running → crashed → dead (+ stopped for manual stop)
+- **Install**: resolve the catalog entry → persist the `url` ref (with its transport, OAuth config, and host UI metadata) on the workspace → connect → register → emit event
+- **Uninstall**: stop the connection → remove source → clear the workspace's OAuth state and revoke any brokered connection → atomic config removal → emit event (data NOT deleted)
+- **States**: starting → running, plus the auth states a remote connection has — `not_authenticated`, `pending_auth`, `reauth_required` — and `crashed` / `dead` / `stopped`
 - **Atomic writes**: config changes use write-temp-then-rename
-
-### Multi-Agent Delegation
-
-`nb__delegate` (`src/tools/delegate.ts`) spawns child `AgentEngine.run()` with a fixed safety preamble (or a named profile's system prompt) and filtered tools. Named agent profiles configured in `nimblebrain.json` under `agents`; an unknown profile name falls back to the default sub-agent rather than failing, and the `agent` parameter is advertised only when profiles are configured. Child iteration budget capped at `min(child.max, parent.remaining - 1)`. Multiple delegations in the same turn run concurrently via `Promise.all()`.
 
 ### MCP Tasks Client
 
@@ -560,7 +543,7 @@ Bundles can be installed per-workspace (tracked via `BundleInstance.wsId`). Each
 `src/prompt/compose.ts` joins layers with `---`:
 - Layer 0: Identity — context skills or default fallback
 - Layer 1: Core skills — always present (bootstrap.md teaches meta-tool usage)
-- Layer 2: Installed Apps — dynamically injected list with UI status and MTF trust scores
+- Layer 2: Installed Apps — dynamically injected list with UI status
 - Layer 3: Matched skill system prompt
 
 ### HTTP API Internals
@@ -607,8 +590,8 @@ Placements with a `route` field get React Router routes in `App.tsx`. Routes fro
 ### Configuration Reference
 
 **Files:**
-- `nimblebrain.json` — instance config. Validated at startup against `src/config/nimblebrain-config.schema.json` (JSON Schema draft-07, AJV). Unknown keys warn; structural errors throw. Workspace-owned fields (`bundles`, `skillDirs`, `agents`, `preferences`, `home`, `noDefaultBundles`) are silently stripped on load. `identity` and `contextFile` are deprecated with a warning.
-- `<workDir>/workspaces/<wsId>/workspace.json` — per-workspace config. Owns `bundles`, `skillDirs`, `agents`, and optional `models` / `identity` overrides.
+- `nimblebrain.json` — instance config. Validated at startup against `src/config/nimblebrain-config.schema.json` (JSON Schema draft-07, AJV). Unknown keys warn; structural errors throw. Workspace-owned fields (`bundles`, `skillDirs`, `preferences`, `home`, `noDefaultBundles`) are silently stripped on load. `identity` and `contextFile` are deprecated with a warning.
+- `<workDir>/workspaces/<wsId>/workspace.json` — per-workspace config. Owns `bundles`, `skillDirs`, and optional `models` / `identity` overrides.
 - `<workDir>/instance.json` — auth configuration (OIDC or WorkOS adapter). Absence signals dev mode.
 
 **Config resolution** for `nimblebrain.json` (when no `--config` flag):
@@ -617,37 +600,36 @@ Placements with a `route` field get React Router routes in `App.tsx`. Routes fro
 
 `NB_WORK_DIR` overrides `workDir` from either the config file or `--workdir`.
 
-#### Bundle Entry Fields (in `workspace.json`)
+#### Connector Entry Fields (in `workspace.json`)
 
-Each entry in `workspace.json → bundles[]` accepts:
+Each entry in `workspace.json → bundles[]` is one remote MCP server:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `name` | string | Bundle name from the mpak registry |
-| `path` | string | Local filesystem path (resolved relative to the config file) |
 | `url` | string | Remote MCP server URL (HTTPS; HTTP blocked unless `allowInsecureRemotes`) |
-| `env` | object | Environment variables passed to the bundle process |
-| `allowedEnv` | string[] | Host env vars this bundle may read |
-| `protected` | boolean | Prevents uninstall via `nb__manage_app` |
-| `trustScore` | number\|null | MTF trust score (0-100) |
-| `ui` | object\|null | UI metadata: `{ name, icon, primaryView? }` |
+| `serverName` | string | Name the server registers under; tools reach the agent as `<serverName>__<tool>` |
+| `transport` | object | Transport class, auth, headers, reconnection |
+| `oauthClient` / `scopes` / `additionalAuthorizationParams` | — | OAuth wiring for the connection |
+| `ui` | object\|null | Host UI metadata from the catalog entry: `{ name, icon, placements? }` |
 
 #### Feature Flags
 
-All default to `true`. Setting to `false` removes the capability entirely — tool not registered, not visible to LLM, returns 403 via HTTP.
+All default to `true`. What `false` does depends on the flag: most withhold a tool, two narrow one tool's behavior, and two gate no tool at all.
 
-| Flag | Controls | Tool(s) Affected |
-|------|----------|-----------------|
-| `bundleManagement` | Install/uninstall/configure apps | `nb__manage_app` |
-| `skillManagement` | Create/edit/delete skills | `nb__manage_skill` |
-| `delegation` | Multi-agent delegation | `nb__delegate` |
-| `toolDiscovery` | Tool search (scope=tools) | `nb__search` |
-| `bundleDiscovery` | Registry search (scope=registry) | `nb__search` |
-| `fileContext` | File upload and context extraction | File processing |
-| `userManagement` | Create/delete users | `nb__manage_users` |
-| `workspaceManagement` | Workspaces, members, sharing | `nb__manage_workspaces` |
+| Flag | Controls | Effect when `false` |
+|------|----------|---------------------|
+| `bundleManagement` | Reserved — gates no tool today | None on the current tool set |
+| `skillManagement` | Create, edit, delete, and activate skills | `skills__create`, `skills__update`, `skills__delete`, `skills__activate`, `skills__deactivate`, `skills__history`, `skills__restore`, `skills__set_status` are never built |
+| `toolDiscovery` | Tool search | `nb__search` stays; `scope: "tools"` returns an error |
+| `bundleDiscovery` | Registry search | `nb__search` stays; `scope: "registry"` returns an error |
+| `fileContext` | File upload, serving, and context extraction | The file endpoints refuse (404, or 415 on a multipart upload) |
+| `userManagement` | Create, update, and delete users | `nb__manage_users` is not registered |
+| `workspaceManagement` | Workspaces, members, sharing | `nb__manage_workspaces` is not registered |
+| `compaction` | Folding the oldest turns of a long conversation into a summary at run start | Full history replays every turn (event-sourced stores only) |
 
-**Enforcement:** Three layers — (1) tools excluded from registry at startup, (2) `POST /v1/tools/call` returns 403, (3) MCP ListTools filters and CallTool rejects. Read-only tools (`nb__status`) are never gated.
+**Enforcement.** For the flags that withhold a tool, three layers: (1) the tool is not built into its source at startup, so it reaches no tool list and no dispatcher; (2) `POST /v1/tools/call` returns `403 feature_disabled`; (3) MCP `tools/list` filters it and `tools/call` returns an error. `toolDiscovery`, `bundleDiscovery`, and `fileContext` are enforced inside the handler instead — the tool or endpoint is present and refuses. `compaction` gates no call path at all. Tools outside the table (`nb__status`, the read-only platform surfaces, `nb__search` itself) are never gated.
+
+Full reference: [Feature flags](https://docs.nimblebrain.ai/config/features/) on docs.nimblebrain.ai.
 
 #### Bundle Env Isolation
 

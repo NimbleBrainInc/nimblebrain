@@ -23,6 +23,7 @@ import { ArtifactPanelProvider } from "./context/ArtifactPanelContext";
 import { ChatProvider, useChatConfigContext, useChatContext } from "./context/ChatContext";
 import { ChatPanelProvider, useChatPanelContext } from "./context/ChatPanelContext";
 import { FocusedAppProvider } from "./context/FocusedAppContext";
+import { NotificationsProvider } from "./context/NotificationsProvider";
 import { PaletteProvider } from "./context/PaletteContext";
 import { SessionProvider } from "./context/SessionContext";
 import { ShellProvider } from "./context/ShellContext";
@@ -46,6 +47,7 @@ import { toSlug } from "./lib/workspace-slug";
 import { ContextInspectorPage } from "./pages/ContextInspectorPage";
 import { GlobalHomePage } from "./pages/GlobalHomePage";
 import { NotFoundPage, WorkspaceNotFoundPage } from "./pages/NotFoundPage";
+import { NotificationsPage } from "./pages/NotificationsPage";
 import { ProfilePage } from "./pages/ProfilePage";
 import { ConnectorBrowsePage } from "./pages/settings/ConnectorBrowsePage";
 import { ConnectorDetailPage } from "./pages/settings/ConnectorDetailPage";
@@ -66,8 +68,10 @@ import { WorkspaceConnectorsTab } from "./pages/settings/WorkspaceConnectorsTab"
 import { WorkspaceDetailPage } from "./pages/settings/WorkspaceDetailPage";
 import { WorkspaceGeneralTab } from "./pages/settings/WorkspaceGeneralTab";
 import { WorkspaceMembersTab } from "./pages/settings/WorkspaceMembersTab";
+import { WorkspaceNotificationsTab } from "./pages/settings/WorkspaceNotificationsTab";
 import { WorkspaceSettingsPage } from "./pages/settings/WorkspaceSettingsPage";
 import { WorkspacesTab } from "./pages/settings/WorkspacesTab";
+import { WorkspaceWebhooksTab } from "./pages/settings/WorkspaceWebhooksTab";
 import { WorkspaceOverviewPage } from "./pages/WorkspaceOverviewPage";
 import { clearSentryContext, setSentryUser } from "./sentry";
 import { initTelemetry } from "./telemetry";
@@ -206,24 +210,26 @@ function BootstrappedShell({
   return (
     <SidebarProvider>
       <WorkspaceAppIconsProvider token={token} workspaceId={activeWorkspace?.id}>
-        <ChatProvider initialConfig={initialConfig} currentUserId={currentUserId}>
-          <ChatPanelProvider>
-            <ArtifactPanelProvider>
-              <PaletteProvider>
-                <FocusedAppProvider>
-                  <AuthenticatedAppContent
-                    token={token}
-                    forSlot={forSlot}
-                    mainRoutes={mainRoutes}
-                    shellWorkspaceId={shellWorkspaceId}
-                    refreshShell={refreshShell}
-                    onLogout={onLogout}
-                  />
-                </FocusedAppProvider>
-              </PaletteProvider>
-            </ArtifactPanelProvider>
-          </ChatPanelProvider>
-        </ChatProvider>
+        <NotificationsProvider token={token} workspaceId={activeWorkspace?.id}>
+          <ChatProvider initialConfig={initialConfig} currentUserId={currentUserId}>
+            <ChatPanelProvider>
+              <ArtifactPanelProvider>
+                <PaletteProvider>
+                  <FocusedAppProvider>
+                    <AuthenticatedAppContent
+                      token={token}
+                      forSlot={forSlot}
+                      mainRoutes={mainRoutes}
+                      shellWorkspaceId={shellWorkspaceId}
+                      refreshShell={refreshShell}
+                      onLogout={onLogout}
+                    />
+                  </FocusedAppProvider>
+                </PaletteProvider>
+              </ArtifactPanelProvider>
+            </ChatPanelProvider>
+          </ChatProvider>
+        </NotificationsProvider>
       </WorkspaceAppIconsProvider>
     </SidebarProvider>
   );
@@ -425,7 +431,11 @@ function AuthenticatedAppContent({
                   chat's In-context panel. Renders in the main area beside the
                   docked chat (the `/w/` prefix keeps ChatChrome mounted). */}
               <Route path="context/:convId" element={<ContextInspectorPage />} />
-              {/* Workspace settings — General/Members/Usage/Apps/Connectors/Skills. */}
+              {/* The inbox is host chrome, not a placement: it belongs to the
+                  workspace rather than to any connector, and no connector may
+                  claim, reorder, or replace it. */}
+              <Route path="notifications" element={<NotificationsPage />} />
+              {/* Workspace settings — General/Members/Usage/Apps/Connectors/Skills/Webhooks. */}
               <Route path="settings" element={<WorkspaceSettingsPage />}>
                 <Route index element={<Navigate to="general" replace />} />
                 <Route path="general" element={<WorkspaceGeneralTab />} />
@@ -436,6 +446,8 @@ function AuthenticatedAppContent({
                 <Route path="connectors/browse" element={<ConnectorBrowsePage />} />
                 <Route path="connectors/:serverName" element={<ConnectorDetailPage />} />
                 <Route path="skills" element={<SkillsTab />} />
+                <Route path="notifications" element={<WorkspaceNotificationsTab />} />
+                <Route path="webhooks" element={<WorkspaceWebhooksTab />} />
               </Route>
               {/* Unmatched path INSIDE a workspace. This has to be a child of
                   `/w/:slug`, not the top-level splat: the router ranks by
@@ -600,7 +612,7 @@ function ActionBridge({
       // Own-key guard so an inherited name (constructor/__proto__) on the event
       // detail can't resolve to an Object.prototype member; unknown actions no-op.
       const action = detail.action as string;
-      if (Object.prototype.hasOwnProperty.call(actions, action)) {
+      if (Object.hasOwn(actions, action)) {
         actions[action]?.(detail as Record<string, unknown>);
       }
     };

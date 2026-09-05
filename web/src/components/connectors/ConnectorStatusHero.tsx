@@ -7,7 +7,6 @@ import {
   initiateMcpOAuth,
 } from "../../api/client";
 import { Button } from "../ui/button";
-import { BundleCredentialsModal } from "./BundleCredentialsModal";
 import { ComposioApiKeyModal } from "./ComposioApiKeyModal";
 import { ConnectorIcon } from "./ConnectorIcon";
 import { OperatorSetupModal } from "./OperatorSetupModal";
@@ -26,10 +25,9 @@ import { OperatorSetupModal } from "./OperatorSetupModal";
  *
  * Owns the primary CTA dispatch:
  *   - needs_setup + missing operator OAuth → OperatorSetupModal
- *   - needs_setup + unpopulated user_config → BundleCredentialsModal
  *   - needs_auth (any cause)                → initiateMcpOAuth
- *   - failed + remote OAuth                 → initiateMcpOAuth (same as Reconnect)
- *   - connecting/starting + remote          → Cancel (reset a wedged OAuth)
+ *   - failed                                → initiateMcpOAuth (same as Reconnect)
+ *   - connecting/starting                   → Cancel (reset a wedged OAuth)
  *
  * Disconnecting an *established* connection is intentionally NOT here —
  * that destructive affordance lives on the connection details section.
@@ -49,7 +47,6 @@ export function ConnectorStatusHero({
 }) {
   const [acting, setActing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [bundleModalOpen, setBundleModalOpen] = useState(false);
   const [operatorModalOpen, setOperatorModalOpen] = useState(false);
   const [apiKeyModalOpen, setApiKeyModalOpen] = useState(false);
 
@@ -157,9 +154,6 @@ export function ConnectorStatusHero({
     if (!action) return;
     setError(null);
     switch (action.kind) {
-      case "open-bundle-modal":
-        setBundleModalOpen(true);
-        return;
       case "open-operator-modal":
         setOperatorModalOpen(true);
         return;
@@ -193,17 +187,6 @@ export function ConnectorStatusHero({
 
       {error && <p className="text-xs text-destructive">{error}</p>}
 
-      {bundleModalOpen && (
-        <BundleCredentialsModal
-          installed={installed}
-          open={bundleModalOpen}
-          onClose={() => setBundleModalOpen(false)}
-          onSaved={() => {
-            setBundleModalOpen(false);
-            onChanged();
-          }}
-        />
-      )}
       {operatorModalOpen && directoryEntry && (
         <OperatorSetupModal
           entry={directoryEntry}
@@ -404,7 +387,6 @@ function statusLabel(status: InstalledConnector["status"]): string {
 // ── Primary CTA resolution ──────────────────────────────────────────
 
 type PrimaryAction =
-  | { kind: "open-bundle-modal"; label: string; adminOnly: true }
   | { kind: "open-operator-modal"; label: string; adminOnly: true }
   // `oauth` is admin-only when it rotates a shared credential and ungated
   // otherwise — conditional rather than fixed by kind.
@@ -434,11 +416,10 @@ type PrimaryAction =
  * ("Configure", "Connect", "Reconnect") rather than the underlying
  * mechanism ("save credentials", "initiate OAuth flow").
  *
- * Returns null when no CTA applies — `ready` (nothing to do),
- * `connecting` / `starting` on a non-remote bundle (wait it out), or
- * `failed` on a non-remote bundle (admin needs to investigate; no
- * one-click fix). A remote connector that's `connecting` / `starting`
- * gets a Cancel CTA so a wedged OAuth isn't a dead end.
+ * Returns null when no CTA applies — `ready` (nothing to do), or
+ * `needs_setup` with no operator catalog entry to configure. A connector
+ * that's `connecting` / `starting` gets a Cancel CTA so a wedged OAuth
+ * isn't a dead end.
  */
 function resolveAction(
   installed: InstalledConnector,
@@ -448,8 +429,6 @@ function resolveAction(
    *  note on `PrimaryAction` for why the other auth paths stay ungated. */
   authRotatesSharedCredential: boolean,
 ): PrimaryAction | null {
-  const isRemote = installed.type === "remote";
-
   switch (installed.status) {
     case "ready":
       return null;
@@ -461,26 +440,20 @@ function resolveAction(
       // a source that never finished starting. Without an escape hatch the
       // page reads "Connecting…" forever. Cancel disconnects (resets to
       // `not_authenticated`), after which the normal Connect CTA reappears.
-      // stdio bundles ("starting") have no OAuth to cancel — wait them out.
       //
       // Admin-only: cancelling calls `disconnectConnector`, and `handleDisconnect`
       // refuses a non-admin outright ("Workspace admin role required to disconnect
       // shared connectors"). The OAuth runs as `WORKSPACE_PRINCIPAL_ID`, so there
       // is no per-member session for a member to cancel — the server is right to
       // refuse, and offering the button only wedges them with a red error.
-      return isRemote ? { kind: "cancel", label: "Cancel", adminOnly: true } : null;
+      return { kind: "cancel", label: "Cancel", adminOnly: true };
 
     case "needs_setup": {
-      // Operator OAuth missing comes first: a static-auth catalog
-      // match without a configured client can't proceed via the
-      // bundle credential modal.
+      // The only setup gate left: a static-auth catalog match without a
+      // configured operator OAuth client can't proceed until an admin
+      // registers one.
       if (installed.missingOperatorSetup && hasOperatorEntry) {
         return { kind: "open-operator-modal", label: "Set up OAuth", adminOnly: true };
-      }
-      // Otherwise it's user_config — the only other admin-config
-      // gate that surfaces as needs_setup.
-      if (installed.userConfig && Object.keys(installed.userConfig.schema).length > 0) {
-        return { kind: "open-bundle-modal", label: "Configure", adminOnly: true };
       }
       return null;
     }
@@ -493,12 +466,8 @@ function resolveAction(
     }
 
     case "failed":
-      // Failed remote bundle → Reconnect is usually the fix (token
-      // upstream rejected, transport blip). Failed local bundle →
-      // statusReason is shown but no one-click action; the admin
-      // diagnoses via the chat agent or logs.
-      return isRemote
-        ? { kind: "oauth", label: "Reconnect", adminOnly: authRotatesSharedCredential }
-        : null;
+      // Reconnect is usually the fix (token upstream rejected, transport
+      // blip).
+      return { kind: "oauth", label: "Reconnect", adminOnly: authRotatesSharedCredential };
   }
 }

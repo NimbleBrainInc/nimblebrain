@@ -46,7 +46,7 @@ export type PersonalWorkspaceInvariantReason =
  * "admin" }]`, and the identity fields (`isPersonal`, `ownerUserId`) are
  * frozen at create time. These rules turn personal workspaces into a
  * stable per-user namespace that the rest of the platform (conversation
- * ownership, credential isolation, agent delegation) can reason about
+ * ownership, credential isolation) can reason about
  * without re-checking on every read.
  *
  * The HTTP handler maps this to `422 personal_workspace_invariant` with

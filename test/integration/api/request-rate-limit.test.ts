@@ -45,6 +45,7 @@ class TokenAuthAdapter implements IdentityProvider {
     authCodeFlow: false,
     tokenRefresh: false,
     managedUsers: false,
+    authorizationServer: false,
   };
   async verifyRequest(req: Request): Promise<UserIdentity | null> {
     const auth = req.headers.get("authorization");

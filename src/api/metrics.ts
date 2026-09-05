@@ -87,14 +87,53 @@ export const httpRequestDurationSeconds = new Histogram({
  */
 export const llmTokensTotal = new Counter({
   name: "nb_llm_tokens_total",
-  help: "LLM tokens processed, by direction, cache kind, cache-write TTL tier, call source, origin, delegation, and model.",
-  labelNames: ["direction", "kind", "ttl", "source", "origin", "delegated", "model"] as const,
+  help: "LLM tokens processed, by direction, cache kind, cache-write TTL tier, call source, origin, and model.",
+  labelNames: ["direction", "kind", "ttl", "source", "origin", "model"] as const,
+  registers: [metricsRegistry],
+});
+
+/**
+ * The engine's PRE-FLIGHT estimate of input tokens, counted the same way and
+ * over the same calls as `nb_llm_tokens_total{direction="input"}` — so the two
+ * divide into the estimator's error:
+ *
+ *   sum(rate(nb_llm_tokens_total{direction="input",source="main"}[1h]))
+ *     / sum(rate(nb_llm_input_tokens_estimated_total{source="main"}[1h]))
+ *
+ * A ratio of 1.0 means the estimate matches what the provider billed. Above
+ * 1.0 the engine is under-counting, which matters because an estimate of this
+ * kind — not the provider's count — is what `windowMessages` compares the
+ * message budget against. An under-count is therefore a prompt larger than
+ * `maxInputTokens` was meant to permit, with nothing in the system aware of it.
+ *
+ * The two are counted over different spans, and comparing them directly is a
+ * mistake: this counter covers the WHOLE prompt (system + tools + messages),
+ * because that is what `usage.inputTokens` bills and therefore the only basis
+ * on which the ratio above is meaningful. `resolveMessageBudget` yields tokens
+ * available for MESSAGE HISTORY alone, and that is what `windowMessages`
+ * enforces. Subtract the system+tools prefix before reading this figure
+ * against a configured `maxInputTokens`.
+ *
+ * A counter rather than a per-call ratio histogram: ratios do not aggregate
+ * (averaging per-call ratios weights a 2k-token call like a 500k one), whereas
+ * summing both sides and dividing is token-weighted and correct over any
+ * window.
+ *
+ * Labels mirror the latency histograms (`source`, `origin`, `model`) rather
+ * than the token counter's full set — `direction`/`kind`/`ttl` describe how the
+ * provider billed a prompt, which a pre-flight estimate has no view of. Sum
+ * those away on the numerator before dividing.
+ */
+export const llmInputTokensEstimatedTotal = new Counter({
+  name: "nb_llm_input_tokens_estimated_total",
+  help: "Engine pre-flight estimate of LLM input tokens, by call source, origin, and model. Divide the actual input-token counter by this to get estimator drift.",
+  labelNames: ["source", "origin", "model"] as const,
   registers: [metricsRegistry],
 });
 
 /**
  * LLM calls, by source (main loop vs forked fast-slot), origin (who the call
- * was for), delegation, and model.
+ * was for), and model.
  *
  * `source` and `origin` answer different questions and neither substitutes for
  * the other: `source="main"` covers interactive chat AND automation runs alike,
@@ -103,15 +142,15 @@ export const llmTokensTotal = new Counter({
  */
 export const llmCallsTotal = new Counter({
   name: "nb_llm_calls_total",
-  help: "LLM calls, by source, origin, delegation, and model.",
-  labelNames: ["source", "origin", "delegated", "model"] as const,
+  help: "LLM calls, by source, origin, and model.",
+  labelNames: ["source", "origin", "model"] as const,
   registers: [metricsRegistry],
 });
 
 /**
  * LLM request latency in seconds — the wall-clock of one provider round-trip
  * (streaming included), observed on the main agentic loop's `llm.done`. Drives
- * the p99-latency alert. Buckets run long (to 120s): an agentic call with a
+ * the p99-latency alert. Buckets run long (to 300s): an agentic call with a
  * large context and tool streaming sits far right of an HTTP histogram, so the
  * 0.005–10s bucket set used for `http_request_duration_seconds` would clip the
  * tail the alert cares about. Forked fast-slot calls (compaction / title /
@@ -127,9 +166,9 @@ export const llmCallsTotal = new Counter({
  */
 export const llmRequestDurationSeconds = new Histogram({
   name: "nb_llm_request_duration_seconds",
-  help: "LLM request latency in seconds, by call source and model.",
-  labelNames: ["source", "model"] as const,
-  buckets: [0.25, 0.5, 1, 2, 5, 10, 20, 30, 45, 60, 90, 120],
+  help: "LLM request latency in seconds, by call source, origin, and model.",
+  labelNames: ["source", "model", "origin"] as const,
+  buckets: [0.25, 0.5, 1, 2, 5, 10, 20, 30, 45, 60, 90, 120, 180, 300],
   registers: [metricsRegistry],
 });
 
@@ -152,8 +191,8 @@ export const llmRequestDurationSeconds = new Histogram({
  */
 export const llmTtftSeconds = new Histogram({
   name: "nb_llm_ttft_seconds",
-  help: "LLM time-to-first-token in seconds (connect + prefill), by call source and model.",
-  labelNames: ["source", "model"] as const,
+  help: "LLM time-to-first-token in seconds (connect + prefill), by call source, origin, and model.",
+  labelNames: ["source", "model", "origin"] as const,
   buckets: [0.25, 0.5, 1, 2, 5, 10, 20, 30, 45, 60],
   registers: [metricsRegistry],
 });
@@ -195,6 +234,47 @@ export const toolPromotionsTotal = new Counter({
   name: "nb_tool_promotions_total",
   help: "Tools promoted into the active set, by whether the tool was used in the run.",
   labelNames: ["used"] as const,
+  registers: [metricsRegistry],
+});
+
+/**
+ * Inbound vendor deliveries reaching the hooks door, by outcome.
+ *
+ * `outcome` is a closed set and carries NO identity: no tenant, no workspace,
+ * no connector, no vendor, no key id. One pod per tenant means the scrape
+ * namespace already attributes these, and every other dimension a label could
+ * add is either client-controlled (an attacker picks the path segments) or
+ * discloses which tenant integrates with which vendor. What a delivery was for
+ * belongs in the log line, which is access-controlled; what happened to it
+ * belongs here.
+ *
+ *   `forwarded`      — opened, checked, and handed to the connector.
+ *   `rejected`       — 404 (unknown/retired/mismatched) or 413 or 405. All
+ *                      three collapse deliberately: splitting them would put a
+ *                      prober's oracle in the metric that the response body is
+ *                      careful not to be.
+ *   `rate_limited`   — 429, from either bucket.
+ *   `upstream_error` — the connector could not be reached, or refused the
+ *                      forward at the transport level (502/504 to the vendor,
+ *                      which is the case a vendor retry can actually fix).
+ *
+ * A sustained `rejected` rate on one runtime is the alert: nobody guesses a
+ * hook path by accident, so it means someone is probing.
+ */
+export const hooksReceivedTotal = new Counter({
+  name: "nb_hooks_received_total",
+  help: "Inbound webhook deliveries handled by the hooks door, by outcome.",
+  labelNames: ["outcome"] as const,
+  registers: [metricsRegistry],
+});
+
+/** Wall-clock of the forward hop alone — the connector's own latency plus the
+ *  edge, excluding token work. The door is thin by contract, so this is where a
+ *  slow delivery path shows up. */
+export const hooksForwardSeconds = new Histogram({
+  name: "nb_hooks_forward_seconds",
+  help: "Duration of the hooks door's forward hop to the connector, in seconds.",
+  buckets: [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10],
   registers: [metricsRegistry],
 });
 
@@ -367,9 +447,7 @@ export function recordLlmUsage(
   model: string,
   usage: UsageForMetrics,
   origin: LlmCallOrigin,
-  delegated: boolean,
 ): void {
-  const delegatedLabel = delegated ? "true" : "false";
   const cacheRead = usage.cacheReadTokens ?? 0;
   const cacheWrite = usage.cacheWriteTokens ?? 0;
   const fresh = Math.max(usage.inputTokens - cacheRead - cacheWrite, 0);
@@ -382,7 +460,7 @@ export function recordLlmUsage(
   // The attribution labels every series below shares. Built once so a new
   // bucket cannot be added with a partial label set — prom-client would mint it
   // as a separate series rather than error.
-  const base = { source, origin, delegated: delegatedLabel, model };
+  const base = { source, origin, model };
 
   llmCallsTotal.inc(base);
   if (fresh > 0)
@@ -404,4 +482,89 @@ export function recordLlmUsage(
       { direction: "output", kind: "text", ttl: "none", ...base },
       usage.outputTokens,
     );
+}
+
+// ---------------------------------------------------------------------------
+// Notifications — the outbox poll.
+//
+// The poll is a standing cost the runtime pays on a tenant's behalf, so these
+// answer "what does it cost" rather than "what did it carry": duration, how
+// often a read had to revive an idle-closed transport first, and how often the
+// budget pushed work to the next tick. `source` is the connector's MCP source
+// name, bucketed through the same `SAFE_SOURCE` guard the crash counter uses,
+// so a malformed name cannot mint an unbounded series. No workspace label —
+// one pod per tenant, and a workspace label would be client-unbounded.
+// ---------------------------------------------------------------------------
+
+/** Envelopes read off a connector's outbox and admitted by the parser. */
+export const notificationsPulledTotal = new Counter({
+  name: "nb_notifications_pulled_total",
+  help: "Notification envelopes pulled from a connector's outbox, by source.",
+  labelNames: ["source"] as const,
+  registers: [metricsRegistry],
+});
+
+/**
+ * Wall-clock of one outbox read, including any on-demand reconnect it had to
+ * do first. Buckets run out to 30s because a poll that had to re-`initialize`
+ * a remote connector is the slow case this exists to make visible.
+ */
+export const notificationsPollSeconds = new Histogram({
+  name: "nb_notifications_poll_seconds",
+  help: "Duration of one notification outbox read, in seconds.",
+  labelNames: ["source"] as const,
+  buckets: [0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30],
+  registers: [metricsRegistry],
+});
+
+/**
+ * Polls that found the transport torn down and revived it before reading.
+ *
+ * The sizing rule in the notifications design budgets three edge requests per
+ * poll on the assumption that a reconnect costs `initialize` + `initialized` +
+ * the read. A rate near zero means the assumption is pessimistic and the
+ * budget can be widened; a rate near one means idle-close is the steady state.
+ */
+export const notificationsPollReconnectsTotal = new Counter({
+  name: "nb_notifications_poll_reconnects_total",
+  help: "Outbox polls that had to reconnect a torn-down transport first, by source.",
+  labelNames: ["source"] as const,
+  registers: [metricsRegistry],
+});
+
+/**
+ * Sources a tick left unpolled because the workspace's poll budget was spent.
+ *
+ * Unlabelled by source deliberately: deferral is a property of the workspace's
+ * budget, and the sources it defers rotate, so attributing it to whichever one
+ * happened to be last in the rotation would read as a fault of that connector.
+ */
+export const notificationsPollDeferredTotal = new Counter({
+  name: "nb_notifications_poll_deferred_total",
+  help: "Outbox polls deferred to a later tick because the workspace poll budget was spent.",
+  registers: [metricsRegistry],
+});
+
+/**
+ * Polls answered `truncated: true` — the outbox dropped undelivered events to
+ * stay under its row cap, so the inbox has a hole. Any nonzero rate is a real
+ * data-loss signal and belongs on a dashboard next to the emitting server's
+ * own cap metric.
+ */
+export const notificationsTruncatedTotal = new Counter({
+  name: "nb_notifications_truncated_total",
+  help: "Outbox polls that reported a gap (truncated), by source.",
+  labelNames: ["source"] as const,
+  registers: [metricsRegistry],
+});
+
+/**
+ * The `source` label for one connector, bucketed to "other" when the name is
+ * not one the label charset admits. Exported so every notification metric
+ * sanitizes identically — `SAFE_SOURCE` is the same guard `recordBundleCrash`
+ * applies, and two copies of that decision is how one call site comes to mint
+ * the unbounded series the guard exists to prevent.
+ */
+export function notificationSourceLabel(source: string | undefined): string {
+  return source && SAFE_SOURCE.test(source) ? source : "other";
 }

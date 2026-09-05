@@ -1,16 +1,7 @@
-import { readFile } from "node:fs/promises";
-import { join } from "node:path";
 import { mcpAuthCallbackUrl } from "../api/routes/mcp-auth.ts";
-import {
-  type ComposioConnection,
-  hasPersistedComposioConnection,
-  readComposioConnection,
-  saveComposioConnection,
-} from "../bundles/composio-connection.ts";
+import { brokeredRef } from "../bundles/brokered.ts";
 import { WORKSPACE_PRINCIPAL_ID } from "../bundles/connection.ts";
-import { brokeredRef } from "../bundles/connection-probe.ts";
 import { sanitizePlacements } from "../bundles/defaults.ts";
-import { getMpak } from "../bundles/mpak.ts";
 import {
   deriveServerName,
   isReservedServerName,
@@ -19,32 +10,25 @@ import {
 } from "../bundles/paths.ts";
 import { startBundleSource } from "../bundles/startup.ts";
 import type {
+  BrokeredRef,
   BundleInstance,
-  BundleManifest,
   BundleRef,
   RemoteTransportConfig,
 } from "../bundles/types.ts";
-import { installBundleInWorkspace } from "../bundles/workspace-ops.ts";
-import type { UserConfigFieldDef } from "../config/workspace-credentials.ts";
-import {
-  composioAuthConfigId,
-  validateComposioConfig,
-} from "../connectors/providers/composio/config.ts";
-import { COMPOSIO_CREDENTIAL_PROVIDER } from "../connectors/providers/composio/transport-credential.ts";
+import { brokeredCatalogConfig, isBrokeredAuthKind } from "../connectors/auth-kind.ts";
 import type {
   ManagedConnectorProvider,
   ManagedSession,
 } from "../connectors/providers/managed-provider.ts";
-import { SMITHERY_CREDENTIAL_PROVIDER } from "../connectors/providers/smithery/transport-credential.ts";
-import {
-  type ComposioConnectorConfig,
-  connectorSkillIdentityFrom,
-} from "../connectors/server-detail.ts";
+import { connectorSkillIdentityFrom } from "../connectors/server-detail.ts";
 import { textContent } from "../engine/content-helpers.ts";
 import { INTERNAL_TOOL_ANNOTATION, type ToolResult } from "../engine/types.ts";
+import { HookContractError, revokeHooksForConnector } from "../hooks/provisioning.ts";
+import { ensureHooks, stopWatchingHooks } from "../hooks/reconcile.ts";
 import type { ConnectorOwner } from "../identity/connector-owner.ts";
 import { IdentityConnectorStore } from "../identity/connector-store.ts";
 import type { UserIdentity } from "../identity/provider.ts";
+import { clearCursor } from "../notifications/cursors.ts";
 import { log } from "../observability/log.ts";
 import type { PermissionOwner } from "../permissions/permission-store.ts";
 import type { ConnectorCatalogEntry } from "../registries/projection.ts";
@@ -54,11 +38,12 @@ import { validateAdditionalAuthorizationParams } from "../util/oauth-params.ts";
 import { isHttpUrl } from "../util/url.ts";
 import { canWriteWorkspaceScoped } from "../workspace/authz.ts";
 import type { Workspace } from "../workspace/types.ts";
-import { FileCredentialStore } from "./credential-store.ts";
+import { type CredentialRef, isCredentialRef } from "./credential-ref.ts";
+import type { CredentialStore } from "./credential-store.ts";
 import type { InProcessTool } from "./in-process-app.ts";
+import { hasMcpOAuthTokens } from "./mcp-oauth-records.ts";
 import { McpSource } from "./mcp-source.ts";
 import type { Tool, ToolSource } from "./types.ts";
-import { hasMcpOAuthTokens } from "./workspace-oauth-provider.ts";
 
 /**
  * `manage_connectors` tool — single surface for the Connectors UI
@@ -91,33 +76,53 @@ export interface ManageConnectorsContext {
 }
 
 /**
- * The registered Composio managed-connector provider, or undefined when
- * Composio isn't configured. All Composio dispatch (userId derivation, session
- * create, API-key connect, connected-account delete) routes through this — the
- * tool never imports `sdk.ts` directly, so the vendor stays behind the seam.
+ * The managed-connector provider that owns `auth`, or undefined when `auth` is
+ * runtime-native or no provider is registered for it.
+ *
+ * ONE lookup for every brokered vendor. All brokered dispatch — userId
+ * derivation, session create, API-key connect, teardown, boot-state — routes
+ * through the provider this returns, so the tool layer imports no vendor module
+ * and gains no arm when a provider is added.
  */
-function composioProvider(ctx: ManageConnectorsContext): ManagedConnectorProvider | undefined {
-  return ctx.runtime.getManagedConnectorRegistry().get("composio");
+function providerFor(
+  ctx: ManageConnectorsContext,
+  auth: string,
+): ManagedConnectorProvider | undefined {
+  if (!isBrokeredAuthKind(auth)) return undefined;
+  return ctx.runtime.getManagedConnectorRegistry().get(auth);
 }
-
-/** Error surfaced when a Composio dispatch arm is reached but no Composio provider is registered. */
-const COMPOSIO_NOT_CONFIGURED = "Composio integration is not configured.";
 
 /**
- * The registered Smithery managed-connector provider, or undefined when
- * Smithery isn't configured. Smithery dispatch (userId derivation, session
- * create) routes through this — the tool never imports the Connect client
- * directly, so the broker stays behind the seam.
+ * Whether a connector with this auth kind can install on the identity plane.
+ *
+ * The rule is a capability, not a vendor list: DCR, or a brokered connector
+ * whose provider brokers an interactive connect (`initiate`) and can therefore
+ * complete auth for one user. `static` reads a workspace-scoped operator secret
+ * and `provider` mints a platform credential; both are workspace/platform-bound,
+ * and their identity variants are a separate slice.
+ *
+ * The install gate and the picker's filter both call this, so they cannot drift.
  */
-function smitheryProvider(ctx: ManageConnectorsContext): ManagedConnectorProvider | undefined {
-  return ctx.runtime.getManagedConnectorRegistry().get("smithery");
+function identityInstallableAuth(ctx: ManageConnectorsContext, auth: string): boolean {
+  return auth === "dcr" || providerFor(ctx, auth)?.initiate !== undefined;
 }
 
-/** Error surfaced when a Smithery dispatch arm is reached but no Smithery provider is registered. */
-const SMITHERY_NOT_CONFIGURED =
-  "Smithery integration is not configured. Set SMITHERY_API_KEY in the platform env, " +
-  "declare connectors.providers.smithery.namespace, " +
-  "and restart the API.";
+/**
+ * The operator-facing message for a brokered connector whose provider this
+ * deployment has not configured. Names the config path generically because it
+ * IS generic: every provider's block is `connectors.providers.<id>`.
+ */
+function brokerNotConfiguredMessage(entryName: string, auth: string): string {
+  // Every provider resolves its settings from `connectors.providers.<id>` and
+  // its credential from `<ID>_API_KEY` as the one env fallback (see
+  // `providers/registry.ts`), so naming both is generic, not a per-vendor case.
+  const envVar = `${auth.toUpperCase().replace(/[^A-Z0-9]/g, "_")}_API_KEY`;
+  return (
+    `"${entryName}" is brokered by "${auth}", which is not configured on this platform. ` +
+    `Declare connectors.providers.${auth} in nimblebrain.json (or set ${envVar} in the ` +
+    "platform env) and restart the API."
+  );
+}
 
 /** Inputs to {@link deriveConnectorStatus}. Subset of InstalledEntry's
  *  shape so the helper has a small, testable surface. */
@@ -126,11 +131,6 @@ export interface StatusInputs {
   state: string;
   /** True when a static-auth catalog entry has no operator OAuth client configured. */
   missingOperatorSetup?: boolean;
-  /** Stdio bundle's user_config probe — present only when the manifest declares one. */
-  userConfig?: {
-    schema: Record<string, UserConfigFieldDef>;
-    populated: Record<string, boolean>;
-  };
   /** Last connection error from the principal Connection (crashed / dead / reauth_required). */
   lastError?: string;
 }
@@ -140,70 +140,22 @@ export interface StatusInputs {
  * status for the UI. Six values:
  *
  *   ready          — works
- *   needs_setup    — admin must configure something (operator OAuth client OR
- *                     stdio user_config) before this is usable
+ *   needs_setup    — admin must configure the operator OAuth client before
+ *                     this is usable
  *   needs_auth     — workspace member must (re)authenticate (Connect / Reconnect)
  *   connecting     — OAuth flow in flight
- *   failed         — bundle crashed / dead with no actionable next step
- *   starting       — subprocess booting up
+ *   failed         — connection dead with no actionable next step
+ *   starting       — connection being established
  *
- * Priority — setup blocks auth blocks usage. A stdio bundle that crashed
- * because its api_key wasn't set surfaces as `needs_setup` (the actionable
- * cause), never as `failed`. Same for static-auth bundles whose OAuth
- * never succeeded because the operator clientSecret is missing.
+ * Priority — setup blocks auth blocks usage. A static-auth connector whose
+ * OAuth never succeeded because the operator clientSecret is missing surfaces
+ * as `needs_setup` (the actionable cause), never as `failed`.
  *
  * The connector-type detail — *which* credentials missing, *what* button
  * label — is left to the UI, derived from the other InstalledConnector
  * fields. This helper's job is the discriminator + a human-readable
  * reason string for tooltips / banners.
  */
-/**
- * Resolve a bundle's manifest from whichever path it actually lives at.
- *
- * Two install shapes coexist in the platform:
- *
- *   - Name-installed (`{ name: "@scope/bundle" }`): mpak fetches and
- *     extracts the bundle into `<mpakHome>/cache/<safeName>/`. Manifest
- *     reads via `mpak.bundleCache.getBundleManifest(name)`.
- *
- *   - Path-installed (`{ path: "/abs/path/to/bundle" }`): bundle lives
- *     wherever the operator points to (e.g. `synapse-apps/synapse-db-query`
- *     during local development). The manifest is at `<path>/manifest.json`.
- *     The mpak cache has no entry; reading via `getBundleManifest` returns
- *     null and any caller relying solely on the cache silently misses
- *     `user_config`.
- *
- * `BundleInstance.configKey` carries the original ref's identity — the
- * path string for path installs, the name string for name installs.
- * That's the key we fall back to when the cache misses. Wrap both in
- * try/catch so a stale config (path no longer exists, manifest moved)
- * gracefully degrades to a missing-userConfig response instead of
- * throwing.
- */
-async function readBundleManifest(
-  mpak: ReturnType<typeof getMpak>,
-  instance: { bundleName: string; configKey?: string },
-): Promise<BundleManifest | null> {
-  try {
-    const cached = mpak.bundleCache.getBundleManifest(instance.bundleName) as BundleManifest | null;
-    if (cached) return cached;
-  } catch {
-    // Corrupt-cache errors fall through to the disk-read fallback.
-  }
-  // Path-install fallback. configKey can be either a name or a path;
-  // attempt the disk read regardless and let the file-not-found case
-  // settle to null.
-  if (instance.configKey) {
-    try {
-      const raw = await readFile(join(instance.configKey, "manifest.json"), "utf-8");
-      return JSON.parse(raw) as BundleManifest;
-    } catch {
-      // Not a valid path or file missing — manifest unavailable.
-    }
-  }
-  return null;
-}
-
 export function deriveConnectorStatus(input: StatusInputs): {
   status: "ready" | "needs_setup" | "needs_auth" | "connecting" | "failed" | "starting";
   statusReason?: string;
@@ -212,19 +164,7 @@ export function deriveConnectorStatus(input: StatusInputs): {
   if (input.missingOperatorSetup) {
     return { status: "needs_setup", statusReason: "OAuth app not configured for this workspace." };
   }
-  // 2. Required user_config field unpopulated → admin sets credentials.
-  if (input.userConfig) {
-    const missing = Object.entries(input.userConfig.schema)
-      .filter(([key, def]) => def.required && !input.userConfig?.populated[key])
-      .map(([key, def]) => def.title ?? key);
-    if (missing.length > 0) {
-      return {
-        status: "needs_setup",
-        statusReason: `Missing required configuration: ${missing.join(", ")}.`,
-      };
-    }
-  }
-  // 3. Auth lifecycle. Reconnect outranks first-time connect (a token
+  // 2. Auth lifecycle. Reconnect outranks first-time connect (a token
   //    that just expired is more disruptive than one never used).
   if (input.state === "reauth_required") {
     return {
@@ -235,16 +175,16 @@ export function deriveConnectorStatus(input: StatusInputs): {
   if (input.state === "not_authenticated") {
     return { status: "needs_auth", statusReason: "Connect to use this connector." };
   }
-  // 4. Transient flows.
+  // 3. Transient flows.
   if (input.state === "pending_auth") {
     return { status: "connecting" };
   }
   if (input.state === "starting") {
     return { status: "starting" };
   }
-  // 5. Failures. Reported with the reason; the web client decides the
+  // 4. Failures. Reported with the reason; the web client decides the
   //    affordance (`resolveAction` in ConnectorStatusHero.tsx — Reconnect,
-  //    usually). `dead` covers a bundle whose boot-start failed, which the
+  //    usually). `dead` covers a connector whose boot-start failed, which the
   //    doors revive on next use.
   if (input.state === "crashed" || input.state === "dead" || input.state === "stopped") {
     return {
@@ -252,7 +192,7 @@ export function deriveConnectorStatus(input: StatusInputs): {
       ...(input.lastError ? { statusReason: input.lastError } : {}),
     };
   }
-  // 6. Default — running, no missing config, no failed connection.
+  // 5. Default — running, no missing config, no failed connection.
   return { status: "ready" };
 }
 
@@ -261,7 +201,7 @@ export function createManageConnectorsTool(ctx: ManageConnectorsContext): InProc
     name: "manage_connectors",
     description:
       "List, install, and disconnect remote MCP connectors. Workspace connectors are shared by all members; user connectors are personal and follow you across workspaces.",
-    annotations: { [INTERNAL_TOOL_ANNOTATION]: true },
+    meta: { [INTERNAL_TOOL_ANNOTATION]: true },
     inputSchema: {
       type: "object",
       properties: {
@@ -282,14 +222,15 @@ export function createManageConnectorsTool(ctx: ManageConnectorsContext): InProc
             "set_permissions",
             "setup_operator",
             "remove_operator_setup",
-            "set_user_config",
-            "clear_user_config",
             "get_redirect_uri",
             "list_bound_skills",
             "list_personal_connectors",
             "list_personal_catalog",
             "grant_connector",
             "revoke_connector",
+            "set_secret",
+            "delete_secret",
+            "list_secret_keys",
           ],
           description: "Action to perform.",
         },
@@ -336,8 +277,18 @@ export function createManageConnectorsTool(ctx: ManageConnectorsContext): InProc
         fields: {
           type: "object",
           description:
-            "For set_user_config: map of bundle user_config field name → string value. Empty string clears that field. Omitted fields are unchanged. Unknown field names are rejected (default-deny). For connect_api_key: map of the connector's declared Composio field key → value (e.g. api_key, subdomain); handed to Composio and never persisted by the platform.",
+            "For connect_api_key: map of the connector's declared Composio field key → value (e.g. api_key, subdomain); handed to Composio and never persisted by the platform.",
           additionalProperties: { type: "string" },
+        },
+        key: {
+          type: "string",
+          description:
+            'Credential-store key (required for set_secret and delete_secret). Dotted-namespace form, e.g. `acme.db_url`. This is the name a connector\'s config references with `{ ref: "credential", key }`.',
+        },
+        value: {
+          type: "string",
+          description:
+            "The secret (set_secret only). Stored in the workspace credential store and never returned by any action — `list_secret_keys` reports keys and timestamps only. Setting an existing key replaces it, which is how a key is rotated.",
         },
       },
       required: ["action"],
@@ -387,10 +338,6 @@ export function createManageConnectorsTool(ctx: ManageConnectorsContext): InProc
           );
         case "remove_operator_setup":
           return handleRemoveOperatorSetup(ctx, args.wsId, args.identity, args.catalogId);
-        case "set_user_config":
-          return handleSetUserConfig(ctx, args.wsId, args.identity, args.serverName, args.fields);
-        case "clear_user_config":
-          return handleClearUserConfig(ctx, args.wsId, args.identity, args.serverName);
         case "get_redirect_uri":
           return handleGetRedirectUri(args.identity);
         case "list_bound_skills":
@@ -403,6 +350,12 @@ export function createManageConnectorsTool(ctx: ManageConnectorsContext): InProc
           return handleGrantConnector(ctx, args.callerId, args.serverName, args.grantTargetWsId);
         case "revoke_connector":
           return handleRevokeConnector(ctx, args.callerId, args.serverName, args.grantTargetWsId);
+        case "set_secret":
+          return handleSetSecret(ctx, args.wsId, args.identity, args.key, args.value);
+        case "delete_secret":
+          return handleDeleteSecret(ctx, args.wsId, args.identity, args.key);
+        case "list_secret_keys":
+          return handleListSecretKeys(ctx, args.wsId, args.identity);
         default:
           return errResult(`Unknown action "${args.action}".`);
       }
@@ -436,6 +389,15 @@ interface DispatchArgs {
   installWsId: string | undefined;
   /** Explicit grant/revoke target workspace (input `wsId`, no header fallback). */
   grantTargetWsId: string | null;
+  /** Credential-store key for the secret actions. */
+  key: string;
+  /**
+   * Secret value for `set_secret`. NOT trimmed here: leading/trailing
+   * whitespace can be part of a secret, and the one thing a store must not do is
+   * quietly hand back something other than what was set. `set_secret` rejects a
+   * value that is *only* whitespace instead.
+   */
+  value: string;
 }
 
 /** Coerce the raw tool input + request context into typed dispatch args. */
@@ -476,6 +438,8 @@ function resolveDispatchArgs(
       input.wsId !== undefined && String(input.wsId).trim() !== ""
         ? String(input.wsId).trim()
         : null,
+    key: str(input.key).trim(),
+    value: str(input.value),
   };
 }
 
@@ -520,13 +484,13 @@ async function handleListCatalog(
 /**
  * Aggregate every enabled registry's entries into a single browseable
  * directory. Replaces the catalog-only `list_catalog` for the Browse
- * page — Browse needs the unified shape so mpak bundles and curated
+ * page — Browse needs the unified shape so registry entries and curated
  * remote services render side-by-side.
  *
  * Per-registry failures are isolated and surfaced in `errors` so the
  * UI can show partial results with a "missing X" hint. Workspace
  * `connectorsAllowList` filters apply only to curated entries today
- * (mpak hasn't shipped its scoping primitive yet).
+ * (upstream registries have not shipped a scoping primitive yet).
  */
 async function handleListDirectory(
   ctx: ManageConnectorsContext,
@@ -541,12 +505,15 @@ async function handleListDirectory(
   // per static-auth entry) on every load — N+1 and growing with the
   // catalog.
   const ws = wsId ? await ctx.runtime.getWorkspaceStore().get(wsId) : null;
-  const credStore = wsId ? new FileCredentialStore(ctx.runtime.getWorkDir()) : null;
+  const credStore = wsId ? ctx.runtime.getCredentialStore() : null;
   const isOperatorConfigured =
     wsId && ws && credStore
       ? async (catalogId: string, clientSecretKey: string): Promise<boolean> => {
           if (!ws.oauthOperatorApps?.[catalogId]?.clientId) return false;
-          const secret = await credStore.get(wsId, clientSecretKey);
+          const secret = await credStore.get({ kind: "workspace", wsId }, clientSecretKey, {
+            caller: "connector-tools:list_directory",
+            purpose: "report whether operator OAuth setup is complete",
+          });
           return secret !== null;
         }
       : undefined;
@@ -602,7 +569,6 @@ type InstalledEntry = {
    * stopped or the server reports none.
    */
   handshakeVersion?: string;
-  type: "remote" | "local";
   state: string;
   // Stage 2: only workspace-scope connectors exist. Personal connectors
   // live in the caller's personal workspace; the legacy `"user"` arm was
@@ -610,17 +576,12 @@ type InstalledEntry = {
   scope: "workspace";
   interactive: boolean;
   toolCount: number;
-  trustScore: number | null;
   /**
-   * Brand icon URL. One field for both remote (catalog.iconUrl) and
-   * stdio bundles (mpak ServerDetail.icons[0].src by package name) so
-   * the UI doesn't fan out across two sources to render the same
-   * thing. Falls through to the deterministic letter avatar when
-   * unset (e.g. the bundle isn't in any active mpak registry, or
-   * the mpak fetch failed).
+   * Brand icon URL, from the catalog entry this connector matched. Falls
+   * through to the deterministic letter avatar when unset (the connector
+   * isn't in any enabled registry, or the fetch failed).
    */
   iconUrl?: string;
-  // Optional — only populated for URL bundles / catalog-matched entries
   url?: string;
   catalogId?: string | null;
   catalog?: ConnectorCatalogEntry;
@@ -649,18 +610,6 @@ type InstalledEntry = {
     configuredByLabel?: string;
   };
   /**
-   * Stdio bundle credential schema + per-field configured-state probe.
-   * Populated only when the bundle's manifest declares `user_config`.
-   * `populated[k]` is `true` when a non-empty value is currently
-   * stored — never the value itself. The Configure page's bundle-config
-   * section reads schema for field metadata and populated for
-   * configured/not-configured indicators.
-   */
-  userConfig?: {
-    schema: Record<string, UserConfigFieldDef>;
-    populated: Record<string, boolean>;
-  };
-  /**
    * Generic, type-agnostic status the UI renders without re-deriving
    * from the underlying BundleState + credential probes. Six values
    * collapse what would otherwise be ~10 specific failure modes —
@@ -669,8 +618,7 @@ type InstalledEntry = {
    *
    * Priority when multiple flags apply: setup blocks auth blocks
    * usage. needs_setup > needs_auth > failed > connecting/starting >
-   * ready. A bundle that crashed because of missing user_config
-   * surfaces as `needs_setup` (the actionable cause), not `failed`.
+   * ready.
    */
   status: "ready" | "needs_setup" | "needs_auth" | "connecting" | "failed" | "starting";
   /** Human-readable detail for status. Surfaces in tooltips / banners. */
@@ -685,11 +633,9 @@ interface InstalledEntryDeps {
    *  catalog match, rather than one disk read per installed connector. */
   ws: Workspace | null;
   registry: ReturnType<Runtime["getRegistryForWorkspace"]>;
-  credStore: FileCredentialStore;
+  credStore: CredentialStore;
   catalogByUrl: Map<string, ConnectorCatalogEntry>;
   catalogById: Map<string, ConnectorCatalogEntry>;
-  mpakIcons: Map<string, string>;
-  mpak: ReturnType<typeof getMpak>;
   resolveUserLabel: (userId: string) => Promise<string | undefined>;
   /** When set, `buildInstalledEntry` skips every instance except this one
    *  before any per-instance IO. */
@@ -711,16 +657,15 @@ function resolveInstanceCatalog(
   instance: BundleInstance,
   catalogByUrl: Map<string, ConnectorCatalogEntry>,
   catalogById: Map<string, ConnectorCatalogEntry>,
-): { isRemote: boolean; url: string | undefined; cat: ConnectorCatalogEntry | undefined } {
+): { url: string | undefined; cat: ConnectorCatalogEntry | undefined } {
   const ref = instance.ref;
-  const isRemote = !!ref && "url" in ref;
-  const url = isRemote ? (ref as { url: string }).url : undefined;
-  const connectorId = isRemote ? brokeredRef(ref)?.connectorId : undefined;
+  const url = ref?.url;
+  const connectorId = ref ? brokeredRef(ref)?.connectorId : undefined;
   let cat = url ? catalogByUrl.get(url) : undefined;
   if (!cat && connectorId) {
     cat = catalogById.get(connectorId);
   }
-  return { isRemote, url, cat };
+  return { url, cat };
 }
 
 /**
@@ -784,7 +729,7 @@ async function applyRemoteConnectionState(
   ref: BundleRef,
   url: string,
   cat: ConnectorCatalogEntry | undefined,
-  credStore: FileCredentialStore,
+  credStore: CredentialStore,
   wsId: string,
 ): Promise<void> {
   entry.url = url;
@@ -795,7 +740,11 @@ async function applyRemoteConnectionState(
   if (conn?.lastError) entry.lastError = conn.lastError;
   const oauthClient = (ref as { oauthClient?: { clientSecret?: { key: string } } }).oauthClient;
   if (oauthClient?.clientSecret) {
-    const wrapped = await credStore.get(wsId, oauthClient.clientSecret.key);
+    // A presence probe, not a use: `get` without a `reveal` writes no audit line.
+    const wrapped = await credStore.get({ kind: "workspace", wsId }, oauthClient.clientSecret.key, {
+      caller: "connector-tools:list_installed",
+      purpose: "report whether operator OAuth setup is complete",
+    });
     if (!wrapped) entry.missingOperatorSetup = true;
   }
 }
@@ -823,69 +772,29 @@ async function applyOperatorOAuth(
 }
 
 /**
- * Stdio bundle credential schema + per-field configured probe, driven by the
- * bundle's manifest `user_config` block. Manifest resolution handles both
- * name-installed (mpak cache) and path-installed (read from disk) bundles — the
- * latter is how every Synapse app under local-dev install ends up registered.
- * Best-effort cosmetic data: on a read error the connector surfaces without the
- * bundle-config section rather than failing the whole list_installed call.
+ * Enrich an entry with its live OAuth connection state + operator OAuth audit
+ * config. Skipped when the instance carries no ref (an instance seeded before
+ * its ref was persisted), which leaves the entry with the state the lifecycle
+ * already reported.
  */
-async function probeStdioUserConfig(
-  ctx: ManageConnectorsContext,
-  wsId: string,
-  mpak: ReturnType<typeof getMpak>,
-  instance: BundleInstance,
-): Promise<
-  { schema: Record<string, UserConfigFieldDef>; populated: Record<string, boolean> } | undefined
-> {
-  try {
-    const manifest = await readBundleManifest(mpak, instance);
-    const schema = manifest?.user_config;
-    if (schema && Object.keys(schema).length > 0) {
-      const stored =
-        (await ctx.runtime.getWorkspaceContext(wsId).getCredentials(instance.bundleName)) ?? {};
-      const populated: Record<string, boolean> = {};
-      for (const key of Object.keys(schema)) {
-        const v = stored[key];
-        populated[key] = typeof v === "string" && v.length > 0;
-      }
-      return { schema, populated };
-    }
-  } catch {
-    // Read errors are best-effort cosmetic data — see the doc comment.
-  }
-  return undefined;
-}
-
-/**
- * Apply the probes appropriate to the entry's transport: remote bundles get
- * their live OAuth connection state + operator OAuth audit config; stdio bundles
- * get the manifest `user_config` schema + configured-state probe.
- */
-async function applyTransportSpecificProbes(
+async function applyConnectionProbes(
   entry: InstalledEntry,
   deps: InstalledEntryDeps,
   instance: BundleInstance,
-  isRemote: boolean,
   url: string | undefined,
   cat: ConnectorCatalogEntry | undefined,
 ): Promise<void> {
-  if (isRemote && url) {
-    await applyRemoteConnectionState(
-      entry,
-      instance,
-      instance.ref as BundleRef,
-      url,
-      cat,
-      deps.credStore,
-      deps.wsId,
-    );
-    await applyOperatorOAuth(entry, cat, deps.ws, deps.resolveUserLabel);
-  }
-  if (!isRemote) {
-    const userConfig = await probeStdioUserConfig(deps.ctx, deps.wsId, deps.mpak, instance);
-    if (userConfig) entry.userConfig = userConfig;
-  }
+  if (!url || !instance.ref) return;
+  await applyRemoteConnectionState(
+    entry,
+    instance,
+    instance.ref,
+    url,
+    cat,
+    deps.credStore,
+    deps.wsId,
+  );
+  await applyOperatorOAuth(entry, cat, deps.ws, deps.resolveUserLabel);
 }
 
 /**
@@ -901,11 +810,7 @@ async function buildInstalledEntry(
   if (instance.wsId !== deps.wsId) return null;
   if (deps.onlyServerName && instance.serverName !== deps.onlyServerName) return null;
 
-  const { isRemote, url, cat } = resolveInstanceCatalog(
-    instance,
-    deps.catalogByUrl,
-    deps.catalogById,
-  );
+  const { url, cat } = resolveInstanceCatalog(instance, deps.catalogByUrl, deps.catalogById);
   const { toolCount, handshakeVersion } = await probeToolCountAndVersion(
     deps.registry,
     instance.serverName,
@@ -914,34 +819,31 @@ async function buildInstalledEntry(
   // so a sole spoofed placement doesn't light the chip while rendering nothing.
   const interactive =
     cat?.interactive === true || sanitizePlacements(instance.ui?.placements).length > 0;
-  // Resolve brand icon once: prefer the static catalog match (remote bundles),
-  // fall back to the mpak-by-package-name lookup (stdio). Either may be
-  // undefined; the UI handles the missing case with a deterministic letter avatar.
-  const iconUrl = cat?.iconUrl ?? deps.mpakIcons.get(instance.bundleName);
+  // Brand icon comes from the catalog match; undefined is fine — the UI falls
+  // back to a deterministic letter avatar.
+  const iconUrl = cat?.iconUrl;
 
   const entry: InstalledEntry = {
     serverName: instance.serverName,
     bundleName: instance.bundleName,
     version: instance.version,
     ...(handshakeVersion ? { handshakeVersion } : {}),
-    type: isRemote ? "remote" : "local",
     state: instance.state,
     // Provisional — overwritten by deriveConnectorStatus below once every probe
-    // (operatorOAuth, userConfig, lastError) has been resolved on the entry.
-    // Initial value satisfies the public InstalledConnector contract that
-    // `status` is required.
+    // (operatorOAuth, lastError) has been resolved on the entry. Initial value
+    // satisfies the public InstalledConnector contract that `status` is
+    // required.
     status: "ready",
     scope: "workspace",
     interactive,
     toolCount,
-    trustScore: instance.trustScore ?? null,
     ...(iconUrl ? { iconUrl } : {}),
   };
 
-  await applyTransportSpecificProbes(entry, deps, instance, isRemote, url, cat);
+  await applyConnectionProbes(entry, deps, instance, url, cat);
 
   // Derive the generic UI status last so it sees every populated probe
-  // (operatorOAuth gate, userConfig populated map, lastError).
+  // (operatorOAuth gate, lastError).
   const derived = deriveConnectorStatus(entry);
   entry.status = derived.status;
   if (derived.statusReason) entry.statusReason = derived.statusReason;
@@ -967,25 +869,18 @@ async function handleListInstalled(
   onlyServerName?: string,
 ): Promise<ToolResult> {
   const lifecycle = ctx.runtime.getLifecycle();
-  const workDir = ctx.runtime.getWorkDir();
-  const credStore = new FileCredentialStore(workDir);
+  const credStore = ctx.runtime.getCredentialStore();
   // One directory instance per request — its memoized `servers()`
-  // means catalogByUrl + iconByPackage share a single fetch even
+  // means catalogByUrl + catalogByIdMap share a single fetch even
   // though they're called separately. Reaching for the lookup tables
   // (rather than the raw catalog list + manual map-build) keeps the
   // construction concern inside the facade.
   const directory = ctx.runtime.getConnectorDirectory();
   const catalogByUrl = await directory.catalogByUrl();
-  // O(1) catalog lookups for composio-backed bundles whose persisted
-  // `ref.url` is a per-install Composio session URL and therefore
-  // misses `catalogByUrl`. Built once per request.
+  // O(1) catalog lookups for brokered bundles whose persisted `ref.url` is a
+  // per-install session URL and therefore misses `catalogByUrl`. Built once per
+  // request.
   const catalogById = await directory.catalogByIdMap();
-  // Stdio bundles aren't keyable by URL — they're matched to their
-  // mpak `ServerDetail` by the package identifier on the bundle
-  // instance (`@scope/name`). Best-effort: a down mpak registry just
-  // means stdio cards fall back to the deterministic letter avatar.
-  const mpakIcons = await directory.iconByPackage();
-
   const installed: InstalledEntry[] = [];
 
   // Resolve operator OAuth audit labels lazily so the most common
@@ -1004,23 +899,15 @@ async function handleListInstalled(
     userLabelCache.set(userId, label);
     return label;
   };
-  // Resolved mpak home — the SAME (absolute) string the lifecycle is
-  // constructed with, so `getMpak()`'s singleton is shared rather than
-  // thrashed. Don't hand-build `join(workDir, "apps")`: `getWorkDir()` isn't
-  // pre-resolved, so under a relative dev `workDir` it would key a second SDK
-  // instance on a relative string for the same dir.
-  const mpak = getMpak(ctx.runtime.getMpakHome());
-
-  // Workspace-scope entries: walk every bundle visible in the workspace
-  // registry (includes local stdio, local URL, Synapse apps, and remote
-  // OAuth). The `list_apps` tool surfaces the same registry-installed set.
+  // Workspace-scope entries: walk every connector visible in the workspace
+  // registry.
   //
   // Read directly from the lifecycle's instance map, NOT the shorthand
   // `getBundleInstancesForWorkspace` — see the rationale on that method for why
   // its registry filter is load-bearing and why this page must bypass it.
   //
-  // The short version: a bundle can be installed and unregistered (torn down by
-  // Disconnect, or a boot-start that failed), and this page is where the user
+  // The short version: a connector can be installed and unregistered (torn down
+  // by Disconnect, or a boot-start that failed), and this page is where the user
   // clicks Connect / Reconnect to get it back. Filtering it out would hide the
   // only affordance that recovers it.
   if ((scope === "all" || scope === "workspace") && wsId) {
@@ -1032,8 +919,6 @@ async function handleListInstalled(
       credStore,
       catalogByUrl,
       catalogById,
-      mpakIcons,
-      mpak,
       resolveUserLabel,
       ...(onlyServerName ? { onlyServerName } : {}),
     };
@@ -1099,9 +984,8 @@ async function handleGetInstalled(
  *     found" class of error doesn't exist in this design).
  *
  * Defense-in-depth on the wire payload: `parseDirectoryEntry` re-runs
- * the value-shape gate (`SCOPED_PACKAGE_RE` for mpak packages,
- * `isHttpUrl` for remote URLs, reserved-OAuth-params for the install
- * action). The entry came from a client over the tool surface, not
+ * the value-shape gate (`isHttpUrl` for remote URLs,
+ * reserved-OAuth-params for the install action). The entry came from a client over the tool surface, not
  * directly from a trusted source instance, so trust-but-verify at the
  * dispatch boundary catches a tampered payload regardless of which
  * registry a well-formed analog originally came from.
@@ -1157,8 +1041,6 @@ async function handleInstall(
       if (collision) return collision;
       return handleInstallRemoteOAuth(ctx, wsId, ws, entry);
     }
-    case "mpak-bundle":
-      return handleInstallMpak(ctx, wsId, entry);
     case "direct-url":
       return errResult("direct-url install is not yet supported.");
   }
@@ -1240,16 +1122,16 @@ async function personalConnectorCollisionGuard(
  * PERSONAL connector on the caller's own identity (`users/<id>/connectors.json`),
  * not into any workspace. The identity-plane sibling of `handleInstallRemoteOAuth`.
  *
- * DCR and composio install here. `dcr` (standard dynamic-client-registration
- * OAuth) authenticates via the interactive Connect flow
- * (`POST /v1/mcp-auth/initiate-identity` → `startIdentityAuth`). `composio` binds
- * the Composio-side identity to the caller (`{type:"user"}`, not a workspace) and
- * connects via `POST /v1/composio-auth/initiate-identity`; its only owner-scoped
- * state is the `composioUserId` + an opaque `connectedAccountId` (the API key is
- * platform-global). `static` reads an operator client secret from the workspace
- * credential store and `provider` carries a platform/fleet auth class — both
- * workspace/platform-bound and rejected here (their identity variants are a
- * separate slice).
+ * DCR and interactive-connect brokered connectors install here. `dcr` (standard
+ * dynamic-client-registration OAuth) authenticates via the interactive Connect
+ * flow (`POST /v1/mcp-auth/initiate-identity` → `startIdentityAuth`). A brokered
+ * connector binds the broker-side identity to the caller (`{type:"user"}`, not a
+ * workspace); its only owner-scoped state is the provider's namespaced user id
+ * plus an opaque connection pointer (the broker credential is platform-global),
+ * and the connect round-trip runs through the provider's own callback routes.
+ * `static` reads an operator client secret from the workspace credential store
+ * and `provider` carries a platform/fleet auth class — both workspace/platform-
+ * bound and rejected here (their identity variants are a separate slice).
  */
 async function handleInstallIdentity(
   ctx: ManageConnectorsContext,
@@ -1267,23 +1149,37 @@ async function handleInstallIdentity(
     );
   }
 
-  // Gate: only DCR + composio install on the identity plane today. Fail fast
-  // before any wiring (a composio session, a static credential read, a provider
-  // re-resolve) for an auth type we reject here anyway. static/provider are
-  // workspace/platform-bound.
-  if (entry.install.auth !== "dcr" && entry.install.auth !== "composio") {
+  // Gate: a personal connector must be one the CALLER can complete a connect
+  // for. That is DCR, or a brokered connector whose provider brokers an
+  // interactive connect (`initiate`) — the capability, not a vendor name, so a
+  // third provider that brokers OAuth qualifies without editing this line and
+  // one that does not (Smithery, whose setup lives on its own hosted page) is
+  // refused. `static` reads a workspace-scoped operator secret and `provider`
+  // mints a platform credential; both are workspace/platform-bound. Fail fast,
+  // before any wiring.
+  // An unconfigured broker is a deploy problem, not an unsupported plane —
+  // say which before the capability gate turns it into "not supported here".
+  const brokerProvider = providerFor(ctx, entry.install.auth);
+  if (isBrokeredAuthKind(entry.install.auth) && !brokerProvider) {
+    return errResult(brokerNotConfiguredMessage(entry.name, entry.install.auth));
+  }
+  if (!identityInstallableAuth(ctx, entry.install.auth)) {
     return errResult(
       `"${entry.name}" uses "${entry.install.auth}" auth, which isn't supported for personal ` +
-        `connectors yet — only standard OAuth (DCR) and Composio connectors can install on your ` +
-        `identity today. Install it into a shared workspace instead.`,
+        `connectors yet — only standard OAuth (DCR) and brokered connectors that support an ` +
+        `interactive connect can install on your identity today. Install it into a shared ` +
+        `workspace instead.`,
     );
   }
 
-  // The gate above narrowed to dcr|composio. `validateComposioInstall` (below)
-  // covers the composio prerequisites; static/provider — the only other things
-  // `validateRemoteOAuthInstall` checks — are already rejected. The action shape
-  // is validated upstream by `parseDirectoryEntry`.
-  const action = entry.install;
+  // `validateRemoteOAuthInstall` re-resolves a brokered entry's block from the
+  // trusted catalog — the same bound the workspace path applies, and the reason
+  // the caller's own block never reaches `createSession`. static/provider are
+  // already rejected above. The action shape is validated upstream by
+  // `parseDirectoryEntry`.
+  const validated = await validateRemoteOAuthInstall(ctx, entry, entry.install);
+  if ("error" in validated) return errResult(validated.error);
+  const action = validated.action;
 
   const serverName = slugifyServerName(entry.id);
 
@@ -1305,10 +1201,10 @@ async function handleInstallIdentity(
 
   // Idempotency (identity side): if this connector is already installed on the
   // caller's identity, short-circuit BEFORE any wiring — a re-install must not
-  // mint a fresh Composio session and orphan the prior one. The workspace path
+  // mint a fresh brokered session and orphan the prior one. The workspace path
   // guards the same way (`handleDuplicateInstall`, before `resolveInstallWiring`).
   // `add` upserts, so the record survives either way; this just defers the
-  // session-create and keeps the contract idempotent (composio and DCR alike).
+  // session-create and keeps the contract idempotent (brokered and DCR alike).
   const existing = await new IdentityConnectorStore({
     workDir: ctx.runtime.getWorkDir(),
   }).get(callerId, serverName);
@@ -1338,40 +1234,31 @@ async function handleInstallIdentity(
   // catalog by id, never the caller's entry (a forged entry can't inject chrome).
   const trustedUi = (await ctx.runtime.getConnectorDirectory().catalogById(entry.id))?.ui;
 
-  // Resolve install wiring, owner-generic. DCR carries none (no session, no client
-  // secret). Composio creates the upstream session bound to the caller's identity
-  // (`{type:"user"}`, not a workspace) and returns the per-install session URL +
-  // a transport naming the `composio` credential provider — the same wiring the
-  // workspace path builds via `resolveInstallWiring`, owner-swapped.
-  let composioWiring: BrokeredWiring | undefined;
-  if (action.auth === "composio") {
-    const composioErr = validateComposioInstall(action, entry.name);
-    if (composioErr) return errResult(composioErr);
-    const provider = composioProvider(ctx);
-    if (!provider) return errResult(COMPOSIO_NOT_CONFIGURED);
-    const wiring = await buildComposioWiring(
-      provider,
+  // Resolve install wiring, owner-generic. DCR carries none (no session, no
+  // client secret). A brokered connector creates the upstream session bound to
+  // the caller's identity (`{type:"user"}`, not a workspace) and returns the
+  // per-install session URL plus a transport naming its credential provider —
+  // the same wiring the workspace path builds via `resolveInstallWiring`,
+  // owner-swapped.
+  let brokeredWiring: BrokeredWiring | undefined;
+  if (brokerProvider) {
+    const wiring = await buildBrokeredWiring(
+      brokerProvider,
       action,
       { type: "user", userId: callerId },
+      entry.id,
       entry.name,
     );
     if ("__err" in wiring) return errResult(wiring.__err);
-    composioWiring = wiring;
+    brokeredWiring = wiring;
   }
 
   // Strip the `oauthScope: "workspace"` literal `buildRemoteBundleRef` stamps for
   // the workspace path — an identity ref is user-owned structurally, by its
   // location in `connectors.json`, and carries no scope field (see
-  // `IdentityConnectorStore`). The composio marker (`{composio:{connectorId}}`),
-  // when present, rides the ref so the Connect route and list handler key on it.
-  const ref = buildRemoteBundleRef(
-    action,
-    serverName,
-    entry.id,
-    trustedUi,
-    composioWiring,
-    undefined,
-  );
+  // `IdentityConnectorStore`). The brokered marker, when present, rides the ref
+  // so the Connect route and list handler key on it.
+  const ref = buildRemoteBundleRef(action, serverName, trustedUi, brokeredWiring, undefined);
   delete (ref as { oauthScope?: "workspace" }).oauthScope;
 
   // The connector-skill overlay (`syncBoundSkills`) is workspace-keyed; the
@@ -1383,7 +1270,7 @@ async function handleInstallIdentity(
 
   // No eager-start: a connector has no live credentials until the user completes
   // the interactive Connect flow — DCR via `POST /v1/mcp-auth/initiate-identity`
-  // (`startIdentityAuth`), composio via `POST /v1/composio-auth/initiate-identity`.
+  // (`startIdentityAuth`), a brokered one via that provider's own initiate route.
   // Both callbacks start the source into the user registry
   // (`getIdentityConnectorSource`) when the browser returns. Install only persists
   // the record.
@@ -1419,20 +1306,24 @@ async function findSharedWorkspaceInstall(
 }
 
 /**
- * `connect_api_key` — authenticate an already-installed Composio connector
- * whose toolkit uses a non-redirect (API-key) auth scheme. The API-key sibling
- * of the OAuth `/v1/composio-auth/initiate` route: there is no browser
- * redirect, so it's a tool action, not a route (no state cookie, no callback —
- * the two reasons that path stays a route). The web shell renders a form from
- * the connector's declared `composio.fields` and submits the values here.
+ * `connect_api_key` — authenticate an already-installed brokered connector
+ * whose upstream takes a key rather than a browser redirect. The non-redirect
+ * sibling of a provider's OAuth connect route: there is no redirect, so it's a
+ * tool action, not a route (no state cookie, no callback — the two reasons that
+ * path stays a route). The web shell renders a form from the connector's
+ * declared fields and submits the values here.
+ *
+ * The tool owns authorization, source registration and connection state. What
+ * the fields MEAN — which are required, how they reach the broker, what gets
+ * recorded — is the provider's, behind `connectApiKey`.
  *
  * Trust posture (mirrors the OAuth path):
- *  - The connector, its field declarations, and its auth-config env all come
- *    from the SERVER-trusted catalog (`catalogById`), never the caller. The
- *    only caller input is the connectorId and the field *values*.
- *  - Field values are handed to Composio and NEVER persisted by the platform —
- *    `connection.json` keeps only the opaque `connectedAccountId`, exactly like
- *    the OAuth path. We don't custody the user's key.
+ *  - The connector and its field declarations come from the SERVER-trusted
+ *    catalog (`catalogById`), never the caller. The only caller input is the
+ *    connectorId and the field *values*.
+ *  - Field values are handed to the broker and NEVER persisted by the platform —
+ *    the provider keeps only an opaque pointer, exactly like the OAuth path. We
+ *    don't custody the user's key.
  *  - Membership-gated: the workspace-scoped tool routing already authorized the
  *    caller as a member of `wsId` (the same level as the OAuth connect route's
  *    `requireWorkspace`). Install — which widens the workspace surface — is
@@ -1452,51 +1343,24 @@ async function handleConnectApiKey(
   const ws = await ctx.runtime.getWorkspaceStore().get(wsId);
   if (!ws) return errResult(`Workspace "${wsId}" not found.`);
 
-  const connector = await loadComposioApiKeyConnector(ctx, catalogId);
-  if ("error" in connector) return errResult(connector.error);
-  const { entry, composio } = connector;
-
-  // Validate submitted values against the declared fields: every required field
-  // present and non-empty; unknown keys rejected (default-deny, same posture as
-  // set_user_config). Only declared keys are forwarded to Composio. This runs
-  // before any config gate — field shape is caller-error, independent of whether
-  // the broker is configured.
-  const collected = collectApiKeyFields(composio, catalogId, rawFields);
-  if ("error" in collected) return errResult(collected.error);
-  const { values } = collected;
-
-  // Config gate: resolves the per-connector auth-config id and asserts the
-  // platform broker key is present (the "not configured" surface callers see).
-  const gate = resolveComposioApiKeyCredentials(entry.name, composio);
-  if ("error" in gate) return errResult(gate.error);
-  const { authConfigId } = gate;
-
-  // The key being present means Composio is configured, so the provider is
-  // registered; resolve it for the broker calls. The broker credential is the
-  // provider's own detail — only the per-connector data crosses the seam.
-  const provider = composioProvider(ctx);
-  if (!provider?.connectApiKey) return errResult(COMPOSIO_NOT_CONFIGURED);
-  // Capture the narrowed method now — the intervening awaits below would widen a
-  // property re-read back to optional.
-  const connectApiKey = provider.connectApiKey;
+  const resolved = await resolveApiKeyConnector(ctx, catalogId);
+  if ("error" in resolved) return errResult(resolved.error);
+  const { entry, config, provider, connectApiKey } = resolved;
 
   const serverName = slugifyServerName(catalogId);
   const owner: ConnectorOwner = { type: "workspace", wsId };
-  const userId = provider.userId(owner);
-  const lifecycle = ctx.runtime.getLifecycle();
   const workDir = ctx.runtime.getWorkDir();
+  const brokered: BrokeredRef = { provider: entry.auth, connectorId: catalogId };
+  const lifecycle = ctx.runtime.getLifecycle();
 
-  // Capture any prior connected account up front: it both gates the rotation
-  // case below and is the id we revoke after a successful replace. We can't
-  // adopt-existing like the OAuth path — an API-key re-submit may carry a
-  // rotated key, so the old account is REPLACED, not reused.
-  const prior = await readComposioConnection(workDir, owner, catalogId);
-
-  // Authz: a FIRST connect (no prior) is member-level, matching the OAuth
-  // connect route. But a RE-CONNECT/rotation replaces and revokes the shared
-  // credential every member's agent runs under — destructive like `disconnect`,
-  // which is admin-gated. So gate only the rotation case on workspace admin.
-  if (prior?.connectedAccountId && !isWorkspaceAdmin(ws, identity)) {
+  // Authz: a FIRST connect is member-level, matching the OAuth connect route.
+  // But a RE-CONNECT/rotation replaces and revokes the shared credential every
+  // member's agent runs under — destructive like `disconnect`, which is
+  // admin-gated. So gate only the rotation case on workspace admin. A provider
+  // with no `hasConnection` cannot distinguish the two and gets the member-level
+  // treatment its own connect semantics imply.
+  const alreadyConnected = provider.hasConnection?.({ owner, brokered, workDir }) ?? false;
+  if (alreadyConnected && !isWorkspaceAdmin(ws, identity)) {
     return {
       content: textContent(
         "Workspace admin role required to replace an already-connected connector's credential.",
@@ -1509,31 +1373,29 @@ async function handleConnectApiKey(
   const regError = await registerApiKeySource(lifecycle, serverName, wsId, workDir, ws, catalogId);
   if (regError) return errResult(regError);
 
-  const connected = await performComposioApiKeyConnect(
-    connectApiKey,
-    { userId, authConfigId, fields: values },
-    catalogId,
-    wsId,
-  );
+  let connected: { status: string } | { error: string };
+  try {
+    connected = await connectApiKey({
+      owner,
+      workDir,
+      connectorId: catalogId,
+      config,
+      fields: stringFields(rawFields),
+    });
+  } catch (err) {
+    // A THROW is a broker failure — genericize it so a rejected credential never
+    // echoes back what was submitted. A returned `{ error }` is the provider's
+    // own caller/operator-facing message and passes through verbatim.
+    const msg = err instanceof Error ? err.message : String(err);
+    log.warn(`[connect_api_key] ${entry.auth} connect failed for ${catalogId} in ${wsId}: ${msg}`);
+    return errResult(
+      "Could not connect with the provided credentials. Check the key (and any " +
+        "region / subdomain) and try again.",
+    );
+  }
   if ("error" in connected) return errResult(connected.error);
 
-  const connection: ComposioConnection = {
-    connectedAccountId: connected.connectedAccountId,
-    toolkit: composio.toolkit,
-    userId,
-    connectedAt: new Date().toISOString(),
-    status: connected.status,
-  };
-  await saveComposioConnection(workDir, owner, catalogId, connection);
   lifecycle.recordConnectionStateChange(serverName, wsId, WORKSPACE_PRINCIPAL_ID, "running");
-
-  await revokeReplacedComposioAccount(
-    provider,
-    prior,
-    connected.connectedAccountId,
-    catalogId,
-    wsId,
-  );
 
   return {
     content: textContent(`Connected ${entry.name}.`),
@@ -1542,125 +1404,63 @@ async function handleConnectApiKey(
   };
 }
 
-type ComposioConfig = NonNullable<ConnectorCatalogEntry["composio"]>;
-type ComposioApiKeyFields = NonNullable<ComposioConfig["fields"]>;
+/**
+ * Narrow a wire payload to string values. Anything else is dropped rather than
+ * coerced — the provider validates what remains against its own declaration, and
+ * a non-string arriving where a credential field is expected is a caller bug the
+ * provider's "required" check surfaces by name.
+ */
+function stringFields(raw: Record<string, unknown>): Record<string, string> {
+  const fields: Record<string, string> = {};
+  for (const [k, v] of Object.entries(raw)) {
+    if (typeof v === "string") fields[k] = v;
+  }
+  return fields;
+}
 
 /**
- * Fetch + validate the catalog entry named by `connect_api_key`: it must be a
- * Composio-backed connector whose toolkit uses the non-redirect API-key auth
- * scheme. Returns the narrowed composio block on success.
+ * Resolve everything `connect_api_key` needs about the target: the trusted
+ * catalog entry, the provider that brokers it, its opaque catalog block, and the
+ * provider's narrowed `connectApiKey` arm.
+ *
+ * The arm is captured here rather than re-read at the call site because the
+ * intervening awaits would widen an optional property back to `undefined`.
  */
-async function loadComposioApiKeyConnector(
+async function resolveApiKeyConnector(
   ctx: ManageConnectorsContext,
   catalogId: string,
-): Promise<{ entry: ConnectorCatalogEntry; composio: ComposioConfig } | { error: string }> {
+): Promise<
+  | {
+      entry: ConnectorCatalogEntry;
+      config: Record<string, unknown>;
+      provider: ManagedConnectorProvider;
+      connectApiKey: NonNullable<ManagedConnectorProvider["connectApiKey"]>;
+    }
+  | { error: string }
+> {
   const entry = await ctx.runtime.getConnectorDirectory().catalogById(catalogId);
   if (!entry) return { error: `Connector "${catalogId}" not in catalog.` };
-  if (entry.auth !== "composio" || !entry.composio) {
-    return { error: `Connector "${catalogId}" is not Composio-backed (auth=${entry.auth}).` };
-  }
-  if (entry.composio.authScheme !== "API_KEY") {
+  const config = brokeredCatalogConfig(entry);
+  if (!config) return { error: `Connector "${catalogId}" is not brokered (auth=${entry.auth}).` };
+  const provider = providerFor(ctx, entry.auth);
+  if (!provider) return { error: brokerNotConfiguredMessage(entry.name, entry.auth) };
+  const connectApiKey = provider.connectApiKey;
+  if (!connectApiKey) {
     return {
-      error: `Connector "${catalogId}" does not use API-key auth (authScheme=${
-        entry.composio.authScheme ?? "OAUTH2"
-      }). Use the OAuth connect flow instead.`,
+      error:
+        `"${entry.name}" is brokered by "${entry.auth}", which has no API-key connect. ` +
+        "Use its own Connect flow instead.",
     };
   }
-  return { entry, composio: entry.composio };
+  return { entry, config, provider, connectApiKey };
 }
 
 /**
- * Coerce declared API-key fields to trimmed string values. Every required field
- * must be present and non-empty; blank optional fields are skipped.
- */
-function coerceApiKeyValues(
-  declared: ComposioApiKeyFields,
-  rawFields: Record<string, unknown>,
-): { values: Record<string, string> } | { error: string } {
-  const values: Record<string, string> = {};
-  for (const field of declared) {
-    const raw = rawFields[field.key];
-    const value = typeof raw === "string" ? raw.trim() : "";
-    if (!value) {
-      if (field.required !== false) {
-        return { error: `Field "${field.key}" (${field.title}) is required.` };
-      }
-      continue;
-    }
-    values[field.key] = value;
-  }
-  return { values };
-}
-
-/**
- * Validate submitted API-key values against the connector's declared fields: at
- * least one field declared, unknown keys rejected (default-deny), required
- * fields present. Only declared keys are forwarded to Composio.
- */
-function collectApiKeyFields(
-  composio: ComposioConfig,
-  catalogId: string,
-  rawFields: Record<string, unknown>,
-): { values: Record<string, string> } | { error: string } {
-  const declared = composio.fields ?? [];
-  if (declared.length === 0) {
-    return { error: `Connector "${catalogId}" declares no API-key fields to collect.` };
-  }
-  const declaredKeys = new Set(declared.map((f) => f.key));
-  for (const key of Object.keys(rawFields)) {
-    if (!declaredKeys.has(key)) {
-      return { error: `Unknown field "${key}" for connector "${catalogId}".` };
-    }
-  }
-  return coerceApiKeyValues(declared, rawFields);
-}
-
-/** Operator-facing message for a Composio install attempted with no broker credential configured. */
-function composioUnconfiguredMessage(entryName: string): string {
-  return (
-    `"${entryName}" requires a platform-wide Composio broker credential. Set ` +
-    "connectors.providers.composio.apiKey in nimblebrain.json (or COMPOSIO_API_KEY " +
-    "in the platform env) and restart the API."
-  );
-}
-
-/**
- * Resolve the platform Composio credentials for an API-key connect: the broker
- * credential and the connector's auth-config id, both from the provider config.
- * Missing values are a deploy-time error; surface a clear (non-secret) message.
- */
-function resolveComposioApiKeyCredentials(
-  entryName: string,
-  composio: ComposioConnectorConfig,
-): { apiKey: string; authConfigId: string } | { error: string } {
-  const { apiKey } = validateComposioConfig();
-  if (!apiKey) {
-    return { error: composioUnconfiguredMessage(entryName) };
-  }
-  const authConfigId = composioAuthConfigId(composio.toolkit);
-  if (!authConfigId) {
-    return { error: composioAuthConfigMessage(entryName, composio.toolkit) };
-  }
-  return { apiKey, authConfigId };
-}
-
-/**
- * The operator-facing message for a toolkit with no auth-config id. Names the
- * config path to set, not the internals of how it is resolved.
- */
-function composioAuthConfigMessage(entryName: string, toolkit: string): string {
-  return (
-    `"${entryName}" requires an auth config id for the "${toolkit}" toolkit. ` +
-    "Create the auth config in the Composio dashboard, then set " +
-    `connectors.providers.composio.authConfigs.${toolkit} in nimblebrain.json.`
-  );
-}
-
-/**
- * Bring the MCP source online before connection.json is persisted (the OAuth
- * adopt path's ordering invariant, so boot-state derivation stays honest). A
- * connector with no ref yet has never been installed, so this doubles as the
- * "install first" guard. Returns an error string, or null on success.
+ * Bring the MCP source online before the provider records the connection (the
+ * OAuth adopt path's ordering invariant, so boot-state derivation stays
+ * honest). A connector with no ref yet has never been installed, so this
+ * doubles as the "install first" guard. Returns an error string, or null on
+ * success.
  */
 async function registerApiKeySource(
   lifecycle: ReturnType<Runtime["getLifecycle"]>,
@@ -1691,53 +1491,6 @@ async function registerApiKeySource(
 }
 
 /**
- * Hand the key(s) to Composio and verify the connection reaches ACTIVE. On
- * failure the SDK helper deletes the half-created account; surface a generic
- * message and never echo the submitted values.
- */
-async function performComposioApiKeyConnect(
-  connectApiKey: NonNullable<ManagedConnectorProvider["connectApiKey"]>,
-  params: { userId: string; authConfigId: string; fields: Record<string, string> },
-  catalogId: string,
-  wsId: string,
-): Promise<{ connectedAccountId: string; status: string } | { error: string }> {
-  try {
-    return await connectApiKey(params);
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    log.warn(`[connect_api_key] Composio connect failed for ${catalogId} in ${wsId}: ${msg}`);
-    return {
-      error:
-        "Could not connect with the provided credentials. Check the key (and any " +
-        "region / subdomain) and try again.",
-    };
-  }
-}
-
-/**
- * Rotation cleanup: revoke the account just replaced so a rotated-away key stops
- * being authorized at Composio and orphans don't accumulate. Runs after the new
- * account is persisted. Best-effort — deleteComposioConnectedAccount never
- * throws; on failure the prior key may linger at Composio until removed there.
- */
-async function revokeReplacedComposioAccount(
-  provider: ManagedConnectorProvider,
-  prior: ComposioConnection | null,
-  newAccountId: string,
-  catalogId: string,
-  wsId: string,
-): Promise<void> {
-  if (!prior?.connectedAccountId || prior.connectedAccountId === newAccountId) return;
-  const revoked = (await provider.delete?.(prior.connectedAccountId)) ?? false;
-  if (!revoked) {
-    log.warn(
-      `[connect_api_key] could not revoke the replaced Composio account for ${catalogId} ` +
-        `in ${wsId}; the prior key may remain authorized until removed at Composio`,
-    );
-  }
-}
-
-/**
  * Validate the wire payload as a `DirectoryEntry`. Tools/JSON arrive
  * as `unknown` from the dispatcher and the entry came from a client,
  * not the registry — anyone with API access can construct a payload.
@@ -1746,9 +1499,6 @@ async function revokeReplacedComposioAccount(
  * controlled package name or URL).
  *
  * Per-kind shape:
- *   - mpak-bundle: `package` must be a scoped npm-style name
- *     `@scope/name` (lowercase kebab on each segment) — the same
- *     shape mpak's registry accepts.
  *   - remote-oauth: `url` must parse as `http(s):` — protocol
  *     allowlist mirrors the catalog's `iconUrl` rules so a malformed
  *     entry can't slip a `javascript:` / `data:` / `file:` URL into
@@ -1759,14 +1509,12 @@ async function revokeReplacedComposioAccount(
  * Workspace `connectorsAllowList` (when set) further narrows the
  * accepted ids — but it's optional, so this is the always-on gate.
  */
-const SCOPED_PACKAGE_RE = /^@[a-z0-9][a-z0-9-]*\/[a-z0-9][a-z0-9-]*$/;
-
 function parseDirectoryEntry(input: unknown): DirectoryEntry | null {
   if (!input || typeof input !== "object") return null;
   const e = input as Record<string, unknown>;
   if (typeof e.id !== "string" || !e.id) return null;
   if (typeof e.name !== "string") return null;
-  const install = e.install as { kind?: unknown; package?: unknown; url?: unknown } | undefined;
+  const install = e.install as { kind?: unknown; url?: unknown } | undefined;
   if (!install || typeof install !== "object") return null;
   if (!isValidInstallKind(install.kind)) return null;
   if (!isInstallPayloadValid(install)) return null;
@@ -1780,24 +1528,16 @@ function parseDirectoryEntry(input: unknown): DirectoryEntry | null {
 
 /** The closed set of install action kinds the dispatch understands. */
 function isValidInstallKind(kind: unknown): boolean {
-  return kind === "remote-oauth" || kind === "mpak-bundle" || kind === "direct-url";
+  return kind === "remote-oauth" || kind === "direct-url";
 }
 
 /**
- * Per-kind value-shape gate: mpak packages must be a scoped npm-style name
- * (`@scope/name`, the shape mpak's registry accepts); remote-oauth URLs must
- * parse as `http(s):` (the protocol allowlist that keeps a malformed entry from
- * slipping a `javascript:` / `data:` / `file:` URL into bundle creation).
- * direct-url has no value-shape check yet (parked behind an errResult).
+ * Per-kind value-shape gate: remote-oauth URLs must parse as `http(s):` (the
+ * protocol allowlist that keeps a malformed entry from slipping a
+ * `javascript:` / `data:` / `file:` URL into connector creation). direct-url
+ * has no value-shape check yet (parked behind an errResult).
  */
-function isInstallPayloadValid(install: {
-  kind?: unknown;
-  package?: unknown;
-  url?: unknown;
-}): boolean {
-  if (install.kind === "mpak-bundle") {
-    return typeof install.package === "string" && SCOPED_PACKAGE_RE.test(install.package);
-  }
+function isInstallPayloadValid(install: { kind?: unknown; url?: unknown }): boolean {
   if (install.kind === "remote-oauth") {
     return typeof install.url === "string" && isHttpUrl(install.url);
   }
@@ -1834,7 +1574,7 @@ function areAdditionalAuthParamsValid(additionalParams: unknown): boolean {
  * dispatcher (the request's active workspace). Every workspace — personal
  * or shared — is a valid target: install, boot-state derivation, and
  * disconnect cleanup are all keyed purely on `wsId`, so the credential
- * layout under `credentials/composio/<connectorId>/` works identically
+ * layout under `credentials/<provider>/<connectorId>/` works identically
  * regardless of the target's `isPersonal` flag. Static-auth entries
  * require operator OAuth client config persisted under
  * `workspace.json#oauthOperatorApps[entry.id]` + the matching
@@ -1851,11 +1591,11 @@ async function handleInstallRemoteOAuth(
   }
 
   // Cheap entry-shape validation up front (fail fast, no IO beyond the catalog
-  // lookup a `provider` install needs). For `provider` entries the security-
-  // critical fields are re-resolved from the server-trusted catalog and the
-  // caller's discarded. The expensive remote work — Composio session create,
-  // operator credential read — is deferred until after the dedup check so a
-  // duplicate-install click doesn't burn an upstream Composio session.
+  // lookup a `provider` or brokered install needs), which also re-resolves those
+  // entries' security-critical fields from the server-trusted catalog. The
+  // expensive remote work — the brokered session create, the operator credential
+  // read — is deferred until after the dedup check so a duplicate-install click
+  // doesn't burn an upstream session.
   const validated = await validateRemoteOAuthInstall(ctx, entry, entry.install);
   if ("error" in validated) return errResult(validated.error);
   const action = validated.action;
@@ -1863,13 +1603,14 @@ async function handleInstallRemoteOAuth(
   // Host UI placement (sidebar app, etc.) is SERVER-authored metadata. Resolve
   // it from the operator-trusted catalog by id — never the caller-supplied
   // entry — so a forged entry can't inject host chrome. Cached by the directory
-  // facade. Undefined when the id isn't a known catalog connector or it declares
-  // no UI. Placements are re-validated at registration (`sanitizePlacements`).
-  const trustedUi = (await ctx.runtime.getConnectorDirectory().catalogById(entry.id))?.ui;
+  // facade. Undefined when the id isn't a known catalog connector. Placements
+  // are re-validated at registration (`sanitizePlacements`).
+  const trusted = await ctx.runtime.getConnectorDirectory().catalogById(entry.id);
+  const trustedUi = trusted?.ui;
 
   // serverName is the slugified canonical reverse-DNS form — opaque,
   // URL-safe, filesystem-safe, collision-free by construction. See
-  // `slugifyServerName` for the rule. mpak install path mirrors this.
+  // `slugifyServerName` for the rule.
   const serverName = slugifyServerName(entry.id);
 
   const lifecycle = ctx.runtime.getLifecycle();
@@ -1883,8 +1624,8 @@ async function handleInstallRemoteOAuth(
   const isPersonalTarget = ws.isPersonal === true;
 
   // Dedup (which self-heals an orphaned workspace.json entry) short-circuits
-  // before any expensive wiring so a re-click doesn't burn a Composio session.
-  const dupResult = handleDuplicateInstall(
+  // before any expensive wiring so a re-click doesn't burn a brokered session.
+  const dupResult = await handleDuplicateInstall(
     ctx,
     wsId,
     ws,
@@ -1901,7 +1642,6 @@ async function handleInstallRemoteOAuth(
   const ref = buildRemoteBundleRef(
     action,
     serverName,
-    entry.id,
     trustedUi,
     wiring.brokeredWiring,
     wiring.staticOAuthClient,
@@ -1913,7 +1653,14 @@ async function handleInstallRemoteOAuth(
   // into the workspace's `connector-skills/` store, NEVER the system prompt.
   const skillsLock = await lifecycle.syncBoundSkills(
     connectorSkillIdentityFrom(
-      action.auth === "composio" ? action.composio?.toolkit : undefined,
+      // From the operator-trusted catalog entry, NEVER the caller's action: the
+      // identity is interpolated into the overlay fetch path, so a field the
+      // caller controls chooses which repository is read. `action` carries the
+      // caller's own object for every auth kind the install does not re-resolve
+      // (`parseDirectoryEntry` strips no unknown install fields), which is
+      // exactly the provenance this must not depend on. Same source
+      // `connector-skill-reconcile` reads it from.
+      trusted?.composio?.toolkit,
       // Derive the overlay identity from the canonical reverse-DNS name
       // (`com.dropbox/mcp` → `dropbox`), NOT the slugified serverName
       // (`com-dropbox-mcp`) — the slug has no dotted structure to split on, so
@@ -1927,7 +1674,7 @@ async function handleInstallRemoteOAuth(
   if (skillsLock.length > 0) ref.skillsLock = skillsLock;
   await ctx.runtime.getWorkspaceStore().update(wsId, { bundles: [...ws.bundles, ref] });
   const wsRegistry = ctx.runtime.getRegistryForWorkspace(wsId);
-  lifecycle.seedInstance(serverName, action.url, ref, undefined, wsId);
+  await lifecycle.seedInstance(serverName, action.url, ref, undefined, wsId);
   lifecycle.notifyInstalled(serverName, wsId);
 
   // Static-credential URL bundles authenticate without an MCP-side OAuth flow,
@@ -1937,27 +1684,96 @@ async function handleInstallRemoteOAuth(
   // here. Eager-start is a UX optimization; a failure returns a warning, not an
   // error, because the install itself has still succeeded.
   let startWarning: string | undefined;
-  if (action.auth === "composio" || action.auth === "smithery" || action.auth === "provider") {
+  if (isBrokeredAuthKind(action.auth) || action.auth === "provider") {
     startWarning = await eagerStartRemoteSource(ctx, ref, wsRegistry, wsId, entry, action);
   }
+
+  // Inbound hooks the connector declares. Runs after the eager start because it
+  // has to call a tool on the server; for a connector whose source starts later
+  // (interactive OAuth) this is a no-op and the same reconcile runs when the
+  // connection reaches `running`. It joins that reconcile's run rather than
+  // racing it — see `singleFlight` in `hooks/reconcile.ts`.
+  //
+  // A contract violation is a WARNING, not an error, for the same reason the
+  // eager start above returns one: by this line the ref is persisted, the
+  // instance is seeded and the source is running, so the install has succeeded
+  // and saying otherwise describes state we kept. The check cannot move ahead
+  // of that commit — it needs the server's tool list, and the source is not
+  // started until after the ref is written — and reporting a failed install for
+  // a connector that is installed sends the operator to a retry that
+  // `handleDuplicateInstall` short-circuits, which is how the check would end up
+  // firing exactly once and then never again.
+  const hookWarning = await provisionDeclaredHooks(ctx, wsId, serverName);
+
+  const warning = [startWarning, hookWarning].filter(Boolean).join(" ") || undefined;
   return {
-    content: textContent(remoteInstallMessage(entry.name, isPersonalTarget, startWarning)),
+    content: textContent(remoteInstallMessage(entry.name, isPersonalTarget, warning)),
     structuredContent: {
       ok: true,
       alreadyInstalled: false,
       serverName,
       scope: "workspace",
       wsId,
-      ...(startWarning ? { warning: startWarning } : {}),
+      ...(warning ? { warning } : {}),
     },
     isError: false,
   };
 }
 
 /**
- * What a brokered provider (Composio, Smithery) produces at install time: the
- * minted session URL, the transport that reaches it, and any marker the
- * provider needs persisted on the BundleRef for later liveness probing.
+ * Provision a freshly-installed connector's declared hooks.
+ *
+ * Returns a WARNING string naming the offending declaration when the
+ * connector's manifest breaks the hook contract, or `undefined` on success, on
+ * a connector with no hooks, and on a runtime with no hooks door. Never an
+ * error: by the time this runs the install has committed, so the caller
+ * surfaces it beside the eager-start warning rather than reporting a failure
+ * for a connector that is installed and running.
+ *
+ * The violation stays visible after the install returns — the same reconcile
+ * re-runs (and re-logs) on every transition to `running`, so a restart or a
+ * reconnect re-reports it rather than the check firing once and going quiet.
+ */
+async function provisionDeclaredHooks(
+  ctx: ManageConnectorsContext,
+  wsId: string,
+  serverName: string,
+): Promise<string | undefined> {
+  try {
+    await ensureHooks(ctx.runtime.getHookReconcileDeps(), wsId, serverName);
+    return undefined;
+  } catch (err) {
+    if (err instanceof HookContractError) return err.message;
+    // Anything else (the source went away mid-install, a transient store
+    // error) leaves the connector installed and the stream unprovisioned —
+    // recoverable with `rotate_hook`, and not worth failing an install over.
+    log.warn("[hooks] install-time provisioning failed", {
+      connector: serverName,
+      workspace_id: wsId,
+      reason: err instanceof Error ? err.message : String(err),
+    });
+    return undefined;
+  }
+}
+
+// ── Inbound hooks (install / uninstall only) ─────────────────────────
+//
+// Installing a connector provisions its declared streams and uninstalling
+// revokes them, both as a consequence of the connector's own lifecycle — that
+// is all this file does with hooks. INSPECTING and ROTATING a stream live in
+// `tools/platform/hooks.ts`, because those answer about the hook itself rather
+// than about the connector, and the operator asking them needs the delivery
+// URL — the one thing this file's tools deliberately never returned.
+//
+// They were both here once, and the split is what the earlier arrangement was
+// guarding against: two surfaces over one lifecycle drift, and they did, with
+// only one of them refusing a rotation against a server that was not running.
+// The resolution is one surface each rather than a guard in both.
+
+/**
+ * What a brokered provider produces at install time: the minted session URL,
+ * the transport that reaches it, and the coordinates the runtime persists on
+ * the BundleRef so the probe and teardown can name the session later.
  *
  * The broker credential never appears here. The transport names a credential
  * PROVIDER (`auth: { type: "provider", provider }`), which attaches the secret
@@ -1967,45 +1783,62 @@ async function handleInstallRemoteOAuth(
 interface BrokeredWiring {
   url: string;
   transport: RemoteTransportConfig;
-  smithery?: { connectorId: string; connectionId: string; namespace: string; baseUrl: string };
+  brokered: BrokeredRef;
 }
 
 /**
- * Composio-auth install prerequisites: the catalog entry's composio block, the
- * platform broker credential, and the toolkit's declared auth-config id.
- * Returns an error string, or null when the install isn't composio-auth or
- * every prerequisite is present.
+ * Check an operator-authored `secretHeaders` block before it becomes transport
+ * config: every value must be a `{ ref: "credential", key }` pointer.
+ *
+ * A literal here would be a secret at rest in a catalog file, which is the copy
+ * the credential store exists to remove — so it is refused rather than passed
+ * through. Refusing at install (and naming the header) beats dropping the entry
+ * silently: a connection missing the header reaches the service and fails there,
+ * where the cause is a driver error rather than a catalog typo.
  */
-function validateComposioInstall(action: RemoteOAuthInstall, entryName: string): string | null {
-  if (action.auth !== "composio") return null;
-  if (!action.composio) {
-    return `"${entryName}" is composio-auth but missing composio config block.`;
+function validateSecretHeaders(
+  entryName: string,
+  secretHeaders: Record<string, CredentialRef> | undefined,
+): { headers?: Record<string, CredentialRef> } | { error: string } {
+  if (!secretHeaders) return {};
+  for (const [name, value] of Object.entries(secretHeaders)) {
+    if (!isCredentialRef(value)) {
+      return {
+        error:
+          `"${entryName}" declares secretHeaders["${name}"] as something other than ` +
+          'a credential reference. Every value must be { ref: "credential", key } — ' +
+          "a catalog entry names the secret, it never carries one.",
+      };
+    }
   }
-  if (!validateComposioConfig().apiKey) {
-    return composioUnconfiguredMessage(entryName);
-  }
-  if (!composioAuthConfigId(action.composio.toolkit)) {
-    return composioAuthConfigMessage(entryName, action.composio.toolkit);
-  }
-  return null;
+  return { headers: secretHeaders };
 }
 
 /**
- * Cheap up-front entry-shape validation. For `auth: "provider"` the security-
- * critical fields (url + providerAuth) are re-resolved from the SERVER-trusted
- * catalog by id and the caller's discarded — a provider install mints a
- * fleet-trusted, workspace-scoped service token and ships it to the entry's URL,
- * so a workspace admin could otherwise forge an entry with an arbitrary url +
- * audience/scope and exfiltrate a fleet token or reach an in-cluster `.svc` the
- * SSRF guard protects. Returns the (possibly-rewritten) action, or an error.
+ * Cheap up-front entry-shape validation. Two kinds of entry have their
+ * security-critical fields re-resolved from the SERVER-trusted catalog by id,
+ * with the caller's discarded:
+ *
+ *   - `auth: "provider"` mints a fleet-trusted, workspace-scoped service token
+ *     and ships it to the entry's URL, so a workspace admin could otherwise
+ *     forge an entry with an arbitrary url + audience/scope and exfiltrate a
+ *     fleet token or reach an in-cluster `.svc` the SSRF guard protects.
+ *   - **every brokered entry** spends the PLATFORM's broker credential to
+ *     create a connection at the operator's account, so the target the provider
+ *     is pointed at must come from the operator-published catalog. Otherwise a
+ *     workspace admin forges an entry naming any server the broker can reach and
+ *     gets a pre-authenticated, eager-started MCP source charged to the
+ *     operator. This check IS the bound: a provider may have no incidental one
+ *     (Composio happens to need a per-toolkit auth-config id declared first;
+ *     Smithery needs nothing).
+ *
+ * Returns the (possibly-rewritten) action, or an error.
  */
 async function validateRemoteOAuthInstall(
   ctx: ManageConnectorsContext,
   entry: DirectoryEntry,
   action: RemoteOAuthInstall,
 ): Promise<{ action: RemoteOAuthInstall } | { error: string }> {
-  const composioErr = validateComposioInstall(action, entry.name);
-  if (composioErr) return { error: composioErr };
   if (action.auth === "static" && !action.operatorSetup) {
     return { error: `"${entry.name}" is static-auth but missing operatorSetup config.` };
   }
@@ -2016,163 +1849,112 @@ async function validateRemoteOAuthInstall(
         error: `"${entry.name}" is not a recognized platform connector — refusing a provider-auth install from an unverified entry.`,
       };
     }
-    return { action: { ...action, url: trusted.url, providerAuth: trusted.providerAuth } };
+    const secretHeaders = validateSecretHeaders(entry.name, trusted.secretHeaders);
+    if ("error" in secretHeaders) return secretHeaders;
+    return {
+      action: {
+        ...action,
+        url: trusted.url,
+        providerAuth: trusted.providerAuth,
+        // Read back from the trusted entry, never the caller's: the header NAME
+        // decides what a fleet-trusted connection sends, and the key decides
+        // which of the workspace's secrets it sends. A forged pair is a workspace
+        // admin choosing both.
+        ...(secretHeaders.headers ? { secretHeaders: secretHeaders.headers } : {}),
+      },
+    };
   }
-  // Smithery is the same threat as `provider` and needs the same treatment: the
-  // install spends the PLATFORM's broker credential to create a connection at
-  // the operator's Smithery account, so the target server must come from the
-  // operator-published catalog, never from the caller. Otherwise a workspace
-  // admin forges an entry naming any registry server and gets a
-  // pre-authenticated, eager-started MCP source charged to the operator's
-  // account. Unlike Composio there is no incidental bound (no per-toolkit
-  // auth-config id that must be declared first), so this check IS the bound.
-  if (action.auth === "smithery") {
+  if (isBrokeredAuthKind(action.auth)) {
     const trusted = await ctx.runtime.getConnectorDirectory().catalogById(entry.id);
-    if (!trusted || trusted.auth !== "smithery" || !trusted.smithery?.server?.trim()) {
+    const config = trusted?.auth === action.auth ? brokeredCatalogConfig(trusted) : undefined;
+    if (!config) {
       return {
-        error: `"${entry.name}" is not a recognized Smithery connector — refusing a smithery-auth install from an unverified entry.`,
+        error:
+          `"${entry.name}" is not a recognized "${action.auth}" connector — ` +
+          "refusing a brokered install from an unverified entry.",
       };
     }
-    return { action: { ...action, smithery: trusted.smithery } };
+    // Replace the caller's block with the operator-published one, under the key
+    // the convention puts it at, so the wiring below reads a trusted value.
+    return { action: { ...action, [action.auth]: config } as RemoteOAuthInstall };
   }
   return { action };
 }
 
 /**
- * Scrub the Composio session's response headers for persistence: the credential
- * is attached at transport-build time by the `composio` credential provider, so
- * any header carrying it — the `x-api-key` itself, or a copy inlined elsewhere —
- * is dropped rather than persisted. Nothing written to workspace.json references
- * the secret, by value or by name.
+ * Brokered MCP wiring: ask the provider for a session and shape the result into
+ * a persistable ref + transport. Called only on the fresh-install branch —
+ * gating it on dedup means a re-click on an installed connector doesn't mint a
+ * second upstream session and orphan the prior one.
  *
- * The non-`x-api-key` branch guards a response shape we do not control: the
- * vendor could return the broker key embedded in some other header, and this
- * function is the last step before the value is persisted. Dropping is lossier
- * than the rewrite it replaces — that header is discarded rather than kept with
- * a resolvable placeholder — but keeping it would mean re-persisting an env
- * reference, which is what this seam removes. No live impact: Composio returns
- * only `x-api-key` today.
+ * Nothing here is vendor-shaped. The catalog block goes in opaque, the session
+ * comes back naming its own credential provider and carrying its own opaque
+ * coordinates, and both are persisted verbatim.
  */
-function scrubComposioHeaders(
-  headers: Record<string, string> | undefined,
-  apiKey: string,
-): Record<string, string> {
-  const extraHeaders: Record<string, string> = {};
-  for (const [k, v] of Object.entries(headers ?? {})) {
-    if (k.toLowerCase() === "x-api-key") continue;
-    if (apiKey && v.includes(apiKey)) continue;
-    extraHeaders[k] = v;
-  }
-  return extraHeaders;
-}
-
-/**
- * Composio MCP wiring (session URL + transport). Called only on the fresh-install
- * branch — gating it on dedup means a re-click on an installed connector doesn't
- * initiate a new upstream Composio session and orphan the prior one.
- *
- * The persisted transport names the `composio` credential provider rather than
- * carrying the key or an env reference to it, so the secret never sits at rest
- * AND resolution stays the provider's own business — which is what lets the
- * broker credential be declared in `nimblebrain.json` instead of the env.
- */
-async function buildComposioWiring(
-  provider: ManagedConnectorProvider,
-  action: RemoteOAuthInstall,
-  owner: ConnectorOwner,
-  entryName: string,
-): Promise<BrokeredWiring | { __err: string }> {
-  if (action.auth !== "composio" || !action.composio) {
-    // Unreachable — guards above ensure the shape. Typed for the caller's
-    // narrowing convenience.
-    return { __err: "composio wiring requested for non-composio install" };
-  }
-  const userId = provider.userId(owner);
-  let sessionMcp: { type: "http" | "sse"; url: string; headers?: Record<string, string> };
-  try {
-    sessionMcp = await provider.createSession({
-      userId,
-      toolkit: action.composio.toolkit,
-      authConfigId: composioAuthConfigId(action.composio.toolkit),
-      ...(action.composio.tools && action.composio.tools.length > 0
-        ? { tools: action.composio.tools }
-        : {}),
-    });
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return { __err: `Composio session creation failed for "${entryName}": ${msg}` };
-  }
-  const { apiKey } = validateComposioConfig();
-  const extraHeaders = scrubComposioHeaders(sessionMcp.headers, apiKey);
-  return {
-    url: sessionMcp.url,
-    transport: {
-      type: sessionMcp.type === "sse" ? "sse" : "streamable-http",
-      auth: { type: "provider", provider: COMPOSIO_CREDENTIAL_PROVIDER, config: {} },
-      ...(Object.keys(extraHeaders).length > 0 ? { headers: extraHeaders } : {}),
-    },
-  };
-}
-
-/**
- * Smithery MCP wiring (brokered session URL + transport + Authorization
- * template). Called only on the fresh-install branch, matching the Composio
- * discipline — a re-click on an installed connector must not re-upsert the
- * broker connection.
- *
- * The connection id is derived deterministically from (owner, server) inside the
- * provider, so the marker persisted here is a cache for the liveness probe, not
- * a source of truth.
- */
-async function buildSmitheryWiring(
+async function buildBrokeredWiring(
   provider: ManagedConnectorProvider,
   action: RemoteOAuthInstall,
   owner: ConnectorOwner,
   entryId: string,
   entryName: string,
 ): Promise<BrokeredWiring | { __err: string }> {
-  if (action.auth !== "smithery" || !action.smithery) {
-    // Unreachable — guards above ensure the shape. Typed for the caller's
-    // narrowing convenience.
-    return { __err: "smithery wiring requested for non-smithery install" };
+  const config = brokeredCatalogConfig(action);
+  if (!config) {
+    // Unreachable — `validateRemoteOAuthInstall` re-resolves the block from the
+    // trusted catalog and refuses when there is none. Typed for narrowing.
+    return { __err: `"${entryName}" is missing its "${action.auth}" config block.` };
   }
-  const server = action.smithery.server;
-  const userId = provider.userId(owner);
-  let sessionMcp: ManagedSession;
+  let session: ManagedSession;
   try {
-    sessionMcp = await provider.createSession({ userId, toolkit: server });
+    session = await provider.createSession({
+      userId: provider.userId(owner),
+      connectorId: entryId,
+      config,
+    });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    return { __err: `Smithery session creation failed for "${entryName}": ${msg}` };
+    return { __err: `${action.auth} session creation failed for "${entryName}": ${msg}` };
   }
 
-  // An absent coordinate is a seam-contract violation, not a benign default:
-  // an empty connectionId still leaves `ref.smithery` truthy, so the revalidator
-  // would claim the connector and answer `indeterminate` forever while uninstall
-  // silently skipped teardown. Fail the install instead.
-  const connectionId = sessionMcp.providerRef?.connectionId ?? "";
-  const namespace = sessionMcp.providerRef?.namespace ?? "";
-  const baseUrl = sessionMcp.providerRef?.baseUrl ?? "";
-  if (!connectionId || !namespace || !baseUrl) {
+  // A coordinate the provider NAMED but left blank is worse than one it omitted:
+  // the ref still reads as brokered, so the revalidator claims it and answers
+  // `indeterminate` forever while uninstall silently skips teardown. Key-agnostic
+  // by necessity — the kernel does not know which coordinates this provider
+  // needs, only that a named one must carry a value.
+  for (const [key, value] of Object.entries(session.providerRef ?? {})) {
+    if (value) continue;
     return {
       __err:
-        `Smithery session for "${entryName}" returned no connection coordinates — ` +
+        `${action.auth} session for "${entryName}" returned an empty "${key}" coordinate — ` +
         "refusing to persist a connector the revalidator and uninstall cannot address.",
     };
   }
 
   return {
-    url: sessionMcp.url,
+    url: session.url,
     transport: {
-      type: sessionMcp.type === "sse" ? "sse" : "streamable-http",
-      // Name the credential, don't point at where it lives: the `smithery`
-      // credential provider attaches the bearer at transport-build time, so
-      // neither the secret nor an env var's NAME lands in workspace.json.
-      auth: { type: "provider", provider: SMITHERY_CREDENTIAL_PROVIDER, config: {} },
+      type: session.type === "sse" ? "sse" : "streamable-http",
+      // Name the credential, don't point at where it lives: the provider's
+      // registered transport-credential attaches the secret at transport-build
+      // time, so neither it nor an env var's NAME lands in workspace.json.
+      ...(session.credentialProvider
+        ? {
+            auth: {
+              type: "provider" as const,
+              provider: session.credentialProvider,
+              config: {},
+            },
+          }
+        : {}),
+      ...(session.headers && Object.keys(session.headers).length > 0
+        ? { headers: session.headers }
+        : {}),
     },
-    // The provider hands back the coordinates it minted; the tool layer stores
-    // them verbatim and never parses the broker's id format itself.
-    smithery: { connectorId: entryId, connectionId, namespace, baseUrl },
+    brokered: {
+      provider: action.auth,
+      connectorId: entryId,
+      ...(session.providerRef ? { providerRef: session.providerRef } : {}),
+    },
   };
 }
 
@@ -2199,8 +1981,11 @@ async function loadStaticOAuthClient(
       __err: `"${entry.name}" needs operator setup before install. Configure the OAuth app at ${setup.portalUrl} and use Set up.`,
     };
   }
-  const credStore = new FileCredentialStore(ctx.runtime.getWorkDir());
-  const secret = await credStore.get(wsId, setup.clientSecretKey);
+  const credStore = ctx.runtime.getCredentialStore();
+  const secret = await credStore.get({ kind: "workspace", wsId }, setup.clientSecretKey, {
+    caller: "connector-tools:install",
+    purpose: `verify operator client_secret is seeded for ${entry.name}`,
+  });
   if (!secret) {
     return {
       __err: `Operator client_secret for "${entry.name}" is missing — re-run Set up to seed it.`,
@@ -2210,14 +1995,13 @@ async function loadStaticOAuthClient(
 }
 
 /**
- * Build the BundleRef from the resolved wiring (composio session URL +
+ * Build the BundleRef from the resolved wiring (a brokered session URL +
  * transport, or static client credentials). Constructed on the fresh-install
  * branch only; the dedup branches re-use the existing persisted ref.
  */
 function buildRemoteBundleRef(
   action: RemoteOAuthInstall,
   serverName: string,
-  entryId: string,
   trustedUi: ConnectorCatalogEntry["ui"],
   brokeredWiring: BrokeredWiring | undefined,
   staticOAuthClient: { clientId: string; clientSecretKey: string } | undefined,
@@ -2232,9 +2016,9 @@ function buildRemoteBundleRef(
     // credential class here: provider + config are copied VERBATIM from the
     // (operator-authored) catalog entry — never tenant input — which is what
     // makes a self-installable platform connector safe. That provenance is
-    // specific to THIS branch: the composio branch above also yields provider
-    // auth, but from a vendor session response, so `provider` auth alone is not
-    // a catalog-provenance signal (see `isMintedFleetSource`).
+    // specific to THIS branch: a brokered session also yields provider auth,
+    // but from a broker's session response, so `provider` auth alone is not a
+    // catalog-provenance signal (see `isMintedFleetSource`).
     transport:
       brokeredWiring?.transport ??
       (action.auth === "provider" && action.providerAuth
@@ -2245,6 +2029,13 @@ function buildRemoteBundleRef(
               provider: action.providerAuth.provider,
               config: action.providerAuth.config,
             },
+            // The workspace's own secrets, as references. They ride alongside the
+            // provider credential rather than replacing it: `auth` is how the
+            // connection proves who is calling, these are what that caller may
+            // open. The transport resolves each one per connection at the
+            // connection's workspace scope, so two workspaces installing this
+            // same entry send different values and a rotation is a `put`.
+            ...(action.secretHeaders ? { headers: action.secretHeaders } : {}),
           }
         : { type: action.transportType }),
     // Post-Stage-2: every ref's oauthScope is "workspace". The install targets
@@ -2262,13 +2053,11 @@ function buildRemoteBundleRef(
           },
         }
       : {}),
-    // Composio marker — carries the catalog id so the lifecycle's boot-time
-    // state derivation can probe the right `connection.json` path under
-    // `credentials/composio/<connectorId>/`.
-    ...(action.auth === "composio" ? { composio: { connectorId: entryId } } : {}),
-    // Smithery marker — the derived broker connection coordinates, so the
-    // liveness probe can read the connection's status directly.
-    ...(brokeredWiring?.smithery ? { smithery: brokeredWiring.smithery } : {}),
+    // Brokered marker: who brokered this install, which catalog entry it came
+    // from (the persisted url is a per-install session URL, so a url→catalog
+    // lookup misses), and the provider's own opaque coordinates for its probe
+    // and teardown.
+    ...(brokeredWiring ? { brokered: brokeredWiring.brokered } : {}),
     // Host UI placement from the operator-trusted catalog (see `trustedUi`).
     // Persisted on the ref so the placement survives restarts; the lifecycle
     // registers + re-validates it via `startBundleSource` → `instance.ui`.
@@ -2283,11 +2072,11 @@ function buildRemoteBundleRef(
  *
  * Dedups primarily on `serverName` — the canonical lifecycle key, derived from
  * `entry.id` and stable across installs. Matching on `b.url` would miss
- * composio-backed bundles whose persisted `b.url` is the per-install session URL
- * and never equals the catalog placeholder `action.url`. Falls back to URL match
+ * brokered bundles whose persisted `b.url` is the per-install session URL and
+ * never equals the catalog placeholder `action.url`. Falls back to URL match
  * for legacy bundles persisted before slugify-on-install (no `serverName` field).
  */
-function handleDuplicateInstall(
+async function handleDuplicateInstall(
   ctx: ManageConnectorsContext,
   wsId: string,
   ws: Workspace,
@@ -2295,7 +2084,7 @@ function handleDuplicateInstall(
   action: RemoteOAuthInstall,
   serverName: string,
   isPersonalTarget: boolean,
-): ToolResult | null {
+): Promise<ToolResult | null> {
   const lifecycle = ctx.runtime.getLifecycle();
   const dup = ws.bundles.find((b) => {
     if (!("url" in b)) return false;
@@ -2309,7 +2098,7 @@ function handleDuplicateInstall(
   // alreadyInstalled — the latter would skip seedInstance and fail the next
   // OAuth initiate.
   if (!lifecycle.getInstance(dupServerName, wsId)) {
-    lifecycle.seedInstance(dupServerName, action.url, dup, undefined, wsId);
+    await lifecycle.seedInstance(dupServerName, action.url, dup, undefined, wsId);
     lifecycle.notifyInstalled(dupServerName, wsId);
     return {
       content: textContent(`Reattached "${entry.name}" (recovered orphan entry).`),
@@ -2341,10 +2130,10 @@ function handleDuplicateInstall(
 }
 
 /**
- * Resolve the fresh-install wiring for a remote-OAuth entry: the Composio
- * session (composio-auth) or the operator OAuth client (static-auth). Deferred
- * until after dedup so a duplicate-install click never burns a Composio session
- * or reads the credential. Returns `{}` for auth kinds needing neither.
+ * Resolve the fresh-install wiring for a remote-OAuth entry: the brokered
+ * session, or the operator OAuth client (static-auth). Deferred until after
+ * dedup so a duplicate-install click never mints a brokered session or reads
+ * the credential. Returns `{}` for auth kinds needing neither.
  */
 async function resolveInstallWiring(
   ctx: ManageConnectorsContext,
@@ -2359,22 +2148,10 @@ async function resolveInstallWiring(
     }
   | { error: string }
 > {
-  if (action.auth === "composio") {
-    const provider = composioProvider(ctx);
-    if (!provider) return { error: COMPOSIO_NOT_CONFIGURED };
-    const brokeredWiring = await buildComposioWiring(
-      provider,
-      action,
-      { type: "workspace", wsId },
-      entry.name,
-    );
-    if ("__err" in brokeredWiring) return { error: brokeredWiring.__err };
-    return { brokeredWiring };
-  }
-  if (action.auth === "smithery") {
-    const provider = smitheryProvider(ctx);
-    if (!provider) return { error: SMITHERY_NOT_CONFIGURED };
-    const brokeredWiring = await buildSmitheryWiring(
+  if (isBrokeredAuthKind(action.auth)) {
+    const provider = providerFor(ctx, action.auth);
+    if (!provider) return { error: brokerNotConfiguredMessage(entry.name, action.auth) };
+    const brokeredWiring = await buildBrokeredWiring(
       provider,
       action,
       { type: "workspace", wsId },
@@ -2393,7 +2170,7 @@ async function resolveInstallWiring(
 }
 
 /**
- * Eager-start a freshly-installed static-credential source (composio / provider)
+ * Eager-start a freshly-installed static-credential source (brokered / provider)
  * so the tool list is available immediately, rather than waiting for the next
  * platform boot. Returns a warning string on failure — the install itself has
  * still succeeded (BundleRef persisted, seedInstance run), and the next Connect
@@ -2408,7 +2185,7 @@ async function eagerStartRemoteSource(
   action: RemoteOAuthInstall,
 ): Promise<string | undefined> {
   try {
-    await startBundleSource(ref, wsRegistry, ctx.runtime.getEventSink(), undefined, {
+    await startBundleSource(ref, wsRegistry, ctx.runtime.getEventSink(), {
       allowInsecureRemotes: ctx.runtime.getAllowInsecureRemotes(),
       wsId,
       workDir: ctx.runtime.getWorkDir(),
@@ -2442,122 +2219,6 @@ function remoteInstallMessage(
   return isPersonalTarget
     ? `Installed "${entryName}" in your personal workspace.`
     : `Installed "${entryName}" in this workspace.`;
-}
-
-/**
- * Mpak (stdio) install. The bundle is fetched from whichever mpak
- * registry the SDK is pointed at, spawned as a subprocess, and
- * registered in the workspace registry via the shared
- * `installBundleInWorkspace` primitive.
- *
- * Workspace-scope only — every stdio bundle is workspace-shared
- * today. A future per-user mpak install would need its own
- * dispatcher branch.
- */
-async function handleInstallMpak(
-  ctx: ManageConnectorsContext,
-  wsId: string | null,
-  entry: DirectoryEntry,
-): Promise<ToolResult> {
-  if (!wsId) return errResult("Workspace context required for stdio install.");
-  if (entry.install.kind !== "mpak-bundle") {
-    return errResult("invariant violated: handleInstallMpak requires mpak-bundle entry");
-  }
-  const bundleName = entry.install.package;
-
-  const ws = await ctx.runtime.getWorkspaceStore().get(wsId);
-  if (!ws) return errResult(`Workspace "${wsId}" not found.`);
-
-  const lifecycle = ctx.runtime.getLifecycle();
-  const registry = ctx.runtime.getRegistryForWorkspace(wsId);
-
-  // Idempotency: workspace.json already has this bundle. If the
-  // lifecycle still tracks it, surface alreadyInstalled. If not,
-  // fall through and let installBundleInWorkspace re-register —
-  // this self-heals the case where uninstall left a stale entry.
-  // Honors the persisted `serverName` (canonical reverse-DNS form,
-  // set at install time) so legacy short-slug installs and new
-  // canonical-form installs both resolve correctly.
-  const already = ws.bundles.find((b) => "name" in b && b.name === bundleName);
-  if (already) {
-    const existingServerName =
-      ("name" in already && already.serverName) || deriveServerName(bundleName);
-    if (lifecycle.getInstance(existingServerName, wsId)) {
-      return {
-        content: textContent(`"${entry.name}" already installed.`),
-        structuredContent: {
-          ok: true,
-          alreadyInstalled: true,
-          serverName: existingServerName,
-          scope: "workspace",
-        },
-        isError: false,
-      };
-    }
-  }
-
-  // Install does NOT force-refresh the shared mpak cache. App *version* is an
-  // org-global concern: the cache is keyed by name only (no version) and shared
-  // across every workspace, so a force-pull here would let a workspace admin
-  // silently bump every workspace's version on its next respawn — bypassing the
-  // org_admin `manage_apps.upgrade` gate. Instead, a ws_admin install adopts
-  // whatever version the org already has cached; a first-ever install cold-
-  // downloads the current release via `prepareServer`. The original "stuck on a
-  // bad version" incident stays cured WITHOUT a force-pull here: a gate-failing
-  // cached manifest self-heals on spawn (`startBundleSource` force-repulls on a
-  // HostManifestGateError, on the install path too).
-
-  // Persist the slugified canonical reverse-DNS form as the BundleRef's
-  // serverName so this install — and every lookup that follows — uses
-  // the same opaque, URL-safe, collision-free identifier the catalog
-  // source emits. Matches the remote-OAuth path's slugify call.
-  const ref: BundleRef = { name: bundleName, serverName: slugifyServerName(entry.id) };
-  let inventoryEntry: Awaited<ReturnType<typeof installBundleInWorkspace>>;
-  try {
-    inventoryEntry = await installBundleInWorkspace(
-      wsId,
-      ref,
-      registry,
-      ctx.runtime.getEventSink(),
-      ctx.runtime.getConfigPath(),
-      {
-        allowInsecureRemotes: ctx.runtime.getAllowInsecureRemotes(),
-        workDir: ctx.runtime.getWorkDir(),
-        bundleMcp: ctx.runtime.getBundleMcpDeps(wsId),
-      },
-    );
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return errResult(`Failed to install "${entry.name}": ${msg}`);
-  }
-
-  lifecycle.seedInstance(
-    inventoryEntry.serverName,
-    bundleName,
-    ref,
-    inventoryEntry.meta ?? undefined,
-    wsId,
-    inventoryEntry.dataDir,
-  );
-  // Register placements + emit bundle.installed so the web shell's
-  // sidebar refreshes without a reboot. seedInstance is intentionally
-  // state-only; the side effects live here.
-  lifecycle.notifyInstalled(inventoryEntry.serverName, wsId);
-
-  if (!already) {
-    await ctx.runtime.getWorkspaceStore().update(wsId, { bundles: [...ws.bundles, ref] });
-  }
-
-  return {
-    content: textContent(`Installed "${entry.name}" in this workspace.`),
-    structuredContent: {
-      ok: true,
-      alreadyInstalled: false,
-      serverName: inventoryEntry.serverName,
-      scope: "workspace",
-    },
-    isError: false,
-  };
 }
 
 async function handleDisconnect(
@@ -2653,22 +2314,31 @@ async function handleUninstall(
     };
   }
   const instance = lifecycle.getInstance(serverName, wsId);
-  const ref = instance?.ref;
-  const isUrlBundle = !!ref && "url" in ref;
 
   // Revoke OAuth tokens upstream first when applicable.
-  const revokeResult = isUrlBundle
+  const revokeResult = instance?.ref
     ? await revokeUrlBundleTokens(lifecycle, ctx, serverName, wsId)
     : {};
 
   try {
     const registry = ctx.runtime.getRegistryForWorkspace(wsId);
-    // Capture the manifest name BEFORE lifecycle.uninstall — the instance
-    // reference is still valid afterwards but the lifecycle map drops it, and we
-    // need the name to strip the matching workspace.json entry.
-    const installedBundleName = instance?.bundleName;
     await lifecycle.uninstall(serverName, registry, wsId);
-    await stripUninstalledBundleEntry(ctx, wsId, serverName, installedBundleName);
+    await stripUninstalledBundleEntry(ctx, wsId, serverName);
+    // Retire every hook this connector held. The door independently refuses a
+    // delivery for an uninstalled connector — it needs the connector's base URL
+    // to have anywhere to forward to — so this is not the only thing that stops
+    // one. It is what keeps a later reinstall from resurrecting a key id whose
+    // URL has been in the wild the whole time.
+    await revokeHooksForConnector(ctx.runtime.getWorkspaceStore(), wsId, serverName);
+    // And reset the outbox position. The cursor is the emitting server's own
+    // opaque value, carrying an epoch it may reset while the connector is gone,
+    // so a reinstall resuming from a stale one would ask a question its outbox
+    // can no longer answer. Bootstrap costs only what was emitted while nobody
+    // was installed to receive it.
+    await clearCursor(ctx.runtime.getWorkspaceStore(), wsId, serverName);
+    // And drop the tool-set watch, whose closure would otherwise hold a source
+    // nothing routes to any more.
+    stopWatchingHooks(wsId, serverName);
     // Drop tool permissions for this connector — they have no meaning
     // once the bundle is gone.
     await ctx.runtime
@@ -2710,28 +2380,24 @@ async function revokeUrlBundleTokens(
 }
 
 /**
- * Strip the just-uninstalled bundle from `workspace.json#bundles[]`.
+ * Strip the just-uninstalled connector from `workspace.json#bundles[]`.
  * `lifecycle.uninstall` clears its own `instances` map and the legacy global
- * `nimblebrain.json`, but not the workspace record — this removes both URL
- * bundles and named entries.
+ * `nimblebrain.json`, but not the workspace record.
  */
 async function stripUninstalledBundleEntry(
   ctx: ManageConnectorsContext,
   wsId: string,
   serverName: string,
-  installedBundleName: string | undefined,
 ): Promise<void> {
   const wsAfter = await ctx.runtime.getWorkspaceStore().get(wsId);
   if (!wsAfter) return;
+  // `deriveServerName` needs a string; a legacy or malformed row has no `url`,
+  // and throwing here would fail the uninstall of a *different*, healthy
+  // connector. Such a row matches nothing, so it is retained untouched.
   const filtered = wsAfter.bundles.filter((b) => {
-    if ("url" in b) {
-      const sn = b.serverName ?? deriveServerName(b.url);
-      return sn !== serverName;
-    }
-    if ("name" in b) {
-      return b.name !== installedBundleName && b.name !== serverName;
-    }
-    return true;
+    if (b.serverName) return b.serverName !== serverName;
+    if (typeof b.url !== "string" || b.url.length === 0) return true;
+    return deriveServerName(b.url) !== serverName;
   });
   if (filtered.length !== wsAfter.bundles.length) {
     await ctx.runtime.getWorkspaceStore().update(wsId, { bundles: filtered });
@@ -3012,14 +2678,13 @@ async function handleSetPermissions(
 /**
  * `list_personal_catalog` — the curated set of connectors offered for PERSONAL
  * (identity-plane) connection: operator-flagged `personal` connectors, narrowed
- * to what `handleInstallIdentity` will actually accept (DCR + composio
- * remote-oauth), minus the ones the caller already installed on their identity.
- * The read behind the profile "Add a connector" picker.
+ * to what `handleInstallIdentity` will actually accept, minus the ones the
+ * caller already installed on their identity. The read behind the profile "Add a
+ * connector" picker.
  *
- * The auth predicate MUST stay in lockstep with `handleInstallIdentity`'s gate
- * (static/provider are workspace/platform-bound and rejected there), so the
- * offered set is a subset of the acceptable set — the picker can never present a
- * connector the install then refuses.
+ * Both sides read the same predicate ({@link identityInstallableAuth}), so the
+ * offered set is a subset of the acceptable set by construction — the picker can
+ * never present a connector the install then refuses.
  */
 async function handleListPersonalCatalog(
   ctx: ManageConnectorsContext,
@@ -3035,14 +2700,16 @@ async function handleListPersonalCatalog(
   const installed = await new IdentityConnectorStore({ workDir: ctx.runtime.getWorkDir() }).list(
     callerId,
   );
-  const installedServerNames = new Set(installed.map((ref) => serverNameFromRef(ref)));
+  const installedServerNames = new Set(
+    installed.map((ref) => serverNameFromRef(ref)).filter((n): n is string => n !== null),
+  );
 
   const catalog = entries.filter(
     (e) =>
       e.personal === true &&
       e.install.kind === "remote-oauth" &&
       // Lockstep with handleInstallIdentity's gate — offered ⊆ acceptable.
-      (e.install.auth === "dcr" || e.install.auth === "composio") &&
+      identityInstallableAuth(ctx, e.install.auth) &&
       !installedServerNames.has(slugifyServerName(e.id)),
   );
 
@@ -3082,51 +2749,68 @@ async function handleListPersonalConnectors(
   const workDir = ctx.runtime.getWorkDir();
   const owner = { type: "user", userId: callerId } as const;
   const lifecycle = ctx.runtime.getLifecycle();
-  const connectors = refs.map((ref) => {
+  // Resolve names first, in their own pass: a stored row this build cannot
+  // name is dropped here rather than rendered under a name no Connect route
+  // resolves. Keeping it out of the projection below leaves that closure
+  // exactly as it was.
+  const named = refs.flatMap((ref) => {
     const serverName = serverNameFromRef(ref);
-    const cat = byServerName.get(serverName);
-    // Auth type + (for composio) the catalog connector id are read from the
-    // stored ref, not the catalog — they're what the Connect route keys on and
-    // must survive a catalog entry being renamed or removed. The composio marker
-    // (`{composio:{connectorId}}`) is stamped at install by `buildRemoteBundleRef`;
-    // its absence means DCR.
-    const composioMarker = (ref as { composio?: { connectorId: string } }).composio;
-    // Connected = authenticated, derived from PERSISTED credentials (tokens.json
-    // for DCR, connection.json for composio) — which survive a pod restart — OR
-    // the source already warm in this pod. Presence, NOT validity: token
-    // expiry/revocation detection is the deferred reauth slice. Persistence
-    // matters because `isIdentityConnectorRunning` is same-pod-only: on a fresh
-    // pod an authed connector would otherwise report `not_authenticated` and offer
-    // a Connect that then fails (it's already authed). The agent lazy-starts the
-    // source from these same credentials, so an authed-but-cold connector is
-    // genuinely usable.
-    const authed = composioMarker
-      ? hasPersistedComposioConnection(workDir, owner, composioMarker.connectorId)
-      : hasMcpOAuthTokens(workDir, owner, serverName);
-    return {
-      serverName,
-      displayName: cat?.name ?? serverName,
-      description: cat?.description ?? null,
-      // Brand icon from the operator-trusted catalog (same source the "Add a
-      // connector" picker renders), so an installed connector shows its icon too.
-      ...(cat?.iconUrl ? { iconUrl: cat.iconUrl } : {}),
-      // The Connect route differs by auth: DCR keys on serverName
-      // (`/v1/mcp-auth/initiate-identity`); composio keys on the connectorId
-      // (`/v1/composio-auth/initiate-identity`). The profile UI branches on this.
-      auth: composioMarker ? ("composio" as const) : ("dcr" as const),
-      ...(composioMarker ? { connectorId: composioMarker.connectorId } : {}),
-      // `authed` carries the common case; the warmth check is a deliberate
-      // backstop, not redundancy — `warm` doesn't strictly imply `authed` (creds
-      // can be deleted after the source warms), and it also catches a future
-      // personal-connector auth type whose creds this `authed` derivation doesn't
-      // yet know to look for. A live source is genuinely serving ⇒ `running`.
-      state:
-        authed || lifecycle.isIdentityConnectorRunning(callerId, serverName)
-          ? ("running" as const)
-          : ("not_authenticated" as const),
-      grantedWorkspaces: grantsByConnector[serverName] ?? [],
-    };
+    if (serverName !== null) return [{ ref, serverName }];
+    log.warn(
+      `[connectors] personal connector row names no server (url: ${JSON.stringify(ref.url)}) — omitted from the listing.`,
+    );
+    return [];
   });
+  const connectors = await Promise.all(
+    named.map(async ({ ref, serverName }) => {
+      const cat = byServerName.get(serverName);
+      // Auth kind + (for a brokered connector) the catalog connector id are read
+      // from the stored ref, not the catalog — they're what the Connect route keys
+      // on and must survive a catalog entry being renamed or removed. The brokered
+      // marker is stamped at install by `buildRemoteBundleRef`; its absence means
+      // DCR.
+      const brokered = brokeredRef(ref);
+      // Connected = authenticated, derived from PERSISTED credentials (the stored
+      // token record for DCR, whatever the provider records for a brokered one) — which survive
+      // a pod restart — OR the source already warm in this pod. Presence, NOT
+      // validity: token expiry/revocation detection is the deferred reauth slice.
+      // Persistence matters because `isIdentityConnectorRunning` is same-pod-only:
+      // on a fresh pod an authed connector would otherwise report
+      // `not_authenticated` and offer a Connect that then fails (it's already
+      // authed). The agent lazy-starts the source from these same credentials, so
+      // an authed-but-cold connector is genuinely usable.
+      const authed = brokered
+        ? (ctx.runtime
+            .getManagedConnectorRegistry()
+            .get(brokered.provider)
+            ?.hasConnection?.({ owner, brokered, workDir }) ?? false)
+        : await hasMcpOAuthTokens(workDir, owner, serverName);
+      return {
+        serverName,
+        displayName: cat?.name ?? serverName,
+        description: cat?.description ?? null,
+        // Brand icon from the operator-trusted catalog (same source the "Add a
+        // connector" picker renders), so an installed connector shows its icon too.
+        ...(cat?.iconUrl ? { iconUrl: cat.iconUrl } : {}),
+        // The Connect route differs by auth: DCR keys on serverName
+        // (`/v1/mcp-auth/initiate-identity`); a brokered connector keys on the
+        // catalog connector id and goes through its provider's own initiate route.
+        // The profile UI branches on this.
+        auth: brokered ? brokered.provider : "dcr",
+        ...(brokered ? { connectorId: brokered.connectorId } : {}),
+        // `authed` carries the common case; the warmth check is a deliberate
+        // backstop, not redundancy — `warm` doesn't strictly imply `authed` (creds
+        // can be deleted after the source warms), and it also catches a future
+        // personal-connector auth type whose creds this `authed` derivation doesn't
+        // yet know to look for. A live source is genuinely serving ⇒ `running`.
+        state:
+          authed || lifecycle.isIdentityConnectorRunning(callerId, serverName)
+            ? ("running" as const)
+            : ("not_authenticated" as const),
+        grantedWorkspaces: grantsByConnector[serverName] ?? [],
+      };
+    }),
+  );
   return {
     content: textContent(`${connectors.length} personal connector(s).`),
     structuredContent: { connectors },
@@ -3324,9 +3008,13 @@ async function handleSetupOperator(
   // back. The reverse case (workspace.json fails after the credential
   // landed) needs explicit rollback so we don't leave an orphan
   // secret pointing at a clientId that was never recorded.
-  const credStore = new FileCredentialStore(ctx.runtime.getWorkDir());
-  const hadPriorSecret = (await credStore.get(wsId, clientSecretKey)) !== null;
-  await credStore.put(wsId, clientSecretKey, clientSecret.trim());
+  const credStore = ctx.runtime.getCredentialStore();
+  const hadPriorSecret =
+    (await credStore.get({ kind: "workspace", wsId }, clientSecretKey, {
+      caller: "connector-tools:setup_operator",
+      purpose: "decide whether a failed workspace.json write may roll the secret back",
+    })) !== null;
+  await credStore.put({ kind: "workspace", wsId }, clientSecretKey, clientSecret.trim());
 
   // Stamp the public clientId + audit trail into workspace.json.
   const apps: NonNullable<Workspace["oauthOperatorApps"]> = { ...(ws.oauthOperatorApps ?? {}) };
@@ -3355,7 +3043,7 @@ async function persistOperatorApp(
   ctx: ManageConnectorsContext,
   wsId: string,
   apps: NonNullable<Workspace["oauthOperatorApps"]>,
-  credStore: FileCredentialStore,
+  credStore: CredentialStore,
   clientSecretKey: string,
   hadPriorSecret: boolean,
 ): Promise<void> {
@@ -3364,7 +3052,7 @@ async function persistOperatorApp(
   } catch (err) {
     if (!hadPriorSecret) {
       try {
-        await credStore.delete(wsId, clientSecretKey);
+        await credStore.delete({ kind: "workspace", wsId }, clientSecretKey);
       } catch {
         // best-effort
       }
@@ -3427,8 +3115,8 @@ async function handleRemoveOperatorSetup(
 
   const clientSecretKey = entry.operatorSetup?.clientSecretKey;
   if (clientSecretKey) {
-    const credStore = new FileCredentialStore(ctx.runtime.getWorkDir());
-    await credStore.delete(wsId, clientSecretKey).catch(() => {});
+    const credStore = ctx.runtime.getCredentialStore();
+    await credStore.delete({ kind: "workspace", wsId }, clientSecretKey).catch(() => {});
   }
 
   return {
@@ -3438,255 +3126,112 @@ async function handleRemoveOperatorSetup(
   };
 }
 
-/**
- * Resolve the bundle manifest's `user_config` schema for a workspace-
- * installed stdio bundle, with admin-gating built in. Returns the
- * BundleInstance + schema on success, or a `ToolResult` error to forward.
- *
- * Centralizes the four checks every credential-write action must do
- * (auth, ws context, admin role, bundle installed + schema present) so
- * `set_user_config` / `clear_user_config` stay focused on their write
- * step and don't drift in their guards.
- */
-async function resolveBundleSchema(
+// ── Workspace secrets ───────────────────────────────────────────────
+//
+// The operator surface on the credential store's WORKSPACE scope: seed a key,
+// remove one, list what is set. Instance scope is deliberately absent — those
+// are the deployment's own keys (LLM providers, brokers, the IdP) and belong to
+// whoever can edit `nimblebrain.json` or reach the CLI, not to a workspace admin
+// with a chat session.
+//
+// No action returns a value, ever. `list_secret_keys` answers "is it set, and
+// when was it last written" because that is the whole of what an operator needs
+// to know a reference will resolve; returning the secret would put every
+// workspace's keys one tool call from a conversation transcript.
+
+/** Resolve and admin-gate the workspace a secret action targets. */
+async function requireSecretAdmin(
   ctx: ManageConnectorsContext,
   wsId: string | null,
   identity: UserIdentity | null,
-  serverName: string,
-): Promise<
-  | { ok: true; bundleName: string; schema: Record<string, UserConfigFieldDef> }
-  | { ok: false; result: ToolResult }
-> {
-  if (!wsId) return { ok: false, result: errResult("Workspace context required.") };
-  if (!serverName) return { ok: false, result: errResult("serverName is required.") };
-  if (!identity) return { ok: false, result: errResult("Authentication required.") };
-
+  verb: string,
+): Promise<{ wsId: string } | ToolResult> {
+  if (!wsId) return errResult("Workspace context required.");
+  if (!identity) return errResult("Authentication required.");
   const ws = await ctx.runtime.getWorkspaceStore().get(wsId);
-  if (!ws) return { ok: false, result: errResult(`Workspace "${wsId}" not found.`) };
+  if (!ws) return errResult(`Workspace "${wsId}" not found.`);
   if (!isWorkspaceAdmin(ws, identity)) {
     return {
-      ok: false,
-      result: {
-        content: textContent("Workspace admin role required to manage bundle credentials."),
-        structuredContent: { error: "permission_denied" },
-        isError: true,
-      },
+      content: textContent(`Workspace admin role required to ${verb} workspace secrets.`),
+      structuredContent: { error: "permission_denied" },
+      isError: true,
     };
   }
-
-  const lifecycle = ctx.runtime.getLifecycle();
-  const instance = lifecycle.getInstance(serverName, wsId);
-  if (!instance) {
-    return { ok: false, result: errResult(`Bundle "${serverName}" not installed in workspace.`) };
-  }
-
-  const mpakHome = join(ctx.runtime.getWorkDir(), "apps");
-  const mpak = getMpak(mpakHome);
-  // Same manifest-resolution rules as handleListInstalled — name-
-  // installed bundles read from the mpak cache, path-installed
-  // (Synapse apps in local dev) read from `<configKey>/manifest.json`.
-  const manifest = await readBundleManifest(mpak, instance);
-  const schema = manifest?.user_config;
-  if (!schema || Object.keys(schema).length === 0) {
-    return {
-      ok: false,
-      result: errResult(`Bundle "${serverName}" declares no user_config fields.`),
-    };
-  }
-  return { ok: true, bundleName: instance.bundleName, schema };
+  return { wsId };
 }
 
 /**
- * Probe the workspace credential file for which `user_config` fields
- * currently have non-empty stored values. Returns `{ key: boolean }`
- * keyed on the schema's field names — never the values themselves.
+ * `set_secret` — write a workspace secret, creating or replacing it.
+ *
+ * Replacing is the rotation path: a `put` on the same key is picked up by the
+ * next connection that resolves a reference to it, with no config edit and no
+ * restart. So there is no separate `rotate_secret` action; there is nothing for
+ * it to do that this does not.
  */
-async function probeUserConfigPopulated(
-  runtime: Runtime,
-  wsId: string,
-  bundleName: string,
-  schema: Record<string, UserConfigFieldDef>,
-): Promise<Record<string, boolean>> {
-  const stored = (await runtime.getWorkspaceContext(wsId).getCredentials(bundleName)) ?? {};
-  const out: Record<string, boolean> = {};
-  for (const key of Object.keys(schema)) {
-    const v = stored[key];
-    out[key] = typeof v === "string" && v.length > 0;
-  }
-  return out;
-}
-
-/**
- * Write or clear individual `user_config` fields on a stdio bundle's
- * workspace credential file. Per-field semantics:
- *
- *   - Field present in `fields`, value non-empty → save.
- *   - Field present in `fields`, value empty string → clear that one field.
- *   - Field absent from `fields` → leave existing value untouched.
- *
- * Unknown field names (anything not in the manifest's `user_config`)
- * are rejected up front (default-deny). Each individual save/clear is
- * already atomic via `withFileLock`; running them in sequence within a
- * single tool call is the simplest "no half-applied state" we can offer
- * without restructuring the credential primitive's API. Sequential is
- * safe because the lock serializes per-file.
- *
- * Admin-gated. Returns the post-write `populated` map so the UI can
- * reflect new state without a follow-up list_installed round-trip.
- */
-async function handleSetUserConfig(
+async function handleSetSecret(
   ctx: ManageConnectorsContext,
   wsId: string | null,
   identity: UserIdentity | null,
-  serverName: string,
-  fieldsInput: Record<string, unknown>,
+  key: string,
+  value: string,
 ): Promise<ToolResult> {
-  const resolved = await resolveBundleSchema(ctx, wsId, identity, serverName);
-  if (!resolved.ok) return resolved.result;
-  const { bundleName, schema } = resolved;
-  // Unsafe to assert inside the closure result type guard, but wsId is
-  // checked in resolveBundleSchema — re-narrow for the rest of the body.
-  if (!wsId) return errResult("Workspace context required.");
-
-  // Default-deny on unknown keys. Reject the whole batch — partial
-  // success on a typo would leave the writer guessing which fields took.
-  const unknown = Object.keys(fieldsInput).filter((k) => !(k in schema));
-  if (unknown.length > 0) {
+  const gate = await requireSecretAdmin(ctx, wsId, identity, "set");
+  if ("content" in gate) return gate;
+  if (!key) return errResult("key is required.");
+  if (value.trim() === "") {
     return errResult(
-      `Unknown user_config field(s) for "${serverName}": ${unknown.join(", ")}. ` +
-        `Allowed: ${Object.keys(schema).join(", ")}.`,
+      "value is required. To remove a secret use delete_secret — storing a blank " +
+        "value would make a reference resolve to an empty header instead of failing.",
     );
   }
-
-  // Type-coerce values. The JSON schema declares `string`, but defend
-  // against a misbehaving caller passing other primitives — anything
-  // non-string gets rejected explicitly rather than coerced silently.
-  const writes: Array<{ key: string; value: string }> = [];
-  for (const [key, raw] of Object.entries(fieldsInput)) {
-    if (typeof raw !== "string") {
-      return errResult(`Field "${key}" must be a string (got ${typeof raw}).`);
-    }
-    writes.push({ key, value: raw });
+  try {
+    await ctx.runtime.getCredentialStore().put({ kind: "workspace", wsId: gate.wsId }, key, value);
+  } catch (err) {
+    return errResult(err instanceof Error ? err.message : String(err));
   }
-
-  const credentialStore = ctx.runtime.getWorkspaceContext(wsId).getCredentialStore();
-  for (const { key, value } of writes) {
-    if (value.length === 0) {
-      // Empty string = clear that single field. Use the dedicated
-      // primitive so the key is removed from the credential file
-      // (rather than persisted as `{ "key": "" }` which would still
-      // resolve as "configured" in shape probes that check
-      // key-presence).
-      await credentialStore.clear(bundleName, key);
-    } else {
-      await credentialStore.save(bundleName, key, value);
-    }
-  }
-
-  // Mode 1 (env_inject) bundles only read user_config at spawn — env
-  // vars are baked in at fork time. Saving to the credential file is
-  // necessary but not sufficient; without a respawn the running
-  // subprocess keeps using whatever it was launched with. Respawn so the
-  // post-write state reflects the new credentials.
-  const respawn = await respawnBundleAfterCredentialChange(ctx, wsId, bundleName, serverName);
-
-  const populated = await probeUserConfigPopulated(ctx.runtime, wsId, bundleName, schema);
   return {
-    content: textContent(`Updated ${writes.length} field(s) for "${serverName}".`),
-    structuredContent: { ok: true, serverName, populated, respawn },
+    content: textContent(`Stored secret "${key}".`),
+    structuredContent: { ok: true, key },
     isError: false,
   };
 }
 
-/**
- * Drop the entire workspace credential file for a stdio bundle. After
- * this returns, every field in the bundle's `user_config` schema reads
- * as not-configured. Admin-gated.
- *
- * Intentionally does NOT respawn the bundle subprocess. A respawn
- * after clear would fail at `prepareServer` for any bundle with
- * required fields, which leaves the workspace registry with no source
- * — and `getBundleInstancesForWorkspace` filters the installed list
- * by `wsRegistry.sourceNames()`. The connector would silently
- * disappear from the UI (404 on the Configure page, gone from the
- * Connectors list), with no way for the user to re-add credentials
- * short of uninstall + reinstall.
- *
- * The behavior here is pragmatic: the credential file on disk is
- * gone (next platform start spawns the bundle without those values),
- * but the running subprocess keeps its launched env until restart.
- * That's a small soundness gap for the rare "revoke without
- * uninstall" case; users wanting full revocation should uninstall.
- * Keep `respawn: { ok: true }` in the response so the UI surface is
- * consistent with `set_user_config`.
- */
-async function handleClearUserConfig(
+/** `delete_secret` — remove a workspace secret. Idempotent; absent is not an error. */
+async function handleDeleteSecret(
   ctx: ManageConnectorsContext,
   wsId: string | null,
   identity: UserIdentity | null,
-  serverName: string,
+  key: string,
 ): Promise<ToolResult> {
-  const resolved = await resolveBundleSchema(ctx, wsId, identity, serverName);
-  if (!resolved.ok) return resolved.result;
-  if (!wsId) return errResult("Workspace context required.");
-  const { bundleName, schema } = resolved;
-
-  await ctx.runtime.getWorkspaceContext(wsId).getCredentialStore().clearAll(bundleName);
-
-  // After clearAll, every field reads as unpopulated. Build the map
-  // directly rather than re-probing — saves one filesystem stat that
-  // would always return null/empty here.
-  const populated: Record<string, boolean> = {};
-  for (const key of Object.keys(schema)) populated[key] = false;
+  const gate = await requireSecretAdmin(ctx, wsId, identity, "delete");
+  if ("content" in gate) return gate;
+  if (!key) return errResult("key is required.");
+  try {
+    await ctx.runtime.getCredentialStore().delete({ kind: "workspace", wsId: gate.wsId }, key);
+  } catch (err) {
+    return errResult(err instanceof Error ? err.message : String(err));
+  }
   return {
-    content: textContent(`Cleared all credentials for "${serverName}".`),
-    structuredContent: { ok: true, serverName, populated, respawn: { ok: true } },
+    content: textContent(`Removed secret "${key}".`),
+    structuredContent: { ok: true, key },
     isError: false,
   };
 }
 
-/**
- * Tear down + restart a stdio bundle's McpSource so a fresh subprocess
- * picks up the just-written credentials from the workspace credential
- * store. Called after `set_user_config` and `clear_user_config`.
- *
- * Why not just leave the bundle running? Mode 1 bundles read
- * `user_config` once, at spawn, via `${user_config.foo}` placeholders
- * resolved into env vars. The subprocess has no way to re-read after
- * launch. Without this respawn the user updates a key in the UI,
- * sees "✓ configured," then watches the next tool call fail with the
- * old key — the bug the user hit before this fix.
- *
- * Best-effort by design: a respawn failure (e.g., required field still
- * missing after a partial save) shouldn't roll back the credential
- * write. The caller's structured response carries `{ respawn: { ok,
- * error? } }` so the UI can surface the failure separately.
- */
-async function respawnBundleAfterCredentialChange(
+/** `list_secret_keys` — which keys this workspace has set, and when each was written. */
+async function handleListSecretKeys(
   ctx: ManageConnectorsContext,
-  wsId: string,
-  bundleName: string,
-  serverName: string,
-): Promise<{ ok: boolean; error?: string }> {
-  try {
-    const registry = ctx.runtime.getRegistryForWorkspace(wsId);
-    if (registry.hasSource(serverName)) {
-      await registry.removeSource(serverName);
-    }
-    // Pass `name` (the scoped manifest name) so startBundleSource hits
-    // the named-bundle path that resolves user_config from the
-    // workspace credential store. configDir is undefined — the
-    // named-bundle path doesn't need it.
-    await startBundleSource({ name: bundleName }, registry, ctx.runtime.getEventSink(), undefined, {
-      wsId,
-      workDir: ctx.runtime.getWorkDir(),
-      allowInsecureRemotes: ctx.runtime.getAllowInsecureRemotes(),
-      bundleMcp: ctx.runtime.getBundleMcpDeps(wsId),
-    });
-    return { ok: true };
-  } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) };
-  }
+  wsId: string | null,
+  identity: UserIdentity | null,
+): Promise<ToolResult> {
+  const gate = await requireSecretAdmin(ctx, wsId, identity, "list");
+  if ("content" in gate) return gate;
+  const keys = await ctx.runtime.getCredentialStore().list({ kind: "workspace", wsId: gate.wsId });
+  return {
+    content: textContent(`${keys.length} secret${keys.length === 1 ? "" : "s"} set.`),
+    structuredContent: { keys },
+    isError: false,
+  };
 }
 
 /**

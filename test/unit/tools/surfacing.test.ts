@@ -15,7 +15,7 @@ function makeTool(name: string): ToolSchema {
 }
 
 function makeSystemTools(count = 4): ToolSchema[] {
-	const names = ["nb__search", "nb__delegate", "nb__status", "nb__set_preferences"];
+	const names = ["nb__search", "nb__use_skill", "nb__status", "nb__set_preferences"];
 	return names.slice(0, count).map(makeTool);
 }
 
@@ -277,16 +277,16 @@ describe("surfaceTools — focusedServerName", () => {
 
 describe("composeSystemPrompt — apps injection", () => {
 	const apps: PromptAppInfo[] = [
-		{ name: "Tasks", trustScore: 92, ui: { name: "Tasks", primaryView: "Task Board" } },
-		{ name: "Weather", trustScore: 78, ui: null },
+		{ name: "Tasks", ui: { name: "Tasks", primaryView: "Task Board" } },
+		{ name: "Weather", ui: null },
 	];
 
 	it("injects Installed Apps section with correct names, UI status, and trust scores", () => {
 		const result = composeSystemPrompt([], null, apps);
 
 		expect(result).toContain("## Installed Apps");
-		expect(result).toContain("- Tasks (has UI: Tasks) — MTF Score: 92");
-		expect(result).toContain("- Weather (no UI) — MTF Score: 78");
+		expect(result).toContain("- Tasks (has UI: Tasks)");
+		expect(result).toContain("- Weather (no UI)");
 	});
 
 	it("includes sidebar instruction when apps have UI", () => {
@@ -301,7 +301,7 @@ describe("composeSystemPrompt — apps injection", () => {
 		const result = composeSystemPrompt([], null, []);
 
 		expect(result).not.toContain("## Installed Apps");
-		expect(result).not.toContain("MTF Score");
+		expect(result).not.toContain("Installed Apps");
 	});
 
 	it("no apps section injected when apps parameter is undefined", () => {
@@ -342,12 +342,12 @@ describe("composeSystemPrompt — apps injection", () => {
 
 	it("UI with no primaryView falls back to app name", () => {
 		const appWithUiNoPrimaryView: PromptAppInfo[] = [
-			{ name: "CRM", trustScore: 87, ui: { name: "Contact Manager" } },
+			{ name: "CRM", ui: { name: "Contact Manager" } },
 		];
 
 		const result = composeSystemPrompt([], null, appWithUiNoPrimaryView);
 
-		expect(result).toContain("- CRM (has UI: Contact Manager) — MTF Score: 87");
+		expect(result).toContain("- CRM (has UI: Contact Manager)");
 	});
 });
 
@@ -489,6 +489,73 @@ describe("surfaceTools — kernel identity tools always direct", () => {
 	});
 });
 
+// --- The overlay write stays off the model's surface ---
+//
+// The workspace overlay is human-authored: the settings UI invokes
+// `instructions__write_instructions` by name over REST, and the tool carries
+// the internal annotation so the model never sees it — not direct, not
+// proxied. The agent's job on "remember this" is to draft the text and point
+// the user at settings (see bootstrap.md), never to write the overlay itself.
+
+describe("surfaceTools — instructions write is internal", () => {
+	const internalWrite: ToolSchema = {
+		name: "instructions__write_instructions",
+		description: "Save workspace-wide custom instructions",
+		inputSchema: { type: "object", properties: {} },
+		meta: { "ai.nimblebrain/internal": true },
+	};
+
+	it("never surfaces direct or proxied, even in a bare workspace", () => {
+		const system = makeSystemTools(4);
+
+		const result = surfaceTools([...system, internalWrite], null);
+
+		expect(result.direct.map((t) => t.name)).not.toContain("instructions__write_instructions");
+		expect(result.proxied.map((t) => t.name)).not.toContain("instructions__write_instructions");
+		expect(result.direct).toHaveLength(4); // only nb__*
+	});
+
+	it("stays invisible under a skill glob that names it", () => {
+		const system = makeSystemTools(4);
+		const tasks = makeAppTools("tasks", 10);
+		const skill = makeSkill({ allowedTools: ["instructions__*", "tasks__*"] });
+
+		const result = surfaceTools([...system, internalWrite, ...tasks], skill);
+
+		expect(result.direct.map((t) => t.name)).not.toContain("instructions__write_instructions");
+		expect(result.proxied.map((t) => t.name)).not.toContain("instructions__write_instructions");
+	});
+
+	it("an instructions source without the annotation gets no special tier", () => {
+		// No kernel special-case remains for the source name: an un-annotated
+		// instructions tool proxies like any other platform tool.
+		const system = makeSystemTools(4);
+		const plain = makeTool("instructions__write_instructions");
+		const app = makeAppTools("tasks", 40);
+
+		const result = surfaceTools([...system, plain, ...app], null);
+
+		const directNames = new Set(result.direct.map((t) => t.name));
+		expect(directNames.has("instructions__write_instructions")).toBe(false);
+		expect(result.direct).toHaveLength(4); // only nb__*
+	});
+
+	it("the skills authoring surface stays proxied", () => {
+		// Nine tools for a surface reached deliberately, not reflexively — it is
+		// named in the bootstrap briefing instead of spent from the direct tier.
+		const system = makeSystemTools(4);
+		const skills = makeAppTools("skills", 10);
+		const app = makeAppTools("tasks", 40);
+
+		const result = surfaceTools([...system, ...skills, ...app], null);
+
+		const directNames = new Set(result.direct.map((t) => t.name));
+		for (const t of skills) {
+			expect(directNames.has(t.name)).toBe(false);
+		}
+	});
+});
+
 describe("surfaceTools — catalog activation is reachable without a promote", () => {
 	// The Skill Catalog renders into the STABLE system prefix, so it reaches the
 	// model on every turn. The tool that acts on it has to be reachable on every
@@ -548,7 +615,7 @@ describe("surfaceTools — internal annotation filtering", () => {
 			name: "nb__manage_identity",
 			description: "Internal identity tool",
 			inputSchema: { type: "object", properties: {} },
-			annotations: { "ai.nimblebrain/internal": true },
+			meta: { "ai.nimblebrain/internal": true },
 		};
 		const visibleTool = makeTool("nb__search");
 		const all = [internalTool, visibleTool];
@@ -565,7 +632,7 @@ describe("surfaceTools — internal annotation filtering", () => {
 			name: "nb__get_config",
 			description: "Internal config",
 			inputSchema: { type: "object", properties: {} },
-			annotations: { "ai.nimblebrain/internal": true },
+			meta: { "ai.nimblebrain/internal": true },
 		};
 		const tools = [...makeSystemTools(4), internalTool];
 

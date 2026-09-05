@@ -14,11 +14,18 @@ import { Hono } from "hono";
 // the real Composio API on a test run.
 interface SdkCalls {
   listImpl: (q: unknown) => Promise<{ items?: Array<{ id?: unknown; status?: unknown }> }>;
-  initiateImpl: (...args: unknown[]) => Promise<unknown>;
+  /**
+   * Drives the redirect flow, which runs on Composio's hosted `link()`. The
+   * mock's `initiate` throws on purpose: it is retired for Composio-managed
+   * OAuth and cannot carry an auth config's required connection-initiation
+   * fields, so a route that reaches for it must fail here rather than in
+   * production.
+   */
+  linkImpl: (...args: unknown[]) => Promise<unknown>;
 }
 const sdkCalls: SdkCalls = {
   listImpl: async () => ({ items: [] }),
-  initiateImpl: async () => ({
+  linkImpl: async () => ({
     redirectUrl: "https://connect.composio.dev/link/lk_default",
     id: "ca_default",
   }),
@@ -38,7 +45,10 @@ mock.module("@composio/core", () => ({
   Composio: class {
     connectedAccounts = {
       list: (q: unknown) => sdkCalls.listImpl(q),
-      initiate: (...args: unknown[]) => sdkCalls.initiateImpl(...args),
+      link: (...args: unknown[]) => sdkCalls.linkImpl(...args),
+      initiate: () => {
+        throw new Error("redirect arm must call connectedAccounts.link, not initiate");
+      },
       delete: async () => undefined,
     };
     create = async () => ({
@@ -49,7 +59,7 @@ mock.module("@composio/core", () => ({
 }));
 
 import type { AppContext, AppEnv } from "../../src/api/types.ts";
-import { composioAuthRoutes } from "../../src/api/routes/composio-auth.ts";
+import { composioAuthRoutes } from "../../src/connectors/providers/composio/routes.ts";
 import {
   _clearAllConnectFlows,
   registerConnectFlow,
@@ -57,7 +67,7 @@ import {
 import {
   composioConnectionPath,
   readComposioConnection,
-} from "../../src/bundles/composio-connection.ts";
+} from "../../src/connectors/providers/composio/connection.ts";
 import { slugifyServerName } from "../../src/bundles/paths.ts";
 import { IdentityConnectorStore } from "../../src/identity/connector-store.ts";
 import { _resetComposioConfigForTest } from "../../src/connectors/providers/composio/config.ts";
@@ -404,6 +414,45 @@ describe("GET /v1/composio-auth/callback", () => {
     }
   });
 
+  // A consent denied at the vendor comes back as `status=failed` with NO `error`
+  // param — verified against a real denial through Composio's hosted flow. The
+  // cookie and flow record are both valid here (the user really did start this
+  // connect), so nothing else in the chain would stop it: the connection would
+  // be persisted and the connector reported connected, against an account
+  // Composio has already marked FAILED.
+  test("a denied consent does not persist a connection or flip the connector on", async () => {
+    const { dir, cleanup } = freshDir();
+    try {
+      const cid = "com.google/gmail";
+      const wsId = "ws_test";
+      const ctx = stubCtx(dir, composioEntry(cid));
+      const app = composioAuthRoutes(ctx);
+      const nonce = "beefbeefbeefbeefbeefbeefbeefbeef";
+      registerConnectFlow(nonce, { type: "workspace", wsId }, cid);
+
+      // Case and surrounding space both have to be absorbed: the same outcome is
+      // spelled `failed` on the redirect and `FAILED` on the connected-account
+      // record, so a comparison against the raw param would catch one and miss
+      // the other. The guard returns before the flow record is consumed, so one
+      // registration serves every variant.
+      for (const status of ["failed", "FAILED", "%20Failed%20"]) {
+        const res = await app.request(
+          `http://nb.test/v1/composio-auth/callback?n=${nonce}` +
+            `&connected_account_id=ca_denied&status=${status}`,
+          { headers: { cookie: `nb_composio_state=${sha256Hex(nonce)}` } },
+        );
+
+        expect(res.status).toBe(400);
+        expect(await res.text()).toContain("Connection failed");
+      }
+
+      expect(await readComposioConnection(dir, { type: "workspace", wsId }, cid)).toBeNull();
+      expect(ctx.__lifecycleCalls.recordConnectionStateChange.callCount).toBe(0);
+    } finally {
+      cleanup();
+    }
+  });
+
   test("forged cookie without a server-side flow is rejected — no cross-owner write", async () => {
     // The reported vulnerability: the callback is unauthenticated and the
     // `nb_composio_state` cookie was a bare sha256 of values the caller already
@@ -543,7 +592,7 @@ describe("POST /v1/composio-auth/initiate", () => {
     for (const k of TRACKED) delete process.env[k];
     _resetComposioConfigForTest();
     sdkCalls.listImpl = async () => ({ items: [] });
-    sdkCalls.initiateImpl = async () => ({
+    sdkCalls.linkImpl = async () => ({
       redirectUrl: "https://connect.composio.dev/link/lk_test",
       id: "ca_test",
     });
@@ -590,7 +639,7 @@ describe("POST /v1/composio-auth/initiate", () => {
     process.env.COMPOSIO_API_KEY = "k_test";
     setConnectorsConfig({ providers: { composio: { authConfigs: { gmail: "ac_gmail" } } } });
     sdkCalls.listImpl = async () => ({ items: [] }); // no existing connection
-    sdkCalls.initiateImpl = async () => ({
+    sdkCalls.linkImpl = async () => ({
       redirectUrl: "https://connect.composio.dev/link/lk_42",
       id: "ca_pending",
     });
@@ -628,10 +677,10 @@ describe("POST /v1/composio-auth/initiate", () => {
     sdkCalls.listImpl = async () => ({
       items: [{ id: "ca_already_active", status: "ACTIVE" }],
     });
-    // initiate should NEVER be called in this branch — fail the test
-    // loudly if it is, instead of silently passing.
-    sdkCalls.initiateImpl = async () => {
-      throw new Error("adopt-existing path should not call connectedAccounts.initiate");
+    // The redirect call should NEVER be reached in this branch — fail the
+    // test loudly if it is, instead of silently passing.
+    sdkCalls.linkImpl = async () => {
+      throw new Error("adopt-existing path should not call connectedAccounts.link");
     };
 
     // Spy on saveComposioConnection by inspecting the filesystem after.
@@ -685,8 +734,8 @@ describe("POST /v1/composio-auth/initiate", () => {
     sdkCalls.listImpl = async () => ({
       items: [{ id: "ca_already_active", status: "ACTIVE" }],
     });
-    sdkCalls.initiateImpl = async () => {
-      throw new Error("adopt-failure path should not call connectedAccounts.initiate");
+    sdkCalls.linkImpl = async () => {
+      throw new Error("adopt-failure path should not call connectedAccounts.link");
     };
 
     const dir = mkdtempSync(join(tmpdir(), "nb-adopt-fail-"));
@@ -875,7 +924,7 @@ describe("POST /v1/composio-auth/initiate-identity", () => {
     for (const k of TRACKED) delete process.env[k];
     _resetComposioConfigForTest();
     sdkCalls.listImpl = async () => ({ items: [] });
-    sdkCalls.initiateImpl = async () => ({
+    sdkCalls.linkImpl = async () => ({
       redirectUrl: "https://connect.composio.dev/link/lk_identity",
       id: "ca_identity",
     });
@@ -919,9 +968,9 @@ describe("POST /v1/composio-auth/initiate-identity", () => {
     process.env.COMPOSIO_API_KEY = "k_test";
     setConnectorsConfig({ providers: { composio: { authConfigs: { gmail: "ac_gmail" } } } });
     sdkCalls.listImpl = async () => ({ items: [] }); // no existing connection
-    let initiateArgs: unknown[] = [];
-    sdkCalls.initiateImpl = async (...args: unknown[]) => {
-      initiateArgs = args;
+    let linkArgs: unknown[] = [];
+    sdkCalls.linkImpl = async (...args: unknown[]) => {
+      linkArgs = args;
       return { redirectUrl: "https://connect.composio.dev/link/lk_identity", id: "ca_identity" };
     };
 
@@ -939,13 +988,13 @@ describe("POST /v1/composio-auth/initiate-identity", () => {
 
     // Composio-side identity is the USER namespace (`user:<id>`), never a
     // workspace — single-tenant here (NB_TENANT_ID unset), so no tenant prefix.
-    expect(initiateArgs[0]).toBe("user:usr_test");
-    expect(initiateArgs[0]).toBe(composioUserId({ type: "user", userId: USER_ID }));
+    expect(linkArgs[0]).toBe("user:usr_test");
+    expect(linkArgs[0]).toBe(composioUserId({ type: "user", userId: USER_ID }));
 
     // The callback URL carries only the nonce — the owner (user vs workspace)
     // and connector live in the server-side flow record, not the query, so the
     // vendor return leg can't be steered to a different owner.
-    const cbUrl = new URL((initiateArgs[2] as { callbackUrl: string }).callbackUrl);
+    const cbUrl = new URL((linkArgs[2] as { callbackUrl: string }).callbackUrl);
     const nonce = cbUrl.searchParams.get("n") ?? "";
     expect(nonce.length).toBeGreaterThan(0);
     expect(cbUrl.searchParams.get("usr")).toBeNull();
@@ -965,8 +1014,8 @@ describe("POST /v1/composio-auth/initiate-identity", () => {
     process.env.COMPOSIO_API_KEY = "k_test";
     setConnectorsConfig({ providers: { composio: { authConfigs: { gmail: "ac_gmail" } } } });
     sdkCalls.listImpl = async () => ({ items: [{ id: "ca_user_active", status: "ACTIVE" }] });
-    sdkCalls.initiateImpl = async () => {
-      throw new Error("adopt-existing path should not call connectedAccounts.initiate");
+    sdkCalls.linkImpl = async () => {
+      throw new Error("adopt-existing path should not call connectedAccounts.link");
     };
 
     const dir = mkdtempSync(join(tmpdir(), "nb-adopt-identity-"));

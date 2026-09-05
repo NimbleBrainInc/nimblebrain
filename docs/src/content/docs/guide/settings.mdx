@@ -40,7 +40,7 @@ This section reflects the workspace you're currently focused on. Switch workspac
 ### General (`/w/<id>/settings/general`)
 
 - **MCP Connection** — your workspace ID, copyable. Use it when wiring up external MCP clients (Claude Desktop, VS Code, Cursor). Note that the `/mcp` endpoint is identity-bound and does not require a workspace header. See [Connecting External Clients](/connect/external-clients).
-- **Workspace Instructions** — custom instructions injected into every conversation focused on this workspace, on top of any organization-wide policy. Only an **admin member of this workspace** can edit; everyone else reads — an organization admin who is not an admin member here gets no bypass.
+- **Workspace Instructions** — custom instructions injected into every conversation focused on this workspace. Only an **admin member of this workspace** can edit; everyone else reads — an organization admin who is not an admin member here gets no bypass. Guidance meant for every workspace in the organization belongs in an org-tier skill (Organization → Skills), not here.
 
 <Aside type="tip">
   Workspace instructions are great for team conventions: tone for shared documents, default triage priorities, citation policies. The agent picks them up on every turn — no need to repeat them in chat.

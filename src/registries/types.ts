@@ -1,9 +1,9 @@
 /**
  * The connector registry layer surfaces installable connectors from a
- * configurable set of sources (curated YAML, mpak.dev, future MCP
+ * configurable set of sources (curated YAML, a future upstream MCP
  * registry, etc.) through one facade — `ConnectorDirectory`. Clients
  * never construct sources or aggregate them by hand; they ask the
- * directory for `list()`, `catalogByUrl()`, `iconByPackage()`, etc.,
+ * directory for `list()`, `catalogByUrl()`, `catalogById()`, etc.,
  * and uniform behavior (scope filtering, error aggregation,
  * projection, dedup) lives in one place.
  *
@@ -14,33 +14,32 @@
  *
  * Configuration drives which sources are loaded. Operators can
  * configure multiple instances of the same source type with different
- * `RegistryConfig` rows — e.g. one mpak instance scoped to
- * `nimblebraininc/*` plus another pointing at a self-hosted mpak —
+ * `RegistryConfig` rows — e.g. two curated catalogs at different paths —
  * because each row gets its own `ConnectorSource` instance.
  *
- * Seeded defaults (see `RegistryStore`):
+ * Seeded default (see `RegistryStore`):
  *
  *   - `static`  — bundled curated catalog of remote OAuth services
  *     (Granola, Notion, HubSpot, etc.) shipped with the platform.
  *     Locked. Operator overrides via `NB_REGISTRIES` JSON.
- *   - `mpak`    — the mpak.dev open MCP bundle registry. Default on;
- *     operator can disable, scope, or point at a self-hosted instance.
- *
- * Future registry types (planned, not implemented):
- *   - `mcp`        — upstream MCP registry (`/v1/servers/...`) once
- *     the upstream service stabilizes.
- *   - `custom-url` — paste-a-URL flow for any remote MCP server
- *     (advanced; bypasses curation).
  */
 
+import type { ConnectorAuthKind } from "../connectors/auth-kind.ts";
 import type {
   ComposioConnectorConfig,
   ServerDetail,
   SmitheryConnectorConfig,
 } from "../connectors/server-detail.ts";
+import type { CredentialRef } from "../tools/credential-ref.ts";
 
-/** Stable registry kind, used for source-type-driven dispatch. */
-export type RegistryType = "static" | "mpak" | "mcp" | "custom-url";
+/**
+ * Registry kind, keyed into the directory's source-factory map. Open on
+ * purpose: a build that does not carry a source for some type surfaces no
+ * entries from that registry rather than failing to compile against a closed
+ * enum, so adding the upstream MCP registry source is one factory entry and
+ * one file.
+ */
+export type RegistryType = string;
 
 /** Persistable configuration for a registry. Stored in `registries.json`. */
 export interface RegistryConfig {
@@ -49,10 +48,8 @@ export interface RegistryConfig {
   type: RegistryType;
   enabled: boolean;
   /**
-   * For `static`: filesystem path to the YAML/JSON `ServerDetail[]`
-   * file. For `mpak` / `mcp`: registry HTTP base URL when the operator
-   * has overridden the SDK default; absent otherwise (the SDK owns its
-   * own default).
+   * For `static`: filesystem path to the directory of YAML/JSON
+   * `ServerDetail` files. For an HTTP-backed source: the registry base URL.
    */
   url?: string;
   /**
@@ -62,7 +59,7 @@ export interface RegistryConfig {
    *   - `ServerDetail.name` reverse-DNS prefix (e.g. `ai.nimblebrain`
    *     matches `ai.nimblebrain/echo`), OR
    *   - the npm scope of any `packages[].identifier` (e.g.
-   *     `nimblebraininc` matches `@nimblebraininc/echo`).
+   *     `acme` matches `@acme/echo`).
    *
    * Either match is sufficient. Empty / undefined = no filter.
    * Applied uniformly by the facade across every source type.
@@ -106,8 +103,8 @@ export interface DirectoryEntry {
   /**
    * For static-auth entries: whether the workspace has operator OAuth
    * app credentials configured (both clientId in workspace.json and
-   * client_secret in the credential store). DCR / mpak / direct-url
-   * entries leave this undefined — operator setup doesn't apply.
+   * client_secret in the credential store). DCR / direct-url entries
+   * leave this undefined — operator setup doesn't apply.
    *
    * Browse uses this to flip the row affordance:
    *   - undefined or true  → "Install" button
@@ -118,7 +115,7 @@ export interface DirectoryEntry {
 }
 
 /** How to install an entry — varies by source type. */
-export type InstallAction = RemoteOAuthInstall | MpakBundleInstall | DirectUrlInstall;
+export type InstallAction = RemoteOAuthInstall | DirectUrlInstall;
 
 /**
  * Curated remote OAuth service. The existing connector catalog flow:
@@ -137,20 +134,22 @@ export interface RemoteOAuthInstall {
    * the handshake.
    */
   transportType: "streamable-http" | "sse";
-  auth: "dcr" | "static" | "composio" | "smithery" | "provider";
+  /**
+   * Runtime-native kind, or the id of the brokered provider that owns this
+   * connector. See `NimbleBrainConnectorMeta.auth`.
+   */
+  auth: ConnectorAuthKind;
   requiredScopes?: string[];
   additionalAuthorizationParams?: Record<string, string>;
   operatorSetup?: { portalUrl: string; hint: string; clientSecretKey: string };
   /**
-   * Required for `auth: "composio"`. Names the Composio toolkit and
-   * the env var holding the auth-config id. See
-   * {@link ComposioConnectorConfig} for the canonical shape.
+   * A brokered entry's provider config block, carried under the key naming its
+   * provider. The install path reads whichever block `auth` names via
+   * `brokeredCatalogConfig` and hands it to that provider verbatim; these two
+   * typed fields document the shapes we ship rather than enumerating what is
+   * accepted.
    */
   composio?: ComposioConnectorConfig;
-  /**
-   * Required for `auth: "smithery"`. Names the Smithery registry server the
-   * brokered connection targets. See {@link SmitheryConnectorConfig}.
-   */
   smithery?: SmitheryConnectorConfig;
   /**
    * Required for `auth: "provider"`. Names the credential provider and its
@@ -160,18 +159,15 @@ export interface RemoteOAuthInstall {
    * input. That is what keeps a self-installable platform connector safe.
    */
   providerAuth?: { provider: string; config: Record<string, unknown> };
-}
-
-/**
- * mpak bundle install. The package is fetched via mpak SDK and
- * spawned as a stdio subprocess. `MpakSource` emits these from
- * mpak.dev's search results; `StaticSource` may also emit them when
- * a curated `ServerDetail` declares a `packages[]` entry.
- */
-export interface MpakBundleInstall {
-  kind: "mpak-bundle";
-  /** Scoped package name, e.g., `@nimblebraininc/echo`. */
-  package: string;
+  /**
+   * Workspace-owned secrets bound to outgoing headers, as credential references
+   * (see `NimbleBrainConnectorMeta.secretHeaders`). Operator-authored in the
+   * catalog and re-read from the trusted entry at install, then copied verbatim
+   * into the BundleRef's `transport.headers` — a caller-supplied value is
+   * discarded, because a forged header name would let a workspace admin decide
+   * what a fleet-trusted connection sends.
+   */
+  secretHeaders?: Record<string, CredentialRef>;
 }
 
 /**
@@ -210,8 +206,8 @@ export interface ListEntriesContext {
  * them. Filtering, projection, error aggregation, and lookup tables
  * are the directory's job, not the source's.
  *
- * Implementations: `StaticSource`, `MpakSource`. Future: `McpSource`,
- * `DirectUrlSource`.
+ * Implementations: `StaticSource`. Future: an upstream-MCP-registry
+ * source, `DirectUrlSource`.
  */
 export interface ConnectorSource {
   /** Stable id from the source's `RegistryConfig` — used in error tags. */

@@ -312,3 +312,32 @@ describe("estimateToolDescriptionTokens", () => {
     expect(estimateToolDescriptionTokens(tool)).toBeGreaterThanOrEqual(0);
   });
 });
+
+describe("estimateToolDescriptionTokens — provider-facing tool shape", () => {
+  // The provider's LanguageModelV3FunctionTool has an OPTIONAL description,
+  // which is why the parameter is the structural minimum rather than
+  // ToolSchema. Taking the estimate over the tools actually sent is what makes
+  // it comparable to the provider's reported usage.
+  test("accepts a tool with no description and still counts name + schema", () => {
+    const withDescription = estimateToolDescriptionTokens({
+      name: "search_web",
+      description: "Search the public web",
+      inputSchema: { type: "object", properties: { q: { type: "string" } } },
+    });
+    const withoutDescription = estimateToolDescriptionTokens({
+      name: "search_web",
+      inputSchema: { type: "object", properties: { q: { type: "string" } } },
+    });
+
+    expect(withoutDescription).toBeGreaterThan(0);
+    expect(Number.isNaN(withoutDescription)).toBe(false);
+    // Dropping the description can only reduce the estimate.
+    expect(withoutDescription).toBeLessThan(withDescription);
+  });
+
+  test("returns a finite estimate for a tool with no fields at all", () => {
+    const estimate = estimateToolDescriptionTokens({});
+    expect(Number.isFinite(estimate)).toBe(true);
+    expect(estimate).toBeGreaterThanOrEqual(0);
+  });
+});

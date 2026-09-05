@@ -1,5 +1,6 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, spyOn } from "bun:test";
 import { isRetryable, withRetry } from "../../src/engine/retry.ts";
+import { ModelStreamStallError } from "../../src/model/stream.ts";
 
 /** Helper: create an error with an HTTP status code. */
 function httpError(status: number, message = `HTTP ${status}`): Error & { status: number } {
@@ -209,5 +210,144 @@ describe("withRetry — retryable marker", () => {
     );
     expect(result).toBe("recovered");
     expect(calls).toBe(2);
+  });
+});
+
+describe("withRetry logging", () => {
+  /** Capture the logger's output channel (log.warn writes to console.error). */
+  function captureWarnings(): { lines: string[]; restore: () => void } {
+    const lines: string[] = [];
+    const spy = spyOn(console, "error").mockImplementation((...args: unknown[]) => {
+      lines.push(args.map(String).join(" "));
+    });
+    return { lines, restore: () => spy.mockRestore() };
+  }
+
+  it("logs nothing when the call succeeds on the first attempt", async () => {
+    const { lines, restore } = captureWarnings();
+    try {
+      await withRetry(async () => "ok", 3, 0);
+    } finally {
+      restore();
+    }
+    expect(lines.filter((l) => l.includes("[engine] retry"))).toHaveLength(0);
+  });
+
+  it("logs one line per retried attempt, with attempt, reason and backoff", async () => {
+    const { lines, restore } = captureWarnings();
+    let calls = 0;
+    try {
+      await withRetry(
+        async () => {
+          calls++;
+          if (calls < 3) throw httpError(429);
+          return "recovered";
+        },
+        3,
+        0,
+      );
+    } finally {
+      restore();
+    }
+    const retries = lines.filter((l) => l.includes("[engine] retry"));
+    // Two failures before the third attempt succeeded.
+    expect(retries).toHaveLength(2);
+    expect(retries[0]).toContain("attempt=1/3");
+    expect(retries[0]).toContain("reason=429");
+    expect(retries[0]).toMatch(/delayMs=\d+/);
+    expect(retries[1]).toContain("attempt=2/3");
+  });
+
+  // Uses the real ModelStreamStallError, not a local stand-in. A stand-in has to
+  // restate the name this asserts, which makes the assertion vacuous: drop
+  // `this.name` from the real class and production logs `reason=Error` while the
+  // test stays green. This is the one case where `reason` is not a status, so it
+  // is the case the test has to actually bind to.
+  it("names the error when the retryable error carries no HTTP status", async () => {
+    const { lines, restore } = captureWarnings();
+    let calls = 0;
+    try {
+      await withRetry(
+        async () => {
+          calls++;
+          if (calls < 2) throw new ModelStreamStallError(1000, { retryable: true });
+          return "ok";
+        },
+        3,
+        0,
+      );
+    } finally {
+      restore();
+    }
+    const retries = lines.filter((l) => l.includes("[engine] retry"));
+    expect(retries).toHaveLength(1);
+    expect(retries[0]).toContain("reason=ModelStreamStallError");
+  });
+
+  // The `retryable` branch of isRetryable never inspects `status`, and getStatus
+  // is an unchecked cast — so an error can be retryable AND carry a `status` of
+  // any shape. `reason` must fall back to the name rather than interpolate it.
+  it("ignores a non-retryable status on an error flagged retryable", async () => {
+    const { lines, restore } = captureWarnings();
+    const err = new ModelStreamStallError(1000, { retryable: true }) as Error & {
+      status?: unknown;
+    };
+    err.status = "sk-should-never-be-logged";
+    let calls = 0;
+    try {
+      await withRetry(
+        async () => {
+          calls++;
+          if (calls < 2) throw err;
+          return "ok";
+        },
+        3,
+        0,
+      );
+    } finally {
+      restore();
+    }
+    const retries = lines.filter((l) => l.includes("[engine] retry"));
+    expect(retries).toHaveLength(1);
+    expect(retries[0]).toContain("reason=ModelStreamStallError");
+    expect(retries[0]).not.toContain("sk-should-never-be-logged");
+  });
+
+  it("does not log the provider's error message", async () => {
+    const { lines, restore } = captureWarnings();
+    let calls = 0;
+    try {
+      await withRetry(
+        async () => {
+          calls++;
+          if (calls < 2) throw httpError(529, "sk-secret-looking-payload");
+          return "ok";
+        },
+        3,
+        0,
+      );
+    } finally {
+      restore();
+    }
+    const retries = lines.filter((l) => l.includes("[engine] retry"));
+    expect(retries).toHaveLength(1);
+    expect(retries[0]).not.toContain("sk-secret-looking-payload");
+  });
+
+  it("logs every attempt when retries are exhausted", async () => {
+    const { lines, restore } = captureWarnings();
+    try {
+      await withRetry(
+        async () => {
+          throw httpError(429);
+        },
+        3,
+        0,
+      ).catch(() => {});
+    } finally {
+      restore();
+    }
+    // 3 retries logged; the 4th (terminal) failure rethrows without a retry line.
+    expect(lines.filter((l) => l.includes("[engine] retry"))).toHaveLength(3);
   });
 });

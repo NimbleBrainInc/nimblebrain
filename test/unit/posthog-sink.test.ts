@@ -158,21 +158,21 @@ describe("PostHogEventSink", () => {
 		expect(errorEvent!.properties.message).toBeUndefined();
 	});
 
-	it("maps bundle.installed with source detection", () => {
+	it("maps bundle.installed as a remote install, carrying only UI presence", () => {
 		const { mock, sink } = createTestSetup();
 
-		// mpak source (starts with @)
-		emit(sink, "bundle.installed", { name: "@org/my-bundle", trustScore: 80 });
-		// local source (no url, no @)
-		emit(sink, "bundle.installed", { name: "my-local-bundle", trustScore: 0 });
-		// remote source (has url)
-		emit(sink, "bundle.installed", { name: "remote-thing", url: "https://example.com/bundle.tar.gz", trustScore: 50 });
+		emit(sink, "bundle.installed", { name: "remote-thing", url: "https://example.com/mcp" });
+		emit(sink, "bundle.installed", {
+			name: "ui-thing",
+			url: "https://example.com/mcp",
+			ui: { name: "UI" },
+		});
 
 		const installs = mock.events.filter((e) => e.event === "bundle.installed");
-		expect(installs).toHaveLength(3);
-		expect(installs[0].properties.source).toBe("mpak");
-		expect(installs[1].properties.source).toBe("local");
-		expect(installs[2].properties.source).toBe("remote");
+		expect(installs).toHaveLength(2);
+		expect(installs[0].properties.source).toBe("remote");
+		expect(installs[0].properties.has_ui).toBe(false);
+		expect(installs[1].properties.has_ui).toBe(true);
 	});
 
 	it("skips text.delta, tool.start, tool.done, tool.progress, data.changed", () => {

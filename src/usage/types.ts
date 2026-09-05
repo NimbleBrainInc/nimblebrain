@@ -27,11 +27,6 @@ import type { LanguageModelV3Usage } from "@ai-sdk/provider";
  * call with no request scope at all (a detached fast-slot call or a background
  * job). Lives here rather than beside the counters so `api/metrics.ts` can name
  * the label type without importing the module that derives it.
- *
- * Deliberately does NOT carry a `delegate` member. Delegation is orthogonal —
- * a sub-agent spawned inside an automation is both delegated and unattended,
- * and folding the two into one enum files that call under `delegate` and drops
- * it from the automation total. It rides as its own boolean.
  */
 export type LlmCallOrigin = "chat" | "task" | "system";
 
@@ -78,10 +73,6 @@ export interface UsageLedgerEntry {
   source: string;
   /** Who the call was for, derived from the request scope. */
   origin: LlmCallOrigin;
-  /** Orthogonal to `origin` — a sub-agent inside an automation is both. */
-  delegated: boolean;
-  /** The originating top-level run, when delegated. Best-effort under concurrency. */
-  parentRunId?: string;
   /** Qualified, e.g. `nebius:zai-org/GLM-5.1`. The prefix is the provider. */
   model: string;
   usage: TokenUsage;
@@ -90,8 +81,50 @@ export interface UsageLedgerEntry {
   userId?: string;
   /** The one workspace the call was bound to. */
   workspaceId?: string;
-  /** `conversationId` for chat, `runId` for a task run. */
+  /**
+   * The chat thread this call belongs to. Absent for a task run (which has no
+   * conversation) and for a detached background call.
+   */
+  conversationId?: string;
+  /**
+   * The engine run this call belongs to — one `run.start`→`run.done` span,
+   * which is one assistant turn. Present for chat and task alike; absent on
+   * the forked fast-slot calls (title, compaction, briefing), which emit no
+   * event and are not a turn of their own.
+   */
+  runId?: string;
+  /**
+   * The automation run this call belongs to (`executeTask`'s correlation id).
+   * Absent in chat. Distinct from {@link runId}: this is the id the automations
+   * bundle persists the run result under, so it is the join key from spend back
+   * to a stored run.
+   */
+  taskRunId?: string;
+  /**
+   * @deprecated Legacy read-only. Held whichever id correlated the work — a
+   * conversation for chat, an automation run for a task — discriminated by
+   * `origin`. No longer written; `conversationId` / `taskRunId` carry those
+   * two facts under their own names, and `runId` adds the per-turn grain the
+   * single field could not express.
+   *
+   * Readers must keep honouring it until every retained record predating the
+   * split has aged out (see `retentionMonths`, default 24). `aggregate.ts`
+   * normalizes it; nothing else should read it.
+   */
   sessionId?: string;
+  /**
+   * @deprecated Legacy read-only. Set on records written while the runtime
+   * could spawn a sub-agent from inside a turn: `delegated` marked such a
+   * call and `parentRunId` named the top-level run it belonged to. Neither is
+   * written any more — a run starts one way, and its calls carry `runId`.
+   *
+   * `aggregate.ts` still reads `parentRunId` so a retained record from that
+   * era rolls onto the turn that spawned it (see `retentionMonths`, default
+   * 24). Nothing else should read either field.
+   */
+  delegated?: boolean;
+  /** @deprecated Legacy read-only. See {@link delegated}. */
+  parentRunId?: string;
   /** Resolved unit prices. Absent when the catalog did not know the model. */
   rates?: UsageRates;
 }

@@ -1,8 +1,8 @@
 /**
  * Legacy `ws_<id>-` globs against bare tool names.
  *
- * Patterns reach `matchToolPattern` from `skill.allowedTools`,
- * `request.allowedTools`, and `delegate(tools: [...])`. The first two are
+ * Patterns reach `matchToolPattern` from `skill.allowedTools` and
+ * `request.allowedTools`. Both are
  * on-disk user/org/workspace-tier data, and `ws_<id>-source__*` was the
  * documented shape until the prefix was removed — so those patterns exist and
  * cannot be migrated by editing this repo.
@@ -81,9 +81,8 @@ describe("the personal marker is NOT normalized away", () => {
     expect(names("my_granola__*")).toEqual(["my_granola__list_meetings"]);
   });
 
-  test("delegation's documented opt-in path uses the marked form", () => {
-    // `runtime.ts` states a sub-agent receives a granted personal connector only
-    // when the parent opts in by glob. That opt-in has to name the form the
+  test("a fully-qualified marked name selects exactly that connector tool", () => {
+    // A pattern that opts into a personal connector has to name the form the
     // connector actually surfaces under, or it is a documented path that selects
     // nothing.
     expect(names("my_granola__list_meetings")).toEqual(["my_granola__list_meetings"]);

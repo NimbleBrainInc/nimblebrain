@@ -18,6 +18,11 @@ function textResult(text: string, isError = false): ToolResult {
   };
 }
 
+/** The model-facing text of a result — what the synth directive actually says. */
+function textOf(result: ToolResult): string {
+  return (result.content[0] as { text: string }).text;
+}
+
 describe("supervisor — pass-through behavior", () => {
   it("passes through 5 distinct successful results without tripping", () => {
     const sup = createRunSupervisor();
@@ -66,12 +71,19 @@ describe("supervisor — trips on repeated identical results", () => {
       const synthText = (v3.replacement.content[0] as { text: string }).text;
       expect(synthText).toContain(sameError);
       expect(synthText).toContain("foo");
-      // Scoped to this tool, past-tense, no universal directives that would
-      // rot in conversation history across future runs.
-      expect(synthText).toContain("disabled for the rest of this run");
+      // Scoped to this tool, no universal directives that would rot in
+      // conversation history across future runs.
+      expect(synthText).toContain("has been disabled");
       expect(synthText).not.toContain("Do not call any tools");
       expect(synthText).not.toContain("End the run");
       expect(synthText).toContain("Other tools remain available");
+      // And it must NOT advertise recovery. A tripped tool has just been
+      // withheld from the model's toolset, so inviting a retry sends the model
+      // hunting for a way to call something it can no longer see — the loop
+      // this guard exists to end. Recovery is a property of the mechanism, not
+      // advice to the model.
+      expect(synthText).not.toContain("re-enable");
+      expect(synthText).not.toContain("corrected call");
     }
   });
 
@@ -95,15 +107,15 @@ describe("supervisor — trips on repeated identical results", () => {
 });
 
 describe("supervisor — stickiness once tripped", () => {
-  it("keeps emitting synth even after a successful different call", () => {
+  it("keeps emitting synth while the tool keeps failing", () => {
     const sup = createRunSupervisor();
     const e = textResult("err", true);
     sup.observe(call("foo"), e);
     sup.observe(call("foo"), e);
     sup.observe(call("foo"), e); // trips
 
-    const recovery = sup.observe(call("foo"), textResult("success now", false));
-    expect(recovery.type).toBe("synth");
+    expect(sup.observe(call("foo"), e).type).toBe("synth");
+    expect(sup.observe(call("foo"), textResult("a different error", true)).type).toBe("synth");
   });
 
   it("keeps the tool in trippedTools across subsequent calls", () => {
@@ -115,6 +127,134 @@ describe("supervisor — stickiness once tripped", () => {
 
     sup.observe(call("foo"), e);
     expect(sup.snapshot().trippedTools).toEqual(["foo"]);
+  });
+});
+
+describe("supervisor — recovery from a trip", () => {
+  /** Trip `name` on three identical errors and assert it landed. */
+  function trip(sup: ReturnType<typeof createRunSupervisor>, name = "foo") {
+    const e = textResult("err", true);
+    sup.observe(call(name), e);
+    sup.observe(call(name), e);
+    expect(sup.observe(call(name), e).type).toBe("synth");
+  }
+
+  it("recovers on an advancing success and passes the real result through", () => {
+    const sup = createRunSupervisor();
+    trip(sup);
+    expect(sup.observe(call("foo"), textResult("success now")).type).toBe("pass");
+  });
+
+  it("drops the tool from trippedTools so the engine re-offers it", () => {
+    const sup = createRunSupervisor();
+    trip(sup);
+    sup.observe(call("foo"), textResult("success now"));
+    expect(sup.snapshot().trippedTools).toEqual([]);
+  });
+
+  it("does not recover on an error", () => {
+    const sup = createRunSupervisor();
+    trip(sup);
+    expect(sup.observe(call("foo"), textResult("still broken", true)).type).toBe("synth");
+  });
+
+  it("does not recover on an infrastructure failure", () => {
+    const sup = createRunSupervisor();
+    trip(sup);
+    const infra: ToolResult = {
+      content: [{ type: "text", text: "connection reset" }],
+      isError: true,
+      _meta: { [INFRA_ERROR_META_KEY]: true },
+    };
+    expect(sup.observe(call("foo"), infra).type).toBe("synth");
+    expect(sup.snapshot().trippedTools).toEqual(["foo"]);
+  });
+
+  it("does not recover on a result the tool flagged non-advancing", () => {
+    const sup = createRunSupervisor();
+    trip(sup);
+    const stalled: ToolResult = {
+      content: [{ type: "text", text: "no matches" }],
+      _meta: { [NON_ADVANCING_META_KEY]: true },
+    };
+    expect(sup.observe(call("foo"), stalled).type).toBe("synth");
+  });
+
+  it("does not recover on a success repeating the content it tripped on", () => {
+    // The pagination dead-end: identical empty-success payloads trip, and
+    // returning that same payload again is not progress however often it comes.
+    const sup = createRunSupervisor();
+    const empty = textResult("[]");
+    sup.observe(call("page", { cursor: 1 }), empty);
+    sup.observe(call("page", { cursor: 1 }), empty);
+    expect(sup.observe(call("page", { cursor: 1 }), empty).type).toBe("synth");
+
+    expect(sup.observe(call("page", { cursor: 1 }), empty).type).toBe("synth");
+  });
+
+  it("does not let a varied input walk the empty-success trip open", () => {
+    // The SUCCESS fingerprint folds in the canonicalized input, so comparing
+    // fingerprints instead of CONTENT would call the next cursor "progress":
+    // the trip would clear on the very same empty page, and every subsequent
+    // cursor would be a fresh fingerprint that never re-trips — the dead-end
+    // loop resuming with the guard disarmed, which is the failure mode the
+    // guard exists for.
+    const sup = createRunSupervisor();
+    const empty = textResult("[]");
+    for (const _ of [1, 2, 3]) sup.observe(call("page", { cursor: 1 }), empty);
+    expect(sup.snapshot().trippedTools).toEqual(["page"]);
+
+    for (const cursor of [2, 3, 4, 5, 6, 7, 8]) {
+      expect(sup.observe(call("page", { cursor }), empty).type).toBe("synth");
+    }
+    expect(sup.snapshot().trippedTools).toEqual(["page"]);
+
+    // A page that actually has rows on it is progress, and does recover.
+    expect(sup.observe(call("page", { cursor: 9 }), textResult('["a"]')).type).toBe("pass");
+    expect(sup.snapshot().trippedTools).toEqual([]);
+  });
+
+  it("stays armed after recovering — a fresh streak trips again", () => {
+    const sup = createRunSupervisor();
+    trip(sup);
+    expect(sup.observe(call("foo"), textResult("success now")).type).toBe("pass");
+
+    const e2 = textResult("broken again", true);
+    sup.observe(call("foo"), e2);
+    sup.observe(call("foo"), e2);
+    expect(sup.observe(call("foo"), e2).type).toBe("synth");
+    expect(sup.snapshot().trippedTools).toEqual(["foo"]);
+  });
+
+  it("lets a model that corrected its arguments finish the work", () => {
+    // The motivating production run. The ERROR fingerprint ignores input, so
+    // three calls carrying three DIFFERENT (differently wrong) argument shapes
+    // collapse to one fingerprint and trip. The model then reads the validation
+    // error, sends the right shape, and the call succeeds — that result must
+    // reach the model, because the write really landed.
+    const sup = createRunSupervisor();
+    const validationError = textResult("Missing required argument: kind, summary", true);
+    sup.observe(call("log", { contact: "a", type: "meeting" }), validationError);
+    sup.observe(call("log", { contact: "b", type: "meeting" }), validationError);
+    expect(sup.observe(call("log", { contact: "c", type: "meeting" }), validationError).type).toBe(
+      "synth",
+    );
+
+    const corrected = sup.observe(
+      call("log", { contact: "a", kind: "meeting", summary: "…" }),
+      textResult('{"interaction":{"id":"ix_1"}}'),
+    );
+    expect(corrected.type).toBe("pass");
+
+    // …and the remaining contacts go through as ordinary calls.
+    for (const contact of ["b", "c", "d"]) {
+      const v = sup.observe(
+        call("log", { contact, kind: "meeting", summary: "…" }),
+        textResult(`{"interaction":{"id":"ix_${contact}"}}`),
+      );
+      expect(v.type).toBe("pass");
+    }
+    expect(sup.snapshot().trippedTools).toEqual([]);
   });
 });
 
@@ -285,26 +425,27 @@ describe("supervisor — non-advancing results", () => {
     _meta: { [NON_ADVANCING_META_KEY]: true },
   });
 
-  it("trips after 3 non-advancing results even when input AND output both vary", () => {
+  /** One fruitless discovery search for `query`. */
+  const miss = (sup: ReturnType<typeof createRunSupervisor>, query: string) =>
+    sup.observe(call("nb__search", { query }), nonAdvancing(`No tools matched "${query}".`));
+
+  it("three materially different queries leave the tool armed", () => {
+    // The failure this prevents: `nb__search` is the only door to every
+    // proxied tool, so disabling it three questions into a session where the
+    // model does not yet know what exists answers "can this platform do X"
+    // with "no" for the rest of the run.
     const sup = createRunSupervisor();
-    // Mirrors the nb__search discovery loop: a fresh query each call and a
-    // distinct "no match" string each time. The input-aware success and
-    // content fingerprints would never collapse these — the `_meta`
-    // non-advancing flag is what does.
-    expect(
-      sup.observe(call("nb__search", { query: "preview" }), nonAdvancing('No tools matched "preview".'))
-        .type,
-    ).toBe("pass");
-    expect(
-      sup.observe(
-        call("nb__search", { query: "collateral" }),
-        nonAdvancing('No tools matched "collateral".'),
-      ).type,
-    ).toBe("pass");
-    const v3 = sup.observe(
-      call("nb__search", { query: "document" }),
-      nonAdvancing('No tools matched "document".'),
-    );
+    expect(miss(sup, "memory").type).toBe("pass");
+    expect(miss(sup, "notes").type).toBe("pass");
+    expect(miss(sup, "instructions").type).toBe("pass");
+    expect(sup.snapshot().trippedTools).toEqual([]);
+  });
+
+  it("trips on the 3rd identical query", () => {
+    const sup = createRunSupervisor();
+    expect(miss(sup, "memory").type).toBe("pass");
+    expect(miss(sup, "memory").type).toBe("pass");
+    const v3 = miss(sup, "memory");
     expect(v3.type).toBe("synth");
     if (v3.type === "synth") {
       expect(v3.trippedTool).toBe("nb__search");
@@ -312,28 +453,98 @@ describe("supervisor — non-advancing results", () => {
     }
   });
 
-  it("an advancing result between non-advancing ones resets the counter", () => {
+  it("re-asking one question in different clothes is still a repeat", () => {
+    // Case and whitespace are not a different question, and a model that
+    // retries a dead end usually retries it lightly reworded.
     const sup = createRunSupervisor();
+    expect(miss(sup, "memory").type).toBe("pass");
+    expect(miss(sup, "Memory").type).toBe("pass");
+    expect(miss(sup, "  memory  ").type).toBe("synth");
+  });
+
+  it("trips on the non-advancing budget once every question comes back empty", () => {
+    // Varied queries no longer accumulate a streak, so the budget is what
+    // bounds the flail: six fruitless calls is enough evidence that the
+    // surface does not hold what is being looked for.
+    const sup = createRunSupervisor();
+    for (const q of ["a", "b", "c", "d", "e"]) {
+      expect(miss(sup, q).type).toBe("pass");
+    }
+    const v6 = miss(sup, "f");
+    expect(v6.type).toBe("synth");
+    if (v6.type === "synth") {
+      expect(v6.consecutiveRepeats).toBe(6);
+    }
+  });
+
+  it("an advancing result clears the non-advancing budget", () => {
+    const sup = createRunSupervisor();
+    for (const q of ["a", "b", "c", "d", "e"]) {
+      expect(miss(sup, q).type).toBe("pass");
+    }
+    // A real match advances — the tool demonstrably works, so the evidence
+    // against it is spent.
     expect(
-      sup.observe(call("nb__search", { query: "a" }), nonAdvancing('No tools matched "a".')).type,
+      sup.observe(call("nb__search", { query: "crm" }), textResult('Found 2 tool(s) for "crm"'))
+        .type,
     ).toBe("pass");
-    expect(
-      sup.observe(call("nb__search", { query: "b" }), nonAdvancing('No tools matched "b".')).type,
-    ).toBe("pass");
-    // A real match advances — different fingerprint, resets the streak.
-    expect(
-      sup.observe(call("nb__search", { query: "crm" }), textResult('Found 2 tool(s) for "crm"')).type,
-    ).toBe("pass");
-    expect(
-      sup.observe(call("nb__search", { query: "c" }), nonAdvancing('No tools matched "c".')).type,
-    ).toBe("pass");
-    expect(
-      sup.observe(call("nb__search", { query: "d" }), nonAdvancing('No tools matched "d".')).type,
-    ).toBe("pass");
-    // Only the 3rd CONSECUTIVE non-advancing result trips.
-    expect(
-      sup.observe(call("nb__search", { query: "e" }), nonAdvancing('No tools matched "e".')).type,
-    ).toBe("synth");
+    for (const q of ["g", "h", "i", "j", "k"]) {
+      expect(miss(sup, q).type).toBe("pass");
+    }
+    expect(miss(sup, "l").type).toBe("synth");
+  });
+
+  it("an error between misses does NOT clear the budget", () => {
+    // Only an advancing success is evidence the tool found something. If an
+    // error reset the count, a tool interleaving fruitless searches with
+    // errors whose text keeps changing would escape both guards — the ERROR
+    // fingerprint only collapses on repeated text — and spend the run's whole
+    // iteration budget flailing.
+    const sup = createRunSupervisor();
+    for (let i = 0; i < 5; i++) {
+      expect(miss(sup, `q${i}`).type).toBe("pass");
+      expect(
+        sup.observe(call("nb__search", { query: `e${i}` }), textResult(`upstream error ${i}`, true))
+          .type,
+      ).toBe("pass");
+    }
+    // Six misses' worth of evidence has accumulated across the errors.
+    expect(miss(sup, "q5").type).toBe("synth");
+  });
+
+  it("an infrastructure failure does not clear the budget either", () => {
+    const sup = createRunSupervisor();
+    for (let i = 0; i < 5; i++) {
+      expect(miss(sup, `q${i}`).type).toBe("pass");
+      expect(
+        sup.observe(call("nb__search", { query: `e${i}` }), infraError("connection reset")).type,
+      ).toBe("pass");
+    }
+    expect(miss(sup, "q5").type).toBe("synth");
+  });
+
+  it("the budget is configurable", () => {
+    const sup = createRunSupervisor({ maxNonAdvancingCalls: 2 });
+    expect(miss(sup, "a").type).toBe("pass");
+    expect(miss(sup, "b").type).toBe("synth");
+  });
+
+  it("a tripped tool keeps reporting the count that tripped it", () => {
+    // A later call cannot tell which counter fired: the streak stands at 1
+    // when the budget is what tripped, so reading it reported "made no
+    // progress 1 times in a row" for a tool disabled at 6. The count lands in
+    // the directive text and in the recorded verdict.
+    const sup = createRunSupervisor();
+    for (const q of ["a", "b", "c", "d", "e"]) expect(miss(sup, q).type).toBe("pass");
+    expect(miss(sup, "f").type).toBe("synth");
+
+    const after = miss(sup, "g");
+    expect(after.type).toBe("synth");
+    if (after.type === "synth") {
+      expect(after.consecutiveRepeats).toBe(6);
+      expect(textOf(after.replacement)).toContain("6 times in a row");
+      expect(textOf(after.replacement)).not.toContain("1 times in a row");
+    }
   });
 
   it("preserves the input-aware success path: varied-input real work never trips", () => {

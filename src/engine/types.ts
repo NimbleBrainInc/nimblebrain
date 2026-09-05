@@ -1,5 +1,9 @@
 import type { LanguageModelV3Message } from "@ai-sdk/provider";
-import type { ContentBlock, TextContent } from "@modelcontextprotocol/sdk/types.js";
+import type {
+  ContentBlock,
+  TextContent,
+  ToolAnnotations,
+} from "@modelcontextprotocol/sdk/types.js";
 import type { TokenUsage } from "../usage/types.ts";
 
 export type { ContentBlock, TextContent };
@@ -43,6 +47,19 @@ export const SKILL_ACTIVATED_SYNTHETIC = "skill_activated";
  */
 export const SKILL_ACTIVATED_META_KEY = "ai.nimblebrain/skill-activated";
 
+/**
+ * `_meta` marker: this tool call muted a skill for THIS CONVERSATION. The
+ * engine turns it into a persisted `skill.suppression` event, which the next
+ * turn's composition reads.
+ *
+ * Host-owned for the same reason as the activation marker above, and a
+ * stricter one: a bundle able to set this could mute another vendor's
+ * always-on guidance — the consistency gate, the safety rules — by name, for
+ * the rest of the conversation, invisibly. `McpSource` strips it from anything
+ * arriving over a real wire; only in-process platform sources may carry it.
+ */
+export const SKILL_SUPPRESSION_META_KEY = "ai.nimblebrain/skill-suppression";
+
 /** Port 2: Tool routing abstraction. */
 export interface ToolRouter {
   availableTools(): Promise<ToolSchema[]>;
@@ -63,8 +80,30 @@ export interface ToolSchema {
   name: string;
   description: string;
   inputSchema: Record<string, unknown>;
-  /** MCP tool annotations (_meta). Includes UI metadata like resourceUri. */
-  annotations?: Record<string, unknown>;
+  /**
+   * The tool's `_meta` — MCP's free-form, reverse-DNS-keyed namespace. Carries
+   * host conventions like `ai.nimblebrain/internal` and the UI metadata
+   * (`resourceUri`) the engine reads to mount an inline panel.
+   *
+   * Distinct from {@link ToolSchema.annotations}, which is the spec's own
+   * closed set of behavioural hints. Both travel; neither is the other.
+   */
+  meta?: Record<string, unknown>;
+  /**
+   * MCP `annotations` (`ToolAnnotations`) — the spec's behavioural hints:
+   * `title`, `readOnlyHint`, `destructiveHint`, `idempotentHint`,
+   * `openWorldHint`.
+   *
+   * Hints, per the spec, and from an untrusted server: a `destructiveHint` is
+   * what the tool *says* about itself, so read it to be more careful, never to
+   * relax a check.
+   */
+  annotations?: ToolAnnotations;
+  /**
+   * MCP `outputSchema` — the JSON Schema a tool's `structuredContent` conforms
+   * to when it declares one.
+   */
+  outputSchema?: Record<string, unknown>;
 }
 
 export interface ToolCall {
@@ -86,7 +125,7 @@ export interface ToolResult {
    * MCP convention (`io.modelcontextprotocol/...`, `ai.nimblebrain/...`).
    *
    * Forwarding lives at the two serialization boundaries, not per-source:
-   * `defineInProcessApp` (every in-process tool, incl. system tools + delegate)
+   * `defineInProcessApp` (every in-process tool, system tools included)
    * and `McpSource` (bundle results, inline + task paths). A direct `ToolSource`
    * that returns a `ToolResult` with no boundary in between carries `_meta`
    * natively — no forwarding needed. So any tool, in-process or
@@ -161,11 +200,30 @@ export const INFRA_ERROR_META_KEY = "ai.nimblebrain/infra-error";
  * source of the key: use {@link isInternalTool} to read it and this const as the
  * annotation key to set it, so a rename can never split the read/write sites.
  */
+/**
+ * Reverse-DNS `_meta` key stamped on the OUTBOUND `tools/call` of an unattended
+ * dispatch — a single tool call made with no session, from stored
+ * configuration, on behalf of a named principal. Its value is the caller's own
+ * short opaque `reason` string, so a server that cares can tell a
+ * configuration-fired call from a chat turn and answer differently (skip a
+ * confirmation prompt, tag what it writes). A server that does not care ignores
+ * it, which is why nothing about the dispatch depends on it being read.
+ *
+ * Host-owned in the same sense as {@link INFRA_ERROR_META_KEY}: it asserts
+ * something about the CALLER, and only the host is in a position to know it. So
+ * it is stripped from every RESULT, in-process sources included — unlike the
+ * skill markers, whose strip is conditioned on crossing a real transport.
+ * Nothing downstream reads it off a result, so a copy coming back is at best
+ * noise and at worst a provenance claim made by the party being asked about,
+ * and the audit line, not the result, is where that provenance is recorded.
+ */
+export const UNATTENDED_META_KEY = "ai.nimblebrain/unattended";
+
 export const INTERNAL_TOOL_ANNOTATION = "ai.nimblebrain/internal";
 
-/** True when a tool carries {@link INTERNAL_TOOL_ANNOTATION}. */
-export function isInternalTool(tool: { annotations?: Record<string, unknown> }): boolean {
-  return Boolean(tool.annotations?.[INTERNAL_TOOL_ANNOTATION]);
+/** True when a tool carries {@link INTERNAL_TOOL_ANNOTATION} in its `_meta`. */
+export function isInternalTool(tool: { meta?: Record<string, unknown> }): boolean {
+  return Boolean(tool.meta?.[INTERNAL_TOOL_ANNOTATION]);
 }
 
 export interface ToolPromotionResult {
@@ -231,6 +289,7 @@ export type EngineEventType =
    * scope, tokens }.
    */
   | "skill.activated"
+  | "skill.suppression"
   | "context.assembled"
   /**
    * Emitted when a model call is rejected for exceeding the context window
@@ -248,7 +307,6 @@ export type EngineEventType =
   | "context.length_continuation"
   | "bundle.installed"
   | "bundle.uninstalled"
-  | "bundle.upgraded"
   /**
    * Per-principal connection state change for a remote URL bundle.
    * Payload: { wsId, serverName, principalId, state, authorizationUrl? }.
@@ -266,9 +324,45 @@ export type EngineEventType =
   | "file.deleted"
   | "bridge.tool.call"
   | "bridge.tool.done"
+  /**
+   * A notification a connector emitted reached a workspace's inbox. Emitted
+   * once per item, after the durable write — the inbox is the guarantee and
+   * everything downstream of it is best-effort. Payload:
+   * { workspaceId, id, seq, source, name, level, title, subject?, receivedAt }.
+   */
+  | "notification.created"
+  /**
+   * A route target for a notification did not deliver, with its retries spent.
+   * Carries the same coordinates as the delivery-ledger row it accompanies, so
+   * a failed post is visible instead of silent. Payload:
+   * { workspaceId, id, routeId, target, attempts, error }.
+   */
+  | "notification.delivery_failed"
   | "http.error"
   | "audit.auth_failure"
-  | "audit.permission_denied";
+  | "audit.permission_denied"
+  /**
+  /**
+   * A secret held in the credential store was revealed to a caller — presented
+   * as a header, exchanged at a token endpoint, handed to a provider SDK.
+   * Payload: { scope, key, caller, purpose } plus `workspaceId` / `userId` when
+   * the scope has one. NEVER the value.
+   *
+   * Emitted on the reveal rather than on the read that produced it, so the log
+   * records secrets that were used and not secrets that were probed for
+   * presence — and at most once per read, so a long-lived `fetch` wrapper
+   * presenting one secret does not write a line per request.
+   */
+  | "audit.credential_read"
+  /**
+   * An unattended dispatch — one tool call made with no session, as a named
+   * principal, from stored configuration — reached the door. Emitted once per
+   * call, whatever the outcome, including the ones that never touch a registry:
+   * the point of the line is that the attempt is on the record, so a dispatch
+   * nobody watched is still something an operator can read back. Payload:
+   * { principalId, workspaceId, tool, reason, outcome, classification?, ms }.
+   */
+  | "audit.unattended_dispatch";
 
 /**
  * Generic event envelope. Per-event-type payload schemas are declared in

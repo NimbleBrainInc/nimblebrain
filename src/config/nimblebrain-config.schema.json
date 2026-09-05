@@ -26,8 +26,8 @@
           "description": "Model provider."
         },
         "apiKey": {
-          "type": "string",
-          "description": "Anthropic API key. Falls back to ANTHROPIC_API_KEY env var."
+          "oneOf": [{ "type": "string" }, { "$ref": "#/$defs/credentialRef" }],
+          "description": "Anthropic API key. Falls back to ANTHROPIC_API_KEY env var. May instead be a credential reference — { \"ref\": \"credential\", \"key\": \"<key>\" } — resolved from the instance scope of the credential store at startup, so the value never sits in this file. See /config/secrets/."
         }
       },
       "additionalProperties": false
@@ -39,7 +39,10 @@
         "anthropic": {
           "type": "object",
           "properties": {
-            "apiKey": { "type": "string" },
+            "apiKey": {
+              "oneOf": [{ "type": "string" }, { "$ref": "#/$defs/credentialRef" }],
+              "description": "Provider API key. May instead be a credential reference — { \"ref\": \"credential\", \"key\": \"<key>\" } — resolved from the instance scope of the credential store at startup, so the value never sits in this file. See /config/secrets/."
+            },
             "promptCaching": { "type": "boolean", "default": true },
             "models": {
               "type": "array",
@@ -52,7 +55,10 @@
         "openai": {
           "type": "object",
           "properties": {
-            "apiKey": { "type": "string" },
+            "apiKey": {
+              "oneOf": [{ "type": "string" }, { "$ref": "#/$defs/credentialRef" }],
+              "description": "Provider API key. May instead be a credential reference — { \"ref\": \"credential\", \"key\": \"<key>\" } — resolved from the instance scope of the credential store at startup, so the value never sits in this file. See /config/secrets/."
+            },
             "baseURL": { "type": "string" },
             "organization": { "type": "string" },
             "models": {
@@ -66,7 +72,10 @@
         "google": {
           "type": "object",
           "properties": {
-            "apiKey": { "type": "string" },
+            "apiKey": {
+              "oneOf": [{ "type": "string" }, { "$ref": "#/$defs/credentialRef" }],
+              "description": "Provider API key. May instead be a credential reference — { \"ref\": \"credential\", \"key\": \"<key>\" } — resolved from the instance scope of the credential store at startup, so the value never sits in this file. See /config/secrets/."
+            },
             "models": {
               "type": "array",
               "items": { "type": "string" },
@@ -80,8 +89,8 @@
           "description": "Nebius Token Factory — OpenAI-compatible gateway for open-weight models. Reference models as nebius:<model-id>.",
           "properties": {
             "apiKey": {
-              "type": "string",
-              "description": "Nebius API key. Falls back to NEBIUS_API_KEY env var."
+              "oneOf": [{ "type": "string" }, { "$ref": "#/$defs/credentialRef" }],
+              "description": "Nebius API key. Falls back to NEBIUS_API_KEY env var. May instead be a credential reference — { \"ref\": \"credential\", \"key\": \"<key>\" } — resolved from the instance scope of the credential store at startup, so the value never sits in this file. See /config/secrets/."
             },
             "baseURL": {
               "type": "string",
@@ -100,8 +109,8 @@
           "description": "xAI (Grok). Reference models as xai:<model-id>, e.g. xai:grok-4.5.",
           "properties": {
             "apiKey": {
-              "type": "string",
-              "description": "xAI API key. Falls back to XAI_API_KEY env var."
+              "oneOf": [{ "type": "string" }, { "$ref": "#/$defs/credentialRef" }],
+              "description": "xAI API key. Falls back to XAI_API_KEY env var. May instead be a credential reference — { \"ref\": \"credential\", \"key\": \"<key>\" } — resolved from the instance scope of the credential store at startup, so the value never sits in this file. See /config/secrets/."
             },
             "baseURL": {
               "type": "string",
@@ -119,32 +128,17 @@
       "additionalProperties": false
     },
     "bundles": {
-      "description": "Bundle configurations. Each entry specifies a bundle by name (mpak registry), local path, or remote URL.",
+      "description": "Connector configurations. Each entry is one remote MCP server, addressed by URL.",
       "type": "array",
       "items": {
         "type": "object",
+        "required": ["url"],
         "properties": {
-          "name": {
-            "type": "string",
-            "description": "Bundle name from mpak registry (e.g., @nimblebraininc/echo)."
-          },
-          "path": { "type": "string", "description": "Local filesystem path to bundle directory." },
           "url": { "type": "string", "description": "Remote MCP server URL." },
           "serverName": {
             "type": "string",
-            "description": "Override server name for remote bundles."
+            "description": "Server name to register the connector under."
           },
-          "env": {
-            "type": "object",
-            "additionalProperties": { "type": "string" },
-            "description": "Environment variables passed to the bundle process."
-          },
-          "allowedEnv": {
-            "type": "array",
-            "items": { "type": "string" },
-            "description": "Host env vars this bundle may access."
-          },
-          "trustScore": { "type": ["number", "null"], "description": "MTF trust score (0-100)." },
           "transport": {
             "type": "object",
             "description": "Remote transport configuration.",
@@ -154,9 +148,15 @@
                 "type": "object",
                 "properties": {
                   "type": { "type": "string", "enum": ["bearer", "header", "none", "provider"] },
-                  "token": { "type": "string" },
+                  "token": {
+                    "oneOf": [{ "type": "string" }, { "$ref": "#/$defs/credentialRef" }],
+                    "description": "Bearer token (auth.type=bearer). May instead be a credential reference — { \"ref\": \"credential\", \"key\": \"<key>\" } — resolved from the connection's own workspace scope on every connect, so rotating the key needs no config edit. See /config/secrets/."
+                  },
                   "name": { "type": "string" },
-                  "value": { "type": "string" },
+                  "value": {
+                    "oneOf": [{ "type": "string" }, { "$ref": "#/$defs/credentialRef" }],
+                    "description": "Header value (auth.type=header). May instead be a credential reference — { \"ref\": \"credential\", \"key\": \"<key>\" } — resolved from the connection's own workspace scope on every connect, so rotating the key needs no config edit. See /config/secrets/."
+                  },
                   "provider": {
                     "type": "string",
                     "description": "Credential provider name (auth.type=provider), e.g. \"minted\"."
@@ -168,7 +168,13 @@
                 },
                 "required": ["type"]
               },
-              "headers": { "type": "object", "additionalProperties": { "type": "string" } },
+              "headers": {
+                "type": "object",
+                "additionalProperties": {
+                  "oneOf": [{ "type": "string" }, { "$ref": "#/$defs/credentialRef" }]
+                },
+                "description": "Arbitrary outgoing headers. Each value is a literal or a credential reference. May instead be a credential reference — { \"ref\": \"credential\", \"key\": \"<key>\" } — resolved from the connection's own workspace scope on every connect, so rotating the key needs no config edit. See /config/secrets/."
+              },
               "reconnection": {
                 "type": "object",
                 "properties": {
@@ -182,7 +188,7 @@
           },
           "ui": {
             "type": ["object", "null"],
-            "description": "UI metadata extracted from manifest."
+            "description": "UI metadata from the catalog entry's host `_meta` block."
           }
         }
       }
@@ -190,7 +196,7 @@
     "allowInsecureRemotes": {
       "type": "boolean",
       "default": false,
-      "description": "Allow HTTP (non-TLS) remote bundle connections. Dev only."
+      "description": "Allow HTTP (non-TLS) remote connector connections. Dev only."
     },
     "models": {
       "type": "object",
@@ -382,12 +388,7 @@
         },
         "skillManagement": {
           "type": "boolean",
-          "description": "Enable skill create/update/delete/activate/deactivate/move_scope via the nb__skills tool surface. Default: true.",
-          "default": true
-        },
-        "delegation": {
-          "type": "boolean",
-          "description": "Enable multi-agent delegation via nb__delegate. Default: true.",
+          "description": "Enable the skill write surface via the nb__skills tools: create, update, delete, history, restore, set_status, and the conversation-scoped activate/deactivate. Default: true.",
           "default": true
         },
         "toolDiscovery": {
@@ -424,7 +425,7 @@
       "additionalProperties": false
     },
     "connectors": {
-      "description": "Managed-connector provider configuration. A managed-connector provider brokers auth and hosts MCP sessions on the tenant's behalf.",
+      "description": "Connector integration configuration. `providers` declares managed-connector providers, which broker auth and host MCP sessions on the tenant's behalf. `gateways` declares hosted-MCP vendors that broker nothing and authenticate with one account-wide API key.",
       "type": "object",
       "properties": {
         "providers": {
@@ -436,8 +437,8 @@
               "type": "object",
               "properties": {
                 "apiKey": {
-                  "type": "string",
-                  "description": "Platform-wide Composio API key — the broker credential, and the gate on registering the provider at all. Falls back to COMPOSIO_API_KEY. A secret in a mounted config file is the operator's call; the env fallback remains the better posture for most deployments."
+                  "oneOf": [{ "type": "string" }, { "$ref": "#/$defs/credentialRef" }],
+                  "description": "Platform-wide Composio API key — the broker credential, and the gate on registering the provider at all. Falls back to COMPOSIO_API_KEY. A secret in a mounted config file is the operator's call; the env fallback remains the better posture for most deployments. May instead be a credential reference — { \"ref\": \"credential\", \"key\": \"<key>\" } — resolved from the instance scope of the credential store at startup, so the value never sits in this file. See /config/secrets/."
                 },
                 "authConfigs": {
                   "type": "object",
@@ -461,8 +462,8 @@
               "type": "object",
               "properties": {
                 "apiKey": {
-                  "type": "string",
-                  "description": "Platform-wide Smithery API key. Falls back to SMITHERY_API_KEY. Its presence (with a namespace) is the gate on registering the provider at all."
+                  "oneOf": [{ "type": "string" }, { "$ref": "#/$defs/credentialRef" }],
+                  "description": "Platform-wide Smithery API key. Falls back to SMITHERY_API_KEY. Its presence (with a namespace) is the gate on registering the provider at all. May instead be a credential reference — { \"ref\": \"credential\", \"key\": \"<key>\" } — resolved from the instance scope of the credential store at startup, so the value never sits in this file. See /config/secrets/."
                 },
                 "namespace": {
                   "type": "string",
@@ -479,6 +480,54 @@
                 }
               },
               "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        "gateways": {
+          "description": "Hosted-MCP gateways, keyed by the operator-chosen name an `auth: provider` catalog entry names in providerAuth.provider. Declaring one registers a credential provider under that name which attaches the key as `Authorization: Bearer`. Names reserved by built-in credential providers (minted, composio, smithery) are refused.",
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "apiKey": {
+                "oneOf": [{ "type": "string" }, { "$ref": "#/$defs/credentialRef" }],
+                "description": "The gateway's account-wide API key. Falls back to <NAME>_API_KEY (name upper-cased, non-alphanumerics to underscore), so `mcp360` reads MCP360_API_KEY. May instead be a credential reference — { \"ref\": \"credential\", \"key\": \"<key>\" } — resolved from the instance scope of the credential store at startup, so the value never sits in this file. See /config/secrets/."
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "notifications": {
+      "description": "Notifications — how the runtime reads the outboxes connectors declare. Only the poll's pacing is configurable: what an outbox carries is the emitting server's decision and who may declare one is the operator's, while what the poll costs is the runtime's.",
+      "type": "object",
+      "properties": {
+        "poll": {
+          "description": "Pacing for the outbox poll. Cadence is per (workspace, connector) and adaptive: consecutive empty polls double the interval up to maxIntervalMs, and a poll that returns events snaps back to intervalMs. A server may recommend its own cadence with nextPollMs, honoured between a fixed 15s floor and maxIntervalMs.",
+          "type": "object",
+          "properties": {
+            "intervalMs": {
+              "type": "number",
+              "description": "Base cadence per source, in milliseconds. Floored at the fixed 15000 ms poll floor. Default: 60000 (60s).",
+              "default": 60000
+            },
+            "maxIntervalMs": {
+              "type": "number",
+              "description": "Backoff ceiling in milliseconds — the slowest an idle source is read, and the interval an open circuit breaker half-opens on. Never resolves below intervalMs. Default: 300000 (5 min).",
+              "default": 300000
+            },
+            "maxEvents": {
+              "type": "number",
+              "description": "Events requested per read. A server that cuts the batch at this size answers hasMore, and the runtime reads again at once within the budget. Capped at 1000. Default: 100.",
+              "default": 100
+            },
+            "budgetPerMinute": {
+              "type": "number",
+              "description": "Polls allowed per workspace per minute, across every connector in it. Sources beyond the budget are deferred to the next tick in round-robin order, never starved. The default derives from the edge limiter: a quarter of a tenant's 120 rpm, at three requests per poll (a reconnect costs initialize + initialized + the read). Default: 10.",
+              "default": 10
             }
           },
           "additionalProperties": false
@@ -511,6 +560,22 @@
           "default": 204800
         }
       },
+      "additionalProperties": false
+    }
+  },
+  "$defs": {
+    "credentialRef": {
+      "type": "object",
+      "description": "A pointer into the credential store instead of a literal secret. The key names a secret set out of band — `manage_connectors set_secret` for a workspace, the file layout for the instance — so nothing about where the value lives appears in config, which is what lets the storage backend change without a config migration.",
+      "properties": {
+        "ref": { "const": "credential" },
+        "key": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$",
+          "description": "Credential-store key, dotted-namespace form, e.g. acme.db_url."
+        }
+      },
+      "required": ["ref", "key"],
       "additionalProperties": false
     }
   }

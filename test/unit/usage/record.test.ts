@@ -1,12 +1,6 @@
 /**
- * The attribution seam: `origin` and `delegated` are derived from the ambient
- * request context and the emitting event, never from the caller.
- *
- * These assert the two orthogonality properties the label exists for. The one
- * that matters most is `origin: "task", delegated: true` — a sub-agent spawned
- * inside an automation is both, and an enum that collapsed them would file that
- * spend under `delegate` and drop it from the automation total, which is the
- * same shape as the defect the ledger exists to fix.
+ * The attribution seam: `origin` is derived from the ambient request context
+ * and the emitting event, never from the caller.
  *
  * Every test uses a model name unique to it and reads that series directly, so
  * nothing here resets the process-global registry that the rest of the suite
@@ -22,7 +16,6 @@ import { UsageLedger } from "../../../src/usage/ledger.ts";
 import { usageMonthOf, usageShardPath } from "../../../src/usage/paths.ts";
 import {
   clearUsageLedger,
-  isDelegated,
   originOf,
   recordLlmCall,
   setUsageLedger,
@@ -56,61 +49,122 @@ describe("originOf", () => {
     });
   });
 
-  test("unattended is `task` even though the context also carries a conversationId", () => {
-    // `executeTask` stamps the run id into `conversationId` for traceability, so
-    // a conversation-first test would file every automation call under `chat`.
-    // This is the precedence that makes the automation total correct.
-    runWithRequestContext({ identity: null, conversationId: "run-1", unattended: true }, () => {
+  test("unattended is `task`, and a run carries no conversation to confuse it", () => {
+    // A run stamps `runId`, not `conversationId` — the two are different
+    // questions. `unattended` is still checked first, so the answer does not
+    // depend on that: a context that somehow carried both would still be a task.
+    runWithRequestContext({ identity: null, runId: "run-1", unattended: true }, () => {
       expect(originOf()).toBe("task");
     });
+    runWithRequestContext(
+      { identity: null, conversationId: "conv-1", unattended: true },
+      () => {
+        expect(originOf()).toBe("task");
+      },
+    );
   });
 });
 
-describe("isDelegated", () => {
-  test("a parentRunId on the event means delegated", () => {
-    expect(isDelegated({ parentRunId: "run-1" })).toBe(true);
+describe("each id in the ledger lands under its own name", () => {
+  // `sessionId` used to hold a conversation-or-run union told apart by
+  // `origin`. Each fact now has its own field, and `runId` — the engine's, per
+  // turn — is the one the union could not express at all.
+  function fieldsFor(
+    ctx: Parameters<typeof runWithRequestContext>[0],
+    event?: Record<string, unknown>,
+  ): Record<string, unknown> {
+    const dir = mkdtempSync(join(tmpdir(), "nb-session-"));
+    const month = usageMonthOf(new Date().toISOString());
+    const ledger = new UsageLedger(dir, "inst", { retentionMonths: 0 });
+    setUsageLedger(ledger);
+    try {
+      runWithRequestContext(ctx, () => {
+        recordLlmCall({
+          source: "main",
+          model: "test-model-session",
+          usage: USAGE,
+          ...(event ? { event } : {}),
+        });
+      });
+    } finally {
+      clearUsageLedger(ledger);
+    }
+    const path = usageShardPath(dir, month, "inst");
+    const line = readFileSync(path, "utf-8").split("\n").filter(Boolean)[0]!;
+    return JSON.parse(line) as Record<string, unknown>;
+  }
+
+  test("a chat's conversation id lands in conversationId", () => {
+    const rec = fieldsFor({ identity: null, conversationId: "conv-42" });
+    expect(rec.conversationId).toBe("conv-42");
+    expect(rec.taskRunId).toBeUndefined();
   });
 
-  test("no event and no parentRunId mean not delegated", () => {
-    expect(isDelegated(undefined)).toBe(false);
-    expect(isDelegated({})).toBe(false);
+  test("an automation's run id lands in taskRunId, not conversationId", () => {
+    // The original defect one layer up: a run id occupying a conversation
+    // field. It must not reappear as a conversation under a new name.
+    const rec = fieldsFor({ identity: null, runId: "run-42", unattended: true });
+    expect(rec.taskRunId).toBe("run-42");
+    expect(rec.conversationId).toBeUndefined();
   });
 
-  test("an empty parentRunId is not delegation", () => {
-    // `DelegateTracker.currentRunId` initializes to "", so a null check alone
-    // would label a child that ran before any top-level run.start.
-    expect(isDelegated({ parentRunId: "" })).toBe(false);
+  test("the engine's run id lands in runId — the per-turn grain", () => {
+    // Read off the emitting event, where it already was.
+    const rec = fieldsFor({ identity: null, conversationId: "conv-42" }, { runId: "engine-run-7" });
+    expect(rec.runId).toBe("engine-run-7");
+    expect(rec.conversationId).toBe("conv-42");
+  });
+
+  test("a chat and its turn are recorded together, not as one id", () => {
+    const rec = fieldsFor({ identity: null, conversationId: "conv-42" }, { runId: "engine-run-7" });
+    expect([rec.conversationId, rec.runId]).toEqual(["conv-42", "engine-run-7"]);
+  });
+
+  test("a forked fast-slot call has no turn of its own", () => {
+    // Title/compaction/briefing emit no event, so there is no engine run to
+    // attribute them to — they belong to the scope they ran in.
+    const rec = fieldsFor({ identity: null, conversationId: "conv-42" });
+    expect(rec.runId).toBeUndefined();
+  });
+
+  test("sessionId is no longer written", () => {
+    expect(fieldsFor({ identity: null, conversationId: "conv-42" }).sessionId).toBeUndefined();
+    expect(
+      fieldsFor({ identity: null, runId: "run-42", unattended: true }).sessionId,
+    ).toBeUndefined();
+  });
+
+  test("nothing in scope leaves all three unset", () => {
+    const rec = fieldsFor({ identity: null });
+    expect(rec.conversationId).toBeUndefined();
+    expect(rec.taskRunId).toBeUndefined();
+    expect(rec.runId).toBeUndefined();
   });
 });
 
 describe("recordLlmCall", () => {
-  test("a delegated call inside an automation is task + delegated, not one or the other", async () => {
-    runWithRequestContext({ identity: null, conversationId: "run-7", unattended: true }, () => {
+  test("a run's own turn records task, and stays recoverable as automation spend", async () => {
+    runWithRequestContext({ identity: null, runId: "run-7", unattended: true }, () => {
       recordLlmCall({
         source: "main",
         model: "test-model-a",
         usage: USAGE,
-        event: { parentRunId: "run-7" },
+        event: { runId: "engine-run-7" },
       });
     });
 
     const sample = await callSample({ model: "test-model-a" });
     expect(sample?.labels.origin).toBe("task");
-    expect(sample?.labels.delegated).toBe("true");
-    // The point of the split: this call is still recoverable as automation
-    // spend. Under a collapsed enum it would read `delegate` and vanish from
-    // the automation total.
     expect(sample?.labels.source).toBe("main");
   });
 
-  test("an interactive turn is chat + not delegated", async () => {
+  test("an interactive turn records chat", async () => {
     runWithRequestContext({ identity: null, conversationId: "conv-9" }, () => {
       recordLlmCall({ source: "main", model: "test-model-b", usage: USAGE, event: {} });
     });
 
     const sample = await callSample({ model: "test-model-b" });
     expect(sample?.labels.origin).toBe("chat");
-    expect(sample?.labels.delegated).toBe("false");
   });
 
   test("token counters carry the same attribution as the call counter", async () => {
@@ -122,7 +176,6 @@ describe("recordLlmCall", () => {
     expect(samples.length).toBeGreaterThan(0);
     for (const s of samples) {
       expect(s.labels.origin).toBe("task");
-      expect(s.labels.delegated).toBe("false");
     }
   });
 });
@@ -154,7 +207,7 @@ describe("origin follows the scope, whatever the source", () => {
   });
 
   test("the same call inside an automation records task", async () => {
-    runWithRequestContext({ identity: null, conversationId: "run-mid", unattended: true }, () => {
+    runWithRequestContext({ identity: null, runId: "run-mid", unattended: true }, () => {
       recordLlmCall({ source: "compaction", model: "test-model-f", usage: USAGE });
     });
 
@@ -169,7 +222,6 @@ describe("origin follows the scope, whatever the source", () => {
 
     const sample = await callSample({ model: "test-model-c" });
     expect(sample?.labels.origin).toBe("system");
-    expect(sample?.labels.delegated).toBe("false");
   });
 });
 

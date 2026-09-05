@@ -1,0 +1,250 @@
+---
+title: Composio Aggregator Setup
+description: End-to-end operator setup for Composio-backed connectors (Gmail, Outlook, and other toolkits where you don't yet hold vendor verification).
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Composio is one [managed-connector provider](/config/connector-providers/) — the concept page covers what that means and how it differs from a connector. This guide is the vendor-specific setup.
+
+Composio is an OAuth aggregator. It holds the vendor's tokens; NimbleBrain proxies tool calls through Composio's MCP endpoint and persists only an opaque `connectedAccountId` per workspace per connector.
+
+You only need this if your catalog has any `auth: composio` entries. A production catalog (the directory `NB_CURATED_CATALOG_DIR` points at) typically ships Gmail and Outlook as Composio-backed because Google and Microsoft require app verification (`gmail.*`, `Mail.*`) that most operators don't hold on day one. Once your own OAuth app is verified, you can migrate the entry from `auth: composio` to `auth: static` or `auth: dcr` without losing the workspace's existing state.
+
+<Aside type="note">
+  This guide assumes you've already chosen to include a Composio-backed entry in your catalog. The catalog mechanics (YAML shape, `composio` block fields, tool allowlists) live in [Connectors Catalog → auth: composio](/config/connectors-catalog/#2-add-the-yaml-entry).
+</Aside>
+
+## One-time setup (per environment)
+
+### 1. Create a Composio account
+
+- Sign up at `platform.composio.dev`.
+- One Composio account per environment is fine; staging and production can share the account during development, but production should get its own once you're under volume.
+- Issue an API key under **Project Settings → API keys**. Save it — you'll wire it into the pod as `COMPOSIO_API_KEY`.
+
+**Composio freezes a key's permissions at creation.** An under-granted key cannot be repaired, only replaced, so set these deliberately:
+
+| Permission | Grant | Why the platform needs it |
+|---|---|---|
+| Connected accounts | **Write** | Beginning a connection, completing an API-key connection, and disconnecting. Write covers the reads (listing an existing account, polling one to active). |
+| Sessions | **Write** | Installing a connector mints a session and its MCP server. |
+| Tool execution | **Enable** | See below — this is the one that is easy to miss. |
+| Tools | Read | Listing the toolkit's tools over that session. |
+| Toolkits | Read | Session creation resolves toolkit slugs. |
+| Auth configs | Read | Not called at runtime, but it is how you read an auth config's `expected_input_fields` when diagnosing a failed connect. |
+| Proxy execute, Triggers, Webhooks | — | Not used. |
+
+**Tool execution is not optional, and its absence is invisible until it isn't.** The MCP endpoint the runtime talks to for a Composio connector authenticates with this same key, so it is not merely the credential that sets connections up — it is what every agent tool call runs under. A key without it connects cleanly, lists tools, and then fails the first time an agent tries to do work.
+
+Before pointing production at a new key, exercise it end to end — a `tools/call` against a session's MCP endpoint, not just a read. Reads and connects can pass while execution is refused, and that combination looks healthy.
+
+If your key is IP-restricted, allowlist **every** egress address the platform can leave from, not the one you observed. On Kubernetes behind per-zone NAT gateways that means one entry per gateway; a partial list fails only for pods in the missing zone, which presents as intermittent `401 Auth_Unauthorized` rather than as misconfiguration. The allowlist, unlike permissions, stays editable after creation.
+
+Rotating the key later: the runtime reads it once at startup, so update the secret, restart the pods, confirm they hold the new value, and only then revoke the old key. Revoking first takes out connects and tool calls together.
+
+### 2. Register a per-toolkit OAuth client (BYO credentials)
+
+For each toolkit you expose, register an OAuth client at the vendor's developer console using **your own** credentials. Composio also offers a "managed" mode where they supply the OAuth app, but it ships with shared quota and Composio branding on the consent screen — bring your own client.
+
+**Gmail (Google Cloud Console):**
+- `console.cloud.google.com/apis/credentials`
+- App: reuse an existing Google OAuth client or create a new one. Name it after your platform.
+- Authorized redirect URI: `https://backend.composio.dev/api/v3.1/toolkits/auth/callback`
+- Scopes (request via Google's OAuth verification flow): `gmail.readonly`, `gmail.send`, `gmail.modify`, `gmail.compose`, plus `openid email profile`
+- Capture **Client ID** + **Client Secret**
+
+**Outlook (Azure Portal):**
+- `portal.azure.com → Azure Active Directory → App registrations → New registration`
+- Supported account types: "Accounts in any organizational directory and personal Microsoft accounts"
+- Redirect URI (Web): `https://backend.composio.dev/api/v3.1/toolkits/auth/callback`
+- API permissions (delegated): `Mail.Read`, `Mail.Send`, `Mail.ReadWrite`, `MailboxSettings.Read`, `Calendars.ReadWrite`, `offline_access`
+- Certificates & secrets → New client secret
+- Capture **Application (client) ID** + the secret value
+
+Repeat per toolkit you plan to enable.
+
+### 3. Create one auth config per toolkit in Composio
+
+In the Composio dashboard:
+
+1. **Authentication management → Create Auth Config**
+2. Select the toolkit (Gmail / Outlook / …)
+3. Toggle **"Use your own developer credentials"**
+4. Paste the Client ID + Client Secret from step 2
+5. Save — copy the resulting `ac_…` id
+
+Declare that id in `nimblebrain.json`, keyed by the toolkit slug the catalog entry names:
+
+```jsonc
+{
+  "connectors": {
+    "providers": {
+      "composio": {
+        "authConfigs": {
+          "gmail": "ac_xxxxxxxx",
+          "outlook": "ac_yyyyyyyy"
+        }
+      }
+    }
+  }
+}
+```
+
+An `ac_…` is an identifier, not a secret — it is inert without the API key — so it belongs in config next to the toolkits it names, not in your secret store. Add a toolkit by adding a line here and a catalog entry; there is no third place to keep in sync.
+
+The key must match the catalog entry's `composio.toolkit` exactly. At boot the runtime reports any key naming no catalog toolkit, so check your startup logs after editing this block.
+
+A toolkit you leave out is **not** reported. The catalog is a menu, and wiring the toolkits you want is the normal case; installing a connector whose toolkit has no id fails at that moment, naming the toolkit and the config key to set.
+
+### 4. Brand the Composio consent screen
+
+In **Project Settings → Auth Screen** in the Composio dashboard, upload your platform's logo and set the app title. Do this before you let users connect anything.
+
+Every redirect-based connect runs through Composio's hosted Connect Link, so this screen is a real stop in the flow, not a flash: the user lands on `connect.composio.dev`, sees the page you brand here, and continues to the vendor's own consent (which uses *your* OAuth client's branding for a BYO auth config).
+
+The hosted page is also what makes toolkits with a required connection field work at all. Zoho asks for a region, Jira a subdomain, WhatsApp a WhatsApp Business Account ID — Composio's page collects those from the connecting user and validates them against the auth config. Nothing in the catalog declares them, and nothing needs to.
+
+Which toolkits ask, and for what, is a property of the auth config rather than of the catalog, so read it from Composio rather than from this list: `GET /api/v3/auth_configs/<ac_id>` returns `expected_input_fields`.
+
+## Wire env vars into the pod
+
+Two variables per environment. Source them from whatever secret store you're already using (Kubernetes Secret, ExternalSecret pointing at a vault, AWS Secrets Manager, etc.).
+
+```bash
+COMPOSIO_API_KEY=...   # from step 1 — the broker credential, the only secret here
+
+# Multi-tenant deployments only — required so two tenants with
+# the same wsId don't share a Composio user namespace.
+NB_TENANT_ID=tenant-a
+```
+
+The per-toolkit `ac_…` ids from step 3 are **not** here: they are identifiers rather than secrets, and live in `nimblebrain.json` under `connectors.providers.composio.authConfigs`.
+
+The full reference is in [Environment Variables → Composio aggregator](/config/environment/#composio-aggregator).
+
+### Declaring the provider in `nimblebrain.json`
+
+The provider can be declared on the config interface instead of the environment:
+
+```json
+{
+  "connectors": {
+    "providers": {
+      "composio": {
+        "apiKey": "…",
+        "baseUrl": "https://backend.composio.dev",
+        "monitorEnabled": true
+      }
+    }
+  }
+}
+```
+
+The broker credential is the only value with two sources: a declared `apiKey` wins, and one left out reads `COMPOSIO_API_KEY`. Every other setting resolves from the block alone. The revalidator's sweep cadence is provider-agnostic and stays on `NB_CONNECTION_REVALIDATE_INTERVAL_SECONDS`. `apiKey` is declarable too, though a secret store → pod environment remains the better posture — see [the broker credential](/config/nimblebrain-json/#the-broker-credential). See [`connectors`](/config/nimblebrain-json/#connectors) for the full surface.
+
+### Verify integration is live
+
+On pod startup, look for this log line:
+
+```
+[composio] integration: configured (base=https://backend.composio.dev)
+```
+
+If you see `integration: not configured` instead, no API key is reaching the pod.
+
+If the platform refuses to start with `NB_TENANT_ID is required when running in bouncer (multi-tenant) mode` or `must be http(s)`, the deployment config is malformed — fix per the error message.
+
+<Aside type="caution">
+  **Rotating an `ac_…` requires a pod restart.** The platform reads and validates Composio config once at startup and caches the result for the process lifetime. After you update an auth-config secret in your store, force the secret reconciler to refresh the in-pod value, then roll the deployment. A stale id won't fail at boot — it'll fail at first install with `400 Invalid auth config IDs`.
+</Aside>
+
+### Egress allowlist
+
+If running behind strict egress filters, allow:
+
+- `backend.composio.dev` (HTTPS, all paths) — SDK calls and the MCP endpoint
+- `connect.composio.dev` and `dashboard.composio.dev` (HTTPS, all paths) — the hosted Connect Link every redirect-based connect passes through; `connect` 307s to `dashboard`, so allowing only the first breaks the flow mid-consent
+- Google / Microsoft OAuth endpoints (most fleets already allow these for native integrations)
+
+## Adding a new Composio toolkit
+
+The full procedure to add (say) Slack to a Composio-backed deployment:
+
+1. **Vendor side**: register a Slack OAuth app (BYO) — `api.slack.com/apps`. Set redirect URI to `https://backend.composio.dev/api/v3.1/toolkits/auth/callback`. Capture Client ID + Client Secret.
+2. **Composio side**: dashboard → Create Auth Config → Slack → BYO credentials → paste. Capture `ac_…`.
+3. **Config**: add the id to `nimblebrain.json` — `connectors.providers.composio.authConfigs.slack: "ac_…"`. Not your secret store: an `ac_…` is inert without `COMPOSIO_API_KEY`.
+4. **Catalog YAML**: add a `auth: composio` entry with `composio.toolkit: slack` — the same slug you keyed step 3 under. Curate `composio.tools` aggressively — Slack publishes 100+ tools, and the agent's first-turn tool search will spend tens of thousands of tokens listing them all if you let it. See [Connectors Catalog → auth: composio](/config/connectors-catalog/#2-add-the-yaml-entry).
+5. **Roll the deployment**: bump the platform image (or restart pods). The new config and catalog entry are picked up on next start.
+
+## API-key toolkits (no OAuth)
+
+Some toolkits in Composio's directory authenticate by **API key**, not OAuth (PostHog, among others). There's no vendor OAuth app and no consent redirect: when a user connects, they paste the toolkit's API key (plus any region/host) into a short form, the platform hands it to Composio, and only the opaque `connectedAccountId` is persisted. **The platform never stores the key.** It's the same trust posture as the OAuth path — Composio custodies the credential.
+
+Setup differs from the OAuth procedure above in three ways:
+
+### 1. Create the auth config with the API_KEY scheme
+
+In the Composio dashboard → **Authentication management → Create Auth Config**, pick the toolkit and choose the **API Key** auth scheme. There is **no** "use your own developer credentials" step — API-key toolkits have no OAuth client. Save and copy the `ac_…` id, then declare it under `connectors.providers.composio.authConfigs` exactly as for OAuth toolkits.
+
+### 2. Declare authScheme + fields in the catalog
+
+The catalog entry sets `authScheme: API_KEY` and lists the `fields` the connect form collects from the user. See [Connectors Catalog → auth: composio with API keys](/config/connectors-catalog/#auth-composio-with-api-keys) for the YAML shape.
+
+### 3. Verify field keys and tool slugs against Composio
+
+Composio exposes **three** slightly different slug namespaces — the REST tool catalog, the connection-initiation fields, and the tool-router session filter — so two values must be confirmed against Composio's own naming rather than guessed:
+
+- **`fields[].key`** must be the connection-initiation field name. Confirm with `getConnectedAccountInitiationFields("<toolkit>", "API_KEY")` (or the toolkit's auth page on composio.dev). It is often not the obvious name — e.g. PostHog's key field is `generic_api_key` (not `api_key`) plus a `subdomain`.
+- **`tools[]`** must be the tool-router `config.tools` names, which differ from the REST catalog (`GET /api/v3/tools`). The authoritative check is to **install the connector with your candidate list**: session-create returns `400 Invalid tool slugs in config.tools: …` naming every wrong one. Iterate until it installs clean. (A no-filter install's exposed tool list is a *third* namespace — also not authoritative for the filter.)
+
+Everything else — `COMPOSIO_API_KEY`, env wiring, the `[composio] integration: configured` startup check, the egress allowlist — is identical to the OAuth setup above.
+
+## Disconnect / revocation semantics
+
+When a user clicks Disconnect on a Composio-backed connector:
+
+1. The platform calls Composio's SDK to delete the connected account (best-effort — failures don't block local cleanup).
+2. The platform deletes `<workDir>/workspaces/<wsId>/credentials/composio/<connectorId>/connection.json`.
+3. The bundle's MCP source is stopped and removed from the registry.
+4. Bundle state transitions to `not_authenticated`. The UI shows **Connect** again.
+
+Reconnect after disconnect runs a fresh OAuth flow at the vendor — there's no adopt-existing shortcut because the upstream account was deleted in step 1. For **API-key** toolkits there's no OAuth flow: reconnect re-opens the key form. Re-connecting an already-connected API-key toolkit (key rotation) replaces and revokes the prior Composio account and is gated to workspace admins, since it swaps the credential every member's agent runs under.
+
+## Migrating off Composio (per toolkit)
+
+When your own OAuth app passes vendor verification for a given toolkit:
+
+1. Update the catalog entry's `_meta.connector.auth` from `composio` to `static` (or `dcr` if the vendor supports DCR).
+2. Provision the platform-side OAuth client for that toolkit (see [Connectors Catalog → static auth](/config/connectors-catalog/#2-add-the-yaml-entry)).
+3. Existing Composio-connected workspaces will see "needs auth" — `connection.json` is still on disk but the catalog's auth discriminator has changed, so the boot probe says re-authenticate.
+4. Once all workspaces have re-authenticated, you can remove the Composio dashboard entries for that toolkit and drop its `authConfigs` entry.
+
+The catalog `name` (`com.google/gmail`) stays stable across the migration. Composio state (`credentials/composio/<connectorId>/connection.json`) and native OAuth state (`credentials/oauth/<connectorId>/tokens.json`) live at distinct paths, so neither overwrites the other during the cutover.
+
+## Known limitations
+
+- **One platform-wide Composio API key.** Per-tenant Composio sub-accounts aren't supported yet — every tenant on a pod shares the same Composio account. Plan multi-tenant Composio sharing accordingly (`NB_TENANT_ID` namespaces *within* a single Composio account but tools, quotas, and tokens are still pooled).
+- **Tool allowlist is source-controlled.** Curating `composio.tools` requires a platform image release. Per-workspace overrides are not yet exposed.
+- **Composio sees tool inputs and outputs.** Email bodies, message contents, every argument and result transits Composio's infrastructure. Acceptable for general productivity workflows; a no-go for tenants under data-residency or PII-handling NDAs. Move those tenants to a native OAuth client before exposing them to a Composio-backed connector.
+- **`@composio/core` is pre-1.0** (pinned to `0.9.x`). Monitor release notes before upgrading; major bumps may make breaking changes.
+
+## Troubleshooting
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| Connect button shows "Failed to start OAuth flow" | Web bundle stale or catalog projection didn't load | Hard refresh the browser; check the `[composio] integration: configured` log line at pod startup |
+| Install succeeds but "Sign-in required" persists after OAuth | `connection.json` didn't land at the callback | Check `<workDir>/workspaces/<wsId>/credentials/composio/<connectorId>/connection.json`; if missing, the callback handler logged the failure |
+| Install returns "Installed … click Connect to retry" | Eager source-start failed (transient upstream / network). The install itself succeeded — workspace.json has the entry, the bundle just couldn't kick its tool list. | Click **Connect** on the connector. If retries keep failing, check pod logs for `[bundles] <serverName> start failed:` |
+| Connect returns 502 `composio_adopt_source_start_failed` | The adopt-existing path matched a Composio account but couldn't bring the local MCP source online. No partial state was persisted. | Click **Disconnect** then **Connect** to run a fresh OAuth flow. Investigate pod logs if it persists. |
+| Install fails with `400 Invalid auth config IDs` from Composio | The toolkit's `authConfigs` entry points at an `ac_…` that doesn't exist in the Composio dashboard | Confirm the id in `platform.composio.dev → Auth Configs`; correct `connectors.providers.composio.authConfigs.<toolkit>`; roll the deployment |
+| Install fails with `400 Invalid tool slugs in config.tools: …` (API-key toolkit) | The `tools` allowlist uses REST-catalog names, not the tool-router `config.tools` namespace | Replace the named slugs with their tool-router equivalents and reinstall to re-validate — see [API-key toolkits](#api-key-toolkits-no-oauth) |
+| Connect form rejects a field or the connection 401s on first tool call (API-key toolkit) | A `fields[].key` doesn't match Composio's connection-initiation field name (e.g. `api_key` vs `generic_api_key`), or the wrong key type was entered | Verify keys via `getConnectedAccountInitiationFields`; confirm the user pasted the correct key type (e.g. PostHog needs a `phx_` personal key, not a `phc_` project key) |
+| Agent returns "model returned an error" on first tool call | Tool allowlist missing or too broad — `nb__search` returns hundreds of tool descriptions and blows past the input-token cap | Add or tighten `composio.tools` in the catalog entry; reinstall |
+| Composio API errors after deploy | API key not propagated through the secret pipeline | `kubectl exec` (or equivalent) into the pod and check `printenv COMPOSIO_API_KEY` |
+| Multiple connected accounts piling up in the Composio dashboard | Legacy state from before the adopt-existing path landed. New connects auto-dedup against the active account. | Manual cleanup in the Composio dashboard for old duplicates |
+
+## Related
+
+- [Connectors Catalog → auth: composio](/config/connectors-catalog/#2-add-the-yaml-entry) — the catalog YAML reference.
+- [Environment Variables → Composio aggregator](/config/environment/#composio-aggregator) — every Composio-related env var.

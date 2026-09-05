@@ -36,6 +36,7 @@ import {
   type RunErrorEvent,
   type RunStartEvent,
   type SkillActivatedEvent,
+  type SkillSuppressionEvent,
   type SkillsLoadedEntry,
   type SkillsLoadedEvent,
   type StoredMessage,
@@ -55,6 +56,20 @@ function safeParseLines<T>(lines: string[]): T[] {
     }
   }
   return results;
+}
+
+/** Map an engine `skill.suppression` to a persisted event, or null when unnamed. */
+function mapSkillSuppression({ ts, d, runId }: EngineEventContext): ConversationEvent | null {
+  const skillName = typeof d.skillName === "string" ? d.skillName : "";
+  if (!skillName) return null;
+  const e: SkillSuppressionEvent = {
+    ts,
+    type: "skill.suppression",
+    runId,
+    skillName,
+    suppressed: d.suppressed === true,
+  };
+  return e;
 }
 
 // ---------------------------------------------------------------------------
@@ -79,6 +94,7 @@ const CONVERSATION_EVENT_TYPES = new Set([
   "context.assembled",
   "connector.skill.injected",
   "skill.activated",
+  "skill.suppression",
 ]);
 
 // ---------------------------------------------------------------------------
@@ -604,8 +620,8 @@ export class EventSourcedConversationStore implements ConversationStore, EventSi
 
   /**
    * Read raw conversation events for a single conversation. Returns []
-   * for missing files or legacy (message-format) conversations. Phase 2
-   * read tools (`skills__active_for`, `skills__loading_log`) consume this.
+   * for missing files or legacy (message-format) conversations. The
+   * event-log read tools (`skills__loading_log`) consume this.
    */
   async readEvents(id: string): Promise<ConversationEvent[]> {
     const path = this.path(id);
@@ -810,6 +826,8 @@ export class EventSourcedConversationStore implements ConversationStore, EventSi
         return mapConnectorSkillInjected(ctx);
       case "skill.activated":
         return mapSkillActivated(ctx);
+      case "skill.suppression":
+        return mapSkillSuppression(ctx);
       default:
         return null;
     }

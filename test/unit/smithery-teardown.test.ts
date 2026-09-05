@@ -27,7 +27,11 @@ import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import { BundleLifecycleManager } from "../../src/bundles/lifecycle.ts";
 import type { BundleRef } from "../../src/bundles/types.ts";
 import { ToolRegistry } from "../../src/tools/registry.ts";
-import { cleanupSmitheryBundle } from "../../src/connectors/providers/smithery/provider.ts";
+import {
+  cleanupSmitheryBundle,
+  createSmitheryProvider,
+} from "../../src/connectors/providers/smithery/provider.ts";
+import { managedConnectorRegistryOf } from "../../src/connectors/providers/registry.ts";
 
 const ENV_KEYS = ["SMITHERY_API_KEY"] as const;
 const saved: Record<string, string | undefined> = {};
@@ -191,18 +195,29 @@ describe("uninstall → broker teardown wiring", () => {
     const workDir = mkdtempSync(join(tmpdir(), "nb-smithery-uninstall-"));
     try {
       const lifecycle = new BundleLifecycleManager(new NoopEventSink(), undefined);
-      const ref = {
+      lifecycle.setManagedConnectorRegistry(managedConnectorRegistryOf([createSmitheryProvider()]));
+      const ref: BundleRef = {
         url: "https://api.smithery.ai/connect/install-time-ns/nb-abc/mcp",
         serverName: "ai-bassethound-mcp",
         oauthScope: "workspace",
-        smithery: {
+        brokered: {
+          provider: "smithery",
           connectorId: "ai.bassethound/mcp",
-          connectionId: "nb-abc",
-          namespace: "install-time-ns",
-          baseUrl: "https://api.smithery.ai",
+          providerRef: {
+            connectionId: "nb-abc",
+            namespace: "install-time-ns",
+            baseUrl: "https://api.smithery.ai",
+          },
         },
-      } as unknown as BundleRef;
-      lifecycle.seedInstance("ai-bassethound-mcp", ref.url, ref, undefined, "ws_test", workDir);
+      };
+      await lifecycle.seedInstance(
+        "ai-bassethound-mcp",
+        ref.url,
+        ref,
+        undefined,
+        "ws_test",
+        workDir,
+      );
 
       await lifecycle.uninstall("ai-bassethound-mcp", new ToolRegistry(), "ws_test");
 

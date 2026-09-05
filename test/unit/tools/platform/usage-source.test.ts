@@ -74,7 +74,6 @@ async function seedSpend(
     ts: AT,
     source: "main",
     origin: "chat",
-    delegated: false,
     model: "claude-sonnet-4-5-20250929",
     usage: { inputTokens: input, outputTokens: output, cacheReadTokens: 0, cacheWriteTokens: 0 },
     llmMs: 100,

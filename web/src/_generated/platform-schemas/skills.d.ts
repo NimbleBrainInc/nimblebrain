@@ -14,12 +14,9 @@ export declare const SkillsListInput: import("@sinclair/typebox").TObject<{
 export type SkillsListInput = Static<typeof SkillsListInput>;
 export declare const SkillsReadInput: import("@sinclair/typebox").TObject<{
     id: import("@sinclair/typebox").TString;
+    version: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
 }>;
 export type SkillsReadInput = Static<typeof SkillsReadInput>;
-export declare const SkillsActiveForInput: import("@sinclair/typebox").TObject<{
-    conversation_id: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-}>;
-export type SkillsActiveForInput = Static<typeof SkillsActiveForInput>;
 export declare const SkillsLoadingLogInput: import("@sinclair/typebox").TObject<{
     conversation_id: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     skill: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
@@ -35,7 +32,6 @@ export declare const SkillsCreateInput: import("@sinclair/typebox").TObject<{
         description: import("@sinclair/typebox").TString;
         loadingStrategy: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"always" | "dynamic">>;
         priority: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
-        status: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"active" | "disabled">>;
         toolAffinity: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
         triggers: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
         allowedTools: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
@@ -49,18 +45,32 @@ export declare const SkillsUpdateInput: import("@sinclair/typebox").TObject<{
         description: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         loadingStrategy: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"always" | "dynamic">>;
         priority: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
-        status: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"active" | "disabled">>;
         toolAffinity: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
         triggers: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
         allowedTools: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
     }>>;
     body: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+    body_mode: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TLiteral<"append">, import("@sinclair/typebox").TLiteral<"replace">]>>;
 }>;
 export type SkillsUpdateInput = Static<typeof SkillsUpdateInput>;
+export declare const SkillsHistoryInput: import("@sinclair/typebox").TObject<{
+    id: import("@sinclair/typebox").TString;
+}>;
+export type SkillsHistoryInput = Static<typeof SkillsHistoryInput>;
+export declare const SkillsRestoreInput: import("@sinclair/typebox").TObject<{
+    id: import("@sinclair/typebox").TString;
+    version: import("@sinclair/typebox").TString;
+}>;
+export type SkillsRestoreInput = Static<typeof SkillsRestoreInput>;
 export declare const SkillsDeleteInput: import("@sinclair/typebox").TObject<{
     id: import("@sinclair/typebox").TString;
 }>;
 export type SkillsDeleteInput = Static<typeof SkillsDeleteInput>;
+export declare const SkillsSetStatusInput: import("@sinclair/typebox").TObject<{
+    id: import("@sinclair/typebox").TString;
+    status: import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TLiteral<"active">, import("@sinclair/typebox").TLiteral<"disabled">]>;
+}>;
+export type SkillsSetStatusInput = Static<typeof SkillsSetStatusInput>;
 export declare const SkillsActivateInput: import("@sinclair/typebox").TObject<{
     id: import("@sinclair/typebox").TString;
 }>;
@@ -145,28 +155,6 @@ export interface SkillDetail {
 }
 /** `SkillsReadOutput` is the detail itself — no wrapper envelope. */
 export type SkillsReadOutput = SkillDetail;
-/**
- * Single entry in the `skills__active_for` response — one currently-
- * active layer-3 skill for the named conversation, with provenance for
- * why it loaded.
- */
-export interface ActiveSkillEntry {
-    id: string;
-    /**
-     * The loading mechanism's layer: `0` = always-on context, `3` = tool-affinity,
-     * `4` = trigger match. Historical events only carried `3`.
-     */
-    layer: 0 | 3 | 4;
-    scope: SkillScope;
-    tokens: number;
-    /** The loading mechanism: always-on context, tool-affinity, or trigger match. */
-    loadedBy: "always" | "tool_affinity" | "trigger";
-    reason: string;
-}
-export interface SkillsActiveForOutput {
-    active: ActiveSkillEntry[];
-    conversationId: string;
-}
 /**
  * `nb__use_skill` result. `loaded` delivers the skill (body rides the result's
  * `content`, not this typed envelope); `already_loaded` is the dedupe note —

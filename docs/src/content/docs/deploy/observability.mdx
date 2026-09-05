@@ -22,7 +22,7 @@ The runtime produces these spans today:
 | `tool.dispatch` | An MCP tool dispatch |
 | HTTP server span | The inbound request; continues an upstream `traceparent` if present |
 
-Spans nest automatically and carry the verified request identity (`user_id`, `workspace_id`, `conversation_id`) plus the boot-time `tenant_id`. They **never** carry the user's display name, email, secrets, prompts, tool arguments or results, or file contents.
+Spans nest automatically and carry the verified request identity (`user_id`, `workspace_id`, and either `conversation_id` for a chat or `run_id` for a scheduled run) plus the boot-time `tenant_id`. They **never** carry the user's display name, email, secrets, prompts, tool arguments or results, or file contents.
 
 ### Enabling export
 
@@ -65,7 +65,8 @@ Each JSON line is auto-enriched with:
 | `service` | `NB_SERVICE_NAME` |
 | `tenant_id` | `NB_TENANT_ID` (boot-time, omitted in dev) |
 | `correlation_id` | The active trace id — pivot a log straight to its trace |
-| `user_id` / `workspace_id` / `conversation_id` | The verified request identity (omitted when not in a request) |
+| `user_id` / `workspace_id` | The verified request identity (omitted when not in a request) |
+| `conversation_id` / `run_id` | What the work belongs to — a chat carries the first, a scheduled run the second, never both |
 
 Identity comes only from the verified request context, never the wire, and never includes the human display name. Logs stay on stderr, so Kubernetes captures them alongside stdout and stdout stays clean for JSON-RPC and piped output.
 
@@ -113,6 +114,32 @@ A few properties worth knowing:
 - Like `/v1/health`, it is unauthenticated. It carries no per-user data and is meant to be reachable only inside the cluster.
 
 In Kubernetes, point a `ServiceMonitor` (or your scrape config) at the platform service's `/metrics` path. Do not expose it to the internet.
+
+### Notification poll metrics
+
+An app can declare an [outbox](/config/nimblebrain-json/#notifications) — a resource the runtime reads on a schedule for facts the app recorded that nobody asked for. That poll is a standing background cost, so it is metered by what it costs rather than by what it carried:
+
+| Metric | Type | Labels | What it says |
+|---|---|---|---|
+| `nb_notifications_pulled_total` | counter | `source` | Envelopes read off an outbox and admitted to the inbox. |
+| `nb_notifications_poll_seconds` | histogram | `source` | Duration of one outbox read, including any reconnect it had to do first. |
+| `nb_notifications_poll_reconnects_total` | counter | `source` | Reads that found the connection idle-closed and re-established it. The poll budget is sized on the assumption that this costs three requests; a rate near zero means the assumption is pessimistic. |
+| `nb_notifications_poll_deferred_total` | counter | — | Polls pushed to a later tick because a workspace's `notifications.poll.budgetPerMinute` was spent. Sustained nonzero means the budget is smaller than the number of outboxes installed. |
+| `nb_notifications_truncated_total` | counter | `source` | Reads answered `truncated` — the app dropped undelivered events to stay under its own cap, so the inbox has a gap. **Any nonzero rate is real data loss** and belongs on a dashboard. |
+
+`source` is the connector's MCP source name, bucketed to `other` for a name outside the label charset. There is no workspace label: one runtime serves one tenant, so the scrape already attributes it, and a workspace label would be unbounded.
+
+## Background loops
+
+Two loops run on timers inside the runtime process: the **connection revalidator**, which re-checks connectors whose upstream credential can lapse without a transport error ([`NB_CONNECTION_REVALIDATE_INTERVAL_SECONDS`](/config/environment/#runtime--server)), and the **notification poller**, which reads declared outboxes ([`notifications.poll`](/config/nimblebrain-json/#notifications)).
+
+Both are per-process and hold their state in memory, so both carry the same prerequisite:
+
+<Aside type="caution">
+  `replicas: 1` is the supported topology for both loops. At `replicas > 1` each pod would run its own copy: the revalidator would re-probe connections whose state another pod owns, and the poller would read every outbox once per pod and race the same stored cursor. Making either safe needs per-tenant leader election, which is not built. Keep the platform at a single replica — the same conclusion the [session store](#multi-replica-session-storage) reaches for its own reasons.
+</Aside>
+
+To confirm the poller found anything after a restart, look for `[notifications] targets=N` — it is logged on the first sweep and again whenever the count changes, so `targets=0` on a pod where an app declaring an outbox is installed means the declaration is not reaching the poller, which is a different fault from an outbox that is being read and is empty.
 
 ## Health and readiness probes
 

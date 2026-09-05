@@ -124,6 +124,7 @@ async function withTimeout<T>(label: string, fn: () => Promise<T>): Promise<T> {
 interface ComposioClient {
   connectedAccounts: {
     list(query: unknown): Promise<unknown>;
+    link(userId: string, authConfigId: string, opts: unknown): Promise<unknown>;
     initiate(userId: string, authConfigId: string, opts: unknown): Promise<unknown>;
     delete(connectedAccountId: string): Promise<unknown>;
   };
@@ -211,10 +212,32 @@ async function composioClient(apiKey: string): Promise<ComposioClient> {
 }
 
 /**
- * Initiate a Composio connection request. Returns the URL the
- * browser should navigate to and the `connectedAccountId` the
- * platform persists on callback. Errors surface verbatim — the
- * caller decides how to map them to API responses.
+ * Begin a redirect-based Composio connection. Returns the URL the browser
+ * should navigate to and the `connectedAccountId` the platform persists on
+ * callback. Errors surface verbatim — the caller decides how to map them to
+ * API responses.
+ *
+ * `link()` — Composio's hosted authentication — is the call for every
+ * redirectable scheme, and the reason is two-fold:
+ *
+ *   1. `initiate()` is retired for Composio-managed OAuth auth configs (the
+ *      vendor answers 400 once enforced). `link()` works for managed and
+ *      custom configs alike and returns the same shape.
+ *   2. Composio's hosted page collects the auth config's required
+ *      connection-initiation fields — a Jira subdomain, a Zoho region, a
+ *      WhatsApp WABA id — directly from the connecting user, and it needs no
+ *      help from us: the SDK's `link()` exposes no channel for supplying
+ *      them. (The underlying endpoint does carry a `connection_data`
+ *      pre-fill, but it is absent from `CreateConnectedAccountLinkOptions`
+ *      and the options schema strips unknown keys, so it is unreachable
+ *      through this method.) A toolkit that declares a required field is
+ *      unconnectable any other way, since `initiate()` — the only call that
+ *      accepts them — is the one being retired.
+ *
+ * The trade-off is the address bar: the consent dance now visibly runs on
+ * Composio's domain rather than behind the white-label `/proxy` forwarder.
+ * The hosted page is co-branded, and an unconnectable toolkit is the
+ * alternative.
  *
  * `allowMultiple: true` is belt-and-suspenders — we only reach here
  * after `findActiveComposioConnection` returned null, but a race
@@ -230,12 +253,28 @@ export async function initiateComposioConnection(opts: {
   callbackUrl: string;
 }): Promise<{ redirectUrl: string; connectedAccountId: string }> {
   const composio = await composioClient(opts.apiKey);
-  const connRequest = (await withTimeout("connectedAccounts.initiate", () =>
-    composio.connectedAccounts.initiate(opts.userId, opts.authConfigId, {
-      callbackUrl: opts.callbackUrl,
-      allowMultiple: true,
-    }),
-  )) as unknown as {
+  let raw: unknown;
+  try {
+    raw = await withTimeout("connectedAccounts.link", () =>
+      composio.connectedAccounts.link(opts.userId, opts.authConfigId, {
+        callbackUrl: opts.callbackUrl,
+        allowMultiple: true,
+      }),
+    );
+  } catch (err) {
+    // `link()` reports every failure as one constant message and hangs the
+    // vendor's response body off `.cause`; `initiate()` rethrew the vendor
+    // error directly. Callers log `err.message`, so without this fold a 400
+    // naming the auth config's missing field reads only as "Failed to create
+    // connected account link" — the detail that made that class of bug
+    // findable at all. Fold it back in and keep the original on `cause`.
+    const cause = err instanceof Error ? err.cause : undefined;
+    if (err instanceof Error && cause instanceof Error && cause.message) {
+      throw new Error(`${err.message}: ${cause.message}`, { cause: err });
+    }
+    throw err;
+  }
+  const connRequest = raw as {
     redirectUrl?: unknown;
     redirectUri?: unknown;
     id?: unknown;
@@ -245,10 +284,10 @@ export async function initiateComposioConnection(opts: {
   const redirectUrl = (connRequest.redirectUrl ?? connRequest.redirectUri) as unknown;
   const connectedAccountId = (connRequest.connectedAccountId ?? connRequest.id) as unknown;
   if (typeof redirectUrl !== "string" || redirectUrl.length === 0) {
-    throw new Error("Composio initiate: missing redirect URL on connection request");
+    throw new Error("Composio link: missing redirect URL on connection request");
   }
   if (typeof connectedAccountId !== "string" || connectedAccountId.length === 0) {
-    throw new Error("Composio initiate: missing connected_account_id on connection request");
+    throw new Error("Composio link: missing connected_account_id on connection request");
   }
   return { redirectUrl, connectedAccountId };
 }
@@ -261,9 +300,10 @@ export async function initiateComposioConnection(opts: {
  * it. The platform persists only the opaque `connectedAccountId`, exactly the
  * trust posture of the OAuth path's `connection.json` (we never hold the key).
  *
- * `initiate` is the correct AND non-deprecated call here: the 2026-07-03 sunset
- * that pushes Composio-managed OAuth to `link()` explicitly excludes non-OAuth
- * schemes (API key / bearer / basic). For an API-key auth config Composio
+ * `initiate` is the correct AND non-deprecated call here, and the one place it
+ * survives: the retirement that moved Composio-managed OAuth to `link()` (see
+ * {@link initiateComposioConnection}) explicitly excludes non-OAuth schemes
+ * (API key / bearer / basic). For an API-key auth config Composio
  * returns a connected account with no `redirectUrl`; `waitForConnection` then
  * polls it to ACTIVE (or throws on a terminal FAILED/EXPIRED) — that poll is
  * our verification that the credential is usable. (Composio marks some API-key
@@ -317,10 +357,12 @@ export async function connectComposioApiKey(opts: {
     }
     // `waitForConnection` resolves only at ACTIVE (it throws on
     // FAILED/EXPIRED/timeout), but assert it explicitly so this helper's
-    // postcondition — and the caller's subsequent "running" flip — can't drift
-    // from the boot-state gate (which keys on status === "ACTIVE") if the SDK's
-    // resolve contract ever changes. A non-ACTIVE resolve falls into the catch
-    // below and deletes the half-created account.
+    // postcondition can't drift if the SDK's resolve contract ever changes.
+    // On success the caller writes `connection.json` and flips the connector to
+    // "running", and the boot-state gate keys on that file's EXISTENCE alone —
+    // nothing re-reads the account afterward. So this is the last point at
+    // which a non-ACTIVE account can still be refused. A non-ACTIVE resolve
+    // falls into the catch below and deletes the half-created account.
     const status = typeof account.status === "string" ? account.status : "";
     if (status !== "ACTIVE") {
       throw new Error(
@@ -411,11 +453,10 @@ export async function deleteComposioConnectedAccount(opts: {
  * the bundle is still authenticated).
  *
  * Idempotent and best-effort throughout: every step swallows its own
- * errors and reports them in the return value. Safe to call from
- * both `disconnect` (keep the bundle installed, drop credentials)
- * and `uninstall` (full removal). Disconnect-only callers can read
- * the return value to surface revoke status; uninstall just calls
- * for side-effects.
+ * errors and reports them in the return value. It backs the provider's
+ * `cleanup` arm, which both `disconnect` (keep the bundle installed, drop
+ * credentials) and `uninstall` (full removal) call. Disconnect reads the return
+ * value to surface revoke status; uninstall just calls for side-effects.
  *
  * Reads the broker credential from the resolved provider config. If
  * Composio isn't configured, the upstream-delete step is skipped
@@ -426,29 +467,24 @@ export async function deleteComposioConnectedAccount(opts: {
  *
  * Why both layers in one function: the alternative is two function
  * calls in every teardown path, each guarded by its own try/catch.
- * That recipe got mis-followed once already (uninstall had only the
- * `mcp-oauth` rmSync and missed composio entirely — see the QA
+ * That recipe got mis-followed once already (uninstall cleared only the
+ * OAuth records and missed composio entirely — see the QA
  * review that prompted this helper). One function, one canonical
- * cleanup recipe, two callers.
+ * cleanup recipe, one seam arm.
  */
 export async function cleanupComposioBundle(opts: {
   workDir: string;
-  wsId: string;
+  owner: ConnectorOwner;
   connectorId: string;
 }): Promise<{
   upstreamDeleted: boolean;
   localDeleted: boolean;
   lastError?: string;
 }> {
-  // Dynamic import to avoid a top-of-file dependency from the SDK
-  // module on `src/bundles/composio-connection.ts`. The connection
-  // module sits in the bundle layer; pulling it eagerly here would
-  // create a cycle if a future refactor moves any of these helpers.
-  // Cleanup is rare (uninstall / disconnect), so the import cost is
-  // negligible vs. the architectural cleanliness.
-  const { readComposioConnection, deleteComposioConnection } = await import(
-    "../../../bundles/composio-connection.ts"
-  );
+  // Dynamic import so this vendor-adapter module keeps no load-time edge to the
+  // connection store. Cleanup is rare (uninstall / disconnect), so the import
+  // cost is negligible.
+  const { readComposioConnection, deleteComposioConnection } = await import("./connection.ts");
 
   let upstreamDeleted = false;
   let localDeleted = false;
@@ -466,11 +502,7 @@ export async function cleanupComposioBundle(opts: {
 
   let connectedAccountId: string | undefined;
   try {
-    const connection = await readComposioConnection(
-      opts.workDir,
-      { type: "workspace", wsId: opts.wsId },
-      opts.connectorId,
-    );
+    const connection = await readComposioConnection(opts.workDir, opts.owner, opts.connectorId);
     connectedAccountId = connection?.connectedAccountId;
   } catch (err) {
     lastError = err instanceof Error ? err.message : String(err);
@@ -484,11 +516,7 @@ export async function cleanupComposioBundle(opts: {
   }
 
   try {
-    localDeleted = await deleteComposioConnection(
-      opts.workDir,
-      { type: "workspace", wsId: opts.wsId },
-      opts.connectorId,
-    );
+    localDeleted = await deleteComposioConnection(opts.workDir, opts.owner, opts.connectorId);
   } catch (err) {
     lastError = err instanceof Error ? err.message : String(err);
   }

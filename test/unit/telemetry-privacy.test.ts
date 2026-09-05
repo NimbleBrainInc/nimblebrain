@@ -169,11 +169,11 @@ describe("Telemetry Privacy", () => {
         allowed: new Set(["source", "has_ui", "trust_score", ...COMMON_KEYS]),
         engineType: "bundle.installed",
         emitData: {
-          name: "@nimblebraininc/tasks",
+          serverName: "tasks",
           bundleName: "@nimblebraininc/tasks",
+          installSource: "registry",
           path: "/Users/john/bundles/tasks",
           ui: { name: "Tasks", icon: "tasks" },
-          trustScore: 85,
           version: "1.2.3",
           manifest: { name: "tasks" },
         },
@@ -183,7 +183,9 @@ describe("Telemetry Privacy", () => {
         allowed: new Set(["source", ...COMMON_KEYS]),
         engineType: "bundle.uninstalled",
         emitData: {
-          name: "@nimblebraininc/tasks",
+          serverName: "tasks",
+          bundleName: "@nimblebraininc/tasks",
+          installSource: "registry",
           path: "/Users/john/bundles/tasks",
           version: "1.2.3",
         },
@@ -257,7 +259,6 @@ describe("Telemetry Privacy", () => {
       emit(sink, "bundle.installed", {
         name: "@nimblebraininc/tasks",
         path: "/Users/john/bundles",
-        trustScore: 80,
       });
 
       emit(sink, "bundle.uninstalled", {
@@ -303,7 +304,6 @@ describe("Telemetry Privacy", () => {
       emit(sink, "bundle.installed", {
         name: "@nimblebraininc/tasks",
         bundleName: "@nimblebraininc/tasks",
-        trustScore: 90,
       });
 
       const captured = lastCaptured(client);
@@ -318,7 +318,6 @@ describe("Telemetry Privacy", () => {
       emit(sink, "bundle.installed", {
         name: "@nimblebraininc/tasks",
         path: "/Users/john/secret-project/bundle",
-        trustScore: 75,
       });
 
       const captured = lastCaptured(client);
@@ -403,7 +402,7 @@ describe("Telemetry Privacy", () => {
           { type: "run.start", data: { runId: "r1", toolNames: ["bash"] } },
           { type: "run.done", data: { runId: "r1", stopReason: "complete", inputTokens: 100, outputTokens: 50 } },
           { type: "run.error", data: { runId: "r2", error: new Error("fail") } },
-          { type: "bundle.installed", data: { name: "test", trustScore: 50 } },
+          { type: "bundle.installed", data: { name: "test" } },
           { type: "bundle.uninstalled", data: { name: "test" } },
         ];
 

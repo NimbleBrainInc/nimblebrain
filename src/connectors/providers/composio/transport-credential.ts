@@ -7,7 +7,7 @@
  *
  * A Composio install used to persist the literal string `${COMPOSIO_API_KEY}`
  * into its `BundleRef` transport headers, resolved from `process.env` at
- * transport-build time by the generic `resolveEnvTemplate`. That kept the secret
+ * transport-build time by a generic env-template expansion. That kept the secret
  * out of `workspace.json` — the goal — but it did so by writing a durable
  * *pointer into the environment namespace* into tenant state. The consequences
  * were structural, not cosmetic: the broker credential could not be declared in
@@ -32,9 +32,10 @@ import {
   type TransportCredentialProvider,
 } from "../../../tools/credential-provider.ts";
 import { validateComposioConfig } from "./config.ts";
+import { COMPOSIO_PROVIDER_ID } from "./id.ts";
 
 /** The credential-provider name a Composio-installed ref selects. */
-export const COMPOSIO_CREDENTIAL_PROVIDER = "composio";
+export const COMPOSIO_CREDENTIAL_PROVIDER = COMPOSIO_PROVIDER_ID;
 
 /** The header a Composio hosted-session endpoint authenticates on. */
 const COMPOSIO_AUTH_HEADER = "x-api-key";
@@ -112,15 +113,15 @@ function isLegacyEnvTemplateAuth(auth: RemoteTransportConfig["auth"]): boolean {
  * already-migrated one both pass straight through.
  *
  * **Scope: `auth` only, not `headers`.** The pre-seam scrub rewrote any *other*
- * response header embedding the key into a `${COMPOSIO_API_KEY}` template too,
- * and `buildRequestHeaders` still resolves those from the process env — so on a
- * config-only deploy such a header would resolve empty. Left unmapped
- * deliberately: no such ref exists (Composio returns only `x-api-key`), and the
- * two cases differ in severity. `scrubComposioHeaders` keeps its drop branch
- * because writing a key-bearing header would put a secret at rest; an unmapped
- * legacy header only produces an empty value, which surfaces as an auth failure
- * rather than a leak. If one is ever found in the field, drop it here rather
- * than re-resolving it — that is what a fresh install now does.
+ * response header embedding the key into a `${COMPOSIO_API_KEY}` template too.
+ * Nothing expands `${VAR}` in a header any more, so such a header would now be
+ * sent verbatim — a literal `${COMPOSIO_API_KEY}` the vendor rejects. Left
+ * unmapped deliberately: no such ref exists (Composio returns only
+ * `x-api-key`), and it fails loudly at the vendor rather than silently.
+ * `provider.ts`'s `scrubSessionHeaders` keeps its drop branch because writing a
+ * key-bearing header would put a secret at rest. If one is ever found in the
+ * field, drop it here rather than resolving it — that is what a fresh install
+ * now does.
  */
 export function composioTransportConfig(
   config: RemoteTransportConfig | undefined,

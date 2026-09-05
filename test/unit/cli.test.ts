@@ -51,7 +51,7 @@ describe("loadConfig", () => {
     // Manually write workspace-owned fields into the JSON (bypasses schema)
     const fs = require("node:fs");
     const raw = JSON.parse(fs.readFileSync(configPath, "utf-8"));
-    raw.bundles = [{ name: "@nimblebraininc/leadgen" }];
+    raw.bundles = [{ url: "https://leadgen.example.com/mcp" }];
     raw.agents = { researcher: { description: "test", systemPrompt: "test", tools: ["*"] } };
     raw.skillDirs = ["./skills"];
     raw.preferences = { displayName: "Test" };
@@ -80,14 +80,14 @@ describe("loadConfig", () => {
   it("loads features from config file", () => {
     const configPath = writeTestConfig("features.json", {
       features: {
-        delegation: false,
+        bundleDiscovery: false,
         workspaceManagement: false,
       },
     });
 
     const config = loadConfig({ config: configPath });
     expect(config.features).toEqual({
-      delegation: false,
+      bundleDiscovery: false,
       workspaceManagement: false,
     });
   });
@@ -212,7 +212,7 @@ describe("config validation", () => {
 
   it("strips bundles from config (workspace-owned, loaded separately)", () => {
     const configPath = writeTestConfig("with-bundles.json", {
-      bundles: [{ name: "@test/a" }],
+      bundles: [{ url: "https://a.example.com/mcp" }],
     });
 
     const config = loadConfig({ config: configPath });

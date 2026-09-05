@@ -1,11 +1,9 @@
 // Limits
 export {
-  DEFAULT_CHILD_ITERATIONS,
   DEFAULT_MAX_DIRECT_TOOLS,
   DEFAULT_MAX_INPUT_TOKENS,
   DEFAULT_MAX_ITERATIONS,
   DEFAULT_MAX_OUTPUT_TOKENS,
-  MAX_CHILD_ITERATIONS,
   MAX_ITERATIONS,
   MAX_TOOL_RESULT_CHARS,
 } from "./limits.ts";
@@ -19,13 +17,12 @@ export { StaticToolRouter } from "./adapters/static-router.ts";
 export { WorkspaceLogSink } from "./adapters/workspace-log-sink.ts";
 export type {
   BundleInstance,
-  BundleManifest,
   BundleRef,
   BundleState,
   BundleUiMeta,
 } from "./bundles/index.ts";
 // Bundles
-export { BundleLifecycleManager, resolveLocalBundle } from "./bundles/index.ts";
+export { BundleLifecycleManager } from "./bundles/index.ts";
 // Config
 export { getValidator, SCHEMA_PATH } from "./config/index.ts";
 export { EventSourcedConversationStore } from "./conversation/event-sourced-store.ts";

@@ -34,10 +34,11 @@
  *   routes to the always-on context channel (composed every turn, the same
  *   reliable path filesystem `always` skills use).
  *
- *   Loading strategy is READ from the discovered skill's frontmatter, not
+ *   Loading config is READ from the discovered skill's frontmatter, not
  *   invented: a server declares `metadata.nimblebrain.loading-strategy` (and an
- *   optional `priority`) exactly as a filesystem skill does, and the host honors
- *   it. A skill that declares nothing defaults to `dynamic` — backward-compatible
+ *   optional `priority` and `triggers`) exactly as a filesystem skill does, and
+ *   the host honors it — identical frontmatter must not behave differently by
+ *   origin. A skill that declares nothing defaults to `dynamic` — backward-compatible
  *   with servers that publish tool-affined usage guidance and never opt in. This
  *   lets a server route an always-present workflow guide to the reliable context
  *   channel, rather than the capability channel that only selects once at
@@ -49,7 +50,7 @@
  *   gating, reference-resource hint) than role-based skill composition.
  *
  * NOTE: the exported names keep the `bundle`/`Bundle` prefix to bound the diff,
- * but a skill is a property of the MCP *server*, independent of the mpak
+ * but a skill is a property of the MCP *server*, independent of the
  * "bundle" packaging (which is being phased out).
  */
 
@@ -133,22 +134,33 @@ export interface DiscoveredSkill {
   loadingStrategy?: SkillLoadingStrategy;
   /** Declared `metadata.nimblebrain.priority`, when the server set one. */
   priority?: number;
+  /**
+   * Declared `metadata.nimblebrain.triggers` — explicit phrases the per-request
+   * `SkillMatcher` fires on. Absent when the server declared none.
+   */
+  triggers?: string[];
 }
 
 /**
- * Read the declared loading strategy + priority from a discovered skill's parsed
- * frontmatter, using the SAME `metadata.nimblebrain.*` fields the filesystem
- * loader reads (`mapFrontmatterToManifest`) — the strategy is READ, not invented.
+ * Read the declared loading configuration — strategy, priority, and trigger
+ * phrases — from a discovered skill's parsed frontmatter, using the SAME
+ * `metadata.nimblebrain.*` fields the filesystem loader reads
+ * (`mapFrontmatterToManifest`). Every field is READ, not invented, so identical
+ * frontmatter means identical loading behavior whether the skill came off disk
+ * or off an MCP server's `skill://…/SKILL.md` resource.
  *
  * Lenient by design: a discovered skill is authored by an arbitrary MCP server,
  * so — unlike the strict on-disk loader — a non-conforming or absent block does
  * not reject the skill; it just leaves the fields `undefined` (synthesis then
  * applies the defaults). Only recognized values are returned: strategy must be
- * `always` or `dynamic`; priority must be a number in [0, 100].
+ * `always` or `dynamic`; priority must be a number in [0, 100]; triggers must be
+ * an array, from which non-string and blank entries are dropped (a trigger that
+ * is empty after trimming would substring-match every message).
  */
 function readDeclaredLoading(data: Record<string, unknown>): {
   loadingStrategy?: SkillLoadingStrategy;
   priority?: number;
+  triggers?: string[];
 } {
   const metadata = data.metadata;
   const nb =
@@ -159,9 +171,13 @@ function readDeclaredLoading(data: Record<string, unknown>): {
   const block = nb as Record<string, unknown>;
   const strategy = block["loading-strategy"];
   const priority = block.priority;
+  const triggers = Array.isArray(block.triggers)
+    ? block.triggers.filter((t): t is string => typeof t === "string" && t.trim().length > 0)
+    : [];
   return {
     ...(strategy === "always" || strategy === "dynamic" ? { loadingStrategy: strategy } : {}),
     ...(typeof priority === "number" && priority >= 0 && priority <= 100 ? { priority } : {}),
+    ...(triggers.length > 0 ? { triggers } : {}),
   };
 }
 
@@ -183,13 +199,14 @@ function skillPathSegment(uri: string): string {
 
 /**
  * Parse a `SKILL.md` resource into `{ name, description, body, loadingStrategy?,
- * priority? }`. The format is the external Agent-Skills spec: YAML frontmatter
- * (`name`, `description`, and the optional `metadata.nimblebrain` runtime block)
- * + a markdown body. Frontmatter `name` wins; the URI's final skill-path segment
- * is the fallback (SEP-2640 requires them to match, but we don't hard-fail on a
- * server that omits the field). The declared `loading-strategy` / `priority` (if
- * any) are read from `metadata.nimblebrain.*`. Malformed frontmatter degrades to
- * the raw body with no declared strategy.
+ * priority?, triggers? }`. The format is the external Agent-Skills spec: YAML
+ * frontmatter (`name`, `description`, and the optional `metadata.nimblebrain`
+ * runtime block) + a markdown body. Frontmatter `name` wins; the URI's final
+ * skill-path segment is the fallback (SEP-2640 requires them to match, but we
+ * don't hard-fail on a server that omits the field). The declared
+ * `loading-strategy` / `priority` / `triggers` (if any) are read from
+ * `metadata.nimblebrain.*`. Malformed frontmatter degrades to the raw body with
+ * no declared loading config.
  */
 export function parseSkillMarkdown(
   uri: string,
@@ -226,6 +243,13 @@ export interface BundleSkillInput {
   loadingStrategy?: SkillLoadingStrategy;
   /** Declared priority from the skill's frontmatter. Defaults to {@link BUNDLE_SKILL_PRIORITY}. */
   priority?: number;
+  /**
+   * Declared trigger phrases from the skill's frontmatter. Stamped onto the
+   * manifest so the per-request `SkillMatcher` can fire the skill on an explicit
+   * phrase — the deterministic (must-fire) channel, independent of whether the
+   * publishing server's tools happen to be in the active toolset.
+   */
+  triggers?: string[];
 }
 
 /**
@@ -237,6 +261,13 @@ export interface BundleSkillInput {
  *  - `always`: composed into the always-on context channel every turn (routed
  *    there by `partitionSkillsByRole`). `toolAffinity` is still stamped but
  *    unused on this path — the context channel is unconditional.
+ *
+ * Declared `triggers` are stamped verbatim. They are orthogonal to the strategy:
+ * a `dynamic` skill with triggers is reachable BOTH by tool-affinity and by an
+ * explicit phrase, and the phrase fires even when the server's tools are proxied
+ * out of the active set. `always` skills are never matched (the matcher filters
+ * to `dynamic`), so triggers on one are inert by construction — it already loads
+ * every turn.
  *
  * Pure function — no I/O, no caching. The caller (runtime) handles discovery,
  * fetch, parse, and cache. Keeping the synthesis pure means it's trivial to
@@ -251,7 +282,8 @@ export interface BundleSkillInput {
  * skill's own name and who published it.
  */
 export function synthesizeBundleSkill(input: BundleSkillInput): Skill {
-  const { serverName, skillName, description, body, uri, loadingStrategy, priority } = input;
+  const { serverName, skillName, description, body, uri, loadingStrategy, priority, triggers } =
+    input;
   return {
     manifest: {
       name: connectorSkillManifestName(serverName, skillName),
@@ -260,6 +292,7 @@ export function synthesizeBundleSkill(input: BundleSkillInput): Skill {
       scope: BUNDLE_SKILL_SCOPE,
       loadingStrategy: loadingStrategy ?? DEFAULT_BUNDLE_LOADING_STRATEGY,
       toolAffinity: [`${serverName}__*`],
+      ...(triggers?.length ? { triggers } : {}),
       status: "active",
     },
     body,

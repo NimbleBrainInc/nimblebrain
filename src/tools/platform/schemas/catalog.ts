@@ -6,6 +6,7 @@ import * as Files from "./files.ts";
 import * as Home from "./home.ts";
 import * as Instructions from "./instructions.ts";
 import * as ManageTools from "./manage-tools.ts";
+import * as Notifications from "./notifications.ts";
 import * as Skills from "./skills.ts";
 import * as Usage from "./usage.ts";
 
@@ -21,7 +22,6 @@ export const PlatformToolCatalog = {
   skills: {
     list: { input: Skills.SkillsListInput },
     read: { input: Skills.SkillsReadInput },
-    active_for: { input: Skills.SkillsActiveForInput },
     loading_log: { input: Skills.SkillsLoadingLogInput },
     create: { input: Skills.SkillsCreateInput },
     update: { input: Skills.SkillsUpdateInput },
@@ -60,6 +60,13 @@ export const PlatformToolCatalog = {
     fork: { input: Conversations.ConversationsForkInput },
     stats: { input: Conversations.ConversationsStatsInput },
     export: { input: Conversations.ConversationsExportInput },
+  },
+  notifications: {
+    list: { input: Notifications.NotificationsListInput },
+    mark_read: { input: Notifications.NotificationsMarkReadInput },
+    settings: { input: Notifications.NotificationsSettingsInput },
+    set_source_level: { input: Notifications.NotificationsSetSourceLevelInput },
+    set_routes: { input: Notifications.NotificationsSetRoutesInput },
   },
   files: {
     list: { input: Files.FilesListInput },

@@ -191,22 +191,25 @@ describe("manage_connectors.install (smithery-auth)", () => {
     await tool.handler({ action: "install", entry: bassethoundEntry(), wsId: h.wsId });
     const ws = await h.workspaceStore.get(h.wsId);
     return ws?.bundles.find(
-      (b): b is Extract<BundleRef, { url: string }> => "url" in b && "smithery" in b,
+      (b): b is Extract<BundleRef, { url: string }> => "url" in b && b.brokered !== undefined,
     );
   }
 
-  test("(a) persists the smithery marker: catalog id, connection id, and namespace", async () => {
+  test("(a) persists the brokered marker: provider, catalog id, and the provider's own coordinates", async () => {
     process.env.SMITHERY_API_KEY = "sk_test";
     setConnectorsConfig({ providers: { smithery: { namespace: "test-ns" } } });
 
     const installed = await installAndReadPersistedRef();
     expect(installed).toBeDefined();
-    expect(installed?.smithery?.connectorId).toBe(BASSETHOUND_ID);
-    expect(installed?.smithery?.namespace).toBe("test-ns");
-    expect(installed?.smithery?.baseUrl).toBe("https://api.smithery.ai");
+    expect(installed?.brokered?.provider).toBe("smithery");
+    expect(installed?.brokered?.connectorId).toBe(BASSETHOUND_ID);
+    // `providerRef` is Smithery's, verbatim — the kernel persisted it without
+    // reading a key out of it.
+    expect(installed?.brokered?.providerRef?.namespace).toBe("test-ns");
+    expect(installed?.brokered?.providerRef?.baseUrl).toBe("https://api.smithery.ai");
     // Deterministic per (owner, server) — non-empty is the contract; an empty
     // id is what silently disables revalidation.
-    expect(installed?.smithery?.connectionId).toBeTruthy();
+    expect(installed?.brokered?.providerRef?.connectionId).toBeTruthy();
   });
 
   test("(b) the persisted url is the brokered session, not the catalog endpoint", async () => {
@@ -297,11 +300,11 @@ describe("manage_connectors.install (smithery-auth)", () => {
     const result = await buildTool(h).handler({ action: "install", entry: forged, wsId: h.wsId });
 
     expect(result.isError).toBe(true);
-    expect(JSON.stringify(result.content)).toContain("not a recognized Smithery connector");
+    expect(JSON.stringify(result.content)).toContain('not a recognized \\"smithery\\" connector');
     // The broker was never called, so no connection exists at the operator's account.
     expect(calls).toHaveLength(0);
     const ws = await h.workspaceStore.get(h.wsId);
-    expect(ws?.bundles.some((b) => "smithery" in b)).toBe(false);
+    expect(ws?.bundles.some((b) => b.brokered !== undefined)).toBe(false);
   });
 
   test("(a2) eager-starts the source — there is no Connect step to wait for", async () => {
@@ -328,9 +331,9 @@ describe("manage_connectors.install (smithery-auth)", () => {
     process.env.SMITHERY_API_KEY = "sk_test";
     setConnectorsConfig({ providers: { smithery: { namespace: "test-ns" } } });
 
-    // A session URL the coordinate parse can't satisfy. Persisting an empty
-    // connectionId would leave `ref.smithery` truthy — claimed by the
-    // revalidator, answered indeterminate forever, and skipped by uninstall.
+    // A session whose coordinates are named but blank. Persisting an empty
+    // connectionId would leave the ref brokered — claimed by the revalidator,
+    // answered indeterminate forever, and skipped by uninstall.
     globalThis.fetch = (async (input: string | URL | Request) => {
       if (String(input).includes("/connect/")) {
         return new Response(JSON.stringify({ connectionId: "c", status: { state: "connected" } }), {
@@ -345,7 +348,11 @@ describe("manage_connectors.install (smithery-auth)", () => {
     const provider = registry.get("smithery");
     if (provider) {
       // Force the seam-contract violation the guard exists for.
-      provider.createSession = async () => ({ type: "http", url: "https://api.smithery.ai/x/mcp" });
+      provider.createSession = async () => ({
+        type: "http",
+        url: "https://api.smithery.ai/x/mcp",
+        providerRef: { connectionId: "", namespace: "test-ns", baseUrl: "https://api.smithery.ai" },
+      });
     }
     const ctx = {
       runtime: {
@@ -362,9 +369,9 @@ describe("manage_connectors.install (smithery-auth)", () => {
     });
 
     expect(result.isError).toBe(true);
-    expect(JSON.stringify(result.content)).toContain("no connection coordinates");
+    expect(JSON.stringify(result.content)).toContain('empty \\"connectionId\\" coordinate');
     const ws = await h.workspaceStore.get(h.wsId);
-    expect(ws?.bundles.some((b) => "smithery" in b)).toBe(false);
+    expect(ws?.bundles.some((b) => b.brokered !== undefined)).toBe(false);
   });
 
   test("(e) refuses the install when Smithery is unconfigured", async () => {
@@ -377,9 +384,9 @@ describe("manage_connectors.install (smithery-auth)", () => {
     });
 
     expect(result.isError).toBe(true);
-    expect(JSON.stringify(result.content)).toContain("Smithery integration is not configured");
+    expect(JSON.stringify(result.content)).toContain('brokered by \\"smithery\\", which is not configured');
     const ws = await h.workspaceStore.get(h.wsId);
-    expect(ws?.bundles.some((b) => "smithery" in b)).toBe(false);
+    expect(ws?.bundles.some((b) => b.brokered !== undefined)).toBe(false);
   });
 
   test("(g) a half-configured provider (key, no namespace) refuses rather than guessing", async () => {
@@ -392,6 +399,6 @@ describe("manage_connectors.install (smithery-auth)", () => {
     });
 
     expect(result.isError).toBe(true);
-    expect(JSON.stringify(result.content)).toContain("Smithery integration is not configured");
+    expect(JSON.stringify(result.content)).toContain('brokered by \\"smithery\\", which is not configured');
   });
 });

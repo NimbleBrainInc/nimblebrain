@@ -185,6 +185,21 @@ export function buildProviderModels(
     // Skip models the platform deliberately does not surface.
     if (MANUAL_EXCLUSIONS.has(`${providerId}:${modelId}`)) continue;
     const model = toCatalogModel(providerId, modelId, raw);
+    // Skip a model upstream reports no context window for. Every budget the
+    // runtime computes is `context - …`, so a zero window has no arithmetic
+    // that yields a usable answer, and the cap below cannot supply one either:
+    // `output < context` is unsatisfiable at `context: 0`, so the row could
+    // never hold the invariant this build is here to enforce.
+    //
+    // Note this drops a **priced** row, which the missing-pricing skip above
+    // does not — so it is the row-deletion shape #739 is open about, and the
+    // reason `gpt-4` is capped rather than excluded a few lines up. It is
+    // acceptable only because there is no history to misprice: a model that
+    // cannot accept a single input token was never called, and today's only
+    // instance emits images and cannot tool-call, so it was never selectable
+    // either. A priced model with a zero window that *is* chat-capable would
+    // be a different question, and there is none upstream.
+    if (model.limits.context <= 0) continue;
     // xAI's own API publishes no per-model max-output cap — neither
     // `/v1/models` nor `/v1/language-models` carries the field, and the endpoint
     // accepts `max_completion_tokens` (what the adapter sends) up to
@@ -196,18 +211,29 @@ export function buildProviderModels(
     // `context - system - tools - maxOutput - safety` — negative, so the budget
     // resolves to 0 and every turn fails.
     //
-    // Capped by rule rather than by model id, because "no published cap" is a
-    // property of the provider: any model it adds arrives the same way, and a
-    // list would land the next one at a zero budget until someone noticed.
-    // A model models.dev does carry a distinct figure for is untouched — the
-    // grok-4.20 line reports 30000 against a 1M window and keeps it.
-    // `sync-nebius.ts` applies the same platform default for the same reason.
+    // Capped by rule rather than by model id, and by rule across every provider
+    // rather than xAI alone: `output >= context` is a property of the *data*,
+    // not of who published it. xAI is simply the provider that produces it
+    // systematically. A model models.dev carries a distinct figure for is
+    // untouched — the grok-4.20 line reports 30000 against a 1M window and keeps
+    // it. `sync-nebius.ts` applies the same platform default for the same reason.
+    //
+    // The cap is relative to the window, not a flat constant. A flat
+    // `DEFAULT_MAX_OUTPUT_TOKENS` is only a cap for models with a window well
+    // above it: at 8192 context it *raises* the declared output to 16384, and at
+    // 16384 it leaves no headroom at all. Half the window keeps the meaning
+    // ("leave at least as much room for input as for output") at every size,
+    // and above 32768 it is the flat default anyway — so every currently-capped
+    // xAI model keeps exactly the ceiling it has today.
     //
     // This also caps an operator override, since `resolveMaxOutputTokens`
     // clamps `configValue` down to the ceiling. That matches every Nebius model
     // today and is the accepted posture.
-    if (providerId === "xai" && model.limits.output >= model.limits.context) {
-      model.limits = { ...model.limits, output: DEFAULT_MAX_OUTPUT_TOKENS };
+    if (model.limits.output >= model.limits.context) {
+      model.limits = {
+        ...model.limits,
+        output: Math.min(DEFAULT_MAX_OUTPUT_TOKENS, Math.floor(model.limits.context / 2)),
+      };
     }
     const limitOverride = MANUAL_LIMIT_OVERRIDES[`${providerId}:${modelId}`];
     if (limitOverride) model.limits = { ...model.limits, ...limitOverride };

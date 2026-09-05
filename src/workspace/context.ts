@@ -1,5 +1,4 @@
 import { join } from "node:path";
-import { WorkspaceCredentialStore } from "../config/workspace-credentials.ts";
 import { WORKSPACE_ID_RE } from "./workspace-store.ts";
 
 /**
@@ -19,11 +18,6 @@ import { WORKSPACE_ID_RE } from "./workspace-store.ts";
  *     is validated against `WORKSPACE_ID_RE` at construction and bound to
  *     the instance as `readonly`. No method on this class takes a `wsId`
  *     argument — the context's wsId is implicit in every operation.
- *
- *   - Owns a `WorkspaceCredentialStore` constructed with the same wsId.
- *     Callers get the bound store via `getCredentialStore()` and never
- *     have a way to construct one for a different workspace through this
- *     context.
  *
  *   - Exposes typed path helpers (`getRoot`, `getDataPath`) so call sites
  *     don't reconstruct the `workspaces/{wsId}/{scope}` layout by hand.
@@ -46,6 +40,10 @@ import { WORKSPACE_ID_RE } from "./workspace-store.ts";
  *   - `connector-skills` — materialized connector overlays; a SIBLING of
  *     `skills/`, never read by the authored-skill loader
  *   - `files`            — uploaded files / file context
+ *   - `notifications`    — the inbox: daily JSONL of notifications pulled from
+ *     this workspace's connectors. Workspace-level, with no owner
+ *     sub-partition: ownership follows the connector that produced an item, so
+ *     anyone who can reach that connector's tools can read what it said.
  *
  * `root` returns the workspace root itself (`workspaces/{wsId}/`); it is
  * the parent of every other scope and most callers should prefer a
@@ -58,7 +56,8 @@ export type WorkspaceScope =
   | "conversations"
   | "skills"
   | "connector-skills"
-  | "files";
+  | "files"
+  | "notifications";
 
 const SUBPATH_FORBIDDEN_RE = /\0/;
 
@@ -104,7 +103,7 @@ function assertSafeSubpathSegment(segment: string, scope: WorkspaceScope): void 
       `[workspace-context] absolute subpath "${segment}" is not allowed; pass relative segments`,
     );
   }
-  // Splitting on `/` lets callers pass `"mcp-oauth/google"` as one segment
+  // Splitting on `/` lets callers pass `"secrets/google"` as one segment
   // for convenience; we still need to reject `..` anywhere in that split.
   for (const part of segment.split("/")) {
     if (part === "" || part === "." || part === "..") {
@@ -119,7 +118,6 @@ export class WorkspaceContext {
   readonly #wsId: string;
   readonly #workDir: string;
   readonly #root: string;
-  readonly #credentialStore: WorkspaceCredentialStore;
 
   constructor(opts: { wsId: string; workDir: string }) {
     if (typeof opts.wsId !== "string" || !WORKSPACE_ID_RE.test(opts.wsId)) {
@@ -133,10 +131,6 @@ export class WorkspaceContext {
     this.#wsId = opts.wsId;
     this.#workDir = opts.workDir;
     this.#root = join(opts.workDir, "workspaces", opts.wsId);
-    this.#credentialStore = new WorkspaceCredentialStore({
-      wsId: opts.wsId,
-      workDir: opts.workDir,
-    });
   }
 
   /** The workspace id bound to this context. */
@@ -166,7 +160,7 @@ export class WorkspaceContext {
    *
    *   ctx.getDataPath("root")                                  → workspaces/ws_x
    *   ctx.getDataPath("conversations")                          → workspaces/ws_x/conversations
-   *   ctx.getDataPath("credentials", "mcp-oauth", "google")     → .../credentials/mcp-oauth/google
+   *   ctx.getDataPath("credentials", "secrets")                 → .../credentials/secrets
    *   ctx.getDataPath("data", deriveBundleDataDir(name))        → .../data/{slug}
    *
    * Subpath segments are validated against path traversal, embedded null
@@ -182,25 +176,5 @@ export class WorkspaceContext {
     }
     for (const segment of subpath) assertSafeSubpathSegment(segment, scope);
     return join(this.#root, scope, ...subpath);
-  }
-
-  /**
-   * The credential store bound to this workspace. The returned object's
-   * `wsId` matches this context's; there is no way to obtain a credential
-   * store for a different workspace through this context.
-   */
-  getCredentialStore(): WorkspaceCredentialStore {
-    return this.#credentialStore;
-  }
-
-  /**
-   * Convenience: equivalent to `getCredentialStore().get(bundleName)`.
-   *
-   * Provided because the credential read is by far the most common
-   * single-shot operation, and threading the store through every call
-   * site that just wants `{api_key: ...}` is noisy.
-   */
-  async getCredentials(bundleName: string): Promise<Record<string, string> | null> {
-    return this.#credentialStore.get(bundleName);
   }
 }

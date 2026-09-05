@@ -88,7 +88,7 @@ export function createManageUsersTool(ctx: ManageUsersContext): InProcessTool {
     name: "manage_users",
     description:
       "Create, update, delete, or list workspace users. Only org admins and owners can use this tool.",
-    annotations: { [INTERNAL_TOOL_ANNOTATION]: true },
+    meta: { [INTERNAL_TOOL_ANNOTATION]: true },
     inputSchema: {
       type: "object",
       properties: {

@@ -127,6 +127,23 @@ Resolution is **always on and fail-soft**: it fetches at a pinned repo version, 
 
 Uninstalling the connector removes its materialized overlays.
 
+## Skills published by an MCP server
+
+A server can publish its own guidance as skill resources — `skill://<name>/SKILL.md`, discovered by listing the server's resources. The platform reads the **same** `metadata.nimblebrain.*` block documented above off that published frontmatter, so a published skill loads by the rules its author writes rather than a fixed convention:
+
+| Field | Effect on a published skill |
+|-------|-----------------------------|
+| `loading-strategy` | `always` composes it every turn; `dynamic` (the default when omitted) loads it on demand. |
+| `priority` | Ordering, same scale. Defaults to 60. |
+| `triggers` | Phrases that load it deterministically, whether or not the server's tools are in the active tool set. |
+
+Two differences from an on-disk skill:
+
+- **Reading is lenient, not strict.** A malformed or absent `metadata.nimblebrain` block leaves the fields unset and the defaults apply — an unrecognized value never rejects the skill. (An on-disk skill with bad frontmatter is skipped and logged.) Blank trigger phrases are dropped: an empty phrase would match every message.
+- **`tool-affinity` and `allowed-tools` are not read from the server.** The platform stamps affinity itself, as `<server-name>__*`, so a `dynamic` published skill loads whenever that server's tools are active.
+
+If a connector has a curated overlay, the platform skips synthesizing its published skills — see the section above.
+
 ## Listing skills
 
 Ask the agent which skills are loaded — it uses the built-in `skills__list` tool to report each skill's name, loading strategy, priority, and source file. To see one skill's full definition, ask the agent for its details.
@@ -191,5 +208,5 @@ Filter by `conversation_id`, `skill` (name or id), `loaded_by`, or a `since`/`un
 ## What's next
 
 - [Chat](/using/chat) — see skills in action during conversations
-- [Managing Apps](/using/managing-apps) — install the bundles a skill's tools come from
+- [Connectors](/using/connectors) — install the servers a skill's tools come from
 - [Configuration: nimblebrain.json](/config/nimblebrain-json) — full config reference including `skillDirs`

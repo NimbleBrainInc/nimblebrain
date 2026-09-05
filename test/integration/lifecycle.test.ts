@@ -1,17 +1,35 @@
-import { describe, expect, it, afterAll, beforeEach } from "bun:test";
-import { mkdirSync, writeFileSync, readFileSync, rmSync, existsSync } from "node:fs";
+import { describe, expect, it, afterAll, afterEach, beforeEach } from "bun:test";
+import { mkdirSync, writeFileSync, readFileSync, rmSync, existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
+import {
+	ListToolsRequestSchema,
+	CallToolRequestSchema,
+} from "@modelcontextprotocol/sdk/types.js";
 import type { EngineEvent, EventSink } from "../../src/engine/types.ts";
 import { BundleLifecycleManager } from "../../src/bundles/lifecycle.ts";
-import type { BundleInstance } from "../../src/bundles/types.ts";
-import {
-	getWorkspaceCredentials,
-	saveWorkspaceCredential,
-} from "../../src/config/workspace-credentials.ts";
+import { startBundleSource } from "../../src/bundles/startup.ts";
+import type { BundleRef } from "../../src/bundles/types.ts";
 import { ToolRegistry } from "../../src/tools/registry.ts";
+import { NoopEventSink } from "../../src/adapters/noop-events.ts";
+import {
+	installTestCredentialStore,
+	resetTestCredentialStore,
+} from "../helpers/credential-store.ts";
 
 const testDir = join(tmpdir(), `nimblebrain-lifecycle-${Date.now()}`);
+
+// Every path here reaches `seedInstance`, which derives the boot Connection
+// state from the OAuth token record — a key in the credential store.
+beforeEach(() => {
+	installTestCredentialStore(testDir);
+});
+
+afterEach(() => {
+	resetTestCredentialStore();
+});
 
 function setupTestDir() {
 	if (existsSync(testDir)) rmSync(testDir, { recursive: true });
@@ -36,464 +54,238 @@ function eventTypes(collector: { events: EngineEvent[] }): string[] {
 	return collector.events.map((e) => e.type);
 }
 
-/** Create a minimal echo MCP server bundle on disk with a valid MCPB manifest. */
-function createEchoBundleOnDisk(
-	dir: string,
-	opts?: { withUiMeta?: boolean; withUpjack?: boolean; upjackNamespace?: string },
-): string {
-	mkdirSync(dir, { recursive: true });
-
-	const nodeModulesPath = join(import.meta.dir, "../..", "node_modules");
-	const serverCode = `
-const { Server } = require("${nodeModulesPath}/@modelcontextprotocol/sdk/dist/cjs/server/index.js");
-const { StdioServerTransport } = require("${nodeModulesPath}/@modelcontextprotocol/sdk/dist/cjs/server/stdio.js");
-const { ListToolsRequestSchema, CallToolRequestSchema } = require("${nodeModulesPath}/@modelcontextprotocol/sdk/dist/cjs/types.js");
-
-async function main() {
-  const server = new Server(
-    { name: "echo-test", version: "0.1.0" },
-    { capabilities: { tools: {} } },
-  );
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: [{ name: "echo", description: "Echo input", inputSchema: { type: "object", properties: { message: { type: "string" } }, required: ["message"] } }],
-  }));
-  server.setRequestHandler(CallToolRequestSchema, async (req) => ({
-    content: [{ type: "text", text: "Echo: " + req.params.arguments?.message }],
-  }));
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
-}
-main();
-`;
-	writeFileSync(join(dir, "server.cjs"), serverCode);
-
-	const meta: Record<string, unknown> = {};
-	if (opts?.withUiMeta) {
-		meta["ai.nimblebrain/host"] = {
-			host_version: "1.0",
-			name: "Echo App",
-			icon: "echo-icon",
-			placements: [
-				{ slot: "main", resourceUri: "ui://echo/main", label: "Echo App", icon: "echo-icon", route: "echo" },
-			],
-		};
-	}
-	if (opts?.withUpjack) {
-		const upjack: Record<string, unknown> = { entities: [] };
-		if (opts.upjackNamespace) upjack.namespace = opts.upjackNamespace;
-		meta["ai.nimblebrain/upjack"] = upjack;
-	}
-
-	const manifest = {
-		manifest_version: "0.4",
-		name: "@test/echo",
-		version: "1.0.0",
-		description: "Echo test bundle",
-		author: { name: "Test Author" },
-		server: {
-			type: "node",
-			entry_point: "server.cjs",
-			mcp_config: {
-				command: "node",
-				args: ["${__dirname}/server.cjs"],
-			},
-		},
-		...(Object.keys(meta).length > 0 ? { _meta: meta } : {}),
-	};
-	writeFileSync(join(dir, "manifest.json"), JSON.stringify(manifest, null, 2));
-	return dir;
-}
-
 // ---------------------------------------------------------------------------
-// Install tests
+// Helper: a real MCP server over Streamable HTTP, the shape every connector
+// now has. The lifecycle owns remote connections only — there is no local
+// bundle to unpack or subprocess to spawn.
 // ---------------------------------------------------------------------------
 
-describe("BundleLifecycleManager — install local bundle", () => {
-	beforeEach(setupTestDir);
+interface MockRemoteServer {
+	url: string;
+	close: () => void;
+}
 
-	it("installs a local bundle: source registered, config updated, event emitted", async () => {
-		const bundleDir = createEchoBundleOnDisk(join(testDir, "echo-install"));
-		const configPath = join(testDir, "nimblebrain.json");
-		writeFileSync(configPath, JSON.stringify({ bundles: [] }, null, 2));
+function startMockRemoteServer(): MockRemoteServer {
+	const transports: WebStandardStreamableHTTPServerTransport[] = [];
+	const servers: Server[] = [];
 
-		const registry = new ToolRegistry();
-		const sink = makeEventCollector();
-		const lifecycle = new BundleLifecycleManager(sink, configPath);
+	const httpServer = Bun.serve({
+		port: 0,
+		async fetch(req: Request) {
+			if (new URL(req.url).pathname !== "/mcp") return new Response("Not found", { status: 404 });
 
-		const instance = await lifecycle.installLocal(bundleDir, registry, "ws_test");
+			const mcpServer = new Server(
+				{ name: "remote-echo", version: "0.1.0" },
+				{ capabilities: { tools: {} } },
+			);
+			mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
+				tools: [
+					{
+						name: "echo",
+						description: "Echo input",
+						inputSchema: {
+							type: "object" as const,
+							properties: { message: { type: "string" } },
+						},
+					},
+				],
+			}));
+			mcpServer.setRequestHandler(CallToolRequestSchema, async (req) => ({
+				content: [{ type: "text", text: `Echo: ${req.params.arguments?.message}` }],
+			}));
+			servers.push(mcpServer);
 
-		// Source registered in registry
-		expect(registry.hasSource(instance.serverName)).toBe(true);
-
-		// Instance state is running
-		expect(instance.state).toBe("running");
-		expect(instance.version).toBe("1.0.0");
-		expect(instance.type).toBe("plain");
-
-		// Config file updated
-		const config = JSON.parse(readFileSync(configPath, "utf-8"));
-		expect(config.bundles).toHaveLength(1);
-		expect(config.bundles[0].path).toBe(bundleDir);
-
-		// Event emitted
-		expect(eventTypes(sink)).toContain("bundle.installed");
-		const installEvent = sink.events.find((e) => e.type === "bundle.installed");
-		expect(installEvent!.data.serverName).toBe(instance.serverName);
-
-		// Cleanup
-		await registry.removeSource(instance.serverName);
-	}, 15_000);
-
-	it("installs with UI metadata: metadata extracted and stored", async () => {
-		const bundleDir = createEchoBundleOnDisk(join(testDir, "echo-ui"), { withUiMeta: true });
-		const configPath = join(testDir, "nimblebrain-ui.json");
-		writeFileSync(configPath, JSON.stringify({ bundles: [] }, null, 2));
-
-		const registry = new ToolRegistry();
-		const sink = makeEventCollector();
-		const lifecycle = new BundleLifecycleManager(sink, configPath);
-
-		const instance = await lifecycle.installLocal(bundleDir, registry, "ws_test");
-
-		// UI metadata extracted from manifest
-		expect(instance.ui).not.toBeNull();
-		expect(instance.ui!.name).toBe("Echo App");
-		expect(instance.ui!.icon).toBe("echo-icon");
-		expect(instance.ui!.placements).toHaveLength(1);
-		expect(instance.ui!.placements![0].resourceUri).toBe("ui://echo/main");
-
-		// Config entry includes ui
-		const config = JSON.parse(readFileSync(configPath, "utf-8"));
-		expect(config.bundles[0].ui).toBeDefined();
-		expect(config.bundles[0].ui.name).toBe("Echo App");
-
-		// Install event includes ui
-		const installEvent = sink.events.find((e) => e.type === "bundle.installed");
-		expect((installEvent!.data.ui as { name: string }).name).toBe("Echo App");
-
-		await registry.removeSource(instance.serverName);
-	}, 15_000);
-
-	it("installs an Upjack bundle: type detected correctly", async () => {
-		const bundleDir = createEchoBundleOnDisk(join(testDir, "echo-upjack"), { withUpjack: true });
-		const configPath = join(testDir, "nimblebrain-upjack.json");
-		writeFileSync(configPath, JSON.stringify({ bundles: [] }, null, 2));
-
-		const registry = new ToolRegistry();
-		const sink = makeEventCollector();
-		const lifecycle = new BundleLifecycleManager(sink, configPath);
-
-		const instance = await lifecycle.installLocal(bundleDir, registry, "ws_test");
-
-		expect(instance.type).toBe("upjack");
-
-		const installEvent = sink.events.find((e) => e.type === "bundle.installed");
-		expect(installEvent!.data.type).toBe("upjack");
-
-		await registry.removeSource(instance.serverName);
-	}, 15_000);
-
-	it(
-		"installLocal lands the bundle's entityDataRoot at workspaces/<wsId>/data/<manifest-slug>/<namespace>/data (end-to-end)",
-		async () => {
-			// The regression we're guarding: installLocal previously didn't pass
-			// dataDir to startBundleSource, so buildLocalSource fell back to
-			// `<workDir>/data/<slug>` (workspace-agnostic) using a path-derived
-			// slug. After this PR, installLocal must produce a workspace-scoped
-			// directory keyed on `manifest.name`.
-			const bundleDir = createEchoBundleOnDisk(join(testDir, "echo-upjack-e2e"), {
-				withUpjack: true,
-				upjackNamespace: "apps/echo",
+			const transport = new WebStandardStreamableHTTPServerTransport({
+				sessionIdGenerator: undefined,
 			});
-			const configPath = join(testDir, "nimblebrain-upjack-e2e.json");
-			writeFileSync(configPath, JSON.stringify({ bundles: [] }, null, 2));
-
-			// Pin the workdir to the test tree so the assertion is host-agnostic
-			// and the test doesn't pollute the dev workdir at ~/.nimblebrain.
-			const prevWorkDir = process.env.NB_WORK_DIR;
-			process.env.NB_WORK_DIR = testDir;
-			try {
-				const registry = new ToolRegistry();
-				const sink = makeEventCollector();
-				const lifecycle = new BundleLifecycleManager(sink, configPath);
-
-				const instance = await lifecycle.installLocal(bundleDir, registry, "ws_test");
-				try {
-					// Manifest name is `@test/echo` → slug `test-echo` (NOT
-					// path-derived, NOT under a workspace-agnostic /data/ root).
-					expect(instance.entityDataRoot).toBe(
-						join(testDir, "workspaces", "ws_test", "data", "test-echo", "apps/echo", "data"),
-					);
-				} finally {
-					await registry.removeSource(instance.serverName);
-				}
-			} finally {
-				if (prevWorkDir === undefined) delete process.env.NB_WORK_DIR;
-				else process.env.NB_WORK_DIR = prevWorkDir;
-			}
+			transports.push(transport);
+			await mcpServer.connect(transport);
+			return transport.handleRequest(req);
 		},
-		15_000,
-	);
-});
+	});
+
+	return {
+		url: `http://localhost:${httpServer.port}/mcp`,
+		close() {
+			httpServer.stop(true);
+			for (const t of transports) t.close().catch(() => {});
+			for (const s of servers) s.close().catch(() => {});
+		},
+	};
+}
+
+const SERVER_NAME = "remote-echo";
+const WS = "ws_test";
+
+/**
+ * Connect the mock server and record it on the lifecycle, as the install path
+ * does. Static bearer auth keeps the seeded connection `running`: without a
+ * credential on the ref, `seedUrlConnectionState` correctly reports
+ * `not_authenticated` until an OAuth flow completes.
+ */
+async function connectAndSeed(
+	lifecycle: BundleLifecycleManager,
+	registry: ToolRegistry,
+	url: string,
+): Promise<BundleRef> {
+	const ref: BundleRef = {
+		url,
+		serverName: SERVER_NAME,
+		transport: { type: "streamable-http", auth: { type: "bearer", token: "t" } },
+	};
+	const { meta } = await startBundleSource(ref, registry, new NoopEventSink(), {
+		allowInsecureRemotes: true,
+		wsId: WS,
+	});
+	await lifecycle.seedInstance(SERVER_NAME, url, ref, meta ?? undefined, WS);
+	return ref;
+}
 
 // ---------------------------------------------------------------------------
-// Uninstall tests
+// Uninstall
 // ---------------------------------------------------------------------------
 
 describe("BundleLifecycleManager — uninstall", () => {
-	beforeEach(setupTestDir);
+	let mockServer: MockRemoteServer;
 
-	it("uninstalls a normal bundle: source removed, config updated, event emitted", async () => {
-		const bundleDir = createEchoBundleOnDisk(join(testDir, "echo-uninstall"));
+	beforeEach(() => {
+		setupTestDir();
+		mockServer = startMockRemoteServer();
+	});
+
+	afterEach(() => {
+		mockServer?.close();
+	});
+
+	it("uninstalls a connector: source removed, config updated, event emitted", async () => {
 		const configPath = join(testDir, "nimblebrain-uninstall.json");
-		writeFileSync(configPath, JSON.stringify({ bundles: [] }, null, 2));
+		writeFileSync(
+			configPath,
+			JSON.stringify({ bundles: [{ url: mockServer.url, serverName: SERVER_NAME }] }, null, 2),
+		);
 
 		const registry = new ToolRegistry();
 		const sink = makeEventCollector();
-		const lifecycle = new BundleLifecycleManager(sink, configPath);
+		const lifecycle = new BundleLifecycleManager(sink, configPath, true);
+		await connectAndSeed(lifecycle, registry, mockServer.url);
 
-		const instance = await lifecycle.installLocal(bundleDir, registry, "ws_test");
-		const serverName = instance.serverName;
+		expect(registry.hasSource(SERVER_NAME)).toBe(true);
 
-		// Verify installed
-		expect(registry.hasSource(serverName)).toBe(true);
+		await lifecycle.uninstall(SERVER_NAME, registry, WS);
 
-		// Now uninstall by server name (same as API: DELETE /v1/apps/:name)
-		await lifecycle.uninstall(serverName, registry, "ws_test");
-
-		// Source removed
-		expect(registry.hasSource(serverName)).toBe(false);
-
-		// Config updated (bundles array empty)
-		const config = JSON.parse(readFileSync(configPath, "utf-8"));
-		expect(config.bundles).toHaveLength(0);
-
-		// Event emitted
+		expect(registry.hasSource(SERVER_NAME)).toBe(false);
+		expect(JSON.parse(readFileSync(configPath, "utf-8")).bundles).toHaveLength(0);
 		expect(eventTypes(sink)).toContain("bundle.uninstalled");
-
-		// Instance no longer tracked (installLocal stores without wsId)
-		expect(lifecycle.getInstances().find(i => i.serverName === serverName)).toBeUndefined();
+		expect(lifecycle.getInstance(SERVER_NAME, WS)).toBeUndefined();
 	}, 15_000);
 
 	it("does not delete data directories on uninstall", async () => {
-		const bundleDir = createEchoBundleOnDisk(join(testDir, "echo-data-preserve"));
 		const configPath = join(testDir, "nimblebrain-data.json");
 		writeFileSync(configPath, JSON.stringify({ bundles: [] }, null, 2));
 
-		// Create a fake data directory that should survive uninstall
+		// A data directory that must survive uninstall — credentials are config,
+		// data is not.
 		const dataDir = join(testDir, "data", "echo");
 		mkdirSync(dataDir, { recursive: true });
 		writeFileSync(join(dataDir, "records.json"), "[]");
 
 		const registry = new ToolRegistry();
-		const sink = makeEventCollector();
-		const lifecycle = new BundleLifecycleManager(sink, configPath);
+		const lifecycle = new BundleLifecycleManager(makeEventCollector(), configPath, true);
+		await connectAndSeed(lifecycle, registry, mockServer.url);
+		await lifecycle.uninstall(SERVER_NAME, registry, WS);
 
-		await lifecycle.installLocal(bundleDir, registry, "ws_test");
-		await lifecycle.uninstall(bundleDir, registry, "ws_test");
-
-		// Data directory should still exist
-		expect(existsSync(dataDir)).toBe(true);
 		expect(existsSync(join(dataDir, "records.json"))).toBe(true);
 	}, 15_000);
 
-	it("removes the workspace credential file on uninstall (data dir preserved)", async () => {
-		const bundleDir = createEchoBundleOnDisk(join(testDir, "echo-creds-cleanup"));
-		const configPath = join(testDir, "nimblebrain-creds.json");
-		writeFileSync(configPath, JSON.stringify({ bundles: [] }, null, 2));
+	it("uninstall leaves the config file valid JSON and no temp files behind", async () => {
+		const configPath = join(testDir, "nimblebrain-atomic.json");
+		writeFileSync(
+			configPath,
+			JSON.stringify(
+				{ bundles: [{ url: mockServer.url, serverName: SERVER_NAME }, { url: "https://other.test/mcp" }] },
+				null,
+				2,
+			),
+		);
 
-		// Lifecycle uninstall reads workDir from NB_WORK_DIR when clearing creds.
-		// Point it at our temp dir so the test is hermetic.
-		const workDir = join(testDir, "workdir");
-		mkdirSync(workDir, { recursive: true });
-		const originalWorkDir = process.env.NB_WORK_DIR;
-		process.env.NB_WORK_DIR = workDir;
+		const registry = new ToolRegistry();
+		const lifecycle = new BundleLifecycleManager(makeEventCollector(), configPath, true);
+		await connectAndSeed(lifecycle, registry, mockServer.url);
+		await lifecycle.uninstall(SERVER_NAME, registry, WS);
 
-		try {
-			const registry = new ToolRegistry();
-			const sink = makeEventCollector();
-			const lifecycle = new BundleLifecycleManager(sink, configPath);
-
-			const instance = await lifecycle.installLocal(bundleDir, registry, "ws_test");
-
-			// Seed credential file for this bundle, and another bundle in the
-			// same workspace that must NOT be touched by the uninstall.
-			await saveWorkspaceCredential("ws_test", instance.bundleName, "api_key", "sk-target", workDir);
-			await saveWorkspaceCredential("ws_test", "@acme/other", "api_key", "sk-other", workDir);
-
-			// Pre-condition: both credential files exist.
-			expect(await getWorkspaceCredentials("ws_test", instance.bundleName, workDir)).toEqual({
-				api_key: "sk-target",
-			});
-			expect(await getWorkspaceCredentials("ws_test", "@acme/other", workDir)).toEqual({
-				api_key: "sk-other",
-			});
-
-			// Uninstall by serverName — the same path the HTTP API uses.
-			await lifecycle.uninstall(instance.serverName, registry, "ws_test");
-
-			// Target bundle's credentials are gone.
-			expect(await getWorkspaceCredentials("ws_test", instance.bundleName, workDir)).toBeNull();
-			// Sibling bundle's credentials are untouched.
-			expect(await getWorkspaceCredentials("ws_test", "@acme/other", workDir)).toEqual({
-				api_key: "sk-other",
-			});
-		} finally {
-			if (originalWorkDir === undefined) delete process.env.NB_WORK_DIR;
-			else process.env.NB_WORK_DIR = originalWorkDir;
-		}
+		const config = JSON.parse(readFileSync(configPath, "utf-8"));
+		expect(config.bundles).toHaveLength(1);
+		expect(config.bundles[0].url).toBe("https://other.test/mcp");
+		expect(readdirSync(testDir).filter((f) => f.endsWith(".tmp"))).toHaveLength(0);
 	}, 15_000);
 
-	it("uninstall succeeds when no credential file exists for the bundle", async () => {
-		const bundleDir = createEchoBundleOnDisk(join(testDir, "echo-no-creds"));
-		const configPath = join(testDir, "nimblebrain-no-creds.json");
-		writeFileSync(configPath, JSON.stringify({ bundles: [] }, null, 2));
+	it("uninstall for a nonexistent server name is a silent no-op", async () => {
+		const registry = new ToolRegistry();
+		const lifecycle = new BundleLifecycleManager(makeEventCollector(), undefined, true);
 
-		const workDir = join(testDir, "workdir-nocreds");
-		mkdirSync(workDir, { recursive: true });
-		const originalWorkDir = process.env.NB_WORK_DIR;
-		process.env.NB_WORK_DIR = workDir;
+		await lifecycle.uninstall("completely-nonexistent-server", registry, WS);
 
-		try {
-			const registry = new ToolRegistry();
-			const sink = makeEventCollector();
-			const lifecycle = new BundleLifecycleManager(sink, configPath);
-
-			const instance = await lifecycle.installLocal(bundleDir, registry, "ws_test");
-
-			// No credentials saved. Uninstall must not throw.
-			await lifecycle.uninstall(instance.serverName, registry, "ws_test");
-
-			expect(eventTypes(sink)).toContain("bundle.uninstalled");
-		} finally {
-			if (originalWorkDir === undefined) delete process.env.NB_WORK_DIR;
-			else process.env.NB_WORK_DIR = originalWorkDir;
-		}
-	}, 15_000);
+		expect(lifecycle.getInstance("completely-nonexistent-server", WS)).toBeUndefined();
+	});
 });
 
 // ---------------------------------------------------------------------------
-// Start / Stop tests
+// Start / Stop / state transitions
 // ---------------------------------------------------------------------------
 
 describe("BundleLifecycleManager — start and stop", () => {
-	beforeEach(setupTestDir);
+	let mockServer: MockRemoteServer;
+
+	beforeEach(() => {
+		setupTestDir();
+		mockServer = startMockRemoteServer();
+	});
+
+	afterEach(() => {
+		mockServer?.close();
+	});
 
 	it("stop transitions state to stopped", async () => {
-		const bundleDir = createEchoBundleOnDisk(join(testDir, "echo-stop"));
 		const registry = new ToolRegistry();
-		const sink = makeEventCollector();
-		const lifecycle = new BundleLifecycleManager(sink, undefined);
-
-		const instance = await lifecycle.installLocal(bundleDir, registry, "ws_test");
+		const lifecycle = new BundleLifecycleManager(makeEventCollector(), undefined, true);
+		await connectAndSeed(lifecycle, registry, mockServer.url);
+		const instance = lifecycle.getInstance(SERVER_NAME, WS)!;
 		expect(instance.state).toBe("running");
 
-		await lifecycle.stopBundle(instance.serverName, "ws_test", registry);
+		await lifecycle.stopBundle(SERVER_NAME, WS, registry);
 		expect(instance.state).toBe("stopped");
 
-		await registry.removeSource(instance.serverName);
+		await registry.removeSource(SERVER_NAME);
 	}, 15_000);
 
-	it("start transitions a stopped bundle back to running", async () => {
-		const bundleDir = createEchoBundleOnDisk(join(testDir, "echo-restart"));
+	it("start transitions a stopped connector back to running", async () => {
 		const registry = new ToolRegistry();
-		const sink = makeEventCollector();
-		const lifecycle = new BundleLifecycleManager(sink, undefined);
+		const lifecycle = new BundleLifecycleManager(makeEventCollector(), undefined, true);
+		await connectAndSeed(lifecycle, registry, mockServer.url);
+		const instance = lifecycle.getInstance(SERVER_NAME, WS)!;
 
-		const instance = await lifecycle.installLocal(bundleDir, registry, "ws_test");
-		await lifecycle.stopBundle(instance.serverName, "ws_test", registry);
+		await lifecycle.stopBundle(SERVER_NAME, WS, registry);
 		expect(instance.state).toBe("stopped");
 
-		await lifecycle.startBundle(instance.serverName, "ws_test", registry);
+		await lifecycle.startBundle(SERVER_NAME, WS, registry);
 		expect(instance.state).toBe("running");
 
-		await registry.removeSource(instance.serverName);
+		await registry.removeSource(SERVER_NAME);
 	}, 15_000);
-});
 
-// ---------------------------------------------------------------------------
-// State machine tests
-// ---------------------------------------------------------------------------
-
-describe("BundleLifecycleManager — state transitions", () => {
-	beforeEach(setupTestDir);
-
-	it("dead bundle requires explicit startBundle to run again", async () => {
-		const bundleDir = createEchoBundleOnDisk(join(testDir, "echo-dead-restart"));
+	it("a dead connector requires an explicit startBundle to run again", async () => {
 		const registry = new ToolRegistry();
-		const sink = makeEventCollector();
-		const lifecycle = new BundleLifecycleManager(sink, undefined);
+		const lifecycle = new BundleLifecycleManager(makeEventCollector(), undefined, true);
+		await connectAndSeed(lifecycle, registry, mockServer.url);
+		const instance = lifecycle.getInstance(SERVER_NAME, WS)!;
 
-		const instance = await lifecycle.installLocal(bundleDir, registry, "ws_test");
 		lifecycle.transition(instance, "dead");
 		expect(instance.state).toBe("dead");
 
-		// Explicit startBundle should bring it back
-		await lifecycle.startBundle(instance.serverName, "ws_test", registry);
+		await lifecycle.startBundle(SERVER_NAME, WS, registry);
 		expect(instance.state).toBe("running");
 
-		await registry.removeSource(instance.serverName);
-	}, 15_000);
-});
-
-// ---------------------------------------------------------------------------
-// Atomic config write tests
-// ---------------------------------------------------------------------------
-
-describe("BundleLifecycleManager — atomic config writes", () => {
-	beforeEach(setupTestDir);
-
-	it("config writes are atomic (valid JSON after concurrent-safe write)", async () => {
-		const bundleDir = createEchoBundleOnDisk(join(testDir, "echo-atomic"));
-		const configPath = join(testDir, "nimblebrain-atomic.json");
-		writeFileSync(configPath, JSON.stringify({ bundles: [] }, null, 2));
-
-		const registry = new ToolRegistry();
-		const sink = makeEventCollector();
-		const lifecycle = new BundleLifecycleManager(sink, configPath);
-
-		await lifecycle.installLocal(bundleDir, registry, "ws_test");
-
-		// Read config — should be valid JSON with the bundle entry
-		const raw = readFileSync(configPath, "utf-8");
-		const config = JSON.parse(raw);
-		expect(config.bundles).toHaveLength(1);
-		expect(config.bundles[0].path).toBe(bundleDir);
-
-		// No temp files should remain
-		const dirContents = require("node:fs").readdirSync(testDir) as string[];
-		const tmpFiles = dirContents.filter((f: string) => f.endsWith(".tmp"));
-		expect(tmpFiles).toHaveLength(0);
-
-		await registry.removeSource("echo");
-	}, 15_000);
-
-	it("install does not duplicate entries on repeated calls", async () => {
-		const bundleDir = createEchoBundleOnDisk(join(testDir, "echo-idempotent"));
-		const configPath = join(testDir, "nimblebrain-idem.json");
-		writeFileSync(configPath, JSON.stringify({ bundles: [] }, null, 2));
-
-		const registry = new ToolRegistry();
-		const sink = makeEventCollector();
-		const lifecycle = new BundleLifecycleManager(sink, configPath);
-
-		await lifecycle.installLocal(bundleDir, registry, "ws_test");
-
-		// Read config after first install
-		let config = JSON.parse(readFileSync(configPath, "utf-8"));
-		expect(config.bundles).toHaveLength(1);
-
-		// Clean up the source so we can install again
-		await registry.removeSource("echo");
-
-		// Second install (same path)
-		await lifecycle.installLocal(bundleDir, registry, "ws_test");
-
-		// Should still be 1 entry (atomicConfigAdd deduplicates)
-		config = JSON.parse(readFileSync(configPath, "utf-8"));
-		expect(config.bundles).toHaveLength(1);
-
-		await registry.removeSource("echo");
+		await registry.removeSource(SERVER_NAME);
 	}, 15_000);
 });
 
@@ -502,243 +294,71 @@ describe("BundleLifecycleManager — atomic config writes", () => {
 // ---------------------------------------------------------------------------
 
 describe("BundleLifecycleManager — instance tracking", () => {
-	it("seedInstance creates a running instance with ref properties", () => {
-		const sink = makeEventCollector();
-		const lifecycle = new BundleLifecycleManager(sink, undefined);
+	it("seedInstance records the ref's UI and derives the connection state", async () => {
+		const lifecycle = new BundleLifecycleManager(makeEventCollector(), undefined);
 
-		lifecycle.seedInstance("ipinfo", "@nimblebraininc/ipinfo", {
-			name: "@nimblebraininc/ipinfo",
-			trustScore: 92,
-			ui: { name: "IPInfo", icon: "globe" },
-		}, undefined, "ws_test");
+		await lifecycle.seedInstance(
+			"ipinfo",
+			"https://ipinfo.example.com/mcp",
+			{
+				url: "https://ipinfo.example.com/mcp",
+				serverName: "ipinfo",
+				ui: { name: "IPInfo", icon: "globe" },
+			},
+			undefined,
+			"ws_test",
+		);
 
 		const instance = lifecycle.getInstance("ipinfo", "ws_test")!;
 		expect(instance).toBeDefined();
-		expect(instance.state).toBe("running");
-		expect(instance.trustScore).toBe(92);
 		expect(instance.ui?.name).toBe("IPInfo");
-
-		const all = lifecycle.getInstances();
-		expect(all).toHaveLength(1);
+		// No credential on the ref and no persisted tokens: the connector is
+		// installed but not connected, and the seeded state says so.
+		expect(instance.state).toBe("not_authenticated");
+		expect(lifecycle.getInstances()).toHaveLength(1);
 	});
 
-	it("seedInstance resolves entityDataRoot from dataDir and upjackNamespace", () => {
-		const sink = makeEventCollector();
-		const lifecycle = new BundleLifecycleManager(sink, undefined);
+	it("seedInstance prefers the manifest name over the config label", async () => {
+		const lifecycle = new BundleLifecycleManager(makeEventCollector(), undefined);
 
-		lifecycle.seedInstance(
-			"synapse-crm",
-			"@nimblebraininc/synapse-crm",
-			{ name: "@nimblebraininc/synapse-crm" },
+		await lifecycle.seedInstance(
+			"crm",
+			"https://crm.example.com/mcp",
+			{ url: "https://crm.example.com/mcp", serverName: "crm" },
 			{
-				manifestName: "@nimblebraininc/synapse-crm",
+				manifestName: "ai.nimblebrain/crm",
 				version: "0.1.0",
 				ui: null,
-				briefing: { facets: [{ name: "deals", label: "Deals", type: "delta", entity: "deal" }] },
-				type: "upjack",
-				upjackNamespace: "apps/crm",
+				briefing: {
+					facets: [{ name: "deals", label: "Deals", type: "delta", tool: "crm__deals" }],
+				},
 			},
 			"ws_eng",
-			"/data/workspaces/ws_eng/data/nimblebraininc-synapse-crm",
 		);
 
-		const instance = lifecycle.getInstance("synapse-crm", "ws_eng")!;
-		expect(instance).toBeDefined();
-		expect(instance.entityDataRoot).toBe(
-			join("/data/workspaces/ws_eng/data/nimblebraininc-synapse-crm", "apps/crm", "data"),
-		);
+		const instance = lifecycle.getInstance("crm", "ws_eng")!;
+		expect(instance.bundleName).toBe("ai.nimblebrain/crm");
+		expect(instance.configKey).toBe("https://crm.example.com/mcp");
+		expect(instance.version).toBe("0.1.0");
+		expect(instance.briefing?.facets).toHaveLength(1);
 		expect(instance.wsId).toBe("ws_eng");
 	});
 
-	it("seedInstance omits entityDataRoot when dataDir is missing", () => {
-		const sink = makeEventCollector();
-		const lifecycle = new BundleLifecycleManager(sink, undefined);
+	it("seedInstance retains the ref so a source can be reconstructed on demand", async () => {
+		const lifecycle = new BundleLifecycleManager(makeEventCollector(), undefined);
+		const ref: BundleRef = {
+			url: "https://crm.example.com/mcp",
+			serverName: "crm",
+			scopes: ["read"],
+		};
 
-		lifecycle.seedInstance(
-			"echo",
-			"@nimblebraininc/echo",
-			{ name: "@nimblebraininc/echo" },
-			{
-				manifestName: "@nimblebraininc/echo",
-				version: "1.0.0",
-				ui: null,
-				briefing: null,
-				type: "plain",
-			},
-			"ws_test",
-		);
+		await lifecycle.seedInstance("crm", ref.url, ref, undefined, "ws_eng");
 
-		const instance = lifecycle.getInstance("echo", "ws_test")!;
-		expect(instance.entityDataRoot).toBeUndefined();
+		expect(lifecycle.getInstance("crm", "ws_eng")?.ref).toEqual(ref);
 	});
 
-	it("seedInstance omits entityDataRoot when upjackNamespace is missing", () => {
-		const sink = makeEventCollector();
-		const lifecycle = new BundleLifecycleManager(sink, undefined);
-
-		lifecycle.seedInstance(
-			"plain-srv",
-			"@test/plain",
-			{ name: "@test/plain" },
-			{
-				manifestName: "@test/plain",
-				version: "1.0.0",
-				ui: null,
-				briefing: null,
-				type: "plain",
-			},
-			"ws_test",
-			"/data/workspaces/ws_test/data/test-plain",
-		);
-
-		const instance = lifecycle.getInstance("plain-srv", "ws_test")!;
-		expect(instance.entityDataRoot).toBeUndefined();
-	});
-
-	it("seedInstance composes entityDataRoot by trusting the caller's dataDir (no re-derivation)", () => {
-		// The previous incarnation of this test locked in a workaround:
-		// seedInstance used to receive a wrong `dataDir` (a path-bundle slug
-		// produced by `bundleNameFromRef(ref.path)`) and silently rebuild
-		// `entityDataRoot` from `manifestName` to compensate. That workaround
-		// is gone — every caller now routes through `resolveBundleDataDirForRef`,
-		// which keys the slug on `manifest.name` directly, so the input dataDir
-		// is already correct. The contract here is just: append the upjack
-		// namespace and `data/` to whatever the caller passed. No magic.
-		const sink = makeEventCollector();
-		const lifecycle = new BundleLifecycleManager(sink, undefined);
-
-		const correctDataDir = "/data/workspaces/ws_eng/data/nimblebraininc-synapse-crm";
-
-		lifecycle.seedInstance(
-			"synapse-crm",
-			"/Users/foo/Code/hq/synapse-apps/synapse-crm",
-			{ path: "/Users/foo/Code/hq/synapse-apps/synapse-crm" },
-			{
-				manifestName: "@nimblebraininc/synapse-crm",
-				version: "0.3.2",
-				ui: null,
-				briefing: {
-					facets: [
-						{ name: "deals", label: "Deals", type: "delta", entity: "deal" },
-					],
-				},
-				type: "upjack",
-				upjackNamespace: "apps/crm",
-			},
-			"ws_eng",
-			correctDataDir,
-		);
-
-		const instance = lifecycle.getInstance("synapse-crm", "ws_eng")!;
-		expect(instance.entityDataRoot).toBe(
-			"/data/workspaces/ws_eng/data/nimblebraininc-synapse-crm/apps/crm/data",
-		);
-	});
-});
-
-// ---------------------------------------------------------------------------
-// Resilience — error path coverage
-// ---------------------------------------------------------------------------
-
-describe("BundleLifecycleManager — error resilience", () => {
-	beforeEach(setupTestDir);
-
-	it("installLocal rejects with corrupt JSON manifest", async () => {
-		const bundleDir = join(testDir, "echo-corrupt");
-		mkdirSync(bundleDir, { recursive: true });
-		writeFileSync(join(bundleDir, "manifest.json"), "{ this is not valid JSON !!!}");
-
-		const registry = new ToolRegistry();
-		const sink = makeEventCollector();
-		const lifecycle = new BundleLifecycleManager(sink, undefined);
-
-		let error: Error | null = null;
-		try {
-			await lifecycle.installLocal(bundleDir, registry, "ws_test");
-		} catch (e) {
-			error = e as Error;
-		}
-
-		expect(error).not.toBeNull();
-		// Should not leave any source registered
-		expect(registry.getSources()).toHaveLength(0);
-	});
-
-	it("installLocal rejects when manifest.json is missing", async () => {
-		const bundleDir = join(testDir, "echo-no-manifest");
-		mkdirSync(bundleDir, { recursive: true });
-		// No manifest.json created
-
-		const registry = new ToolRegistry();
-		const sink = makeEventCollector();
-		const lifecycle = new BundleLifecycleManager(sink, undefined);
-
-		let error: Error | null = null;
-		try {
-			await lifecycle.installLocal(bundleDir, registry, "ws_test");
-		} catch (e) {
-			error = e as Error;
-		}
-
-		expect(error).not.toBeNull();
-	});
-
-	it("uninstall for nonexistent server name is a silent no-op", async () => {
-		const registry = new ToolRegistry();
-		const sink = makeEventCollector();
-		const lifecycle = new BundleLifecycleManager(sink, undefined);
-
-		// Should not throw — lenient behavior for idempotent uninstall
-		await lifecycle.uninstall("completely-nonexistent-server", registry, "ws_test");
-
-		// But should still emit uninstalled event (even if nothing was installed)
-		// OR be a full no-op — verify whichever is the actual behavior
-		expect(lifecycle.getInstances().find(i => i.serverName === "completely-nonexistent-server")).toBeUndefined();
-	});
-
-	it("getInstance returns undefined for unknown server name", () => {
-		const sink = makeEventCollector();
-		const lifecycle = new BundleLifecycleManager(sink, undefined);
-
+	it("getInstance returns undefined for an unknown server name", () => {
+		const lifecycle = new BundleLifecycleManager(makeEventCollector(), undefined);
 		expect(lifecycle.getInstance("nonexistent", "ws_test")).toBeUndefined();
 	});
-
-	it("config file is not corrupted when installLocal fails mid-operation", async () => {
-		const configPath = join(testDir, "nimblebrain-resilience.json");
-		const initialConfig = { bundles: [{ name: "@test/existing" }] };
-		writeFileSync(configPath, JSON.stringify(initialConfig, null, 2));
-
-		const registry = new ToolRegistry();
-		const sink = makeEventCollector();
-		const lifecycle = new BundleLifecycleManager(sink, configPath);
-
-		// Try to install a broken bundle (missing server entry_point)
-		const brokenDir = join(testDir, "echo-broken-server");
-		mkdirSync(brokenDir, { recursive: true });
-		writeFileSync(join(brokenDir, "manifest.json"), JSON.stringify({
-			manifest_version: "0.4",
-			name: "@test/broken",
-			version: "1.0.0",
-			description: "Broken bundle",
-			server: {
-				type: "node",
-				entry_point: "nonexistent.js",
-				mcp_config: {
-					command: "node",
-					args: ["${__dirname}/nonexistent.js"],
-				},
-			},
-		}));
-
-		try {
-			await lifecycle.installLocal(brokenDir, registry, "ws_test");
-		} catch {
-			// Expected to fail
-		}
-
-		// Config should be parseable and not corrupted
-		const raw = readFileSync(configPath, "utf-8");
-		const config = JSON.parse(raw);
-		expect(config.bundles).toBeDefined();
-	}, 15_000);
 });

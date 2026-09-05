@@ -37,6 +37,7 @@ import type { ResourceData, ToolSource } from "../tools/types.ts";
 import { validateToolInput } from "../tools/validate-input.ts";
 import { estimateCost } from "../usage/cost.ts";
 import { bytesToBase64 } from "../util/base64.ts";
+import { splitInnerToolName } from "../util/tool-name.ts";
 import { PersonalWorkspaceInvariantError } from "../workspace/errors.ts";
 import type { WorkspaceStore } from "../workspace/workspace-store.ts";
 import { personalWorkspaceIdFor } from "../workspace/workspace-store.ts";
@@ -1277,7 +1278,9 @@ function dispatchRestToolCall(
   coercedArgs: Record<string, unknown>,
 ): Promise<Awaited<ReturnType<ToolRegistry["execute"]>>> {
   if (identitySource) {
-    return identitySource.execute(toolName.slice(toolName.indexOf("__") + 2), coercedArgs);
+    // `normalizeRestToolName` guarantees the `<source>__` prefix, so the bare
+    // segment is what the source executes.
+    return identitySource.execute(splitInnerToolName(toolName).bareToolName, coercedArgs);
   }
   // A non-identity source always resolved a workspace registry above (or we
   // 400'd); the guard narrows the type without a non-null assertion.
@@ -1710,7 +1713,7 @@ export function handleLogout(): Response {
   // Clear nb_session for both SameSite modes (covers Strict and Lax)
   res.headers.append("Set-Cookie", "nb_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0");
   res.headers.append("Set-Cookie", "nb_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0");
-  // Clear WorkOS refresh token
+  // Clear the provider refresh token
   res.headers.append("Set-Cookie", "nb_refresh=; HttpOnly; SameSite=Lax; Path=/v1/auth; Max-Age=0");
   return res;
 }

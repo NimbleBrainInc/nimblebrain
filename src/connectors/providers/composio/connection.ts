@@ -1,0 +1,218 @@
+/**
+ * Composio connected-account state — the local half of a Composio install.
+ *
+ * NimbleBrain integrates with Composio as a remote OAuth provider for
+ * toolkits (Gmail, Slack, HubSpot, …) where we do not yet hold the
+ * vendor's own restricted-scope approval. Composio holds the user's
+ * vendor tokens; the platform only holds an opaque `connectedAccountId`
+ * pointer per owner per connector.
+ *
+ * This file is Composio's own business and lives behind the provider seam:
+ * the kernel owns the DIRECTORY rule (`credentials/<provider>/<connectorId>/`,
+ * built by `brokeredConnectorDir`) and knows nothing of what is written inside
+ * it. The kernel reaches this state only through the provider's `hasConnection`
+ * and `cleanup` arms.
+ *
+ * Storage layout:
+ *   <workDir>/workspaces/<wsId>/credentials/composio/<connectorId>/connection.json
+ *
+ * The file's EXISTENCE is the gating signal for a Composio-backed
+ * connector: present, and the platform may resolve its remote-MCP URL
+ * with `user_id={NB_USER_ID}` and start the source. Absent, the
+ * connector stays in `not_authenticated` until
+ * `/v1/composio-auth/callback` writes it.
+ *
+ * `status` is recorded, never consulted — `hasPersistedComposioConnection`
+ * tests the path and nothing else. Do not add a `status === "ACTIVE"`
+ * gate here on the assumption that the field carries that vocabulary:
+ * the value is whatever the vendor put on the callback, and the hosted
+ * connect flow reports a success as `success`, where the retired
+ * non-hosted call reported `ACTIVE`. A gate keyed on one spelling
+ * silently rejects every connection made through the other. The
+ * callback rejects a failed connect before it ever writes this file.
+ *
+ * Security posture: 0o700 directory, 0o600 file, atomic temp+rename
+ * writes, wsId validated against WORKSPACE_ID_RE before any path is built.
+ */
+
+import { existsSync } from "node:fs";
+import { chmod, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { brokeredConnectorDir } from "../../../bundles/brokered.ts";
+import type { ConnectorOwner } from "../../../identity/connector-owner.ts";
+import { COMPOSIO_PROVIDER_ID } from "./id.ts";
+
+/**
+ * Persisted state for one (workspace, connector) Composio connection.
+ *
+ * Kept deliberately minimal: anything beyond the pointer + status lives
+ * on Composio's side. `userId` is the value the platform passed to
+ * `connected_accounts.initiate(user_id=…)` — recorded so a future audit
+ * can prove which Composio namespace this connection sits in.
+ */
+export interface ComposioConnection {
+  /** Composio's identifier for the connected account (e.g. `ca_…`). */
+  connectedAccountId: string;
+  /** Toolkit slug at Composio (e.g. `gmail`). */
+  toolkit: string;
+  /** The `user_id` value passed to Composio at initiate time. */
+  userId: string;
+  /** ISO-8601 timestamp the connection landed. */
+  connectedAt: string;
+  /**
+   * Composio's reported status at callback time. Composio's lifecycle
+   * may move this independently of NimbleBrain (revocation, vendor
+   * disconnect, etc.), so callers should treat absent or stale values
+   * as "verify with Composio before acting." The string isn't
+   * normalized — we record whatever Composio returns and let the
+   * connector layer decide what's actionable.
+   */
+  status: string;
+}
+
+/**
+ * Absolute path to the per-connector Composio state directory. One thin wrapper
+ * over the kernel's single path-building site so this module never spells the
+ * layout itself.
+ */
+export function composioConnectorDir(
+  workDir: string,
+  owner: ConnectorOwner,
+  connectorId: string,
+): string {
+  return brokeredConnectorDir(workDir, owner, COMPOSIO_PROVIDER_ID, connectorId);
+}
+
+/** Absolute path to `connection.json` for an (owner, connector). */
+export function composioConnectionPath(
+  workDir: string,
+  owner: ConnectorOwner,
+  connectorId: string,
+): string {
+  return join(composioConnectorDir(workDir, owner, connectorId), "connection.json");
+}
+
+/**
+ * True iff a `connection.json` exists at the expected path for this
+ * (owner, connector). Existence-only — does not parse or validate.
+ * Backs the provider's `hasConnection` arm, which platform boot consults to
+ * pick a Composio-backed connector's initial state (`not_authenticated` vs
+ * ready-to-start).
+ */
+export function hasPersistedComposioConnection(
+  workDir: string,
+  owner: ConnectorOwner,
+  connectorId: string,
+): boolean {
+  return existsSync(composioConnectionPath(workDir, owner, connectorId));
+}
+
+let tmpCounter = 0;
+function uniqueTmpSuffix(): string {
+  return `${Date.now()}.${++tmpCounter}`;
+}
+
+async function atomicWriteFile(path: string, content: string, mode: number): Promise<void> {
+  const tmpPath = `${path}.tmp.${uniqueTmpSuffix()}`;
+  await writeFile(tmpPath, content, { encoding: "utf-8", mode });
+  await chmod(tmpPath, mode);
+  await rename(tmpPath, path);
+}
+
+/**
+ * Write `connection.json` atomically with 0o600. Parent dirs created
+ * with 0o700. Replaces any existing file at the path — Composio
+ * connections are owned by the most recent successful flow; the
+ * previous `connectedAccountId` becomes orphaned at Composio (must be
+ * cleaned up there, not here).
+ */
+export async function saveComposioConnection(
+  workDir: string,
+  owner: ConnectorOwner,
+  connectorId: string,
+  connection: ComposioConnection,
+): Promise<void> {
+  const dir = composioConnectorDir(workDir, owner, connectorId);
+  await mkdir(dir, { recursive: true, mode: 0o700 });
+  try {
+    await chmod(dir, 0o700);
+  } catch {
+    // Best-effort directory hardening — the file is 0o600 explicitly, so a
+    // failed chmod on the parent is not worth aborting the write for.
+  }
+  const filePath = composioConnectionPath(workDir, owner, connectorId);
+  await atomicWriteFile(filePath, `${JSON.stringify(connection, null, 2)}\n`, 0o600);
+}
+
+/**
+ * Read and parse `connection.json`. Returns `null` if the file does
+ * not exist — missing is a normal state (connector not yet
+ * authenticated). Throws on parse error or missing required fields so
+ * a corrupted file surfaces loudly rather than silently masquerading
+ * as "not connected."
+ */
+export async function readComposioConnection(
+  workDir: string,
+  owner: ConnectorOwner,
+  connectorId: string,
+): Promise<ComposioConnection | null> {
+  const filePath = composioConnectionPath(workDir, owner, connectorId);
+  let raw: string;
+  try {
+    raw = await readFile(filePath, "utf-8");
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw err;
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    throw new Error(
+      `[composio-connection] failed to parse ${filePath}: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
+  }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error(`[composio-connection] ${filePath} is not a JSON object`);
+  }
+  const obj = parsed as Record<string, unknown>;
+  for (const k of ["connectedAccountId", "toolkit", "userId", "connectedAt", "status"]) {
+    if (typeof obj[k] !== "string" || (obj[k] as string).length === 0) {
+      throw new Error(`[composio-connection] ${filePath} missing required field "${k}"`);
+    }
+  }
+  return {
+    connectedAccountId: obj.connectedAccountId as string,
+    toolkit: obj.toolkit as string,
+    userId: obj.userId as string,
+    connectedAt: obj.connectedAt as string,
+    status: obj.status as string,
+  };
+}
+
+/**
+ * Delete `connection.json` for an (owner, connector). Returns `true` if the
+ * file existed and was removed, `false` if it didn't.
+ *
+ * Called from the provider's `cleanup` arm — the parallel of
+ * `revokeAndDeleteTokens` on the OAuth provider for native bundles.
+ * Composio-side account deletion is a separate step (in `sdk.ts`) so this
+ * module stays SDK-free.
+ */
+export async function deleteComposioConnection(
+  workDir: string,
+  owner: ConnectorOwner,
+  connectorId: string,
+): Promise<boolean> {
+  const filePath = composioConnectionPath(workDir, owner, connectorId);
+  try {
+    await unlink(filePath);
+    return true;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw err;
+  }
+}

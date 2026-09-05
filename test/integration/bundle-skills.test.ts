@@ -30,6 +30,9 @@ import { McpSource } from "../../src/tools/mcp-source.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
 
+/** The synthesized name for the fixture bundle's skill. */
+const BUNDLE_SKILL_NAME = "bundle:ai-nimblebrain-test-mcp:test";
+
 const SKILL_BODY = `---
 name: test
 description: How to use the test server.
@@ -111,6 +114,42 @@ async function main() {
 main();
 `;
   writeFileSync(join(dir, "server.cjs"), serverCode);
+  return dir;
+}
+
+/**
+ * A second server answering to the SAME registry name that publishes no skill
+ * resources — one workspace's instance of a bundle that has nothing to say.
+ * Used to prove a neighbour's discovery cannot speak for it.
+ */
+function createSkilllessFixtureBundle(dir: string): string {
+  mkdirSync(dir, { recursive: true });
+  const nodeModulesPath = join(import.meta.dir, "../..", "node_modules");
+  writeFileSync(
+    join(dir, "server.cjs"),
+    `
+const { Server } = require("${nodeModulesPath}/@modelcontextprotocol/sdk/dist/cjs/server/index.js");
+const { StdioServerTransport } = require("${nodeModulesPath}/@modelcontextprotocol/sdk/dist/cjs/server/stdio.js");
+const { ListToolsRequestSchema, CallToolRequestSchema, ListResourcesRequestSchema } =
+  require("${nodeModulesPath}/@modelcontextprotocol/sdk/dist/cjs/types.js");
+
+async function main() {
+  const server = new Server(
+    { name: "test", version: "0.1.0" },
+    { capabilities: { tools: {}, resources: {} } },
+  );
+  server.setRequestHandler(ListToolsRequestSchema, async () => ({
+    tools: [{ name: "doit", description: "Do the thing", inputSchema: { type: "object", properties: {} } }],
+  }));
+  server.setRequestHandler(CallToolRequestSchema, async () => ({
+    content: [{ type: "text", text: "done" }],
+  }));
+  server.setRequestHandler(ListResourcesRequestSchema, async () => ({ resources: [] }));
+  await server.connect(new StdioServerTransport());
+}
+main();
+`,
+  );
   return dir;
 }
 
@@ -284,6 +323,51 @@ describe("bundle-skill adapter — end-to-end", () => {
       (s) => s.id === "skill://test/SKILL.md",
     );
     expect(bundleEntry).toBeUndefined();
+  });
+
+  it("does not let one workspace's discovery answer for another", async () => {
+    // Discovery used to resolve a server name against whichever workspace
+    // registry iterated first, and cache the result under the bare name. So a
+    // bundle installed in several workspaces had ONE shared answer: whichever
+    // instance won the race spoke for all of them, and an instance that
+    // published nothing (or was transiently unreachable) decided the skill for
+    // everyone. That moves the catalog and the surface-once candidates
+    // together, since both read this.
+    //
+    // Both workspaces must hold a source of the SAME name for the leak to
+    // exist — a workspace with no such source never reaches discovery at all,
+    // so it cannot observe the shared cache.
+    const otherWsId = "ws_other_tenant";
+    await provisionTestWorkspace(runtime, otherWsId);
+
+    const barrenDir = createSkilllessFixtureBundle(join(testDir, "barren"));
+    const barrenSource = new McpSource(
+      "ai-nimblebrain-test-mcp", // same name, different instance
+      {
+        type: "stdio",
+        spawn: {
+          command: "node",
+          args: [join(barrenDir, "server.cjs")],
+          env: process.env as Record<string, string>,
+        },
+      },
+      new NoopEventSink(),
+    );
+    await barrenSource.start();
+    runtime.getRegistryForWorkspace(otherWsId).addSource(barrenSource);
+
+    try {
+      // Warm from the workspace whose instance does publish a skill.
+      const owning = await runtime.listActivatableSkills(TEST_WORKSPACE_ID, null);
+      expect(owning.some((s) => s.name === BUNDLE_SKILL_NAME)).toBe(true);
+
+      // The other workspace's own instance publishes none, so it must see
+      // none — not its neighbour's cached answer under the same name.
+      const other = await runtime.listActivatableSkills(otherWsId, null);
+      expect(other.some((s) => s.name === BUNDLE_SKILL_NAME)).toBe(false);
+    } finally {
+      await barrenSource.stop();
+    }
   });
 
   it("discovers the workspace's bundle skills once per turn", async () => {

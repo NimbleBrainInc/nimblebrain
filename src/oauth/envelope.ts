@@ -166,13 +166,19 @@ export function isUniformByte(buf: Buffer, byte: number): boolean {
  * `v1.<b64url(json)>` prefix (NOT the raw JSON), so the version is bound into
  * the signature.
  *
- * This is the single crypto construction shared by the two payload schemas that
- * ride this envelope: the LOGIN assertion (`signEnvelope`, payload carries
+ * This is the single crypto construction shared by every payload schema that
+ * rides this envelope: the LOGIN assertion (`signEnvelope`, payload carries
  * `inner`) and the tenant-key MINT request (`buildMintRequest` in
  * `tenant-key-mint.ts`, payload carries `workspace`/`audience`/`scope`). The
- * authorizer mirrors this exactly with a single `verifyMac` over both schemas —
- * keeping sign and verify as one construction on each side, not two copies of a
- * security-critical path.
+ * inbound hooks door was a third: it now addresses a stream by an opaque stored
+ * id instead of a sealed payload, so it seals nothing and rides nothing here.
+ * The authorizer mirrors this exactly with a
+ * single `verifyMac` over the schemas it sees — keeping sign and verify as one
+ * construction on each side, not several copies of a security-critical path.
+ *
+ * {@link verifyMacEnvelope} is the symmetric verifier: schema-agnostic, like
+ * this function. Anything that verifies one of these wires locally goes through
+ * it and applies its own payload schema on top.
  *
  * The caller owns the payload schema, including the temporal fields (`iat` /
  * `exp`): this function does serialization + MAC only, never clock or field
@@ -188,6 +194,56 @@ export function signMacEnvelope(payload: object, tenantKey: Buffer): string {
   const signed = `${VERSION_PREFIX}${payloadB64}`;
   const macB64 = base64UrlEncode(createHmac("sha256", tenantKey).update(signed).digest());
   return `${signed}.${macB64}`;
+}
+
+/**
+ * Low-level MAC envelope verification — the symmetric counterpart of
+ * {@link signMacEnvelope}, and deliberately schema-agnostic in the same way.
+ *
+ * Does exactly three things: split the versioned wire, recompute the HMAC over
+ * the `v1.<b64url(payload)>` prefix, and compare it in constant time. Returns
+ * the raw payload bytes. It reads **no field** and consults **no clock** —
+ * payload schema and temporal policy belong to the caller, because they differ
+ * per schema: a login assertion expires in minutes, while a hook token is held
+ * by a third party for months and is retired by a registration lookup instead.
+ *
+ * Extracted so a second local verifier never has to restate the compare. Before
+ * the hooks door there was only one local verify path (`parseAndVerify`) and it
+ * had the login schema baked in, which would have forced any other verifier to
+ * copy this construction rather than share it — the exact duplication the
+ * signer's doc comment above promises does not exist.
+ *
+ * Throws `EnvelopeError` with `invalid_format` (unparseable wire) or `bad_mac`
+ * (wrong key, or tampered payload). Callers that must not leak which one
+ * happened should collapse both at their own boundary.
+ */
+export function verifyMacEnvelope(wire: string, key: Buffer): Buffer {
+  const { payloadB64, macB64 } = splitWire(wire);
+  if (payloadB64.length > MAX_PAYLOAD_BYTES) {
+    throw new EnvelopeError("invalid_payload");
+  }
+
+  let payloadRaw: Buffer;
+  let macProvided: Buffer;
+  try {
+    payloadRaw = base64UrlDecode(payloadB64);
+    macProvided = base64UrlDecode(macB64);
+  } catch {
+    throw new EnvelopeError("invalid_format");
+  }
+
+  const macExpected = createHmac("sha256", key).update(`${VERSION_PREFIX}${payloadB64}`).digest();
+
+  // Length check first — `timingSafeEqual` requires equal-length inputs and
+  // throws on mismatch. Classify any length difference as a bad MAC rather
+  // than letting the throw escape.
+  if (macProvided.length !== macExpected.length) {
+    throw new EnvelopeError("bad_mac");
+  }
+  if (!timingSafeEqual(macProvided, macExpected)) {
+    throw new EnvelopeError("bad_mac");
+  }
+  return payloadRaw;
 }
 
 export function signEnvelope(opts: SignOptions): string {
@@ -319,32 +375,7 @@ function parseAndVerify(
   key: Buffer,
   nowOverride: number | undefined,
 ): { payload: EnvelopePayload } {
-  const { payloadB64, macB64 } = splitWire(wire);
-  if (payloadB64.length > MAX_PAYLOAD_BYTES) {
-    throw new EnvelopeError("invalid_payload");
-  }
-
-  let payloadRaw: Buffer;
-  let macProvided: Buffer;
-  try {
-    payloadRaw = base64UrlDecode(payloadB64);
-    macProvided = base64UrlDecode(macB64);
-  } catch {
-    throw new EnvelopeError("invalid_format");
-  }
-
-  const signed = `${VERSION_PREFIX}${payloadB64}`;
-  const macExpected = createHmac("sha256", key).update(signed).digest();
-
-  // Length check first — `timingSafeEqual` requires equal-length inputs
-  // and throws on mismatch. We classify any length difference as a bad
-  // MAC rather than letting the throw escape.
-  if (macProvided.length !== macExpected.length) {
-    throw new EnvelopeError("bad_mac");
-  }
-  if (!timingSafeEqual(macProvided, macExpected)) {
-    throw new EnvelopeError("bad_mac");
-  }
+  const payloadRaw = verifyMacEnvelope(wire, key);
 
   let parsed: unknown;
   try {

@@ -89,7 +89,7 @@ The web dev server port is controlled by `NB_WEB_PORT`. The standard npm scripts
 
 ## Developing an app
 
-To iterate on a Synapse/Upjack app with hot module replacement, point `bun run dev` at the app directory with `--app`. The CLI reads the app's `manifest.json`, registers the app in dev mode, and starts a Vite dev server for it (default port `5173`):
+To iterate on a Synapse app's UI with hot module replacement, point `bun run dev` at the app directory with `--app`. The CLI reads the app's local `manifest.json` for its name, registers that name in dev mode so its `ui://` resources are served from Vite, and starts the dev server (default port `5173`). Run the app's MCP server yourself and point the workspace at its URL — see [Local Development](/apps/local-dev/):
 
 ```bash
 bun run dev --app ../synapse-apps/synapse-crm
