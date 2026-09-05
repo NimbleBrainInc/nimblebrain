@@ -113,6 +113,31 @@ function assertValidKey(key: string): void {
   }
 }
 
+/**
+ * Where the person reading this error goes to set the missing key.
+ *
+ * A workspace secret has a UI: the connector's page under Settings → Connectors
+ * collects it and writes it through the same door. Naming that instead of a tool
+ * call matters more than the wording suggests — the tool call is reachable only
+ * by typing the value into a conversation, which puts a plaintext credential in
+ * the transcript, the model's context, and wherever that conversation persists.
+ *
+ * The other two scopes have no such surface. An instance key is the deployment's
+ * own (LLM providers, the IdP, brokers) and belongs to whoever edits config; a
+ * user key is the caller's own identity-plane credential, written by the flow
+ * that acquired it.
+ */
+function remedyFor(scope: CredentialScope): string {
+  switch (scope.kind) {
+    case "workspace":
+      return "Set it on the connector's page under Settings → Connectors";
+    case "instance":
+      return "Set it in the deployment's credential store";
+    case "user":
+      return "Reconnect the connector to acquire it";
+  }
+}
+
 /** Thrown when a config reference names a key the store has nothing for. */
 export class CredentialNotFoundError extends Error {
   constructor(
@@ -122,7 +147,7 @@ export class CredentialNotFoundError extends Error {
   ) {
     super(
       `[credential-store] no secret at key "${key}" in scope ${credentialScopeLabel(scope)} ` +
-        `(needed for ${what}). Set it with manage_connectors set_secret, or remove the reference.`,
+        `(needed for ${what}). ${remedyFor(scope)}, or remove the reference.`,
     );
     this.name = "CredentialNotFoundError";
   }

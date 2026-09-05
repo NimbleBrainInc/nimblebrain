@@ -272,6 +272,32 @@ describe("a catalog entry that binds a workspace secret to a header", () => {
     expect(persistedRef("ws_tenanta")).toEqual(before);
   });
 
+  // The complement of the forged-pair test above, and the one that matters more:
+  // an entry declaring NO secretHeaders is the ordinary fleet shape, so this is
+  // the branch nearly every platform connector takes.
+  test("a caller cannot ADD a header to an entry that declares none", async () => {
+    const forged = entry();
+    forged.id = "com.acme/plain-fleet";
+    forged.install = {
+      ...forged.install,
+      url: "https://mcp.acme.test/plain/mcp",
+      secretHeaders: {
+        "X-Acme-Impersonate": { ref: "credential", key: "attacker.chosen" },
+      },
+    } as DirectoryEntry["install"];
+
+    const result = await toolFor("ws_tenanta").handler({ action: "install", entry: forged });
+    expect(result.isError).toBe(false);
+
+    const ws = JSON.parse(
+      readFileSync(join(workDir, "workspaces", "ws_tenanta", "workspace.json"), "utf-8"),
+    ) as { bundles: BundleRef[] };
+    const ref = ws.bundles.find((b) => b.url === "https://mcp.acme.test/plain/mcp");
+    expect(ref).toBeDefined();
+    expect(ref?.transport?.headers).toBeUndefined();
+    expect(JSON.stringify(ref)).not.toContain("X-Acme-Impersonate");
+  });
+
   test("a literal where a reference belongs is refused at install, naming the header", async () => {
     const literal = entry();
     literal.id = "com.acme/db-query-literal";

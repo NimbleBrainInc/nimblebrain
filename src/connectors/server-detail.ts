@@ -171,6 +171,27 @@ export interface SmitheryConnectorConfig {
 }
 
 /**
+ * One entry of a connector's {@link NimbleBrainConnectorMeta.secretHeaders} — a
+ * credential reference, plus the two optional strings that let the operator say
+ * what the value is in words a person recognises.
+ *
+ * The reference alone names a header and a store key, and neither is a label: a
+ * user asked for `acme.db_url` on `X-Db-Url` is being asked in the catalog's
+ * vocabulary. The collection dialog derives a readable default from the key's
+ * last segment, so an entry that sets neither still asks a usable question;
+ * `label` and `help` are how an entry says it better than the derivation can.
+ *
+ * Both are display-only. Neither reaches the transport, the store, or the
+ * persisted ref — the header carries the resolved value and nothing else.
+ */
+export interface SecretHeaderRef extends CredentialRef {
+  /** What to call this value, e.g. "Database connection string". */
+  label?: string;
+  /** One line of guidance — where to find the value, what format it takes. */
+  help?: string;
+}
+
+/**
  * NimbleBrain-specific extension carried inside `ServerDetail._meta`
  * under the key `ai.nimblebrain/connector`. Holds the platform-specific
  * fields that don't fit upstream slots: OAuth flow type, operator-setup
@@ -241,7 +262,7 @@ export interface NimbleBrainConnectorMeta {
   /**
    * Secrets the WORKSPACE owns, bound to outgoing request headers — a customer's
    * own database URL, an API key the customer holds. Each value is a
-   * {@link CredentialRef} into that workspace's credential store, so one catalog
+   * {@link SecretHeaderRef} into that workspace's credential store, so one catalog
    * entry installs into two workspaces and each sends its own value, and rotation
    * is a `put` on the key rather than a catalog change.
    *
@@ -252,11 +273,12 @@ export interface NimbleBrainConnectorMeta {
    * This is NOT how the connection authenticates — `providerAuth` is. A fleet
    * entry keeps `provider: "minted"` (the identity the edge verifies) and carries
    * the customer's secret here, because the two answer different questions: who
-   * is calling, and what that caller may open. Copied verbatim from the trusted
-   * catalog entry into the BundleRef's `transport.headers`, where the transport
-   * resolves each reference per connection at the connection's workspace scope.
+   * is calling, and what that caller may open. The reference is read from the
+   * trusted catalog entry into the BundleRef's `transport.headers`, where the
+   * transport resolves it per connection at the connection's workspace scope;
+   * `label` / `help` stay behind, since they are for the person being asked.
    */
-  secretHeaders?: Record<string, CredentialRef>;
+  secretHeaders?: Record<string, SecretHeaderRef>;
   /** Optional OAuth scopes the bundle requests. */
   requiredScopes?: string[];
   /** Optional extra authorize-URL params (e.g. Google's access_type=offline). */

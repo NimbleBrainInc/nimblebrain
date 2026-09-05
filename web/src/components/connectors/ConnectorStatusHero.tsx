@@ -1,6 +1,5 @@
 import { useMemo, useState } from "react";
 import {
-  type DirectoryEntry,
   disconnectConnector,
   type InstalledConnector,
   initiateComposioOAuth,
@@ -9,7 +8,7 @@ import {
 import { Button } from "../ui/button";
 import { ComposioApiKeyModal } from "./ComposioApiKeyModal";
 import { ConnectorIcon } from "./ConnectorIcon";
-import { OperatorSetupModal } from "./OperatorSetupModal";
+import { OperatorSetupModal, type OperatorSetupTarget } from "./OperatorSetupModal";
 
 /**
  * Hero block for the Connector Configure page. Carries the visual
@@ -53,32 +52,12 @@ export function ConnectorStatusHero({
   const cat = installed.catalog;
   const name = cat?.name ?? installed.serverName;
 
-  // Synthesize a DirectoryEntry shape for OperatorSetupModal — it only
-  // reads `id`, `name`, and `install.operatorSetup`. Same trick
-  // OperatorOAuthSection uses; could be extracted but the call is
-  // small enough that duplication beats premature abstraction.
-  const directoryEntry = useMemo<DirectoryEntry | null>(() => {
+  // The OAuth-app target for OperatorSetupModal, present only for a static-auth
+  // entry that declares one. Null is also the "no Set up CTA" signal below.
+  const operatorTarget = useMemo<OperatorSetupTarget | null>(() => {
     if (!cat || cat.auth !== "static" || !cat.operatorSetup) return null;
-    return {
-      id: cat.id,
-      registryId: "bundled-static",
-      registryType: "static",
-      name: cat.name,
-      description: cat.description,
-      ...(installed.iconUrl ? { iconUrl: installed.iconUrl } : {}),
-      tags: cat.tags,
-      install: {
-        kind: "remote-oauth",
-        url: cat.url,
-        auth: "static",
-        operatorSetup: cat.operatorSetup,
-        ...(cat.requiredScopes ? { requiredScopes: cat.requiredScopes } : {}),
-        ...(cat.additionalAuthorizationParams
-          ? { additionalAuthorizationParams: cat.additionalAuthorizationParams }
-          : {}),
-      },
-    };
-  }, [cat, installed.iconUrl]);
+    return { id: cat.id, name: cat.name, operatorSetup: cat.operatorSetup };
+  }, [cat]);
 
   // A composio API-key connector has no redirect: its auth CTA opens the key
   // modal and calls `connect_api_key`, which admin-gates once a connected
@@ -98,7 +77,7 @@ export function ConnectorStatusHero({
     cat?.auth === "composio" &&
     cat.composio?.authScheme === "API_KEY" &&
     (installed.state === "reauth_required" || installed.status === "failed");
-  const action = resolveAction(installed, !!directoryEntry, authRotatesSharedCredential);
+  const action = resolveAction(installed, !!operatorTarget, authRotatesSharedCredential);
 
   /** Surface an unknown error's message on the hero. */
   const reportError = (err: unknown) => setError(err instanceof Error ? err.message : String(err));
@@ -187,9 +166,9 @@ export function ConnectorStatusHero({
 
       {error && <p className="text-xs text-destructive">{error}</p>}
 
-      {operatorModalOpen && directoryEntry && (
+      {operatorModalOpen && operatorTarget && (
         <OperatorSetupModal
-          entry={directoryEntry}
+          entry={operatorTarget}
           open={operatorModalOpen}
           onClose={() => setOperatorModalOpen(false)}
           onSaved={() => {

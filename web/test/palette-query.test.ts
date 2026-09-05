@@ -32,7 +32,7 @@ const ctx: CommandSourceContext = {
   activeWorkspaceSlug: "bbbbbbbbbbbbbbbb",
   apps,
   iconForApp: () => undefined,
-  orgRole: "org_admin",
+  scopedRole: "org_admin",
 };
 
 describe("parseQuery", () => {

@@ -22,12 +22,12 @@ import { createPortal } from "react-dom";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useChatPanelContext } from "../../context/ChatPanelContext";
 import { usePalette } from "../../context/PaletteContext";
-import { useSession } from "../../context/SessionContext";
 import { useShellContext } from "../../context/ShellContext";
 import { useSidebar } from "../../context/SidebarContext";
 import { useTheme } from "../../context/ThemeContext";
 import { useWorkspaceAppIcons } from "../../context/WorkspaceAppIconsContext";
 import { useWorkspaceContext } from "../../context/WorkspaceContext";
+import { useScopedRole } from "../../hooks/useScopedRole";
 import { workspaceApps } from "../../lib/workspace-apps";
 import { toSlug } from "../../lib/workspace-slug";
 import { KeyboardShortcutsModal } from "../KeyboardShortcutsModal";
@@ -46,7 +46,7 @@ export function CommandPalette({ onLogout }: { onLogout: () => void }) {
   const wsCtx = useWorkspaceContext();
   const shell = useShellContext();
   const { iconFor } = useWorkspaceAppIcons();
-  const session = useSession();
+  const scopedRole = useScopedRole();
   const navigate = useNavigate();
   const isWorkspaceRoute = useLocation().pathname.startsWith("/w/");
   const chatPanel = useChatPanelContext();
@@ -73,10 +73,10 @@ export function CommandPalette({ onLogout }: { onLogout: () => void }) {
       activeWorkspaceSlug: wsCtx.activeWorkspace ? toSlug(wsCtx.activeWorkspace.id) : undefined,
       apps,
       iconForApp: iconFor,
-      orgRole: session?.user?.orgRole,
+      scopedRole,
       isWorkspaceRoute,
     };
-  }, [wsCtx.workspaces, wsCtx.activeWorkspace, shell, iconFor, session, isWorkspaceRoute]);
+  }, [wsCtx.workspaces, wsCtx.activeWorkspace, shell, iconFor, scopedRole, isWorkspaceRoute]);
 
   // Imperative handles, assembled once. setShowShortcuts is stable, so this is
   // memoized cheaply.
