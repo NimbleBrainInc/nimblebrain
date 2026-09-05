@@ -14,6 +14,7 @@ import { actionsSource } from "../src/components/palette/sources/actions";
 import { workspacesSource } from "../src/components/palette/sources/workspaces";
 import type { CommandRunContext, CommandSourceContext } from "../src/components/palette/types";
 import type { WorkspaceInfo } from "../src/context/WorkspaceContext";
+import type { ScopedRole } from "../src/hooks/useScopedRole";
 import type { PlacementEntry } from "../src/types";
 
 function ws(id: string, name: string, extra?: Partial<WorkspaceInfo>): WorkspaceInfo {
@@ -124,13 +125,38 @@ describe("actionsSource", () => {
     expect(ids).toContain("action:workspace-settings");
   });
 
-  test("hides org settings for non-admins, shows for org_admin", () => {
-    expect(actionsSource.getItems("org", baseCtx).map((i) => i.id)).not.toContain(
-      "action:org-settings",
-    );
-    expect(
-      actionsSource.getItems("org", { ...baseCtx, orgRole: "org_admin" }).map((i) => i.id),
-    ).toContain("action:org-settings");
+  test("org settings is gated at org_admin, and workspace admin does not reach it", () => {
+    // `ws_admin` is the load-bearing case: an org admin is escalated to
+    // `ws_admin` for every workspace, but the converse is not true, so a
+    // workspace admin must not clear an org-scoped gate.
+    const denied: (ScopedRole | undefined)[] = [undefined, "none", "ws_member", "ws_admin"];
+    for (const scopedRole of denied) {
+      expect(
+        actionsSource.getItems("org", { ...baseCtx, scopedRole }).map((i) => i.id),
+      ).not.toContain("action:org-settings");
+    }
+
+    const admitted: ScopedRole[] = ["org_admin", "org_owner"];
+    for (const scopedRole of admitted) {
+      expect(actionsSource.getItems("org", { ...baseCtx, scopedRole }).map((i) => i.id)).toContain(
+        "action:org-settings",
+      );
+    }
+  });
+
+  test("raw OrgRole values never reach the gate", () => {
+    // `web/tsconfig.json` typechecks `src` only, so the union on
+    // `CommandSourceContext.scopedRole` cannot catch a raw `OrgRole` written
+    // here. These are the literals a gate must never be handed directly —
+    // `useScopedRole` maps them, and skipping it is what leaves the action
+    // unreachable for the people it exists for.
+    for (const raw of ["owner", "admin", "member"]) {
+      expect(
+        actionsSource
+          .getItems("org", { ...baseCtx, scopedRole: raw as ScopedRole })
+          .map((i) => i.id),
+      ).not.toContain("action:org-settings");
+    }
   });
 
   test("workspace-settings run builds the scoped route", () => {

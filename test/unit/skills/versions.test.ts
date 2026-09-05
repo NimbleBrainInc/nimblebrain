@@ -10,7 +10,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import {
@@ -55,6 +55,11 @@ const ADDITION = "## Rule two\n\nNever invent a number.";
 
 function livePath(name = "rules"): string {
   return join(dir, `${name}.md`);
+}
+
+/** The filename stamp `snapshotSkillVersion` writes for the instant `ms`. */
+function stampFor(ms: number): string {
+  return new Date(ms).toISOString().replace(/[:.]/g, "-");
 }
 
 describe("joinSkillBody", () => {
@@ -173,6 +178,57 @@ describe("version history", () => {
     expect(listSkillVersions(livePath("rules-extra"))).toHaveLength(1);
     // Both snapshots really are in the one shared directory.
     expect(readdirSync(versionsDirFor(livePath())).length).toBe(2);
+  });
+
+  test("a snapshot never overwrites one already at its stamp", () => {
+    writeSkill(dir, "rules", manifest(), ORIGINAL);
+    const versionsDir = versionsDirFor(livePath());
+    mkdirSync(versionsDir, { recursive: true });
+
+    // The real collision needs two writes inside one millisecond, which no
+    // test can schedule — so occupy the stamps instead. Every millisecond from
+    // now through now+250 is taken, and writing 251 empty files costs single
+    // digit milliseconds, so the snapshot below is certain to start on an
+    // occupied slot however fast the machine is. Before the walk, its
+    // `copyFileSync` landed on top of one of these and the count stayed flat.
+    const start = Date.now();
+    const occupied = new Set<string>();
+    for (let ms = start; ms <= start + 250; ms++) {
+      const stamp = stampFor(ms);
+      occupied.add(stamp);
+      writeFileSync(join(versionsDir, `rules.${stamp}.md`), "occupied");
+    }
+
+    const version = snapshotSkillVersion(livePath()) as string;
+
+    expect(occupied.has(version)).toBe(false);
+    expect(readdirSync(versionsDir)).toHaveLength(occupied.size + 1);
+    // Every hand-built stamp parses as a real version id, so a change to the
+    // stamp format fails here rather than quietly leaving the window occupying
+    // slots nothing would ever contend for.
+    expect(listSkillVersions(livePath())).toHaveLength(occupied.size + 1);
+    expect(readSkillVersionRaw(livePath(), version)).toContain("Always cite a source.");
+    // Every occupied slot still holds what it held.
+    for (const stamp of occupied) {
+      expect(readSkillVersionRaw(livePath(), stamp)).toBe("occupied");
+    }
+  });
+
+  test("the snapshot that was written last is the one listed newest", () => {
+    writeSkill(dir, "rules", manifest(), ORIGINAL);
+    const versionsDir = versionsDirFor(livePath());
+    mkdirSync(versionsDir, { recursive: true });
+
+    // Ordering is the half a bare collision guard would miss: `listSkillVersions`
+    // sorts by stamp, so a snapshot that resolved its collision downward would
+    // report a stale version as the newest and a restore would reach for it.
+    const start = Date.now();
+    for (let ms = start; ms <= start + 250; ms++) {
+      writeFileSync(join(versionsDir, `rules.${stampFor(ms)}.md`), "occupied");
+    }
+
+    const version = snapshotSkillVersion(livePath()) as string;
+    expect(listSkillVersions(livePath())[0]?.version).toBe(version);
   });
 
   test("a foreign file in _versions/ is skipped rather than listed with a guessed date", () => {
