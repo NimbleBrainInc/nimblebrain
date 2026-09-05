@@ -207,6 +207,11 @@ export function ConnectorBrowsePage() {
   // any. Cancelling the dialog installs nothing, which is the honest outcome: a
   // connector that cannot reach its upstream was never added, so there is no
   // dead row on the Connectors list and nothing to clean up.
+  //
+  // The symmetry stops at cancel. If the install itself fails after the dialog
+  // wrote the keys, those values stay in the store with no connector attached —
+  // deliberately: a retry reuses them, and unwinding a write to the credential
+  // store on an unrelated failure is a delete this path has no business making.
   const onInstall = async (entry: DirectoryEntry) => {
     const fields = secretHeaderFields(entry.install);
     if (fields.length > 0) {

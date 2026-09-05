@@ -87,7 +87,12 @@ function isSecretHeaderRef(value: unknown): value is SecretHeaderRef {
  * operator wrote them.
  */
 export function secretHeaderFields(install: DirectoryEntry["install"]): SecretHeaderField[] {
-  if (install.kind !== "remote-oauth") return [];
+  // Gated on `auth` as well as `kind`. The projection carries `secretHeaders`
+  // through for every auth kind and no catalog check rejects it, but only the
+  // `provider` branch of the install ever wires the header — so on any other
+  // kind the field is declared, ignored, and (without this) would have produced
+  // a badge, a dialog, and a stored secret nothing goes on to send.
+  if (install.kind !== "remote-oauth" || install.auth !== "provider") return [];
   return secretHeaderFieldsFrom(install.secretHeaders);
 }
 

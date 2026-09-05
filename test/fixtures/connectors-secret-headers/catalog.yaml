@@ -48,3 +48,22 @@ servers:
             scope: mcp:invoke
         secretHeaders:
           X-Db-Url: postgres://literal.acme.test/db
+
+  # The ordinary shape of a fleet connector: provider auth, no workspace secret.
+  # Install must not let a caller ADD one — a header the operator never declared,
+  # bound to a key of the caller's choosing, would ride the fleet-minted identity.
+  - name: com.acme/plain-fleet
+    title: Acme Plain Fleet
+    description: A platform connector that declares no workspace secret
+    version: "1.0.0"
+    remotes:
+      - type: streamable-http
+        url: https://mcp.acme.test/plain/mcp
+    _meta:
+      ai.nimblebrain/connector:
+        auth: provider
+        providerAuth:
+          provider: minted
+          config:
+            audience: mcp-fleet
+            scope: mcp:invoke

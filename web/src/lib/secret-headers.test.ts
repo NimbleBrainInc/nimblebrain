@@ -7,12 +7,15 @@ import { labelForCredentialKey, secretHeaderFields } from "./secret-headers";
  * Untyped on purpose: the point of several cases below is a block the server
  * type forbids but a miscurated catalog can still put on the wire.
  */
-function install(secretHeaders?: Record<string, unknown>): DirectoryEntry["install"] {
+function install(
+  secretHeaders?: Record<string, unknown>,
+  auth = "provider",
+): DirectoryEntry["install"] {
   return {
     kind: "remote-oauth",
     url: "https://mcp.example.test/mcp",
     transportType: "streamable-http",
-    auth: "provider",
+    auth,
     ...(secretHeaders ? { secretHeaders } : {}),
   } as DirectoryEntry["install"];
 }
@@ -66,6 +69,17 @@ describe("secretHeaderFields", () => {
   // key it would be written against does not exist.
   test("a literal where a reference belongs yields no field to prompt for", () => {
     expect(secretHeaderFields(install({ "X-Db-Url": "postgres://literal.test/db" }))).toEqual([]);
+  });
+
+  // Only the `provider` branch of the install wires a header. A dcr/static/
+  // composio entry declaring the field is ignored at install, so asking for its
+  // value would store a secret nothing sends.
+  test("a non-provider entry declaring the field prompts for nothing", () => {
+    const declared = { "X-Db-Url": { ref: "credential", key: "acme.db_url" } };
+    expect(secretHeaderFields(install(declared, "dcr"))).toEqual([]);
+    expect(secretHeaderFields(install(declared, "static"))).toEqual([]);
+    expect(secretHeaderFields(install(declared, "composio"))).toEqual([]);
+    expect(secretHeaderFields(install(declared))).toHaveLength(1);
   });
 
   test("an entry that declares nothing prompts for nothing", () => {

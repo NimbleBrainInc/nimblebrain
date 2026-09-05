@@ -1808,7 +1808,10 @@ function validateSecretHeaders(
   entryName: string,
   secretHeaders: Record<string, SecretHeaderRef> | undefined,
 ): { headers?: Record<string, CredentialRef> } | { error: string } {
-  if (!secretHeaders) return {};
+  // `undefined`, not an omission: the caller writes this over its own copy, so
+  // an entry declaring nothing must produce a value that ERASES rather than one
+  // that declines to overwrite. See the call site.
+  if (!secretHeaders) return { headers: undefined };
   const headers: Record<string, CredentialRef> = {};
   for (const [name, value] of Object.entries(secretHeaders)) {
     if (!isCredentialRef(value)) {
@@ -1870,7 +1873,14 @@ async function validateRemoteOAuthInstall(
         // decides what a fleet-trusted connection sends, and the key decides
         // which of the workspace's secrets it sends. A forged pair is a workspace
         // admin choosing both.
-        ...(secretHeaders.headers ? { secretHeaders: secretHeaders.headers } : {}),
+        //
+        // Assigned UNCONDITIONALLY, and that is the whole guard. `...action` above
+        // spreads the caller's own block in first, so a conditional assignment
+        // protects only the case where the trusted entry HAS secretHeaders — and
+        // leaves the caller's copy standing in the case where it has none, which
+        // is the ordinary shape of a fleet connector. Overwriting with `undefined`
+        // is what erases it.
+        secretHeaders: secretHeaders.headers,
       },
     };
   }

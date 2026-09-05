@@ -11,7 +11,8 @@ import { SecretHeadersModal } from "./SecretHeadersModal";
 /**
  * The workspace secrets this connector sends, and when each was last written.
  *
- * Renders only for a connector whose catalog entry declares `secretHeaders`.
+ * Renders only for a `provider`-auth connector whose catalog entry declares
+ * `secretHeaders` — the one shape whose install actually wires the header.
  * Rotation is the same dialog Browse uses before install, for the same reason:
  * replacing a value must not be a chat call either. A `set_secret` on an
  * existing key is picked up by the next request the connector makes — nothing
@@ -20,7 +21,8 @@ import { SecretHeadersModal } from "./SecretHeadersModal";
  * `list_secret_keys` reports keys and timestamps and no values, which is exactly
  * what tells this view whether a reference will resolve. There is deliberately
  * no "show current value": reading a secret back to render it is a new way out
- * of the store bought for nothing.
+ * of the store bought for nothing. It is also ws-admin gated, so a member sees
+ * "status unknown" rather than a guess — see `refresh`.
  */
 export function WorkspaceSecretsSection({
   installed,
@@ -30,11 +32,17 @@ export function WorkspaceSecretsSection({
   canManage: boolean;
 }) {
   const cat = installed.catalog;
-  const fields = useMemo(() => secretHeaderFieldsFrom(cat?.secretHeaders), [cat?.secretHeaders]);
+  // Gated on `provider` for the same reason Browse is: only that branch of the
+  // install wires a header, so on any other auth kind the declaration is inert
+  // and this section would offer to rotate a value nothing sends.
+  const fields = useMemo(
+    () => (cat?.auth === "provider" ? secretHeaderFieldsFrom(cat.secretHeaders) : []),
+    [cat?.auth, cat?.secretHeaders],
+  );
 
   const [keys, setKeys] = useState<WorkspaceSecretKey[] | null>(null);
-  const [editing, setEditing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [editing, setEditing] = useState(false);
 
   const refresh = useCallback(async () => {
     if (fields.length === 0) return;
@@ -43,10 +51,12 @@ export function WorkspaceSecretsSection({
       setKeys(res.keys);
       setError(null);
     } catch (err) {
-      // A workspace member who is not an admin is refused here. That is not a
-      // page error — they simply cannot see or change these — so the rows fall
-      // back to "unknown" rather than shouting.
-      setKeys([]);
+      // `list_secret_keys` is ws-admin gated, so a member is refused BY DESIGN
+      // and lands here on every render. Leaving `keys` null is what keeps that
+      // from reading as an answer: an empty list would render every key "not
+      // set" and raise the cannot-reach-upstream banner on a working connector,
+      // which is a false claim to the one reader least able to check it.
+      setKeys(null);
       setError(err instanceof Error ? err.message : String(err));
     }
   }, [fields.length]);
@@ -59,6 +69,9 @@ export function WorkspaceSecretsSection({
 
   const writtenAt = (key: string): string | undefined =>
     keys?.find((k) => k.key === key)?.updatedAt;
+  // Only ever claimed off a list we actually read. `keys === null` covers both
+  // "still loading" and "the read was refused or failed" — neither is evidence
+  // that a key is unset, and this drives the banner and the button's label.
   const anyMissing = keys !== null && fields.some((f) => writtenAt(f.key) === undefined);
 
   return (
@@ -71,10 +84,16 @@ export function WorkspaceSecretsSection({
           {fields.map((f) => {
             const at = writtenAt(f.key);
             return (
-              <div key={f.key}>
+              <div key={f.header}>
                 <span className="text-foreground font-medium">{f.label}</span>
                 {" — "}
-                {keys === null ? "checking…" : at ? `set ${formatRelativeTime(at)}` : "not set"}
+                {keys === null
+                  ? error
+                    ? "status unknown"
+                    : "checking…"
+                  : at
+                    ? `set ${formatRelativeTime(at)}`
+                    : "not set"}
                 {", sent as "}
                 <span className="font-mono">{f.header}</span>
               </div>
@@ -85,9 +104,14 @@ export function WorkspaceSecretsSection({
               This connector cannot reach its upstream until every value is set.
             </div>
           )}
-          {error && !canManage && (
-            <div>Only a workspace admin can view or change these values.</div>
-          )}
+          {error &&
+            (canManage ? (
+              // An admin's read genuinely failed — they can act on the reason,
+              // so show it rather than swallowing it behind the role message.
+              <div className="text-destructive">Couldn't read which values are set: {error}</div>
+            ) : (
+              <div>Only a workspace admin can view or change these values.</div>
+            ))}
         </div>
         {canManage && (
           <Button
