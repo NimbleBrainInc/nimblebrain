@@ -203,6 +203,10 @@ describe("version history", () => {
 
     expect(occupied.has(version)).toBe(false);
     expect(readdirSync(versionsDir)).toHaveLength(occupied.size + 1);
+    // Every hand-built stamp parses as a real version id, so a change to the
+    // stamp format fails here rather than quietly leaving the window occupying
+    // slots nothing would ever contend for.
+    expect(listSkillVersions(livePath())).toHaveLength(occupied.size + 1);
     expect(readSkillVersionRaw(livePath(), version)).toContain("Always cite a source.");
     // Every occupied slot still holds what it held.
     for (const stamp of occupied) {

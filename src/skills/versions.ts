@@ -98,10 +98,17 @@ export function versionFilePath(livePath: string, version: string): string | nul
  * A stamp is only millisecond-resolution, so two mutations of one skill inside
  * the same tick want the same filename — and a plain `copyFileSync` would let
  * the second overwrite the first, losing the state in between. Taking the next
- * free millisecond instead keeps every snapshot, and keeps the stamp ordering
- * honest: the file written second sorts second, which is what makes "newest
- * first" in {@link listSkillVersions} mean newest rather than whichever write
- * happened to land last.
+ * free millisecond instead keeps every snapshot, and orders the pair the way
+ * they were written, so {@link listSkillVersions} reports the second of two
+ * colliding writes as the newer.
+ *
+ * That is a guarantee about a collision, not about the clock. Stamp order is
+ * wall-clock order, so a snapshot already on disk bearing a stamp ahead of
+ * `Date.now()` — what a backward clock correction leaves behind — sits in a
+ * slot nobody is contending for, and the next snapshot takes an earlier stamp
+ * and lists as older than a file written before it. Nothing depends on that
+ * today: `savedAt` is displayed and never compared, a restore names its
+ * version explicitly, and snapshot recovery matches on content hash.
  *
  * The walk terminates because each existing file occupies exactly one stamp,
  * so a directory holding n snapshots of this skill yields a free slot within
