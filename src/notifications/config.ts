@@ -21,27 +21,28 @@ import {
   DEFAULT_SOURCE_MAX_LEVEL,
   NOTIFICATION_PLACEHOLDERS,
   type NotificationDeliverTarget,
+  type NotificationRouteDisabled,
   type NotificationRouteInput,
   type NotificationRouteMatch,
 } from "../tools/platform/schemas/notifications.ts";
 import { serializePerWorkspace } from "../workspace/serialize.ts";
 import type { Workspace } from "../workspace/types.ts";
 import type { WorkspaceStore } from "../workspace/workspace-store.ts";
+import { PLACEHOLDER_RE } from "./template.ts";
 import { NOTIFICATION_LEVELS, type NotificationLevel } from "./types.ts";
 
 export { DEFAULT_SOURCE_MAX_LEVEL };
 
 /**
- * Whether a matching route is actually dispatched.
+ * Whether a matching route's `kind: "tool"` targets are actually dispatched.
  *
  * A constant rather than an operator feature flag: there is nothing for an
- * operator to decide here. The dispatch half of the design is unbuilt, so the
- * honest value is `false` for every deployment on this version, and the slice
- * that builds it flips this one line. The settings surface reads it and says
- * plainly that a saved route does not run yet — a stored rule that silently
- * does nothing is worse than no rule at all.
+ * operator to decide here. It reaches the settings surface as `routesExecuted`
+ * and drives what the editor says about a saved route. An `agent` target is
+ * still recorded as deferred and not run, which is why the editor's notice
+ * narrows to that kind rather than disappearing.
  */
-export const ROUTES_EXECUTE = false;
+export const ROUTES_EXECUTE = true;
 
 /** What an admin set for one emitting connector. */
 export interface NotificationSourceSetting {
@@ -55,6 +56,18 @@ export interface NotificationRoute {
   createdBy: string;
   match: NotificationRouteMatch;
   deliver: NotificationDeliverTarget[];
+  /**
+   * Why the runtime is refusing to dispatch this route, when it is.
+   *
+   * The runtime's field on an otherwise operator-owned record, and the only
+   * one: an admin writes a route, and the runtime reports back that its author
+   * is no longer a member. It is cleared automatically when a later evaluation
+   * finds the author is a member again, so it is never something an admin has
+   * to un-set. `set_routes` replaces the whole list and does not carry it,
+   * which means a re-save clears it too and the next evaluation re-establishes
+   * the truth.
+   */
+  disabled?: NotificationRouteDisabled;
 }
 
 /**
@@ -91,9 +104,6 @@ export interface WorkspaceNotificationsConfig {
 
 /** Longest serialized `input` one tool target may carry. */
 const DELIVER_INPUT_MAX_BYTES = 8192;
-
-/** Every `{{…}}` occurrence, however spaced. */
-const PLACEHOLDER_RE = /\{\{\s*([^}]*?)\s*\}\}/g;
 
 const PLACEHOLDERS = new Set<string>(NOTIFICATION_PLACEHOLDERS);
 
@@ -196,6 +206,47 @@ export async function updateNotificationsConfig(
     await store.update(wsId, { notifications: next });
     return next;
   });
+}
+
+/**
+ * Set or clear one route's dormancy note, if the stored state disagrees.
+ *
+ * Returns whether anything was written. A no-op when the note already says
+ * what it should, which is the common case: the condition is re-observed on
+ * every matching notification, and rewriting a workspace record per delivery
+ * to restate a fact would put the operator record on the hot path.
+ *
+ * A route that has since been deleted or rewritten under a new id is simply
+ * not found, and the note goes nowhere — correct, because the route it
+ * described no longer exists.
+ */
+export async function setRouteDisabled(
+  store: WorkspaceStore,
+  wsId: string,
+  routeId: string,
+  disabled: NotificationRouteDisabled | null,
+): Promise<boolean> {
+  let wrote = false;
+  await updateNotificationsConfig(store, wsId, (current) => {
+    const routes = current.routes;
+    const route = routes?.find((r) => r.id === routeId);
+    if (!route) return null;
+    if (
+      disabled === null ? route.disabled === undefined : route.disabled?.reason === disabled.reason
+    ) {
+      return null;
+    }
+    wrote = true;
+    return {
+      ...current,
+      routes: routes?.map((r) => {
+        if (r.id !== routeId) return r;
+        const { disabled: _dropped, ...rest } = r;
+        return disabled === null ? rest : { ...rest, disabled };
+      }),
+    };
+  });
+  return wrote;
 }
 
 // -- internals ------------------------------------------------------------
@@ -326,12 +377,27 @@ function readRoute(entry: unknown): NotificationRoute | undefined {
   if (!Array.isArray(route.deliver) || route.deliver.length === 0) return undefined;
   const match = route.match;
   if (match !== undefined && (typeof match !== "object" || match === null)) return undefined;
+  const disabled = readDisabled(route.disabled);
   return {
     id: route.id,
     createdBy: route.createdBy,
     match: (match ?? {}) as NotificationRouteMatch,
     deliver: route.deliver as NotificationDeliverTarget[],
+    ...(disabled ? { disabled } : {}),
   };
+}
+
+/**
+ * The runtime's dormancy note, or `undefined` when the record does not carry a
+ * usable one. A half-written note is dropped rather than rendered: a route
+ * shown as disabled "for no reason" is worse than one shown as healthy, since
+ * the next evaluation re-establishes the truth either way.
+ */
+function readDisabled(raw: unknown): NotificationRouteDisabled | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const note = raw as { reason?: unknown; at?: unknown };
+  if (typeof note.reason !== "string" || typeof note.at !== "string") return undefined;
+  return { reason: note.reason, at: note.at };
 }
 
 function isLevel(value: string): value is NotificationLevel {

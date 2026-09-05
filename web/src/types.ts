@@ -172,16 +172,22 @@ export interface NotificationCreatedEvent {
 }
 
 /**
- * A route target for a notification did not deliver, with its retries spent.
+ * One route target reached a terminal outcome.
  *
- * Typed down to the one field the fan-out itself guarantees. The runtime's
- * `SSE_ROUTES` requires `workspaceId` to scope the frame at all, so that field
- * is pinned; the rest of the payload belongs to the slice that emits it, which
- * is unbuilt. The consumer here refetches, so it needs nothing more, and
- * inventing the remaining fields now would be a contract nobody has agreed to.
+ * Typed down to what the fan-out itself guarantees: `SSE_ROUTES` requires
+ * `workspaceId` to scope the frame at all, and `id` names the item whose
+ * ledger changed. The rest of the payload is on the ledger row, which the
+ * consumer refetches — a frame is a hint that an item moved, and the list is
+ * the thing that is true.
+ *
+ * Both delivery outcomes carry the same shape, and both exist because the
+ * ledger row changes *after* `notification.created` announced the item: a
+ * browser holding it would otherwise show a delivery frozen at whatever it was
+ * when the item arrived, until an unrelated later frame happened to land.
  */
-export interface NotificationDeliveryFailedEvent {
+export interface NotificationDeliveryEvent {
   workspaceId: string;
+  id: string;
 }
 
 /** SSE event type to payload mapping. */
@@ -193,7 +199,8 @@ export interface SseEventMap {
   "conversation.title": ConversationTitleEvent;
   "config.changed": ConfigChangedEvent;
   "notification.created": NotificationCreatedEvent;
-  "notification.delivery_failed": NotificationDeliveryFailedEvent;
+  "notification.delivered": NotificationDeliveryEvent;
+  "notification.delivery_failed": NotificationDeliveryEvent;
   heartbeat: HeartbeatEvent;
 }
 
