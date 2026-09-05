@@ -206,6 +206,97 @@ describe("markRead", () => {
     store.markRead([{ source: "acme", eventId: "evt_01" }]);
     expect(store.markRead([{ source: "acme", eventId: "evt_01" }])).toEqual([]);
   });
+
+  test("records who marked it — read state is shared, and this is who cleared it", () => {
+    // The whole workspace reads one queue, so the second member to open an
+    // item changes nothing and the row keeps naming the first.
+    const store = storeFor(WS_A);
+    store.append("acme", envelope());
+    store.markRead([{ source: "acme", eventId: "evt_01" }], "usr_first");
+    expect(store.markRead([{ source: "acme", eventId: "evt_01" }], "usr_second")).toEqual([]);
+    expect(store.get("acme", "evt_01")?.readBy).toBe("usr_first");
+  });
+});
+
+/** An envelope's presentation block at the top of the level vocabulary. */
+const URGENT = { _meta: { "ai.nimblebrain/notification": { level: "urgent", title: "A reply" } } };
+
+describe("the effective level", () => {
+  test("is stored only when a ceiling actually clamped the item", () => {
+    const store = storeFor(WS_A);
+    store.append("acme", envelope({ eventId: "e1", ...URGENT }), "info");
+    store.append("acme", envelope({ eventId: "e2", ...URGENT }), "urgent");
+    // A second copy of a value that already exists is a field that can
+    // disagree with itself, so an unclamped item does not carry one.
+    expect(store.get("acme", "e1")?.effectiveLevel).toBe("info");
+    expect(store.get("acme", "e2")?.effectiveLevel).toBeUndefined();
+  });
+
+  test("is absent when the caller resolved none", () => {
+    const store = storeFor(WS_A);
+    store.append("acme", envelope({ ...URGENT }));
+    expect(store.get("acme", "evt_01")?.effectiveLevel).toBeUndefined();
+  });
+});
+
+describe("the delivery ledger", () => {
+  const row = (over: Record<string, unknown> = {}) => ({
+    routeId: "rt_1",
+    target: "slack__send_message",
+    kind: "tool" as const,
+    attempts: 1,
+    outcome: "pending" as const,
+    updatedAt: "2026-09-01T19:00:00.000Z",
+    ...over,
+  });
+
+  test("writes rows onto an item and replaces one that names the same target", () => {
+    const store = storeFor(WS_A);
+    store.append("acme", envelope());
+    const ref = { source: "acme", eventId: "evt_01" };
+
+    store.recordDeliveries(ref, [row(), row({ routeId: "rt_2" })]);
+    store.recordDeliveries(ref, [row({ outcome: "delivered", attempts: 2 })]);
+
+    const stored = storeFor(WS_A).get("acme", "evt_01")?.deliveries ?? [];
+    expect(stored).toHaveLength(2);
+    expect(stored[0]).toMatchObject({ routeId: "rt_1", outcome: "delivered", attempts: 2 });
+    expect(stored[1]).toMatchObject({ routeId: "rt_2", outcome: "pending" });
+  });
+
+  test("a ref naming nothing here answers rather than throwing", () => {
+    // An item pruned mid-retry is the ordinary way this happens, and a
+    // background loop needs an answer, not an exception.
+    const store = storeFor(WS_A);
+    expect(store.recordDeliveries({ source: "acme", eventId: "gone" }, [row()])).toBeUndefined();
+  });
+
+  test("pendingDeliveries returns only rows still waiting on an attempt", () => {
+    const store = storeFor(WS_A);
+    store.append("acme", envelope({ eventId: "e1" }));
+    store.append("acme", envelope({ eventId: "e2" }));
+    store.recordDeliveries({ source: "acme", eventId: "e1" }, [row()]);
+    store.recordDeliveries({ source: "acme", eventId: "e2" }, [row({ outcome: "delivered" })]);
+
+    const pending = storeFor(WS_A).pendingDeliveries();
+    expect(pending).toHaveLength(1);
+    expect(pending[0]?.item.envelope.eventId).toBe("e1");
+  });
+
+  test("survives the round trip through disk, which is what makes it the retry state", () => {
+    const store = storeFor(WS_A);
+    store.append("acme", envelope());
+    store.recordDeliveries({ source: "acme", eventId: "evt_01" }, [
+      row({ nextAttemptAt: "2026-09-01T19:01:00.000Z", classification: "timeout" }),
+    ]);
+    // A fresh store object: everything it knows, it read back off the files.
+    const reread = storeFor(WS_A).pendingDeliveries();
+    expect(reread[0]?.row).toMatchObject({
+      nextAttemptAt: "2026-09-01T19:01:00.000Z",
+      classification: "timeout",
+      attempts: 1,
+    });
+  });
 });
 
 describe("list", () => {

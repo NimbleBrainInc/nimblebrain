@@ -52,7 +52,7 @@ function settings(over: Record<string, unknown> = {}): Record<string, unknown> {
     deliverableTools: ["slack__send_message"],
     automations: [{ id: "auto_triage", name: "Triage" }],
     placeholders: ["title", "body", "subject", "link.resource"],
-    routesExecuted: false,
+    routesExecuted: true,
     ...over,
   };
 }
@@ -156,18 +156,59 @@ afterEach(() => {
 });
 
 describe("what the page tells an admin about routes", () => {
-  test("says they are saved but not executed while the dispatch half is unbuilt", async () => {
+  test("says tool targets run and automation targets do not", async () => {
     const container = await mount();
-    const notice = Array.from(
-      container.querySelectorAll('[data-testid="routes-not-executed"]'),
-    )[0] as HTMLElement | undefined;
-    expect(notice?.textContent).toContain("not yet executed");
+    const notice = container.querySelector(
+      '[data-testid="agent-routes-not-executed"]',
+    ) as HTMLElement | null;
+    expect(notice?.textContent).toContain("run");
+    expect(notice?.textContent).toContain("automation");
+    // The blanket "nothing dispatches" notice is gone: it would be false now,
+    // and a warning that is false is worse than none.
+    expect(container.querySelector('[data-testid="routes-not-executed"]')).toBeNull();
   });
 
-  test("says nothing of the sort once routes execute", async () => {
-    current = settings({ routesExecuted: true });
+  test("falls back to the blanket notice when nothing executes at all", async () => {
+    current = settings({ routesExecuted: false });
     const container = await mount();
-    expect(container.querySelector('[data-testid="routes-not-executed"]')).toBeNull();
+    const notice = container.querySelector(
+      '[data-testid="routes-not-executed"]',
+    ) as HTMLElement | null;
+    expect(notice?.textContent).toContain("not yet executed");
+    expect(container.querySelector('[data-testid="agent-routes-not-executed"]')).toBeNull();
+  });
+
+  test("a route the runtime disabled says so, with the reason, where it is edited", async () => {
+    current = settings({
+      routes: [
+        {
+          id: "rt_slack",
+          createdBy: "usr_gone",
+          match: {},
+          deliver: [{ kind: "tool", tool: "slack__send_message" }],
+          disabled: { reason: "Its author is no longer a member.", at: "2026-09-04T00:00:00Z" },
+        },
+      ],
+    });
+    const container = await mount();
+    const badge = container.querySelector('[data-testid="route-disabled"]') as HTMLElement | null;
+    expect(badge?.textContent).toContain("Not dispatching");
+    expect(badge?.textContent).toContain("no longer a member");
+  });
+
+  test("a healthy route shows no such badge", async () => {
+    current = settings({
+      routes: [
+        {
+          id: "rt_slack",
+          createdBy: "usr_admin",
+          match: {},
+          deliver: [{ kind: "tool", tool: "slack__send_message" }],
+        },
+      ],
+    });
+    const container = await mount();
+    expect(container.querySelector('[data-testid="route-disabled"]')).toBeNull();
   });
 });
 

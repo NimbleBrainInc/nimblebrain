@@ -47,6 +47,7 @@ class FakeRuntime {
   }
   getWorkspaceStore() {
     return {
+      list: async () => [...this.workspaces.values()],
       get: async (id: string) => this.workspaces.get(id) ?? null,
       update: async (id: string, patch: Partial<Workspace>) => {
         const ws = this.workspaces.get(id);
@@ -264,6 +265,42 @@ describe("the principal a route dispatches under", () => {
   });
 });
 
+describe("the runtime's dormancy note on a route", () => {
+  test("reaches the editor, and a save clears it so the next match re-establishes it", async () => {
+    await exec("set_routes", { routes: [route()] });
+    const stored = runtime.workspaces.get(WS)?.notifications?.routes ?? [];
+    const id = stored[0]?.id as string;
+    runtime.workspaces.set(WS, {
+      ...(runtime.workspaces.get(WS) as Workspace),
+      notifications: {
+        routes: [{ ...stored[0], disabled: { reason: "author left", at: "2026-09-04T00:00:00Z" } }],
+      },
+    } as Workspace);
+
+    expect((await settings()).routes[0]?.disabled).toEqual({
+      reason: "author left",
+      at: "2026-09-04T00:00:00Z",
+    });
+
+    // `set_routes` replaces the list with what the editor sent, and the editor
+    // never sends this field. Losing it is right: it is a report, and the next
+    // evaluation writes it again if it is still true.
+    await exec("set_routes", { routes: [route({ id })] });
+    expect((await settings()).routes[0]?.disabled).toBeUndefined();
+  });
+
+  test("a half-written note is dropped rather than rendered as a reasonless refusal", async () => {
+    await exec("set_routes", { routes: [route()] });
+    const stored = runtime.workspaces.get(WS)?.notifications?.routes ?? [];
+    runtime.workspaces.set(WS, {
+      ...(runtime.workspaces.get(WS) as Workspace),
+      notifications: { routes: [{ ...stored[0], disabled: { reason: 42 } }] },
+    } as unknown as Workspace);
+
+    expect((await settings()).routes[0]?.disabled).toBeUndefined();
+  });
+});
+
 describe("a route may only name what the workspace has", () => {
   test("a tool outside the installed set is rejected", async () => {
     const res = await exec("set_routes", {
@@ -331,8 +368,11 @@ describe("a route may only name what the workspace has", () => {
 });
 
 describe("what the editor is told", () => {
-  test("routes are reported as saved-but-not-executed until the dispatch half lands", async () => {
-    expect((await settings()).routesExecuted).toBe(false);
+  test("tool targets are reported as executed, which narrows the editor's notice", async () => {
+    // The editor draws its whole claim from this one flag: true means a
+    // matching route calls its tool targets, and the notice that remains is
+    // about agent targets only.
+    expect((await settings()).routesExecuted).toBe(true);
   });
 
   test("the pickers are the sets the write validates against", async () => {

@@ -26,6 +26,11 @@ import { NotificationsContext, type NotificationsValue } from "./NotificationsCo
  * replay, so everything that arrived during a disconnect is simply absent from
  * the stream. Without the reconnect read an inbox left open through a deploy
  * shows yesterday's list and no sign that it is wrong.
+ *
+ * **A delivery frame refetches for the same reason a creation does.** A route's
+ * ledger row changes *after* the item was announced, so a list painted from
+ * `notification.created` alone holds a delivery frozen at the instant the item
+ * arrived — which is before anything had been tried.
  */
 
 /** How long a burst of frames coalesces into one read. */
@@ -96,7 +101,7 @@ export function NotificationsProvider({
 
   useEvents(token, workspaceId, {
     onNotificationCreated: refresh,
-    onNotificationDeliveryFailed: refresh,
+    onNotificationDelivery: refresh,
     onReconnect: refresh,
   });
 

@@ -247,8 +247,10 @@ describe("the delivery ledger", () => {
             {
               routeId: "rt_1",
               target: "slack__send_message",
+              kind: "tool",
               attempts: 3,
               outcome: "failed",
+              updatedAt: "2026-09-01T19:00:00.000Z",
               lastError: "channel_not_found",
             },
           ],
@@ -262,6 +264,51 @@ describe("the delivery ledger", () => {
     expect(ledger?.textContent).toContain("slack__send_message");
     expect(ledger?.textContent).toContain("failed");
     expect(ledger?.textContent).toContain("channel_not_found");
+  });
+
+  test("an agent target reads as waiting, not as a failure", async () => {
+    // The row is terminal for this version and nothing is wrong with it. An
+    // operator scanning for red must not find one here.
+    const { container } = await mount({
+      items: [
+        item({
+          deliveries: [
+            {
+              routeId: "rt_1",
+              target: "auto_triage",
+              kind: "agent",
+              attempts: 0,
+              outcome: "deferred",
+              classification: "awaiting_wake",
+              updatedAt: "2026-09-01T19:00:00.000Z",
+            },
+          ],
+        }),
+      ],
+    });
+    await click(rows(container)[0]!);
+
+    const ledger = container.querySelector('[data-testid="delivery-ledger"]');
+    expect(ledger?.textContent).toContain("auto_triage");
+    expect(ledger?.textContent).toContain("waiting for the automation trigger");
+    expect(ledger?.querySelector(".text-destructive")).toBeNull();
+  });
+});
+
+describe("a level the workspace ceiling clamped", () => {
+  test("is shown on the expanded row, because it explains the ledger under it", async () => {
+    const { container } = await mount({
+      items: [item({ level: "urgent", effectiveLevel: "info" })],
+    });
+    await click(rows(container)[0]!);
+    const line = container.querySelector('[data-testid="effective-level"]');
+    expect(line?.textContent).toContain("info");
+  });
+
+  test("is absent when nothing was clamped", async () => {
+    const { container } = await mount({ items: [item({ level: "urgent" })] });
+    await click(rows(container)[0]!);
+    expect(container.querySelector('[data-testid="effective-level"]')).toBeNull();
   });
 });
 

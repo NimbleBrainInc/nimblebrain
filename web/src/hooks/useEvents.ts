@@ -6,7 +6,7 @@ import type {
   ConversationTitleEvent,
   DataChangedEvent,
   NotificationCreatedEvent,
-  NotificationDeliveryFailedEvent,
+  NotificationDeliveryEvent,
 } from "../types";
 
 export interface UseEventsOptions {
@@ -32,11 +32,12 @@ export interface UseEventsOptions {
    */
   onNotificationCreated?: (event: NotificationCreatedEvent) => void;
   /**
-   * Called when a route target for a notification gave up. Wired to the same
-   * refetch as `onNotificationCreated`: the change is on an item already in
-   * the list, and the list is where the ledger lives.
+   * Called when a route target for a notification reached a terminal outcome —
+   * delivered, or given up on. Both wire to the same refetch as
+   * `onNotificationCreated`: the change is on an item already in the list, and
+   * the list is where the ledger lives.
    */
-  onNotificationDeliveryFailed?: (event: NotificationDeliveryFailedEvent) => void;
+  onNotificationDelivery?: (event: NotificationDeliveryEvent) => void;
   /**
    * Called after every successful reconnection (NOT the initial
    * connect). The workspace stream has no `Last-Event-Id` replay, so
@@ -81,8 +82,8 @@ export function useEvents(
   onBundleLifecycleChangedRef.current = options?.onBundleLifecycleChanged;
   const onNotificationCreatedRef = useRef(options?.onNotificationCreated);
   onNotificationCreatedRef.current = options?.onNotificationCreated;
-  const onNotificationDeliveryFailedRef = useRef(options?.onNotificationDeliveryFailed);
-  onNotificationDeliveryFailedRef.current = options?.onNotificationDeliveryFailed;
+  const onNotificationDeliveryRef = useRef(options?.onNotificationDelivery);
+  onNotificationDeliveryRef.current = options?.onNotificationDelivery;
   const onReconnectRef = useRef(options?.onReconnect);
   onReconnectRef.current = options?.onReconnect;
 
@@ -128,8 +129,13 @@ export function useEvents(
       }),
     );
     unsubs.push(
+      subscribe("notification.delivered", (data) => {
+        onNotificationDeliveryRef.current?.(data);
+      }),
+    );
+    unsubs.push(
       subscribe("notification.delivery_failed", (data) => {
-        onNotificationDeliveryFailedRef.current?.(data);
+        onNotificationDeliveryRef.current?.(data);
       }),
     );
     unsubs.push(
