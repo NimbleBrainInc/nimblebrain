@@ -5,7 +5,7 @@
 //
 //   1. `list_secret_keys` is ws-admin gated, so a non-admin member is refused on
 //      every render. That refusal is not evidence a key is unset — reading it as
-//      one puts "not set" and a "cannot reach its upstream" banner on a working
+//      one puts "not set" and a "can't connect" banner on a working
 //      connector, in front of the one reader least able to check the claim.
 //
 //   2. Only a `provider`-auth install wires the header, so the section must not
@@ -143,15 +143,16 @@ function setInputValue(input: HTMLInputElement, value: string): void {
 }
 
 describe("WorkspaceSecretsSection — what it renders", () => {
-  test("a set key reports when it was written and which header carries it", async () => {
+  test("a set key reports when it was written", async () => {
     mounted = await mount(
       <WorkspaceSecretsSection installed={installed({ secretHeaders: DECLARED })} canManage />,
     );
     expect(mounted.container.textContent).toContain("Database URL");
     expect(mounted.container.textContent).toContain("set 1h ago");
-    expect(mounted.container.textContent).toContain("X-Db-Url");
+    // The header name is deliberately not shown — it is row identity, not copy.
+    expect(mounted.container.textContent).not.toContain("X-Db-Url");
     // Nothing is missing, so the connector is not accused of being broken.
-    expect(mounted.container.textContent).not.toContain("cannot reach its upstream");
+    expect(mounted.container.textContent).not.toContain("can't connect");
     expect(findButton(mounted.container, "Replace credentials")).not.toBeNull();
   });
 
@@ -161,7 +162,7 @@ describe("WorkspaceSecretsSection — what it renders", () => {
       <WorkspaceSecretsSection installed={installed({ secretHeaders: DECLARED })} canManage />,
     );
     expect(mounted.container.textContent).toContain("not set");
-    expect(mounted.container.textContent).toContain("cannot reach its upstream");
+    expect(mounted.container.textContent).toContain("can't connect");
     expect(findButton(mounted.container, "Set credentials")).not.toBeNull();
   });
 
@@ -200,7 +201,7 @@ describe("WorkspaceSecretsSection — when the key list cannot be read", () => {
     );
     expect(mounted.container.textContent).toContain("status unknown");
     expect(mounted.container.textContent).not.toContain("not set");
-    expect(mounted.container.textContent).not.toContain("cannot reach its upstream");
+    expect(mounted.container.textContent).not.toContain("can't connect");
     expect(mounted.container.textContent).toContain("Only a workspace admin");
     // No affordance a member's next click would be refused for.
     expect(findButton(mounted.container, "credentials")).toBeNull();
@@ -215,7 +216,7 @@ describe("WorkspaceSecretsSection — when the key list cannot be read", () => {
     );
     expect(mounted.container.textContent).toContain("network down");
     expect(mounted.container.textContent).not.toContain("Only a workspace admin");
-    expect(mounted.container.textContent).not.toContain("cannot reach its upstream");
+    expect(mounted.container.textContent).not.toContain("can't connect");
     // Unknown is not missing, so the dialog opens in rotate mode, not collect.
     expect(findButton(mounted.container, "Replace credentials")).not.toBeNull();
   });

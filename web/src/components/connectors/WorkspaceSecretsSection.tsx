@@ -94,14 +94,12 @@ export function WorkspaceSecretsSection({
                   : at
                     ? `set ${formatRelativeTime(at)}`
                     : "not set"}
-                {", sent as "}
-                <span className="font-mono">{f.header}</span>
               </div>
             );
           })}
           {anyMissing && (
             <div className="text-amber-600">
-              This connector cannot reach its upstream until every value is set.
+              This connector can't connect until every value is set.
             </div>
           )}
           {error &&
