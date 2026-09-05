@@ -17,24 +17,21 @@
  */
 
 import { hostMetaToUiMeta, sanitizePlacements } from "../bundles/defaults.ts";
-import type { BundleUiMeta } from "../bundles/types.ts";
 import { brokeredCatalogConfig, type ConnectorAuthKind } from "../connectors/auth-kind.ts";
 import {
   type ComposioConnectorConfig,
   getNimbleBrainConnectorMeta,
   getNimbleBrainHostMeta,
   type NimbleBrainConnectorMeta,
+  type SecretHeaderRef,
   type ServerDetail,
   type SmitheryConnectorConfig,
 } from "../connectors/server-detail.ts";
 import { parseHookDeclarations } from "../hooks/declaration.ts";
-import type { HookDeclaration } from "../hooks/types.ts";
 import { parseNotificationsDeclaration } from "../notifications/declaration.ts";
-import type { NotificationsDeclaration } from "../notifications/types.ts";
-import type { CredentialRef } from "../tools/credential-ref.ts";
 import { validateAdditionalAuthorizationParams } from "../util/oauth-params.ts";
 import { isHttpUrl } from "../util/url.ts";
-import type { DirectoryEntry, RegistryType } from "./types.ts";
+import type { ConnectorCatalogEntry, DirectoryEntry, RegistryType } from "./types.ts";
 
 export interface ProjectionContext {
   registryId: string;
@@ -70,7 +67,7 @@ function connectorMetaAuthFields(meta: NimbleBrainConnectorMeta | undefined): {
   composio?: ComposioConnectorConfig;
   smithery?: SmitheryConnectorConfig;
   providerAuth?: { provider: string; config: Record<string, unknown> };
-  secretHeaders?: Record<string, CredentialRef>;
+  secretHeaders?: Record<string, SecretHeaderRef>;
 } {
   const auth = meta?.auth ?? "dcr";
   // A brokered entry's config block travels under the key naming its provider,
@@ -147,95 +144,6 @@ function deriveInstall(s: ServerDetail): DirectoryEntry["install"] | null {
     };
   }
   return null;
-}
-
-/**
- * Flat per-entry record consumed by the platform's connector handlers.
- * Mirrors the wire shape the web shell expects under
- * `InstalledConnector.catalog`. Fields are derived mechanically from
- * `ServerDetail` + its `_meta["ai.nimblebrain/connector"]` extension.
- */
-export interface ConnectorCatalogEntry {
-  /** Stable identifier — upstream `ServerDetail.name` (reverse-DNS). */
-  id: string;
-  /** Display name from `title` (falling back to `name`). */
-  name: string;
-  description: string;
-  /**
-   * First icon src, when the entry ships one. Optional — a missing icon is
-   * cosmetic: the UI falls back to a deterministic letter-avatar. Never gate
-   * installability on this.
-   */
-  iconUrl?: string;
-  /** Remote MCP server URL — the value that goes into the bundle `url`. */
-  url: string;
-  /**
-   * Runtime-native kind, or the id of the brokered provider that owns this
-   * connector. See `NimbleBrainConnectorMeta.auth`.
-   */
-  auth: ConnectorAuthKind;
-  requiredScopes?: string[];
-  additionalAuthorizationParams?: Record<string, string>;
-  operatorSetup?: { portalUrl: string; hint: string; clientSecretKey: string };
-  /**
-   * A brokered entry's provider config block, carried under the key naming its
-   * provider — the convention `brokeredCatalogConfig` reads. The two typed
-   * fields document the shapes we ship; the install path never reads either by
-   * name, it hands whichever block `auth` names to that provider.
-   */
-  composio?: ComposioConnectorConfig;
-  smithery?: SmitheryConnectorConfig;
-  /**
-   * Required for `auth: "provider"` entries: the credential provider name + its
-   * opaque config (e.g. `{ provider: "minted", config: { audience, scope } }`).
-   * Operator-authored; copied verbatim into the BundleRef's `transport.auth` at
-   * install, never derived from tenant input.
-   */
-  providerAuth?: { provider: string; config: Record<string, unknown> };
-  /**
-   * Workspace-owned secrets bound to outgoing headers, as credential references
-   * — see `NimbleBrainConnectorMeta.secretHeaders`. Operator-authored, and read
-   * back from THIS entry at install (the caller's copy is discarded) for the
-   * same reason `ui` and `hooks` are.
-   */
-  secretHeaders?: Record<string, CredentialRef>;
-  tags?: string[];
-  interactive?: boolean;
-  docsUrl?: string;
-  /** Offered for personal (identity-plane) connection — see `NimbleBrainConnectorMeta.personal`. */
-  personal?: boolean;
-  /**
-   * Host UI integration (sidebar placement, etc.) declared by the server in
-   * `ServerDetail._meta["ai.nimblebrain/host"]`. Server-authored, carried here
-   * from the operator-trusted catalog so the install path can register the
-   * connector's placements without trusting the caller-supplied entry. Absent
-   * for connectors that declare no UI.
-   */
-  ui?: BundleUiMeta;
-  /**
-   * Inbound event streams the server declares in
-   * `ServerDetail._meta["ai.nimblebrain/host"].hooks`. Carried here from the
-   * operator-trusted catalog for the same reason `ui` is: the install path must
-   * read a route and a registration tool from metadata the OPERATOR published,
-   * never from the caller-supplied entry — a forged route would choose where
-   * this runtime sends a delivery, with a freshly minted platform token
-   * attached. Absent for connectors that declare no hooks.
-   */
-  hooks?: HookDeclaration[];
-  /**
-   * The outbox the server declares in
-   * `ServerDetail._meta["ai.nimblebrain/host"].notifications` — the resource
-   * the runtime polls for facts nobody asked for.
-   *
-   * Carried from the catalog entry beside `hooks` because that is where the
-   * host extension is published today, but for a weaker reason than `hooks`
-   * has. A hook declaration must be operator-trusted because it chooses where
-   * a delivery is sent with a platform token attached. This one grants no
-   * privilege — no mint, no new audience, no path to a human — so a server's
-   * own `initialize` result is a legitimate future source for it. Absent for
-   * connectors that declare no outbox.
-   */
-  notifications?: NotificationsDeclaration;
 }
 
 /**

@@ -34,7 +34,7 @@
  */
 
 import { log } from "../../../observability/log.ts";
-import type { ConnectorCatalogEntry } from "../../../registries/projection.ts";
+import type { ConnectorCatalogEntry } from "../../../registries/types.ts";
 import { declaredProviderConfig } from "../config.ts";
 
 export interface ComposioAuthConfigAudit {

@@ -27,7 +27,6 @@
 import type { ServerDetail } from "../connectors/server-detail.ts";
 import { log } from "../observability/log.ts";
 import {
-  type ConnectorCatalogEntry,
   projectServerDetailToDirectoryEntry,
   serverDetailToCatalogEntry,
   validateServerDetailSafety,
@@ -35,6 +34,7 @@ import {
 import type { RegistryStore } from "./registry-store.ts";
 import { StaticSource } from "./static-source.ts";
 import type {
+  ConnectorCatalogEntry,
   ConnectorSource,
   DirectoryEntry,
   ListEntriesContext,

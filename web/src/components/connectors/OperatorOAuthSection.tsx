@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
-import type { DirectoryEntry, InstalledConnector } from "../../api/client";
+import type { InstalledConnector } from "../../api/client";
 import { Button } from "../ui/button";
-import { OperatorSetupModal } from "./OperatorSetupModal";
+import { OperatorSetupModal, type OperatorSetupTarget } from "./OperatorSetupModal";
 
 /**
  * Operator-supplied OAuth client config for a static-auth connector
@@ -28,34 +28,13 @@ export function OperatorOAuthSection({
   const cat = installed.catalog;
   const op = installed.operatorOAuth;
 
-  // Synthesize a DirectoryEntry-shaped object from the catalog so we can
-  // hand it to OperatorSetupModal unchanged. Browse passes a real
-  // DirectoryEntry from listDirectory(); we don't have one in scope here,
-  // but the modal only reads `id`, `name`, and `install.operatorSetup`.
-  const directoryEntry = useMemo<DirectoryEntry | null>(() => {
+  // What the setup modal needs of this connector — the catalog carries all three.
+  const operatorTarget = useMemo<OperatorSetupTarget | null>(() => {
     if (!cat || cat.auth !== "static" || !cat.operatorSetup) return null;
-    return {
-      id: cat.id,
-      registryId: "bundled-static",
-      registryType: "static",
-      name: cat.name,
-      description: cat.description,
-      ...(installed.iconUrl ? { iconUrl: installed.iconUrl } : {}),
-      tags: cat.tags,
-      install: {
-        kind: "remote-oauth",
-        url: cat.url,
-        auth: "static",
-        operatorSetup: cat.operatorSetup,
-        ...(cat.requiredScopes ? { requiredScopes: cat.requiredScopes } : {}),
-        ...(cat.additionalAuthorizationParams
-          ? { additionalAuthorizationParams: cat.additionalAuthorizationParams }
-          : {}),
-      },
-    };
-  }, [cat, installed.iconUrl]);
+    return { id: cat.id, name: cat.name, operatorSetup: cat.operatorSetup };
+  }, [cat]);
 
-  if (!cat || cat.auth !== "static" || !op || !directoryEntry) return null;
+  if (!cat || cat.auth !== "static" || !op || !operatorTarget) return null;
 
   return (
     <section className="space-y-2">
@@ -92,7 +71,7 @@ export function OperatorOAuthSection({
       </div>
       {editing && (
         <OperatorSetupModal
-          entry={directoryEntry}
+          entry={operatorTarget}
           initialClientId={op.clientId}
           open={editing}
           onClose={() => setEditing(false)}

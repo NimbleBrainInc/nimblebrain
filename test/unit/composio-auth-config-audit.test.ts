@@ -20,7 +20,7 @@ import {
   _resetConnectorsConfigForTest,
   setConnectorsConfig,
 } from "../../src/connectors/providers/config.ts";
-import type { ConnectorCatalogEntry } from "../../src/registries/projection.ts";
+import type { ConnectorCatalogEntry } from "../../src/registries/types.ts";
 
 /** Minimal catalog entry — only the fields the audit reads. */
 function entry(

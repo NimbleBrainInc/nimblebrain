@@ -1,7 +1,9 @@
 #!/usr/bin/env bun
 /**
- * Generates `web/src/_generated/platform-schemas/` from the canonical
- * TypeBox schemas at `src/tools/platform/schemas/`.
+ * Generates the `.d.ts` trees under `web/src/_generated/` from the server-side
+ * sources that own their shapes: the TypeBox schemas at
+ * `src/tools/platform/schemas/`, and the connector-registry wire types at
+ * `src/registries/types.ts`.
  *
  * Why this exists: web is a separate package (its own Dockerfile,
  * package.json, build context). The web shell needs the catalog's
@@ -17,10 +19,13 @@
  * doesn't reach outside web/, and the generated artifact is a normal
  * source file in version control.
  *
- * The generated tree is checked in. `scripts/check-codegen.ts` runs
+ * The generated trees are checked in. `scripts/check-codegen.ts` runs
  * after this script and fails on anything git reports under
  * `web/src/_generated/` — including a file this generator emitted that
  * was never added to git, which a diff over tracked paths cannot see.
+ * That is what stops a client-side copy of a server type from drifting:
+ * add a field to `RemoteOAuthInstall` without regenerating and CI fails,
+ * rather than the field being quietly invisible to the web shell.
  *
  * Run: `bun run codegen` (alias for this script — see package.json).
  */
@@ -30,11 +35,12 @@ import { cpSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } f
 import { dirname, join, resolve } from "node:path";
 
 const REPO_ROOT = resolve(import.meta.dirname ?? __dirname, "..");
-const SCHEMA_SRC = join(REPO_ROOT, "src/tools/platform/schemas");
 const TMP_OUT = join(REPO_ROOT, ".tmp-codegen");
 const WEB_DEST = join(REPO_ROOT, "web/src/_generated/platform-schemas");
 const WORKSPACE_ID_PATTERN_SRC = join(REPO_ROOT, "src/workspace/workspace-id-pattern.ts");
 const WORKSPACE_ID_PATTERN_DEST = join(REPO_ROOT, "web/src/_generated/workspace-id-pattern.ts");
+const CONNECTOR_TYPES_TMP = join(REPO_ROOT, ".tmp-codegen-connectors");
+const CONNECTOR_TYPES_DEST = join(REPO_ROOT, "web/src/_generated/connector-registry");
 const IDENTITY_SOURCES_SRC = join(REPO_ROOT, "src/tools/identity-sources.ts");
 const PERSONAL_CONNECTOR_PREFIX_DEST = join(
   REPO_ROOT,
@@ -54,20 +60,24 @@ function header(sourcePath: string): string {
 `;
 }
 
-/** Recursively prepend the header to every .d.ts file in `dir`. */
-function injectHeaders(dir: string, sourceRoot: string): void {
+/**
+ * Recursively prepend the header to every .d.ts under `dir`, naming the source
+ * each file came from. `treeRoot` is the emitted tree's own root and `sourceRoot`
+ * the repo-relative directory its layout mirrors, so the path a reader is sent to
+ * is the real one for whichever tree this is called on.
+ */
+function injectHeaders(dir: string, treeRoot: string, sourceRoot: string): void {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     const full = join(dir, entry.name);
     if (entry.isDirectory()) {
-      injectHeaders(full, sourceRoot);
+      injectHeaders(full, treeRoot, sourceRoot);
       continue;
     }
     if (!entry.name.endsWith(".d.ts")) continue;
     // Map output path back to source path for the header.
-    const relFromOutput = full.slice(WEB_DEST.length + 1).replace(/\.d\.ts$/, ".ts");
-    const sourcePath = `src/tools/platform/schemas/${relFromOutput}`;
+    const relFromOutput = full.slice(treeRoot.length + 1).replace(/\.d\.ts$/, ".ts");
     const body = readFileSync(full, "utf-8");
-    writeFileSync(full, header(sourcePath) + body);
+    writeFileSync(full, header(`${sourceRoot}/${relFromOutput}`) + body);
   }
 }
 
@@ -175,6 +185,39 @@ cpSync(TMP_OUT, WEB_DEST, { recursive: true });
 rmSync(TMP_OUT, { recursive: true, force: true });
 
 // Inject the do-not-edit header into every generated file.
-injectHeaders(WEB_DEST, SCHEMA_SRC);
+injectHeaders(WEB_DEST, WEB_DEST, "src/tools/platform/schemas");
 
 console.log(`[codegen] OK → ${WEB_DEST.replace(REPO_ROOT, ".")}`);
+
+// ── connector-registry wire types ──────────────────────────────────
+//
+// `web/src/api/client.ts` used to re-declare `DirectoryEntry` /
+// `ConnectorCatalogEntry` by hand, and the copy drifted: `providerAuth` and
+// `secretHeaders` were on the wire and absent from the client, which made a
+// whole credential class invisible to the UI with nothing to notice. The web
+// shell now imports these, and `check:codegen` fails the build when the server
+// type moves without a regen.
+//
+// Only the type closure of `src/registries/types.ts` is emitted — a small set
+// of leaf type modules. `ConnectorCatalogEntry` lives there beside
+// `DirectoryEntry` for that reason: the projection module that builds it also
+// imports half the runtime, and rooting the emit at a module with runtime
+// imports pulls ~80 files into a tree the web shell has no use for.
+
+console.log("[codegen] connector-registry → web/src/_generated/connector-registry/");
+
+rmSync(CONNECTOR_TYPES_TMP, { recursive: true, force: true });
+rmSync(CONNECTOR_TYPES_DEST, { recursive: true, force: true });
+
+execSync(`bunx tsc -p scripts/tsconfig.codegen-web-connectors.json`, {
+  cwd: REPO_ROOT,
+  stdio: "inherit",
+});
+
+mkdirSync(dirname(CONNECTOR_TYPES_DEST), { recursive: true });
+cpSync(CONNECTOR_TYPES_TMP, CONNECTOR_TYPES_DEST, { recursive: true });
+rmSync(CONNECTOR_TYPES_TMP, { recursive: true, force: true });
+
+injectHeaders(CONNECTOR_TYPES_DEST, CONNECTOR_TYPES_DEST, "src");
+
+console.log(`[codegen] OK → ${CONNECTOR_TYPES_DEST.replace(REPO_ROOT, ".")}`);
