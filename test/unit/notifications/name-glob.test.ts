@@ -87,19 +87,27 @@ describe("matching is bounded, whatever the pattern", () => {
    * A pattern alternating single wildcards with literals is the shape that
    * makes a compiled regex backtrack: every wildcard doubles the ways a
    * non-matching name can be split, and the earlier implementation reached
-   * "does not return" at ten characters. Both inputs here are inside the
-   * bounds already in force — the schema admits a 200-character pattern and
-   * the envelope parser caps a name at the same — so nothing outside the
-   * system has to be true for this to be reachable.
+   * "does not return" at ten characters.
+   *
+   * Both inputs sit at the bounds already in force, so nothing outside the
+   * system has to be true for this to be reachable: `ROUTE_NAME_GLOB_PATTERN`
+   * in `schemas/notifications.ts` admits 200 characters of pattern, and the
+   * envelope parser caps a name at {@link NOTIFICATION_NAME_MAX}.
+   *
+   * Alternating rather than repeating, because that is what makes each of
+   * these wildcards a token of its own. A run of `*` collapses to a single
+   * `**`, so a pattern of 200 bare wildcards is *one* token — it would measure
+   * the cheapest thing the grammar has while reading like the dearest.
    *
    * A wall-clock assertion is a blunt instrument, and it is deliberately loose
    * enough not to flake on a loaded machine: the failure it exists to catch is
    * six orders of magnitude away, not a factor of two.
    */
-  const ADVERSARIAL = "*a".repeat(20);
+  const GLOB_PATTERN_MAX = 200;
+  const ADVERSARIAL = "*a".repeat(GLOB_PATTERN_MAX / 2);
   const NON_MATCHING = `${"a".repeat(NOTIFICATION_NAME_MAX - 1)}b`;
 
-  test("a wildcard-heavy pattern against a long non-matching name returns at once", () => {
+  test("the worst case the bounds admit — a name that fails against every split", () => {
     const startedAt = performance.now();
     expect(matchesNameGlob(NON_MATCHING, ADVERSARIAL)).toBe(false);
     expect(performance.now() - startedAt).toBeLessThan(100);
@@ -111,9 +119,9 @@ describe("matching is bounded, whatever the pattern", () => {
     expect(performance.now() - startedAt).toBeLessThan(100);
   });
 
-  test("the worst case the bounds admit — every character a wildcard", () => {
+  test("and against a dotted name, where every single wildcard dies at a dot", () => {
     const startedAt = performance.now();
-    matchesNameGlob("a.b".repeat(60), "*".repeat(NOTIFICATION_NAME_MAX));
+    expect(matchesNameGlob("a.b".repeat(60), ADVERSARIAL)).toBe(false);
     expect(performance.now() - startedAt).toBeLessThan(100);
   });
 });
