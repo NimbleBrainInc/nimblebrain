@@ -23,7 +23,11 @@ import type {
   UnattendedDispatchResult,
 } from "../../../src/orchestrator/unattended-dispatch.ts";
 import { parseNotificationEnvelope } from "../../../src/notifications/envelope.ts";
-import { RouteDispatcher, RETRY_TICK_MS } from "../../../src/notifications/routes.ts";
+import {
+  RouteDispatcher,
+  type RouteDispatcherDeps,
+  RETRY_TICK_MS,
+} from "../../../src/notifications/routes.ts";
 import { NotificationStore } from "../../../src/notifications/store.ts";
 import { clampLevel, type Notification } from "../../../src/notifications/types.ts";
 import type {
@@ -79,7 +83,7 @@ function storeFor(id: string): NotificationStore {
   });
 }
 
-function dispatcher(): RouteDispatcher {
+function dispatcher(overrides: Partial<RouteDispatcherDeps> = {}): RouteDispatcher {
   const made = new RouteDispatcher({
     workspaceStore,
     storeFor,
@@ -90,6 +94,7 @@ function dispatcher(): RouteDispatcher {
       calls.push(opts);
       return answers.length > 1 ? (answers.shift() as UnattendedDispatchResult) : answers[0]!;
     },
+    ...overrides,
   });
   teardown.push(() => made.stop());
   return made;
@@ -497,6 +502,55 @@ describe("the retry bound", () => {
 
     expect(calls).toHaveLength(1);
     expect(ledger(item)[0]).toMatchObject({ outcome: "failed", classification: "route_changed" });
+  });
+});
+
+describe("a retry whose attempt cannot even start", () => {
+  /**
+   * `sweepRetries` takes the entry out of the index before the attempt runs,
+   * and `#attempt` is what normally puts a fresh one back — so a throw on the
+   * way there is the one path that can lose the row from memory while it is
+   * still `pending` on disk. Nothing else in this file reaches it, which is
+   * why it went unnoticed for two rounds.
+   */
+  test("is re-queued rather than stranded until the next boot", async () => {
+    answers = [{ outcome: "error", classification: "tool_error", error: "down" }];
+    await configure({ routes: [toolRoute({})] });
+    const item = seed();
+
+    let broken = false;
+    const disp = dispatcher({
+      workspaceStore: {
+        ...workspaceStore,
+        get: async (id: string) => {
+          if (broken) throw new Error("workspace record is unreadable");
+          return workspaceStore.get(id);
+        },
+      } as unknown as typeof workspaceStore,
+    });
+    await disp.onItem(wsId, item);
+    expect(ledger(item)[0]).toMatchObject({ outcome: "pending", attempts: 1 });
+
+    // The store breaks before the retry lands.
+    broken = true;
+    advance(61_000);
+    await disp.sweepRetries();
+    expect(calls).toHaveLength(1);
+
+    // Still pending on disk, and still held in memory — so the recovery is the
+    // next tick, not the next boot. It is also not due immediately: re-queuing
+    // an unreachable store as already-due would retry it at tick rate.
+    expect(ledger(item)[0]).toMatchObject({ outcome: "pending", attempts: 1 });
+    await disp.sweepRetries();
+    expect(calls).toHaveLength(1);
+
+    broken = false;
+    advance(61_000);
+    await disp.sweepRetries();
+
+    // The outage spent no attempt: this is the second, not the third.
+    expect(calls).toHaveLength(2);
+    expect(ledger(item)[0]).toMatchObject({ attempts: 2 });
   });
 });
 

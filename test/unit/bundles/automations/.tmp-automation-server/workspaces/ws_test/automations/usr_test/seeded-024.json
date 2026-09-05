@@ -1,0 +1,20 @@
+{
+  "id": "seeded-024",
+  "name": "Seeded 024",
+  "ownerId": "usr_test",
+  "workspaceId": "ws_test",
+  "prompt": "noop",
+  "schedule": {
+    "type": "interval",
+    "intervalMs": 1800000
+  },
+  "enabled": true,
+  "source": "agent",
+  "createdAt": "2026-09-05T02:50:17.768Z",
+  "updatedAt": "2026-09-05T02:50:17.768Z",
+  "runCount": 0,
+  "consecutiveErrors": 0,
+  "cumulativeInputTokens": 0,
+  "cumulativeOutputTokens": 0,
+  "nextRunAt": "2026-09-05T02:50:17.768Z"
+}

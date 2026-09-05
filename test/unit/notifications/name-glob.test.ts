@@ -8,6 +8,7 @@
 
 import { describe, expect, test } from "bun:test";
 import { matchesNameGlob } from "../../../src/notifications/name-glob.ts";
+import { NOTIFICATION_NAME_MAX } from "../../../src/notifications/envelope.ts";
 
 describe("an omitted pattern", () => {
   test("matches every name, because a filter nobody set narrows nothing", () => {
@@ -76,6 +77,44 @@ describe("`**` — across segments", () => {
 
   test("a longer run collapses to the same thing", () => {
     expect(matchesNameGlob("domain.dns.ready", "domain.***")).toBe(true);
+  });
+});
+
+describe("matching is bounded, whatever the pattern", () => {
+  /**
+   * The property the module argues for in prose, asserted.
+   *
+   * A pattern alternating single wildcards with literals is the shape that
+   * makes a compiled regex backtrack: every wildcard doubles the ways a
+   * non-matching name can be split, and the earlier implementation reached
+   * "does not return" at ten characters. Both inputs here are inside the
+   * bounds already in force — the schema admits a 200-character pattern and
+   * the envelope parser caps a name at the same — so nothing outside the
+   * system has to be true for this to be reachable.
+   *
+   * A wall-clock assertion is a blunt instrument, and it is deliberately loose
+   * enough not to flake on a loaded machine: the failure it exists to catch is
+   * six orders of magnitude away, not a factor of two.
+   */
+  const ADVERSARIAL = "*a".repeat(20);
+  const NON_MATCHING = `${"a".repeat(NOTIFICATION_NAME_MAX - 1)}b`;
+
+  test("a wildcard-heavy pattern against a long non-matching name returns at once", () => {
+    const startedAt = performance.now();
+    expect(matchesNameGlob(NON_MATCHING, ADVERSARIAL)).toBe(false);
+    expect(performance.now() - startedAt).toBeLessThan(100);
+  });
+
+  test("and the same pattern against a name that does match", () => {
+    const startedAt = performance.now();
+    expect(matchesNameGlob("a".repeat(NOTIFICATION_NAME_MAX), ADVERSARIAL)).toBe(true);
+    expect(performance.now() - startedAt).toBeLessThan(100);
+  });
+
+  test("the worst case the bounds admit — every character a wildcard", () => {
+    const startedAt = performance.now();
+    matchesNameGlob("a.b".repeat(60), "*".repeat(NOTIFICATION_NAME_MAX));
+    expect(performance.now() - startedAt).toBeLessThan(100);
   });
 });
 

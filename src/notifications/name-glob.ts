@@ -20,16 +20,41 @@
  * because a route asking for what is under `domain` is not asking for
  * `domain` itself.
  *
- * Deliberately not a regex and deliberately not a path matcher. A regex in a
- * stored route is an expression the runtime evaluates on a background loop
- * with no timeout, which is a denial of service an admin can write by
- * accident; the schema's own character class already refuses one. A path
- * matcher would bring `?`, `[a-z]`, brace expansion and negation — four more
- * things to document and to get wrong, for a vocabulary that is dotted names.
+ * Deliberately not a path matcher: that would bring `?`, `[a-z]`, brace
+ * expansion and negation — four more things to document and to get wrong, for
+ * a vocabulary that is dotted names.
+ *
+ * **And deliberately not a regex, including one this module builds itself.**
+ * The stored pattern is not a regex and the schema's character class sees to
+ * that, but compiling one *from* it puts the same expression on the same
+ * background loop with the same absent timeout. A pattern alternating single
+ * wildcards with literals — `*a*a*a*a*a`, ten characters, schema-legal — turns
+ * into adjacent variable-length groups, and a long dot-free name that fails to
+ * match walks every way of splitting it: measured at roughly 40x per added
+ * wildcard, which reaches "never returns" inside the 200-character bound the
+ * schema and the envelope parser already impose. That is synchronous CPU on
+ * the shared event loop, so it stalls every workspace in the runtime and not
+ * just the one whose route it is, it recurs on each poll, and it survives a
+ * restart because the pattern is on the workspace record.
+ *
+ * So the match below is a **reachable-set sweep** and does no backtracking at
+ * all: it walks the name once, carrying the set of token positions still live.
+ * Cost is `name x tokens` — bounded at 200x200 — for every input, matching or
+ * not. The property this file argues for in prose is now the one it implements.
  */
 
-/** Characters that mean something to a regex and nothing to this grammar. */
-const REGEX_META = /[.+?^${}()|[\]\\]/g;
+/**
+ * One unit of a compiled pattern: a literal character, or a wildcard run.
+ *
+ * `crossesDot` is the whole of the difference between `*` and `**`, and a run
+ * of three or more collapses to `**` — `***` can match nothing `**` cannot.
+ */
+interface GlobToken {
+  /** The character to match, for a literal. Empty for a wildcard. */
+  literal: string;
+  /** `true` for `**`, `false` for `*`, `undefined` for a literal. */
+  crossesDot?: boolean;
+}
 
 /**
  * Whether one event name matches one glob.
@@ -39,32 +64,73 @@ const REGEX_META = /[.+?^${}()|[\]\\]/g;
  */
 export function matchesNameGlob(name: string, pattern: string | undefined): boolean {
   if (pattern === undefined || pattern === "") return true;
-  return globRegex(pattern).test(name);
+
+  const tokens = tokenize(pattern);
+  // `reachable[j]` — the pattern could have consumed everything read so far and
+  // be sitting at token `j`. Length is `tokens.length + 1` so the last slot
+  // means "the whole pattern is used up", which is the accepting position.
+  let reachable = new Array<boolean>(tokens.length + 1).fill(false);
+  reachable[0] = true;
+  advancePastEmptyWildcards(tokens, reachable);
+
+  for (const char of name) {
+    reachable = step(tokens, reachable, char);
+  }
+
+  return reachable[tokens.length] === true;
 }
 
 /**
- * Compiled fresh on every call rather than memoised. The pattern comes off a
- * workspace record, so a cache keyed by it grows with every route an admin
- * ever saved for the life of the process — an unbounded map to save a
- * compilation that costs microseconds a few times per notification.
+ * One character of the name: every live token consumes it, or does not.
+ *
+ * Both of a wildcard's choices are carried forward at once — stay and keep
+ * eating, or hand over to the next token — which is what removes the need to
+ * ever un-consume, and with it the backtracking.
  */
-function globRegex(pattern: string): RegExp {
-  let body = "";
-  for (let i = 0; i < pattern.length; i++) {
-    const char = pattern[i] as string;
-    if (char !== "*") {
-      body += char.replace(REGEX_META, "\\$&");
-      continue;
+function step(
+  tokens: readonly GlobToken[],
+  reachable: readonly boolean[],
+  char: string,
+): boolean[] {
+  const next = new Array<boolean>(tokens.length + 1).fill(false);
+  for (let j = 0; j < tokens.length; j++) {
+    if (!reachable[j]) continue;
+    const token = tokens[j] as GlobToken;
+    if (token.crossesDot === undefined) {
+      // A literal consumes this character and moves on, or dies here.
+      if (token.literal === char) next[j + 1] = true;
+    } else if (token.crossesDot || char !== ".") {
+      next[j] = true;
     }
-    if (pattern[i + 1] === "*") {
-      // Consume the whole run: `***` is `**`, not `**` followed by a segment
-      // wildcard that could never match anything the first one left behind.
-      while (pattern[i + 1] === "*") i++;
-      body += ".*";
-      continue;
-    }
-    body += "[^.]*";
   }
+  advancePastEmptyWildcards(tokens, next);
+  return next;
+}
 
-  return new RegExp(`^${body}$`);
+/**
+ * Let every reachable wildcard also count as matching nothing.
+ *
+ * Ascending, and once: a wildcard's "skip me" edge only ever points one token
+ * forward, so a single left-to-right sweep closes over a run of them.
+ */
+function advancePastEmptyWildcards(tokens: readonly GlobToken[], reachable: boolean[]): void {
+  for (let j = 0; j < tokens.length; j++) {
+    if (reachable[j] && tokens[j]?.crossesDot !== undefined) reachable[j + 1] = true;
+  }
+}
+
+/** Split a pattern into literals and wildcard runs, left to right. */
+function tokenize(pattern: string): GlobToken[] {
+  const tokens: GlobToken[] = [];
+  for (let i = 0; i < pattern.length; i++) {
+    if (pattern[i] !== "*") {
+      tokens.push({ literal: pattern[i] as string });
+      continue;
+    }
+    let run = 0;
+    while (pattern[i + run] === "*") run++;
+    tokens.push({ literal: "", crossesDot: run >= 2 });
+    i += run - 1;
+  }
+  return tokens;
 }

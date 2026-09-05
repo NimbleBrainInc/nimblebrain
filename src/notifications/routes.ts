@@ -290,6 +290,32 @@ export class RouteDispatcher {
           await this.#retry(entry);
         } catch (err) {
           log.warn(`[notifications] route retry failed: ${errorText(err)}`, { wsId: entry.wsId });
+          // The entry came out of the index before the attempt ran, and
+          // `#attempt` is what normally puts a fresh one back — so a throw on
+          // the way there (a workspace record that would not read, a store
+          // that would not open) would otherwise leave the row `pending` on
+          // disk with nothing in this process ever looking at it again, until
+          // the next boot's resume.
+          //
+          // Re-queued one rung out rather than at the same instant: nothing
+          // was delivered and nothing was refused, so this is not an attempt
+          // and must not spend one — but re-adding it as already-due would
+          // retry a broken store at tick rate for as long as it stayed broken.
+          // The wait is the one that precedes the attempt it is still owed,
+          // floored at the first rung so a row that has never been tried
+          // (`attempts: 0`, seeded and resumed) does not come back immediately.
+          // `attempts` is left alone, so whatever budget the target still had
+          // survives the outage intact.
+          //
+          // Guarded, because `#attempt` may already have stored a newer entry
+          // and this must not stomp it.
+          const key = pendingKeyOf(entry);
+          if (!this.#pending.has(key)) {
+            this.#pending.set(key, {
+              ...entry,
+              dueAt: this.#now() + retryDelayMs(Math.max(entry.attempts, 1)),
+            });
+          }
         }
       });
     });
@@ -382,6 +408,9 @@ export class RouteDispatcher {
 
     const attempts = priorAttempts + 1;
     let result: UnattendedDispatchResult;
+    // Whether the answer below is the door's or one synthesised from a throw.
+    // Only the door's carries a membership verdict.
+    let answered = true;
     try {
       result = await this.#deps.dispatch({
         principalId: route.createdBy,
@@ -396,9 +425,14 @@ export class RouteDispatcher {
       // The door's contract is that nothing leaves it as an exception. If one
       // does anyway, it is the same shape as a call that did not complete.
       result = { outcome: "error", classification: "tool_error", error: errorText(err) };
+      answered = false;
     }
 
-    await this.#reconcileAuthorState(wsId, route, result);
+    // Only on an answer the door actually gave. The synthesised result above
+    // carries `tool_error`, which is "not owner_not_member" — and reconciling
+    // on it would clear a route's dormancy note on the strength of a
+    // membership verdict nobody reached.
+    if (answered) await this.#reconcileAuthorState(wsId, route, result);
 
     const outcome = ledgerOutcome(result, attempts);
     const at = new Date(this.#now()).toISOString();
@@ -495,9 +529,14 @@ export class RouteDispatcher {
    *
    * The dispatch answers the membership question on every call, so this is a
    * read of an answer rather than a second check: a `skipped/owner_not_member`
-   * sets the note, and any other outcome means the author was a member and
-   * clears it. That is what makes a route self-heal on re-add without anybody
-   * touching the settings page — the same semantics a scheduled run has.
+   * sets the note, and any other outcome the door **returned** means the author
+   * was a member and clears it. That is what makes a route self-heal on re-add
+   * without anybody touching the settings page — the same semantics a scheduled
+   * run has.
+   *
+   * The caller withholds a result it synthesised from a throw, which is why
+   * "any other outcome" is safe to read as "was a member" here: a result the
+   * door never produced never reaches this function.
    */
   async #reconcileAuthorState(
     wsId: string,
