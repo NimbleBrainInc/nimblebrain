@@ -119,8 +119,8 @@ describe("HealthMonitor", () => {
 
     const events = eventNames(sink);
     expect(events).toContain("bundle.cooldown");
-    // `connector.dead` is retired for the crash path — a crash never ends terminal.
-    expect(events).not.toContain("connector.dead");
+    // `bundle.dead` is retired for the crash path — a crash never ends terminal.
+    expect(events).not.toContain("bundle.dead");
 
     // While cooling, further checks neither restart nor re-emit `bundle.crashed`
     // — a throttling upstream is not hammered, and the crash-rate metric (which
@@ -258,7 +258,7 @@ describe("HealthMonitor", () => {
     }
 
     expect(monitor.getStatus()[0]!.state).toBe("healthy");
-    expect(eventNames(sink)).not.toContain("connector.dead");
+    expect(eventNames(sink)).not.toContain("bundle.dead");
 
     // Backoff resets between episodes: every restarting attempt fires at the
     // base delay (2 ** 0), never the escalated delays a climbing counter
@@ -300,7 +300,7 @@ describe("HealthMonitor", () => {
     await monitor.check();
     expect(monitor.getStatus()[0]!.state).toBe("cooldown");
     expect(eventNames(sink)).toContain("bundle.cooldown");
-    expect(eventNames(sink)).not.toContain("connector.dead");
+    expect(eventNames(sink)).not.toContain("bundle.dead");
 
     monitor.stop();
   });

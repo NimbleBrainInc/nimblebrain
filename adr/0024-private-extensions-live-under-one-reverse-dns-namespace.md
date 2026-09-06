@@ -52,7 +52,7 @@ methods (`src/host-resources/methods.ts`) return the standard MCP
 `ReadResourceResult` and `ListResourcesResult`. The inbound request schemas are
 the standard `resources/{read,list}` shapes with only the method literal swapped
 (`src/tools/mcp-source.ts`), so the params shape — uri, cursor, filter — carries
-through from the spec-blessed types unchanged. Bundle-supplied filter data rides
+through from the spec-blessed types unchanged. Connector-supplied filter data rides
 in `_meta`, per MCP's convention for extension-carried request data.
 
 Because only the method name differs, an eventual upstream migration is

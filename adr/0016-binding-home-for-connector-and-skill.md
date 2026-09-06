@@ -15,7 +15,7 @@ tool-affinity glob the adapter stamps is derived from the source's own name.
 
 A **curated overlay** (ADR-0013) binds by *identity string*. The overlay repo is
 keyed `<identity>/SKILL.md`, and the identity is derived at install by
-`connectorSkillIdentity` (`src/connectors/server-detail.ts`) — the brokered
+`connectorSkillIdentity` (`src/connectors/catalog/server-detail.ts`) — the brokered
 toolkit slug when the catalog entry names one, otherwise the last dotted segment
 of the reverse-DNS server name's first path component. The materialized copy is
 then re-stamped with a tool-affinity glob bound to *that install's* namespace.

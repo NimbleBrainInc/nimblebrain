@@ -182,7 +182,7 @@ describe("HealthMonitor — remote sources", () => {
 
     const events = eventNames(sink);
     expect(events).toContain("bundle.cooldown");
-    expect(events).not.toContain("connector.dead");
+    expect(events).not.toContain("bundle.dead");
 
     // cooldown event should have remote: true
     const cooldownEvent = eventData(sink).find((d) => d.event === "bundle.cooldown");

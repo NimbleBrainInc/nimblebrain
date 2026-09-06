@@ -162,7 +162,7 @@ export class HealthMonitor {
     // (rate-limit, brief 5xx window) can outlast the burst and still recover.
     // Back off to a slow re-probe — reset the counter and gate the next burst
     // behind the cooldown window — so we keep trying at a bounded rate until the
-    // source recovers or is deliberately stopped. (`connector.dead` is retired: a
+    // source recovers or is deliberately stopped. (`bundle.dead` is retired: a
     // crash never ends here, and deliberate teardown is handled above.)
     if (record.restartCount >= MAX_RESTARTS) {
       record.state = "cooldown";
