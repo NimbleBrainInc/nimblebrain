@@ -558,6 +558,61 @@ export const notificationsTruncatedTotal = new Counter({
   registers: [metricsRegistry],
 });
 
+// ---------------------------------------------------------------------------
+// Notification routing — what the poll CARRIED, once an operator wrote a route.
+//
+// These three answer the operator's questions rather than the poll's: is my
+// route firing at all, is it getting through, and is its template resolving.
+// ---------------------------------------------------------------------------
+
+/**
+ * Route targets that reached a terminal ledger outcome.
+ *
+ * `kind` is `tool` or `agent`; `outcome` is the ledger's own vocabulary
+ * (`delivered`, `denied`, `skipped`, `failed`, `deferred`). Both are closed
+ * sets defined in this repo, so the series count is fixed. Deliberately NOT
+ * labelled by route or by tool: a route id is admin-chosen and unbounded, and
+ * the ledger on the item is where "which route, which target" is answered.
+ */
+export const notificationsDeliveredTotal = new Counter({
+  name: "nb_notifications_delivered_total",
+  help: "Notification route targets that reached a terminal outcome, by kind and outcome.",
+  labelNames: ["kind", "outcome"] as const,
+  registers: [metricsRegistry],
+});
+
+/**
+ * Notifications a route matched, by the source that emitted them.
+ *
+ * Counted per `(item, route)` pair, so a workspace with three routes matching
+ * one item moves this by three — the question it answers is "is anything
+ * firing", and one item that fans out to three deliveries is three deliveries.
+ * A rate of zero against a nonzero `nb_notifications_pulled_total` is the
+ * signature of a route that matches nothing, which is otherwise invisible: the
+ * inbox fills up exactly as it would with no route at all.
+ */
+export const notificationsRoutesMatchedTotal = new Counter({
+  name: "nb_notifications_routes_matched_total",
+  help: "Route matches against a notification — one per matching route, by source.",
+  labelNames: ["source"] as const,
+  registers: [metricsRegistry],
+});
+
+/**
+ * Placeholders in a route's template that named nothing the runtime resolves.
+ *
+ * Each one rendered empty. Unlabelled: the write-time validator refuses an
+ * unknown placeholder, so anything counted here came off a record written by
+ * an older version or edited by hand, and what an operator needs to know is
+ * that it happened at all. A known name with no value (`{{body}}` on an item
+ * without one) is not counted — that is the ordinary case.
+ */
+export const notificationsTemplateMissesTotal = new Counter({
+  name: "nb_notifications_template_misses_total",
+  help: "Route template placeholders that named nothing the runtime resolves, rendered empty.",
+  registers: [metricsRegistry],
+});
+
 /**
  * The `source` label for one connector, bucketed to "other" when the name is
  * not one the label charset admits. Exported so every notification metric

@@ -1,7 +1,12 @@
 import { AlertTriangle, Bell, ChevronRight, Info, Zap } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import type { DeliveryRecord, NotificationLevel, NotificationView } from "../api/notifications";
+import type {
+  DeliveryOutcome,
+  DeliveryRecord,
+  NotificationLevel,
+  NotificationView,
+} from "../api/notifications";
 import { Button } from "../components/ui/button";
 import { useNotifications } from "../context/NotificationsContext";
 import { useShellContext } from "../context/ShellContext";
@@ -207,6 +212,18 @@ function NotificationRow({
             <dd className="font-mono text-foreground/80">{item.name}</dd>
             <dt>Received</dt>
             <dd>{formatInstant(item.receivedAt)}</dd>
+            {/* Only when a ceiling actually held the item down. Shown here and
+                not on the row because it explains the ledger below it: a route
+                asking for a level above this one did not fire, and this is the
+                only place that says why. */}
+            {item.effectiveLevel ? (
+              <>
+                <dt>Routed at</dt>
+                <dd data-testid="effective-level">
+                  {item.effectiveLevel} — this workspace holds {item.source} to that ceiling
+                </dd>
+              </>
+            ) : null}
           </dl>
 
           {item.deliveries && item.deliveries.length > 0 ? (
@@ -244,23 +261,46 @@ function NotificationLink({ uri, href }: { uri: string; href: string | null }) {
   );
 }
 
-/** One row per route target that has been tried. */
+/**
+ * How each ledger outcome reads, and what it is coloured.
+ *
+ * `pending` and `deferred` are neither good nor bad — one is mid-flight and
+ * the other is waiting on a capability that does not exist yet — so neither
+ * takes a colour. Everything the runtime gave up on is destructive, whatever
+ * the reason: an operator scanning for "did this get through" wants one signal
+ * and the classification beside it for the detail.
+ */
+const OUTCOME_LABEL: Record<DeliveryOutcome, string> = {
+  pending: "sending",
+  delivered: "delivered",
+  deferred: "waiting for the automation trigger",
+  denied: "refused",
+  skipped: "skipped",
+  failed: "failed",
+};
+
+const OUTCOME_CLASS: Record<DeliveryOutcome, string> = {
+  pending: "",
+  delivered: "text-success",
+  deferred: "",
+  denied: "text-destructive",
+  skipped: "text-destructive",
+  failed: "text-destructive",
+};
+
+/** One row per route target that matched. */
 function DeliveryLedger({ rows }: { rows: DeliveryRecord[] }) {
   return (
     <div className="space-y-1.5" data-testid="delivery-ledger">
       <p className="text-xs font-semibold">Delivery</p>
       <ul className="space-y-1">
         {rows.map((row) => (
-          <li key={`${row.routeId}:${row.target}`} className="text-xs text-muted-foreground">
+          <li
+            key={`${row.routeId}:${row.index}:${row.target}`}
+            className="text-xs text-muted-foreground"
+          >
             <span className="font-mono text-foreground/80">{row.target}</span>{" "}
-            <span
-              className={cn(
-                row.outcome === "failed" && "text-destructive",
-                row.outcome === "delivered" && "text-success",
-              )}
-            >
-              {row.outcome}
-            </span>
+            <span className={cn(OUTCOME_CLASS[row.outcome])}>{OUTCOME_LABEL[row.outcome]}</span>
             {row.attempts > 1 ? ` after ${row.attempts} attempts` : null}
             {row.lastError ? <span className="block break-words">{row.lastError}</span> : null}
           </li>

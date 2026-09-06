@@ -51,6 +51,11 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 .environments/*/users/
 .environments/*/workspaces/
 
+# test scratch directories — every `.tmp-<name>` under test/ is a TMP_DIR a
+# suite mkdirs on entry and rmSyncs on exit, so a tracked file inside one shows
+# up as deleted the moment anybody runs the tests.
+test/**/.tmp-*/
+
 # implementation tasks (ephemeral)
 .tasks
 

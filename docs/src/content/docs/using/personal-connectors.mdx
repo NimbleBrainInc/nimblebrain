@@ -51,6 +51,23 @@ You can also grant from **chat**: ask the agent to "grant Granola to this worksp
 
 Once a personal connector is **granted into the workspace you're chatting in**, its tools are available to the agent there, namespaced to that workspace. Ask the agent to use the service ("summarize my last three Granola meetings") and it will call the connector's tools. In a workspace where you haven't granted it, those tools simply aren't present.
 
+## In a notification route
+
+A [notification route](/using/notifications#routes) may deliver through one of
+your `my_` tools — so a connector's report can reach *your* Slack, not a shared
+one. Two conditions, and they are the ordinary grant rule rather than anything
+new:
+
+- **You have to be the route's author.** A route dispatches under whoever last
+  saved it, and a personal connector answers only to its owner. Somebody else
+  saving that route re-stamps it to them, and it stops working — the delivery is
+  recorded as *refused* on the item, with the missing grant named.
+- **The connector has to be granted into that workspace.** Same grant as for
+  chat; without it the tool is not present there for anyone, including a route.
+
+Revoking the grant, or disconnecting the connector, stops the route the same
+way it stops the agent — immediately, and visibly in the item's delivery ledger.
+
 ## Disconnecting
 
 **Disconnect** on a connector's row fully removes it from your identity in one step:
@@ -83,6 +100,7 @@ A personal connector's credentials are **identity-owned**: they live at `users/<
 ## What's next
 
 - [Connectors](/using/connectors) — workspace-shared connectors and the auth kinds
+- [Notifications](/using/notifications) — routing a connector's report through one of your tools
 - [Workspaces](/using/workspaces) — how membership and per-workspace scoping work
 - [Chat](/using/chat) — talking to the agent
 - [Credentials](/config/credentials/) — how secrets are stored

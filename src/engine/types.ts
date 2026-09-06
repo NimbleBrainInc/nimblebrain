@@ -332,10 +332,19 @@ export type EngineEventType =
    */
   | "notification.created"
   /**
-   * A route target for a notification did not deliver, with its retries spent.
-   * Carries the same coordinates as the delivery-ledger row it accompanies, so
-   * a failed post is visible instead of silent. Payload:
-   * { workspaceId, id, routeId, target, attempts, error }.
+   * A route target delivered. The ledger row on the item changed after
+   * `notification.created` announced it, so without this a browser holding
+   * that item shows a delivery that never updates until an unrelated later
+   * frame happens to arrive. Payload:
+   * { workspaceId, id, seq, routeId, target, attempts }.
+   */
+  | "notification.delivered"
+  /**
+   * A route target reached a terminal outcome that is not delivery — refused,
+   * skipped for a departed author, or out of retries. Carries the same
+   * coordinates as the delivery-ledger row it accompanies, so a failed post is
+   * visible instead of silent. Payload:
+   * { workspaceId, id, seq, routeId, target, outcome, attempts, error }.
    */
   | "notification.delivery_failed"
   | "http.error"

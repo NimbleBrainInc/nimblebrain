@@ -39,6 +39,12 @@ above `info`, and within a level the newest is first. Each row carries:
 Open a row to see the **body** and the event name. Opening an item marks it read;
 **Mark all read** clears the rest.
 
+**Read state is shared across the workspace.** A notification is something a
+connector recorded, not a message addressed to a person, so the inbox is one
+queue the whole workspace works through: when anyone opens an item it is read
+for everyone, and the row records who. If you want a per-person copy, a route
+is what makes one.
+
 <Aside type="caution" title="Everything in the inbox is content a connector wrote">
 Titles, subjects and bodies are text from a third-party server, and the platform
 renders them as text: no formatting, no markup, and no clickable link built out
@@ -89,11 +95,10 @@ on it.
 
 A route says: when a notification matches, deliver it there.
 
-<Aside type="caution" title="Routes are saved but not executed in this version">
-The editor stores, validates and lists routes, and nothing dispatches them yet.
-The notice at the top of the settings tab says so, and disappears in the version
-that turns them on. The inbox and the ceilings work now.
-</Aside>
+Routes that deliver to a **tool** run. Routes that wake an **automation** are
+matched and recorded, and nothing runs them yet — the settings tab says so, and
+the item's delivery ledger shows those targets as *waiting for the automation
+trigger*.
 
 ### Match
 
@@ -102,9 +107,29 @@ workspace receives — legal, and rarely what you want.
 
 | Field | Means |
 |---|---|
-| **Source** | Exactly one connector. Omit for any. |
+| **Source** | Exactly one connector, by its exact server name. Omit for any. |
 | **Event name** | A glob over the event name the connector chose, e.g. `domain.*`. Omit for any. The names are the connector's own; its documentation lists them. |
 | **Minimum level** | `attention` also matches `urgent`. Omit for any level. |
+
+The event-name glob has two wildcards, and the difference between them is
+whether a dot may be crossed:
+
+| Pattern | Matches | Does not match |
+|---|---|---|
+| `domain.active` | `domain.active` | anything else |
+| `domain.*` | `domain.active`, `domain.pending` | `domain.dns.ready`, `domain` |
+| `domain.**` | `domain.active`, `domain.dns.ready` | `domain` |
+| `*.received` | `reply.received` | `mail.reply.received` |
+| `**` | every name | — |
+
+`*` matches within one dotted segment; `**` matches across as many as it likes.
+Nothing else is a wildcard — a pattern is otherwise matched as literal text, so
+a `.` means a dot and not "any character".
+
+**The level a route matches against is the clamped one.** If the source's
+ceiling is `info` and the connector sent `urgent`, a route asking for
+`attention` does not fire. The item still shows in the inbox at `urgent`, and
+its expanded row says which level it was **routed at**.
 
 ### Deliver to a tool
 
@@ -133,6 +158,19 @@ Those four are the whole list. There is no placeholder for the connector's
 refused when you save rather than delivered as literal braces in somebody's
 Slack channel.
 
+A placeholder the connector left empty — `{{body}}` on an item with no body —
+renders as nothing. There is no logic: no conditionals, no loops, no defaults.
+Whatever the connector wrote is inserted as text, and the tool decides what
+text means.
+
+<Aside type="caution" title="A delivery can happen twice">
+A call that times out may have run anyway; the platform only knows no answer
+came back, so it retries. If you route to a tool that is not safe to repeat —
+one that mints, rotates, charges, or sends something a person will read twice —
+write the route knowing that. Retries are bounded (below), which limits the
+damage but does not remove it.
+</Aside>
+
 ### Deliver to an automation
 
 Pick one of your [automations](/using/automations) and the route wakes it, handing
@@ -156,13 +194,44 @@ than dispatching as nobody. Re-adding them restores it.
 
 ## The delivery ledger
 
-Once a route has tried to deliver an item, the expanded row shows one line per
-target: what it aimed at, whether it delivered, and the last error if it did
-not. Items with nothing tried show nothing.
+Once a route has matched an item, the expanded row shows one line per target:
+what it aimed at, where it stands, how many attempts it took, and the last
+error if there was one. Items no route matched show nothing.
 
 That ledger is the point of routing being visible at all. A notification that
 reached the inbox and never reached the Slack channel it was routed to looks
 exactly like one nobody routed, unless the attempt was recorded.
+
+| Line reads | Means | Retries? |
+|---|---|---|
+| **sending** | An attempt is in flight or the next one is due. | yes |
+| **delivered** | The tool ran and did not report a failure. | — |
+| **waiting for the automation trigger** | An `automation` target. Recorded, not run. | — |
+| **refused** | A permission gate said no — the author may not use that tool, or its connector grant is missing. | no |
+| **skipped** | The route's author is no longer a member of this workspace. | no |
+| **failed** | The call did not complete and the retry budget is spent. | no |
+
+**A target gets three attempts across about five minutes** — immediately, a
+minute later, and four minutes after that — and then reads *failed*. That is
+long enough to ride out a connector restart or a brief outage upstream, and
+short enough that you learn the answer while you are still looking. The
+platform never retries a *refused* or *skipped* target: nothing about those
+changes until the configuration does.
+
+Retry state lives on the item itself, so a platform restart mid-delivery picks
+up where it left off, and nothing already delivered is sent again.
+
+### When a route stops firing
+
+Two things make a route dormant without deleting it, and both say so where you
+can see them:
+
+- **Its author left the workspace.** The route shows **Not dispatching** in the
+  editor with the reason, and each matched item records *skipped*. Re-adding
+  them turns it back on by itself; nothing needs saving.
+- **The source ceiling is below what the route asks for.** No ledger line is
+  written at all, because no route matched. The item's expanded row shows the
+  level it was routed at.
 
 ## What the agent sees
 
@@ -180,6 +249,8 @@ them: it cannot raise a ceiling and it cannot author a route.
 
 - [Notifications for app authors](/apps/notifications) — declaring an outbox,
   the event envelope, and the levels, from the connector's side.
+- [Connectors](/using/connectors) — installing the connector a route delivers through.
+- [Personal connectors](/using/personal-connectors) — what a `my_` tool in a route needs.
 - [Workspaces](/using/workspaces) — who can see and configure what.
 - [Automations](/using/automations) — what a route can wake.
 - [workspace.json](/config/workspace-json) — where the ceilings and routes are stored.

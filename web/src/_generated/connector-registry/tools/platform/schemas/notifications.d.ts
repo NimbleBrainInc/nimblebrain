@@ -32,12 +32,41 @@ export declare const NotificationsMarkReadInput: import("@sinclair/typebox").TOb
 }>;
 export type NotificationsMarkReadInput = Static<typeof NotificationsMarkReadInput>;
 /**
+ * Where one route target stands for one notification.
+ *
+ * Three of the six are terminal because retrying changes nothing until
+ * configuration does, and the split is the dispatch's own, read rather than
+ * re-derived:
+ *
+ * | Outcome | Terminal | Means |
+ * |---|---|---|
+ * | `pending` | no | written before the attempt; a retry is due |
+ * | `delivered` | yes | the tool ran and did not report failure |
+ * | `deferred` | yes for now | an agent target, waiting on the slice that wakes one |
+ * | `denied` | yes | a gate refused the author this tool |
+ * | `skipped` | yes | the author is no longer a member of the workspace |
+ * | `failed` | yes | the call did not complete, and the retry budget is spent |
+ *
+ * `pending` is what makes the ledger the retry state rather than a report of
+ * it: the row is written before the first attempt, so a runtime that restarts
+ * mid-delivery finds the work on disk and resumes it. There is no queue
+ * anywhere else holding the same fact.
+ */
+export type DeliveryOutcome = "pending" | "delivered" | "deferred" | "denied" | "skipped" | "failed";
+/**
  * How one route target fared for one notification.
  *
  * The ledger is what makes a failed delivery visible instead of silent: a
  * notification that reached the inbox and never reached the Slack channel it
  * was routed to looks identical to one nobody routed, unless the attempt is
- * recorded. Empty until routes are dispatched.
+ * recorded.
+ *
+ * A row's identity is `(routeId, target, index)` — the **slot** in the route's
+ * `deliver` list, not the name it points at. A route may legitimately name one
+ * tool twice with different arguments ("post to #outbound and to #alerts"),
+ * and those are two deliveries that can fail independently; keying on the name
+ * alone would let the second overwrite the first and report a message that
+ * never landed as delivered.
  *
  * It lives in this directory rather than in `src/notifications/` because it
  * crosses to the web on `NotificationView`, and this is the one directory the
@@ -48,9 +77,23 @@ export interface DeliveryRecord {
     routeId: string;
     /** What the route aimed at — a tool name, or an automation id. */
     target: string;
+    /** Position in the route's `deliver` list. Part of the row's identity. */
+    index: number;
+    /** Which kind of target `target` names. */
+    kind: "tool" | "agent";
     attempts: number;
     lastError?: string;
-    outcome: "delivered" | "failed" | "skipped";
+    outcome: DeliveryOutcome;
+    /**
+     * Why, for a non-`delivered` outcome — the dispatch's own classification
+     * (`owner_not_member`, `timeout`, `tool_error`, …), or `awaiting_wake` for a
+     * deferred agent target. Opaque to the browser, which renders it as text.
+     */
+    classification?: string;
+    /** ISO 8601 instant this row last changed. */
+    updatedAt: string;
+    /** ISO 8601 instant the next attempt is due. Present only while `pending`. */
+    nextAttemptAt?: string;
 }
 /**
  * The wire shape of one inbox item — what `notifications__list` returns, and
@@ -74,7 +117,20 @@ export interface NotificationView {
     source: string;
     /** The server's own event name. */
     name: string;
+    /** The level the emitting connector chose. */
     level: NotificationLevel;
+    /**
+     * The level routes were matched against, when the workspace's ceiling for
+     * this source held it below {@link level}. Absent when nothing was clamped,
+     * because an unclamped item's effective level IS its level and a second copy
+     * of one value is a field that can disagree with itself.
+     *
+     * Stamped when the item was written, not derived on read: it records the
+     * ceiling that was in force at the moment routes were evaluated, which is
+     * what explains why one did or did not fire. Lowering a ceiling afterwards
+     * does not rewrite history.
+     */
+    effectiveLevel?: NotificationLevel;
     title: string;
     subject?: string;
     body?: string;
@@ -85,11 +141,21 @@ export interface NotificationView {
     timestamp: string;
     /** When this runtime wrote it. */
     receivedAt: string;
-    readAt?: string;
     /**
-     * One row per route target that has been tried. Absent while nothing has
-     * tried — an empty ledger is not a fact worth rendering, and omitting it
-     * keeps every item in a routeless workspace one field smaller.
+     * When somebody marked it read. **Read state is shared across the
+     * workspace**, deliberately: a notification is authored by a connector, not
+     * by a person, so the queue it forms is the workspace's and "has anyone
+     * dealt with this" is the question it answers. {@link readBy} names who,
+     * which is the field that keeps the choice visible in the record instead of
+     * implied by its absence.
+     */
+    readAt?: string;
+    /** The member who marked it read. Absent while unread. */
+    readBy?: string;
+    /**
+     * One row per route target that matched. Absent while none has — an empty
+     * ledger is not a fact worth rendering, and omitting it keeps every item in
+     * a routeless workspace one field smaller.
      */
     deliveries?: DeliveryRecord[];
     data: Record<string, unknown>;
@@ -228,6 +294,26 @@ export interface NotificationSourceView {
     /** False while the source is still at the default — nobody has raised it. */
     configured: boolean;
 }
+/**
+ * Why a route is dormant, written by the runtime rather than by an admin.
+ *
+ * The one condition today is an author who has left the workspace: the
+ * dispatch skips them, and without this the route would look healthy while
+ * silently doing nothing. Cleared by the runtime when a later evaluation finds
+ * the author is a member again — the same self-healing-on-re-add a scheduled
+ * run gets — so it is a report, not a setting.
+ */
+export interface NotificationRouteDisabled {
+    /** One line an admin can act on. */
+    reason: string;
+    /**
+     * ISO 8601 instant the runtime FIRST observed the condition since the note
+     * was last cleared. Re-observing it does not move the timestamp: the note is
+     * re-derived on every matching notification, and rewriting the operator
+     * record each time would put it on the delivery path.
+     */
+    at: string;
+}
 /** One stored route, with the principal it dispatches under. */
 export interface NotificationRouteView {
     id: string;
@@ -235,6 +321,8 @@ export interface NotificationRouteView {
     createdBy: string;
     match: NotificationRouteMatch;
     deliver: NotificationDeliverTarget[];
+    /** Present while the runtime is refusing to dispatch this route. */
+    disabled?: NotificationRouteDisabled;
 }
 /**
  * Everything the workspace settings surface needs to render and validate the
@@ -257,9 +345,10 @@ export interface NotificationsSettingsOutput {
     /** The placeholders a tool input may carry. */
     placeholders: readonly string[];
     /**
-     * Whether a matching route actually runs. False while the dispatch half is
-     * unbuilt: routes are stored, validated and shown, and nothing reads them.
-     * The editor says so rather than implying a delivery that will not happen.
+     * Whether a matching route's **tool** targets actually run. An `agent`
+     * target is stored, matched and recorded in the ledger as deferred, and the
+     * slice that wakes an automation is unbuilt — so the editor narrows its
+     * notice to that kind rather than dropping it.
      */
     routesExecuted: boolean;
 }

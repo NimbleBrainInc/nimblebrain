@@ -10,6 +10,7 @@ import {
   type WorkspaceNotificationsConfig,
 } from "../../notifications/config.ts";
 import { NotificationPoller } from "../../notifications/poller.ts";
+import { RouteDispatcher } from "../../notifications/routes.ts";
 import type { NotificationRef, NotificationStore } from "../../notifications/store.ts";
 import { collectPollTargets } from "../../notifications/targets.ts";
 import { notificationId, parseNotificationId } from "../../notifications/types.ts";
@@ -302,7 +303,14 @@ export function createNotificationsSource(runtime: Runtime, eventSink: EventSink
           const ref = parseNotificationId(id);
           if (ref) refs.push(ref);
         }
-        const marked = new Set(currentStore().markRead(refs).map(notificationId));
+        // Read state is shared across the workspace, so the caller's identity
+        // is recorded rather than used as a partition key: the row says who
+        // cleared it, and a second member marking it again changes nothing.
+        const marked = new Set(
+          currentStore()
+            .markRead(refs, runtime.resolveRequestUserId(runtime.getCurrentIdentity() ?? undefined))
+            .map(notificationId),
+        );
         const out: NotificationsMarkReadOutput = {
           // A malformed id never became a ref, so it is already in the
           // complement — `skipped` is every id the store did not just change,
@@ -399,6 +407,14 @@ export function createNotificationsSource(runtime: Runtime, eventSink: EventSink
   // ever grows a path that throws. Today it clears a timer and releases
   // listeners, and is benign; the asymmetry between "poller error" and "leaked
   // transport" is what the guard is for.
+  const dispatcher = new RouteDispatcher({
+    workspaceStore: runtime.getWorkspaceStore(),
+    storeFor: (wsId) => runtime.getNotificationStore(wsId),
+    dispatch: (opts) => runtime.dispatchUnattended(opts),
+    workspaceIds: async () => (await runtime.getWorkspaceStore().list()).map((ws) => ws.id),
+    eventSink,
+  });
+
   const poller = new NotificationPoller({
     targets: () =>
       collectPollTargets(runtime.getLifecycle(), (serverName) =>
@@ -406,14 +422,25 @@ export function createNotificationsSource(runtime: Runtime, eventSink: EventSink
       ),
     storeFor: (wsId) => runtime.getNotificationStore(wsId),
     workspaceStore: runtime.getWorkspaceStore(),
+    // Fired and not awaited. The poll's job ends when an envelope is durable,
+    // and the dispatcher owns its own errors, ordering and concurrency — a
+    // sweep that waited on a Slack post would spend a workspace's poll budget
+    // on somebody else's timeout.
+    onItemStored: (wsId, item) => void dispatcher.onItem(wsId, item),
     config: runtime.getNotificationsPollConfig(),
   });
+
+  // Arms the retry tick and picks up whatever the previous process left
+  // unfinished, which it finds on the ledger — the only place the retry state
+  // lives.
+  dispatcher.start();
   poller.start();
 
   const originalStop = source.stop.bind(source);
   source.stop = async () => {
     try {
       poller.stop();
+      dispatcher.stop();
     } finally {
       await originalStop();
     }

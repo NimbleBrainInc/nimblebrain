@@ -12,6 +12,7 @@ import {
 import { join } from "node:path";
 import type { EventSink } from "../engine/types.ts";
 import { log } from "../observability/log.ts";
+import type { DeliveryRecord } from "../tools/platform/schemas/notifications.ts";
 import {
   NOTIFICATION_LIST_DEFAULT_LIMIT,
   NOTIFICATION_LIST_MAX_LIMIT,
@@ -146,16 +147,29 @@ export class NotificationStore {
    * inbox is the guarantee; anything downstream of the event is best-effort
    * and never rolls the item back.
    */
-  append(source: string, envelope: NotificationEnvelope): NotificationAppendResult {
+  append(
+    source: string,
+    envelope: NotificationEnvelope,
+    effectiveLevel?: NotificationLevel,
+  ): NotificationAppendResult {
     const existing = this.#find(source, envelope.eventId);
     if (existing) return { item: existing, created: false };
 
+    const presentation = notificationPresentation(envelope);
     const item: Notification = {
       envelope,
       source,
       workspaceId: this.#wsId,
       receivedAt: new Date().toISOString(),
       seq: this.#nextSeq(),
+      // Stored only when the workspace's ceiling actually held the item below
+      // the level its connector chose. The ceiling is the caller's to resolve:
+      // it lives on the workspace record and this store is bound to a
+      // directory, so a store that read it would be a second reader of a
+      // decision the poller already made.
+      ...(effectiveLevel !== undefined && effectiveLevel !== presentation.level
+        ? { effectiveLevel }
+        : {}),
       deliveries: [],
     };
 
@@ -163,7 +177,6 @@ export class NotificationStore {
     appendFileSync(this.#dayFile(item.receivedAt.slice(0, 10)), `${JSON.stringify(item)}\n`);
     this.prune();
 
-    const presentation = notificationPresentation(item.envelope);
     this.#eventSink.emit({
       type: "notification.created",
       data: {
@@ -216,8 +229,13 @@ export class NotificationStore {
    * A ref naming nothing in this workspace is skipped — including one that is
    * real in a *different* workspace, which this store cannot see and therefore
    * cannot mark. The wall holds structurally here rather than as a check.
+   *
+   * `readBy` names the member who marked it. Read state is shared across the
+   * workspace (see {@link Notification.readAt}), so this is a record of who
+   * cleared a shared queue, not a per-member flag: a second member marking an
+   * item that is already read changes nothing and is reported as skipped.
    */
-  markRead(refs: readonly NotificationRef[]): Notification[] {
+  markRead(refs: readonly NotificationRef[], readBy?: string): Notification[] {
     const wanted = new Set(refs.map((ref) => refKey(ref.source, ref.eventId)));
     if (wanted.size === 0) return [];
     const readAt = new Date().toISOString();
@@ -230,12 +248,82 @@ export class NotificationStore {
         if (item.readAt) continue;
         if (!wanted.has(refKey(item.source, item.envelope.eventId))) continue;
         item.readAt = readAt;
+        if (readBy) item.readBy = readBy;
         dirty = true;
         changed.push(item);
       }
       if (dirty) this.#rewriteDayFile(day, items);
     }
     return changed;
+  }
+
+  /**
+   * Write delivery-ledger rows onto one item, replacing any row with the same
+   * identity — `(routeId, target, index)`, the slot in the route's `deliver`
+   * list rather than the name it points at. One route may name a tool twice
+   * with different arguments, and those are two deliveries that fail
+   * independently.
+   *
+   * Through the store rather than beside it, so `notifications__list` and the
+   * SSE consumers read one record: a ledger held anywhere else would be a
+   * second answer to "what happened to this item" that the browser never sees.
+   *
+   * Returns the updated item, or `undefined` when the ref names nothing here —
+   * an item pruned mid-retry is the ordinary way that happens, and a delivery
+   * loop asking about it gets an answer rather than an exception.
+   */
+  recordDeliveries(
+    ref: NotificationRef,
+    rows: readonly DeliveryRecord[],
+  ): Notification | undefined {
+    if (rows.length === 0) return this.#find(ref.source, ref.eventId);
+    for (const day of this.#dayFiles()) {
+      const items = this.#readDayFile(day);
+      const item = items.find(
+        (candidate) =>
+          candidate.source === ref.source && candidate.envelope.eventId === ref.eventId,
+      );
+      if (!item) continue;
+      const merged = [...(item.deliveries ?? [])];
+      for (const row of rows) {
+        // `?? 0` on both sides, not one: a stored record is an untrusted input
+        // again by the time it is read back, and a row missing its slot must
+        // compare the same way here as it does where the retry index is
+        // rebuilt — otherwise one reader treats it as slot 0 and the other
+        // appends a duplicate beside it.
+        const at = merged.findIndex(
+          (old) =>
+            old.routeId === row.routeId &&
+            old.target === row.target &&
+            (old.index ?? 0) === (row.index ?? 0),
+        );
+        if (at === -1) merged.push(row);
+        else merged[at] = row;
+      }
+      item.deliveries = merged;
+      this.#rewriteDayFile(day, items);
+      return item;
+    }
+    return undefined;
+  }
+
+  /**
+   * Every ledger row still waiting on an attempt, with the item it belongs to.
+   *
+   * The whole of restart recovery: retry state lives on the ledger and nowhere
+   * else, so a runtime that comes up mid-delivery finds its outstanding work by
+   * reading what it already wrote. A row that reached any terminal outcome is
+   * not returned, which is what makes "nothing already delivered is re-sent"
+   * a property of the data rather than of a guard.
+   */
+  pendingDeliveries(): Array<{ item: Notification; row: DeliveryRecord }> {
+    const out: Array<{ item: Notification; row: DeliveryRecord }> = [];
+    for (const item of this.#loadAll()) {
+      for (const row of item.deliveries ?? []) {
+        if (row.outcome === "pending") out.push({ item, row });
+      }
+    }
+    return out;
   }
 
   /** Delete day files past the retention window. Best-effort. */

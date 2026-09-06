@@ -95,11 +95,21 @@ export function isTransientError(message: string): boolean {
 /**
  * Compute the backoff delay for a given number of consecutive errors.
  * Returns 0 when consecutiveErrors is 0.
+ *
+ * `ladder` defaults to an automation's own, which runs out to an hour because
+ * a schedule that keeps failing should be asked less and less often. A caller
+ * with a different bound passes its own — the shape (index, clamp at the last
+ * entry, zero below one) is what is shared, and the delays are the caller's
+ * policy. The notification route dispatcher is the second caller, with three
+ * attempts inside five minutes.
  */
-export function backoffDelay(consecutiveErrors: number): number {
-  if (consecutiveErrors <= 0) return 0;
-  const idx = Math.min(consecutiveErrors - 1, BACKOFF_DELAYS.length - 1);
-  return BACKOFF_DELAYS[idx]!;
+export function backoffDelay(
+  consecutiveErrors: number,
+  ladder: readonly number[] = BACKOFF_DELAYS,
+): number {
+  if (consecutiveErrors <= 0 || ladder.length === 0) return 0;
+  const idx = Math.min(consecutiveErrors - 1, ladder.length - 1);
+  return ladder[idx]!;
 }
 
 /**

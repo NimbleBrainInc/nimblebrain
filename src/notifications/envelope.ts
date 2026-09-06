@@ -38,7 +38,12 @@ export const NOTIFICATION_ENVELOPE_MAX_BYTES = 64 * 1024;
 
 /** Longest an id, a name, a cursor, or a link may be. */
 const ID_MAX = 200;
-const NAME_MAX = 200;
+/**
+ * Exported because it is the ceiling on the input a route's name glob is
+ * matched against, and the test that pins that match's cost has to assert
+ * against the real bound rather than a copy of it.
+ */
+export const NOTIFICATION_NAME_MAX = 200;
 const CURSOR_MAX = 1024;
 const LINK_MAX = 2048;
 
@@ -210,7 +215,7 @@ export function parseNotificationEnvelope(raw: unknown): NotificationEnvelope | 
   // `name` is matched as a string and never enumerated, so the only constraint
   // is that it stays a legible identifier: bounded, and with no whitespace or
   // control characters that would make a glob or a log line ambiguous.
-  if (!isCleanString(raw.name, NAME_MAX) || /\s/.test(raw.name)) {
+  if (!isCleanString(raw.name, NOTIFICATION_NAME_MAX) || /\s/.test(raw.name)) {
     return drop("name is not a bounded whitespace-free string", eventId);
   }
   const name = raw.name;

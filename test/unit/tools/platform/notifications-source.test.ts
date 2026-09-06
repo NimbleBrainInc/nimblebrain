@@ -63,15 +63,20 @@ function seed(wsId: string, source_: string, eventId: string, extra: Record<stri
 /**
  * The Runtime surface this source reaches at construction.
  *
- * Beyond the store it reads, the factory also builds the poller — so the stub
- * has to answer what the poller needs to exist. With no lifecycle instances it
- * has nothing to read, which is what these tests want: they are about the tool
- * door, and the poller is exercised in `notifications/poller.test.ts`.
+ * Beyond the store it reads, the factory also builds the poller and the route
+ * dispatcher — so the stub has to answer what those need to exist. With no
+ * lifecycle instances there is nothing to poll and no workspace holds a route,
+ * which is what these tests want: they are about the tool door, and the loops
+ * are exercised in `notifications/poller.test.ts` and
+ * `notifications/routes.test.ts`.
  */
 function makeRuntime(): Runtime {
   return {
     getNotificationStore: (wsId: string) => storeFor(wsId),
     getWorkspaceStore: () => new WorkspaceStore(workDir),
+    getCurrentIdentity: () => ({ id: OWNER_ID }),
+    resolveRequestUserId: (identity?: { id: string }) => identity?.id ?? OWNER_ID,
+    dispatchUnattended: async () => ({ outcome: "ok" }),
     getLifecycle: () => ({ getInstances: () => [] }),
     getNotificationsDeclaration: async () => undefined,
     getNotificationsPollConfig: () => resolvePollConfig(),

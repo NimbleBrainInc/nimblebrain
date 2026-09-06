@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from "react";
 import {
   type NotificationDeliverTarget,
   type NotificationLevel,
+  type NotificationRouteDisabled,
   type NotificationRouteInput,
   type NotificationRouteMatch,
   type NotificationRouteView,
@@ -72,6 +73,13 @@ interface RouteDraft {
   id?: string;
   /** Absent for a route that has never been saved. */
   createdBy?: string;
+  /**
+   * Why the runtime is not dispatching this route, when it is not.
+   *
+   * The runtime's report, not an editable field: it is never sent back on save
+   * and it is re-established (or cleared) the next time a notification matches.
+   */
+  disabled?: NotificationRouteDisabled;
   match: NotificationRouteMatch;
   targets: TargetDraft[];
 }
@@ -83,6 +91,7 @@ function toDraft(route: NotificationRouteView): RouteDraft {
     key: newKey(),
     id: route.id,
     createdBy: route.createdBy,
+    ...(route.disabled ? { disabled: route.disabled } : {}),
     match: route.match,
     targets: route.deliver.map((target) => ({
       key: newKey(),
@@ -162,15 +171,7 @@ export function WorkspaceNotificationsTab() {
       <RequireActiveWorkspace>
         {error ? <InlineError message={error} /> : null}
 
-        {settings && !settings.routesExecuted ? (
-          <p
-            data-testid="routes-not-executed"
-            className="rounded-sm border border-warning/40 bg-warning/10 px-3 py-2 text-sm"
-          >
-            Routes are saved but not yet executed in this version. What you write here is stored,
-            validated and shown; nothing dispatches it. The inbox and the ceilings below work now.
-          </p>
-        ) : null}
+        {settings ? <RoutesExecutedNotice executed={settings.routesExecuted} /> : null}
 
         <Section
           flush
@@ -223,6 +224,38 @@ export function WorkspaceNotificationsTab() {
         </Section>
       </RequireActiveWorkspace>
     </div>
+  );
+}
+
+/**
+ * What actually happens to a saved route, said plainly.
+ *
+ * Tool targets dispatch; an agent target is matched and recorded and nothing
+ * wakes it yet. Two notices rather than one because the two claims are
+ * different sizes, and an admin writing a Slack route needs to know it will
+ * fire as much as one writing an automation route needs to know it will not.
+ */
+function RoutesExecutedNotice({ executed }: { executed: boolean }) {
+  if (!executed) {
+    return (
+      <p
+        data-testid="routes-not-executed"
+        className="rounded-sm border border-warning/40 bg-warning/10 px-3 py-2 text-sm"
+      >
+        Routes are saved but not yet executed in this version. What you write here is stored,
+        validated and shown; nothing dispatches it. The inbox and the ceilings below work now.
+      </p>
+    );
+  }
+  return (
+    <p
+      data-testid="agent-routes-not-executed"
+      className="rounded-sm border border-warning/40 bg-warning/10 px-3 py-2 text-sm"
+    >
+      Routes that deliver to a <strong>tool</strong> run: a matching notification calls it as the
+      route's author, and the result is on the item in the inbox. Routes that wake an{" "}
+      <strong>automation</strong> are matched and recorded, and nothing runs them yet.
+    </p>
   );
 }
 
@@ -303,6 +336,11 @@ function RouteEditor({
           {route.createdBy ? (
             <p className="text-xs text-muted-foreground">
               Dispatches as <span className="font-mono">{route.createdBy}</span>
+            </p>
+          ) : null}
+          {route.disabled ? (
+            <p data-testid="route-disabled" className="mt-1 text-xs text-warning">
+              Not dispatching. {route.disabled.reason}
             </p>
           ) : null}
         </div>

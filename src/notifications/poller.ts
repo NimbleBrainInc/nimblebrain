@@ -9,6 +9,7 @@ import {
 import { log } from "../observability/log.ts";
 import type { McpSource } from "../tools/mcp-source.ts";
 import type { WorkspaceStore } from "../workspace/workspace-store.ts";
+import { readNotificationsConfig, sourceMaxLevel } from "./config.ts";
 import { cursorWriteContention, readCursor, writeCursor } from "./cursors.ts";
 import { parseNotificationEnvelope } from "./envelope.ts";
 import { NOTIFICATION_REPLAY_MAX_AGE_MS, outboxReadUri } from "./outbox-uri.ts";
@@ -20,6 +21,13 @@ import {
 } from "./poll-config.ts";
 import { type OutboxPollResult, parseOutboxPollBody } from "./poll-result.ts";
 import type { NotificationStore } from "./store.ts";
+import {
+  clampLevel,
+  type Notification,
+  type NotificationEnvelope,
+  type NotificationLevel,
+  notificationPresentation,
+} from "./types.ts";
 
 /**
  * The poller — what makes the inbox fill up on its own.
@@ -100,8 +108,19 @@ export interface NotificationPollerDeps {
   targets: () => Promise<PollTarget[]>;
   /** The inbox for one workspace. */
   storeFor: (wsId: string) => NotificationStore;
-  /** Where the cursors live. */
+  /** Where the cursors and the notifications config live. */
   workspaceStore: WorkspaceStore;
+  /**
+   * Called once for each item this poll newly created, after the durable
+   * write. The route dispatcher is wired here.
+   *
+   * A callback rather than a dependency on routing, because this loop's job
+   * ends when an envelope is durable: it must not learn what a route is, and
+   * it must not wait on one. Whatever is behind this handles its own errors
+   * and its own concurrency — a poll that awaited a Slack post would spend a
+   * workspace's poll budget on somebody else's timeout.
+   */
+  onItemStored?: (wsId: string, item: Notification) => void;
   config: ResolvedPollConfig;
   /**
    * The clock. Defaults to `Date.now`.
@@ -423,7 +442,7 @@ export class NotificationPoller {
    * transport's promise and the store's dedupe is what makes a re-read free.
    */
   async #readOnce(target: PollTarget): Promise<ReadOutcome> {
-    const cursor = await this.#cursorFor(target);
+    const { cursor, ceiling } = await this.#positionFor(target);
     const uri = outboxReadUri(target.resource, {
       ...(cursor !== undefined ? { cursor } : {}),
       maxEvents: this.#config.maxEvents,
@@ -433,7 +452,7 @@ export class NotificationPoller {
     const result = await this.#fetchPollResult(target, uri);
     if (!result) return { ok: false };
 
-    const written = this.#writeEvents(target, result.events);
+    const written = this.#writeEvents(target, result.events, ceiling);
     if (!written.ok) return { ok: false };
 
     await this.#advanceCursor(target, cursor, result.cursor ?? written.lastEventCursor);
@@ -535,6 +554,7 @@ export class NotificationPoller {
   #writeEvents(
     target: PollTarget,
     events: readonly unknown[],
+    ceiling: NotificationLevel,
   ): { ok: true; lastEventCursor?: string } | { ok: false } {
     const store = this.#deps.storeFor(target.wsId);
     const label = notificationSourceLabel(target.serverName);
@@ -544,7 +564,7 @@ export class NotificationPoller {
       const envelope = parseNotificationEnvelope(raw);
       if (!envelope) continue;
       try {
-        store.append(target.serverName, envelope);
+        this.#storeOne(target, store, envelope, ceiling);
       } catch (err) {
         log.warn(
           `[notifications] inbox write failed: ${err instanceof Error ? err.message : String(err)}`,
@@ -565,10 +585,48 @@ export class NotificationPoller {
     return { ok: true, ...(lastEventCursor !== undefined ? { lastEventCursor } : {}) };
   }
 
-  /** The stored cursor, or `undefined` to bootstrap. */
-  async #cursorFor(target: PollTarget): Promise<string | undefined> {
+  /**
+   * Write one envelope and hand a newly created item on for routing.
+   *
+   * The effective level is stamped here, at the write, so the inbox and the
+   * ledger agree on why a route did or did not fire; the ceiling it clamps
+   * against came off the same workspace record read as the cursor.
+   *
+   * Routing runs only for an item this poll actually created. A re-read of an
+   * already-stored event is the at-least-once transport working as designed,
+   * and re-evaluating it would post the same message twice.
+   */
+  #storeOne(
+    target: PollTarget,
+    store: NotificationStore,
+    envelope: NotificationEnvelope,
+    ceiling: NotificationLevel,
+  ): void {
+    const effective = clampLevel(notificationPresentation(envelope).level, ceiling);
+    const { item, created } = store.append(target.serverName, envelope, effective);
+    if (created) this.#deps.onItemStored?.(target.wsId, item);
+  }
+
+  /**
+   * What this read needs off the workspace record: where to resume, and how
+   * high this source's items may reach a route.
+   *
+   * One read for both. They are written by different authors on different
+   * schedules but they live in one block, and reading it twice per poll would
+   * be two answers that can disagree by the width of a write.
+   *
+   * A workspace record that cannot be read bootstraps the cursor and takes the
+   * default ceiling — the conservative end of both, and the same answer a
+   * newly declared source gets.
+   */
+  async #positionFor(
+    target: PollTarget,
+  ): Promise<{ cursor: string | undefined; ceiling: NotificationLevel }> {
     const ws = await this.#deps.workspaceStore.get(target.wsId);
-    return ws ? readCursor(ws, target.serverName) : undefined;
+    return {
+      cursor: ws ? readCursor(ws, target.serverName) : undefined,
+      ceiling: sourceMaxLevel(readNotificationsConfig(ws), target.serverName),
+    };
   }
 
   // -- cadence and the breaker -------------------------------------------

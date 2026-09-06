@@ -113,11 +113,48 @@ export interface Notification {
     receivedAt: string;
     /** Monotonic per workspace. The addressable position for replay (`?after=`). */
     seq: number;
-    /** ISO 8601 instant a reader marked it read. Absent while unread. */
+    /**
+     * The level routes were matched against, when the workspace's ceiling for
+     * this source held it below the level the connector chose.
+     *
+     * Stored only when it differs, and read back through
+     * {@link notificationEffectiveLevel}. An unclamped item's effective level is
+     * its own, and writing a second copy of one value is how the two come to
+     * disagree.
+     */
+    effectiveLevel?: NotificationLevel;
+    /**
+     * ISO 8601 instant a reader marked it read. Absent while unread.
+     *
+     * **One instant for the whole workspace, decided rather than inherited.** A
+     * notification is authored by a *connector*, so it is filed by workspace and
+     * not by person, and the queue it forms is shared: a route that posted an
+     * item to a channel already delivered it to everyone, and per-member read
+     * state would disagree with the channel. {@link readBy} names who marked it,
+     * which is what makes the choice a field in the record rather than an
+     * omission — a later move to per-member state has a place to put the map.
+     */
     readAt?: string;
-    /** One row per route target. Empty until routes exist. */
+    /** The member who marked it read. Absent while unread. */
+    readBy?: string;
+    /** One row per route target that matched. Empty until one does. */
     deliveries: DeliveryRecord[];
 }
+/**
+ * The level routes were evaluated at — the stamped one, or the connector's own
+ * when nothing clamped it.
+ */
+export declare function notificationEffectiveLevel(item: Notification): NotificationLevel;
+/**
+ * The lower of a connector's chosen level and the workspace's ceiling for it.
+ *
+ * The ceiling is the operator's grant: declaring an outbox costs a poll and
+ * some inbox rows, and it should not also be a decision to let that connector
+ * reach a route that asks for urgency. Clamping rather than filtering is what
+ * keeps the item in the inbox at the level the connector meant while holding
+ * what it can *reach* to what the admin allowed.
+ */
+export declare function clampLevel(level: NotificationLevel, ceiling: NotificationLevel): NotificationLevel;
 /**
  * The wire id for one notification: `<source>:<eventId>`.
  *

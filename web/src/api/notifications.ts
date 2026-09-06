@@ -27,9 +27,11 @@ import { callTool } from "./client";
 import { parseToolResult } from "./tool-result";
 
 export type {
+  DeliveryOutcome,
   DeliveryRecord,
   NotificationDeliverTarget,
   NotificationLevel,
+  NotificationRouteDisabled,
   NotificationRouteInput,
   NotificationRouteMatch,
   NotificationRouteView,
