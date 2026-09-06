@@ -1,11 +1,19 @@
 #!/usr/bin/env bun
 /**
- * Layering rule enforcement — prevents circular dependencies between
- * runtime/ and tools/ by ensuring no file in src/runtime/ (except the
- * composition root runtime.ts and workspace-runtime.ts) imports from src/tools/.
+ * Layering rule enforcement — prevents circular dependencies between runtime/
+ * and the layers composed on top of it, by ensuring no file in src/runtime/
+ * (except the composition roots runtime.ts and workspace-runtime.ts) imports
+ * from src/tools/ or src/platform/.
  *
- * Also verifies that no file in src/config/ imports from src/runtime/ or src/tools/,
- * and that no file in src/engine/ imports from src/runtime/.
+ * Also verifies that no file in src/config/ imports from src/runtime/,
+ * src/tools/ or src/platform/, and that no file in src/engine/ imports from
+ * src/runtime/.
+ *
+ * `platform/` is named alongside `tools/` in every rule because a platform app
+ * IS a tool source, just an in-process one: each `src/platform/<app>/source.ts`
+ * imports `Runtime`, so an edge back from runtime/ or config/ closes the same
+ * cycle the tools/ patterns exist to reject. A rule naming only `tools/` stops
+ * covering an app the moment it lives anywhere else.
  *
  * The `(?:\.\.\/)+` in each pattern is load-bearing: `listTsFiles` recurses, so a
  * file in a SUBDIRECTORY reaches a sibling layer as `../../<layer>/`. Anchoring to a
@@ -69,20 +77,20 @@ function checkDir(
   }
 }
 
-// Rule 1: src/runtime/*.ts must not import from src/tools/
+// Rule 1: src/runtime/*.ts must not import from src/tools/ or src/platform/
 // Exceptions: runtime.ts (composition root) and workspace-runtime.ts
 checkDir(
   join(SRC, "runtime"),
   [
     {
-      pattern: /from\s+["'](?:\.\.\/)+tools\//,
-      description: "runtime/ must not import from tools/",
+      pattern: /from\s+["'](?:\.\.\/)+(?:tools|platform)\//,
+      description: "runtime/ must not import from tools/ or platform/",
     },
   ],
   new Set(["runtime/runtime.ts", "runtime/workspace-runtime.ts"]),
 );
 
-// Rule 2: src/config/*.ts must not import from src/runtime/ or src/tools/
+// Rule 2: src/config/*.ts must not import from src/runtime/, src/tools/ or src/platform/
 checkDir(
   join(SRC, "config"),
   [
@@ -91,8 +99,8 @@ checkDir(
       description: "config/ must not import from runtime/",
     },
     {
-      pattern: /from\s+["'](?:\.\.\/)+tools\//,
-      description: "config/ must not import from tools/",
+      pattern: /from\s+["'](?:\.\.\/)+(?:tools|platform)\//,
+      description: "config/ must not import from tools/ or platform/",
     },
   ],
   new Set(),
