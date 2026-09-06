@@ -24,7 +24,7 @@ import type { BootstrapResponse } from "../types";
 /**
  * Convert the bootstrap response's per-workspace shape into the
  * `WorkspaceInfo` the `WorkspaceProvider` consumes. Caller is expected to
- * pass `bootstrap.workspaces` directly. `bundles` starts empty and is
+ * pass `bootstrap.workspaces` directly. `connectors` starts empty and is
  * populated lazily; `userRole` propagates so role gating works.
  */
 export function bootstrapWorkspacesToInfo(
@@ -34,7 +34,7 @@ export function bootstrapWorkspacesToInfo(
     id: ws.id,
     name: ws.name,
     memberCount: ws.memberCount,
-    bundles: [],
+    connectors: [],
     userRole: ws.role,
     // `isPersonal` flows through unchanged from bootstrap. The shell uses
     // it to badge the personal workspace and to enforce the personal-
@@ -73,7 +73,8 @@ export function parseWorkspaceListResponse(raw: unknown): WorkspaceInfo[] {
         id: String(ws.id ?? ""),
         name: String(ws.name ?? ""),
         memberCount: typeof ws.memberCount === "number" ? ws.memberCount : 0,
-        bundles: Array.isArray(ws.bundles)
+        // `manage_workspaces.list` still names this array `bundles` on the wire.
+        connectors: Array.isArray(ws.bundles)
           ? (ws.bundles as Array<{ name?: string; path?: string }>)
           : [],
         ...(userRole ? { userRole } : {}),

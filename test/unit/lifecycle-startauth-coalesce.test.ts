@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
-import { BundleLifecycleManager } from "../../src/bundles/lifecycle.ts";
-import type { BundleInstance, BundleRef } from "../../src/bundles/types.ts";
+import { ConnectorLifecycleManager } from "../../src/connectors/runtime/lifecycle.ts";
+import type { ConnectorInstance, ConnectorRef } from "../../src/connectors/runtime/types.ts";
 import type { EngineEvent, EventSink } from "../../src/engine/types.ts";
 
 /**
@@ -31,14 +31,14 @@ class CapturingSink implements EventSink {
 }
 
 function seedInstance(
-  lifecycle: BundleLifecycleManager,
+  lifecycle: ConnectorLifecycleManager,
   serverName: string,
   wsId: string,
-  ref?: BundleRef,
-): BundleInstance {
-  const instance: BundleInstance = {
+  ref?: ConnectorRef,
+): ConnectorInstance {
+  const instance: ConnectorInstance = {
     serverName,
-    bundleName: "https://example.test/mcp",
+    connectorName: "https://example.test/mcp",
     version: "remote",
     state: "starting",
     ui: null,
@@ -53,7 +53,7 @@ function seedInstance(
   return instance;
 }
 
-function flowSlot(lifecycle: BundleLifecycleManager): Map<string, Promise<unknown>> {
+function flowSlot(lifecycle: ConnectorLifecycleManager): Map<string, Promise<unknown>> {
   // biome-ignore lint/suspicious/noExplicitAny: test internals
   return (lifecycle as any).authFlowsInFlight;
 }
@@ -61,11 +61,11 @@ function flowSlot(lifecycle: BundleLifecycleManager): Map<string, Promise<unknow
 const OPTS = { workDir: "/tmp/nb-test", callbackUrl: "http://localhost/callback" };
 const KEY = "ghost|ws_test|_workspace";
 
-describe("BundleLifecycleManager.startAuth — authFlowsInFlight coalesce", () => {
-  let lifecycle: BundleLifecycleManager;
+describe("ConnectorLifecycleManager.startAuth — authFlowsInFlight coalesce", () => {
+  let lifecycle: ConnectorLifecycleManager;
 
   beforeEach(() => {
-    lifecycle = new BundleLifecycleManager(new CapturingSink(), undefined);
+    lifecycle = new ConnectorLifecycleManager(new CapturingSink(), undefined);
   });
 
   test("concurrent startAuth calls coalesce — startAuthInner runs ONCE regardless of caller count", async () => {
@@ -126,7 +126,7 @@ describe("BundleLifecycleManager.startAuth — authFlowsInFlight coalesce", () =
       "reauth_required",
     ] as const;
     for (const newState of terminals) {
-      const lc = new BundleLifecycleManager(new CapturingSink(), undefined);
+      const lc = new ConnectorLifecycleManager(new CapturingSink(), undefined);
       seedInstance(lc, "granola", "ws_test", { url: "https://example.test/mcp" });
       // Inject a fake in-flight flow
       const fake = Promise.resolve({ authorizationUrl: "x" });
@@ -143,7 +143,7 @@ describe("BundleLifecycleManager.startAuth — authFlowsInFlight coalesce", () =
     // sat below the `if (!instance) return`, the slot would hold a permanently-resolved
     // flow and every later startAuth for this key would short-circuit to it (Reconnect
     // silently no-ops until restart).
-    const lc = new BundleLifecycleManager(new CapturingSink(), undefined);
+    const lc = new ConnectorLifecycleManager(new CapturingSink(), undefined);
     // NO seedInstance — the instance was removed while the flow was in flight.
     flowSlot(lc).set("ghost|ws_test|_workspace", Promise.resolve({ authorizationUrl: null }));
     lc.recordConnectionStateChange("ghost", "ws_test", "_workspace", "running");
@@ -207,7 +207,7 @@ describe("BundleLifecycleManager.startAuth — authFlowsInFlight coalesce", () =
     // "running")` in `startAuthBackground`. Drop or skip that call and the slot leaks
     // permanently (every later startAuth returns the stale resolved promise → Reconnect
     // a silent no-op). Pin the invariant.
-    const lifecycle = new BundleLifecycleManager(new CapturingSink(), undefined);
+    const lifecycle = new ConnectorLifecycleManager(new CapturingSink(), undefined);
     seedInstance(lifecycle, "minted", "ws_test", { url: "https://example.test/mcp" });
     flowSlot(lifecycle).set("minted|ws_test|_workspace", Promise.resolve({ authorizationUrl: null }));
 

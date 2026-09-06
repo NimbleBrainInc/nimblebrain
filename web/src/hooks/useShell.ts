@@ -28,7 +28,7 @@ export function useShell(_token: string, workspaceId?: string, initialShell?: Sh
   workspaceIdRef.current = workspaceId;
 
   /**
-   * Refetch the shell payload. Used by bundle lifecycle SSE events so
+   * Refetch the shell payload. Used by connector lifecycle SSE events so
    * newly-installed apps surface in the sidebar without a page reload.
    * Keep the old shell visible during the swap (no loading flash) — same
    * pattern as the workspace-switch refetch.

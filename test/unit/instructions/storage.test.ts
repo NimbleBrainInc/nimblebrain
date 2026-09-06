@@ -1,8 +1,8 @@
 /**
  * `InstructionsStore` contract tests.
  *
- * Two scopes only — `org` and `workspace`. Per-bundle instructions are
- * NOT platform-owned (bundles handle their own storage and publish a
+ * Two scopes only — `org` and `workspace`. Per-connector instructions are
+ * NOT platform-owned (connectors handle their own storage and publish a
  * `<sourceName>://instructions` resource); this store is just for the
  * cross-cutting platform overlays.
  */

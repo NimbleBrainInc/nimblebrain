@@ -9,7 +9,7 @@ import { HOOK_ROTATION_GRACE_MS, type HookRegistration } from "./types.ts";
  *
  * They sit beside `oauthOperatorApps` because they are the same kind of thing
  * in every dimension that matters: operator-plane, workspace-scoped, and with a
- * lifecycle that is related to but not identical to a bundle install. Putting
+ * lifecycle that is related to but not identical to a connector install. Putting
  * them there also makes the delivery path ONE read — the door already has to
  * load the workspace to resolve `bundles[]` into a forward target, and a
  * separate store would make it two on the one path the spec insists stays thin.
@@ -24,7 +24,7 @@ import { HOOK_ROTATION_GRACE_MS, type HookRegistration } from "./types.ts";
  * registration on the far side and no error anywhere.
  *
  * The race is on the ordinary path, not an exotic one — boot seeds every
- * workspace bundle in a synchronous loop with the connection observer armed, so
+ * workspace connector in a synchronous loop with the connection observer armed, so
  * N hooks-declaring connectors fan out N reconciles that all read this map
  * before any of them writes.
  */

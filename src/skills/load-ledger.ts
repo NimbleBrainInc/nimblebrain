@@ -78,7 +78,7 @@ export interface SkillLoadRow {
   loaded_by: SkillLoadedBy;
   /** Approximate tokens delivered. 0 where the record does not measure it. */
   tokens: number;
-  /** `org` / `workspace` / `user` / `bundle` / `connector`. */
+  /** `org` / `workspace` / `user` / `connector` / `connector`. */
   scope?: string;
   /** MCP server that published the skill, when one did. */
   connector?: string;

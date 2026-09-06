@@ -2,7 +2,7 @@
  * Dev mode registry — tracks which apps are being served from local Vite dev servers.
  *
  * When `bun run dev --app <path>` is used, the specified app's resources are served
- * from the Vite dev server instead of the bundle's static HTML.
+ * from the Vite dev server instead of the connector's static HTML.
  */
 
 const devApps = new Map<string, string>();

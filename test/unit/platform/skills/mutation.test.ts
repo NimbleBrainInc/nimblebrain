@@ -527,7 +527,7 @@ describe("skills__update", () => {
     );
   });
 
-  test("rejects update of bundle-scope skill (Layer 1 vendored)", async () => {
+  test("rejects update of connector-scope skill (Layer 1 vendored)", async () => {
     const src = await buildSource();
     const client = src.getClient()!;
     const result = await client.callTool({

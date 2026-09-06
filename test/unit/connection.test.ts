@@ -3,7 +3,7 @@ import {
   WORKSPACE_PRINCIPAL_ID,
   type Connection,
   summarizeConnectionState,
-} from "../../src/bundles/connection.ts";
+} from "../../src/connectors/runtime/connection.ts";
 
 function conn(state: Connection["state"]): Connection {
   return { principalId: "p", state };

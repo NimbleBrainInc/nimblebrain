@@ -44,9 +44,9 @@ function findFirst<T extends ts.Node>(
 }
 
 describe("check-credential-paths — isUserCredentialJoin", () => {
-  test("matches `join(workDir, 'users', userId, 'credentials', bundleName)`", () => {
+  test("matches `join(workDir, 'users', userId, 'credentials', connectorName)`", () => {
     const src = parse(
-      `const path = join(workDir, "users", userId, "credentials", bundleName);`,
+      `const path = join(workDir, "users", userId, "credentials", connectorName);`,
     );
     const call = findFirst(src, ts.isCallExpression);
     expect(call).toBeDefined();
@@ -111,7 +111,7 @@ describe("check-credential-paths — isUserCredentialJoin", () => {
 describe("check-credential-paths — isUserCredentialTemplate", () => {
   test("matches a template literal that spells out the user-credential path", () => {
     const src = parse(
-      "const p = `${workDir}/users/${userId}/credentials/${bundleName}.json`;",
+      "const p = `${workDir}/users/${userId}/credentials/${connectorName}.json`;",
     );
     const node = findFirst(src, ts.isTemplateExpression);
     expect(node).toBeDefined();

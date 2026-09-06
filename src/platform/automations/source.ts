@@ -128,7 +128,7 @@ export async function createAutomationsSource(
   /**
    * The caller's owner id. Automations are workspace-owned with the owner as a
    * privacy sub-partition: the tool path carries the caller's identity in the
-   * request context; internal callers (CLI, bundle lifecycle) resolve to the dev
+   * request context; internal callers (CLI, connector lifecycle) resolve to the dev
    * identity in dev. Mirrors files' owner resolution so an automation's store and
    * its scheduled run agree.
    */

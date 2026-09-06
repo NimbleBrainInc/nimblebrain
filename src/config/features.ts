@@ -7,10 +7,10 @@ import { ORG_ADMIN_ROLES, type OrgRole } from "../identity/types.ts";
  */
 export interface FeatureFlags {
   /**
-   * Reserved. Gated conversational bundle install/uninstall/configure via
+   * Reserved. Gated conversational connector install/uninstall/configure via
    * `nb__manage_app`, which was removed (install/configure now live in the
    * Apps catalog + CLI). Kept as a stable operator config knob for the
-   * bundle-management tool a future design may reintroduce (single tool,
+   * connector-management tool a future design may reintroduce (single tool,
    * explicit workspace param, per-call admin auth).
    */
   bundleManagement?: boolean;

@@ -7,12 +7,12 @@
  * dynamic loading, and triggers. A second org-wide always-on channel bought
  * none of that.
  *
- * Per-bundle instructions are NOT platform-owned: bundles publish a
+ * Per-connector instructions are NOT platform-owned: connectors publish a
  * `<sourceName>://instructions` resource if and only if they want to support
  * custom instructions, and store them in their own data dir. The platform
  * reads that resource on every prompt assembly and wraps it in
  * `<app-custom-instructions>` containment — but the storage and tool authoring
- * stay bundle-side.
+ * stay connector-side.
  */
 
 export type UpdatedBy = "agent" | "ui";

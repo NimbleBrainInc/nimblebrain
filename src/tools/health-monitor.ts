@@ -3,14 +3,14 @@ import type { McpSource } from "./mcp-source.ts";
 
 export type ProcessLiveness = "healthy" | "restarting" | "cooldown" | "dead";
 
-export interface BundleHealth {
+export interface ConnectorHealth {
   name: string;
   state: ProcessLiveness;
   uptime: number | null;
   restartCount: number;
 }
 
-interface BundleRecord {
+interface ConnectorRecord {
   source: McpSource;
   state: ProcessLiveness;
   restartCount: number;
@@ -54,7 +54,7 @@ export interface HealthMonitorOptions {
  * a deliberate teardown (`isStopped()`) is terminal.
  */
 export class HealthMonitor {
-  private records: BundleRecord[];
+  private records: ConnectorRecord[];
   private timer: ReturnType<typeof setInterval> | null = null;
   private checkIntervalMs: number;
   private baseDelayMs: number;
@@ -97,14 +97,14 @@ export class HealthMonitor {
     }
   }
 
-  /** Run a single health check across all bundles. */
+  /** Run a single health check across all connectors. */
   async check(): Promise<void> {
     const tasks = this.records.map((record) => this.checkOne(record));
     await Promise.all(tasks);
   }
 
-  /** Get per-bundle health info. */
-  getStatus(): BundleHealth[] {
+  /** Get per-connector health info. */
+  getStatus(): ConnectorHealth[] {
     return this.records.map((r) => ({
       name: r.source.name,
       state: r.state,
@@ -113,7 +113,7 @@ export class HealthMonitor {
     }));
   }
 
-  private async checkOne(record: BundleRecord): Promise<void> {
+  private async checkOne(record: ConnectorRecord): Promise<void> {
     // `dead` is terminal and reachable ONLY via deliberate teardown
     // (`isStopped()` below). A crashed source is never left here — it backs off
     // to the `cooldown` slow re-probe — so this early-out never strands a
@@ -156,19 +156,19 @@ export class HealthMonitor {
     const remote = isRemoteSource(record.source);
 
     // Source is down — emit crashed event
-    this.emitBundleEvent(record, "bundle.crashed", remote);
+    this.emitConnectorEvent(record, "bundle.crashed", remote);
 
     // Quick-retry budget spent. NOT terminal: a transient upstream outage
     // (rate-limit, brief 5xx window) can outlast the burst and still recover.
     // Back off to a slow re-probe — reset the counter and gate the next burst
     // behind the cooldown window — so we keep trying at a bounded rate until the
-    // source recovers or is deliberately stopped. (`bundle.dead` is retired: a
+    // source recovers or is deliberately stopped. (`connector.dead` is retired: a
     // crash never ends here, and deliberate teardown is handled above.)
     if (record.restartCount >= MAX_RESTARTS) {
       record.state = "cooldown";
       record.cooldownUntil = Date.now() + this.cooldownMs;
       record.restartCount = 0;
-      this.emitBundleEvent(record, "bundle.cooldown", remote, { retryInMs: this.cooldownMs });
+      this.emitConnectorEvent(record, "bundle.cooldown", remote, { retryInMs: this.cooldownMs });
       return;
     }
 
@@ -179,7 +179,7 @@ export class HealthMonitor {
    * Clear the consecutive-failure counter once a recovered source has
    * sustained a full check interval of uptime.
    */
-  private resetBackoffIfRecovered(record: BundleRecord): void {
+  private resetBackoffIfRecovered(record: ConnectorRecord): void {
     // `MAX_RESTARTS` must bound CONSECUTIVE failures, not lifetime drops, and
     // the exponential backoff must start fresh for the next independent crash
     // episode. Without this, a remote connector that periodically drops and
@@ -198,12 +198,12 @@ export class HealthMonitor {
   }
 
   /** Restart a downed source after exponential backoff, updating state on the outcome. */
-  private async attemptRestart(record: BundleRecord, remote: boolean): Promise<void> {
+  private async attemptRestart(record: ConnectorRecord, remote: boolean): Promise<void> {
     record.state = "restarting";
     const delay = this.baseDelayMs * 2 ** record.restartCount;
     record.restartCount++;
 
-    this.emitBundleEvent(record, "bundle.restarting", remote, {
+    this.emitConnectorEvent(record, "bundle.restarting", remote, {
       attempt: record.restartCount,
       delayMs: delay,
     });
@@ -216,16 +216,16 @@ export class HealthMonitor {
 
     if (ok) {
       record.state = "healthy";
-      this.emitBundleEvent(record, "bundle.recovered", remote);
+      this.emitConnectorEvent(record, "bundle.recovered", remote);
     } else {
       // Restart failed — check again on next cycle (might hit max)
       record.state = "restarting";
     }
   }
 
-  /** Emit a `run.error` lifecycle event for a bundle, flagging remote sources. */
-  private emitBundleEvent(
-    record: BundleRecord,
+  /** Emit a `run.error` lifecycle event for a connector, flagging remote sources. */
+  private emitConnectorEvent(
+    record: ConnectorRecord,
     event: string,
     remote: boolean,
     extra: Record<string, unknown> = {},

@@ -72,7 +72,7 @@ const encoder = new TextEncoder();
 type SseRoute = { scope: "global" } | { scope: "workspace"; wsIdField: string };
 
 const SSE_ROUTES: Partial<Record<EngineEventType, SseRoute>> = {
-  // Bundle lifecycle — workspace-scoped. `wsId` is on every payload (added
+  // Connector lifecycle — workspace-scoped. `wsId` is on every payload (added
   // in lifecycle.ts when emitting); without it we can't safely scope, so the
   // event drops at the boundary below.
   "bundle.installed": { scope: "workspace", wsIdField: "wsId" },

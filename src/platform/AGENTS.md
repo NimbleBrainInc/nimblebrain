@@ -14,7 +14,7 @@ not negotiate around them.
 A platform app is an in-process MCP server the kernel hosts: its tools, the
 code behind them, and its UI. All of that lives under `src/platform/<app>/`.
 An app is not a connector — the runtime does not fetch or execute it, it
-*is* the runtime — so nothing about it belongs under `src/bundles/`, which
+*is* the runtime — so nothing about it belongs under `src/connectors/`, which
 holds connector code only.
 
 ```
@@ -128,7 +128,7 @@ EXCLUDE from the LLM-facing schema:
 - Source-of-truth fields the runtime sets (`source`, `bundleName`,
   `ownerId`, `workspaceId`, `createdAt`).
 - Literal-tool-name affinity strings (e.g. `tool-affinity` globs). Usually
-  leaky — they couple a tool's input to bundle identities that change.
+  leaky — they couple a tool's input to connector identities that change.
   (The skills tool is the deliberate exception: a skill author genuinely
   chooses *when* a skill loads, so `tool-affinity` is authorable there.)
 - "Designed-but-not-enforced" placeholder fields. If a feature isn't
@@ -141,7 +141,7 @@ Test: if a field is set by the runtime in 100% of cases, it does not
 belong in the LLM-facing schema. Set it in the handler.
 
 **Internal callers use the domain API, not the tool handler.** When a
-domain has both LLM-facing and operator-facing callers (CLI, bundle
+domain has both LLM-facing and operator-facing callers (CLI, connector
 lifecycle, settings UI), factor a `domain.ts` module that accepts the
 full shape including operator fields. The tool handler becomes a thin
 wrapper that narrows the input and stamps `source: "agent"`. Internal
@@ -152,7 +152,7 @@ silently no-ops or strips operator fields.** See
 and `src/runtime/runtime.ts::registerAutomationsContext` for the wiring.
 
 The cost of doing this once per domain: one extra file. The cost of not
-doing it: bundle install loses bundle-contributed schedules, CLI pause/
+doing it: connector install loses connector-contributed schedules, CLI pause/
 resume silently no-ops, and the tool surface accumulates operator fields
 to "make it work" — exactly what (1.4) forbids.
 
@@ -198,7 +198,7 @@ Inputs have a strong shared-type story: TypeBox schemas in
 `src/platform/schemas/`, derived static types via `Static<typeof X>`,
 codegen to web. Outputs need the same shape. **The handler's TypeScript
 return type IS the contract; the schemas file is where it's declared so
-every consumer (CLI, integration tests, web client, future bundles) imports
+every consumer (CLI, integration tests, web client, future apps) imports
 the same name.**
 
 Why this matters: until this rule was enforced, every consumer redeclared
@@ -337,7 +337,7 @@ passed, production stayed broken. Match the production type strictly.
 |---|---|
 | Bare `{ type: "object" }` | Model invents structure; serializes nested objects as JSON strings |
 | `name` at root, `description` in manifest | Splits identity; model packs everything into one place and gets it wrong |
-| `allowedTools: string[]` | Leaky abstraction — couples skill/automation identity to bundle names that change |
+| `allowedTools: string[]` | Leaky abstraction — couples skill/automation identity to connector names that change |
 | `source`, `bundleName`, `ownerId` in input schema | Runtime fields the LLM has no business setting |
 | Designed-but-not-enforced placeholder fields | Confuses callers; schema lies about what's load-bearing |
 | Multiple casings accepted in handler | Hides the contract; one casing won, document it |

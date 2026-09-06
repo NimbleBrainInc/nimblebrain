@@ -1,4 +1,4 @@
-import type { HostManifestMeta } from "../bundles/types.ts";
+import type { HostManifestMeta } from "../connectors/runtime/types.ts";
 import { HOOK_SLUG_RE } from "./token.ts";
 import type { HookDeclaration } from "./types.ts";
 

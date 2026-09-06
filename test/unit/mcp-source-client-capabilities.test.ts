@@ -10,7 +10,7 @@
  * have invited a server to expect a client that never arrived.
  *
  * Read from the server end of a real in-process handshake, so what is asserted
- * is what a bundle actually receives.
+ * is what a connector actually receives.
  */
 
 import { afterEach, describe, expect, test } from "bun:test";

@@ -566,7 +566,7 @@ async function generateBriefing(
   });
   const activity = await collector.collect({ since });
   const registry = runtime.getRegistryForCurrentWorkspace();
-  const instances = runtime.getBundleInstancesForWorkspace(wsId);
+  const instances = runtime.getConnectorInstancesForWorkspace(wsId);
   const facetContext = await collectBriefingFacets(instances, registry, { since, until });
   const modelString = runtime.getModelSlot("fast");
   const generator = new BriefingGenerator(
@@ -652,7 +652,7 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
   const toolDefs: InProcessTool[] = [
     {
       name: "list_apps",
-      description: "List installed apps/bundles with status, tool count, and trust scores.",
+      description: "List installed apps/connectors with status, tool count, and trust scores.",
       meta: { [INTERNAL_TOOL_ANNOTATION]: true },
       inputSchema: {
         type: "object",

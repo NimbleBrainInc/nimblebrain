@@ -220,10 +220,10 @@ describe("validateStaticCatalog", () => {
   });
 
   test("the shipped example catalog and the test fixtures both pass the gate", () => {
-    // `check:catalog-schema` runs the gate over src/connectors/curated in
+    // `check:catalog-schema` runs the gate over src/connectors/catalog/curated in
     // `verify:static`; this keeps the fixture catalog honest too, so a
     // fixture edit cannot quietly start relying on a dropped entry.
-    expect(validateStaticCatalog("src/connectors/curated")).toEqual([]);
+    expect(validateStaticCatalog("src/connectors/catalog/curated")).toEqual([]);
     expect(validateStaticCatalog(CONNECTOR_FIXTURE_DIR)).toEqual([]);
   });
 });

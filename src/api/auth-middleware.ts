@@ -23,7 +23,7 @@ export function resolveAuthMode(provider: IdentityProvider | null): AuthMode {
 export interface AuthMiddlewareOptions {
   /** Auth mode — adapter or dev. */
   mode: AuthMode;
-  /** Internal token for bundle-to-host calls (scoped to chat endpoints). */
+  /** Internal token for connector-to-host calls (scoped to chat endpoints). */
   internalToken: string;
   /** Event sink for audit logging. */
   eventSink: EventSink;
@@ -44,7 +44,7 @@ export function isAuthError(result: AuthResult): result is Response {
  * Authenticate a request against the configured auth mode.
  *
  * Checks in order:
- * 1. Internal token (scoped to chat endpoints — always checked first for bundle-to-host calls)
+ * 1. Internal token (scoped to chat endpoints — always checked first for connector-to-host calls)
  * 2. IdentityProvider.verifyRequest() when mode is "adapter"
  * 3. Pass-through when mode is "dev"
  *
@@ -60,7 +60,7 @@ export async function authenticateRequest(
   const authHeader = req.headers.get("authorization") ?? "";
   const bearerToken = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
 
-  // 1. Always check internal token first (bundle-to-host calls)
+  // 1. Always check internal token first (connector-to-host calls)
   if (bearerToken && constantTimeEqual(bearerToken, internalToken)) {
     const url = new URL(req.url);
     const error = validateInternalToken(bearerToken, internalToken, url.pathname, req.method);

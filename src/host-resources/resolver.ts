@@ -25,7 +25,7 @@ const RESOURCE_NOT_FOUND = -32002;
  * `-32004 Rate limited` in the JSON-RPC reserved range — both are
  * deliberate quota responses, not server faults. `-32603 InternalError`
  * would mis-signal "this read exceeded the cap" as "the platform is
- * broken." Bundle SDKs match on the specific code to back off
+ * broken." Connector SDKs match on the specific code to back off
  * intelligently (e.g. split a large read into ranges once range reads
  * ship in v2).
  */
@@ -33,13 +33,13 @@ const RESPONSE_TOO_LARGE = -32005;
 
 /**
  * Per-call context for resolving a host resource. The workspace id comes
- * from the bundle's session, never from the URI — the platform owns the
- * identity, the URI carries only the file id. The bundle id rides along
+ * from the connector's session, never from the URI — the platform owns the
+ * identity, the URI carries only the file id. The connector id rides along
  * for audit / rate-limit attribution.
  */
 export interface HostResourceContext {
   workspaceId: string;
-  bundleId: string;
+  connectorId: string;
 }
 
 export interface ListResourcesParams {
@@ -52,10 +52,10 @@ export interface ListResourcesParams {
 }
 
 /**
- * The single chokepoint a bundle's inbound `ai.nimblebrain/resources/*`
+ * The single chokepoint a connector's inbound `ai.nimblebrain/resources/*`
  * request goes through (today the workspace-owned `FileStore`; future schemes like
  * `entities://` would land here as additional read/list paths). Files are
- * workspace-owned: every read/list resolves in the bundle's request workspace
+ * workspace-owned: every read/list resolves in the connector's request workspace
  * (`ctx.workspaceId`) under the session user's partition — never against any
  * wsId the URI might encode (the URI is bare), and never across workspaces.
  */
@@ -66,14 +66,14 @@ export interface HostResourcesResolver {
 
 /**
  * Resolves `files://<id>` URIs through the workspace-owned `FileStore` for the
- * bundle's request workspace and the session user's partition.
+ * connector's request workspace and the session user's partition.
  * Reuses `isTextMime`/`fileIdToUri` from the platform's `files` source
  * so the byte/text discrimination matches what the agent sees via
  * `files__read` exactly. Audit events ride the platform's existing
  * event sink alongside other tool activity.
  *
  * Files are workspace-owned: `getFileStore(wsId)` resolves the caller's store in one
- * workspace. The resolver passes `ctx.workspaceId` (the workspace the bundle ran in), so a
+ * workspace. The resolver passes `ctx.workspaceId` (the workspace the connector ran in), so a
  * `files://` read resolves in that workspace only — a file from another workspace is not
  * on disk there and collapses to `-32002`.
  */
@@ -97,11 +97,11 @@ export class FileBackedHostResourcesResolver implements HostResourcesResolver {
       // belongs to a different user (we never look across identities),
       // disk I/O / permission / corruption errors. The collapse
       // prevents cross-identity inventory enumeration AND keeps the wire
-      // contract simple for bundle SDKs. But operators chasing a real
+      // contract simple for connector SDKs. But operators chasing a real
       // disk-side issue need visibility — log the actual error before
       // collapsing so the ops trail isn't blind.
       log.warn(
-        `[host-resources] [${ctx.bundleId}:${ctx.workspaceId}] read ${uri} failed (collapsing to -32002): ${err instanceof Error ? err.message : String(err)}`,
+        `[host-resources] [${ctx.connectorId}:${ctx.workspaceId}] read ${uri} failed (collapsing to -32002): ${err instanceof Error ? err.message : String(err)}`,
       );
       throw new McpError(RESOURCE_NOT_FOUND, "Resource not found", { uri });
     }
@@ -132,14 +132,14 @@ export class FileBackedHostResourcesResolver implements HostResourcesResolver {
 
     log.debug(
       "host-resources",
-      `[${ctx.bundleId}:${ctx.workspaceId}] read ${uri} → ${result.size}B (${Date.now() - start}ms)`,
+      `[${ctx.connectorId}:${ctx.workspaceId}] read ${uri} → ${result.size}B (${Date.now() - start}ms)`,
     );
 
     return { contents };
   }
 
   async list(params: ListResourcesParams, ctx: HostResourceContext): Promise<ListResourcesResult> {
-    // Workspace-scoped: returns the session user's files in the bundle's
+    // Workspace-scoped: returns the session user's files in the connector's
     // request workspace (`ctx.workspaceId`) only — never across the user's other
     // workspaces. The store is rooted at that one owner partition, so the
     // boundary is the directory, not a filter here.
@@ -150,9 +150,9 @@ export class FileBackedHostResourcesResolver implements HostResourcesResolver {
       });
     }
     // Pagination isn't supported in v1 — listing the user's files
-    // returns the full set in a single call. A bundle that passes a
+    // returns the full set in a single call. A connector that passes a
     // cursor would otherwise silently get the full set every call,
-    // breaking polite pagination loops. Reject loudly so the bundle
+    // breaking polite pagination loops. Reject loudly so the connector
     // SDK can detect the missing feature.
     if (params.cursor && params.cursor.length > 0) {
       throw new McpError(ErrorCode.InvalidParams, "Pagination is not supported in this version", {
@@ -167,12 +167,12 @@ export class FileBackedHostResourcesResolver implements HostResourcesResolver {
       ? all.filter((entry) => entry.mimeType === params.filter?.mimeType)
       : all;
 
-    // Validate `tags` shape before iterating. A buggy bundle that sends
+    // Validate `tags` shape before iterating. A buggy connector that sends
     // `tags: "single-tag"` (string) instead of `tags: ["single-tag"]`
     // would otherwise throw TypeError on `.every` and surface as a
     // generic dispatch failure with no diagnostic. Reject with
     // `-32602 Invalid params`, mirroring the unsupported-scheme branch
-    // above: same error code, same actionable shape for the bundle
+    // above: same error code, same actionable shape for the connector
     // author. Treating non-array as "no filter" was considered and
     // rejected — silently returning all files lies about whether the
     // filter ran.
@@ -195,7 +195,7 @@ export class FileBackedHostResourcesResolver implements HostResourcesResolver {
 
     log.debug(
       "host-resources",
-      `[${ctx.bundleId}:${ctx.workspaceId}] list → ${resources.length} resources`,
+      `[${ctx.connectorId}:${ctx.workspaceId}] list → ${resources.length} resources`,
     );
 
     return { resources };
@@ -204,7 +204,7 @@ export class FileBackedHostResourcesResolver implements HostResourcesResolver {
   /**
    * Single place that validates the URI scheme. Unknown schemes return
    * `-32602 Invalid params` with the supported set in `data.supported`,
-   * so a bundle author with a typo gets actionable feedback. Phase 1
+   * so a connector author with a typo gets actionable feedback. Phase 1
    * advertises only `files`; future schemes (e.g. `entities`) get added
    * here as the resolver gains additional backends.
    */

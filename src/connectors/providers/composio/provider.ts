@@ -38,7 +38,7 @@ import { ComposioConnectionProbe } from "./connection-probe.ts";
 import { COMPOSIO_PROVIDER_ID } from "./id.ts";
 import { composioAuthRoutes } from "./routes.ts";
 import {
-  cleanupComposioBundle,
+  cleanupComposioConnector,
   composioUserId,
   connectComposioApiKey,
   createComposioSession,
@@ -242,7 +242,7 @@ async function revokeReplacedAccount(
  * on a stale ACTIVE account. Best-effort by the seam's contract.
  */
 function cleanup(opts: BrokeredStateOptions): Promise<BrokeredCleanupResult> {
-  return cleanupComposioBundle({
+  return cleanupComposioConnector({
     workDir: opts.workDir,
     owner: opts.owner,
     connectorId: opts.brokered.connectorId,

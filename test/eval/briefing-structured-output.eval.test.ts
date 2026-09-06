@@ -73,8 +73,8 @@ function richActivity(): ActivityOutput {
       },
     ],
     bundle_events: [
-      { bundle: "@nimblebraininc/granola", event: "crashed", timestamp: "2026-04-13T11:00:00Z", detail: "Connection timeout" },
-      { bundle: "@nimblebraininc/granola", event: "recovered", timestamp: "2026-04-13T11:02:00Z" },
+      { connector: "@nimblebraininc/granola", event: "crashed", timestamp: "2026-04-13T11:00:00Z", detail: "Connection timeout" },
+      { connector: "@nimblebraininc/granola", event: "recovered", timestamp: "2026-04-13T11:02:00Z" },
     ],
     tool_usage: [
       { tool: "search_meetings", server: "granola", call_count: 6, error_count: 1, avg_latency_ms: 250 },

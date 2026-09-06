@@ -80,7 +80,7 @@ describe("handleExport — markdown", () => {
 		expect(result.content).toContain("**Created:** 2025-06-01T10:00:00.000Z");
 		expect(result.content).toContain("**Messages:** 4");
 		// Sum of per-message usage across the two assistant turns: 800 in / 600 out.
-		// (Was 1200/800 when the bundle honored line-1 totals; now derived from messages.)
+		// (Was 1200/800 when the connector honored line-1 totals; now derived from messages.)
 		expect(result.content).toContain("**Tokens:** 800 in / 600 out");
 		expect(result.content).toContain("## User");
 		expect(result.content).toContain("## Assistant");

@@ -103,12 +103,12 @@ describe("internal auth token - server integration", () => {
 				Authorization: `Bearer ${handle.internalToken}`,
 				"X-Workspace-Id": TEST_WORKSPACE_ID,
 			},
-			body: JSON.stringify({ message: "Hello from bundle", workspaceId: TEST_WORKSPACE_ID }),
+			body: JSON.stringify({ message: "Hello from connector", workspaceId: TEST_WORKSPACE_ID }),
 		});
 
 		expect(res.status).toBe(200);
 		const body = await res.json();
-		expect(body.response).toBe("Hello from bundle");
+		expect(body.response).toBe("Hello from connector");
 	});
 
 	it("request with internal token to /v1/chat/stream succeeds (200)", async () => {
@@ -119,7 +119,7 @@ describe("internal auth token - server integration", () => {
 				Authorization: `Bearer ${handle.internalToken}`,
 				"X-Workspace-Id": TEST_WORKSPACE_ID,
 			},
-			body: JSON.stringify({ message: "Stream from bundle", workspaceId: TEST_WORKSPACE_ID }),
+			body: JSON.stringify({ message: "Stream from connector", workspaceId: TEST_WORKSPACE_ID }),
 		});
 
 		expect(res.status).toBe(200);

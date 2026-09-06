@@ -3,12 +3,12 @@
  * one.
  *
  * **Config carries references; the store holds values.** A `nimblebrain.json`,
- * a `workspace.json`, or a `BundleRef` names the key it needs and nothing
+ * a `workspace.json`, or a `ConnectorRef` names the key it needs and nothing
  * about where the value lives — that stays the credential store's business
  * (`credential-store.ts`), which is what lets the backend swap from files to a
  * KMS without a config migration.
  *
- * A leaf module on purpose: the config types (`src/bundles/types.ts`,
+ * A leaf module on purpose: the config types (`src/connectors/runtime/types.ts`,
  * `src/model/registry.ts`, the `connectors` block) and the store both import
  * this, so it may import nothing itself.
  *

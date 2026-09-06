@@ -1,6 +1,6 @@
 /**
  * JSON-RPC method names for the host-resources extension. Namespaced
- * under `ai.nimblebrain/` per the MCP extension convention; bundles
+ * under `ai.nimblebrain/` per the MCP extension convention; connectors
  * dispatch to these via `ctx.session.send_request(...)` (Python) or
  * `server.request(...)` (TS) on the SDK side.
  *

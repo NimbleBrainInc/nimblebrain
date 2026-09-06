@@ -15,16 +15,16 @@ export { NoopEventSink } from "./adapters/noop-events.ts";
 // Adapters (non-model)
 export { StaticToolRouter } from "./adapters/static-router.ts";
 export { WorkspaceLogSink } from "./adapters/workspace-log-sink.ts";
-export type {
-  BundleInstance,
-  BundleRef,
-  BundleState,
-  BundleUiMeta,
-} from "./bundles/index.ts";
-// Bundles
-export { BundleLifecycleManager } from "./bundles/index.ts";
 // Config
 export { getValidator, SCHEMA_PATH } from "./config/index.ts";
+export type {
+  ConnectionState,
+  ConnectorInstance,
+  ConnectorRef,
+  ConnectorUiMeta,
+} from "./connectors/runtime/index.ts";
+// Connectors
+export { ConnectorLifecycleManager } from "./connectors/runtime/index.ts";
 export { EventSourcedConversationStore } from "./conversation/event-sourced-store.ts";
 export type {
   Conversation,

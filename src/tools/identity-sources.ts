@@ -130,7 +130,7 @@ export const AUTOMATIONS_TASK_SAFE_TOOLS: ReadonlySet<string> = new Set([
  * them out of the model's view; this predicate is the shared policy both layers
  * read.
  * `executor.ts::containsRecursiveTool` is a separate, narrower guard on
- * operator/bundle-authored `allowedTools`.
+ * operator/connector-authored `allowedTools`.
  */
 export function isTaskForbiddenIdentityTool(name: string): boolean {
   return name.startsWith("automations__") && !AUTOMATIONS_TASK_SAFE_TOOLS.has(name);

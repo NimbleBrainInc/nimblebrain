@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { getValidator } from "../../src/config/index.ts";
-import type { BundleRef, RemoteTransportConfig } from "../../src/bundles/types.ts";
+import type { ConnectorRef, RemoteTransportConfig } from "../../src/connectors/runtime/types.ts";
 
 describe("Remote transport — JSON Schema validation", () => {
 	const validate = getValidator();
@@ -9,7 +9,7 @@ describe("Remote transport — JSON Schema validation", () => {
 		return validate(config) as boolean;
 	}
 
-	it("accepts a url bundle and refuses one without a url", () => {
+	it("accepts a url connector and refuses one without a url", () => {
 		// Every connector is a remote MCP endpoint; `url` is the only addressing form.
 		expect(isValid({ bundles: [{ url: "https://example.com/mcp" }] })).toBe(true);
 		expect(isValid({ bundles: [{ name: "@nimblebraininc/echo" }] })).toBe(false);
@@ -18,8 +18,8 @@ describe("Remote transport — JSON Schema validation", () => {
 });
 
 describe("Remote transport — TypeScript types", () => {
-	it("BundleRef url variant type-checks", () => {
-		const ref: BundleRef = {
+	it("ConnectorRef url variant type-checks", () => {
+		const ref: ConnectorRef = {
 			url: "https://mcp.example.com/mcp",
 			serverName: "example",
 			transport: {

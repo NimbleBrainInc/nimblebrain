@@ -56,7 +56,7 @@ export interface Automation {
   /** Who created this automation. */
   source: AutomationSource;
 
-  /** If bundle-contributed, which bundle. */
+  /** If connector-contributed, which connector. */
   bundleName?: string;
 
   /** ISO timestamp. */
@@ -154,7 +154,7 @@ export interface AutomationRun {
   resultPreview?: string;
   /**
    * Engine-level stop reason. Mirrors `StopReason` from `src/engine/types.ts`
-   * (intentionally duplicated here to keep this bundle's types decoupled
+   * (intentionally duplicated here to keep this app's types decoupled
    * from the engine package). Keep in sync when the engine union changes.
    */
   stopReason?: "complete" | "max_iterations" | "length" | "content_filter" | "error" | "other";

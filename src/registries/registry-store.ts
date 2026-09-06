@@ -21,7 +21,7 @@ import type { RegistryConfig } from "./types.ts";
  *
  *   - `bundled-static` — a `StaticSource` pointing at the curated
  *     catalog directory. Defaults to the minimal in-image example
- *     (`src/connectors/curated/`); a deployment overrides the path with
+ *     (`src/connectors/catalog/curated/`); a deployment overrides the path with
  *     `NB_CURATED_CATALOG_DIR` (a mounted ConfigMap dir) to supply the
  *     real catalog. Locked: the registry is always present and can't be
  *     disabled, but its backing path is deployment configuration.
@@ -41,13 +41,19 @@ const FILE_NAME = "registries.json";
 /**
  * Absolute path to the minimal curated catalog shipped in the image —
  * a directory of `ServerDetail` YAML files (see
- * `src/connectors/curated/`). Deliberately tiny: a couple of DCR
+ * `src/connectors/catalog/curated/`). Deliberately tiny: a couple of DCR
  * entries so fresh / OSS / dev installs have a non-empty Browse without
  * inheriting production curation. Real deployments override this with
  * `NB_CURATED_CATALOG_DIR` pointing at a mounted ConfigMap directory
  * (see `curatedCatalogPath`).
  */
-export const BUNDLED_STATIC_CATALOG_PATH = join(import.meta.dir, "..", "connectors", "curated");
+export const BUNDLED_STATIC_CATALOG_PATH = join(
+  import.meta.dir,
+  "..",
+  "connectors",
+  "catalog",
+  "curated",
+);
 
 /**
  * Deployment override for the curated catalog source. Set to a mounted
@@ -278,8 +284,8 @@ function resolveEnvOverride(): RegistryConfig[] | null {
     // operator overrides can add registries without accidentally
     // dropping the platform default.
     const bundled = defaultRegistryById(BUNDLED_STATIC_ID);
-    const withoutBundled = validated.filter((r) => r.id !== bundled.id);
-    return [bundled, ...withoutBundled];
+    const withoutConnectord = validated.filter((r) => r.id !== bundled.id);
+    return [bundled, ...withoutConnectord];
   } catch (err) {
     log.warn(
       `[registries] NB_REGISTRIES parse error: ${err instanceof Error ? err.message : String(err)} — ignored`,

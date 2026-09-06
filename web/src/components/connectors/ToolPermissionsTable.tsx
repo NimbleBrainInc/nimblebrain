@@ -143,7 +143,7 @@ export function ToolPermissionsTable({
   // active source) returns empty tools — the hero already conveys
   // the "Sign-in required / Configure" prompt; an empty Tool
   // permissions section adds noise. Same for genuine zero-tool
-  // bundles (rare). After load, only render with content.
+  // connectors (rare). After load, only render with content.
   if (!loading && !error && tools.length === 0) return null;
 
   if (loading) {

@@ -33,7 +33,7 @@ export interface CreateIframeOptions {
    * Whether to honor server-declared `_meta.ui.permissions` (camera, microphone,
    * geolocation). Defaults to `false` — servers cannot unilaterally grant
    * themselves device access. The host opts in after some form of consent
-   * (per-workspace admin approval, per-bundle config, user prompt), staged for
+   * (per-workspace admin approval, per-connector config, user prompt), staged for
    * the consent-UI follow-up in an internal design note.
    *
    * `clipboard-write` is always on — it's needed for copy/cut UX and is
@@ -69,7 +69,7 @@ function filterDomains(list: string[] | undefined): string[] | undefined {
     if (isValidCspDomain(entry)) {
       ok.push(entry);
     } else {
-      // Loud rejection — silent drops mask bundle misconfiguration.
+      // Loud rejection — silent drops mask connector misconfiguration.
       console.warn(
         `[iframe-csp] dropping invalid server-declared domain: ${JSON.stringify(entry)}`,
       );
@@ -85,14 +85,14 @@ function filterDomains(list: string[] | undefined): string[] | undefined {
  * network, no nested frames, no base URI override. Server-declared
  * `_meta.ui.csp.*` fields (passed via `CreateIframeOptions`) relax these for
  * the specific origins the app needs — after validation; invalid entries
- * are dropped with a warning so a compromised or misconfigured bundle can't
+ * are dropped with a warning so a compromised or misconfigured connector can't
  * inject additional directives via metacharacters in its declarations.
  * `blob:` is preserved on `frame-src` for inline content rendering (e.g.,
  * PDF preview of tool output).
  */
 export function buildCSP(options?: CreateIframeOptions): string {
   // Validate every server-declared entry before it touches a directive. A
-  // compromised bundle declaring
+  // compromised connector declaring
   // `connectDomains: ["https://x; script-src *"]` would otherwise inject a
   // second directive that relaxes script-src; `filterDomains` rejects it.
   const connectDomains = filterDomains(options?.connectDomains);
@@ -141,7 +141,7 @@ export function buildCSP(options?: CreateIframeOptions): string {
  * (explicitly disallowed because it's a gesture-less exfiltration vector).
  *
  * The host can opt in via `CreateIframeOptions.honorServerPermissions`.
- * The production path for that opt-in is a per-bundle workspace-config flag
+ * The production path for that opt-in is a per-connector workspace-config flag
  * or a user consent prompt — staged for the consent-UI follow-up.
  *
  * `clipboard-write` stays always-on: needed for copy/cut UX and gesture-gated
@@ -218,7 +218,7 @@ export function injectCSP(html: string, policy: string): string {
  *   silently blocks the download.
  *
  * Deliberately NOT granted:
- * - allow-same-origin: App HTML is third-party (bundle / remote-MCP-server
+ * - allow-same-origin: App HTML is third-party (connector / remote-MCP-server
  *   authored). With `srcdoc`, granting this makes the frame SAME-ORIGIN with
  *   the host — the app could then read `window.parent` (DOM, globals), ride
  *   the host session cookie on same-origin `/v1` + `/mcp` fetches, and remove

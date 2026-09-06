@@ -332,7 +332,7 @@ Greet with enthusiasm!
     await runtime.shutdown();
   });
 
-  it("reports available tools (empty when no bundles)", async () => {
+  it("reports available tools (empty when no connectors)", async () => {
     const runtime = await Runtime.start({
       workDir: testDir,
       model: { provider: "custom", adapter: createEchoModel() },
@@ -340,7 +340,7 @@ Greet with enthusiasm!
     });
 
     const tools = await runtime.availableTools();
-    // System tools + nb-core tools are always present even without bundles.
+    // System tools + nb-core tools are always present even without connectors.
     // Exact count may change as tools are added — verify minimum expected set.
     expect(tools.length).toBeGreaterThanOrEqual(15);
     const names = tools.map((t) => t.name).sort();

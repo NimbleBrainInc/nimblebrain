@@ -21,7 +21,7 @@
  * The invariant is the one phase 2.5 established and it is why the key is not in
  * the catalog entry: **persisted state names *what* credential it needs, never
  * *where* the value comes from.** An install copies `providerAuth.config`
- * verbatim into the `BundleRef`, so a `tokenEnv` field there would write an env
+ * verbatim into the `ConnectorRef`, so a `tokenEnv` field there would write an env
  * var name into tenant state — the shape that arrangement removed. The ref names
  * the gateway; resolution stays here.
  */

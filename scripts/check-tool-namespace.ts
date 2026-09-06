@@ -86,7 +86,7 @@ const ALLOWED_FILES = new Set(
  * `namespaced`, `qualified`, or `fullTool` in their name, OR are
  * literally `toolName`. We deliberately do NOT match the bare
  * identifier `name` — too many call sites use `name` for unrelated
- * things (e.g. reverse-DNS server names in `src/bundles/paths.ts`).
+ * things (e.g. reverse-DNS server names in `src/connectors/runtime/paths.ts`).
  * If a future call site genuinely binds a namespaced tool name to
  * `name`, the lint surfaces it via the construction predicates first;
  * splitting it back open is then trivially obvious in review.

@@ -9,10 +9,10 @@ import {
 	CallToolRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { ToolRegistry } from "../../src/tools/registry.ts";
-import { deriveServerName } from "../../src/bundles/paths.ts";
-import { startBundleSource } from "../../src/bundles/startup.ts";
+import { deriveServerName } from "../../src/connectors/runtime/paths.ts";
+import { startConnectorSource } from "../../src/connectors/runtime/startup.ts";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
-import type { BundleRef } from "../../src/bundles/types.ts";
+import type { ConnectorRef } from "../../src/connectors/runtime/types.ts";
 
 const testDir = join(tmpdir(), `nimblebrain-remote-lifecycle-${Date.now()}`);
 
@@ -105,10 +105,10 @@ function startMockRemoteServer(toolCount = 2): MockRemoteServer {
 }
 
 // ---------------------------------------------------------------------------
-// Startup with url entries in config (startBundleSource)
+// Startup with url entries in config (startConnectorSource)
 // ---------------------------------------------------------------------------
 
-describe("startBundleSource — remote url entries", () => {
+describe("startConnectorSource — remote url entries", () => {
 	let mockServer: MockRemoteServer;
 
 	beforeEach(() => {
@@ -120,14 +120,14 @@ describe("startBundleSource — remote url entries", () => {
 		mockServer?.close();
 	});
 
-	it("starts a remote bundle from a url BundleRef", async () => {
+	it("starts a remote connector from a url ConnectorRef", async () => {
 		const registry = new ToolRegistry();
-		const ref: BundleRef = {
+		const ref: ConnectorRef = {
 			url: mockServer.url,
 			serverName: "startup-remote",
 		};
 
-		const meta = await startBundleSource(ref, registry, new NoopEventSink(), {
+		const meta = await startConnectorSource(ref, registry, new NoopEventSink(), {
 			allowInsecureRemotes: true,
 			wsId: "ws_test",
 		});
@@ -146,11 +146,11 @@ describe("startBundleSource — remote url entries", () => {
 
 	it("derives serverName from url when serverName not provided", async () => {
 		const registry = new ToolRegistry();
-		const ref: BundleRef = {
+		const ref: ConnectorRef = {
 			url: mockServer.url,
 		};
 
-		const meta = await startBundleSource(ref, registry, new NoopEventSink(), {
+		const meta = await startConnectorSource(ref, registry, new NoopEventSink(), {
 			allowInsecureRemotes: true,
 			wsId: "ws_test",
 		});
@@ -165,14 +165,14 @@ describe("startBundleSource — remote url entries", () => {
 
 	it("failed remote startup is caught by allSettled (not fatal)", async () => {
 		const registry = new ToolRegistry();
-		const ref: BundleRef = {
+		const ref: ConnectorRef = {
 			url: "http://127.0.0.1:1/mcp",
 			serverName: "bad-remote",
 		};
 
-		// startBundleSource throws — but callers use allSettled
+		// startConnectorSource throws — but callers use allSettled
 		const results = await Promise.allSettled([
-			startBundleSource(ref, registry, new NoopEventSink(), {
+			startConnectorSource(ref, registry, new NoopEventSink(), {
 				allowInsecureRemotes: true,
 				wsId: "ws_test",
 			}),
@@ -182,21 +182,21 @@ describe("startBundleSource — remote url entries", () => {
 		expect(registry.hasSource("bad-remote")).toBe(false);
 	}, 20_000);
 
-	it("url bundle without static auth + missing wsId throws (no silent ws_default fallback)", async () => {
-		// Credential-boundary guard: URL bundles that will open an OAuth flow
+	it("url connector without static auth + missing wsId throws (no silent ws_default fallback)", async () => {
+		// Credential-boundary guard: URL connectors that will open an OAuth flow
 		// must be workspace-scoped. A silent `?? "ws_default"` fallback would
-		// pool OAuth tokens across workspaces, so startBundleSource hard-errors
+		// pool OAuth tokens across workspaces, so startConnectorSource hard-errors
 		// instead. If someone refactors and weakens the check to a default,
 		// this test fails — which is the whole point.
 		const registry = new ToolRegistry();
-		const ref: BundleRef = {
+		const ref: ConnectorRef = {
 			url: mockServer.url,
 			serverName: "no-ws",
 			// no transport.auth — triggers OAuth provider path
 		};
 
 		await expect(
-			startBundleSource(ref, registry, new NoopEventSink(), {
+			startConnectorSource(ref, registry, new NoopEventSink(), {
 				allowInsecureRemotes: true,
 				// wsId intentionally omitted
 			}),
@@ -204,19 +204,19 @@ describe("startBundleSource — remote url entries", () => {
 		expect(registry.hasSource("no-ws")).toBe(false);
 	}, 15_000);
 
-	it("url bundle WITH static auth starts without wsId (no OAuth provider needed)", async () => {
+	it("url connector WITH static auth starts without wsId (no OAuth provider needed)", async () => {
 		// Complement to the above: when static auth is present, no OAuth
 		// provider is constructed, so missing wsId is not a credential-
 		// boundary concern. Confirms the wsId requirement is scoped exactly
 		// to the path that would otherwise leak credentials.
 		const registry = new ToolRegistry();
-		const ref: BundleRef = {
+		const ref: ConnectorRef = {
 			url: mockServer.url,
 			serverName: "static-auth",
 			transport: { type: "streamable-http", auth: { type: "bearer", token: "t" } },
 		};
 
-		const meta = await startBundleSource(ref, registry, new NoopEventSink(), {
+		const meta = await startConnectorSource(ref, registry, new NoopEventSink(), {
 			allowInsecureRemotes: true,
 			// wsId intentionally omitted — allowed here
 		});

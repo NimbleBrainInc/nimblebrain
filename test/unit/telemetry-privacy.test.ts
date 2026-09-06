@@ -170,9 +170,9 @@ describe("Telemetry Privacy", () => {
         engineType: "bundle.installed",
         emitData: {
           serverName: "tasks",
-          bundleName: "@nimblebraininc/tasks",
+          connectorName: "@nimblebraininc/tasks",
           installSource: "registry",
-          path: "/Users/john/bundles/tasks",
+          path: "/Users/john/connectors/tasks",
           ui: { name: "Tasks", icon: "tasks" },
           version: "1.2.3",
           manifest: { name: "tasks" },
@@ -184,9 +184,9 @@ describe("Telemetry Privacy", () => {
         engineType: "bundle.uninstalled",
         emitData: {
           serverName: "tasks",
-          bundleName: "@nimblebraininc/tasks",
+          connectorName: "@nimblebraininc/tasks",
           installSource: "registry",
-          path: "/Users/john/bundles/tasks",
+          path: "/Users/john/connectors/tasks",
           version: "1.2.3",
         },
       },
@@ -258,12 +258,12 @@ describe("Telemetry Privacy", () => {
 
       emit(sink, "bundle.installed", {
         name: "@nimblebraininc/tasks",
-        path: "/Users/john/bundles",
+        path: "/Users/john/connectors",
       });
 
       emit(sink, "bundle.uninstalled", {
         name: "@nimblebraininc/tasks",
-        path: "/Users/john/bundles",
+        path: "/Users/john/connectors",
       });
 
       expect(client.events.length).toBeGreaterThan(0);
@@ -296,14 +296,14 @@ describe("Telemetry Privacy", () => {
   });
 
   // -----------------------------------------------------------------------
-  // 3. Bundle Name Exclusion
+  // 3. Connector Name Exclusion
   // -----------------------------------------------------------------------
 
-  describe("bundle name exclusion", () => {
-    it("bundle.installed does not contain bundle name", () => {
+  describe("connector name exclusion", () => {
+    it("bundle.installed does not contain connector name", () => {
       emit(sink, "bundle.installed", {
         name: "@nimblebraininc/tasks",
-        bundleName: "@nimblebraininc/tasks",
+        connectorName: "@nimblebraininc/tasks",
       });
 
       const captured = lastCaptured(client);
@@ -314,17 +314,17 @@ describe("Telemetry Privacy", () => {
       }
     });
 
-    it("bundle.installed does not contain bundle path", () => {
+    it("bundle.installed does not contain connector path", () => {
       emit(sink, "bundle.installed", {
         name: "@nimblebraininc/tasks",
-        path: "/Users/john/secret-project/bundle",
+        path: "/Users/john/secret-project/connector",
       });
 
       const captured = lastCaptured(client);
       expect(captured).toBeDefined();
 
       for (const value of Object.values(captured.properties)) {
-        expect(String(value)).not.toContain("/Users/john/secret-project/bundle");
+        expect(String(value)).not.toContain("/Users/john/secret-project/connector");
       }
     });
 

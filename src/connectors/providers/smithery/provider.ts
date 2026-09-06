@@ -203,12 +203,12 @@ async function cleanup(opts: BrokeredStateOptions): Promise<BrokeredCleanupResul
         "nothing to revoke.",
     };
   }
-  const { upstreamDeleted, lastError } = await cleanupSmitheryBundle(coords);
+  const { upstreamDeleted, lastError } = await cleanupSmitheryConnector(coords);
   return { upstreamDeleted, localDeleted: false, ...(lastError ? { lastError } : {}) };
 }
 
 /**
- * Tear down a smithery-backed bundle's brokered connection.
+ * Tear down a smithery-backed connector's brokered connection.
  *
  * The reason it exists at all: uninstall-without-prior-disconnect is the
  * realistic flow, and without a teardown the connection — plus, for any
@@ -218,7 +218,7 @@ async function cleanup(opts: BrokeredStateOptions): Promise<BrokeredCleanupResul
  * Exported for its own direct tests; the runtime reaches it through the
  * provider's `cleanup` arm. Best-effort — never throws.
  */
-export async function cleanupSmitheryBundle(opts: {
+export async function cleanupSmitheryConnector(opts: {
   connectionId: string;
   namespace: string;
   baseUrl: string;

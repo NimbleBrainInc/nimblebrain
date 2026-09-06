@@ -28,7 +28,7 @@ interface FixtureConfig {
   textBody: string;
 }
 
-function createFixtureBundle(dir: string, config: FixtureConfig): string {
+function createFixtureConnector(dir: string, config: FixtureConfig): string {
   mkdirSync(dir, { recursive: true });
   const nodeModulesPath = join(import.meta.dir, "../..", "node_modules");
   const dashboardUri = `ui://${config.namespace}/dashboard`;
@@ -129,7 +129,7 @@ beforeAll(async () => {
 
   // Provision the primary workspace and register the fixture MCP source in it.
   await provisionTestWorkspace(runtime);
-  const fixtureDir = createFixtureBundle(join(testDir, "fixture"), {
+  const fixtureDir = createFixtureConnector(join(testDir, "fixture"), {
     namespace: "fixture",
     htmlBody: FIXTURE_HTML,
     textBody: FIXTURE_TEXT,
@@ -153,7 +153,7 @@ beforeAll(async () => {
   // Provision a second workspace with its own MCP source and a distinct
   // namespace — `ui://other/dashboard` is only reachable from this workspace.
   await provisionTestWorkspace(runtime, OTHER_WORKSPACE_ID, "Other Workspace");
-  const otherDir = createFixtureBundle(join(testDir, "other"), {
+  const otherDir = createFixtureConnector(join(testDir, "other"), {
     namespace: "other",
     htmlBody: "<h1>Other Workspace</h1>",
     textBody: "other greetings",
@@ -251,7 +251,7 @@ describe("MCP /mcp — resources", () => {
     // mimeType?, text?, blob? }] }` — with identical bytes for a given URI.
     //
     // We can't exercise the legacy REST endpoint directly here because it
-    // goes through `Runtime.readAppResource`, which checks bundle lifecycle
+    // goes through `Runtime.readAppResource`, which checks connector lifecycle
     // state (`lifecycle.getInstance`) and returns null for sources added
     // straight to the registry. We still assert the canonical spec shape
     // and the round-trip bytes, which is what parity means in practice.

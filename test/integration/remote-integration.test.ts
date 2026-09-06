@@ -22,12 +22,12 @@ import { startServer } from "../../src/api/server.ts";
 import type { ServerHandle } from "../../src/api/server.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
 import { getValidator } from "../../src/config/index.ts";
-import { deriveServerName } from "../../src/bundles/paths.ts";
+import { deriveServerName } from "../../src/connectors/runtime/paths.ts";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
-import { startBundleSource } from "../../src/bundles/startup.ts";
+import { startConnectorSource } from "../../src/connectors/runtime/startup.ts";
 import { ToolRegistry } from "../../src/tools/registry.ts";
 import { McpSource } from "../../src/tools/mcp-source.ts";
-import type { BundleRef } from "../../src/bundles/types.ts";
+import type { ConnectorRef } from "../../src/connectors/runtime/types.ts";
 import {
 	installTestCredentialStore,
 	resetTestCredentialStore,
@@ -121,7 +121,7 @@ describe("Remote integration: config → validate → load → tools", () => {
 
 	beforeEach(() => {
 		ensureTestDir();
-		// This block drives `startBundleSource` without a Runtime, so nothing has
+		// This block drives `startConnectorSource` without a Runtime, so nothing has
 		// installed the store the OAuth provider reads its records through.
 		installTestCredentialStore(testDir);
 		mockServer = startMockRemoteServer(3);
@@ -133,7 +133,7 @@ describe("Remote integration: config → validate → load → tools", () => {
 	});
 
 	it("config with url entry passes schema validation and starts a working source", async () => {
-		// Step 1: Build a config object with a url bundle
+		// Step 1: Build a config object with a url connector
 		const config = {
 			bundles: [
 				{
@@ -147,10 +147,10 @@ describe("Remote integration: config → validate → load → tools", () => {
 		const validate = getValidator();
 		expect(validate(config)).toBe(true);
 
-		// Step 3: Start bundle source from the validated ref
+		// Step 3: Start connector source from the validated ref
 		const registry = new ToolRegistry();
-		const ref: BundleRef = config.bundles[0] as BundleRef;
-		const meta = await startBundleSource(ref, registry, new NoopEventSink(), { allowInsecureRemotes: true, wsId: "ws_test" });
+		const ref: ConnectorRef = config.bundles[0] as ConnectorRef;
+		const meta = await startConnectorSource(ref, registry, new NoopEventSink(), { allowInsecureRemotes: true, wsId: "ws_test" });
 
 		expect(meta).not.toBeNull();
 		expect(meta.meta).not.toBeNull();
@@ -186,8 +186,8 @@ describe("Remote integration: config → validate → load → tools", () => {
 
 		// Start source (auth headers won't affect our mock server)
 		const registry = new ToolRegistry();
-		const ref: BundleRef = config.bundles[0] as BundleRef;
-		const meta = await startBundleSource(ref, registry, new NoopEventSink(), { allowInsecureRemotes: true, wsId: "ws_test" });
+		const ref: ConnectorRef = config.bundles[0] as ConnectorRef;
+		const meta = await startConnectorSource(ref, registry, new NoopEventSink(), { allowInsecureRemotes: true, wsId: "ws_test" });
 
 		expect(meta).not.toBeNull();
 		expect(registry.hasSource("authed-remote")).toBe(true);
@@ -209,24 +209,24 @@ describe("Remote integration: config → validate → load → tools", () => {
 		expect(validate(config)).toBe(true);
 
 		const registry = new ToolRegistry();
-		const ref: BundleRef = config.bundles[0] as BundleRef;
+		const ref: ConnectorRef = config.bundles[0] as ConnectorRef;
 
-		const results = await Promise.allSettled([startBundleSource(ref, registry, new NoopEventSink(), { allowInsecureRemotes: true, wsId: "ws_test" })]);
+		const results = await Promise.allSettled([startConnectorSource(ref, registry, new NoopEventSink(), { allowInsecureRemotes: true, wsId: "ws_test" })]);
 		expect(results[0]!.status).toBe("rejected");
 		expect(registry.hasSource("dead-remote")).toBe(false);
 	}, 20_000);
 
-	it("keepRegisteredOnStartFailure leaves an unreachable url bundle registered and retryable", async () => {
-		// The boot-loop contract. An installed bundle whose endpoint is unreachable
+	it("keepRegisteredOnStartFailure leaves an unreachable url connector registered and retryable", async () => {
+		// The boot-loop contract. An installed connector whose endpoint is unreachable
 		// during startup must stay in the registry: an absent source is invisible to
 		// the agent's tool list, `nb__status`, HealthMonitor, and the unhealthy
 		// gauge — and the only path that revives it needs a tool call the model
 		// cannot make against a tool it was never shown.
 		const registry = new ToolRegistry();
-		const ref: BundleRef = { url: "http://127.0.0.1:1/mcp", serverName: "boot-down-remote" };
+		const ref: ConnectorRef = { url: "http://127.0.0.1:1/mcp", serverName: "boot-down-remote" };
 
 		const results = await Promise.allSettled([
-			startBundleSource(ref, registry, new NoopEventSink(), {
+			startConnectorSource(ref, registry, new NoopEventSink(), {
 				allowInsecureRemotes: true,
 				wsId: "ws_test",
 				keepRegisteredOnStartFailure: true,
@@ -284,7 +284,7 @@ describe.skip("Remote integration: POST /v1/apps/install with url", () => {
 		mockServer?.close();
 	});
 
-	it("installs a remote bundle via API and returns correct response", async () => {
+	it("installs a remote connector via API and returns correct response", async () => {
 		const res = await fetch(`${baseUrl}/v1/apps/install`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json", "X-Workspace-Id": TEST_WORKSPACE_ID },
@@ -298,13 +298,13 @@ describe.skip("Remote integration: POST /v1/apps/install with url", () => {
 		const body = await res.json();
 
 		expect(body.name).toBe("api-remote");
-		expect(body.bundleName).toBe(mockServer.url);
+		expect(body.connectorName).toBe(mockServer.url);
 		expect(body.status).toBe("running");
 		expect(body.type).toBe("plain");
 		expect(body.toolCount).toBe(4);
 	}, 15_000);
 
-	it("installs a remote bundle with transport config via API", async () => {
+	it("installs a remote connector with transport config via API", async () => {
 		const res = await fetch(`${baseUrl}/v1/apps/install`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json", "X-Workspace-Id": TEST_WORKSPACE_ID },
@@ -321,7 +321,7 @@ describe.skip("Remote integration: POST /v1/apps/install with url", () => {
 		expect(body.toolCount).toBe(4);
 	}, 15_000);
 
-	it("installed remote bundle appears in GET /v1/apps", async () => {
+	it("installed remote connector appears in GET /v1/apps", async () => {
 		// Install first
 		const installRes = await fetch(`${baseUrl}/v1/apps/install`, {
 			method: "POST",
@@ -379,7 +379,7 @@ describe.skip("Remote integration: POST /v1/apps/install with url", () => {
 // 3. Mixed config startup: name + path + url via Runtime.start
 // ---------------------------------------------------------------------------
 
-describe("Remote integration: registering remote bundles in workspace registry", () => {
+describe("Remote integration: registering remote connectors in workspace registry", () => {
 	let mockServer: MockRemoteServer;
 
 	beforeEach(() => {
@@ -391,7 +391,7 @@ describe("Remote integration: registering remote bundles in workspace registry",
 		mockServer?.close();
 	});
 
-	it("remote bundle can be registered into a workspace registry and provides tools", async () => {
+	it("remote connector can be registered into a workspace registry and provides tools", async () => {
 		const runtime = await Runtime.start({
 			workDir: testDir,
 			model: { provider: "custom", adapter: createEchoModel() },
@@ -401,10 +401,10 @@ describe("Remote integration: registering remote bundles in workspace registry",
 		});
 		await provisionTestWorkspace(runtime);
 
-		// Register a remote bundle into the workspace registry
+		// Register a remote connector into the workspace registry
 		const registry = runtime.getRegistryForWorkspace(TEST_WORKSPACE_ID);
-		const ref: BundleRef = { url: mockServer.url, serverName: "runtime-remote" };
-		await startBundleSource(ref, registry, new NoopEventSink(), { allowInsecureRemotes: true, wsId: "ws_test" });
+		const ref: ConnectorRef = { url: mockServer.url, serverName: "runtime-remote" };
+		await startConnectorSource(ref, registry, new NoopEventSink(), { allowInsecureRemotes: true, wsId: "ws_test" });
 
 		expect(registry.hasSource("runtime-remote")).toBe(true);
 
@@ -417,7 +417,7 @@ describe("Remote integration: registering remote bundles in workspace registry",
 		await runtime.shutdown();
 	}, 15_000);
 
-	it("failed remote bundle does not pollute registry while successful one registers", async () => {
+	it("failed remote connector does not pollute registry while successful one registers", async () => {
 		const runtime = await Runtime.start({
 			workDir: testDir,
 			model: { provider: "custom", adapter: createEchoModel() },
@@ -430,16 +430,16 @@ describe("Remote integration: registering remote bundles in workspace registry",
 		const registry = runtime.getRegistryForWorkspace(TEST_WORKSPACE_ID);
 
 		// Try to register a bad remote (should fail)
-		const badRef: BundleRef = { url: "http://127.0.0.1:1/mcp", serverName: "bad-remote" };
+		const badRef: ConnectorRef = { url: "http://127.0.0.1:1/mcp", serverName: "bad-remote" };
 		const badResult = await Promise.allSettled([
-			startBundleSource(badRef, registry, new NoopEventSink(), { allowInsecureRemotes: true, wsId: "ws_test" }),
+			startConnectorSource(badRef, registry, new NoopEventSink(), { allowInsecureRemotes: true, wsId: "ws_test" }),
 		]);
 		expect(badResult[0]!.status).toBe("rejected");
 		expect(registry.hasSource("bad-remote")).toBe(false);
 
 		// Register a good remote (should succeed)
-		const goodRef: BundleRef = { url: mockServer.url, serverName: "good-remote" };
-		await startBundleSource(goodRef, registry, new NoopEventSink(), { allowInsecureRemotes: true, wsId: "ws_test" });
+		const goodRef: ConnectorRef = { url: mockServer.url, serverName: "good-remote" };
+		await startConnectorSource(goodRef, registry, new NoopEventSink(), { allowInsecureRemotes: true, wsId: "ws_test" });
 		expect(registry.hasSource("good-remote")).toBe(true);
 
 		await registry.removeSource("good-remote");

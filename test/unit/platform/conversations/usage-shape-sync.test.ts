@@ -5,14 +5,14 @@ import type { TokenUsage } from "../../../../src/usage/types.ts";
 /**
  * Compile-time drift guard.
  *
- * The conversations bundle is intentionally self-contained — it does
+ * The conversations app is intentionally self-contained — it does
  * not import from the runtime — so it duplicates `TokenUsage` as a
  * local `UsageShape` interface. The two definitions are textually
  * identical today; this test makes sure they STAY structurally
  * compatible.
  *
  * If a future PR adds a field to `TokenUsage` but forgets to add it to
- * the bundle's `UsageShape` (or vice versa), one of these assignments
+ * the connector's `UsageShape` (or vice versa), one of these assignments
  * fails at compile time and CI blocks the merge.
  */
 describe("UsageShape ↔ TokenUsage drift guard", () => {

@@ -556,7 +556,7 @@ describe("WorkspaceOAuthProvider — revokeAndDeleteTokens", () => {
     });
     const { fetch: f, calls } = makeFetcher({});
     const result = await p.revokeAndDeleteTokens({
-      bundleUrl: "https://mcp.granola.test/mcp",
+      connectorUrl: "https://mcp.granola.test/mcp",
       fetchImpl: f,
     });
     expect(result.deletedLocal).toBe(true);
@@ -580,7 +580,7 @@ describe("WorkspaceOAuthProvider — revokeAndDeleteTokens", () => {
       refresh_token: "ref-tok",
     });
 
-    const bundleUrl = "http://localhost:39990/mcp";
+    const connectorUrl = "http://localhost:39990/mcp";
     const { fetch: f, calls } = makeFetcher({
       "http://localhost:39990/.well-known/oauth-authorization-server": {
         status: 200,
@@ -591,7 +591,7 @@ describe("WorkspaceOAuthProvider — revokeAndDeleteTokens", () => {
       "http://localhost:39990/oauth/revoke": { status: 200 },
     });
 
-    const result = await p.revokeAndDeleteTokens({ bundleUrl, fetchImpl: f });
+    const result = await p.revokeAndDeleteTokens({ connectorUrl, fetchImpl: f });
     expect(result.deletedLocal).toBe(true);
     expect(result.revoked.refresh).toBe(true);
     expect(result.revoked.access).toBe(true);
@@ -641,7 +641,7 @@ describe("WorkspaceOAuthProvider — revokeAndDeleteTokens", () => {
     // address is rejected even under allowInsecureRemotes, so the refresh token
     // + client_secret are never POSTed there.
     const ssrfEndpoint = "http://169.254.169.254/latest/oauth/revoke";
-    const bundleUrl = "http://localhost:39990/mcp";
+    const connectorUrl = "http://localhost:39990/mcp";
     const { fetch: f, calls } = makeFetcher({
       "http://localhost:39990/.well-known/oauth-authorization-server": {
         status: 200,
@@ -650,7 +650,7 @@ describe("WorkspaceOAuthProvider — revokeAndDeleteTokens", () => {
       [ssrfEndpoint]: { status: 200 },
     });
 
-    const result = await p.revokeAndDeleteTokens({ bundleUrl, fetchImpl: f });
+    const result = await p.revokeAndDeleteTokens({ connectorUrl, fetchImpl: f });
 
     // No request was ever made to the SSRF target.
     expect(calls.some((c) => c.url.startsWith("http://169.254.169.254"))).toBe(false);
@@ -680,7 +680,7 @@ describe("WorkspaceOAuthProvider — revokeAndDeleteTokens", () => {
     // Metadata endpoint 404s → no revocation_endpoint → skip revoke, still delete locally.
     const { fetch: f } = makeFetcher({});
     const result = await p.revokeAndDeleteTokens({
-      bundleUrl: "http://localhost:39990/mcp",
+      connectorUrl: "http://localhost:39990/mcp",
       fetchImpl: f,
     });
     expect(result.deletedLocal).toBe(true);
@@ -784,7 +784,7 @@ describe("WorkspaceOAuthProvider — revokeAndDeleteTokens", () => {
   });
 
   it("RFC 9728: discovers AS at a different origin via oauth-protected-resource", async () => {
-    // Mimics Google: bundle at gmailmcp.googleapis.com but AS at
+    // Mimics Google: connector at gmailmcp.googleapis.com but AS at
     // oauth2.googleapis.com. The protected-resource metadata points at
     // the AS origin; we then fetch the AS's authorization-server metadata
     // for the revocation_endpoint.
@@ -802,8 +802,8 @@ describe("WorkspaceOAuthProvider — revokeAndDeleteTokens", () => {
       refresh_token: "g-refresh",
     });
 
-    // Bundle origin: localhost:39990. AS origin: localhost:39991.
-    const bundleUrl = "http://localhost:39990/mcp/v1";
+    // Connector origin: localhost:39990. AS origin: localhost:39991.
+    const connectorUrl = "http://localhost:39990/mcp/v1";
     const { fetch: f, calls } = makeFetcher({
       "http://localhost:39990/.well-known/oauth-protected-resource": {
         status: 200,
@@ -816,12 +816,12 @@ describe("WorkspaceOAuthProvider — revokeAndDeleteTokens", () => {
       "http://localhost:39991/oauth/revoke": { status: 200 },
     });
 
-    const result = await p.revokeAndDeleteTokens({ bundleUrl, fetchImpl: f });
+    const result = await p.revokeAndDeleteTokens({ connectorUrl, fetchImpl: f });
     expect(result.revoked.refresh).toBe(true);
     expect(result.revoked.access).toBe(true);
     // 1 PR metadata + 1 AS metadata + 2 revoke = 4 calls.
     expect(calls.length).toBe(4);
-    // Revocation hit the OTHER origin, not the bundle origin.
+    // Revocation hit the OTHER origin, not the connector origin.
     expect(calls.some((c) => c.url === "http://localhost:39991/oauth/revoke")).toBe(true);
   });
 
@@ -847,7 +847,7 @@ describe("WorkspaceOAuthProvider — revokeAndDeleteTokens", () => {
       },
     });
     const result = await p.revokeAndDeleteTokens({
-      bundleUrl: "http://localhost:39990/mcp",
+      connectorUrl: "http://localhost:39990/mcp",
       fetchImpl: f,
     });
     expect(result.revoked.refresh).toBe(true);

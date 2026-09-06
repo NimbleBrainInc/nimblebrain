@@ -9,7 +9,7 @@
  */
 import { describe, expect, it } from "bun:test";
 import { type BriefingContext, collectBriefingFacets } from "../../src/services/briefing-collector.ts";
-import type { BriefingFacet, BundleInstance } from "../../src/bundles/types.ts";
+import type { BriefingFacet, ConnectorInstance } from "../../src/connectors/runtime/types.ts";
 import type { ToolRegistry } from "../../src/tools/registry.ts";
 
 /** Registry stub recording the tool call a `tool` facet makes. */
@@ -23,16 +23,16 @@ function stubRegistry(calls: Array<{ name: string; input: unknown }> = []): Tool
 	} as unknown as ToolRegistry;
 }
 
-function makeInstance(facets: BriefingFacet[]): BundleInstance {
+function makeInstance(facets: BriefingFacet[]): ConnectorInstance {
 	return {
 		serverName: "crm",
-		bundleName: "crm",
+		connectorName: "crm",
 		version: "0.0.0",
 		state: "running",
 		ui: { name: "CRM", icon: "users", placements: [] },
 		briefing: { priority: "medium", facets },
 		wsId: "ws_test",
-	} as BundleInstance;
+	} as ConnectorInstance;
 }
 
 const period = { since: "2026-04-13T00:00:00Z", until: "2026-04-14T00:00:00Z" };

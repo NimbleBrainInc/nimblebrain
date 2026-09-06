@@ -2,7 +2,7 @@
  * Layer 1 vendored authoring-guide content tests.
  *
  * Verifies the markdown file shipped at `src/skills/builtin/authoring-guide.md`
- * parses cleanly through the loader, carries the manifest fields the bundle
+ * parses cleanly through the loader, carries the manifest fields the connector
  * relies on, and keeps its top-level structure stable across edits.
  */
 
@@ -23,7 +23,7 @@ describe("authoring-guide Layer 1 skill", () => {
     expect(skill).not.toBeNull();
   });
 
-  test("manifest carries the bundle-shipped Layer 1 fields", () => {
+  test("manifest carries the connector-shipped Layer 1 fields", () => {
     const skill = parseSkillFile(GUIDE_PATH);
     if (!skill) throw new Error("parseSkillFile returned null");
 

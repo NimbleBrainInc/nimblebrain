@@ -1,6 +1,6 @@
 import { Hono } from "hono";
-import { serverNameFromRef } from "../../bundles/paths.ts";
-import type { BundleRef } from "../../bundles/types.ts";
+import { serverNameFromRef } from "../../connectors/runtime/paths.ts";
+import type { ConnectorRef } from "../../connectors/runtime/types.ts";
 import { forwardDelivery } from "../../hooks/forward.ts";
 import { isDeliveryIdAdmissible, listRegistrations } from "../../hooks/registrations.ts";
 import { HOOKS_PATH_PREFIX, type HookIdentity, readHookIdentity } from "../../hooks/token.ts";
@@ -25,7 +25,7 @@ import type { AppContext } from "../types.ts";
  * preference.** A tenant runtime is one pod; a delivery arriving while it is
  * busy is a 5xx the vendor has to retry. So: open, check, mint, forward. No
  * queue, no persistence, no retry, no body parsing. Durability belongs to the
- * vendor's own retry and to the receiving bundle's raw capture and reconcile
+ * vendor's own retry and to the receiving connector's raw capture and reconcile
  * poll — both of which can provide it and neither of which is this process.
  *
  * **Every rejection is the same 404 with an empty body.** An id that matches no
@@ -67,7 +67,7 @@ export const HOOK_ANON_BUCKET_MAX = 600;
  * Post-token bucket, per `(workspace, connector)`, per minute.
  *
  * Sized BELOW the fleet edge's per-tenant ceiling, which the forwarded traffic
- * shares with the agent's own tool calls to the same bundle. A burst should
+ * shares with the agent's own tool calls to the same connector. A burst should
  * fail here — as a 429 the vendor retries, against one workspace — rather than
  * at the edge, where it would also starve the agent.
  */
@@ -127,8 +127,11 @@ async function readCappedBody(req: Request, cap: number): Promise<Uint8Array | n
 }
 
 /** Find an installed connector by its resolved server name. */
-function findInstalledConnector(bundles: BundleRef[], connector: string): BundleRef | undefined {
-  return bundles.find((ref) => serverNameFromRef(ref) === connector);
+function findInstalledConnector(
+  connectors: ConnectorRef[],
+  connector: string,
+): ConnectorRef | undefined {
+  return connectors.find((ref) => serverNameFromRef(ref) === connector);
 }
 
 export interface HooksRoutesOptions {
@@ -226,15 +229,15 @@ async function readBodyWithinCap(req: Request): Promise<Uint8Array | null> {
   return readCappedBody(req, HOOK_MAX_BODY_BYTES);
 }
 
-/** The `url:` variant of a `BundleRef` — the only shape a hook can forward to,
+/** The `url:` variant of a `ConnectorRef` — the only shape a hook can forward to,
  *  because a forward needs a base URL and a transport to resolve against. */
-type RemoteBundleRef = BundleRef;
+type RemoteConnectorRef = ConnectorRef;
 
 /** A delivery that passed every check, with everything the forward needs. */
 interface AdmittedDelivery {
   wsId: string;
   registration: HookRegistration;
-  ref: RemoteBundleRef;
+  ref: RemoteConnectorRef;
 }
 
 /**
@@ -315,7 +318,7 @@ async function forwardAdmitted(
     logDelivery(wsId, registration, "forwarded", upstream.status, startedAt);
     // The connector's status is the vendor's answer: it is the party that knows
     // whether the delivery was accepted, and a runtime that rewrote it would be
-    // deciding on the bundle's behalf whether a retry is wanted.
+    // deciding on the connector's behalf whether a retry is wanted.
     return new Response(upstream.body, {
       status: upstream.status,
       headers: passthroughResponseHeaders(upstream.headers),
@@ -345,7 +348,7 @@ async function forwardAdmitted(
  * `upstream.headers`, so copying them tells the vendor `gzip` while handing it
  * plaintext, at a length that was the compressed one. A vendor's client then
  * fails to decode, scores the delivery failed, and redelivers — which quietly
- * inverts the contract this door gives a bundle author, that a `2xx` means the
+ * inverts the contract this door gives a connector author, that a `2xx` means the
  * delivery is durably recorded and will not be retried. The body being returned
  * here is the decoded one; neither header describes it, so neither travels.
  */

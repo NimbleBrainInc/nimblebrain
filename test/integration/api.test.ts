@@ -179,7 +179,7 @@ describe("POST /v1/chat/stream", () => {
 });
 
 describe("GET /v1/health", () => {
-	it("returns status ok with bundle health summary", async () => {
+	it("returns status ok with connector health summary", async () => {
 		const res = await fetch(`${baseUrl}/v1/health`);
 
 		expect(res.status).toBe(200);
@@ -187,7 +187,7 @@ describe("GET /v1/health", () => {
 		expect(body.status).toBe("ok");
 		expect(body.uptime).toBeUndefined();
 		expect(Array.isArray(body.bundles)).toBe(true);
-		// Each bundle entry should have name and state (not just a string)
+		// Each connector entry should have name and state (not just a string)
 		for (const b of body.bundles) {
 			expect(typeof b.name).toBe("string");
 			expect(typeof b.state).toBe("string");
@@ -419,7 +419,7 @@ describe("SSE Event Manager", () => {
 		// Broadcast a test event
 		manager.broadcast("bundle.installed", {
 			name: "test-app",
-			bundleName: "@test/app",
+			connectorName: "@test/app",
 			status: "running",
 		});
 
@@ -487,7 +487,7 @@ describe("SSE Event Manager", () => {
 		manager.stop();
 	});
 
-	it("emits only bundle and data.changed events via EventSink interface", async () => {
+	it("emits only connector and data.changed events via EventSink interface", async () => {
 		const { SseEventManager } = await import("../../src/api/events.ts");
 		const manager = new SseEventManager(60_000);
 
@@ -503,7 +503,7 @@ describe("SSE Event Manager", () => {
 		// Emit a bundle.installed event — SHOULD be forwarded
 		manager.emit({
 			type: "bundle.installed",
-			data: { wsId: "ws_test", serverName: "weather", bundleName: "@test/weather" },
+			data: { wsId: "ws_test", serverName: "weather", connectorName: "@test/weather" },
 		});
 
 		const { value } = await reader.read();

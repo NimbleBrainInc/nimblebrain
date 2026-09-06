@@ -11,7 +11,7 @@ import type {
   OAuthClientMetadata,
   OAuthTokens,
 } from "@modelcontextprotocol/sdk/shared/auth.js";
-import { validateBundleUrl } from "../bundles/url-validator.ts";
+import { validateConnectorUrl } from "../connectors/runtime/url-validator.ts";
 import type { ConnectorOwner } from "../identity/connector-owner.ts";
 import { buildTenantAssertion } from "../oauth/fleet-assertion.ts";
 import { log } from "../observability/log.ts";
@@ -125,7 +125,7 @@ export interface WorkspaceOAuthProviderOptions {
    * Whether loopback / RFC1918 / cloud-metadata hosts are acceptable targets
    * for the authorize chain. Mirrors the platform-level `allowInsecureRemotes`
    * flag; when `false` (production default), every hop of the authorize
-   * redirect chain is passed through `validateBundleUrl` to block SSRF
+   * redirect chain is passed through `validateConnectorUrl` to block SSRF
    * against internal infrastructure (AWS IMDS, RFC1918 admin panels,
    * NimbleBrain's own loopback ports).
    */
@@ -220,7 +220,7 @@ export interface WorkspaceOAuthProviderOptions {
    * attempt and rejects the user's real code at exchange (`invalid_code`)
    * or strands the flow. A standard client never touches `/authorize`
    * server-side; it just hands the URL to the browser. So: probe only when
-   * the bundle is known-headless.
+   * the connector is known-headless.
    */
   headlessAuthProbe?: boolean;
   /**
@@ -307,31 +307,31 @@ function applyClientAuthentication(
 
 /**
  * Discover the OAuth authorization-server origins for a resource (the MCP
- * bundle URL). Tries RFC 9728 (Protected Resource Metadata) first to
+ * connector URL). Tries RFC 9728 (Protected Resource Metadata) first to
  * support vendors where the AS lives at a different origin than the
- * resource (Google, Microsoft); falls back to the bundle origin itself
+ * resource (Google, Microsoft); falls back to the connector origin itself
  * for co-located deployments (Granola, Notion, HubSpot).
  *
  * Returns the list of AS origins to probe for token-revocation metadata.
- * Order: RFC 9728-listed origins first (most specific signal), bundle
+ * Order: RFC 9728-listed origins first (most specific signal), connector
  * origin appended last as the universal fallback. Duplicates removed
  * preserving order.
  *
  * Best-effort — network errors at the protected-resource layer return
- * just the bundle-origin fallback. SSRF-validated by the caller (the
+ * just the connector-origin fallback. SSRF-validated by the caller (the
  * fetcher itself doesn't enforce, since revocation discovery happens
  * post-auth in a trusted context).
  */
 async function discoverAuthorizationServerOrigins(
   fetchImpl: typeof fetch,
-  bundleOrigin: string,
+  connectorOrigin: string,
   allowInsecure: boolean,
 ): Promise<string[]> {
   const origins = new Set<string>();
   // 1. RFC 9728 — Protected Resource Metadata.
   try {
-    const prMetadataUrl = `${bundleOrigin}/.well-known/oauth-protected-resource`;
-    validateBundleUrl(new URL(prMetadataUrl), { allowInsecure });
+    const prMetadataUrl = `${connectorOrigin}/.well-known/oauth-protected-resource`;
+    validateConnectorUrl(new URL(prMetadataUrl), { allowInsecure });
     const res = await fetchImpl(prMetadataUrl);
     if (res.ok) {
       const body = (await res.json()) as { authorization_servers?: unknown };
@@ -347,13 +347,13 @@ async function discoverAuthorizationServerOrigins(
       }
     }
   } catch {
-    // RFC 9728 not advertised — fall through to the bundle-origin
+    // RFC 9728 not advertised — fall through to the connector-origin
     // probe below. This is the common case for vendors where the AS
     // lives at the same origin as the MCP server.
   }
-  // 2. Bundle origin always appended as the last fallback (covers
+  // 2. Connector origin always appended as the last fallback (covers
   //    Granola/Notion/HubSpot pattern). Set deduplicates.
-  origins.add(bundleOrigin);
+  origins.add(connectorOrigin);
   return [...origins];
 }
 
@@ -392,7 +392,7 @@ async function postRevoke(
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: params.toString(),
     // Don't follow redirects on a request that carries the refresh token +
-    // client_secret: `validateBundleUrl` vetted `endpoint`, but a 307/308
+    // client_secret: `validateConnectorUrl` vetted `endpoint`, but a 307/308
     // would re-POST the credential body to an unvetted `Location` (a
     // cross-origin/internal target). `manual` keeps the credential on the
     // validated origin — the redirect is surfaced as a non-2xx (RFC 7009
@@ -1149,7 +1149,7 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
   /**
    * Read the captured OIDC identity claims for this principal. Returns
    * `null` when no identity record exists (no id_token was issued, or
-   * the bundle predates id_token capture). Used by the Connections
+   * the connector predates id_token capture). Used by the Connections
    * page to show "Connected as <email>".
    */
   async identity(): Promise<{ sub?: string; email?: string; name?: string } | null> {
@@ -1363,7 +1363,7 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
     this.pendingFlow.promise = registryPromise;
     this.pendingFlow.deferred = undefined;
 
-    // Notify the lifecycle / UI so the bundle transitions to pending_auth and
+    // Notify the lifecycle / UI so the connector transitions to pending_auth and
     // the banner appears (best-effort — see notifyInteractiveAuthRequired). The
     // registry registration above already lets the callback handler resolve the
     // flow even if the lifecycle notification path is broken.
@@ -1492,7 +1492,7 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
 
   /**
    * SSRF-validate one authorize-chain hop. Validates EVERY hop (including the
-   * initial URL the server handed us), not just the configured bundle URL: the
+   * initial URL the server handed us), not just the configured connector URL: the
    * authorize URL and every Location header are attacker-controlled — a
    * compromised remote MCP server could otherwise use our fetch() as an
    * internal-network probe tool (AWS IMDS, RFC1918 admin panels, loopback
@@ -1501,7 +1501,7 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
    */
   private validateProbeHop(current: URL): void {
     try {
-      validateBundleUrl(current, { allowInsecure: this.allowInsecureRemotes });
+      validateConnectorUrl(current, { allowInsecure: this.allowInsecureRemotes });
     } catch (err) {
       throw new Error(
         `[workspace-oauth-provider] SSRF block on ${current.toString()}: ${
@@ -1544,7 +1544,7 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
 
   /**
    * Fire the `onInteractiveAuthRequired` callback so the lifecycle / UI can
-   * transition the bundle to pending_auth. Best-effort: a throwing receiver must
+   * transition the connector to pending_auth. Best-effort: a throwing receiver must
    * not break the OAuth dance, so errors are logged and swallowed.
    */
   private notifyInteractiveAuthRequired(url: URL): void {
@@ -1617,7 +1617,7 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
    *      from `oauthClient` / cached in-memory).
    *   2. Discover the AS's `revocation_endpoint` via the well-known
    *      OAuth metadata path: `<server-origin>/.well-known/oauth-authorization-server`.
-   *      We bind discovery to the bundle URL's origin since that's the
+   *      We bind discovery to the connector URL's origin since that's the
    *      only origin we know belongs to this server; servers that put
    *      their AS at a different origin can declare it via metadata
    *      but we don't currently support cross-origin discovery (rare
@@ -1635,10 +1635,10 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
    * refresh tokens for at most their natural expiry. Best-effort is
    * the right discipline here.
    *
-   * `bundleUrl` is the bundle's MCP endpoint URL — used as the origin
+   * `connectorUrl` is the connector's MCP endpoint URL — used as the origin
    * for OAuth metadata discovery. `fetchImpl` is injectable for tests.
    */
-  async revokeAndDeleteTokens(opts: { bundleUrl: string; fetchImpl?: typeof fetch }): Promise<{
+  async revokeAndDeleteTokens(opts: { connectorUrl: string; fetchImpl?: typeof fetch }): Promise<{
     revoked: { access?: boolean; refresh?: boolean };
     deletedLocal: boolean;
     error?: string;
@@ -1674,7 +1674,7 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
 
     // Discover the revocation endpoint (best-effort — undefined when the server
     // advertises none, in which case there's nothing to revoke upstream).
-    const revocationEndpoint = await this.discoverRevocationEndpoint(fetcher, opts.bundleUrl);
+    const revocationEndpoint = await this.discoverRevocationEndpoint(fetcher, opts.connectorUrl);
 
     if (!clientInfo) {
       // `clientInformation()` returned undefined despite tokens being
@@ -1714,29 +1714,29 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
   }
 
   /**
-   * Discover the AS `revocation_endpoint` for a bundle. Best-effort — returns
+   * Discover the AS `revocation_endpoint` for a connector. Best-effort — returns
    * undefined when the server advertises none or on any network error.
    *
    * Discovery order:
    *   1. RFC 9728 Protected Resource Metadata at
-   *      `<bundleOrigin>/.well-known/oauth-protected-resource`. This lists
+   *      `<connectorOrigin>/.well-known/oauth-protected-resource`. This lists
    *      `authorization_servers[]` whose origins host the AS metadata. Required
    *      for vendors where the AS lives at a different origin than the resource
-   *      (Google: AS at `oauth2.googleapis.com`, bundle at
+   *      (Google: AS at `oauth2.googleapis.com`, connector at
    *      `gmailmcp.googleapis.com`; Microsoft: AS at `login.microsoftonline.com`).
    *   2. RFC 8414 fallback at
-   *      `<bundleOrigin>/.well-known/oauth-authorization-server` for vendors
+   *      `<connectorOrigin>/.well-known/oauth-authorization-server` for vendors
    *      that co-locate the AS with the resource (Granola, Notion, HubSpot).
    */
   private async discoverRevocationEndpoint(
     fetcher: typeof fetch,
-    bundleUrl: string,
+    connectorUrl: string,
   ): Promise<string | undefined> {
     try {
-      const bundleOrigin = new URL(bundleUrl).origin;
+      const connectorOrigin = new URL(connectorUrl).origin;
       const asOrigins = await discoverAuthorizationServerOrigins(
         fetcher,
-        bundleOrigin,
+        connectorOrigin,
         this.allowInsecureRemotes,
       );
       // Try each AS in order. First one that advertises a usable
@@ -1766,7 +1766,7 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
   ): Promise<string | undefined> {
     const metadataUrl = `${asOrigin}/.well-known/oauth-authorization-server`;
     try {
-      validateBundleUrl(new URL(metadataUrl), {
+      validateConnectorUrl(new URL(metadataUrl), {
         allowInsecure: this.allowInsecureRemotes,
       });
       const res = await fetcher(metadataUrl);
@@ -1782,7 +1782,7 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
         // throws into the catch below → treated as "none advertised", which
         // matches this method's best-effort contract (local cleanup still
         // runs; upstream tokens lapse at their natural expiry).
-        validateBundleUrl(new URL(meta.revocation_endpoint), {
+        validateConnectorUrl(new URL(meta.revocation_endpoint), {
           allowInsecure: this.allowInsecureRemotes,
         });
         return meta.revocation_endpoint;

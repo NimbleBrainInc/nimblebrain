@@ -352,7 +352,7 @@ describe("loadCoreSkills", () => {
 
   it("capabilities names both persistence surfaces, and neither as an agent write", () => {
     // Nothing else in the always-on prompt says the runtime can persist
-    // anything, so a workspace with no bundles installed reads as having no
+    // anything, so a workspace with no connectors installed reads as having no
     // memory at all unless the briefing names these surfaces. The overlay is
     // human-authored: the briefing must teach draft-and-point, never name the
     // internal write tool — a named tool reads as callable.

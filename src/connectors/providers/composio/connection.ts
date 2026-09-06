@@ -38,7 +38,7 @@
 import { existsSync } from "node:fs";
 import { chmod, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { brokeredConnectorDir } from "../../../bundles/brokered.ts";
+import { brokeredConnectorDir } from "../../../connectors/runtime/brokered.ts";
 import type { ConnectorOwner } from "../../../identity/connector-owner.ts";
 import { COMPOSIO_PROVIDER_ID } from "./id.ts";
 
@@ -198,7 +198,7 @@ export async function readComposioConnection(
  * file existed and was removed, `false` if it didn't.
  *
  * Called from the provider's `cleanup` arm — the parallel of
- * `revokeAndDeleteTokens` on the OAuth provider for native bundles.
+ * `revokeAndDeleteTokens` on the OAuth provider for native connectors.
  * Composio-side account deletion is a separate step (in `sdk.ts`) so this
  * module stays SDK-free.
  */

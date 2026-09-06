@@ -52,7 +52,7 @@ describe("ledgerChanges", () => {
   });
 
   test("a set that changes mid-conversation is announced again", () => {
-    // The one real transition in the survey: a bundle installed mid-thread.
+    // The one real transition in the survey: a connector installed mid-thread.
     const one = ctx("test");
     const seven = ctx("test", "orientation", "writing");
     expect(announced(turns(one, seven, seven))).toEqual([

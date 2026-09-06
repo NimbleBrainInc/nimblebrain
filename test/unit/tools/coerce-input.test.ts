@@ -244,7 +244,7 @@ describe("coerceInputForSchema — depth and edge cases", () => {
 describe("coerceInputForSchema — anyOf / oneOf union resolution", () => {
   // Pydantic v2 encodes `Optional[T]` (= `T | None`) as
   // `{anyOf: [{type: T-shape}, {type: "null"}]}` — the canonical shape
-  // for any optional structural parameter on a FastMCP bundle. These
+  // for any optional structural parameter on a FastMCP connector. These
   // tests pin the behavior that recovers stringified values arriving at
   // such properties (the live `patch_source(edits=...)` bug).
 
@@ -405,7 +405,7 @@ describe("coerceInputForSchema — anyOf / oneOf union resolution", () => {
   it("leaves a multi-structural union (array | object, no null) untouched", () => {
     // We deliberately do not disambiguate 2+ structural branches; the value
     // passes through for the validator. Re-add disambiguation additively if a
-    // real bundle ever ships such a param.
+    // real connector ever ships such a param.
     const schema = {
       type: "object" as const,
       properties: {

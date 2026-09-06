@@ -16,11 +16,11 @@ export const ComposeEffectiveContextInput = Type.Object({
         "layer-3 skill content hashes). Default: live mode (current state).",
     }),
   ),
-  bundle: Type.Optional(
+  connector: Type.Optional(
     Type.String({
       description:
-        "Filter the response to one bundle's contributions (apps section " +
-        "row + layer-3 skills under the bundle's affined directory).",
+        "Filter the response to one connector's contributions (apps section " +
+        "row + layer-3 skills under the connector's affined directory).",
     }),
   ),
 });
@@ -144,7 +144,7 @@ export interface ComposeAssembledContextOutput {
  * actually entered the window. Lighter consumers may ignore `text`; it is the
  * largest field and only the inspector renders it. The runtime `subItems`
  * (per-app / per-skill breakdown) are omitted: they exist for the server-side
- * `bundle` filter, which runs on the runtime `TracedLayer`, and the inspector
+ * `connector` filter, which runs on the runtime `TracedLayer`, and the inspector
  * renders each layer's composed `text`, not its sub-items.
  */
 export interface TracedLayerView {
@@ -154,7 +154,7 @@ export interface TracedLayerView {
   source: string;
   tokens: number;
   text: string;
-  bundle?: string;
+  connector?: string;
 }
 
 /**

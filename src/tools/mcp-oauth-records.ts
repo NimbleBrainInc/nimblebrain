@@ -286,7 +286,7 @@ async function removeIfEmpty(dir: string): Promise<boolean> {
  * restart), NOT validity: token expiry / revocation detection is the reauth
  * slice's job. Used to render "connected" for an authed connector whose source
  * isn't warm in the current pod, so the profile doesn't offer a spurious
- * re-Connect, and to decide whether a boot-time URL bundle has anything to
+ * re-Connect, and to decide whether a boot-time URL connector has anything to
  * auto-start with.
  */
 export async function hasMcpOAuthTokens(

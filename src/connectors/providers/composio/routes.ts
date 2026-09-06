@@ -8,8 +8,8 @@ import {
 } from "../../../api/routes/connectors-redirect.ts";
 import { SUCCESS_PAGE_CSP, successPageHtml } from "../../../api/routes/oauth-success-page.ts";
 import { type AppContext, type AppEnv, apiError } from "../../../api/types.ts";
-import { WORKSPACE_PRINCIPAL_ID } from "../../../bundles/connection.ts";
-import { slugifyServerName } from "../../../bundles/paths.ts";
+import { WORKSPACE_PRINCIPAL_ID } from "../../../connectors/runtime/connection.ts";
+import { slugifyServerName } from "../../../connectors/runtime/paths.ts";
 import { type ConnectorOwner, connectorOwnerKey } from "../../../identity/connector-owner.ts";
 import { IdentityConnectorStore } from "../../../identity/connector-store.ts";
 import { log } from "../../../observability/log.ts";
@@ -360,7 +360,7 @@ async function adoptExistingComposioConnection(
   // we'd hit Composio's "Multiple connected accounts found … use
   // allowMultiple" error or pile up duplicates. We adopt the existing
   // account by writing our own connection.json against its id,
-  // transitioning the bundle state to `running`, and telling the SPA
+  // transitioning the connector state to `running`, and telling the SPA
   // to navigate to the success page — no second OAuth round-trip.
   try {
     const existing = await findActiveComposioConnection({
@@ -639,7 +639,7 @@ async function recoverCallbackSource(
   // After a Disconnect → Connect cycle, `teardownConnectionSource`
   // has already removed the source from the registry — pure state
   // mutation isn't enough to recover. `ensureSourceRegistered` brings
-  // the source back up from the persisted BundleRef if it's missing,
+  // the source back up from the persisted ConnectorRef if it's missing,
   // no-ops if it's already there (first-connect path, where the
   // install-eager-start already registered).
   const serverName = slugifyServerName(cid);

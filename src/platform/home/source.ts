@@ -20,7 +20,7 @@ export function createHomeSource(runtime: Runtime, eventSink: EventSink): McpSou
     {
       name: "activity",
       description:
-        "Get raw workspace activity data — conversations, tool usage, bundle events, and errors. Use for specific questions about workspace activity.",
+        "Get raw workspace activity data — conversations, tool usage, connector events, and errors. Use for specific questions about workspace activity.",
       inputSchema: HomeActivityInput,
       handler: async (input: Record<string, unknown>) => {
         try {

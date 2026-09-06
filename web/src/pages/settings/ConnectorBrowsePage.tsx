@@ -154,7 +154,7 @@ export function ConnectorBrowsePage() {
     }
     // API-key Composio connectors have no OAuth redirect — collect the declared
     // fields in a modal and call connect_api_key. The install already created the
-    // bundle ref the connect step needs.
+    // connector ref the connect step needs.
     if (install.auth === "composio" && install.composio?.authScheme === "API_KEY") {
       setApiKeyModal({ entry, serverName });
       setBusyId(null);
@@ -184,7 +184,7 @@ export function ConnectorBrowsePage() {
   // that same route). That's the identical workspace the follow-up
   // `initiateMcpOAuth` / list_tools / status calls read — so an install
   // and its connect step can't land in different workspaces. (The prior
-  // target-picker let them diverge, which surfaced as "Bundle not
+  // target-picker let them diverge, which surfaced as "Connector not
   // installed" on Connect.)
   const runInstall = async (entry: DirectoryEntry) => {
     setLoadError(null);
@@ -331,7 +331,7 @@ export function ConnectorBrowsePage() {
  * One card in the Browse grid. Layout:
  *
  *   ┌────────────────────────────────────────────┐
- *   │ [icon] Bundle name                         │
+ *   │ [icon] Connector name                         │
  *   │        Short description, two lines max.   │
  *   │                                            │
  *   │                              [Install / …] │

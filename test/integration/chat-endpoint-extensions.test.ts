@@ -72,7 +72,7 @@ describe("surfaceTools — requestAllowedTools", () => {
     }
   });
 
-  it("empty allowedTools array blocks all bundle tools, only nb__* remain", () => {
+  it("empty allowedTools array blocks all connector tools, only nb__* remain", () => {
     const system = makeSystemTools();
     const files = Array.from({ length: 5 }, (_, i) => makeTool(`files__tool_${i}`));
     const all = [...system, ...files];

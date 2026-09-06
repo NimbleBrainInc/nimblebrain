@@ -56,7 +56,7 @@ function writeConv(opts: ConvOptions): void {
 		title: opts.title ?? null,
 		lastModel: opts.lastModel ?? null,
 	};
-	// Bundle no longer reads line-1 totals — synthesize an assistant
+	// Connector no longer reads line-1 totals — synthesize an assistant
 	// message carrying the requested usage IF the supplied messages don't
 	// already declare their own. Tests that want explicit per-message
 	// usage just include it in `messages`; tests that just want a top-line

@@ -11,7 +11,7 @@ describe("identity sources", () => {
       expect(isIdentitySource(source)).toBe(true);
     }
     expect(isIdentitySource("nb")).toBe(false);
-    expect(isIdentitySource("some-bundle")).toBe(false);
+    expect(isIdentitySource("some-connector")).toBe(false);
   });
 });
 

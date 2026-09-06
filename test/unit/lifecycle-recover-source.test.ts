@@ -1,16 +1,16 @@
 import { beforeEach, describe, expect, test } from "bun:test";
-import { BundleLifecycleManager } from "../../src/bundles/lifecycle.ts";
-import type { BundleInstance, BundleRef } from "../../src/bundles/types.ts";
+import { ConnectorLifecycleManager } from "../../src/connectors/runtime/lifecycle.ts";
+import type { ConnectorInstance, ConnectorRef } from "../../src/connectors/runtime/types.ts";
 import type { EngineEvent, EventSink, ToolResult } from "../../src/engine/types.ts";
 import { ToolRegistry } from "../../src/tools/registry.ts";
 import type { Tool, ToolSource } from "../../src/tools/types.ts";
 
 /**
- * Coverage for `BundleLifecycleManager.tryRecoverSource` — the best-effort,
+ * Coverage for `ConnectorLifecycleManager.tryRecoverSource` — the best-effort,
  * cooldown-guarded re-registration the orchestrator calls on a source-miss
  * to self-heal a workspace whose connector was torn down without being
  * re-added (the Dropbox mid-run incident). The real re-spawn
- * (`ensureSourceRegistered` → `startBundleSource`) hits the network, so
+ * (`ensureSourceRegistered` → `startConnectorSource`) hits the network, so
  * these tests override it with a spy to pin the wrapper's own contract:
  * the guards, the never-throws promise, the negative-cache cooldown, and
  * cooldown-reset on success.
@@ -40,10 +40,10 @@ function stubSource(name: string): ToolSource {
 const WS = "ws_test";
 const WORK_DIR = "/tmp/nb-recover-test";
 
-function seedInstance(lifecycle: BundleLifecycleManager, serverName: string, ref?: BundleRef): void {
-  const instance: BundleInstance = {
+function seedInstance(lifecycle: ConnectorLifecycleManager, serverName: string, ref?: ConnectorRef): void {
+  const instance: ConnectorInstance = {
     serverName,
-    bundleName: "https://example.test/mcp",
+    connectorName: "https://example.test/mcp",
     version: "remote",
     state: "starting",
     ui: null,
@@ -59,7 +59,7 @@ function seedInstance(lifecycle: BundleLifecycleManager, serverName: string, ref
 
 /** Replace `ensureSourceRegistered` with a spy; returns its call count getter. */
 function spyEnsure(
-  lifecycle: BundleLifecycleManager,
+  lifecycle: ConnectorLifecycleManager,
   impl: (serverName: string, wsId: string) => Promise<void>,
 ): () => number {
   let calls = 0;
@@ -71,12 +71,12 @@ function spyEnsure(
   return () => calls;
 }
 
-describe("BundleLifecycleManager.tryRecoverSource", () => {
-  let lifecycle: BundleLifecycleManager;
+describe("ConnectorLifecycleManager.tryRecoverSource", () => {
+  let lifecycle: ConnectorLifecycleManager;
   let registry: ToolRegistry;
 
   beforeEach(() => {
-    lifecycle = new BundleLifecycleManager(new CapturingSink(), undefined);
+    lifecycle = new ConnectorLifecycleManager(new CapturingSink(), undefined);
     registry = new ToolRegistry();
     const registries = new Map([[WS, registry]]);
     lifecycle.bindWorkspaceRegistries(() => registries);
@@ -111,7 +111,7 @@ describe("BundleLifecycleManager.tryRecoverSource", () => {
   test("re-spawns once and returns true when recovery registers the source", async () => {
     seedInstance(lifecycle, "dropbox", { url: "https://mcp.dropbox.com/mcp" });
     const callCount = spyEnsure(lifecycle, async (name) => {
-      registry.addSource(stubSource(name)); // simulate startBundleSource → addSource
+      registry.addSource(stubSource(name)); // simulate startConnectorSource → addSource
     });
 
     expect(await lifecycle.tryRecoverSource("dropbox", WS, WORK_DIR)).toBe(true);
@@ -122,7 +122,7 @@ describe("BundleLifecycleManager.tryRecoverSource", () => {
   test("never throws when the re-spawn fails — returns false", async () => {
     seedInstance(lifecycle, "dropbox", { url: "https://mcp.dropbox.com/mcp" });
     spyEnsure(lifecycle, async () => {
-      throw new Error("startBundleSource refused");
+      throw new Error("startConnectorSource refused");
     });
 
     // Must resolve, not reject — the orchestrator hot path depends on this.
@@ -138,7 +138,7 @@ describe("BundleLifecycleManager.tryRecoverSource", () => {
 
     expect(await lifecycle.tryRecoverSource("dropbox", WS, WORK_DIR)).toBe(false);
     expect(await lifecycle.tryRecoverSource("dropbox", WS, WORK_DIR)).toBe(false);
-    // Second call is cooldown-suppressed — the broken bundle is NOT
+    // Second call is cooldown-suppressed — the broken connector is NOT
     // re-spawned on every tool-call miss.
     expect(callCount()).toBe(1);
   });

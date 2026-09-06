@@ -1,7 +1,7 @@
 /**
  * `McpSource` emits its WIRE name, not its registry key.
  *
- * These are the same string for a workspace bundle and different for a personal
+ * These are the same string for a workspace connector and different for a personal
  * connector, whose wire form carries the reserved marker. The distinction only
  * matters on emitted events: a consumer reading `source` off a `tool.progress`
  * decides from it whether to broadcast `data.changed`, and a connector emitting
@@ -27,7 +27,7 @@ const remote = { type: "remote" as const, url: new URL("https://example.test/mcp
 const sink = { emit: () => {} };
 
 describe("McpSource event source name", () => {
-  test("a workspace bundle emits its bare name", () => {
+  test("a workspace connector emits its bare name", () => {
     const s = new McpSource("gmail", remote as never, sink as never);
     expect(emittedName(s)).toBe("gmail");
   });

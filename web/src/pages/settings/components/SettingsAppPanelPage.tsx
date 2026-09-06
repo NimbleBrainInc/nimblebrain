@@ -5,23 +5,23 @@ import type { PlacementEntry } from "../../../types";
 import { SettingsPageHeader } from "./SettingsPageHeader";
 
 /**
- * Layout template for *bundle-provided* settings panels — the iframe-hosted
- * UIs registered by bundles via the `settings` placement slot.
+ * Layout template for *connector-provided* settings panels — the iframe-hosted
+ * UIs registered by connectors via the `settings` placement slot.
  *
  * Without this template, navigating to `/w/<slug>/settings/apps/<server>`
  * dropped the user into a raw, chromeless iframe with no indication that
  * they were still inside settings. This template provides the settings
- * frame consistently — bundle icon and title in the header, back-link to
+ * frame consistently — connector icon and title in the header, back-link to
  * the apps index, and a faint "provided by" footer below the iframe.
  *
- * The iframe is rendered flush — no outer ring or `bg-card`. Bundle UIs
+ * The iframe is rendered flush — no outer ring or `bg-card`. Connector UIs
  * already render their own complete content (headings, sections, save
  * bars), so wrapping them in host card chrome produces visible
  * cards-in-cards. This also matches the rule the sibling templates follow
  * (`SettingsFormPage` docstring): pages don't wrap content in cards.
  *
  * The credit is rendered as a footer (not a subtitle) so it recedes
- * properly. Subtitle position competes with the bundle's own internal
+ * properly. Subtitle position competes with the connector's own internal
  * title for attention; footer position reads as a quiet attribution line.
  *
  * Theme propagation into the iframe is handled separately by `SlotRenderer`

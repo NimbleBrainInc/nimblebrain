@@ -122,7 +122,7 @@ export declare const PlatformToolCatalog: {
             readonly input: import("@sinclair/typebox").TObject<{
                 conversation_id: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
                 run_id: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-                bundle: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+                connector: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
             }>;
         };
         readonly assembled_context: {

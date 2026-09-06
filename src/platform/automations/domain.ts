@@ -3,8 +3,8 @@
  *
  * The LLM-facing tool handlers (`handleCreate` / `handleUpdate` /
  * `handleDelete` in `server.ts`) are thin schema-translators that
- * delegate here. Internal callers — the bundle lifecycle
- * (bundle-contributed schedules) — call this
+ * delegate here. Internal callers — the connector lifecycle
+ * (connector-contributed schedules) — call this
  * module directly. No callers go through the LLM-facing schema except
  * the LLM itself.
  *
@@ -13,7 +13,7 @@
  *   - The LLM-facing schema must be minimal (no `source`, no `bundleName`,
  *     no `allowedTools`) — operator/runtime fields only.
  *   - But internal callers legitimately need to set those fields. The
- *     bundle install path must stamp `source: "bundle"` and `bundleName`,
+ *     connector install path must stamp `source: "bundle"` and `bundleName`,
  *     otherwise uninstall can't find what to clean up.
  *   - Without this split, internal callers either (a) pass the wrong
  *     shape and silently no-op, or (b) sneak operator fields back into

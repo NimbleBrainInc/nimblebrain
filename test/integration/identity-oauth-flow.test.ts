@@ -2,7 +2,7 @@ import { existsSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { BundleLifecycleManager, ConnectorBusyError } from "../../src/bundles/lifecycle.ts";
+import { ConnectorLifecycleManager, ConnectorBusyError } from "../../src/connectors/runtime/lifecycle.ts";
 import { IdentityConnectorStore } from "../../src/identity/connector-store.ts";
 import type { EngineEvent, EventSink } from "../../src/engine/types.ts";
 import { requireCredentialStore } from "../../src/tools/credential-store.ts";
@@ -123,7 +123,7 @@ async function clientRecordStored(): Promise<boolean> {
  * start settles and frees the gate.
  */
 async function retryConnect(
-  lifecycle: BundleLifecycleManager,
+  lifecycle: ConnectorLifecycleManager,
   workDir: string,
   timeoutMs = 10_000,
 ): Promise<{ authorizationUrl: string }> {
@@ -147,13 +147,13 @@ async function retryConnect(
 describe("lifecycle.startIdentityAuth — interactive OAuth for a personal connector", () => {
   let workDir: string;
   let mock: MockAS;
-  let lifecycle: BundleLifecycleManager;
+  let lifecycle: ConnectorLifecycleManager;
 
   beforeEach(async () => {
     workDir = mkdtempSync(join(tmpdir(), "nb-identity-oauth-"));
     installTestCredentialStore(workDir);
     mock = startMockAuthServer();
-    lifecycle = new BundleLifecycleManager(new CapturingSink(), undefined, /* allowInsecure */ true);
+    lifecycle = new ConnectorLifecycleManager(new CapturingSink(), undefined, /* allowInsecure */ true);
     // The connector is installed on the caller's identity — no workspace.
     await new IdentityConnectorStore({ workDir }).add(USER_ID, {
       url: `${mock.base}/mcp`,

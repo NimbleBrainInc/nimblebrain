@@ -7,7 +7,7 @@
  * platform token, so it cannot enter through the fleet edge. Something has to
  * decide which `(tenant, workspace)` that delivery belongs to, and the runtime
  * is the only component entitled to decide it: shared services verify a
- * workspace claim, they never originate one, and a bundle asserting its own
+ * workspace claim, they never originate one, and a connector asserting its own
  * workspace would be the whole isolation model inverted.
  *
  * So the runtime provides ONE generic door and originates identity on it. It

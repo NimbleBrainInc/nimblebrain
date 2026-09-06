@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   getNimbleBrainConnectorMeta,
   validateServerDetail,
-} from "../../src/connectors/server-detail.ts";
+} from "../../src/connectors/catalog/server-detail.ts";
 import { readStaticServers } from "../../src/registries/static-source.ts";
 import { CONNECTOR_FIXTURE_DIR } from "../helpers/connector-fixtures.ts";
 
@@ -113,7 +113,7 @@ describe("validateServerDetail", () => {
     expect(validateServerDetail(makeValid({ description: "a".repeat(100) })).valid).toBe(true);
   });
 
-  test("accepts entries with only packages (stdio bundle)", () => {
+  test("accepts entries with only packages (stdio connector)", () => {
     const detail = makeValid({
       remotes: undefined,
       packages: [{ registryType: "mpak", identifier: "@x/y", transport: { type: "stdio" } }],

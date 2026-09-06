@@ -1,5 +1,5 @@
 import type { FetchLike } from "@modelcontextprotocol/sdk/shared/transport.js";
-import { validateBundleUrl } from "../bundles/url-validator.ts";
+import { validateConnectorUrl } from "../connectors/runtime/url-validator.ts";
 
 /**
  * Maximum redirect hops to follow before giving up. A legitimate remote MCP
@@ -15,17 +15,17 @@ const MAX_REDIRECT_HOPS = 5;
  *
  * The MCP SDK's HTTP transports (`StreamableHTTPClientTransport`,
  * `SSEClientTransport`) call `fetch` with its default `redirect: "follow"`.
- * For a remote bundle whose URL is tenant-supplied (a self-service `dcr` /
+ * For a remote connector whose URL is tenant-supplied (a self-service `dcr` /
  * `static` connector install), that lets a hostile or compromised server
  * answer the initial request with `30x Location: http://169.254.169.254/...`
  * (cloud-metadata / IMDS) or an in-cluster service, and the SDK's fetch
  * silently follows it — turning our outbound fetch into an internal-network
- * probe. `validateBundleUrl` runs once on the configured URL at startup; it
+ * probe. `validateConnectorUrl` runs once on the configured URL at startup; it
  * never sees the redirect target.
  *
  * This wrapper closes that gap by reusing the per-hop validation the headless
  * OAuth probe already performs (see `workspace-oauth-provider.ts`): issue each
- * request with `redirect: "manual"` and re-run `validateBundleUrl` on every
+ * request with `redirect: "manual"` and re-run `validateConnectorUrl` on every
  * hop. The primary control is stricter than the probe's, though: redirects are
  * followed **same-origin only**. A cross-origin bounce is refused outright —
  * it is the SSRF pivot, and re-issuing the request to a new origin would leak
@@ -54,7 +54,7 @@ export function createSsrfGuardedFetch(
       // configured endpoint's opts — including `fleetInternal` for an
       // operator-vetted in-cluster http source — apply unchanged on every hop.
       // This validation is a backstop; the same-origin rule is the primary control.
-      validateBundleUrl(currentUrl, {
+      validateConnectorUrl(currentUrl, {
         allowInsecure: opts.allowInsecure,
         fleetInternal: opts.fleetInternal,
       });

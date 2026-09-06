@@ -521,7 +521,7 @@ describe("createDirectExecutor — aborted run preserves partial usage", () => {
 // ---------------------------------------------------------------------------
 //
 // `allowedTools` is no longer in the LLM-facing schema (PR #127), but
-// operator file edits and bundle-contributed schedules can still set it.
+// operator file edits and connector-contributed schedules can still set it.
 // The guard lives at the executor — closest to the actual chat() call —
 // so it sees the merged Automation regardless of how the field got there.
 

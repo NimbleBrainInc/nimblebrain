@@ -10,7 +10,7 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import type { HostManifestMeta } from "../../../src/bundles/types.ts";
+import type { HostManifestMeta } from "../../../src/connectors/runtime/types.ts";
 import {
   isOutboxResource,
   parseNotificationsDeclaration,
@@ -20,7 +20,7 @@ import {
   isReservedResourceScheme,
   RESERVED_RESOURCE_SCHEMES,
 } from "../../../src/tools/resource-schemes.ts";
-import type { ServerDetail } from "../../../src/connectors/server-detail.ts";
+import type { ServerDetail } from "../../../src/connectors/catalog/server-detail.ts";
 
 /** A `HostManifestMeta` carrying whatever the caller wants under `notifications`. */
 function metaWith(notifications: unknown): HostManifestMeta {
@@ -158,7 +158,7 @@ describe("the catalog carries the declaration to the install path", () => {
 /**
  * The published schema and this module state one rule, so they have to agree.
  *
- * `host-manifest.schema.json` is what a bundle author validates against before
+ * `host-manifest.schema.json` is what a connector author validates against before
  * shipping — it is the only place the rule can reach the one person who can fix
  * a bad declaration. `isOutboxResource` is what the runtime enforces at install
  * time, where a failure is a debug log and an outbox that is simply never
@@ -166,7 +166,7 @@ describe("the catalog carries the declaration to the install path", () => {
  * matters, is exactly the shape that drifts; these pin them together.
  */
 describe("the schema and the parser state the same rule", () => {
-  const schema = require("../../../src/connectors/schemas/host-manifest.schema.json");
+  const schema = require("../../../src/connectors/catalog/schemas/host-manifest.schema.json");
   const resource = schema.$defs.NotificationsDeclaration.properties.resource;
 
   test("the reserved-scheme constraint names exactly the schemes the runtime resolves", () => {

@@ -81,7 +81,7 @@ const { chatStore } = await import("../hooks/chat-store");
 import type { WorkspaceInfo } from "../context/WorkspaceContext";
 
 function ws(id: string, name: string): WorkspaceInfo {
-  return { id, name, bundles: [], memberCount: 1, isPersonal: false, userRole: "admin" };
+  return { id, name, connectors: [], memberCount: 1, isPersonal: false, userRole: "admin" };
 }
 const WS_A = ws("ws_a", "Alpha");
 const WS_B = ws("ws_b", "Bravo");

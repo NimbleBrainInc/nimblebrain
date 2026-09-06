@@ -108,7 +108,7 @@ export interface RequestContext {
    * a conversation and a run id to be identified by.
    *
    * Two readers, and they are the whole of it: the audit line, and the
-   * outbound `_meta` stamp under `UNATTENDED_META_KEY` so a bundle can tell a
+   * outbound `_meta` stamp under `UNATTENDED_META_KEY` so a connector can tell a
    * configuration-fired call from a chat turn. The host never parses it — a
    * caller may put anything short in here, and the value decides nothing.
    */

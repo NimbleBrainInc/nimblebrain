@@ -194,7 +194,7 @@ describe("CSP permits the origin the faces are served from", () => {
   });
 
   test("no directive injection via the added origin", () => {
-    // The origin is derived from `window.location`, never from bundle input,
+    // The origin is derived from `window.location`, never from connector input,
     // but assert the shape anyway: exactly the directives we expect.
     const csp = buildCSP();
     const names = csp.split("; ").map((d) => d.split(" ")[0]);

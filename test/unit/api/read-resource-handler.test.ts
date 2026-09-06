@@ -120,7 +120,7 @@ describe("handleReadResource", () => {
   });
 
   it("revives an installed-but-unregistered source instead of 403ing", async () => {
-    // A bundle whose endpoint was unreachable at boot is installed but absent
+    // A connector whose endpoint was unreachable at boot is installed but absent
     // from the registry. Membership alone would call that permanently gone; the
     // door self-heals first, the same way the engine's tool door does.
     const runtime = makeStubRuntime({

@@ -75,7 +75,7 @@ const MARK_READ_DESCRIPTION =
  * staying callable by name, so the workspace settings surface reaches them and
  * no agent does. That is the design's own rule, not a precaution added here:
  * a route is written only by a workspace admin through the settings surface —
- * never by a bundle, and never by the agent. A route is a standing
+ * never by a connector, and never by the agent. A route is a standing
  * instruction to call a tool with a stored input under a stored principal, so
  * an agent that could author one could grant itself an unattended path to any
  * tool in the workspace — and an agent that could merely *read* the list could

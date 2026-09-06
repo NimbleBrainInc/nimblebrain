@@ -33,8 +33,8 @@ import { WORKSPACE_ID_RE } from "./workspace-store.ts";
  * Scopes available under a workspace's root. These map 1:1 to the
  * directories created by `scaffoldWorkspace` (see `src/workspace/scaffold.ts`):
  *
- *   - `data`           — bundle data dirs (`{name}/...`)
- *   - `credentials`    — per-bundle credentials, OAuth tokens, secrets
+ *   - `data`           — connector data dirs (`{name}/...`)
+ *   - `credentials`    — per-connector credentials, OAuth tokens, secrets
  *   - `conversations`    — JSONL message persistence
  *   - `skills`           — workspace-installed (authored) skills
  *   - `connector-skills` — materialized connector overlays; a SIBLING of
@@ -72,7 +72,7 @@ const SUBPATH_FORBIDDEN_RE = /\0/;
  *   - Absolute paths and Windows drive letters (would discard our prefix)
  *   - Backslashes (Windows path separators that some callers mis-emit)
  *
- * Bundle data dirs, server names, and the like are already validated by
+ * Connector data dirs, server names, and the like are already validated by
  * their producers; this check is defense in depth against a future caller
  * who forgets.
  */
@@ -143,7 +143,7 @@ export class WorkspaceContext {
    *
    * Exposed because some legacy call sites need the global root for
    * non-workspace-scoped paths (the workspace tree itself, instance.json,
-   * the bundle registry cache). New code should treat this as an
+   * the connector registry cache). New code should treat this as an
    * implementation detail and prefer the scope-aware helpers below.
    */
   get workDir(): string {
@@ -161,7 +161,7 @@ export class WorkspaceContext {
    *   ctx.getDataPath("root")                                  → workspaces/ws_x
    *   ctx.getDataPath("conversations")                          → workspaces/ws_x/conversations
    *   ctx.getDataPath("credentials", "secrets")                 → .../credentials/secrets
-   *   ctx.getDataPath("data", deriveBundleDataDir(name))        → .../data/{slug}
+   *   ctx.getDataPath("data", deriveConnectorDataDir(name))        → .../data/{slug}
    *
    * Subpath segments are validated against path traversal, embedded null
    * bytes, backslashes, and absolute prefixes — see `assertSafeSubpathSegment`

@@ -204,7 +204,7 @@ export function loadConfig(flags: CliFlags = {}): RuntimeConfig {
   stripWorkspaceFields(fileConfig);
   warnDeprecatedFields(fileConfig, configPath);
 
-  // CLI flags override file config — workspace-owned fields (bundles,
+  // CLI flags override file config — workspace-owned fields (connectors,
   // skillDirs, preferences, home, noDefaultBundles) are intentionally omitted;
   // they were deleted above and now live in workspace.json.
   const config: RuntimeConfig = {
@@ -227,7 +227,7 @@ export function loadConfig(flags: CliFlags = {}): RuntimeConfig {
     features: fileConfig.features as RuntimeConfig["features"],
     connectors: fileConfig.connectors as RuntimeConfig["connectors"],
     files: fileConfig.files as RuntimeConfig["files"],
-    // Pass config path for bundle install/uninstall persistence
+    // Pass config path for connector install/uninstall persistence
     configPath,
     configOverridePath,
     workDir: absoluteWorkDir(fileConfig, flags),

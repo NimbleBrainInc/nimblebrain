@@ -934,7 +934,7 @@ export function createChatStore(): ChatStore {
    * The `name` fallback is a malformed-frame guard, not the legacy path: the
    * runtime stamps `name` on every entry it emits, and events recorded before
    * that field existed reach the UI only through replay, where the
-   * conversations bundle resolves a name before this ever sees them. It still
+   * conversations app resolves a name before this ever sees them. It still
    * derives rather than printing the id, because every connector skill's id
    * ends in `/SKILL.md` — the guard firing must not put that back on screen.
    */
@@ -954,7 +954,7 @@ export function createChatStore(): ChatStore {
 
   function handleSkillsLoaded(slice: ConversationSlice, data: unknown): void {
     // The stream frame is untrusted `unknown`; normalize each entry the same way
-    // the reopen path does (`projectSkillsLoaded` in the conversations bundle) so
+    // the reopen path does (`projectSkillsLoaded` in the conversations app) so
     // live and replay produce byte-identical ledger rows and a malformed field
     // can't render `ledger-scope--undefined`. Zero well-formed entries → leave
     // `skillsLoaded` unset so the line is suppressed (absence is the signal).

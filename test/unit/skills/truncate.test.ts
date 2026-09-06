@@ -3,7 +3,7 @@
  *
  * Verifies budget enforcement, section preservation, and fallback behavior
  * when a single section exceeds the budget. Replaces mid-string slicing
- * that bit production (a bundle "rules" appendix was lost mid-rule).
+ * that bit production (a connector "rules" appendix was lost mid-rule).
  */
 
 import { describe, expect, test } from "bun:test";

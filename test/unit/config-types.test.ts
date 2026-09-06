@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { getValidator } from "../../src/config/index.ts";
-import type { BundleState, AppInfo, HostManifestMeta, BundleUiMeta } from "../../src/bundles/types.ts";
+import type { ConnectionState } from "../../src/connectors/runtime/connection.ts";
+import type { AppInfo, HostManifestMeta, ConnectorUiMeta } from "../../src/connectors/runtime/types.ts";
 import type { RuntimeConfig } from "../../src/runtime/types.ts";
 import type { EngineEventType } from "../../src/engine/types.ts";
 
@@ -63,9 +64,9 @@ describe("JSON Schema validation", () => {
 	});
 });
 
-describe("BundleState type", () => {
+describe("ConnectionState type", () => {
 	it("covers all 5 states", () => {
-		const states: BundleState[] = ["starting", "running", "crashed", "dead", "stopped"];
+		const states: ConnectionState[] = ["starting", "running", "crashed", "dead", "stopped"];
 		expect(states).toHaveLength(5);
 		// Verify uniqueness
 		expect(new Set(states).size).toBe(5);
@@ -108,7 +109,7 @@ describe("AppInfo type", () => {
 	it("matches the GET /v1/apps response shape", () => {
 		const app: AppInfo = {
 			name: "tasks",
-			bundleName: "@nimblebraininc/tasks",
+			connectorName: "@nimblebraininc/tasks",
 			version: "1.2.0",
 			status: "running",
 			toolCount: 12,
@@ -126,7 +127,7 @@ describe("AppInfo type", () => {
 	it("supports null ui for apps without a frontend", () => {
 		const app: AppInfo = {
 			name: "weather",
-			bundleName: "@nimblebraininc/weather",
+			connectorName: "@nimblebraininc/weather",
 			version: "0.3.0",
 			status: "running",
 			toolCount: 3,

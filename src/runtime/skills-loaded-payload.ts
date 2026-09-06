@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { SkillsLoadedPayload } from "../engine/types.ts";
-import { parseConnectorSkillName } from "../skills/bundle-skills.ts";
+import { parseConnectorSkillName } from "../skills/connector-skills.ts";
 import { readSkillMtime } from "../skills/loader.ts";
 import type { SkillMatch } from "../skills/matcher.ts";
 import type { LoadedBy, SelectedSkill } from "../skills/select.ts";
@@ -33,7 +33,7 @@ function skillKey(skill: Skill): string {
  *   - `trigger`      — the `SkillMatcher` hit, if any → reason
  *     `trigger matched "<phrase>"`.
  *   - `alwaysOn`     — the always-on context skills composed this turn (persona
- *     override, org/workspace/user + bundle always-on skills) → reason
+ *     override, org/workspace/user + connector always-on skills) → reason
  *     `always-on`.
  *
  * Platform-vendored core/builtin skills are EXCLUDED across ALL three sources —

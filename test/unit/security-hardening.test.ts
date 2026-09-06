@@ -23,7 +23,7 @@ import { appendRun, readRuns } from "../../src/platform/automations/store.ts";
 import type { AutomationRun } from "../../src/platform/automations/types.ts";
 
 // NB-004: SSRF
-import { validateBundleUrl } from "../../src/bundles/url-validator.ts";
+import { validateConnectorUrl } from "../../src/connectors/runtime/url-validator.ts";
 
 // NB-002: Prompt injection — skill body XML containment
 // NB-007: App guide trust gating
@@ -155,19 +155,19 @@ describe("Security Hardening Regression Tests", () => {
 
 		it("rejects ::ffff:169.254.169.254 (cloud metadata via IPv4-mapped IPv6)", () => {
 			expect(() =>
-				validateBundleUrl(new URL("https://[::ffff:169.254.169.254]/latest/meta-data/")),
+				validateConnectorUrl(new URL("https://[::ffff:169.254.169.254]/latest/meta-data/")),
 			).toThrow(/private\/reserved/);
 		});
 
 		it("allows ::ffff:8.8.8.8 (public IP via IPv4-mapped IPv6)", () => {
 			expect(() =>
-				validateBundleUrl(new URL("https://[::ffff:8.8.8.8]/")),
+				validateConnectorUrl(new URL("https://[::ffff:8.8.8.8]/")),
 			).not.toThrow();
 		});
 
 		it("rejects plain 169.254.169.254 (link-local metadata)", () => {
 			expect(() =>
-				validateBundleUrl(new URL("http://169.254.169.254/latest/meta-data/")),
+				validateConnectorUrl(new URL("http://169.254.169.254/latest/meta-data/")),
 			).toThrow(/private\/reserved/);
 		});
 	});
@@ -227,14 +227,14 @@ describe("Security Hardening Regression Tests", () => {
 	// ---------------------------------------------------------------------------
 	//
 	// The platform previously gated `<app-guide>` injection on MTF trust score
-	// >= 50. That gate has been removed: if a bundle is active in the workspace
+	// >= 50. That gate has been removed: if a connector is active in the workspace
 	// its tools are already callable, so suppressing the workflow guidance that
 	// teaches the model how to use them safely leaves the model less safe,
 	// not more. Trust is an install-time concern.
 	//
-	// The remaining defense is the same one used for every other bundle-
+	// The remaining defense is the same one used for every other connector-
 	// authored containment tag (`<app-instructions>`, `<app-state>`,
-	// `<layer3-skill>`): escape `</tag>` in the body so a malicious bundle
+	// `<layer3-skill>`): escape `</tag>` in the body so a malicious connector
 	// cannot break out of containment. These tests guard that escape.
 
 	describe("NB-007: app-guide containment escapes break-out attempts", () => {
@@ -255,7 +255,7 @@ describe("Security Hardening Regression Tests", () => {
 			// in the output is the legitimate closing tag emitted by compose.
 			const closingTagCount = (result.match(/<\/app-guide>/g) || []).length;
 			expect(closingTagCount).toBe(1);
-			// The escaped form is what bundle bytes actually produced
+			// The escaped form is what connector bytes actually produced
 			expect(result).toContain("&lt;/app-guide>");
 			// Containment intact: the malicious payload sits inside the tags
 			const openIdx = result.indexOf("<app-guide>");

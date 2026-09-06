@@ -79,8 +79,8 @@ describe("WorkspaceContext.getRoot / getDataPath", () => {
     expect(ctx.getDataPath("credentials", "secrets")).toBe(
       "/tmp/nb/workspaces/ws_alpha/credentials/secrets",
     );
-    expect(ctx.getDataPath("data", "@scope-bundle-slug")).toBe(
-      "/tmp/nb/workspaces/ws_alpha/data/@scope-bundle-slug",
+    expect(ctx.getDataPath("data", "@scope-connector-slug")).toBe(
+      "/tmp/nb/workspaces/ws_alpha/data/@scope-connector-slug",
     );
   });
 

@@ -9,7 +9,7 @@ import {
  * Read client for the shared artifacts data plane.
  *
  * The host is an *unprivileged* client of the data plane, exactly like a
- * capability bundle — neither bypasses row-level security. The difference is
+ * capability connector — neither bypasses row-level security. The difference is
  * direction and privilege: a producing capability holds a write-only token; the
  * host holds a workspace-scoped *read* token and reads on behalf of the viewing
  * user. The single enforcement point is the data plane's RLS, keyed on

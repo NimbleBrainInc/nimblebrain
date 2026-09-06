@@ -94,7 +94,7 @@ describe("Layer 3 — workspace-tier `loading_strategy: always` skills", () => {
 
     // Match by the file path the loader records as id — workspace-tier
     // skills carry their on-disk path, NOT a `skill://` URI (that's the
-    // bundle-tier shape).
+    // connector-tier shape).
     const expectedPath = join(
       testDir,
       "workspaces",

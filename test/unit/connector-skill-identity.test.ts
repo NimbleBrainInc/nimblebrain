@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 import {
   connectorSkillIdentity,
   type ServerDetail,
-} from "../../src/connectors/server-detail.ts";
+} from "../../src/connectors/catalog/server-detail.ts";
 
 function detail(over: Partial<ServerDetail> = {}): ServerDetail {
   return { name: "example-server", description: "d", version: "1.0.0", ...over };

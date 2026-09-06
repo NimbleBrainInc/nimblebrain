@@ -21,7 +21,7 @@
  *
  * A BROKERED provider's home — `users/<userId>/credentials/<provider>/<connector>/`
  * — needs no carve-out and must not get one. `brokeredConnectorDir`
- * (`src/bundles/brokered.ts`) is its single construction site and builds it from
+ * (`src/connectors/runtime/brokered.ts`) is its single construction site and builds it from
  * a *variable* provider segment onto a variable root, so this lint never sees it;
  * anything that spells such a path literally is bypassing that site and IS the
  * regression.
@@ -136,7 +136,7 @@ export function isUserCredentialJoin(node: ts.CallExpression): boolean {
 /**
  * Returns true iff `node` is a template literal whose assembled text
  * contains the substring `users/<...>/credentials/`. Catches the
- * `` `${workDir}/users/${userId}/credentials/${bundleName}` `` shape
+ * `` `${workDir}/users/${userId}/credentials/${connectorName}` `` shape
  * that `join` would otherwise express piecewise.
  */
 export function isUserCredentialTemplate(node: ts.TemplateExpression): boolean {

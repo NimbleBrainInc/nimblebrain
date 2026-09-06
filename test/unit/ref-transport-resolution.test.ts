@@ -1,5 +1,5 @@
 /**
- * What a persisted `BundleRef` resolves to at start: which transport config, and
+ * What a persisted `ConnectorRef` resolves to at start: which transport config, and
  * whether it earns the in-cluster plain-HTTP exception.
  *
  * Both properties are pinned here because both were defects. The transport map
@@ -10,11 +10,11 @@
  */
 
 import { describe, expect, it } from "bun:test";
-import { resolveRefTransport } from "../../src/bundles/startup.ts";
-import type { BundleRef } from "../../src/bundles/types.ts";
-import { validateBundleUrl } from "../../src/bundles/url-validator.ts";
+import { resolveRefTransport } from "../../src/connectors/runtime/startup.ts";
+import type { ConnectorRef } from "../../src/connectors/runtime/types.ts";
+import { validateConnectorUrl } from "../../src/connectors/runtime/url-validator.ts";
 
-type UrlRef = Extract<BundleRef, { url: string }>;
+type UrlRef = Extract<ConnectorRef, { url: string }>;
 
 const IN_CLUSTER = new URL("http://composio-session.mcp-shared.svc.cluster.local/mcp");
 
@@ -55,7 +55,7 @@ describe("fleetInternal: only the minted rail earns the in-cluster exception", (
     );
     expect(fleetInternal).toBe(true);
     expect(() =>
-      validateBundleUrl(IN_CLUSTER, { allowInsecure: false, fleetInternal }),
+      validateConnectorUrl(IN_CLUSTER, { allowInsecure: false, fleetInternal }),
     ).not.toThrow();
   });
 
@@ -67,7 +67,7 @@ describe("fleetInternal: only the minted rail earns the in-cluster exception", (
       ref({ type: "streamable-http", auth: { type: "provider", provider: "composio", config: {} } }),
     );
     expect(fleetInternal).toBe(false);
-    expect(() => validateBundleUrl(IN_CLUSTER, { allowInsecure: false, fleetInternal })).toThrow();
+    expect(() => validateConnectorUrl(IN_CLUSTER, { allowInsecure: false, fleetInternal })).toThrow();
   });
 
   it("denies it to a legacy Composio ref, which maps to composio provider auth", () => {

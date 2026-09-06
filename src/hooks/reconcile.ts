@@ -101,7 +101,7 @@ export async function ensureHooks(
   const port = deps.portFor(wsId, connector);
   if (!port) {
     // The source is not up yet — an interactive-OAuth connector at install
-    // time, or a bundle still starting. Nothing is recorded, so nothing is half
+    // time, or a connector still starting. Nothing is recorded, so nothing is half
     // done; the same reconcile runs when the connection reaches `running`.
     log.debug("mcp", `[hooks] ${connector} declares hooks but is not running yet — deferring`);
     return [];
@@ -129,7 +129,7 @@ export async function ensureHooks(
  *
  * A fresh install reaches `provisionHooks` from TWO directions at once: the
  * connection-reached-running observer, fired from inside the awaited
- * `startBundleSource`, and the install handler on the line after the eager
+ * `startConnectorSource`, and the install handler on the line after the eager
  * start returns. Both read the workspace before either writes, so both see no
  * registration and both mint — two divergent `kid`s, one persisted, neither
  * recorded as the other's `prevKid`, and `register_tool` called twice with two

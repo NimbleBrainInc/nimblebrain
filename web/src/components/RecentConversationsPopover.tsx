@@ -10,7 +10,7 @@ import { toSlug } from "../lib/workspace-slug";
 // result (server shape: ListResult / IndexEntry in
 // src/platform/conversations/index-cache.ts). The web package can't import
 // server types, and only tool *inputs* are codegen'd, so the read shape is
-// declared locally — the same approach the Conversations bundle UI takes.
+// declared locally — the same approach the Conversations app UI takes.
 interface RecentConversation {
   id: string;
   title: string | null;

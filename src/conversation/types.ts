@@ -570,7 +570,7 @@ export interface SkillActivatedEvent {
   toolCallId: string;
   /** The activated skill's catalog name. */
   skillName: string;
-  /** Scope label for provenance / telemetry (`org` / `workspace` / `user` / `bundle` / `connector`). */
+  /** Scope label for provenance / telemetry (`org` / `workspace` / `user` / `connector` / `connector`). */
   scope: string;
   /** Approximate tokens of the delivered (capped) body. */
   tokens: number;

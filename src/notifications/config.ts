@@ -3,8 +3,8 @@
  *
  * It sits beside `hooks` for the reason `hooks` sits beside `oauthOperatorApps`:
  * operator-plane, workspace-scoped, a lifecycle related to but not identical to
- * a bundle install, and one read on the path that needs it. Written only by a
- * workspace admin through the settings surface; never by a bundle, and never by
+ * a connector install, and one read on the path that needs it. Written only by a
+ * workspace admin through the settings surface; never by a connector, and never by
  * the agent.
  *
  * **The principal is the writer.** Every route carries `createdBy`, and a route

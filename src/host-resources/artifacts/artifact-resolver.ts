@@ -22,8 +22,8 @@ import {
  *
  * Trust: the resolver carries the viewing user's verified workspace into the
  * read client, which mints a workspace-scoped read token; RLS in the data plane
- * is the enforcement point. No producing bundle is ever in this read path —
- * resolution is decoupled from the bundle's `resources/read` and its liveness.
+ * is the enforcement point. No producing connector is ever in this read path —
+ * resolution is decoupled from the connector's `resources/read` and its liveness.
  *
  * The bytes this returns are UNTRUSTED (a report can quote a hostile page). The
  * resolver does not render — it returns raw bytes/text. Sanitization happens at
@@ -107,7 +107,7 @@ export class ArtifactResolver {
    * List artifacts in a workspace (discovery for retrieval), reading as the
    * viewing user. Delegates to the read client — the same workspace-scoped
    * `artifacts:read` token gates it and RLS fences the rows. The resolver is the
-   * host's single artifact-access seam (resolve + list); no bundle is ever in
+   * host's single artifact-access seam (resolve + list); no connector is ever in
    * the artifacts read path.
    */
   list(workspaceId: string, opts: ArtifactListOptions = {}): Promise<ArtifactListResult> {

@@ -8,7 +8,7 @@ import { makeInProcessSource } from "../../helpers/in-process-source.ts";
  *
  * `makeInProcessSource` runs a real in-process MCP server + client transport,
  * so a tool result here crosses the same `CallToolResult` serialization a
- * bundle's would. These tests prove a reverse-DNS `_meta` key set by a tool
+ * connector's would. These tests prove a reverse-DNS `_meta` key set by a tool
  * survives that boundary and lands on the engine-side `ToolResult._meta` —
  * the assumption the loop supervisor's non-advancing trip depends on.
  */

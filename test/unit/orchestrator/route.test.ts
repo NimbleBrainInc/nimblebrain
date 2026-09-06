@@ -661,7 +661,7 @@ describe("routeToolCall — personal connectors (identity-door grant gate)", () 
       runtime,
     });
 
-    expect(routed.source).toBe(kernel); // the kernel source, not the personal bundle
+    expect(routed.source).toBe(kernel); // the kernel source, not the personal connector
   });
 });
 

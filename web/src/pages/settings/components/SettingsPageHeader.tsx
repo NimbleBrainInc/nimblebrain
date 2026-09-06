@@ -22,7 +22,7 @@ export interface SettingsPageHeaderProps {
   /**
    * Optional glyph rendered inline to the left of the title — used for
    * pages whose identity is reinforced by an icon (currently
-   * `SettingsAppPanelPage`, which carries the bundle's icon). Render the
+   * `SettingsAppPanelPage`, which carries the connector's icon). Render the
    * icon node yourself; the header doesn't size or color it.
    */
   icon?: ReactNode;

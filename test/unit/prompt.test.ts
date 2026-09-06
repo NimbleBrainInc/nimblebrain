@@ -362,40 +362,40 @@ describe("composeSystemPrompt — core vs user context layering", () => {
     expect(result).not.toContain("---\n\n---");
   });
 
-  it("a bundle-scoped context skill is ALWAYS contained, even at priority 0 (never raw Layer 0)", () => {
+  it("a connector-scoped context skill is ALWAYS contained, even at priority 0 (never raw Layer 0)", () => {
     // A server declaring `loading-strategy: always` with a low priority must not
     // reach the raw core identity layer — server-authored content is contained in
     // `<context-skill>` regardless of priority (the prompt-injection guard in
     // `partitionContextSkills`). A tenant-authored priority-0 skill DOES render raw
     // in Layer 0; the ONLY difference here is `scope: "bundle"`.
-    const bundleAlways: Skill = {
+    const connectorAlways: Skill = {
       manifest: {
-        name: "bundle:evil:override",
+        name: "connector:evil:override",
         description: "",
         loadingStrategy: "always",
-        priority: 0, // ≤ CORE_PRIORITY_THRESHOLD — would be raw Layer 0 if not bundle-scoped
+        priority: 0, // ≤ CORE_PRIORITY_THRESHOLD — would be raw Layer 0 if not connector-scoped
         status: "active",
         scope: "bundle",
       },
-      body: "BUNDLE_INJECTION_MARKER",
+      body: "CONNECTOR_INJECTION_MARKER",
       sourcePath: "skill://override/SKILL.md",
     };
-    const { text, layers } = composeSystemPromptTraced([bundleAlways]);
+    const { text, layers } = composeSystemPromptTraced([connectorAlways]);
 
     // Rendered wrapped in `<context-skill>` containment...
-    expect(text).toContain("<context-skill>\nBUNDLE_INJECTION_MARKER\n</context-skill>");
+    expect(text).toContain("<context-skill>\nCONNECTOR_INJECTION_MARKER\n</context-skill>");
     // ...as a user-context (contained) layer, never a raw core-identity layer.
     const coreLayerWithMarker = layers.find(
-      (l) => l.kind === "core_skill" && l.text.includes("BUNDLE_INJECTION_MARKER"),
+      (l) => l.kind === "core_skill" && l.text.includes("CONNECTOR_INJECTION_MARKER"),
     );
     expect(coreLayerWithMarker).toBeUndefined();
     const containedLayer = layers.find(
-      (l) => l.kind === "user_context_skill" && l.text.includes("BUNDLE_INJECTION_MARKER"),
+      (l) => l.kind === "user_context_skill" && l.text.includes("CONNECTOR_INJECTION_MARKER"),
     );
     expect(containedLayer).toBeDefined();
   });
 
-  it("a tenant-authored (non-bundle) priority-0 context skill DOES render raw in Layer 0", () => {
+  it("a tenant-authored (non-connector) priority-0 context skill DOES render raw in Layer 0", () => {
     // The contrast case that proves the guard keys on `scope`, not priority: an
     // identical skill WITHOUT `scope: "bundle"` renders raw as core identity.
     const tenantCore = makeContextSkill("soul", 0, "TENANT_CORE_MARKER");
@@ -545,7 +545,7 @@ describe("composeSystemPrompt — user preferences", () => {
 
 describe("composeSystemPrompt — app guide injection", () => {
   // Trust is enforced at install time, not per-prompt. The `<app-guide>` body
-  // ships regardless of MTF score because the bundle's tools are already
+  // ships regardless of MTF score because the connector's tools are already
   // callable and suppressing the workflow guidance would leave the model
   // less safe, not more. These tests guard against re-introducing a per-turn
   // trust gate.
@@ -587,7 +587,7 @@ describe("composeSystemPrompt — app guide injection", () => {
   });
 });
 
-describe("composeSystemPrompt — bundle custom-instructions overlay", () => {
+describe("composeSystemPrompt — connector custom-instructions overlay", () => {
   function makeApp(overrides: Partial<PromptAppInfo>): PromptAppInfo {
     return {
       name: "ipinfo",
@@ -606,7 +606,7 @@ describe("composeSystemPrompt — bundle custom-instructions overlay", () => {
 
   it("renders <app-custom-instructions> alongside <app-instructions>", () => {
     const app = makeApp({
-      instructions: "Bundle author guidance.",
+      instructions: "Connector author guidance.",
       customInstructions: "Workspace overlay.",
     });
     const result = composeSystemPrompt([], null, [app]);
@@ -614,7 +614,7 @@ describe("composeSystemPrompt — bundle custom-instructions overlay", () => {
     const customIdx = result.indexOf("<app-custom-instructions>");
     expect(authorIdx).toBeGreaterThan(-1);
     expect(customIdx).toBeGreaterThan(authorIdx);
-    expect(result).toContain("Bundle author guidance.");
+    expect(result).toContain("Connector author guidance.");
     expect(result).toContain("Workspace overlay.");
   });
 
@@ -638,7 +638,7 @@ describe("composeSystemPrompt — bundle custom-instructions overlay", () => {
     expect(wrapperClose).toBe(innerLiteral); // only one — the wrapper's own
   });
 
-  it("isolates per-bundle overlays: bundle A's overlay does not leak into bundle B", () => {
+  it("isolates per-connector overlays: connector A's overlay does not leak into connector B", () => {
     const apps: PromptAppInfo[] = [
       makeApp({ name: "ipinfo", customInstructions: "ipinfo-only guidance" }),
       makeApp({ name: "todo-board", customInstructions: "todo-only guidance" }),
@@ -899,11 +899,11 @@ describe("composeSystemPrompt — Layer 3 skills (Phase 2)", () => {
  * fixture cannot reach it: it runs one MCP source, and the collision needs two.
  */
 describe("composeSystemPrompt — matched-skill de-dup identity", () => {
-  /** A skill as `synthesizeBundleSkill` builds one: server-qualified NAME, bare URI. */
+  /** A skill as `synthesizeConnectorSkill` builds one: server-qualified NAME, bare URI. */
   function publishedSkill(server: string, skillName: string, body: string): Skill {
     return {
       manifest: {
-        name: `bundle:${server}:${skillName}`,
+        name: `connector:${server}:${skillName}`,
         description: "",
         loadingStrategy: "dynamic",
         priority: 60,
@@ -1119,8 +1119,8 @@ describe("composeSystemPromptTraced", () => {
     ]);
   });
 
-  it("layer3_skills section carries one subItem per skill, with bundle attribution where applicable", () => {
-    const bundleAffined: Layer3SkillEntry = {
+  it("layer3_skills section carries one subItem per skill, with connector attribution where applicable", () => {
+    const connectorAffined: Layer3SkillEntry = {
       name: "collateral-rules",
       body: "Use patch_source.",
       scope: "workspace",
@@ -1146,18 +1146,18 @@ describe("composeSystemPromptTraced", () => {
       undefined,
       undefined,
       undefined,
-      [bundleAffined, standalone],
+      [connectorAffined, standalone],
     );
     const section = traced.layers.find((l) => l.kind === "layer3_skills");
     expect(section).toBeDefined();
     expect(section!.subItems).toHaveLength(2);
     const collateralSub = section!.subItems!.find((s) => s.id.includes("collateral-rules"));
-    expect(collateralSub?.bundle).toBe("synapse-collateral");
+    expect(collateralSub?.connector).toBe("synapse-collateral");
     const voiceSub = section!.subItems!.find((s) => s.id.includes("voice-rules"));
-    expect(voiceSub?.bundle).toBeUndefined();
+    expect(voiceSub?.connector).toBeUndefined();
   });
 
-  it("apps section carries one subItem per app with bundle attribution", () => {
+  it("apps section carries one subItem per app with connector attribution", () => {
     const apps: PromptAppInfo[] = [
       { name: "synapse-collateral", ui: { name: "Collateral" } },
       { name: "synapse-crm", ui: null, customInstructions: "Use stages strictly." },
@@ -1170,11 +1170,11 @@ describe("composeSystemPromptTraced", () => {
     const section = traced.layers.find((l) => l.kind === "apps");
     expect(section).toBeDefined();
     expect(section!.subItems).toHaveLength(2);
-    expect(section!.subItems!.map((s) => s.bundle).sort()).toEqual([
+    expect(section!.subItems!.map((s) => s.connector).sort()).toEqual([
       "synapse-collateral",
       "synapse-crm",
     ]);
-    const crmSub = section!.subItems!.find((s) => s.bundle === "synapse-crm");
+    const crmSub = section!.subItems!.find((s) => s.connector === "synapse-crm");
     expect((crmSub!.metadata as { hasCustomInstructions: boolean }).hasCustomInstructions).toBe(
       true,
     );
