@@ -40,10 +40,10 @@ export function SecretHeadersModal({
       fields.map((f) => ({
         key: f.key,
         label: f.label,
-        // Fall back to naming the header when the entry declared no help. It is
-        // the one true thing available about where the value goes, and a user
-        // looking at two similar inputs needs to tell them apart.
-        description: f.help ?? `Sent as ${f.header}.`,
+        // Only what the entry chose to say. Naming the header here read as
+        // detail for its own sake — the person filling this in is pasting a
+        // credential, not debugging a request.
+        ...(f.help ? { description: f.help } : {}),
         // Always masked. Every value here is a credential by construction — the
         // declaration exists to keep them out of config, so none belongs on
         // screen in plaintext either.
@@ -60,8 +60,8 @@ export function SecretHeadersModal({
       }
       description={
         mode === "rotate"
-          ? "Enter the new values. They replace what this workspace has stored; the next request the connector makes uses them, with no restart."
-          : `${connectorName} needs credentials only this workspace holds. They're stored in the workspace credential store and sent on each request — never shown again, and never part of a conversation.`
+          ? "Replaces what this workspace has stored. Takes effect on the next request."
+          : "Stored in this workspace, never shown again, and never part of a conversation."
       }
       fields={modalFields}
       submitLabel={mode === "rotate" ? "Replace" : "Save and install"}
