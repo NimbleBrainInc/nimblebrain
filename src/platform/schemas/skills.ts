@@ -20,6 +20,17 @@ const LoadingStrategy = StringEnum(["always", "dynamic"] as const, {
     "`always` = always-on context (Layer 0/1); `dynamic` = on-demand (loads via tool-affinity, triggers, or the catalog). Default `dynamic`.",
 });
 
+// How a `---` block at the head of `body` is treated. The canonical skill
+// artifact is a whole file, so a caller handing one over is the normal case,
+// not the exception — `apply` is the default and `ignore` is the escape hatch
+// for a body whose leading `---` is genuinely prose.
+const FrontmatterMode = StringEnum(["apply", "ignore"] as const, {
+  description:
+    "`apply` (default): a leading `---` block in `body` is read as SKILL.md frontmatter — " +
+    "its fields override `manifest` and it is stripped from the stored body; invalid " +
+    "frontmatter is an error, never stored as prose. `ignore`: keep the block as body text.",
+});
+
 // LLM-facing manifest fields shared by create + update — a flat `Pick` of the
 // canonical schema (`schemas/skill-manifest.ts`). Operator/stamped fields
 // (`scope`, `provenance`) are excluded per `platform/AGENTS.md §1.4`; the
@@ -147,8 +158,11 @@ export const SkillsCreateInput = Type.Object(
       description: "YAML frontmatter for the skill file. Identity + selection metadata.",
     }),
     body: Type.String({
-      description: "Markdown body — the prose below the frontmatter.",
+      description:
+        "Markdown body — the prose below the frontmatter. May be a whole SKILL.md: " +
+        "a leading `---` block is parsed and applied to the manifest (see `frontmatter`).",
     }),
+    frontmatter: Type.Optional(FrontmatterMode),
   },
   { required: ["scope", "manifest", "body"] },
 );
@@ -200,6 +214,7 @@ export const SkillsUpdateInput = Type.Object(
           "`replace` overwrites the whole body. Required whenever `body` is given.",
       }),
     ),
+    frontmatter: Type.Optional(FrontmatterMode),
   },
   { required: ["id"] },
 );
@@ -316,6 +331,18 @@ export interface SkillSource {
 }
 
 /**
+ * Computed loading visibility: whether any loader path reaches a skill
+ * (`wouldLoad`) and the mechanism by which it loads. `mechanism: "none"`
+ * (`wouldLoad: false`) flags a dead skill — no strategy, no triggers, no tool
+ * affinity — that would otherwise be silently inert. Derived by
+ * `resolveLoadingMechanism`, not stored on disk.
+ */
+export interface SkillLoading {
+  wouldLoad: boolean;
+  mechanism: "always" | "tool_affinity" | "trigger" | "none";
+}
+
+/**
  * Row returned per skill by `skills__list`. The summary surface for the
  * settings UI and the agent's `skills__list` enumeration.
  */
@@ -333,14 +360,7 @@ export interface SkillSummary {
   toolAffinity?: string[];
   triggers?: string[];
   priority?: number;
-  /**
-   * Computed loading visibility: whether any loader path reaches this skill
-   * (`wouldLoad`) and the mechanism by which it loads. `mechanism: "none"`
-   * (`wouldLoad: false`) flags a dead skill — no strategy, no triggers, no
-   * tool affinity — that would otherwise be silently inert. Derived, not
-   * stored on disk.
-   */
-  loading?: { wouldLoad: boolean; mechanism: "always" | "tool_affinity" | "trigger" | "none" };
+  loading?: SkillLoading;
 }
 
 export interface SkillsListOutput {
@@ -371,6 +391,25 @@ export interface SkillDetail {
 
 /** `SkillsReadOutput` is the detail itself — no wrapper envelope. */
 export type SkillsReadOutput = SkillDetail;
+
+/**
+ * Result of a write — `skills__create` and `skills__update` share it.
+ *
+ * `loading` answers the question a skill exists to answer, at the moment it is
+ * written: a skill that reaches no loader path is reported here rather than
+ * discovered later as silence. `frontmatterApplied` names the on-disk fields
+ * taken from a pasted SKILL.md, so a caller whose manifest was overridden by
+ * the document it handed over is told which fields moved and why.
+ */
+export interface SkillsWriteOutput {
+  id: string;
+  name: string;
+  scope: string;
+  loadingStrategy?: string;
+  loading?: SkillLoading;
+  /** Absent when the body carried no frontmatter, or when `frontmatter: "ignore"`. */
+  frontmatterApplied?: string[];
+}
 
 /**
  * `nb__use_skill` result. `loaded` delivers the skill (body rides the result's

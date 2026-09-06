@@ -56,6 +56,7 @@ export declare const PlatformToolCatalog: {
                     allowedTools: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
                 }>;
                 body: import("@sinclair/typebox").TString;
+                frontmatter: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"apply" | "ignore">>;
             }>;
         };
         readonly update: {
@@ -71,6 +72,7 @@ export declare const PlatformToolCatalog: {
                 }>>;
                 body: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
                 body_mode: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TLiteral<"append">, import("@sinclair/typebox").TLiteral<"replace">]>>;
+                frontmatter: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"apply" | "ignore">>;
             }>;
         };
         readonly delete: {

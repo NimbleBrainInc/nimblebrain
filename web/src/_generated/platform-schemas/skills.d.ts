@@ -37,6 +37,7 @@ export declare const SkillsCreateInput: import("@sinclair/typebox").TObject<{
         allowedTools: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
     }>;
     body: import("@sinclair/typebox").TString;
+    frontmatter: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"apply" | "ignore">>;
 }>;
 export type SkillsCreateInput = Static<typeof SkillsCreateInput>;
 export declare const SkillsUpdateInput: import("@sinclair/typebox").TObject<{
@@ -51,6 +52,7 @@ export declare const SkillsUpdateInput: import("@sinclair/typebox").TObject<{
     }>>;
     body: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     body_mode: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TLiteral<"append">, import("@sinclair/typebox").TLiteral<"replace">]>>;
+    frontmatter: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"apply" | "ignore">>;
 }>;
 export type SkillsUpdateInput = Static<typeof SkillsUpdateInput>;
 export declare const SkillsHistoryInput: import("@sinclair/typebox").TObject<{
@@ -100,6 +102,17 @@ export interface SkillSource {
     uri?: string;
 }
 /**
+ * Computed loading visibility: whether any loader path reaches a skill
+ * (`wouldLoad`) and the mechanism by which it loads. `mechanism: "none"`
+ * (`wouldLoad: false`) flags a dead skill — no strategy, no triggers, no tool
+ * affinity — that would otherwise be silently inert. Derived by
+ * `resolveLoadingMechanism`, not stored on disk.
+ */
+export interface SkillLoading {
+    wouldLoad: boolean;
+    mechanism: "always" | "tool_affinity" | "trigger" | "none";
+}
+/**
  * Row returned per skill by `skills__list`. The summary surface for the
  * settings UI and the agent's `skills__list` enumeration.
  */
@@ -117,17 +130,7 @@ export interface SkillSummary {
     toolAffinity?: string[];
     triggers?: string[];
     priority?: number;
-    /**
-     * Computed loading visibility: whether any loader path reaches this skill
-     * (`wouldLoad`) and the mechanism by which it loads. `mechanism: "none"`
-     * (`wouldLoad: false`) flags a dead skill — no strategy, no triggers, no
-     * tool affinity — that would otherwise be silently inert. Derived, not
-     * stored on disk.
-     */
-    loading?: {
-        wouldLoad: boolean;
-        mechanism: "always" | "tool_affinity" | "trigger" | "none";
-    };
+    loading?: SkillLoading;
 }
 export interface SkillsListOutput {
     skills: SkillSummary[];
@@ -155,6 +158,24 @@ export interface SkillDetail {
 }
 /** `SkillsReadOutput` is the detail itself — no wrapper envelope. */
 export type SkillsReadOutput = SkillDetail;
+/**
+ * Result of a write — `skills__create` and `skills__update` share it.
+ *
+ * `loading` answers the question a skill exists to answer, at the moment it is
+ * written: a skill that reaches no loader path is reported here rather than
+ * discovered later as silence. `frontmatterApplied` names the on-disk fields
+ * taken from a pasted SKILL.md, so a caller whose manifest was overridden by
+ * the document it handed over is told which fields moved and why.
+ */
+export interface SkillsWriteOutput {
+    id: string;
+    name: string;
+    scope: string;
+    loadingStrategy?: string;
+    loading?: SkillLoading;
+    /** Absent when the body carried no frontmatter, or when `frontmatter: "ignore"`. */
+    frontmatterApplied?: string[];
+}
 /**
  * `nb__use_skill` result. `loaded` delivers the skill (body rides the result's
  * `content`, not this typed envelope); `already_loaded` is the dedupe note —

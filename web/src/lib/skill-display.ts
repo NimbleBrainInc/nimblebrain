@@ -93,6 +93,41 @@ export function skillMechanismLabel(skill: SkillMechanismInput): SkillMechanismL
   }
 }
 
+/**
+ * The full sentence form of a loading mechanism, for the authoring editor.
+ *
+ * `skillMechanismLabel` above is the catalog row's compact grammar; this one
+ * answers the question the editor is actually being asked — *will this skill
+ * ever reach the agent, and on what?* — so it names the signal and, for the
+ * dead case, says so as a warning rather than a status. Both read the same
+ * mechanism value, so the two surfaces cannot disagree about the verdict, only
+ * about how much room they have to say it.
+ */
+export function skillLoadingSentence(
+  mechanism: "always" | "tool_affinity" | "trigger" | "none",
+  signals: { toolAffinity?: string[]; triggers?: string[] },
+): { text: string; mono?: string; dead?: boolean } {
+  switch (mechanism) {
+    case "always":
+      return { text: "Loads on every turn — the agent reads it in every conversation." };
+    case "tool_affinity": {
+      const globs = (signals.toolAffinity ?? []).filter(Boolean);
+      return { text: "Loads when an active tool matches", mono: globs.join(", ") };
+    }
+    case "trigger": {
+      const phrases = (signals.triggers ?? []).filter(Boolean);
+      return { text: `Loads on ${phrases.map((p) => `"${p}"`).join(", ")}` };
+    }
+    case "none":
+      return {
+        text:
+          "Never loads. Nothing activates it — a skill that loads on demand needs " +
+          "a trigger phrase or a tool pattern.",
+        dead: true,
+      };
+  }
+}
+
 /** Token-driven scope color class (defined in index.css; no raw palette values). */
 export const SCOPE_CLASS: Record<SkillScope, string> = {
   org: "ledger-scope--org",
