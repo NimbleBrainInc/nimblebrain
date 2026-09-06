@@ -1850,8 +1850,8 @@ function absorbPastedFrontmatter(
       error: errorResult(
         new Error(
           "`body` opens with a `---` block that is not valid SKILL.md frontmatter — " +
-            `${absorbed.errors.join("; ")}. Fix those fields, or pass \`frontmatter: "ignore"\` ` +
-            "to store the block as body text.",
+            `${absorbed.errors.join("; ")}. Fix those fields, or keep the block as body text ` +
+            '(`frontmatter: "ignore"`).',
         ),
       ),
     };

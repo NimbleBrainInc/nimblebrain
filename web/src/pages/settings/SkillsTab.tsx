@@ -285,7 +285,7 @@ export function SkillsBrowser(props: SkillsBrowserProps) {
         const data = parseToolResponse<Partial<SkillsWriteOutput>>(res);
         if (data.frontmatterApplied?.length) {
           setNotice(
-            `Applied the frontmatter from the document you pasted — it set ${data.frontmatterApplied.join(", ")}. The \`---\` block was not stored as body text.`,
+            `Applied the frontmatter from the document you pasted — it set ${data.frontmatterApplied.join(", ")}. The block itself was not stored as body text.`,
           );
         }
         await fetchSkills();
