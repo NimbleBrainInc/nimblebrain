@@ -173,7 +173,7 @@ supply-chain review lives where a server is built and published, not in a proces
 that also holds tenant credentials. Every connector is aggregated into the same
 unified tool namespace by the `ToolRegistry`.
 
-No connectors are installed by default. Platform capabilities (home, conversations, files, settings, usage, automations) are built in as inline tool sources (see `src/tools/platform/`). Install connectors from the connectors catalog. Tool visibility follows the tiered surfacing rules described under [Tiered Tool Surfacing](#tiered-tool-surfacing).
+No connectors are installed by default. Platform apps (home, conversations, files, usage, automations, and the rest) are built in as in-process MCP sources (see `src/platform/`). Install connectors from the connectors catalog. Tool visibility follows the tiered surfacing rules described under [Tiered Tool Surfacing](#tiered-tool-surfacing).
 
 ## Configuration
 

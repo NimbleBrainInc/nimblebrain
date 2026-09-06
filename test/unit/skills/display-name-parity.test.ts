@@ -15,7 +15,7 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { skillNameFromId } from "../../../src/bundles/conversations/src/jsonl-reader.ts";
+import { skillNameFromId } from "../../../src/platform/conversations/jsonl-reader.ts";
 import { skillDisplayName } from "../../../src/skills/display-name.ts";
 import { nameFromSkillId } from "../../../web/src/lib/skill-display.ts";
 

@@ -1441,7 +1441,7 @@ export class McpSource implements ToolSource {
           description: t.description ?? "",
           inputSchema: (t.inputSchema ?? {}) as Record<string, unknown>,
           outputSchema: t.outputSchema as Record<string, unknown> | undefined,
-          source: `mcpb:${this.name}`,
+          source: `mcp:${this.name}`,
           meta: t._meta as Record<string, unknown> | undefined,
           annotations: t.annotations,
           execution,

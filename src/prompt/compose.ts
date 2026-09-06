@@ -859,7 +859,7 @@ export function composeSystemSegments(
  * agnostic and the `bundle` filter shouldn't claim it.
  *
  * Exported so other surfaces (e.g. the historical-audit path in
- * `tools/platform/compose.ts`) classify skills the same way as the live
+ * `platform/compose/source.ts`) classify skills the same way as the live
  * trace — drift between the two would silently mis-attribute the bundle
  * filter.
  */

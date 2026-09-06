@@ -65,7 +65,7 @@ function buildInlineSource(schema: Record<string, unknown>): DispatchCapture {
       name: "outlook__OUTLOOK_CREATE_DRAFT",
       description: "",
       inputSchema: schema,
-      source: "mcpb:outlook",
+      source: "mcp:outlook",
       // No `execution` → inline (non-task) dispatch path.
     },
   ];
@@ -195,7 +195,7 @@ function buildTaskSource(schema: Record<string, unknown>): DispatchCapture {
       name: "outlook__OUTLOOK_CREATE_DRAFT",
       description: "",
       inputSchema: schema,
-      source: "mcpb:outlook",
+      source: "mcp:outlook",
       execution: { taskSupport: "optional" }, // → task-augmented dispatch path
     },
   ];

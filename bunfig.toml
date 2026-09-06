@@ -20,7 +20,7 @@ preload = ["./instrument/sentry.ts"]
 #
 # bunfig.toml is NOT resolved up the directory tree, so this governs only
 # installs run from this directory. `web/bunfig.toml` carries its own copy;
-# the bundle UIs under src/bundles/*/ui have no bunfig and are not covered.
+# the app UIs under src/platform/*/ui have no bunfig and are not covered.
 [install]
 minimumReleaseAge = 1209600
 # `latest` here tracks the installed bun rather than naming a version, and

@@ -7,10 +7,10 @@
     "declaration": true,
     "emitDeclarationOnly": true,
     "outDir": "../.tmp-codegen",
-    "rootDir": "../src/tools/platform/schemas",
+    "rootDir": "../src/platform/schemas",
     "skipLibCheck": true,
     "strict": true,
     "esModuleInterop": true
   },
-  "include": ["../src/tools/platform/schemas/**/*.ts"]
+  "include": ["../src/platform/schemas/**/*.ts"]
 }

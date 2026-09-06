@@ -132,7 +132,7 @@ function pipeChild(children: Subprocess[], proc: Subprocess, prefix: string): vo
 async function waitForApiReadyOrExit(apiProc: Subprocess, port: number): Promise<void> {
   // Gate Vite spawns on API readiness. Without this, Vite proxies fire requests
   // into a not-yet-listening API and the user sees ECONNREFUSED stack traces
-  // until bundles finish loading.
+  // until the sources finish loading.
   log.info("[dev] Waiting for API to become ready...");
   try {
     await waitForHealth(port, { timeoutMs: 30_000 });
@@ -251,7 +251,7 @@ async function runDev(options: DevOptions): Promise<void> {
   const { port, noWeb, config, debug, app: appPath, appPort = 5173 } = options;
   const children: Subprocess[] = [];
 
-  // A fresh clone has no web deps and no bundle dists, and the README quickstart
+  // A fresh clone has no web deps and no app UI dists, and the README quickstart
   // builds neither. Runs after arg parsing so `--no-web` does not install
   // dependencies the run will never load.
   prepareCheckout(join(import.meta.dir, ".."), { web: !noWeb });

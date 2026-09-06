@@ -7,7 +7,7 @@ LABEL org.opencontainers.image.url="https://nimblebrain.ai"
 LABEL org.opencontainers.image.vendor="NimbleBrain"
 LABEL org.opencontainers.image.licenses="Apache-2.0"
 
-# Bun runtime, plus the toolchain the in-image bundle UIs build with.
+# Bun runtime, plus the toolchain the in-image platform app UIs build with.
 # `git` and `curl` are used by the install steps below and by the health check.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl unzip git ca-certificates gnupg \
@@ -32,23 +32,23 @@ COPY --chown=1000:1000 scripts/ scripts/
 COPY --chown=1000:1000 bunfig.toml ./
 COPY --chown=1000:1000 instrument/ instrument/
 
-# Build the built-in bundle UIs (home, conversations, files, automations,
-# usage) — each is its own single-file Vite app and must build in the container
-# because dist/ is gitignored. UI deps are installed fresh here and removed
-# after build; the source tree's nested node_modules are excluded by
-# .dockerignore (**/node_modules) so they never enter the build context.
+# Build the platform app UIs (home, conversations, files, automations) — each
+# is its own single-file Vite app and must build in the container because dist/
+# is gitignored. UI deps are installed fresh here and removed after build; the
+# source tree's nested node_modules are excluded by .dockerignore
+# (**/node_modules) so they never enter the build context.
 #
-# Built in parallel (each bundle does its own install + build) rather than
+# Built in parallel (each app does its own install + build) rather than
 # serially — they're independent. PIDs are collected and waited on individually
-# so any single bundle's failure fails the whole RUN (a bare `wait` would mask
-# a nonzero exit). Each subshell tags its own failure with the bundle path so
+# so any single app's failure fails the whole RUN (a bare `wait` would mask
+# a nonzero exit). Each subshell tags its own failure with the app's UI path so
 # the culprit is greppable even though parallel output is interleaved.
 RUN set -e; \
     pids=""; \
-    for ui in src/bundles/*/ui; do \
+    for ui in src/platform/*/ui; do \
       [ -f "$ui/package.json" ] || continue; \
       ( cd "$ui" && bun install --frozen-lockfile && bun run build && rm -rf node_modules \
-        || { echo "ERROR: bundle UI build failed: $ui" >&2; exit 1; } ) & \
+        || { echo "ERROR: platform app UI build failed: $ui" >&2; exit 1; } ) & \
       pids="$pids $!"; \
     done; \
     for p in $pids; do wait "$p"; done

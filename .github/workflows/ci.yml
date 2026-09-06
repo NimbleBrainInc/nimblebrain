@@ -39,7 +39,7 @@ env:
 # small even when the key misses.
 #
 # The key carries `github.job` because the jobs install DIFFERENT sets — root
-# only, root + `web/`, or root + `web/` + the bundle UIs — and `actions/cache`
+# only, root + `web/`, or root + `web/` + the platform app UIs — and `actions/cache`
 # skips its save entirely when the primary key already exists. Sharing one key
 # across all four would therefore freeze the entry at whichever job saved
 # first, and the jobs installing more than that could never contribute: they
@@ -68,7 +68,7 @@ jobs:
         uses: actions/cache@v6
         with:
           path: ~/.bun/install/cache
-          key: ${{ runner.os }}-bun-${{ github.job }}-${{ hashFiles('bun.lock', 'web/bun.lock', 'src/bundles/*/ui/bun.lock') }}
+          key: ${{ runner.os }}-bun-${{ github.job }}-${{ hashFiles('bun.lock', 'web/bun.lock', 'src/platform/*/ui/bun.lock') }}
           restore-keys: |
             ${{ runner.os }}-bun-${{ github.job }}-
             ${{ runner.os }}-bun-
@@ -93,7 +93,7 @@ jobs:
         uses: actions/cache@v6
         with:
           path: ~/.bun/install/cache
-          key: ${{ runner.os }}-bun-${{ github.job }}-${{ hashFiles('bun.lock', 'web/bun.lock', 'src/bundles/*/ui/bun.lock') }}
+          key: ${{ runner.os }}-bun-${{ github.job }}-${{ hashFiles('bun.lock', 'web/bun.lock', 'src/platform/*/ui/bun.lock') }}
           restore-keys: |
             ${{ runner.os }}-bun-${{ github.job }}-
             ${{ runner.os }}-bun-
@@ -101,20 +101,20 @@ jobs:
         run: bun install --frozen-lockfile
       - name: Install web dependencies
         run: cd web && bun install --frozen-lockfile
-      # Bundle UI deps must be installed so each bundle's co-located tests
+      # Platform app UI deps must be installed so each app's co-located tests
       # (e.g. the automations markdown sanitizer contract) can resolve their
-      # own npm dependencies (marked, dompurify, happy-dom). `test:bundles`
-      # runs `bun test` inside each src/bundles/*/ui package. Mirrors the
-      # install loop inside build:bundles; CI doesn't build bundles for the
-      # unit job, so the install must be explicit.
-      - name: Install bundle UI dependencies
-        run: bun run install:bundles
+      # own npm dependencies (marked, dompurify, happy-dom). `test:platform-apps`
+      # runs `bun test` inside each src/platform/*/ui package. Mirrors the
+      # install loop inside build:platform-apps; CI doesn't build the app UIs for
+      # the unit job, so the install must be explicit.
+      - name: Install platform app UI dependencies
+        run: bun run install:platform-apps
       - name: Verify (unit + web tests)
         run: bun run verify:test-unit
 
   # The root unit suite must run on a fresh checkout with ONLY root deps — no
-  # `web/` or `src/bundles/*/ui` install. `test-unit` above installs both, so it
-  # cannot catch a web-only (or bundle-only) module leaking into the backend
+  # `web/` or `src/platform/*/ui` install. `test-unit` above installs both, so it
+  # cannot catch a web-only (or app-UI-only) module leaking into the backend
   # test graph: such a regression stays green there and surfaces only on a
   # contributor's fresh clone/worktree (`bun install && bun test test/unit/`).
   # This job reproduces that bare environment and fails loudly instead. It
@@ -134,7 +134,7 @@ jobs:
         uses: actions/cache@v6
         with:
           path: ~/.bun/install/cache
-          key: ${{ runner.os }}-bun-${{ github.job }}-${{ hashFiles('bun.lock', 'web/bun.lock', 'src/bundles/*/ui/bun.lock') }}
+          key: ${{ runner.os }}-bun-${{ github.job }}-${{ hashFiles('bun.lock', 'web/bun.lock', 'src/platform/*/ui/bun.lock') }}
           restore-keys: |
             ${{ runner.os }}-bun-${{ github.job }}-
             ${{ runner.os }}-bun-
@@ -157,7 +157,7 @@ jobs:
         uses: actions/cache@v6
         with:
           path: ~/.bun/install/cache
-          key: ${{ runner.os }}-bun-${{ github.job }}-${{ hashFiles('bun.lock', 'web/bun.lock', 'src/bundles/*/ui/bun.lock') }}
+          key: ${{ runner.os }}-bun-${{ github.job }}-${{ hashFiles('bun.lock', 'web/bun.lock', 'src/platform/*/ui/bun.lock') }}
           restore-keys: |
             ${{ runner.os }}-bun-${{ github.job }}-
             ${{ runner.os }}-bun-

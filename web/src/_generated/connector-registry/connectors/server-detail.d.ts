@@ -310,8 +310,7 @@ export declare function getNimbleBrainConnectorMeta(s: ServerDetail): NimbleBrai
 /**
  * Reverse-DNS namespace key for the host-integration `_meta` extension —
  * how a server declares its UI placement in the NimbleBrain host shell.
- * Same key whether the descriptor is an MCPB manifest (bundles) or a
- * `ServerDetail` (fleet connectors). See schemas.nimblebrain.ai/v1/nimblebrain-host.schema.json.
+ * See schemas.nimblebrain.ai/v1/nimblebrain-host.schema.json.
  */
 export declare const NIMBLEBRAIN_HOST_META_KEY = "ai.nimblebrain/host";
 /** Convenience accessor for the host-integration extension. */

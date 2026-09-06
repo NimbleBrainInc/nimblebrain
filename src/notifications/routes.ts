@@ -40,18 +40,18 @@ import {
   notificationsRoutesMatchedTotal,
   notificationsTemplateMissesTotal,
 } from "../api/metrics.ts";
-import { backoffDelay } from "../bundles/automations/src/scheduler.ts";
 import type { EventSink } from "../engine/types.ts";
 import { log } from "../observability/log.ts";
 import type {
   UnattendedDispatchOptions,
   UnattendedDispatchResult,
 } from "../orchestrator/unattended-dispatch.ts";
+import { backoffDelay } from "../platform/automations/scheduler.ts";
 import type {
   DeliveryOutcome,
   DeliveryRecord,
   NotificationDeliverTarget,
-} from "../tools/platform/schemas/notifications.ts";
+} from "../platform/schemas/notifications.ts";
 import type { WorkspaceStore } from "../workspace/workspace-store.ts";
 import { type NotificationRoute, readNotificationsConfig, setRouteDisabled } from "./config.ts";
 import { matchesNameGlob } from "./name-glob.ts";

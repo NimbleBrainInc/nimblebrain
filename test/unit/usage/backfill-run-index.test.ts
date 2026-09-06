@@ -22,7 +22,7 @@ import { join } from "node:path";
 import {
   automationRunIndexPath,
   automationRunsDir,
-} from "../../../src/bundles/automations/src/paths.ts";
+} from "../../../src/platform/automations/paths.ts";
 import {
   collectEntries,
   isRunIndex,

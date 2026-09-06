@@ -19,7 +19,7 @@ bun run dev:worktree       # Run from any worktree against an isolated workdir o
 bun run dev:api            # API only with auto-restart
 bun run verify             # Full CI parity — runs every subscript below
 bun run verify:static      # format:check + lint + check + check:cycles
-bun run verify:test-unit   # test:unit + test:web + test:bundles
+bun run verify:test-unit   # test:unit + test:web + test:platform-apps
 
 bun run test               # Unit then integration (stops at the first failing suite)
 bun run test:unit          # Unit tests only (fast, ~10s)
@@ -32,21 +32,21 @@ bun run format             # Biome auto-format (writes)
 cd web && bun install      # Web client dependencies (separate package.json)
 cd web && bun run build    # Web production build → web/dist/
 
-bun run install:bundles    # Bundle UI deps (each a separate package.json) — the exact command CI runs
-bun run build:bundles      # Rebuild every src/bundles/*/ui (vite single-file)
+bun run install:platform-apps    # Platform app UI deps (each a separate package.json) — the exact command CI runs
+bun run build:platform-apps      # Rebuild every src/platform/*/ui (vite single-file)
 ```
 
-**A fresh checkout/worktree must install `web/` AND every `src/bundles/*/ui/` before `bun run verify`.** `verify:test-unit` runs `test:web` + `test:bundles`, which execute those separate packages; root `bun install` doesn't cover them, so verify fails with a missing-module error (e.g. `Cannot find package 'dompurify'`) until they're installed. **But `test:unit` itself runs on root deps alone** — the backend unit suite imports the shared bridge protocol (`web/src/bridge/*`), so a web-only *value* import must never leak into that graph: keep such deps type-only and inject the value at the browser entry (`web/src/sentry.ts` is the pattern). The `Unit Tests (root deps only)` CI job enforces this; only `test:web`/`test:bundles` need the `web/` + bundle installs.
+**A fresh checkout/worktree must install `web/` AND every `src/platform/*/ui/` before `bun run verify`.** `verify:test-unit` runs `test:web` + `test:platform-apps`, which execute those separate packages; root `bun install` doesn't cover them, so verify fails with a missing-module error (e.g. `Cannot find package 'dompurify'`) until they're installed. **But `test:unit` itself runs on root deps alone** — the backend unit suite imports the shared bridge protocol (`web/src/bridge/*`), so a web-only *value* import must never leak into that graph: keep such deps type-only and inject the value at the browser entry (`web/src/sentry.ts` is the pattern). The `Unit Tests (root deps only)` CI job enforces this; only `test:web`/`test:platform-apps` need the `web/` + app UI installs.
 
 **A fresh checkout prepares itself.** `node_modules` and `dist/` are both gitignored, so a
 new clone or worktree has neither. Every dev launcher — `dev`, `dev:empty`, `dev:minimal`,
-`dev:docs-demo`, `dev:worktree` — installs `web/` dependencies and builds any bundle UI
+`dev:docs-demo`, `dev:worktree` — installs `web/` dependencies and builds any platform app UI
 missing its `dist/index.html` before starting, so the quickstart does not need those steps.
 `dev:worktree` additionally installs **root** dependencies, which it must: `scripts/dev.ts`
 imports from `src/`, so it cannot install the dependencies it needs in order to load. Only
 what is absent is done — see the rebuild note below.
 
-**`bun run dev` does NOT rebuild bundles.** The API serves each bundle from its pre-built `src/bundles/<name>/ui/dist/index.html`. After editing any file under `src/bundles/*/ui/src/`, run `bun run build:bundles` and restart the dev server (the API reads dist on iframe mount; it doesn't watch the file). Forgetting this means the iframe loads stale code while your changes look "live" in the source tree — a high-confusion failure mode.
+**`bun run dev` does NOT rebuild the platform app UIs.** The API serves each app from its pre-built `src/platform/<name>/ui/dist/index.html`. After editing any file under `src/platform/*/ui/src/`, run `bun run build:platform-apps` and restart the dev server (the API reads dist on iframe mount; it doesn't watch the file). Forgetting this means the iframe loads stale code while your changes look "live" in the source tree — a high-confusion failure mode.
 
 **Before opening a PR, run `bun run verify`.** It is the single command that mirrors CI, enforced by construction: `.github/workflows/ci.yml` invokes only `verify:*` subscripts (plus `test:integration`) — no inline check steps. To add or change a check, edit the matching subscript in `package.json`; CI picks it up automatically. If CI ever catches something `verify` didn't, the fix is to update the subscript, not the checklist. Tool-level parity is the gate; discipline-level rules are not.
 
@@ -67,7 +67,7 @@ Each worktree gets its own isolated state, so two worktrees can run side-by-side
 ## Conventions
 
 - **Runtime:** Bun (not Node). Use `bun run`, `bun test`, `bunx`.
-- **Lockfiles are frozen everywhere except local dev.** CI, both Dockerfiles, and `install:bundles` pass `--frozen-lockfile` — bun does not do this on its own in CI, and without it CI tests a freshly-resolved tree while the image ships the locked one. A frozen install that fails means a `package.json` moved without its `bun.lock`: run `bun install` in that package dir and commit the lockfile. `bun run dev` and `build:bundles` stay unfrozen so adding a dependency locally still works.
+- **Lockfiles are frozen everywhere except local dev.** CI, both Dockerfiles, and `install:platform-apps` pass `--frozen-lockfile` — bun does not do this on its own in CI, and without it CI tests a freshly-resolved tree while the image ships the locked one. A frozen install that fails means a `package.json` moved without its `bun.lock`: run `bun install` in that package dir and commit the lockfile. `bun run dev` and `build:platform-apps` stay unfrozen so adding a dependency locally still works.
 - **Module system:** ESM only. All imports use `.ts` extensions.
 - **Linting:** Biome (not ESLint/Prettier). Run `bun run lint`.
 - **Type checking:** `bunx tsc --noEmit`. Strict mode enabled.
@@ -107,7 +107,7 @@ the checkers), and on any single file you run by hand —
 `bun test --no-env-file <file>`.
 
 It disables dotenv, not the environment: a value exported in your shell outranks
-`.env` and survives regardless. `test:web` and `test:bundles` run in their own
+`.env` and survives regardless. `test:web` and `test:platform-apps` run in their own
 directories without the flag — neither reads a credential today.
 
 A repo-wide `env = false` in `bunfig.toml` would make this deny-by-default and
@@ -126,8 +126,9 @@ src/
 ├── engine/        Agentic loop (model → tool → repeat). Start here.
 ├── runtime/       High-level orchestration (Runtime.start → runtime.chat)
 ├── api/           HTTP API (Hono). Routes in api/routes/.
-├── bundles/       MCPB bundle lifecycle (install/uninstall/start/stop)
+├── bundles/       Connector lifecycle (install/uninstall/start/stop) and live connection state
 ├── connectors/    Connector catalog + managed-connector providers (providers/<vendor>/ behind the seam)
+├── platform/      The kernel's own apps — in-process MCP servers, one directory each (see platform/AGENTS.md)
 ├── tools/         System tool definitions (search, status, manage)
 ├── identity/      Auth adapters (dev, oidc, workos)
 ├── workspace/     Multi-tenant workspace isolation
@@ -152,6 +153,7 @@ web/               Vite + React + TypeScript SPA (separate package.json)
 | `src/runtime/run-spec.ts` | `RunSpec` / `RunHandle`: how a trigger describes a run to the door |
 | `src/runtime/types.ts` | RuntimeConfig, ChatRequest, ChatResult |
 | `src/bundles/lifecycle.ts` | Bundle install/uninstall state machine |
+| `src/platform/index.ts` | `createPlatformSources` — every platform app the kernel hosts |
 | `src/api/app.ts` | HTTP routes and middleware |
 | `src/tools/system-tools.ts` | System tools factory |
 | `src/prompt/compose.ts` | System prompt assembly |
@@ -230,7 +232,7 @@ Both read paths route through the process-wide `ConversationLocator`, which reso
 
 Files an automation run writes land in the run owner's partition here, referenced from the run result.
 
-**Automations are workspace-owned.** An automation lives at `workspaces/<wsId>/automations/<ownerId>/<automationId>.json`, one file per automation. Construct paths ONLY via `src/bundles/automations/src/paths.ts` (`workspaceAutomationsDir` and friends); `check:automation-paths` rejects the identity-scoped `getIdentityContext(...).getDataPath("automations")` and hand-built `users/<id>/automations/` paths.
+**Automations are workspace-owned.** An automation lives at `workspaces/<wsId>/automations/<ownerId>/<automationId>.json`, one file per automation. Construct paths ONLY via `src/platform/automations/paths.ts` (`workspaceAutomationsDir` and friends); `check:automation-paths` rejects the identity-scoped `getIdentityContext(...).getDataPath("automations")` and hand-built `users/<id>/automations/` paths.
 
 - **The workspace comes from `RequestContext.workspaceId`.** Like files, `automations__*` is an identity-door tool, so it reads the same single bound workspace every other kernel source does.
 - **A scheduled run fires as its owner.** The scheduler scans `workspaces/*/automations/*/` and keys by `${wsId}/${ownerId}/${id}`. The run is an identity-bound session **walled to** the automation's provenance `workspaceId` — its tools plus the owner's identity tools, with NO cross-workspace reach.
@@ -621,8 +623,7 @@ Do not edit these manually:
 
 - `bun.lock`, `web/bun.lock` — lock files, managed by `bun install`
 - `web/dist/` — Vite build output, regenerated by `bun run build`
-- `src/bundles/schemas/*.schema.json` — vendored MCPB JSON Schemas (v0.3, v0.4)
-- `web/src/_generated/platform-schemas/` — TypeScript declarations derived from `src/tools/platform/schemas/`. Regenerate with `bun run codegen` after editing any source schema. CI verifies via `bun run check:codegen` (part of `verify:static`); drift is a build failure.
+- `web/src/_generated/platform-schemas/` — TypeScript declarations derived from `src/platform/schemas/`. Regenerate with `bun run codegen` after editing any source schema. CI verifies via `bun run check:codegen` (part of `verify:static`); drift is a build failure.
 
 ## Config Schema
 

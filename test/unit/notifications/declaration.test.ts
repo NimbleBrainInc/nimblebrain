@@ -166,7 +166,7 @@ describe("the catalog carries the declaration to the install path", () => {
  * matters, is exactly the shape that drifts; these pin them together.
  */
 describe("the schema and the parser state the same rule", () => {
-  const schema = require("../../../src/bundles/schemas/host-manifest.schema.json");
+  const schema = require("../../../src/connectors/schemas/host-manifest.schema.json");
   const resource = schema.$defs.NotificationsDeclaration.properties.resource;
 
   test("the reserved-scheme constraint names exactly the schemes the runtime resolves", () => {

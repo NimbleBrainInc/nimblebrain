@@ -5,7 +5,7 @@
  * Automations live under the workspace that owns them, with the owner as a
  * privacy sub-partition (`{workDir}/workspaces/<wsId>/automations/<ownerId>/`).
  * The dir is built only by `workspaceAutomationsDir()` in
- * `src/bundles/automations/src/paths.ts`. Two regressions are forbidden in
+ * `src/platform/automations/paths.ts`. Two regressions are forbidden in
  * `src/`:
  *
  *   1. `getIdentityContext(...).getDataPath("automations")` /
@@ -193,9 +193,7 @@ async function main(): Promise<void> {
     console.error(
       "Automations are workspace-owned at `{workDir}/workspaces/<wsId>/automations/<ownerId>/` — build the",
     );
-    console.error(
-      "dir only via `workspaceAutomationsDir()` (src/bundles/automations/src/paths.ts).",
-    );
+    console.error("dir only via `workspaceAutomationsDir()` (src/platform/automations/paths.ts).");
     console.error(
       `Legitimate exceptions (rare) require a // ${ALLOW_MARKER} comment on the line above.`,
     );

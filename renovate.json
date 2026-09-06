@@ -34,8 +34,8 @@
     },
     {
       "matchUpdateTypes": ["minor", "patch"],
-      "matchFileNames": ["src/bundles/*/ui/package.json"],
-      "groupName": "bundle ui dependencies"
+      "matchFileNames": ["src/platform/*/ui/package.json"],
+      "groupName": "platform app ui dependencies"
     },
     {
       "description": "docs/ is a standalone package gated by its own workflow (docs-ci.yml), so its updates land on their own.",
@@ -83,7 +83,7 @@
       "groupName": "typebox"
     },
     {
-      "description": "Build toolchain shared by web/ and every bundle UI.",
+      "description": "Build toolchain shared by web/ and every platform app UI.",
       "matchPackageNames": [
         "vite",
         "@vitejs/plugin-react",

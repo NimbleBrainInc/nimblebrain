@@ -3,7 +3,7 @@ import type { BriefingOutput, BriefingSection } from "./home-types.ts";
 // Section categories in the order the model should read them — attention
 // first (matches the generator's "surface these first" guidance), then
 // recent activity, then what's coming up. Mirrors the schema enum in
-// `src/tools/platform/schemas/home.ts` (BriefingSection.category) — NOT the
+// `src/platform/schemas/home.ts` (BriefingSection.category) — NOT the
 // stale names in the inline dashboard script.
 const CATEGORY_ORDER: { category: BriefingSection["category"]; label: string }[] = [
   { category: "attention", label: "Needs attention" },
@@ -19,7 +19,7 @@ const CATEGORY_ORDER: { category: BriefingSection["category"]; label: string }[]
  * model only ever sees `content` (the engine feeds `extractTextForModel(content)`
  * back into the prompt — `structuredContent` never reaches it). A model-facing
  * tool's `content` must therefore carry the human-readable summary, per the
- * platform-tool contract (src/tools/platform/CLAUDE.md §2.1). Without this the
+ * platform-tool contract (src/platform/AGENTS.md §2.1). Without this the
  * model receives only the status note and reports an empty briefing.
  */
 export function renderBriefingText(briefing: BriefingOutput): string {

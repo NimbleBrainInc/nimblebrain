@@ -2,7 +2,7 @@
 /**
  * Generates the `.d.ts` trees under `web/src/_generated/` from the server-side
  * sources that own their shapes: the TypeBox schemas at
- * `src/tools/platform/schemas/`, and the connector-registry wire types at
+ * `src/platform/schemas/`, and the connector-registry wire types at
  * `src/registries/types.ts`.
  *
  * Why this exists: web is a separate package (its own Dockerfile,
@@ -185,7 +185,7 @@ cpSync(TMP_OUT, WEB_DEST, { recursive: true });
 rmSync(TMP_OUT, { recursive: true, force: true });
 
 // Inject the do-not-edit header into every generated file.
-injectHeaders(WEB_DEST, WEB_DEST, "src/tools/platform/schemas");
+injectHeaders(WEB_DEST, WEB_DEST, "src/platform/schemas");
 
 console.log(`[codegen] OK → ${WEB_DEST.replace(REPO_ROOT, ".")}`);
 

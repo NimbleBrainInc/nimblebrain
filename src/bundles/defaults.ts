@@ -12,7 +12,7 @@ const DISPLAY_STRING_MAX = 128;
 /**
  * Connectors included by default. Empty: platform capabilities
  * (conversations, files, home, settings, usage, automations) are in-process
- * MCP servers — see src/tools/platform/.
+ * MCP servers — see src/platform/.
  */
 export const DEFAULT_BUNDLES: BundleRef[] = [];
 

@@ -12,11 +12,11 @@ import {
 import { join } from "node:path";
 import type { EventSink } from "../engine/types.ts";
 import { log } from "../observability/log.ts";
-import type { DeliveryRecord } from "../tools/platform/schemas/notifications.ts";
+import type { DeliveryRecord } from "../platform/schemas/notifications.ts";
 import {
   NOTIFICATION_LIST_DEFAULT_LIMIT,
   NOTIFICATION_LIST_MAX_LIMIT,
-} from "../tools/platform/schemas/notifications.ts";
+} from "../platform/schemas/notifications.ts";
 import type { WorkspaceContext } from "../workspace/context.ts";
 import {
   NOTIFICATION_LEVEL_RANK,

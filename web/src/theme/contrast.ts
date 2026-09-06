@@ -3,7 +3,7 @@
  *
  * Lives beside the palette rather than inside a test because two guards need
  * it: `__tests__/contrast.test.ts` asserts the palette's own pairs, and
- * `test/unit/bundles/animated-dot-contrast.test.ts` asserts what a bundle's
+ * `test/unit/platform/animated-dot-contrast.test.ts` asserts what a bundle's
  * animation does to one of them. Formulas copied into a second file are the
  * shape this theme system has already been bitten by; there is one copy.
  */

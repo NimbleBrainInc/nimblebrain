@@ -1,10 +1,10 @@
 /**
  * SDK ⇄ host bridge schema parity.
  *
- * The bundles in `src/bundles/{home,usage,conversations,automations}/ui`
- * construct postMessage envelopes through `@nimblebrain/synapse`, never
- * by hand. The bridge (`web/src/bridge/validate.ts`) drops any envelope
- * that fails its TypeBox schema. If the SDK ever emits an envelope that
+ * The platform app UIs under `src/platform/*\/ui` construct postMessage
+ * envelopes through `@nimblebrain/synapse`, never by hand. The bridge
+ * (`web/src/bridge/validate.ts`) drops any envelope that fails its
+ * TypeBox schema. If the SDK ever emits an envelope that
  * doesn't match the host schemas, every internal app silently breaks.
  *
  * This test drives the SDK through a fake host, captures every

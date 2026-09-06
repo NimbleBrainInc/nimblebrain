@@ -19,8 +19,8 @@ import { JsonlConversationStore } from "../../src/conversation/jsonl-store.ts";
 import { EventSourcedConversationStore } from "../../src/conversation/event-sourced-store.ts";
 
 // NB-001 (automation): Automation ID path traversal
-import { appendRun, readRuns } from "../../src/bundles/automations/src/store.ts";
-import type { AutomationRun } from "../../src/bundles/automations/src/types.ts";
+import { appendRun, readRuns } from "../../src/platform/automations/store.ts";
+import type { AutomationRun } from "../../src/platform/automations/types.ts";
 
 // NB-004: SSRF
 import { validateBundleUrl } from "../../src/bundles/url-validator.ts";
@@ -114,7 +114,7 @@ describe("Security Hardening Regression Tests", () => {
 	// ---------------------------------------------------------------------------
 
 	describe("NB-001 (automation): Automation ID path traversal", () => {
-		// Primary coverage: test/unit/bundles/automations/store.test.ts
+		// Primary coverage: test/unit/platform/automations/store.test.ts
 		// (covers ../../etc/passwd, empty, slashes, dots, uppercase, leading/trailing hyphens)
 
 		let tmpDir: string;

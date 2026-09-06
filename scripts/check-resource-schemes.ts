@@ -32,7 +32,7 @@
  * Scope: `src/**\/*.ts`, minus vendored trees. Comments are not scanned — the
  * AST walk sees literals only, so prose naming a scheme is free. Tests live
  * outside `src/` and are out of scope; a fixture naming an unclassified scheme
- * is the point of a fixture. `node_modules` under each bundle's `ui/` is
+ * is the point of a fixture. `node_modules` under each platform app's `ui/` is
  * skipped for the same reason the sibling lints skip it: it is gitignored,
  * local-only, and full of other people's URI grammars.
  */

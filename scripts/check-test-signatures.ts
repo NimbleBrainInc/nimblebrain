@@ -54,8 +54,8 @@
  * ## What this does NOT cover
  *
  * Only the `test/` tree. `web/`'s suite (`web/tsconfig.json` excludes
- * `src/**\/*.test.ts(x)` and `src/**\/__tests__`) and the bundle UI suites
- * (under the base config's `src/bundles/*\/ui` exclude, which this project
+ * `src/**\/*.test.ts(x)` and `src/**\/__tests__`) and the platform app UI suites
+ * (under the base config's `src/platform/*\/ui` exclude, which this project
  * inherits) have the identical hole and are not gated here. Extending to them
  * is tracked with the full-strictness migration.
  *

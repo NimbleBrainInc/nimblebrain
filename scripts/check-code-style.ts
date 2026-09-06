@@ -15,9 +15,9 @@
  *      formatted findings.
  *   3. Add the new check to `checks` in `main()`.
  *
- * Scope: `src/**\/*.ts` only. Tests and bundles are out of scope
- * (tests deliberately exercise edge cases; bundles run in subprocesses
- * with their own conventions).
+ * Scope: `src/**\/*.ts` only. Tests and the platform app UIs are out of
+ * scope (tests deliberately exercise edge cases; an app UI is a separate
+ * Vite package with its own conventions and its own vendored deps).
  */
 
 import { readFileSync } from "node:fs";
@@ -27,6 +27,14 @@ import * as ts from "typescript";
 
 const ROOT = join(import.meta.dirname ?? __dirname, "..");
 const SRC_ROOT = join(ROOT, "src");
+
+/**
+ * A platform app's UI: `src/platform/<app>/ui/**`. Its own Vite package, its
+ * own conventions, and its own vendored `node_modules` when it has been built.
+ */
+function isAppUi(rel: string): boolean {
+  return /^src\/platform\/[^/]+\/ui\//.test(rel);
+}
 
 interface CheckResult {
   rule: string;
@@ -51,20 +59,19 @@ function checkNoInlineTypeImports(): CheckResult {
   const glob = new Glob("**/*.ts");
 
   for (const file of glob.scanSync({ cwd: SRC_ROOT, absolute: true })) {
-    // Never lint vendored dependencies. Some bundle UIs install their own
-    // node_modules under src/bundles/<name>/ui/ (gitignored, local-only);
+    // Never lint vendored dependencies. Some app UIs install their own
+    // node_modules under src/platform/<name>/ui/ (gitignored, local-only);
     // those third-party .d.ts files are full of inline type imports we
     // don't own, and they don't exist in CI's fresh checkout — so without
     // this skip the check passes in CI but fails on a developer's machine.
     if (file.split(/[\\/]/).includes("node_modules")) continue;
     const rel = relative(ROOT, file);
-    // Skip bundle subtrees (their UIs have their own conventions, per the
-    // doc comment) and vendored deps. `bun run build:bundles` installs
-    // node_modules under each bundle's UI, so an unfiltered walk picks
-    // up thousands of vendored `.d.ts` violations that have nothing to
-    // do with our source.
+    // Skip the app UI subtrees (their own conventions, per the doc comment)
+    // and vendored deps. `bun run build:platform-apps` installs node_modules
+    // under each app's UI, so an unfiltered walk picks up thousands of
+    // vendored `.d.ts` violations that have nothing to do with our source.
     if (rel.includes("/node_modules/")) continue;
-    if (rel.startsWith("src/bundles/")) continue;
+    if (isAppUi(rel)) continue;
     const content = readFileSync(file, "utf-8");
     const source = ts.createSourceFile(file, content, ts.ScriptTarget.Latest, true);
 
@@ -167,8 +174,8 @@ function checkContainmentTagOpens(): CheckResult {
   const glob = new Glob("**/*.ts");
   for (const file of glob.scanSync({ cwd: SRC_ROOT, absolute: true })) {
     const rel = relative(ROOT, file);
-    // Skip vendored deps and bundle subtrees, matching the other passes.
-    if (rel.includes("/node_modules/") || rel.startsWith("src/bundles/")) continue;
+    // Skip vendored deps and the app UI subtrees, matching the other passes.
+    if (rel.includes("/node_modules/") || isAppUi(rel)) continue;
     const content = file === composeFile ? composeContent : readFileSync(file, "utf-8");
     const source =
       file === composeFile
@@ -261,8 +268,8 @@ function checkNoControlBytes(): CheckResult {
 
   for (const file of glob.scanSync({ cwd: SRC_ROOT, absolute: true })) {
     const rel = relative(ROOT, file);
-    // Skip vendored deps and bundle subtrees, matching the other passes.
-    if (rel.includes("/node_modules/") || rel.startsWith("src/bundles/")) continue;
+    // Skip vendored deps and the app UI subtrees, matching the other passes.
+    if (rel.includes("/node_modules/") || isAppUi(rel)) continue;
     scanForControlBytes(rel, readFileSync(file, "utf-8"), violations);
   }
 

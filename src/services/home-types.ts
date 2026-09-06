@@ -6,7 +6,7 @@ import type {
   BriefingOutput,
   BriefingSection,
   BriefingState,
-} from "../tools/platform/schemas/home.ts";
+} from "../platform/schemas/home.ts";
 
 export type { BriefingAction, BriefingOutput, BriefingSection, BriefingState };
 
