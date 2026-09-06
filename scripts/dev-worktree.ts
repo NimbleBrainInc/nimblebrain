@@ -65,7 +65,7 @@ const envResult = loadDotenvIntoProcess(WORKTREE_ROOT);
 
 // Root ONLY. `scripts/dev.ts` imports from `src/`, so it cannot install the
 // deps it needs to be loaded — that has to happen before it is spawned. Web
-// deps and bundle builds live in `scripts/lib/dev-prepare.ts`, which dev.ts
+// deps and app UI builds live in `scripts/lib/dev-prepare.ts`, which dev.ts
 // runs, so every launcher gets them and not just this one.
 installIfMissing("root", WORKTREE_ROOT, "[dev:worktree]");
 

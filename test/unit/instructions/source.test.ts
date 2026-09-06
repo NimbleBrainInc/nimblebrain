@@ -24,7 +24,7 @@ import { NoopEventSink } from "../../../src/adapters/noop-events.ts";
 import { InstructionsStore } from "../../../src/instructions/index.ts";
 import { runWithRequestContext } from "../../../src/runtime/request-context.ts";
 import { McpSource } from "../../../src/tools/mcp-source.ts";
-import { createInstructionsSource } from "../../../src/tools/platform/instructions.ts";
+import { createInstructionsSource } from "../../../src/platform/instructions/source.ts";
 import type { Workspace } from "../../../src/workspace/types.ts";
 
 // ── Fake Runtime ────────────────────────────────────────────────────────

@@ -81,7 +81,7 @@ function toolSource(t: ToolSchema): string {
  * overlay is human-authored through the settings UI, and the tool that backs
  * that UI is internal (tier 3) — the model persists standing guidance by
  * drafting it and pointing the user at settings, not by writing the overlay
- * itself. See `src/tools/platform/instructions.ts`.
+ * itself. See `src/platform/instructions/source.ts`.
  */
 function isKernelTool(t: ToolSchema): boolean {
   return isSystemTool(t) || isIdentitySource(toolSource(t));

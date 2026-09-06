@@ -1,4 +1,4 @@
-import type { NotificationView } from "../tools/platform/schemas/notifications.ts";
+import type { NotificationView } from "../platform/schemas/notifications.ts";
 import type { Notification } from "./types.ts";
 import { notificationId, notificationPresentation } from "./types.ts";
 

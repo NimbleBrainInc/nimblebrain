@@ -8,7 +8,7 @@ import {
 
 /**
  * What the injected map must CONTAIN is asserted where it can stay true on its
- * own: `test/unit/bundles/theme-token-names.test.ts` checks the emitted set
+ * own: `test/unit/platform/theme-token-names.test.ts` checks the emitted set
  * against the published docs in both directions, and against every token the
  * themed trees read. A hand-written copy of the key list lived here and had to
  * be edited by hand whenever the projection grew — the fourth instance of that

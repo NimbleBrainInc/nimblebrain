@@ -1,0 +1,358 @@
+import {
+  SynapseProvider,
+  useDataSync,
+  useHostContext,
+  useSynapse,
+} from "@nimblebrain/synapse/react";
+import { useCallback, useEffect, useRef, useState } from "react";
+
+/* ---------- types ---------- */
+
+interface BriefingOutput {
+  greeting: string;
+  date: string;
+  lede: string;
+  sections: BriefingSection[];
+  state: "empty" | "quiet" | "all-clear" | "normal" | "attention";
+  generated_at: string;
+  cached: boolean;
+}
+
+interface BriefingSection {
+  id: string;
+  text: string;
+  type: "positive" | "neutral" | "warning";
+  category: "recent" | "upcoming" | "attention";
+  action?: BriefingAction;
+}
+
+interface BriefingAction {
+  label: string;
+  type: string;
+  [key: string]: unknown;
+}
+
+/* ---------- helpers ---------- */
+
+function getGreeting(userName?: string): string {
+  const h = new Date().getHours();
+  const name = userName || "";
+  const prefix = h < 12 ? "Good morning" : h < 17 ? "Good afternoon" : "Good evening";
+  return name ? `${prefix}, ${name}` : prefix;
+}
+
+function getDateStr(timezone?: string): string {
+  const opts: Intl.DateTimeFormatOptions = {
+    weekday: "long",
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  };
+  if (timezone) opts.timeZone = timezone;
+  try {
+    return new Intl.DateTimeFormat("en-US", opts).format(new Date());
+  } catch {
+    return new Intl.DateTimeFormat("en-US", {
+      weekday: "long",
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+    }).format(new Date());
+  }
+}
+
+function dotColor(sentiment: string): string {
+  if (sentiment === "positive") return "var(--nb-color-success)";
+  if (sentiment === "warning") return "var(--nb-color-danger)";
+  return "var(--nb-color-warning)";
+}
+
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+// `text` is LLM-generated briefing copy — untrusted. Escape HTML first so only
+// the bold/code markup this function adds can produce tags; without it, an
+// `<img src=x onerror=…>` in the model output would execute as XSS in the app
+// iframe. Escaping runs before the regexes so `**…**` / `` `…` `` still work
+// (the markers aren't HTML metacharacters) and any tags in the captured text
+// stay inert.
+function renderMd(text: string): string {
+  return escapeHtml(text)
+    .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+    .replace(/`([^`]+)`/g, "<code>$1</code>");
+}
+
+/* ---------- cross-server tool call ----------------------------------------
+ *
+ * `synapse.callTool(name, args)` always routes to the bundle's own server.
+ * `home` needs to invoke `briefing` on the platform's `nb` source, which is
+ * a different server. The bridge supports `params.server` for internal
+ * apps (see `INTERNAL_APPS` in `web/src/bridge/bridge.ts`); the SDK does
+ * not expose this because it isn't part of the ext-apps spec.
+ *
+ * Until the SDK gains a typed cross-server API, this function is the
+ * documented escape hatch. Phase 4's bundle-transport lint allowlists
+ * exactly the call inside `loadBriefing` via a `// lint-ok:` marker.
+ * -------------------------------------------------------------------------- */
+
+let _rpcId = 0;
+const _pending = new Map<string, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
+
+window.addEventListener("message", (e) => {
+  const msg = e.data;
+  if (!msg || typeof msg !== "object" || !msg.jsonrpc || !msg.id) return;
+  const p = _pending.get(msg.id);
+  if (!p) return;
+  _pending.delete(msg.id);
+  if (msg.error) {
+    p.reject(new Error(msg.error.message || "Tool call failed"));
+  } else {
+    p.resolve(msg.result);
+  }
+});
+
+function callServerTool<T>(
+  server: string,
+  tool: string,
+  args: Record<string, unknown> = {},
+): Promise<T> {
+  const id = `home-${++_rpcId}`;
+  return new Promise((resolve, reject) => {
+    _pending.set(id, {
+      resolve: (raw) => {
+        const result = raw as { structuredContent?: Record<string, unknown> };
+        resolve((result?.structuredContent ?? raw) as T);
+      },
+      reject,
+    });
+    // lint-ok:platform-app-transport — typed cross-server call, see comment above.
+    window.parent.postMessage(
+      {
+        jsonrpc: "2.0",
+        method: "tools/call",
+        id,
+        params: { server, name: tool, arguments: args },
+      },
+      "*",
+    );
+    // 60s covers the briefing server budget (45s LLM call + IPC and
+    // facet collection overhead) with margin. If the server takes
+    // longer than this the iframe surfaces a clear "Tool call timed
+    // out" error and the user can click Retry.
+    setTimeout(() => {
+      if (_pending.has(id)) {
+        _pending.delete(id);
+        reject(new Error("Tool call timed out"));
+      }
+    }, 60000);
+  });
+}
+
+/* ---------- components ---------- */
+
+function Skeleton() {
+  return (
+    <div style={{ marginTop: 24 }}>
+      <div className="skel skel-divider" />
+      <div className="skel skel-item" />
+      <div className="skel skel-item" />
+    </div>
+  );
+}
+
+function SectionGroup({
+  label,
+  items,
+  onAction,
+}: {
+  label: string;
+  items: BriefingSection[];
+  onAction: (action: BriefingAction) => void;
+}) {
+  if (items.length === 0) return null;
+  return (
+    <>
+      <div className="section-divider">{label}</div>
+      {items.map((item) => (
+        <div key={item.id} className="section-item">
+          <span className="dot" style={{ background: dotColor(item.type) }} />
+          {/* biome-ignore lint/security/noDangerouslySetInnerHtml: renderMd HTML-escapes the untrusted LLM text before adding bold/code markup */}
+          <span className="item-text" dangerouslySetInnerHTML={{ __html: renderMd(item.text) }} />
+          {item.action && (
+            <button
+              type="button"
+              className="item-action"
+              style={{
+                background: "none",
+                border: "none",
+                cursor: "pointer",
+                padding: 0,
+                color: "inherit",
+                font: "inherit",
+              }}
+              onClick={() => {
+                onAction(item.action!);
+              }}
+            >
+              {item.action.label || "View"} &rarr;
+            </button>
+          )}
+        </div>
+      ))}
+    </>
+  );
+}
+
+function Dashboard() {
+  const synapse = useSynapse();
+  // The host publishes the active workspace as `hostContext.workspace` on
+  // every workspace switch. Keying the briefing fetch on `workspace.id`
+  // refetches the (workspace-scoped) briefing without remounting this iframe.
+  // Narrow to both id and name even though only id drives refetch — keeps
+  // future briefing copy ("Switched to Acme") cheap to wire up.
+  // `forceRefresh` arrives in the `ui/initialize` host context when the
+  // host-shell URL carried `?force=1`. Consumed once by the briefing effect
+  // below — a one-shot cache-bust, not a persistent mode.
+  const { workspace, forceRefresh } = useHostContext<{
+    workspace?: { id: string; name: string };
+    forceRefresh?: boolean;
+  }>();
+  const workspaceId = workspace?.id;
+  const forceConsumedRef = useRef(false);
+  const [briefing, setBriefing] = useState<BriefingOutput | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [stale, setStale] = useState(false);
+
+  const loadBriefing = useCallback(async (forceRefresh = false) => {
+    setError(null);
+    setStale(false);
+    setLoading(true);
+    try {
+      // `briefing` lives on the platform's `nb` source, not on `home`.
+      // See `callServerTool` definition above.
+      const result = await callServerTool(
+        "nb",
+        "briefing",
+        forceRefresh ? { force_refresh: true } : {},
+      );
+      if (result) setBriefing(result);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load briefing");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  // Reload whenever the active workspace lands or changes. The host bridge
+  // sends `host-context-changed` with the new workspace id; the SDK exposes
+  // it via `useHostContext`. `loadBriefing` is stable so it isn't a dep —
+  // `workspaceId` is the only meaningful trigger.
+  //
+  // Skip the first render where `workspaceId` is undefined: the
+  // `useHostContext` value lands on the next render after the handshake
+  // resolves. Without the guard we'd fire one wasted briefing fetch in the
+  // handshake-window, then immediately fire again with the real id.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: workspaceId is the refetch trigger; loadBriefing is stable; forceRefresh is read once and must not retrigger
+  useEffect(() => {
+    if (!workspaceId) return;
+    // `?force=1` is a one-shot cache-bust: honor it on the first briefing
+    // fetch, then fall back to the cache for later workspace switches even
+    // if the host keeps the flag in context.
+    const force = forceRefresh === true && !forceConsumedRef.current;
+    if (force) forceConsumedRef.current = true;
+    loadBriefing(force);
+  }, [workspaceId]);
+
+  // Show refresh banner on data changes
+  useDataSync(() => {
+    setStale(true);
+  });
+
+  const handleAction = useCallback(
+    (action: BriefingAction) => {
+      const { type, label: _label, ...params } = action;
+      synapse.action(type, params);
+    },
+    [synapse],
+  );
+
+  const categories: Array<{
+    key: string;
+    label: string;
+  }> = [
+    { key: "attention", label: "Needs attention" },
+    { key: "recent", label: "Recent" },
+    { key: "upcoming", label: "Coming up" },
+  ];
+
+  const greeting = briefing?.greeting || getGreeting();
+  const date = briefing?.date || getDateStr();
+
+  return (
+    <div className="page">
+      {/* Refresh banner */}
+      {stale && (
+        <div className="refresh-banner visible">
+          <span>New activity available</span>
+          <button type="button" onClick={() => loadBriefing(true)}>
+            Refresh
+          </button>
+        </div>
+      )}
+
+      {/* Always-visible header */}
+      <div className="greeting">{greeting}</div>
+      <div className="date">{date}</div>
+
+      {/* Loading state */}
+      {loading && !briefing && !error && (
+        <>
+          <p className="lede">Generating your daily briefing&hellip;</p>
+          <Skeleton />
+        </>
+      )}
+
+      {/* Error state */}
+      {error && (
+        <div className="error-box">
+          <p>{error}</p>
+          <button type="button" className="retry-btn" onClick={() => loadBriefing()}>
+            Retry
+          </button>
+        </div>
+      )}
+
+      {/* Briefing content */}
+      {briefing && (
+        <>
+          {briefing.lede && <p className="lede">{briefing.lede}</p>}
+          {categories.map(({ key, label }) => (
+            <SectionGroup
+              key={key}
+              label={label}
+              items={(briefing.sections || []).filter((s) => s.category === key)}
+              onAction={handleAction}
+            />
+          ))}
+        </>
+      )}
+    </div>
+  );
+}
+
+/* ---------- root ---------- */
+
+export function App() {
+  return (
+    <SynapseProvider name="@nimblebraininc/home" version="0.1.0">
+      <Dashboard />
+    </SynapseProvider>
+  );
+}

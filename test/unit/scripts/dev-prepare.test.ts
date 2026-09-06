@@ -2,11 +2,11 @@
  * Tests for `scripts/lib/dev-prepare.ts` — the fresh-checkout preparation the
  * shared dev launcher runs.
  *
- * The selection predicate is the part worth locking. If the bundle-UI layout
- * ever moves, `bundleUisMissingDist` quietly returns `[]`, nothing is built,
+ * The selection predicate is the part worth locking. If the app-UI layout
+ * ever moves, `appUisMissingDist` quietly returns `[]`, nothing is built,
  * and the "UI not built" fallback comes back with no error and no log line —
  * silently undoing the only thing this module exists to do. The equivalent
- * breakage in `build:bundles` fails loudly through `test:bundles`; this one
+ * breakage in `build:platform-apps` fails loudly through `test:platform-apps`; this one
  * has no such alarm, which is why it gets one here.
  *
  * `installIfMissing`'s guards are pure `existsSync` checks that return before
@@ -17,13 +17,13 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { bundleUisMissingDist, installIfMissing } from "../../../scripts/lib/dev-prepare.ts";
+import { appUisMissingDist, installIfMissing } from "../../../scripts/lib/dev-prepare.ts";
 
 let repoRoot: string;
 
-/** Build a bundle dir the way the repo lays them out. */
-function makeBundle(name: string, opts: { ui?: boolean; dist?: boolean } = {}) {
-  const ui = join(repoRoot, "src", "bundles", name, "ui");
+/** Build a platform app dir the way the repo lays them out. */
+function makeApp(name: string, opts: { ui?: boolean; dist?: boolean } = {}) {
+  const ui = join(repoRoot, "src", "platform", name, "ui");
   mkdirSync(ui, { recursive: true });
   if (opts.ui !== false) writeFileSync(join(ui, "package.json"), "{}");
   if (opts.dist) {
@@ -41,44 +41,44 @@ afterEach(() => {
   rmSync(repoRoot, { recursive: true, force: true });
 });
 
-describe("bundleUisMissingDist", () => {
-  test("selects a bundle UI with no dist/index.html", () => {
-    makeBundle("home");
-    expect(bundleUisMissingDist(repoRoot).map((b) => b.name)).toEqual(["home"]);
+describe("appUisMissingDist", () => {
+  test("selects an app UI with no dist/index.html", () => {
+    makeApp("home");
+    expect(appUisMissingDist(repoRoot).map((a) => a.name)).toEqual(["home"]);
   });
 
-  test("skips a bundle UI that already has a built dist", () => {
-    makeBundle("home", { dist: true });
-    expect(bundleUisMissingDist(repoRoot)).toEqual([]);
+  test("skips an app UI that already has a built dist", () => {
+    makeApp("home", { dist: true });
+    expect(appUisMissingDist(repoRoot)).toEqual([]);
   });
 
-  test("skips a bundle directory with no ui/package.json", () => {
-    // `schemas` is real: a bundle dir with no UI at all. It must never be built.
-    makeBundle("schemas", { ui: false });
-    expect(bundleUisMissingDist(repoRoot)).toEqual([]);
+  test("skips an app directory with no ui/package.json", () => {
+    // `schemas` is real: a directory under src/platform with no UI at all. It must never be built.
+    makeApp("schemas", { ui: false });
+    expect(appUisMissingDist(repoRoot)).toEqual([]);
   });
 
   test("selects only the unbuilt ones from a mixed tree", () => {
-    makeBundle("home", { dist: true });
-    makeBundle("usage");
-    makeBundle("files");
-    makeBundle("schemas", { ui: false });
-    expect(bundleUisMissingDist(repoRoot).map((b) => b.name).sort()).toEqual(["files", "usage"]);
+    makeApp("home", { dist: true });
+    makeApp("usage");
+    makeApp("files");
+    makeApp("schemas", { ui: false });
+    expect(appUisMissingDist(repoRoot).map((a) => a.name).sort()).toEqual(["files", "usage"]);
   });
 
-  test("returns [] when src/bundles does not exist rather than throwing", () => {
-    expect(bundleUisMissingDist(repoRoot)).toEqual([]);
+  test("returns [] when src/platform does not exist rather than throwing", () => {
+    expect(appUisMissingDist(repoRoot)).toEqual([]);
   });
 
   test("the returned ui path is the directory a build would run in", () => {
-    const ui = makeBundle("home");
-    expect(bundleUisMissingDist(repoRoot)[0]?.ui).toBe(ui);
+    const ui = makeApp("home");
+    expect(appUisMissingDist(repoRoot)[0]?.ui).toBe(ui);
   });
 
   test("dist/ alone is not enough — index.html is the sentinel the runtime resolves", () => {
-    const ui = makeBundle("home");
+    const ui = makeApp("home");
     mkdirSync(join(ui, "dist"), { recursive: true });
-    expect(bundleUisMissingDist(repoRoot).map((b) => b.name)).toEqual(["home"]);
+    expect(appUisMissingDist(repoRoot).map((a) => a.name)).toEqual(["home"]);
   });
 });
 

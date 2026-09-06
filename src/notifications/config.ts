@@ -24,7 +24,7 @@ import {
   type NotificationRouteDisabled,
   type NotificationRouteInput,
   type NotificationRouteMatch,
-} from "../tools/platform/schemas/notifications.ts";
+} from "../platform/schemas/notifications.ts";
 import { serializePerWorkspace } from "../workspace/serialize.ts";
 import type { Workspace } from "../workspace/types.ts";
 import type { WorkspaceStore } from "../workspace/workspace-store.ts";

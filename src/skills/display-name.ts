@@ -10,7 +10,7 @@
  * (`compose__assembled_context`) can take it directly.
  *
  * Two mirrors exist, each forced by a boundary that forbids importing this:
- *   - `src/bundles/conversations/src/jsonl-reader.ts` — deployable independently
+ *   - `src/platform/conversations/jsonl-reader.ts` — deployable independently
  *     of the runtime (see that file's header).
  *   - `web/src/lib/skill-display.ts` — the browser can't import from `src/`.
  *

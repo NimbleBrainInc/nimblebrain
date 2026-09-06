@@ -28,11 +28,11 @@ import { join } from "node:path";
 import type { ServerHandle } from "../../src/api/server.ts";
 import { startServer } from "../../src/api/server.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
-import type { ToolInput } from "../../src/tools/platform/schemas/catalog.ts";
+import type { ToolInput } from "../../src/platform/schemas/catalog.ts";
 import type {
   SkillDetail,
   SkillsListOutput,
-} from "../../src/tools/platform/schemas/skills.ts";
+} from "../../src/platform/schemas/skills.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
 

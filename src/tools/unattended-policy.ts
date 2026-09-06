@@ -38,8 +38,8 @@
  * policy, instead of a source-specific error raised three layers down.
  */
 
+import { isTaskForbiddenSkillTool } from "../platform/skills/source.ts";
 import { isTaskForbiddenIdentityTool } from "./identity-sources.ts";
-import { isTaskForbiddenSkillTool } from "./platform/skills.ts";
 
 /**
  * Wire names barred outright, beyond the two namespace predicates.

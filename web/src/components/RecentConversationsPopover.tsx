@@ -8,7 +8,7 @@ import { toSlug } from "../lib/workspace-slug";
 
 // Mirror of the fields this popover reads from the `conversations__list`
 // result (server shape: ListResult / IndexEntry in
-// src/bundles/conversations/src/index-cache.ts). The web package can't import
+// src/platform/conversations/index-cache.ts). The web package can't import
 // server types, and only tool *inputs* are codegen'd, so the read shape is
 // declared locally — the same approach the Conversations bundle UI takes.
 interface RecentConversation {

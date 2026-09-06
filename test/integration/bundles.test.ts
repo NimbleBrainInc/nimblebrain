@@ -121,7 +121,7 @@ describe("McpSource (integration)", () => {
     const tools = await source.tools();
     expect(tools).toHaveLength(1);
     expect(tools[0]!.name).toBe("echo-test__echo");
-    expect(tools[0]!.source).toBe("mcpb:echo-test");
+    expect(tools[0]!.source).toBe("mcp:echo-test");
 
     // Execute
     const result = await source.execute("echo", { message: "Hello from test!" });

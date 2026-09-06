@@ -13,14 +13,14 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { Scheduler } from "../../src/bundles/automations/src/scheduler.ts";
+import { Scheduler } from "../../src/platform/automations/scheduler.ts";
 import {
 	handleCreate,
 	handleRun,
 	handleRuns,
 	handleStatus,
 	type ToolContext,
-} from "../../src/bundles/automations/src/server.ts";
+} from "../../src/platform/automations/server.ts";
 import {
 	deleteAutomationDefinition,
 	loadOwnerAutomations,
@@ -28,13 +28,13 @@ import {
 	readRunResult,
 	readRuns,
 	saveAutomation,
-} from "../../src/bundles/automations/src/store.ts";
+} from "../../src/platform/automations/store.ts";
 import type {
 	Automation,
 	AutomationRun,
 	AutomationRunResult,
-} from "../../src/bundles/automations/src/types.ts";
-import type { AutomationsRunOutput } from "../../src/tools/platform/schemas/automations.ts";
+} from "../../src/platform/automations/types.ts";
+import type { AutomationsRunOutput } from "../../src/platform/schemas/automations.ts";
 
 // ---------------------------------------------------------------------------
 // Test helpers

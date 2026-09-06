@@ -111,6 +111,20 @@ The transport arm is also a trust boundary: in-memory means the bytes never left
 the process, which is what host-owned `_meta` markers are conditioned on
 (ADR-0014, ADR-0024).
 
+### Platform app
+One of the kernel's own capabilities, expressed as a source: home,
+conversations, files, automations, usage, skills, instructions, hooks,
+notifications, compose. Each is an in-process MCP server the runtime hosts
+rather than connects to — there is no URL, no credential, and no connection
+to supervise, so none of what the *Connection* entry below describes applies
+to one.
+
+An app is one unit — its tools, the code behind them, and its UI — and it
+lives in one directory, `src/platform/<app>/`. `createPlatformSources` starts
+the set. Being a source is the whole of its interface: the registry, the
+prompt, and `/mcp` cannot tell it from a remote server, which is what keeps
+the kernel small enough to have only one extension mechanism.
+
 ### Connection
 The supervised link to a remote source, carrying the
 `(serverName, workspaceId, principalId, ref)` tuple. Two disjoint loops watch it

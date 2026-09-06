@@ -168,7 +168,7 @@ describe("toolListChanged", () => {
     name,
     description,
     inputSchema,
-    source: "mcpb:x",
+    source: "mcp:x",
   });
 
   it("is false for identical sets regardless of order", () => {

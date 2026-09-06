@@ -1764,7 +1764,7 @@ async function provisionDeclaredHooks(
 // Installing a connector provisions its declared streams and uninstalling
 // revokes them, both as a consequence of the connector's own lifecycle — that
 // is all this file does with hooks. INSPECTING and ROTATING a stream live in
-// `tools/platform/hooks.ts`, because those answer about the hook itself rather
+// `platform/hooks/source.ts`, because those answer about the hook itself rather
 // than about the connector, and the operator asking them needs the delivery
 // URL — the one thing this file's tools deliberately never returned.
 //

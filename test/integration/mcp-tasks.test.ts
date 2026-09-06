@@ -88,7 +88,7 @@ class FakeTaskAwareSource implements ToolSource {
       name: `${this.name}__${t.name}`,
       description: `Fake tool ${t.name}`,
       inputSchema: { type: "object", properties: {} },
-      source: `mcpb:${this.name}`,
+      source: `mcp:${this.name}`,
       ...(t.taskSupport ? { execution: { taskSupport: t.taskSupport } } : {}),
     }));
   }

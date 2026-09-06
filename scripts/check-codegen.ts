@@ -6,7 +6,7 @@
  *
  * Why `git status --porcelain` and not `git diff`: a diff compares
  * tracked paths only. Adding a schema source under
- * `src/tools/platform/schemas/` makes the generator emit a matching
+ * `src/platform/schemas/` makes the generator emit a matching
  * `.d.ts` that no diff can see, so the guard passes with the artifact
  * missing and it lands later in whatever unrelated change next runs
  * codegen. `--porcelain` (v1) is git's documented stable-for-scripts

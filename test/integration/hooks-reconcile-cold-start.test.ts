@@ -49,7 +49,7 @@ function advertised(bareName: string): Tool {
       type: "object",
       properties: { vendor: { type: "string" }, url: { type: "string" } },
     },
-    source: `mcpb:${CONNECTOR}`,
+    source: `mcp:${CONNECTOR}`,
   };
 }
 

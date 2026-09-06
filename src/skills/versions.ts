@@ -9,7 +9,7 @@
  * as no backup while costing the disk.
  *
  * This module is the home for the write and read-back sides. It is not yet the
- * only reader: `tools/platform/compose.ts::findMatchingSnapshot` still derives
+ * only reader: `platform/compose/source.ts::findMatchingSnapshot` still derives
  * the directory, base name, suffix and sort itself for its hash-matching walk,
  * so that convention exists in two places until it is folded in here.
  *

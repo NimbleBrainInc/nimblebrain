@@ -22,7 +22,7 @@
 import { readdirSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { USAGE_GROUP_BYS, type UsageGroupBy } from "../tools/platform/schemas/usage.ts";
+import { USAGE_GROUP_BYS, type UsageGroupBy } from "../platform/schemas/usage.ts";
 import { costBreakdown } from "./cost.ts";
 import { isBackfillShard, usageMonthDir, usageMonthsInRange } from "./paths.ts";
 import type { UsageLedgerEntry } from "./types.ts";

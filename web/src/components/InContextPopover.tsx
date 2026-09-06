@@ -1,7 +1,7 @@
 import { Layers } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-// Canonical shapes from `src/tools/platform/schemas/compose.ts`; mirrored
+// Canonical shapes from `src/platform/schemas/compose.ts`; mirrored
 // here via codegen so server + web can't drift.
 import type {
   AssembledContextSource,

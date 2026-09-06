@@ -63,7 +63,7 @@ function buildSource(
       name: "crm__search",
       description: "",
       inputSchema: { type: "object", properties: { q: { type: "string" } } },
-      source: "mcpb:crm",
+      source: "mcp:crm",
     },
   ];
 

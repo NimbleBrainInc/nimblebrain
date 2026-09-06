@@ -1,0 +1,1359 @@
+/**
+ * Phase 4 — mutation-tool behavior tests for `nb__skills`.
+ *
+ * Per-tool: happy path + at least one error/permission edge. Versioning
+ * (`_versions/{name}.{iso}.md` snapshots) is verified as a side-effect of
+ * update / delete. The fake runtime is intentionally close to
+ * the read-tool tests' fixture so behavioral parity stays obvious.
+ */
+
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { isInternalTool } from "../../../../src/engine/types.ts";
+import { surfaceTools } from "../../../../src/tools/surfacing.ts";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { NoopEventSink } from "../../../../src/adapters/noop-events.ts";
+import { runWithRequestContext } from "../../../../src/runtime/request-context.ts";
+import { EventSourcedConversationStore } from "../../../../src/conversation/event-sourced-store.ts";
+import type { EngineEvent, EventSink } from "../../../../src/engine/types.ts";
+import { parseSkillContent } from "../../../../src/skills/loader.ts";
+import { selectLayer3Skills } from "../../../../src/skills/select.ts";
+import { MAX_SKILL_BODY_CHARS } from "../../../../src/skills/truncate.ts";
+import { McpSource } from "../../../../src/tools/mcp-source.ts";
+import { createSkillsSource } from "../../../../src/platform/skills/source.ts";
+import { WorkspaceContext } from "../../../../src/workspace/context.ts";
+
+interface FakeIdentity {
+  id: string;
+  email: string;
+  displayName: string;
+  orgRole: "owner" | "admin" | "member";
+  preferences: { timezone: string; locale: string; theme: string };
+}
+
+class FakeRuntime {
+  identity: FakeIdentity | null = null;
+  hasIdentityProvider = false;
+  wsId: string | null = null;
+  workspaces = new Map<
+    string,
+    { id: string; name: string; members: Array<{ userId: string; role: "admin" | "member" }> }
+  >();
+
+  private readonly _store: EventSourcedConversationStore;
+
+  constructor(private workDir: string) {
+    const convDir = join(workDir, "conversations");
+    mkdirSync(convDir, { recursive: true });
+    this._store = new EventSourcedConversationStore({ dir: convDir });
+  }
+
+  getWorkDir(): string {
+    return this.workDir;
+  }
+  getCurrentIdentity(): FakeIdentity | null {
+    return this.identity;
+  }
+  getIdentityProvider(): object | null {
+    return this.hasIdentityProvider ? ({} as object) : null;
+  }
+  requireWorkspaceId(): string {
+    if (!this.wsId) throw new Error("no workspace");
+    return this.wsId;
+  }
+  getWorkspaceContext(wsId: string): WorkspaceContext {
+    // Production: `Runtime.getWorkspaceContext` constructs a `WorkspaceContext`
+    // bound to `{wsId, workDir}`. The fake mirrors that closely enough for
+    // tests that just want a typed handle for path derivation.
+    return new WorkspaceContext({ wsId, workDir: this.workDir });
+  }
+  getWorkspaceStore() {
+    return {
+      get: async (id: string) => this.workspaces.get(id) ?? null,
+    };
+  }
+  getContextSkills() {
+    return [];
+  }
+  getMatchableSkills() {
+    return [];
+  }
+  loadConversationSkills() {
+    return [];
+  }
+  async reloadSkills(): Promise<void> {
+    // Production runtime rebuilds the SkillMatcher after a mutation
+    // so newly-created org/workspace skills match their triggers
+    // without a process restart. Tests don't exercise the matcher;
+    // a no-op satisfies the call site (`reloadBootSkills` in
+    // platform/skills.ts) without a TypeError under suite load.
+  }
+
+  setMember(wsId: string, userId: string, role: "admin" | "member"): void {
+    const ws = this.workspaces.get(wsId);
+    if (!ws) {
+      this.workspaces.set(wsId, { id: wsId, name: wsId, members: [{ userId, role }] });
+    } else {
+      ws.members = [{ userId, role }];
+    }
+  }
+}
+
+class CollectingSink implements EventSink {
+  events: EngineEvent[] = [];
+  emit(e: EngineEvent): void {
+    this.events.push(e);
+  }
+}
+
+let workDir: string;
+let runtime: FakeRuntime;
+let source: McpSource | undefined;
+let sink: CollectingSink;
+
+beforeEach(() => {
+  workDir = mkdtempSync(join(tmpdir(), "skills-mut-test-"));
+  runtime = new FakeRuntime(workDir);
+  sink = new CollectingSink();
+});
+
+afterEach(async () => {
+  if (source) await source.stop();
+  source = undefined;
+  rmSync(workDir, { recursive: true, force: true });
+});
+
+async function buildSource(): Promise<McpSource> {
+  source = createSkillsSource(runtime as unknown as never, sink ?? new NoopEventSink());
+  await source.start();
+  return source;
+}
+
+function readManifestField(path: string, key: string): string | undefined {
+  const raw = readFileSync(path, "utf-8");
+  const match = raw.match(new RegExp(`^\\s*${key}:\\s*(.+)$`, "m"));
+  return match?.[1]?.trim().replace(/^"(.*)"$/, "$1");
+}
+
+// ── create ───────────────────────────────────────────────────────────────
+
+describe("skills__create", () => {
+  test("writes a platform-scope skill in dev mode and emits skill.created", async () => {
+    const src = await buildSource();
+    const client = src.getClient()!;
+    const result = await client.callTool({
+      name: "create",
+      arguments: {
+        scope: "org",
+        manifest: {
+          name: "voice-rules",
+          description: "speak plainly",
+          type: "context",
+          priority: 25,
+        },
+        body: "Be concise.",
+      },
+    });
+    expect(result.isError).toBeFalsy();
+    const path = join(workDir, "skills", "voice-rules.md");
+    expect(existsSync(path)).toBe(true);
+    expect(readFileSync(path, "utf-8")).toContain("Be concise.");
+    expect(sink.events.some((e) => e.type === "skill.created")).toBe(true);
+  });
+
+  test("a skill cannot be created inside an automation run at all", async () => {
+    // This began as a provenance test. While a run's correlation id lived in
+    // `conversationId`, an automation-created skill was persisted as
+    // `origin: "chat"` with a run id recorded as its conversation — wrong data
+    // on disk. #1033 corrected the stamp; the unattended wall then removed the
+    // path, which is the stronger guarantee: a skill is durable guidance that
+    // loads itself into later conversations, and a run ingesting untrusted
+    // content must not be able to author one. So the assertion is no longer
+    // "the provenance is right" but "nothing was written".
+    const src = await buildSource();
+    const client = src.getClient()!;
+    const result = await runWithRequestContext(
+      { identity: null, workspaceId: "ws_any", runId: "run_a8f15601-0dd", unattended: true },
+      () =>
+        client.callTool({
+          name: "create",
+          arguments: {
+            scope: "org",
+            manifest: { name: "run-authored", description: "made by a run", type: "skill" },
+            body: "From an automation.",
+          },
+        }),
+    );
+
+    expect(result.isError).toBe(true);
+    const text = (result.content as Array<{ type: string; text: string }>)
+      .filter((c) => c.type === "text")
+      .map((c) => c.text)
+      .join("");
+    expect(text).toContain("not available inside an unattended automation run");
+
+    // Refused before the writer, not after it.
+    expect(existsSync(join(workDir, "skills", "run-authored.md"))).toBe(false);
+    expect(sink.events.some((e) => e.type === "skill.created")).toBe(false);
+  });
+
+  test("a skill created inside a chat still records the conversation", async () => {
+    // The other arm — so the test above pins the run case, not just the
+    // absence of a stamp everywhere.
+    const src = await buildSource();
+    const client = src.getClient()!;
+    const result = await runWithRequestContext(
+      { identity: null, workspaceId: "ws_any", conversationId: "conv_aaaaaaaaaaaaaaaa" },
+      () =>
+        client.callTool({
+          name: "create",
+          arguments: {
+            scope: "org",
+            manifest: { name: "chat-authored", description: "made in a chat", type: "skill" },
+            body: "From a chat.",
+          },
+        }),
+    );
+    expect(result.isError).toBeFalsy();
+
+    const written = readFileSync(join(workDir, "skills", "chat-authored.md"), "utf-8");
+    expect(written).toContain("origin: chat");
+    expect(written).toContain("conv_aaaaaaaaaaaaaaaa");
+  });
+
+  test("rejects duplicate name within scope", async () => {
+    const src = await buildSource();
+    const client = src.getClient()!;
+    const make = () =>
+      client.callTool({
+        name: "create",
+        arguments: {
+          scope: "org",
+          manifest: { name: "voice", description: "test", type: "skill" },
+          body: "v1",
+        },
+      });
+    expect((await make()).isError).toBeFalsy();
+    const second = await make();
+    expect(second.isError).toBe(true);
+    expect((second.content as Array<{ text: string }>)[0]?.text).toMatch(/already exists/i);
+  });
+
+  test("rejects invalid skill name (slashes)", async () => {
+    const src = await buildSource();
+    const client = src.getClient()!;
+    // Schema enforces `name: ^[a-zA-Z0-9_-]+$` — invalid name is rejected at
+    // the validator before reaching the handler. The validator uses pattern
+    // matching, so this surfaces as a JSON-RPC validation error (not the
+    // handler's `assertValidName`).
+    const result = await client.callTool({
+      name: "create",
+      arguments: {
+        scope: "org",
+        manifest: { name: "../etc/passwd", description: "test", type: "skill" },
+        body: "",
+      },
+    });
+    expect(result.isError).toBe(true);
+  });
+
+  test("non-admin denied for platform scope when identity provider is configured", async () => {
+    runtime.hasIdentityProvider = true;
+    runtime.identity = {
+      id: "u1",
+      email: "u@ex.com",
+      displayName: "U",
+      orgRole: "member",
+      preferences: { timezone: "UTC", locale: "en-US", theme: "system" },
+    };
+    const src = await buildSource();
+    const client = src.getClient()!;
+    const result = await client.callTool({
+      name: "create",
+      arguments: {
+        scope: "org",
+        manifest: { name: "no-perm", description: "test", type: "skill" },
+        body: "x",
+      },
+    });
+    expect(result.isError).toBe(true);
+    expect((result as { structuredContent?: { code?: string } }).structuredContent?.code).toBe(
+      "permission_denied",
+    );
+  });
+
+  test("workspace scope writes under {workDir}/workspaces/{wsId}/skills/", async () => {
+    runtime.wsId = "ws_demo";
+    const src = await buildSource();
+    const client = src.getClient()!;
+    const result = await client.callTool({
+      name: "create",
+      arguments: {
+        scope: "workspace",
+        manifest: { name: "ws-only", description: "test", type: "skill" },
+        body: "ws body",
+      },
+    });
+    expect(result.isError).toBeFalsy();
+    expect(existsSync(join(workDir, "workspaces", "ws_demo", "skills", "ws-only.md"))).toBe(true);
+  });
+});
+
+// ── workspace-scope write gate (shared `canWriteWorkspaceScoped`) ──────────
+
+// These tests exercise the real authorization path (identity provider
+// configured) — distinct from the dev-mode create test above, which bypasses
+// auth. Skills delegates workspace-scope WRITES to `canWriteWorkspaceScoped`
+// (strict: workspace admin member, no org-admin override) while keeping the
+// READ rule as "any member". Behavior here must be identical to the prior
+// hand-rolled branch for every (member, role, mode) combination.
+describe("skills — workspace-scope write gate", () => {
+  const WS = "ws_gate";
+
+  function setIdentity(id: string, orgRole: "owner" | "admin" | "member"): void {
+    runtime.hasIdentityProvider = true;
+    runtime.wsId = WS;
+    runtime.identity = {
+      id,
+      email: `${id}@ex.com`,
+      displayName: id,
+      orgRole,
+      preferences: { timezone: "UTC", locale: "en-US", theme: "system" },
+    };
+  }
+
+  async function createWsSkill(name: string) {
+    const src = await buildSource();
+    const client = src.getClient()!;
+    return client.callTool({
+      name: "create",
+      arguments: {
+        scope: "workspace",
+        manifest: { name, description: "test", type: "skill" },
+        body: "ws body",
+      },
+    });
+  }
+
+  test("workspace ADMIN member CAN write a workspace skill", async () => {
+    setIdentity("u_admin", "member");
+    runtime.setMember(WS, "u_admin", "admin");
+    const result = await createWsSkill("admin-can");
+    expect(result.isError).toBeFalsy();
+    expect(existsSync(join(workDir, "workspaces", WS, "skills", "admin-can.md"))).toBe(true);
+  });
+
+  test("workspace NON-ADMIN member CANNOT write a workspace skill", async () => {
+    setIdentity("u_member", "member");
+    runtime.setMember(WS, "u_member", "member");
+    const result = await createWsSkill("member-cannot");
+    expect(result.isError).toBe(true);
+    expect((result as { structuredContent?: { code?: string } }).structuredContent?.code).toBe(
+      "permission_denied",
+    );
+    expect(existsSync(join(workDir, "workspaces", WS, "skills", "member-cannot.md"))).toBe(false);
+  });
+
+  test("workspace NON-ADMIN member CAN read a workspace skill (read semantics preserved)", async () => {
+    // Seed a skill in the workspace dir, then read it as a plain member.
+    // The write helper would deny a non-admin; reads must not route through it.
+    setIdentity("u_member", "member");
+    runtime.setMember(WS, "u_member", "member");
+    const skillPath = join(workDir, "workspaces", WS, "skills", "readable.md");
+    mkdirSync(join(workDir, "workspaces", WS, "skills"), { recursive: true });
+    writeFileSync(
+      skillPath,
+      "---\nname: readable\ndescription: test\n---\nbody\n",
+      "utf-8",
+    );
+    const src = await buildSource();
+    const client = src.getClient()!;
+    const result = await client.callTool({ name: "read", arguments: { id: skillPath } });
+    expect(result.isError).toBeFalsy();
+  });
+
+  test("org admin who is NOT a workspace member CANNOT write (no org-admin override)", async () => {
+    setIdentity("u_orgadmin", "admin");
+    runtime.setMember(WS, "someone_else", "admin"); // workspace has a member, just not the actor
+    const result = await createWsSkill("orgadmin-cannot");
+    expect(result.isError).toBe(true);
+    expect((result as { structuredContent?: { code?: string } }).structuredContent?.code).toBe(
+      "permission_denied",
+    );
+    expect(existsSync(join(workDir, "workspaces", WS, "skills", "orgadmin-cannot.md"))).toBe(false);
+  });
+
+  test("org OWNER who is NOT a workspace member CANNOT write (no org-owner override)", async () => {
+    setIdentity("u_owner", "owner");
+    runtime.setMember(WS, "someone_else", "admin");
+    const result = await createWsSkill("owner-cannot");
+    expect(result.isError).toBe(true);
+    expect((result as { structuredContent?: { code?: string } }).structuredContent?.code).toBe(
+      "permission_denied",
+    );
+    expect(existsSync(join(workDir, "workspaces", WS, "skills", "owner-cannot.md"))).toBe(false);
+  });
+});
+
+// ── create-time loading-strategy derivation (issue #391) ───────────────────
+
+describe("skills__create — loading-strategy", () => {
+  test("defaults to dynamic; with no triggers/affinity it is catalog-only (not Layer-3 selected)", async () => {
+    const src = await buildSource();
+    const client = src.getClient()!;
+    const result = await client.callTool({
+      name: "create",
+      arguments: {
+        scope: "org",
+        manifest: { name: "catalog-only", description: "no signals yet" },
+        body: "Do the thing.",
+      },
+    });
+    expect(result.isError).toBeFalsy();
+
+    const path = join(workDir, "skills", "catalog-only.md");
+    const parsed = parseSkillContent(readFileSync(path, "utf-8"), path);
+    expect(parsed).not.toBeNull();
+    expect(parsed?.manifest.loadingStrategy).toBe("dynamic");
+
+    // No tool-affinity → NOT reachable by the Layer-3 selector (catalog-only,
+    // honoring #4 — the handler does not silently bump it to `always`).
+    const selected = selectLayer3Skills({ skills: [parsed!], activeTools: [] });
+    expect(selected.map((s) => s.skill.manifest.name)).not.toContain("catalog-only");
+  });
+
+  test("dynamic + triggers loads via the matcher", async () => {
+    const src = await buildSource();
+    const client = src.getClient()!;
+    const result = await client.callTool({
+      name: "create",
+      arguments: {
+        scope: "org",
+        manifest: { name: "trigger-skill", description: "matches on triggers", triggers: ["deploy", "ship"] },
+        body: "Deploy guidance.",
+      },
+    });
+    expect(result.isError).toBeFalsy();
+
+    const path = join(workDir, "skills", "trigger-skill.md");
+    const parsed = parseSkillContent(readFileSync(path, "utf-8"), path);
+    expect(parsed?.manifest.loadingStrategy).toBe("dynamic");
+    expect(parsed?.manifest.triggers).toEqual(["deploy", "ship"]);
+  });
+
+  test("loading-strategy: always composes into the context channel", async () => {
+    const src = await buildSource();
+    const client = src.getClient()!;
+    const result = await client.callTool({
+      name: "create",
+      arguments: {
+        scope: "org",
+        manifest: { name: "ctx-skill", description: "always-on", loadingStrategy: "always" },
+        body: "Always-on context.",
+      },
+    });
+    expect(result.isError).toBeFalsy();
+
+    const path = join(workDir, "skills", "ctx-skill.md");
+    const parsed = parseSkillContent(readFileSync(path, "utf-8"), path);
+    expect(parsed?.manifest.loadingStrategy).toBe("always");
+  });
+
+  test("success message flags a catalog-only skill", async () => {
+    const src = await buildSource();
+    const client = src.getClient()!;
+    const result = await client.callTool({
+      name: "create",
+      arguments: {
+        scope: "org",
+        manifest: { name: "named-mechanism", description: "x" },
+        body: "y",
+      },
+    });
+    const text = (result.content as Array<{ text: string }>)[0]?.text ?? "";
+    expect(text).toMatch(/catalog-only/);
+  });
+});
+
+// ── update ───────────────────────────────────────────────────────────────
+
+describe("skills__update", () => {
+  async function seed(): Promise<{ id: string }> {
+    const src = await buildSource();
+    const client = src.getClient()!;
+    await client.callTool({
+      name: "create",
+      arguments: {
+        scope: "org",
+        manifest: { name: "voice", description: "v1", type: "context", priority: 25 },
+        body: "Body v1",
+      },
+    });
+    return { id: join(workDir, "skills", "voice.md") };
+  }
+
+  test("merges manifest patch and replaces body; snapshots prior version", async () => {
+    const { id } = await seed();
+    const client = source!.getClient()!;
+    const result = await client.callTool({
+      name: "update",
+      arguments: {
+        id,
+        manifest: { description: "v2", priority: 30 },
+        body: "Body v2",
+        body_mode: "replace",
+      },
+    });
+    expect(result.isError).toBeFalsy();
+    expect(readFileSync(id, "utf-8")).toContain("Body v2");
+    expect(readManifestField(id, "description")).toBe("v2");
+    expect(readManifestField(id, "priority")).toBe("30");
+
+    const versions = readdirSync(join(workDir, "skills", "_versions"));
+    expect(versions.length).toBe(1);
+    expect(versions[0]).toMatch(/^voice\..*\.md$/);
+    expect(readFileSync(join(workDir, "skills", "_versions", versions[0]!), "utf-8")).toContain(
+      "Body v1",
+    );
+  });
+
+  test("rejects update of bundle-scope skill (Layer 1 vendored)", async () => {
+    const src = await buildSource();
+    const client = src.getClient()!;
+    const result = await client.callTool({
+      name: "update",
+      arguments: { id: "skill://skills/authoring-guide", body: "x" },
+    });
+    expect(result.isError).toBe(true);
+    expect((result as { structuredContent?: { error?: string } }).structuredContent?.error).toBe(
+      "skill_not_mutable_via_platform",
+    );
+  });
+
+  test("returns isError when target file does not exist", async () => {
+    const src = await buildSource();
+    const client = src.getClient()!;
+    const result = await client.callTool({
+      name: "update",
+      arguments: { id: join(workDir, "skills", "nope.md"), body: "x" },
+    });
+    expect(result.isError).toBe(true);
+  });
+
+  // Regression: production bug where the agent passed a stale `id` (a path
+  // the skill used to live at, before being moved to a workspace dir). The
+  // old ordering ran the permission check first and returned "Org-scope
+  // writes require org admin or owner" — sending the agent down a
+  // hallucination loop trying to fix its role instead of refreshing its
+  // path. Existence-first surfaces the actual cause.
+  test("stale org-scope id (file moved away) returns 'not found', not 'permission denied'", async () => {
+    runtime.hasIdentityProvider = true;
+    runtime.identity = {
+      id: "u_member",
+      email: "m@ex.com",
+      displayName: "M",
+      orgRole: "member",
+      preferences: { timezone: "UTC", locale: "en-US", theme: "system" },
+    };
+    const src = await buildSource();
+    const client = src.getClient()!;
+    const result = await client.callTool({
+      name: "update",
+      arguments: { id: join(workDir, "skills", "moved-away.md"), body: "x" },
+    });
+    expect(result.isError).toBe(true);
+    const text = (result.content as Array<{ text: string }>)[0]?.text ?? "";
+    expect(text).toMatch(/not found/i);
+    expect(text).toMatch(/skills__list/);
+    // Must NOT lead with the role/permission narrative for a missing file.
+    expect(text).not.toMatch(/permission denied/i);
+    expect(text).not.toMatch(/org admin/i);
+  });
+
+  test("permission-denied error carries scope + role causation", async () => {
+    runtime.hasIdentityProvider = true;
+    runtime.identity = {
+      id: "u_member",
+      email: "m@ex.com",
+      displayName: "M",
+      orgRole: "member",
+      preferences: { timezone: "UTC", locale: "en-US", theme: "system" },
+    };
+    // Pre-stage an org-scope skill on disk so existence-check passes and
+    // permission becomes the real failure.
+    const orgDir = join(workDir, "skills");
+    mkdirSync(orgDir, { recursive: true });
+    const id = join(orgDir, "org-skill.md");
+    writeFileSync(
+      id,
+      [
+        "---",
+        "name: org-skill",
+        'description: "x"',
+        'version: "1.0.0"',
+        "type: skill",
+        "priority: 50",
+        "---",
+        "body",
+        "",
+      ].join("\n"),
+    );
+
+    const src = await buildSource();
+    const client = src.getClient()!;
+    const result = await client.callTool({
+      name: "update",
+      arguments: { id, body: "tampered" },
+    });
+    expect(result.isError).toBe(true);
+    const sc = (
+      result as { structuredContent?: { code?: string; scope?: string; role?: string } }
+    ).structuredContent;
+    expect(sc?.code).toBe("permission_denied");
+    expect(sc?.scope).toBe("org");
+    expect(sc?.role).toBe("member");
+    const text = (result.content as Array<{ text: string }>)[0]?.text ?? "";
+    expect(text).toMatch(/org-scope/);
+    expect(text).toMatch(/workspace-scoped/); // alternate-scope hint
+    expect(text).toMatch(/member/);
+  });
+});
+
+// ── read (regression: existence-first ordering) ──────────────────────────
+
+// Mirrors the update-side regression at line 305. The read handler picked
+// up the same existence-before-permission reorder; without a dedicated
+// test the read path could regress silently (cross-workspace tests cover
+// permission denial on extant files but not the stale-id case).
+describe("skills__read — stale-id regression", () => {
+  test("stale org-scope id (file moved away) returns 'not found', not 'permission denied'", async () => {
+    runtime.hasIdentityProvider = true;
+    runtime.identity = {
+      id: "u_member",
+      email: "m@ex.com",
+      displayName: "M",
+      orgRole: "member",
+      preferences: { timezone: "UTC", locale: "en-US", theme: "system" },
+    };
+    const src = await buildSource();
+    const client = src.getClient()!;
+    const result = await client.callTool({
+      name: "read",
+      arguments: { id: join(workDir, "skills", "moved-away.md") },
+    });
+    expect(result.isError).toBe(true);
+    const text = (result.content as Array<{ text: string }>)[0]?.text ?? "";
+    expect(text).toMatch(/not found/i);
+    expect(text).toMatch(/skills__list/);
+    expect(text).not.toMatch(/permission denied/i);
+    expect(text).not.toMatch(/org admin/i);
+  });
+});
+
+describe("skills__read — full body (no prompt-cap leak)", () => {
+  test("returns the full stored body for a skill larger than the prompt cap", async () => {
+    const src = await buildSource();
+    const client = src.getClient()!;
+    const body = `${"x".repeat(MAX_SKILL_BODY_CHARS * 2)}\nEND_MARKER_KEEP_ME`;
+    await client.callTool({
+      name: "create",
+      arguments: {
+        scope: "org",
+        manifest: { name: "oversized", description: "test", type: "skill" },
+        body,
+      },
+    });
+    const result = await client.callTool({
+      name: "read",
+      arguments: { id: join(workDir, "skills", "oversized.md") },
+    });
+    expect(result.isError).toBeFalsy();
+    const text = (result.content as Array<{ text: string }>).map((c) => c.text).join("");
+    // The end marker survives only if the read did NOT truncate to the prompt cap.
+    // skills__read must return the full stored body, or a read-then-rewrite via
+    // skills__update would silently lose user-authored content.
+    expect(text).toContain("END_MARKER_KEEP_ME");
+    expect(text.length).toBeGreaterThan(MAX_SKILL_BODY_CHARS);
+  });
+});
+
+// ── delete ───────────────────────────────────────────────────────────────
+
+describe("skills__delete", () => {
+  test("removes the live file and snapshots to _versions/", async () => {
+    const src = await buildSource();
+    const client = src.getClient()!;
+    await client.callTool({
+      name: "create",
+      arguments: {
+        scope: "org",
+        manifest: { name: "doomed", description: "test", type: "skill" },
+        body: "rip",
+      },
+    });
+    const id = join(workDir, "skills", "doomed.md");
+    expect(existsSync(id)).toBe(true);
+
+    const result = await client.callTool({ name: "delete", arguments: { id } });
+    expect(result.isError).toBeFalsy();
+    expect(existsSync(id)).toBe(false);
+    const versions = readdirSync(join(workDir, "skills", "_versions"));
+    expect(versions.length).toBe(1);
+  });
+
+  test("missing file returns isError, not silent success", async () => {
+    const src = await buildSource();
+    const client = src.getClient()!;
+    const result = await client.callTool({
+      name: "delete",
+      arguments: { id: join(workDir, "skills", "ghost.md") },
+    });
+    expect(result.isError).toBe(true);
+  });
+});
+
+// ── activate / deactivate ────────────────────────────────────────────────
+
+describe("durable status is set_status only", () => {
+  test("set_status writes the durable status to the file", async () => {
+    const src = await buildSource();
+    const client = src.getClient()!;
+    await client.callTool({
+      name: "create",
+      arguments: {
+        scope: "org",
+        manifest: { name: "togglable", description: "test", type: "skill" },
+        body: "x",
+      },
+    });
+    const id = join(workDir, "skills", "togglable.md");
+
+    const off = await client.callTool({ name: "set_status", arguments: { id, status: "disabled" } });
+    expect(off.isError).toBeFalsy();
+    expect(readManifestField(id, "status")).toBe("disabled");
+
+    const on = await client.callTool({ name: "set_status", arguments: { id, status: "active" } });
+    expect(on.isError).toBeFalsy();
+    // The writer emits status explicitly under metadata.nimblebrain.
+    expect(readManifestField(id, "status")).toBe("active");
+  });
+
+  test("activate / deactivate write nothing to the file", async () => {
+    // They mute for one conversation now. The durable field is shared by every
+    // conversation that loads the skill — in every workspace for a user-scope
+    // one — so an agent reaching for "not right now" must not land there.
+    const src = await buildSource();
+    const client = src.getClient()!;
+    await client.callTool({
+      name: "create",
+      arguments: {
+        scope: "org",
+        manifest: { name: "untouched", description: "test", type: "skill" },
+        body: "x",
+      },
+    });
+    const id = join(workDir, "skills", "untouched.md");
+
+    await client.callTool({ name: "deactivate", arguments: { id } });
+    expect(readManifestField(id, "status")).toBe("active");
+  });
+
+  test("update refuses manifest.status — set_status is the only durable door", async () => {
+    // The schema no longer declares the field, but the validator lets unknown
+    // keys through, so a silent drop would report a disable that never
+    // happened. Refuse instead, and say where the capability lives.
+    const src = await buildSource();
+    const client = src.getClient()!;
+    await client.callTool({
+      name: "create",
+      arguments: {
+        scope: "org",
+        manifest: { name: "no-status-via-update", description: "test", type: "skill" },
+        body: "x",
+      },
+    });
+    const id = join(workDir, "skills", "no-status-via-update.md");
+
+    const res = await client.callTool({
+      name: "update",
+      arguments: { id, manifest: { status: "disabled" } },
+    });
+    expect(res.isError).toBe(true);
+    expect(JSON.stringify(res.content)).toContain("Skills settings");
+    expect(readManifestField(id, "status")).toBe("active");
+  });
+
+  test("create refuses manifest.status — a skill cannot be born disabled", async () => {
+    // Worse than a disabled edit, not better: the tier merge dedups by NAME
+    // before the active-status filter, so a lower-tier skill created disabled
+    // takes the name and is then dropped — and the org skill it shadowed
+    // composes nowhere at all.
+    const src = await buildSource();
+    const client = src.getClient()!;
+    const res = await client.callTool({
+      name: "create",
+      arguments: {
+        scope: "org",
+        manifest: { name: "born-disabled", description: "test", status: "disabled" },
+        body: "x",
+      },
+    });
+    expect(res.isError).toBe(true);
+    expect(JSON.stringify(res.content)).toContain("Skills settings");
+    expect(existsSync(join(workDir, "skills", "born-disabled.md"))).toBe(false);
+  });
+
+  test("a refused update leaves no version snapshot behind", async () => {
+    // The refusal sits above snapshotSkillVersion: a call that writes nothing
+    // must leave no version, or history fills with copies of an unchanged file.
+    const src = await buildSource();
+    const client = src.getClient()!;
+    await client.callTool({
+      name: "create",
+      arguments: {
+        scope: "org",
+        manifest: { name: "no-snapshot-on-refusal", description: "test" },
+        body: "x",
+      },
+    });
+    const id = join(workDir, "skills", "no-snapshot-on-refusal.md");
+    for (let i = 0; i < 3; i++) {
+      await client.callTool({ name: "update", arguments: { id, manifest: { status: "disabled" } } });
+    }
+    expect(existsSync(join(workDir, "skills", "_versions"))).toBe(false);
+  });
+
+  // One invariant instead of a guard per door.
+  //
+  // Four rounds of review found the same defect four times: update, then
+  // create, then restore each let the durable off switch through, and each was
+  // closed on its own. A per-door guard only ever proves the door someone
+  // thought to name. The pair below replaces that: the invariant drives every
+  // writer that can reach `status` — create, update, restore — at a skill that
+  // is on, and asserts nothing turns it off; the enumeration test pins the
+  // writer set itself, so a new door has to be argued rather than merely added.
+  // The three it does not drive are accounted for, not skipped: `activate` and
+  // `deactivate` write no file at all (they refuse outside a chat, and their
+  // scope is `skill-mute-scope.test.ts`), and `delete` removes the very file
+  // the assertion reads.
+  const MODEL_FACING_WRITERS = ["create", "update", "delete", "activate", "deactivate", "restore"];
+
+  test("no model-facing writer is covered by accident — the set is enumerated", async () => {
+    // Through `surfaceTools`, not the wire: the MCP `annotations` schema drops
+    // the custom internal key, so a wire-level check would count `set_status`
+    // as model-facing and hide the very door this suite proves is shut.
+    const src = await buildSource();
+    const { direct, proxied } = surfaceTools(await src.tools(), null, { maxDirectTools: 1000 });
+    const writers = [...direct, ...proxied]
+      .map((t) => t.name.split("__").pop() ?? t.name)
+      .filter((n) => !["list", "read", "history", "loading_log"].includes(n))
+      .sort();
+    expect(writers).toEqual([...MODEL_FACING_WRITERS].sort());
+  });
+
+  test("no model-facing writer can leave a skill durably disabled", async () => {
+    const src = await buildSource();
+    const client = src.getClient()!;
+
+    // A skill that has been off and on again — so its history holds a
+    // `status: disabled` snapshot, the shape restore turned into a durable
+    // disable.
+    await client.callTool({
+      name: "create",
+      arguments: {
+        scope: "org",
+        manifest: { name: "invariant-probe", description: "test" },
+        body: "body",
+      },
+    });
+    const id = join(workDir, "skills", "invariant-probe.md");
+    await client.callTool({ name: "set_status", arguments: { id, status: "disabled" } });
+    await client.callTool({ name: "set_status", arguments: { id, status: "active" } });
+    const hist = await client.callTool({ name: "history", arguments: { id } });
+    const versions = (
+      (hist as { structuredContent?: { versions?: Array<{ version: string }> } }).structuredContent
+        ?.versions ?? []
+    ).map((v) => v.version);
+    expect(versions.length).toBeGreaterThan(0);
+    expect(readManifestField(id, "status")).toBe("active");
+
+    // Every door the model can reach, aimed at turning a skill off. `create`
+    // is aimed at a NEW name: its hazard is a skill *born* disabled — which
+    // masks a same-named higher-tier skill out of composition, since the tier
+    // merge dedups by name before the status filter — and a create aimed at
+    // `invariant-probe` would be refused for already existing long before the
+    // durable-status refusal is reached, proving nothing.
+    const bornDisabled = join(workDir, "skills", "invariant-born-disabled.md");
+    const attempts: Array<{
+      call: { name: string; arguments: Record<string, unknown> };
+      check: () => void;
+    }> = [
+      {
+        call: {
+          name: "create",
+          arguments: {
+            scope: "org",
+            manifest: {
+              name: "invariant-born-disabled",
+              description: "test",
+              status: "disabled",
+            },
+            body: "body",
+          },
+        },
+        check: () => expect(existsSync(bornDisabled)).toBe(false),
+      },
+      {
+        call: { name: "update", arguments: { id, manifest: { status: "disabled" } } },
+        check: () => expect(readManifestField(id, "status")).toBe("active"),
+      },
+      ...versions.map((version) => ({
+        call: { name: "restore", arguments: { id, version } },
+        check: () => expect(readManifestField(id, "status")).toBe("active"),
+      })),
+    ];
+    for (const attempt of attempts) {
+      await client.callTool(attempt.call);
+      attempt.check();
+      // And the skill that was on is still on, whichever door was tried.
+      expect(readManifestField(id, "status")).toBe("active");
+    }
+  });
+
+  test("set_status is internal — surfaceTools keeps it out of the model's list", async () => {
+    // The wire's `annotations` is a typed MCP object, so asserting the custom
+    // key survives `listTools()` tests the SDK, not us. What matters is the
+    // behaviour: the filter at the top of `surfaceTools` drops internal tools
+    // from what the model is offered, while the tool stays callable by name
+    // for the settings UI over REST.
+    const src = await buildSource();
+    const tools = await src.tools();
+    const setStatus = tools.find((t) => t.name.endsWith("set_status"));
+    expect(setStatus).toBeDefined();
+    expect(isInternalTool(setStatus as { meta?: Record<string, unknown> })).toBe(true);
+
+    const { direct, proxied } = surfaceTools(tools, null, { maxDirectTools: 1000 });
+    expect([...direct, ...proxied].some((t) => t.name.endsWith("set_status"))).toBe(false);
+    // The conversation-scoped pair stays visible.
+    expect([...direct, ...proxied].some((t) => t.name.endsWith("deactivate"))).toBe(true);
+  });
+});
+
+// ── Cross-tenant access regressions ──────────────────────────────────────
+//
+// These exercise the strict access policy: workspace skills are scoped
+// to the workspace named in the path (no silent org-admin override into
+// untouched workspaces); user skills are scoped to the owning user.
+
+describe("cross-workspace access — regression", () => {
+  function configureCrossWorkspaceFixture() {
+    runtime.hasIdentityProvider = true;
+    runtime.identity = {
+      id: "u_alice",
+      email: "alice@ex.com",
+      displayName: "Alice",
+      orgRole: "member",
+      preferences: { timezone: "UTC", locale: "en-US", theme: "system" },
+    };
+    runtime.wsId = "ws_alice";
+    // Alice is admin in ws_alice. ws_other has no Alice membership.
+    runtime.setMember("ws_alice", "u_alice", "admin");
+    runtime.workspaces.set("ws_other", {
+      id: "ws_other",
+      name: "Other",
+      members: [{ userId: "u_carol", role: "admin" }],
+    });
+    // Pre-stage a skill under ws_other, on disk.
+    const otherDir = join(workDir, "workspaces", "ws_other", "skills");
+    mkdirSync(otherDir, { recursive: true });
+    const otherPath = join(otherDir, "secret.md");
+    writeFileSync(
+      otherPath,
+      [
+        "---",
+        "name: secret",
+        'description: "ws_other secret"',
+        'version: "1.0.0"',
+        "type: skill",
+        "priority: 50",
+        "---",
+        "secret body",
+        "",
+      ].join("\n"),
+    );
+    return otherPath;
+  }
+
+  test("update against another workspace's path is permission_denied", async () => {
+    const otherPath = configureCrossWorkspaceFixture();
+    const src = await buildSource();
+    const client = src.getClient()!;
+    const result = await client.callTool({
+      name: "update",
+      arguments: { id: otherPath, body: "tampered" },
+    });
+    expect(result.isError).toBe(true);
+    expect((result as { structuredContent?: { code?: string } }).structuredContent?.code).toBe(
+      "permission_denied",
+    );
+    // File on disk must be unchanged.
+    expect(readFileSync(otherPath, "utf-8")).toContain("secret body");
+  });
+
+  test("delete against another workspace's path is permission_denied", async () => {
+    const otherPath = configureCrossWorkspaceFixture();
+    const src = await buildSource();
+    const client = src.getClient()!;
+    const result = await client.callTool({
+      name: "delete",
+      arguments: { id: otherPath },
+    });
+    expect(result.isError).toBe(true);
+    expect(existsSync(otherPath)).toBe(true);
+  });
+
+  test("activate / deactivate against another workspace's path is permission_denied", async () => {
+    const otherPath = configureCrossWorkspaceFixture();
+    const src = await buildSource();
+    const client = src.getClient()!;
+    const off = await client.callTool({ name: "deactivate", arguments: { id: otherPath } });
+    expect(off.isError).toBe(true);
+    const on = await client.callTool({ name: "activate", arguments: { id: otherPath } });
+    expect(on.isError).toBe(true);
+  });
+
+  test("read against another workspace's path is permission_denied", async () => {
+    const otherPath = configureCrossWorkspaceFixture();
+    const src = await buildSource();
+    const client = src.getClient()!;
+    const result = await client.callTool({
+      name: "read",
+      arguments: { id: otherPath },
+    });
+    expect(result.isError).toBe(true);
+    expect((result as { structuredContent?: { code?: string } }).structuredContent?.code).toBe(
+      "permission_denied",
+    );
+  });
+
+  test("workspace member but not admin: read allowed, write denied", async () => {
+    runtime.hasIdentityProvider = true;
+    runtime.identity = {
+      id: "u_bob",
+      email: "bob@ex.com",
+      displayName: "Bob",
+      orgRole: "member",
+      preferences: { timezone: "UTC", locale: "en-US", theme: "system" },
+    };
+    runtime.wsId = "ws_team";
+    runtime.setMember("ws_team", "u_bob", "member");
+    const wsDir = join(workDir, "workspaces", "ws_team", "skills");
+    mkdirSync(wsDir, { recursive: true });
+    const path = join(wsDir, "team-skill.md");
+    writeFileSync(
+      path,
+      [
+        "---",
+        "name: team-skill",
+        'description: "team rules"',
+        "metadata:",
+        "  nimblebrain:",
+        "    loading-strategy: dynamic",
+        "    priority: 50",
+        "---",
+        "team body",
+        "",
+      ].join("\n"),
+    );
+    const src = await buildSource();
+    const client = src.getClient()!;
+
+    const read = await client.callTool({ name: "read", arguments: { id: path } });
+    expect(read.isError).toBeFalsy();
+
+    const write = await client.callTool({
+      name: "update",
+      arguments: { id: path, body: "edited" },
+    });
+    expect(write.isError).toBe(true);
+    expect((write as { structuredContent?: { code?: string } }).structuredContent?.code).toBe(
+      "permission_denied",
+    );
+  });
+
+  test("user-scope skills: another user's path is permission_denied", async () => {
+    runtime.hasIdentityProvider = true;
+    runtime.identity = {
+      id: "u_alice",
+      email: "alice@ex.com",
+      displayName: "Alice",
+      orgRole: "owner", // even owner — strict policy denies cross-user
+      preferences: { timezone: "UTC", locale: "en-US", theme: "system" },
+    };
+    const otherUserDir = join(workDir, "users", "u_carol", "skills");
+    mkdirSync(otherUserDir, { recursive: true });
+    const otherPath = join(otherUserDir, "carols.md");
+    writeFileSync(
+      otherPath,
+      [
+        "---",
+        "name: carols",
+        'description: "carol secret"',
+        'version: "1.0.0"',
+        "type: skill",
+        "priority: 50",
+        "---",
+        "carol body",
+        "",
+      ].join("\n"),
+    );
+    const src = await buildSource();
+    const client = src.getClient()!;
+    const result = await client.callTool({ name: "read", arguments: { id: otherPath } });
+    expect(result.isError).toBe(true);
+    expect((result as { structuredContent?: { code?: string } }).structuredContent?.code).toBe(
+      "permission_denied",
+    );
+  });
+});
+
+// ── Symlink-escape regressions ──────────────────────────────────────────
+//
+// Mutation handlers must run the realpath check before any FS write,
+// otherwise a writer with access to a workspace skills dir could place
+// a symlink that the platform follows during snapshotVersion's
+// copyFileSync — leaking arbitrary file contents into _versions/.
+
+describe("symlink escape — mutation defense", () => {
+  test("update refuses a symlink whose target is outside allowed roots", async () => {
+    const src = await buildSource();
+    const client = src.getClient()!;
+    runtime.wsId = "ws_demo";
+    // Create a real file outside the work tree.
+    const outsideDir = mkdtempSync(join(tmpdir(), "skills-mut-outside-"));
+    const outsidePath = join(outsideDir, "secret.md");
+    writeFileSync(
+      outsidePath,
+      ["---", "name: secret", "type: skill", "priority: 50", "---", "outside body", ""].join("\n"),
+    );
+    // Symlink under a writable scope dir.
+    const wsDir = join(workDir, "workspaces", "ws_demo", "skills");
+    mkdirSync(wsDir, { recursive: true });
+    const linkPath = join(wsDir, "evil.md");
+    symlinkSync(outsidePath, linkPath);
+
+    const result = await client.callTool({
+      name: "update",
+      arguments: { id: linkPath, body: "tampered" },
+    });
+    expect(result.isError).toBe(true);
+    // No snapshot copy of the outside file should have been created.
+    const versionsDir = join(wsDir, "_versions");
+    expect(existsSync(versionsDir)).toBe(false);
+    rmSync(outsideDir, { recursive: true, force: true });
+  });
+
+  test("delete refuses a symlink whose target is outside allowed roots", async () => {
+    const src = await buildSource();
+    const client = src.getClient()!;
+    runtime.wsId = "ws_demo";
+    const outsideDir = mkdtempSync(join(tmpdir(), "skills-mut-outside-"));
+    const outsidePath = join(outsideDir, "secret.md");
+    writeFileSync(
+      outsidePath,
+      ["---", "name: secret", "type: skill", "priority: 50", "---", "outside body", ""].join("\n"),
+    );
+    const wsDir = join(workDir, "workspaces", "ws_demo", "skills");
+    mkdirSync(wsDir, { recursive: true });
+    const linkPath = join(wsDir, "evil.md");
+    symlinkSync(outsidePath, linkPath);
+
+    const result = await client.callTool({ name: "delete", arguments: { id: linkPath } });
+    expect(result.isError).toBe(true);
+    expect(existsSync(outsidePath)).toBe(true);
+    rmSync(outsideDir, { recursive: true, force: true });
+  });
+});
+
+// ── Symlink boundary regressions (post-QA round 2) ──────────────────────
+//
+// Three classes of symlink attack the QA review found a working bypass
+// for, all closed by `assertSymlinkBoundaryOrThrow`:
+//
+//   1. Outside the work tree but inside the broken
+//      `allowedReadRoots(runtime, "")` window — the original POC
+//      placed the target under `dirname(process.cwd())`. The new
+//      check rejects anything not under the runtime's workDir.
+//   2. Within `{workDir}/workspaces/` but pointing at a different
+//      workspace — bypassed the lexical-only permission check while
+//      the realpath stayed under the workspaces root.
+//   3. Within the workdir but crossing scope tiers (workspace skill
+//      → user dir or vice versa).
+//
+// Plus the read-side equivalent for #2: `skills__read` must reject a
+// cross-workspace symlink even though the lexical path "looks" like
+// the caller's own workspace.
+
+describe("symlink boundary — outside workdir entirely", () => {
+  test("update refuses a symlink whose realpath sits outside the workDir tree", async () => {
+    const src = await buildSource();
+    const client = src.getClient()!;
+    runtime.wsId = "ws_demo";
+
+    // Sibling of workDir. NOT under `tmpdir()` parent or any other
+    // writable root — fully outside the platform's reach.
+    const siblingDir = mkdtempSync(join(tmpdir(), "skills-sibling-"));
+    const targetPath = join(siblingDir, "secret.md");
+    writeFileSync(
+      targetPath,
+      ["---", "name: secret", "type: skill", "priority: 50", "---", "OUTSIDE_SECRET", ""].join(
+        "\n",
+      ),
+    );
+
+    const wsDir = join(workDir, "workspaces", "ws_demo", "skills");
+    mkdirSync(wsDir, { recursive: true });
+    const linkPath = join(wsDir, "evil.md");
+    symlinkSync(targetPath, linkPath);
+
+    const result = await client.callTool({
+      name: "update",
+      arguments: { id: linkPath, body: "tampered" },
+    });
+    expect(result.isError).toBe(true);
+
+    // No snapshot of OUTSIDE_SECRET in _versions/.
+    const versionsDir = join(wsDir, "_versions");
+    if (existsSync(versionsDir)) {
+      for (const f of readdirSync(versionsDir)) {
+        expect(readFileSync(join(versionsDir, f), "utf-8")).not.toContain("OUTSIDE_SECRET");
+      }
+    }
+    rmSync(siblingDir, { recursive: true, force: true });
+  });
+});
+
+describe("symlink boundary — cross-workspace", () => {
+  test("update via cross-workspace symlink: refused, no content leak into _versions/", async () => {
+    runtime.wsId = "ws_alice";
+    const src = await buildSource();
+    const client = src.getClient()!;
+
+    // Pre-stage wsB's secret on disk.
+    const otherDir = join(workDir, "workspaces", "ws_bob", "skills");
+    mkdirSync(otherDir, { recursive: true });
+    const otherPath = join(otherDir, "secret.md");
+    writeFileSync(
+      otherPath,
+      ["---", "name: secret", "type: skill", "priority: 50", "---", "BOB_SECRET", ""].join("\n"),
+    );
+
+    // Symlink under wsA pointing at wsB's file. The lexical scope is
+    // workspace, lexical wsId is "ws_alice" — caller's own.
+    const wsADir = join(workDir, "workspaces", "ws_alice", "skills");
+    mkdirSync(wsADir, { recursive: true });
+    const linkPath = join(wsADir, "evil.md");
+    symlinkSync(otherPath, linkPath);
+
+    const result = await client.callTool({
+      name: "update",
+      arguments: { id: linkPath, body: "tampered" },
+    });
+    expect(result.isError).toBe(true);
+
+    // Bob's file content must not have leaked into Alice's _versions/.
+    const versionsDir = join(wsADir, "_versions");
+    if (existsSync(versionsDir)) {
+      for (const f of readdirSync(versionsDir)) {
+        expect(readFileSync(join(versionsDir, f), "utf-8")).not.toContain("BOB_SECRET");
+      }
+    }
+    // Bob's file untouched.
+    expect(readFileSync(otherPath, "utf-8")).toContain("BOB_SECRET");
+  });
+
+  test("delete via cross-workspace symlink: refused", async () => {
+    runtime.wsId = "ws_alice";
+    const src = await buildSource();
+    const client = src.getClient()!;
+
+    const otherDir = join(workDir, "workspaces", "ws_bob", "skills");
+    mkdirSync(otherDir, { recursive: true });
+    const otherPath = join(otherDir, "secret.md");
+    writeFileSync(
+      otherPath,
+      ["---", "name: secret", "type: skill", "priority: 50", "---", "BOB_SECRET", ""].join("\n"),
+    );
+
+    const wsADir = join(workDir, "workspaces", "ws_alice", "skills");
+    mkdirSync(wsADir, { recursive: true });
+    const linkPath = join(wsADir, "evil.md");
+    symlinkSync(otherPath, linkPath);
+
+    const result = await client.callTool({ name: "delete", arguments: { id: linkPath } });
+    expect(result.isError).toBe(true);
+    expect(existsSync(otherPath)).toBe(true);
+  });
+
+  test("read via cross-workspace symlink: refused", async () => {
+    runtime.wsId = "ws_alice";
+    const src = await buildSource();
+    const client = src.getClient()!;
+
+    const otherDir = join(workDir, "workspaces", "ws_bob", "skills");
+    mkdirSync(otherDir, { recursive: true });
+    const otherPath = join(otherDir, "secret.md");
+    writeFileSync(
+      otherPath,
+      ["---", "name: secret", "type: skill", "priority: 50", "---", "BOB_SECRET", ""].join("\n"),
+    );
+
+    const wsADir = join(workDir, "workspaces", "ws_alice", "skills");
+    mkdirSync(wsADir, { recursive: true });
+    const linkPath = join(wsADir, "evil.md");
+    symlinkSync(otherPath, linkPath);
+
+    const result = await client.callTool({ name: "read", arguments: { id: linkPath } });
+    expect(result.isError).toBe(true);
+    const text = (result as { content?: Array<{ text: string }> }).content?.[0]?.text ?? "";
+    expect(text).not.toContain("BOB_SECRET");
+  });
+});
+
+describe("symlink boundary — cross-scope tier", () => {
+  test("workspace skill symlinked to a user dir is refused", async () => {
+    runtime.wsId = "ws_demo";
+    const src = await buildSource();
+    const client = src.getClient()!;
+
+    // Pre-stage a user-tier file.
+    const userDir = join(workDir, "users", "u_other", "skills");
+    mkdirSync(userDir, { recursive: true });
+    const userPath = join(userDir, "private.md");
+    writeFileSync(
+      userPath,
+      ["---", "name: private", "type: skill", "priority: 50", "---", "USER_SECRET", ""].join("\n"),
+    );
+
+    // Symlink under a workspace pointing at the user file. Lexical
+    // scope is workspace, real scope is user → boundary check trips.
+    const wsDir = join(workDir, "workspaces", "ws_demo", "skills");
+    mkdirSync(wsDir, { recursive: true });
+    const linkPath = join(wsDir, "evil.md");
+    symlinkSync(userPath, linkPath);
+
+    const result = await client.callTool({ name: "delete", arguments: { id: linkPath } });
+    expect(result.isError).toBe(true);
+    expect(existsSync(userPath)).toBe(true);
+  });
+});

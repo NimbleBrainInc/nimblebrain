@@ -440,7 +440,7 @@ function appendRunMessages(
   // modified"). Grouping content by category (reasoning / text / tool-call) and
   // emitting them as separate messages is a 400 on multi-iteration runs with
   // thinking enabled. The chat UI consumes its own projection from
-  // src/bundles/conversations/src/jsonl-reader.ts; this function is the
+  // src/platform/conversations/jsonl-reader.ts; this function is the
   // LLM-replay projection.
   // Overlays are emitted where the live run put them: directly after the tool
   // results of the iteration that triggered them, so the model reads the

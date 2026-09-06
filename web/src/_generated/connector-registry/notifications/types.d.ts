@@ -26,7 +26,7 @@
  * host has started knowing what a server's events mean — which is the split
  * this design exists to keep.
  */
-import { type DeliveryRecord, NOTIFICATION_LEVELS, type NotificationLevel } from "../tools/platform/schemas/notifications.ts";
+import { type DeliveryRecord, NOTIFICATION_LEVELS, type NotificationLevel } from "../platform/schemas/notifications.ts";
 /**
  * Re-exported so everything under `src/notifications/` imports its vocabulary
  * from one place. The values themselves live in the schema module, which is

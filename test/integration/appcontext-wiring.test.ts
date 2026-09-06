@@ -41,7 +41,7 @@ function createFakeSource(name: string, tools: Array<{ localName: string; descri
 				name: `${name}__${t.localName}`,
 				description: t.description,
 				inputSchema: {},
-				source: `mcpb:${name}`,
+				source: `mcp:${name}`,
 			}));
 		},
 		async execute(_toolName: string, _input: Record<string, unknown>): Promise<ToolResult> {

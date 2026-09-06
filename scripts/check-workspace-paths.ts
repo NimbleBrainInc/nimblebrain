@@ -26,9 +26,8 @@
  *     above the call, for the rare future case where the typed handle
  *     genuinely doesn't apply.
  *
- * Scope: only `src/**\/*.ts`. Tests and bundles are out of scope
- * (tests deliberately exercise the legacy shims; bundles are
- * subprocesses that don't share the host's path layout).
+ * Scope: only `src/**\/*.ts`, minus vendored trees. Tests are out of scope —
+ * they deliberately exercise the legacy shims.
  */
 
 import { readFileSync } from "node:fs";

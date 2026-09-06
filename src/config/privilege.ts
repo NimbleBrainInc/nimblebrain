@@ -57,7 +57,7 @@ const PRIVILEGE_CANDIDATES: PrivilegeEntry[] = [
  * That premise is enforced elsewhere and is load-bearing HERE: skipping the
  * confirmation for a tool that is still callable would drop the prompt and
  * leave the call. It holds because a feature-disabled tool is never built into
- * its source — `createSkillsSource` (`src/tools/platform/skills.ts`) and
+ * its source — `createSkillsSource` (`src/platform/skills/source.ts`) and
  * `createSystemTools` (`src/tools/system-tools.ts`) both filter on
  * `isToolEnabled` at construction. Anything that starts constructing a
  * feature-gated tool unconditionally has to gate it here too.

@@ -21,7 +21,7 @@
 import {
   NOTIFICATION_PLACEHOLDERS,
   type NotificationPlaceholder,
-} from "../tools/platform/schemas/notifications.ts";
+} from "../platform/schemas/notifications.ts";
 import type { NotificationPresentation } from "./types.ts";
 
 /**

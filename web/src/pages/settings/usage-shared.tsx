@@ -14,7 +14,7 @@ import { formatTokens, formatUsd } from "../../lib/format";
 
 // Wire shape comes from the generated platform-schema types — the single
 // cross-package contract (§2.1). The handler's `UsageReportOutput` in
-// src/tools/platform/schemas/usage.ts is the source of truth; `bun run
+// src/platform/schemas/usage.ts is the source of truth; `bun run
 // codegen` mirrors it here, and `check:codegen` fails the build on drift.
 export type UsageReport = UsageReportOutput;
 

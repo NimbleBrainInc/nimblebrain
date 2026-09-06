@@ -47,7 +47,7 @@ const ANCHORS = {
 describe("paletteToExtAppsTokens — structure and anchors", () => {
   for (const mode of ["light", "dark"] as const) {
     // What the map must CONTAIN is asserted where it can stay true on its own:
-    // `test/unit/bundles/theme-token-names.test.ts` checks the emitted set in
+    // `test/unit/platform/theme-token-names.test.ts` checks the emitted set in
     // both directions against the published docs, and against every token the
     // themed trees actually read. A second hand-written copy of the key list
     // lived here and went stale at 34 of 52 — the shape this palette work has

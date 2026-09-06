@@ -23,7 +23,7 @@ import { extractText } from "../../src/engine/content-helpers.ts";
 import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 import { runWithRequestContext } from "../../src/runtime/request-context.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
-import type { ComposeAssembledContextOutput } from "../../src/tools/platform/schemas/compose.ts";
+import type { ComposeAssembledContextOutput } from "../../src/platform/schemas/compose.ts";
 import { createMockModel } from "../helpers/mock-model.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
 

@@ -29,7 +29,7 @@ describe("defineInProcessApp", () => {
     const byName = (n: string) => tools.find((t) => t.name === n);
     expect(byName("test__greet")).toBeDefined();
     expect(byName("test__greet")!.description).toBe("Greet someone");
-    expect(byName("test__greet")!.source).toBe("mcpb:test");
+    expect(byName("test__greet")!.source).toBe("mcp:test");
     expect(byName("test__farewell")).toBeDefined();
 
     const result = await source.execute("greet", { name: "World" });

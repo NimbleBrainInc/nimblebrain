@@ -33,7 +33,7 @@ import { clampLevel, type Notification } from "../../../src/notifications/types.
 import type {
   DeliveryRecord,
   NotificationLevel,
-} from "../../../src/tools/platform/schemas/notifications.ts";
+} from "../../../src/platform/schemas/notifications.ts";
 import { WorkspaceContext } from "../../../src/workspace/context.ts";
 import { WorkspaceStore } from "../../../src/workspace/workspace-store.ts";
 

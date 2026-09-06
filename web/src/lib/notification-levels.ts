@@ -4,7 +4,7 @@ import type { NotificationLevel } from "../_generated/platform-schemas/notificat
  * The urgency vocabulary, ordered least to most urgent, for the browser.
  *
  * The server's own copy is `NOTIFICATION_LEVELS` in
- * `src/tools/platform/schemas/notifications.ts`, and this is deliberately not
+ * `src/platform/schemas/notifications.ts`, and this is deliberately not
  * an import of it: the generated tree under `_generated/platform-schemas/` is
  * `.d.ts` only, so it can carry the TYPE across the package boundary but not
  * the value. What crosses instead is the exhaustiveness check — `LEVEL_RANK`

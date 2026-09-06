@@ -27,7 +27,7 @@ import {
   type DeliveryRecord,
   NOTIFICATION_LEVELS,
   type NotificationLevel,
-} from "../tools/platform/schemas/notifications.ts";
+} from "../platform/schemas/notifications.ts";
 
 /**
  * Re-exported so everything under `src/notifications/` imports its vocabulary

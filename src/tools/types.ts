@@ -6,7 +6,7 @@ export interface Tool {
   name: string;
   description: string;
   inputSchema: Record<string, unknown>;
-  source: string; // "mcpb:leadgen" | "connector:slack" | "inline"
+  source: string; // which source produced it, e.g. "mcp:slack"
   /**
    * The tool's `_meta` — MCP's free-form, reverse-DNS-keyed namespace. Carries
    * host conventions like `ai.nimblebrain/internal` and the UI metadata

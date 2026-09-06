@@ -171,7 +171,7 @@ function buildTaskAugmentedSource(sink: EventSink, opts: BuildOptions): McpSourc
       name: "test__do_work",
       description: "",
       inputSchema: {},
-      source: "mcpb:test",
+      source: "mcp:test",
       execution: { taskSupport: "optional" },
     },
   ];

@@ -10,7 +10,6 @@ import type {
 import { MetricsEventSink } from "../adapters/metrics-events.ts";
 import { NoopEventSink } from "../adapters/noop-events.ts";
 import { WorkspaceLogSink } from "../adapters/workspace-log-sink.ts";
-import type { AutomationDomainContext } from "../bundles/automations/src/domain.ts";
 import { bootReconcileConnectorSkills } from "../bundles/connector-skill-reconcile.ts";
 import { sanitizePlacements } from "../bundles/defaults.ts";
 import { BundleLifecycleManager } from "../bundles/lifecycle.ts";
@@ -116,6 +115,8 @@ import {
   type PermissionOwner,
   PermissionStore,
 } from "../permissions/permission-store.ts";
+import type { AutomationDomainContext } from "../platform/automations/domain.ts";
+import { isTaskForbiddenSkillTool } from "../platform/skills/source.ts";
 import type {
   AppStateInfo,
   FocusedAppInfo,
@@ -172,7 +173,6 @@ import {
 } from "../tools/identity-sources.ts";
 import { resolveInstanceCredentialRefs } from "../tools/instance-credentials.ts";
 import { McpSource } from "../tools/mcp-source.ts";
-import { isTaskForbiddenSkillTool } from "../tools/platform/skills.ts";
 import { SharedSourceRef, type ToolRegistry } from "../tools/registry.ts";
 import { APP_INSTRUCTIONS_URI } from "../tools/resource-schemes.ts";
 import { surfaceTools } from "../tools/surfacing.ts";
@@ -373,7 +373,7 @@ export class Runtime {
    * `installBundleSchedules` / `removeBundleAutomations`) that need the
    * full domain shape — including operator-only fields (`source`,
    * `bundleName`, `allowedTools`) — that the LLM-facing tool schema
-   * deliberately doesn't expose. See `src/tools/platform/CLAUDE.md` § 1.4.
+   * deliberately doesn't expose. See `src/platform/AGENTS.md` § 1.4.
    */
   private _automationsContextGetter: (() => AutomationDomainContext) | null = null;
   /**
@@ -774,7 +774,7 @@ export class Runtime {
     // Phase 2: Create platform capability sources. Each is an in-process
     // MCP server reachable through `InMemoryTransport` — no subprocess.
     // `createPlatformSources` returns sources already started.
-    const { createPlatformSources } = await import("../tools/platform/index.ts");
+    const { createPlatformSources } = await import("../platform/index.ts");
     const platformSources = await createPlatformSources(rt, events);
     // Make the host-resources factory accessible on `rt` so non-lifecycle
     // install paths (connector-tools, boot reload) can pull deps directly.

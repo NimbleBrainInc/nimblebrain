@@ -11,7 +11,7 @@ export interface UploadedFile {
 }
 
 // MIME types we accept, grouped by category. Exported so other modules
-// (notably `src/tools/platform/files.ts::handleRead`) classify files
+// (notably `src/platform/files/source.ts::handleRead`) classify files
 // against the same source of truth instead of duplicating the lists.
 export const EXTRACTABLE_TEXT = new Set([
   "text/plain",
