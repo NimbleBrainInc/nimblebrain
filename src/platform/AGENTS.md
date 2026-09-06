@@ -26,7 +26,6 @@ src/platform/
     source.ts           defineInProcessApp — the app's MCP server
     ui-resource.ts      reads ui/dist/index.html for the `ui://` resource
     ui/                 its own Vite package (package.json, bun.lock, dist)
-    manifest.json       the `ai.nimblebrain/host` placement declaration
     *.ts                whatever the tools are implemented on
 ```
 
@@ -38,6 +37,11 @@ its shape.
 Register a new app in `index.ts`. Its UI, if it has one, is picked up by
 `build:platform-apps` and the image build from the `src/platform/*/ui` glob —
 there is no list to add it to.
+
+An app's placements are the `placements:` array passed to `defineInProcessApp`,
+and that is the only copy the runtime reads. Two apps also carry a
+`manifest.json` restating them in `ai.nimblebrain/host` form; nothing loads it.
+Do not add one to a new app, and do not treat the pair as a contract.
 
 ---
 
