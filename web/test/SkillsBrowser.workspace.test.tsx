@@ -121,7 +121,18 @@ mock.module("../src/api/client", () => ({
       return { structuredContent: { id: args.id }, isError: false };
     }
     if (server === "skills" && tool === "create") {
-      return { structuredContent: { id: "/tmp/skills/ws/test-skill.md" }, isError: false };
+      // Stands in for the server's own report of what a pasted document set.
+      // The list of fields is the server's to compute; the UI's job is to say
+      // it, so the mock just has to return one when a fence was sent.
+      const pasted =
+        typeof args.body === "string" && args.body.startsWith("---\n") && !args.frontmatter;
+      return {
+        structuredContent: {
+          id: "/tmp/skills/ws/test-skill.md",
+          ...(pasted ? { frontmatterApplied: ["description", "loading-strategy"] } : {}),
+        },
+        isError: false,
+      };
     }
     if (server === "skills" && tool === "update") {
       return { structuredContent: { id: args.id }, isError: false };
@@ -294,6 +305,38 @@ function expanderFor(container: HTMLElement, text: string): HTMLButtonElement | 
   return (match as HTMLButtonElement | undefined) ?? null;
 }
 
+/** Set a controlled input/textarea's value the way a user typing would. */
+async function typeInto(el: HTMLElement | null, value: string): Promise<void> {
+  expect(el).not.toBeNull();
+  const WindowEvent = (globalThis as unknown as { window: { Event: typeof Event } }).window.Event;
+  const proto =
+    el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(proto, "value")?.set?.call(el, value);
+    el?.dispatchEvent(new WindowEvent("input", { bubbles: true }));
+  });
+}
+
+/** Click a radio/checkbox by its DOM node, firing the events React listens for. */
+async function check(el: HTMLInputElement | null): Promise<void> {
+  expect(el).not.toBeNull();
+  await act(async () => {
+    el?.click();
+  });
+}
+
+/** Open the create form as a workspace admin, with Advanced expanded. */
+async function openCreateForm(): Promise<Mounted> {
+  const m = await mountAsAdmin();
+  await act(async () => {
+    clickByText(m.container, "+ Add a skill");
+  });
+  await act(async () => {
+    clickByText(m.container, "Advanced");
+  });
+  return m;
+}
+
 describe("SkillsBrowser with surface='workspace' (workspace settings tab)", () => {
   test("does not render a scope filter", async () => {
     mounted = await mount(React.createElement(SkillsBrowser, { surface: "workspace" }));
@@ -463,11 +506,12 @@ describe("SkillsBrowser with surface='workspace' (workspace settings tab)", () =
     expect(manifest.description).toBeUndefined();
     expect(manifest.type).toBeUndefined();
     expect(manifest.name).toBeUndefined();
-    // loadingStrategy is set once at create ("always") and is not part of an
-    // edit — a rule is always-on by definition, and update only patches the
-    // fields the user explicitly touched (priority, body). Sending it here
-    // would be a redundant no-op.
-    expect(manifest.loadingStrategy).toBeUndefined();
+    // The manifest fields the form DOES own now ride every save, including
+    // their empty forms: the editor can set a trigger list, so it has to be
+    // able to clear one, and an omitted key keeps the value on disk.
+    expect(manifest.loadingStrategy).toBe("always");
+    expect(manifest.toolAffinity).toEqual([]);
+    expect(manifest.triggers).toEqual([]);
   });
 
   test("edit-view back arrow returns to the list (not up the route tree)", async () => {
@@ -896,5 +940,131 @@ describe("SkillsBrowser with surface='workspace' — the workspace-admin write g
     );
     expect(labels).not.toContain("Edit");
     expect(labels.some((l) => l?.includes("Delete"))).toBe(false);
+  });
+});
+
+// ── The manifest the editor can author, and what it says about it ─────────
+//
+// One component serves all three tiers (`OrgSkillsTab` / `ProfileSkillsTab` are
+// wrappers over this same `SkillsBrowser`), so these behaviors are exercised
+// once here and hold for every vantage.
+
+describe("SkillsBrowser authoring — the loading verdict and a pasted SKILL.md", () => {
+  test("a dynamic skill with no trigger and no tool pattern says it never loads", async () => {
+    // The condition the editor used to make unreachable by hardcoding
+    // `always`, and which the CLI made silently. Exposing the control is only
+    // safe because the verdict appears the instant the condition is created.
+    mounted = await openCreateForm();
+
+    expect(mounted.container.textContent).toContain("Loads on every turn");
+
+    const dynamic = mounted.container.querySelector(
+      'input[name="loading-strategy"][value="dynamic"]',
+    ) as HTMLInputElement | null;
+    await check(dynamic);
+
+    expect(mounted.container.textContent).toContain("Never loads");
+
+    // Adding a signal clears it, without leaving the form.
+    await typeInto(mounted.container.querySelector("#triggers"), "deploy to staging");
+    expect(mounted.container.textContent).not.toContain("Never loads");
+    expect(mounted.container.textContent).toContain('Loads on "deploy to staging"');
+  });
+
+  test("the always-on token cost is visible while the rule is being written", async () => {
+    mounted = await openCreateForm();
+    await typeInto(mounted.container.querySelector("#rule-body"), "x".repeat(400));
+    // `approxTokens` is length/4, mirrored from the runtime — the same number
+    // the catalog row will report after the save.
+    expect(mounted.container.textContent).toContain("≈100 tokens in every conversation");
+  });
+
+  test("tool patterns and trigger phrases reach the manifest", async () => {
+    mounted = await openCreateForm();
+    await typeInto(mounted.container.querySelector("#rule-name"), "dynamic-rule");
+    await typeInto(mounted.container.querySelector("#rule-body"), "Do the thing.");
+    await check(
+      mounted.container.querySelector(
+        'input[name="loading-strategy"][value="dynamic"]',
+      ) as HTMLInputElement | null,
+    );
+    await typeInto(mounted.container.querySelector("#tool-affinity"), "files__*\n\ndocs__*");
+    await typeInto(mounted.container.querySelector("#triggers"), "ship it");
+    await act(async () => {
+      clickByText(mounted!.container, "Save");
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const createCall = callToolCalls.find((c) => c.server === "skills" && c.tool === "create");
+    const manifest = createCall?.args.manifest as Record<string, unknown>;
+    expect(manifest.loadingStrategy).toBe("dynamic");
+    // Blank lines are not entries.
+    expect(manifest.toolAffinity).toEqual(["files__*", "docs__*"]);
+    expect(manifest.triggers).toEqual(["ship it"]);
+  });
+
+  test("a pasted document is flagged before the save, and applied by default", async () => {
+    mounted = await openCreateForm();
+    await typeInto(mounted.container.querySelector("#rule-name"), "pasted");
+    await typeInto(
+      mounted.container.querySelector("#rule-body"),
+      "---\nname: pasted\ndescription: A real one.\n---\n\nBody.",
+    );
+
+    expect(mounted.container.textContent).toContain("block");
+    expect(mounted.container.textContent).toContain("Keep it as body text instead");
+
+    await act(async () => {
+      clickByText(mounted!.container, "Save");
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    const createCall = callToolCalls.find((c) => c.server === "skills" && c.tool === "create");
+    // Default is `apply`, so no mode is sent — the server's default is the
+    // ordinary case and the wire says nothing extra about it.
+    expect(createCall?.args.frontmatter).toBeUndefined();
+    expect(createCall?.args.body).toContain("---");
+  });
+
+  test("keep-as-text sends the escape hatch instead", async () => {
+    mounted = await openCreateForm();
+    await typeInto(mounted.container.querySelector("#rule-name"), "about-frontmatter");
+    await typeInto(
+      mounted.container.querySelector("#rule-body"),
+      "---\nname: example\ndescription: An example.\n---\n\nThis block is an example.",
+    );
+    await check(
+      mounted.container.querySelector('input[type="checkbox"]') as HTMLInputElement | null,
+    );
+    await act(async () => {
+      clickByText(mounted!.container, "Save");
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    const createCall = callToolCalls.find((c) => c.server === "skills" && c.tool === "create");
+    expect(createCall?.args.frontmatter).toBe("ignore");
+  });
+
+  test("a save that overrode the form says which fields the document set", async () => {
+    // Silence here is half the original defect. The server reports what it
+    // applied; the list is where the save lands, so that is where it is said.
+    mounted = await openCreateForm();
+    await typeInto(mounted.container.querySelector("#rule-name"), "reported");
+    await typeInto(
+      mounted.container.querySelector("#rule-body"),
+      "---\nname: reported\ndescription: A real one.\n---\n\nBody.",
+    );
+    await act(async () => {
+      clickByText(mounted!.container, "Save");
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(mounted.container.textContent).toContain("Applied the frontmatter");
+    expect(mounted.container.textContent).toContain("description, loading-strategy");
   });
 });
