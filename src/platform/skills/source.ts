@@ -1809,19 +1809,7 @@ function buildCreateManifest(
   };
 }
 
-/**
- * What a pasted `SKILL.md` contributes to a write, or the refusal that stops it.
- *
- * The canonical skill artifact is a whole file, so a caller handing one over is
- * the ordinary case — the editor's most natural gesture is to paste one. Both
- * write paths therefore run the body through the runtime's own frontmatter
- * parser before anything is stored.
- *
- * Invalid frontmatter is a refusal, never a quiet fallback to prose. Storing it
- * would inject dead YAML into every prompt while the manifest silently kept
- * values the document contradicts, and the result reads healthy in every list
- * that shows it — which is precisely the failure this path exists to remove.
- */
+/** What a pasted `SKILL.md` contributes to a write. */
 interface PastedFields {
   /** The body as it will be stored — the document below the frontmatter, if there was any. */
   body: string;
@@ -1834,6 +1822,19 @@ interface PastedFields {
 
 type PastedFrontmatter = { error: ToolResult } | PastedFields;
 
+/**
+ * Read a pasted `SKILL.md` out of a write's body, or refuse it.
+ *
+ * The canonical skill artifact is a whole file, so a caller handing one over is
+ * the ordinary case — the editor's most natural gesture is to paste one. Both
+ * write paths therefore run the body through the runtime's own frontmatter
+ * parser before anything is stored.
+ *
+ * Invalid frontmatter is a refusal, never a quiet fallback to prose. Storing it
+ * would inject dead YAML into every prompt while the manifest silently kept
+ * values the document contradicts, and the result reads healthy in every list
+ * that shows it — which is precisely the failure this path exists to remove.
+ */
 function absorbPastedFrontmatter(
   body: string,
   mode: "apply" | "ignore" | undefined,
