@@ -385,14 +385,14 @@ export const connectorUnhealthy = new Gauge({
     // gauge is absent for healthy sources), letting the alert resolve.
     this.reset();
     const status = healthStatusProvider?.() ?? [];
-    for (const b of status) {
+    for (const connector of status) {
       // Both involuntary-down states assert, so the series stays continuously 1
       // across the whole burst→cooldown→burst cycle (the `for: 10m` alert needs
       // that continuity): `restarting` (active backoff burst) and `cooldown`
       // (slow re-probe between bursts). `healthy` is up; `dead` is a DELIBERATE
       // teardown, not an outage.
-      if (b.state !== "restarting" && b.state !== "cooldown") continue;
-      const safe = b.name && SAFE_SOURCE.test(b.name) ? b.name : "other";
+      if (connector.state !== "restarting" && connector.state !== "cooldown") continue;
+      const safe = connector.name && SAFE_SOURCE.test(connector.name) ? connector.name : "other";
       this.set({ source: safe }, 1);
     }
   },
