@@ -156,19 +156,19 @@ export class HealthMonitor {
     const remote = isRemoteSource(record.source);
 
     // Source is down — emit crashed event
-    this.emitConnectorEvent(record, "bundle.crashed", remote);
+    this.emitConnectorEvent(record, "connector.crashed", remote);
 
     // Quick-retry budget spent. NOT terminal: a transient upstream outage
     // (rate-limit, brief 5xx window) can outlast the burst and still recover.
     // Back off to a slow re-probe — reset the counter and gate the next burst
     // behind the cooldown window — so we keep trying at a bounded rate until the
-    // source recovers or is deliberately stopped. (`bundle.dead` is retired: a
-    // crash never ends here, and deliberate teardown is handled above.)
+    // source recovers or is deliberately stopped. No terminal event is emitted
+    // here: a crash never ends here, and deliberate teardown is handled above.
     if (record.restartCount >= MAX_RESTARTS) {
       record.state = "cooldown";
       record.cooldownUntil = Date.now() + this.cooldownMs;
       record.restartCount = 0;
-      this.emitConnectorEvent(record, "bundle.cooldown", remote, { retryInMs: this.cooldownMs });
+      this.emitConnectorEvent(record, "connector.cooldown", remote, { retryInMs: this.cooldownMs });
       return;
     }
 
@@ -203,7 +203,7 @@ export class HealthMonitor {
     const delay = this.baseDelayMs * 2 ** record.restartCount;
     record.restartCount++;
 
-    this.emitConnectorEvent(record, "bundle.restarting", remote, {
+    this.emitConnectorEvent(record, "connector.restarting", remote, {
       attempt: record.restartCount,
       delayMs: delay,
     });
@@ -216,7 +216,7 @@ export class HealthMonitor {
 
     if (ok) {
       record.state = "healthy";
-      this.emitConnectorEvent(record, "bundle.recovered", remote);
+      this.emitConnectorEvent(record, "connector.recovered", remote);
     } else {
       // Restart failed — check again on next cycle (might hit max)
       record.state = "restarting";

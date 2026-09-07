@@ -19,7 +19,7 @@ import {
  *   - A stored DCR client whose registered redirect_uri has drifted from the
  *     current callback is HONORED on the silent/background path (not discarded)
  *     — discarding it orphaned the refresh token and forced a headless
- *     interactive flow that timed out (the bundle.crashed loop).
+ *     interactive flow that timed out (the connector.crashed loop).
  *   - A structurally-corrupt client (no usable redirect_uris) is still dropped.
  *   - A user-initiated interactive flow on a drifted host DOES re-register.
  *   - A background start that hits an interactive requirement flips to

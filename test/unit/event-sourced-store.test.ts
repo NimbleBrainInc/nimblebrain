@@ -194,7 +194,7 @@ describe("EventSourcedConversationStore", () => {
     store.setActiveConversation(conv.id);
 
     store.emit({ type: "text.delta", data: { runId: "r1", text: "hi" } });
-    store.emit({ type: "bundle.installed", data: { serverName: "test" } });
+    store.emit({ type: "connector.installed", data: { serverName: "test" } });
     store.emit({ type: "data.changed", data: {} });
 
     const lines = readLines(join(dirs.dir, `${conv.id}.jsonl`));

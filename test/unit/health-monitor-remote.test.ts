@@ -136,9 +136,9 @@ describe("HealthMonitor — remote sources", () => {
 
     // Should have emitted crashed, restarting, recovered
     const events = eventNames(sink);
-    expect(events).toContain("bundle.crashed");
-    expect(events).toContain("bundle.restarting");
-    expect(events).toContain("bundle.recovered");
+    expect(events).toContain("connector.crashed");
+    expect(events).toContain("connector.restarting");
+    expect(events).toContain("connector.recovered");
 
     // All events should have remote: true
     for (const data of eventData(sink)) {
@@ -181,11 +181,11 @@ describe("HealthMonitor — remote sources", () => {
     expect(status[0]!.state).toBe("cooldown");
 
     const events = eventNames(sink);
-    expect(events).toContain("bundle.cooldown");
-    expect(events).not.toContain("bundle.dead");
+    expect(events).toContain("connector.cooldown");
+    expect(events).not.toContain("connector.dead");
 
     // cooldown event should have remote: true
-    const cooldownEvent = eventData(sink).find((d) => d.event === "bundle.cooldown");
+    const cooldownEvent = eventData(sink).find((d) => d.event === "connector.cooldown");
     expect(cooldownEvent?.remote).toBe(true);
 
     // No reconnect attempts while cooling — a throttling remote isn't hammered.
@@ -219,7 +219,7 @@ describe("HealthMonitor — remote sources", () => {
 
     // recovered event has remote: true
     const recoveredEvents = eventData(sink).filter(
-      (d) => d.event === "bundle.recovered",
+      (d) => d.event === "connector.recovered",
     );
     expect(recoveredEvents).toHaveLength(2);
     for (const ev of recoveredEvents) {
@@ -247,9 +247,9 @@ describe("HealthMonitor — remote sources", () => {
 
     // Should have crashed and restarting events but NOT recovered
     const events = eventNames(sink);
-    expect(events).toContain("bundle.crashed");
-    expect(events).toContain("bundle.restarting");
-    expect(events).not.toContain("bundle.recovered");
+    expect(events).toContain("connector.crashed");
+    expect(events).toContain("connector.restarting");
+    expect(events).not.toContain("connector.recovered");
 
     monitor.stop();
   });
@@ -338,9 +338,9 @@ describe("HealthMonitor — remote sources", () => {
     expect(source.stopCalls).toBe(0);
     expect(source.startCalls).toBe(0);
     const events = eventNames(sink);
-    expect(events).not.toContain("bundle.crashed");
-    expect(events).not.toContain("bundle.restarting");
-    expect(events).not.toContain("bundle.recovered");
+    expect(events).not.toContain("connector.crashed");
+    expect(events).not.toContain("connector.restarting");
+    expect(events).not.toContain("connector.recovered");
 
     // Terminal: marked dead and stays dead on subsequent checks.
     expect(monitor.getStatus()[0]!.state).toBe("dead");

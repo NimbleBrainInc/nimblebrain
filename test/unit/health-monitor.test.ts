@@ -79,9 +79,9 @@ describe("HealthMonitor", () => {
 
     // Should have emitted crashed, restarting, recovered
     const events = eventNames(sink);
-    expect(events).toContain("bundle.crashed");
-    expect(events).toContain("bundle.restarting");
-    expect(events).toContain("bundle.recovered");
+    expect(events).toContain("connector.crashed");
+    expect(events).toContain("connector.restarting");
+    expect(events).toContain("connector.recovered");
 
     // Status should show healthy after recovery
     const status = monitor.getStatus();
@@ -118,19 +118,19 @@ describe("HealthMonitor", () => {
     expect(status[0]!.state).toBe("cooldown");
 
     const events = eventNames(sink);
-    expect(events).toContain("bundle.cooldown");
-    // `bundle.dead` is retired for the crash path — a crash never ends terminal.
-    expect(events).not.toContain("bundle.dead");
+    expect(events).toContain("connector.cooldown");
+    // The crash path emits no terminal event — a crash never ends terminal.
+    expect(events).not.toContain("connector.dead");
 
-    // While cooling, further checks neither restart nor re-emit `bundle.crashed`
+    // While cooling, further checks neither restart nor re-emit `connector.crashed`
     // — a throttling upstream is not hammered, and the crash-rate metric (which
-    // counts `bundle.crashed`) is not inflated during the quiet window.
+    // counts `connector.crashed`) is not inflated during the quiet window.
     const restartsBefore = source.restartCalls;
-    const crashedBefore = eventNames(sink).filter((e) => e === "bundle.crashed").length;
+    const crashedBefore = eventNames(sink).filter((e) => e === "connector.crashed").length;
     await monitor.check();
     await monitor.check();
     expect(source.restartCalls).toBe(restartsBefore);
-    expect(eventNames(sink).filter((e) => e === "bundle.crashed").length).toBe(crashedBefore);
+    expect(eventNames(sink).filter((e) => e === "connector.crashed").length).toBe(crashedBefore);
 
     monitor.stop();
   });
@@ -166,7 +166,7 @@ describe("HealthMonitor", () => {
     expect(status[0]!.state).toBe("healthy");
     expect(source.restartCalls).toBeGreaterThan(restartsAtCooldown);
     // A recovery event fires once the source comes back — no operator action.
-    expect(eventNames(sink)).toContain("bundle.recovered");
+    expect(eventNames(sink)).toContain("connector.recovered");
 
     monitor.stop();
   });
@@ -258,14 +258,14 @@ describe("HealthMonitor", () => {
     }
 
     expect(monitor.getStatus()[0]!.state).toBe("healthy");
-    expect(eventNames(sink)).not.toContain("bundle.dead");
+    expect(eventNames(sink)).not.toContain("connector.dead");
 
     // Backoff resets between episodes: every restarting attempt fires at the
     // base delay (2 ** 0), never the escalated delays a climbing counter
     // would produce.
     const delays = sink.events
       .map((e) => e.data as { event: string; delayMs?: number })
-      .filter((d) => d.event === "bundle.restarting")
+      .filter((d) => d.event === "connector.restarting")
       .map((d) => d.delayMs);
     expect(delays.length).toBe(8);
     for (const d of delays) expect(d).toBe(1);
@@ -299,8 +299,8 @@ describe("HealthMonitor", () => {
     source.alive = false;
     await monitor.check();
     expect(monitor.getStatus()[0]!.state).toBe("cooldown");
-    expect(eventNames(sink)).toContain("bundle.cooldown");
-    expect(eventNames(sink)).not.toContain("bundle.dead");
+    expect(eventNames(sink)).toContain("connector.cooldown");
+    expect(eventNames(sink)).not.toContain("connector.dead");
 
     monitor.stop();
   });
