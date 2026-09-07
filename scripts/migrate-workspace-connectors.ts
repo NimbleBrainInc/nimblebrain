@@ -90,7 +90,20 @@ async function collectOutcomes(roots: string[], write: boolean): Promise<Outcome
 }
 
 /** Print the per-file lines and the summary tally for a completed run. */
-function report(all: Outcome[], write: boolean): void {
+function report(all: Outcome[], roots: string[], write: boolean): void {
+  if (all.length === 0) {
+    // A wrong path and an already-migrated tree both scan zero files, and the
+    // tally alone cannot tell them apart. Say which root was walked and what
+    // was being looked for, so a near-miss (`<workDir>/workspaces` rather than
+    // `<workDir>`) is legible here rather than at the next boot.
+    console.error(
+      `No workspace records found under ${roots.join(", ")} — ` +
+        "expected <root>/workspaces/<wsId>/workspace.json. " +
+        "Point this at a runtime work dir, or at a parent of several.",
+    );
+    return;
+  }
+
   const changed = all.filter((o) => o.status === "changed");
   const errors = all.filter((o) => o.status === "error");
 
@@ -124,7 +137,7 @@ function exitCode(all: Outcome[], write: boolean): number {
 async function main(): Promise<void> {
   const { write, roots } = parseArgs(process.argv.slice(2));
   const all = await collectOutcomes(roots, write);
-  report(all, write);
+  report(all, roots, write);
   const code = exitCode(all, write);
   if (code !== 0) process.exit(code);
 }

@@ -81,7 +81,8 @@ describe("migrateWorkspaceContent", () => {
   });
 
   test("an empty connector list is a migrated record, not a missing one", () => {
-    const result = migrateWorkspaceContent(JSON.stringify({ ...RECORD, connectors: [], bundles: undefined }));
+    const { bundles: _drop, ...rest } = RECORD;
+    const result = migrateWorkspaceContent(JSON.stringify({ ...rest, connectors: [] }));
     expect(result.status).toBe("unchanged");
   });
 
