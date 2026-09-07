@@ -90,7 +90,7 @@ export function startServer(options: ServerOptions): ServerHandle {
   const mcpSources = runtime.mcpSources();
   const healthMonitor = new HealthMonitor(mcpSources, runtime.getEventSink());
   healthMonitor.start();
-  // Expose currently-down connectors as the `nb_bundle_unhealthy` gauge (read
+  // Expose currently-down connectors as the `nb_connector_unhealthy` gauge (read
   // through this provider at scrape time). The gauge stays asserted for the
   // whole outage, unlike the crash counter which goes flat once a source is
   // dead-terminal — so the down-alert resolves only on recovery.

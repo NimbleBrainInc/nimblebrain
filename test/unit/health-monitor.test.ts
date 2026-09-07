@@ -379,7 +379,7 @@ describe("HealthMonitor — initial state reflects the source, not an assumption
     // A source can be registered and already down when the monitor is
     // constructed — a boot start that failed, or one waiting on interactive
     // auth. Seeding a constant `healthy` made those read healthy, and kept them
-    // out of `nb_bundle_unhealthy`, for a whole check interval.
+    // out of `nb_connector_unhealthy`, for a whole check interval.
     const down = makeMockSource("down-at-boot");
     down.alive = false;
     const up = makeMockSource("up-at-boot");

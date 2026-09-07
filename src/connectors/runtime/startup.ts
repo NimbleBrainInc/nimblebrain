@@ -113,7 +113,7 @@ interface StartConnectorOpts {
    * endpoint merely happened to be unreachable during startup is not gone, and
    * an absent source is invisible to every surface that enumerates the registry
    * — the agent's tool list, `nb__status`, `HealthMonitor`, and the
-   * `nb_bundle_unhealthy` gauge. That combination is a trap: the one path that
+   * `nb_connector_unhealthy` gauge. That combination is a trap: the one path that
    * revives it (`tryRecoverSource`) is reached from a tool-call source-miss, and
    * the model cannot call a tool that was never listed. Registered-and-down is
    * strictly better — the connector is visible, reports honestly, alerts, and
