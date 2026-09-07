@@ -564,7 +564,7 @@ Connectors can be installed per-workspace (tracked via `ConnectorInstance.wsId`)
 
 ### SSE Event Streams
 
-**Workspace-level** (`GET /v1/events`): Events: `bundle.installed`, `bundle.uninstalled`, `data.changed`, `config.changed`, `skill.created`, `skill.updated`, `skill.deleted`, `file.created`, `file.deleted`, `bridge.tool.call`, `bridge.tool.done`, `heartbeat` (30s).
+**Workspace-level** (`GET /v1/events`): Events: `connector.installed`, `connector.uninstalled`, `connection.state_changed`, `data.changed`, `conversation.title`, `config.changed`, `skill.created`, `skill.updated`, `skill.deleted`, `bridge.tool.call`, `bridge.tool.done`, `notification.created`, `notification.delivered`, `notification.delivery_failed`, `heartbeat` (30s).
 
 **Per-conversation** (`GET /v1/conversations/:id/events`): For multi-participant chat. Security: `requireAuth` → `requireWorkspace` → `canAccess()`. Events: `user.message`, `text.delta`, `tool.start`, `tool.done`, `llm.done`, `done`, `heartbeat`. Sender excluded from own broadcast.
 

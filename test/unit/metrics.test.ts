@@ -186,7 +186,7 @@ describe("MetricsEventSink", () => {
 });
 
 describe("connector crash metric", () => {
-  it("test_run_error_bundle_crashed_increments_counter_with_source_and_remote", async () => {
+  it("test_run_error_connector_crashed_increments_counter_with_source_and_remote", async () => {
     const sink = new MetricsEventSink();
     const labels = { source: "com-dropbox-mcp", remote: "true" };
     const before = await read(connectorCrashedTotal, labels);
@@ -199,7 +199,7 @@ describe("connector crash metric", () => {
     expect((await read(connectorCrashedTotal, labels)) - before).toBe(1);
   });
 
-  it("test_local_source_bundle_crashed_records_remote_false", async () => {
+  it("test_local_source_connector_crashed_records_remote_false", async () => {
     const sink = new MetricsEventSink();
     const labels = { source: "synapse-crm", remote: "false" };
     const before = await read(connectorCrashedTotal, labels);
@@ -211,7 +211,7 @@ describe("connector crash metric", () => {
     expect((await read(connectorCrashedTotal, labels)) - before).toBe(1);
   });
 
-  it("test_run_error_without_bundle_crashed_does_not_increment", async () => {
+  it("test_run_error_without_connector_crashed_does_not_increment", async () => {
     const sink = new MetricsEventSink();
     const before = await readTotal(connectorCrashedTotal);
     // An ordinary run error and a normal run completion must not touch the

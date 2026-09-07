@@ -59,7 +59,14 @@ are `install` and `uninstall`, so the events they produce are
   fact cannot name a principal, it is not a `connection.*` event.
 - Two families is one more than one. An operator grepping "everything about this
   connector" matches two prefixes, not one — the honest cost of not conflating
-  two questions in a single prefix.
+  two questions in a single prefix. Three, in fact: `source.*` is the transport
+  object's report about itself, and an `McpSource` backs the platform's own
+  in-process apps as well as connectors, so its subject is strictly wider than a
+  connector and the family does not merge into `connector.*`.
+- The rule reads back on the code that satisfies it. `HealthMonitor` enumerates
+  its records by transport object, so its set is wider than the `connector.*`
+  facts it emits about them. The name is right and the set is not; correcting
+  the set is a behaviour change, not a rename.
 - A future fact that genuinely is per-principal but is not about a credential —
   a per-member rate limit, say — lands in `connection.*` on this rule and will
   need the family's meaning widened or a third family. The rule points at the
