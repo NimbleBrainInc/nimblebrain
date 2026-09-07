@@ -251,7 +251,7 @@ Tool calls are scoped to your app's MCP server. The bridge automatically routes 
 
 ### `resources/read`
 
-Read a resource from your app's MCP server. This is a JSON-RPC **request** — the response is a standard MCP `ReadResourceResult` (`{ contents: [...] }`). The URI passes through verbatim to your server; resources are namespaced by the bundle that authored them.
+Read a resource from your app's MCP server. This is a JSON-RPC **request** — the response is a standard MCP `ReadResourceResult` (`{ contents: [...] }`). The URI passes through verbatim to your server; resources are namespaced by the app that authored them.
 
 **Request:**
 

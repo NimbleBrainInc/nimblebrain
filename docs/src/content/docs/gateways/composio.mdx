@@ -206,8 +206,8 @@ When a user clicks Disconnect on a Composio-backed connector:
 
 1. The platform calls Composio's SDK to delete the connected account (best-effort — failures don't block local cleanup).
 2. The platform deletes `<workDir>/workspaces/<wsId>/credentials/composio/<connectorId>/connection.json`.
-3. The bundle's MCP source is stopped and removed from the registry.
-4. Bundle state transitions to `not_authenticated`. The UI shows **Connect** again.
+3. The connector's MCP source is stopped and removed from the registry.
+4. The connection transitions to `not_authenticated`. The UI shows **Connect** again.
 
 Reconnect after disconnect runs a fresh OAuth flow at the vendor — there's no adopt-existing shortcut because the upstream account was deleted in step 1. For **API-key** toolkits there's no OAuth flow: reconnect re-opens the key form. Re-connecting an already-connected API-key toolkit (key rotation) replaces and revokes the prior Composio account and is gated to workspace admins, since it swaps the credential every member's agent runs under.
 
@@ -233,9 +233,9 @@ The catalog `name` (`com.google/gmail`) stays stable across the migration. Compo
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| Connect button shows "Failed to start OAuth flow" | Web bundle stale or catalog projection didn't load | Hard refresh the browser; check the `[composio] integration: configured` log line at pod startup |
+| Connect button shows "Failed to start OAuth flow" | Stale web build, or the catalog projection didn't load | Hard refresh the browser; check the `[composio] integration: configured` log line at pod startup |
 | Install succeeds but "Sign-in required" persists after OAuth | `connection.json` didn't land at the callback | Check `<workDir>/workspaces/<wsId>/credentials/composio/<connectorId>/connection.json`; if missing, the callback handler logged the failure |
-| Install returns "Installed … click Connect to retry" | Eager source-start failed (transient upstream / network). The install itself succeeded — workspace.json has the entry, the bundle just couldn't kick its tool list. | Click **Connect** on the connector. If retries keep failing, check pod logs for `[bundles] <serverName> start failed:` |
+| Install returns "Installed … click Connect to retry" | Eager source-start failed (transient upstream / network). The install itself succeeded — workspace.json has the entry, the connector just couldn't kick its tool list. | Click **Connect** on the connector. If retries keep failing, check pod logs for `[connectors] <serverName> start failed:` |
 | Connect returns 502 `composio_adopt_source_start_failed` | The adopt-existing path matched a Composio account but couldn't bring the local MCP source online. No partial state was persisted. | Click **Disconnect** then **Connect** to run a fresh OAuth flow. Investigate pod logs if it persists. |
 | Install fails with `400 Invalid auth config IDs` from Composio | The toolkit's `authConfigs` entry points at an `ac_…` that doesn't exist in the Composio dashboard | Confirm the id in `platform.composio.dev → Auth Configs`; correct `connectors.providers.composio.authConfigs.<toolkit>`; roll the deployment |
 | Install fails with `400 Invalid tool slugs in config.tools: …` (API-key toolkit) | The `tools` allowlist uses REST-catalog names, not the tool-router `config.tools` namespace | Replace the named slugs with their tool-router equivalents and reinstall to re-validate — see [API-key toolkits](#api-key-toolkits-no-oauth) |

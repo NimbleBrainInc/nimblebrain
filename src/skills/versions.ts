@@ -24,7 +24,10 @@
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 
-/** Directory name holding a skill dir's snapshots. Reserved by the loader. */
+/**
+ * Directory name holding a skill dir's snapshots. The loader reads no
+ * subdirectory, so a snapshot never loads as a live skill.
+ */
 export const VERSIONS_DIR = "_versions";
 
 /** One snapshot of a skill file. `version` is the id callers pass back. */

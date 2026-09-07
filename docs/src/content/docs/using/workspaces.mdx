@@ -11,7 +11,7 @@ Workspaces let you organize your NimbleBrain environment into isolated contexts.
 
 A workspace is an isolated environment within a NimbleBrain instance. It contains:
 
-- **Apps and connectors** — each workspace has its own set of installed MCP bundles and connectors
+- **Connectors** — each workspace has its own set of installed connectors, and the app UIs they bring with them
 - **Members** — users with assigned roles who can access the workspace
 
 When you send a chat message, it runs in the context of your focused workspace, and the agent's active tool set is scoped to the apps installed there. **Conversations are partitioned by workspace** — each one is stored under the workspace it ran in and authorized by its owner. See [Conversations](/using/conversations) for how ownership and storage work.
@@ -72,13 +72,13 @@ Only workspace admins can manage members. Regular members cannot add or remove o
 
 ## Workspace-scoped apps
 
-Apps and connectors are installed at the workspace level. When a bundle is installed in a workspace, only members of that workspace can use its tools.
+Apps and connectors are installed at the workspace level. When a connector is installed in a workspace, only members of that workspace can use its tools.
 
 ```
 Install @nimblebraininc/tasks in this workspace
 ```
 
-The agent installs the bundle and registers its tools in the workspace's tool registry. Other workspaces are unaffected.
+The agent installs the connector and registers its tools in the workspace's tool registry. Other workspaces are unaffected.
 
 ## Switching workspaces
 

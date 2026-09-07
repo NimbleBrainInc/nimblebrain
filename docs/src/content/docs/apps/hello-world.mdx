@@ -30,7 +30,7 @@ The result works in NimbleBrain (full Synapse features), Claude Desktop (tools o
       - main.tsx
       - App.tsx            Your components with Synapse hooks
     - dist/
-      - index.html         Built single-file bundle
+      - index.html         Built single-file HTML
 </FileTree>
 
 The key insight: **the server and UI are separate projects**. The Python server defines tools and serves HTML. The UI is a standard Vite+React app that builds to a single HTML file. The server reads that file at runtime.

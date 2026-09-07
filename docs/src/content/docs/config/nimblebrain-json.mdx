@@ -119,7 +119,7 @@ A sibling `nimblebrain.overrides.json` next to the resolved config file is **dee
 | `connectors` | `object` | — | Managed-connector provider settings (Composio). See [connectors](#connectors). |
 | `notifications` | `object` | — | Pacing for the notification outbox poll. See [notifications](#notifications). |
 | `files` | `object` | — | File upload limits. See [files](#files). |
-| `allowInsecureRemotes` | `boolean` | `false` | Allow HTTP (non-TLS) remote bundle connections. Dev only. |
+| `allowInsecureRemotes` | `boolean` | `false` | Allow HTTP (non-TLS) remote connector connections. Dev only. |
 | `telemetry` | `object` | `{ "enabled": true }` | Anonymous usage telemetry. See [telemetry](#telemetry). |
 | `workDir` | `string` | `"~/.nimblebrain"` | Working directory for runtime state (conversations, logs, workspaces). |
 
@@ -648,7 +648,7 @@ File upload limits applied when `features.fileContext` is enabled.
 
 ## telemetry
 
-NimbleBrain collects anonymized, aggregate usage data with no PII — no bundle names, tool names, error messages, or file paths are sent.
+NimbleBrain collects anonymized, aggregate usage data with no PII — no connector names, tool names, error messages, or file paths are sent.
 
 ```json
 { "telemetry": { "enabled": false } }

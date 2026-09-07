@@ -402,7 +402,7 @@ function ResearchPanel() {
 }
 ```
 
-This pattern means the UI navigates within ~1s of the click — as soon as the bundle creates the entity — instead of blocking for minutes on the task result.
+This pattern means the UI navigates within ~1s of the click — as soon as the server creates the entity — instead of blocking for minutes on the task result.
 
 ### Capability detection and graceful fallback
 
@@ -755,7 +755,7 @@ For testing data sync, agent interactions, and multi-app navigation:
 bun run dev --app ./ui
 ```
 
-Your app must be configured as a local bundle in `.nimblebrain/nimblebrain.json`.
+Your app must be registered as a connector in the dev workspace's `workspace.json`, pointing at the URL your server listens on.
 
 See the [Local Development guide](/apps/local-dev) for the full workflow comparison.
 
@@ -778,7 +778,7 @@ The recommended structure for an MCP app with a UI:
       - main.tsx
       - App.tsx              Your components + Synapse hooks
     - dist/
-      - index.html           Built single-file bundle
+      - index.html           Built single-file HTML
 </FileTree>
 
 The server reads the built `ui/dist/index.html` and serves it as a `ui://` resource. `vite-plugin-singlefile` bundles everything (React, CSS, JS) into that single file.

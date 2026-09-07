@@ -54,9 +54,8 @@ export async function createSystemTools(
   // `nb__manage_app`. The tool was removed; keep the positional slot stable
   // (the file's reserved-slot convention) so every call site's arity holds.
   _gate?: ConfirmationGate,
-  // Reserved slot — was the lifecycle manager for skill `requires-bundles`
-  // dependency checks (removed in the manifest cutover). Keep the positional
-  // slot stable so call-site arity holds.
+  // Reserved slot — unused. Keep the positional slot stable so call-site
+  // arity holds.
   _lifecycle?: ConnectorLifecycleManager,
   // Reserved slot — was the sub-agent spawn context for `nb__delegate`
   // (removed: the kernel starts a run through one door). Keep the positional

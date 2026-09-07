@@ -1,6 +1,6 @@
 ---
 title: Core Concepts
-description: Understand orchestration, the agent loop, bundles, skills, tools, and conversations that make up NimbleBrain.
+description: Understand orchestration, the agent loop, connectors, skills, tools, and conversations that make up NimbleBrain.
 ---
 
 import { Aside } from '@astrojs/starlight/components';
@@ -90,7 +90,7 @@ Before the engine loop starts, the `Runtime` orchestrates the composition descri
 5. Run the `AgentEngine` loop against the composed tool set
 6. Persist the conversation (JSONL or in-memory)
 
-## Bundles (apps)
+## Connectors
 
 A **connector** is a remote MCP server a workspace connects to. The runtime
 orchestrates over remote MCP: it holds the server's URL and a credential, and
@@ -98,11 +98,19 @@ never downloads, verifies, or executes the server's code. Supply-chain review
 belongs where the server is built and published, not in a process that also
 holds tenant credentials.
 
-### Sources
+Three words sit around it and mean different things. A **connection** is the
+supervised link to one connector for one workspace and principal — it is what
+has a lifecycle, a credential, and a health state. A **source** is anything
+serving tools and resources behind the MCP boundary, which a connector's
+connection is one of. And a **platform app** is a source the runtime hosts
+in-process rather than connects to, so it has no URL, no credential, and no
+connection to supervise.
+
+### Where connectors come from
 
 Connectors are installed per workspace and tracked in `workspace.json` (not `nimblebrain.json` — entries placed there are stripped on load). They are discovered through the **connectors catalog**: a directory of `ServerDetail` files read into a single Browse list, installed point-and-click or via `manage_connectors`. See [Connectors Catalog](/config/connectors-catalog/).
 
-### Lifecycle states
+### Connection lifecycle
 
 Each connection goes through these states:
 
@@ -123,9 +131,24 @@ starting ──► running ──► crashed ──► dead
 | `dead` | Repeatedly unreachable, not retrying on its own |
 | `stopped` | Manually stopped via API or CLI |
 
-### No connectors by default
+### Brokered connectors
 
-NimbleBrain installs no connectors by default. Platform capabilities (home, conversations, files, settings, usage, automations) are built in as inline tool sources. Install connectors from the catalog to give the agent domain-specific tools.
+Some connectors do not hold their own auth. A **brokered connector** gets both its
+credential and its hosted MCP session from a third party — Composio or Smithery — that an
+operator configures once, platform-wide. The session the broker returns is an ordinary
+remote source; the broker never sits in the tool call. A **gateway** is the simpler case:
+it brokers nothing, so one account key reaches every endpoint you publish from it. The
+runtime-native kinds, `dcr` and `static`, put no third party in the trust path at all. See
+[Connector Providers](/config/connector-providers/).
+
+### Platform apps
+
+NimbleBrain installs no connectors by default, and it still has tools on a fresh install.
+The kernel's own capabilities — home, conversations, files, automations, usage, skills,
+instructions, hooks, notifications, compose — are **platform apps**: in-process MCP servers
+the runtime hosts, reached over the same MCP boundary as a remote server. Nothing above the
+source can tell them apart, which is why the platform needs only one extension mechanism.
+Install connectors from the catalog to give the agent domain-specific tools.
 
 ### Connector options
 
@@ -203,7 +226,7 @@ Skills are loaded from three locations (in order):
 
 ## Tools
 
-Tools come from two places: MCP bundles and built-in system tools.
+Tools come from two places: connectors and built-in system tools.
 
 ### System tools
 
@@ -234,7 +257,7 @@ NimbleBrain uses tiered tool surfacing to keep the LLM's tool list manageable:
 The threshold is configurable via `maxDirectTools` (default: 30).
 
 <Aside type="tip">
-When you have many bundles installed, the agent uses `nb__search` to find the right tool before calling it. You don't need to manage this — the bootstrap skill teaches the agent how to use meta-tools automatically.
+When you have many connectors installed, the agent uses `nb__search` to find the right tool before calling it. You don't need to manage this — the bootstrap skill teaches the agent how to use meta-tools automatically.
 </Aside>
 
 ## Conversations
@@ -278,13 +301,13 @@ Unlike traditional web apps, MCP Apps:
 - **Inherit the host's theme** — CSS variables are injected automatically
 - **Run in a security sandbox** — no access to the parent page, cookies, or other apps
 
-Any MCP bundle that declares UI resources and placements becomes an MCP App. See [MCP Apps](/concepts/mcp-apps) for the full concept and [MCP App Bridge](/apps/bridge) for the implementation protocol.
+Any connector that declares UI resources and placements becomes an MCP App. See [MCP Apps](/concepts/mcp-apps) for the full concept and [MCP App Bridge](/apps/bridge) for the implementation protocol.
 
 ## Platform as MCP server
 
 NimbleBrain exposes a `/mcp` endpoint that turns the platform into a Streamable HTTP MCP server. External MCP clients — Claude Code, Open WebUI, or another NimbleBrain instance — can connect through a single endpoint. Each request names its workspace via the `X-Workspace-Id` header (validated against your membership): `/mcp` serves that one workspace's tools plus your identity tools (conversations, files, automations), and refuses tools in any other workspace. A request with no `X-Workspace-Id` is identity-only.
 
-This means NimbleBrain is both an MCP **client** (connecting to installed bundles) and an MCP **server** (exposing composed tools to external hosts). See [MCP Endpoint Reference](/connect/mcp-endpoint) for configuration and usage.
+This means NimbleBrain is both an MCP **client** (connecting to installed connectors) and an MCP **server** (exposing composed tools to external hosts). See [MCP Endpoint Reference](/connect/mcp-endpoint) for configuration and usage.
 
 ## What's next
 

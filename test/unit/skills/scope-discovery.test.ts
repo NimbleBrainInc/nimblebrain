@@ -4,10 +4,8 @@
  * Verifies:
  *   - `loadScopedSkills(dir, scope)` stamps `manifest.scope` on every
  *     returned skill.
- *   - Reserved subdirs (`_versions/`, `_archived/`, anything starting with
- *     "_") are skipped.
- *   - Nested `connectors/<connector>/<skill>.md` is discovered with the parent
- *     scope stamped.
+ *   - A tier is one flat directory: subdirectories are not descended into,
+ *     so `_versions/` snapshots never load as live skills.
  *   - Missing directories return `[]` without throwing.
  *   - The pure merge helper (`mergeScopedSkills`) layers user > workspace
  *     > org on `manifest.name` collisions.
@@ -85,48 +83,17 @@ describe("loadScopedSkills — stamping", () => {
 });
 
 describe("loadScopedSkills — subdir handling", () => {
-  test("skips reserved subdirs (_versions, _archived, _anything)", () => {
+  test("reads the tier's own files and no subdirectory's", () => {
     const dir = join(root, "skips");
     mkdirSync(dir, { recursive: true });
     writeSkillFile(join(dir, "live.md"), "live");
     writeSkillFile(join(dir, "_versions", "old.md"), "old-versioned");
     writeSkillFile(join(dir, "_archived", "ancient.md"), "ancient");
-    writeSkillFile(join(dir, "_secrets", "hidden.md"), "hidden");
+    writeSkillFile(join(dir, "child", "nested.md"), "nested");
 
     const skills = loadScopedSkills(dir, "workspace");
     const names = skills.map((s) => s.manifest.name).sort();
     expect(names).toEqual(["live"]);
-  });
-
-  test("discovers nested connectors/<connector>/<skill>.md with the parent scope", () => {
-    const dir = join(root, "with-connectors");
-    mkdirSync(dir, { recursive: true });
-    writeSkillFile(join(dir, "top-level.md"), "top-level");
-    writeSkillFile(join(dir, "bundles", "synapse-collateral", "patch-policy.md"), "patch-policy");
-    writeSkillFile(join(dir, "bundles", "another-connector", "voice.md"), "voice");
-
-    const skills = loadScopedSkills(dir, "workspace");
-    const names = skills.map((s) => s.manifest.name).sort();
-    expect(names).toEqual(["patch-policy", "top-level", "voice"]);
-    for (const s of skills) {
-      expect(s.manifest.scope).toBe("workspace");
-    }
-  });
-
-  test("recurses to depth 2 (connectors/<connector>/<skill>.md) but no further", () => {
-    const dir = join(root, "depth-cap");
-    mkdirSync(dir, { recursive: true });
-    writeSkillFile(join(dir, "level0.md"), "level0");
-    writeSkillFile(join(dir, "child", "level1.md"), "level1");
-    writeSkillFile(join(dir, "child", "grandchild", "level2.md"), "level2");
-    writeSkillFile(
-      join(dir, "child", "grandchild", "great-grandchild", "level3.md"),
-      "level3",
-    );
-
-    const skills = loadScopedSkills(dir, "workspace");
-    const names = skills.map((s) => s.manifest.name).sort();
-    expect(names).toEqual(["level0", "level1", "level2"]);
   });
 });
 

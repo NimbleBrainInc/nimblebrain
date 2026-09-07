@@ -139,7 +139,7 @@ Release is taken from the runtime's existing `NB_VERSION` → `NB_BUILD_SHA` (no
 
 ### Web client (runtime config)
 
-The web UI is a static bundle, so it cannot read pod env from JS. Instead Caddy serves `/config.js` dynamically from these `NB_*` values (set `window.__NB_CONFIG__`), which the client reads on boot. This lets one image be configured **per tenant via Helm** with no rebuild and no writable filesystem. All values are **public client keys** — never secrets. Unset ⇒ the corresponding feature is disabled (the OSS/self-host default).
+The web UI is a static build, so it cannot read pod env from JS. Instead Caddy serves `/config.js` dynamically from these `NB_*` values (set `window.__NB_CONFIG__`), which the client reads on boot. This lets one image be configured **per tenant via Helm** with no rebuild and no writable filesystem. All values are **public client keys** — never secrets. Unset ⇒ the corresponding feature is disabled (the OSS/self-host default).
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|

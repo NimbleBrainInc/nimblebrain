@@ -43,7 +43,6 @@ import type { EventSink, ToolResult } from "../../engine/types.ts";
 import {
   type ComposedPrompt,
   composeSystemPromptTraced,
-  deriveConnectorFromSkillPath,
   type Layer3SkillEntry,
   type TracedLayer,
   type TracedSubItem,
@@ -80,8 +79,8 @@ const COMPOSE_DESCRIPTION =
   "Pass `run_id` for historical mode — reads the recorded `skills.loaded` event " +
   "for that run from the calling workspace's conv jsonl and verifies each " +
   "layer-3 skill's `contentHash` against its current source, flagging drift. " +
-  "Pass `connector` to filter the response to one connector's contributions (apps " +
-  "section + layer-3 skills under the connector's affined directory). Read-only. " +
+  "Pass `connector` to filter the response to that connector's contributions " +
+  "(the apps section and its focused-app section). Read-only. " +
   "Use this to answer 'what's in the agent's prompt right now' or 'what was " +
   "in the prompt for run X'. " +
   "`totalTokens` is the size of the composed system prompt, in both modes — " +
@@ -685,7 +684,6 @@ function auditToSubItem(
     kind: "layer3_skill",
     id: entry.id,
     source: audit.body !== null ? entry.id : `${entry.id} (body unavailable)`,
-    ...(audit.connector ? { connector: audit.connector } : {}),
     metadata: {
       scope: entry.scope,
       loadedBy: entry.loadedBy,
@@ -735,7 +733,6 @@ interface L3SkillAudit {
    *  "missing" — file no longer exists on disk; body is null. */
   hashStatus: "match" | "drift" | "recovered" | "missing";
   body: string | null;
-  connector?: string;
   snapshotPath?: string;
   warning?: string;
 }
@@ -775,10 +772,9 @@ function auditL3Skill(entry: SkillsLoadedEvent["skills"][number]): L3SkillAudit 
     };
   }
   const currentHash = hashSkillBody(currentBody);
-  const connector = deriveConnectorFromSkillPath(path);
 
   if (entry.contentHash === currentHash) {
-    return { hashStatus: "match", body: currentBody, ...(connector ? { connector } : {}) };
+    return { hashStatus: "match", body: currentBody };
   }
 
   // Drift detected. Try to find a `_versions/` snapshot whose body hashes
@@ -789,7 +785,6 @@ function auditL3Skill(entry: SkillsLoadedEvent["skills"][number]): L3SkillAudit 
       hashStatus: "recovered",
       body: snapshot.body,
       snapshotPath: snapshot.path,
-      ...(connector ? { connector } : {}),
       warning: `skill ${path}: edited since this run; recovered the loaded body from ${snapshot.path}`,
     };
   }
@@ -797,7 +792,6 @@ function auditL3Skill(entry: SkillsLoadedEvent["skills"][number]): L3SkillAudit 
   return {
     hashStatus: "drift",
     body: currentBody,
-    ...(connector ? { connector } : {}),
     warning: `skill ${path}: edited since this run, no matching snapshot in _versions/. Showing current body — content may differ from what actually loaded.`,
   };
 }
