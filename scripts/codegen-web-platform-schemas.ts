@@ -42,6 +42,19 @@ const WORKSPACE_ID_PATTERN_DEST = join(REPO_ROOT, "web/src/_generated/workspace-
 const CONNECTOR_TYPES_TMP = join(REPO_ROOT, ".tmp-codegen-connectors");
 const CONNECTOR_TYPES_DEST = join(REPO_ROOT, "web/src/_generated/connector-registry");
 const IDENTITY_SOURCES_SRC = join(REPO_ROOT, "src/tools/identity-sources.ts");
+/**
+ * Zero-import runtime modules mirrored verbatim into the web tree.
+ *
+ * A `.d.ts` emit gives the web shell types; these are the cases where it needs
+ * the server's actual LOGIC and a hand-written second copy would drift with
+ * nothing to catch it. Every entry must import nothing — a copied import would
+ * not resolve from `web/src/_generated/` — and `check:codegen` fails the build
+ * when the mirrored copy stops matching its source.
+ */
+const MIRRORED_MODULES: Array<{ src: string; dest: string }> = [
+  { src: "src/skills/loading.ts", dest: "web/src/_generated/skill-loading.ts" },
+  { src: "src/skills/tokens.ts", dest: "web/src/_generated/skill-tokens.ts" },
+];
 const PERSONAL_CONNECTOR_PREFIX_DEST = join(
   REPO_ROOT,
   "web/src/_generated/personal-connector-prefix.ts",
@@ -162,6 +175,23 @@ export const PERSONAL_CONNECTOR_PREFIX = ${JSON.stringify(prefix)};
   mkdirSync(dirname(PERSONAL_CONNECTOR_PREFIX_DEST), { recursive: true });
   writeFileSync(PERSONAL_CONNECTOR_PREFIX_DEST, body);
   console.log(`[codegen] OK → ${PERSONAL_CONNECTOR_PREFIX_DEST.replace(REPO_ROOT, ".")}`);
+}
+
+for (const { src, dest } of MIRRORED_MODULES) {
+  console.log(`[codegen] ${src} → ${dest}`);
+  const body = readFileSync(join(REPO_ROOT, src), "utf-8");
+  // An import in the source would land in the copy and fail to resolve from
+  // the web tree — caught here rather than as a mystery build error in `web/`.
+  if (/^\s*import\s/m.test(body)) {
+    throw new Error(
+      `[codegen] ${src} is mirrored into the web tree and must import nothing, but it does. ` +
+        "Move the imported dependency out, or drop the file from MIRRORED_MODULES.",
+    );
+  }
+  const destPath = join(REPO_ROOT, dest);
+  mkdirSync(dirname(destPath), { recursive: true });
+  writeFileSync(destPath, header(src) + body);
+  console.log(`[codegen] OK → ${dest}`);
 }
 
 console.log("[codegen] platform-schemas → web/src/_generated/platform-schemas/");
