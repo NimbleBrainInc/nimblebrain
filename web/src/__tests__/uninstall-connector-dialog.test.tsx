@@ -82,6 +82,7 @@ const TWO_DECLARED = {
 function installed(overrides: {
   auth?: string;
   secretHeaders?: Record<string, unknown>;
+  providerAuth?: { provider: string; config: Record<string, unknown> };
 }): InstalledConnector {
   return {
     serverName: "com-acme-db-query",
@@ -99,6 +100,7 @@ function installed(overrides: {
       url: "https://mcp.acme.test/mcp",
       auth: overrides.auth ?? "provider",
       ...(overrides.secretHeaders ? { secretHeaders: overrides.secretHeaders } : {}),
+      ...(overrides.providerAuth ? { providerAuth: overrides.providerAuth } : {}),
     },
   } as unknown as InstalledConnector;
 }
@@ -225,6 +227,29 @@ describe("UninstallConnectorDialog — what it names", () => {
     expect(dialogButton("Uninstall")).not.toBeNull();
   });
 
+  test("a connector whose only credential is providerAuth.config.key names it", async () => {
+    // The second declaration site, and the one with no header behind it. An
+    // entry using it declares no `secretHeaders` at all, so reading only those
+    // would show no secrets section while the server deleted its one credential
+    // — a silent delete, which is the shape this dialog exists to replace.
+    listResult = async () => ({ keys: [{ key: "acme.db_url", updatedAt: HOUR_AGO }] });
+    mounted = await open(
+      installed({ providerAuth: { provider: "credential", config: { key: "acme.db_url" } } }),
+    );
+    const text = popup()?.textContent ?? "";
+    expect(text).toContain("acme.db_url");
+    expect(text).toContain("will be deleted");
+  });
+
+  test("a `minted` providerAuth names nothing — its config carries no store key", async () => {
+    mounted = await open(
+      installed({
+        providerAuth: { provider: "minted", config: { audience: "mcp-fleet" } },
+      }),
+    );
+    expect(popup()?.textContent).not.toContain("will be deleted");
+  });
+
   test("a non-provider connector declaring secretHeaders names nothing", async () => {
     // Only a `provider`-auth install wires the header, so on any other kind the
     // declaration is inert and nothing was ever written against it. Naming a
@@ -275,18 +300,23 @@ describe("UninstallConnectorDialog — reporting", () => {
     expect(uninstalledWith).toEqual([undefined]);
   });
 
-  test("a key that outlived the connector is reported, not swallowed", async () => {
+  test("a key that outlived the connector is reported BY NAME, not swallowed", async () => {
+    // The Configure page goes with the connector, so this notice is the last
+    // surface on which a stranded key can be identified at all. A plural
+    // "its stored credentials" naming none is the actionable half dropped.
     uninstallResult = async () => ({
       ok: true,
       scope: "workspace" as const,
       serverName: "com-acme-db-query",
       deletedSecretKeys: [],
+      failedSecretKeys: ["acme.db_url"],
       secretDeleteError: "EACCES",
     });
     mounted = await open(installed({ secretHeaders: DECLARED }));
     await click(dialogButton("Uninstall"));
     expect(uninstalledWith).toHaveLength(1);
-    expect(uninstalledWith[0]).toContain("could not be removed");
+    expect(uninstalledWith[0]).toContain("acme.db_url");
+    expect(uninstalledWith[0]).toContain("still stored");
     expect(uninstalledWith[0]).toContain("EACCES");
   });
 

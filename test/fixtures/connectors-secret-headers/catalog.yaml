@@ -67,3 +67,27 @@ servers:
           config:
             audience: mcp-fleet
             scope: mcp:invoke
+
+  # The OTHER place a provider-auth entry names a workspace key: the built-in
+  # `credential` provider resolves `config.key` from the workspace store on every
+  # request, and an entry using this shape declares no `secretHeaders` at all.
+  #
+  # It names `acme.db_url` on purpose — the same key `com.acme/db-query` binds to
+  # a header, mirroring the two examples in `docs/config/secrets.mdx`. Two
+  # installed connectors on one key is what the uninstall reference check exists
+  # to survive.
+  - name: com.acme/db-direct
+    title: Acme DB Direct
+    description: Authenticates as the workspace's own database credential
+    version: "1.0.0"
+    remotes:
+      - type: streamable-http
+        url: https://mcp.acme.test/direct/mcp
+    _meta:
+      ai.nimblebrain/connector:
+        auth: provider
+        providerAuth:
+          provider: credential
+          config:
+            key: acme.db_url
+        tags: [database]

@@ -883,9 +883,11 @@ export async function disconnectConnector(
  * declaration — this call names none, because a key from here would be a delete
  * pointed at any secret in the workspace.
  *
- * `deletedSecretKeys` is what actually went. `secretDeleteError` means the
- * connector is gone and at least one key is not, which is a state to report
- * rather than an uninstall to retry.
+ * `deletedSecretKeys` is what actually went, and `failedSecretKeys` names what
+ * did not — the connector is gone and those are still stored, which is a state
+ * to report rather than an uninstall to retry. `retainedSecretKeys` is the
+ * different case of a key deliberately left because another installed connector
+ * still resolves it.
  */
 export async function uninstallConnector(
   serverName: string,
@@ -895,6 +897,8 @@ export async function uninstallConnector(
   scope: "workspace";
   serverName: string;
   deletedSecretKeys?: string[];
+  failedSecretKeys?: string[];
+  retainedSecretKeys?: string[];
   secretDeleteError?: string;
 }> {
   const result = await callTool("nb", "manage_connectors", {

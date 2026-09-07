@@ -1,6 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import type { CatalogListing } from "../api/client";
-import { labelForCredentialKey, secretHeaderFields } from "./secret-headers";
+import {
+  labelForCredentialKey,
+  secretHeaderFields,
+  workspaceKeysDeclaredBy,
+} from "./secret-headers";
 
 /**
  * A remote-oauth install descriptor carrying an arbitrary `secretHeaders` block.
@@ -85,5 +89,44 @@ describe("secretHeaderFields", () => {
   test("an entry that declares nothing prompts for nothing", () => {
     expect(secretHeaderFields(install())).toEqual([]);
     expect(secretHeaderFields({ kind: "direct-url", url: "https://x.test" })).toEqual([]);
+  });
+});
+
+describe("workspaceKeysDeclaredBy", () => {
+  const HEADERS = { "X-Db-Url": { ref: "credential" as const, key: "acme.db_url" } };
+
+  test("reads both declaration sites and deduplicates across them", () => {
+    // The shape the docs show twice on one key: a header binding and a
+    // provider-auth credential naming the same store entry.
+    expect(
+      workspaceKeysDeclaredBy({
+        auth: "provider",
+        secretHeaders: HEADERS,
+        providerAuth: { provider: "credential", config: { key: "acme.db_url" } },
+      }),
+    ).toEqual(["acme.db_url"]);
+  });
+
+  test("a providerAuth-only entry still reports its key", () => {
+    expect(
+      workspaceKeysDeclaredBy({
+        auth: "provider",
+        providerAuth: { provider: "credential", config: { key: "acme.db_url" } },
+      }),
+    ).toEqual(["acme.db_url"]);
+  });
+
+  test("a non-`credential` provider names no store key", () => {
+    // `minted` config carries an audience and a scope, never a key.
+    expect(
+      workspaceKeysDeclaredBy({
+        auth: "provider",
+        providerAuth: { provider: "minted", config: { audience: "mcp-fleet" } },
+      }),
+    ).toEqual([]);
+  });
+
+  test("gated on provider auth, like every other reader of these fields", () => {
+    expect(workspaceKeysDeclaredBy({ auth: "dcr", secretHeaders: HEADERS })).toEqual([]);
   });
 });

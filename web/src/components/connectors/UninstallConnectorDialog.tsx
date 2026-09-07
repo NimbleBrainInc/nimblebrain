@@ -4,7 +4,7 @@ import {
   listWorkspaceSecretKeys,
   uninstallConnector,
 } from "../../api/client";
-import { secretHeaderFieldsFrom } from "../../lib/secret-headers";
+import { workspaceKeysDeclaredBy } from "../../lib/secret-headers";
 import { ConfirmDialog } from "../ui/confirm-dialog";
 
 /**
@@ -42,15 +42,17 @@ export function UninstallConnectorDialog({
 }) {
   const cat = installed.catalog;
   const displayName = cat?.name ?? installed.connectorName ?? installed.serverName;
-  // Same gate and same source as the Configure page's rotation section: only a
-  // `provider`-auth install wires the header, so on any other kind the
-  // declaration is inert and nothing was written against it. Naming a key here
-  // that uninstall does not delete would make the dialog a worse lie than the
-  // silence it replaces.
-  const fields = useMemo(
-    () => (cat?.auth === "provider" ? secretHeaderFieldsFrom(cat.secretHeaders) : []),
-    [cat?.auth, cat?.secretHeaders],
-  );
+  // Every key the entry names, from BOTH declaration sites — `secretHeaders`
+  // and, for the built-in `credential` provider, `providerAuth.config.key`.
+  // The rotation section reads only the first, which is right for a form that
+  // collects values; here it would omit the one credential of a connector using
+  // the second shape, and the server would delete it with nothing on screen
+  // having said so.
+  //
+  // Gated on `provider` because that is the only auth kind either site is wired
+  // on. Naming a key uninstall does not delete would make the dialog a worse
+  // lie than the silence it replaces.
+  const keys = useMemo(() => (cat ? workspaceKeysDeclaredBy(cat) : []), [cat]);
 
   const [stored, setStored] = useState<Map<string, string> | null>(null);
   const [listFailed, setListFailed] = useState(false);
@@ -58,7 +60,7 @@ export function UninstallConnectorDialog({
   // Read on open, not on mount. Which keys are set is a fact about this moment,
   // and this is a rare action on a page that otherwise never needs it.
   const refresh = useCallback(async () => {
-    if (fields.length === 0) return;
+    if (keys.length === 0) return;
     try {
       const res = await listWorkspaceSecretKeys();
       setStored(new Map(res.keys.map((k) => [k.key, k.updatedAt])));
@@ -71,7 +73,7 @@ export function UninstallConnectorDialog({
       setStored(null);
       setListFailed(true);
     }
-  }, [fields.length]);
+  }, [keys.length]);
 
   useEffect(() => {
     if (!open) return;
@@ -82,7 +84,7 @@ export function UninstallConnectorDialog({
 
   // Only claimed off a list actually read. Unknown means every declared key is
   // named, unqualified, which is the honest shape of "we could not check".
-  const named = stored === null ? fields : fields.filter((f) => stored.has(f.key));
+  const named = stored === null ? keys : keys.filter((key) => stored.has(key));
 
   return (
     <ConfirmDialog
@@ -95,9 +97,17 @@ export function UninstallConnectorDialog({
       destructive
       onConfirm={async () => {
         const res = await uninstallConnector(installed.serverName, "workspace");
+        // Name the survivors. This notice replaces the Configure page, which
+        // goes with the connector — it is the last surface on which a key that
+        // outlived its connector can be identified at all.
+        const stranded = res.failedSecretKeys ?? [];
         onUninstalled(
           res.secretDeleteError
-            ? `${displayName} was uninstalled, but its stored credentials could not be removed: ${res.secretDeleteError}`
+            ? `${displayName} was uninstalled, but ${
+                stranded.length > 0
+                  ? `${stranded.join(", ")} ${stranded.length === 1 ? "is" : "are"} still stored`
+                  : "its stored credentials could not be removed"
+              }: ${res.secretDeleteError}`
             : undefined,
         );
       }}
@@ -109,11 +119,11 @@ export function UninstallConnectorDialog({
             deleted:
           </p>
           <ul className="space-y-0.5">
-            {named.map((f) => {
-              const at = stored?.get(f.key);
+            {named.map((key) => {
+              const at = stored?.get(key);
               return (
-                <li key={f.header} className="font-mono text-2xs">
-                  {f.key}
+                <li key={key} className="font-mono text-2xs">
+                  {key}
                   {at && (
                     <span className="text-muted-foreground"> — set {formatWrittenAt(at)}</span>
                   )}

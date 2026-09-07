@@ -54,6 +54,10 @@ const HEADER = "X-Db-Url";
 const KEY = "acme.db_url";
 // What `install` derives from the entry id — the handle every later action uses.
 const SERVER_NAME = slugifyServerName(ENTRY_ID);
+/** The sibling naming the SAME key through `providerAuth` rather than a header. */
+const DIRECT_ID = "com.acme/db-direct";
+const DIRECT_URL = "https://mcp.acme.test/direct/mcp";
+const DIRECT_SERVER_NAME = slugifyServerName(DIRECT_ID);
 
 const ADMIN: UserIdentity = {
   id: "usr_admin_secret_headers",
@@ -106,8 +110,30 @@ function entry(): CatalogListing {
   };
 }
 
-function toolFor(sessionWsId: string) {
-  const lifecycle = new ConnectorLifecycleManager(new NoopEventSink());
+/** The `providerAuth: credential` entry, as `list_directory` projects it. */
+function directEntry(): DirectoryEntry {
+  return {
+    id: DIRECT_ID,
+    registryId: "bundled-static",
+    registryType: "static",
+    name: "Acme DB Direct",
+    description: "Authenticates as the workspace's own database credential",
+    install: {
+      kind: "remote-oauth",
+      url: DIRECT_URL,
+      transportType: "streamable-http",
+      auth: "provider",
+      providerAuth: { provider: "credential", config: { key: KEY } },
+    },
+  };
+}
+
+/**
+ * `lifecycle` is injectable so a test can make `uninstall` throw — the ordering
+ * invariant has no other seam, and the handler holds the manager internally.
+ */
+function toolFor(sessionWsId: string, injected?: ConnectorLifecycleManager) {
+  const lifecycle = injected ?? new ConnectorLifecycleManager(new NoopEventSink());
   const workspaceRegistry = new ToolRegistry();
   const runtime = {
     getWorkDir: () => workDir,
@@ -352,15 +378,70 @@ describe("a catalog entry that binds a workspace secret to a header", () => {
     expect(structured(await tool.handler({ action: "list_secret_keys" })).keys?.[0]?.key).toBe(KEY);
   });
 
-  test("a failed uninstall deletes no key", async () => {
-    // The connector is not installed, so the uninstall is refused before
-    // anything is torn down — and the secret it would have owned is untouched.
+  test("a uninstall refused before it starts deletes no key", async () => {
+    // The connector is not installed, so the uninstall is refused at the
+    // pre-flight guard — before the keys are even resolved.
     const tool = toolFor("ws_tenanta");
     await tool.handler({ action: "set_secret", key: KEY, value: "postgres://a.acme.test/db" });
 
     const result = await tool.handler({ action: "uninstall", serverName: SERVER_NAME });
     expect(result.isError).toBe(true);
     expect(structured(await tool.handler({ action: "list_secret_keys" })).keys?.[0]?.key).toBe(KEY);
+  });
+
+  test("an uninstall that throws AFTER the keys are resolved still deletes none", async () => {
+    // The ordering invariant itself, which the pre-flight refusal above does not
+    // reach: keys are resolved before `lifecycle.uninstall` runs, so a throw
+    // there must leave a connector that is still installed holding a credential
+    // it can still use.
+    const lifecycle = new ConnectorLifecycleManager(new NoopEventSink());
+    const tool = toolFor("ws_tenanta", lifecycle);
+    await tool.handler({ action: "install", entry: entry() });
+    await tool.handler({ action: "set_secret", key: KEY, value: "postgres://a.acme.test/db" });
+
+    lifecycle.uninstall = async () => {
+      throw new Error("source refused to stop");
+    };
+    const result = await tool.handler({ action: "uninstall", serverName: SERVER_NAME });
+    expect(result.isError).toBe(true);
+    expect(structured(await tool.handler({ action: "list_secret_keys" })).keys?.[0]?.key).toBe(KEY);
+  });
+
+  test("a providerAuth `credential` key goes with its own connector", async () => {
+    // The second declaration site. This entry binds no header at all — its one
+    // credential is `providerAuth.config.key`, which the transport resolves per
+    // request — so reading only `secretHeaders` would leave it behind.
+    const tool = toolFor("ws_tenanta");
+    await tool.handler({ action: "install", entry: directEntry() });
+    await tool.handler({ action: "set_secret", key: KEY, value: "postgres://a.acme.test/db" });
+
+    const result = await tool.handler({ action: "uninstall", serverName: DIRECT_SERVER_NAME });
+    expect(result.isError).toBe(false);
+    expect(structured(result).deletedSecretKeys).toEqual([KEY]);
+    expect(structured(await tool.handler({ action: "list_secret_keys" })).keys).toEqual([]);
+  });
+
+  test("a key another installed connector still names is kept, and said", async () => {
+    // Two entries, one key: `com.acme/db-query` binds it to a header and
+    // `com.acme/db-direct` authenticates with it. Deleting it on the first
+    // uninstall would break the survivor on its next request, naming a key whose
+    // value is no longer recoverable — worse than the orphan being prevented.
+    const lifecycle = new ConnectorLifecycleManager(new NoopEventSink());
+    const tool = toolFor("ws_tenanta", lifecycle);
+    await tool.handler({ action: "install", entry: entry() });
+    await tool.handler({ action: "install", entry: directEntry() });
+    await tool.handler({ action: "set_secret", key: KEY, value: "postgres://a.acme.test/db" });
+
+    const result = await tool.handler({ action: "uninstall", serverName: SERVER_NAME });
+    expect(result.isError).toBe(false);
+    expect(structured(result).deletedSecretKeys).toEqual([]);
+    expect(structured(result).retainedSecretKeys).toEqual([KEY]);
+    expect(structured(await tool.handler({ action: "list_secret_keys" })).keys?.[0]?.key).toBe(KEY);
+
+    // And once the last referrer goes, so does the key.
+    const last = await tool.handler({ action: "uninstall", serverName: DIRECT_SERVER_NAME });
+    expect(structured(last).deletedSecretKeys).toEqual([KEY]);
+    expect(structured(await tool.handler({ action: "list_secret_keys" })).keys).toEqual([]);
   });
 
   // The complement of the forged-pair test above, and the one that matters more:
