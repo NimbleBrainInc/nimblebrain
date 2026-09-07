@@ -56,7 +56,7 @@ export function LedgerLine({ skills }: { skills: SkillsLoadedContext | undefined
           {entries.map((s) => (
             <div key={s.id} className="ledger-line__row">
               <span className="ledger-line__row-name">{s.name}</span>
-              <span className={`ledger-line__scope ${SCOPE_CLASS[s.scope]}`}>
+              <span className={`ledger-line__scope ${SCOPE_CLASS[s.scope] ?? ""}`}>
                 {skillProvenanceLabel(s)}
               </span>
               <span className="ledger-line__row-detail ledger-line__mono" title={s.reason}>

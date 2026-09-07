@@ -79,9 +79,9 @@ surfaces that display what a past turn did.
   so a body already delivered under an old identity is delivered once more.
   Because the record cannot be rewritten and the comparator will not read two
   spellings, this cost is paid, stated in the release notes, and not hidden.
-- A display surface that maps the scope union to a label is a partial function
-  over what a historical record may hold, so it falls back to the stored string
-  rather than rendering nothing.
+- Every display surface that keys a map on the scope union is a partial function
+  over what a historical record may hold, so each falls back rather than
+  rendering nothing — the label to the stored string, the style class to none.
 - Nothing about the scope is migrable, and nothing needs to be: it exists on
   disk nowhere.
 

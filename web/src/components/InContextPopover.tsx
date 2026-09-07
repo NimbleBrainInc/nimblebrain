@@ -149,7 +149,7 @@ export function InContextPopover({ conversationId }: { conversationId: string | 
                           <li key={s.id} className="ledger-line__row" title={s.reason}>
                             <span className="disclosure__dot" aria-hidden />
                             <span className="ledger-line__row-name">{s.name}</span>
-                            <span className={`ledger-line__scope ${SCOPE_CLASS[s.scope]}`}>
+                            <span className={`ledger-line__scope ${SCOPE_CLASS[s.scope] ?? ""}`}>
                               {skillProvenanceLabel(s)}
                             </span>
                             {/* Bare count, no `tok`: the window section above

@@ -650,6 +650,25 @@ describe("handleList filters", () => {
 		expect(result.automations.every((a) => a.enabled)).toBe(true);
 	});
 
+	// A definition written before a source value left the union still loads: the
+	// store parses without validating and the projection passes the string
+	// through. The CHANGELOG promises this, so it is pinned here rather than
+	// resting on the absence of a validation pass nobody has added yet.
+	test("a definition whose source is outside the union still lists", () => {
+		const ctx = makeCtx();
+		seedAutomations(ctx);
+		const defs = ctx.definitions();
+		defs.get("active-agent")!.source = "retired-source" as never;
+		ctx.save(defs);
+
+		const result = handleList({}, ctx) as {
+			automations: Array<{ id: string; source: string }>;
+			total: number;
+		};
+		expect(result.total).toBe(3);
+		expect(result.automations.find((a) => a.id === "active-agent")?.source).toBe("retired-source");
+	});
+
 	test("filter source: user", () => {
 		const ctx = makeCtx();
 		seedAutomations(ctx);
