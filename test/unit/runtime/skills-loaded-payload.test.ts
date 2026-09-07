@@ -13,7 +13,7 @@ function makeSkill(
   name: string,
   opts: {
     strategy?: "always" | "dynamic";
-    scope?: "org" | "workspace" | "user" | "bundle";
+    scope?: "org" | "workspace" | "user" | "provided";
     sourcePath?: string;
     body?: string;
     vendored?: boolean;

@@ -17,8 +17,8 @@ import { type Static } from "@sinclair/typebox";
  */
 export declare const SkillPriority: import("@sinclair/typebox").TNumber;
 export declare const SkillsListInput: import("@sinclair/typebox").TObject<{
-    scope: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"user" | "bundle" | "org" | "workspace">>;
-    layer: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<3 | 1>>;
+    scope: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"user" | "org" | "workspace" | "provided">>;
+    layer: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<1 | 3>>;
     loading_strategy: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"always" | "dynamic">>;
     tool_affinity: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     status: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"active" | "disabled">>;
@@ -99,7 +99,7 @@ export declare const UseSkillInput: import("@sinclair/typebox").TObject<{
 }>;
 export type UseSkillInput = Static<typeof UseSkillInput>;
 /** Tier a skill lives in. */
-export type SkillScope = "org" | "workspace" | "user" | "bundle";
+export type SkillScope = "org" | "workspace" | "user" | "provided";
 /** Skill layer per the loading-strategy spec. */
 export type SkillLayer = 1 | 3;
 /** Per-skill enablement state. */

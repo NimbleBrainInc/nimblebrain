@@ -3,7 +3,7 @@ import { NumberEnum, StringEnum } from "./_shared.ts";
 
 // ── Shared building blocks ───────────────────────────────────────────────
 
-const ScopeAll = StringEnum(["org", "workspace", "user", "bundle"] as const, {
+const ScopeAll = StringEnum(["org", "workspace", "user", "provided"] as const, {
   description: "Filter to a single tier of the skill catalog.",
 });
 
@@ -285,7 +285,7 @@ const SkillNameInput = Type.Object(
     id: Type.String({
       description:
         "Skill name, exactly as `skills__list` or the Skill Catalog reports it " +
-        "(e.g. `house-voice`, `bundle:<server>:<skill>`). Not a filesystem path.",
+        "(e.g. `house-voice`, `connector:<server>:<skill>`). Not a filesystem path.",
     }),
   },
   { required: ["id"] },
@@ -325,7 +325,7 @@ export type UseSkillInput = Static<typeof UseSkillInput>;
 // truth; both sides import it, drift becomes structurally impossible.
 
 /** Tier a skill lives in. */
-export type SkillScope = "org" | "workspace" | "user" | "bundle";
+export type SkillScope = "org" | "workspace" | "user" | "provided";
 
 /** Skill layer per the loading-strategy spec. */
 export type SkillLayer = 1 | 3;

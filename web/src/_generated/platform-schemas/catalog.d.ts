@@ -20,8 +20,8 @@ export declare const PlatformToolCatalog: {
     readonly skills: {
         readonly list: {
             readonly input: import("@sinclair/typebox").TObject<{
-                scope: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"user" | "bundle" | "org" | "workspace">>;
-                layer: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<3 | 1>>;
+                scope: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"user" | "org" | "workspace" | "provided">>;
+                layer: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<1 | 3>>;
                 loading_strategy: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"always" | "dynamic">>;
                 tool_affinity: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
                 status: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"active" | "disabled">>;
@@ -195,7 +195,7 @@ export declare const PlatformToolCatalog: {
         readonly list: {
             readonly input: import("@sinclair/typebox").TObject<{
                 enabled: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TBoolean>;
-                source: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"user" | "agent" | "bundle">>;
+                source: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"user" | "agent">>;
                 limit: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TInteger>;
                 cursor: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
             }>;

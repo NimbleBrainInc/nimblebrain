@@ -15,9 +15,9 @@
  *
  * `manifest` is the persistent automation definition; `body` is the prompt
  * sent to POST /v1/chat on each run — the analog of a skill's markdown
- * body. Operator-only fields (`source`, `bundleName`) are intentionally
- * absent from the LLM-facing schema; they live on the stored type and are
- * set by the runtime, never by an authoring caller.
+ * body. The operator-only field `source` is intentionally absent from the
+ * LLM-facing schema; it lives on the stored type and is set by the runtime,
+ * never by an authoring caller.
  */
 import { type Static } from "@sinclair/typebox";
 export declare const AutomationsCreateInput: import("@sinclair/typebox").TObject<{
@@ -76,7 +76,7 @@ export declare const AutomationsDeleteInput: import("@sinclair/typebox").TObject
 export type AutomationsDeleteInput = Static<typeof AutomationsDeleteInput>;
 export declare const AutomationsListInput: import("@sinclair/typebox").TObject<{
     enabled: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TBoolean>;
-    source: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"user" | "agent" | "bundle">>;
+    source: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"user" | "agent">>;
     limit: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TInteger>;
     cursor: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
 }>;
@@ -126,7 +126,7 @@ export interface AutomationSummary {
     description?: string;
     schedule: string;
     enabled: boolean;
-    source: "user" | "agent" | "bundle";
+    source: "user" | "agent";
     runCount: number;
     lastRunStatus: AutomationLastRunStatus | null;
     lastRunAt: string | null;
@@ -254,8 +254,7 @@ export interface AutomationStatusDetail {
     schedule: AutomationScheduleSpec;
     scheduleHuman: string;
     enabled: boolean;
-    source: "user" | "agent" | "bundle";
-    bundleName?: string;
+    source: "user" | "agent";
     ownerId?: string;
     workspaceId?: string;
     model?: string | null;

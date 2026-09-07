@@ -570,7 +570,12 @@ export interface SkillActivatedEvent {
   toolCallId: string;
   /** The activated skill's catalog name. */
   skillName: string;
-  /** Scope label for provenance / telemetry (`org` / `workspace` / `user` / `connector` / `connector`). */
+  /**
+   * Scope label for provenance / telemetry: the skill's storage tier
+   * (`org` / `workspace` / `user` / `provided`), or `connector` for a curated
+   * overlay, which names the connector it is bound to. Display only — the
+   * delivery-dedup read keys on `skillName`. See ADR-0034.
+   */
   scope: string;
   /** Approximate tokens of the delivered (capped) body. */
   tokens: number;

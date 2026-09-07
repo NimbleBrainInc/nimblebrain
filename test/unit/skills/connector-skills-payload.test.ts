@@ -38,7 +38,7 @@ describe("skills.loaded payload — connector skill entry", () => {
     // this came from.
     expect(entry.id).toBe("skill://collateral/SKILL.md");
     // `scope: connector` so web (amber chip) and loading_log filtering work.
-    expect(entry.scope).toBe("bundle");
+    expect(entry.scope).toBe("provided");
     // Layer 3 — selected via tool affinity, not vendored Layer 1.
     expect(entry.layer).toBe(3);
     // Provenance: `tool_affinity` is the observable label

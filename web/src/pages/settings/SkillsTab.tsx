@@ -105,7 +105,7 @@ function headerDescription(lockedScope: "org" | "user" | undefined, isWorkspaceS
 // data, so org/profile (single-scope fetches) collapse to one tier and drop the
 // filter, while the workspace fetch (unscoped) shows the full stack.
 const TIER_ORDER: Record<WritableScope, Scope[]> = {
-  workspace: ["workspace", "user", "org", "bundle"],
+  workspace: ["workspace", "user", "org", "provided"],
   org: ["org"],
   user: ["user"],
 };
@@ -115,7 +115,7 @@ const SEGMENT_LABEL: Record<Scope, string> = {
   workspace: "Yours",
   user: "You",
   org: "Org",
-  bundle: "System",
+  provided: "System",
 };
 
 /**

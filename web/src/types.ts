@@ -315,7 +315,7 @@ export interface LlmDoneEvent {
 }
 
 /** Which tier a skill lives in — mirrors the server `SkillScope`. */
-export type LedgerSkillScope = "org" | "workspace" | "user" | "bundle";
+export type LedgerSkillScope = "org" | "workspace" | "user" | "provided";
 
 /**
  * One skill in a turn's `skills.loaded` telemetry, projected to what the

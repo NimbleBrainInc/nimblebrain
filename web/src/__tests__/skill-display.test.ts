@@ -19,23 +19,30 @@ import {
 
 describe("skillProvenanceLabel", () => {
   test("names the publishing connector when there is one", () => {
-    expect(skillProvenanceLabel({ scope: "bundle", connector: "acme-mcp" })).toBe("acme-mcp");
+    expect(skillProvenanceLabel({ scope: "provided", connector: "acme-mcp" })).toBe("acme-mcp");
   });
 
-  // Runs recorded before `connector` existed carry the tier and nothing else.
-  // "connector" is still the honest word for that tier; it must not print the
-  // wire value `bundle`.
-  test("falls back to the tier, which reads `connector` for the bundle tier", () => {
-    expect(skillProvenanceLabel({ scope: "bundle" })).toBe("connector");
+  // A row recorded before the entry carried a `connector` field has the tier
+  // and nothing else. In the ledger that tier can only be a connector's own
+  // guidance, so it reads "connector" rather than the stored tier name.
+  test("falls back to the tier, which reads `connector` for the provided tier", () => {
+    expect(skillProvenanceLabel({ scope: "provided" })).toBe("connector");
     expect(skillProvenanceLabel({ scope: "org" })).toBe("org");
     expect(skillProvenanceLabel({ scope: "workspace" })).toBe("workspace");
     expect(skillProvenanceLabel({ scope: "user" })).toBe("user");
   });
 
-  test("no label or class anywhere says `bundle`", () => {
-    expect(Object.values(SCOPE_LABEL)).not.toContain("bundle");
-    expect(Object.values(SCOPE_CLASS)).not.toContain("ledger-scope--bundle");
-    expect(SCOPE_CLASS.bundle).toBe("ledger-scope--connector");
+  // A recorded event may name a tier this build's union does not list — the
+  // runtime never rewrites history to match a later vocabulary (ADR-0034).
+  // The row reads as what it was, not as a blank.
+  test("falls back to the stored string for a tier the union no longer lists", () => {
+    expect(skillProvenanceLabel({ scope: "retired-tier" as never })).toBe("retired-tier");
+  });
+
+  test("no label or class exposes the tier's wire name", () => {
+    expect(Object.values(SCOPE_LABEL)).not.toContain("provided");
+    expect(Object.values(SCOPE_CLASS)).not.toContain("ledger-scope--provided");
+    expect(SCOPE_CLASS.provided).toBe("ledger-scope--connector");
   });
 });
 

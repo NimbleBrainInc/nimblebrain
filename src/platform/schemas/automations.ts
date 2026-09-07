@@ -11,9 +11,9 @@
  *
  * `manifest` is the persistent automation definition; `body` is the prompt
  * sent to POST /v1/chat on each run — the analog of a skill's markdown
- * body. Operator-only fields (`source`, `bundleName`) are intentionally
- * absent from the LLM-facing schema; they live on the stored type and are
- * set by the runtime, never by an authoring caller.
+ * body. The operator-only field `source` is intentionally absent from the
+ * LLM-facing schema; it lives on the stored type and is set by the runtime,
+ * never by an authoring caller.
  */
 
 import { type Static, Type } from "@sinclair/typebox";
@@ -135,7 +135,7 @@ export type AutomationsDeleteInput = Static<typeof AutomationsDeleteInput>;
 export const AutomationsListInput = Type.Object({
   enabled: Type.Optional(Type.Boolean({ description: "Filter by enabled status." })),
   source: Type.Optional(
-    StringEnum(["user", "agent", "bundle"] as const, { description: "Filter by source." }),
+    StringEnum(["user", "agent"] as const, { description: "Filter by source." }),
   ),
   limit: Type.Optional(
     // Default/cap mirror AUTOMATIONS_LIST_DEFAULT_LIMIT / AUTOMATIONS_LIST_MAX_LIMIT
@@ -255,7 +255,7 @@ export interface AutomationSummary {
   description?: string;
   schedule: string;
   enabled: boolean;
-  source: "user" | "agent" | "bundle";
+  source: "user" | "agent";
   runCount: number;
   lastRunStatus: AutomationLastRunStatus | null;
   lastRunAt: string | null;
@@ -387,8 +387,7 @@ export interface AutomationStatusDetail {
   schedule: AutomationScheduleSpec;
   scheduleHuman: string;
   enabled: boolean;
-  source: "user" | "agent" | "bundle";
-  bundleName?: string;
+  source: "user" | "agent";
   ownerId?: string;
   workspaceId?: string;
   model?: string | null;

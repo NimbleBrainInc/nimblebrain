@@ -367,15 +367,15 @@ describe("composeSystemPrompt — core vs user context layering", () => {
     // reach the raw core identity layer — server-authored content is contained in
     // `<context-skill>` regardless of priority (the prompt-injection guard in
     // `partitionContextSkills`). A tenant-authored priority-0 skill DOES render raw
-    // in Layer 0; the ONLY difference here is `scope: "bundle"`.
+    // in Layer 0; the ONLY difference here is `scope: "provided"`.
     const connectorAlways: Skill = {
       manifest: {
-        name: "bundle:evil:override",
+        name: "connector:evil:override",
         description: "",
         loadingStrategy: "always",
         priority: 0, // ≤ CORE_PRIORITY_THRESHOLD — would be raw Layer 0 if not connector-scoped
         status: "active",
-        scope: "bundle",
+        scope: "provided",
       },
       body: "CONNECTOR_INJECTION_MARKER",
       sourcePath: "skill://override/SKILL.md",
@@ -397,7 +397,7 @@ describe("composeSystemPrompt — core vs user context layering", () => {
 
   it("a tenant-authored (non-connector) priority-0 context skill DOES render raw in Layer 0", () => {
     // The contrast case that proves the guard keys on `scope`, not priority: an
-    // identical skill WITHOUT `scope: "bundle"` renders raw as core identity.
+    // identical skill WITHOUT `scope: "provided"` renders raw as core identity.
     const tenantCore = makeContextSkill("soul", 0, "TENANT_CORE_MARKER");
     const { layers } = composeSystemPromptTraced([tenantCore]);
     const coreLayer = layers.find(
@@ -903,12 +903,12 @@ describe("composeSystemPrompt — matched-skill de-dup identity", () => {
   function publishedSkill(server: string, skillName: string, body: string): Skill {
     return {
       manifest: {
-        name: `bundle:${server}:${skillName}`,
+        name: `connector:${server}:${skillName}`,
         description: "",
         loadingStrategy: "dynamic",
         priority: 60,
         status: "active",
-        scope: "bundle",
+        scope: "provided",
         toolAffinity: [`${server}__*`],
       },
       body,
@@ -920,7 +920,7 @@ describe("composeSystemPrompt — matched-skill de-dup identity", () => {
     return {
       name: skill.manifest.name,
       body: skill.body,
-      scope: "bundle",
+      scope: "provided",
       sourcePath: skill.sourcePath as string,
       loadedBy: "tool_affinity",
       reason: "tool-affinity matched",

@@ -125,8 +125,8 @@ not in the LLM-facing schema.
 
 EXCLUDE from the LLM-facing schema:
 
-- Source-of-truth fields the runtime sets (`source`, `bundleName`,
-  `ownerId`, `workspaceId`, `createdAt`).
+- Source-of-truth fields the runtime sets (`source`, `ownerId`,
+  `workspaceId`, `createdAt`).
 - Literal-tool-name affinity strings (e.g. `tool-affinity` globs). Usually
   leaky — they couple a tool's input to connector identities that change.
   (The skills tool is the deliberate exception: a skill author genuinely
@@ -338,7 +338,7 @@ passed, production stayed broken. Match the production type strictly.
 | Bare `{ type: "object" }` | Model invents structure; serializes nested objects as JSON strings |
 | `name` at root, `description` in manifest | Splits identity; model packs everything into one place and gets it wrong |
 | `allowedTools: string[]` | Leaky abstraction — couples skill/automation identity to connector names that change |
-| `source`, `bundleName`, `ownerId` in input schema | Runtime fields the LLM has no business setting |
+| `source`, `ownerId` in input schema | Runtime fields the LLM has no business setting |
 | Designed-but-not-enforced placeholder fields | Confuses callers; schema lies about what's load-bearing |
 | Multiple casings accepted in handler | Hides the contract; one casing won, document it |
 | Defensive `validateAutomationFields(args)` after schema validation | Validator already ran; redundant code that drifts from the schema |

@@ -23,7 +23,7 @@ export interface AutomationDetail {
   schedule: Record<string, unknown>;
   scheduleHuman: string;
   enabled: boolean;
-  source: "user" | "agent" | "bundle";
+  source: "user" | "agent";
   model?: string | null;
   maxIterations?: number;
   maxInputTokens?: number;

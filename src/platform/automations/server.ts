@@ -335,10 +335,10 @@ function validateNumericLimits(args: ValidatableAutomationFields): void {
 /**
  * Strict input shape for `automations__create`. The validator has already
  * enforced shape — handler reads typed fields directly. Operator-only
- * fields (`source`, `bundleName`, `allowedTools`) are NOT in this shape;
- * the LLM-facing handler hardcodes `source: "agent"` and never sets the
- * others. Internal callers (CLI, lifecycle) bypass this handler and call
- * `createAutomation` from `domain.ts` directly with the full shape.
+ * fields (`source`, `allowedTools`) are NOT in this shape; the LLM-facing
+ * handler hardcodes `source: "agent"` and never sets the others. An
+ * internal caller bypasses this handler and calls `createAutomation` from
+ * `domain.ts` directly with the full shape.
  */
 interface CreateInput {
   manifest: {
@@ -375,8 +375,8 @@ export function handleCreate(args: Record<string, unknown>, ctx: ToolContext): o
       tokenBudget: manifest.tokenBudget,
       enabled: manifest.enabled,
       // LLM-facing path: stamp `agent` source and derive ownership from
-      // request context. Operator fields (`bundleName`, `allowedTools`)
-      // are intentionally not reachable from this surface.
+      // request context. `allowedTools` is intentionally not reachable
+      // from this surface.
       source: "agent",
       ownerId: ctx.currentUserId,
       workspaceId: ctx.currentWorkspaceId,

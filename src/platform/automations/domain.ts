@@ -3,21 +3,18 @@
  *
  * The LLM-facing tool handlers (`handleCreate` / `handleUpdate` /
  * `handleDelete` in `server.ts`) are thin schema-translators that
- * delegate here. Internal callers — the connector lifecycle
- * (connector-contributed schedules) — call this
- * module directly. No callers go through the LLM-facing schema except
+ * delegate here. An internal caller that needs the operator fields calls
+ * this module directly. No callers go through the LLM-facing schema except
  * the LLM itself.
  *
  * Why split this out:
  *
- *   - The LLM-facing schema must be minimal (no `source`, no `bundleName`,
- *     no `allowedTools`) — operator/runtime fields only.
- *   - But internal callers legitimately need to set those fields. The
- *     connector install path must stamp `source: "bundle"` and `bundleName`,
- *     otherwise uninstall can't find what to clean up.
+ *   - The LLM-facing schema must be minimal (no `source`, no
+ *     `allowedTools`) — operator/runtime fields only.
+ *   - But an internal caller legitimately needs to set those fields.
  *   - Without this split, internal callers either (a) pass the wrong
  *     shape and silently no-op, or (b) sneak operator fields back into
- *     the LLM-facing schema. Both happened in QA review of #127.
+ *     the LLM-facing schema.
  *
  * The convention for the wider codebase: any time the same domain has
  * both LLM-facing and internal callers, factor a domain module that
@@ -97,10 +94,9 @@ function resetBudgetWindowIfChanged(
 
 /**
  * Full create input for the domain. Includes operator-only fields the
- * LLM-facing schema does NOT expose: `source`, `bundleName`,
- * `allowedTools`, `ownerId`, `workspaceId`. The tool handler hardcodes
- * `source: "agent"` and derives ownership from request context; the
- * lifecycle layer sets `source: "bundle"` plus `bundleName`.
+ * LLM-facing schema does NOT expose: `source`, `allowedTools`, `ownerId`,
+ * `workspaceId`. The tool handler hardcodes `source: "agent"` and derives
+ * ownership from request context.
  */
 export interface DomainCreateInput {
   name: string;
@@ -116,7 +112,6 @@ export interface DomainCreateInput {
   enabled?: boolean;
   // Operator/runtime fields:
   source?: AutomationSource;
-  bundleName?: string;
   allowedTools?: string[];
   ownerId?: string;
   workspaceId?: string;
@@ -201,7 +196,6 @@ export function createAutomation(
     tokenBudget: input.tokenBudget,
     enabled: input.enabled ?? true,
     source: input.source ?? "agent",
-    bundleName: input.bundleName,
     createdAt: now,
     updatedAt: now,
     runCount: 0,

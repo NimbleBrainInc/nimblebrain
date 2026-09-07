@@ -154,7 +154,7 @@ describe("skill lifecycle (end-to-end)", () => {
 	});
 
 	it("skills__update on a bare/garbage id returns the unrecognized-id error, not the connector error", async () => {
-		// Regression: scopeOfPath used to fall through to "bundle" for any
+		// Regression: scopeOfPath used to fall through to "provided" for any
 		// path that didn't sit under workspaces/users/skills. That meant
 		// passing a bare name like "dl-production-memory" got back the
 		// misleading "Connector (Layer 1) skills are vendored" error, which

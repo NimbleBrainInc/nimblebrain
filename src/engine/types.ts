@@ -671,7 +671,7 @@ export interface SkillsLoadedEntry {
    * carried `3`; the read path treats this additively so they still parse.
    */
   layer: 0 | 3 | 4;
-  scope: "org" | "workspace" | "user" | "bundle";
+  scope: "org" | "workspace" | "user" | "provided";
   version: string;
   tokens: number;
   /** SHA-256 hex of the skill body composed into the prompt. */

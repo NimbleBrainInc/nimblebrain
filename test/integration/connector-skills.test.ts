@@ -14,7 +14,7 @@
  *
  * Then runs a chat with NO `appContext` — the failing production case — and
  * verifies the synthesized skill flows through `selectLayer3Skills` and appears
- * in the `skills.loaded` payload with `scope: "bundle"` and
+ * in the `skills.loaded` payload with `scope: "provided"` and
  * `loadedBy: "tool_affinity"`.
  */
 
@@ -31,7 +31,7 @@ import { createEchoModel } from "../helpers/echo-model.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
 
 /** The synthesized name for the fixture connector's skill. */
-const CONNECTOR_SKILL_NAME = "bundle:ai-nimblebrain-test-mcp:test";
+const CONNECTOR_SKILL_NAME = "connector:ai-nimblebrain-test-mcp:test";
 
 const SKILL_BODY = `---
 name: test
@@ -252,7 +252,7 @@ describe("connector-skill adapter — end-to-end", () => {
       (s) => s.id === "skill://test/SKILL.md",
     );
     expect(connectorEntry).toBeDefined();
-    expect(connectorEntry?.scope).toBe("bundle");
+    expect(connectorEntry?.scope).toBe("provided");
     expect(connectorEntry?.loadedBy).toBe("tool_affinity");
     expect(connectorEntry?.reason).toContain("ai-nimblebrain-test-mcp__*");
   });
@@ -514,7 +514,7 @@ describe("connector-skill adapter — mid-turn tool promotion", () => {
       | { skillName: string; skillBody: string; scope: string; toolName: string }
       | undefined;
     expect(injected).toBeDefined();
-    expect(injected?.skillName).toBe("bundle:ai-nimblebrain-test-mcp:test");
+    expect(injected?.skillName).toBe("connector:ai-nimblebrain-test-mcp:test");
     expect(injected?.skillBody).toContain("How to use the test server");
 
     // And it rides the conversation history as a `<connector-skill>` block —
@@ -733,7 +733,7 @@ describe("connector-skill adapter — honors declared loading-strategy", () => {
     const dynamicEntry = skillsLoaded?.skills.find(
       (s) => s.id === "skill://dynamic-usage/SKILL.md",
     );
-    expect(dynamicEntry?.scope).toBe("bundle");
+    expect(dynamicEntry?.scope).toBe("provided");
     expect(dynamicEntry?.loadedBy).toBe("tool_affinity");
     const alwaysEntry = skillsLoaded?.skills.find((s) => s.id === "skill://always-guide/SKILL.md");
     expect(alwaysEntry?.loadedBy).toBe("always");

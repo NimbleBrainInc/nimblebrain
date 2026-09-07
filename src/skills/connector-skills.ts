@@ -55,7 +55,7 @@ import matter from "gray-matter";
 import type { Skill, SkillLoadingStrategy, SkillScope } from "./types.ts";
 
 /** Scope tag used on synthesized server skills. */
-export const PUBLISHED_SKILL_SCOPE: SkillScope = "bundle";
+export const PUBLISHED_SKILL_SCOPE: SkillScope = "provided";
 
 /**
  * Default priority for a synthesized server skill that declares none. Mid-range —
@@ -74,7 +74,7 @@ const DEFAULT_CONNECTOR_LOADING_STRATEGY: SkillLoadingStrategy = "dynamic";
  * names match `SKILL_NAME_PATTERN` (lowercase alphanumerics and hyphens, no
  * colons), so a name carrying this prefix can only have been built here.
  */
-const CONNECTOR_SKILL_NAME_PREFIX = "bundle:";
+const CONNECTOR_SKILL_NAME_PREFIX = "connector:";
 
 /** Manifest name (identity) for a skill published by `connector`. */
 export function connectorSkillManifestName(connector: string, skillName: string): string {
@@ -271,7 +271,7 @@ export interface ConnectorSkillInput {
  *
  * Observability contract: when a `dynamic` skill is selected by
  * `selectLayer3Skills`, `buildSkillsLoadedPayload` emits it on the
- * `skills.loaded` event with `id = <uri>`, `scope = "bundle"`,
+ * `skills.loaded` event with `id = <uri>`, `scope = "provided"`,
  * `loadedBy = "tool_affinity"` — byte-identical in payload structure to any
  * filesystem-sourced Layer 3 skill with the same scope / strategy, plus
  * `name` / `connector` split out of the manifest name so a reader gets the

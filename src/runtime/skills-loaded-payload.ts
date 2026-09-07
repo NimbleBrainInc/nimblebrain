@@ -108,7 +108,7 @@ export function buildSkillsLoadedPayload(selected: SelectedSkill[]): SkillsLoade
       name: published?.name ?? s.skill.manifest.name,
       ...(published ? { connector: published.connector } : {}),
       layer: layerForMechanism(s.loadedBy),
-      scope: (s.skill.manifest.scope ?? "org") as "org" | "workspace" | "user" | "bundle",
+      scope: (s.skill.manifest.scope ?? "org") as "org" | "workspace" | "user" | "provided",
       version: sourcePath ? readSkillMtime(sourcePath) : "",
       tokens,
       contentHash: hashSkillBody(body),

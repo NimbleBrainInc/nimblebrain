@@ -253,7 +253,7 @@ export interface OverlayLayers {
 export interface Layer3SkillEntry {
   name: string;
   body: string;
-  scope: "org" | "workspace" | "user" | "bundle";
+  scope: "org" | "workspace" | "user" | "provided";
   sourcePath?: string;
   /** The loading mechanism, for the provenance annotation (display only). */
   loadedBy: LoadedBy;
@@ -443,7 +443,7 @@ function taskIdentityLayers(mode: ComposeMode): PendingLayer[] {
  * `provenance.origin: "vendored"`, stamped at load by `markVendored` on the
  * platform's own source-tree dirs — a signal a third party cannot forge
  * (`synthesizeConnectorSkill` builds connector manifests from scratch and never sets
- * provenance). `stampDerivedScope` also labels them `scope: "bundle"` for the
+ * provenance). `stampDerivedScope` also labels them `scope: "provided"` for the
  * mutation UI (they're immutable), but trust follows provenance, not that
  * mutability label: a vendored skill is first-party identity, so it renders raw
  * in Layer 0 like it's meant to, never inside `<context-skill>`.
@@ -453,7 +453,7 @@ function partitionContextSkills(contextSkills: Skill[]): { core: Skill[]; user: 
   const user: Skill[] = [];
   for (const ctx of contextSkills) {
     const isVendored = ctx.manifest.provenance?.origin === "vendored";
-    const isConnectorAuthored = ctx.manifest.scope === "bundle" && !isVendored;
+    const isConnectorAuthored = ctx.manifest.scope === "provided" && !isVendored;
     if (!isConnectorAuthored && ctx.manifest.priority <= CORE_PRIORITY_THRESHOLD) {
       core.push(ctx);
     } else {
