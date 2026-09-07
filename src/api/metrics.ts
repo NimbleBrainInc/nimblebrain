@@ -344,9 +344,7 @@ const SAFE_SOURCE = /^[a-z0-9_.-]+$/;
  */
 export function recordConnectorCrash(source: string | undefined, remote: boolean): void {
   const safe = source && SAFE_SOURCE.test(source) ? source : "other";
-  const labels = { source: safe, remote: remote ? "true" : "false" };
-  connectorCrashedTotal.inc(labels);
-  retiredBundleCrashedTotal.inc(labels);
+  connectorCrashedTotal.inc({ source: safe, remote: remote ? "true" : "false" });
 }
 
 /**
@@ -382,56 +380,21 @@ export const connectorUnhealthy = new Gauge({
   labelNames: ["source"] as const,
   registers: [metricsRegistry],
   collect() {
-    collectUnhealthy(this);
-  },
-});
-
-/**
- * Fill an unhealthy gauge from the live HealthMonitor. Runs at scrape time
- * (prom-client invokes the owning `collect()` in `.get()`). Resets first so a
- * source that has since recovered drops out of the series entirely (the gauge is
- * absent for healthy sources), letting the alert resolve.
- */
-function collectUnhealthy(gauge: Gauge<"source">): void {
-  gauge.reset();
-  const status = healthStatusProvider?.() ?? [];
-  for (const b of status) {
-    // Both involuntary-down states assert, so the series stays continuously 1
-    // across the whole burst→cooldown→burst cycle (the `for: 10m` alert needs
-    // that continuity): `restarting` (active backoff burst) and `cooldown`
-    // (slow re-probe between bursts). `healthy` is up; `dead` is a DELIBERATE
-    // teardown, not an outage.
-    if (b.state !== "restarting" && b.state !== "cooldown") continue;
-    const safe = b.name && SAFE_SOURCE.test(b.name) ? b.name : "other";
-    gauge.set({ source: safe }, 1);
-  }
-}
-
-/**
- * The `nb_bundle_*` spelling of the two series above, emitted alongside them and
- * carrying identical values. `bundle` names nothing in this runtime; `connector`
- * does. The duplicate exists only so the alert rule and the Grafana panels that
- * read these can be repointed at the new names in a separate release — renaming
- * and repointing together would leave the down-alert reading an absent series,
- * which is indistinguishable from "no connectors are down".
- *
- * These two declarations and this comment are deleted once every consumer reads
- * `nb_connector_*`. Nothing else should be added to them.
- */
-export const retiredBundleCrashedTotal = new Counter({
-  name: "nb_bundle_crashed_total",
-  help: "MCP connector crashes detected by the health monitor, by source and transport kind.",
-  labelNames: ["source", "remote"] as const,
-  registers: [metricsRegistry],
-});
-
-export const retiredBundleUnhealthy = new Gauge({
-  name: "nb_bundle_unhealthy",
-  help: 'MCP connectors currently down involuntarily (HealthMonitor state "restarting" or "cooldown"), by source. 1 = down.',
-  labelNames: ["source"] as const,
-  registers: [metricsRegistry],
-  collect() {
-    collectUnhealthy(this);
+    // Runs at scrape time (prom-client invokes this in `.get()`). Reset so a
+    // source that has since recovered drops out of the series entirely (the
+    // gauge is absent for healthy sources), letting the alert resolve.
+    this.reset();
+    const status = healthStatusProvider?.() ?? [];
+    for (const connector of status) {
+      // Both involuntary-down states assert, so the series stays continuously 1
+      // across the whole burst→cooldown→burst cycle (the `for: 10m` alert needs
+      // that continuity): `restarting` (active backoff burst) and `cooldown`
+      // (slow re-probe between bursts). `healthy` is up; `dead` is a DELIBERATE
+      // teardown, not an outage.
+      if (connector.state !== "restarting" && connector.state !== "cooldown") continue;
+      const safe = connector.name && SAFE_SOURCE.test(connector.name) ? connector.name : "other";
+      this.set({ source: safe }, 1);
+    }
   },
 });
 

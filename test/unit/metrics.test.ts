@@ -5,8 +5,6 @@ import type { Counter } from "prom-client";
 import {
   connectorCrashedTotal,
   connectorUnhealthy,
-  retiredBundleCrashedTotal,
-  retiredBundleUnhealthy,
   llmCallsTotal,
   llmErrorsTotal,
   llmInputTokensEstimatedTotal,
@@ -309,32 +307,6 @@ describe("connector unhealthy gauge", () => {
   it("test_connector_unhealthy_gauge_unsafe_source_buckets_to_other", async () => {
     registerConnectorHealthGauge(() => status({ name: "Weird Name!! /etc", state: "cooldown" }));
     expect(await readGauge("other")).toBe(1);
-  });
-});
-
-describe("retired nb_bundle_* series", () => {
-  // The `nb_bundle_*` duplicates carry identical values to `nb_connector_*` so a
-  // consumer can be repointed in its own release. If they ever diverge, the
-  // alert and the dashboard disagree about whether a connector is down.
-  afterAll(() => registerConnectorHealthGauge(() => []));
-
-  it("test_retired_crash_counter_tracks_the_connector_counter", async () => {
-    const labels = { source: "com-dropbox-mcp", remote: "true" };
-    const beforeConnector = await read(connectorCrashedTotal, labels);
-    const beforeRetired = await read(retiredBundleCrashedTotal, labels);
-    recordConnectorCrash("com-dropbox-mcp", true);
-    expect((await read(connectorCrashedTotal, labels)) - beforeConnector).toBe(1);
-    expect((await read(retiredBundleCrashedTotal, labels)) - beforeRetired).toBe(1);
-  });
-
-  it("test_retired_unhealthy_gauge_tracks_the_connector_gauge", async () => {
-    registerConnectorHealthGauge(() => [
-      { name: "ai-granola-mcp", state: "cooldown", uptime: null, restartCount: 0 },
-    ]);
-    const seriesOf = async (gauge: typeof connectorUnhealthy) =>
-      (await gauge.get()).values.map((s) => [s.labels.source, s.value]);
-    expect(await seriesOf(retiredBundleUnhealthy)).toEqual(await seriesOf(connectorUnhealthy));
-    expect(await seriesOf(connectorUnhealthy)).toEqual([["ai-granola-mcp", 1]]);
   });
 });
 
