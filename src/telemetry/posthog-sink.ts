@@ -53,8 +53,8 @@ export class PostHogEventSink implements EventSink {
     "run.start": (data, runId) => this.captureRunStart(data, runId),
     "run.done": (data, runId) => this.captureRunDone(data, runId),
     "run.error": (data, runId) => this.captureRunError(data, runId),
-    "bundle.installed": (data) => this.captureConnectorInstalled(data),
-    "bundle.uninstalled": (data) => this.captureConnectorUninstalled(data),
+    "connector.installed": (data) => this.captureConnectorInstalled(data),
+    "connector.uninstalled": (data) => this.captureConnectorUninstalled(data),
   };
 
   constructor(telemetry: TelemetryManager) {
@@ -149,16 +149,16 @@ export class PostHogEventSink implements EventSink {
     if (runId) this.runs.delete(runId);
   }
 
-  /** Capture bundle.installed with UI presence. Every connector is remote. */
+  /** Capture connector.installed with UI presence. Every connector is remote. */
   private captureConnectorInstalled(data: Record<string, unknown>): void {
-    this.telemetry.capture("bundle.installed", {
+    this.telemetry.capture("connector.installed", {
       source: "remote",
       has_ui: Boolean(data.ui),
     });
   }
 
-  /** Capture bundle.uninstalled. */
+  /** Capture connector.uninstalled. */
   private captureConnectorUninstalled(_data: Record<string, unknown>): void {
-    this.telemetry.capture("bundle.uninstalled", { source: "remote" });
+    this.telemetry.capture("connector.uninstalled", { source: "remote" });
   }
 }

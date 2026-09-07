@@ -76,8 +76,8 @@ describe("ConnectionState type", () => {
 describe("EngineEventType", () => {
 	it("includes all new event types", () => {
 		const newEvents: EngineEventType[] = [
-			"bundle.installed",
-			"bundle.uninstalled",
+			"connector.installed",
+			"connector.uninstalled",
 			"data.changed",
 			"tool.progress",
 		];

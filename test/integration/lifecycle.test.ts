@@ -175,7 +175,7 @@ describe("ConnectorLifecycleManager — uninstall", () => {
 
 		expect(registry.hasSource(SERVER_NAME)).toBe(false);
 		expect(JSON.parse(readFileSync(configPath, "utf-8")).bundles).toHaveLength(0);
-		expect(eventTypes(sink)).toContain("bundle.uninstalled");
+		expect(eventTypes(sink)).toContain("connector.uninstalled");
 		expect(lifecycle.getInstance(SERVER_NAME, WS)).toBeUndefined();
 	}, 15_000);
 

@@ -81,7 +81,7 @@ describe("events-client — singleton transport", () => {
   test("N subscribes across types share the same connection", () => {
     subscribe("data.changed", () => {});
     subscribe("config.changed", () => {});
-    subscribe("bundle.installed", () => {});
+    subscribe("connector.installed", () => {});
     subscribe("data.changed", () => {}); // second handler for same type
     expect(connectCalls).toBe(1);
     expect(__internal__.subscriberCount()).toBe(4);

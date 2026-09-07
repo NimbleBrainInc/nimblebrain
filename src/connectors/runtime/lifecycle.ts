@@ -465,7 +465,7 @@ export class ConnectorLifecycleManager {
    * 1. Stop MCP server
    * 2. Remove source from ToolRegistry
    * 3. Remove entry from nimblebrain.json
-   * 4. Emit bundle.uninstalled
+   * 4. Emit connector.uninstalled
    * 5. Data is NOT deleted
    */
   async uninstall(nameOrPath: string, registry: ToolRegistry, wsId: string): Promise<void> {
@@ -516,7 +516,7 @@ export class ConnectorLifecycleManager {
 
     // Step 5 — Emit event (data NOT deleted — step 6)
     this.eventSink.emit({
-      type: "bundle.uninstalled",
+      type: "connector.uninstalled",
       data: { serverName, connectorName: nameOrPath, wsId },
     });
   }
@@ -1453,12 +1453,12 @@ export class ConnectorLifecycleManager {
   /**
    * Side-effect-only "I just installed this connector" notification —
    * registers UI placements with the platform's placement registry and
-   * fires the `bundle.installed` event so SSE-subscribed clients
+   * fires the `connector.installed` event so SSE-subscribed clients
    * (e.g. the web shell's sidebar) refresh without a page reload.
    *
    * Separate from `seedInstance` because seedInstance is also called
    * at boot for already-installed connectors, and we don't want boot to
-   * fire `bundle.installed` events (telemetry would double-count, and
+   * fire `connector.installed` events (telemetry would double-count, and
    * no SSE clients exist yet anyway). Install handlers call this
    * explicitly after their seed; the boot path does not.
    *
@@ -1966,7 +1966,7 @@ export class ConnectorLifecycleManager {
     }
     this.registerPlacements(serverName, instance.ui, wsId);
     this.eventSink.emit({
-      type: "bundle.installed",
+      type: "connector.installed",
       data: {
         wsId,
         serverName,
