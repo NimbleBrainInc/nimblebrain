@@ -76,7 +76,7 @@ describe("ConnectorLifecycleManager.tryRecoverSource", () => {
   let registry: ToolRegistry;
 
   beforeEach(() => {
-    lifecycle = new ConnectorLifecycleManager(new CapturingSink(), undefined);
+    lifecycle = new ConnectorLifecycleManager(new CapturingSink());
     registry = new ToolRegistry();
     const registries = new Map([[WS, registry]]);
     lifecycle.bindWorkspaceRegistries(() => registries);

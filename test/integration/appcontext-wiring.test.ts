@@ -67,7 +67,6 @@ describe("Runtime.chat() appContext wiring", () => {
 		const runtime = await Runtime.start({
 			workDir: freshWorkDir(),
 			model: { provider: "custom", adapter },
-			noDefaultBundles: true,
 			logging: { disabled: true },
 		});
 
@@ -101,7 +100,6 @@ describe("Runtime.chat() appContext wiring", () => {
 		const runtime = await Runtime.start({
 			workDir: freshWorkDir(),
 			model: { provider: "custom", adapter },
-			noDefaultBundles: true,
 			logging: { disabled: true },
 		});
 
@@ -120,7 +118,6 @@ describe("Runtime.chat() appContext wiring", () => {
 		const runtime = await Runtime.start({
 			workDir: freshWorkDir(),
 			model: { provider: "custom", adapter },
-			noDefaultBundles: true,
 			logging: { disabled: true },
 		});
 

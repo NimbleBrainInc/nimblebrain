@@ -43,7 +43,6 @@ beforeAll(async () => {
   runtime = await Runtime.start({
     workDir,
     model: { provider: "custom", adapter: createEchoModel() },
-    noDefaultBundles: true,
     logging: { disabled: true },
   });
 

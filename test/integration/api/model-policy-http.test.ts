@@ -25,7 +25,6 @@ beforeAll(async () => {
     // clears the gate then fails against a placeholder key — which is fine
     // here: every assertion is about the response the gate produces.
     providers: { anthropic: { apiKey: "test-key", models: ["claude-sonnet-4-6"] } },
-    noDefaultBundles: true,
     logging: { disabled: true },
     workDir: testDir,
   });

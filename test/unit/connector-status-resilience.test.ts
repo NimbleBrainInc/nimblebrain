@@ -6,13 +6,13 @@ import { createSystemTools } from "../../src/tools/system-tools.ts";
 import type { Tool, ToolSource } from "../../src/tools/types.ts";
 
 /**
- * Resilience guard around `nb__status(scope="bundles")`. The status/health
+ * Resilience guard around `nb__status(scope="connectors")`. The status/health
  * report iterates every registered source and enumerates its tools. A source
  * in `starting` / `pending_auth` / `dead` state has `client === null` and
  * throws `<name> not started` from `McpSource.tools()`. Reporting health is
  * precisely where a down connector must be SURFACED — it must not abort the
  * whole report. Without per-source containment one dead connector's throw
- * rejects the entire `scope="bundles"` call, and the tool's top-level catch
+ * rejects the entire `scope="connectors"` call, and the tool's top-level catch
  * then replaces every connector's status with that single error.
  *
  * Sibling of `registry-tool-enumeration-resilience.test.ts`, which guards the
@@ -58,7 +58,7 @@ describe("nb__status scope=connectors — error containment", () => {
     // `name: "svc"` matches both sources (the non-McpSource filter only
     // applies to the unfiltered path, so a query is needed to render the
     // plain test doubles here).
-    const result = await systemTools.execute("status", { scope: "bundles", name: "svc" });
+    const result = await systemTools.execute("status", { scope: "connectors", name: "svc" });
 
     // The whole call succeeds rather than collapsing into the top-level
     // "Failed to get status" error.
@@ -76,7 +76,7 @@ describe("nb__status scope=connectors — error containment", () => {
     registry.addSource(new BrokenSource("svc-broken"));
     const systemTools = await createSystemTools(() => registry);
 
-    const result = await systemTools.execute("status", { scope: "bundles", name: "svc-broken" });
+    const result = await systemTools.execute("status", { scope: "connectors", name: "svc-broken" });
 
     expect(result.isError).toBe(false);
     const text = extractText(result.content);

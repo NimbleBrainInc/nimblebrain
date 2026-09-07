@@ -71,7 +71,7 @@ class FakeRuntime {
         id: wsId,
         name: wsId,
         members: [{ userId, role }],
-        bundles: [],
+        connectors: [],
         createdAt: "",
         updatedAt: "",
       });

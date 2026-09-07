@@ -105,7 +105,7 @@ describe("ActivityCollector", () => {
 		});
 
 		expect(result.conversations).toEqual([]);
-		expect(result.bundle_events).toEqual([]);
+		expect(result.connector_events).toEqual([]);
 		expect(result.tool_usage).toEqual([]);
 		expect(result.errors).toEqual([]);
 		expect(result.totals).toEqual({
@@ -351,12 +351,12 @@ describe("ActivityCollector", () => {
 			until: "2025-01-02T00:00:00Z",
 		});
 
-		expect(result.bundle_events).toHaveLength(2);
-		expect(result.bundle_events[0].connector).toBe("@nimblebraininc/echo");
-		expect(result.bundle_events[0].event).toBe("installed");
-		expect(result.bundle_events[1].connector).toBe("@nimblebraininc/postgres");
-		expect(result.bundle_events[1].event).toBe("crashed");
-		expect(result.bundle_events[1].detail).toBe("OOM");
+		expect(result.connector_events).toHaveLength(2);
+		expect(result.connector_events[0].connector).toBe("@nimblebraininc/echo");
+		expect(result.connector_events[0].event).toBe("installed");
+		expect(result.connector_events[1].connector).toBe("@nimblebraininc/postgres");
+		expect(result.connector_events[1].event).toBe("crashed");
+		expect(result.connector_events[1].detail).toBe("OOM");
 	});
 
 	it("filters by category = conversations", async () => {
@@ -400,7 +400,7 @@ describe("ActivityCollector", () => {
 		});
 
 		expect(result.conversations).toHaveLength(1);
-		expect(result.bundle_events).toEqual([]);
+		expect(result.connector_events).toEqual([]);
 		expect(result.tool_usage).toEqual([]);
 		expect(result.errors).toEqual([]);
 	});
@@ -427,7 +427,7 @@ describe("ActivityCollector", () => {
 		expect(result.tool_usage).toHaveLength(1);
 		expect(result.errors).toEqual([]); // errors filtered out by category
 		expect(result.conversations).toEqual([]);
-		expect(result.bundle_events).toEqual([]);
+		expect(result.connector_events).toEqual([]);
 	});
 
 	it("filters by category = errors", async () => {
@@ -457,7 +457,7 @@ describe("ActivityCollector", () => {
 		expect(result.errors[0].message).toBe("boom");
 		expect(result.tool_usage).toEqual([]); // tools filtered out by category
 		expect(result.conversations).toEqual([]);
-		expect(result.bundle_events).toEqual([]);
+		expect(result.connector_events).toEqual([]);
 	});
 
 	// Regression: HTTP error middleware writes http.error records to workspace logs.

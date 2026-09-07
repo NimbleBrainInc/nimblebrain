@@ -76,7 +76,6 @@ describe("connector-skill binding lifecycle (runtime wiring)", () => {
     const workDir = join(testDir, "bind-cycle");
     const runtime = await Runtime.start({
       model: { provider: "custom", adapter: fixtureModel() },
-      noDefaultBundles: true,
       workDir,
       logging: { disabled: true },
       telemetry: { enabled: false },
@@ -152,7 +151,6 @@ describe("connector-skill binding lifecycle (runtime wiring)", () => {
 
     const runtime = await Runtime.start({
       model: { provider: "custom", adapter: model },
-      noDefaultBundles: true,
       workDir,
       logging: { disabled: true },
       telemetry: { enabled: false },

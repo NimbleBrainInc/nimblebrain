@@ -31,7 +31,6 @@ beforeAll(async () => {
   // No metrics config of any kind — this is the bare local/no-k8s setup.
   runtime = await Runtime.start({
     model: { provider: "custom", adapter: createEchoModel() },
-    noDefaultBundles: true,
     logging: { disabled: true },
     workDir,
   });

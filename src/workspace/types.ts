@@ -17,7 +17,7 @@ export interface Workspace {
   id: string;
   name: string;
   members: WorkspaceMember[];
-  bundles: ConnectorRef[];
+  connectors: ConnectorRef[];
   createdAt: string;
   updatedAt: string;
 
@@ -69,7 +69,7 @@ export interface Workspace {
    * separate catalog ConfigMaps.
    *
    * Filters the catalog only — does NOT affect connectors already
-   * installed in `bundles[]` (those continue to function regardless of
+   * installed in `connectors[]` (those continue to function regardless of
    * allow-list state). Removing an id from the allow-list while a
    * connector of the same name is installed is permitted; the connector
    * stays running but won't appear in the catalog UI.
@@ -105,7 +105,7 @@ export interface Workspace {
    * which the runtime does not store and must not reconstruct on demand.
    *
    * Living here also keeps the delivery path to ONE read: the door must load
-   * this record anyway to resolve `bundles[]` into a forward target, and the
+   * this record anyway to resolve `connectors[]` into a forward target, and the
    * handler is the one thing in the runtime that must never be the reason the
    * process is busy. See `src/hooks/types.ts`.
    */

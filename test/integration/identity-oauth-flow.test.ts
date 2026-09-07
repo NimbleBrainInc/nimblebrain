@@ -153,7 +153,7 @@ describe("lifecycle.startIdentityAuth — interactive OAuth for a personal conne
     workDir = mkdtempSync(join(tmpdir(), "nb-identity-oauth-"));
     installTestCredentialStore(workDir);
     mock = startMockAuthServer();
-    lifecycle = new ConnectorLifecycleManager(new CapturingSink(), undefined, /* allowInsecure */ true);
+    lifecycle = new ConnectorLifecycleManager(new CapturingSink(), /* allowInsecure */ true);
     // The connector is installed on the caller's identity — no workspace.
     await new IdentityConnectorStore({ workDir }).add(USER_ID, {
       url: `${mock.base}/mcp`,

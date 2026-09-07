@@ -105,7 +105,7 @@ async function seedWorkspace(opts: {
   id?: string;
 }): Promise<void> {
   await store.update(opts.id ?? wsId, {
-    bundles:
+    connectors:
       opts.installed === false
         ? []
         : [

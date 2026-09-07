@@ -205,7 +205,7 @@ function buildHarness(): Harness {
     ].join("\n"),
   );
   const registryStore = new RegistryStore(workDir);
-  const lifecycle = new ConnectorLifecycleManager(new NoopEventSink(), undefined);
+  const lifecycle = new ConnectorLifecycleManager(new NoopEventSink());
   // What Runtime wires at startup. Delegating rather than snapshotting because
   // these tests move `COMPOSIO_API_KEY` between cases, and a snapshot taken at
   // harness-build time would answer for the wrong config.
@@ -308,7 +308,7 @@ describe("manage_connectors.install (composio-auth)", () => {
     const tool = buildTool(h);
     await tool.handler({ action: "install", entry: gmailEntry(), wsId: h.wsId });
     const ws = await h.workspaceStore.get(h.wsId);
-    return ws?.bundles.find(
+    return ws?.connectors.find(
       (b): b is Extract<ConnectorRef, { url: string }> => "url" in b && b.brokered !== undefined,
     );
   }
@@ -426,7 +426,7 @@ describe("manage_connectors.install (composio-auth)", () => {
 
     // ConnectorRef persisted regardless — install state is committed.
     const ws = await h.workspaceStore.get(h.wsId);
-    expect(ws?.bundles).toHaveLength(1);
+    expect(ws?.connectors).toHaveLength(1);
   });
 
   test("(e-1) errResult when COMPOSIO_API_KEY is unset", async () => {
@@ -443,7 +443,7 @@ describe("manage_connectors.install (composio-auth)", () => {
     // ConnectorRef must NOT be persisted on failure — env check runs
     // before the workspace.json write.
     const ws = await h.workspaceStore.get(h.wsId);
-    expect(ws?.bundles ?? []).toHaveLength(0);
+    expect(ws?.connectors ?? []).toHaveLength(0);
   });
 
   test("(e-2) errResult when the toolkit has no auth-config id", async () => {
@@ -462,7 +462,7 @@ describe("manage_connectors.install (composio-auth)", () => {
     expect(text).toContain("connectors.providers.composio.authConfigs.gmail");
 
     const ws = await h.workspaceStore.get(h.wsId);
-    expect(ws?.bundles ?? []).toHaveLength(0);
+    expect(ws?.connectors ?? []).toHaveLength(0);
   });
 
   test("(e-3) refuses a composio entry the trusted catalog doesn't publish", async () => {
@@ -480,7 +480,7 @@ describe("manage_connectors.install (composio-auth)", () => {
     // The broker was never asked, so no session exists at the operator's account.
     expect(composioCalls.createConfig).toBeUndefined();
     const ws = await h.workspaceStore.get(h.wsId);
-    expect(ws?.bundles ?? []).toHaveLength(0);
+    expect(ws?.connectors ?? []).toHaveLength(0);
   });
 
   // The overlay identity is interpolated into the curated repo's fetch path, so
@@ -558,7 +558,7 @@ describe("manage_connectors.install (composio-auth)", () => {
       oauthScope: "workspace",
       composio: { connectorId: GMAIL_ID },
     };
-    await h.workspaceStore.update(h.wsId, { bundles: [orphanRef] });
+    await h.workspaceStore.update(h.wsId, { connectors: [orphanRef] });
 
     // Track whether createComposioSession is invoked — self-heal must
     // skip it (re-attach should not burn an upstream Composio session).
@@ -589,8 +589,8 @@ describe("manage_connectors.install (composio-auth)", () => {
     // No duplicate row appended. The original orphan ref (with its
     // existing session URL) is preserved untouched.
     const ws = await h.workspaceStore.get(h.wsId);
-    expect(ws?.bundles).toHaveLength(1);
-    const persisted = ws?.bundles[0] as Extract<ConnectorRef, { url: string }>;
+    expect(ws?.connectors).toHaveLength(1);
+    const persisted = ws?.connectors[0] as Extract<ConnectorRef, { url: string }>;
     expect(persisted.url).toBe("https://composio.test/mcp/session_orphaned");
 
     // Self-heal must not call back to Composio — re-attach reuses the
@@ -619,7 +619,7 @@ describe("manage_connectors.install (composio-auth)", () => {
     // Nothing should be persisted if the session create fails — the
     // ConnectorRef can't carry a session URL we never received.
     const ws = await h.workspaceStore.get(h.wsId);
-    expect(ws?.bundles ?? []).toHaveLength(0);
+    expect(ws?.connectors ?? []).toHaveLength(0);
   });
 
   // ── personal-workspace target ─────────────────────────────────────
@@ -659,7 +659,7 @@ describe("manage_connectors.install (composio-auth)", () => {
     // The ref landed in the personal workspace with the composio marker
     // and the post-T008 workspace scope.
     const personalWs = await h.workspaceStore.get(personalWsId);
-    const installed = personalWs?.bundles.find(
+    const installed = personalWs?.connectors.find(
       (b): b is Extract<ConnectorRef, { url: string }> => "url" in b && b.brokered !== undefined,
     );
     expect(installed).toBeDefined();
@@ -746,7 +746,7 @@ describe("manage_connectors.install scope:identity (composio personal connector)
 
     // Nothing written into any workspace.
     const ws = await h.workspaceStore.get(h.wsId);
-    expect(ws?.bundles ?? []).toHaveLength(0);
+    expect(ws?.connectors ?? []).toHaveLength(0);
 
     // Neither the key nor an env reference to it lands on disk — the transport
     // names the credential provider.

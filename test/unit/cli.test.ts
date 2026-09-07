@@ -23,7 +23,7 @@ describe("loadConfig", () => {
     const configPath = writeTestConfig("empty-defaults.json", {});
     const config = loadConfig({ config: configPath });
     expect(config.model).toEqual({ provider: "anthropic" });
-    expect(config.bundles).toBeUndefined();
+    expect(config.connectors).toBeUndefined();
     expect(config.skillDirs).toBeUndefined();
   });
 
@@ -51,12 +51,10 @@ describe("loadConfig", () => {
     // Manually write workspace-owned fields into the JSON (bypasses schema)
     const fs = require("node:fs");
     const raw = JSON.parse(fs.readFileSync(configPath, "utf-8"));
-    raw.bundles = [{ url: "https://leadgen.example.com/mcp" }];
     raw.agents = { researcher: { description: "test", systemPrompt: "test", tools: ["*"] } };
     raw.skillDirs = ["./skills"];
     raw.preferences = { displayName: "Test" };
     raw.home = { enabled: true };
-    raw.noDefaultBundles = true;
     raw.skills = [];
     fs.writeFileSync(configPath, JSON.stringify(raw));
 
@@ -66,15 +64,26 @@ describe("loadConfig", () => {
       // Instance fields still loaded
       expect(config.defaultModel).toBe("claude-opus-4-6");
       // Workspace-owned fields stripped
-      expect(config.bundles).toBeUndefined();
       expect(config.agents).toBeUndefined();
       expect(config.skillDirs).toBeUndefined();
       expect(config.preferences).toBeUndefined();
       expect(config.home).toBeUndefined();
-      expect(config.noDefaultBundles).toBeUndefined();
     } finally {
       spy.mockRestore();
     }
+  });
+
+  it("keeps the instance connector block through the workspace-field strip", () => {
+    // `connectors` names the provider/gateway block here, not a workspace's
+    // connector array. Stripping it would drop every declared provider and
+    // gateway at boot.
+    const configPath = writeTestConfig("keep-connectors.json", {
+      model: { provider: "anthropic" },
+      connectors: { gateways: { mcp360: { apiKey: "k" } } },
+    });
+
+    const config = loadConfig({ config: configPath });
+    expect(config.connectors?.gateways?.mcp360).toBeDefined();
   });
 
   it("loads features from config file", () => {
@@ -208,17 +217,6 @@ describe("config validation", () => {
     });
 
     expect(() => loadConfig({ config: configPath })).toThrow("Invalid config");
-  });
-
-  it("strips bundles from config (workspace-owned, loaded separately)", () => {
-    const configPath = writeTestConfig("with-bundles.json", {
-      bundles: [{ url: "https://a.example.com/mcp" }],
-    });
-
-    const config = loadConfig({ config: configPath });
-    // bundles passes schema validation but is stripped by loadConfig
-    // because it's now workspace-owned (loaded from workspace.json)
-    expect(config.bundles).toBeUndefined();
   });
 
   it("warns on unknown keys but does not throw", () => {

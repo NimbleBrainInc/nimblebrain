@@ -116,7 +116,7 @@ export function createManageWorkspacesTool(ctx: ManageWorkspacesContext): InProc
           type: "string",
           description: "Workspace ID (required for most actions except create/list).",
         },
-        bundles: {
+        connectors: {
           type: "array",
           items: {
             type: "object",
@@ -230,7 +230,7 @@ async function handleCreate(
   }
 
   const slug = input.slug ? String(input.slug) : undefined;
-  const connectors = input.bundles as Array<Record<string, unknown>> | undefined;
+  const connectors = input.connectors as Array<Record<string, unknown>> | undefined;
 
   try {
     let workspace = await ctx.workspaceStore.create(name, slug);
@@ -259,7 +259,7 @@ async function handleCreate(
     // If connectors were provided, update the workspace with them
     if (connectors && connectors.length > 0) {
       const updated = await ctx.workspaceStore.update(workspace.id, {
-        bundles: connectors.map(toConnectorRef),
+        connectors: connectors.map(toConnectorRef),
       });
       if (updated) workspace = updated;
     }
@@ -268,7 +268,7 @@ async function handleCreate(
       workspace: {
         id: workspace.id,
         name: workspace.name,
-        bundles: workspace.bundles,
+        connectors: workspace.connectors,
         memberCount: workspace.members.length,
         createdAt: workspace.createdAt,
       },
@@ -392,15 +392,15 @@ async function handleUpdate(
 
   const patch: Record<string, unknown> = {};
   if (input.name !== undefined) patch.name = String(input.name);
-  if (input.bundles !== undefined) {
-    const refs = toConnectorRefs(input.bundles as Array<Record<string, unknown>>);
+  if (input.connectors !== undefined) {
+    const refs = toConnectorRefs(input.connectors as Array<Record<string, unknown>>);
     if (!Array.isArray(refs)) return { content: textContent(refs.error), isError: true };
-    patch.bundles = refs;
+    patch.connectors = refs;
   }
 
   if (Object.keys(patch).length === 0) {
     return {
-      content: textContent("No fields to update. Provide name or bundles."),
+      content: textContent("No fields to update. Provide name or connectors."),
       isError: true,
     };
   }
@@ -418,7 +418,7 @@ async function handleUpdate(
       workspace: {
         id: updated.id,
         name: updated.name,
-        bundles: updated.bundles,
+        connectors: updated.connectors,
         memberCount: updated.members.length,
         updatedAt: updated.updatedAt,
       },
@@ -490,7 +490,7 @@ async function handleList(ctx: ManageWorkspacesContext): Promise<ToolResult> {
         id: ws.id,
         name: ws.name,
         memberCount: ws.members.length,
-        bundles: ws.bundles,
+        connectors: ws.connectors,
         createdAt: ws.createdAt,
         // The requester's role within this workspace, when applicable. Lets the
         // web client gate workspace-admin UI without an extra `list_members`

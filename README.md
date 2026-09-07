@@ -237,9 +237,8 @@ Each workspace has its own config at `<workDir>/workspaces/<ws-id>/workspace.jso
   "id": "ws_product",
   "name": "Product",
   "members": [{ "userId": "usr_default", "role": "admin" }],
-  "bundles": [
-    { "name": "@nimblebraininc/ipinfo" },
-    { "path": "../mcp-servers/hello" }
+  "connectors": [
+    { "url": "https://mcp.example.com/mcp", "serverName": "example" }
   ],
   "skillDirs": ["./skills"],
   "models": { "default": "anthropic:claude-opus-4-6" },
@@ -247,7 +246,7 @@ Each workspace has its own config at `<workDir>/workspaces/<ws-id>/workspace.jso
 }
 ```
 
-`bundles`, `skillDirs`, and optional `models` / `identity` overrides live here, not in `nimblebrain.json`. Entries placed at the top level of `nimblebrain.json` are silently stripped on load — the runtime treats them as configuration errors rather than falling back to a global scope.
+`connectors`, `skillDirs`, and optional `models` / `identity` overrides live here, not in `nimblebrain.json`. `skillDirs`, `home` and `preferences` placed at the top level of `nimblebrain.json` are stripped on load — the runtime treats them as configuration errors rather than falling back to a global scope. A workspace-shaped `connectors` array there is rejected outright, because in that file the name is the provider and gateway block.
 
 ### Workspace Isolation
 
@@ -302,7 +301,7 @@ The working directory is set via `NB_WORK_DIR` (see Environment Variables).
 | `MCP_SESSION_TTL_SECONDS` | MCP session idle TTL in seconds; drives both transport-map sweep and registry TTL (default: 28800, i.e. 8h) |
 | `NB_CHAT_RATE_LIMIT` | Chat requests per minute per user (default: 20) |
 | `NB_TOOL_RATE_LIMIT` | Tool calls per minute per user (default: 60) |
-| `NB_BUNDLE_START_CONCURRENCY` | Max connector subprocesses spawned in parallel at boot (default: 4, set to 1 for sequential) |
+| `NB_CONNECTOR_START_CONCURRENCY` | Max connectors started in parallel at boot (default: 4, set to 1 for sequential) |
 | `NB_TIMEZONE` | Default IANA timezone for time-aware features |
 | `NB_HOST_URL` | Public host URL for OAuth redirects |
 | `NB_HSTS` | `Strict-Transport-Security` value (default: `max-age=31536000; includeSubDomains`). Set to `""` to disable — e.g., when a reverse proxy already emits this header |
@@ -592,8 +591,8 @@ Placements with a `route` field get React Router routes in `App.tsx`. Routes fro
 ### Configuration Reference
 
 **Files:**
-- `nimblebrain.json` — instance config. Validated at startup against `src/config/nimblebrain-config.schema.json` (JSON Schema draft-07, AJV). Unknown keys warn; structural errors throw. Workspace-owned fields (`bundles`, `skillDirs`, `preferences`, `home`, `noDefaultBundles`) are silently stripped on load. `identity` and `contextFile` are deprecated with a warning.
-- `<workDir>/workspaces/<wsId>/workspace.json` — per-workspace config. Owns `bundles`, `skillDirs`, and optional `models` / `identity` overrides.
+- `nimblebrain.json` — instance config. Validated at startup against `src/config/nimblebrain-config.schema.json` (JSON Schema draft-07, AJV). Unknown keys warn; structural errors throw. Workspace-owned fields (`skillDirs`, `preferences`, `home`) are stripped on load. `identity` and `contextFile` are deprecated with a warning.
+- `<workDir>/workspaces/<wsId>/workspace.json` — per-workspace config. Owns `connectors`, `skillDirs`, and optional `models` / `identity` overrides.
 - `<workDir>/instance.json` — auth configuration (OIDC or WorkOS adapter). Absence signals dev mode.
 
 **Config resolution** for `nimblebrain.json` (when no `--config` flag):
@@ -604,7 +603,7 @@ Placements with a `route` field get React Router routes in `App.tsx`. Routes fro
 
 #### Connector Entry Fields (in `workspace.json`)
 
-Each entry in `workspace.json → bundles[]` is one remote MCP server:
+Each entry in `workspace.json → connectors[]` is one remote MCP server:
 
 | Field | Type | Description |
 |-------|------|-------------|

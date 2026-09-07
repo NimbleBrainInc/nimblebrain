@@ -464,7 +464,7 @@ export class WorkspaceStore {
       id,
       name,
       members,
-      bundles: [],
+      connectors: [],
       createdAt: now,
       updatedAt: now,
       isPersonal,
@@ -491,7 +491,7 @@ export class WorkspaceStore {
       Pick<
         Workspace,
         | "name"
-        | "bundles"
+        | "connectors"
         | "skillDirs"
         | "models"
         | "identity"

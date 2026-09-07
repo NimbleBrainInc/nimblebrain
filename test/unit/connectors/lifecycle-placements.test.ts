@@ -64,7 +64,7 @@ describe("ConnectorLifecycleManager — placement registration on install", () =
 		];
 		const sink = makeEventCollector();
 		const pr = new PlacementRegistry();
-		const lifecycle = new ConnectorLifecycleManager(sink, undefined);
+		const lifecycle = new ConnectorLifecycleManager(sink);
 		lifecycle.setPlacementRegistry(pr);
 
 		await seedAndNotify(lifecycle, refWithUi(placements));
@@ -88,7 +88,7 @@ describe("ConnectorLifecycleManager — placement registration on install", () =
 
 	it("a connector with UI but no placements registers none", async () => {
 		const pr = new PlacementRegistry();
-		const lifecycle = new ConnectorLifecycleManager(makeEventCollector(), undefined);
+		const lifecycle = new ConnectorLifecycleManager(makeEventCollector());
 		lifecycle.setPlacementRegistry(pr);
 
 		await seedAndNotify(lifecycle, refWithUi());
@@ -102,7 +102,7 @@ describe("ConnectorLifecycleManager — placement registration on install", () =
 		// registration. Fail-closed per-placement: one bad entry does not take
 		// the rest of the declaration with it.
 		const pr = new PlacementRegistry();
-		const lifecycle = new ConnectorLifecycleManager(makeEventCollector(), undefined);
+		const lifecycle = new ConnectorLifecycleManager(makeEventCollector());
 		lifecycle.setPlacementRegistry(pr);
 
 		await seedAndNotify(
@@ -122,7 +122,7 @@ describe("ConnectorLifecycleManager — placement registration on install", () =
 describe("ConnectorLifecycleManager — placement unregistration on uninstall", () => {
 	it("uninstall removes placements from PlacementRegistry", async () => {
 		const pr = new PlacementRegistry();
-		const lifecycle = new ConnectorLifecycleManager(makeEventCollector(), undefined);
+		const lifecycle = new ConnectorLifecycleManager(makeEventCollector());
 		lifecycle.setPlacementRegistry(pr);
 
 		await seedAndNotify(

@@ -61,7 +61,6 @@ describe("Runtime", () => {
     const runtime = await Runtime.start({
       workDir: testDir,
       model: { provider: "custom", adapter: createEchoModel() },
-      noDefaultBundles: true,
     });
     await provisionTestWorkspace(runtime);
 
@@ -83,7 +82,6 @@ describe("Runtime", () => {
     await expect(
       Runtime.start({
         model: { provider: "custom", adapter: createEchoModel() },
-        noDefaultBundles: true,
       }),
     ).rejects.toThrow(/workDir/);
   });
@@ -93,7 +91,6 @@ describe("Runtime", () => {
     mkdirSync(workDir, { recursive: true });
     const runtime = await Runtime.start({
       model: { provider: "custom", adapter: createEchoModel() },
-      noDefaultBundles: true,
       workDir,
     });
     await provisionTestWorkspace(runtime);
@@ -114,7 +111,6 @@ describe("Runtime", () => {
     const runtime = await Runtime.start({
       workDir: testDir,
       model: { provider: "custom", adapter: createEchoModel() },
-      noDefaultBundles: true,
     });
     await provisionTestWorkspace(runtime);
 
@@ -132,7 +128,6 @@ describe("Runtime", () => {
 
     const runtime = await Runtime.start({
       model: { provider: "custom", adapter: createEchoModel() },
-      noDefaultBundles: true,
       workDir,
     });
 
@@ -161,7 +156,6 @@ describe("Runtime", () => {
 
     const runtime = await Runtime.start({
       model: { provider: "custom", adapter: createEchoModel() },
-      noDefaultBundles: true,
       workDir,
     });
 
@@ -202,7 +196,6 @@ You are a friendly greeter. Always respond with enthusiasm!
     const runtime = await Runtime.start({
       workDir: testDir,
       model: { provider: "custom", adapter: createEchoModel() },
-      noDefaultBundles: true,
       skillDirs: [skillDir],
     });
     await provisionTestWorkspace(runtime);
@@ -251,7 +244,6 @@ I am Nira, your AI assistant. You work at Acme Corp.
     const runtime = await Runtime.start({
       workDir: testDir,
       model: { provider: "custom", adapter: model },
-      noDefaultBundles: true,
       skillDirs: [skillDir],
     });
     await provisionTestWorkspace(runtime);
@@ -276,7 +268,6 @@ I am Nira, your AI assistant. You work at Acme Corp.
     const runtime = await Runtime.start({
       workDir: isolatedWorkDir,
       model: { provider: "custom", adapter: createEchoModel() },
-      noDefaultBundles: true,
       skillDirs: [skillDir],
     });
     await provisionTestWorkspace(runtime);
@@ -319,7 +310,6 @@ Greet with enthusiasm!
     const runtime = await Runtime.start({
       workDir: testDir,
       model: { provider: "custom", adapter: createEchoModel() },
-      noDefaultBundles: true,
       events: [sink],
     });
     await provisionTestWorkspace(runtime);
@@ -336,7 +326,6 @@ Greet with enthusiasm!
     const runtime = await Runtime.start({
       workDir: testDir,
       model: { provider: "custom", adapter: createEchoModel() },
-      noDefaultBundles: true,
     });
 
     const tools = await runtime.availableTools();

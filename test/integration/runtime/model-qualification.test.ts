@@ -30,7 +30,6 @@ describe("model qualification at runtime boundary", () => {
 
     const runtime = await Runtime.start({
       model: { provider: "custom", adapter: createEchoModel() },
-      noDefaultBundles: true,
       workDir,
     });
     await provisionTestWorkspace(runtime);
@@ -65,7 +64,6 @@ describe("model qualification at runtime boundary", () => {
 
     const runtime = await Runtime.start({
       model: { provider: "custom", adapter: createEchoModel() },
-      noDefaultBundles: true,
       workDir,
     });
     await provisionTestWorkspace(runtime);
@@ -98,7 +96,6 @@ describe("model qualification at runtime boundary", () => {
 
     const runtime = await Runtime.start({
       model: { provider: "custom", adapter: createEchoModel() },
-      noDefaultBundles: true,
       workDir,
       // Stored config simulates the legacy state: bare ids saved by an
       // older settings UI that didn't encode the provider into option
@@ -127,7 +124,6 @@ describe("model qualification at runtime boundary", () => {
 
     const runtime = await Runtime.start({
       model: { provider: "custom", adapter: createEchoModel() },
-      noDefaultBundles: true,
       workDir,
       models: {
         default: "anthropic:claude-sonnet-4-6",

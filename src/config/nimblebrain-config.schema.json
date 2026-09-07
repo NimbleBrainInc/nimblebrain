@@ -127,72 +127,6 @@
       },
       "additionalProperties": false
     },
-    "bundles": {
-      "description": "Connector configurations. Each entry is one remote MCP server, addressed by URL.",
-      "type": "array",
-      "items": {
-        "type": "object",
-        "required": ["url"],
-        "properties": {
-          "url": { "type": "string", "description": "Remote MCP server URL." },
-          "serverName": {
-            "type": "string",
-            "description": "Server name to register the connector under."
-          },
-          "transport": {
-            "type": "object",
-            "description": "Remote transport configuration.",
-            "properties": {
-              "type": { "type": "string", "enum": ["streamable-http", "sse"] },
-              "auth": {
-                "type": "object",
-                "properties": {
-                  "type": { "type": "string", "enum": ["bearer", "header", "none", "provider"] },
-                  "token": {
-                    "oneOf": [{ "type": "string" }, { "$ref": "#/$defs/credentialRef" }],
-                    "description": "Bearer token (auth.type=bearer). May instead be a credential reference — { \"ref\": \"credential\", \"key\": \"<key>\" } — resolved from the connection's own workspace scope on every connect, so rotating the key needs no config edit. See /config/secrets/."
-                  },
-                  "name": { "type": "string" },
-                  "value": {
-                    "oneOf": [{ "type": "string" }, { "$ref": "#/$defs/credentialRef" }],
-                    "description": "Header value (auth.type=header). May instead be a credential reference — { \"ref\": \"credential\", \"key\": \"<key>\" } — resolved from the connection's own workspace scope on every connect, so rotating the key needs no config edit. See /config/secrets/."
-                  },
-                  "provider": {
-                    "type": "string",
-                    "description": "Credential provider name (auth.type=provider), e.g. \"minted\"."
-                  },
-                  "config": {
-                    "type": "object",
-                    "description": "Opaque provider config (e.g. { audience, scope } for \"minted\")."
-                  }
-                },
-                "required": ["type"]
-              },
-              "headers": {
-                "type": "object",
-                "additionalProperties": {
-                  "oneOf": [{ "type": "string" }, { "$ref": "#/$defs/credentialRef" }]
-                },
-                "description": "Arbitrary outgoing headers. Each value is a literal or a credential reference. May instead be a credential reference — { \"ref\": \"credential\", \"key\": \"<key>\" } — resolved from the connection's own workspace scope on every connect, so rotating the key needs no config edit. See /config/secrets/."
-              },
-              "reconnection": {
-                "type": "object",
-                "properties": {
-                  "maxReconnectionDelay": { "type": "number" },
-                  "initialReconnectionDelay": { "type": "number" },
-                  "maxRetries": { "type": "number" }
-                }
-              },
-              "sessionId": { "type": "string" }
-            }
-          },
-          "ui": {
-            "type": ["object", "null"],
-            "description": "UI metadata from the catalog entry's host `_meta` block."
-          }
-        }
-      }
-    },
     "allowInsecureRemotes": {
       "type": "boolean",
       "default": false,
@@ -564,6 +498,69 @@
     }
   },
   "$defs": {
+    "connectorRef": {
+      "description": "One entry in a workspace's `connectors[]` — a remote MCP server, addressed by URL. Workspace records live at `<workDir>/workspaces/<wsId>/workspace.json`, not in this file.",
+      "type": "object",
+      "required": ["url"],
+      "properties": {
+        "url": { "type": "string", "description": "Remote MCP server URL." },
+        "serverName": {
+          "type": "string",
+          "description": "Server name to register the connector under."
+        },
+        "transport": {
+          "type": "object",
+          "description": "Remote transport configuration.",
+          "properties": {
+            "type": { "type": "string", "enum": ["streamable-http", "sse"] },
+            "auth": {
+              "type": "object",
+              "properties": {
+                "type": { "type": "string", "enum": ["bearer", "header", "none", "provider"] },
+                "token": {
+                  "oneOf": [{ "type": "string" }, { "$ref": "#/$defs/credentialRef" }],
+                  "description": "Bearer token (auth.type=bearer). May instead be a credential reference — { \"ref\": \"credential\", \"key\": \"<key>\" } — resolved from the connection's own workspace scope on every connect, so rotating the key needs no config edit. See /config/secrets/."
+                },
+                "name": { "type": "string" },
+                "value": {
+                  "oneOf": [{ "type": "string" }, { "$ref": "#/$defs/credentialRef" }],
+                  "description": "Header value (auth.type=header). May instead be a credential reference — { \"ref\": \"credential\", \"key\": \"<key>\" } — resolved from the connection's own workspace scope on every connect, so rotating the key needs no config edit. See /config/secrets/."
+                },
+                "provider": {
+                  "type": "string",
+                  "description": "Credential provider name (auth.type=provider), e.g. \"minted\"."
+                },
+                "config": {
+                  "type": "object",
+                  "description": "Opaque provider config (e.g. { audience, scope } for \"minted\")."
+                }
+              },
+              "required": ["type"]
+            },
+            "headers": {
+              "type": "object",
+              "additionalProperties": {
+                "oneOf": [{ "type": "string" }, { "$ref": "#/$defs/credentialRef" }]
+              },
+              "description": "Arbitrary outgoing headers. Each value is a literal or a credential reference. May instead be a credential reference — { \"ref\": \"credential\", \"key\": \"<key>\" } — resolved from the connection's own workspace scope on every connect, so rotating the key needs no config edit. See /config/secrets/."
+            },
+            "reconnection": {
+              "type": "object",
+              "properties": {
+                "maxReconnectionDelay": { "type": "number" },
+                "initialReconnectionDelay": { "type": "number" },
+                "maxRetries": { "type": "number" }
+              }
+            },
+            "sessionId": { "type": "string" }
+          }
+        },
+        "ui": {
+          "type": ["object", "null"],
+          "description": "UI metadata from the catalog entry's host `_meta` block."
+        }
+      }
+    },
     "credentialRef": {
       "type": "object",
       "description": "A pointer into the credential store instead of a literal secret. The key names a secret set out of band — `manage_connectors set_secret` for a workspace, the file layout for the instance — so nothing about where the value lives appears in config, which is what lets the storage backend change without a config migration.",

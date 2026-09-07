@@ -224,7 +224,6 @@ describe("API full-flow integration", () => {
 		runtime = await Runtime.start({
 			workDir: runtimeWorkDir,
 			model: { provider: "custom", adapter: createEchoModel() },
-			noDefaultBundles: true,
 			logging: { disabled: true },
 		});
 

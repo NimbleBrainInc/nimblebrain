@@ -20,7 +20,6 @@ beforeAll(async () => {
 	mkdirSync(testDir, { recursive: true });
 	runtime = await Runtime.start({
 		model: { provider: "custom", adapter: createEchoModel() },
-		noDefaultBundles: true,
 		logging: { disabled: true },
 		workDir: testDir,
 	});
@@ -54,7 +53,7 @@ describe("GET /v1/shell", () => {
 		const res = await fetch(`${baseUrl}/v1/shell`, { headers: wsHeaders });
 		const body = await res.json();
 
-		// With noDefaultBundles and no installed connectors, the placement registry
+		// With no installed connectors, the placement registry
 		// is empty (core "nb" source does not register placements itself).
 		// Verify the response shape is valid — an empty array is expected here.
 		expect(Array.isArray(body.placements)).toBe(true);
@@ -80,7 +79,6 @@ describe("GET /v1/shell auth", () => {
 		mkdirSync(shellAuthDir, { recursive: true });
 		authRuntime = await Runtime.start({
 			model: { provider: "custom", adapter: createEchoModel() },
-			noDefaultBundles: true,
 			logging: { disabled: true },
 			workDir: shellAuthDir,
 		});

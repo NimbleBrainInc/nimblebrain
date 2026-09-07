@@ -191,7 +191,7 @@ describe("POST /v1/mcp-auth/initiate", () => {
 
     expect(res.status).toBe(404);
     const body = await res.json();
-    expect(body.error).toBe("bundle_not_found");
+    expect(body.error).toBe("connector_not_found");
     // No cookie should be set when no flow exists.
     expect(res.headers.get("Set-Cookie")).toBeNull();
   });

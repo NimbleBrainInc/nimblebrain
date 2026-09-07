@@ -107,7 +107,7 @@ function buildHarness(): Harness {
     ].join("\n"),
   );
   const registryStore = new RegistryStore(workDir);
-  const lifecycle = new ConnectorLifecycleManager(new NoopEventSink(), undefined);
+  const lifecycle = new ConnectorLifecycleManager(new NoopEventSink());
   const workspaceRegistry = new ToolRegistry();
 
   const runtime = {
@@ -190,7 +190,7 @@ describe("manage_connectors.install (smithery-auth)", () => {
     const tool = buildTool(h);
     await tool.handler({ action: "install", entry: bassethoundEntry(), wsId: h.wsId });
     const ws = await h.workspaceStore.get(h.wsId);
-    return ws?.bundles.find(
+    return ws?.connectors.find(
       (b): b is Extract<ConnectorRef, { url: string }> => "url" in b && b.brokered !== undefined,
     );
   }
@@ -304,7 +304,7 @@ describe("manage_connectors.install (smithery-auth)", () => {
     // The broker was never called, so no connection exists at the operator's account.
     expect(calls).toHaveLength(0);
     const ws = await h.workspaceStore.get(h.wsId);
-    expect(ws?.bundles.some((b) => b.brokered !== undefined)).toBe(false);
+    expect(ws?.connectors.some((b) => b.brokered !== undefined)).toBe(false);
   });
 
   test("(a2) eager-starts the source — there is no Connect step to wait for", async () => {
@@ -371,7 +371,7 @@ describe("manage_connectors.install (smithery-auth)", () => {
     expect(result.isError).toBe(true);
     expect(JSON.stringify(result.content)).toContain('empty \\"connectionId\\" coordinate');
     const ws = await h.workspaceStore.get(h.wsId);
-    expect(ws?.bundles.some((b) => b.brokered !== undefined)).toBe(false);
+    expect(ws?.connectors.some((b) => b.brokered !== undefined)).toBe(false);
   });
 
   test("(e) refuses the install when Smithery is unconfigured", async () => {
@@ -386,7 +386,7 @@ describe("manage_connectors.install (smithery-auth)", () => {
     expect(result.isError).toBe(true);
     expect(JSON.stringify(result.content)).toContain('brokered by \\"smithery\\", which is not configured');
     const ws = await h.workspaceStore.get(h.wsId);
-    expect(ws?.bundles.some((b) => b.brokered !== undefined)).toBe(false);
+    expect(ws?.connectors.some((b) => b.brokered !== undefined)).toBe(false);
   });
 
   test("(g) a half-configured provider (key, no namespace) refuses rather than guessing", async () => {

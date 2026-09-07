@@ -96,7 +96,7 @@ function emptyActivity(): ActivityOutput {
 	return {
 		period: { since: "2026-03-24T00:00:00Z", until: "2026-03-25T00:00:00Z" },
 		conversations: [],
-		bundle_events: [],
+		connector_events: [],
 		tool_usage: [],
 		errors: [],
 		totals: {
@@ -125,7 +125,7 @@ function activeActivity(): ActivityOutput {
 				had_errors: false,
 			},
 		],
-		bundle_events: [],
+		connector_events: [],
 		tool_usage: [
 			{
 				tool: "search",

@@ -182,7 +182,7 @@ function buildHarness(): Harness {
     }),
   );
   const registryStore = new RegistryStore(workDir);
-  const lifecycle = new ConnectorLifecycleManager(new NoopEventSink(), undefined);
+  const lifecycle = new ConnectorLifecycleManager(new NoopEventSink());
   const workspaceRegistry = new ToolRegistry();
 
   const runtime = {
@@ -421,7 +421,7 @@ function stubCtx(opts: {
         id: opts.wsId,
         name: "Test",
         members: [{ userId: identity.id, role }],
-        bundles: opts.connectors ?? [],
+        connectors: opts.connectors ?? [],
       }),
     }),
     getConnectorDirectory: () => ({

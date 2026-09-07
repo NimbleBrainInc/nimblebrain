@@ -57,7 +57,7 @@ describe("seedInstance — provider-auth fleet source", () => {
   // spin a bogus OAuth flow against a server with no OAuth. It must seed
   // `running` (auto-connected) instead.
   test("seeds running, not not_authenticated", async () => {
-    const lifecycle = new ConnectorLifecycleManager(new NoopSink(), undefined);
+    const lifecycle = new ConnectorLifecycleManager(new NoopSink());
     await lifecycle.seedInstance(
       "web",
       "https://web.svc.test/mcp",
@@ -81,7 +81,7 @@ describe("seedInstance — provider-auth fleet source", () => {
   // Tested through a fake provider, not a vendor: the kernel's contract is
   // "ask whoever owns this ref", and that is what must hold for provider #3.
   test("an unconnected brokered connector seeds not_authenticated (the provider's verdict wins over static-auth)", async () => {
-    const lifecycle = new ConnectorLifecycleManager(new NoopSink(), undefined);
+    const lifecycle = new ConnectorLifecycleManager(new NoopSink());
     lifecycle.setManagedConnectorRegistry(
       managedConnectorRegistryOf([exampleBroker({ connected: false })]),
     );
@@ -98,7 +98,7 @@ describe("seedInstance — provider-auth fleet source", () => {
   });
 
   test("a connected brokered connector seeds running", async () => {
-    const lifecycle = new ConnectorLifecycleManager(new NoopSink(), undefined);
+    const lifecycle = new ConnectorLifecycleManager(new NoopSink());
     lifecycle.setManagedConnectorRegistry(
       managedConnectorRegistryOf([exampleBroker({ connected: true })]),
     );
@@ -117,7 +117,7 @@ describe("seedInstance — provider-auth fleet source", () => {
   // A provider with nothing to connect per-owner omits `hasConnection`, and the
   // generic static-auth check answers — the Smithery shape.
   test("a brokered connector whose provider has no hasConnection falls back to static-auth", async () => {
-    const lifecycle = new ConnectorLifecycleManager(new NoopSink(), undefined);
+    const lifecycle = new ConnectorLifecycleManager(new NoopSink());
     lifecycle.setManagedConnectorRegistry(managedConnectorRegistryOf([exampleBroker({})]));
     await lifecycle.seedInstance(
       "gmail",

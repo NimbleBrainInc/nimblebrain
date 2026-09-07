@@ -45,7 +45,7 @@ export interface ConnectorSkillReconcileDeps {
   /** The overlay version every installed connector should track. */
   pinnedVersion: string;
   workDir: string;
-  listWorkspaces: () => Promise<ReadonlyArray<{ id: string; bundles: ConnectorRef[] }>>;
+  listWorkspaces: () => Promise<ReadonlyArray<{ id: string; connectors: ConnectorRef[] }>>;
   updateWorkspaceConnectors: (wsId: string, connectors: ConnectorRef[]) => Promise<unknown>;
   syncBoundSkills: (
     identity: string,
@@ -83,7 +83,11 @@ export async function reconcileConnectorSkills(
   for (const ws of workspaces) {
     let changed = false;
     const nextConnectors: ConnectorRef[] = [];
-    for (const ref of ws.bundles) {
+    // Reached only after `startWorkspaceConnectors`, whose disk-read boundary
+    // has already refused any workspace record without a `connectors[]`. Keep
+    // that order: this loop would answer an un-migrated record with a bare
+    // TypeError instead of the error that names the migration.
+    for (const ref of ws.connectors) {
       if (!("url" in ref)) {
         // Every ref carries a url by type. A row read off disk may predate
         // that, and it has no source to bind an overlay to — carry it through

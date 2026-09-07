@@ -94,7 +94,7 @@ async function buildHarness(): Promise<Harness> {
   const credStore = new FileCredentialStore(workDir);
   const registryStore = new RegistryStore(workDir);
   const permissionStore = new PermissionStore(workDir);
-  const lifecycle = new ConnectorLifecycleManager(new NoopEventSink(), undefined);
+  const lifecycle = new ConnectorLifecycleManager(new NoopEventSink());
   const registry = new ToolRegistry();
   const source = new MockSource("mock");
   registry.addSource(source);

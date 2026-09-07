@@ -188,8 +188,8 @@ describe("ownerUserId forbidden on non-personal workspaces", () => {
 describe("topology — non-identity fields stay freely mutable on personal workspaces", () => {
   test("update() of connectors on a personal workspace succeeds", async () => {
     const { wsId } = await createPersonal();
-    const updated = await store.update(wsId, { bundles: [{ name: "echo" }] });
-    expect(updated?.bundles).toEqual([{ name: "echo" }]);
+    const updated = await store.update(wsId, { connectors: [{ name: "echo" }] });
+    expect(updated?.connectors).toEqual([{ name: "echo" }]);
     // Identity fields stay intact.
     expect(updated?.isPersonal).toBe(true);
     expect(updated?.ownerUserId).toBe("user_alice");

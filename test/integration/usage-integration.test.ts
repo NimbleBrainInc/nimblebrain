@@ -21,7 +21,6 @@ describe("ChatResult.usage", () => {
 		runtime = await Runtime.start({
 			workDir: usageTestDir,
 			model: { provider: "custom", adapter: createEchoModel() },
-			noDefaultBundles: true,
 			logging: { disabled: true },
 		});
 		await provisionTestWorkspace(runtime);
@@ -69,7 +68,6 @@ describe("per-conversation token accumulation", () => {
 		mkdirSync(workDir, { recursive: true });
 		const runtime = await Runtime.start({
 			model: { provider: "custom", adapter: createEchoModel() },
-			noDefaultBundles: true,
 			logging: { disabled: true },
 			workDir,
 		});
@@ -123,7 +121,6 @@ describe("per-conversation token accumulation", () => {
 		mkdirSync(workDir, { recursive: true });
 		const runtime = await Runtime.start({
 			model: { provider: "custom", adapter: createEchoModel() },
-			noDefaultBundles: true,
 			logging: { disabled: true },
 			workDir,
 		});

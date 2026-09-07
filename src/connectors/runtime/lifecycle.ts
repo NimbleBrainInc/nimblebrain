@@ -1,5 +1,5 @@
-import { existsSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { rmSync } from "node:fs";
+import { join } from "node:path";
 import { resolveConnectorSkillsConfig } from "../../config/connector-skills.ts";
 import type { ManagedConnectorProvider } from "../../connectors/providers/managed-provider.ts";
 import {
@@ -263,7 +263,6 @@ export class ConnectorLifecycleManager {
 
   constructor(
     private eventSink: EventSink,
-    private configPath: string | undefined,
     private allowInsecureRemotes = false,
   ) {}
 
@@ -464,9 +463,12 @@ export class ConnectorLifecycleManager {
    *
    * 1. Stop MCP server
    * 2. Remove source from ToolRegistry
-   * 3. Remove entry from nimblebrain.json
-   * 4. Emit connector.uninstalled
-   * 5. Data is NOT deleted
+   * 3. Emit connector.uninstalled
+   * 4. Data is NOT deleted
+   *
+   * The workspace record is the connector's persistence, and the caller
+   * (`manage_connectors`) rewrites it — this manager owns the live connection,
+   * not the file.
    */
   async uninstall(nameOrPath: string, registry: ToolRegistry, wsId: string): Promise<void> {
     const { serverName, instance } = this.resolveUninstallTarget(nameOrPath, wsId);
@@ -480,13 +482,6 @@ export class ConnectorLifecycleManager {
     // Step 3b — Unregister placements for this workspace only
     if (this.placementRegistry) {
       this.placementRegistry.unregister(serverName, wsId);
-    }
-
-    // Step 4 — Remove from config
-    if (this.configPath) {
-      // Use configKey (original path/name/url from install) for reliable matching
-      const configKey = instance?.configKey ?? nameOrPath;
-      atomicConfigRemove(this.configPath, configKey);
     }
 
     // Track state change before removing
@@ -2145,8 +2140,6 @@ function buildSeededInstance(
   return {
     serverName,
     connectorName: manifestMeta?.manifestName ?? connectorName,
-    // Config key for reliable uninstall — the original value from nimblebrain.json
-    configKey: connectorName,
     version: manifestMeta?.version ?? "unknown",
     description: manifestMeta?.description,
     state: "running",
@@ -2158,33 +2151,4 @@ function buildSeededInstance(
     // oauthClient + scopes). Stored as an opaque copy.
     ref: { ...ref },
   };
-}
-
-// ---------------------------------------------------------------------------
-// Atomic config read / write helpers
-// ---------------------------------------------------------------------------
-
-/** Read and parse the nimblebrain.json config file. */
-function readConfig(configPath: string): Record<string, unknown> {
-  if (!existsSync(configPath)) return {};
-  return JSON.parse(readFileSync(configPath, "utf-8"));
-}
-
-/**
- * Atomic config write: write to a temp file in the same directory, then rename.
- * This prevents partial writes from corrupting the config.
- */
-function atomicWrite(configPath: string, config: Record<string, unknown>): void {
-  const dir = dirname(configPath);
-  const tmpPath = join(dir, `.nimblebrain.json.${process.pid}.tmp`);
-  writeFileSync(tmpPath, `${JSON.stringify(config, null, 2)}\n`);
-  renameSync(tmpPath, configPath);
-}
-
-/** Atomically remove a connector entry from the config. */
-function atomicConfigRemove(configPath: string, key: string): void {
-  const config = readConfig(configPath);
-  const connectors = (config.bundles ?? []) as Array<Record<string, unknown>>;
-  config.bundles = connectors.filter((b) => b.url !== key);
-  atomicWrite(configPath, config);
 }

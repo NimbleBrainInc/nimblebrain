@@ -43,7 +43,6 @@ beforeAll(async () => {
 	_resetComposioConfigForTest();
 	runtime = await Runtime.start({
 		model: { provider: "custom", adapter: createEchoModel() },
-		noDefaultBundles: true,
 		logging: { disabled: true },
 		http: { port: 0, host: "127.0.0.1" },
 		workDir: testDir,

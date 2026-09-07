@@ -156,7 +156,7 @@ function buildHarness(provider: ManagedConnectorProvider): Harness {
 
   const registryStore = new RegistryStore(workDir);
   const registry = managedConnectorRegistryOf([provider]);
-  const lifecycle = new ConnectorLifecycleManager(new NoopEventSink(), undefined);
+  const lifecycle = new ConnectorLifecycleManager(new NoopEventSink());
   lifecycle.setManagedConnectorRegistry(registry);
   lifecycle.setWorkDir(workDir);
   const workspaceRegistry = new ToolRegistry();
@@ -253,7 +253,7 @@ describe("example-broker — install", () => {
     expect(calls.sessions[0]?.userId).toBe("ws:ws_test");
 
     const ws = await h.workspaceStore.get(h.wsId);
-    const ref = ws?.bundles.find((b) => b.brokered !== undefined);
+    const ref = ws?.connectors.find((b) => b.brokered !== undefined);
     expect(ref?.brokered?.provider).toBe(PROVIDER_ID);
     expect(ref?.brokered?.connectorId).toBe(CONNECTOR_ID);
     // Opaque both ways: persisted exactly as returned.

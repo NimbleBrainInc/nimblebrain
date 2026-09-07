@@ -68,7 +68,6 @@ async function startRuntime(workDir: string, compaction: boolean) {
   mkdirSync(workDir, { recursive: true });
   const runtime = await Runtime.start({
     model: { provider: "custom", adapter: growingModel() },
-    noDefaultBundles: true,
     logging: { disabled: true },
     workDir,
     features: { compaction },

@@ -37,13 +37,13 @@ function makeTmpDir(): string {
 function makeWorkspace(
   id: string,
   name: string,
-  connectors: Workspace["bundles"],
+  connectors: Workspace["connectors"],
 ): Workspace {
   return {
     id,
     name,
     members: [],
-    bundles: connectors,
+    connectors: connectors,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   };
@@ -262,7 +262,7 @@ describe("Workspace security: DevIdentityProvider populates workspace connectors
     expect(workspaces.length).toBeGreaterThanOrEqual(1);
 
     const defaultWs = workspaces[0]!;
-    expect(defaultWs.bundles).toHaveLength(0);
+    expect(defaultWs.connectors).toHaveLength(0);
   });
 });
 
@@ -310,7 +310,7 @@ describe("Workspace security: same connector installed in two workspaces", () =>
   test("ConnectorLifecycleManager: seeding the same connector in two workspaces keeps them distinct", async () => {
     const events: EngineEvent[] = [];
     const sink: EventSink = { emit: (e) => events.push(e) };
-    const lifecycle = new ConnectorLifecycleManager(sink, undefined);
+    const lifecycle = new ConnectorLifecycleManager(sink);
 
     const ref: ConnectorRef = { url: "https://crm.example.com/mcp", serverName: "crm" };
     const meta = {

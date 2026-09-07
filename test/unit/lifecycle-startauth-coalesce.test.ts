@@ -65,7 +65,7 @@ describe("ConnectorLifecycleManager.startAuth — authFlowsInFlight coalesce", (
   let lifecycle: ConnectorLifecycleManager;
 
   beforeEach(() => {
-    lifecycle = new ConnectorLifecycleManager(new CapturingSink(), undefined);
+    lifecycle = new ConnectorLifecycleManager(new CapturingSink());
   });
 
   test("concurrent startAuth calls coalesce — startAuthInner runs ONCE regardless of caller count", async () => {
@@ -126,7 +126,7 @@ describe("ConnectorLifecycleManager.startAuth — authFlowsInFlight coalesce", (
       "reauth_required",
     ] as const;
     for (const newState of terminals) {
-      const lc = new ConnectorLifecycleManager(new CapturingSink(), undefined);
+      const lc = new ConnectorLifecycleManager(new CapturingSink());
       seedInstance(lc, "granola", "ws_test", { url: "https://example.test/mcp" });
       // Inject a fake in-flight flow
       const fake = Promise.resolve({ authorizationUrl: "x" });
@@ -143,7 +143,7 @@ describe("ConnectorLifecycleManager.startAuth — authFlowsInFlight coalesce", (
     // sat below the `if (!instance) return`, the slot would hold a permanently-resolved
     // flow and every later startAuth for this key would short-circuit to it (Reconnect
     // silently no-ops until restart).
-    const lc = new ConnectorLifecycleManager(new CapturingSink(), undefined);
+    const lc = new ConnectorLifecycleManager(new CapturingSink());
     // NO seedInstance — the instance was removed while the flow was in flight.
     flowSlot(lc).set("ghost|ws_test|_workspace", Promise.resolve({ authorizationUrl: null }));
     lc.recordConnectionStateChange("ghost", "ws_test", "_workspace", "running");
@@ -207,7 +207,7 @@ describe("ConnectorLifecycleManager.startAuth — authFlowsInFlight coalesce", (
     // "running")` in `startAuthBackground`. Drop or skip that call and the slot leaks
     // permanently (every later startAuth returns the stale resolved promise → Reconnect
     // a silent no-op). Pin the invariant.
-    const lifecycle = new ConnectorLifecycleManager(new CapturingSink(), undefined);
+    const lifecycle = new ConnectorLifecycleManager(new CapturingSink());
     seedInstance(lifecycle, "minted", "ws_test", { url: "https://example.test/mcp" });
     flowSlot(lifecycle).set("minted|ws_test|_workspace", Promise.resolve({ authorizationUrl: null }));
 

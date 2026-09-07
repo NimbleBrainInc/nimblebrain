@@ -86,7 +86,6 @@ beforeAll(async () => {
 
 	runtime = await Runtime.start({
 		model: { provider: "custom", adapter: createEchoModel() },
-		noDefaultBundles: true,
 		logging: { disabled: true },
 		workDir: testDir,
 	});
@@ -326,7 +325,6 @@ describe("MCP Server Auth", () => {
 
 		authRuntime = await Runtime.start({
 			model: { provider: "custom", adapter: createEchoModel() },
-			noDefaultBundles: true,
 			logging: { disabled: true },
 			workDir: authTestDir,
 		});

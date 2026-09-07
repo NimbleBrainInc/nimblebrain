@@ -16,20 +16,20 @@ describe("JSON Schema validation", () => {
 		expect(isValid({})).toBe(true);
 	});
 
-	it("accepts bundles in config", () => {
-		// bundles is a valid top-level config field
-		expect(isValid({ bundles: [] })).toBe(true);
-		expect(isValid({ bundles: [{ url: "https://example.com/mcp" }] })).toBe(true);
-		expect(isValid({ bundles: [{ name: "@test/echo" }] })).toBe(false);
-	});
-
 	it("rejects workspace-owned fields (skillDirs, etc.)", () => {
 		// These fields are not part of nimblebrain.json schema
 		expect(isValid({ skillDirs: [] })).toBe(false);
 		expect(isValid({ skills: [] })).toBe(false);
-		expect(isValid({ noDefaultBundles: true })).toBe(false);
 		expect(isValid({ home: { enabled: true } })).toBe(false);
 		expect(isValid({ preferences: { displayName: "Test" } })).toBe(false);
+	});
+
+	it("rejects a workspace's connector array at the top level", () => {
+		// `connectors` here is the instance-level provider/gateway block. A
+		// workspace's connector array shares the name but not the shape, so
+		// putting one in nimblebrain.json is a type error, not a silent strip.
+		expect(isValid({ connectors: [{ url: "https://example.com/mcp" }] })).toBe(false);
+		expect(isValid({ connectors: { providers: {} } })).toBe(true);
 	});
 
 	it("accepts http config with port and host", () => {

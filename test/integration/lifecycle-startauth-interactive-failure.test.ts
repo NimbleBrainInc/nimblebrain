@@ -117,7 +117,7 @@ describe("lifecycle.startAuth — interactive-flow failure is surfaced, not swal
     workDir = mkdtempSync(join(tmpdir(), "nb-startauth-interactive-"));
     mock = startMockAuthServer();
     sink = new CapturingSink();
-    lifecycle = new ConnectorLifecycleManager(sink, undefined);
+    lifecycle = new ConnectorLifecycleManager(sink);
     const ref: ConnectorRef = { url: `${mock.base}/mcp`, serverName: SERVER, oauthScope: "workspace" };
     const instance: ConnectorInstance = {
       serverName: SERVER,

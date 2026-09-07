@@ -307,7 +307,7 @@ console.error(`[mock]   authorize:   GET ${ORIGIN}/authorize`);
 console.error(`[mock]   token:       POST ${ORIGIN}/token`);
 console.error(`[mock]   mcp:         POST ${ORIGIN}/mcp`);
 console.error(``);
-console.error(`To test, add this to your workspace.json bundles:`);
+console.error(`To test, add this to your workspace.json connectors:`);
 console.error(`  { "url": "${ORIGIN}/mcp", "serverName": "mock-granola" }`);
 console.error(`then start NimbleBrain with NB_API_URL=http://localhost:27247.`);
 

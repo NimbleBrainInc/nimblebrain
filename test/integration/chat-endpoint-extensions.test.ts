@@ -158,7 +158,6 @@ describe("ChatRequest.metadata — conversation persistence", () => {
     const workDir = join(testDir, `meta-${Date.now()}`);
     const runtime = await Runtime.start({
       model: { provider: "custom", adapter: createEchoModel() },
-      noDefaultBundles: true,
       workDir,
     });
 
@@ -193,7 +192,6 @@ describe("ChatRequest.metadata — conversation persistence", () => {
     const workDir = join(testDir, `nometa-${Date.now()}`);
     const runtime = await Runtime.start({
       model: { provider: "custom", adapter: createEchoModel() },
-      noDefaultBundles: true,
       workDir,
     });
 
@@ -216,7 +214,6 @@ describe("ChatRequest.metadata — conversation persistence", () => {
     const workDir = join(testDir, `metakeep-${Date.now()}`);
     const runtime = await Runtime.start({
       model: { provider: "custom", adapter: createEchoModel() },
-      noDefaultBundles: true,
       workDir,
     });
 

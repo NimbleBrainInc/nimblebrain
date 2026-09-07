@@ -81,7 +81,6 @@ beforeAll(async () => {
   getSystem = cap.getSystem;
   runtime = await Runtime.start({
     model: { provider: "custom", adapter: cap.model },
-    noDefaultBundles: true,
     logging: { disabled: true },
     workDir: testDir,
     telemetry: { enabled: false },

@@ -189,7 +189,6 @@ beforeAll(async () => {
 
   runtime = await Runtime.start({
     model: { provider: "custom", adapter: createCapturingModel() },
-    noDefaultBundles: true,
     logging: { disabled: true },
     workDir: testDir,
     telemetry: { enabled: false },
@@ -447,7 +446,6 @@ describe("connector-skill adapter — mid-turn tool promotion", () => {
 
     promoRuntime = await Runtime.start({
       model: { provider: "custom", adapter: model },
-      noDefaultBundles: true,
       logging: { disabled: true },
       workDir: promoDir,
       telemetry: { enabled: false },
@@ -649,7 +647,6 @@ describe("connector-skill adapter — honors declared loading-strategy", () => {
 
     multiRuntime = await Runtime.start({
       model: { provider: "custom", adapter: capturing },
-      noDefaultBundles: true,
       logging: { disabled: true },
       workDir: multiDir,
       telemetry: { enabled: false },

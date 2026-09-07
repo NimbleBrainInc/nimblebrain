@@ -171,7 +171,7 @@ function buildHarness(opts: { adminId?: string } = {}): Harness {
     }),
   );
   const registryStore = new RegistryStore(workDir);
-  const lifecycle = new ConnectorLifecycleManager(new NoopEventSink(), undefined);
+  const lifecycle = new ConnectorLifecycleManager(new NoopEventSink());
   const workspaceRegistry = new ToolRegistry();
 
   const runtime = {
@@ -524,7 +524,7 @@ describe("manage_connectors.remove_operator_setup", () => {
     expect(result.isError).toBe(true);
   });
 
-  test("refuses while the connector is currently installed in workspace.bundles", async () => {
+  test("refuses while the connector is currently installed in workspace.connectors", async () => {
     const tool = buildTool(h, ADMIN_USER);
     await tool.handler({
       action: "setup_operator",
@@ -536,8 +536,8 @@ describe("manage_connectors.remove_operator_setup", () => {
     const ws = await h.workspaceStore.get(h.wsId);
     expect(ws).not.toBeNull();
     await h.workspaceStore.update(h.wsId, {
-      bundles: [
-        ...(ws?.bundles ?? []),
+      connectors: [
+        ...(ws?.connectors ?? []),
         { url: DROPBOX_URL, serverName: DROPBOX_ID } as ConnectorRef,
       ],
     });
@@ -581,7 +581,7 @@ describe("manage_connectors.remove_operator_setup", () => {
       clientSecret: "sec",
     });
     const ws = await h.workspaceStore.get(h.wsId);
-    expect(ws?.bundles).toEqual([]);
+    expect(ws?.connectors).toEqual([]);
 
     const result = await tool.handler({
       action: "remove_operator_setup",
@@ -696,7 +696,7 @@ describe("manage_connectors.install (static-auth)", () => {
     expect(text.toLowerCase()).toContain("client_secret");
   });
 
-  test("on success the ConnectorRef in workspace.bundles carries oauthClient pointing at the credential", async () => {
+  test("on success the ConnectorRef in workspace.connectors carries oauthClient pointing at the credential", async () => {
     const tool = buildTool(h, ADMIN_USER);
     await tool.handler({
       action: "setup_operator",
@@ -717,7 +717,7 @@ describe("manage_connectors.install (static-auth)", () => {
     expect(structured(result).serverName).toBe("com-dropbox-mcp");
 
     const ws = await h.workspaceStore.get(h.wsId);
-    const installed = ws?.bundles.find(
+    const installed = ws?.connectors.find(
       (b): b is Extract<ConnectorRef, { url: string }> => "url" in b && b.url === DROPBOX_URL,
     );
     expect(installed).toBeDefined();
@@ -803,7 +803,7 @@ describe("manage_connectors.install", () => {
     expect(text).toMatch(/not a recognized platform connector/i);
     // Nothing forged was persisted into workspace.json.
     const ws = await h.workspaceStore.get(h.wsId);
-    const connectors = (ws?.bundles ?? []) as Array<{ url?: string }>;
+    const connectors = (ws?.connectors ?? []) as Array<{ url?: string }>;
     expect(connectors.some((b) => (b.url ?? "").includes("mcp-authorizer"))).toBe(false);
   });
 
@@ -988,7 +988,7 @@ describe("manage_connectors.install", () => {
     // Persisted ref pins the post-T008 shape: oauthScope: "workspace"
     // (the legacy "user" literal does not exist in this codebase).
     const personalWs = await h.workspaceStore.get(adminPersonalWsId);
-    const installed = personalWs?.bundles.find(
+    const installed = personalWs?.connectors.find(
       (b): b is Extract<ConnectorRef, { url: string }> =>
         "url" in b && b.url === "https://mcp.canva.com/mcp",
     );
@@ -1154,7 +1154,7 @@ describe("manage_connectors.uninstall", () => {
     await seedConnector(h);
     // Mirror what the install path writes to workspace.json.
     await h.workspaceStore.update(h.wsId, {
-      bundles: [{ url: STUB_URL, serverName: STUB_SERVER_NAME }],
+      connectors: [{ url: STUB_URL, serverName: STUB_SERVER_NAME }],
     });
   });
 
@@ -1164,8 +1164,8 @@ describe("manage_connectors.uninstall", () => {
 
   test("strips the entry from workspace.json so it doesn't reseed at next boot", async () => {
     const wsBefore = await h.workspaceStore.get(h.wsId);
-    expect(wsBefore?.bundles).toHaveLength(1);
-    expect(wsBefore?.bundles[0]?.url).toBe(STUB_URL);
+    expect(wsBefore?.connectors).toHaveLength(1);
+    expect(wsBefore?.connectors[0]?.url).toBe(STUB_URL);
 
     const tool = buildTool(h, ADMIN_USER);
     const result = await tool.handler({
@@ -1176,7 +1176,7 @@ describe("manage_connectors.uninstall", () => {
     expect(result.isError).toBe(false);
 
     const wsAfter = await h.workspaceStore.get(h.wsId);
-    expect(wsAfter?.bundles ?? []).toHaveLength(0);
+    expect(wsAfter?.connectors ?? []).toHaveLength(0);
   });
 
   test("returns permission_denied when caller is not workspace admin", async () => {
@@ -1195,7 +1195,7 @@ describe("manage_connectors.uninstall", () => {
     // And the connector is still in workspace.json — non-admin gate
     // didn't accidentally tear down state before the check.
     const wsAfter = await h.workspaceStore.get(h.wsId);
-    expect(wsAfter?.bundles ?? []).toHaveLength(1);
+    expect(wsAfter?.connectors ?? []).toHaveLength(1);
   });
 });
 
