@@ -260,7 +260,7 @@ describe("skills__list", () => {
     expect(names).toContain("authoring-guide");
     const guide = skills.find((s) => s.name === "authoring-guide")!;
     expect(guide.layer).toBe(1);
-    expect(guide.scope).toBe("bundle");
+    expect(guide.scope).toBe("provided");
     const ws = skills.find((s) => s.name === "voice")!;
     expect(ws.layer).toBe(3);
     expect(ws.scope).toBe("workspace");
@@ -605,7 +605,7 @@ describe("skills__read", () => {
     expect(result.isError).toBeFalsy();
     const sc = (result as { structuredContent?: Record<string, unknown> }).structuredContent!;
     expect(sc.layer).toBe(1);
-    expect(sc.scope).toBe("bundle");
+    expect(sc.scope).toBe("provided");
     expect((sc.metadata as { name: string }).name).toBe("authoring-guide");
     expect((sc.content as string).length).toBeGreaterThan(0);
   });

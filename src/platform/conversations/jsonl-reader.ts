@@ -85,7 +85,7 @@ export interface DisplaySkill {
   name: string;
   /** The MCP server that published it; absent for filesystem skills. */
   connector?: string;
-  scope: "org" | "workspace" | "user" | "bundle";
+  scope: "org" | "workspace" | "user" | "provided";
   tokens: number;
   loadedBy: string;
   reason: string;
@@ -272,7 +272,7 @@ interface SkillsLoadedEvent {
     id?: string;
     name?: string;
     connector?: string;
-    scope?: "org" | "workspace" | "user" | "bundle";
+    scope?: "org" | "workspace" | "user" | "provided";
     tokens?: number;
     loadedBy?: string;
     reason?: string;

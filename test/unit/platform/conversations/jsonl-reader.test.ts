@@ -217,7 +217,7 @@ describe("readConversation (event format)", () => {
 				type: "skills.loaded",
 				runId,
 				skills: [
-					{ id: "skill://acme/billing/SKILL.md", name: "billing", connector: "acme-mcp", layer: 3, scope: "bundle", version: "", tokens: 900, contentHash: "d1", loadedBy: "tool_affinity", reason: "tool-affinity matched acme-mcp__*" },
+					{ id: "skill://acme/billing/SKILL.md", name: "billing", connector: "acme-mcp", layer: 3, scope: "provided", version: "", tokens: 900, contentHash: "d1", loadedBy: "tool_affinity", reason: "tool-affinity matched acme-mcp__*" },
 				],
 				totalTokens: 900,
 			}),
@@ -228,7 +228,7 @@ describe("readConversation (event format)", () => {
 		expect(result!.messages[1]!.skillsLoaded!.skills[0]).toMatchObject({
 			name: "billing",
 			connector: "acme-mcp",
-			scope: "bundle",
+			scope: "provided",
 		});
 	});
 
@@ -246,7 +246,7 @@ describe("readConversation (event format)", () => {
 				type: "skills.loaded",
 				runId,
 				skills: [
-					{ id: "skill://acme/billing/refunds/SKILL.md", layer: 3, scope: "bundle", version: "", tokens: 900, contentHash: "d1", loadedBy: "tool_affinity", reason: "tool-affinity matched acme__*" },
+					{ id: "skill://acme/billing/refunds/SKILL.md", layer: 3, scope: "provided", version: "", tokens: 900, contentHash: "d1", loadedBy: "tool_affinity", reason: "tool-affinity matched acme__*" },
 					{ id: "/work/skills/release-notes.md", layer: 0, scope: "org", version: "v1", tokens: 300, contentHash: "d2", loadedBy: "always", reason: "always-on" },
 				],
 				totalTokens: 1200,

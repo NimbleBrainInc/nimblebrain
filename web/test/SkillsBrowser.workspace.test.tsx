@@ -63,16 +63,16 @@ const SKILLS_FIXTURE = [
     loading: { wouldLoad: true, mechanism: "tool_affinity" },
   },
   {
-    id: "skill://bundle/usage",
-    name: "bundle-skill",
-    description: "Bundle (Layer 1).",
-    scope: "bundle",
+    id: "skill://provided/usage",
+    name: "provided-skill",
+    description: "Provided (Layer 1).",
+    scope: "provided",
     layer: 1,
     status: "active",
     type: "skill",
     priority: 50,
     tokens: 80,
-    source: { uri: "skill://bundle/usage" },
+    source: { uri: "skill://provided/usage" },
     triggers: ["cut a release"],
     loading: { wouldLoad: true, mechanism: "trigger" },
   },
@@ -629,7 +629,7 @@ describe("SkillsBrowser with surface='workspace' — composition list", () => {
     mounted = await mountAsAdmin();
     // The toggle is a sibling of the row's expander, so it's addressed by its
     // accessible name rather than by nesting.
-    expect(toggleFor(mounted.container, "bundle-skill")?.disabled).toBe(true);
+    expect(toggleFor(mounted.container, "provided-skill")?.disabled).toBe(true);
     // `toBeFalsy` is satisfied by `undefined`, so a lookup that finds nothing
     // would assert nothing. Pin the lookup first. (The locked assertion above
     // needs no such guard — `toBe(true)` already fails on `undefined`.)
@@ -680,7 +680,7 @@ describe("SkillsBrowser with surface='workspace' — composition list", () => {
     // `aria-disabled` later (the usual way to keep a locked control focusable)
     // would silently turn `onClick={onChange}` into a live mutation.
     mounted = await mount(React.createElement(SkillsBrowser, { surface: "workspace" }));
-    const locked = toggleFor(mounted.container, "bundle-skill");
+    const locked = toggleFor(mounted.container, "provided-skill");
     // Guard against a vacuous pass — a missing toggle would satisfy the
     // assertion below for the wrong reason.
     expect(locked).not.toBeNull();

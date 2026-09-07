@@ -106,7 +106,7 @@ export type SkillFrontmatter = Static<typeof SkillFrontmatterSchema>;
 
 // ── Runtime types (flat camelCase — what the rest of the runtime consumes) ──
 
-export type SkillScope = "org" | "workspace" | "user" | "bundle";
+export type SkillScope = "org" | "workspace" | "user" | "provided";
 export type SkillLoadingStrategy = "always" | "dynamic";
 export type SkillStatus = "active" | "disabled";
 

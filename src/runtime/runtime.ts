@@ -373,13 +373,11 @@ export class Runtime {
    */
   private _workspaceSources: ToolSource[] = [];
   /**
-   * Domain-context getter for the automations app. Set by the
-   * automations source factory; consumed by internal callers (the
-   * automations tool handlers and connector lifecycle's
-   * `installConnectorSchedules` / `removeConnectorAutomations`) that need the
-   * full domain shape — including operator-only fields (`source`,
-   * `bundleName`, `allowedTools`) — that the LLM-facing tool schema
-   * deliberately doesn't expose. See `src/platform/AGENTS.md` § 1.4.
+   * Domain-context getter for the automations app. Set by the automations
+   * source factory; consumed by an internal caller that needs the full
+   * domain shape — including the operator-only `source` and `allowedTools`
+   * fields the LLM-facing tool schema deliberately doesn't expose. See
+   * `src/platform/AGENTS.md` § 1.4.
    */
   private _automationsContextGetter: (() => AutomationDomainContext) | null = null;
   /**
@@ -5178,7 +5176,7 @@ function loadAllSkills(configDirs?: string[], skillDir?: string): Skill[] {
  * live in the source tree (`src/skills/{core,builtin}/`), not under
  * `{workDir}/skills/` — they're vendored with the platform and not
  * mutable. The mutation tools' `scopeOfPath` already rejects those
- * paths as `"bundle"`; without this fix the UI would happily show an
+ * paths as `"provided"`; without this fix the UI would happily show an
  * Edit button for them and only fail on save.
  *
  * Decision matrix:
@@ -5192,7 +5190,7 @@ function stampDerivedScope(workDir: string, skill: Skill): Skill {
   const isOrg = skill.sourcePath?.startsWith(orgDir) ?? false;
   return {
     ...skill,
-    manifest: { ...skill.manifest, scope: isOrg ? "org" : "bundle" },
+    manifest: { ...skill.manifest, scope: isOrg ? "org" : "provided" },
   };
 }
 

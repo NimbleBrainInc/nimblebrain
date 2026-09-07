@@ -260,22 +260,21 @@ describe("token budget window anchoring", () => {
   });
 });
 
-describe("createAutomation / deleteAutomation — connector lifecycle path", () => {
-  test("create with source=connector and connectorName preserves identity for cleanup", () => {
+describe("createAutomation / deleteAutomation — internal caller path", () => {
+  test("an explicit source overrides the agent default", () => {
     const ctx = makeCtx();
     createAutomation(
       {
-        name: "monitoring__heartbeat",
+        name: "operator-authored",
         prompt: "ping",
         schedule: { type: "interval", intervalMs: 60_000 },
-        source: "bundle",
-        bundleName: "@acme/monitoring",
+        source: "user",
       },
       ctx,
     );
     createAutomation(
       {
-        name: "user-authored",
+        name: "tool-authored",
         prompt: "agent stuff",
         schedule: { type: "interval", intervalMs: 60_000 },
       },
@@ -283,13 +282,8 @@ describe("createAutomation / deleteAutomation — connector lifecycle path", () 
     );
 
     const defs = ctx.definitions();
-    const connectorAuto = defs.get("monitoring-heartbeat");
-    expect(connectorAuto?.source).toBe("bundle");
-    expect(connectorAuto?.bundleName).toBe("@acme/monitoring");
-
-    const userAuto = defs.get("user-authored");
-    expect(userAuto?.source).toBe("agent");
-    expect(userAuto?.bundleName).toBeUndefined();
+    expect(defs.get("operator-authored")?.source).toBe("user");
+    expect(defs.get("tool-authored")?.source).toBe("agent");
   });
 
   test("delete by name removes from store", () => {

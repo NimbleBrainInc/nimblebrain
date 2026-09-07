@@ -33,7 +33,7 @@ const SkillScope = Type.Union([
   Type.Literal("org"),
   Type.Literal("workspace"),
   Type.Literal("user"),
-  Type.Literal("bundle"),
+  Type.Literal("provided"),
 ]);
 const WritableSkillScope = Type.Union([
   Type.Literal("org"),

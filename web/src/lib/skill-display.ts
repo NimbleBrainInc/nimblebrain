@@ -133,25 +133,25 @@ export const SCOPE_CLASS: Record<SkillScope, string> = {
   org: "ledger-scope--org",
   workspace: "ledger-scope--workspace",
   user: "ledger-scope--user",
-  bundle: "ledger-scope--connector",
+  provided: "ledger-scope--connector",
 };
 
 /**
  * What a reader is shown for a skill's tier.
  *
- * The wire value stays `bundle` because it is persisted on every recorded
- * `skills.loaded` event; "connector" is the term the industry settled on for an
- * MCP server, and in this telemetry that is exactly what the tier means (the
- * platform's own vendored skills are excluded from the event upstream, by
- * `collectLoadedSkills`). Note Settings → Skills reads the SAME enum value with
- * a different meaning — there it is the built-in authoring guide, labelled
- * "System" — so this map is per-surface, not a global rename.
+ * The wire value names the tier a skill is stored in (ADR-0034); the label
+ * names what that tier means on THIS surface. In the ledger, `provided` can
+ * only be a connector's own guidance — the platform's vendored skills are
+ * excluded from the event upstream, by `collectLoadedSkills` — so it reads
+ * "connector". Settings → Skills reads the same value where it CAN be the
+ * built-in authoring guide, and labels it "System". The map is per-surface for
+ * that reason, not because either label is the wire value's real name.
  */
 export const SCOPE_LABEL: Record<SkillScope, string> = {
   org: "org",
   workspace: "workspace",
   user: "user",
-  bundle: "connector",
+  provided: "connector",
 };
 
 /** The subset of a ledger skill that identifies where it came from. */
@@ -167,7 +167,11 @@ export interface SkillProvenanceInput {
  * a list — the publisher is what tells them apart.
  */
 export function skillProvenanceLabel(skill: SkillProvenanceInput): string {
-  return skill.connector ?? SCOPE_LABEL[skill.scope];
+  // A ledger row is a projection of a recorded event, and a record may hold a
+  // tier this build's union does not list — the runtime never rewrites history
+  // to match a later vocabulary (ADR-0034). Fall back to the stored string so a
+  // historical row reads as what it was, rather than as a blank.
+  return skill.connector ?? SCOPE_LABEL[skill.scope] ?? skill.scope;
 }
 
 /** Heading for a group of skills that loaded by the same mechanism. */

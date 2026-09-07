@@ -54,7 +54,7 @@ const DIGEST = {
       id: "skill://acme/usage/SKILL.md",
       name: "usage",
       connector: "acme-mcp",
-      scope: "bundle" as const,
+      scope: "provided" as const,
       tokens: 900,
       loadedBy: "tool_affinity" as const,
       reason: "tool-affinity matched acme-mcp__*",
@@ -151,7 +151,7 @@ describe("InContextPopover", () => {
     expect(text).toContain("usage");
     expect(text).toContain("acme-mcp");
     expect(text).not.toContain("SKILL.md");
-    expect(text).not.toContain("bundle");
+    expect(text).not.toContain("provided");
   });
 
   test("shows an empty state when no run has recorded context yet", async () => {

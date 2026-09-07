@@ -114,7 +114,7 @@ const AUTHORING_GUIDE_URI = "skill://skills/authoring-guide";
 
 const SKILLS_LIST_DESCRIPTION =
   "List Layer 3 skills (cross-connector agent orchestration content) and Layer 1 vendored connector skills. " +
-  "Filter by `scope` (org | workspace | user | bundle), `layer` (1 | 3), `loading_strategy` (always | dynamic), " +
+  "Filter by `scope` (org | workspace | user | provided), `layer` (1 | 3), `loading_strategy` (always | dynamic), " +
   "`tool_affinity` (a tool name; returns skills whose `tool-affinity` glob matches it), " +
   "`status` (active | disabled), or `modified_since` (ISO 8601). " +
   "Returns id, name, layer, scope, status, token count, and source metadata for each skill. " +
@@ -664,7 +664,7 @@ function buildAuthoringGuideEntry(authoringGuidePath: string): ListedSkill | nul
     id: AUTHORING_GUIDE_URI,
     name: skill.manifest.name,
     layer: 1,
-    scope: "bundle",
+    scope: "provided",
     status: skill.manifest.status,
     tokens,
     source: { uri: AUTHORING_GUIDE_URI, path: authoringGuidePath, connector: "nb__skills" },
@@ -777,7 +777,7 @@ function realPathUnderAnyRootOrThrow(target: string, roots: string[]): string {
  *
  *   1. realScope === expectedScope — catches tier-jumping (workspace
  *      symlink → user file, etc.) AND outside-workdir paths (the local
- *      fallback below classifies those as `"bundle"`, which never
+ *      fallback below classifies those as `"provided"`, which never
  *      matches an `expectedScope` of `workspace` / `user` / `org`).
  *   2. realWsId === lexicalWsId for workspace scope — catches
  *      cross-workspace symlinks within `{workDir}/workspaces/`.
@@ -790,7 +790,7 @@ function realPathUnderAnyRootOrThrow(target: string, roots: string[]): string {
 function assertSymlinkBoundaryOrThrow(
   runtime: Runtime,
   target: string,
-  expectedScope: WritableScope | "bundle",
+  expectedScope: WritableScope | "provided",
 ): void {
   const real = realpathSync(target);
   const workDir = runtime.getWorkDir();
@@ -808,11 +808,11 @@ function assertSymlinkBoundaryOrThrow(
   const wsRoot = `${join(realWorkDir, "workspaces")}/`;
   const userRoot = `${join(realWorkDir, "users")}/`;
   const orgRoot = `${join(realWorkDir, "skills")}/`;
-  let realScope: WritableScope | "bundle";
+  let realScope: WritableScope | "provided";
   if (real.startsWith(wsRoot)) realScope = "workspace";
   else if (real.startsWith(userRoot)) realScope = "user";
   else if (real.startsWith(orgRoot)) realScope = "org";
-  else realScope = "bundle";
+  else realScope = "provided";
 
   if (realScope !== expectedScope) {
     throw new Error(
@@ -862,7 +862,7 @@ async function readSkillById(
     return buildReadResult(skill, {
       id,
       layer: 1,
-      scope: "bundle",
+      scope: "provided",
       source: { uri: id, path: authoringGuidePath, connector: "nb__skills" },
       modifiedAt: readSkillMtime(authoringGuidePath),
     });
@@ -945,7 +945,7 @@ async function readSkillHandler(
   // skill:// URIs always resolve to the Layer 1 connector resource;
   // anything else is path-derived.
   const isUri = id === AUTHORING_GUIDE_URI || id.startsWith(SKILL_URI_PREFIX);
-  const scope = isUri ? "bundle" : scopeOfPath(runtime, id, authoringGuidePath);
+  const scope = isUri ? "provided" : scopeOfPath(runtime, id, authoringGuidePath);
   if (!scope) {
     return {
       content: textContent(unrecognizedIdMessage(id)),
@@ -1150,7 +1150,7 @@ function buildReadResult(
   base: {
     id: string;
     layer: 1 | 3;
-    scope: "org" | "workspace" | "user" | "bundle";
+    scope: "org" | "workspace" | "user" | "provided";
     source: ReadResult["source"];
     modifiedAt?: string;
   },
@@ -1188,12 +1188,12 @@ function buildReadResult(
 function inferScopeFromPath(
   path: string,
   workDir: string,
-): "org" | "workspace" | "user" | "bundle" {
+): "org" | "workspace" | "user" | "provided" {
   const resolved = resolve(path);
   if (resolved.startsWith(`${resolve(workDir, "workspaces")}/`)) return "workspace";
   if (resolved.startsWith(`${resolve(workDir, "users")}/`)) return "user";
   if (resolved.startsWith(`${resolve(workDir, "skills")}/`)) return "org";
-  return "bundle";
+  return "provided";
 }
 
 interface LoadingLogInput {
@@ -1477,7 +1477,7 @@ type AccessMode = "read" | "write";
 async function checkPathAccess(
   runtime: Runtime,
   path: string,
-  scope: WritableScope | "bundle",
+  scope: WritableScope | "provided",
   mode: AccessMode,
 ): Promise<PermissionDecision> {
   if (runtime.getIdentityProvider() === null) return { allowed: true };
@@ -1486,7 +1486,7 @@ async function checkPathAccess(
 
   const workDir = runtime.getWorkDir();
 
-  if (scope === "bundle") return connectorAccess(mode);
+  if (scope === "provided") return connectorAccess(mode);
   if (scope === "org") return orgAccess(mode, ORG_ADMIN_ROLES.has(identity.orgRole));
   if (scope === "user") return userScopeAccess(path, workDir, identity);
   return workspaceScopeAccess(runtime, path, workDir, identity, mode);
@@ -1629,14 +1629,14 @@ function scopeOfPath(
   runtime: Runtime,
   path: string,
   authoringGuidePath: string,
-): WritableScope | "bundle" | null {
+): WritableScope | "provided" | null {
   const work = resolve(runtime.getWorkDir());
   const real = resolve(path);
   if (real.startsWith(`${join(work, "workspaces")}/`)) return "workspace";
   if (real.startsWith(`${join(work, "users")}/`)) return "user";
   if (real.startsWith(`${join(work, "skills")}/`)) return "org";
   for (const root of connectorSkillRoots(authoringGuidePath)) {
-    if (real === root || real.startsWith(`${root}/`)) return "bundle";
+    if (real === root || real.startsWith(`${root}/`)) return "provided";
   }
   return null;
 }
@@ -1682,7 +1682,7 @@ function permissionDenied(
   reason: string,
   context?: {
     path?: string;
-    scope?: WritableScope | "bundle";
+    scope?: WritableScope | "provided";
     role?: string;
   },
 ): ToolResult {
@@ -1720,7 +1720,7 @@ function permissionDenied(
 }
 
 /** Best-effort role lookup for permission-denied causation messages. */
-function currentRoleHint(runtime: Runtime, scope: WritableScope | "bundle"): string | undefined {
+function currentRoleHint(runtime: Runtime, scope: WritableScope | "provided"): string | undefined {
   const identity = runtime.getCurrentIdentity();
   if (!identity) return undefined;
   if (scope === "workspace") {
@@ -1752,7 +1752,7 @@ function connectorNotMutable(): ToolResult {
     structuredContent: {
       error: "skill_not_mutable_via_platform",
       layer: 1,
-      suggested_action: "publish_new_bundle_version",
+      suggested_action: "publish_new_connector_version",
       message:
         "This skill ships with the connector and is versioned with it. To change it, publish a new connector version.",
     },
@@ -2277,7 +2277,7 @@ async function gateSkillPath(
   if (snapErr) return { error: snapErr };
   if (id.startsWith(SKILL_URI_PREFIX)) return { error: connectorNotMutable() };
   const scope = scopeOfPath(runtime, id, authoringGuidePath);
-  if (scope === "bundle") return { error: connectorNotMutable() };
+  if (scope === "provided") return { error: connectorNotMutable() };
   if (!scope) return { error: errorResult(new Error(unrecognizedIdMessage(id))) };
   if (!existsSync(id)) {
     return {

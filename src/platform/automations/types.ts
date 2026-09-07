@@ -8,7 +8,7 @@
 // ---------------------------------------------------------------------------
 
 /** Who created this automation. */
-export type AutomationSource = "user" | "agent" | "bundle";
+export type AutomationSource = "user" | "agent";
 
 export interface Automation {
   /** Unique identifier. Kebab-case, derived from name. */
@@ -55,9 +55,6 @@ export interface Automation {
 
   /** Who created this automation. */
   source: AutomationSource;
-
-  /** If connector-contributed, which connector. */
-  bundleName?: string;
 
   /** ISO timestamp. */
   createdAt: string;

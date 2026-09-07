@@ -24,7 +24,12 @@ export interface ActivatableSkill {
   name: string;
   description?: string;
   body: string;
-  /** Provenance label for the activation block (`org` / `workspace` / `user` / `connector` / `connector`). */
+  /**
+   * Provenance label for the activation block. A filesystem skill carries its
+   * storage tier (`org` / `workspace` / `user`); a server-published one carries
+   * `provided`; a curated overlay carries the connector it is bound to
+   * (`connector`). See ADR-0034.
+   */
   scope: string;
 }
 
@@ -43,8 +48,9 @@ export interface SkillCatalogEntry {
  * - `connectorCandidates` are the curated overlays (always active by
  *   materialization).
  *
- * Deduplicated by name — first pool wins (filesystem > connector > connector,
- * matching the tier-override direction of `mergeScopedSkills`) — then sorted
+ * Deduplicated by name — first pool wins (filesystem > server-published >
+ * curated overlay, matching the tier-override direction of
+ * `mergeScopedSkills`) — then sorted
  * by name via codepoint comparison (never locale-sensitive collation), so the
  * output is byte-stable for identical inputs.
  *

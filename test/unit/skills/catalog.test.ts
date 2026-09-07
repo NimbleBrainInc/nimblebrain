@@ -54,11 +54,11 @@ describe("collectActivatableSkills", () => {
   test("merges all three pools sorted by name", () => {
     const out = collectActivatableSkills({
       fsCapability: [dynamicSkill("zeta", { scope: "workspace" })],
-      connectorCapability: [dynamicSkill("alpha", { scope: "bundle" })],
+      connectorCapability: [dynamicSkill("alpha", { scope: "provided" })],
       connectorCandidates: [candidate("mid", "curated overlay")],
     });
     expect(out.map((s) => s.name)).toEqual(["alpha", "mid", "zeta"]);
-    expect(out[0]!.scope).toBe("bundle");
+    expect(out[0]!.scope).toBe("provided");
     expect(out[1]!.scope).toBe("connector");
     expect(out[1]!.description).toBe("curated overlay");
     expect(out[2]!.scope).toBe("workspace");
@@ -76,7 +76,7 @@ describe("collectActivatableSkills", () => {
   test("dedupes by name with filesystem > connector > connector precedence", () => {
     const out = collectActivatableSkills({
       fsCapability: [dynamicSkill("shared", { scope: "user" }, "fs body")],
-      connectorCapability: [dynamicSkill("shared", { scope: "bundle" }, "connector body")],
+      connectorCapability: [dynamicSkill("shared", { scope: "provided" }, "connector body")],
       connectorCandidates: [candidate("shared")],
     });
     expect(out).toHaveLength(1);

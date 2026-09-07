@@ -110,7 +110,7 @@ const TWO: SkillsLoadedContext = {
       id: "skill://acme/release-notes/SKILL.md",
       name: "release-notes",
       connector: "acme-mcp",
-      scope: "bundle",
+      scope: "provided",
       tokens: 610,
       loadedBy: "tool_affinity",
       reason: "tool-affinity matched registry__status",
@@ -180,12 +180,12 @@ describe("LedgerLine", () => {
     );
     expect(first(rows[0]!, "ledger-line__row-tok")?.textContent).toBe("1.2k tok");
 
-    // Row 2: connector guidance names its publisher, never the word "bundle" —
+    // Row 2: connector guidance names its publisher, never the word "provided" —
     // connector skills are conventionally named for their job, so the publisher
     // is what tells two of them apart in a list.
     expect(first(rows[1]!, "ledger-line__row-name")?.textContent).toBe("release-notes");
     expect(first(rows[1]!, "ledger-scope--connector")?.textContent).toBe("acme-mcp");
-    expect(container.textContent).not.toContain("bundle");
+    expect(container.textContent).not.toContain("provided");
 
     const link = container.getElementsByTagName("a")[0];
     expect(link?.textContent).toContain("Manage skills");

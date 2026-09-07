@@ -212,6 +212,7 @@ Manage skills:
 - [0017](adr/0017-retiring-the-trigger-matcher.md) — *(proposed)* whether the trigger matcher retires
 - [0018](adr/0018-skill-channels-and-the-cache-breakpoints.md) — *(proposed)* where each skill channel sits relative to the cache breakpoints
 - [0019](adr/0019-scope-precedence-when-two-skills-share-a-name.md) — *(proposed)* scope precedence when two skills share a name
+- [0034](adr/0034-a-skills-scope-names-where-it-is-stored.md) — a skill's scope names where it is stored; its name prefix names who published it
 
 Orchestrate over remote MCP:
 

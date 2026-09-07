@@ -140,7 +140,7 @@ describe("event schemas — accept representative payloads", () => {
         toolName: "gmail__send",
         skillName: "gmail",
         skillBody: "Confirm the recipient before sending.",
-        scope: "bundle",
+        scope: "provided",
       }),
     ).toBe(true);
   });
@@ -205,7 +205,7 @@ describe("event schemas — reject malformed payloads", () => {
       Value.Check(SkillCreatedPayload, {
         id: "/x.md",
         name: "x",
-        scope: "bundle",
+        scope: "provided",
         type: "skill",
       }),
     ).toBe(false);

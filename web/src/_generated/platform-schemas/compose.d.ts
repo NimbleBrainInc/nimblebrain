@@ -64,7 +64,7 @@ export interface AssembledContextSkill {
     name: string;
     /** The MCP server that published it; absent for filesystem skills. */
     connector?: string;
-    scope: "org" | "workspace" | "user" | "bundle";
+    scope: "org" | "workspace" | "user" | "provided";
     tokens: number;
     /** The loading mechanism: always-on context, tool-affinity, or trigger match. */
     loadedBy: "always" | "tool_affinity" | "trigger";
