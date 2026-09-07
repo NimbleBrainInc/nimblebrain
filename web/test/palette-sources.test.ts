@@ -18,7 +18,7 @@ import type { ScopedRole } from "../src/hooks/useScopedRole";
 import type { PlacementEntry } from "../src/types";
 
 function ws(id: string, name: string, extra?: Partial<WorkspaceInfo>): WorkspaceInfo {
-  return { id, name, memberCount: 1, bundles: [], ...extra };
+  return { id, name, memberCount: 1, connectors: [], ...extra };
 }
 
 const baseCtx: CommandSourceContext = {
