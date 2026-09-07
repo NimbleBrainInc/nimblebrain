@@ -72,7 +72,7 @@ describe("surfaceTools — requestAllowedTools", () => {
     }
   });
 
-  it("empty allowedTools array blocks all bundle tools, only nb__* remain", () => {
+  it("empty allowedTools array blocks all connector tools, only nb__* remain", () => {
     const system = makeSystemTools();
     const files = Array.from({ length: 5 }, (_, i) => makeTool(`files__tool_${i}`));
     const all = [...system, ...files];
@@ -158,7 +158,6 @@ describe("ChatRequest.metadata — conversation persistence", () => {
     const workDir = join(testDir, `meta-${Date.now()}`);
     const runtime = await Runtime.start({
       model: { provider: "custom", adapter: createEchoModel() },
-      noDefaultBundles: true,
       workDir,
     });
 
@@ -193,7 +192,6 @@ describe("ChatRequest.metadata — conversation persistence", () => {
     const workDir = join(testDir, `nometa-${Date.now()}`);
     const runtime = await Runtime.start({
       model: { provider: "custom", adapter: createEchoModel() },
-      noDefaultBundles: true,
       workDir,
     });
 
@@ -216,7 +214,6 @@ describe("ChatRequest.metadata — conversation persistence", () => {
     const workDir = join(testDir, `metakeep-${Date.now()}`);
     const runtime = await Runtime.start({
       model: { provider: "custom", adapter: createEchoModel() },
-      noDefaultBundles: true,
       workDir,
     });
 

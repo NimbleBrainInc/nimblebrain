@@ -5,7 +5,7 @@
 // must wire its `onReconnect` option through to the singleton's
 // `onReconnect` channel. Without this, a watchdog/visibility-driven
 // reconnect silently resumes the stream and any state derived from
-// missed `bundle.installed` / `config.changed` events drifts.
+// missed `connector.installed` / `config.changed` events drifts.
 //
 // Same shape as the other hook tests in this directory — bun:test +
 // react-dom/client + happy-dom (via web/test/setup.ts), no

@@ -1,13 +1,13 @@
 /**
  * Integration tests: Workspace Security
  *
- * Validates workspace-level bundle isolation using per-workspace registries
+ * Validates workspace-level connector isolation using per-workspace registries
  * and placement filtering with wsId tags.
  *
  * Covers:
  * - Per-workspace ToolRegistry isolation
  * - filterPlacementsForWorkspace: correct placements per workspace
- * - DevIdentityProvider: workspace gets config bundles populated
+ * - DevIdentityProvider: workspace gets config connectors populated
  */
 
 import { mkdtempSync, rmSync } from "node:fs";
@@ -15,8 +15,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "bun:test";
 
-import { BundleLifecycleManager } from "../../src/bundles/lifecycle.ts";
-import type { BriefingBlock, BundleRef, BundleUiMeta } from "../../src/bundles/types.ts";
+import { ConnectorLifecycleManager } from "../../src/connectors/runtime/lifecycle.ts";
+import type { BriefingBlock, ConnectorRef, ConnectorUiMeta } from "../../src/connectors/runtime/types.ts";
 import { DevIdentityProvider } from "../../src/identity/providers/dev.ts";
 import { UserStore } from "../../src/identity/user.ts";
 import { PlacementRegistry } from "../../src/runtime/placement-registry.ts";
@@ -37,13 +37,13 @@ function makeTmpDir(): string {
 function makeWorkspace(
   id: string,
   name: string,
-  bundles: Workspace["bundles"],
+  connectors: Workspace["connectors"],
 ): Workspace {
   return {
     id,
     name,
     members: [],
-    bundles,
+    connectors: connectors,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   };
@@ -111,7 +111,7 @@ function buildMktRegistry(): ToolRegistry {
 }
 
 // A registry populated via the production API: ambient (no wsId) for
-// platform sources, scoped (wsId set) for workspace-installed bundles.
+// platform sources, scoped (wsId set) for workspace-installed connectors.
 function buildRegistry(): PlacementRegistry {
   const reg = new PlacementRegistry();
   for (const src of protectedSources) {
@@ -185,10 +185,10 @@ describe("Workspace security: PlacementRegistry.forWorkspace", () => {
     expect(names).toContain("files");
     expect(names).toContain("settings");
 
-    // Workspace bundle present
+    // Workspace connector present
     expect(names).toContain("crm");
 
-    // Other workspace bundle absent
+    // Other workspace connector absent
     expect(names).not.toContain("dropbox");
   });
 
@@ -205,15 +205,15 @@ describe("Workspace security: PlacementRegistry.forWorkspace", () => {
     expect(names).not.toContain("crm");
   });
 
-  test("ws_eng placement count = ambient count + workspace bundle count", () => {
+  test("ws_eng placement count = ambient count + workspace connector count", () => {
     expect(buildRegistry().forWorkspace("ws_eng")).toHaveLength(5);
   });
 
-  test("ws_mkt placement count = ambient count + workspace bundle count", () => {
+  test("ws_mkt placement count = ambient count + workspace connector count", () => {
     expect(buildRegistry().forWorkspace("ws_mkt")).toHaveLength(5);
   });
 
-  test("workspace with no installed bundles only gets ambient placements", () => {
+  test("workspace with no installed connectors only gets ambient placements", () => {
     const result = buildRegistry().forWorkspace("ws_empty");
     const names = result.map((p) => p.serverName);
     expect(names).toEqual(
@@ -226,17 +226,17 @@ describe("Workspace security: PlacementRegistry.forWorkspace", () => {
 });
 
 // ---------------------------------------------------------------------------
-// DevIdentityProvider: workspace has config bundles populated
+// DevIdentityProvider: workspace has config connectors populated
 // ---------------------------------------------------------------------------
 
-describe("Workspace security: DevIdentityProvider populates workspace bundles", () => {
+describe("Workspace security: DevIdentityProvider populates workspace connectors", () => {
   let workDir: string;
 
   afterEach(() => {
     if (workDir) rmSync(workDir, { recursive: true, force: true });
   });
 
-  test("workspace created with empty bundles when provisioned by runtime", async () => {
+  test("workspace created with empty connectors when provisioned by runtime", async () => {
     workDir = makeTmpDir();
 
     const userStore = new UserStore(workDir);
@@ -262,7 +262,7 @@ describe("Workspace security: DevIdentityProvider populates workspace bundles", 
     expect(workspaces.length).toBeGreaterThanOrEqual(1);
 
     const defaultWs = workspaces[0]!;
-    expect(defaultWs.bundles).toHaveLength(0);
+    expect(defaultWs.connectors).toHaveLength(0);
   });
 });
 
@@ -270,7 +270,7 @@ describe("Workspace security: DevIdentityProvider populates workspace bundles", 
 // Cross-workspace data leak regressions (bayze incident, 2026-04)
 // ---------------------------------------------------------------------------
 
-describe("Workspace security: same bundle installed in two workspaces", () => {
+describe("Workspace security: same connector installed in two workspaces", () => {
   const placements = [
     { slot: "sidebar.apps", resourceUri: "ui://crm/nav", priority: 30 },
     { slot: "main", resourceUri: "ui://crm/board", route: "crm" },
@@ -307,16 +307,16 @@ describe("Workspace security: same bundle installed in two workspaces", () => {
     expect(pr.forWorkspace("ws_eng").filter((e) => e.wsId === "ws_eng")).toHaveLength(2);
   });
 
-  test("BundleLifecycleManager: seeding the same connector in two workspaces keeps them distinct", async () => {
+  test("ConnectorLifecycleManager: seeding the same connector in two workspaces keeps them distinct", async () => {
     const events: EngineEvent[] = [];
     const sink: EventSink = { emit: (e) => events.push(e) };
-    const lifecycle = new BundleLifecycleManager(sink, undefined);
+    const lifecycle = new ConnectorLifecycleManager(sink);
 
-    const ref: BundleRef = { url: "https://crm.example.com/mcp", serverName: "crm" };
+    const ref: ConnectorRef = { url: "https://crm.example.com/mcp", serverName: "crm" };
     const meta = {
       manifestName: "ai.nimblebrain/crm",
       version: "1.0.0",
-      ui: { name: "CRM", icon: "cards" } as BundleUiMeta,
+      ui: { name: "CRM", icon: "cards" } as ConnectorUiMeta,
       briefing: null as BriefingBlock | null,
     };
 

@@ -7,7 +7,7 @@ import { toWsId } from "../lib/workspace-slug";
  * `<Routes>` renders `null` when nothing matches, so without this the main area
  * is simply blank — a white screen indistinguishable from an app that failed to
  * render. The usual way to land here is an app URL whose placement is gone: the
- * bundle was uninstalled, or it is installed but not running, so the shell never
+ * connector was uninstalled, or it is installed but not running, so the shell never
  * emitted a route for it.
  *
  * `settled` is false while the shell's placements still describe a different

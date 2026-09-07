@@ -24,7 +24,7 @@ import type { EventSink } from "../../src/engine/types.ts";
 import { McpSource } from "../../src/tools/mcp-source.ts";
 
 // End-to-end wire test for the inbound host-resources handlers, without
-// spawning a real subprocess. We build a fake "bundle" MCP Server inside
+// spawning a real subprocess. We build a fake "connector" MCP Server inside
 // the test process, link it to an McpSource via InMemoryTransport, and
 // drive a tool call whose implementation calls back through the server
 // → client request channel using the namespaced method.
@@ -70,14 +70,14 @@ async function seedFile(
 }
 
 /**
- * Build a fake bundle MCP server whose single tool, when called, issues
+ * Build a fake connector MCP server whose single tool, when called, issues
  * an `ai.nimblebrain/resources/read` request back to its client peer.
  * Linked to the platform-side McpSource via InMemoryTransport. The tool
  * result echoes the bytes the host returned, so the test can assert
  * end-to-end correctness.
  */
-async function buildFakeBundle(uriToRead: string) {
-  const server = new Server({ name: "fake-bundle", version: "0.0.1" }, { capabilities: { tools: {} } });
+async function buildFakeConnector(uriToRead: string) {
+  const server = new Server({ name: "fake-connector", version: "0.0.1" }, { capabilities: { tools: {} } });
 
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
     tools: [
@@ -121,17 +121,17 @@ async function buildFakeBundle(uriToRead: string) {
 }
 
 describe("McpSource inbound host-resources handlers", () => {
-  it("dispatches ai.nimblebrain/resources/read through the resolver and back to the bundle", async () => {
+  it("dispatches ai.nimblebrain/resources/read through the resolver and back to the connector", async () => {
     const fileId = await seedFile(wsAStore, "brokers.csv", "hello,world", "text/csv");
     const uri = `files://${fileId}`;
 
-    const fake = await buildFakeBundle(uri);
+    const fake = await buildFakeConnector(uri);
 
     const resolver = new FileBackedHostResourcesResolver(() => wsAStore);
     const rateLimit = new TokenBucketRateLimit();
 
     const source = new McpSource(
-      "fake-bundle",
+      "fake-connector",
       {
         type: "inProcess",
         createServer: async () => fake,
@@ -139,7 +139,7 @@ describe("McpSource inbound host-resources handlers", () => {
       NoopSink,
       {
         workspaceId: "ws_a",
-        bundleId: "fake-bundle",
+        connectorId: "fake-connector",
         hostResources: resolver,
         rateLimit,
       },
@@ -147,7 +147,7 @@ describe("McpSource inbound host-resources handlers", () => {
 
     await source.start();
     const tools = await source.tools();
-    expect(tools.map((t) => t.name)).toContain("fake-bundle__read_via_host");
+    expect(tools.map((t) => t.name)).toContain("fake-connector__read_via_host");
 
     // McpSource.execute takes the BARE tool name (without source prefix);
     // ToolRegistry.execute strips the prefix before calling source.execute.
@@ -175,7 +175,7 @@ describe("McpSource inbound host-resources handlers", () => {
   // The list handler in mcp-source.ts unwraps `params._meta.filter` (a
   // non-standard location chosen because spec `ListResourcesRequest`
   // doesn't carry `filter` at the top level). This test proves the
-  // bundle-supplied filter reaches the resolver intact — without it, a
+  // connector-supplied filter reaches the resolver intact — without it, a
   // future refactor of the param-schema parse could silently swap
   // filtered for unfiltered results and the resolver-level tests would
   // still pass.
@@ -184,7 +184,7 @@ describe("McpSource inbound host-resources handlers", () => {
     await seedFile(wsAStore, "doc.md", "y", "text/markdown");
 
     const server = new Server(
-      { name: "fake-bundle", version: "0.0.1" },
+      { name: "fake-connector", version: "0.0.1" },
       { capabilities: { tools: {} } },
     );
     server.setRequestHandler(ListToolsRequestSchema, async () => ({
@@ -222,12 +222,12 @@ describe("McpSource inbound host-resources handlers", () => {
     const resolver = new FileBackedHostResourcesResolver(() => wsAStore);
     const rateLimit = new TokenBucketRateLimit();
     const source = new McpSource(
-      "fake-bundle",
+      "fake-connector",
       { type: "inProcess", createServer: async () => ({ server, clientTransport }) },
       NoopSink,
       {
         workspaceId: "ws_a",
-        bundleId: "fake-bundle",
+        connectorId: "fake-connector",
         hostResources: resolver,
         rateLimit,
       },
@@ -264,7 +264,7 @@ describe("McpSource inbound host-resources handlers", () => {
     await seedFile(wsAStore, "final.md", "y", "text/markdown", ["published"]);
 
     const server = new Server(
-      { name: "fake-bundle", version: "0.0.1" },
+      { name: "fake-connector", version: "0.0.1" },
       { capabilities: { tools: {} } },
     );
     server.setRequestHandler(ListToolsRequestSchema, async () => ({
@@ -302,12 +302,12 @@ describe("McpSource inbound host-resources handlers", () => {
     const resolver = new FileBackedHostResourcesResolver(() => wsAStore);
     const rateLimit = new TokenBucketRateLimit();
     const source = new McpSource(
-      "fake-bundle",
+      "fake-connector",
       { type: "inProcess", createServer: async () => ({ server, clientTransport }) },
       NoopSink,
       {
         workspaceId: "ws_a",
-        bundleId: "fake-bundle",
+        connectorId: "fake-connector",
         hostResources: resolver,
         rateLimit,
       },
@@ -331,24 +331,24 @@ describe("McpSource inbound host-resources handlers", () => {
   });
 
   it("propagates resolver errors (e.g. unknown file id) as JSON-RPC error responses", async () => {
-    const fake = await buildFakeBundle("files://fl_does_not_exist");
+    const fake = await buildFakeConnector("files://fl_does_not_exist");
     const resolver = new FileBackedHostResourcesResolver(() => wsAStore);
     const rateLimit = new TokenBucketRateLimit();
 
     const source = new McpSource(
-      "fake-bundle",
+      "fake-connector",
       { type: "inProcess", createServer: async () => fake },
       NoopSink,
       {
         workspaceId: "ws_a",
-        bundleId: "fake-bundle",
+        connectorId: "fake-connector",
         hostResources: resolver,
         rateLimit,
       },
     );
     await source.start();
 
-    // The bundle's tool catches the host-side error via the SDK's
+    // The connector's tool catches the host-side error via the SDK's
     // request-response machinery and surfaces it as a thrown exception.
     // McpSource's execute wrapper turns that into an `isError: true`
     // tool result rather than throwing.

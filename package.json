@@ -69,7 +69,7 @@
     "check:resource-schemes": "bun run scripts/check-resource-schemes.ts",
     "check:code-style": "bun run scripts/check-code-style.ts",
     "check:no-raw-console": "bun run scripts/check-no-raw-console.ts",
-    "check:catalog-schema": "bun run scripts/check-catalog-schema.ts src/connectors/curated",
+    "check:catalog-schema": "bun run scripts/check-catalog-schema.ts src/connectors/catalog/curated",
     "check:no-sentry-in-kernel": "bun run scripts/check-no-sentry-in-kernel.ts",
     "check:usage-record": "bun run scripts/check-usage-record.ts",
     "migrate:usage-ledger": "bun run scripts/backfill-usage-ledger.ts",
@@ -87,7 +87,8 @@
     "format:check": "bunx @biomejs/biome format src/ web/src/ instrument/ scripts/",
     "sync-models": "bun run src/model/sync-models.ts && bunx @biomejs/biome format --write src/model/catalog-data.json",
     "sync-nebius": "bun run src/model/sync-nebius.ts && bunx @biomejs/biome format --write src/model/catalog-nebius.json",
-    "migrate:skill-frontmatter": "bun run scripts/migrate-skill-frontmatter.ts"
+    "migrate:skill-frontmatter": "bun run scripts/migrate-skill-frontmatter.ts",
+    "migrate:workspace-connectors": "bun run scripts/migrate-workspace-connectors.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.10",

@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
-import { BundleLifecycleManager } from "../../src/bundles/lifecycle.ts";
+import { ConnectorLifecycleManager } from "../../src/connectors/runtime/lifecycle.ts";
 import { IdentityConnectorStore } from "../../src/identity/connector-store.ts";
 import type { UserIdentity } from "../../src/identity/provider.ts";
 import { ConnectorDirectory } from "../../src/registries/directory.ts";
@@ -119,7 +119,7 @@ async function buildHarness(): Promise<Harness> {
   );
 
   const workspaceStore = new WorkspaceStore(workDir);
-  const lifecycle = new BundleLifecycleManager(new NoopEventSink(), undefined);
+  const lifecycle = new ConnectorLifecycleManager(new NoopEventSink());
   const workspaceRegistry = new ToolRegistry();
   const registryStore = new RegistryStore(workDir);
 
@@ -428,14 +428,14 @@ describe("manage_connectors.list_personal_catalog — the curated personal-conne
 
 describe("startIdentityAuth reserved-name guard", () => {
   test("rejects a reserved serverName (nb) before any wiring", async () => {
-    // Defense-in-depth mirroring `startBundleSource`: the interactive Connect
-    // path builds its source directly (outside startBundleSource), so it
+    // Defense-in-depth mirroring `startConnectorSource`: the interactive Connect
+    // path builds its source directly (outside startConnectorSource), so it
     // enforces the reserved-name invariant itself. Install already blocks such a
     // record, so reaching here means a hand-edited connectors.json — it must
     // still fail closed before constructing a source named `nb`.
     const workDir = mkdtempSync(join(tmpdir(), "nb-startauth-reserved-"));
     try {
-      const lifecycle = new BundleLifecycleManager(new NoopEventSink(), undefined);
+      const lifecycle = new ConnectorLifecycleManager(new NoopEventSink());
       await expect(lifecycle.startIdentityAuth("nb", USER.id, { workDir })).rejects.toThrow(
         /reserved/i,
       );

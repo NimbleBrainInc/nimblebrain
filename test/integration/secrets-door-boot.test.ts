@@ -11,7 +11,7 @@
  *      being one swap point, which is the failure this arrangement exists to
  *      prevent and which nothing else would catch.
  *   2. The `credential` transport credential is registered by `start` itself,
- *      before `startWorkspaceBundles` — a connector installed with it boots, and
+ *      before `startWorkspaceConnectors` — a connector installed with it boots, and
  *      an unregistered name would drop its source on every restart. (The same
  *      defect the Composio boot test pins, for the same reason.)
  *   3. An instance-scope `{ ref: "credential" }` in the config `start` was
@@ -56,7 +56,6 @@ beforeAll(async () => {
 
   runtime = await Runtime.start({
     model: { provider: "custom", adapter: createEchoModel() },
-    noDefaultBundles: true,
     logging: { disabled: true },
     workDir: testDir,
     connectors: {

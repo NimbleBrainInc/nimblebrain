@@ -6,7 +6,7 @@
  *     returned skill.
  *   - Reserved subdirs (`_versions/`, `_archived/`, anything starting with
  *     "_") are skipped.
- *   - Nested `bundles/<bundle>/<skill>.md` is discovered with the parent
+ *   - Nested `connectors/<connector>/<skill>.md` is discovered with the parent
  *     scope stamped.
  *   - Missing directories return `[]` without throwing.
  *   - The pure merge helper (`mergeScopedSkills`) layers user > workspace
@@ -14,7 +14,7 @@
  *
  * The merge logic is exercised through the pure helper so we don't have to
  * spin up a full `Runtime.start()` (which pulls in identity providers,
- * bundle lifecycle, etc. — overkill for this unit). The runtime method
+ * connector lifecycle, etc. — overkill for this unit). The runtime method
  * `Runtime.loadConversationSkills` is a thin orchestrator over
  * `loadScopedSkills` + `mergeScopedSkills`; integration coverage of the
  * combined path lives in higher-tier tests once Task 003 wires it into
@@ -77,7 +77,7 @@ describe("loadScopedSkills — stamping", () => {
     mkdirSync(dir, { recursive: true });
     writeFileSync(
       join(dir, "legacy.md"),
-      `---\nname: legacy\ndescription: x\ntype: skill\npriority: 50\nscope: bundle\n---\nBody.\n`,
+      `---\nname: legacy\ndescription: x\ntype: skill\npriority: 50\nscope: connector\n---\nBody.\n`,
       "utf-8",
     );
     expect(loadScopedSkills(dir, "user")).toHaveLength(0);
@@ -98,12 +98,12 @@ describe("loadScopedSkills — subdir handling", () => {
     expect(names).toEqual(["live"]);
   });
 
-  test("discovers nested bundles/<bundle>/<skill>.md with the parent scope", () => {
-    const dir = join(root, "with-bundles");
+  test("discovers nested connectors/<connector>/<skill>.md with the parent scope", () => {
+    const dir = join(root, "with-connectors");
     mkdirSync(dir, { recursive: true });
     writeSkillFile(join(dir, "top-level.md"), "top-level");
     writeSkillFile(join(dir, "bundles", "synapse-collateral", "patch-policy.md"), "patch-policy");
-    writeSkillFile(join(dir, "bundles", "another-bundle", "voice.md"), "voice");
+    writeSkillFile(join(dir, "bundles", "another-connector", "voice.md"), "voice");
 
     const skills = loadScopedSkills(dir, "workspace");
     const names = skills.map((s) => s.manifest.name).sort();
@@ -113,7 +113,7 @@ describe("loadScopedSkills — subdir handling", () => {
     }
   });
 
-  test("recurses to depth 2 (bundles/<bundle>/<skill>.md) but no further", () => {
+  test("recurses to depth 2 (connectors/<connector>/<skill>.md) but no further", () => {
     const dir = join(root, "depth-cap");
     mkdirSync(dir, { recursive: true });
     writeSkillFile(join(dir, "level0.md"), "level0");

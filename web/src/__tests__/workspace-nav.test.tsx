@@ -143,7 +143,7 @@ function ws(overrides: Partial<WorkspaceInfo> & { id: string; name: string }): W
   return {
     id: overrides.id,
     name: overrides.name,
-    bundles: [],
+    connectors: [],
     memberCount: 1,
     isPersonal: overrides.isPersonal ?? false,
     userRole: overrides.userRole ?? "admin",

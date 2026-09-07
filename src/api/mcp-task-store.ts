@@ -313,7 +313,7 @@ export function createMcpTaskStore(options: McpTaskStoreOptions): McpTaskStore {
       const entry = lookup(taskId);
       // The SDK's built-in tasks/cancel handler transitions the task to
       // 'cancelled' via this method. Route that back into the engine so
-      // the upstream bundle actually receives `tasks/cancel`. Other
+      // the upstream connector actually receives `tasks/cancel`. Other
       // transitions (engine-initiated `completed`/`failed`) just update
       // the cached Task.
       if (status === "cancelled") {

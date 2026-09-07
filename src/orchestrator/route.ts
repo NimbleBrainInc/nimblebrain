@@ -99,7 +99,7 @@ export class WorkspaceToolUnavailable extends WorkspaceAccessDenied {
 /**
  * Thrown when the inner tool name's source prefix isn't registered in the
  * session's workspace `ToolRegistry` — the workspace is the bound one, but no
- * bundle in it serves the requested source. A structured error (not a bare
+ * connector in it serves the requested source. A structured error (not a bare
  * `Error`) so the HTTP / `/mcp` layer can distinguish "tool source not
  * installed" from "tool exists but execution failed."
  */
@@ -531,7 +531,7 @@ async function resolveWorkspaceSource(
   }
   const registry = runtime.getRegistryForWorkspace(wsId);
   let source = registry.getSource(sourceName);
-  // Self-heal. An installed bundle's source can be transiently absent from the
+  // Self-heal. An installed connector's source can be transiently absent from the
   // registry: a failed credential respawn or a remote-OAuth teardown removes it
   // WITHOUT re-adding, and nothing on the chat / automation hot path
   // re-registers it — so the workspace stays toolless until a platform restart

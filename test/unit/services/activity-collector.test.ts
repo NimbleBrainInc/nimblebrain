@@ -51,7 +51,7 @@ function makeCollector(
 	return new ActivityCollector({
 		logDir,
 		conversations: { kind: "store", list: (o, a) => store.list(o, a) },
-		bundleEvents: { kind: "sse", eventManager },
+		connectorEvents: { kind: "sse", eventManager },
 	});
 }
 
@@ -105,7 +105,7 @@ describe("ActivityCollector", () => {
 		});
 
 		expect(result.conversations).toEqual([]);
-		expect(result.bundle_events).toEqual([]);
+		expect(result.connector_events).toEqual([]);
 		expect(result.tool_usage).toEqual([]);
 		expect(result.errors).toEqual([]);
 		expect(result.totals).toEqual({
@@ -320,10 +320,10 @@ describe("ActivityCollector", () => {
 		expect(result.totals.errors).toBe(2);
 	});
 
-	it("filters bundle events from event buffer", async () => {
+	it("filters connector events from event buffer", async () => {
 		const events: BufferedEvent[] = [
 			{
-				event: "bundle.installed",
+				event: "connector.installed",
 				data: { name: "@nimblebraininc/echo" },
 				timestamp: "2025-01-01T10:00:00Z",
 			},
@@ -333,7 +333,7 @@ describe("ActivityCollector", () => {
 				timestamp: "2025-01-01T10:01:00Z",
 			},
 			{
-				event: "bundle.crashed",
+				event: "connector.crashed",
 				data: { name: "@nimblebraininc/postgres", reason: "OOM" },
 				timestamp: "2025-01-01T10:05:00Z",
 			},
@@ -351,12 +351,12 @@ describe("ActivityCollector", () => {
 			until: "2025-01-02T00:00:00Z",
 		});
 
-		expect(result.bundle_events).toHaveLength(2);
-		expect(result.bundle_events[0].bundle).toBe("@nimblebraininc/echo");
-		expect(result.bundle_events[0].event).toBe("installed");
-		expect(result.bundle_events[1].bundle).toBe("@nimblebraininc/postgres");
-		expect(result.bundle_events[1].event).toBe("crashed");
-		expect(result.bundle_events[1].detail).toBe("OOM");
+		expect(result.connector_events).toHaveLength(2);
+		expect(result.connector_events[0].connector).toBe("@nimblebraininc/echo");
+		expect(result.connector_events[0].event).toBe("installed");
+		expect(result.connector_events[1].connector).toBe("@nimblebraininc/postgres");
+		expect(result.connector_events[1].event).toBe("crashed");
+		expect(result.connector_events[1].detail).toBe("OOM");
 	});
 
 	it("filters by category = conversations", async () => {
@@ -385,7 +385,7 @@ describe("ActivityCollector", () => {
 
 		const events: BufferedEvent[] = [
 			{
-				event: "bundle.installed",
+				event: "connector.installed",
 				data: { name: "test" },
 				timestamp: "2025-01-01T10:00:00Z",
 			},
@@ -400,7 +400,7 @@ describe("ActivityCollector", () => {
 		});
 
 		expect(result.conversations).toHaveLength(1);
-		expect(result.bundle_events).toEqual([]);
+		expect(result.connector_events).toEqual([]);
 		expect(result.tool_usage).toEqual([]);
 		expect(result.errors).toEqual([]);
 	});
@@ -427,7 +427,7 @@ describe("ActivityCollector", () => {
 		expect(result.tool_usage).toHaveLength(1);
 		expect(result.errors).toEqual([]); // errors filtered out by category
 		expect(result.conversations).toEqual([]);
-		expect(result.bundle_events).toEqual([]);
+		expect(result.connector_events).toEqual([]);
 	});
 
 	it("filters by category = errors", async () => {
@@ -457,7 +457,7 @@ describe("ActivityCollector", () => {
 		expect(result.errors[0].message).toBe("boom");
 		expect(result.tool_usage).toEqual([]); // tools filtered out by category
 		expect(result.conversations).toEqual([]);
-		expect(result.bundle_events).toEqual([]);
+		expect(result.connector_events).toEqual([]);
 	});
 
 	// Regression: HTTP error middleware writes http.error records to workspace logs.

@@ -64,7 +64,6 @@ describe("integration: full flow with auth", () => {
 		mkdirSync(workDir, { recursive: true });
 		runtime = await Runtime.start({
 			model: { provider: "custom", adapter: createEchoModel() },
-			noDefaultBundles: true,
 			logging: { disabled: true },
 			workDir,
 		});
@@ -156,7 +155,6 @@ describe("integration: concurrent authenticated load", () => {
 		mkdirSync(workDir, { recursive: true });
 		runtime = await Runtime.start({
 			model: { provider: "custom", adapter: createEchoModel() },
-			noDefaultBundles: true,
 			logging: { disabled: true },
 			workDir,
 		});
@@ -244,7 +242,6 @@ describe("integration: windowing under load", () => {
 
 		runtime = await Runtime.start({
 			model: { provider: "custom", adapter: createEchoModel() },
-			noDefaultBundles: true,
 			logging: { disabled: true },
 			maxInputTokens: 2000, // Low budget to trigger windowing
 			workDir: windowTestDir,
@@ -357,7 +354,6 @@ describe("integration: auth boundary", () => {
 		mkdirSync(workDir, { recursive: true });
 		runtime = await Runtime.start({
 			model: { provider: "custom", adapter: createEchoModel() },
-			noDefaultBundles: true,
 			logging: { disabled: true },
 			workDir,
 		});
@@ -433,7 +429,6 @@ describe("E2E: install app -> tool call via API", () => {
 
 		runtime = await Runtime.start({
 			model: { provider: "custom", adapter: createEchoModel() },
-			noDefaultBundles: true,
 			logging: { disabled: true },
 			workDir: testDir,
 		});
@@ -523,7 +518,6 @@ describe("E2E: tool call via API -> SSE data.changed event", () => {
 
 		runtime = await Runtime.start({
 			model: { provider: "custom", adapter: createEchoModel() },
-			noDefaultBundles: true,
 			logging: { disabled: true },
 			workDir: sseTestDir,
 		});
@@ -621,7 +615,6 @@ describe("E2E: multi-step conversation -> history -> conversations list consiste
 
 		runtime = await Runtime.start({
 			model: { provider: "custom", adapter: createEchoModel() },
-			noDefaultBundles: true,
 			logging: { disabled: true },
 			workDir: multiStepDir,
 		});
@@ -696,11 +689,11 @@ describe("E2E: multi-step conversation -> history -> conversations list consiste
 });
 
 // =============================================================================
-// E2E Scenario 6: SSE event manager — bundle lifecycle events
+// E2E Scenario 6: SSE event manager — connector lifecycle events
 // =============================================================================
 
-describe("E2E: SSE event filtering — only bundle and data.changed events pass through", () => {
-	it("SseEventManager.emit forwards bundle.installed but not run.start", async () => {
+describe("E2E: SSE event filtering — only connector and data.changed events pass through", () => {
+	it("SseEventManager.emit forwards connector.installed but not run.start", async () => {
 		const { SseEventManager } = await import("../../src/api/events.ts");
 		const manager = new SseEventManager(60_000);
 
@@ -714,11 +707,11 @@ describe("E2E: SSE event filtering — only bundle and data.changed events pass 
 		});
 
 		manager.emit({
-			type: "bundle.installed",
+			type: "connector.installed",
 			data: {
 				wsId: "ws_test",
 				serverName: "tasks",
-				bundleName: "https://tasks.example.com/mcp",
+				connectorName: "https://tasks.example.com/mcp",
 				version: "1.0.0",
 				ui: null,
 			},
@@ -727,8 +720,8 @@ describe("E2E: SSE event filtering — only bundle and data.changed events pass 
 		const { value } = await reader.read();
 		const text = new TextDecoder().decode(value);
 
-		// Should only contain the bundle.installed event, not run.start
-		expect(text).toContain("event: bundle.installed");
+		// Should only contain the connector.installed event, not run.start
+		expect(text).toContain("event: connector.installed");
 		expect(text).toContain('"serverName":"tasks"');
 		expect(text).not.toContain("run.start");
 

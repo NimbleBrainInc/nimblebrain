@@ -6,7 +6,7 @@ name: Deploy Schemas
 # editors and external validators fetch via `$schema` / `$id`.
 #
 #   - src/config/nimblebrain-config.schema.json -> /v1/nimblebrain-config.schema.json
-#   - src/connectors/schemas/host-manifest.schema.json -> /v1/nimblebrain-host.schema.json
+#   - src/connectors/catalog/schemas/host-manifest.schema.json -> /v1/nimblebrain-host.schema.json
 #     (the `ai.nimblebrain/host` _meta extension — how an MCP server declares
 #      its UI placement in the host shell. PUBLISHED-ONLY: nothing in this repo
 #      validates against it, since the runtime reads that block from a catalog
@@ -26,7 +26,7 @@ on:
     branches: [main]
     paths:
       - 'src/config/nimblebrain-config.schema.json'
-      - 'src/connectors/schemas/host-manifest.schema.json'
+      - 'src/connectors/catalog/schemas/host-manifest.schema.json'
       - '.github/workflows/schema-deploy.yml'
   workflow_dispatch:
 
@@ -49,7 +49,7 @@ jobs:
         include:
           - file: src/config/nimblebrain-config.schema.json
             key: v1/nimblebrain-config.schema.json
-          - file: src/connectors/schemas/host-manifest.schema.json
+          - file: src/connectors/catalog/schemas/host-manifest.schema.json
             key: v1/nimblebrain-host.schema.json
     steps:
       - uses: actions/checkout@v6

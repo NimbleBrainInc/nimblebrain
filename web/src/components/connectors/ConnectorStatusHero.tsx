@@ -20,7 +20,7 @@ import { OperatorSetupModal, type OperatorSetupTarget } from "./OperatorSetupMod
  * settings surface. When attention is required (`needs_setup`,
  * `needs_auth`, `failed`), the status row appears as the page's first
  * actionable concern, ahead of the secondary sections that show
- * connection details / OAuth client audit / bundle config.
+ * connection details / OAuth client audit / connector config.
  *
  * Owns the primary CTA dispatch:
  *   - needs_setup + missing operator OAuth → OperatorSetupModal
@@ -204,7 +204,7 @@ function IdentityRow({ installed, name }: { installed: InstalledConnector; name:
   // Connector version, two axes: the running serverInfo.version (handshakeVersion —
   // what's actually connected) takes precedence over the declared catalog/manifest
   // version (installed.version). Either can arrive as a placeholder sentinel — "remote"
-  // for a remote bundle that declares none, "unknown" when it isn't known — which are
+  // for a remote connector that declares none, "unknown" when it isn't known — which are
   // not versions and never render. When both are real and differ, the declared one is
   // surfaced as a small drift note rather than silently hidden.
   const asVersion = (v: string | undefined) =>
@@ -248,7 +248,7 @@ function IdentityRow({ installed, name }: { installed: InstalledConnector; name:
         {/* Version: running serverInfo.version primary, declared (catalog/manifest)
             version shown only when it drifts from what's running. Covers remote
             connectors (fleet, Composio, OAuth) — which report a handshake version
-            but carry no meaningful bundle version — as well as local bundles. */}
+            but carry no meaningful connector version — as well as local connectors. */}
         {shownVersion && (
           <p className="text-xs text-muted-foreground font-mono mt-0.5">
             {vlabel(shownVersion)}

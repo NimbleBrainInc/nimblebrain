@@ -1,4 +1,4 @@
-import type { HostManifestMeta } from "../bundles/types.ts";
+import type { HostManifestMeta } from "../connectors/runtime/types.ts";
 import { log } from "../observability/log.ts";
 import { isReservedResourceScheme } from "../tools/resource-schemes.ts";
 import type { NotificationsDeclaration } from "./types.ts";

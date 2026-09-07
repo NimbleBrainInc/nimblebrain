@@ -9,7 +9,7 @@
  *   4. `ownerUserId` MUST NOT be set on non-personal workspaces.
  *
  * Each rule is exercised positively (it throws) and the topology
- * adversarial cases (`bundles`, `name` updates on a personal workspace)
+ * adversarial cases (`connectors`, `name` updates on a personal workspace)
  * confirm we didn't over-lock — those still succeed.
  */
 
@@ -186,10 +186,10 @@ describe("ownerUserId forbidden on non-personal workspaces", () => {
 // ── Topology adversarial: mutable fields still work ──────────────────
 
 describe("topology — non-identity fields stay freely mutable on personal workspaces", () => {
-  test("update() of bundles on a personal workspace succeeds", async () => {
+  test("update() of connectors on a personal workspace succeeds", async () => {
     const { wsId } = await createPersonal();
-    const updated = await store.update(wsId, { bundles: [{ name: "echo" }] });
-    expect(updated?.bundles).toEqual([{ name: "echo" }]);
+    const updated = await store.update(wsId, { connectors: [{ name: "echo" }] });
+    expect(updated?.connectors).toEqual([{ name: "echo" }]);
     // Identity fields stay intact.
     expect(updated?.isPersonal).toBe(true);
     expect(updated?.ownerUserId).toBe("user_alice");

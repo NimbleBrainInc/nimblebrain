@@ -387,7 +387,7 @@ export class ServiceTokenCache {
  * Process-wide default cache. One instance backs every tenant-key connection in
  * the runtime, so concurrent connections to the same `(workspace, audience,
  * scope)` share a single minted token. Lazily constructed so a runtime with no
- * tenant-key bundles never reads the (possibly absent) provisioning env.
+ * tenant-key connectors never reads the (possibly absent) provisioning env.
  */
 let defaultCache: ServiceTokenCache | undefined;
 export function getDefaultServiceTokenCache(): ServiceTokenCache {

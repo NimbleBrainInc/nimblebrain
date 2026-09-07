@@ -7,7 +7,7 @@
  * dangerous-attr removals so a future config change can't silently
  * weaken the sanitizer.
  *
- * The renderer normally runs in a bundle iframe (where `window` and
+ * The renderer normally runs in an app iframe (where `window` and
  * `document` exist). Bun's unit test environment doesn't ship a DOM,
  * so we install happy-dom globals BEFORE importing the module — both
  * DOMPurify's import-time bootstrap and marked's renderer instantiation
@@ -56,7 +56,7 @@ describe("renderMarkdown — sanitization contract", () => {
     // happy-dom's HTML parser leaves some void/legacy embed elements
     // (`<object>`, `<embed>`) in place even with a strict ALLOWED_TAGS
     // allowlist — a known parser limitation, NOT a production gap. The
-    // real browser DOM that the bundle runs against enforces the
+    // real browser DOM that the app runs against enforces the
     // allowlist faithfully. `<iframe>` is the one parsers handle
     // uniformly, so we use it as the canary for the allowlist.
     const html = renderMarkdown('<iframe src="evil"></iframe>OK');

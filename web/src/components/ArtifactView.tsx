@@ -22,7 +22,7 @@ export interface ArtifactViewProps {
   uri: string;
   /** Producing server/app — passed through to the read endpoint for the
    *  envelope, though the host resolves artifact:// against the data plane (the
-   *  bundle is never in the read path). */
+   *  connector is never in the read path). */
   appName?: string;
   /** Optional display name from the resource_link block. */
   name?: string;

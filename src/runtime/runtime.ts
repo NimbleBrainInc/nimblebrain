@@ -10,13 +10,6 @@ import type {
 import { MetricsEventSink } from "../adapters/metrics-events.ts";
 import { NoopEventSink } from "../adapters/noop-events.ts";
 import { WorkspaceLogSink } from "../adapters/workspace-log-sink.ts";
-import { bootReconcileConnectorSkills } from "../bundles/connector-skill-reconcile.ts";
-import { sanitizePlacements } from "../bundles/defaults.ts";
-import { BundleLifecycleManager } from "../bundles/lifecycle.ts";
-import { slugifyServerName } from "../bundles/paths.ts";
-import { setConnectionRunningHandler } from "../bundles/pending-auth-buffer.ts";
-import type { BundleMcpDeps } from "../bundles/startup.ts";
-import type { AppInfo, BundleInstance, PlacementDeclaration } from "../bundles/types.ts";
 import { isToolVisibleToRole, type ResolvedFeatures, resolveFeatures } from "../config/features.ts";
 import { deriveOverridePath } from "../config/overrides.ts";
 import { createPrivilegeHook, NoopConfirmationGate } from "../config/privilege.ts";
@@ -29,6 +22,17 @@ import {
   type ManagedConnectorRegistry,
 } from "../connectors/providers/registry.ts";
 import { registerSmitheryCredentialProvider } from "../connectors/providers/smithery/transport-credential.ts";
+import { bootReconcileConnectorSkills } from "../connectors/runtime/connector-skill-reconcile.ts";
+import { sanitizePlacements } from "../connectors/runtime/defaults.ts";
+import { ConnectorLifecycleManager } from "../connectors/runtime/lifecycle.ts";
+import { slugifyServerName } from "../connectors/runtime/paths.ts";
+import { setConnectionRunningHandler } from "../connectors/runtime/pending-auth-buffer.ts";
+import type { ConnectorMcpDeps } from "../connectors/runtime/startup.ts";
+import type {
+  AppInfo,
+  ConnectorInstance,
+  PlacementDeclaration,
+} from "../connectors/runtime/types.ts";
 import { generateTitle } from "../conversation/auto-title.ts";
 import {
   compactConversationMessages,
@@ -127,13 +131,6 @@ import { composeSystemSegments } from "../prompt/compose.ts";
 import { ConnectorDirectory } from "../registries/directory.ts";
 import { RegistryStore, warnIfCuratedCatalogEmpty } from "../registries/registry-store.ts";
 import {
-  BUNDLE_SKILL_SCOPE,
-  type DiscoveredSkill,
-  isSkillEntrypointUri,
-  parseSkillMarkdown,
-  synthesizeBundleSkill,
-} from "../skills/bundle-skills.ts";
-import {
   type ActivatableSkill,
   collectActivatableSkills,
   toCatalogEntries,
@@ -144,6 +141,13 @@ import {
   listConnectorOverlays,
   readConnectorSkillCandidates,
 } from "../skills/connector-skill-store.ts";
+import {
+  type DiscoveredSkill,
+  isSkillEntrypointUri,
+  PUBLISHED_SKILL_SCOPE,
+  parseSkillMarkdown,
+  synthesizeConnectorSkill,
+} from "../skills/connector-skills.ts";
 import {
   loadBuiltinSkills,
   loadCoreSkills,
@@ -222,7 +226,7 @@ import type {
 import {
   createWorkspaceRegistry,
   type ProcessInventoryEntry,
-  startWorkspaceBundles,
+  startWorkspaceConnectors,
 } from "./workspace-runtime.ts";
 
 const DEFAULT_WORK_DIR = join(homedir(), ".nimblebrain");
@@ -274,7 +278,7 @@ function resolveWorkDir(config: RuntimeConfig): string {
   if (config.workDir) return config.workDir;
   // Hard guard: under `bun test` (NODE_ENV=test is set automatically by the
   // bun test runner), defaulting to `~/.nimblebrain` would pollute the
-  // developer's real workdir with test conversations / workspaces / bundles.
+  // developer's real workdir with test conversations / workspaces / connectors.
   // Force every test to pass an explicit (typically tmpdir-based) workDir.
   // Without this, a test that forgets `workDir` silently writes echo-model
   // conversations into the user's dev environment and they show up in the
@@ -327,7 +331,7 @@ export class Runtime {
   private _conversationsChangedListeners = new Set<(change?: ConversationChange) => void>();
   private hooks: EngineHooks;
   private defaultEvents: EventSink;
-  private lifecycle: BundleLifecycleManager;
+  private lifecycle: ConnectorLifecycleManager;
   private placementRegistry: PlacementRegistry;
   private telemetryManager: TelemetryManager;
   /** This runtime's own ledger handle, so `shutdown` releases only its own. */
@@ -348,7 +352,7 @@ export class Runtime {
   _getWorkspaceId: () => string | null = () => null;
   /** Per-workspace ToolRegistry instances — each workspace gets its own scoped registry. */
   private _workspaceRegistries: Map<string, ToolRegistry>;
-  // Protected sources are captured in start() and passed to startWorkspaceBundles directly.
+  // Protected sources are captured in start() and passed to startWorkspaceConnectors directly.
   /** The system source ("nb") — shared across workspace registries. */
   _systemSource: ToolSource | null;
   /**
@@ -367,10 +371,10 @@ export class Runtime {
    */
   private _workspaceSources: ToolSource[] = [];
   /**
-   * Domain-context getter for the automations bundle. Set by the
+   * Domain-context getter for the automations app. Set by the
    * automations source factory; consumed by internal callers (the
-   * automations tool handlers and bundle lifecycle's
-   * `installBundleSchedules` / `removeBundleAutomations`) that need the
+   * automations tool handlers and connector lifecycle's
+   * `installConnectorSchedules` / `removeConnectorAutomations`) that need the
    * full domain shape — including operator-only fields (`source`,
    * `bundleName`, `allowedTools`) — that the LLM-facing tool schema
    * deliberately doesn't expose. See `src/platform/AGENTS.md` § 1.4.
@@ -385,17 +389,17 @@ export class Runtime {
    * constructed without the host-resources subsystem wired — never in
    * production.
    */
-  private _bundleMcpDepsFactory: ((wsId: string) => BundleMcpDeps) | null = null;
+  private _connectorMcpDepsFactory: ((wsId: string) => ConnectorMcpDeps) | null = null;
   /** Getter for current workspace ID (set per-request). */
   private _currentWorkspaceId: (() => string | null) | null = null;
   /**
    * Cache of the skills discovered on each MCP source (its `skill://…/SKILL.md`
    * resources, parsed + truncated). An empty array is the common "this server
-   * publishes no skills" case — without caching it, `loadBundleSkills` would
+   * publishes no skills" case — without caching it, `loadConnectorSkills` would
    * re-list + re-read every non-skill source on every chat.
    *
    * Keyed by **workspace AND server name**, because a server name identifies a
-   * source only within one workspace: a bundle installed in N workspaces is N
+   * source only within one workspace: a connector installed in N workspaces is N
    * distinct instances under one name. A name-only key lets one workspace's
    * instance answer for all of them, so a transiently unreachable copy blanks
    * the skill everywhere — and blanking it removes the skill from the catalog
@@ -432,7 +436,7 @@ export class Runtime {
     contextSkills: Skill[],
     hooks: EngineHooks,
     defaultEvents: EventSink,
-    lifecycle: BundleLifecycleManager,
+    lifecycle: ConnectorLifecycleManager,
     placementRegistry: PlacementRegistry,
     telemetryManager: TelemetryManager,
     features: ResolvedFeatures,
@@ -504,12 +508,12 @@ export class Runtime {
     // Register built-in transport credential providers (e.g. `minted`) at the
     // ONE composition root every entry point shares — serve, the no-subcommand
     // TUI/headless boot, and the automation runner all reach here before
-    // startWorkspaceBundles. Idempotent (last-writer-wins); doing it here instead
+    // startWorkspaceConnectors. Idempotent (last-writer-wins); doing it here instead
     // of per-entry-point avoids a provider-auth source failing to boot under any
     // path that forgot to register.
     registerBuiltinCredentialProviders();
     // Composio's transport credential, registered here for the same reason: a
-    // connected Composio connector starts inside `startWorkspaceBundles` below,
+    // connected Composio connector starts inside `startWorkspaceConnectors` below,
     // and an unregistered credential name fails its source start.
     registerComposioCredentialProvider();
     registerSmitheryCredentialProvider();
@@ -544,7 +548,7 @@ export class Runtime {
     const usageLedger = createProcessLedger(resolveWorkDir(config), config.usage?.ledger);
     setUsageLedger(usageLedger);
 
-    // Load identity stores early — before bundle startup. `instance.json` goes
+    // Load identity stores early — before connector startup. `instance.json` goes
     // through the same dereference as `nimblebrain.json` (inside
     // `loadInstanceConfig`), so the IdP key may be a reference too.
     const instanceConfig = await loadInstanceConfig(workDir);
@@ -560,11 +564,7 @@ export class Runtime {
 
     // Create placement registry and lifecycle manager
     const placementRegistry = new PlacementRegistry();
-    const lifecycle = new BundleLifecycleManager(
-      events,
-      config.configPath,
-      config.allowInsecureRemotes,
-    );
+    const lifecycle = new ConnectorLifecycleManager(events, config.allowInsecureRemotes);
     lifecycle.setPlacementRegistry(placementRegistry);
     // Connector-skill cleanup on uninstall resolves the `connector-skills/`
     // store from this same workDir that install + the per-turn loader use, so
@@ -573,24 +573,24 @@ export class Runtime {
     lifecycle.setWorkDir(resolveWorkDir(config));
 
     // Host-resources subsystem. One resolver + one rate-limit shared
-    // across every bundle spawned through this runtime, parameterized
+    // across every connector spawned through this runtime, parameterized
     // per-call by workspace id. Construction lives here (not inside
     // lifecycle) because the resolver depends on the workspace-scoped
     // data layout, which is a Runtime concern; lifecycle consumes via
-    // `setBundleMcpDepsFactory`, other install paths consume via
-    // `Runtime.getBundleMcpDeps(wsId)`.
+    // `setConnectorMcpDepsFactory`, other install paths consume via
+    // `Runtime.getConnectorMcpDeps(wsId)`.
     const hostResourcesWorkDir = resolveWorkDir(config);
-    // Files are workspace-owned: a bundle's `files://` read/list resolves in the
-    // workspace the bundle runs in (`ctx.workspaceId`, passed by the resolver)
+    // Files are workspace-owned: a connector's `files://` read/list resolves in the
+    // workspace the connector runs in (`ctx.workspaceId`, passed by the resolver)
     // under the session user's partition. The resolver fires inside the request
-    // context the orchestrator set up for the bundle's tool call, so the
+    // context the orchestrator set up for the connector's tool call, so the
     // identity is in scope here; we resolve it with the same rule `chat()` uses
     // (`resolveRequestOwnerId`) so reads see exactly the files the agent does.
     // Memoize per (workspace, user) — FileStore is cheap closures today, but
     // per-call construction would leak if it gained state (fd handles, watchers).
     const hostResourcesFileStoreCache = new Map<string, ReturnType<typeof createFileStore>>();
     const hostResourcesResolver = new FileBackedHostResourcesResolver((wsId: string) => {
-      // Files are workspace-owned: the resolver passes the bundle's request
+      // Files are workspace-owned: the resolver passes the connector's request
       // workspace (`ctx.workspaceId`) so a `files://` read resolves there only.
       const userId = resolveRequestOwnerId(
         getRequestContext()?.identity,
@@ -604,14 +604,14 @@ export class Runtime {
       return store;
     });
     const hostResourcesRateLimit = new TokenBucketRateLimit();
-    const bundleMcpDepsFactory = (wsId: string) => ({
+    const connectorMcpDepsFactory = (wsId: string) => ({
       workspaceId: wsId,
       hostResources: hostResourcesResolver,
       rateLimit: hostResourcesRateLimit,
     });
-    lifecycle.setBundleMcpDepsFactory(bundleMcpDepsFactory);
+    lifecycle.setConnectorMcpDepsFactory(connectorMcpDepsFactory);
 
-    // Wire the connection-running notification path so URL bundles
+    // Wire the connection-running notification path so URL connectors
     // whose interactive OAuth completes (after the user clicks Connect
     // and returns from the AS) transition out of `pending_auth` and
     // emit the `connection.state_changed` SSE event for the UI.
@@ -726,7 +726,7 @@ export class Runtime {
     // connection's workspace, so it can only be registered once the store is
     // installed — which is why it is not in `registerBuiltinCredentialProviders`
     // with `minted` at the top of `start`. Still ahead of
-    // `startWorkspaceBundles`, which is the ordering that matters: an
+    // `startWorkspaceConnectors`, which is the ordering that matters: an
     // unregistered provider name fails a boot-started source outright.
     registerCredentialTransportCredentialProvider();
 
@@ -761,11 +761,11 @@ export class Runtime {
       events,
       features,
       rt,
-      undefined, // reserved slot — was a registry-SDK home (legacy bundle-search path, removed)
+      undefined, // reserved slot — was a registry-SDK home (legacy connector-search path, removed)
       manageUsersCtx,
       manageWorkspacesCtx,
       manageMembersCtx,
-      undefined, // reserved slot — was manageBundleCtx (nb__manage_app, removed)
+      undefined, // reserved slot — was manageConnectorCtx (nb__manage_app, removed)
       toolPromotionCtx,
       toolEligibilityCtx,
     );
@@ -778,7 +778,7 @@ export class Runtime {
     const platformSources = await createPlatformSources(rt, events);
     // Make the host-resources factory accessible on `rt` so non-lifecycle
     // install paths (connector-tools, boot reload) can pull deps directly.
-    rt._bundleMcpDepsFactory = bundleMcpDepsFactory;
+    rt._connectorMcpDepsFactory = connectorMcpDepsFactory;
 
     // Register placements declared by platform sources.
     registerPlatformPlacements(placementRegistry, platformSources);
@@ -789,16 +789,16 @@ export class Runtime {
     // the user only through the identity door — never `ws_<id>-conversations`.
     const workspaceSources = platformSources.filter((s) => !isIdentitySource(s.name));
 
-    // Phase 3: Start workspace bundles with per-workspace registries
-    const { registries: workspaceRegistries, entries: workspaceBundleEntries } =
-      await startWorkspaceBundles(workspaceStore, workspaceSources, systemTools, events, {
+    // Phase 3: Start workspace connectors with per-workspace registries
+    const { registries: workspaceRegistries, entries: workspaceConnectorEntries } =
+      await startWorkspaceConnectors(workspaceStore, workspaceSources, systemTools, events, {
         workDir: resolveWorkDir(config),
         allowInsecureRemotes: config.allowInsecureRemotes,
         // Boot re-spawn picks up host-resources handlers per workspace so
         // a platform restart doesn't silently drop the capability for
-        // already-installed bundles.
-        getBundleMcpDeps: bundleMcpDepsFactory,
-        // A brokered bundle's boot readiness is its provider's answer, not a
+        // already-installed connectors.
+        getConnectorMcpDeps: connectorMcpDepsFactory,
+        // A brokered connector's boot readiness is its provider's answer, not a
         // token file — the same predicate `seedUrlConnectionState` consumes.
         managedConnectors: rt.getManagedConnectorRegistry(),
         // Late-bound: a boot-started connection that loses auth mid-session
@@ -825,8 +825,8 @@ export class Runtime {
     // the lifecycle has to see those workspaces too.
     lifecycle.bindWorkspaceRegistries(() => rt.getWorkspaceRegistries());
 
-    // Seed lifecycle instances for workspace bundles.
-    await seedWorkspaceBundleInstances(lifecycle, placementRegistry, workspaceBundleEntries);
+    // Seed lifecycle instances for workspace connectors.
+    await seedWorkspaceConnectorInstances(lifecycle, placementRegistry, workspaceConnectorEntries);
 
     // Reconcile connector-skill overlays to the pinned version. Overlays bind
     // only at connector install, and the pin is deploy-time config — so boot
@@ -836,7 +836,7 @@ export class Runtime {
     await bootReconcileConnectorSkills({
       workDir: rt.getWorkDir(),
       listWorkspaces: () => workspaceStore.list(),
-      updateWorkspaceBundles: (wsId, bundles) => workspaceStore.update(wsId, { bundles }),
+      updateWorkspaceConnectors: (wsId, connectors) => workspaceStore.update(wsId, { connectors }),
       syncBoundSkills: (identity, serverName, wsId, wd) =>
         lifecycle.syncBoundSkills(identity, serverName, wsId, wd),
       catalogByIdMap: () => rt.getConnectorDirectory().catalogByIdMap(),
@@ -1287,11 +1287,11 @@ export class Runtime {
    *    own run).
    *  - The prompt goes in as a plain user message — no content parts, no file
    *    refs, and no trigger matching: a task description is not a phrase a skill
-   *    should claim. Layer 3 (bundle workflow guidance) still applies based on
+   *    should claim. Layer 3 (connector workflow guidance) still applies based on
    *    the active tool set.
    *  - The system prompt is composed in task mode, prepending `TASK_IDENTITY`
    *    so the model produces a deliverable rather than a conversational reply.
-   *    The runtime owns this framing — bundles cannot spoof it by wrapping the
+   *    The runtime owns this framing — connectors cannot spoof it by wrapping the
    *    user message.
    *  - `workspaceId` is optional: present → that workspace's tool scope +
    *    briefing; absent → the run is housed in the owner's personal workspace
@@ -1312,7 +1312,7 @@ export class Runtime {
     const sessionWsId = await this.prepareSessionWorkspace(requestIdentity);
 
     // The run's single working workspace: the focused workspace, or the personal
-    // one when unfocused. Tool scope, skill/bundle scope, connector overlays,
+    // one when unfocused. Tool scope, skill/connector scope, connector overlays,
     // model slots, and file provenance all key off this one id. Only a focused
     // run narrates a workspace; an unfocused one is walled to the personal
     // workspace without being about it, so `TASK_IDENTITY` carries the framing.
@@ -1493,7 +1493,7 @@ export class Runtime {
     // records what the prompt looked like for this run — even if the LLM call
     // fails or the process is killed. Reports every loading mechanism, not just
     // tool-affinity: the trigger match and the always-on context skills
-    // (persona + org/workspace/user + bundle always-on; vendored core excluded).
+    // (persona + org/workspace/user + connector always-on; vendored core excluded).
     const skillsLoaded = buildSkillsLoadedPayload(
       collectLoadedSkills({
         toolAffinity: composed.selectedLayer3,
@@ -1646,7 +1646,7 @@ export class Runtime {
    * from selection (needs the toolset) breaks it.
    *
    * Every pool it reads is read exactly once — the filesystem skill tiers, the
-   * workspace's server-published bundle skills, and the connector-overlay store
+   * workspace's server-published connector skills, and the connector-overlay store
    * — and threaded into the selectors, so a run pays one disk pass per pool.
    */
   private async composeRun(
@@ -1671,7 +1671,7 @@ export class Runtime {
     // filter below is the identity.
     //
     // EVERY pool that can reach composition is filtered — the conversation
-    // pool, the bundle pool, and the connector overlays. `suppressibleSkillNames`
+    // pool, the connector pool, and the connector overlays. `suppressibleSkillNames`
     // builds the mute's validation set from the same union, so a name the tool
     // accepts is always a name some filter here will act on.
     const suppressed = binding
@@ -1726,7 +1726,7 @@ export class Runtime {
     // tool-affinity selection needs. Splitting discovery (registry only) from
     // selection (needs the toolset) breaks it. The partition is threaded into
     // `selectRequestLayer3` below, so discovery still happens once per run.
-    const bundlePoolRaw = await this.discoverBundleSkillsByRole(spec.workspaceId, {
+    const connectorPoolRaw = await this.discoverConnectorSkillsByRole(spec.workspaceId, {
       // Exclude only the ONE skill `<app-guide>` carries, resolved above — not
       // the entered server (its other skills must still route by strategy), and
       // not a same-pathed skill published by any other server.
@@ -1734,11 +1734,11 @@ export class Runtime {
         ? { excludeSkill: { serverName: focusedServerName, uri: focusedSkillUri } }
         : {}),
     });
-    // Bundle guidance is mutable by name too — `listActivatableSkills` puts it
+    // Connector guidance is mutable by name too — `listActivatableSkills` puts it
     // in the catalog the model reads, so it is a name the model will pass.
-    const bundlePool = {
-      context: withoutSuppressed(bundlePoolRaw.context, suppressed),
-      capability: withoutSuppressed(bundlePoolRaw.capability, suppressed),
+    const connectorPool = {
+      context: withoutSuppressed(connectorPoolRaw.context, suppressed),
+      capability: withoutSuppressed(connectorPoolRaw.capability, suppressed),
     };
 
     // Per-run trigger match, over the run's pool AND the workspace's
@@ -1754,7 +1754,7 @@ export class Runtime {
     let skillMatch: SkillMatch | null = null;
     if (spec.input.matchOn !== undefined) {
       const requestMatcher = new SkillMatcher();
-      requestMatcher.load([...poolCapability, ...bundlePool.capability]);
+      requestMatcher.load([...poolCapability, ...connectorPool.capability]);
       skillMatch = requestMatcher.match(spec.input.matchOn);
     }
     // The trigger match drives both prompt composition (`skill`, the matched
@@ -1766,7 +1766,7 @@ export class Runtime {
     // A fired phrase reaches here, but only bites when the matched skill declares
     // `allowed-tools` — that is the one input `surfaceTools` reads off it, and it
     // moves the tools block, which precedes the messages and is the run's most
-    // expensive cache bust. `synthesizeBundleSkill` stamps no `allowedTools`, so a
+    // expensive cache bust. `synthesizeConnectorSkill` stamps no `allowedTools`, so a
     // server-published skill firing does not move the block; a workspace-authored
     // one that declares the field always could, before and after this.
     const { direct: tools, proxied } = surfaceTools(
@@ -1781,18 +1781,18 @@ export class Runtime {
 
     // Skill selection over the pools gathered above. Server-published skills
     // route by the strategy they DECLARE: `dynamic` ones join tool-affinity
-    // Layer 3 (loading when the bundle's tools are surfaced, no `appContext`
-    // scoping required); `always` ones (`bundleContext`) compose into the
+    // Layer 3 (loading when the connector's tools are surfaced, no `appContext`
+    // scoping required); `always` ones (`connectorContext`) compose into the
     // always-on context channel below, the same reliable every-run path
     // filesystem `always` skills use.
     //
     // Workspace-tier skills follow the run's own workspace, matching the
     // briefing / apps / overlay surfaces. Both precomputed pools are threaded
-    // in — the skill disk read and the bundle discovery each happen once per
+    // in — the skill disk read and the connector discovery each happen once per
     // run, not twice.
     const {
-      context: bundleContext,
-      capability: bundleCapability,
+      context: connectorContext,
+      capability: connectorCapability,
       layer3: selectedLayer3,
     } = await this.selectRequestLayer3({
       wsId: spec.workspaceId,
@@ -1801,17 +1801,17 @@ export class Runtime {
       capabilityPool: poolCapability,
       // No `excludeSkill` here: it only steers discovery, and discovery
       // already ran with it above. The entered app's exclusion is inherited from
-      // `bundlePool` rather than restated as a second argument that has to agree
-      // with the first — the same reason `toBundleSkillCandidates` takes a pool.
-      bundlePool,
+      // `connectorPool` rather than restated as a second argument that has to agree
+      // with the first — the same reason `toConnectorSkillCandidates` takes a pool.
+      connectorPool,
     });
 
     // Always-on context channel: the `always` skills across every tier
-    // (core/builtin/org + workspace + user) plus the always-on bundle skills,
+    // (core/builtin/org + workspace + user) plus the always-on connector skills,
     // then the workspace identity/persona override when the narrated workspace
     // sets one.
     const requestContextSkills = withIdentityOverride(
-      [...poolContext, ...bundleContext],
+      [...poolContext, ...connectorContext],
       activeWorkspace?.identity,
     );
     const layer3Entries: Layer3SkillEntry[] = selectedLayer3.map((s) => ({
@@ -1836,14 +1836,14 @@ export class Runtime {
     const skillCatalog = toCatalogEntries(
       collectActivatableSkills({
         fsCapability: poolCapability,
-        bundleCapability,
+        connectorCapability,
         connectorCandidates: connectorOverlayCandidates,
       }),
     );
 
     // Task mode prepends TASK_IDENTITY so an unattended run produces a
     // deliverable rather than a conversational reply. The runtime owns that
-    // framing — a bundle cannot spoof it by wrapping the user message.
+    // framing — a connector cannot spoof it by wrapping the user message.
     const { stableSystem, volatileHead } = composeSystemSegments(
       requestContextSkills,
       skill,
@@ -1872,7 +1872,7 @@ export class Runtime {
       alwaysOnSkills: requestContextSkills,
       connectorSkillCandidates: [
         ...connectorOverlayCandidates,
-        ...this.toBundleSkillCandidates(bundleCapability, selectedLayer3),
+        ...this.toConnectorSkillCandidates(connectorCapability, selectedLayer3),
       ],
       stableSystem,
       volatileHead,
@@ -2174,7 +2174,7 @@ export class Runtime {
     /**
      * URI of the one skill this briefing carries in `<app-guide>`, so the
      * caller can exclude exactly that skill — and nothing else the same server
-     * publishes — from the bundle-skill pool.
+     * publishes — from the connector-skill pool.
      */
     focusedSkillUri?: string;
   }> {
@@ -2191,7 +2191,7 @@ export class Runtime {
       const sourceTools = await source.tools();
       // Primary = the first skill this source lists (resources/list order), and
       // the only one this briefing carries. Its URI is returned as
-      // `focusedSkillUri` so the caller excludes just this skill from the bundle
+      // `focusedSkillUri` so the caller excludes just this skill from the connector
       // pool; every OTHER skill the same server publishes still routes by its
       // declared strategy, exactly as it does outside an app.
       const [primarySkill] = await this.discoverServerSkills(appWsId, appContext.serverName);
@@ -2477,8 +2477,8 @@ export class Runtime {
     return allTools;
   }
 
-  /** Get registered bundle/source names across all workspace registries. */
-  bundleNames(): string[] {
+  /** Get registered connector/source names across all workspace registries. */
+  connectorNames(): string[] {
     const names = new Set<string>();
     for (const reg of this._workspaceRegistries.values()) {
       for (const n of reg.sourceNames()) names.add(n);
@@ -2496,12 +2496,12 @@ export class Runtime {
    * workspace. Identity handles that case exactly — they are literally the same
    * object — while keeping the sources a name-keyed set would wrongly collapse.
    *
-   * A URL bundle's source name comes from the bundle (`ref.serverName ??
+   * A URL connector's source name comes from the connector (`ref.serverName ??
    * deriveServerName(ref.url)`) and carries no workspace, so the same fleet
-   * bundle installed in N workspaces yields N SEPARATE `McpSource` instances —
+   * connector installed in N workspaces yields N SEPARATE `McpSource` instances —
    * separate transports, separate sessions — sharing one name.
    *
-   * Generally: **a source name identifies a bundle, not an instance.** Any
+   * Generally: **a source name identifies a connector, not an instance.** Any
    * name-keyed collection over sources has to justify itself, because collapsing
    * on the name silently drops every workspace but one. This de-dup was that bug;
    * `discoverServerSkills` was another, and now resolves and caches per
@@ -2525,22 +2525,22 @@ export class Runtime {
     return sources;
   }
 
-  /** Get all tracked bundle instances (unfiltered — use getBundleInstancesForWorkspace for scoped access). */
-  getBundleInstances(): BundleInstance[] {
+  /** Get all tracked connector instances (unfiltered — use getConnectorInstancesForWorkspace for scoped access). */
+  getConnectorInstances(): ConnectorInstance[] {
     return this.lifecycle.getInstances();
   }
 
   /**
-   * Get bundle instances visible in a specific workspace.
+   * Get connector instances visible in a specific workspace.
    *
-   * `inst.wsId === wsId` is the authoritative scope — every BundleInstance
+   * `inst.wsId === wsId` is the authoritative scope — every ConnectorInstance
    * carries a required workspace.
    *
    * `visible.has(serverName)` is load-bearing, not a redundant guard: an
-   * installed bundle that is not RUNNING — a boot-start that failed, or a
+   * installed connector that is not RUNNING — a boot-start that failed, or a
    * connector torn down by a disconnect — must stay out of the agent's view
    * (`getApps` → `nb__list_apps`), because `buildAppInfo` carries no liveness
-   * into the prompt: a down bundle would read as an ordinary usable app whose
+   * into the prompt: a down connector would read as an ordinary usable app whose
    * tools are inexplicably missing. Deleting this filter surfaces every such
    * record as a usable app.
    *
@@ -2553,12 +2553,12 @@ export class Runtime {
    * so it can show a Connect / Reconnect affordance.
    *
    * "Established" deliberately still includes a source whose transport has since
-   * dropped: that bundle works and heals in place, so hiding it would be the
+   * dropped: that connector works and heals in place, so hiding it would be the
    * regression, not the fix.
-   * That the agent cannot see, or explain, a bundle in this state is the open
+   * That the agent cannot see, or explain, a connector in this state is the open
    * gap tracked in #757.
    */
-  getBundleInstancesForWorkspace(wsId: string): BundleInstance[] {
+  getConnectorInstancesForWorkspace(wsId: string): ConnectorInstance[] {
     const wsRegistry = this._workspaceRegistries.get(wsId);
     if (!wsRegistry) return [];
     const visible = new Set(
@@ -2570,7 +2570,7 @@ export class Runtime {
   }
 
   /** Get the lifecycle manager (for health monitor integration). */
-  getLifecycle(): BundleLifecycleManager {
+  getLifecycle(): ConnectorLifecycleManager {
     return this.lifecycle;
   }
 
@@ -2676,7 +2676,7 @@ export class Runtime {
       // registry before asking, so this branch is reachable when the source
       // was removed between that resolution and this lookup. The steady-state
       // installed-but-absent case never gets here — no caller names a server
-      // the registry does not hold — and is reported in `loadBundleSkills`,
+      // the registry does not hold — and is reported in `loadConnectorSkills`,
       // where the installed set and the registry are both visible.
       if (this.lifecycle?.getInstance(serverName, wsId)) {
         reportSkillDiscoveryDegraded({
@@ -2787,15 +2787,15 @@ export class Runtime {
   }
 
   /**
-   * Report every bundle the lifecycle believes is RUNNING in this workspace
+   * Report every connector the lifecycle believes is RUNNING in this workspace
    * whose source is absent from the workspace registry.
    *
-   * Such a bundle can't be probed at all: it never becomes a discovery
+   * Such a connector can't be probed at all: it never becomes a discovery
    * candidate, so its skills silently vanish from every turn. The caller's
    * candidate loop is the one place the installed set and the registry are
    * both in hand — `discoverServerSkills` only ever hears names the registry
    * already holds. This reads the RAW lifecycle list, because
-   * `getBundleInstancesForWorkspace` filters by registry visibility, which
+   * `getConnectorInstancesForWorkspace` filters by registry visibility, which
    * would hide exactly the absent instance this is looking for.
    *
    * The `running` gate carries the signal's meaning. Every other state has a
@@ -2808,7 +2808,7 @@ export class Runtime {
    * with an unconnected connector, forever — and an alert that always fires
    * is not an alert.
    */
-  private reportAbsentRunningBundles(wsId: string, registeredNames: ReadonlySet<string>): void {
+  private reportAbsentRunningConnectors(wsId: string, registeredNames: ReadonlySet<string>): void {
     for (const instance of this.lifecycle?.getInstances() ?? []) {
       if (instance.wsId !== wsId) continue;
       if (instance.state !== "running") continue;
@@ -2856,7 +2856,7 @@ export class Runtime {
    * cache entry `resolveFocusedApp` just warmed. Per-source errors are
    * swallowed (no skill resource is the normal not-published case).
    */
-  private async loadBundleSkills(
+  private async loadConnectorSkills(
     wsId: string,
     options: { excludeSkill?: { serverName: string; uri: string } } = {},
   ): Promise<Skill[]> {
@@ -2866,7 +2866,7 @@ export class Runtime {
     // Candidate sources: MCP-backed (unwrapping `SharedSourceRef` so shared
     // sources are visible).
     //
-    // No trust-score gate: if a bundle is active its tools are callable, so
+    // No trust-score gate: if a connector is active its tools are callable, so
     // suppressing the workflow guidance that teaches the model how to use them
     // safely would make the situation worse, not better. Trust is enforced at
     // install time. See `formatFocusedAppSection` for the matching policy on
@@ -2876,7 +2876,7 @@ export class Runtime {
     // would otherwise double the guidance under two framings). A server "has an
     // overlay" iff its persisted ref carries a non-empty `skillsLock`.
     const overlaidServers = new Set(
-      this.getBundleInstancesForWorkspace(wsId)
+      this.getConnectorInstancesForWorkspace(wsId)
         .filter((i) => i.ref && "skillsLock" in i.ref && (i.ref.skillsLock?.length ?? 0) > 0)
         .map((i) => i.serverName),
     );
@@ -2891,7 +2891,7 @@ export class Runtime {
       candidates.push(source.name);
     }
 
-    this.reportAbsentRunningBundles(wsId, registeredNames);
+    this.reportAbsentRunningConnectors(wsId, registeredNames);
 
     // Parallel discovery: serial probing N-times-multiplied the chat hot-path
     // latency on workspaces with many non-skill servers. `discoverServerSkills`
@@ -2914,7 +2914,7 @@ export class Runtime {
               ? discovered.filter((s) => s.uri !== exclude.uri)
               : discovered;
           return skills.map((s) =>
-            synthesizeBundleSkill({
+            synthesizeConnectorSkill({
               serverName: name,
               skillName: s.name,
               description: s.description,
@@ -2937,19 +2937,19 @@ export class Runtime {
    * Build apps list from in-memory lifecycle instances for system-prompt
    * injection (§7.3).
    *
-   * Each app's `customInstructions` overlay comes from the bundle itself —
-   * the platform reads `app://instructions` from the bundle's MCP
-   * server on every assembly. Bundles that don't publish that resource get
+   * Each app's `customInstructions` overlay comes from the connector itself —
+   * the platform reads `app://instructions` from the connector's MCP
+   * server on every assembly. Connectors that don't publish that resource get
    * no overlay (no UI surfaces, no behavior change). The platform's job is
    * the convention: read the URI, wrap the body in `<app-custom-instructions>`
-   * containment in `formatAppsSection`. Bundles own storage, the agent tool
+   * containment in `formatAppsSection`. Connectors own storage, the agent tool
    * to write, validation, and the editor UI.
    */
   /** Public so the compose-effective-context debug tool can re-gather the same
-   *  inputs `runtime.chat()` uses, without duplicating the bundle-instructions
+   *  inputs `runtime.chat()` uses, without duplicating the connector-instructions
    *  fetch logic. Workspace-scoped via the wsId argument; no privilege escalation. */
   async buildAppsList(workspaceId: string): Promise<PromptAppInfo[]> {
-    const instances = this.getBundleInstancesForWorkspace(workspaceId);
+    const instances = this.getConnectorInstancesForWorkspace(workspaceId);
     const registry = this._workspaceRegistries.get(workspaceId);
 
     const apps: PromptAppInfo[] = [];
@@ -2965,13 +2965,13 @@ export class Runtime {
    * custom-instructions overlay.
    */
   private async buildAppInfo(
-    instance: BundleInstance,
+    instance: ConnectorInstance,
     registry: ToolRegistry | undefined,
   ): Promise<PromptAppInfo> {
     const ui: PromptAppInfo["ui"] = instance.ui ? { name: instance.ui.name } : null;
 
     // Surface the MCP server's `initialize.instructions` (when set) so the
-    // LLM sees per-bundle guidance — typically a pointer to `skill://`
+    // LLM sees per-connector guidance — typically a pointer to `skill://`
     // resources that explain correct tool usage. Without this hint the
     // agent cannot discover that such resources exist.
     let instructions: string | undefined;
@@ -2992,39 +2992,39 @@ export class Runtime {
   }
 
   /**
-   * Read a bundle's `app://instructions` custom-instructions overlay. Returns
-   * the trimmed non-empty body, or `undefined` when the bundle doesn't publish
+   * Read a connector's `app://instructions` custom-instructions overlay. Returns
+   * the trimmed non-empty body, or `undefined` when the connector doesn't publish
    * the resource (or the read errors) — the normal not-supported case.
    */
   private async readAppCustomInstructions(
     source: McpSource,
     serverName: string,
   ): Promise<string | undefined> {
-    // A bundle that supports user-set custom instructions publishes its current
+    // A connector that supports user-set custom instructions publishes its current
     // overlay body at this URI; the platform reads it on every assembly and
     // renders it inside `<app-custom-instructions>` containment in
     // `formatAppsSection`.
     //
     // Why a fixed `app://` over `<serverName>://instructions`: the serverName is
     // platform-derived (e.g. `@nimblebraininc/synapse-collateral` →
-    // `synapse-collateral`), not something a bundle author intuitively knows.
-    // A fixed scheme means bundle authors just remember `app://instructions`
+    // `synapse-collateral`), not something a connector author intuitively knows.
+    // A fixed scheme means connector authors just remember `app://instructions`
     // and the platform's name-derivation rules are not part of the contract.
-    // That makes the scheme the host's rather than the bundle's, which is why
+    // That makes the scheme the host's rather than the connector's, which is why
     // `tools/resource-schemes.ts` owns the URI and reserves it against an
     // outbox declaring the same address.
     //
     // Resource-not-found returns `null` from `readResource` (the SDK's normal
-    // not-found path); we treat any read error or empty body as "bundle does
+    // not-found path); we treat any read error or empty body as "connector does
     // not support / has none". Plain MCP servers (no opt-in) end up here.
     try {
       const data = await source.readResource(APP_INSTRUCTIONS_URI);
       const body = data?.text;
       const trimmedLen = typeof body === "string" ? body.trim().length : 0;
       // Visible under NB_DEBUG=mcp — confirms the platform fetched
-      // app://instructions per active bundle and shows the resulting body
-      // length. "len=0" + "set=false" for bundles that don't publish;
-      // "set=true" + len=N for bundles that do.
+      // app://instructions per active connector and shows the resulting body
+      // length. "len=0" + "set=false" for connectors that don't publish;
+      // "set=true" + len=N for connectors that do.
       log.debug(
         "mcp",
         `app-instructions source=${serverName} fetched=${data !== null} len=${trimmedLen} set=${trimmedLen > 0}`,
@@ -3047,21 +3047,21 @@ export class Runtime {
 
   /**
    * Resolve the host-resources deps for a workspace. Used by install
-   * paths that don't go through `BundleLifecycleManager`: connector-tools
+   * paths that don't go through `ConnectorLifecycleManager`: connector-tools
    * (Composio install eager-start), workspace-runtime (boot reload).
    * Returns `undefined` only when the runtime was constructed without the
    * host-resources subsystem wired — never in production. Callers should
-   * thread the returned deps into `startBundleSource` (or
-   * `installBundleInWorkspace`) via the `bundleMcp` opt so the spawned
+   * thread the returned deps into `startConnectorSource` (or
+   * `installConnectorInWorkspace`) via the `connectorMcp` opt so the spawned
    * McpSource registers inbound `ai.nimblebrain/resources/*` handlers.
    */
-  getBundleMcpDeps(wsId: string): BundleMcpDeps | undefined {
-    return this._bundleMcpDepsFactory?.(wsId);
+  getConnectorMcpDeps(wsId: string): ConnectorMcpDeps | undefined {
+    return this._connectorMcpDepsFactory?.(wsId);
   }
 
   /**
    * Get a per-workdir `InstructionsStore` for the workspace overlay.
-   * Per-bundle instructions are NOT stored here — bundles own their storage
+   * Per-connector instructions are NOT stored here — connectors own their storage
    * and publish a `app://instructions` resource if and only if they
    * support the convention. The store is stateless aside from the rooted
    * workdir, so a fresh instance per call is fine.
@@ -3072,7 +3072,7 @@ export class Runtime {
 
   /**
    * Read the workspace instruction overlay for a system-prompt
-   * assembly. Per-bundle overlays are NOT read here — they're populated on
+   * assembly. Per-connector overlays are NOT read here — they're populated on
    * `PromptAppInfo.customInstructions` directly in `buildAppsList`.
    *
    * Reads happen on every call (no caching) per the locked decision: edits
@@ -3120,7 +3120,7 @@ export class Runtime {
 
   /**
    * Resolve a user's personal connector to a started `ToolSource`, lazy-starting
-   * it on first use (see `BundleLifecycleManager.getIdentityConnectorSource`).
+   * it on first use (see `ConnectorLifecycleManager.getIdentityConnectorSource`).
    * The DYNAMIC, per-identity connector door — deliberately separate from the
    * static kernel `getIdentitySource(name)` above: keyed by `(userId, name)`, it
    * resolves an MCP-backed personal connector, not a kernel source. Returns
@@ -3365,7 +3365,7 @@ export class Runtime {
    * Validates that the workspace exists in the WorkspaceStore before creating
    * a registry. Returns the existing registry if one is already present.
    * This is the JIT counterpart to the boot-time registry creation in
-   * startWorkspaceBundles — both use createWorkspaceRegistry() for consistency.
+   * startWorkspaceConnectors — both use createWorkspaceRegistry() for consistency.
    */
   async ensureWorkspaceRegistry(wsId: string): Promise<ToolRegistry> {
     const existing = this._workspaceRegistries.get(wsId);
@@ -4364,7 +4364,7 @@ export class Runtime {
     const orgDirPrefix = `${join(workDir, "skills")}/`;
 
     const orgPool: Skill[] = [];
-    // Bundled skills (core + builtin) — sourcePath sits outside the
+    // Connectord skills (core + builtin) — sourcePath sits outside the
     // live platform dir, so include from the cache. Skills loaded at
     // boot from the live dir are dropped here in favour of the fresh
     // read below; otherwise a deleted/moved platform skill would
@@ -4411,7 +4411,7 @@ export class Runtime {
     return readConnectorSkillCandidates(dir);
   }
 
-  /** SEP-2640 bundle skills as surface-once connector-skill candidates, so a server's
+  /** SEP-2640 connector skills as surface-once connector-skill candidates, so a server's
    *  skill can be delivered mid-turn when its tools are progressively disclosed (not only
    *  at turn-start via <layer3-skill>).
    *
@@ -4424,7 +4424,7 @@ export class Runtime {
    *  Only skills this turn has NOT already composed ride this channel. Two
    *  exclusions, one rule — a body already in the prompt must not be delivered
    *  again:
-   *   - `always` bundle skills, by taking the `capability` half: an `always`
+   *   - `always` connector skills, by taking the `capability` half: an `always`
    *     skill is in the context channel every turn.
    *   - `alreadyComposed`, the turn's Layer-3 selection: a `dynamic` skill whose
    *     tools were active at turn start is already in `<layer3-skill>`.
@@ -4440,7 +4440,7 @@ export class Runtime {
    *  What remains is what the channel is for: a skill whose tools were proxied
    *  out of the active set at turn start, so Layer 3 could not select it, and
    *  which becomes relevant when a tool is promoted mid-turn. */
-  private toBundleSkillCandidates(
+  private toConnectorSkillCandidates(
     capability: Skill[],
     alreadyComposed: SelectedSkill[],
   ): ConnectorSkillCandidate[] {
@@ -4450,7 +4450,7 @@ export class Runtime {
       .map((s) => ({
         name: s.manifest.name,
         body: s.body,
-        scope: s.manifest.scope ?? BUNDLE_SKILL_SCOPE,
+        scope: s.manifest.scope ?? PUBLISHED_SKILL_SCOPE,
         toolAffinity: s.manifest.toolAffinity ?? [],
       }));
   }
@@ -4489,7 +4489,7 @@ export class Runtime {
   /**
    * Every skill the given workspace's conversations can activate on demand —
    * the union the skill catalog is projected from: the conversation tiers'
-   * `dynamic` skills, the workspace's `dynamic` bundle skills, and its curated
+   * `dynamic` skills, the workspace's `dynamic` connector skills, and its curated
    * connector overlays. Backs the `nb__use_skill` tool's name validation and
    * body lookup, resolving through the same workspace-walled loaders the
    * request path composes with — a skill in another workspace can neither
@@ -4504,10 +4504,12 @@ export class Runtime {
     const fsCapability = partitionSkillsByRole(
       this.loadConversationSkills(wsId, userId),
     ).capability;
-    const bundleCapability = partitionSkillsByRole(await this.loadBundleSkills(wsId)).capability;
+    const connectorCapability = partitionSkillsByRole(
+      await this.loadConnectorSkills(wsId),
+    ).capability;
     return collectActivatableSkills({
       fsCapability,
-      bundleCapability,
+      connectorCapability,
       connectorCandidates: this.loadConnectorSkillCandidates(wsId),
     });
   }
@@ -4516,18 +4518,18 @@ export class Runtime {
    * Every skill name a conversation in this workspace can mute.
    *
    * Deliberately the SAME union composition filters: the filesystem tiers, both
-   * halves of the bundle pool, and the connector overlays. Building the two
+   * halves of the connector pool, and the connector overlays. Building the two
    * from one place is the point — validating against a wider set than the
    * filter covers accepts a name, reports "stops composing", and composes it
    * anyway; validating against a narrower one makes the commonest case (an
-   * always-on bundle skill, the kind a vendor ships six of) unmutable.
+   * always-on connector skill, the kind a vendor ships six of) unmutable.
    */
   async suppressibleSkillNames(wsId: string, userId: string | null): Promise<Set<string>> {
-    const bundle = await this.discoverBundleSkillsByRole(wsId);
+    const connector = await this.discoverConnectorSkillsByRole(wsId);
     return new Set<string>([
       ...this.loadConversationSkills(wsId, userId).map((sk) => sk.manifest.name),
-      ...bundle.context.map((sk) => sk.manifest.name),
-      ...bundle.capability.map((sk) => sk.manifest.name),
+      ...connector.context.map((sk) => sk.manifest.name),
+      ...connector.capability.map((sk) => sk.manifest.name),
       ...this.loadConnectorSkillCandidates(wsId).map((c) => c.name),
     ]);
   }
@@ -4573,11 +4575,11 @@ export class Runtime {
    * `context` (`always` skills) composes into the always-on channel; `capability`
    * (`dynamic` skills) is both the tool-affinity pool and the matchable pool.
    */
-  private async discoverBundleSkillsByRole(
+  private async discoverConnectorSkillsByRole(
     wsId: string,
     options: { excludeSkill?: { serverName: string; uri: string } } = {},
   ): Promise<{ context: Skill[]; capability: Skill[] }> {
-    return partitionSkillsByRole(await this.loadBundleSkills(wsId, options));
+    return partitionSkillsByRole(await this.loadConnectorSkills(wsId, options));
   }
 
   /**
@@ -4592,18 +4594,18 @@ export class Runtime {
    *
    * The pool merges per-conversation tier skills (org + workspace + user, via
    * {@link loadConversationSkills}) with server-exposed `skill://<name>/SKILL.md`
-   * skills from the focused workspace only — a bundle installed there whose
+   * skills from the focused workspace only — a connector installed there whose
    * tools land in the workspace's tool list must also surface its workflow
    * guidance, else the model gets the namespaced tool name with no
-   * instructions. A bundle in another workspace never contributes here.
+   * instructions. A connector in another workspace never contributes here.
    *
-   * Discovered bundle skills are routed by the strategy they DECLARE, exactly
+   * Discovered connector skills are routed by the strategy they DECLARE, exactly
    * like filesystem skills: `partitionSkillsByRole` splits them so a `dynamic`
-   * bundle skill feeds `selectLayer3Skills` (tool-affinity, `layer3`) while an
-   * `always` bundle skill is returned in `context` for the caller to compose
+   * connector skill feeds `selectLayer3Skills` (tool-affinity, `layer3`) while an
+   * `always` connector skill is returned in `context` for the caller to compose
    * into the always-on channel every turn. Conversation-tier context skills are
    * NOT returned here — the caller already partitioned those; `context` and
-   * `capability` carry only the *bundle* skills the caller couldn't see.
+   * `capability` carry only the *connector* skills the caller couldn't see.
    *
    * Both halves of that partition are returned, not just the one Layer 3 keeps.
    * A turn also needs the `dynamic` half as surface-once candidates, and
@@ -4613,7 +4615,7 @@ export class Runtime {
   async selectRequestLayer3(params: {
     /**
      * Focused workspace (or session/personal in home mode) — the ONLY workspace
-     * whose workspace-tier AND bundle skills are in scope. Skills never cross a
+     * whose workspace-tier AND connector skills are in scope. Skills never cross a
      * workspace boundary.
      */
     wsId: string;
@@ -4633,32 +4635,32 @@ export class Runtime {
      */
     capabilityPool?: Skill[];
     /**
-     * Precomputed bundle partition from {@link discoverBundleSkillsByRole}. Pass
+     * Precomputed connector partition from {@link discoverConnectorSkillsByRole}. Pass
      * it when the caller already ran discovery — the chat path must, because the
      * `dynamic` half feeds the phrase matcher that runs before the active
      * toolset exists. Omitted callers discover here. Either way discovery
      * happens exactly once per turn.
      */
-    bundlePool?: { context: Skill[]; capability: Skill[] };
+    connectorPool?: { context: Skill[]; capability: Skill[] };
   }): Promise<{ context: Skill[]; capability: Skill[]; layer3: SelectedSkill[] }> {
     const capabilityPool =
       params.capabilityPool ??
       partitionSkillsByRole(this.loadConversationSkills(params.wsId, params.userId)).capability;
-    // Bundle skills come from the FOCUSED workspace only — a connector installed
+    // Connector skills come from the FOCUSED workspace only — a connector installed
     // in another workspace must not inject its usage skill here (the wall).
     // Routed by their DECLARED strategy: `always` skills go to the context
     // channel (composed every turn), `dynamic` skills join the tool-affinity
     // capability pool that `selectLayer3Skills` filters.
-    const { context: bundleContext, capability: bundleCapability } =
-      params.bundlePool ??
-      (await this.discoverBundleSkillsByRole(params.wsId, {
+    const { context: connectorContext, capability: connectorCapability } =
+      params.connectorPool ??
+      (await this.discoverConnectorSkillsByRole(params.wsId, {
         ...(params.excludeSkill ? { excludeSkill: params.excludeSkill } : {}),
       }));
     const layer3 = selectLayer3Skills({
-      skills: [...capabilityPool, ...bundleCapability],
+      skills: [...capabilityPool, ...connectorCapability],
       activeTools: params.activeToolNames,
     });
-    return { context: bundleContext, capability: bundleCapability, layer3 };
+    return { context: connectorContext, capability: connectorCapability, layer3 };
   }
 
   /**
@@ -4696,16 +4698,16 @@ export class Runtime {
     const { context, capability } = partitionSkillsByRole(
       withoutSuppressed(this.loadConversationSkills(wsId, userId), suppressed),
     );
-    const { context: bundleContext, layer3 } = await this.selectRequestLayer3({
+    const { context: connectorContext, layer3 } = await this.selectRequestLayer3({
       wsId,
       userId,
       activeToolNames,
       capabilityPool: capability,
     });
-    // Include always-on bundle skills in the reported context so the status
+    // Include always-on connector skills in the reported context so the status
     // surface matches what the prompt actually composes.
     return {
-      context: [...context, ...withoutSuppressed(bundleContext, suppressed)],
+      context: [...context, ...withoutSuppressed(connectorContext, suppressed)],
       layer3: layer3.filter((sel) => !suppressed.has(sel.skill.manifest.name)),
     };
   }
@@ -4850,7 +4852,7 @@ export class Runtime {
   }
 
   /**
-   * Whether the runtime allows OAuth flows / bundle URLs to target loopback
+   * Whether the runtime allows OAuth flows / connector URLs to target loopback
    * / RFC1918 / cloud-metadata hosts. Mirrors `config.allowInsecureRemotes`;
    * read by `/v1/mcp-auth/initiate` when constructing the workspace OAuth
    * provider so the SSRF allowlist matches the boot-time provider's behavior.
@@ -4872,7 +4874,7 @@ export class Runtime {
       throw new Error("No workspace in request context. Every request must be workspace-scoped.");
     }
     const apps: AppInfo[] = [];
-    for (const instance of this.getBundleInstancesForWorkspace(wsId)) {
+    for (const instance of this.getConnectorInstancesForWorkspace(wsId)) {
       let toolCount = 0;
       try {
         const source = registry.getSources().find((s) => s.name === instance.serverName);
@@ -4885,7 +4887,7 @@ export class Runtime {
       }
       apps.push({
         name: instance.serverName,
-        bundleName: instance.bundleName,
+        connectorName: instance.connectorName,
         version: instance.version,
         status: instance.state,
         toolCount,
@@ -4916,8 +4918,8 @@ export class Runtime {
    * Read a `ui://` resource from an app (workspace-scoped).
    *
    * Resolves an app — platform built-ins (in-process MCP) and user-installed
-   * bundles (subprocess/remote MCP) — strictly through the workspace registry.
-   * The lifecycle store tracks user-installed bundles only; platform sources
+   * connectors (subprocess/remote MCP) — strictly through the workspace registry.
+   * The lifecycle store tracks user-installed connectors only; platform sources
    * never appear there, so registry membership is the single authoritative
    * "is this app available to this workspace?" check.
    */
@@ -5013,7 +5015,7 @@ export class Runtime {
  * Best-effort placement extraction for any ToolSource. `McpSource`
  * exposes `getPlacements()` (returning declarations from
  * `defineInProcessApp`); sources that don't declare any — including
- * external bundles, whose placements come from their manifest, not the
+ * external connectors, whose placements come from their manifest, not the
  * source — return `[]`.
  */
 function readSourcePlacements(src: ToolSource): PlacementDeclaration[] {
@@ -5041,10 +5043,10 @@ function registerPlatformPlacements(
 }
 
 /**
- * Seed lifecycle instances for every workspace bundle that survived the boot
+ * Seed lifecycle instances for every workspace connector that survived the boot
  * loop, then re-register any placements they carry.
  *
- * "Survived" is not "started": a URL bundle that was skipped (no tokens) or that
+ * "Survived" is not "started": a URL connector that was skipped (no tokens) or that
  * failed to start is seeded too, carrying `startError` so its Connection is
  * recorded honestly. Seeding it is what keeps the app in the shell and gives
  * `tryRecoverSource` the persisted ref it needs to revive the source on next use.
@@ -5055,19 +5057,19 @@ function registerPlatformPlacements(
  * ref reaches `seedInstance` only via `buildProcessInventory` and throws
  * `LegacyOAuthScopeError` there.
  */
-async function seedWorkspaceBundleInstances(
-  lifecycle: BundleLifecycleManager,
+async function seedWorkspaceConnectorInstances(
+  lifecycle: ConnectorLifecycleManager,
   placementRegistry: PlacementRegistry,
   entries: ProcessInventoryEntry[],
 ): Promise<void> {
   for (const entry of entries) {
-    const { serverName: sn, bundle: ref, meta, wsId, startError } = entry;
+    const { serverName: sn, connector: ref, meta, wsId, startError } = entry;
     await lifecycle.seedInstance(sn, ref.url, ref, meta ?? undefined, wsId, startError);
 
     const instance = lifecycle.getInstance(sn, wsId);
     if (instance?.ui?.placements && instance.ui.placements.length > 0) {
       // Sanitize at boot too — not just at install. Placements persist RAW on
-      // the BundleRef (`instance.ui` is the unfiltered host meta), so a spoof
+      // the ConnectorRef (`instance.ui` is the unfiltered host meta), so a spoof
       // that `registerPlacements` dropped at install time would otherwise
       // re-register verbatim here on every restart. Same fail-closed guard.
       const safe = sanitizePlacements(instance.ui.placements);
@@ -5123,7 +5125,7 @@ function initWorkDir(config: RuntimeConfig): void {
   const resolvedWorkDir = resolve(workDir);
   process.env.NB_WORK_DIR = resolvedWorkDir;
 
-  // Sync core skills (soul.md) into the work dir so bundles can find them
+  // Sync core skills (soul.md) into the work dir so connectors can find them
   // without needing env vars that point into the source tree.
   syncCoreSkills(resolvedWorkDir);
 }
@@ -5139,7 +5141,7 @@ function buildEventSink(config: RuntimeConfig): EventSink {
     const workDir = resolveWorkDir(config);
     const logDir = config.logging?.dir ?? join(workDir, "logs");
     const retentionDays = config.logging?.retentionDays;
-    // Workspace events (bundle lifecycle, bridge calls, audit) go to daily workspace log
+    // Workspace events (connector lifecycle, bridge calls, audit) go to daily workspace log
     sinks.push(new WorkspaceLogSink({ dir: logDir, retentionDays }));
   }
   return sinks.length > 0 ? new MultiEventSink(sinks) : new NoopEventSink();
@@ -5201,7 +5203,7 @@ function loadAllSkills(configDirs?: string[], skillDir?: string): Skill[] {
  * Decision matrix:
  *   - manifest.scope already set → trust the frontmatter
  *   - sourcePath under {workDir}/skills/ → real org-tier (live, mutable)
- *   - everything else → bundle (vendored, immutable)
+ *   - everything else → connector (vendored, immutable)
  */
 function stampDerivedScope(workDir: string, skill: Skill): Skill {
   if (skill.manifest.scope) return skill;
@@ -5473,7 +5475,7 @@ function buildWorkspaceContext(
  * Report a skill enumeration the runtime KNOWS came back short.
  *
  * The product defect the composition-flap incident exposed was not the flap —
- * it was that a workspace whose bundles publish `always` skills composed none
+ * it was that a workspace whose connectors publish `always` skills composed none
  * of them and nothing anywhere said so. `skills: 0` in the context event is
  * indistinguishable from "this workspace has no skills", so the absence read as
  * normal for two weeks.
@@ -5491,7 +5493,7 @@ function buildWorkspaceContext(
  * What it does NOT catch, deliberately: a server that enumerates cleanly and
  * returns nothing. Distinguishing "stopped publishing" from "never published"
  * needs a remembered per-server baseline, and a wrong baseline would page an
- * operator every time a bundle is legitimately uninstalled — the exact false
+ * operator every time a connector is legitimately uninstalled — the exact false
  * positive that inflated the incident's own blast-radius count.
  */
 function reportSkillDiscoveryDegraded(input: {
@@ -5518,7 +5520,7 @@ function reportSkillDiscoveryDegraded(input: {
  *
  * Applied to EVERY pool that can reach composition, not just the filesystem
  * tiers. The mute is validated against the activatable union — which includes
- * bundle-published guidance and connector overlays — so filtering one pool
+ * connector-published guidance and connector overlays — so filtering one pool
  * accepts a name, reports "stops composing", and composes it anyway through
  * another. A steering control that reports success and changes nothing is the
  * defect this whole mechanism replaces, so it must not reappear one pool over.
@@ -5656,7 +5658,7 @@ export function makeIdentitySkill(body: string): Skill {
 
 /**
  * Copy core skills (soul.md etc.) from the source tree into {workDir}/core/
- * so bundle subprocesses can find them via NB_WORK_DIR alone.
+ * so connector subprocesses can find them via NB_WORK_DIR alone.
  */
 function syncCoreSkills(workDir: string): void {
   const srcDir = resolve(dirname(fileURLToPath(import.meta.url)), "../skills/core");

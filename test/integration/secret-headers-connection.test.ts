@@ -22,8 +22,8 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
-import { BundleLifecycleManager } from "../../src/bundles/lifecycle.ts";
-import type { BundleMcpDeps } from "../../src/bundles/startup.ts";
+import { ConnectorLifecycleManager } from "../../src/connectors/runtime/lifecycle.ts";
+import type { ConnectorMcpDeps } from "../../src/connectors/runtime/startup.ts";
 import type { UserIdentity } from "../../src/identity/provider.ts";
 import { MINTED_PROVIDER } from "../../src/oauth/minted-credential-provider.ts";
 import { ConnectorDirectory } from "../../src/registries/directory.ts";
@@ -63,7 +63,7 @@ let workDir: string;
 let catalogDir: string;
 let store: FileCredentialStore;
 let workspaceStore: WorkspaceStore;
-let lifecycle: BundleLifecycleManager;
+let lifecycle: ConnectorLifecycleManager;
 let workspaceRegistry: ToolRegistry;
 let upstream: FakeConnectorServer;
 
@@ -136,8 +136,8 @@ function entry(url: string): DirectoryEntry {
  * is the property that keeps one tenant's key off another tenant's request. The
  * host-resources handles are unused: nothing in these tests calls a tool.
  */
-function bundleMcpDeps(wsId: string): BundleMcpDeps {
-  return { workspaceId: wsId } as unknown as BundleMcpDeps;
+function connectorMcpDeps(wsId: string): ConnectorMcpDeps {
+  return { workspaceId: wsId } as unknown as ConnectorMcpDeps;
 }
 
 function tool() {
@@ -154,9 +154,9 @@ function tool() {
     getRegistryForWorkspace: (_id: string) => workspaceRegistry,
     getPermissionStore: () => ({ deleteConnector: async () => {} }),
     getUserStore: () => ({ get: async () => null }),
-    getBundleInstancesForWorkspace: (_wsId: string) => lifecycle.getInstances(),
+    getConnectorInstancesForWorkspace: (_wsId: string) => lifecycle.getInstances(),
     getAllowInsecureRemotes: () => true,
-    getBundleMcpDeps: bundleMcpDeps,
+    getConnectorMcpDeps: connectorMcpDeps,
   } as unknown as Runtime;
   return createManageConnectorsTool({
     runtime,
@@ -193,8 +193,8 @@ beforeEach(async () => {
 
   // `allowInsecureRemotes` on the constructor: `tryRecoverSource` reads the
   // lifecycle's own flag, not the install path's, and the fake upstream is http.
-  lifecycle = new BundleLifecycleManager(new NoopEventSink(), undefined, true);
-  lifecycle.setBundleMcpDepsFactory(bundleMcpDeps);
+  lifecycle = new ConnectorLifecycleManager(new NoopEventSink(), true);
+  lifecycle.setConnectorMcpDepsFactory(connectorMcpDeps);
   workspaceRegistry = new ToolRegistry();
   // What `Runtime.start` binds — `tryRecoverSource` and the eager start both
   // reach the workspace's registry through it.

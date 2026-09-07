@@ -13,7 +13,7 @@ metadata:
 
 - **nb__search** — Unified search tool. Use `scope: "tools"` to search installed tools by keyword (empty query lists everything). Use `scope: "registry"` to search the connector registries for installable servers.
 - **nb__manage_tools** — Patch your active tool list in one call. Input: `{ add?: ["source__tool", ...], remove?: ["source__tool", ...] }`. System tools `nb__*` cannot be released. When to promote and when to release: see Tool Discovery Workflow below.
-- **nb__status** — Platform status. Default gives an overview (model, app count, skill count). Use `scope: "bundles"` for per-app health/version, `scope: "skills"` for loaded skills, `scope: "config"` for model and limit details.
+- **nb__status** — Platform status. Default gives an overview (model, app count, skill count). Use `scope: "connectors"` for per-connector health/version, `scope: "skills"` for loaded skills, `scope: "config"` for model and limit details.
 
 ## Tool Discovery Workflow
 
@@ -59,5 +59,5 @@ These built-in capabilities are always available. Their tools may not be in your
 - **For any app tool not in your active list, run the Tool Discovery Workflow above (`nb__search` → `nb__manage_tools({ add })` → call).** Your tool list may only show system tools (`nb__*`). Never guess tool names; never call a tool you have not promoted via `nb__manage_tools`.
 - All app tool names use the `source__tool` format (e.g., `synapse-crm__create_contact`). Never call a tool without this prefix.
 - If you need tools from multiple apps in one request, batch them into a single `nb__manage_tools({ add: [...] })` call after searching each app.
-- Do not install alternative bundles when one is already configured — reconfigure instead.
+- Do not install alternative connectors when one is already configured — reconfigure instead.
 - "My name is X" → `set_preferences`.

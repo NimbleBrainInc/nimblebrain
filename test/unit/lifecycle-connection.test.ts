@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, test } from "bun:test";
-import { BundleLifecycleManager } from "../../src/bundles/lifecycle.ts";
-import type { BundleInstance } from "../../src/bundles/types.ts";
+import { ConnectorLifecycleManager } from "../../src/connectors/runtime/lifecycle.ts";
+import type { ConnectorInstance } from "../../src/connectors/runtime/types.ts";
 import type { EngineEvent, EventSink } from "../../src/engine/types.ts";
 
 class CapturingSink implements EventSink {
@@ -16,10 +16,10 @@ class CapturingSink implements EventSink {
   }
 }
 
-function seedInstance(lifecycle: BundleLifecycleManager, serverName: string, wsId: string): BundleInstance {
-  const instance: BundleInstance = {
+function seedInstance(lifecycle: ConnectorLifecycleManager, serverName: string, wsId: string): ConnectorInstance {
+  const instance: ConnectorInstance = {
     serverName,
-    bundleName: "https://example.test/mcp",
+    connectorName: "https://example.test/mcp",
     version: "remote",
     state: "starting",
     ui: null,
@@ -35,13 +35,13 @@ function seedInstance(lifecycle: BundleLifecycleManager, serverName: string, wsI
   return instance;
 }
 
-describe("BundleLifecycleManager — Connection state transitions", () => {
+describe("ConnectorLifecycleManager — Connection state transitions", () => {
   let sink: CapturingSink;
-  let lifecycle: BundleLifecycleManager;
+  let lifecycle: ConnectorLifecycleManager;
 
   beforeEach(() => {
     sink = new CapturingSink();
-    lifecycle = new BundleLifecycleManager(sink, undefined);
+    lifecycle = new ConnectorLifecycleManager(sink);
   });
 
   test("recordConnectionStateChange creates the connection on first call", () => {
@@ -74,7 +74,7 @@ describe("BundleLifecycleManager — Connection state transitions", () => {
     });
   });
 
-  test("BundleInstance.state mirrors the single connection state (Step 1 workspace-scope)", () => {
+  test("ConnectorInstance.state mirrors the single connection state (Step 1 workspace-scope)", () => {
     const instance = seedInstance(lifecycle, "granola", "ws_test");
     lifecycle.recordConnectionStateChange("granola", "ws_test", "_workspace", "pending_auth", {
       authorizationUrl: "https://x.test/?state=s",

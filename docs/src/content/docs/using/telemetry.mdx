@@ -15,7 +15,7 @@ Telemetry events fall into four categories:
 
 | Event | Properties |
 |-------|-----------|
-| `cli.startup` | Mode (`serve`), bundle count, startup time in ms |
+| `cli.startup` | Mode (`serve`), connector count, startup time in ms |
 
 ### Agent loop events
 
@@ -25,12 +25,12 @@ Telemetry events fall into four categories:
 | `agent.chat_completed` | Iteration count, tool call count, stop reason (`complete`, `max_iterations`, `token_budget`), LLM latency, tool latency, total time, input/output token counts |
 | `agent.error` | Error type name only (e.g., `AnthropicError`), structured error code if available |
 
-### Bundle lifecycle events
+### Connector lifecycle events
 
 | Event | Properties |
 |-------|-----------|
-| `bundle.installed` | Whether the connector has UI |
-| `bundle.uninstalled` | Source type |
+| `connector.installed` | Whether the connector has UI |
+| `connector.uninstalled` | Source type |
 
 ### Web client events
 
@@ -45,7 +45,7 @@ Telemetry events fall into four categories:
 - Conversation content, messages, or prompts
 - File paths, working directories, or hostnames
 - Usernames, IP addresses, or email addresses
-- Bundle names, skill names, or tool names
+- Connector names, skill names, or tool names
 - Tool arguments or results
 - Error messages or stack traces (only error type)
 - Model names (could reveal organization info)

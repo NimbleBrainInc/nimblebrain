@@ -3,7 +3,7 @@
  *
  * The schemas themselves now live in `src/platform/schemas/automations.ts`
  * — that's the single source of truth shared between the standalone MCP
- * server (this bundle) and the in-process platform source. This file
+ * server (this app) and the in-process platform source. This file
  * re-exports them as the `TOOL_SCHEMAS` array consumed by both server
  * implementations.
  */

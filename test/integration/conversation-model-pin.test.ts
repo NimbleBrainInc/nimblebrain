@@ -63,7 +63,6 @@ beforeAll(async () => {
   runtime = await Runtime.start({
     model: { provider: "custom", adapter: createEchoModel() },
     models: { default: MODEL_A, fast: FAST_MODEL, reasoning: MODEL_A },
-    noDefaultBundles: true,
     logging: { disabled: true },
     workDir,
   });

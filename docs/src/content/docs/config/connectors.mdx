@@ -1,0 +1,185 @@
+---
+title: Connector Configuration
+description: Configure a workspace's remote MCP connectors in workspace.json.
+---
+
+import { Tabs, TabItem, Aside } from '@astrojs/starlight/components';
+
+The `connectors` array lives in [`workspace.json`](/config/workspace-json/), **not** `nimblebrain.json` — where the name `connectors` belongs to the [provider and gateway block](/config/nimblebrain-json/#connectors) instead. Each workspace declares its own connectors. This page documents the shape of a single entry — the same shape whether it was written by hand, by the connectors install flow, or by the CLI.
+
+Every entry is one remote MCP server, addressed by URL. The runtime orchestrates over remote MCP: it connects to a URL with a credential, and does not download, verify, or execute a server's code. There is no by-name or by-path entry, and nothing runs as a subprocess of the platform.
+
+NimbleBrain ships with no connectors by default. Platform capabilities (home, conversations, files, settings, usage, automations) are built in as in-process tool sources — install connectors to give a workspace domain-specific tools.
+
+<Aside type="note">
+  Connectors are workspace-scoped. Two workspaces that install the same server hold independent credentials and independent connection state. See [`workspace.json`](/config/workspace-json/) for where the array lives and how workspaces are managed.
+</Aside>
+
+## The entry shape
+
+```json
+{
+  "connectors": [
+    {
+      "url": "https://mcp.example.com/mcp",
+      "serverName": "example",
+      "transport": {
+        "type": "streamable-http",
+        "auth": { "type": "bearer", "token": "sk-..." }
+      }
+    }
+  ]
+}
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `url` | `string` | — | **Required.** The remote MCP endpoint. |
+| `serverName` | `string` | derived from `url` | The name the server registers under. Tools reach the agent as `<serverName>__<tool>`, so this is the stable identity every other surface looks the connector up by. Set automatically at install from the catalog entry's canonical id. |
+| `transport` | `object` | `{ "type": "streamable-http" }` | How to reach the server. See [Remote transport configuration](#remote-transport-configuration). |
+| `ui` | `object \| null` | `null` | Host UI metadata, copied from the operator-trusted catalog entry at install. |
+| `oauthScope` | `"workspace"` | `"workspace"` | Identity scope for the connection. One identity per (workspace, server), shared by the workspace's members. |
+| `scopes` | `string[]` | — | OAuth scopes to request. Omit for servers that derive their own (DCR). |
+| `oauthClient` | `object` | — | Pre-registered OAuth client for vendors without Dynamic Client Registration. `clientSecret` is a reference into the credential store, never an inline value — see [Credentials](/config/credentials/). |
+| `additionalAuthorizationParams` | `object` | — | Extra query params for the authorize URL (e.g. Google's `access_type=offline`). Reserved OAuth keys are rejected at config load. |
+
+<Aside type="tip">
+  Don't hand-write an `auth.token` for a service the catalog can connect over OAuth — install it from Browse instead, and the tokens land in the workspace credential store rather than in `workspace.json`. Inline static auth is for a server you operate yourself.
+</Aside>
+
+### UI metadata
+
+The `ui` field is populated automatically when you install a connector whose catalog entry declares UI metadata. You do not need to set this manually.
+
+```json
+{
+  "ui": {
+    "name": "Tasks",
+    "icon": "clipboard",
+    "placements": [
+      { "slot": "main", "resourceUri": "ui://tasks/index.html" }
+    ]
+  }
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `ui.name` | `string` | Human-readable app name shown in the sidebar. |
+| `ui.icon` | `string` | Emoji or icon identifier. |
+| `ui.placements` | `array` | Placement declarations (each a `slot` plus a `ui://` resource URI) that register the app's views. Re-validated at every registration, so a malformed one is dropped rather than rendered. |
+
+## Remote transport configuration
+
+The `transport` object controls how NimbleBrain connects to the server.
+
+```json
+{
+  "url": "https://mcp.example.com/mcp",
+  "serverName": "example",
+  "transport": {
+    "type": "streamable-http",
+    "auth": { "type": "bearer", "token": "sk-..." },
+    "headers": {
+      "X-Custom-Header": "value"
+    },
+    "reconnection": {
+      "maxRetries": 5,
+      "initialReconnectionDelay": 1000,
+      "maxReconnectionDelay": 30000
+    },
+    "sessionId": "resume-session-abc123"
+  }
+}
+```
+
+### Transport fields
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `type` | `"streamable-http"` \| `"sse"` | `"streamable-http"` | Transport protocol. Streamable HTTP is the default MCP transport. Use `"sse"` for servers that only support Server-Sent Events. |
+| `auth` | `object` | — | Authentication method. See [auth types](#auth-types). |
+| `headers` | `object` | `{}` | Custom HTTP headers sent with every request. Keys and values are strings. |
+| `reconnection` | `object` | — | Reconnection behavior. See [reconnection](#reconnection). |
+| `sessionId` | `string` | — | MCP session ID for resuming an existing session. |
+
+### Auth types
+
+<Tabs>
+  <TabItem label="Bearer token">
+    ```json
+    {
+      "auth": {
+        "type": "bearer",
+        "token": "sk-your-api-key"
+      }
+    }
+    ```
+
+    Sends an `Authorization: Bearer <token>` header with every request.
+  </TabItem>
+  <TabItem label="Custom header">
+    ```json
+    {
+      "auth": {
+        "type": "header",
+        "name": "X-API-Key",
+        "value": "your-api-key"
+      }
+    }
+    ```
+
+    Sends a custom header with every request. Use this for APIs that expect a non-standard auth header.
+  </TabItem>
+  <TabItem label="No auth">
+    ```json
+    {
+      "auth": {
+        "type": "none"
+      }
+    }
+    ```
+
+    No authentication headers are sent. Use this for servers on a private network or behind a VPN.
+  </TabItem>
+</Tabs>
+
+### Reconnection
+
+Control how NimbleBrain handles dropped connections to remote servers.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `maxRetries` | `number` | Maximum number of reconnection attempts before giving up. |
+| `initialReconnectionDelay` | `number` | Milliseconds to wait before the first retry. |
+| `maxReconnectionDelay` | `number` | Maximum milliseconds between retries (backs off exponentially up to this cap). |
+
+## Complete example
+
+```json
+{
+  "id": "ws_product",
+  "name": "Product",
+  "connectors": [
+    {
+      "url": "https://mcp.example.com/mcp",
+      "serverName": "example-remote",
+      "transport": {
+        "type": "streamable-http",
+        "auth": { "type": "bearer", "token": "sk-..." },
+        "headers": { "X-Tenant": "acme" },
+        "reconnection": {
+          "maxRetries": 3,
+          "initialReconnectionDelay": 1000,
+          "maxReconnectionDelay": 10000
+        }
+      }
+    },
+    {
+      "url": "https://mcp.granola.ai/mcp",
+      "serverName": "ai-granola-mcp",
+      "oauthScope": "workspace"
+    }
+  ]
+}
+```

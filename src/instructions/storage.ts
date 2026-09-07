@@ -18,7 +18,7 @@ import {
  * Each file has a sibling `instructions.meta.json` with `{ updated_at, updated_by }`.
  * Reading a missing file returns `""`. Writing empty text deletes the pair.
  *
- * Per-bundle instructions are NOT stored here — bundles own their storage,
+ * Per-connector instructions are NOT stored here — connectors own their storage,
  * publish a `<sourceName>://instructions` resource, and the platform reads
  * that on every prompt assembly.
  */

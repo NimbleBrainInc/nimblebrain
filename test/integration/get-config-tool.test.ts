@@ -19,7 +19,6 @@ async function makeRuntime(overrides?: Record<string, unknown>): Promise<Runtime
 	mkdirSync(workDir, { recursive: true });
 	return Runtime.start({
 		model: { provider: "custom", adapter: createEchoModel() },
-		noDefaultBundles: true,
 		workDir,
 		logging: { disabled: true },
 		...overrides,

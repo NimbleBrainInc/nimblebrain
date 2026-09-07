@@ -2,7 +2,7 @@
  * `StaticSource` reads `ServerDetail[]` from a YAML/JSON file — or a
  * directory of them — on disk. It's the curated-services source we
  * ship with the platform (the minimal in-image example under
- * `src/connectors/curated/`, overridden in deployments by a mounted
+ * `src/connectors/catalog/curated/`, overridden in deployments by a mounted
  * catalog directory) and any operator-override source mounted via
  * `NB_REGISTRIES` with `type: "static"`.
  *
@@ -13,7 +13,7 @@
  * ConfigMap take effect without a restart.
  *
  * Wire format is the upstream MCP registry's `ServerDetail` shape
- * (see `src/connectors/server-detail.ts`). Every entry is ajv-validated
+ * (see `src/connectors/catalog/server-detail.ts`). Every entry is ajv-validated
  * before it leaves the source. Invalid entries are dropped with a
  * logged warning naming the source path and the entry name (or index,
  * when `name` is missing); the surviving subset flows up.
@@ -29,7 +29,7 @@
 
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { extname, join } from "node:path";
-import { type ServerDetail, validateServerDetail } from "../connectors/server-detail.ts";
+import { type ServerDetail, validateServerDetail } from "../connectors/catalog/server-detail.ts";
 import { log } from "../observability/log.ts";
 import {
   type ProjectionContext,

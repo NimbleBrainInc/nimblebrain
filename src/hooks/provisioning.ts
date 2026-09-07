@@ -24,7 +24,7 @@ import type { HookDeclaration, HookRegistration } from "./types.ts";
  *
  *     It does NOT refuse the install. The check needs the server's tool list,
  *     which needs a started source, which the install pipeline does not reach
- *     until after the bundle ref is committed — so by the time this can run,
+ *     until after the connector ref is committed — so by the time this can run,
  *     the install has succeeded and reporting otherwise would describe state
  *     the runtime kept. The caller surfaces it as a warning on a successful
  *     install instead, and the reconcile re-runs it on every transition to
@@ -41,7 +41,7 @@ import type { HookDeclaration, HookRegistration } from "./types.ts";
  *   - A **transient failure** — the registration tool exists but the call fails
  *     (the server is starting, the operator has denied that tool by permission,
  *     the vendor's API is down) — records the `kid` and logs. A connector is
- *     useful without its webhook; the receiving bundle's own reconcile poll is
+ *     useful without its webhook; the receiving connector's own reconcile poll is
  *     the designed backstop for a stream that never arrives, and the recorded
  *     registration means a later `rotate_hook` or re-install retries it.
  */
@@ -293,7 +293,7 @@ export async function provisionHooks(opts: ProvisionHooksOptions): Promise<Provi
  * Hand one minted URL to the server that declared the stream.
  *
  * A failure here is NOT fatal and NOT an error-level event. The connector is
- * installed and useful; the receiving bundle's own reconcile poll is the
+ * installed and useful; the receiving connector's own reconcile poll is the
  * designed backstop for a stream that never arrives; and the registration is
  * already recorded, so a later `rotate_hook` or reinstall retries. What the
  * operator needs is to know the stream is not live yet, which the warn line and

@@ -43,7 +43,7 @@ import type { EventSink, ToolResult } from "../../engine/types.ts";
 import {
   type ComposedPrompt,
   composeSystemPromptTraced,
-  deriveBundleFromSkillPath,
+  deriveConnectorFromSkillPath,
   type Layer3SkillEntry,
   type TracedLayer,
   type TracedSubItem,
@@ -80,8 +80,8 @@ const COMPOSE_DESCRIPTION =
   "Pass `run_id` for historical mode — reads the recorded `skills.loaded` event " +
   "for that run from the calling workspace's conv jsonl and verifies each " +
   "layer-3 skill's `contentHash` against its current source, flagging drift. " +
-  "Pass `bundle` to filter the response to one bundle's contributions (apps " +
-  "section + layer-3 skills under the bundle's affined directory). Read-only. " +
+  "Pass `connector` to filter the response to one connector's contributions (apps " +
+  "section + layer-3 skills under the connector's affined directory). Read-only. " +
   "Use this to answer 'what's in the agent's prompt right now' or 'what was " +
   "in the prompt for run X'. " +
   "`totalTokens` is the size of the composed system prompt, in both modes — " +
@@ -105,7 +105,7 @@ const ASSEMBLED_CONTEXT_DESCRIPTION =
 interface ComposeArgs {
   conversation_id?: string;
   run_id?: string;
-  bundle?: string;
+  connector?: string;
 }
 
 /** Exported for unit testing. */
@@ -168,10 +168,10 @@ export function createComposeSource(runtime: Runtime, eventSink: EventSink): Mcp
             ? await composeHistorical(runtime, convId, args.run_id)
             : await composeLive(runtime, convId);
 
-          // Bundle filter applied last so the structural contract (mode,
+          // Connector filter applied last so the structural contract (mode,
           // conversationId, etc.) doesn't depend on filter shape.
-          if (args.bundle) {
-            applyBundleFilter(response, args.bundle);
+          if (args.connector) {
+            applyConnectorFilter(response, args.connector);
           }
 
           return {
@@ -249,7 +249,7 @@ export function createComposeSource(runtime: Runtime, eventSink: EventSink): Mcp
  *     piece — without it the trace would lie for any workspace using a
  *     custom identity.
  *   - `apps` = `runtime.buildAppsList(wsId)` — workspace-scoped, includes
- *     each bundle's `app://instructions` overlay.
+ *     each connector's `app://instructions` overlay.
  *   - `overlays` = `runtime.readPromptOverlays(wsId)` — the workspace
  *     instruction overlay.
  *   - `layer3Skills` = `loadConversationSkills` ∩ `selectLayer3Skills`
@@ -332,14 +332,14 @@ async function composeLive(runtime: Runtime, convId: string): Promise<ComposeRes
     reason: s.reason,
   }));
 
-  // Skill catalog — same projection `runtime.chat()` composes. Bundle-skill
+  // Skill catalog — same projection `runtime.chat()` composes. Connector-skill
   // discovery is async-registry work this trace doesn't perform (matching the
   // Layer-3 selection above, which also runs over the filesystem pool only),
   // so the catalog here carries the filesystem + connector-overlay entries.
   const skillCatalog = toCatalogEntries(
     collectActivatableSkills({
       fsCapability: poolCapability,
-      bundleCapability: [],
+      connectorCapability: [],
       // Filtered like the pool above. The trace exists to show what composed;
       // listing a connector overlay the same turn's prompt dropped is the
       // divergence it is supposed to expose, not produce.
@@ -685,7 +685,7 @@ function auditToSubItem(
     kind: "layer3_skill",
     id: entry.id,
     source: audit.body !== null ? entry.id : `${entry.id} (body unavailable)`,
-    ...(audit.bundle ? { bundle: audit.bundle } : {}),
+    ...(audit.connector ? { connector: audit.connector } : {}),
     metadata: {
       scope: entry.scope,
       loadedBy: entry.loadedBy,
@@ -735,7 +735,7 @@ interface L3SkillAudit {
    *  "missing" — file no longer exists on disk; body is null. */
   hashStatus: "match" | "drift" | "recovered" | "missing";
   body: string | null;
-  bundle?: string;
+  connector?: string;
   snapshotPath?: string;
   warning?: string;
 }
@@ -775,10 +775,10 @@ function auditL3Skill(entry: SkillsLoadedEvent["skills"][number]): L3SkillAudit 
     };
   }
   const currentHash = hashSkillBody(currentBody);
-  const bundle = deriveBundleFromSkillPath(path);
+  const connector = deriveConnectorFromSkillPath(path);
 
   if (entry.contentHash === currentHash) {
-    return { hashStatus: "match", body: currentBody, ...(bundle ? { bundle } : {}) };
+    return { hashStatus: "match", body: currentBody, ...(connector ? { connector } : {}) };
   }
 
   // Drift detected. Try to find a `_versions/` snapshot whose body hashes
@@ -789,7 +789,7 @@ function auditL3Skill(entry: SkillsLoadedEvent["skills"][number]): L3SkillAudit 
       hashStatus: "recovered",
       body: snapshot.body,
       snapshotPath: snapshot.path,
-      ...(bundle ? { bundle } : {}),
+      ...(connector ? { connector } : {}),
       warning: `skill ${path}: edited since this run; recovered the loaded body from ${snapshot.path}`,
     };
   }
@@ -797,7 +797,7 @@ function auditL3Skill(entry: SkillsLoadedEvent["skills"][number]): L3SkillAudit 
   return {
     hashStatus: "drift",
     body: currentBody,
-    ...(bundle ? { bundle } : {}),
+    ...(connector ? { connector } : {}),
     warning: `skill ${path}: edited since this run, no matching snapshot in _versions/. Showing current body — content may differ from what actually loaded.`,
   };
 }
@@ -891,12 +891,12 @@ async function readConvEvents(
   return store.readEvents(convId);
 }
 
-// ── bundle filter ────────────────────────────────────────────────────────
+// ── connector filter ────────────────────────────────────────────────────────
 
 /**
- * Filter the response to one bundle's contributions in place. A layer is
- * kept if its top-level `bundle` matches OR if any of its `subItems`
- * carries the matching bundle; for sections with subItems, the subItems
+ * Filter the response to one connector's contributions in place. A layer is
+ * kept if its top-level `connector` matches OR if any of its `subItems`
+ * carries the matching connector; for sections with subItems, the subItems
  * array is also pared to just the matching ones.
  *
  * All three response fields are kept consistent with the filtered layers:
@@ -911,16 +911,16 @@ async function readConvEvents(
  * formatting (we don't re-run the apps-section formatter against just
  * the filtered apps). This is honest about scope: the tool surfaces the
  * filtered subItems for fine-grained inspection while keeping section
- * text intact for context. Consumers wanting per-bundle prompt text
+ * text intact for context. Consumers wanting per-connector prompt text
  * should walk the subItems, not slice the section text.
  */
 /** Exported for unit testing. */
-export function applyBundleFilter(response: ComposeResponse, bundle: string): void {
+export function applyConnectorFilter(response: ComposeResponse, connector: string): void {
   const filtered: TracedLayer[] = [];
   for (const layer of response.layers) {
-    const ownBundleMatches = layer.bundle === bundle;
-    const matchingSubs = layer.subItems?.filter((s) => s.bundle === bundle) ?? [];
-    if (ownBundleMatches) {
+    const ownConnectorMatches = layer.connector === connector;
+    const matchingSubs = layer.subItems?.filter((s) => s.connector === connector) ?? [];
+    if (ownConnectorMatches) {
       filtered.push(layer);
       continue;
     }

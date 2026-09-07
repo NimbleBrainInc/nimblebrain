@@ -1,5 +1,5 @@
 import { describe, expect, it, afterAll, afterEach, beforeEach } from "bun:test";
-import { mkdirSync, writeFileSync, readFileSync, rmSync, existsSync, readdirSync } from "node:fs";
+import { mkdirSync, writeFileSync, rmSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
@@ -9,9 +9,9 @@ import {
 	CallToolRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import type { EngineEvent, EventSink } from "../../src/engine/types.ts";
-import { BundleLifecycleManager } from "../../src/bundles/lifecycle.ts";
-import { startBundleSource } from "../../src/bundles/startup.ts";
-import type { BundleRef } from "../../src/bundles/types.ts";
+import { ConnectorLifecycleManager } from "../../src/connectors/runtime/lifecycle.ts";
+import { startConnectorSource } from "../../src/connectors/runtime/startup.ts";
+import type { ConnectorRef } from "../../src/connectors/runtime/types.ts";
 import { ToolRegistry } from "../../src/tools/registry.ts";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import {
@@ -57,7 +57,7 @@ function eventTypes(collector: { events: EngineEvent[] }): string[] {
 // ---------------------------------------------------------------------------
 // Helper: a real MCP server over Streamable HTTP, the shape every connector
 // now has. The lifecycle owns remote connections only — there is no local
-// bundle to unpack or subprocess to spawn.
+// connector to unpack or subprocess to spawn.
 // ---------------------------------------------------------------------------
 
 interface MockRemoteServer {
@@ -124,16 +124,16 @@ const WS = "ws_test";
  * `not_authenticated` until an OAuth flow completes.
  */
 async function connectAndSeed(
-	lifecycle: BundleLifecycleManager,
+	lifecycle: ConnectorLifecycleManager,
 	registry: ToolRegistry,
 	url: string,
-): Promise<BundleRef> {
-	const ref: BundleRef = {
+): Promise<ConnectorRef> {
+	const ref: ConnectorRef = {
 		url,
 		serverName: SERVER_NAME,
 		transport: { type: "streamable-http", auth: { type: "bearer", token: "t" } },
 	};
-	const { meta } = await startBundleSource(ref, registry, new NoopEventSink(), {
+	const { meta } = await startConnectorSource(ref, registry, new NoopEventSink(), {
 		allowInsecureRemotes: true,
 		wsId: WS,
 	});
@@ -145,7 +145,7 @@ async function connectAndSeed(
 // Uninstall
 // ---------------------------------------------------------------------------
 
-describe("BundleLifecycleManager — uninstall", () => {
+describe("ConnectorLifecycleManager — uninstall", () => {
 	let mockServer: MockRemoteServer;
 
 	beforeEach(() => {
@@ -157,16 +157,10 @@ describe("BundleLifecycleManager — uninstall", () => {
 		mockServer?.close();
 	});
 
-	it("uninstalls a connector: source removed, config updated, event emitted", async () => {
-		const configPath = join(testDir, "nimblebrain-uninstall.json");
-		writeFileSync(
-			configPath,
-			JSON.stringify({ bundles: [{ url: mockServer.url, serverName: SERVER_NAME }] }, null, 2),
-		);
-
+	it("uninstalls a connector: source removed, instance dropped, event emitted", async () => {
 		const registry = new ToolRegistry();
 		const sink = makeEventCollector();
-		const lifecycle = new BundleLifecycleManager(sink, configPath, true);
+		const lifecycle = new ConnectorLifecycleManager(sink, true);
 		await connectAndSeed(lifecycle, registry, mockServer.url);
 
 		expect(registry.hasSource(SERVER_NAME)).toBe(true);
@@ -174,15 +168,11 @@ describe("BundleLifecycleManager — uninstall", () => {
 		await lifecycle.uninstall(SERVER_NAME, registry, WS);
 
 		expect(registry.hasSource(SERVER_NAME)).toBe(false);
-		expect(JSON.parse(readFileSync(configPath, "utf-8")).bundles).toHaveLength(0);
-		expect(eventTypes(sink)).toContain("bundle.uninstalled");
+		expect(eventTypes(sink)).toContain("connector.uninstalled");
 		expect(lifecycle.getInstance(SERVER_NAME, WS)).toBeUndefined();
 	}, 15_000);
 
 	it("does not delete data directories on uninstall", async () => {
-		const configPath = join(testDir, "nimblebrain-data.json");
-		writeFileSync(configPath, JSON.stringify({ bundles: [] }, null, 2));
-
 		// A data directory that must survive uninstall — credentials are config,
 		// data is not.
 		const dataDir = join(testDir, "data", "echo");
@@ -190,38 +180,16 @@ describe("BundleLifecycleManager — uninstall", () => {
 		writeFileSync(join(dataDir, "records.json"), "[]");
 
 		const registry = new ToolRegistry();
-		const lifecycle = new BundleLifecycleManager(makeEventCollector(), configPath, true);
+		const lifecycle = new ConnectorLifecycleManager(makeEventCollector(), true);
 		await connectAndSeed(lifecycle, registry, mockServer.url);
 		await lifecycle.uninstall(SERVER_NAME, registry, WS);
 
 		expect(existsSync(join(dataDir, "records.json"))).toBe(true);
 	}, 15_000);
 
-	it("uninstall leaves the config file valid JSON and no temp files behind", async () => {
-		const configPath = join(testDir, "nimblebrain-atomic.json");
-		writeFileSync(
-			configPath,
-			JSON.stringify(
-				{ bundles: [{ url: mockServer.url, serverName: SERVER_NAME }, { url: "https://other.test/mcp" }] },
-				null,
-				2,
-			),
-		);
-
-		const registry = new ToolRegistry();
-		const lifecycle = new BundleLifecycleManager(makeEventCollector(), configPath, true);
-		await connectAndSeed(lifecycle, registry, mockServer.url);
-		await lifecycle.uninstall(SERVER_NAME, registry, WS);
-
-		const config = JSON.parse(readFileSync(configPath, "utf-8"));
-		expect(config.bundles).toHaveLength(1);
-		expect(config.bundles[0].url).toBe("https://other.test/mcp");
-		expect(readdirSync(testDir).filter((f) => f.endsWith(".tmp"))).toHaveLength(0);
-	}, 15_000);
-
 	it("uninstall for a nonexistent server name is a silent no-op", async () => {
 		const registry = new ToolRegistry();
-		const lifecycle = new BundleLifecycleManager(makeEventCollector(), undefined, true);
+		const lifecycle = new ConnectorLifecycleManager(makeEventCollector(), true);
 
 		await lifecycle.uninstall("completely-nonexistent-server", registry, WS);
 
@@ -233,7 +201,7 @@ describe("BundleLifecycleManager — uninstall", () => {
 // Start / Stop / state transitions
 // ---------------------------------------------------------------------------
 
-describe("BundleLifecycleManager — start and stop", () => {
+describe("ConnectorLifecycleManager — start and stop", () => {
 	let mockServer: MockRemoteServer;
 
 	beforeEach(() => {
@@ -247,12 +215,12 @@ describe("BundleLifecycleManager — start and stop", () => {
 
 	it("stop transitions state to stopped", async () => {
 		const registry = new ToolRegistry();
-		const lifecycle = new BundleLifecycleManager(makeEventCollector(), undefined, true);
+		const lifecycle = new ConnectorLifecycleManager(makeEventCollector(), true);
 		await connectAndSeed(lifecycle, registry, mockServer.url);
 		const instance = lifecycle.getInstance(SERVER_NAME, WS)!;
 		expect(instance.state).toBe("running");
 
-		await lifecycle.stopBundle(SERVER_NAME, WS, registry);
+		await lifecycle.stopConnector(SERVER_NAME, WS, registry);
 		expect(instance.state).toBe("stopped");
 
 		await registry.removeSource(SERVER_NAME);
@@ -260,29 +228,29 @@ describe("BundleLifecycleManager — start and stop", () => {
 
 	it("start transitions a stopped connector back to running", async () => {
 		const registry = new ToolRegistry();
-		const lifecycle = new BundleLifecycleManager(makeEventCollector(), undefined, true);
+		const lifecycle = new ConnectorLifecycleManager(makeEventCollector(), true);
 		await connectAndSeed(lifecycle, registry, mockServer.url);
 		const instance = lifecycle.getInstance(SERVER_NAME, WS)!;
 
-		await lifecycle.stopBundle(SERVER_NAME, WS, registry);
+		await lifecycle.stopConnector(SERVER_NAME, WS, registry);
 		expect(instance.state).toBe("stopped");
 
-		await lifecycle.startBundle(SERVER_NAME, WS, registry);
+		await lifecycle.startConnector(SERVER_NAME, WS, registry);
 		expect(instance.state).toBe("running");
 
 		await registry.removeSource(SERVER_NAME);
 	}, 15_000);
 
-	it("a dead connector requires an explicit startBundle to run again", async () => {
+	it("a dead connector requires an explicit startConnector to run again", async () => {
 		const registry = new ToolRegistry();
-		const lifecycle = new BundleLifecycleManager(makeEventCollector(), undefined, true);
+		const lifecycle = new ConnectorLifecycleManager(makeEventCollector(), true);
 		await connectAndSeed(lifecycle, registry, mockServer.url);
 		const instance = lifecycle.getInstance(SERVER_NAME, WS)!;
 
 		lifecycle.transition(instance, "dead");
 		expect(instance.state).toBe("dead");
 
-		await lifecycle.startBundle(SERVER_NAME, WS, registry);
+		await lifecycle.startConnector(SERVER_NAME, WS, registry);
 		expect(instance.state).toBe("running");
 
 		await registry.removeSource(SERVER_NAME);
@@ -293,9 +261,9 @@ describe("BundleLifecycleManager — start and stop", () => {
 // seedInstance / getInstances
 // ---------------------------------------------------------------------------
 
-describe("BundleLifecycleManager — instance tracking", () => {
+describe("ConnectorLifecycleManager — instance tracking", () => {
 	it("seedInstance records the ref's UI and derives the connection state", async () => {
-		const lifecycle = new BundleLifecycleManager(makeEventCollector(), undefined);
+		const lifecycle = new ConnectorLifecycleManager(makeEventCollector());
 
 		await lifecycle.seedInstance(
 			"ipinfo",
@@ -319,7 +287,7 @@ describe("BundleLifecycleManager — instance tracking", () => {
 	});
 
 	it("seedInstance prefers the manifest name over the config label", async () => {
-		const lifecycle = new BundleLifecycleManager(makeEventCollector(), undefined);
+		const lifecycle = new ConnectorLifecycleManager(makeEventCollector());
 
 		await lifecycle.seedInstance(
 			"crm",
@@ -337,16 +305,15 @@ describe("BundleLifecycleManager — instance tracking", () => {
 		);
 
 		const instance = lifecycle.getInstance("crm", "ws_eng")!;
-		expect(instance.bundleName).toBe("ai.nimblebrain/crm");
-		expect(instance.configKey).toBe("https://crm.example.com/mcp");
+		expect(instance.connectorName).toBe("ai.nimblebrain/crm");
 		expect(instance.version).toBe("0.1.0");
 		expect(instance.briefing?.facets).toHaveLength(1);
 		expect(instance.wsId).toBe("ws_eng");
 	});
 
 	it("seedInstance retains the ref so a source can be reconstructed on demand", async () => {
-		const lifecycle = new BundleLifecycleManager(makeEventCollector(), undefined);
-		const ref: BundleRef = {
+		const lifecycle = new ConnectorLifecycleManager(makeEventCollector());
+		const ref: ConnectorRef = {
 			url: "https://crm.example.com/mcp",
 			serverName: "crm",
 			scopes: ["read"],
@@ -358,7 +325,7 @@ describe("BundleLifecycleManager — instance tracking", () => {
 	});
 
 	it("getInstance returns undefined for an unknown server name", () => {
-		const lifecycle = new BundleLifecycleManager(makeEventCollector(), undefined);
+		const lifecycle = new ConnectorLifecycleManager(makeEventCollector());
 		expect(lifecycle.getInstance("nonexistent", "ws_test")).toBeUndefined();
 	});
 });

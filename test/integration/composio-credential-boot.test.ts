@@ -1,6 +1,6 @@
 /**
  * The Composio transport credential must be registered by `Runtime.start`
- * itself, before `startWorkspaceBundles` runs.
+ * itself, before `startWorkspaceConnectors` runs.
  *
  * This pins the defect that shipped in this PR's first cut: registration lived
  * in `createComposioProvider`, which runs only when the managed-connector
@@ -43,7 +43,6 @@ beforeAll(async () => {
 
   runtime = await Runtime.start({
     model: { provider: "custom", adapter: createEchoModel() },
-    noDefaultBundles: true,
     logging: { disabled: true },
     workDir: testDir,
   });

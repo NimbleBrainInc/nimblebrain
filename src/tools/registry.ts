@@ -39,7 +39,7 @@ export function isTaskAwareSource(
 
 /**
  * Non-stoppable reference wrapper for shared ToolSource objects.
- * When protected sources (e.g., default bundles, system tools) are added to
+ * When protected sources (e.g., default connectors, system tools) are added to
  * per-workspace registries, this wrapper prevents workspace cleanup from
  * stopping the underlying shared process.
  */
@@ -161,7 +161,7 @@ export class ToolRegistry implements ToolRouter {
       // the whole call and every chat turn fails — exactly the
       // platform-level outage shape we don't want from one bad
       // workspace source. Surface the failure in the source's own
-      // status (Configure page renders it from BundleInstance.state)
+      // status (Configure page renders it from ConnectorInstance.state)
       // and leave the chat usable.
       let tools: Tool[];
       try {
@@ -170,7 +170,7 @@ export class ToolRegistry implements ToolRouter {
         const msg = err instanceof Error ? err.message : String(err);
         log.warn(
           `[registry] availableTools: skipping source "${source.name}" — ${msg}. ` +
-            `The bundle's own state surface (Connectors page) reflects this; the chat list ` +
+            `The connector's own state surface (Connectors page) reflects this; the chat list ` +
             `omits its tools until the source recovers.`,
         );
         continue;
@@ -261,7 +261,7 @@ export class ToolRegistry implements ToolRouter {
    *
    * The distinction matters wherever presence is used to decide "do we need to
    * recover this?". A source can be registered and down — a boot start that
-   * failed keeps its entry so the bundle stays visible and HealthMonitor can
+   * failed keeps its entry so the connector stays visible and HealthMonitor can
    * heal it — and for those, presence is exactly the wrong answer: treating it
    * as available lets a dead source suppress the recovery that would fix it.
    *
@@ -297,7 +297,7 @@ export class ToolRegistry implements ToolRouter {
    *     `HealthMonitor.resetBackoffIfRecovered`): `reconnectOnDemand` and the
    *     next sweep heal it IN PLACE. Tearing it down and re-spawning instead is
    *     destructive — it `stop()`s a working source and the replacement object
-   *     is absent from HealthMonitor's boot snapshot, so the bundle silently
+   *     is absent from HealthMonitor's boot snapshot, so the connector silently
    *     loses monitoring for the life of the process.
    *
    * `uptime()` separates them: `startedAt` is set only on a successful connect
@@ -324,9 +324,9 @@ export class ToolRegistry implements ToolRouter {
    *
    * The canonical form for every "I built a new source, put it in" path, and it
    * exists because a source can now be registered *and* dead: the boot loop
-   * retains a failed URL bundle so it stays visible and healable. The obvious
+   * retains a failed URL connector so it stays visible and healable. The obvious
    * `if (!hasSource(n)) addSource(s)` silently drops the fresh source in exactly
-   * that case and leaves the corpse routing every call — the bundle then reads
+   * that case and leaves the corpse routing every call — the connector then reads
    * healthy (its connection record says running) and serves nothing.
    *
    * A LIVE entry wins: concurrent starts must not tear down a working source.

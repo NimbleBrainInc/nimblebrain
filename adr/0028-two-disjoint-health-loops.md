@@ -38,7 +38,7 @@ cooldown, and the burst budget being spent is explicitly *not* terminal: a
 transient upstream outage can outlast the burst and still recover. The only
 terminal state is a deliberate teardown.
 
-**`ConnectionRevalidator` (`src/bundles/connection-revalidator.ts`) watches
+**`ConnectionRevalidator` (`src/connectors/runtime/connection-revalidator.ts`) watches
 credential liveness.** It operates over lifecycle connections, which carry the
 `(serverName, workspace, principal, ref)` tuple a provider probe needs. It never
 touches transports, never restarts, and never marks a connection dead. Its one

@@ -4,7 +4,7 @@
  * Replaces mid-string `slice(0, N)` truncation with a heading-aware walk that
  * preserves whole sections. When a skill is too large to fit the prompt
  * budget, we'd rather drop the last few sections cleanly than chop a sentence
- * in half — the latter has bitten production (a bundle's "rules" appendix at
+ * in half — the latter has bitten production (a connector's "rules" appendix at
  * the end was lost mid-rule, leaving the model with half a directive).
  *
  * Algorithm:

@@ -2,9 +2,9 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { WORKSPACE_PRINCIPAL_ID } from "../../src/bundles/connection.ts";
-import { BundleLifecycleManager } from "../../src/bundles/lifecycle.ts";
-import type { BundleInstance, BundleRef } from "../../src/bundles/types.ts";
+import { WORKSPACE_PRINCIPAL_ID } from "../../src/connectors/runtime/connection.ts";
+import { ConnectorLifecycleManager } from "../../src/connectors/runtime/lifecycle.ts";
+import type { ConnectorInstance, ConnectorRef } from "../../src/connectors/runtime/types.ts";
 import type { EngineEvent, EventSink } from "../../src/engine/types.ts";
 import { _clearAll, resolveWithCode } from "../../src/tools/oauth-flow-registry.ts";
 
@@ -110,18 +110,18 @@ const SERVER = "interactive-fail-test";
 describe("lifecycle.startAuth — interactive-flow failure is surfaced, not swallowed", () => {
   let workDir: string;
   let mock: MockAS;
-  let lifecycle: BundleLifecycleManager;
+  let lifecycle: ConnectorLifecycleManager;
   let sink: CapturingSink;
 
   beforeEach(() => {
     workDir = mkdtempSync(join(tmpdir(), "nb-startauth-interactive-"));
     mock = startMockAuthServer();
     sink = new CapturingSink();
-    lifecycle = new BundleLifecycleManager(sink, undefined);
-    const ref: BundleRef = { url: `${mock.base}/mcp`, serverName: SERVER, oauthScope: "workspace" };
-    const instance: BundleInstance = {
+    lifecycle = new ConnectorLifecycleManager(sink);
+    const ref: ConnectorRef = { url: `${mock.base}/mcp`, serverName: SERVER, oauthScope: "workspace" };
+    const instance: ConnectorInstance = {
       serverName: SERVER,
-      bundleName: ref.url,
+      connectorName: ref.url,
       version: "remote",
       state: "starting",
       ui: null,

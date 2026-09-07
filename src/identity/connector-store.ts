@@ -1,13 +1,13 @@
 import { mkdir, readFile } from "node:fs/promises";
 import { dirname } from "node:path";
-import { serverNameFromRef } from "../bundles/paths.ts";
-import type { BundleRef } from "../bundles/types.ts";
+import { serverNameFromRef } from "../connectors/runtime/paths.ts";
+import type { ConnectorRef } from "../connectors/runtime/types.ts";
 import { writeJsonAtomic } from "../util/atomic-json.ts";
 import { IdentityContext } from "./context.ts";
 
 /**
  * Per-user connector install record — the identity-plane analog of the
- * `bundles[]` slice of `workspace.json`.
+ * `connectors[]` slice of `workspace.json`.
  *
  * A personal connector is a remote MCP connection a user installs on their
  * own identity (Gmail / Granola / Composio / …), reachable across every
@@ -21,7 +21,7 @@ import { IdentityContext } from "./context.ts";
  *
  * Ownership is **structural**: a ref stored here is user-owned by virtue of
  * its location, not a field on the ref. Refs carry no `oauthScope` — the
- * `"user"` scope value was removed from the `BundleRef` union in Stage 2, and
+ * `"user"` scope value was removed from the `ConnectorRef` union in Stage 2, and
  * a `"workspace"` scope would be meaningless off any workspace. The source
  * holder that reads this record constructs a `{ type: "user" }` OAuth provider
  * because the ref came from `connectors.json`, not from any workspace.
@@ -41,7 +41,7 @@ const RECORD_FILENAME = "connectors.json";
  */
 interface IdentityConnectorRecord {
   version: typeof RECORD_VERSION;
-  connectors: BundleRef[];
+  connectors: ConnectorRef[];
 }
 
 export class IdentityConnectorStore {
@@ -72,7 +72,7 @@ export class IdentityConnectorStore {
    * `[]` when the user has no record yet (the file is absent) — an
    * uninstalled identity is indistinguishable from an empty one, by design.
    */
-  async list(userId: string): Promise<BundleRef[]> {
+  async list(userId: string): Promise<ConnectorRef[]> {
     let content: string;
     try {
       content = await readFile(this.#recordPath(userId), "utf-8");
@@ -92,7 +92,7 @@ export class IdentityConnectorStore {
    * lifecycle/route key (`serverNameFromRef`), the same key install stamps and
    * dispatch resolves on.
    */
-  async get(userId: string, serverName: string): Promise<BundleRef | null> {
+  async get(userId: string, serverName: string): Promise<ConnectorRef | null> {
     const connectors = await this.list(userId);
     return connectors.find((ref) => serverNameFromRef(ref) === serverName) ?? null;
   }
@@ -104,7 +104,7 @@ export class IdentityConnectorStore {
    * rely on; a re-install therefore updates in place (and moves the entry to
    * the end). Returns the new list.
    */
-  async add(userId: string, ref: BundleRef): Promise<BundleRef[]> {
+  async add(userId: string, ref: ConnectorRef): Promise<ConnectorRef[]> {
     const serverName = serverNameFromRef(ref);
     const current = await this.list(userId);
     const next = current.filter((r) => serverNameFromRef(r) !== serverName);
@@ -126,7 +126,7 @@ export class IdentityConnectorStore {
     return true;
   }
 
-  async #write(userId: string, connectors: BundleRef[]): Promise<void> {
+  async #write(userId: string, connectors: ConnectorRef[]): Promise<void> {
     const path = this.#recordPath(userId);
     // The user root may not exist yet (a fresh identity that has only ever
     // installed connectors). `recursive: true` is idempotent when it does.

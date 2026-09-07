@@ -18,7 +18,6 @@ beforeAll(async () => {
 	mkdirSync(testDir, { recursive: true });
 	runtime = await Runtime.start({
 		model: { provider: "custom", adapter: createEchoModel() },
-		noDefaultBundles: true,
 		logging: { disabled: true },
 		workDir: testDir,
 	});
@@ -179,16 +178,16 @@ describe("POST /v1/chat/stream", () => {
 });
 
 describe("GET /v1/health", () => {
-	it("returns status ok with bundle health summary", async () => {
+	it("returns status ok with connector health summary", async () => {
 		const res = await fetch(`${baseUrl}/v1/health`);
 
 		expect(res.status).toBe(200);
 		const body = await res.json();
 		expect(body.status).toBe("ok");
 		expect(body.uptime).toBeUndefined();
-		expect(Array.isArray(body.bundles)).toBe(true);
-		// Each bundle entry should have name and state (not just a string)
-		for (const b of body.bundles) {
+		expect(Array.isArray(body.connectors)).toBe(true);
+		// Each connector entry should have name and state (not just a string)
+		for (const b of body.connectors) {
 			expect(typeof b.name).toBe("string");
 			expect(typeof b.state).toBe("string");
 		}
@@ -248,7 +247,6 @@ describe("Bearer token authentication", () => {
 		mkdirSync(authDir, { recursive: true });
 		authRuntime = await Runtime.start({
 			model: { provider: "custom", adapter: createEchoModel() },
-			noDefaultBundles: true,
 			logging: { disabled: true },
 			workDir: authDir,
 		});
@@ -417,9 +415,9 @@ describe("SSE Event Manager", () => {
 		const reader = stream.getReader();
 
 		// Broadcast a test event
-		manager.broadcast("bundle.installed", {
+		manager.broadcast("connector.installed", {
 			name: "test-app",
-			bundleName: "@test/app",
+			connectorName: "@test/app",
 			status: "running",
 		});
 
@@ -427,7 +425,7 @@ describe("SSE Event Manager", () => {
 		expect(done).toBe(false);
 
 		const text = new TextDecoder().decode(value);
-		expect(text).toContain("event: bundle.installed");
+		expect(text).toContain("event: connector.installed");
 		expect(text).toContain('"name":"test-app"');
 
 		reader.cancel();
@@ -487,7 +485,7 @@ describe("SSE Event Manager", () => {
 		manager.stop();
 	});
 
-	it("emits only bundle and data.changed events via EventSink interface", async () => {
+	it("emits only connector and data.changed events via EventSink interface", async () => {
 		const { SseEventManager } = await import("../../src/api/events.ts");
 		const manager = new SseEventManager(60_000);
 
@@ -500,17 +498,17 @@ describe("SSE Event Manager", () => {
 			data: { runId: "test" },
 		});
 
-		// Emit a bundle.installed event — SHOULD be forwarded
+		// Emit a connector.installed event — SHOULD be forwarded
 		manager.emit({
-			type: "bundle.installed",
-			data: { wsId: "ws_test", serverName: "weather", bundleName: "@test/weather" },
+			type: "connector.installed",
+			data: { wsId: "ws_test", serverName: "weather", connectorName: "@test/weather" },
 		});
 
 		const { value } = await reader.read();
 		const text = new TextDecoder().decode(value);
 
-		// Should only contain the bundle.installed event
-		expect(text).toContain("event: bundle.installed");
+		// Should only contain the connector.installed event
+		expect(text).toContain("event: connector.installed");
 		expect(text).not.toContain("run.start");
 
 		reader.cancel();
@@ -533,7 +531,6 @@ describe("auth enforcement on new endpoints", () => {
 		mkdirSync(authDir2, { recursive: true });
 		authRuntime2 = await Runtime.start({
 			model: { provider: "custom", adapter: createEchoModel() },
-			noDefaultBundles: true,
 			logging: { disabled: true },
 			workDir: authDir2,
 		});

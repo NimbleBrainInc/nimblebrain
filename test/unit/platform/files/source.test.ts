@@ -3,7 +3,7 @@
  *
  * The generic InlineSource contract (schema validation, unknown-tool errors)
  * is covered in test/unit/tools/inline-source.test.ts. This file only covers
- * what's specific to the files bundle: the on-disk round-trip and the tool
+ * what's specific to the files app: the on-disk round-trip and the tool
  * surface the model actually sees.
  */
 
@@ -140,7 +140,7 @@ afterEach(async () => {
   rmSync(workDir, { recursive: true, force: true });
 });
 
-describe("files bundle", () => {
+describe("files app", () => {
   test("advertises create (not write) as the canonical tool name", async () => {
     const tools = await source.tools();
     const names = tools.map((t) => t.name);

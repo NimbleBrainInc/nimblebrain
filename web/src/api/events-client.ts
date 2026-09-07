@@ -143,7 +143,7 @@ export function subscribe<K extends SseEventType>(type: K, handler: Handler<K>):
 /**
  * Register a handler invoked after every successful reconnection (NOT
  * the initial connect). Consumers wire this to refetch state that may
- * have drifted during the disconnect gap — bundles, workspace config —
+ * have drifted during the disconnect gap — connectors, workspace config —
  * since the workspace stream has no `Last-Event-Id` replay. `useEvents`
  * routes this through to its `onReconnect` option (currently consumed
  * by `App.tsx` to call `refreshShell` + `refreshConfig`).

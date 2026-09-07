@@ -124,7 +124,6 @@ describe("cross-workspace resume scopes the session's workspace to the conversat
 
     const runtime = await Runtime.start({
       model: { provider: "custom", adapter: createCapturingModel(captured) },
-      noDefaultBundles: true,
       logging: { disabled: true },
       workDir,
     });
@@ -172,7 +171,6 @@ describe("cross-workspace resume scopes the session's workspace to the conversat
 
     const runtime = await Runtime.start({
       model: { provider: "custom", adapter: createCapturingModel(captured) },
-      noDefaultBundles: true,
       logging: { disabled: true },
       workDir,
     });
@@ -226,7 +224,6 @@ describe("cross-workspace resume scopes the session's workspace to the conversat
 
     const runtime = await Runtime.start({
       model: { provider: "custom", adapter: createCapturingModel(captured) },
-      noDefaultBundles: true,
       logging: { disabled: true },
       workDir,
     });

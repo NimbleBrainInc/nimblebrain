@@ -26,7 +26,7 @@ function makeProvider(
     serverName: overrides.serverName ?? "test-srv",
     workDir,
     callbackUrl: overrides.callbackUrl ?? CALLBACK,
-    // Most tests target localhost:<random> via Bun.serve, which validateBundleUrl
+    // Most tests target localhost:<random> via Bun.serve, which validateConnectorUrl
     // blocks by default. Each test opts in explicitly; the "SSRF block" test
     // flips this off to assert the blocker works.
     allowInsecureRemotes: overrides.allowInsecureRemotes ?? true,
@@ -272,7 +272,7 @@ describe("WorkspaceOAuthProvider — SSRF defense", () => {
 
   it("blocks a loopback authorize URL when allowInsecureRemotes is false", async () => {
     // Mock server that would gladly 302-to-metadata if reached — we should
-    // never reach it because validateBundleUrl blocks the initial hop.
+    // never reach it because validateConnectorUrl blocks the initial hop.
     const mockAuthServer = Bun.serve({
       port: 0,
       fetch(_req: Request) {

@@ -12,7 +12,7 @@ import { cn } from "../../../lib/utils";
  *
  * Title is `h3 text-sm font-semibold` — one tier below the page title.
  * `icon` renders inline with the title for sections that benefit from a
- * glyph (Members, Apps, Bundles).
+ * glyph (Members, Apps, Connectors).
  */
 export interface SectionProps {
   /** Optional — sections without a title render their body only. */

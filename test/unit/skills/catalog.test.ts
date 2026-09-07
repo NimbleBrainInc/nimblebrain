@@ -3,7 +3,7 @@
  *
  * Verifies:
  *   - Deterministic output: sorted by name (codepoint order), deduplicated
- *     with filesystem > bundle > connector precedence.
+ *     with filesystem > connector > connector precedence.
  *   - Disabled skills never enter the catalog.
  *   - Connector candidates contribute name/description/body/scope.
  *   - `toCatalogEntries` projects name+description only (no body, no state).
@@ -54,7 +54,7 @@ describe("collectActivatableSkills", () => {
   test("merges all three pools sorted by name", () => {
     const out = collectActivatableSkills({
       fsCapability: [dynamicSkill("zeta", { scope: "workspace" })],
-      bundleCapability: [dynamicSkill("alpha", { scope: "bundle" })],
+      connectorCapability: [dynamicSkill("alpha", { scope: "bundle" })],
       connectorCandidates: [candidate("mid", "curated overlay")],
     });
     expect(out.map((s) => s.name)).toEqual(["alpha", "mid", "zeta"]);
@@ -67,16 +67,16 @@ describe("collectActivatableSkills", () => {
   test("drops disabled skills — the catalog must not offer a muted skill", () => {
     const out = collectActivatableSkills({
       fsCapability: [dynamicSkill("live"), dynamicSkill("muted", { status: "disabled" })],
-      bundleCapability: [],
+      connectorCapability: [],
       connectorCandidates: [],
     });
     expect(out.map((s) => s.name)).toEqual(["live"]);
   });
 
-  test("dedupes by name with filesystem > bundle > connector precedence", () => {
+  test("dedupes by name with filesystem > connector > connector precedence", () => {
     const out = collectActivatableSkills({
       fsCapability: [dynamicSkill("shared", { scope: "user" }, "fs body")],
-      bundleCapability: [dynamicSkill("shared", { scope: "bundle" }, "bundle body")],
+      connectorCapability: [dynamicSkill("shared", { scope: "bundle" }, "connector body")],
       connectorCandidates: [candidate("shared")],
     });
     expect(out).toHaveLength(1);
@@ -87,7 +87,7 @@ describe("collectActivatableSkills", () => {
   test("sort is codepoint order — stable regardless of locale collation", () => {
     const out = collectActivatableSkills({
       fsCapability: [dynamicSkill("b-skill"), dynamicSkill("a-skill"), dynamicSkill("ab-skill")],
-      bundleCapability: [],
+      connectorCapability: [],
       connectorCandidates: [],
     });
     expect(out.map((s) => s.name)).toEqual(["a-skill", "ab-skill", "b-skill"]);
@@ -95,7 +95,7 @@ describe("collectActivatableSkills", () => {
 
   test("empty pools produce an empty catalog", () => {
     expect(
-      collectActivatableSkills({ fsCapability: [], bundleCapability: [], connectorCandidates: [] }),
+      collectActivatableSkills({ fsCapability: [], connectorCapability: [], connectorCandidates: [] }),
     ).toEqual([]);
   });
 });
@@ -105,7 +105,7 @@ describe("toCatalogEntries", () => {
     const entries = toCatalogEntries(
       collectActivatableSkills({
         fsCapability: [dynamicSkill("with-desc"), dynamicSkill("bare", { description: "" })],
-        bundleCapability: [],
+        connectorCapability: [],
         connectorCandidates: [],
       }),
     );
@@ -148,7 +148,7 @@ describe("workspace wall — catalog contains only the scoped loader's output", 
     const entries = toCatalogEntries(
       collectActivatableSkills({
         fsCapability: loadScopedSkills(wsADir, "workspace"),
-        bundleCapability: [],
+        connectorCapability: [],
         connectorCandidates: [],
       }),
     );

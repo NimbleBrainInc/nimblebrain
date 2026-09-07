@@ -2,17 +2,17 @@
  * Tests for `handleInstallRemoteOAuth`'s composio branch in
  * `src/tools/connector-tools.ts`. Kept in a separate file from
  * `connector-tools.test.ts` because the composio path needs module-
- * level mocks (`@composio/core` SDK, `startBundleSource`) that would
+ * level mocks (`@composio/core` SDK, `startConnectorSource`) that would
  * change behaviour for the static-auth and mpak tests in the
  * sibling file.
  *
  * What's covered:
- *   - ref.composio.connectorId is stamped on the persisted BundleRef
+ *   - ref.composio.connectorId is stamped on the persisted ConnectorRef
  *   - transport.auth names the `composio` credential provider
  *     (literal API key never appears in workspace.json)
  *   - extra headers containing the API key are scrubbed to the
  *     template form
- *   - startBundleSource is invoked exactly once (eager-start contract)
+ *   - startConnectorSource is invoked exactly once (eager-start contract)
  *   - errResult when COMPOSIO_API_KEY is unset
  *   - errResult when the per-toolkit auth-config env is unset
  *   - errResult when the catalog entry lacks a composio block
@@ -27,7 +27,7 @@ import { join } from "node:path";
 //
 // `createComposioSession` calls into `@composio/core` via the SDK
 // adapter. Stub the constructor + `create` method so tests can drive
-// the session URL / headers that get baked into the BundleRef.
+// the session URL / headers that get baked into the ConnectorRef.
 interface ComposioCalls {
   createConfig: unknown;
   createImpl: (userId: string, config: unknown) => Promise<unknown>;
@@ -64,20 +64,20 @@ mock.module("@composio/core", () => ({
   },
 }));
 
-// startBundleSource is NOT mocked. Mocking it via `mock.module` on
-// `bundles/startup.ts` leaks across test files in the bun runner
+// startConnectorSource is NOT mocked. Mocking it via `mock.module` on
+// `connectors/runtime/startup.ts` leaks across test files in the bun runner
 // (other tests of `buildPlatformEnv` in the same module fail). The
 // install path's contract is:
 //   1. Validate composio env + call createComposioSession
-//   2. Persist the BundleRef into workspace.json
+//   2. Persist the ConnectorRef into workspace.json
 //   3. seedInstance + notifyInstalled
-//   4. Eagerly call startBundleSource
+//   4. Eagerly call startConnectorSource
 //
 // Step 4 will fail on the fake `composio.test/mcp/...` URL the mock
-// returns. That's fine — the BundleRef shape we want to assert was
+// returns. That's fine — the ConnectorRef shape we want to assert was
 // already persisted at step 2. Happy-path tests below check the
 // persisted shape, then assert that the install returned an error
-// (because step 4 failed) with a message that proves startBundleSource
+// (because step 4 failed) with a message that proves startConnectorSource
 // was reached.
 
 // Imports come after the hoisted mocks. Bun's mock.module guarantees
@@ -86,8 +86,8 @@ mock.module("@composio/core", () => ({
 // future reader.
 import { ConnectorDirectory } from "../../src/registries/directory.ts";
 import { RegistryStore } from "../../src/registries/registry-store.ts";
-import { BundleLifecycleManager } from "../../src/bundles/lifecycle.ts";
-import type { BundleRef } from "../../src/bundles/types.ts";
+import { ConnectorLifecycleManager } from "../../src/connectors/runtime/lifecycle.ts";
+import type { ConnectorRef } from "../../src/connectors/runtime/types.ts";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import { IdentityConnectorStore } from "../../src/identity/connector-store.ts";
 import type { UserIdentity } from "../../src/identity/provider.ts";
@@ -205,7 +205,7 @@ function buildHarness(): Harness {
     ].join("\n"),
   );
   const registryStore = new RegistryStore(workDir);
-  const lifecycle = new BundleLifecycleManager(new NoopEventSink(), undefined);
+  const lifecycle = new ConnectorLifecycleManager(new NoopEventSink());
   // What Runtime wires at startup. Delegating rather than snapshotting because
   // these tests move `COMPOSIO_API_KEY` between cases, and a snapshot taken at
   // harness-build time would answer for the wrong config.
@@ -233,7 +233,7 @@ function buildHarness(): Harness {
       revokeConnector: async () => {},
     }),
     getUserStore: () => ({ get: async () => null }),
-    getBundleInstancesForWorkspace: () => lifecycle.getInstances(),
+    getConnectorInstancesForWorkspace: () => lifecycle.getInstances(),
     getManagedConnectorRegistry: () => buildManagedConnectorRegistry(),
   } as unknown as Runtime;
 
@@ -298,22 +298,22 @@ afterEach(() => {
 
 describe("manage_connectors.install (composio-auth)", () => {
   // Helper for the happy-path-shape tests: install will fail at the
-  // unmocked startBundleSource step (fake `composio.test` URL), but
-  // the BundleRef is persisted to workspace.json BEFORE that step.
+  // unmocked startConnectorSource step (fake `composio.test` URL), but
+  // the ConnectorRef is persisted to workspace.json BEFORE that step.
   // We read what landed and assert its shape, ignoring the install's
   // error return.
   async function installAndReadPersistedRef(): Promise<
-    Extract<BundleRef, { url: string }> | undefined
+    Extract<ConnectorRef, { url: string }> | undefined
   > {
     const tool = buildTool(h);
     await tool.handler({ action: "install", entry: gmailEntry(), wsId: h.wsId });
     const ws = await h.workspaceStore.get(h.wsId);
-    return ws?.bundles.find(
-      (b): b is Extract<BundleRef, { url: string }> => "url" in b && b.brokered !== undefined,
+    return ws?.connectors.find(
+      (b): b is Extract<ConnectorRef, { url: string }> => "url" in b && b.brokered !== undefined,
     );
   }
 
-  test("(a) persists the brokered marker on the BundleRef", async () => {
+  test("(a) persists the brokered marker on the ConnectorRef", async () => {
     process.env.COMPOSIO_API_KEY = "k_test";
 
     const installed = await installAndReadPersistedRef();
@@ -359,7 +359,7 @@ describe("manage_connectors.install (composio-auth)", () => {
     // Composio's session sometimes returns headers beyond x-api-key.
     // Defensive: if the API key appears anywhere inside one (e.g. a
     // hypothetical `Authorization: Bearer secret-api-key` shape), the install
-    // path must drop it before the BundleRef hits disk. The credential is
+    // path must drop it before the ConnectorRef hits disk. The credential is
     // attached at transport-build time by the credential provider, so there is
     // nothing to substitute a placeholder for.
     composioCalls.createImpl = async () => ({
@@ -393,18 +393,18 @@ describe("manage_connectors.install (composio-auth)", () => {
     expect(JSON.stringify(installed).includes("secret-api-key")).toBe(false);
   });
 
-  test("(d) eager startBundleSource failure returns success with a warning, not a hard error", async () => {
+  test("(d) eager startConnectorSource failure returns success with a warning, not a hard error", async () => {
     process.env.COMPOSIO_API_KEY = "k_test";
 
     const tool = buildTool(h);
     const result = await tool.handler({ action: "install", entry: gmailEntry(), wsId: h.wsId });
 
     // Eager-start fails on the fake `composio.test` URL, but the
-    // install itself has succeeded — the BundleRef is in workspace.json,
+    // install itself has succeeded — the ConnectorRef is in workspace.json,
     // seedInstance has run, and a subsequent Connect click will run
     // the same `ensureSourceRegistered` path as a normal reconnect.
     // Surfacing this as a hard error would say "install failed" while
-    // the bundle is in fact installed — misleading. Contract: return
+    // the connector is in fact installed — misleading. Contract: return
     // success with a `warning` field so the agent / UI can communicate
     // "installed, click Connect to retry" honestly.
     expect(result.isError).toBe(false);
@@ -424,9 +424,9 @@ describe("manage_connectors.install (composio-auth)", () => {
     expect(text).toContain("Installed");
     expect(text).toContain("Connect");
 
-    // BundleRef persisted regardless — install state is committed.
+    // ConnectorRef persisted regardless — install state is committed.
     const ws = await h.workspaceStore.get(h.wsId);
-    expect(ws?.bundles).toHaveLength(1);
+    expect(ws?.connectors).toHaveLength(1);
   });
 
   test("(e-1) errResult when COMPOSIO_API_KEY is unset", async () => {
@@ -440,10 +440,10 @@ describe("manage_connectors.install (composio-auth)", () => {
     const text = (result.content?.[0] as { text?: string } | undefined)?.text ?? "";
     expect(text).toContain("COMPOSIO_API_KEY");
 
-    // BundleRef must NOT be persisted on failure — env check runs
+    // ConnectorRef must NOT be persisted on failure — env check runs
     // before the workspace.json write.
     const ws = await h.workspaceStore.get(h.wsId);
-    expect(ws?.bundles ?? []).toHaveLength(0);
+    expect(ws?.connectors ?? []).toHaveLength(0);
   });
 
   test("(e-2) errResult when the toolkit has no auth-config id", async () => {
@@ -462,7 +462,7 @@ describe("manage_connectors.install (composio-auth)", () => {
     expect(text).toContain("connectors.providers.composio.authConfigs.gmail");
 
     const ws = await h.workspaceStore.get(h.wsId);
-    expect(ws?.bundles ?? []).toHaveLength(0);
+    expect(ws?.connectors ?? []).toHaveLength(0);
   });
 
   test("(e-3) refuses a composio entry the trusted catalog doesn't publish", async () => {
@@ -480,7 +480,7 @@ describe("manage_connectors.install (composio-auth)", () => {
     // The broker was never asked, so no session exists at the operator's account.
     expect(composioCalls.createConfig).toBeUndefined();
     const ws = await h.workspaceStore.get(h.wsId);
-    expect(ws?.bundles ?? []).toHaveLength(0);
+    expect(ws?.connectors ?? []).toHaveLength(0);
   });
 
   // The overlay identity is interpolated into the curated repo's fetch path, so
@@ -543,22 +543,22 @@ describe("manage_connectors.install (composio-auth)", () => {
     expect(config?.toolkits).toEqual(["gmail"]);
   });
 
-  test("(f) self-heal: orphan composio bundle (workspace.json row but no lifecycle instance) is reattached without re-running createComposioSession or duplicating", async () => {
+  test("(f) self-heal: orphan composio connector (workspace.json row but no lifecycle instance) is reattached without re-running createComposioSession or duplicating", async () => {
     process.env.COMPOSIO_API_KEY = "k_test";
 
-    // Pre-seed an orphan: a persisted composio bundle whose `url` is
+    // Pre-seed an orphan: a persisted composio connector whose `url` is
     // the dynamic per-install Composio session URL (the realistic shape
     // — not the catalog placeholder). No corresponding lifecycle
     // instance, mimicking the state after a prior uninstall that
     // didn't clean workspace.json.
-    const orphanRef: Extract<BundleRef, { url: string }> = {
+    const orphanRef: Extract<ConnectorRef, { url: string }> = {
       url: "https://composio.test/mcp/session_orphaned",
       serverName: "com-google-gmail",
       transport: { type: "streamable-http" },
       oauthScope: "workspace",
       composio: { connectorId: GMAIL_ID },
     };
-    await h.workspaceStore.update(h.wsId, { bundles: [orphanRef] });
+    await h.workspaceStore.update(h.wsId, { connectors: [orphanRef] });
 
     // Track whether createComposioSession is invoked — self-heal must
     // skip it (re-attach should not burn an upstream Composio session).
@@ -589,8 +589,8 @@ describe("manage_connectors.install (composio-auth)", () => {
     // No duplicate row appended. The original orphan ref (with its
     // existing session URL) is preserved untouched.
     const ws = await h.workspaceStore.get(h.wsId);
-    expect(ws?.bundles).toHaveLength(1);
-    const persisted = ws?.bundles[0] as Extract<BundleRef, { url: string }>;
+    expect(ws?.connectors).toHaveLength(1);
+    const persisted = ws?.connectors[0] as Extract<ConnectorRef, { url: string }>;
     expect(persisted.url).toBe("https://composio.test/mcp/session_orphaned");
 
     // Self-heal must not call back to Composio — re-attach reuses the
@@ -617,9 +617,9 @@ describe("manage_connectors.install (composio-auth)", () => {
     expect(text).toContain("Composio");
 
     // Nothing should be persisted if the session create fails — the
-    // BundleRef can't carry a session URL we never received.
+    // ConnectorRef can't carry a session URL we never received.
     const ws = await h.workspaceStore.get(h.wsId);
-    expect(ws?.bundles ?? []).toHaveLength(0);
+    expect(ws?.connectors ?? []).toHaveLength(0);
   });
 
   // ── personal-workspace target ─────────────────────────────────────
@@ -648,7 +648,7 @@ describe("manage_connectors.install (composio-auth)", () => {
       wsId: personalWsId,
     });
 
-    // Eager startBundleSource fails on the fake session URL (same as
+    // Eager startConnectorSource fails on the fake session URL (same as
     // the shared-workspace path), so this returns success-with-warning,
     // NOT the old "cannot install into a personal workspace" error.
     expect(result.isError).toBe(false);
@@ -659,15 +659,15 @@ describe("manage_connectors.install (composio-auth)", () => {
     // The ref landed in the personal workspace with the composio marker
     // and the post-T008 workspace scope.
     const personalWs = await h.workspaceStore.get(personalWsId);
-    const installed = personalWs?.bundles.find(
-      (b): b is Extract<BundleRef, { url: string }> => "url" in b && b.brokered !== undefined,
+    const installed = personalWs?.connectors.find(
+      (b): b is Extract<ConnectorRef, { url: string }> => "url" in b && b.brokered !== undefined,
     );
     expect(installed).toBeDefined();
     expect(installed?.brokered?.connectorId).toBe(GMAIL_ID);
     expect(installed?.oauthScope).toBe("workspace");
   });
 
-  test("(h) disconnect of a personal-workspace composio bundle runs cleanup keyed on that wsId (no isPersonal gate)", async () => {
+  test("(h) disconnect of a personal-workspace composio connector runs cleanup keyed on that wsId (no isPersonal gate)", async () => {
     process.env.COMPOSIO_API_KEY = "k_test";
 
     const personalWsId = personalWorkspaceIdFor(ADMIN.id);
@@ -676,7 +676,7 @@ describe("manage_connectors.install (composio-auth)", () => {
       ownerUserId: ADMIN.id,
     });
 
-    // Install seeds the BundleRef + lifecycle instance for the personal
+    // Install seeds the ConnectorRef + lifecycle instance for the personal
     // workspace (the eager-start failure is caught and logged after).
     const tool = buildTool(h);
     await tool.handler({ action: "install", entry: gmailEntry(), wsId: personalWsId });
@@ -737,7 +737,7 @@ describe("manage_connectors.install scope:identity (composio personal connector)
     // session URL from the mocked session.
     const refs = await new IdentityConnectorStore({ workDir: h.workDir }).list(ADMIN.id);
     expect(refs).toHaveLength(1);
-    const ref = refs[0] as Extract<BundleRef, { url: string }>;
+    const ref = refs[0] as Extract<ConnectorRef, { url: string }>;
     expect(ref.url).toBe("https://composio.test/mcp/session_test");
     expect(ref.brokered?.provider).toBe("composio");
     expect(ref.brokered?.connectorId).toBe(GMAIL_ID);
@@ -746,7 +746,7 @@ describe("manage_connectors.install scope:identity (composio personal connector)
 
     // Nothing written into any workspace.
     const ws = await h.workspaceStore.get(h.wsId);
-    expect(ws?.bundles ?? []).toHaveLength(0);
+    expect(ws?.connectors ?? []).toHaveLength(0);
 
     // Neither the key nor an env reference to it lands on disk — the transport
     // names the credential provider.

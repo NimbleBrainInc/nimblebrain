@@ -121,7 +121,6 @@ describe("Stage 2 T008 — ambient RequestContext.workspaceId matches the routed
 
     runtime = await Runtime.start({
       model: { provider: "custom", adapter: model },
-      noDefaultBundles: true,
       logging: { disabled: true },
       workDir,
     });

@@ -91,7 +91,7 @@ describe("WorkspaceStore CRUD", () => {
     expect(ws.id).not.toBe("ws_engineering_team");
     expect(ws.name).toBe("Engineering Team");
     expect(ws.members).toEqual([]);
-    expect(ws.bundles).toEqual([]);
+    expect(ws.connectors).toEqual([]);
     expect(ws.createdAt).toBeTruthy();
     expect(ws.updatedAt).toBeTruthy();
 

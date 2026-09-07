@@ -11,17 +11,18 @@
  * `Connection`. That distinction is the whole point of this file: a
  * hand-assembled connection can be given a source that no code path actually
  * sets, and a suite built that way stays green over a poller that selects
- * nothing. So each test constructs a `BundleLifecycleManager`, registers the
- * source in the workspace registry the way a completed `startBundleSource`
+ * nothing. So each test constructs a `ConnectorLifecycleManager`, registers the
+ * source in the workspace registry the way a completed `startConnectorSource`
  * leaves it, and calls `seedInstance` with the arguments the boot seeder
  * passes.
  */
 
 import { beforeEach, describe, expect, test } from "bun:test";
 import { NoopEventSink } from "../../../src/adapters/noop-events.ts";
-import { WORKSPACE_PRINCIPAL_ID } from "../../../src/bundles/connection.ts";
-import { BundleLifecycleManager } from "../../../src/bundles/lifecycle.ts";
-import type { BundleRef, BundleState } from "../../../src/bundles/types.ts";
+import { WORKSPACE_PRINCIPAL_ID } from "../../../src/connectors/runtime/connection.ts";
+import { ConnectorLifecycleManager } from "../../../src/connectors/runtime/lifecycle.ts";
+import type { ConnectionState } from "../../../src/connectors/runtime/connection.ts";
+import type { ConnectorRef } from "../../../src/connectors/runtime/types.ts";
 import { collectPollTargets } from "../../../src/notifications/targets.ts";
 import type { NotificationsDeclaration } from "../../../src/notifications/types.ts";
 import { McpSource } from "../../../src/tools/mcp-source.ts";
@@ -38,7 +39,7 @@ const URL_FOR = (serverName: string) => `https://${serverName}.invalid/mcp`;
  * boot seeder's readiness probe answers from the ref alone and seeds `running`
  * without reading a token file.
  */
-function fleetRef(serverName: string): BundleRef {
+function fleetRef(serverName: string): ConnectorRef {
   return {
     url: URL_FOR(serverName),
     serverName,
@@ -49,7 +50,7 @@ function fleetRef(serverName: string): BundleRef {
   };
 }
 
-/** The source object a completed `startBundleSource` leaves in the registry. */
+/** The source object a completed `startConnectorSource` leaves in the registry. */
 function startedSource(serverName: string): McpSource {
   return new McpSource(
     serverName,
@@ -58,11 +59,11 @@ function startedSource(serverName: string): McpSource {
   );
 }
 
-let lifecycle: BundleLifecycleManager;
+let lifecycle: ConnectorLifecycleManager;
 let registries: Map<string, ToolRegistry>;
 
 beforeEach(() => {
-  lifecycle = new BundleLifecycleManager(new NoopEventSink(), undefined);
+  lifecycle = new ConnectorLifecycleManager(new NoopEventSink());
   registries = new Map();
   lifecycle.bindWorkspaceRegistries(() => registries);
 });
@@ -83,7 +84,7 @@ function registryFor(wsId: string): ToolRegistry {
 /**
  * Boot one connector into one workspace, the way the platform does: the boot
  * loop starts the source (leaving it registered under its server name), then
- * `seedWorkspaceBundleInstances` seeds the instance from the surviving
+ * `seedWorkspaceConnectorInstances` seeds the instance from the surviving
  * inventory entry.
  *
  * `started: false` is the install whose source never came up — the entry is
@@ -183,7 +184,7 @@ describe("collectPollTargets", () => {
     expect(await collectPollTargets(lifecycle, declaresNothing)).toEqual([]);
   });
 
-  test.each<BundleState>([
+  test.each<ConnectionState>([
     "starting",
     "pending_auth",
     "reauth_required",

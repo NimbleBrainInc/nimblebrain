@@ -33,7 +33,6 @@ describe("POST /v1/tools/call manage_workspaces — personal workspace invariant
     mkdirSync(workDir, { recursive: true });
     runtime = await Runtime.start({
       model: { provider: "custom", adapter: createEchoModel() },
-      noDefaultBundles: true,
       logging: { disabled: true },
       workDir,
     });

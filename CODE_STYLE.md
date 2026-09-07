@@ -31,15 +31,15 @@ Never write `import("...").TypeName` in a type position. Use a top-level
 ```ts
 // BAD — looks like a runtime dynamic import.
 private _factory:
-  | ((wsId: string) => import("../bundles/startup.ts").BundleMcpDeps)
+  | ((wsId: string) => import("../connectors/runtime/startup.ts").ConnectorMcpDeps)
   | null = null;
 ```
 
 ```ts
 // GOOD — equivalent at compile (both forms erase), explicit at the top.
-import type { BundleMcpDeps } from "../bundles/startup.ts";
+import type { ConnectorMcpDeps } from "../connectors/runtime/startup.ts";
 
-private _factory: ((wsId: string) => BundleMcpDeps) | null = null;
+private _factory: ((wsId: string) => ConnectorMcpDeps) | null = null;
 ```
 
 **Rationale.** The two forms compile to the same JS — TypeScript erases

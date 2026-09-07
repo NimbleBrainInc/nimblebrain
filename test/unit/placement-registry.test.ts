@@ -9,7 +9,7 @@ describe("PlacementRegistry", () => {
       { slot: "sidebar", resourceUri: "ui://core/home", priority: 10 },
       { slot: "sidebar", resourceUri: "ui://core/conversations", priority: 20 },
     ]);
-    // Scoped — a bundle installed in ws_eng.
+    // Scoped — a connector installed in ws_eng.
     reg.register(
       "tasks",
       [{ slot: "sidebar.apps", resourceUri: "ui://tasks/nav", priority: 50 }],

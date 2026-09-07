@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { getValidator } from "../../src/config/index.ts";
-import type { BundleState, AppInfo, HostManifestMeta, BundleUiMeta } from "../../src/bundles/types.ts";
+import type { ConnectionState } from "../../src/connectors/runtime/connection.ts";
+import type { AppInfo, HostManifestMeta, ConnectorUiMeta } from "../../src/connectors/runtime/types.ts";
 import type { RuntimeConfig } from "../../src/runtime/types.ts";
 import type { EngineEventType } from "../../src/engine/types.ts";
 
@@ -15,20 +16,20 @@ describe("JSON Schema validation", () => {
 		expect(isValid({})).toBe(true);
 	});
 
-	it("accepts bundles in config", () => {
-		// bundles is a valid top-level config field
-		expect(isValid({ bundles: [] })).toBe(true);
-		expect(isValid({ bundles: [{ url: "https://example.com/mcp" }] })).toBe(true);
-		expect(isValid({ bundles: [{ name: "@test/echo" }] })).toBe(false);
-	});
-
 	it("rejects workspace-owned fields (skillDirs, etc.)", () => {
 		// These fields are not part of nimblebrain.json schema
 		expect(isValid({ skillDirs: [] })).toBe(false);
 		expect(isValid({ skills: [] })).toBe(false);
-		expect(isValid({ noDefaultBundles: true })).toBe(false);
 		expect(isValid({ home: { enabled: true } })).toBe(false);
 		expect(isValid({ preferences: { displayName: "Test" } })).toBe(false);
+	});
+
+	it("rejects a workspace's connector array at the top level", () => {
+		// `connectors` here is the instance-level provider/gateway block. A
+		// workspace's connector array shares the name but not the shape, so
+		// putting one in nimblebrain.json is a type error, not a silent strip.
+		expect(isValid({ connectors: [{ url: "https://example.com/mcp" }] })).toBe(false);
+		expect(isValid({ connectors: { providers: {} } })).toBe(true);
 	});
 
 	it("accepts http config with port and host", () => {
@@ -63,9 +64,9 @@ describe("JSON Schema validation", () => {
 	});
 });
 
-describe("BundleState type", () => {
+describe("ConnectionState type", () => {
 	it("covers all 5 states", () => {
-		const states: BundleState[] = ["starting", "running", "crashed", "dead", "stopped"];
+		const states: ConnectionState[] = ["starting", "running", "crashed", "dead", "stopped"];
 		expect(states).toHaveLength(5);
 		// Verify uniqueness
 		expect(new Set(states).size).toBe(5);
@@ -75,8 +76,8 @@ describe("BundleState type", () => {
 describe("EngineEventType", () => {
 	it("includes all new event types", () => {
 		const newEvents: EngineEventType[] = [
-			"bundle.installed",
-			"bundle.uninstalled",
+			"connector.installed",
+			"connector.uninstalled",
 			"data.changed",
 			"tool.progress",
 		];
@@ -108,7 +109,7 @@ describe("AppInfo type", () => {
 	it("matches the GET /v1/apps response shape", () => {
 		const app: AppInfo = {
 			name: "tasks",
-			bundleName: "@nimblebraininc/tasks",
+			connectorName: "@nimblebraininc/tasks",
 			version: "1.2.0",
 			status: "running",
 			toolCount: 12,
@@ -126,7 +127,7 @@ describe("AppInfo type", () => {
 	it("supports null ui for apps without a frontend", () => {
 		const app: AppInfo = {
 			name: "weather",
-			bundleName: "@nimblebraininc/weather",
+			connectorName: "@nimblebraininc/weather",
 			version: "0.3.0",
 			status: "running",
 			toolCount: 3,

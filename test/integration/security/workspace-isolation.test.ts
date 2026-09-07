@@ -7,8 +7,8 @@
  * 3. Concurrent requests don't contaminate each other's workspace context
  * 4. Workspace middleware rejects authenticated requests without workspace
  * 5. SSE events are scoped to workspace
- * 6. Bundle instances do not leak across workspaces when two workspaces
- *    install the same bundle (the briefing/nav leak class)
+ * 6. Connector instances do not leak across workspaces when two workspaces
+ *    install the same connector (the briefing/nav leak class)
  */
 
 import { mkdirSync, rmSync } from "node:fs";
@@ -17,9 +17,9 @@ import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import type {
   BriefingBlock,
-  BundleRef,
-  BundleUiMeta,
-} from "../../../src/bundles/types.ts";
+  ConnectorRef,
+  ConnectorUiMeta,
+} from "../../../src/connectors/runtime/types.ts";
 import { Runtime } from "../../../src/runtime/runtime.ts";
 import { createEchoModel } from "../../helpers/echo-model.ts";
 import { createTestAuthAdapter } from "../../helpers/test-auth-adapter.ts";
@@ -43,7 +43,6 @@ beforeAll(async () => {
   runtime = await Runtime.start({
     workDir,
     model: { provider: "custom", adapter: createEchoModel() },
-    noDefaultBundles: true,
     logging: { disabled: true },
   });
 
@@ -264,9 +263,9 @@ describe("V5: SSE events scoped by workspace", () => {
   });
 });
 
-// ── V6: Cross-workspace bundle instance isolation ───────────────
+// ── V6: Cross-workspace connector instance isolation ───────────────
 //
-// Pins Runtime.getBundleInstancesForWorkspace against the class of leak
+// Pins Runtime.getConnectorInstancesForWorkspace against the class of leak
 // where two workspaces install the same connector and the filter returns
 // cross-workspace instances because it only matched on serverName. Each
 // workspace holds its own instance and its own credentials, so a leak here
@@ -293,7 +292,7 @@ function makeFakeSource(name: string): ToolSource {
   };
 }
 
-describe("V6: getBundleInstancesForWorkspace — two workspaces, same connector", () => {
+describe("V6: getConnectorInstancesForWorkspace — two workspaces, same connector", () => {
   it("returns only the caller's instance", async () => {
     const wsStore = runtime.getWorkspaceStore();
     const wsA = await wsStore.create("Isolation A", `iso_a_${Date.now()}`);
@@ -302,11 +301,11 @@ describe("V6: getBundleInstancesForWorkspace — two workspaces, same connector"
     await runtime.ensureWorkspaceRegistry(wsB.id);
 
     const serverName = `leakcheck_${Date.now()}`;
-    const ref: BundleRef = { url: `https://${serverName}.example.com/mcp`, serverName };
+    const ref: ConnectorRef = { url: `https://${serverName}.example.com/mcp`, serverName };
     const meta = {
       manifestName: `ai.nimblebrain/${serverName}`,
       version: "1.0.0",
-      ui: { name: "Leak Check", icon: "bug" } as BundleUiMeta,
+      ui: { name: "Leak Check", icon: "bug" } as ConnectorUiMeta,
       briefing: null as BriefingBlock | null,
     };
 
@@ -320,8 +319,8 @@ describe("V6: getBundleInstancesForWorkspace — two workspaces, same connector"
     runtime.getRegistryForWorkspace(wsA.id).addSource(makeFakeSource(serverName));
     runtime.getRegistryForWorkspace(wsB.id).addSource(makeFakeSource(serverName));
 
-    const fromA = runtime.getBundleInstancesForWorkspace(wsA.id);
-    const fromB = runtime.getBundleInstancesForWorkspace(wsB.id);
+    const fromA = runtime.getConnectorInstancesForWorkspace(wsA.id);
+    const fromB = runtime.getConnectorInstancesForWorkspace(wsB.id);
 
     expect(fromA).toHaveLength(1);
     expect(fromB).toHaveLength(1);
@@ -347,7 +346,7 @@ describe("V6: getBundleInstancesForWorkspace — two workspaces, same connector"
     await runtime.ensureWorkspaceRegistry(ws.id);
 
     const serverName = `orphan_${Date.now()}`;
-    const ref: BundleRef = { url: `https://${serverName}.example.com/mcp`, serverName };
+    const ref: ConnectorRef = { url: `https://${serverName}.example.com/mcp`, serverName };
     const meta = {
       manifestName: `ai.nimblebrain/${serverName}`,
       version: "1.0.0",
@@ -357,6 +356,6 @@ describe("V6: getBundleInstancesForWorkspace — two workspaces, same connector"
     await runtime.getLifecycle().seedInstance(serverName, ref.url, ref, meta, ws.id);
     // Deliberately do NOT add the source to the registry.
 
-    expect(runtime.getBundleInstancesForWorkspace(ws.id)).toHaveLength(0);
+    expect(runtime.getConnectorInstancesForWorkspace(ws.id)).toHaveLength(0);
   });
 });

@@ -3,21 +3,23 @@ import { log } from "../../src/observability/log.ts";
 import { MAX_TRACKED_RUNS, MetricsEventSink } from "../../src/adapters/metrics-events.ts";
 import type { Counter } from "prom-client";
 import {
-  bundleCrashedTotal,
-  bundleUnhealthy,
+  connectorCrashedTotal,
+  connectorUnhealthy,
+  retiredBundleCrashedTotal,
+  retiredBundleUnhealthy,
   llmCallsTotal,
   llmErrorsTotal,
   llmInputTokensEstimatedTotal,
   llmRequestDurationSeconds,
   llmTokensTotal,
   llmTtftSeconds,
-  recordBundleCrash,
+  recordConnectorCrash,
   recordLlmUsage,
-  registerBundleHealthGauge,
+  registerConnectorHealthGauge,
   toolCallsTotal,
   toolPromotionsTotal,
 } from "../../src/api/metrics.ts";
-import type { BundleHealth } from "../../src/tools/health-monitor.ts";
+import type { ConnectorHealth } from "../../src/tools/health-monitor.ts";
 import { runWithRequestContext } from "../../src/runtime/request-context.ts";
 
 // Read one label-series value off a counter. Tests use deltas (read → act →
@@ -185,114 +187,114 @@ describe("MetricsEventSink", () => {
   });
 });
 
-describe("bundle crash metric", () => {
-  it("test_run_error_bundle_crashed_increments_counter_with_source_and_remote", async () => {
+describe("connector crash metric", () => {
+  it("test_run_error_connector_crashed_increments_counter_with_source_and_remote", async () => {
     const sink = new MetricsEventSink();
     const labels = { source: "com-dropbox-mcp", remote: "true" };
-    const before = await read(bundleCrashedTotal, labels);
-    // Mirrors HealthMonitor's emission: run.error with a nested bundle.crashed
+    const before = await read(connectorCrashedTotal, labels);
+    // Mirrors HealthMonitor's emission: run.error with a nested connector.crashed
     // event, a `source` name, and `remote: true`. No runId.
     sink.emit({
       type: "run.error",
-      data: { source: "com-dropbox-mcp", event: "bundle.crashed", remote: true },
+      data: { source: "com-dropbox-mcp", event: "connector.crashed", remote: true },
     });
-    expect((await read(bundleCrashedTotal, labels)) - before).toBe(1);
+    expect((await read(connectorCrashedTotal, labels)) - before).toBe(1);
   });
 
-  it("test_local_source_bundle_crashed_records_remote_false", async () => {
+  it("test_local_source_connector_crashed_records_remote_false", async () => {
     const sink = new MetricsEventSink();
     const labels = { source: "synapse-crm", remote: "false" };
-    const before = await read(bundleCrashedTotal, labels);
-    // A local stdio bundle: HealthMonitor omits the `remote` field entirely.
+    const before = await read(connectorCrashedTotal, labels);
+    // A local stdio connector: HealthMonitor omits the `remote` field entirely.
     sink.emit({
       type: "run.error",
-      data: { source: "synapse-crm", event: "bundle.crashed" },
+      data: { source: "synapse-crm", event: "connector.crashed" },
     });
-    expect((await read(bundleCrashedTotal, labels)) - before).toBe(1);
+    expect((await read(connectorCrashedTotal, labels)) - before).toBe(1);
   });
 
-  it("test_run_error_without_bundle_crashed_does_not_increment", async () => {
+  it("test_run_error_without_connector_crashed_does_not_increment", async () => {
     const sink = new MetricsEventSink();
-    const before = await readTotal(bundleCrashedTotal);
+    const before = await readTotal(connectorCrashedTotal);
     // An ordinary run error and a normal run completion must not touch the
-    // crash counter — only the nested bundle.crashed discriminator counts.
+    // crash counter — only the nested connector.crashed discriminator counts.
     sink.emit({ type: "run.error", data: { runId: "r1" } });
     sink.emit({ type: "run.done", data: { runId: "r2" } });
     sink.emit({
       type: "run.error",
-      data: { source: "com-dropbox-mcp", event: "bundle.restarting", remote: true },
+      data: { source: "com-dropbox-mcp", event: "connector.restarting", remote: true },
     });
-    expect((await readTotal(bundleCrashedTotal)) - before).toBe(0);
+    expect((await readTotal(connectorCrashedTotal)) - before).toBe(0);
   });
 
   it("test_unsafe_source_name_buckets_to_other", async () => {
     const labels = { source: "other", remote: "false" };
-    const before = await read(bundleCrashedTotal, labels);
-    recordBundleCrash("Weird Name!! /etc", false);
-    recordBundleCrash(undefined, false);
-    recordBundleCrash("", false);
-    expect((await read(bundleCrashedTotal, labels)) - before).toBe(3);
+    const before = await read(connectorCrashedTotal, labels);
+    recordConnectorCrash("Weird Name!! /etc", false);
+    recordConnectorCrash(undefined, false);
+    recordConnectorCrash("", false);
+    expect((await read(connectorCrashedTotal, labels)) - before).toBe(3);
   });
 });
 
-describe("bundle unhealthy gauge", () => {
-  // Read one `nb_bundle_unhealthy` series; `.get()` triggers the collect
+describe("connector unhealthy gauge", () => {
+  // Read one `nb_connector_unhealthy` series; `.get()` triggers the collect
   // callback. Returns undefined when the series is absent (collect resets each
   // scrape, so a recovered source disappears entirely rather than going to 0).
   async function readGauge(source: string): Promise<number | undefined> {
-    const metric = await bundleUnhealthy.get();
+    const metric = await connectorUnhealthy.get();
     for (const s of metric.values) {
       if (s.labels.source === source) return s.value;
     }
     return undefined;
   }
 
-  const status = (...records: Array<Partial<BundleHealth> & { name: string; state: BundleHealth["state"] }>): BundleHealth[] =>
+  const status = (...records: Array<Partial<ConnectorHealth> & { name: string; state: ConnectorHealth["state"] }>): ConnectorHealth[] =>
     records.map((r) => ({ uptime: null, restartCount: 0, ...r }));
 
   // Leave the gauge inert for other test files sharing the process-global
   // registry (a full-registry scrape elsewhere would otherwise invoke our
   // collect with a stale provider).
-  afterAll(() => registerBundleHealthGauge(() => []));
+  afterAll(() => registerConnectorHealthGauge(() => []));
 
-  it("test_bundle_unhealthy_gauge_excludes_deliberately_stopped_dead_source", async () => {
+  it("test_connector_unhealthy_gauge_excludes_deliberately_stopped_dead_source", async () => {
     // `dead` is now reachable only via deliberate teardown (disconnect /
     // uninstall) — not an involuntary outage, so it must NOT page.
-    registerBundleHealthGauge(() => status({ name: "com-dropbox-mcp", state: "dead" }));
+    registerConnectorHealthGauge(() => status({ name: "com-dropbox-mcp", state: "dead" }));
     expect(await readGauge("com-dropbox-mcp")).toBeUndefined();
   });
 
-  it("test_bundle_unhealthy_gauge_absent_for_healthy_source", async () => {
-    registerBundleHealthGauge(() => status({ name: "synapse-crm", state: "healthy" }));
+  it("test_connector_unhealthy_gauge_absent_for_healthy_source", async () => {
+    registerConnectorHealthGauge(() => status({ name: "synapse-crm", state: "healthy" }));
     expect(await readGauge("synapse-crm")).toBeUndefined();
   });
 
-  it("test_bundle_unhealthy_gauge_reports_1_for_restarting_source", async () => {
+  it("test_connector_unhealthy_gauge_reports_1_for_restarting_source", async () => {
     // `restarting` (an active backoff burst) is one of the two involuntary-down
     // states — it must assert so the series stays continuous across the
     // burst→cooldown→burst cycle (the `for: 10m` alert needs that continuity; a
     // genuine transient blip is de-flapped by `for:`, not by excluding this).
-    registerBundleHealthGauge(() => status({ name: "ai-granola-mcp", state: "restarting" }));
+    registerConnectorHealthGauge(() => status({ name: "ai-granola-mcp", state: "restarting" }));
     expect(await readGauge("ai-granola-mcp")).toBe(1);
   });
 
-  it("test_bundle_unhealthy_gauge_reports_1_for_cooldown_source", async () => {
+  it("test_connector_unhealthy_gauge_reports_1_for_cooldown_source", async () => {
     // `cooldown` (crashed, spent its quick-retry budget, now on slow re-probe)
     // can stay down indefinitely — the other involuntary-down state.
-    registerBundleHealthGauge(() => status({ name: "com-example-enrich-mcp", state: "cooldown" }));
+    registerConnectorHealthGauge(() => status({ name: "com-example-enrich-mcp", state: "cooldown" }));
     expect(await readGauge("com-example-enrich-mcp")).toBe(1);
   });
 
-  it("test_bundle_unhealthy_gauge_resolves_when_source_recovers", async () => {
-    registerBundleHealthGauge(() => status({ name: "com-dropbox-mcp", state: "cooldown" }));
+  it("test_connector_unhealthy_gauge_resolves_when_source_recovers", async () => {
+    registerConnectorHealthGauge(() => status({ name: "com-dropbox-mcp", state: "cooldown" }));
     expect(await readGauge("com-dropbox-mcp")).toBe(1);
     // Source recovers → collect resets → series disappears → alert can resolve.
-    registerBundleHealthGauge(() => status({ name: "com-dropbox-mcp", state: "healthy" }));
+    registerConnectorHealthGauge(() => status({ name: "com-dropbox-mcp", state: "healthy" }));
     expect(await readGauge("com-dropbox-mcp")).toBeUndefined();
   });
 
-  it("test_bundle_unhealthy_gauge_separate_series_per_source", async () => {
-    registerBundleHealthGauge(() =>
+  it("test_connector_unhealthy_gauge_separate_series_per_source", async () => {
+    registerConnectorHealthGauge(() =>
       status(
         { name: "com-dropbox-mcp", state: "cooldown" },
         { name: "ai-granola-mcp", state: "cooldown" },
@@ -304,9 +306,35 @@ describe("bundle unhealthy gauge", () => {
     expect(await readGauge("synapse-crm")).toBeUndefined();
   });
 
-  it("test_bundle_unhealthy_gauge_unsafe_source_buckets_to_other", async () => {
-    registerBundleHealthGauge(() => status({ name: "Weird Name!! /etc", state: "cooldown" }));
+  it("test_connector_unhealthy_gauge_unsafe_source_buckets_to_other", async () => {
+    registerConnectorHealthGauge(() => status({ name: "Weird Name!! /etc", state: "cooldown" }));
     expect(await readGauge("other")).toBe(1);
+  });
+});
+
+describe("retired nb_bundle_* series", () => {
+  // The `nb_bundle_*` duplicates carry identical values to `nb_connector_*` so a
+  // consumer can be repointed in its own release. If they ever diverge, the
+  // alert and the dashboard disagree about whether a connector is down.
+  afterAll(() => registerConnectorHealthGauge(() => []));
+
+  it("test_retired_crash_counter_tracks_the_connector_counter", async () => {
+    const labels = { source: "com-dropbox-mcp", remote: "true" };
+    const beforeConnector = await read(connectorCrashedTotal, labels);
+    const beforeRetired = await read(retiredBundleCrashedTotal, labels);
+    recordConnectorCrash("com-dropbox-mcp", true);
+    expect((await read(connectorCrashedTotal, labels)) - beforeConnector).toBe(1);
+    expect((await read(retiredBundleCrashedTotal, labels)) - beforeRetired).toBe(1);
+  });
+
+  it("test_retired_unhealthy_gauge_tracks_the_connector_gauge", async () => {
+    registerConnectorHealthGauge(() => [
+      { name: "ai-granola-mcp", state: "cooldown", uptime: null, restartCount: 0 },
+    ]);
+    const seriesOf = async (gauge: typeof connectorUnhealthy) =>
+      (await gauge.get()).values.map((s) => [s.labels.source, s.value]);
+    expect(await seriesOf(retiredBundleUnhealthy)).toEqual(await seriesOf(connectorUnhealthy));
+    expect(await seriesOf(connectorUnhealthy)).toEqual([["ai-granola-mcp", 1]]);
   });
 });
 

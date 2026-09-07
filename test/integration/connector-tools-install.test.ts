@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
-import { BundleLifecycleManager } from "../../src/bundles/lifecycle.ts";
+import { ConnectorLifecycleManager } from "../../src/connectors/runtime/lifecycle.ts";
 import { textContent } from "../../src/engine/content-helpers.ts";
 import type { UserIdentity } from "../../src/identity/provider.ts";
 import { ConnectorDirectory } from "../../src/registries/directory.ts";
@@ -28,7 +28,7 @@ import { CONNECTOR_FIXTURE_DIR } from "../helpers/connector-fixtures.ts";
  * Integration coverage for T010's `manage_connectors.install` contract:
  *
  *   1. **Persisted shape**: after a successful install into a non-
- *      personal workspace, the on-disk `BundleInstance` carries
+ *      personal workspace, the on-disk `ConnectorInstance` carries
  *      `wsId: <picked>` and `oauthScope: "workspace"`. The legacy
  *      `oauthScope: "user"` literal is gone (T008) and stays gone —
  *      we read `workspace.json` directly to pin this.
@@ -100,7 +100,7 @@ async function buildHarness(opts: { sessionWsId: string | null } = { sessionWsId
   );
 
   const workspaceStore = new WorkspaceStore(workDir);
-  const lifecycle = new BundleLifecycleManager(new NoopEventSink(), undefined);
+  const lifecycle = new ConnectorLifecycleManager(new NoopEventSink());
   const workspaceRegistry = new ToolRegistry();
   const registryStore = new RegistryStore(workDir);
 
@@ -128,7 +128,7 @@ async function buildHarness(opts: { sessionWsId: string | null } = { sessionWsId
     }),
     getUserStore: () => ({ get: async () => null }),
     getUserConnectorStore: () => ({ get: async () => null }),
-    getBundleInstancesForWorkspace: (_wsId: string) => lifecycle.getInstances(),
+    getConnectorInstancesForWorkspace: (_wsId: string) => lifecycle.getInstances(),
     getAllowInsecureRemotes: () => false,
   } as unknown as Runtime;
 
@@ -169,7 +169,7 @@ describe("manage_connectors.install (T010) — persisted shape + hard-error", ()
     rmSync(h.workDir, { recursive: true, force: true });
   });
 
-  test("install into ws_helix persists BundleRef with oauthScope=workspace + wsId=ws_helix on disk", async () => {
+  test("install into ws_helix persists ConnectorRef with oauthScope=workspace + wsId=ws_helix on disk", async () => {
     const result = await h.tool.handler({
       action: "install",
       entry: dcrEntry(),
@@ -180,13 +180,13 @@ describe("manage_connectors.install (T010) — persisted shape + hard-error", ()
     expect(sc.wsId).toBe(h.sharedWsId);
     expect(sc.scope).toBe("workspace");
 
-    // Read workspace.json directly. The persisted BundleRef must
+    // Read workspace.json directly. The persisted ConnectorRef must
     // carry `oauthScope: "workspace"` — never `"user"` (T008 removed
     // that literal; this test pins it stays gone).
     const wsDoc = JSON.parse(
       readFileSync(join(h.workDir, "workspaces", h.sharedWsId, "workspace.json"), "utf-8"),
     );
-    const installed = (wsDoc.bundles as Array<{ url?: string; oauthScope?: string }>).find(
+    const installed = (wsDoc.connectors as Array<{ url?: string; oauthScope?: string }>).find(
       (b) => b.url === "https://api.granola.test/mcp",
     );
     expect(installed).toBeDefined();
@@ -223,11 +223,11 @@ describe("manage_connectors.install (T010) — persisted shape + hard-error", ()
 
     // Persisted ref shape — same `oauthScope: "workspace"` shape as
     // shared installs. The "personal-ness" of the target workspace
-    // is a property of the workspace record, NOT the bundle ref.
+    // is a property of the workspace record, NOT the connector ref.
     const wsDoc = JSON.parse(
       readFileSync(join(h.workDir, "workspaces", personalWsId, "workspace.json"), "utf-8"),
     );
-    const installed = (wsDoc.bundles as Array<{ url?: string; oauthScope?: string }>).find(
+    const installed = (wsDoc.connectors as Array<{ url?: string; oauthScope?: string }>).find(
       (b) => b.url === "https://api.granola.test/mcp",
     );
     expect(installed?.oauthScope).toBe("workspace");
@@ -246,7 +246,7 @@ describe("manage_connectors.install (T010) — persisted shape + hard-error", ()
     const text = (result.content?.[0] as { text?: string } | undefined)?.text ?? "";
     expect(text.toLowerCase()).toContain("wsid is required");
 
-    // Workspace.json for both workspaces shows ZERO bundles installed
+    // Workspace.json for both workspaces shows ZERO connectors installed
     // — the hard-error path wrote nothing.
     const sharedDoc = JSON.parse(
       readFileSync(join(h.workDir, "workspaces", h.sharedWsId, "workspace.json"), "utf-8"),
@@ -257,8 +257,8 @@ describe("manage_connectors.install (T010) — persisted shape + hard-error", ()
         "utf-8",
       ),
     );
-    expect((sharedDoc.bundles as unknown[]).length).toBe(0);
-    expect((personalDoc.bundles as unknown[]).length).toBe(0);
+    expect((sharedDoc.connectors as unknown[]).length).toBe(0);
+    expect((personalDoc.connectors as unknown[]).length).toBe(0);
   });
 
   test("install with no wsId arg defaults to the session-header workspace", async () => {
@@ -267,7 +267,7 @@ describe("manage_connectors.install (T010) — persisted shape + hard-error", ()
     // (`getWorkspaceId()` → the `/w/<slug>` route header). That's the
     // same workspace the follow-up connect / list / status calls read,
     // so they can't land in different workspaces — the prior divergence
-    // surfaced as "Bundle not installed" on Connect.
+    // surfaced as "Connector not installed" on Connect.
     h = await buildHarness({ sessionWsId: h.sharedWsId });
     const result = await h.tool.handler({ action: "install", entry: dcrEntry() });
     expect(result.isError).toBe(false);
@@ -276,7 +276,7 @@ describe("manage_connectors.install (T010) — persisted shape + hard-error", ()
     const sharedDoc = JSON.parse(
       readFileSync(join(h.workDir, "workspaces", h.sharedWsId, "workspace.json"), "utf-8"),
     );
-    expect((sharedDoc.bundles as unknown[]).length).toBe(1);
+    expect((sharedDoc.connectors as unknown[]).length).toBe(1);
   });
 
   test("explicit wsId arg overrides the session-header workspace", async () => {
@@ -300,8 +300,8 @@ describe("manage_connectors.install (T010) — persisted shape + hard-error", ()
     const personalDoc = JSON.parse(
       readFileSync(join(h.workDir, "workspaces", personalWsId, "workspace.json"), "utf-8"),
     );
-    expect((sharedDoc.bundles as unknown[]).length).toBe(0);
-    expect((personalDoc.bundles as unknown[]).length).toBe(1);
+    expect((sharedDoc.connectors as unknown[]).length).toBe(0);
+    expect((personalDoc.connectors as unknown[]).length).toBe(1);
   });
 
   test("DCR connector binds its overlay via the canonical (reverse-DNS) identity, not the slug", async () => {
@@ -331,7 +331,7 @@ describe("manage_connectors.install (T010) — persisted shape + hard-error", ()
       readFileSync(join(h.workDir, "workspaces", h.sharedWsId, "workspace.json"), "utf-8"),
     );
     const installed = (
-      wsDoc.bundles as Array<{ url?: string; skillsLock?: Array<{ identity: string }> }>
+      wsDoc.connectors as Array<{ url?: string; skillsLock?: Array<{ identity: string }> }>
     ).find((b) => b.url === "https://api.granola.test/mcp");
     expect(installed?.skillsLock?.[0]?.identity).toBe("granola");
   });

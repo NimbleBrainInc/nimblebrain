@@ -95,7 +95,7 @@ describe("ensureUserWorkspace", () => {
       id: personalWorkspaceIdFor("user_alice"),
       name: "Alice's Workspace",
       members: [{ userId: "user_alice", role: "admin" }],
-      bundles: [],
+      connectors: [],
       isPersonal: true,
       ownerUserId: "user_alice",
       createdAt: new Date().toISOString(),

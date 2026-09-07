@@ -260,8 +260,8 @@ describe("token budget window anchoring", () => {
   });
 });
 
-describe("createAutomation / deleteAutomation — bundle lifecycle path", () => {
-  test("create with source=bundle and bundleName preserves identity for cleanup", () => {
+describe("createAutomation / deleteAutomation — connector lifecycle path", () => {
+  test("create with source=connector and connectorName preserves identity for cleanup", () => {
     const ctx = makeCtx();
     createAutomation(
       {
@@ -283,9 +283,9 @@ describe("createAutomation / deleteAutomation — bundle lifecycle path", () => 
     );
 
     const defs = ctx.definitions();
-    const bundleAuto = defs.get("monitoring-heartbeat");
-    expect(bundleAuto?.source).toBe("bundle");
-    expect(bundleAuto?.bundleName).toBe("@acme/monitoring");
+    const connectorAuto = defs.get("monitoring-heartbeat");
+    expect(connectorAuto?.source).toBe("bundle");
+    expect(connectorAuto?.bundleName).toBe("@acme/monitoring");
 
     const userAuto = defs.get("user-authored");
     expect(userAuto?.source).toBe("agent");

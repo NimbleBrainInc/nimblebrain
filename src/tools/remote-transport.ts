@@ -2,7 +2,7 @@ import type { OAuthClientProvider } from "@modelcontextprotocol/sdk/client/auth.
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { FetchLike, Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
-import type { RemoteTransportConfig } from "../bundles/types.ts";
+import type { RemoteTransportConfig } from "../connectors/runtime/types.ts";
 import { isMintedFleetSource } from "../oauth/minted-credential-provider.ts";
 import { getCredentialProvider } from "./credential-provider.ts";
 import { type CredentialValue, isCredentialRef } from "./credential-ref.ts";
@@ -177,7 +177,7 @@ export async function createRemoteTransport(
   opts?: {
     /** Workspace of the connection — passed to a credential provider (e.g. the
      *  dimension a `provider`-auth token is scoped to). Threaded from the
-     *  McpSource's `BundleMcpContext`. */
+     *  McpSource's `ConnectorMcpContext`. */
     workspaceId?: string;
     /** Dev-mode flag (`allowInsecureRemotes`) threaded to the SSRF redirect
      *  guard so http://localhost endpoints still work under local development.
@@ -199,7 +199,7 @@ export async function createRemoteTransport(
   // an in-cluster `http://*.svc` endpoint, so its configured URL is validated
   // with `fleetInternal`. Redirect targets inherit it too — deliberately: hops
   // are same-origin only (`resolveRedirect`), which is the primary control, and
-  // the per-hop `validateBundleUrl` is its backstop. Other credential providers
+  // the per-hop `validateConnectorUrl` is its backstop. Other credential providers
   // (brokered connectors) get no such exception at all.
   const guardedFetch: FetchLike = createSsrfGuardedFetch(transportFetch, {
     allowInsecure: opts?.allowInsecure ?? false,

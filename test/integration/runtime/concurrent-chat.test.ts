@@ -20,7 +20,6 @@ describe("concurrent chat rejection", () => {
 
     const runtime = await Runtime.start({
       model: { provider: "custom", adapter: createEchoModel() },
-      noDefaultBundles: true,
       workDir,
     });
     await provisionTestWorkspace(runtime);
@@ -73,7 +72,6 @@ describe("concurrent chat rejection", () => {
 
     const runtime = await Runtime.start({
       model: { provider: "custom", adapter: createEchoModel() },
-      noDefaultBundles: true,
       workDir,
     });
     await provisionTestWorkspace(runtime);
@@ -107,7 +105,6 @@ describe("concurrent chat rejection", () => {
 
     const runtime = await Runtime.start({
       model: { provider: "custom", adapter: createEchoModel() },
-      noDefaultBundles: true,
       workDir,
     });
     await provisionTestWorkspace(runtime);

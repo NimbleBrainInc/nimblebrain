@@ -8,7 +8,7 @@ const ScopeAll = StringEnum(["org", "workspace", "user", "bundle"] as const, {
 });
 
 const ScopeWritable = StringEnum(["org", "workspace", "user"] as const, {
-  description: "Tier to write the skill into. Bundle (Layer 1) is not writable.",
+  description: "Tier to write the skill into. Connector (Layer 1) is not writable.",
 });
 
 const SkillStatus = StringEnum(["active", "disabled"] as const, {
@@ -277,7 +277,7 @@ export type SkillsSetStatusInput = Static<typeof SkillsSetStatusInput>;
 /**
  * The mute pair takes a skill NAME, not a path. `IdOnlyInput`'s description
  * says "filesystem path", which sends the model down the `update`/`delete`
- * shape — and a bundle-published skill has no path at all, so a basename
+ * shape — and a connector-published skill has no path at all, so a basename
  * fallback cannot rescue it.
  */
 const SkillNameInput = Type.Object(
@@ -335,11 +335,11 @@ export type SkillStatus = "active" | "disabled";
 
 /**
  * Source provenance for a skill — where it came from on disk or via
- * a bundle. Optional fields; at least one is populated.
+ * a connector. Optional fields; at least one is populated.
  */
 export interface SkillSource {
-  bundle?: string;
-  bundleVersion?: string;
+  connector?: string;
+  connectorVersion?: string;
   path?: string;
   uri?: string;
 }

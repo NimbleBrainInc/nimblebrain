@@ -11,7 +11,7 @@ import {
 //   matches the MCP extension naming convention).
 // - Each operation is declared as an object, NOT a bare boolean. Future
 //   sub-fields (`read.range`, `list.filter`, etc.) slot in without breaking
-//   bundles that only check `enabled`.
+//   connectors that only check `enabled`.
 // - v1 ships with `read.enabled: true, read.range: false`. A 10 MiB whole-file
 //   cap holds until v2 adds range reads.
 // - The exported `hostExtensions()` helper is the single source of truth for
@@ -48,7 +48,7 @@ describe("HOST_RESOURCES_CAPABILITY_V1", () => {
 
   it("uses object-shaped operations (not bare booleans) for forward-compat", () => {
     // If anyone refactors to `read: true` later, future sub-fields can't be
-    // added without breaking bundle compatibility. Lock the shape now.
+    // added without breaking connector compatibility. Lock the shape now.
     expect(typeof HOST_RESOURCES_CAPABILITY_V1.read).toBe("object");
     expect(typeof HOST_RESOURCES_CAPABILITY_V1.list).toBe("object");
     expect(typeof HOST_RESOURCES_CAPABILITY_V1.write).toBe("object");
@@ -65,7 +65,7 @@ describe("hostExtensions", () => {
   });
 
   it("references the same capability object — no defensive copy needed", () => {
-    // Bundles read this through the SDK; serialization happens at the
+    // Connectors read this through the SDK; serialization happens at the
     // transport boundary. Mutating the result would mutate the source, but
     // nothing in the runtime does that.
     expect(hostExtensions()[HOST_RESOURCES_CAPABILITY_KEY]).toBe(

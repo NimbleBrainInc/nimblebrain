@@ -68,7 +68,7 @@ import {
   composioConnectionPath,
   readComposioConnection,
 } from "../../src/connectors/providers/composio/connection.ts";
-import { slugifyServerName } from "../../src/bundles/paths.ts";
+import { slugifyServerName } from "../../src/connectors/runtime/paths.ts";
 import { IdentityConnectorStore } from "../../src/identity/connector-store.ts";
 import { _resetComposioConfigForTest } from "../../src/connectors/providers/composio/config.ts";
 import {
@@ -95,7 +95,7 @@ function sha256Hex(input: string): string {
 /**
  * Capturing record of the last `recordConnectionStateChange` call the
  * stub lifecycle observed. Tests assert against `.lastCall` to verify
- * the callback / initiate adopt paths actually flip the bundle's
+ * the callback / initiate adopt paths actually flip the connector's
  * persisted state — previously the callback's `try { ctx.runtime
  * .getLifecycle().recordConnectionStateChange(...) }` silently
  * swallowed the throw from a stub-missing-method test (the call was
@@ -745,7 +745,7 @@ describe("POST /v1/composio-auth/initiate", () => {
       // written (so the next retry runs a clean adopt-existing) and
       // the SPA receives an honest error, not a misleading success.
       const ctx = stubCtx(dir, composioEntry("com.google/gmail"), {
-        ensureSourceRegisteredError: new Error("startBundleSource refused"),
+        ensureSourceRegisteredError: new Error("startConnectorSource refused"),
       });
       (ctx as unknown as { authOptions: unknown }).authOptions = {
         mode: { type: "dev" },

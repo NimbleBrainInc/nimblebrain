@@ -1,7 +1,7 @@
 import { NoopEventSink } from "../adapters/noop-events.ts";
-import type { BundleLifecycleManager } from "../bundles/lifecycle.ts";
 import { isToolEnabled, type ResolvedFeatures } from "../config/features.ts";
 import type { ConfirmationGate } from "../config/privilege.ts";
+import type { ConnectorLifecycleManager } from "../connectors/runtime/lifecycle.ts";
 import { textContent } from "../engine/content-helpers.ts";
 import type { EventSink, ToolPromotionControls, ToolResult, ToolSchema } from "../engine/types.ts";
 import { isInternalTool, NON_ADVANCING_META_KEY } from "../engine/types.ts";
@@ -51,14 +51,14 @@ export type GetSkillsFn = () => { context: Skill[]; matchable: Skill[] };
 export async function createSystemTools(
   getRegistry: () => ToolRegistry,
   _configPath?: string,
-  // Reserved slot — was the bundle-management ConfirmationGate consumed by
+  // Reserved slot — was the connector-management ConfirmationGate consumed by
   // `nb__manage_app`. The tool was removed; keep the positional slot stable
   // (the file's reserved-slot convention) so every call site's arity holds.
   _gate?: ConfirmationGate,
   // Reserved slot — was the lifecycle manager for skill `requires-bundles`
   // dependency checks (removed in the manifest cutover). Keep the positional
   // slot stable so call-site arity holds.
-  _lifecycle?: BundleLifecycleManager,
+  _lifecycle?: ConnectorLifecycleManager,
   // Reserved slot — was the sub-agent spawn context for `nb__delegate`
   // (removed: the kernel starts a run through one door). Keep the positional
   // slot stable so every call site's arity holds.
@@ -74,7 +74,7 @@ export async function createSystemTools(
   eventSink?: EventSink,
   features?: ResolvedFeatures,
   runtime?: Runtime,
-  // Reserved slot — was a registry-SDK home for a legacy bundle-discovery
+  // Reserved slot — was a registry-SDK home for a legacy connector-discovery
   // path. Registry search now goes through ConnectorDirectory.servers()
   // (Browse's own cached, scoped fetch). Keep the positional slot stable so
   // every call site's arity holds.
@@ -82,10 +82,10 @@ export async function createSystemTools(
   manageUsersCtx?: ManageUsersContext,
   manageWorkspacesCtx?: ManageWorkspacesContext,
   manageMembersCtx?: ManageMembersContext,
-  // Reserved slot — was the workspace-scoped bundle-management context for
+  // Reserved slot — was the workspace-scoped connector-management context for
   // `nb__manage_app` (removed). Kept (typed `unknown`) to hold the positional
   // slot stable for every call site. Prune on the next signature shake-up.
-  _manageBundleCtx?: unknown,
+  _manageConnectorCtx?: unknown,
   toolPromotionCtx?: ToolPromotionContext,
   toolEligibilityCtx?: ToolEligibilityContext,
 ): Promise<McpSource> {
@@ -166,7 +166,7 @@ export async function createSystemTools(
         runtime,
         getIdentity: manageWorkspacesCtx.getIdentity,
         // Workspace id is per-call — pull from the runtime's current
-        // workspace context to know which workspace's bundles[] to mutate.
+        // workspace context to know which workspace's connectors[] to mutate.
         getWorkspaceId: () => runtime.getCurrentWorkspaceId(),
       }),
     );
@@ -179,7 +179,7 @@ export async function createSystemTools(
   }
 
   // Filter out system tools whose feature flag is disabled.
-  // Tools not in FEATURE_TOOL_MAP (e.g., bundle_status, skill_status) always pass.
+  // Tools not in FEATURE_TOOL_MAP always pass.
   // Core tools are never feature-gated — they are always available.
   const filteredSystemDefs = features
     ? systemToolDefs.filter((t) => isToolEnabled(t.name, features))
@@ -199,14 +199,14 @@ export async function createSystemTools(
 }
 
 // ---------------------------------------------------------------------------
-// status tool (universal read — replaces bundle_status + skill_status)
+// status tool (universal read across connectors, skills, and runtime config)
 // ---------------------------------------------------------------------------
 
 /** Core skills ship with the package under src/skills/core/. */
 const CORE_SKILL_MARKER = "/skills/core/";
 
 /** Maximum characters returned from a single read_resource call.
- *  Matches the focused-app skill budget so a bundle-advertised `skill://` resource
+ *  Matches the focused-app skill budget so a connector-advertised `skill://` resource
  *  fits into the LLM's context without blowing past it. */
 const READ_RESOURCE_MAX_CHARS = 12_000;
 
@@ -225,7 +225,7 @@ function createReadResourceTool(getRegistry: () => ToolRegistry): InProcessTool 
     name: "read_resource",
     description:
       "Read a resource published by an installed app or by the platform. Use this when an app's instructions tell you to load a specific resource, or when you need to inspect platform-published context (e.g. saved overlay instructions). Supported URI schemes include " +
-      `${READ_RESOURCE_SCHEMES_PROSE}, and any bundle-published scheme matching the bundle's source name. ` +
+      `${READ_RESOURCE_SCHEMES_PROSE}, and any connector-published scheme matching the connector's source name. ` +
       "Pass the full URI; the content comes back as text in the tool result.",
     inputSchema: {
       type: "object",
@@ -233,7 +233,7 @@ function createReadResourceTool(getRegistry: () => ToolRegistry): InProcessTool 
         uri: {
           type: "string",
           description:
-            "The full URI to read, scheme included (e.g. skill://myapp/SKILL.md, <bundle>://instructions).",
+            "The full URI to read, scheme included (e.g. skill://myapp/SKILL.md, <connector>://instructions).",
         },
       },
       required: ["uri"],
@@ -302,8 +302,8 @@ function formatResourceText(full: string): ToolResult {
 }
 
 /**
- * Creates the unified nb__status tool that replaces bundle_status and skill_status.
- * Aggregates data from the registry, skills, and runtime config into one read-only tool.
+ * Creates the unified nb__status tool. Aggregates data from the registry,
+ * skills, and runtime config into one read-only tool.
  */
 function createStatusTool(
   getRegistry: () => ToolRegistry,
@@ -313,19 +313,19 @@ function createStatusTool(
   return {
     name: "status",
     description:
-      "Get platform status. Default scope shows a concise overview. Use 'bundles' for per-app health, 'skills' for loaded skills, or 'config' for model and limit details.",
+      "Get platform status. Default scope shows a concise overview. Use 'connectors' for per-connector health, 'skills' for loaded skills, or 'config' for model and limit details.",
     inputSchema: {
       type: "object",
       properties: {
         scope: {
           type: "string",
-          enum: ["overview", "bundles", "skills", "config"],
+          enum: ["overview", "connectors", "skills", "config"],
           description:
-            "What to report. 'overview' (default): concise self-portrait. 'bundles': per-app health/version. 'skills': loaded skills by category. 'config': model slots, providers, limits.",
+            "What to report. 'overview' (default): concise self-portrait. 'connectors': per-connector health/version. 'skills': loaded skills by category. 'config': model slots, providers, limits.",
         },
         name: {
           type: "string",
-          description: "Optional name to get detail for a specific bundle or skill.",
+          description: "Optional name to get detail for a specific connector or skill.",
         },
       },
     },
@@ -355,8 +355,8 @@ async function resolveStatusScope(
   getSkills: GetSkillsFn | undefined,
   runtime: Runtime | undefined,
 ): Promise<ToolResult> {
-  if (scope === "bundles") {
-    return handleBundleStatus(getRegistry, nameQuery);
+  if (scope === "connectors") {
+    return handleConnectorStatus(getRegistry, nameQuery);
   }
   if (scope === "skills") {
     const wsId = runtime?.requireWorkspaceId();
@@ -371,7 +371,7 @@ async function resolveStatusScope(
   return handleOverviewStatus(getRegistry, getSkills, runtime);
 }
 
-async function handleBundleStatus(
+async function handleConnectorStatus(
   getRegistry: () => ToolRegistry,
   nameQuery: string | null,
 ): Promise<ToolResult> {
@@ -380,7 +380,7 @@ async function handleBundleStatus(
   const entries: string[] = [];
 
   for (const source of sources) {
-    const entry = await buildBundleStatusEntry(source, query);
+    const entry = await buildConnectorStatusEntry(source, query);
     if (entry) entries.push(entry);
   }
 
@@ -401,7 +401,7 @@ async function handleBundleStatus(
  * `pending_auth` / `dead` state has `client === null` and throws
  * `"<name>" not started` from `tools()`. A status call is exactly where a down
  * connector must be REPORTED, not where it aborts the whole report: without
- * this guard one dead source's throw rejects `nb__status(scope="bundles")` for
+ * this guard one dead source's throw rejects `nb__status(scope="connectors")` for
  * every connector (the tool's top-level catch then replaces the entire report
  * with that one error). Returns null when the count is unknowable so the caller
  * omits the Tools line rather than fabricating `Tools: 0` for a live-but-down
@@ -421,8 +421,8 @@ async function safeToolCount(
   }
 }
 
-/** Format one bundle's status block, or null when the source is filtered out. */
-async function buildBundleStatusEntry(
+/** Format one connector's status block, or null when the source is filtered out. */
+async function buildConnectorStatusEntry(
   source: ReturnType<ToolRegistry["getSources"]>[number],
   query: string | null,
 ): Promise<string | null> {
@@ -515,7 +515,7 @@ async function handleSkillStatus(
  * belongs at a different scope, and moving one is already `read` → `create` at
  * the new scope → `delete`.
  *
- * Vendored core skills are counted under `core`, not under the `bundle` scope
+ * Vendored core skills are counted under `core`, not under the `connector` scope
  * the loader stamps them with. That stamp answers whether a skill is mutable;
  * this report answers which tier is worth moving something out of, and a row
  * the reader can never act on does not belong beside the rows they can.

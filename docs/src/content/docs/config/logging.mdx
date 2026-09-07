@@ -5,7 +5,7 @@ description: Structured JSONL logging configuration and log format reference.
 
 import { Aside } from '@astrojs/starlight/components';
 
-NimbleBrain writes a structured workspace event log as JSONL (one JSON object per line) to daily rolling log files. These logs capture workspace-level events — bundle lifecycle, skill and file changes, data and config mutations, tool-surface changes, and audit signals.
+NimbleBrain writes a structured workspace event log as JSONL (one JSON object per line) to daily rolling log files. These logs capture workspace-level events — connector lifecycle, skill and file changes, data and config mutations, tool-surface changes, and audit signals.
 
 ## Configuration
 
@@ -59,7 +59,7 @@ A new file is created automatically each day. Examples:
 Every log line is a JSON object: a timestamp, the event type, and the event's own data fields spread alongside them.
 
 ```json
-{"ts":"2026-03-25T14:30:00.123Z","event":"bundle.installed","serverName":"postgres","bundleName":"@nimblebraininc/postgres","version":"1.2.0"}
+{"ts":"2026-03-25T14:30:00.123Z","event":"connector.installed","wsId":"ws_product","serverName":"postgres","connectorName":"https://mcp.example.com/mcp","version":"remote (12 tools)"}
 ```
 
 ### Common fields
@@ -67,7 +67,7 @@ Every log line is a JSON object: a timestamp, the event type, and the event's ow
 | Field | Type | Description |
 |-------|------|-------------|
 | `ts` | `string` | ISO 8601 timestamp of when the event was recorded. |
-| `event` | `string` | Event type (e.g., `bundle.installed`, `data.changed`, `audit.permission_denied`). |
+| `event` | `string` | Event type (e.g., `connector.installed`, `data.changed`, `audit.permission_denied`). |
 
 Remaining fields vary by event type — they are the event's payload, written inline.
 
@@ -75,10 +75,10 @@ Remaining fields vary by event type — they are the event's payload, written in
 
 Only workspace-level events are written to this log; conversation streaming events (`text.delta`, `tool.start`, and the like) are not.
 
-**Connector lifecycle** — `bundle.installed`, `bundle.uninstalled`. Track connectors entering and leaving the workspace.
+**Connector lifecycle** — `connector.installed`, `connector.uninstalled`. Track connectors entering and leaving the workspace.
 
 ```json
-{"ts":"2026-03-25T14:30:00.123Z","event":"bundle.installed","wsId":"ws_product","serverName":"com-example-postgres","bundleName":"https://mcp.example.com/mcp","version":"remote (12 tools)"}
+{"ts":"2026-03-25T14:30:00.123Z","event":"connector.installed","wsId":"ws_product","serverName":"com-example-postgres","connectorName":"https://mcp.example.com/mcp","version":"remote (12 tools)"}
 ```
 
 **`data.changed`** — A tool mutated workspace data. Carries the `server` and `tool` that wrote, and `source: "agent"` when emitted from the agent's tool dispatch.
@@ -134,9 +134,9 @@ Only workspace-level events are written to this log; conversation streaming even
 Log files are plain JSONL, so you can use standard command-line tools:
 
 ```bash
-# Bundles installed today
+# Connectors installed today
 cat ~/.nimblebrain/logs/workspace/2026-03-25.jsonl \
-  | jq 'select(.event == "bundle.installed") | {bundleName, version}'
+  | jq 'select(.event == "connector.installed") | {connectorName, version}'
 
 # Audit events only
 cat ~/.nimblebrain/logs/workspace/2026-03-25.jsonl \

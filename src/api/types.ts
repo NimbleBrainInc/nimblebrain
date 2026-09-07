@@ -73,7 +73,7 @@ export interface AppContext {
   rateLimiter: LoginRateLimiter;
   chatLimiter: RequestRateLimiter;
   toolCallLimiter: RequestRateLimiter;
-  /** Per-identity limiter for the remote `/mcp` surface (external clients + bundle iframes). */
+  /** Per-identity limiter for the remote `/mcp` surface (external clients + connector iframes). */
   mcpLimiter: RequestRateLimiter;
   /**
    * The hooks door's two buckets — pre-token (keyed on the client address) and

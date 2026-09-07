@@ -427,7 +427,7 @@ describe("surfaceTools — namespaced (cross-workspace) names", () => {
 // the conversation's cached prefix. Keeping them direct keeps the prefix stable.
 
 describe("surfaceTools — kernel identity tools always direct", () => {
-	it("Tier 2: identity-source tools surface direct alongside nb__, bundle tools proxy", () => {
+	it("Tier 2: identity-source tools surface direct alongside nb__, connector tools proxy", () => {
 		const system = makeSystemTools(4); // nb__*
 		const identity = [
 			makeTool("files__read"),
@@ -435,7 +435,7 @@ describe("surfaceTools — kernel identity tools always direct", () => {
 			makeTool("conversations__search"),
 			makeTool("automations__create"),
 		];
-		const app = makeAppTools("tasks", 40); // non-kernel bundle tools
+		const app = makeAppTools("tasks", 40); // non-kernel connector tools
 		const all = [...system, ...identity, ...app];
 
 		const result = surfaceTools(all, null);

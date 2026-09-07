@@ -2,8 +2,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import { BundleLifecycleManager } from "../../src/bundles/lifecycle.ts";
-import type { BundleInstance, BundleRef } from "../../src/bundles/types.ts";
+import { ConnectorLifecycleManager } from "../../src/connectors/runtime/lifecycle.ts";
+import type { ConnectorInstance, ConnectorRef } from "../../src/connectors/runtime/types.ts";
 import type { EngineEvent, EventSink } from "../../src/engine/types.ts";
 import { McpSource } from "../../src/tools/mcp-source.ts";
 import { ToolRegistry } from "../../src/tools/registry.ts";
@@ -19,7 +19,7 @@ import {
  * exercised in the integration suite (workspace-oauth-provider.test).
  * This file covers the synchronous validation + state-machine glue:
  *
- *   - error paths (bundle not installed, missing URL, scope mismatch)
+ *   - error paths (connector not installed, missing URL, scope mismatch)
  *   - idempotence (existing pending_auth URL reused)
  *   - disconnect's symmetric behaviour across both scopes
  *   - state transitions emit the right SSE events
@@ -36,16 +36,16 @@ class CapturingSink implements EventSink {
 }
 
 function seedInstance(
-  lifecycle: BundleLifecycleManager,
+  lifecycle: ConnectorLifecycleManager,
   serverName: string,
   wsId: string,
   // Stage 2: only "workspace" is legal post-schema-cut.
   oauthScope: "workspace" = "workspace",
-  ref?: BundleRef,
-): BundleInstance {
-  const instance: BundleInstance = {
+  ref?: ConnectorRef,
+): ConnectorInstance {
+  const instance: ConnectorInstance = {
     serverName,
-    bundleName: "https://example.test/mcp",
+    connectorName: "https://example.test/mcp",
     version: "remote",
     state: "starting",
     ui: null,
@@ -76,22 +76,22 @@ afterEach(() => {
   rmSync(workDir, { recursive: true, force: true });
 });
 
-describe("BundleLifecycleManager.startAuth — validation & idempotence", () => {
+describe("ConnectorLifecycleManager.startAuth — validation & idempotence", () => {
   let sink: CapturingSink;
-  let lifecycle: BundleLifecycleManager;
+  let lifecycle: ConnectorLifecycleManager;
 
   beforeEach(() => {
     sink = new CapturingSink();
-    lifecycle = new BundleLifecycleManager(sink, undefined);
+    lifecycle = new ConnectorLifecycleManager(sink);
   });
 
-  test("rejects when bundle is not installed", async () => {
+  test("rejects when connector is not installed", async () => {
     await expect(
       lifecycle.startAuth("ghost", "ws_test", "_workspace", OPTS),
     ).rejects.toThrow(/not installed/);
   });
 
-  test("rejects when bundle ref has no URL (named or local bundle)", async () => {
+  test("rejects when connector ref has no URL (named or local connector)", async () => {
     seedInstance(lifecycle, "stdio", "ws_test", "workspace", { name: "@scope/stdio" });
     await expect(
       lifecycle.startAuth("stdio", "ws_test", "_workspace", OPTS),
@@ -133,22 +133,22 @@ describe("BundleLifecycleManager.startAuth — validation & idempotence", () => 
   });
 });
 
-describe("BundleLifecycleManager.disconnect — symmetric teardown", () => {
+describe("ConnectorLifecycleManager.disconnect — symmetric teardown", () => {
   let sink: CapturingSink;
-  let lifecycle: BundleLifecycleManager;
+  let lifecycle: ConnectorLifecycleManager;
 
   beforeEach(() => {
     sink = new CapturingSink();
-    lifecycle = new BundleLifecycleManager(sink, undefined);
+    lifecycle = new ConnectorLifecycleManager(sink);
   });
 
-  test("rejects when bundle is not installed", async () => {
+  test("rejects when connector is not installed", async () => {
     await expect(
       lifecycle.disconnect("ghost", "ws_test", "_workspace", { workDir: "/tmp" }),
     ).rejects.toThrow(/not installed/);
   });
 
-  test("rejects when bundle has no URL ref (revocation requires the AS URL)", async () => {
+  test("rejects when connector has no URL ref (revocation requires the AS URL)", async () => {
     seedInstance(lifecycle, "stdio", "ws_test", "workspace", { name: "@scope/stdio" });
     await expect(
       lifecycle.disconnect("stdio", "ws_test", "_workspace", { workDir: "/tmp" }),
@@ -193,10 +193,10 @@ describe("BundleLifecycleManager.disconnect — symmetric teardown", () => {
   });
 });
 
-describe("BundleLifecycleManager.startAuthBackground — headless / already-authenticated connect (#679)", () => {
+describe("ConnectorLifecycleManager.startAuthBackground — headless / already-authenticated connect (#679)", () => {
   test("resolves the auth-URL promise with null (not reject) and transitions to running", async () => {
     const sink = new CapturingSink();
-    const lifecycle = new BundleLifecycleManager(sink, undefined);
+    const lifecycle = new ConnectorLifecycleManager(sink);
     seedInstance(lifecycle, "minted", "ws_test"); // so the running transition can emit
     const resolveAuthUrl = mock((_url: string | null) => {});
     const rejectAuthUrl = mock((_err: Error) => {});

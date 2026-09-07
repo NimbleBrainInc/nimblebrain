@@ -35,7 +35,9 @@ const { LedgerLine } = await import("../components/LedgerLine");
 type SkillsLoadedContext = import("../hooks/chat-store").SkillsLoadedContext;
 
 const WS_ID = "ws_0123456789abcdef";
-const BOOTSTRAP_WS = [{ id: WS_ID, name: "Acme", memberCount: 1, bundles: [], isPersonal: true }];
+const BOOTSTRAP_WS = [
+  { id: WS_ID, name: "Acme", memberCount: 1, connectors: [], isPersonal: true },
+];
 
 function byClass(root: Element, cls: string): Element[] {
   return Array.from(root.getElementsByTagName("*")).filter((el) => el.classList.contains(cls));

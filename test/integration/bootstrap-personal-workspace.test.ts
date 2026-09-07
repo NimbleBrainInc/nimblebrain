@@ -23,7 +23,7 @@ interface BootstrapResponse {
     name: string;
     role: "admin" | "member";
     memberCount: number;
-    bundleCount: number;
+    connectorCount: number;
     isPersonal: boolean;
   }>;
   activeWorkspace: string | null;
@@ -37,7 +37,6 @@ beforeEach(async () => {
   mkdirSync(workDir, { recursive: true });
   runtime = await Runtime.start({
     model: { provider: "custom", adapter: createEchoModel() },
-    noDefaultBundles: true,
     logging: { disabled: true },
     workDir,
   });

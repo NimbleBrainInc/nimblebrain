@@ -29,7 +29,7 @@ runtime already executing.
 **The runtime connects to MCP servers over a network. It does not acquire,
 verify, or execute a server's code.**
 
-`BundleRef` (`src/bundles/types.ts`) is one shape: a URL, plus the transport,
+`ConnectorRef` (`src/connectors/runtime/types.ts`) is one shape: a URL, plus the transport,
 OAuth, and overlay-lock fields that describe how to reach that URL and who it
 speaks as. There is no by-name and no by-path variant, because there is nothing
 to resolve a name or a path into.

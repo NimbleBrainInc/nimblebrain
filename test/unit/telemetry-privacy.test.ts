@@ -164,29 +164,29 @@ describe("Telemetry Privacy", () => {
           conversationId: "conv-123",
         },
       },
-      "bundle.installed": {
-        telemetryEvent: "bundle.installed",
+      "connector.installed": {
+        telemetryEvent: "connector.installed",
         allowed: new Set(["source", "has_ui", "trust_score", ...COMMON_KEYS]),
-        engineType: "bundle.installed",
+        engineType: "connector.installed",
         emitData: {
           serverName: "tasks",
-          bundleName: "@nimblebraininc/tasks",
+          connectorName: "@nimblebraininc/tasks",
           installSource: "registry",
-          path: "/Users/john/bundles/tasks",
+          path: "/Users/john/connectors/tasks",
           ui: { name: "Tasks", icon: "tasks" },
           version: "1.2.3",
           manifest: { name: "tasks" },
         },
       },
-      "bundle.uninstalled": {
-        telemetryEvent: "bundle.uninstalled",
+      "connector.uninstalled": {
+        telemetryEvent: "connector.uninstalled",
         allowed: new Set(["source", ...COMMON_KEYS]),
-        engineType: "bundle.uninstalled",
+        engineType: "connector.uninstalled",
         emitData: {
           serverName: "tasks",
-          bundleName: "@nimblebraininc/tasks",
+          connectorName: "@nimblebraininc/tasks",
           installSource: "registry",
-          path: "/Users/john/bundles/tasks",
+          path: "/Users/john/connectors/tasks",
           version: "1.2.3",
         },
       },
@@ -256,14 +256,14 @@ describe("Telemetry Privacy", () => {
         error: Object.assign(new Error("ENOENT: /home/user/.ssh/id_rsa"), { code: "ENOENT" }),
       });
 
-      emit(sink, "bundle.installed", {
+      emit(sink, "connector.installed", {
         name: "@nimblebraininc/tasks",
-        path: "/Users/john/bundles",
+        path: "/Users/john/connectors",
       });
 
-      emit(sink, "bundle.uninstalled", {
+      emit(sink, "connector.uninstalled", {
         name: "@nimblebraininc/tasks",
-        path: "/Users/john/bundles",
+        path: "/Users/john/connectors",
       });
 
       expect(client.events.length).toBeGreaterThan(0);
@@ -296,14 +296,14 @@ describe("Telemetry Privacy", () => {
   });
 
   // -----------------------------------------------------------------------
-  // 3. Bundle Name Exclusion
+  // 3. Connector Name Exclusion
   // -----------------------------------------------------------------------
 
-  describe("bundle name exclusion", () => {
-    it("bundle.installed does not contain bundle name", () => {
-      emit(sink, "bundle.installed", {
+  describe("connector name exclusion", () => {
+    it("connector.installed does not contain connector name", () => {
+      emit(sink, "connector.installed", {
         name: "@nimblebraininc/tasks",
-        bundleName: "@nimblebraininc/tasks",
+        connectorName: "@nimblebraininc/tasks",
       });
 
       const captured = lastCaptured(client);
@@ -314,17 +314,17 @@ describe("Telemetry Privacy", () => {
       }
     });
 
-    it("bundle.installed does not contain bundle path", () => {
-      emit(sink, "bundle.installed", {
+    it("connector.installed does not contain connector path", () => {
+      emit(sink, "connector.installed", {
         name: "@nimblebraininc/tasks",
-        path: "/Users/john/secret-project/bundle",
+        path: "/Users/john/secret-project/connector",
       });
 
       const captured = lastCaptured(client);
       expect(captured).toBeDefined();
 
       for (const value of Object.values(captured.properties)) {
-        expect(String(value)).not.toContain("/Users/john/secret-project/bundle");
+        expect(String(value)).not.toContain("/Users/john/secret-project/connector");
       }
     });
 
@@ -402,8 +402,8 @@ describe("Telemetry Privacy", () => {
           { type: "run.start", data: { runId: "r1", toolNames: ["bash"] } },
           { type: "run.done", data: { runId: "r1", stopReason: "complete", inputTokens: 100, outputTokens: 50 } },
           { type: "run.error", data: { runId: "r2", error: new Error("fail") } },
-          { type: "bundle.installed", data: { name: "test" } },
-          { type: "bundle.uninstalled", data: { name: "test" } },
+          { type: "connector.installed", data: { name: "test" } },
+          { type: "connector.uninstalled", data: { name: "test" } },
         ];
 
         for (const evt of allEvents) {

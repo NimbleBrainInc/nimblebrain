@@ -191,7 +191,7 @@ export interface RunHandle {
  *
  * One value because the two are resolved together and cannot be resolved apart:
  * the matched skill's `allowed-tools` decides the surfaced set, and the surfaced
- * set decides which bundle skills tool-affinity selection loads.
+ * set decides which connector skills tool-affinity selection loads.
  */
 export interface RunComposition {
   /** The ACTIVE tool set the model sees. */

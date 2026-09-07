@@ -1,23 +1,23 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { join } from "node:path";
-import type { BundleRef } from "../../../src/bundles/types.ts";
+import type { ConnectorRef } from "../../../src/connectors/runtime/types.ts";
 import type { Workspace } from "../../../src/workspace/types.ts";
 import {
   buildProcessInventory,
   type ProcessInventoryEntry,
-  resolveBundleStartConcurrency,
+  resolveConnectorStartConcurrency,
 } from "../../../src/runtime/workspace-runtime.ts";
 
 // ---------------------------------------------------------------------------
 // Fixtures
 // ---------------------------------------------------------------------------
 
-function makeWorkspace(id: string, name: string, bundles: BundleRef[]): Workspace {
+function makeWorkspace(id: string, name: string, connectors: ConnectorRef[]): Workspace {
   return {
     id,
     name,
     members: [],
-    bundles,
+    connectors: connectors,
     createdAt: "2026-01-01T00:00:00Z",
     updatedAt: "2026-01-01T00:00:00Z",
   };
@@ -25,7 +25,7 @@ function makeWorkspace(id: string, name: string, bundles: BundleRef[]): Workspac
 
 const WORK_DIR = "/home/user/.nimblebrain";
 
-function crm(): BundleRef {
+function crm(): ConnectorRef {
   return { url: "https://crm.example.com/mcp", serverName: "crm" };
 }
 
@@ -46,13 +46,13 @@ describe("buildProcessInventory", () => {
   });
 
   it("2 workspaces with 3 connectors each → 6 entries", () => {
-    const bundles: BundleRef[] = [
+    const connectors: ConnectorRef[] = [
       crm(),
       { url: "https://tasks.example.com/mcp", serverName: "tasks" },
       { url: "https://docs.example.com/mcp", serverName: "docs" },
     ];
-    const ws1 = makeWorkspace("ws_engineering", "Engineering", bundles);
-    const ws2 = makeWorkspace("ws_sales", "Sales", bundles);
+    const ws1 = makeWorkspace("ws_engineering", "Engineering", connectors);
+    const ws2 = makeWorkspace("ws_sales", "Sales", connectors);
 
     const entries = buildProcessInventory([ws1, ws2], WORK_DIR);
     expect(entries).toHaveLength(6);
@@ -76,9 +76,9 @@ describe("buildProcessInventory", () => {
   });
 
   it("same connector in two workspaces → two entries, different data dirs", () => {
-    const bundles = [crm()];
-    const ws1 = makeWorkspace("ws_engineering", "Engineering", bundles);
-    const ws2 = makeWorkspace("ws_sales", "Sales", bundles);
+    const connectors = [crm()];
+    const ws1 = makeWorkspace("ws_engineering", "Engineering", connectors);
+    const ws2 = makeWorkspace("ws_sales", "Sales", connectors);
 
     const entries = buildProcessInventory([ws1, ws2], WORK_DIR);
     expect(entries).toHaveLength(2);
@@ -100,7 +100,7 @@ describe("buildProcessInventory", () => {
   });
 
   it("preserves the original connector ref in each entry", () => {
-    const ref: BundleRef = {
+    const ref: ConnectorRef = {
       url: "https://crm.example.com/mcp",
       serverName: "crm",
       scopes: ["read"],
@@ -108,7 +108,7 @@ describe("buildProcessInventory", () => {
     const ws = makeWorkspace("ws_eng", "Eng", [ref]);
 
     const entries = buildProcessInventory([ws], WORK_DIR);
-    expect(entries[0].bundle).toBe(ref);
+    expect(entries[0].connector).toBe(ref);
   });
 
   it("multiple workspaces with different connectors", () => {
@@ -132,19 +132,19 @@ describe("buildProcessInventory", () => {
   });
 
   it("skips a row with no usable url instead of aborting the whole inventory", () => {
-    // Boot reads every workspace's `bundles[]` in one pass before any
+    // Boot reads every workspace's `connectors[]` in one pass before any
     // per-entry containment, so a throw here takes the instance down over one
     // bad row. Both reachable shapes are covered: a legacy `name:`/`path:`
     // entry predating the URL-only ref, and a `url: ""` that reached the store.
     const ws = makeWorkspace("ws_mixed", "Mixed", [
-      { name: "@acme/echo" } as unknown as BundleRef,
-      { path: "/opt/echo" } as unknown as BundleRef,
-      { url: "" } as BundleRef,
+      { name: "@acme/echo" } as unknown as ConnectorRef,
+      { path: "/opt/echo" } as unknown as ConnectorRef,
+      { url: "" } as ConnectorRef,
       // Blank-but-nonempty and unparseable urls: the first guard tested
       // `length === 0`, so these still reached `getDataPath` and threw the
       // whole-instance boot crash the guard existed to stop.
-      { url: "   " } as BundleRef,
-      { url: "..." } as BundleRef,
+      { url: "   " } as ConnectorRef,
+      { url: "..." } as ConnectorRef,
       crm(),
     ]);
 
@@ -157,7 +157,7 @@ describe("buildProcessInventory", () => {
 
   it("one workspace's bad row does not cost another workspace its connectors", () => {
     const broken = makeWorkspace("ws_broken", "Broken", [
-      { name: "@acme/echo" } as unknown as BundleRef,
+      { name: "@acme/echo" } as unknown as ConnectorRef,
     ]);
     const healthy = makeWorkspace("ws_healthy", "Healthy", [crm()]);
 
@@ -167,9 +167,9 @@ describe("buildProcessInventory", () => {
   });
 
   it("no global connector state leaks between workspaces", () => {
-    const bundles = [crm()];
-    const ws1 = makeWorkspace("ws_a", "A", bundles);
-    const ws2 = makeWorkspace("ws_b", "B", bundles);
+    const connectors = [crm()];
+    const ws1 = makeWorkspace("ws_a", "A", connectors);
+    const ws2 = makeWorkspace("ws_b", "B", connectors);
 
     const entries = buildProcessInventory([ws1, ws2], WORK_DIR);
     const dataDirs = entries.map((e) => e.dataDir);
@@ -179,46 +179,46 @@ describe("buildProcessInventory", () => {
 });
 
 // ---------------------------------------------------------------------------
-// resolveBundleStartConcurrency
+// resolveConnectorStartConcurrency
 // ---------------------------------------------------------------------------
 
-describe("resolveBundleStartConcurrency", () => {
-  const original = process.env.NB_BUNDLE_START_CONCURRENCY;
+describe("resolveConnectorStartConcurrency", () => {
+  const original = process.env.NB_CONNECTOR_START_CONCURRENCY;
 
   beforeEach(() => {
-    delete process.env.NB_BUNDLE_START_CONCURRENCY;
+    delete process.env.NB_CONNECTOR_START_CONCURRENCY;
   });
 
   afterEach(() => {
-    if (original === undefined) delete process.env.NB_BUNDLE_START_CONCURRENCY;
-    else process.env.NB_BUNDLE_START_CONCURRENCY = original;
+    if (original === undefined) delete process.env.NB_CONNECTOR_START_CONCURRENCY;
+    else process.env.NB_CONNECTOR_START_CONCURRENCY = original;
   });
 
   it("defaults to 4 when unset", () => {
-    expect(resolveBundleStartConcurrency()).toBe(4);
+    expect(resolveConnectorStartConcurrency()).toBe(4);
   });
 
   it("defaults to 4 for empty string", () => {
-    process.env.NB_BUNDLE_START_CONCURRENCY = "";
-    expect(resolveBundleStartConcurrency()).toBe(4);
+    process.env.NB_CONNECTOR_START_CONCURRENCY = "";
+    expect(resolveConnectorStartConcurrency()).toBe(4);
   });
 
   it("honors a valid positive integer", () => {
-    process.env.NB_BUNDLE_START_CONCURRENCY = "8";
-    expect(resolveBundleStartConcurrency()).toBe(8);
+    process.env.NB_CONNECTOR_START_CONCURRENCY = "8";
+    expect(resolveConnectorStartConcurrency()).toBe(8);
   });
 
   it("accepts 1 as the legacy sequential value", () => {
-    process.env.NB_BUNDLE_START_CONCURRENCY = "1";
-    expect(resolveBundleStartConcurrency()).toBe(1);
+    process.env.NB_CONNECTOR_START_CONCURRENCY = "1";
+    expect(resolveConnectorStartConcurrency()).toBe(1);
   });
 
   it("falls back to default on zero, negatives, or garbage", () => {
-    process.env.NB_BUNDLE_START_CONCURRENCY = "0";
-    expect(resolveBundleStartConcurrency()).toBe(4);
-    process.env.NB_BUNDLE_START_CONCURRENCY = "-2";
-    expect(resolveBundleStartConcurrency()).toBe(4);
-    process.env.NB_BUNDLE_START_CONCURRENCY = "abc";
-    expect(resolveBundleStartConcurrency()).toBe(4);
+    process.env.NB_CONNECTOR_START_CONCURRENCY = "0";
+    expect(resolveConnectorStartConcurrency()).toBe(4);
+    process.env.NB_CONNECTOR_START_CONCURRENCY = "-2";
+    expect(resolveConnectorStartConcurrency()).toBe(4);
+    process.env.NB_CONNECTOR_START_CONCURRENCY = "abc";
+    expect(resolveConnectorStartConcurrency()).toBe(4);
   });
 });

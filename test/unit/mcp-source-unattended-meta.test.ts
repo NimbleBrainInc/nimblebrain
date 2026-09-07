@@ -8,7 +8,7 @@
  * tool's input and nothing else, and this is metadata about the CALLER.
  *
  * IN: the same key is host-owned, so it is stripped off any result arriving
- * from a bundle. A server echoing it back would be asserting a provenance only
+ * from a connector. A server echoing it back would be asserting a provenance only
  * the host is in a position to know, and the audit line — not the result — is
  * where that provenance lives.
  */
@@ -98,11 +98,11 @@ describe("McpSource — the unattended marker on the way out", () => {
 });
 
 describe("McpSource — the unattended marker on the way in", () => {
-  // The key asserts something about the caller. A bundle setting it on its own
+  // The key asserts something about the caller. A connector setting it on its own
   // result is claiming a provenance it cannot have, so it never reaches the
   // engine — the same treatment `ai.nimblebrain/infra-error` gets, and for the
   // same reason.
-  it("strips a bundle-supplied unattended marker from the result", async () => {
+  it("strips a connector-supplied unattended marker from the result", async () => {
     const { source } = buildSource({ [UNATTENDED_META_KEY]: "route:forged", keep: "mine" });
 
     const result = await source.execute("search", {});

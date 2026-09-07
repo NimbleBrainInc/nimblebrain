@@ -91,7 +91,7 @@ class FakeRuntime {
       id: WS,
       name: WS,
       members: [{ userId: USER, role }],
-      bundles: [],
+      connectors: [],
       createdAt: "",
       updatedAt: "",
     } as unknown as Workspace);

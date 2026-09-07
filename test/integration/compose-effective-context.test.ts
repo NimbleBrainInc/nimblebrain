@@ -4,11 +4,11 @@
  * Exercises the full path: real `Runtime.start()` + workspace + identity +
  * skill files on disk + the actual platform-tool registration. Verifies:
  *
- *   - Live mode returns the traced layers, with paths and bundle
+ *   - Live mode returns the traced layers, with paths and connector
  *     attribution as expected.
  *   - Historical mode reads `skills.loaded` events from the conv jsonl
  *     and verifies recorded `contentHash` against current source.
- *   - Bundle filter narrows layers + subItems.
+ *   - Connector filter narrows layers + subItems.
  *   - The conversation_id default falls through RequestContext.
  */
 
@@ -52,12 +52,12 @@ interface ComposeResponse {
     source: string;
     text: string;
     tokens: number;
-    bundle?: string;
+    connector?: string;
     subItems?: Array<{
       kind: string;
       id: string;
       source: string;
-      bundle?: string;
+      connector?: string;
       metadata?: Record<string, unknown>;
     }>;
   }>;
@@ -163,7 +163,6 @@ describe("compose_effective_context — live mode", () => {
     const workDir = join(testDir, "live-basic");
     const runtime = await Runtime.start({
       model: { provider: "custom", adapter: makeModel() },
-      noDefaultBundles: true,
       workDir,
       logging: { disabled: true },
       telemetry: { enabled: false },
@@ -227,7 +226,6 @@ describe("compose_effective_context — live mode", () => {
     const workDir = join(testDir, "live-workspace-identity");
     const runtime = await Runtime.start({
       model: { provider: "custom", adapter: makeModel() },
-      noDefaultBundles: true,
       workDir,
       logging: { disabled: true },
       telemetry: { enabled: false },
@@ -262,7 +260,6 @@ describe("compose_effective_context — live mode", () => {
     const workDir = join(testDir, "live-ws");
     const runtime = await Runtime.start({
       model: { provider: "custom", adapter: makeModel() },
-      noDefaultBundles: true,
       workDir,
       logging: { disabled: true },
       telemetry: { enabled: false },
@@ -282,7 +279,6 @@ describe("compose_effective_context — live mode", () => {
     const workDir = join(testDir, "no-conv");
     const runtime = await Runtime.start({
       model: { provider: "custom", adapter: makeModel() },
-      noDefaultBundles: true,
       workDir,
       logging: { disabled: true },
       telemetry: { enabled: false },
@@ -303,7 +299,6 @@ describe("compose_effective_context — historical mode", () => {
     const workDir = join(testDir, "historical-match");
     const runtime = await Runtime.start({
       model: { provider: "custom", adapter: makeModel() },
-      noDefaultBundles: true,
       workDir,
       logging: { disabled: true },
       telemetry: { enabled: false },
@@ -369,7 +364,6 @@ describe("compose_effective_context — historical mode", () => {
     const workDir = join(testDir, "historical-escape");
     const runtime = await Runtime.start({
       model: { provider: "custom", adapter: makeModel() },
-      noDefaultBundles: true,
       workDir,
       logging: { disabled: true },
       telemetry: { enabled: false },
@@ -409,7 +403,6 @@ describe("compose_effective_context — historical mode", () => {
     const workDir = join(testDir, "historical-drift");
     const runtime = await Runtime.start({
       model: { provider: "custom", adapter: makeModel() },
-      noDefaultBundles: true,
       workDir,
       logging: { disabled: true },
       telemetry: { enabled: false },
@@ -466,7 +459,6 @@ describe("compose_effective_context — historical mode", () => {
     const workDir = join(testDir, "historical-recovered");
     const runtime = await Runtime.start({
       model: { provider: "custom", adapter: makeModel() },
-      noDefaultBundles: true,
       workDir,
       logging: { disabled: true },
       telemetry: { enabled: false },
@@ -522,19 +514,18 @@ describe("compose_effective_context — historical mode", () => {
   });
 });
 
-describe("compose_effective_context — bundle filter", () => {
-  it("narrows layers and subItems to the filtered bundle", async () => {
-    const workDir = join(testDir, "bundle-filter");
+describe("compose_effective_context — connector filter", () => {
+  it("narrows layers and subItems to the filtered connector", async () => {
+    const workDir = join(testDir, "connector-filter");
     const runtime = await Runtime.start({
       model: { provider: "custom", adapter: makeModel() },
-      noDefaultBundles: true,
       workDir,
       logging: { disabled: true },
       telemetry: { enabled: false },
     });
     await provisionTestWorkspace(runtime);
 
-    // Plant two skills under bundle-affined directories so the bundle
+    // Plant two skills under connector-affined directories so the connector
     // attribution heuristic kicks in.
     const collateralDir = join(workDir, "skills", "bundles", "synapse-collateral");
     const crmDir = join(workDir, "skills", "bundles", "synapse-crm");
@@ -557,27 +548,27 @@ describe("compose_effective_context — bundle filter", () => {
     const unfiltered = await callCompose(runtime, {}, "conv_cccccccccccccccc");
     const l3Section = unfiltered.structured!.layers.find((l) => l.kind === "layer3_skills");
     expect(l3Section).toBeDefined();
-    const unfilteredBundles = (l3Section!.subItems ?? [])
-      .map((s) => s.bundle)
+    const unfilteredConnectors = (l3Section!.subItems ?? [])
+      .map((s) => s.connector)
       .filter((b): b is string => b !== undefined);
-    expect(unfilteredBundles).toContain("synapse-collateral");
-    expect(unfilteredBundles).toContain("synapse-crm");
+    expect(unfilteredConnectors).toContain("synapse-collateral");
+    expect(unfilteredConnectors).toContain("synapse-crm");
 
-    // With bundle=synapse-collateral, only the collateral skill survives.
-    // Non-bundle subItems get dropped (their `bundle` is undefined, not
+    // With connector=synapse-collateral, only the collateral skill survives.
+    // Non-connector subItems get dropped (their `connector` is undefined, not
     // matching the filter), so the section's subItems should be exactly
-    // [{bundle: "synapse-collateral", ...}] — anything else would be a
+    // [{connector: "synapse-collateral", ...}] — anything else would be a
     // bug in the filter.
     const filtered = await callCompose(
       runtime,
-      { bundle: "synapse-collateral" },
+      { connector: "synapse-collateral" },
       "conv_cccccccccccccccc",
     );
     expect(filtered.isError).toBe(false);
     const l3Filtered = filtered.structured!.layers.find((l) => l.kind === "layer3_skills");
     expect(l3Filtered).toBeDefined();
     expect(l3Filtered!.subItems!.length).toBe(1);
-    expect(l3Filtered!.subItems![0]!.bundle).toBe("synapse-collateral");
+    expect(l3Filtered!.subItems![0]!.connector).toBe("synapse-collateral");
 
     await runtime.shutdown();
   });
@@ -588,7 +579,6 @@ describe("compose_effective_context — conversation_id resolution", () => {
     const workDir = join(testDir, "ctx-fallback");
     const runtime = await Runtime.start({
       model: { provider: "custom", adapter: makeModel() },
-      noDefaultBundles: true,
       workDir,
       logging: { disabled: true },
       telemetry: { enabled: false },
@@ -606,7 +596,6 @@ describe("compose_effective_context — conversation_id resolution", () => {
     const workDir = join(testDir, "explicit-wins");
     const runtime = await Runtime.start({
       model: { provider: "custom", adapter: makeModel() },
-      noDefaultBundles: true,
       workDir,
       logging: { disabled: true },
       telemetry: { enabled: false },

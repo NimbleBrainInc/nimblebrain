@@ -3,7 +3,7 @@
  * point two workspaces at two different customer-owned secrets.
  *
  * `auth: provider` with `providerAuth: { provider: "credential", config: { key } }`
- * is copied verbatim into the `BundleRef` at install, so what is asserted here is
+ * is copied verbatim into the `ConnectorRef` at install, so what is asserted here is
  * exactly what a persisted ref produces: a `fetch` that resolves the key at the
  * connection's own workspace on every request.
  */
@@ -12,7 +12,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { RemoteTransportConfig } from "../../src/bundles/types.ts";
+import type { RemoteTransportConfig } from "../../src/connectors/runtime/types.ts";
 import type { EngineEvent } from "../../src/engine/types.ts";
 import { _resetCredentialProvidersForTest } from "../../src/tools/credential-provider.ts";
 import {

@@ -21,7 +21,7 @@ function bootstrapWs(
     id: "ws_test",
     name: "Test",
     memberCount: 1,
-    bundleCount: 0,
+    connectorCount: 0,
     isPersonal: false,
     ...partial,
   };
@@ -38,14 +38,14 @@ describe("bootstrapWorkspacesToInfo", () => {
     expect(info?.userRole).toBe("member");
   });
 
-  test("preserves id, name, memberCount; bundles starts empty", () => {
+  test("preserves id, name, memberCount; connectors starts empty", () => {
     const [info] = bootstrapWorkspacesToInfo([
       bootstrapWs({ id: "ws_1", name: "Acme", memberCount: 5, role: "admin" }),
     ]);
     expect(info?.id).toBe("ws_1");
     expect(info?.name).toBe("Acme");
     expect(info?.memberCount).toBe(5);
-    expect(info?.bundles).toEqual([]);
+    expect(info?.connectors).toEqual([]);
   });
 
   test("maps every workspace independently", () => {

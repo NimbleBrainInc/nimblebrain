@@ -57,7 +57,6 @@ async function makeRuntime(): Promise<Runtime> {
 	mkdirSync(workDir, { recursive: true });
 	return Runtime.start({
 		model: { provider: "custom", adapter: createEchoModel() },
-		noDefaultBundles: true,
 		workDir,
 		logging: { disabled: true },
 	});
@@ -147,7 +146,6 @@ describe("Core Source", () => {
 
 		const runtime = await Runtime.start({
 			model: { provider: "custom", adapter: createEchoModel() },
-			noDefaultBundles: true,
 			workDir,
 			configPath,
 			logging: { disabled: true },
@@ -179,7 +177,6 @@ describe("Core Source", () => {
 
 		const runtime = await Runtime.start({
 			model: { provider: "custom", adapter: createEchoModel() },
-			noDefaultBundles: true,
 			workDir,
 			configPath,
 			logging: { disabled: true },
@@ -204,7 +201,6 @@ describe("Core Source", () => {
 
 		const runtime = await Runtime.start({
 			model: { provider: "custom", adapter: createEchoModel() },
-			noDefaultBundles: true,
 			workDir,
 			configPath,
 			logging: { disabled: true },
@@ -229,7 +225,6 @@ describe("Core Source", () => {
 
 		const runtime = await Runtime.start({
 			model: { provider: "custom", adapter: createEchoModel() },
-			noDefaultBundles: true,
 			workDir,
 			configPath,
 			logging: { disabled: true },
@@ -270,7 +265,6 @@ describe("Core Source", () => {
 
 		const runtime = await Runtime.start({
 			model: { provider: "custom", adapter: createEchoModel() },
-			noDefaultBundles: true,
 			workDir,
 			configPath,
 			logging: { disabled: true },
@@ -296,7 +290,6 @@ describe("Core Source", () => {
 
 		const runtime = await Runtime.start({
 			model: { provider: "custom", adapter: createEchoModel() },
-			noDefaultBundles: true,
 			workDir,
 			configPath,
 			logging: { disabled: true },
@@ -351,7 +344,6 @@ describe("Core Source", () => {
 
 		const runtime = await Runtime.start({
 			model: { provider: "custom", adapter: createEchoModel() },
-			noDefaultBundles: true,
 			workDir,
 			configPath,
 			logging: { disabled: true },
@@ -401,7 +393,6 @@ describe("Core Source", () => {
 
 		const runtime = await Runtime.start({
 			model: { provider: "custom", adapter: createEchoModel() },
-			noDefaultBundles: true,
 			workDir,
 			configPath,
 			logging: { disabled: true },
@@ -427,7 +418,6 @@ describe("Core Source", () => {
 
 		const runtime = await Runtime.start({
 			model: { provider: "custom", adapter: createEchoModel() },
-			noDefaultBundles: true,
 			workDir,
 			configPath,
 			logging: { disabled: true },
@@ -468,7 +458,6 @@ describe("Core Source", () => {
 
 		const runtime = await Runtime.start({
 			model: { provider: "custom", adapter: createEchoModel() },
-			noDefaultBundles: true,
 			workDir,
 			configPath,
 			logging: { disabled: true },
@@ -507,7 +496,6 @@ describe("Core Source", () => {
 
 		const runtime = await Runtime.start({
 			model: { provider: "custom", adapter: createEchoModel() },
-			noDefaultBundles: true,
 			workDir,
 			configPath,
 			logging: { disabled: true },
@@ -545,7 +533,6 @@ describe("Core Source", () => {
 
 		const runtime = await Runtime.start({
 			model: { provider: "custom", adapter: createEchoModel() },
-			noDefaultBundles: true,
 			workDir,
 			configPath,
 			logging: { disabled: true },
@@ -581,7 +568,6 @@ describe("Core Source", () => {
 
 		const runtime = await Runtime.start({
 			model: { provider: "custom", adapter: createEchoModel() },
-			noDefaultBundles: true,
 			workDir,
 			configPath,
 			logging: { disabled: true },
@@ -618,7 +604,6 @@ describe("Core Source", () => {
 
 		const runtime = await Runtime.start({
 			model: { provider: "custom", adapter: createEchoModel() },
-			noDefaultBundles: true,
 			workDir,
 			configPath,
 			logging: { disabled: true },
@@ -651,7 +636,6 @@ describe("Core Source", () => {
 			writeFileSync(configPath, JSON.stringify({ version: "1" }));
 			const runtime = await Runtime.start({
 				model: { provider: "custom", adapter: createEchoModel() },
-				noDefaultBundles: true,
 				workDir,
 				configPath,
 				logging: { disabled: true },
@@ -801,7 +785,6 @@ describe("Core Source", () => {
 			const runtime = await Runtime.start({
 				...loaded,
 				model: { provider: "custom", adapter: createEchoModel() },
-				noDefaultBundles: true,
 				workDir,
 				logging: { disabled: true },
 			});
@@ -1036,7 +1019,6 @@ describe("Core Source", () => {
 			writeFileSync(configPath, JSON.stringify({ version: "1" }));
 			const runtime = await Runtime.start({
 				model: { provider: "custom", adapter: createEchoModel() },
-				noDefaultBundles: true,
 				workDir,
 				configPath,
 				logging: { disabled: true },
@@ -1192,7 +1174,6 @@ describe("Core Source", () => {
 		// First runtime: simulate the operator changing config.
 		const r1 = await Runtime.start({
 			model: { provider: "custom", adapter: createEchoModel() },
-			noDefaultBundles: true,
 			workDir,
 			configPath,
 			logging: { disabled: true },
@@ -1225,7 +1206,6 @@ describe("Core Source", () => {
 		const r2 = await Runtime.start({
 			...loaded,
 			model: { provider: "custom", adapter: createEchoModel() },
-			noDefaultBundles: true,
 			workDir,
 			logging: { disabled: true },
 		});
@@ -1298,7 +1278,6 @@ describe("Core Source", () => {
 
 		const runtime = await Runtime.start({
 			model: { provider: "custom", adapter: model },
-			noDefaultBundles: true,
 			workDir,
 			logging: { disabled: true },
 		});

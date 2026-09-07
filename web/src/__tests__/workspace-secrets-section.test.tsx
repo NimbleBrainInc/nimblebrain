@@ -61,7 +61,7 @@ function installed(overrides: {
 }): InstalledConnector {
   return {
     serverName: "com-acme-db-query",
-    bundleName: "https://mcp.acme.test/mcp",
+    connectorName: "https://mcp.acme.test/mcp",
     version: "1.0.0",
     state: "running",
     scope: "workspace",

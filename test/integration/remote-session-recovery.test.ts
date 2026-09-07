@@ -12,7 +12,7 @@ import { McpSource } from "../../src/tools/mcp-source.ts";
  * End-to-end recovery half of issue #571: when a remote MCP server rolls and
  * forgets our Streamable-HTTP session, a subsequent `ui://` read must
  * re-initialize the session and retry — returning the resource — rather than
- * surfacing the "Session not found" error as a null that strands the bundle's
+ * surfacing the "Session not found" error as a null that strands the connector's
  * sidebar UI until a manual runtime bounce.
  *
  * Unlike the unit test (which hand-builds the error shape), this drives the real

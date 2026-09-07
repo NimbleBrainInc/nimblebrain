@@ -620,7 +620,7 @@ describe("handleList filters", () => {
 	// directly with automations whose `source` is set as an operator would.
 	function seedAutomations(ctx: ToolContext): void {
 		handleCreate(
-			createArgs("Active Bundle", "p", { type: "interval", intervalMs: 60_000 }),
+			createArgs("Active Connector", "p", { type: "interval", intervalMs: 60_000 }),
 			ctx,
 		);
 		handleCreate(
@@ -634,7 +634,7 @@ describe("handleList filters", () => {
 		// Stamp non-default sources directly — bypasses the tool input contract,
 		// which is the right shape for this test (filtering, not authoring).
 		const defs = ctx.definitions();
-		defs.get("active-bundle")!.source = "bundle";
+		defs.get("active-connector")!.source = "bundle";
 		defs.get("disabled-user")!.source = "user";
 		ctx.save(defs);
 	}
@@ -651,7 +651,7 @@ describe("handleList filters", () => {
 		expect(result.automations.every((a) => a.enabled)).toBe(true);
 	});
 
-	test("filter source: bundle", () => {
+	test("filter source: connector", () => {
 		const ctx = makeCtx();
 		seedAutomations(ctx);
 

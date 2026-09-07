@@ -7,7 +7,7 @@ import { join } from "node:path";
  *
  * Why this exists: `Runtime.start({})` defaults `workDir` to `~/.nimblebrain`.
  * A test that forgets to pass `workDir` writes echo-model conversations,
- * test workspaces, and bundle data straight into the developer's real dev
+ * test workspaces, and connector data straight into the developer's real dev
  * workdir, where they then show up in the conversations tab and lifecycle
  * tools. `Runtime.start` throws under `NODE_ENV=test` if `workDir` is
  * missing — this helper is the canonical way to satisfy that guard.

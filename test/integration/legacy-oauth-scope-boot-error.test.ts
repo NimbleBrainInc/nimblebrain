@@ -1,6 +1,6 @@
 /**
  * Stage 2 disk-read boundary: refs carrying the legacy `oauthScope: "user"`
- * literal in `workspaces/<wsId>/workspace.json#bundles[]` hard-error at
+ * literal in `workspaces/<wsId>/workspace.json#connectors[]` hard-error at
  * boot. The runtime does NOT migrate or normalize at startup — operators
  * are expected to have run `bun run migrate:user-creds` per the Stage 2
  * deploy runbook.
@@ -10,7 +10,7 @@ import { afterEach, describe, expect, it } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { LegacyOAuthScopeError } from "../../src/bundles/lifecycle.ts";
+import { LegacyOAuthScopeError } from "../../src/connectors/runtime/lifecycle.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { writeJsonAtomic } from "../../src/util/atomic-json.ts";
 import { personalWorkspaceIdFor } from "../../src/workspace/workspace-store.ts";
@@ -24,7 +24,7 @@ async function makeWorkDir(prefix: string): Promise<string> {
   return workDir;
 }
 
-async function seedWorkspaceWithLegacyBundle(workDir: string, userId: string): Promise<void> {
+async function seedWorkspaceWithLegacyConnector(workDir: string, userId: string): Promise<void> {
   const wsId = personalWorkspaceIdFor(userId);
   const wsDir = join(workDir, "workspaces", wsId);
   mkdirSync(wsDir, { recursive: true });
@@ -32,7 +32,7 @@ async function seedWorkspaceWithLegacyBundle(workDir: string, userId: string): P
     id: wsId,
     name: "Personal",
     members: [{ userId, role: "admin" }],
-    bundles: [
+    connectors: [
       // Legacy on-disk shape: pre-Stage-2 records carried oauthScope: "user".
       {
         url: "https://granola.so/mcp",
@@ -61,13 +61,12 @@ describe("Stage 2 — legacy oauthScope on disk hard-errors at boot", () => {
 
   it("boot fails with LegacyOAuthScopeError when a workspace.json carries a legacy ref", async () => {
     workDir = await makeWorkDir("nb-legacy-boot-");
-    await seedWorkspaceWithLegacyBundle(workDir, USER_ID);
+    await seedWorkspaceWithLegacyConnector(workDir, USER_ID);
 
     let caught: unknown = null;
     try {
       const rt = await Runtime.start({
         model: { provider: "custom", adapter: createEchoModel() },
-        noDefaultBundles: true,
         logging: { disabled: true },
         workDir,
       });

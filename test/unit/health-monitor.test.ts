@@ -67,7 +67,7 @@ function eventNames(collector: { events: EngineEvent[] }): string[] {
 
 describe("HealthMonitor", () => {
   it("detects crashed subprocess and restarts it", async () => {
-    const source = makeMockSource("test-bundle");
+    const source = makeMockSource("test-connector");
     const sink = makeEventCollector();
     const monitor = new HealthMonitor([source], sink, { checkIntervalMs: 60_000, baseDelayMs: 1 });
 
@@ -79,9 +79,9 @@ describe("HealthMonitor", () => {
 
     // Should have emitted crashed, restarting, recovered
     const events = eventNames(sink);
-    expect(events).toContain("bundle.crashed");
-    expect(events).toContain("bundle.restarting");
-    expect(events).toContain("bundle.recovered");
+    expect(events).toContain("connector.crashed");
+    expect(events).toContain("connector.restarting");
+    expect(events).toContain("connector.recovered");
 
     // Status should show healthy after recovery
     const status = monitor.getStatus();
@@ -92,7 +92,7 @@ describe("HealthMonitor", () => {
   });
 
   it("backs off to cooldown after the quick-retry budget — not terminal — and stops hammering", async () => {
-    const source = makeMockSource("flaky-bundle");
+    const source = makeMockSource("flaky-connector");
     const sink = makeEventCollector();
     // Large cooldown so the source stays in the cooling window across the checks
     // below; the self-heal-after-cooldown case is covered by its own test.
@@ -118,25 +118,25 @@ describe("HealthMonitor", () => {
     expect(status[0]!.state).toBe("cooldown");
 
     const events = eventNames(sink);
-    expect(events).toContain("bundle.cooldown");
-    // `bundle.dead` is retired for the crash path — a crash never ends terminal.
-    expect(events).not.toContain("bundle.dead");
+    expect(events).toContain("connector.cooldown");
+    // The crash path emits no terminal event — a crash never ends terminal.
+    expect(events).not.toContain("connector.dead");
 
-    // While cooling, further checks neither restart nor re-emit `bundle.crashed`
+    // While cooling, further checks neither restart nor re-emit `connector.crashed`
     // — a throttling upstream is not hammered, and the crash-rate metric (which
-    // counts `bundle.crashed`) is not inflated during the quiet window.
+    // counts `connector.crashed`) is not inflated during the quiet window.
     const restartsBefore = source.restartCalls;
-    const crashedBefore = eventNames(sink).filter((e) => e === "bundle.crashed").length;
+    const crashedBefore = eventNames(sink).filter((e) => e === "connector.crashed").length;
     await monitor.check();
     await monitor.check();
     expect(source.restartCalls).toBe(restartsBefore);
-    expect(eventNames(sink).filter((e) => e === "bundle.crashed").length).toBe(crashedBefore);
+    expect(eventNames(sink).filter((e) => e === "connector.crashed").length).toBe(crashedBefore);
 
     monitor.stop();
   });
 
   it("self-heals: after the cooldown window elapses it retries and recovers", async () => {
-    const source = makeMockSource("recoverable-bundle");
+    const source = makeMockSource("recoverable-connector");
     const sink = makeEventCollector();
     // Tiny cooldown so the window elapses within the test.
     const monitor = new HealthMonitor([source], sink, {
@@ -166,7 +166,7 @@ describe("HealthMonitor", () => {
     expect(status[0]!.state).toBe("healthy");
     expect(source.restartCalls).toBeGreaterThan(restartsAtCooldown);
     // A recovery event fires once the source comes back — no operator action.
-    expect(eventNames(sink)).toContain("bundle.recovered");
+    expect(eventNames(sink)).toContain("connector.recovered");
 
     monitor.stop();
   });
@@ -234,7 +234,7 @@ describe("HealthMonitor", () => {
   });
 
   it("resets restartCount after sustained recovery so a flapping-but-recovering source never dies", async () => {
-    const source = makeMockSource("flapping-bundle");
+    const source = makeMockSource("flapping-connector");
     const sink = makeEventCollector();
     const checkIntervalMs = 1000;
     const monitor = new HealthMonitor([source], sink, { checkIntervalMs, baseDelayMs: 1 });
@@ -258,14 +258,14 @@ describe("HealthMonitor", () => {
     }
 
     expect(monitor.getStatus()[0]!.state).toBe("healthy");
-    expect(eventNames(sink)).not.toContain("bundle.dead");
+    expect(eventNames(sink)).not.toContain("connector.dead");
 
     // Backoff resets between episodes: every restarting attempt fires at the
     // base delay (2 ** 0), never the escalated delays a climbing counter
     // would produce.
     const delays = sink.events
       .map((e) => e.data as { event: string; delayMs?: number })
-      .filter((d) => d.event === "bundle.restarting")
+      .filter((d) => d.event === "connector.restarting")
       .map((d) => d.delayMs);
     expect(delays.length).toBe(8);
     for (const d of delays) expect(d).toBe(1);
@@ -299,13 +299,13 @@ describe("HealthMonitor", () => {
     source.alive = false;
     await monitor.check();
     expect(monitor.getStatus()[0]!.state).toBe("cooldown");
-    expect(eventNames(sink)).toContain("bundle.cooldown");
-    expect(eventNames(sink)).not.toContain("bundle.dead");
+    expect(eventNames(sink)).toContain("connector.cooldown");
+    expect(eventNames(sink)).not.toContain("connector.dead");
 
     monitor.stop();
   });
 
-  it("getStatus reflects current state for each bundle", async () => {
+  it("getStatus reflects current state for each connector", async () => {
     const healthy = makeMockSource("healthy-one");
     const crashed = makeMockSource("crashed-one");
     const sink = makeEventCollector();
@@ -334,8 +334,8 @@ describe("HealthMonitor", () => {
     monitor.stop();
   });
 
-  it("does not restart healthy bundles", async () => {
-    const source = makeMockSource("stable-bundle");
+  it("does not restart healthy connectors", async () => {
+    const source = makeMockSource("stable-connector");
     const sink = makeEventCollector();
     const monitor = new HealthMonitor([source], sink, { checkIntervalMs: 60_000, baseDelayMs: 1 });
 
@@ -352,7 +352,7 @@ describe("HealthMonitor", () => {
   });
 
   it("stop() clears the interval so no more checks run", async () => {
-    const source = makeMockSource("interval-bundle");
+    const source = makeMockSource("interval-connector");
     const sink = makeEventCollector();
     // Use a very short interval
     const monitor = new HealthMonitor([source], sink, { checkIntervalMs: 10, baseDelayMs: 1 });
@@ -379,7 +379,7 @@ describe("HealthMonitor — initial state reflects the source, not an assumption
     // A source can be registered and already down when the monitor is
     // constructed — a boot start that failed, or one waiting on interactive
     // auth. Seeding a constant `healthy` made those read healthy, and kept them
-    // out of `nb_bundle_unhealthy`, for a whole check interval.
+    // out of `nb_connector_unhealthy`, for a whole check interval.
     const down = makeMockSource("down-at-boot");
     down.alive = false;
     const up = makeMockSource("up-at-boot");
@@ -398,9 +398,9 @@ describe("HealthMonitor — same-named sources are distinct records", () => {
     // which lives in this file rather than that one: `records` is an ARRAY built
     // by `sources.map(...)`, not a name-keyed map.
     //
-    // A URL bundle's source name carries no workspace, so the same bundle in N
+    // A URL connector's source name carries no workspace, so the same connector in N
     // workspaces yields N distinct McpSource objects under one name. If `records`
-    // ever became `Map<string, BundleRecord>`, the seed would collapse them again
+    // ever became `Map<string, ConnectorRecord>`, the seed would collapse them again
     // and the sources this monitor exists to heal would go unmonitored — with the
     // rest of the suite green, because every other fixture here uses a distinct
     // name.

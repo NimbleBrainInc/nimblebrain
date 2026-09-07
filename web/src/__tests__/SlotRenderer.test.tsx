@@ -5,13 +5,13 @@
 // failed `getResources` was `console.warn` plus an empty container: blank space,
 // indistinguishable from a crashed app.
 //
-// This path is common rather than exotic. Keeping a boot-failed bundle's
+// This path is common rather than exotic. Keeping a boot-failed connector's
 // placement alive means the app stays in the sidebar while its source is
 // unregistered, so `getResources` returns 403 until something revives it — a
 // failure the user can reach by clicking the app.
 //
 // Pinned here: the message names the app and carries the reason, text goes
-// through `textContent` (the label is bundle-authored and the message is
+// through `textContent` (the label is connector-authored and the message is
 // server-supplied), and one broken placement doesn't stop the ones after it.
 //
 // Same plumbing as ContextInspectorPage.test.tsx: whole-module mock over the
@@ -122,7 +122,7 @@ describe("SlotRenderer — failed placement", () => {
   });
 
   test("markupInTheReason_isEscapedNotParsed", async () => {
-    // The label is bundle-authored and the message is server-supplied, so both
+    // The label is connector-authored and the message is server-supplied, so both
     // go through textContent. A tag in either must stay inert.
     getResources.mockImplementation(async () => {
       throw new Error("<img src=x onerror=alert(1)>");

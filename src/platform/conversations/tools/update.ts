@@ -22,7 +22,7 @@ export interface UpdateInput {
 /**
  * Which channel carries the title for this file.
  *
- * Every reader — this bundle's `jsonl-reader`, its index, and the runtime's
+ * Every reader — this connector's `jsonl-reader`, its index, and the runtime's
  * event reconstructor — takes the title from the LAST `metadata.title` event
  * and falls back to line 1 only when there is none. The auto-titler appends
  * exactly that event on a conversation's first turn, so on an event-sourced

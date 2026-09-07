@@ -1,10 +1,10 @@
 type BunServer = ReturnType<typeof Bun.serve>;
 
-import type { ConnectionHealthProbe } from "../bundles/connection-probe.ts";
+import type { ConnectionHealthProbe } from "../connectors/runtime/connection-probe.ts";
 import {
   ConnectionRevalidator,
   revalidatorIntervalMsFromEnv,
-} from "../bundles/connection-revalidator.ts";
+} from "../connectors/runtime/connection-revalidator.ts";
 import type { IdentityProvider } from "../identity/provider.ts";
 import { DevIdentityProvider } from "../identity/providers/dev.ts";
 import { canonicalOrigins, webOrigin } from "../oauth/public-origin.ts";
@@ -17,7 +17,7 @@ import { resolveAuthMode } from "./auth-middleware.ts";
 import { ConversationEventManager } from "./conversation-events.ts";
 import { deriveDataChangedTarget, SseEventManager } from "./events.ts";
 import { McpServerHost } from "./mcp-server.ts";
-import { registerBundleHealthGauge } from "./metrics.ts";
+import { registerConnectorHealthGauge } from "./metrics.ts";
 import { LoginRateLimiter, RequestRateLimiter } from "./rate-limiter.ts";
 import {
   HOOK_ANON_BUCKET_MAX,
@@ -71,7 +71,7 @@ const envAllowedOrigins: Set<string> | null = process.env.ALLOWED_ORIGINS
  * Start an HTTP API server wrapping a Runtime instance.
  *
  * Uses Hono for routing and middleware composition.
- * Creates a HealthMonitor for MCP bundle sources and starts it.
+ * Creates a HealthMonitor for MCP connector sources and starts it.
  * Returns a ServerHandle for lifecycle control.
  */
 export function startServer(options: ServerOptions): ServerHandle {
@@ -90,11 +90,11 @@ export function startServer(options: ServerOptions): ServerHandle {
   const mcpSources = runtime.mcpSources();
   const healthMonitor = new HealthMonitor(mcpSources, runtime.getEventSink());
   healthMonitor.start();
-  // Expose currently-down bundles as the `nb_bundle_unhealthy` gauge (read
+  // Expose currently-down connectors as the `nb_connector_unhealthy` gauge (read
   // through this provider at scrape time). The gauge stays asserted for the
   // whole outage, unlike the crash counter which goes flat once a source is
   // dead-terminal — so the down-alert resolves only on recovery.
-  registerBundleHealthGauge(() => healthMonitor.getStatus());
+  registerConnectorHealthGauge(() => healthMonitor.getStatus());
 
   // Connection credential re-validation (a disjoint concern from HealthMonitor's
   // transport liveness): poll brokered providers whose upstream account can lapse
@@ -141,7 +141,7 @@ export function startServer(options: ServerOptions): ServerHandle {
   // Per-identity request rate limiters. The limit lives on the caller's
   // trust class, not "is it expensive":
   //   - `/mcp` (mcpLimiter) is the remote/untrusted surface — external MCP
-  //     clients and sandboxed bundle iframes. This is the real abuse vector,
+  //     clients and sandboxed connector iframes. This is the real abuse vector,
   //     so it carries a present-but-generous cap.
   //   - `/v1/tools/call` (toolCallLimiter) is the trusted first-party shell.
   //     Its only failure mode is a runaway client loop, so the ceiling is
@@ -174,7 +174,7 @@ export function startServer(options: ServerOptions): ServerHandle {
   runtimeSink.emit = (event) => {
     // Trace every progress/completion event that reaches the runtime sink.
     // Answers "is the event source actually firing into the SSE wrap?" —
-    // the first thing to check when a bundle's UI isn't updating live.
+    // the first thing to check when a connector's UI isn't updating live.
     // Run with `NB_DEBUG=sse` to enable.
     if ((event.type === "tool.progress" || event.type === "tool.done") && log.debugEnabled("sse")) {
       log.debug("sse", `sink got ${event.type} data=${JSON.stringify(event.data).slice(0, 160)}`);
@@ -182,7 +182,7 @@ export function startServer(options: ServerOptions): ServerHandle {
     originalEmit(event);
     sseManager.emit(event);
 
-    // Broadcast `data.changed` so bundle iframes (Synapse useDataSync) know to
+    // Broadcast `data.changed` so connector iframes (Synapse useDataSync) know to
     // refresh. We broadcast in two situations:
     //
     //   (1) tool.done (ok)      — the call completed; any entity writes have

@@ -1,7 +1,7 @@
 /**
  * "What is this skill called, given only its id" exists in three places, each
  * forced by a boundary that forbids sharing code: the runtime leaf, the
- * conversations bundle (deployable independently), and the web tier (can't
+ * conversations app (deployable independently), and the web tier (can't
  * import from `src/`).
  *
  * They must agree. The defect this whole change fixes was one copy of a naming

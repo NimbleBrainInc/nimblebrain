@@ -7,8 +7,8 @@
  *   - The single tool `write_instructions(body)` writes via storage,
  *     fires `notifications/resources/updated`, and enforces the
  *     workspace-admin gate (no org-role bypass).
- *   - Per-bundle instructions are NOT in this source's surface area —
- *     bundles publish their own `<sourceName>://instructions` resource;
+ *   - Per-connector instructions are NOT in this source's surface area —
+ *     connectors publish their own `<sourceName>://instructions` resource;
  *     the runtime reads it. Verified at integration tier.
  */
 
@@ -71,7 +71,7 @@ class FakeRuntime {
         id: wsId,
         name: wsId,
         members: [{ userId, role }],
-        bundles: [],
+        connectors: [],
         createdAt: "",
         updatedAt: "",
       });
@@ -253,7 +253,7 @@ describe("instructions source — write_instructions", () => {
       .write({ wsId: "ws_demo", text: "existing workspace body", updatedBy: "ui" });
     const client = src.getClient()!;
 
-    for (const scope of ["org", "bundles/foo"]) {
+    for (const scope of ["org", "connectors/foo"]) {
       const result = await client.callTool({
         name: "write_instructions",
         arguments: { scope, body: "org-intended text" },
@@ -458,9 +458,9 @@ describe("instructions source — tool list", () => {
   });
 });
 
-// ── No bundle-list-changed notifications ────────────────────────────────
+// ── No connector-list-changed notifications ────────────────────────────────
 
-describe("instructions source — bundle lifecycle", () => {
+describe("instructions source — connector lifecycle", () => {
   test("does NOT emit list-changed notifications (resource catalog is fixed)", async () => {
     const src = await buildSource();
     const client = src.getClient()!;

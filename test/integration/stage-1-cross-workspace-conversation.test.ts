@@ -101,7 +101,6 @@ describe("conversation access after the owner is removed from its workspace", ()
     mkdirSync(workDir, { recursive: true });
     runtime = await Runtime.start({
       model: { provider: "custom", adapter: createEchoModel() },
-      noDefaultBundles: true,
       logging: { disabled: true },
       workDir,
     });

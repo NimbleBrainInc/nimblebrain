@@ -19,7 +19,7 @@ import { publicOrigin } from "./public-origin.ts";
  * (raw `NB_API_URL`, a `http://_/` placeholder, …) makes the drift check
  * fire on our *own* inconsistency: the client gets re-registered, mints a
  * new `client_id`, and orphans the stored refresh token — after which
- * silent refresh fails and the bundle falls into an interactive flow that
+ * silent refresh fails and the connector falls into an interactive flow that
  * times out headlessly at boot. Resolving every path here keeps the
  * registered redirect_uri identical across paths, so the drift check only
  * fires on a genuine operator change (its intended purpose).

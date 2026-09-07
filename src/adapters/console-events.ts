@@ -58,7 +58,7 @@ function logRunError(event: EngineEvent): void {
   // (e.g. "source.crashed") and finally a generic label.
   const message = event.data.error ?? event.data.event ?? "unknown error";
   console.error(`[engine] error: ${message}`);
-  // Render bundle stderr tail (if any) immediately after the error line,
+  // Render connector stderr tail (if any) immediately after the error line,
   // dimmed and indented so it's visually nested under the crash. Issue #116:
   // keeps the cause-of-death visible without reproducing the failure outside NB.
   const tail = event.data.stderrTail;

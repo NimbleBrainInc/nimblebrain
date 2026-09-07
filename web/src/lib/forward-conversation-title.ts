@@ -2,7 +2,7 @@
  * Forward a live `conversation.title` SSE event to the conversations-list
  * iframe via postMessage.
  *
- * The conversations bundle's Dashboard listens for `synapse/conversation-title`
+ * The conversations app's Dashboard listens for `synapse/conversation-title`
  * and patches the matching row's title in-place. This is the cheap path: a
  * full `data.changed` would force a list refetch, which is what the runtime
  * used to fire on title resolve. Sending the (conversationId, title) tuple

@@ -1,5 +1,5 @@
 /**
- * `cleanupSmitheryBundle` — the only teardown Smithery has.
+ * `cleanupSmitheryConnector` — the only teardown Smithery has.
  *
  * It runs on uninstall and is what keeps a brokered connection (and, for any
  * OAuth-backed Smithery connector, the user's upstream grant that Smithery
@@ -24,11 +24,11 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
-import { BundleLifecycleManager } from "../../src/bundles/lifecycle.ts";
-import type { BundleRef } from "../../src/bundles/types.ts";
+import { ConnectorLifecycleManager } from "../../src/connectors/runtime/lifecycle.ts";
+import type { ConnectorRef } from "../../src/connectors/runtime/types.ts";
 import { ToolRegistry } from "../../src/tools/registry.ts";
 import {
-  cleanupSmitheryBundle,
+  cleanupSmitheryConnector,
   createSmitheryProvider,
 } from "../../src/connectors/providers/smithery/provider.ts";
 import { managedConnectorRegistryOf } from "../../src/connectors/providers/registry.ts";
@@ -70,12 +70,12 @@ function configure(namespace = "current-ns"): void {
   _resetSmitheryConfigForTest();
 }
 
-describe("cleanupSmitheryBundle", () => {
+describe("cleanupSmitheryConnector", () => {
   it("deletes in the namespace recorded on the ref, not the current config", async () => {
     configure("current-ns");
     const { calls } = stubDelete(204);
 
-    const result = await cleanupSmitheryBundle({
+    const result = await cleanupSmitheryConnector({
       connectionId: "nb-abc",
       namespace: "install-time-ns",
       baseUrl: "https://api.smithery.ai",
@@ -96,7 +96,7 @@ describe("cleanupSmitheryBundle", () => {
     _resetSmitheryConfigForTest();
     const { calls } = stubDelete(204);
 
-    await cleanupSmitheryBundle({
+    await cleanupSmitheryConnector({
       connectionId: "nb-abc",
       namespace: "install-time-ns",
       baseUrl: "https://api.smithery.ai",
@@ -113,7 +113,7 @@ describe("cleanupSmitheryBundle", () => {
     configure();
     stubDelete(404);
 
-    const result = await cleanupSmitheryBundle({
+    const result = await cleanupSmitheryConnector({
       connectionId: "nb-abc",
       namespace: "current-ns",
       baseUrl: "https://api.smithery.ai",
@@ -128,7 +128,7 @@ describe("cleanupSmitheryBundle", () => {
 
     // A revoked platform key would otherwise leave the connection — and any
     // upstream grant behind it — alive at the broker with no log line anywhere.
-    const result = await cleanupSmitheryBundle({
+    const result = await cleanupSmitheryConnector({
       connectionId: "nb-abc",
       namespace: "current-ns",
       baseUrl: "https://api.smithery.ai",
@@ -141,7 +141,7 @@ describe("cleanupSmitheryBundle", () => {
     configure();
     stubDelete(500);
 
-    const result = await cleanupSmitheryBundle({
+    const result = await cleanupSmitheryConnector({
       connectionId: "nb-abc",
       namespace: "current-ns",
       baseUrl: "https://api.smithery.ai",
@@ -156,7 +156,7 @@ describe("cleanupSmitheryBundle", () => {
       throw new Error("network down");
     }) as typeof fetch;
 
-    const result = await cleanupSmitheryBundle({
+    const result = await cleanupSmitheryConnector({
       connectionId: "nb-abc",
       namespace: "current-ns",
       baseUrl: "https://api.smithery.ai",
@@ -169,7 +169,7 @@ describe("cleanupSmitheryBundle", () => {
     // No credential — nothing to authenticate with.
     const { calls } = stubDelete(204);
 
-    const result = await cleanupSmitheryBundle({
+    const result = await cleanupSmitheryConnector({
       connectionId: "nb-abc",
       namespace: "current-ns",
       baseUrl: "https://api.smithery.ai",
@@ -183,20 +183,20 @@ describe("cleanupSmitheryBundle", () => {
 
 describe("uninstall → broker teardown wiring", () => {
   /**
-   * The half `cleanupSmitheryBundle`'s own tests cannot reach: that uninstall
+   * The half `cleanupSmitheryConnector`'s own tests cannot reach: that uninstall
    * actually CALLS it. Without this the connection — and, for any OAuth-backed
    * Smithery connector, the user's upstream grant — is orphaned at the broker,
    * which is the failure three review rounds chased.
    */
-  it("issues a DELETE in the ref's namespace when a smithery bundle is uninstalled", async () => {
+  it("issues a DELETE in the ref's namespace when a smithery connector is uninstalled", async () => {
     configure("current-ns");
     const { calls } = stubDelete(204);
 
     const workDir = mkdtempSync(join(tmpdir(), "nb-smithery-uninstall-"));
     try {
-      const lifecycle = new BundleLifecycleManager(new NoopEventSink(), undefined);
+      const lifecycle = new ConnectorLifecycleManager(new NoopEventSink());
       lifecycle.setManagedConnectorRegistry(managedConnectorRegistryOf([createSmitheryProvider()]));
-      const ref: BundleRef = {
+      const ref: ConnectorRef = {
         url: "https://api.smithery.ai/connect/install-time-ns/nb-abc/mcp",
         serverName: "ai-bassethound-mcp",
         oauthScope: "workspace",

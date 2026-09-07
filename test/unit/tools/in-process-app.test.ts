@@ -328,8 +328,8 @@ describe("defineInProcessApp — parametric resources", () => {
         tools: [],
         resources: staticMap,
         listResources: async () => [
-          { uri: "instructions://bundles/foo", mimeType: "text/markdown" },
-          { uri: "instructions://bundles/bar", name: "bar custom" },
+          { uri: "instructions://connectors/foo", mimeType: "text/markdown" },
+          { uri: "instructions://connectors/bar", name: "bar custom" },
         ],
       },
       new NoopEventSink(),
@@ -340,16 +340,16 @@ describe("defineInProcessApp — parametric resources", () => {
     const uris = result.resources.map((r) => r.uri);
     expect(uris).toEqual([
       "instructions://workspace",
-      "instructions://bundles/foo",
-      "instructions://bundles/bar",
+      "instructions://connectors/foo",
+      "instructions://connectors/bar",
     ]);
 
-    const fooEntry = result.resources.find((r) => r.uri === "instructions://bundles/foo");
+    const fooEntry = result.resources.find((r) => r.uri === "instructions://connectors/foo");
     expect(fooEntry?.mimeType).toBe("text/markdown");
     // Dynamic entry without `name` defaults to its URI, matching static-map behavior.
-    expect(fooEntry?.name).toBe("instructions://bundles/foo");
+    expect(fooEntry?.name).toBe("instructions://connectors/foo");
 
-    const barEntry = result.resources.find((r) => r.uri === "instructions://bundles/bar");
+    const barEntry = result.resources.find((r) => r.uri === "instructions://connectors/bar");
     expect(barEntry?.name).toBe("bar custom");
   });
 
@@ -360,9 +360,9 @@ describe("defineInProcessApp — parametric resources", () => {
         version: "1.0.0",
         tools: [],
         resourceHandler: async (uri) => {
-          if (uri.startsWith("instructions://bundles/")) {
-            const bundle = uri.slice("instructions://bundles/".length);
-            return { text: `body for ${bundle}`, mimeType: "text/markdown" };
+          if (uri.startsWith("instructions://connectors/")) {
+            const connector = uri.slice("instructions://connectors/".length);
+            return { text: `body for ${connector}`, mimeType: "text/markdown" };
           }
           return null;
         },
@@ -373,10 +373,10 @@ describe("defineInProcessApp — parametric resources", () => {
 
     const result = await source
       .getClient()!
-      .readResource({ uri: "instructions://bundles/ipinfo" });
+      .readResource({ uri: "instructions://connectors/ipinfo" });
     expect(result.contents).toHaveLength(1);
     const first = result.contents[0]!;
-    expect(first.uri).toBe("instructions://bundles/ipinfo");
+    expect(first.uri).toBe("instructions://connectors/ipinfo");
     expect(first.text).toBe("body for ipinfo");
     expect(first.mimeType).toBe("text/markdown");
   });
@@ -395,7 +395,7 @@ describe("defineInProcessApp — parametric resources", () => {
 
     let captured: unknown;
     try {
-      await source.getClient()!.readResource({ uri: "instructions://bundles/missing" });
+      await source.getClient()!.readResource({ uri: "instructions://connectors/missing" });
     } catch (err) {
       captured = err;
     }
@@ -404,7 +404,7 @@ describe("defineInProcessApp — parametric resources", () => {
     expect(e).toBeDefined();
     // ErrorCode.InvalidParams === -32602
     expect(e?.code).toBe(-32602);
-    expect(String(e?.message ?? "")).toContain("Resource not found: instructions://bundles/missing");
+    expect(String(e?.message ?? "")).toContain("Resource not found: instructions://connectors/missing");
   });
 
   test("static map miss with no resourceHandler still raises InvalidParams (regression)", async () => {
@@ -437,9 +437,9 @@ describe("defineInProcessApp — parametric resources", () => {
         tools: [],
         templates: [
           {
-            uriTemplate: "instructions://bundles/{name}",
-            name: "Bundle instructions",
-            description: "Per-bundle instruction overlay",
+            uriTemplate: "instructions://connectors/{name}",
+            name: "Connector instructions",
+            description: "Per-connector instruction overlay",
             mimeType: "text/markdown",
           },
           {
@@ -455,9 +455,9 @@ describe("defineInProcessApp — parametric resources", () => {
     const result = await source.getClient()!.listResourceTemplates();
     expect(result.resourceTemplates).toHaveLength(2);
     const first = result.resourceTemplates[0]!;
-    expect(first.uriTemplate).toBe("instructions://bundles/{name}");
-    expect(first.name).toBe("Bundle instructions");
-    expect(first.description).toBe("Per-bundle instruction overlay");
+    expect(first.uriTemplate).toBe("instructions://connectors/{name}");
+    expect(first.name).toBe("Connector instructions");
+    expect(first.description).toBe("Per-connector instruction overlay");
     expect(first.mimeType).toBe("text/markdown");
 
     const second = result.resourceTemplates[1]!;

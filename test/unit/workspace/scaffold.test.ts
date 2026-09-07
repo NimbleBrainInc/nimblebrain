@@ -81,7 +81,7 @@ describe("scaffoldWorkspace", () => {
   test("non-credential directories inherit the default umask mode", async () => {
     await scaffoldWorkspace(wsPath);
 
-    // data/ holds non-secret bundle state; we do not force a restrictive mode.
+    // data/ holds non-secret connector state; we do not force a restrictive mode.
     // Compute what mkdir-with-no-mode would produce under the current umask
     // and compare. This keeps the test stable across umask-0o022 dev boxes
     // and umask-0o077 hardened CI runners.

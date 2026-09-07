@@ -94,7 +94,6 @@ describe("cross-workspace resume scopes the file TOOL to the conversation's work
 
     const runtime = await Runtime.start({
       model: { provider: "custom", adapter: createResumeFileToolModel() },
-      noDefaultBundles: true,
       logging: { disabled: true },
       workDir,
     });

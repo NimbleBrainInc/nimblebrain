@@ -90,7 +90,6 @@ describe("POST /v1/chat/stream — run survives client disconnect", () => {
     mkdirSync(workDir, { recursive: true });
     runtime = await Runtime.start({
       model: { provider: "custom", adapter: gatedModel },
-      noDefaultBundles: true,
       logging: { disabled: true },
       workDir,
     });

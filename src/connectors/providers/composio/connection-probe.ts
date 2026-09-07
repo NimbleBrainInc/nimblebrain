@@ -16,12 +16,12 @@
  * verdict.
  */
 
-import { brokeredRef } from "../../../bundles/brokered.ts";
+import { brokeredRef } from "../../../connectors/runtime/brokered.ts";
 import type {
   ConnectionHealthProbe,
   ConnectionLiveness,
   ProbeTarget,
-} from "../../../bundles/connection-probe.ts";
+} from "../../../connectors/runtime/connection-probe.ts";
 import { log } from "../../../observability/log.ts";
 import type { ConnectorDirectory } from "../../../registries/directory.ts";
 import { composioAuthConfigId, validateComposioConfig } from "./config.ts";

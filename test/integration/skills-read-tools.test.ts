@@ -102,7 +102,6 @@ describe("skills read tools — end-to-end", () => {
 
     const runtime = await Runtime.start({
       model: { provider: "custom", adapter: model },
-      noDefaultBundles: true,
       workDir,
       logging: { disabled: true },
       telemetry: { enabled: false },

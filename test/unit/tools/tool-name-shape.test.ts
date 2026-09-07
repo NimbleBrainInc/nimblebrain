@@ -23,7 +23,7 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { slugifyServerName } from "../../../src/bundles/paths.ts";
+import { slugifyServerName } from "../../../src/connectors/runtime/paths.ts";
 import { personalConnectorWireName } from "../../../src/tools/identity-sources.ts";
 
 /** The provider-side alphabet, common to every vendor we target. */

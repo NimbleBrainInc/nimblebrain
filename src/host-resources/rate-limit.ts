@@ -10,15 +10,15 @@ import { McpError } from "@modelcontextprotocol/sdk/types.js";
 const RATE_LIMITED = -32004;
 
 /**
- * Per-(workspace, bundle) rate limit on inbound host-resources requests.
- * Prevents a buggy or runaway bundle from DoSing the FileStore. Resets
+ * Per-(workspace, connector) rate limit on inbound host-resources requests.
+ * Prevents a buggy or runaway connector from DoSing the FileStore. Resets
  * on platform restart — no persistence needed, the limit is a guard
  * rail not an audit trail.
  *
- * Token bucket semantics: a bundle accrues `ratePerSec` tokens per
+ * Token bucket semantics: a connector accrues `ratePerSec` tokens per
  * second up to a `burst` ceiling. Each `check()` debits one token; a
  * call with no tokens throws `-32004 Rate limited` carrying
- * `retryAfterMs` in the error data so a polite bundle can back off
+ * `retryAfterMs` in the error data so a polite connector can back off
  * intelligently. The code sits in the JSON-RPC impl-defined
  * server-error range (`-32000` to `-32099`) — `-32603 InternalError`
  * would mis-signal a deliberate quota response as a server fault.
@@ -31,14 +31,14 @@ const RATE_LIMITED = -32004;
  * - ratePerSec: 100   (every 10ms is the steady-state floor)
  * - burst:     1000   (10 seconds of slack for bursty workloads)
  *
- * A bundle that hits these defaults is doing something unusual.
+ * A connector that hits these defaults is doing something unusual.
  */
 export interface HostResourcesRateLimit {
   /**
-   * Debits one token from the (workspace, bundle) bucket. Throws when
+   * Debits one token from the (workspace, connector) bucket. Throws when
    * the bucket is empty.
    */
-  check(workspaceId: string, bundleId: string): void;
+  check(workspaceId: string, connectorId: string): void;
 }
 
 export interface RateLimitOptions {
@@ -58,8 +58,8 @@ interface Bucket {
 
 export class TokenBucketRateLimit implements HostResourcesRateLimit {
   // No eviction by design — bucket count is bounded by the number of
-  // distinct `(workspaceId, bundleId)` pairs the runtime has ever
-  // seen, which is itself bounded by installed bundles × active
+  // distinct `(workspaceId, connectorId)` pairs the runtime has ever
+  // seen, which is itself bounded by installed connectors × active
   // workspaces. The map is per-runtime, so a process restart resets
   // it; that's the operational pressure-release valve at scale.
   private readonly buckets = new Map<string, Bucket>();
@@ -73,8 +73,8 @@ export class TokenBucketRateLimit implements HostResourcesRateLimit {
     this.now = opts.now ?? Date.now;
   }
 
-  check(workspaceId: string, bundleId: string): void {
-    const key = `${workspaceId}|${bundleId}`;
+  check(workspaceId: string, connectorId: string): void {
+    const key = `${workspaceId}|${connectorId}`;
     const now = this.now();
     const existing = this.buckets.get(key);
     const bucket: Bucket = existing ?? { tokens: this.burst, lastRefillMs: now };

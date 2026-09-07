@@ -11,7 +11,7 @@ import { makeTestWorkDir } from "../helpers/test-workdir.ts";
 /**
  * A fresh install reaches provisioning from two directions at once: the
  * connection-reached-running observer, fired from inside the awaited
- * `startBundleSource`, and the install handler on the line after the eager
+ * `startConnectorSource`, and the install handler on the line after the eager
  * start returns.
  *
  * Without coalescing, both read the workspace before either writes, both see no
@@ -153,8 +153,8 @@ describe("concurrent provisioning of one stream", () => {
     // but only the last writer's map survives, so the loser holds a URL whose
     // kid exists nowhere and every delivery on it 404s silently.
     //
-    // This is boot's ordinary shape, not an exotic one: `seedWorkspaceBundleInstances`
-    // walks every workspace bundle in a synchronous loop with the observer
+    // This is boot's ordinary shape, not an exotic one: `seedWorkspaceConnectorInstances`
+    // walks every workspace connector in a synchronous loop with the observer
     // already armed, so N hooks-declaring connectors fan out N reconciles that
     // all read before any of them writes.
     const deps = makeDeps({ declarationsFor: async () => [DECL] });
@@ -197,7 +197,7 @@ describe("concurrent provisioning of one stream", () => {
 describe("a manifest that breaks the hook contract", () => {
   test("provisions nothing and names the offending declaration", async () => {
     // The check cannot precede the install commit — it needs the server's tool
-    // list, and the source is not started until after the bundle ref is
+    // list, and the source is not started until after the connector ref is
     // written. So it throws, the caller turns it into a warning on a successful
     // install, and nothing is half-provisioned.
     const deps = makeDeps({

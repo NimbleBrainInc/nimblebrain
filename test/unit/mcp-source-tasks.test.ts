@@ -260,7 +260,7 @@ describe("McpSource agent-loop (callToolAsTask wrapper)", () => {
     // Regression: the upstream SDK's task stream emits an
     // `McpError(InternalError, "Task <id> failed")` whenever the server-
     // side task status is `failed`, discarding the server's
-    // `tasks/result` payload. A bundle that misclassified its own
+    // `tasks/result` payload. A connector that misclassified its own
     // terminal status (post-result exception flipping COMPLETED→FAILED
     // while a usable payload was already stored — the synapse-research
     // production failure mode) would otherwise surface to the agent as
@@ -331,11 +331,11 @@ describe("McpSource agent-loop (callToolAsTask wrapper)", () => {
     );
   });
 
-  it("does NOT attempt recovery when error message is bundle-specific (not generic SDK shape)", async () => {
+  it("does NOT attempt recovery when error message is connector-specific (not generic SDK shape)", async () => {
     // The recovery path keys off the SDK's exact generic format
     // `Task <id> failed` (with or without the McpError wrapping
     // prefix) — anything else carries real information from the
-    // bundle and should be surfaced verbatim, not overridden.
+    // connector and should be surfaced verbatim, not overridden.
     let getResultCalled = false;
     const { sink } = recordingSink();
     const source = buildTaskAugmentedSource(sink, {

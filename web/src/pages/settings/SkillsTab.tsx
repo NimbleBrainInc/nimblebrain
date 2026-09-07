@@ -163,7 +163,7 @@ function tierChrome(
       // for anyone else it would silently bounce to /profile.
       ...(canManageOrg ? { manageTo: "/org/skills", manageLabel: "Manage in org settings" } : {}),
     };
-  // The only other context tier any surface renders is the system bundle.
+  // The only other context tier any surface renders is the system connector.
   return { label: "System · built in" };
 }
 

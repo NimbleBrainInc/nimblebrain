@@ -38,7 +38,6 @@ async function getRuntime(): Promise<Runtime> {
   runtime = await Runtime.start({
     model: { provider: "anthropic", apiKey },
     defaultModel: DEFAULT_MODEL,
-    noDefaultBundles: true,
     workDir,
     maxIterations: 3,
     telemetry: { enabled: false },

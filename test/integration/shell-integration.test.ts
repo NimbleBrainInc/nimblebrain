@@ -8,11 +8,11 @@ import { startServer } from "../../src/api/server.ts";
 import type { ServerHandle } from "../../src/api/server.ts";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import type { BundleRef, PlacementDeclaration } from "../../src/bundles/types.ts";
+import type { ConnectorRef, PlacementDeclaration } from "../../src/connectors/runtime/types.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
 
 // ---------------------------------------------------------------------------
-// Test setup: Runtime + HTTP server + temp directory for bundles
+// Test setup: Runtime + HTTP server + temp directory for connectors
 // ---------------------------------------------------------------------------
 
 const testDir = join(tmpdir(), `nimblebrain-shell-integ-${Date.now()}`);
@@ -27,7 +27,6 @@ beforeAll(async () => {
 
 	runtime = await Runtime.start({
 		model: { provider: "custom", adapter: createEchoModel() },
-		noDefaultBundles: true,
 		workDir,
 		logging: { disabled: true },
 	});
@@ -49,7 +48,7 @@ afterAll(async () => {
 
 /**
  * Seed one connector into the workspace and register whatever chrome it
- * declares. Placements ride on the `BundleRef.ui` the install path copies from
+ * declares. Placements ride on the `ConnectorRef.ui` the install path copies from
  * the operator-trusted catalog entry, so the shell surface needs no live
  * source to render them.
  */
@@ -57,7 +56,7 @@ async function installConnector(
 	name: string,
 	placements: PlacementDeclaration[],
 ): Promise<string> {
-	const ref: BundleRef = {
+	const ref: ConnectorRef = {
 		url: `https://${name}.example.com/mcp`,
 		serverName: name,
 		ui: { name: `${name} App`, icon: `${name}-icon`, placements },

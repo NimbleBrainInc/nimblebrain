@@ -23,7 +23,7 @@
  *   - top-level/`meta` `version`      → `metadata.version` (canonical conventional)
  *
  * DROPPED (deliberately, matching the cutover): `type` (replaced by
- * `loading-strategy`), `requires-bundles` (bundles are sunset), `metadata.keywords`
+ * `loading-strategy`), `requires-bundles` (the dependency concept it named is gone), `metadata.keywords`
  * (folded into description at authoring time), top-level `scope` (stamped from the
  * directory tier at load, never persisted), and any non-canonical `metadata.*`
  * keys the runtime doesn't model (e.g. `tags`, `category`).

@@ -16,7 +16,7 @@
 //
 //   3. **GENERIC.** This component knows nothing about any specific capability.
 //      It renders any artifact of a supported media type and falls back to a
-//      download affordance for anything else — never an error, never per-bundle
+//      download affordance for anything else — never an error, never per-connector
 //      rendering code.
 //
 //   4. **Open `type` for meaning · standard `mime_type` for format · closed,

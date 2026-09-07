@@ -25,7 +25,7 @@ import { SkeletonCards, SkeletonRows } from "./Skeleton.tsx";
 async function fetchAllAutomations(
   call: (args: Record<string, unknown>) => Promise<{ data?: unknown }>,
 ): Promise<{ items: AutomationSummary[]; exhausted: boolean }> {
-  // 500 is AUTOMATIONS_LIST_MAX_LIMIT; a literal because this bundle's Vite
+  // 500 is AUTOMATIONS_LIST_MAX_LIMIT; a literal because this app's Vite
   // tsconfig scopes to its own src and cannot import src/limits.ts.
   const PAGE = 500;
   const MAX_PAGES = 50;

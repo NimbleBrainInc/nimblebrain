@@ -3,7 +3,7 @@ import type {
   ComposioConnectField,
   ComposioConnectorConfig,
   SecretHeaderRef,
-} from "../_generated/connector-registry/connectors/server-detail";
+} from "../_generated/connector-registry/connectors/catalog/server-detail";
 import type {
   ConnectorCatalogEntry,
   DirectoryEntry,
@@ -565,7 +565,7 @@ export const refreshSession = refreshInterceptor.tryRefresh;
 // ---------------------------------------------------------------------------
 
 /**
- * Initiate an interactive OAuth flow for a remote URL bundle that's in
+ * Initiate an interactive OAuth flow for a remote URL connector that's in
  * `pending_auth`. Sets a session-bound `nb_oauth_state` cookie scoped
  * to `/v1/mcp-auth/callback` and returns the authorization URL the
  * caller must navigate the user's browser to (typically via
@@ -658,7 +658,7 @@ export async function initiateComposioOAuth(
  */
 export interface InstalledConnector {
   serverName: string;
-  bundleName: string;
+  connectorName: string;
   /** Declared version — the catalog/manifest's stated version. */
   version: string;
   /**
@@ -703,7 +703,7 @@ export interface InstalledConnector {
   };
   /**
    * Generic, type-agnostic UI status. Derived server-side from the
-   * underlying BundleState + credential probes so list-page pills,
+   * underlying ConnectionState + credential probes so list-page pills,
    * detail-page hero, and any future surface read one value.
    *
    *   ready          — works
@@ -874,8 +874,8 @@ export async function disconnectConnector(
 }
 
 /**
- * Full uninstall — works for any bundle type. For OAuth connectors,
- * revokes tokens upstream first; for local bundles, just removes from
+ * Full uninstall — works for any connector type. For OAuth connectors,
+ * revokes tokens upstream first; for local connectors, just removes from
  * workspace.json. Drops tool permissions associated with the connector.
  */
 export async function uninstallConnector(

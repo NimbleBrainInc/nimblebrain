@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { bundleHasStaticAuth } from "../../src/bundles/bundle-auth.ts";
-import { WORKSPACE_PRINCIPAL_ID } from "../../src/bundles/connection.ts";
-import { BundleLifecycleManager } from "../../src/bundles/lifecycle.ts";
-import type { BundleRef } from "../../src/bundles/types.ts";
+import { connectorHasStaticAuth } from "../../src/connectors/runtime/connector-auth.ts";
+import { WORKSPACE_PRINCIPAL_ID } from "../../src/connectors/runtime/connection.ts";
+import { ConnectorLifecycleManager } from "../../src/connectors/runtime/lifecycle.ts";
+import type { ConnectorRef } from "../../src/connectors/runtime/types.ts";
 import type { ManagedConnectorProvider } from "../../src/connectors/providers/managed-provider.ts";
 import { managedConnectorRegistryOf } from "../../src/connectors/providers/registry.ts";
 import type { EngineEvent, EventSink } from "../../src/engine/types.ts";
@@ -11,7 +11,7 @@ class NoopSink implements EventSink {
   emit(_event: EngineEvent): void {}
 }
 
-function providerRef(): BundleRef {
+function providerRef(): ConnectorRef {
   return {
     url: "https://web.svc.test/mcp",
     serverName: "web",
@@ -22,31 +22,31 @@ function providerRef(): BundleRef {
   };
 }
 
-describe("bundleHasStaticAuth", () => {
-  test("provider-auth url bundle has static auth", () => {
-    expect(bundleHasStaticAuth(providerRef())).toBe(true);
+describe("connectorHasStaticAuth", () => {
+  test("provider-auth url connector has static auth", () => {
+    expect(connectorHasStaticAuth(providerRef())).toBe(true);
   });
 
-  test("bearer and header url bundles have static auth", () => {
+  test("bearer and header url connectors have static auth", () => {
     expect(
-      bundleHasStaticAuth({ url: "u", transport: { auth: { type: "bearer", token: "t" } } }),
+      connectorHasStaticAuth({ url: "u", transport: { auth: { type: "bearer", token: "t" } } }),
     ).toBe(true);
     expect(
-      bundleHasStaticAuth({
+      connectorHasStaticAuth({
         url: "u",
         transport: { auth: { type: "header", name: "X-Key", value: "v" } },
       }),
     ).toBe(true);
   });
 
-  test("auth:none and no-auth url bundles are NOT static (they take the OAuth path)", () => {
-    expect(bundleHasStaticAuth({ url: "u", transport: { auth: { type: "none" } } })).toBe(false);
-    expect(bundleHasStaticAuth({ url: "u" })).toBe(false);
+  test("auth:none and no-auth url connectors are NOT static (they take the OAuth path)", () => {
+    expect(connectorHasStaticAuth({ url: "u", transport: { auth: { type: "none" } } })).toBe(false);
+    expect(connectorHasStaticAuth({ url: "u" })).toBe(false);
   });
 
-  test("named and local-path bundles are not static-auth url sources", () => {
-    expect(bundleHasStaticAuth({ name: "n" })).toBe(false);
-    expect(bundleHasStaticAuth({ path: "/p" })).toBe(false);
+  test("named and local-path connectors are not static-auth url sources", () => {
+    expect(connectorHasStaticAuth({ name: "n" })).toBe(false);
+    expect(connectorHasStaticAuth({ path: "/p" })).toBe(false);
   });
 });
 
@@ -57,7 +57,7 @@ describe("seedInstance — provider-auth fleet source", () => {
   // spin a bogus OAuth flow against a server with no OAuth. It must seed
   // `running` (auto-connected) instead.
   test("seeds running, not not_authenticated", async () => {
-    const lifecycle = new BundleLifecycleManager(new NoopSink(), undefined);
+    const lifecycle = new ConnectorLifecycleManager(new NoopSink());
     await lifecycle.seedInstance(
       "web",
       "https://web.svc.test/mcp",
@@ -72,7 +72,7 @@ describe("seedInstance — provider-auth fleet source", () => {
   });
 
   // Regression guard for the asymmetry that bit the first cut of this fix: a
-  // brokered bundle ALSO carries static transport auth, so `bundleHasStaticAuth`
+  // brokered connector ALSO carries static transport auth, so `connectorHasStaticAuth`
   // is true for it — but its broker may still need a per-owner connect. The gate
   // must ask the PROVIDER first. An unconnected brokered connector must seed
   // `not_authenticated`, not `running`, or the UI loses its Connect button and
@@ -81,7 +81,7 @@ describe("seedInstance — provider-auth fleet source", () => {
   // Tested through a fake provider, not a vendor: the kernel's contract is
   // "ask whoever owns this ref", and that is what must hold for provider #3.
   test("an unconnected brokered connector seeds not_authenticated (the provider's verdict wins over static-auth)", async () => {
-    const lifecycle = new BundleLifecycleManager(new NoopSink(), undefined);
+    const lifecycle = new ConnectorLifecycleManager(new NoopSink());
     lifecycle.setManagedConnectorRegistry(
       managedConnectorRegistryOf([exampleBroker({ connected: false })]),
     );
@@ -98,7 +98,7 @@ describe("seedInstance — provider-auth fleet source", () => {
   });
 
   test("a connected brokered connector seeds running", async () => {
-    const lifecycle = new BundleLifecycleManager(new NoopSink(), undefined);
+    const lifecycle = new ConnectorLifecycleManager(new NoopSink());
     lifecycle.setManagedConnectorRegistry(
       managedConnectorRegistryOf([exampleBroker({ connected: true })]),
     );
@@ -117,7 +117,7 @@ describe("seedInstance — provider-auth fleet source", () => {
   // A provider with nothing to connect per-owner omits `hasConnection`, and the
   // generic static-auth check answers — the Smithery shape.
   test("a brokered connector whose provider has no hasConnection falls back to static-auth", async () => {
-    const lifecycle = new BundleLifecycleManager(new NoopSink(), undefined);
+    const lifecycle = new ConnectorLifecycleManager(new NoopSink());
     lifecycle.setManagedConnectorRegistry(managedConnectorRegistryOf([exampleBroker({})]));
     await lifecycle.seedInstance(
       "gmail",
@@ -133,7 +133,7 @@ describe("seedInstance — provider-auth fleet source", () => {
 });
 
 /** A brokered ref carrying static transport auth — the shape the gate must not mistake for "ready". */
-function brokeredRef(): BundleRef {
+function brokeredRef(): ConnectorRef {
   return {
     url: "https://broker.test/session/abc/mcp",
     serverName: "gmail",

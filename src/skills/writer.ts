@@ -32,7 +32,7 @@ export class SkillFrontmatterValidationError extends Error {
 // ---------------------------------------------------------------------------
 // Skill file CRUD — atomic persistence for skill markdown files.
 //
-// Uses the write-temp-then-rename pattern from BundleLifecycleManager to
+// Uses the write-temp-then-rename pattern from ConnectorLifecycleManager to
 // prevent partial writes from corrupting existing files.
 // ---------------------------------------------------------------------------
 

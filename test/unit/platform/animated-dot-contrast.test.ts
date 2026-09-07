@@ -49,7 +49,7 @@ const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
  * silently. Nothing in any themed tree is written that way today — verified by
  * re-running the sweep with an unrestricted selector alphabet, which finds the
  * same eight — so widening now would add a regex that has never once fired.
- * Widen it when a bundle first needs one of those shapes, not before.
+ * Widen it when a connector first needs one of those shapes, not before.
  */
 const LOOPING_TOKEN_RULE =
   /([.#][\w-]+(?:\s*,\s*[.#][\w-]+)*)\s*\{([^}]*animation:[^;]*\binfinite\b[^}]*)\}/g;
@@ -77,7 +77,7 @@ function derivedCandidates(): { file: string; selector: string }[] {
  * This list is checked AGAINST the derived set, not trusted in place of it.
  * The first version of this guard was a hand-maintained constant and drifted
  * immediately: it covered `.dot-running` while `.conv-streaming-dot` sat one
- * bundle over at 1.93:1, already measured and written into a comment. A guard
+ * connector over at 1.93:1, already measured and written into a comment. A guard
  * whose scope is narrower than its rule is the shape {@link ./themed-trees.ts}
  * argues against, so a new looping indicator now fails CI until it is either
  * asserted here or exempted with a reason.
@@ -109,13 +109,13 @@ const EXEMPT: Record<string, string> = Object.fromEntries(
     ["home", ".skel", "loading skeleton — as above"],
     ["files", ".file-thumb-shimmer", "thumbnail placeholder — replaced by the image"],
     ["files", ".detail-shimmer", "detail-pane placeholder — replaced by content"],
-  ].map(([bundle, sel, why]) => [`${bundle}::${sel}`, why]),
+  ].map(([connector, sel, why]) => [`${connector}::${sel}`, why]),
 );
 
-/** Key an exemption the way GUARDED is keyed: per bundle, not per name. */
+/** Key an exemption the way GUARDED is keyed: per connector, not per name. */
 function exemptKey(file: string, selector: string): string {
-  const bundle = relative(REPO, file).split("/")[2] ?? relative(REPO, file);
-  return `${bundle}::${selector}`;
+  const connector = relative(REPO, file).split("/")[2] ?? relative(REPO, file);
+  return `${connector}::${selector}`;
 }
 
 /**
@@ -124,10 +124,10 @@ function exemptKey(file: string, selector: string): string {
  * A `.ts` entry is EVALUATED rather than slurped as text, because
  * `automations/ui/src/styles.ts` is one big template literal and a stray
  * backtick in a comment terminates it. That is not theoretical: it happened,
- * and nothing caught it — `vite build` bundles without evaluating, the root
+ * and nothing caught it — `vite build` connectors without evaluating, the root
  * tsconfig excludes `src/platform/*&#47;ui`, and a `readFileSync` guard is
  * perfectly happy to parse a file the runtime cannot load. Importing it means a
- * bundle that would render a blank iframe fails here instead.
+ * connector that would render a blank iframe fails here instead.
  */
 async function loadCss(file: string): Promise<string> {
   if (!file.endsWith(".ts")) return readFileSync(file, "utf8");
@@ -257,7 +257,7 @@ for (const { what, selector, css } of LOADED) {
     /**
      * Every ground the indicator renders on, derived rather than listed.
      *
-     * The page and the card are the obvious two. The third, where a bundle has
+     * The page and the card are the obvious two. The third, where a connector has
      * one, is the row hover fill: `automations` paints a 30% mix of the border
      * token in `.run-row:hover` and `.rail-auto-item:hover`, and every dot in
      * that rail and run list renders inside one of those rows

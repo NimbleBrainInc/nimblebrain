@@ -607,12 +607,12 @@ export function friendlyError(raw: string): { code: string; message: string } {
 
 /** Handle GET /v1/health */
 export function handleHealth(healthMonitor: HealthMonitor | null): Response {
-  const bundleHealth = healthMonitor?.getStatus() ?? [];
+  const connectorHealth = healthMonitor?.getStatus() ?? [];
   return json({
     status: "ok",
     version: VERSION,
     buildSha: process.env.NB_BUILD_SHA || null,
-    bundles: bundleHealth.map((b) => ({ name: b.name, state: b.state })),
+    connectors: connectorHealth.map((b) => ({ name: b.name, state: b.state })),
   });
 }
 
@@ -621,7 +621,7 @@ export function handleHealth(healthMonitor: HealthMonitor | null): Response {
  * is installed but missing?
  *
  * Registry membership is the authoritative "is this available here?" check, but
- * a source can be installed and absent: a remote bundle whose endpoint was
+ * a source can be installed and absent: a remote connector whose endpoint was
  * unreachable during the boot loop, or one torn down by a reconnect without a
  * re-add. Treating absent as permanently-gone is what turns a dependency that
  * was down for seconds into an app that stays broken until the pod restarts.
@@ -703,7 +703,7 @@ export async function handleResourceProxy(
   }
 
   // Workspace apps — resolve the workspace and authorize membership. Both
-  // platform built-ins and user-installed bundles are MCP servers reachable
+  // platform built-ins and user-installed connectors are MCP servers reachable
   // through the workspace registry; registry membership is the authoritative
   // "is this app available to this workspace?" check. A qualified
   // `ws_<id>-<app>` (a cross-workspace app icon / primary preview surfaced
@@ -753,8 +753,8 @@ export async function handleResourceProxy(
  *
  * Two sources of truth depending on the app's lineage:
  *
- *   - User-installed bundles publish placements via their manifest, which
- *     the bundle lifecycle exposes on `BundleInstance.ui.placements`.
+ *   - User-installed connectors publish placements via their manifest, which
+ *     the connector lifecycle exposes on `ConnectorInstance.ui.placements`.
  *   - Platform built-ins are in-process MCP sources whose placements live
  *     on the McpSource (`getPlacements()`); they have no lifecycle entry.
  *
@@ -1013,7 +1013,7 @@ export async function handleReadResource(
   }
 
   // `artifact://` is host-resolved against the shared data plane, not against
-  // any producing bundle — the bundle is never in the read path. It carries no
+  // any producing connector — the connector is never in the read path. It carries no
   // `server`, and resolution is uniform across every capability. Intercept it
   // here, before per-source routing, and read as the VIEWING USER: the verified
   // workspace from the request scopes the minted read token, and RLS in the data
@@ -1634,7 +1634,7 @@ export async function handleBootstrap(
       name: ws.name,
       role: ws.members.find((m) => m.userId === identity.id)!.role,
       memberCount: ws.members.length,
-      bundleCount: ws.bundles.length,
+      connectorCount: ws.connectors.length,
       // `isPersonal` defaults to `false` on disk for pre-Stage-1 workspaces;
       // backfilled eagerly by the personal-workspace migration.
       isPersonal: ws.isPersonal === true,

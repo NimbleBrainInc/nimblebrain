@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { sanitizePlacements } from "../../src/bundles/defaults.ts";
-import type { PlacementDeclaration } from "../../src/bundles/types.ts";
-import type { ServerDetail } from "../../src/connectors/server-detail.ts";
+import { sanitizePlacements } from "../../src/connectors/runtime/defaults.ts";
+import type { PlacementDeclaration } from "../../src/connectors/runtime/types.ts";
+import type { ServerDetail } from "../../src/connectors/catalog/server-detail.ts";
 import { serverDetailToCatalogEntry } from "../../src/registries/projection.ts";
 import { PlacementRegistry } from "../../src/runtime/placement-registry.ts";
 
@@ -97,7 +97,7 @@ describe("serverDetailToCatalogEntry — interactive badge is derived, not trust
 describe("registration sanitizes before the registry (install AND boot paths)", () => {
   // Both registration sites — install (lifecycle.registerPlacements) and boot
   // (runtime.ts workspace loop) — must sanitize before PlacementRegistry.register.
-  // The earlier gap: placements persist RAW on the BundleRef, so a spoof dropped
+  // The earlier gap: placements persist RAW on the ConnectorRef, so a spoof dropped
   // at install would re-register verbatim at boot. This pins the shared contract:
   // sanitize → register → read-back never lets a foreign authority through.
   function registerLikeRuntime(reg: PlacementRegistry, server: string, raw: PlacementDeclaration[], wsId: string) {

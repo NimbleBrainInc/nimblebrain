@@ -103,7 +103,7 @@ beforeAll(async () => {
   mkdirSync(testDir, { recursive: true });
   // Two scripted turns:
   //  1. Model "calls" a tool — forces the engine to issue a second iteration.
-  //     The system tool `nb__list_apps` exists on every workspace (no bundles
+  //     The system tool `nb__list_apps` exists on every workspace (no connectors
   //     required), so we don't need to install anything to satisfy the call.
   //  2. Model produces final text.
   const { model, prompts } = createRecordingModel([
@@ -117,7 +117,6 @@ beforeAll(async () => {
 
   runtime = await Runtime.start({
     model: { provider: "custom", adapter: model },
-    noDefaultBundles: true,
     logging: { disabled: true },
     workDir: testDir,
   });

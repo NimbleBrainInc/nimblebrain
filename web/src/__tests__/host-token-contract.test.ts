@@ -39,7 +39,7 @@
  *
  * The SDK import resolves from the ROOT `node_modules`, not `web/`'s — `web/` has
  * no `@nimblebrain/synapse` pin, and shouldn't get one: the version under test
- * must be the version the bundle UIs and root install, and a second manifest is a
+ * must be the version the connector UIs and root install, and a second manifest is a
  * second thing to keep in sync. CI installs root before `web/` (`ci.yml`), so the
  * hoisted copy is always present.
  */

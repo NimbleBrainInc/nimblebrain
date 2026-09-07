@@ -8,7 +8,7 @@ export const DEFAULT_HSTS = "max-age=31536000; includeSubDomains";
 
 /**
  * Default CSP: locks the API down to nothing. JSON and SSE responses are
- * unaffected. Bundle UI HTML served from /v1/apps/... is consumed by the
+ * unaffected. Connector UI HTML served from /v1/apps/... is consumed by the
  * iframe bridge via fetch + srcdoc (where the response CSP does not apply),
  * so a restrictive header actively protects against someone opening that
  * HTML directly in a browser.

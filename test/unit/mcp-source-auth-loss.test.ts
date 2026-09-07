@@ -14,7 +14,7 @@ import type { WorkspaceOAuthProvider } from "../../src/tools/workspace-oauth-pro
 
 function startedRemoteSource(opts: {
   callTool: () => Promise<unknown>;
-  // Omit to model a static-auth remote (e.g. a Composio x-api-key bundle)
+  // Omit to model a static-auth remote (e.g. a Composio x-api-key connector)
   // that has no OAuth provider — the reauth branch must NOT fire for it.
   notifyAuthLost?: () => void;
 }): McpSource {
@@ -66,7 +66,7 @@ describe("McpSource — auth loss on a tool call (detect-on-use)", () => {
   });
 
   it("UnauthorizedError on a static-auth remote (no provider) does NOT show reauth", async () => {
-    // A Composio bundle authenticates with a static x-api-key header — no
+    // A Composio connector authenticates with a static x-api-key header — no
     // OAuth provider. A 401 there is a bad operator credential, not a
     // user-reconnectable token: the branch is gated on authProvider, so it
     // falls through to the normal error path instead of a misleading

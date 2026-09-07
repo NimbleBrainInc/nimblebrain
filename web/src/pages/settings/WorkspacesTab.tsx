@@ -21,7 +21,7 @@ interface Workspace {
   id: string;
   name: string;
   memberCount: number;
-  bundles?: Array<{ name?: string; path?: string }>;
+  connectors?: Array<{ name?: string; path?: string }>;
   createdAt?: string;
 }
 
@@ -129,7 +129,7 @@ function WorkspaceRow({
     <TableRow className="cursor-pointer" onClick={onOpen}>
       <TableCell className="font-medium">{workspace.name}</TableCell>
       <TableCell>{workspace.memberCount}</TableCell>
-      <TableCell>{workspace.bundles?.length ?? 0}</TableCell>
+      <TableCell>{workspace.connectors?.length ?? 0}</TableCell>
       <TableCell className="text-muted-foreground">{formatDate(workspace.createdAt)}</TableCell>
       {isAdmin && (
         <TableCell>
@@ -152,7 +152,7 @@ function WorkspaceRow({
   );
 }
 
-/** Table listing all workspaces with member, bundle, and created-date columns. */
+/** Table listing all workspaces with member, connector, and created-date columns. */
 function WorkspacesTable({
   workspaces,
   isAdmin,
@@ -172,7 +172,7 @@ function WorkspacesTable({
         <TableRow>
           <TableHead>Name</TableHead>
           <TableHead>Members</TableHead>
-          <TableHead>Bundles</TableHead>
+          <TableHead>Connectors</TableHead>
           <TableHead>Created</TableHead>
           {isAdmin && <TableHead className="w-[60px]" />}
         </TableRow>
@@ -304,7 +304,7 @@ export function WorkspacesTab() {
   return (
     <SettingsListPage
       title="Workspaces"
-      description="Manage workspaces and their bundles."
+      description="Manage workspaces and their connectors."
       loading={loading}
       loadingMessage="Loading workspaces..."
       loadError={error}

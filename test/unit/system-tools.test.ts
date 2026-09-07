@@ -753,7 +753,7 @@ describe("status tool — scope: skills", () => {
 			() => registry,
 			undefined,
 			undefined,
-			lifecycleMock as unknown as import("../../src/bundles/lifecycle.ts").BundleLifecycleManager,
+			lifecycleMock as unknown as import("../../src/connectors/runtime/lifecycle.ts").ConnectorLifecycleManager,
 			undefined,
 			undefined,
 			undefined,
@@ -1295,9 +1295,9 @@ describe("nb__read_resource system tool", () => {
 	});
 
 	// Description signals the supported URI schemes so the agent can discover
-	// the platform-published `instructions://` resources and bundle-published
-	// `<bundle>://...` resources without having to be told about each one.
-	it("description references instructions:// and bundle-scheme URIs alongside skill:// / ui://", async () => {
+	// the platform-published `instructions://` resources and connector-published
+	// `<connector>://...` resources without having to be told about each one.
+	it("description references instructions:// and connector-scheme URIs alongside skill:// / ui://", async () => {
 		const registry = new ToolRegistry();
 		const systemTools = await createSystemTools(() => registry);
 		const tools = await systemTools.tools();

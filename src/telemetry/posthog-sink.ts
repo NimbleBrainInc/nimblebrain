@@ -34,7 +34,7 @@ type EventHandler = (data: Record<string, unknown>, runId: string | undefined) =
  * via TelemetryManager. Accumulates per-run metrics keyed by runId,
  * supporting concurrent runs without cross-contamination.
  *
- * CRITICAL: Never captures bundle names, paths, tool names, error messages,
+ * CRITICAL: Never captures connector names, paths, tool names, error messages,
  * or any string that could contain PII.
  */
 export class PostHogEventSink implements EventSink {
@@ -53,8 +53,8 @@ export class PostHogEventSink implements EventSink {
     "run.start": (data, runId) => this.captureRunStart(data, runId),
     "run.done": (data, runId) => this.captureRunDone(data, runId),
     "run.error": (data, runId) => this.captureRunError(data, runId),
-    "bundle.installed": (data) => this.captureBundleInstalled(data),
-    "bundle.uninstalled": (data) => this.captureBundleUninstalled(data),
+    "connector.installed": (data) => this.captureConnectorInstalled(data),
+    "connector.uninstalled": (data) => this.captureConnectorUninstalled(data),
   };
 
   constructor(telemetry: TelemetryManager) {
@@ -149,16 +149,16 @@ export class PostHogEventSink implements EventSink {
     if (runId) this.runs.delete(runId);
   }
 
-  /** Capture bundle.installed with UI presence. Every connector is remote. */
-  private captureBundleInstalled(data: Record<string, unknown>): void {
-    this.telemetry.capture("bundle.installed", {
+  /** Capture connector.installed with UI presence. Every connector is remote. */
+  private captureConnectorInstalled(data: Record<string, unknown>): void {
+    this.telemetry.capture("connector.installed", {
       source: "remote",
       has_ui: Boolean(data.ui),
     });
   }
 
-  /** Capture bundle.uninstalled. */
-  private captureBundleUninstalled(_data: Record<string, unknown>): void {
-    this.telemetry.capture("bundle.uninstalled", { source: "remote" });
+  /** Capture connector.uninstalled. */
+  private captureConnectorUninstalled(_data: Record<string, unknown>): void {
+    this.telemetry.capture("connector.uninstalled", { source: "remote" });
   }
 }

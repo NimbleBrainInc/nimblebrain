@@ -27,7 +27,7 @@ export const workspacesSource: CommandSource = {
     for (const ws of ordered) {
       const isCurrent = ws.id === ctx.activeWorkspaceId;
       const role = ws.userRole;
-      const appCount = ws.bundles?.length ?? 0;
+      const appCount = ws.connectors?.length ?? 0;
       const subtitleParts = [
         isCurrent ? "current" : undefined,
         role,

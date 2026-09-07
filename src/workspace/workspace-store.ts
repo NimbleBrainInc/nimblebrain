@@ -150,7 +150,7 @@ export function personalWorkspaceSlugFor(userId: string): string {
  * the caller cleanly falls back to the opaque id. Deliberately non-throwing:
  * a cosmetic label must never block an auth flow. Constructs a throwaway
  * store from `workDir` — cheap, and these are infrequent (interactive auth
- * start / bundle boot) paths, not hot loops.
+ * start / connector boot) paths, not hot loops.
  */
 export async function resolveWorkspaceDisplayName(
   workDir: string,
@@ -464,7 +464,7 @@ export class WorkspaceStore {
       id,
       name,
       members,
-      bundles: [],
+      connectors: [],
       createdAt: now,
       updatedAt: now,
       isPersonal,
@@ -491,7 +491,7 @@ export class WorkspaceStore {
       Pick<
         Workspace,
         | "name"
-        | "bundles"
+        | "connectors"
         | "skillDirs"
         | "models"
         | "identity"

@@ -64,7 +64,7 @@ Rules:
 - Write like a human assistant, not a monitoring dashboard. "2 follow-ups overdue" not "2 interaction entities with follow_up_date < now".
 - Use concrete numbers and names from the facet data.
 - If facet data is empty or zero, skip it — don't report "0 new contacts".
-- System activity (errors, tool calls) only gets a section if error rate > 5% or a bundle crashed. Otherwise omit it entirely.
+- System activity (errors, tool calls) only gets a section if error rate > 5% or a connector crashed. Otherwise omit it entirely.
 - Keep total output under 800 tokens.
 - Return ONLY valid JSON. No markdown, no explanation.
 - Actions are semantic — never include route paths or URLs.`;
@@ -318,7 +318,7 @@ export class BriefingGenerator {
   private isEmpty(activity: ActivityOutput): boolean {
     return (
       activity.conversations.length === 0 &&
-      activity.bundle_events.length === 0 &&
+      activity.connector_events.length === 0 &&
       activity.tool_usage.length === 0 &&
       activity.errors.length === 0
     );
@@ -438,7 +438,7 @@ export class BriefingGenerator {
         activity.totals.tool_calls > 0
           ? `${((activity.totals.errors / activity.totals.tool_calls) * 100).toFixed(1)}%`
           : "0%",
-      bundle_events: activity.bundle_events,
+      connector_events: activity.connector_events,
     };
     return userPayload;
   }

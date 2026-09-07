@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
-import { BundleLifecycleManager } from "../../src/bundles/lifecycle.ts";
+import { ConnectorLifecycleManager } from "../../src/connectors/runtime/lifecycle.ts";
 import { textContent } from "../../src/engine/content-helpers.ts";
 import type { ToolResult } from "../../src/engine/types.ts";
 import type { UserIdentity } from "../../src/identity/provider.ts";
@@ -81,7 +81,7 @@ interface Harness {
   credStore: FileCredentialStore;
   registryStore: RegistryStore;
   permissionStore: PermissionStore;
-  lifecycle: BundleLifecycleManager;
+  lifecycle: ConnectorLifecycleManager;
   registry: ToolRegistry;
   source: MockSource;
   tool: ReturnType<typeof createManageConnectorsTool>;
@@ -94,7 +94,7 @@ async function buildHarness(): Promise<Harness> {
   const credStore = new FileCredentialStore(workDir);
   const registryStore = new RegistryStore(workDir);
   const permissionStore = new PermissionStore(workDir);
-  const lifecycle = new BundleLifecycleManager(new NoopEventSink(), undefined);
+  const lifecycle = new ConnectorLifecycleManager(new NoopEventSink());
   const registry = new ToolRegistry();
   const source = new MockSource("mock");
   registry.addSource(source);
@@ -107,7 +107,7 @@ async function buildHarness(): Promise<Harness> {
 
   // Seed an instance for "mock" so `set_permissions`' installed-
   // connector gate passes. The full install path (workspace.json
-  // bundle ref + lifecycle.seedInstance) is exercised in
+  // connector ref + lifecycle.seedInstance) is exercised in
   // connector-tools.test.ts; here we focus on the gate→enforcement
   // boundary.
   await lifecycle.seedInstance(

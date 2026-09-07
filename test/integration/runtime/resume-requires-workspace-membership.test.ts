@@ -34,7 +34,6 @@ async function startRuntime(name: string): Promise<Runtime> {
   mkdirSync(workDir, { recursive: true });
   return Runtime.start({
     model: { provider: "custom", adapter: createEchoModel() },
-    noDefaultBundles: true,
     logging: { disabled: true },
     workDir,
   });

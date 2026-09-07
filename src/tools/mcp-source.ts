@@ -18,7 +18,7 @@ import {
   ToolListChangedNotificationSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
-import type { PlacementDeclaration, RemoteTransportConfig } from "../bundles/types.ts";
+import type { PlacementDeclaration, RemoteTransportConfig } from "../connectors/runtime/types.ts";
 import { textContent } from "../engine/content-helpers.ts";
 import {
   type ContentBlock,
@@ -56,7 +56,7 @@ import type { WorkspaceOAuthProvider } from "./workspace-oauth-provider.ts";
 /**
  * Default time-to-live (ms) sent with task-augmented `tools/call` requests.
  * One hour fits research-run-style workloads; the server MAY clamp it down.
- * Override globally via `McpSource` constructor or per-bundle in the future.
+ * Override globally via `McpSource` constructor or per-connector in the future.
  */
 const DEFAULT_TASK_TTL_MS = 60 * 60 * 1000;
 
@@ -80,7 +80,7 @@ const TASK_SWEEPER_INTERVAL_MS = 60_000;
 const TASK_CREATED_TIMEOUT_MS = 60_000;
 
 /**
- * Bundle stderr ring buffer cap. Keeps the last N lines of subprocess
+ * Connector stderr ring buffer cap. Keeps the last N lines of subprocess
  * stderr so we can attach them to a `source.crashed` event payload — long
  * enough for a typical Python traceback, short enough not to drown the
  * event payload in a runaway log.
@@ -88,17 +88,17 @@ const TASK_CREATED_TIMEOUT_MS = 60_000;
 const STDERR_TAIL_MAX_LINES = 50;
 
 /**
- * Per-bundle context threaded into McpSource so its Client can answer
+ * Per-connector context threaded into McpSource so its Client can answer
  * inbound `ai.nimblebrain/resources/*` requests. Owned by the caller
  * (lifecycle, workspace-ops) which knows the workspace; passed into the
  * constructor at spawn time. Absent for in-process platform sources —
  * they are the platform talking to itself and have no business asking
  * the host for resources.
  */
-export interface BundleMcpContext {
+export interface ConnectorMcpContext {
   workspaceId: string;
-  /** The McpSource name (bundle slug). Used for audit + rate-limit attribution. */
-  bundleId: string;
+  /** The McpSource name (connector slug). Used for audit + rate-limit attribution. */
+  connectorId: string;
   hostResources: HostResourcesResolver;
   rateLimit: HostResourcesRateLimit;
 }
@@ -118,7 +118,7 @@ const NbListResourcesRequestSchema = ListResourcesRequestSchema.extend({
 });
 
 /**
- * Hard cap on a single stderr line we'll log or buffer. A bundle that
+ * Hard cap on a single stderr line we'll log or buffer. A connector that
  * writes a 100MB single line should not OOM the host or balloon an event
  * payload. Truncation is marked so the developer knows it happened.
  */
@@ -368,7 +368,7 @@ export class McpSource implements ToolSource {
   private startedAt: number | null = null;
   /** Optional `instructions` string returned by the MCP server during
    *  `initialize`. Captured after connect so callers (e.g. the system
-   *  prompt composer) can surface per-bundle guidance to the LLM. */
+   *  prompt composer) can surface per-connector guidance to the LLM. */
   private _instructions: string | undefined;
   /** Sanitized `serverInfo.version` reported in the `initialize` response.
    *  Untrusted (the server sets it); display-only. Undefined until start()
@@ -463,7 +463,7 @@ export class McpSource implements ToolSource {
    * `eventSink` is REQUIRED, not optional. Emitted events include
    * `tool.progress` during task-augmented calls — when those events reach
    * the runtime sink wrap in `src/api/server.ts`, they turn into SSE
-   * `data.changed` broadcasts which drive Synapse `useDataSync` in bundle
+   * `data.changed` broadcasts which drive Synapse `useDataSync` in connector
    * iframes.
    *
    * Pass `new NoopEventSink()` only when a caller deliberately wants to
@@ -472,18 +472,18 @@ export class McpSource implements ToolSource {
    * that's what turned this parameter optional and silently broke live
    * updates across the whole platform.
    *
-   * `bundleContext` is optional and threaded only on bundle-spawning
+   * `connectorContext` is optional and threaded only on connector-spawning
    * paths. When set, the Client registers inbound handlers for
-   * `ai.nimblebrain/resources/{read,list}` against the bundle's
+   * `ai.nimblebrain/resources/{read,list}` against the connector's
    * workspace. In-process platform sources don't pass it (they're MCP
-   * servers talking to the platform itself, not bundles requesting
+   * servers talking to the platform itself, not connectors requesting
    * platform resources).
    */
   constructor(
     readonly name: string,
     private mode: McpTransportMode,
     private eventSink: EventSink,
-    private readonly bundleContext?: BundleMcpContext,
+    private readonly connectorContext?: ConnectorMcpContext,
     /**
      * The name this source appears under ON THE WIRE, when it differs from
      * `name`. Set for a personal connector, whose wire form carries the reserved
@@ -531,9 +531,9 @@ export class McpSource implements ToolSource {
 
     this.client = this.buildClient();
     // Inbound host-resources handlers registered before connect so they're
-    // ready the moment the bundle issues its first request. No-op for
-    // in-process sources that don't pass a bundleContext.
-    this.registerBundleHandlers(this.client);
+    // ready the moment the connector issues its first request. No-op for
+    // in-process sources that don't pass a connectorContext.
+    this.registerConnectorHandlers(this.client);
     // Native `tools/list_changed` subscription — must be on the client before
     // connect so a notification arriving immediately after `initialize` isn't
     // dropped.
@@ -653,7 +653,7 @@ export class McpSource implements ToolSource {
         this.mode.transportConfig,
         this.mode.authProvider,
         {
-          workspaceId: this.bundleContext?.workspaceId,
+          workspaceId: this.connectorContext?.workspaceId,
           allowInsecure: this.mode.allowInsecure ?? false,
         },
       );
@@ -739,7 +739,7 @@ export class McpSource implements ToolSource {
       this.client = this.buildClient();
       // Re-register inbound host-resources handlers on the rebuilt Client —
       // handler tables don't carry over from the prior instance.
-      this.registerBundleHandlers(this.client);
+      this.registerConnectorHandlers(this.client);
       this.registerToolsChangedHandler(this.client);
       this.registerResourceUpdatedHandler(this.client);
       // Re-arm crash detection for the retry: cleanupOnStartFailure set
@@ -862,7 +862,7 @@ export class McpSource implements ToolSource {
       this.mode.transportConfig,
       this.mode.authProvider,
       {
-        workspaceId: this.bundleContext?.workspaceId,
+        workspaceId: this.connectorContext?.workspaceId,
         allowInsecure: this.mode.allowInsecure ?? false,
       },
     );
@@ -878,13 +878,13 @@ export class McpSource implements ToolSource {
    * Drain the stdio subprocess's stderr stream into the developer's
    * terminal and a bounded in-memory ring buffer.
    *
-   * Why default-on (not gated behind `NB_DEBUG`): bundle stderr is the
-   * bundle author's deliberate diagnostic output — tracebacks, warnings,
+   * Why default-on (not gated behind `NB_DEBUG`): connector stderr is the
+   * connector author's deliberate diagnostic output — tracebacks, warnings,
    * runtime logs. That's a different concern than NB's own protocol
    * tracing (`NB_DEBUG=mcp`). Hiding signal that costs hours to recreate
    * (issue #116) is a worse default than dimmed lines a developer can
-   * scan past or silence at the bundle level. Visual prefix + dim
-   * formatting via `log.bundle` makes the channel tunable by eye.
+   * scan past or silence at the connector level. Visual prefix + dim
+   * formatting via `log.connector` makes the channel tunable by eye.
    *
    * Why a ring buffer in addition to live print: when the subprocess
    * exits, the `transport.onclose` handler attaches `stderrTail` to the
@@ -956,7 +956,7 @@ export class McpSource implements ToolSource {
       line.length > STDERR_LINE_MAX_CHARS
         ? `${line.slice(0, STDERR_LINE_MAX_CHARS)} […truncated]`
         : line;
-    log.bundle(this.name, capped);
+    log.connector(this.name, capped);
     this.stderrTail.push(capped);
     if (this.stderrTail.length > STDERR_TAIL_MAX_LINES) {
       this.stderrTail.shift();
@@ -983,8 +983,8 @@ export class McpSource implements ToolSource {
    *
    * The `extensions` block carries NimbleBrain-namespaced vendor capabilities
    * (e.g. `ai.nimblebrain/host-resources`) per the MCP extensions spec —
-   * https://modelcontextprotocol.io/extensions/overview. Bundles read these
-   * from their ClientCapabilities to opt into bundle→host resource reads.
+   * https://modelcontextprotocol.io/extensions/overview. Connectors read these
+   * from their ClientCapabilities to opt into connector→host resource reads.
    * Phase 1 advertises the capability; handlers land in Phase 2.
    */
   private buildClient(): Client {
@@ -1006,32 +1006,32 @@ export class McpSource implements ToolSource {
    * Register inbound handlers for the host-resources extension methods.
    * Called once per Client lifecycle — after `new Client()` (initial
    * start) and after `buildClient()` (OAuth retry rebuild). No-op when
-   * `bundleContext` is absent (in-process platform sources don't need
+   * `connectorContext` is absent (in-process platform sources don't need
    * the surface).
    *
    * Handlers do three things, in order: rate-limit check (throws
    * `-32004` on exhaustion), delegate to the resolver (which enforces
    * scheme allowlist + workspace isolation + size cap), and log via
    * the `host-resources` debug namespace. Errors propagate as JSON-RPC
-   * errors back to the bundle.
+   * errors back to the connector.
    */
-  private registerBundleHandlers(client: Client): void {
-    const ctx = this.bundleContext;
+  private registerConnectorHandlers(client: Client): void {
+    const ctx = this.connectorContext;
     if (!ctx) return;
 
     client.setRequestHandler(NbReadResourceRequestSchema, async (request) => {
-      ctx.rateLimit.check(ctx.workspaceId, ctx.bundleId);
+      ctx.rateLimit.check(ctx.workspaceId, ctx.connectorId);
       return ctx.hostResources.read(request.params.uri, {
         workspaceId: ctx.workspaceId,
-        bundleId: ctx.bundleId,
+        connectorId: ctx.connectorId,
       });
     });
 
     client.setRequestHandler(NbListResourcesRequestSchema, async (request) => {
-      ctx.rateLimit.check(ctx.workspaceId, ctx.bundleId);
+      ctx.rateLimit.check(ctx.workspaceId, ctx.connectorId);
       const params = request.params ?? {};
       return ctx.hostResources.list(
-        // Bundle-supplied filter rides in `_meta` per MCP convention for
+        // Connector-supplied filter rides in `_meta` per MCP convention for
         // extension-carried request data — spec `ListResourcesRequest`
         // doesn't have a `filter` field. If the spec ever adds one, also
         // accept it from `params.filter` here.
@@ -1042,7 +1042,7 @@ export class McpSource implements ToolSource {
               | { scheme?: string; mimeType?: string; tags?: string[] }
               | undefined) ?? undefined,
         },
-        { workspaceId: ctx.workspaceId, bundleId: ctx.bundleId },
+        { workspaceId: ctx.workspaceId, connectorId: ctx.connectorId },
       );
     });
   }
@@ -1057,7 +1057,7 @@ export class McpSource implements ToolSource {
    *
    * Called once per Client lifecycle — after `new Client()` (initial start)
    * and after `buildClient()` (OAuth retry rebuild) — because handler tables
-   * don't carry across SDK Client instances. Unlike `registerBundleHandlers`
+   * don't carry across SDK Client instances. Unlike `registerConnectorHandlers`
    * this runs for every source (in-process platform sources included): any
    * MCP server may push the notification.
    */
@@ -1399,8 +1399,8 @@ export class McpSource implements ToolSource {
   /**
    * UI placements declared by this source. Populated for `inProcess` mode
    * (platform built-ins); `[]` for stdio/remote sources, whose placements
-   * come from the bundle manifest and are tracked separately by the
-   * bundle lifecycle.
+   * come from the connector manifest and are tracked separately by the
+   * connector lifecycle.
    *
    * Read by the runtime at start time to register placements in the
    * platform `PlacementRegistry`. Static — doesn't change across restarts.
@@ -1741,10 +1741,10 @@ export class McpSource implements ToolSource {
           // denylist of one type, not a proof of transport origin.
           //
           // It is load-bearing because three of the allowlisted classes are
-          // decided by regex over the server's own error text: a bundle answering
+          // decided by regex over the server's own error text: a connector answering
           // `McpError(-32603, "Rate limit exceeded")` — FastMCP's default for an
           // unhandled exception — would otherwise exempt itself from the guard
-          // permanently, and a bundle relaying a persistent upstream 429 would be
+          // permanently, and a connector relaying a persistent upstream 429 would be
           // exempted exactly when the guard should trip. An `McpError` IS the
           // server answering, so it never earns the marker.
           //
@@ -1948,7 +1948,7 @@ export class McpSource implements ToolSource {
     // A real failure (a torn transport, a dropped connection, an exhausted
     // recovery) is NOT a missing resource — log it ONLY on the app-surface path
     // (the resource proxy passes `logFailures`), where a failure is anomalous.
-    // Discovery probes stay silent so a bundle that simply lacks a probed
+    // Discovery probes stay silent so a connector that simply lacks a probed
     // resource never spams. The null (404) is preserved either way; this only
     // makes the anomalous case visible.
     const logAndNull = (err: unknown): null => {
@@ -2130,7 +2130,7 @@ export class McpSource implements ToolSource {
         | undefined,
       isError: Boolean(result.isError),
       // Surface result-level `_meta` (loose object on the wire) so out-of-band
-      // hints from the bundle — e.g. the supervisor's non-advancing marker —
+      // hints from the connector — e.g. the supervisor's non-advancing marker —
       // reach the engine instead of being dropped at this projection.
       _meta: hostOwnedMetaStripped((result as { _meta?: Record<string, unknown> })._meta, {
         inProcess: this.mode.type === "inProcess",
@@ -2186,7 +2186,7 @@ export class McpSource implements ToolSource {
       structuredContent: callToolResult.structuredContent as Record<string, unknown> | undefined,
       isError: Boolean(callToolResult.isError),
       // Surface result-level `_meta` (loose object on the wire) so out-of-band
-      // hints from the bundle reach the engine — same as the inline path.
+      // hints from the connector reach the engine — same as the inline path.
       _meta: hostOwnedMetaStripped((callToolResult as { _meta?: Record<string, unknown> })._meta, {
         inProcess: this.mode.type === "inProcess",
       }),
@@ -2574,7 +2574,7 @@ export class McpSource implements ToolSource {
    * Defense in depth: the upstream MCP SDK's task stream emits `type: 'error'`
    * with an `McpError(InternalError, "Task <id> failed")` whenever the
    * server-side status is `failed`, AND discards the server's `tasks/result`
-   * payload along the way. A bundle that misclassified its own terminal status —
+   * payload along the way. A connector that misclassified its own terminal status —
    * e.g. a post-result exception flipping COMPLETED→FAILED while a usable payload
    * already existed in the store — would surface to the agent as a useless string
    * with the real output gone. Try one extra `tasks/result` fetch before settling
@@ -2587,7 +2587,7 @@ export class McpSource implements ToolSource {
    * `error.message` is "MCP error -32603: Task <id> failed" — anchored regexes
    * against the bare form silently fail to match and the recovery is a no-op.
    * Using the taskId as the discriminator also tightens specificity: we won't
-   * accidentally recover on a bundle-authored error that mentions a different
+   * accidentally recover on a connector-authored error that mentions a different
    * task.
    */
   private async recoverFailedTaskResult(
@@ -2844,7 +2844,7 @@ export type ConnectionFailure =
  *   fleet servers' Python SDK returns it as HTTP 404 with a
  *   `{"code":-32600,"message":"Session not found"}` body (so the client's
  *   `StreamableHTTPError.code` is 404 and the `-32600` is body text), but remote
- *   bundles are untrusted/heterogeneous — the message is the reliable signal.
+ *   connectors are untrusted/heterogeneous — the message is the reliable signal.
  * - **timeout** — `McpError(-32001, "Request timed out")`: the request was sent
  *   but the response is slow (the tool, not the transport). Surfaces, never
  *   restarts — restarting strands the source's other tools without speeding the
@@ -2881,7 +2881,7 @@ export function classifyConnectionFailure(err: unknown): ConnectionFailure {
   // the server's text, not the envelope: the fleet servers' Python MCP SDK returns
   // it as HTTP 404 with a `{"code":-32600,"message":"Session not found"}` body
   // (so the SDK client's StreamableHTTPError has `code === 404`), but a remote
-  // bundle is untrusted and heterogeneous — another server (or the same one in
+  // connector is untrusted and heterogeneous — another server (or the same one in
   // HTTP-200 + JSON-RPC-error mode) could surface it as `McpError(-32600)` or a
   // non-404 status. Gating on the status would silently strand those. Matching the
   // message also takes precedence over the `-32600 → none` branch below, so a
@@ -2901,7 +2901,7 @@ export function classifyConnectionFailure(err: unknown): ConnectionFailure {
   // but restarting wouldn't speed up a slow tool anyway (that IS the #581 cascade);
   // a real liveness probe is the fix for that narrow case. Checked after the
   // session-message match so an artificial -32001+session-text still classifies
-  // session-lost. (See #581 — a tool timeout was cascading bundle restarts in prod.)
+  // session-lost. (See #581 — a tool timeout was cascading connector restarts in prod.)
   if (code === -32001) {
     return "timeout";
   }
@@ -3096,20 +3096,20 @@ function infraErrorMeta(): { _meta: Record<string, unknown> } {
 /**
  * Drop host-owned keys from `_meta` that arrived over the wire.
  *
- * `_meta` is otherwise forwarded verbatim so a bundle's own out-of-band hints
+ * `_meta` is otherwise forwarded verbatim so a connector's own out-of-band hints
  * reach the engine. The infrastructure marker cannot be among them: the
- * supervisor trusts it unconditionally, so a bundle setting it on its own error
+ * supervisor trusts it unconditionally, so a connector setting it on its own error
  * results would exempt itself from the loop guard permanently — and that guard
  * is the only thing that removes a tool from the model's toolset mid-run.
  *
  * Note the asymmetry with `NON_ADVANCING_META_KEY`, which is safe to accept from
- * the wire: a bundle setting that one makes the guard STRICTER. This one makes
+ * the wire: a connector setting that one makes the guard STRICTER. This one makes
  * it weaker, so it is host-owned and stripped here rather than documented as a
  * convention callers are trusted to honour.
  *
  * `SKILL_ACTIVATED_META_KEY` is host-owned for the same reason — the engine
  * trusts it to mark a skill as already-delivered (suppressing future overlay
- * guidance), so a bundle setting it could mute a curated overlay by name. It
+ * guidance), so a connector setting it could mute a curated overlay by name. It
  * is stripped from every source that crosses a real transport; only in-process
  * sources (`inProcess: true` — the `nb` system source, whose `use_skill` tool
  * legitimately emits it) carry it through.

@@ -16,7 +16,7 @@
  * enableDefaultMetrics(), called once at server start.
  */
 import { Counter, collectDefaultMetrics, Gauge, Histogram, Registry } from "prom-client";
-import type { BundleHealth } from "../tools/health-monitor.ts";
+import type { ConnectorHealth } from "../tools/health-monitor.ts";
 import type { LlmCallOrigin } from "../usage/types.ts";
 
 export const metricsRegistry = new Registry();
@@ -299,7 +299,7 @@ export const artifactResolutionsTotal = new Counter({
 });
 
 /**
- * Remote/local MCP bundle (connector) crashes detected by the HealthMonitor
+ * Remote/local MCP connector (connector) crashes detected by the HealthMonitor
  * liveness loop, by connector and transport kind. A "crash" here is one
  * HealthMonitor sweep finding a source down (transport gone) that was NOT
  * deliberately stopped — so a connector that stays down increments once per
@@ -309,8 +309,8 @@ export const artifactResolutionsTotal = new Counter({
  * user noticing failed tool calls.
  *
  * `source` is the MCP source name, sanitized to a bounded charset (see
- * recordBundleCrash) so a malformed/unbounded name can't explode cardinality.
- * `remote` separates remote (HTTP/SSE) connectors from local stdio bundles.
+ * recordConnectorCrash) so a malformed/unbounded name can't explode cardinality.
+ * `remote` separates remote (HTTP/SSE) connectors from local stdio connectors.
  * No tenant/workspace label — one pod per tenant, so the scrape namespace
  * attributes it (same rationale as nb_artifact_resolutions_total).
  *
@@ -319,11 +319,11 @@ export const artifactResolutionsTotal = new Counter({
  * right now": a crashed source retries in a quick burst and then re-probes on a
  * slow cooldown, so the counter carries a low floor (one burst per cooldown)
  * rather than a steady level while the connector stays down. Use
- * `nb_bundle_unhealthy` (below) for down-alerting.
+ * `nb_connector_unhealthy` (below) for down-alerting.
  */
-export const bundleCrashedTotal = new Counter({
-  name: "nb_bundle_crashed_total",
-  help: "MCP bundle/connector crashes detected by the health monitor, by source and transport kind.",
+export const connectorCrashedTotal = new Counter({
+  name: "nb_connector_crashed_total",
+  help: "MCP connector crashes detected by the health monitor, by source and transport kind.",
   labelNames: ["source", "remote"] as const,
   registers: [metricsRegistry],
 });
@@ -337,14 +337,16 @@ export const bundleCrashedTotal = new Counter({
 const SAFE_SOURCE = /^[a-z0-9_.-]+$/;
 
 /**
- * Record one health-monitor-detected bundle crash. `source` is the MCP source
+ * Record one health-monitor-detected connector crash. `source` is the MCP source
  * name (sanitized to a bounded label); `remote` is true for HTTP/SSE connectors
- * and false for local stdio bundles. Defensive: a missing/empty/odd name
+ * and false for local stdio connectors. Defensive: a missing/empty/odd name
  * buckets to "other".
  */
-export function recordBundleCrash(source: string | undefined, remote: boolean): void {
+export function recordConnectorCrash(source: string | undefined, remote: boolean): void {
   const safe = source && SAFE_SOURCE.test(source) ? source : "other";
-  bundleCrashedTotal.inc({ source: safe, remote: remote ? "true" : "false" });
+  const labels = { source: safe, remote: remote ? "true" : "false" };
+  connectorCrashedTotal.inc(labels);
+  retiredBundleCrashedTotal.inc(labels);
 }
 
 /**
@@ -365,53 +367,88 @@ export function recordBundleCrash(source: string | undefined, remote: boolean): 
  * within the first burst asserts for only ~1-2 min and is de-flapped by the
  * alert's `for: 10m` — no false page.
  *
- * Why a gauge, not the `nb_bundle_crashed_total` counter: the counter is a
+ * Why a gauge, not the `nb_connector_crashed_total` counter: the counter is a
  * crash RATE (a burst per cooldown), so an `increase()`-based alert would
  * mis-track a steady outage. This gauge is the correct down-detector; it clears
  * only when the source recovers (or is deliberately stopped). Driven at scrape
- * time from the live HealthMonitor via {@link registerBundleHealthGauge}; the
+ * time from the live HealthMonitor via {@link registerConnectorHealthGauge}; the
  * collect callback resets first, so a recovered source's series disappears.
  *
  * No tenant/workspace label — one pod per tenant, scrape namespace attributes it.
  */
-export const bundleUnhealthy = new Gauge({
+export const connectorUnhealthy = new Gauge({
+  name: "nb_connector_unhealthy",
+  help: 'MCP connectors currently down involuntarily (HealthMonitor state "restarting" or "cooldown"), by source. 1 = down.',
+  labelNames: ["source"] as const,
+  registers: [metricsRegistry],
+  collect() {
+    collectUnhealthy(this);
+  },
+});
+
+/**
+ * Fill an unhealthy gauge from the live HealthMonitor. Runs at scrape time
+ * (prom-client invokes the owning `collect()` in `.get()`). Resets first so a
+ * source that has since recovered drops out of the series entirely (the gauge is
+ * absent for healthy sources), letting the alert resolve.
+ */
+function collectUnhealthy(gauge: Gauge<"source">): void {
+  gauge.reset();
+  const status = healthStatusProvider?.() ?? [];
+  for (const b of status) {
+    // Both involuntary-down states assert, so the series stays continuously 1
+    // across the whole burst→cooldown→burst cycle (the `for: 10m` alert needs
+    // that continuity): `restarting` (active backoff burst) and `cooldown`
+    // (slow re-probe between bursts). `healthy` is up; `dead` is a DELIBERATE
+    // teardown, not an outage.
+    if (b.state !== "restarting" && b.state !== "cooldown") continue;
+    const safe = b.name && SAFE_SOURCE.test(b.name) ? b.name : "other";
+    gauge.set({ source: safe }, 1);
+  }
+}
+
+/**
+ * The `nb_bundle_*` spelling of the two series above, emitted alongside them and
+ * carrying identical values. `bundle` names nothing in this runtime; `connector`
+ * does. The duplicate exists only so the alert rule and the Grafana panels that
+ * read these can be repointed at the new names in a separate release — renaming
+ * and repointing together would leave the down-alert reading an absent series,
+ * which is indistinguishable from "no connectors are down".
+ *
+ * These two declarations and this comment are deleted once every consumer reads
+ * `nb_connector_*`. Nothing else should be added to them.
+ */
+export const retiredBundleCrashedTotal = new Counter({
+  name: "nb_bundle_crashed_total",
+  help: "MCP connector crashes detected by the health monitor, by source and transport kind.",
+  labelNames: ["source", "remote"] as const,
+  registers: [metricsRegistry],
+});
+
+export const retiredBundleUnhealthy = new Gauge({
   name: "nb_bundle_unhealthy",
   help: 'MCP connectors currently down involuntarily (HealthMonitor state "restarting" or "cooldown"), by source. 1 = down.',
   labelNames: ["source"] as const,
   registers: [metricsRegistry],
   collect() {
-    // Runs at scrape time (prom-client invokes this in `.get()`). Reset so a
-    // source that has since recovered drops out of the series entirely (the
-    // gauge is absent for healthy sources), letting the alert resolve.
-    this.reset();
-    const status = healthStatusProvider?.() ?? [];
-    for (const b of status) {
-      // Both involuntary-down states assert, so the series stays continuously 1
-      // across the whole burst→cooldown→burst cycle (the `for: 10m` alert needs
-      // that continuity): `restarting` (active backoff burst) and `cooldown`
-      // (slow re-probe between bursts). `healthy` is up; `dead` is a DELIBERATE
-      // teardown, not an outage.
-      if (b.state !== "restarting" && b.state !== "cooldown") continue;
-      const safe = b.name && SAFE_SOURCE.test(b.name) ? b.name : "other";
-      this.set({ source: safe }, 1);
-    }
+    collectUnhealthy(this);
   },
 });
 
 /**
- * Live HealthMonitor status provider read by the `nb_bundle_unhealthy` gauge's
+ * Live HealthMonitor status provider read by the `nb_connector_unhealthy` gauge's
  * collect callback. `null` until wired (e.g. local dev with no server start, or
  * a test that hasn't registered one), in which case the gauge reports nothing.
  */
-let healthStatusProvider: (() => BundleHealth[]) | null = null;
+let healthStatusProvider: (() => ConnectorHealth[]) | null = null;
 
 /**
- * Wire the `nb_bundle_unhealthy` gauge to a live HealthMonitor. Call once at
+ * Wire the `nb_connector_unhealthy` gauge to a live HealthMonitor. Call once at
  * server start, right after the HealthMonitor is constructed, with
  * `() => healthMonitor.getStatus()`. Last registration wins (so tests can swap
  * in a stub); the gauge reads through this provider at every scrape.
  */
-export function registerBundleHealthGauge(getStatus: () => BundleHealth[]): void {
+export function registerConnectorHealthGauge(getStatus: () => ConnectorHealth[]): void {
   healthStatusProvider = getStatus;
 }
 
@@ -616,7 +653,7 @@ export const notificationsTemplateMissesTotal = new Counter({
 /**
  * The `source` label for one connector, bucketed to "other" when the name is
  * not one the label charset admits. Exported so every notification metric
- * sanitizes identically — `SAFE_SOURCE` is the same guard `recordBundleCrash`
+ * sanitizes identically — `SAFE_SOURCE` is the same guard `recordConnectorCrash`
  * applies, and two copies of that decision is how one call site comes to mint
  * the unbounded series the guard exists to prevent.
  */

@@ -43,7 +43,7 @@ import {
   validateSmitheryConfig,
 } from "../../src/connectors/providers/smithery/config.ts";
 import {
-  cleanupSmitheryBundle,
+  cleanupSmitheryConnector,
   createSmitheryProvider,
 } from "../../src/connectors/providers/smithery/provider.ts";
 
@@ -193,7 +193,7 @@ describe.skipIf(!HAVE_CREDS)(
     // connection per run and nothing would say so. Runs in BOTH states: an
     // auth_required connection still exists at the broker and still needs it.
     it("tears the connection down at the broker on uninstall", async () => {
-      const { upstreamDeleted, lastError } = await cleanupSmitheryBundle({
+      const { upstreamDeleted, lastError } = await cleanupSmitheryConnector({
         connectionId,
         namespace: options.namespace,
         baseUrl: options.baseUrl,

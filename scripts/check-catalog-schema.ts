@@ -61,7 +61,7 @@ function main(): void {
     console.error(
       "\nA dropped entry does not fail at runtime — the connector just never appears.\n" +
         "Field rules: `description` is capped at 100 characters by the upstream MCP\n" +
-        "registry schema (src/connectors/schemas/server.schema.json); icon, docs, and\n" +
+        "registry schema (src/connectors/catalog/schemas/server.schema.json); icon, docs, and\n" +
         "portal URLs must be http(s); OAuth params may not use reserved keys; and an\n" +
         "entry needs `packages` or a `remotes` entry the installer supports.",
     );

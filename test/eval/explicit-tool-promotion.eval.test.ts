@@ -181,7 +181,7 @@ describe("explicit tool promotion workflow", () => {
     it("does not call manage_tools for tools already in the direct list", async () => {
       // nb__search is always direct. Asking the agent to search shouldn't
       // trigger a redundant manage_tools call to "promote" it.
-      const result = await runEval("search for installed bundles");
+      const result = await runEval("search for installed connectors");
 
       const promotedSearch = result.toolCalls.some(
         (tc) =>

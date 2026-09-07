@@ -2,7 +2,7 @@
  * A server that publishes more than one `always` skill keeps ALL of them when
  * the user enters its app.
  *
- * Regression guard. `loadBundleSkills` used to skip the entered SOURCE, on the
+ * Regression guard. `loadConnectorSkills` used to skip the entered SOURCE, on the
  * premise that its guidance was recovered via `<app-guide>` — but `<app-guide>`
  * carries only the primary skill (the first `resources/list` entry). One skill
  * per server made that equivalent; six made it a five-sixths loss, silently, on
@@ -42,7 +42,7 @@ const SKILLS = [
   { slug: "research-discipline", phrase: "RESEARCH-MARKER-FOXTROT" },
 ];
 
-/** Tool count mirrors a real fleet bundle, so the promotion delta is visible. */
+/** Tool count mirrors a real fleet connector, so the promotion delta is visible. */
 const TOOL_NAMES = ["draft_email", "reject_draft", "create_campaign", "list_campaigns"];
 
 function skillBody(slug: string, phrase: string): string {
@@ -59,7 +59,7 @@ metadata:
 ${phrase} — this rule must be in context on every turn.`;
 }
 
-function createMultiSkillBundle(dir: string): string {
+function createMultiSkillConnector(dir: string): string {
   mkdirSync(dir, { recursive: true });
   const nodeModulesPath = join(import.meta.dir, "../..", "node_modules");
   const resources = SKILLS.map((s) => ({
@@ -124,7 +124,7 @@ main();
 const NEIGHBOUR_NAME = "ai-nimblebrain-neighbour-mcp";
 const NEIGHBOUR_PHRASE = "NEIGHBOUR-MARKER-GOLF";
 
-function createNeighbourBundle(dir: string): string {
+function createNeighbourConnector(dir: string): string {
   mkdirSync(dir, { recursive: true });
   const nodeModulesPath = join(import.meta.dir, "../..", "node_modules");
   // Same path as SKILLS[0] — `skill://orientation/SKILL.md`.
@@ -211,21 +211,20 @@ beforeAll(async () => {
   mkdirSync(testDir, { recursive: true });
   runtime = await Runtime.start({
     model: { provider: "custom", adapter: createCapturingModel() },
-    noDefaultBundles: true,
     logging: { disabled: true },
     workDir: testDir,
     telemetry: { enabled: false },
   });
   await provisionTestWorkspace(runtime);
 
-  const bundleDir = createMultiSkillBundle(join(testDir, "bundle"));
+  const connectorDir = createMultiSkillConnector(join(testDir, "connector"));
   source = new McpSource(
     SERVER_NAME,
     {
       type: "stdio",
       spawn: {
         command: "node",
-        args: [join(bundleDir, "server.cjs")],
+        args: [join(connectorDir, "server.cjs")],
         env: process.env as Record<string, string>,
       },
     },
@@ -234,7 +233,7 @@ beforeAll(async () => {
   await source.start();
   runtime.getRegistryForWorkspace(TEST_WORKSPACE_ID).addSource(source);
 
-  const neighbourDir = createNeighbourBundle(join(testDir, "neighbour"));
+  const neighbourDir = createNeighbourConnector(join(testDir, "neighbour"));
   neighbour = new McpSource(
     NEIGHBOUR_NAME,
     {

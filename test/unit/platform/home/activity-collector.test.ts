@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { ActivityCollector } from "../../../../src/services/activity-collector.ts";
 
 /**
- * Regression coverage for the home-bundle activity collector's
+ * Regression coverage for the home-connector activity collector's
  * conversation summary derivation.
  *
  * The collector previously read `meta.totalInputTokens` / `totalOutputTokens`

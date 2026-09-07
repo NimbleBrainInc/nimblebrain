@@ -63,7 +63,7 @@ export interface IndexEntry {
  * derivation could disagree with the first.
  *
  * Structurally compatible with the runtime's `ConversationChange` and declared
- * separately on purpose: this bundle imports no runtime types.
+ * separately on purpose: this app imports no runtime types.
  */
 export interface ConversationChange {
   id: string;

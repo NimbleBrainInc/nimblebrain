@@ -24,8 +24,8 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
-import { BundleLifecycleManager } from "../../src/bundles/lifecycle.ts";
-import type { BundleRef } from "../../src/bundles/types.ts";
+import { ConnectorLifecycleManager } from "../../src/connectors/runtime/lifecycle.ts";
+import type { ConnectorRef } from "../../src/connectors/runtime/types.ts";
 import type { UserIdentity } from "../../src/identity/provider.ts";
 import { MINTED_PROVIDER } from "../../src/oauth/minted-credential-provider.ts";
 import { ConnectorDirectory } from "../../src/registries/directory.ts";
@@ -107,7 +107,7 @@ function entry(): DirectoryEntry {
 }
 
 function toolFor(sessionWsId: string) {
-  const lifecycle = new BundleLifecycleManager(new NoopEventSink(), undefined);
+  const lifecycle = new ConnectorLifecycleManager(new NoopEventSink());
   const registryStore = new RegistryStore(workDir);
   const workspaceRegistry = new ToolRegistry();
   const runtime = {
@@ -122,7 +122,7 @@ function toolFor(sessionWsId: string) {
     getRegistryForWorkspace: (_id: string) => workspaceRegistry,
     getPermissionStore: () => ({ deleteConnector: async () => {} }),
     getUserStore: () => ({ get: async () => null }),
-    getBundleInstancesForWorkspace: (_wsId: string) => lifecycle.getInstances(),
+    getConnectorInstancesForWorkspace: (_wsId: string) => lifecycle.getInstances(),
     getAllowInsecureRemotes: () => false,
   } as unknown as Runtime;
   return createManageConnectorsTool({
@@ -133,11 +133,11 @@ function toolFor(sessionWsId: string) {
 }
 
 /** The persisted ref for the installed connector, read off disk. */
-function persistedRef(wsId: string): BundleRef {
+function persistedRef(wsId: string): ConnectorRef {
   const ws = JSON.parse(
     readFileSync(join(workDir, "workspaces", wsId, "workspace.json"), "utf-8"),
-  ) as { bundles: BundleRef[] };
-  const ref = ws.bundles.find((b) => b.url === URL_);
+  ) as { connectors: ConnectorRef[] };
+  const ref = ws.connectors.find((b) => b.url === URL_);
   if (!ref) throw new Error(`no db-query ref in ${wsId}`);
   return ref;
 }
@@ -291,8 +291,8 @@ describe("a catalog entry that binds a workspace secret to a header", () => {
 
     const ws = JSON.parse(
       readFileSync(join(workDir, "workspaces", "ws_tenanta", "workspace.json"), "utf-8"),
-    ) as { bundles: BundleRef[] };
-    const ref = ws.bundles.find((b) => b.url === "https://mcp.acme.test/plain/mcp");
+    ) as { connectors: ConnectorRef[] };
+    const ref = ws.connectors.find((b) => b.url === "https://mcp.acme.test/plain/mcp");
     expect(ref).toBeDefined();
     expect(ref?.transport?.headers).toBeUndefined();
     expect(JSON.stringify(ref)).not.toContain("X-Acme-Impersonate");

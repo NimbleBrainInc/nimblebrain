@@ -16,7 +16,6 @@
  * never invoke these directly.
  */
 
-import { hostMetaToUiMeta, sanitizePlacements } from "../bundles/defaults.ts";
 import { brokeredCatalogConfig, type ConnectorAuthKind } from "../connectors/auth-kind.ts";
 import {
   type ComposioConnectorConfig,
@@ -26,7 +25,8 @@ import {
   type SecretHeaderRef,
   type ServerDetail,
   type SmitheryConnectorConfig,
-} from "../connectors/server-detail.ts";
+} from "../connectors/catalog/server-detail.ts";
+import { hostMetaToUiMeta, sanitizePlacements } from "../connectors/runtime/defaults.ts";
 import { parseHookDeclarations } from "../hooks/declaration.ts";
 import { parseNotificationsDeclaration } from "../notifications/declaration.ts";
 import { validateAdditionalAuthorizationParams } from "../util/oauth-params.ts";
@@ -129,7 +129,7 @@ export function projectServerDetailToDirectoryEntry(
  * Decide which installable variant to surface. Only `remotes[]` is
  * installable: the runtime orchestrates over remote MCP and never acquires,
  * verifies, or executes server code, so an entry advertising only
- * `packages[]` — a downloadable bundle — projects as not installable and is
+ * `packages[]` — a downloadable package — projects as not installable and is
  * dropped from Browse. An entry advertising both (a vendor shipping a CLI
  * and a hosted endpoint) surfaces its remote.
  */

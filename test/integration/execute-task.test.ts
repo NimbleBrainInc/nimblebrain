@@ -6,7 +6,7 @@
  *  - A task leaves a RUN, not a conversation: each call returns a fresh
  *    `runId` and writes NO conversation (no resume path).
  *  - The deliverable rides back on `TaskResult.output`; the caller (the
- *    automations bundle) persists the run result sidecar.
+ *    automations app) persists the run result sidecar.
  *  - `workspaceId` set    → focused workspace tool scope.
  *  - `workspaceId` absent → the orchestrator still routes a namespaced
  *                            cross-workspace tool call (dispatch
@@ -80,7 +80,6 @@ describe("runtime.executeTask", () => {
     mkdirSync(workDir, { recursive: true });
     const r = await Runtime.start({
       model: { provider: "custom", adapter: createEchoModel(echoResponses) },
-      noDefaultBundles: true,
       logging: { disabled: true },
       workDir,
     });

@@ -26,7 +26,7 @@ export interface BriefingCacheEntry {
 export interface ActivityInput {
   since?: string;
   until?: string;
-  category?: "conversations" | "bundles" | "tools" | "errors";
+  category?: "conversations" | "connectors" | "tools" | "errors";
   limit?: number;
 }
 
@@ -34,7 +34,7 @@ export interface ActivityInput {
 export interface ActivityOutput {
   period: { since: string; until: string };
   conversations: ActivityConversationSummary[];
-  bundle_events: ActivityBundleEvent[];
+  connector_events: ActivityConnectorEvent[];
   tool_usage: ToolUsageSummary[];
   errors: ErrorEntry[];
   automations?: AutomationRunSummary;
@@ -75,9 +75,9 @@ export interface ActivityConversationSummary {
   had_errors: boolean;
 }
 
-/** Bundle lifecycle event for activity reporting. */
-export interface ActivityBundleEvent {
-  bundle: string;
+/** Connector lifecycle event for activity reporting. */
+export interface ActivityConnectorEvent {
+  connector: string;
   event: "installed" | "uninstalled" | "crashed" | "recovered" | "dead";
   timestamp: string;
   detail?: string;
@@ -95,7 +95,7 @@ export interface ToolUsageSummary {
 /** Error entry for activity reporting. */
 export interface ErrorEntry {
   timestamp: string;
-  source: "tool" | "engine" | "bundle" | "http";
+  source: "tool" | "engine" | "http";
   message: string;
   context?: string;
 }

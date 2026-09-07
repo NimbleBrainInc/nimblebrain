@@ -23,7 +23,7 @@ export interface ConnectEventsOptions {
   /**
    * Called on successful reconnection (NOT the initial connect). Lets
    * consumers refetch state that may have drifted during the gap —
-   * bundles, config, skills. (The per-conversation turn stream handles its
+   * connectors, config, skills. (The per-conversation turn stream handles its
    * own gap recovery via seq-based replay in `conversation-stream.ts`; this
    * hook is the workspace stream's equivalent, which has no seq cursor.)
    */

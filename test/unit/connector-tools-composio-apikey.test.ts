@@ -74,8 +74,8 @@ import {
   readComposioConnection,
   saveComposioConnection,
 } from "../../src/connectors/providers/composio/connection.ts";
-import { BundleLifecycleManager } from "../../src/bundles/lifecycle.ts";
-import { slugifyServerName } from "../../src/bundles/paths.ts";
+import { ConnectorLifecycleManager } from "../../src/connectors/runtime/lifecycle.ts";
+import { slugifyServerName } from "../../src/connectors/runtime/paths.ts";
 import { _resetComposioConfigForTest } from "../../src/connectors/providers/composio/config.ts";
 import { connectComposioApiKey } from "../../src/connectors/providers/composio/sdk.ts";
 import { buildManagedConnectorRegistry } from "../../src/connectors/providers/registry.ts";
@@ -182,7 +182,7 @@ function buildHarness(): Harness {
     }),
   );
   const registryStore = new RegistryStore(workDir);
-  const lifecycle = new BundleLifecycleManager(new NoopEventSink(), undefined);
+  const lifecycle = new ConnectorLifecycleManager(new NoopEventSink());
   const workspaceRegistry = new ToolRegistry();
 
   const runtime = {
@@ -194,7 +194,7 @@ function buildHarness(): Harness {
     getRegistryForWorkspace: () => workspaceRegistry,
     getAllowInsecureRemotes: () => false,
     getEventSink: () => new NoopEventSink(),
-    getBundleInstancesForWorkspace: () => lifecycle.getInstances(),
+    getConnectorInstancesForWorkspace: () => lifecycle.getInstances(),
     getManagedConnectorRegistry: () => buildManagedConnectorRegistry(),
   } as unknown as Runtime;
 
@@ -395,7 +395,7 @@ function stubCtx(opts: {
   ensureSourceRegisteredError?: Error;
   identity?: UserIdentity;
   role?: "admin" | "member";
-  bundles?: Array<{ serverName: string }>;
+  connectors?: Array<{ serverName: string }>;
 }): ManageConnectorsContext & { __calls: StubCalls } {
   const identity = opts.identity ?? ADMIN;
   const role = opts.role ?? "admin";
@@ -421,7 +421,7 @@ function stubCtx(opts: {
         id: opts.wsId,
         name: "Test",
         members: [{ userId: identity.id, role }],
-        bundles: opts.bundles ?? [],
+        connectors: opts.connectors ?? [],
       }),
     }),
     getConnectorDirectory: () => ({
@@ -542,7 +542,7 @@ describe("manage_connectors.connect_api_key — lifecycle tail", () => {
     // The submitted key is never written to disk.
     expect(JSON.stringify(conn)).not.toContain("phx_secret");
 
-    // Bundle flipped to running via the shared tail.
+    // Connector flipped to running via the shared tail.
     expect(ctx.__calls.recordConnectionStateChange.callCount).toBe(1);
     expect(ctx.__calls.recordConnectionStateChange.lastCall).toEqual({
       serverName: slugifyServerName(POSTHOG_ID),
@@ -589,7 +589,7 @@ describe("manage_connectors.connect_api_key — lifecycle tail", () => {
       workDir,
       wsId: WS,
       entry: POSTHOG_ENTRY,
-      bundles: [{ serverName: slugifyServerName(POSTHOG_ID) }],
+      connectors: [{ serverName: slugifyServerName(POSTHOG_ID) }],
       ensureSourceRegisteredError: new Error("transport handshake failed"),
     });
     const r = await createManageConnectorsTool(ctx).handler({

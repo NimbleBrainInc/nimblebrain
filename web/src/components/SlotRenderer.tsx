@@ -37,7 +37,7 @@ interface SlotRendererProps {
  * node keeps the failure in the DOM the iframe would have occupied.
  *
  * Text goes through `textContent`, never `innerHTML` — the label is
- * bundle-authored and the message is server-supplied.
+ * connector-authored and the message is server-supplied.
  */
 function appendLoadError(container: HTMLElement, entry: PlacementEntry, err: unknown): void {
   const box = document.createElement("div");

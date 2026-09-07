@@ -31,9 +31,9 @@ function remoteSource(name: string): McpSource {
 }
 
 describe("Runtime.mcpSources — what HealthMonitor gets to watch", () => {
-  it("keeps every per-workspace instance of a bundle installed in many workspaces", () => {
-    // A URL bundle's source name comes from the bundle, not the workspace
-    // (`ref.serverName ?? deriveServerName(ref.url)`), so the SAME fleet bundle
+  it("keeps every per-workspace instance of a connector installed in many workspaces", () => {
+    // A URL connector's source name comes from the connector, not the workspace
+    // (`ref.serverName ?? deriveServerName(ref.url)`), so the SAME fleet connector
     // in N workspaces produces N separate McpSource objects — separate
     // transports, separate sessions — under one name. Keying the de-dup on the
     // name kept the first and dropped the rest, so a source that went down in
@@ -81,18 +81,18 @@ describe("Runtime.mcpSources — what HealthMonitor gets to watch", () => {
     expect(got[0]).toBe(shared);
   });
 
-  it("handles the mixed shape: shared platform sources plus per-workspace bundles", () => {
+  it("handles the mixed shape: shared platform sources plus per-workspace connectors", () => {
     const shared = remoteSource("platform-home");
-    const bundleA = remoteSource("tasks");
-    const bundleB = remoteSource("tasks");
+    const connectorA = remoteSource("tasks");
+    const connectorB = remoteSource("tasks");
     const wsA = new ToolRegistry();
     const wsB = new ToolRegistry();
-    for (const [reg, bundle] of [
-      [wsA, bundleA],
-      [wsB, bundleB],
+    for (const [reg, connector] of [
+      [wsA, connectorA],
+      [wsB, connectorB],
     ] as const) {
       reg.addSource(shared);
-      reg.addSource(bundle);
+      reg.addSource(connector);
     }
 
     const got = runtimeWith(
@@ -102,9 +102,9 @@ describe("Runtime.mcpSources — what HealthMonitor gets to watch", () => {
       ]),
     ).mcpSources();
 
-    // The shared platform source once; both per-workspace bundles.
+    // The shared platform source once; both per-workspace connectors.
     expect(got).toHaveLength(3);
     expect(got.filter((s) => s === shared)).toHaveLength(1);
-    expect(new Set(got)).toEqual(new Set([shared, bundleA, bundleB]));
+    expect(new Set(got)).toEqual(new Set([shared, connectorA, connectorB]));
   });
 });

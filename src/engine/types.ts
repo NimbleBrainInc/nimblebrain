@@ -41,7 +41,7 @@ export const SKILL_ACTIVATED_SYNTHETIC = "skill_activated";
  * same guidance twice in one run.
  *
  * Host-owned: the engine trusts it to suppress future guidance delivery, so a
- * bundle able to set it could mute a curated overlay by name. `McpSource`
+ * connector able to set it could mute a curated overlay by name. `McpSource`
  * strips it from results arriving over a real wire; only in-process platform
  * sources (the `skills` source) may carry it through.
  */
@@ -53,7 +53,7 @@ export const SKILL_ACTIVATED_META_KEY = "ai.nimblebrain/skill-activated";
  * turn's composition reads.
  *
  * Host-owned for the same reason as the activation marker above, and a
- * stricter one: a bundle able to set this could mute another vendor's
+ * stricter one: a connector able to set this could mute another vendor's
  * always-on guidance — the consistency gate, the safety rules — by name, for
  * the rest of the conversation, invisibly. `McpSource` strips it from anything
  * arriving over a real wire; only in-process platform sources may carry it.
@@ -119,17 +119,17 @@ export interface ToolResult {
   /**
    * Free-form out-of-band metadata, mirroring MCP's `CallToolResult._meta`.
    * Round-trips across the tool boundary in both directions: in-process tools
-   * set it on their `ToolResult`, MCP bundle results carry it from the wire.
+   * set it on their `ToolResult`, MCP connector results carry it from the wire.
    * It is NOT the tool's data payload (that's `content` / `structuredContent`)
    * — it's metadata *about* the result, keyed by reverse-DNS namespace per the
    * MCP convention (`io.modelcontextprotocol/...`, `ai.nimblebrain/...`).
    *
    * Forwarding lives at the two serialization boundaries, not per-source:
    * `defineInProcessApp` (every in-process tool, system tools included)
-   * and `McpSource` (bundle results, inline + task paths). A direct `ToolSource`
+   * and `McpSource` (connector results, inline + task paths). A direct `ToolSource`
    * that returns a `ToolResult` with no boundary in between carries `_meta`
    * natively — no forwarding needed. So any tool, in-process or
-   * bundle, can opt into a `_meta` hint and have it reach the engine.
+   * connector, can opt into a `_meta` hint and have it reach the engine.
    */
   _meta?: Record<string, unknown>;
 }
@@ -147,7 +147,7 @@ export interface ToolResult {
  *
  * It rides in `_meta` — the MCP-blessed channel for metadata-about-a-result —
  * rather than `structuredContent` (the tool's data) or a bespoke top-level
- * field (dropped at the boundary). Any tool, in-process or bundle, can set it.
+ * field (dropped at the boundary). Any tool, in-process or connector, can set it.
  */
 export const NON_ADVANCING_META_KEY = "ai.nimblebrain/non-advancing";
 
@@ -170,12 +170,12 @@ export const NON_ADVANCING_META_KEY = "ai.nimblebrain/non-advancing";
  * that all fail the same infrastructural way collapse to one fingerprint and
  * trip after three.
  *
- * Host-owned, because the supervisor trusts it unconditionally: a bundle able to
+ * Host-owned, because the supervisor trusts it unconditionally: a connector able to
  * set it could exempt itself from the guard permanently. That is the asymmetry
- * with `NON_ADVANCING_META_KEY` above, which IS safe to accept from a bundle —
+ * with `NON_ADVANCING_META_KEY` above, which IS safe to accept from a connector —
  * setting that one makes the guard stricter; this one makes it weaker.
  *
- * `McpSource` owns it on two channels, and both need closing because a bundle
+ * `McpSource` owns it on two channels, and both need closing because a connector
  * controls both:
  *
  *   - the `_meta` key, stripped from anything arriving over the wire;
@@ -305,13 +305,13 @@ export type EngineEventType =
    * resume count (bounded by MAX_LENGTH_CONTINUATIONS).
    */
   | "context.length_continuation"
-  | "bundle.installed"
-  | "bundle.uninstalled"
+  | "connector.installed"
+  | "connector.uninstalled"
   /**
-   * Per-principal connection state change for a remote URL bundle.
+   * Per-principal connection state change for a remote URL connector.
    * Payload: { wsId, serverName, principalId, state, authorizationUrl? }.
-   * Workspace-scoped bundles emit one event stream (principalId = "_workspace");
-   * member-scoped bundles emit one stream per active member.
+   * Workspace-scoped connectors emit one event stream (principalId = "_workspace");
+   * member-scoped connectors emit one stream per active member.
    */
   | "connection.state_changed"
   | "data.changed"
