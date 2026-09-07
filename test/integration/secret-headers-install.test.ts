@@ -33,6 +33,7 @@ import { RegistryStore } from "../../src/registries/registry-store.ts";
 import type { DirectoryEntry } from "../../src/registries/types.ts";
 import type { Runtime } from "../../src/runtime/runtime.ts";
 import { createManageConnectorsTool } from "../../src/tools/connector-tools.ts";
+import { slugifyServerName } from "../../src/connectors/runtime/paths.ts";
 import {
   _resetCredentialProvidersForTest,
   registerCredentialProvider,
@@ -52,6 +53,8 @@ const ENTRY_ID = "com.acme/db-query";
 const URL_ = "https://mcp.acme.test/mcp";
 const HEADER = "X-Db-Url";
 const KEY = "acme.db_url";
+// What `install` derives from the entry id — the handle every later action uses.
+const SERVER_NAME = slugifyServerName(ENTRY_ID);
 
 const ADMIN: UserIdentity = {
   id: "usr_admin_secret_headers",
@@ -130,6 +133,15 @@ function toolFor(sessionWsId: string) {
     getIdentity: () => ADMIN,
     getWorkspaceId: () => sessionWsId,
   });
+}
+
+/** The structured half of a tool result, typed to what these tests read. */
+function structured(result: { structuredContent?: unknown }): {
+  deletedSecretKeys?: string[];
+  secretDeleteError?: string;
+  keys?: Array<{ key: string; updatedAt: string }>;
+} {
+  return (result.structuredContent ?? {}) as ReturnType<typeof structured>;
 }
 
 /** The persisted ref for the installed connector, read off disk. */
@@ -270,6 +282,97 @@ describe("a catalog entry that binds a workspace secret to a header", () => {
     });
     expect((await send("ws_tenanta")).get(HEADER)).toBe("postgres://new.acme.test/db");
     expect(persistedRef("ws_tenanta")).toEqual(before);
+  });
+
+  // ── Uninstall ───────────────────────────────────────────────────────
+  //
+  // A connector owns its secrets, so removing the connector resolves them.
+  // Leaving them behind is not neutral: the rotation surface renders only for
+  // an INSTALLED connector, so an orphaned key is unreachable from the UI
+  // entirely — a live outbound capability on a volume with nothing referencing
+  // it and nothing admitting it exists.
+  //
+  // The key is read from the connector's OWN declaration here, never from the
+  // call. A caller-named key would be a delete primitive pointed at any secret
+  // in the workspace.
+
+  test("uninstalling removes the connector's declared secrets", async () => {
+    // One tool for both actions: `toolFor` builds a fresh lifecycle per call,
+    // and uninstall resolves the instance install seeded.
+    const tool = toolFor("ws_tenanta");
+    await tool.handler({ action: "install", entry: entry() });
+    await tool.handler({ action: "set_secret", key: KEY, value: "postgres://a.acme.test/db" });
+    expect(structured(await tool.handler({ action: "list_secret_keys" })).keys).toHaveLength(1);
+
+    const result = await tool.handler({ action: "uninstall", serverName: SERVER_NAME });
+    expect(result.isError).toBe(false);
+    expect(structured(result).deletedSecretKeys).toEqual([KEY]);
+    expect(structured(await tool.handler({ action: "list_secret_keys" })).keys).toEqual([]);
+  });
+
+  test("keepSecrets leaves them, and says nothing else changed", async () => {
+    const tool = toolFor("ws_tenanta");
+    await tool.handler({ action: "install", entry: entry() });
+    await tool.handler({ action: "set_secret", key: KEY, value: "postgres://a.acme.test/db" });
+
+    const result = await tool.handler({
+      action: "uninstall",
+      serverName: SERVER_NAME,
+      keepSecrets: true,
+    });
+    expect(result.isError).toBe(false);
+    expect(structured(result).deletedSecretKeys).toEqual([]);
+    expect(structured(await tool.handler({ action: "list_secret_keys" })).keys?.[0]?.key).toBe(KEY);
+  });
+
+  test("only the uninstalled connector's own keys go", async () => {
+    // The declaration is the bound. A key the workspace holds for something
+    // else is not this connector's to resolve.
+    const tool = toolFor("ws_tenanta");
+    await tool.handler({ action: "install", entry: entry() });
+    await tool.handler({ action: "set_secret", key: KEY, value: "postgres://a.acme.test/db" });
+    await tool.handler({ action: "set_secret", key: "unrelated.token", value: "keep-me" });
+
+    await tool.handler({ action: "uninstall", serverName: SERVER_NAME });
+    expect(structured(await tool.handler({ action: "list_secret_keys" })).keys?.map((k) => k.key)).toEqual([
+      "unrelated.token",
+    ]);
+  });
+
+  test("uninstalling a connector that declares no secret removes none", async () => {
+    // Same code path, no branch: the plain-fleet entry declares nothing, so
+    // `secretHeaders` yields no keys and the workspace's other secrets stand.
+    const plain = entry();
+    plain.id = "com.acme/plain-fleet";
+    plain.name = "Acme Plain Fleet";
+    plain.install = {
+      ...plain.install,
+      url: "https://mcp.acme.test/plain/mcp",
+      secretHeaders: undefined,
+    } as DirectoryEntry["install"];
+
+    const tool = toolFor("ws_tenanta");
+    await tool.handler({ action: "install", entry: plain });
+    await tool.handler({ action: "set_secret", key: KEY, value: "postgres://a.acme.test/db" });
+
+    const result = await tool.handler({
+      action: "uninstall",
+      serverName: slugifyServerName("com.acme/plain-fleet"),
+    });
+    expect(result.isError).toBe(false);
+    expect(structured(result).deletedSecretKeys).toEqual([]);
+    expect(structured(await tool.handler({ action: "list_secret_keys" })).keys?.[0]?.key).toBe(KEY);
+  });
+
+  test("a failed uninstall deletes no key", async () => {
+    // The connector is not installed, so the uninstall is refused before
+    // anything is torn down — and the secret it would have owned is untouched.
+    const tool = toolFor("ws_tenanta");
+    await tool.handler({ action: "set_secret", key: KEY, value: "postgres://a.acme.test/db" });
+
+    const result = await tool.handler({ action: "uninstall", serverName: SERVER_NAME });
+    expect(result.isError).toBe(true);
+    expect(structured(await tool.handler({ action: "list_secret_keys" })).keys?.[0]?.key).toBe(KEY);
   });
 
   // The complement of the forged-pair test above, and the one that matters more:

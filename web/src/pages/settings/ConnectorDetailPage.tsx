@@ -1,14 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import {
-  getInstalledConnector,
-  type InstalledConnector,
-  uninstallConnector,
-} from "../../api/client";
+import { getInstalledConnector, type InstalledConnector } from "../../api/client";
 import { ConnectorStatusHero } from "../../components/connectors/ConnectorStatusHero";
 import { OAuthConnectionSection } from "../../components/connectors/OAuthConnectionSection";
 import { OperatorOAuthSection } from "../../components/connectors/OperatorOAuthSection";
 import { ToolPermissionsTable } from "../../components/connectors/ToolPermissionsTable";
+import { UninstallConnectorDialog } from "../../components/connectors/UninstallConnectorDialog";
 import { WorkspaceSecretsSection } from "../../components/connectors/WorkspaceSecretsSection";
 import { useCanWriteActiveWorkspace } from "../../hooks/useScopedRole";
 
@@ -42,12 +39,11 @@ export function ConnectorDetailPage() {
   const [installed, setInstalled] = useState<InstalledConnector | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [acting, setActing] = useState<string | null>(null);
-  // Two-step uninstall: first click arms the button (label changes
-  // to "Click again to confirm"), second click runs. Replaces
-  // window.confirm() — that gets suppressed by browsers after a
-  // few uses and silently makes destructive buttons no-op.
-  const [uninstallArmed, setUninstallArmed] = useState(false);
+  const [confirmingUninstall, setConfirmingUninstall] = useState(false);
+  // Set only when an uninstall succeeded and a credential outlived it. The
+  // connector is gone, so this page has nothing left to configure — the notice
+  // takes its place rather than following a navigation nothing would render.
+  const [orphanNotice, setOrphanNotice] = useState<string | null>(null);
 
   // Edit gates ride on workspace-admin *membership*, matching the server's
   // `canWriteWorkspaceScoped`. In a personal workspace the sole owner is its
@@ -75,29 +71,18 @@ export function ConnectorDetailPage() {
     refresh();
   }, [refresh]);
 
-  const onUninstall = async () => {
-    if (!installed) return;
-    // First click arms; second click runs. Replaces window.confirm()
-    // (browsers suppress it after a few uses, silently no-op'ing
-    // destructive buttons).
-    if (!uninstallArmed) {
-      setUninstallArmed(true);
-      return;
-    }
-    setActing("uninstall");
-    setError(null);
-    try {
-      await uninstallConnector(installed.serverName, "workspace");
-      navigate(backPath);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-      setActing(null);
-      setUninstallArmed(false);
-    }
-  };
-
   if (loading) {
     return <div className="max-w-3xl mx-auto text-sm text-muted-foreground">Loading…</div>;
+  }
+  if (orphanNotice) {
+    return (
+      <div className="max-w-3xl mx-auto space-y-3">
+        <Link to={backPath} className="text-xs text-muted-foreground hover:underline">
+          ← All connectors
+        </Link>
+        <p className="text-sm text-destructive">{orphanNotice}</p>
+      </div>
+    );
   }
   if (!installed) {
     return (
@@ -134,18 +119,10 @@ export function ConnectorDetailPage() {
           {canManage && (
             <button
               type="button"
-              onClick={onUninstall}
-              onBlur={() => setUninstallArmed(false)}
-              disabled={acting !== null}
-              className={`text-xs hover:underline disabled:opacity-60 ${
-                uninstallArmed ? "text-destructive font-semibold" : "text-destructive"
-              }`}
+              onClick={() => setConfirmingUninstall(true)}
+              className="text-xs text-destructive hover:underline"
             >
-              {acting === "uninstall"
-                ? "Uninstalling…"
-                : uninstallArmed
-                  ? "Click again to confirm"
-                  : "Uninstall"}
+              Uninstall
             </button>
           )}
         </div>
@@ -165,6 +142,23 @@ export function ConnectorDetailPage() {
         <WorkspaceSecretsSection installed={installed} canManage={canManage} />
         <ToolPermissionsTable serverName={installed.serverName} canManage={canManage} />
       </div>
+
+      {canManage && (
+        <UninstallConnectorDialog
+          installed={installed}
+          open={confirmingUninstall}
+          onOpenChange={setConfirmingUninstall}
+          // A clean uninstall leaves nothing to configure, so the page goes with
+          // it. A credential that outlived the connector is the one thing the
+          // user can still act on, and navigating away is where it would be
+          // lost — so that case stays put and says so.
+          onUninstalled={(warning) => {
+            setConfirmingUninstall(false);
+            if (warning) setOrphanNotice(warning);
+            else navigate(backPath);
+          }}
+        />
+      )}
     </div>
   );
 }

@@ -296,6 +296,11 @@ export function createManageConnectorsTool(ctx: ManageConnectorsContext): InProc
           description:
             "The secret (set_secret only). Stored in the workspace credential store and never returned by any action — `list_secret_keys` reports keys and timestamps only. Setting an existing key replaces it, which is how a key is rotated.",
         },
+        keepSecrets: {
+          type: "boolean",
+          description:
+            "For `uninstall`: leave the workspace secrets this connector declares in `secretHeaders` in the store instead of removing them. Default false — a connector owns its secrets, so removing it removes them, and the key is chosen from the connector's own declaration rather than from this call. Pass true only when the value is expensive to re-issue and a reinstall is expected.",
+        },
       },
       required: ["action"],
     },
@@ -328,7 +333,14 @@ export function createManageConnectorsTool(ctx: ManageConnectorsContext): InProc
         case "uninstall":
           if (args.scope === "identity")
             return handleDisconnectIdentity(ctx, args.identity, args.serverName);
-          return handleUninstall(ctx, args.wsId, args.identity, args.serverName, args.scope);
+          return handleUninstall(
+            ctx,
+            args.wsId,
+            args.identity,
+            args.serverName,
+            args.scope,
+            args.keepSecrets,
+          );
         case "get_permissions":
           return handleGetPermissions(ctx, args.wsId, args.callerId, args.serverName);
         case "set_permissions":
@@ -404,6 +416,8 @@ interface DispatchArgs {
    * value that is *only* whitespace instead.
    */
   value: string;
+  /** `uninstall` opt-out: keep the connector's declared secrets in the store. */
+  keepSecrets: boolean;
 }
 
 /** Coerce the raw tool input + request context into typed dispatch args. */
@@ -446,6 +460,11 @@ function resolveDispatchArgs(
         : null,
     key: str(input.key).trim(),
     value: str(input.value),
+    // Deletion is the default and `keepSecrets` names the exception, so a
+    // caller that has never heard of this flag still leaves nothing behind.
+    // Strictly `=== true`: any other value keeps the invariant rather than
+    // letting a stray string opt out of it.
+    keepSecrets: input.keepSecrets === true,
   };
 }
 
@@ -2294,12 +2313,52 @@ async function handleDisconnect(
 }
 
 /**
+ * The credential-store keys a connector owns: the ones its `secretHeaders`
+ * declaration names.
+ *
+ * Gated on `auth === "provider"` because that is the only install branch that
+ * wires the header — the projection carries `secretHeaders` through for every
+ * auth kind, so on any other kind the declaration is inert and nothing was ever
+ * written against it. Same gate the Configure page's rotation section applies,
+ * and deliberately the same source, so what that section calls this connector's
+ * credentials is what uninstall removes.
+ *
+ * Deduplicated: two headers may reference one key, and deleting it twice would
+ * report a key the store no longer has.
+ */
+function ownedSecretKeys(cat: ConnectorCatalogEntry | undefined): string[] {
+  if (!cat || cat.auth !== "provider" || !cat.secretHeaders) return [];
+  const keys = new Set<string>();
+  for (const ref of Object.values(cat.secretHeaders)) {
+    if (isCredentialRef(ref)) keys.add(ref.key);
+  }
+  return [...keys];
+}
+
+/**
  * Uninstall a connector — full removal. For OAuth-protected URL connectors
  * we revoke tokens upstream first (so the user's grant in the vendor
  * portal is cleaned up), then `lifecycle.uninstall` stops the source,
  * removes the entry from `workspace.json`, clears credentials, and
  * unregisters placements. For local connectors (stdio / non-OAuth URL),
  * just `lifecycle.uninstall`.
+ *
+ * The workspace secrets the connector declares go with it. A connector owns
+ * its secrets, so removing the connector resolves them — leaving them behind
+ * strands a live outbound capability (a customer's database, someone's API) on
+ * a volume with nothing referencing it and no surface admitting it exists, since
+ * the rotation section renders only for an INSTALLED connector. `keepSecrets`
+ * is the opt-out, for a value that is expensive to re-issue.
+ *
+ * The keys come from the connector's own declaration, read here rather than
+ * from the call: a caller-named key would be a delete primitive pointed at any
+ * secret in the workspace.
+ *
+ * Order is uninstall-then-delete, and it matters. A delete that ran first and
+ * was followed by a failed uninstall would leave a connector installed and
+ * unable to connect. The reverse leaves the connector gone and a key behind,
+ * which is the state before this change and one the caller can act on — so a
+ * failed delete is reported, not rolled back.
  *
  * Workspace connectors only — a personal (identity-owned) connector is removed
  * via `handleDisconnectIdentity` (the dispatcher routes `scope:"identity"` there).
@@ -2310,6 +2369,7 @@ async function handleUninstall(
   identity: UserIdentity | null,
   serverName: string,
   scopeHint: string | undefined,
+  keepSecrets: boolean,
 ): Promise<ToolResult> {
   if (!serverName) return errResult("serverName is required.");
   void scopeHint; // workspace-only path; `scope:"identity"` is routed upstream
@@ -2337,6 +2397,21 @@ async function handleUninstall(
     };
   }
   const instance = lifecycle.getInstance(serverName, wsId);
+
+  // Resolved BEFORE the uninstall: `lifecycle.uninstall` drops the instance,
+  // and the instance is what matches this connector to its catalog entry.
+  const directory = ctx.runtime.getConnectorDirectory();
+  const secretKeys = keepSecrets
+    ? []
+    : ownedSecretKeys(
+        instance
+          ? resolveInstanceCatalog(
+              instance,
+              await directory.catalogByUrl(),
+              await directory.catalogByIdMap(),
+            ).cat
+          : undefined,
+      );
 
   // Revoke OAuth tokens upstream first when applicable.
   const revokeResult = instance?.ref
@@ -2367,14 +2442,75 @@ async function handleUninstall(
     await ctx.runtime
       .getPermissionStore()
       .deleteConnector({ scope: "workspace", wsId }, serverName);
+    const secrets = await deleteOwnedSecrets(ctx, wsId, secretKeys);
     return {
-      content: textContent(`Uninstalled "${serverName}" from workspace.`),
-      structuredContent: { ok: true, scope: "workspace", serverName, ...revokeResult },
+      content: textContent(
+        `Uninstalled "${serverName}" from workspace.${describeSecretOutcome(secrets)}`,
+      ),
+      structuredContent: {
+        ok: true,
+        scope: "workspace",
+        serverName,
+        deletedSecretKeys: secrets.deleted,
+        ...(secrets.error ? { secretDeleteError: secrets.error } : {}),
+        ...revokeResult,
+      },
       isError: false,
     };
   } catch (err) {
+    // Nothing has been deleted yet — the secrets go after the uninstall, so a
+    // connector that is still installed still has its credentials.
     return errResult(err instanceof Error ? err.message : String(err));
   }
+}
+
+/**
+ * Remove the keys an uninstalled connector owned, reporting what went.
+ *
+ * Every key is attempted even after one fails: a partial delete that stopped at
+ * the first error would leave the rest orphaned with nothing to say so. The
+ * result is not an error — the uninstall succeeded, and the connector is gone
+ * whether or not its key went with it.
+ */
+async function deleteOwnedSecrets(
+  ctx: ManageConnectorsContext,
+  wsId: string,
+  keys: string[],
+): Promise<{ deleted: string[]; failed: string[]; error?: string }> {
+  const store = ctx.runtime.getCredentialStore();
+  const deleted: string[] = [];
+  const failed: string[] = [];
+  let firstError: string | undefined;
+  for (const key of keys) {
+    try {
+      await store.delete({ kind: "workspace", wsId }, key);
+      deleted.push(key);
+    } catch (err) {
+      failed.push(key);
+      firstError ??= err instanceof Error ? err.message : String(err);
+    }
+  }
+  return { deleted, failed, ...(firstError ? { error: firstError } : {}) };
+}
+
+/** One clause for the uninstall's text result — silent when no key was in play. */
+function describeSecretOutcome(secrets: { deleted: string[]; failed: string[] }): string {
+  const parts: string[] = [];
+  if (secrets.deleted.length > 0) {
+    parts.push(
+      ` Removed ${secrets.deleted.length === 1 ? "secret" : "secrets"} ${quoteKeys(secrets.deleted)}.`,
+    );
+  }
+  if (secrets.failed.length > 0) {
+    parts.push(
+      ` The connector is gone, but ${quoteKeys(secrets.failed)} could not be removed and ${secrets.failed.length === 1 ? "is" : "are"} still stored.`,
+    );
+  }
+  return parts.join("");
+}
+
+function quoteKeys(keys: string[]): string {
+  return keys.map((k) => `"${k}"`).join(", ");
 }
 
 /**

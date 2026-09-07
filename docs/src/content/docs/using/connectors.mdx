@@ -61,6 +61,10 @@ shown again — not in the UI, not in a log, and never in a conversation. Replac
 one later from the connector's **Configure** page; the next request uses it, with
 no restart. See [Secrets](/config/secrets/) for the storage model.
 
+Uninstalling takes them with it. The confirmation names each stored credential
+the connector owns, and deletes them unless you tick **Keep them for a
+reinstall** — see [Uninstalling](/config/secrets/#uninstalling).
+
 The last three rows depend on something configured once for the whole platform rather than anything in this workspace — but on *different* platform machinery: **composio** and **smithery** on a configured [connector provider](/config/connector-providers/), **provider** on the fleet authorizer or a declared gateway. None of them is something a workspace admin can turn on.
 
 ## Where your secrets live

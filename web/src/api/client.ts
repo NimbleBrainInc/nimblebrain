@@ -877,15 +877,33 @@ export async function disconnectConnector(
  * Full uninstall — works for any connector type. For OAuth connectors,
  * revokes tokens upstream first; for local connectors, just removes from
  * workspace.json. Drops tool permissions associated with the connector.
+ *
+ * The workspace secrets the connector's catalog entry declares go with it,
+ * unless `keepSecrets` says otherwise. Which keys those are is the server's
+ * decision, read from the connector's own declaration — this call carries the
+ * intent, never a key, because a key from here would be a delete pointed at any
+ * secret in the workspace.
+ *
+ * `deletedSecretKeys` is what actually went. `secretDeleteError` means the
+ * connector is gone and at least one key is not, which is a state to report
+ * rather than an uninstall to retry.
  */
 export async function uninstallConnector(
   serverName: string,
   scope: "workspace",
-): Promise<{ ok: boolean; scope: "workspace"; serverName: string }> {
+  opts: { keepSecrets?: boolean } = {},
+): Promise<{
+  ok: boolean;
+  scope: "workspace";
+  serverName: string;
+  deletedSecretKeys?: string[];
+  secretDeleteError?: string;
+}> {
   const result = await callTool("nb", "manage_connectors", {
     action: "uninstall",
     serverName,
     scope,
+    ...(opts.keepSecrets ? { keepSecrets: true } : {}),
   });
   return unwrapStructured(result, "uninstall");
 }
