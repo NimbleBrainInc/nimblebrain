@@ -224,6 +224,7 @@ function withWorkspaceRole(
             id: "ws_test",
             name: "Test",
             memberCount: 2,
+            connectors: [],
             ...(userRole ? { userRole } : {}),
           },
         ],

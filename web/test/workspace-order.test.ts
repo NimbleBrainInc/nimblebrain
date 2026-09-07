@@ -27,6 +27,7 @@ function ws(over: Partial<WorkspaceInfo>): WorkspaceInfo {
     id: "ws_default",
     name: "Default",
     memberCount: 1,
+    connectors: [],
     ...over,
   };
 }

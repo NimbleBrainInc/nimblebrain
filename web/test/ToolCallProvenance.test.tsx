@@ -71,6 +71,7 @@ function ws(over: Partial<WorkspaceInfo>): WorkspaceInfo {
     id: "ws_helix",
     name: "Helix",
     memberCount: 1,
+    connectors: [],
     ...over,
   };
 }

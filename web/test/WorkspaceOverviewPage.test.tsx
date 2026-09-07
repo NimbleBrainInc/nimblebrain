@@ -94,6 +94,7 @@ const WS: WorkspaceInfo = {
   id: "ws_acme",
   name: "Acme",
   memberCount: 2,
+  connectors: [],
   userRole: "admin",
 };
 
