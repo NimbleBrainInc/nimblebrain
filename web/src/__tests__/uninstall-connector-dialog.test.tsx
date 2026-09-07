@@ -12,8 +12,8 @@
 // a new silent policy:
 //
 //   1. the dialog NAMES the keys it will delete, and never a value
-//   2. deletion is the default; "keep for reinstall" is the opt-out, and it
-//      travels to the server rather than being applied on the client
+//   2. deletion is unconditional, and the client names no key — the call
+//      carries the intent and the server reads the declaration
 //   3. a connector that declares nothing gets the same dialog with no secrets
 //      section — one code path, not two
 //
@@ -51,12 +51,10 @@ const listWorkspaceSecretKeys = mock(async () => {
   if (!listResult) throw new Error("no stub set");
   return listResult();
 });
-const uninstallConnector = mock(
-  async (_serverName: string, _scope: "workspace", _opts?: { keepSecrets?: boolean }) => {
-    if (!uninstallResult) throw new Error("no stub set");
-    return uninstallResult();
-  },
-);
+const uninstallConnector = mock(async (_serverName: string, _scope: "workspace") => {
+  if (!uninstallResult) throw new Error("no stub set");
+  return uninstallResult();
+});
 
 mock.module("../api/client", () => ({
   ...realClient,
@@ -179,34 +177,11 @@ function dialogButton(text: string): HTMLButtonElement | null {
   );
 }
 
-function checkbox(): HTMLInputElement | null {
-  return popup()?.querySelector('input[type="checkbox"]') ?? null;
-}
-
 async function click(el: Element | null): Promise<void> {
   const MouseEventCtor = (globalThis as unknown as { window: { MouseEvent: typeof MouseEvent } })
     .window.MouseEvent;
   await act(async () => {
     el?.dispatchEvent(new MouseEventCtor("click", { bubbles: true }));
-  });
-  await flush();
-}
-
-/**
- * Tick the box the way a person does. React reads `checked` through its own
- * value tracker, so the prototype setter is what makes the change visible to it
- * — assigning `box.checked` directly updates the tracker too and the synthetic
- * change never fires.
- */
-async function toggleKeep(): Promise<void> {
-  const box = checkbox();
-  if (!box) throw new Error("no checkbox in the dialog");
-  const WindowEvent = (globalThis as unknown as { window: { Event: typeof Event } }).window.Event;
-  const setChecked = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "checked")?.set;
-  await act(async () => {
-    setChecked?.call(box, !box.checked);
-    box.dispatchEvent(new WindowEvent("click", { bubbles: true }));
-    box.dispatchEvent(new WindowEvent("change", { bubbles: true }));
   });
   await flush();
 }
@@ -244,8 +219,9 @@ describe("UninstallConnectorDialog — what it names", () => {
 
   test("a connector declaring no secrets gets the same dialog with no secrets section", async () => {
     mounted = await open(installed({}));
-    expect(popup()?.textContent).toContain("Uninstall Acme DB Query?");
-    expect(checkbox()).toBeNull();
+    const text = popup()?.textContent ?? "";
+    expect(text).toContain("Uninstall Acme DB Query?");
+    expect(text).not.toContain("will be deleted");
     expect(dialogButton("Uninstall")).not.toBeNull();
   });
 
@@ -255,28 +231,24 @@ describe("UninstallConnectorDialog — what it names", () => {
     // key uninstall does not delete would make the dialog a worse lie than the
     // silence it replaces.
     mounted = await open(installed({ auth: "dcr", secretHeaders: DECLARED }));
-    expect(popup()?.textContent).not.toContain("acme.db_url");
-    expect(checkbox()).toBeNull();
+    const text = popup()?.textContent ?? "";
+    expect(text).not.toContain("acme.db_url");
+    expect(text).not.toContain("will be deleted");
   });
 });
 
 describe("UninstallConnectorDialog — deciding", () => {
-  test("deletion is the default", async () => {
+  test("deletion is unconditional — there is no opt-out to offer", async () => {
+    // A connector declaring `secretHeaders` cannot be installed without
+    // supplying every value, so a reinstall re-collects and overwrites. A
+    // keep-them control would preserve a value the next install replaces, and
+    // leave behind the orphan this dialog exists to prevent.
     mounted = await open(installed({ secretHeaders: DECLARED }));
-    expect(checkbox()?.checked).toBe(false);
+    expect(popup()?.querySelector('input[type="checkbox"]')).toBeNull();
 
     await click(dialogButton("Uninstall"));
     expect(uninstallConnector).toHaveBeenCalledTimes(1);
-    expect(uninstallConnector.mock.calls[0]?.[2]).toEqual({ keepSecrets: false });
-  });
-
-  test("keep-for-reinstall travels to the server and the copy follows it", async () => {
-    mounted = await open(installed({ secretHeaders: DECLARED }));
-    await toggleKeep();
-    expect(popup()?.textContent).toContain("will be kept");
-
-    await click(dialogButton("Uninstall"));
-    expect(uninstallConnector.mock.calls[0]?.[2]).toEqual({ keepSecrets: true });
+    expect(uninstallConnector.mock.calls[0]).toEqual(["com-acme-db-query", "workspace"]);
   });
 
   test("cancelling uninstalls nothing", async () => {

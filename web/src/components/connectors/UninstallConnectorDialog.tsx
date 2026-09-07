@@ -16,10 +16,13 @@ import { ConfirmDialog } from "../ui/confirm-dialog";
  * rotation section renders only for an installed connector — no surface left
  * that admits it exists.
  *
- * So deletion is the default and "keep for reinstall" is the opt-out, offered
- * because the re-fetch cost is asymmetric: a customer may have to re-issue a
- * credential, and an accidental uninstall should not force that. It is a
- * decision at the moment of the act, not a preference.
+ * There is no keep-them option, because there is nothing for one to preserve.
+ * A connector declaring `secretHeaders` cannot be installed without supplying
+ * every value first (`ConnectorBrowsePage.onInstall` routes it through the
+ * collection dialog, which default-denies a blank field), so a reinstall
+ * re-collects and overwrites whatever was held back. The opt-out would keep a
+ * value the next install replaces — buying nothing, and leaving the orphan this
+ * dialog exists to prevent.
  *
  * Keys and timestamps only. There is no value here, no masked preview of one,
  * and no read that could produce either — the key and when it was written are
@@ -49,7 +52,6 @@ export function UninstallConnectorDialog({
     [cat?.auth, cat?.secretHeaders],
   );
 
-  const [keep, setKeep] = useState(false);
   const [stored, setStored] = useState<Map<string, string> | null>(null);
   const [listFailed, setListFailed] = useState(false);
 
@@ -73,7 +75,6 @@ export function UninstallConnectorDialog({
 
   useEffect(() => {
     if (!open) return;
-    setKeep(false);
     setStored(null);
     setListFailed(false);
     void refresh();
@@ -93,9 +94,7 @@ export function UninstallConnectorDialog({
       pendingLabel="Uninstalling…"
       destructive
       onConfirm={async () => {
-        const res = await uninstallConnector(installed.serverName, "workspace", {
-          keepSecrets: keep,
-        });
+        const res = await uninstallConnector(installed.serverName, "workspace");
         onUninstalled(
           res.secretDeleteError
             ? `${displayName} was uninstalled, but its stored credentials could not be removed: ${res.secretDeleteError}`
@@ -106,9 +105,8 @@ export function UninstallConnectorDialog({
       {named.length > 0 && (
         <div className="space-y-2">
           <p className="text-muted-foreground">
-            {keep
-              ? "These stored credentials will be kept:"
-              : `${named.length === 1 ? "This stored credential" : "These stored credentials"} will be deleted:`}
+            {named.length === 1 ? "This stored credential" : "These stored credentials"} will be
+            deleted:
           </p>
           <ul className="space-y-0.5">
             {named.map((f) => {
@@ -128,10 +126,6 @@ export function UninstallConnectorDialog({
               Couldn't check which of these are stored. Removing one that isn't set does nothing.
             </p>
           )}
-          <label className="flex items-center gap-2 text-muted-foreground">
-            <input type="checkbox" checked={keep} onChange={(e) => setKeep(e.target.checked)} />
-            Keep them for a reinstall
-          </label>
         </div>
       )}
     </ConfirmDialog>

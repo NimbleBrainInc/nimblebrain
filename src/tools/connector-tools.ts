@@ -296,11 +296,6 @@ export function createManageConnectorsTool(ctx: ManageConnectorsContext): InProc
           description:
             "The secret (set_secret only). Stored in the workspace credential store and never returned by any action — `list_secret_keys` reports keys and timestamps only. Setting an existing key replaces it, which is how a key is rotated.",
         },
-        keepSecrets: {
-          type: "boolean",
-          description:
-            "For `uninstall`: leave the workspace secrets this connector declares in `secretHeaders` in the store instead of removing them. Default false — a connector owns its secrets, so removing it removes them, and the key is chosen from the connector's own declaration rather than from this call. Pass true only when the value is expensive to re-issue and a reinstall is expected.",
-        },
       },
       required: ["action"],
     },
@@ -333,14 +328,7 @@ export function createManageConnectorsTool(ctx: ManageConnectorsContext): InProc
         case "uninstall":
           if (args.scope === "identity")
             return handleDisconnectIdentity(ctx, args.identity, args.serverName);
-          return handleUninstall(
-            ctx,
-            args.wsId,
-            args.identity,
-            args.serverName,
-            args.scope,
-            args.keepSecrets,
-          );
+          return handleUninstall(ctx, args.wsId, args.identity, args.serverName, args.scope);
         case "get_permissions":
           return handleGetPermissions(ctx, args.wsId, args.callerId, args.serverName);
         case "set_permissions":
@@ -416,8 +404,6 @@ interface DispatchArgs {
    * value that is *only* whitespace instead.
    */
   value: string;
-  /** `uninstall` opt-out: keep the connector's declared secrets in the store. */
-  keepSecrets: boolean;
 }
 
 /** Coerce the raw tool input + request context into typed dispatch args. */
@@ -460,11 +446,6 @@ function resolveDispatchArgs(
         : null,
     key: str(input.key).trim(),
     value: str(input.value),
-    // Deletion is the default and `keepSecrets` names the exception, so a
-    // caller that has never heard of this flag still leaves nothing behind.
-    // Strictly `=== true`: any other value keeps the invariant rather than
-    // letting a stray string opt out of it.
-    keepSecrets: input.keepSecrets === true,
   };
 }
 
@@ -2343,12 +2324,17 @@ function ownedSecretKeys(cat: ConnectorCatalogEntry | undefined): string[] {
  * unregisters placements. For local connectors (stdio / non-OAuth URL),
  * just `lifecycle.uninstall`.
  *
- * The workspace secrets the connector declares go with it. A connector owns
- * its secrets, so removing the connector resolves them — leaving them behind
- * strands a live outbound capability (a customer's database, someone's API) on
- * a volume with nothing referencing it and no surface admitting it exists, since
- * the rotation section renders only for an INSTALLED connector. `keepSecrets`
- * is the opt-out, for a value that is expensive to re-issue.
+ * The workspace secrets the connector declares go with it, unconditionally. A
+ * connector owns its secrets, so removing the connector resolves them — leaving
+ * them behind strands a live outbound capability (a customer's database,
+ * someone's API) on a volume with nothing referencing it and no surface
+ * admitting it exists, since the rotation section renders only for an INSTALLED
+ * connector.
+ *
+ * There is no keep-them flag, because there is nothing for one to preserve: a
+ * connector declaring `secretHeaders` cannot be installed without supplying
+ * every value, so a reinstall re-collects and overwrites whatever was held back.
+ * The flag would keep a value the next install replaces, and leave the orphan.
  *
  * The keys come from the connector's own declaration, read here rather than
  * from the call: a caller-named key would be a delete primitive pointed at any
@@ -2369,7 +2355,6 @@ async function handleUninstall(
   identity: UserIdentity | null,
   serverName: string,
   scopeHint: string | undefined,
-  keepSecrets: boolean,
 ): Promise<ToolResult> {
   if (!serverName) return errResult("serverName is required.");
   void scopeHint; // workspace-only path; `scope:"identity"` is routed upstream
@@ -2401,17 +2386,15 @@ async function handleUninstall(
   // Resolved BEFORE the uninstall: `lifecycle.uninstall` drops the instance,
   // and the instance is what matches this connector to its catalog entry.
   const directory = ctx.runtime.getConnectorCatalog();
-  const secretKeys = keepSecrets
-    ? []
-    : ownedSecretKeys(
-        instance
-          ? resolveInstanceCatalog(
-              instance,
-              await directory.catalogByUrl(),
-              await directory.catalogByIdMap(),
-            ).cat
-          : undefined,
-      );
+  const secretKeys = instance
+    ? ownedSecretKeys(
+        resolveInstanceCatalog(
+          instance,
+          await directory.catalogByUrl(),
+          await directory.catalogByIdMap(),
+        ).cat,
+      )
+    : [];
 
   // Revoke OAuth tokens upstream first when applicable.
   const revokeResult = instance?.ref

@@ -274,6 +274,10 @@ describe("a catalog entry that binds a workspace secret to a header", () => {
   // The key is read from the connector's OWN declaration here, never from the
   // call. A caller-named key would be a delete primitive pointed at any secret
   // in the workspace.
+  //
+  // Deletion is unconditional. The opt-out that was here would have preserved a
+  // value the next install overwrites, since a connector declaring
+  // `secretHeaders` cannot be installed without supplying every value.
 
   test("uninstalling removes the connector's declared secrets", async () => {
     // One tool for both actions: `toolFor` builds a fresh lifecycle per call,
@@ -289,7 +293,12 @@ describe("a catalog entry that binds a workspace secret to a header", () => {
     expect(structured(await tool.handler({ action: "list_secret_keys" })).keys).toEqual([]);
   });
 
-  test("keepSecrets leaves them, and says nothing else changed", async () => {
+  test("no flag can hold the key back", async () => {
+    // There is no keep-them opt-out, and an unrecognized one must not become
+    // one by accident. A connector declaring `secretHeaders` cannot be
+    // installed without supplying every value, so a reinstall re-collects and
+    // overwrites — holding the key back would preserve a value the next
+    // install replaces, and leave the orphan.
     const tool = toolFor("ws_tenanta");
     await tool.handler({ action: "install", entry: entry() });
     await tool.handler({ action: "set_secret", key: KEY, value: "postgres://a.acme.test/db" });
@@ -300,8 +309,8 @@ describe("a catalog entry that binds a workspace secret to a header", () => {
       keepSecrets: true,
     });
     expect(result.isError).toBe(false);
-    expect(structured(result).deletedSecretKeys).toEqual([]);
-    expect(structured(await tool.handler({ action: "list_secret_keys" })).keys?.[0]?.key).toBe(KEY);
+    expect(structured(result).deletedSecretKeys).toEqual([KEY]);
+    expect(structured(await tool.handler({ action: "list_secret_keys" })).keys).toEqual([]);
   });
 
   test("only the uninstalled connector's own keys go", async () => {
