@@ -5,7 +5,7 @@ import {
   collectLoadedSkills,
   hashSkillBody,
 } from "../../../src/runtime/skills-loaded-payload.ts";
-import { synthesizeBundleSkill } from "../../../src/skills/bundle-skills.ts";
+import { synthesizeConnectorSkill } from "../../../src/skills/connector-skills.ts";
 import type { Skill } from "../../../src/skills/types.ts";
 import type { LoadedBy, SelectedSkill } from "../../../src/skills/select.ts";
 
@@ -159,7 +159,7 @@ describe("buildSkillsLoadedPayload", () => {
   // so the ledger has to split it back apart. Without this the surfaces fell
   // back to the id, whose last segment is the literal `SKILL`.
   test("splits a connector skill's composite identity into name + connector", () => {
-    const skill = synthesizeBundleSkill({
+    const skill = synthesizeConnectorSkill({
       serverName: "acme-mcp",
       skillName: "billing",
       description: "Billing playbook",
@@ -177,7 +177,7 @@ describe("buildSkillsLoadedPayload", () => {
 
   test("two connectors publishing the same skill name stay distinguishable", () => {
     const publish = (serverName: string) =>
-      synthesizeBundleSkill({
+      synthesizeConnectorSkill({
         serverName,
         skillName: "usage",
         description: "",

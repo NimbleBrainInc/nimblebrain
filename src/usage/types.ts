@@ -96,7 +96,7 @@ export interface UsageLedgerEntry {
   /**
    * The automation run this call belongs to (`executeTask`'s correlation id).
    * Absent in chat. Distinct from {@link runId}: this is the id the automations
-   * bundle persists the run result under, so it is the join key from spend back
+   * connector persists the run result under, so it is the join key from spend back
    * to a stored run.
    */
   taskRunId?: string;

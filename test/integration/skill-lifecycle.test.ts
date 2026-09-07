@@ -155,11 +155,11 @@ describe("skill lifecycle (end-to-end)", () => {
 		await runtime.shutdown();
 	});
 
-	it("skills__update on a bare/garbage id returns the unrecognized-id error, not the bundle error", async () => {
+	it("skills__update on a bare/garbage id returns the unrecognized-id error, not the connector error", async () => {
 		// Regression: scopeOfPath used to fall through to "bundle" for any
 		// path that didn't sit under workspaces/users/skills. That meant
 		// passing a bare name like "dl-production-memory" got back the
-		// misleading "Bundle (Layer 1) skills are vendored" error, which
+		// misleading "Connector (Layer 1) skills are vendored" error, which
 		// pointed agents at the wrong fix path. After the fix, scopeOfPath
 		// returns null for unclassified inputs and the handler errors with
 		// a clear message describing the real input contract.
@@ -183,7 +183,7 @@ describe("skill lifecycle (end-to-end)", () => {
 			const r = await callTool(runtime, "skills__update", { id, body: "test" });
 			expect(r.isError).toBe(true);
 			expect(r.content).toContain("not a recognized form");
-			expect(r.content).not.toContain("Bundle (Layer 1)");
+			expect(r.content).not.toContain("Connector (Layer 1)");
 		}
 
 		await runtime.shutdown();

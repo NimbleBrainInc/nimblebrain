@@ -709,7 +709,7 @@ function ToolWidgets({ calls }: { calls: ReadonlyArray<ToolCallDisplay> }) {
           // bytes are UNTRUSTED. Route it through ArtifactView → the sanitizing
           // ArtifactRenderer registry. This is the generic artifact read path;
           // it precedes the document/binary heuristics below, which are for the
-          // bundle-owned (files://, collateral://, …) resource_links.
+          // connector-owned (files://, collateral://, …) resource_links.
           isArtifactUri(link.uri) ? (
             <ArtifactView
               key={`${tc.id}:${link.uri}`}

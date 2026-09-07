@@ -1,5 +1,5 @@
 import type { FetchLike } from "@modelcontextprotocol/sdk/shared/transport.js";
-import type { RemoteTransportConfig } from "../bundles/types.ts";
+import type { RemoteTransportConfig } from "../connectors/runtime/types.ts";
 import { isMintedFleetSource } from "../oauth/minted-credential-provider.ts";
 import { injectTraceparent } from "../observability/index.ts";
 import { resolveTransportCredential } from "../tools/remote-transport.ts";
@@ -15,8 +15,8 @@ import { isStrippedRequestHeader, resolveForwardUrl } from "./declaration.ts";
  * credential (`resolveTransportCredential` — one owner for "how does this
  * connection authenticate", shared with the MCP transport), and the redirect
  * guard is the connector's own SSRF posture. There is no new mint path, no new
- * audience, and no new key owner: the delivery reaches the bundle exactly as a
- * tool call does, and the bundle reads identity from the edge-injected headers
+ * audience, and no new key owner: the delivery reaches the connector exactly as a
+ * tool call does, and the connector reads identity from the edge-injected headers
  * exactly as it does for a tool call.
  *
  * The runtime does not read the body. It does not parse it, size-check it
@@ -41,7 +41,7 @@ import { isStrippedRequestHeader, resolveForwardUrl } from "./declaration.ts";
  * The `kid` is not lost — it stays where the runtime already holds it, in the
  * delivery log line. Correlating a vendor's delivery to a minted URL is an
  * operator question answered from the runtime's own logs, not a value the
- * bundle needs in order to do its job: the bundle selects its adapter by the
+ * connector needs in order to do its job: the connector selects its adapter by the
  * ROUTE, and nothing downstream ever selected on the kid.
  */
 
@@ -127,7 +127,7 @@ export function buildForwardHeaders(opts: {
  *
  * Durability belongs to the two parties that can actually provide it: the
  * vendor, which retries on a 5xx for its own retry window, and the receiving
- * bundle, whose raw capture and reconcile poll are the designed backstop. A
+ * connector, whose raw capture and reconcile poll are the designed backstop. A
  * retry here would duplicate the vendor's and buffer a delivery in the one
  * process that must not become the reason the runtime is busy.
  */

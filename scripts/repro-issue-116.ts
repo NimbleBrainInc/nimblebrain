@@ -1,11 +1,11 @@
 #!/usr/bin/env bun
 /**
- * End-to-end reproducer for issue #116 (bundle subprocess stderr surfacing).
+ * End-to-end reproducer for issue #116 (connector subprocess stderr surfacing).
  *
- * Spawns a deliberately-broken Python MCP server as a stdio bundle, runs
+ * Spawns a deliberately-broken Python MCP server as a stdio connector, runs
  * the production `McpSource` against it, and verifies:
  *
- *   1. The subprocess's stderr lines reach the developer (live `[bundle:…]`
+ *   1. The subprocess's stderr lines reach the developer (live `[connector:…]`
  *      print path).
  *   2. The death is reported via exactly one `source.crashed` event.
  *   3. That event's `stderrTail` payload contains the Python traceback.
@@ -40,23 +40,23 @@ function fail(msg: string, detail?: string) {
 
 let failures = 0;
 
-const bundleDir = join(tmpdir(), `nb-repro-issue-116-${Date.now()}`);
-mkdirSync(bundleDir, { recursive: true });
+const connectorDir = join(tmpdir(), `nb-repro-issue-116-${Date.now()}`);
+mkdirSync(connectorDir, { recursive: true });
 
 // Python server that writes some stderr lines, then raises.
 // Mirrors the original bug shape — a real ModuleNotFoundError-style death.
 const SERVER_PY = `
 import sys
-print("[broken-bundle] starting up", file=sys.stderr)
-print("[broken-bundle] reading config", file=sys.stderr)
-print("[broken-bundle] about to import a missing module", file=sys.stderr)
+print("[broken-connector] starting up", file=sys.stderr)
+print("[broken-connector] reading config", file=sys.stderr)
+print("[broken-connector] about to import a missing module", file=sys.stderr)
 raise ModuleNotFoundError("No module named 'definitely_not_real'")
 `;
 
-writeFileSync(join(bundleDir, "server.py"), SERVER_PY);
+writeFileSync(join(connectorDir, "server.py"), SERVER_PY);
 
 console.log(`${BOLD}Issue #116 reproducer${RESET}`);
-console.log(`${DIM}bundle dir: ${bundleDir}${RESET}`);
+console.log(`${DIM}connector dir: ${connectorDir}${RESET}`);
 console.log("");
 
 // Recording sink so we can assert on emitted events.
@@ -67,7 +67,7 @@ const sink: EventSink = {
   },
 };
 
-// Intercept the live drain (log.bundle writes via console.error) so we can
+// Intercept the live drain (log.connector writes via console.error) so we can
 // confirm lines reached the renderer. Restore on cleanup.
 const originalConsoleError = console.error;
 const consoleLines: string[] = [];
@@ -81,11 +81,11 @@ const mode: McpTransportMode = {
   type: "stdio",
   spawn: {
     command: "python3",
-    args: [join(bundleDir, "server.py")],
+    args: [join(connectorDir, "server.py")],
     env: process.env as Record<string, string>,
   },
 };
-const source = new McpSource("broken-bundle", mode, sink);
+const source = new McpSource("broken-connector", mode, sink);
 
 // Run start() — expected to throw because the subprocess dies during the
 // MCP handshake. We catch and inspect the side effects.
@@ -108,22 +108,22 @@ console.log(`${BOLD}Results:${RESET}`);
 console.log("");
 
 if (!startError) {
-  fail("start() should have thrown — the broken bundle exits during initialize");
+  fail("start() should have thrown — the broken connector exits during initialize");
 } else {
   pass(`start() threw as expected (${(startError as Error).message?.slice(0, 60) ?? "unknown"}…)`);
 }
 
-const bundleLines = consoleLines.filter((l) => l.includes("[bundle:broken-bundle]"));
-if (bundleLines.length === 0) {
+const connectorLines = consoleLines.filter((l) => l.includes("[connector:broken-connector]"));
+if (connectorLines.length === 0) {
   fail(
-    "No [bundle:broken-bundle] lines were rendered to console.error",
+    "No [connector:broken-connector] lines were rendered to console.error",
     "Expected the live drain to print stderr lines as they were written.",
   );
 } else {
-  pass(`Live drain rendered ${bundleLines.length} [bundle:…] line(s) to the developer`);
+  pass(`Live drain rendered ${connectorLines.length} [connector:…] line(s) to the developer`);
 }
 
-const sawStartupBanner = bundleLines.some((l) => l.includes("starting up"));
+const sawStartupBanner = connectorLines.some((l) => l.includes("starting up"));
 if (!sawStartupBanner) {
   fail("Live drain did not include the 'starting up' line written before crash");
 } else {
@@ -163,7 +163,7 @@ if (crashes.length > 0) {
 }
 
 // Cleanup
-rmSync(bundleDir, { recursive: true, force: true });
+rmSync(connectorDir, { recursive: true, force: true });
 
 console.log("");
 if (failures > 0) {

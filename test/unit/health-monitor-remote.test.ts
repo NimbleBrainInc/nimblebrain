@@ -125,7 +125,7 @@ function eventData(collector: { events: EngineEvent[] }): Record<string, unknown
 
 describe("HealthMonitor — remote sources", () => {
   it("detects crashed remote source and reconnects via restart() (stop+start)", async () => {
-    const source = makeMockRemoteSource("remote-bundle");
+    const source = makeMockRemoteSource("remote-connector");
     const sink = makeEventCollector();
     const monitor = new HealthMonitor([source], sink, { checkIntervalMs: 60_000, baseDelayMs: 1 });
 
@@ -255,7 +255,7 @@ describe("HealthMonitor — remote sources", () => {
   });
 
   it("subprocess sources still work identically (no regression)", async () => {
-    const source = makeMockStdioSource("stdio-bundle");
+    const source = makeMockStdioSource("stdio-connector");
     const sink = makeEventCollector();
     const monitor = new HealthMonitor([source], sink, { checkIntervalMs: 60_000, baseDelayMs: 1 });
 

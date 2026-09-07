@@ -34,7 +34,7 @@ export interface ActivityInput {
 export interface ActivityOutput {
   period: { since: string; until: string };
   conversations: ActivityConversationSummary[];
-  bundle_events: ActivityBundleEvent[];
+  bundle_events: ActivityConnectorEvent[];
   tool_usage: ToolUsageSummary[];
   errors: ErrorEntry[];
   automations?: AutomationRunSummary;
@@ -75,9 +75,9 @@ export interface ActivityConversationSummary {
   had_errors: boolean;
 }
 
-/** Bundle lifecycle event for activity reporting. */
-export interface ActivityBundleEvent {
-  bundle: string;
+/** Connector lifecycle event for activity reporting. */
+export interface ActivityConnectorEvent {
+  connector: string;
   event: "installed" | "uninstalled" | "crashed" | "recovered" | "dead";
   timestamp: string;
   detail?: string;

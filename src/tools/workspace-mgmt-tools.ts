@@ -1,4 +1,4 @@
-import type { BundleRef } from "../bundles/types.ts";
+import type { ConnectorRef } from "../connectors/runtime/types.ts";
 import { textContent } from "../engine/content-helpers.ts";
 import { INTERNAL_TOOL_ANNOTATION, type ToolResult } from "../engine/types.ts";
 import type { UserIdentity } from "../identity/provider.ts";
@@ -12,12 +12,12 @@ import type { WorkspaceStore } from "../workspace/workspace-store.ts";
 import type { InProcessTool } from "./in-process-app.ts";
 
 /**
- * Project one tool-supplied connector row onto a `BundleRef`. Only the URL and
+ * Project one tool-supplied connector row onto a `ConnectorRef`. Only the URL and
  * an optional explicit `serverName` are accepted from tool input: every other
  * field on a ref (transport, OAuth client, broker coordinates) is
  * operator-catalog territory, set by the install path, never by a caller.
  */
-function toBundleRef(b: Record<string, unknown>): BundleRef {
+function toConnectorRef(b: Record<string, unknown>): ConnectorRef {
   // The JSON Schema requires `url` but admits any string, including "". A row
   // that reaches the store without a reachable URL is a connector nothing can
   // connect to, and every reader downstream has to defend against it — so it
@@ -38,14 +38,14 @@ function toBundleRef(b: Record<string, unknown>): BundleRef {
 /**
  * Map the tool's connector rows to refs, or report the first unusable one.
  *
- * `toBundleRef` throws so `create` — which maps inside its own try — gets the
+ * `toConnectorRef` throws so `create` — which maps inside its own try — gets the
  * refusal for free. `update` builds its patch before that try (the
  * nothing-to-update check needs the built patch), so it comes through here and
  * turns the refusal into a tool error rather than an unhandled throw.
  */
-function toBundleRefs(rows: Array<Record<string, unknown>>): BundleRef[] | { error: string } {
+function toConnectorRefs(rows: Array<Record<string, unknown>>): ConnectorRef[] | { error: string } {
   try {
-    return rows.map(toBundleRef);
+    return rows.map(toConnectorRef);
   } catch (err) {
     return { error: err instanceof Error ? err.message : String(err) };
   }
@@ -230,7 +230,7 @@ async function handleCreate(
   }
 
   const slug = input.slug ? String(input.slug) : undefined;
-  const bundles = input.bundles as Array<Record<string, unknown>> | undefined;
+  const connectors = input.bundles as Array<Record<string, unknown>> | undefined;
 
   try {
     let workspace = await ctx.workspaceStore.create(name, slug);
@@ -257,9 +257,9 @@ async function handleCreate(
     }
 
     // If connectors were provided, update the workspace with them
-    if (bundles && bundles.length > 0) {
+    if (connectors && connectors.length > 0) {
       const updated = await ctx.workspaceStore.update(workspace.id, {
-        bundles: bundles.map(toBundleRef),
+        bundles: connectors.map(toConnectorRef),
       });
       if (updated) workspace = updated;
     }
@@ -393,7 +393,7 @@ async function handleUpdate(
   const patch: Record<string, unknown> = {};
   if (input.name !== undefined) patch.name = String(input.name);
   if (input.bundles !== undefined) {
-    const refs = toBundleRefs(input.bundles as Array<Record<string, unknown>>);
+    const refs = toConnectorRefs(input.bundles as Array<Record<string, unknown>>);
     if (!Array.isArray(refs)) return { content: textContent(refs.error), isError: true };
     patch.bundles = refs;
   }

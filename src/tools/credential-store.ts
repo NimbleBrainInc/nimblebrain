@@ -93,7 +93,7 @@ export interface CredentialStore {
 }
 
 /**
- * Validate a key. We reuse the same shape as bundle-credential keys —
+ * Validate a key. We reuse the same shape as connector-credential keys —
  * dotted-namespace, alphanumerics, hyphen, underscore — because the key
  * becomes a filesystem path component.
  *

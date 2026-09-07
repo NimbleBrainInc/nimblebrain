@@ -233,7 +233,7 @@ describe("handleResourceProxy — qualified cross-workspace app", () => {
   });
 
   it("revives an installed-but-unregistered app, addressed by the resolved workspace", async () => {
-    // A bundle whose endpoint was unreachable at boot is installed but absent
+    // A connector whose endpoint was unreachable at boot is installed but absent
     // from the registry. Membership alone reads that as permanently gone.
     const { runtime, calls, recoverCalls } = makeProxyRuntime({
       memberOf: ["ws_nimblebrain_shared"],

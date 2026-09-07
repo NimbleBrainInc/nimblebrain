@@ -71,7 +71,7 @@ export function mcpRoutes(ctx: AppContext) {
   const app = new Hono<AuthEnv>();
   app.use("*", requireMcpAuth(ctx.authOptions, ctx));
 
-  // Rate limit the remote surface: external MCP clients + sandboxed bundle
+  // Rate limit the remote surface: external MCP clients + sandboxed connector
   // iframes (the bridge speaks `/mcp`). Chained on the route, NOT `.use("*")`,
   // so it can't leak onto sibling routes — and it runs after `requireMcpAuth`
   // above, so the per-identity key is populated. Bypassed in dev.

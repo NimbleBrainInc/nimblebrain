@@ -64,7 +64,7 @@ async function auditSource(source: McpSource): Promise<void> {
   }
 }
 
-describe("Bundle audit — every inline bundle has compilable schemas", () => {
+describe("Connector audit — every inline connector has compilable schemas", () => {
   test("files", async () => {
     const dir = mkdtempSync(join(tmpdir(), "nb-audit-files-"));
     try {

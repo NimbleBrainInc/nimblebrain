@@ -30,7 +30,7 @@ after the model has already chosen wrong.
 its origin, decides its channel.**
 
 Discovery is by listing, never by convention
-(`src/skills/bundle-skills.ts`, driven from the runtime's per-source discovery).
+(`src/skills/connector-skills.ts`, driven from the runtime's per-source discovery).
 The runtime issues `resources/list` against each MCP source in the active
 workspace registry and takes every URI matching the SEP-2640 entrypoint shape
 `skill://…/SKILL.md`. It does not construct a URI from the source's name: a

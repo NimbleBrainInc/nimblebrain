@@ -62,7 +62,7 @@ export function wrapContained(tag: ContainmentTag, body: string): string {
  *
  * `subItems` is populated for sections that aggregate multiple operator-
  * authored entries (apps, layer3 skills). It lets debug tools render per-
- * item attribution, filter by bundle, and detect content drift on a
+ * item attribution, filter by connector, and detect content drift on a
  * per-skill basis without re-parsing the section text.
  */
 export interface TracedLayer {
@@ -86,11 +86,11 @@ export interface TracedLayer {
   /** Approximate tokens for `text`. */
   tokens: number;
   /**
-   * Bundle attribution, when applicable. For the apps section / focused-app
-   * section / layer3-skills under a bundles/<name>/ subdir. Used by the
-   * compose-effective-context tool's `bundle` filter.
+   * Connector attribution, when applicable. For the apps section / focused-app
+   * section / layer3-skills under a connectors/<name>/ subdir. Used by the
+   * compose-effective-context tool's `connector` filter.
    */
-  bundle?: string;
+  connector?: string;
   /**
    * Per-entry breakdown for sections that aggregate multiple operator-
    * authored items. Empty / absent for atomic sections.
@@ -117,12 +117,12 @@ export type TracedLayerKind =
 export interface TracedSubItem {
   /** Item kind — finer-grained than the parent layer's kind. */
   kind: "app" | "layer3_skill";
-  /** Stable identifier — filesystem path for skills; bundle name for apps. */
+  /** Stable identifier — filesystem path for skills; connector name for apps. */
   id: string;
   /** Human-readable display. */
   source: string;
-  /** Bundle attribution when known. Drives the `bundle` filter. */
-  bundle?: string;
+  /** Connector attribution when known. Drives the `connector` filter. */
+  connector?: string;
   /** Free-form metadata appropriate to the kind (skill scope, app UI descriptor, etc.). */
   metadata?: Record<string, unknown>;
 }
@@ -166,7 +166,7 @@ const VOLATILE_KINDS: ReadonlySet<TracedLayerKind> = new Set([
  *
  * `String()` rather than trusting the parameter type: several callers pass
  * fields that are typed `string` but originate in unvalidated JSON — persisted
- * `BundleRef.ui`, registry `_meta`, `nimblebrain.json` — so a non-string
+ * `ConnectorRef.ui`, registry `_meta`, `nimblebrain.json` — so a non-string
  * reaches here at runtime. Coercing reproduces what the template literal at
  * each call site did before this function guarded it, which keeps a malformed
  * record inert instead of throwing out of `composeSystemPrompt` on every turn.
@@ -196,7 +196,7 @@ IMPORTANT: Only use tools that are provided to you via the tools parameter. Neve
  * Identity framing for task-mode invocations (e.g. scheduled automations,
  * eval runs, future webhook-triggered jobs). Prepended above the core
  * skills when `composeSystemPrompt({ mode: "task" })`. The runtime owns
- * this contract; bundles cannot spoof it by wrapping the user message.
+ * this contract; connectors cannot spoof it by wrapping the user message.
  *
  * The contract: artifact production, no follow-up questions, factual
  * gap-handling, markdown by default.
@@ -216,17 +216,17 @@ export interface PromptAppInfo {
   name: string;
   description?: string;
   /**
-   * Optional per-bundle guidance from the MCP server's `initialize.instructions`
+   * Optional per-connector guidance from the MCP server's `initialize.instructions`
    * field. Rendered inside `<app-instructions>` containment tags so the model
    * treats the content as data, not a nested system prompt.
    */
   instructions?: string;
   /**
-   * Optional workspace-admin overlay text for this bundle. Rendered inside a
+   * Optional workspace-admin overlay text for this connector. Rendered inside a
    * sibling `<app-custom-instructions>` tag using the same containment-escape
    * pattern as `instructions`. The overlay text comes from the platform
-   * instructions store, NOT from the bundle author — it's the workspace's
-   * say over how the agent should behave when using this bundle.
+   * instructions store, NOT from the connector author — it's the workspace's
+   * say over how the agent should behave when using this connector.
    */
   customInstructions?: string;
   ui: { name: string } | null;
@@ -408,7 +408,7 @@ type PendingLayer = Omit<TracedLayer, "segment">;
 
 /**
  * Layer 0a (task mode only): the TASK_IDENTITY contract, prepended before any
- * core skill so the framing is read first. The runtime owns this layer — bundles
+ * core skill so the framing is read first. The runtime owns this layer — connectors
  * cannot remove or override it by wrapping the user message. Workspace `soul.md`
  * and similar core skills still layer in below; their domain identity composes
  * with, not against, the task contract.
@@ -430,11 +430,11 @@ function taskIdentityLayers(mode: ComposeMode): PendingLayer[] {
  * Split context skills into core (priority ≤ threshold, rendered RAW in Layer 0)
  * and user (priority > threshold, wrapped in `<context-skill>` containment).
  *
- * Third-party `bundle`-scoped skills are ALWAYS placed in the `user` bucket
+ * Third-party `connector`-scoped skills are ALWAYS placed in the `user` bucket
  * regardless of priority: they carry server-authored content, which must never
  * render as raw trusted identity in Layer 0 (that would be a prompt-injection
  * vector). This is the same install-time-not-per-prompt trust posture as the
- * other bundle-authored containment tags (`<app-guide>`, `<app-state>`,
+ * other connector-authored containment tags (`<app-guide>`, `<app-state>`,
  * `<layer3-skill>`) — the defense is XML containment, so a server that declares
  * `loading-strategy: always` with a low priority still gets contained, not
  * promoted into the identity layer.
@@ -442,7 +442,7 @@ function taskIdentityLayers(mode: ComposeMode): PendingLayer[] {
  * The vendored core skills (soul, capabilities) are the exception. They carry
  * `provenance.origin: "vendored"`, stamped at load by `markVendored` on the
  * platform's own source-tree dirs — a signal a third party cannot forge
- * (`synthesizeBundleSkill` builds bundle manifests from scratch and never sets
+ * (`synthesizeConnectorSkill` builds connector manifests from scratch and never sets
  * provenance). `stampDerivedScope` also labels them `scope: "bundle"` for the
  * mutation UI (they're immutable), but trust follows provenance, not that
  * mutability label: a vendored skill is first-party identity, so it renders raw
@@ -453,8 +453,8 @@ function partitionContextSkills(contextSkills: Skill[]): { core: Skill[]; user: 
   const user: Skill[] = [];
   for (const ctx of contextSkills) {
     const isVendored = ctx.manifest.provenance?.origin === "vendored";
-    const isBundleAuthored = ctx.manifest.scope === "bundle" && !isVendored;
-    if (!isBundleAuthored && ctx.manifest.priority <= CORE_PRIORITY_THRESHOLD) {
+    const isConnectorAuthored = ctx.manifest.scope === "bundle" && !isVendored;
+    if (!isConnectorAuthored && ctx.manifest.priority <= CORE_PRIORITY_THRESHOLD) {
       core.push(ctx);
     } else {
       user.push(ctx);
@@ -627,12 +627,12 @@ function layer3SkillsLayers(layer3Skills?: Layer3SkillEntry[]): PendingLayer[] {
       subItems: layer3Skills
         .filter((entry) => entry.body && entry.body.trim().length > 0)
         .map((entry) => {
-          const bundle = deriveBundleFromSkillPath(entry.sourcePath);
+          const connector = deriveConnectorFromSkillPath(entry.sourcePath);
           return {
             kind: "layer3_skill" as const,
             id: entry.sourcePath ?? `nb:layer3:${entry.name}`,
             source: entry.sourcePath ?? entry.name,
-            ...(bundle !== undefined ? { bundle } : {}),
+            ...(connector !== undefined ? { connector } : {}),
             metadata: {
               name: entry.name,
               scope: entry.scope,
@@ -668,7 +668,7 @@ function skillCatalogLayers(skillCatalog?: SkillCatalogEntry[]): PendingLayer[] 
 
 /**
  * Layer 2: installed apps section. One TracedLayer for the section; per-app
- * detail in `subItems`. Each subItem carries the bundle name so a `bundle` filter
+ * detail in `subItems`. Each subItem carries the connector name so a `connector` filter
  * on the debug tool can pick out a single app's contribution from the section text.
  */
 function appsLayers(apps?: PromptAppInfo[], hasProxiedTools?: boolean): PendingLayer[] {
@@ -685,7 +685,7 @@ function appsLayers(apps?: PromptAppInfo[], hasProxiedTools?: boolean): PendingL
         kind: "app" as const,
         id: app.name,
         source: app.name,
-        bundle: app.name,
+        connector: app.name,
         metadata: {
           description: app.description,
           hasInstructions: !!app.instructions,
@@ -729,7 +729,7 @@ function focusedAppLayers(focusedApp?: FocusedAppInfo): PendingLayer[] {
       source: `focused app: ${focusedApp.name}`,
       text,
       tokens: approxTokens(text),
-      bundle: focusedApp.name,
+      connector: focusedApp.name,
     },
   ];
 }
@@ -854,16 +854,16 @@ export function composeSystemSegments(
 
 /**
  * Heuristic: if a Layer 3 skill lives under `.../skills/bundles/<name>/`
- * (the documented convention for bundle-affined L3 skills), attribute it
- * to that bundle. Otherwise return undefined — the skill is bundle-
- * agnostic and the `bundle` filter shouldn't claim it.
+ * (the documented convention for connector-affined L3 skills), attribute it
+ * to that connector. Otherwise return undefined — the skill is connector-
+ * agnostic and the `connector` filter shouldn't claim it.
  *
  * Exported so other surfaces (e.g. the historical-audit path in
  * `platform/compose/source.ts`) classify skills the same way as the live
- * trace — drift between the two would silently mis-attribute the bundle
+ * trace — drift between the two would silently mis-attribute the connector
  * filter.
  */
-export function deriveBundleFromSkillPath(sourcePath?: string): string | undefined {
+export function deriveConnectorFromSkillPath(sourcePath?: string): string | undefined {
   if (!sourcePath) return undefined;
   const m = sourcePath.match(/\/skills\/bundles\/([^/]+)\//);
   return m?.[1];
@@ -873,7 +873,7 @@ function formatAppsSection(apps: PromptAppInfo[], hasProxiedTools?: boolean): st
   const lines = ["## Installed Apps"];
   for (const app of apps) {
     // Both names land on one `- ` bullet, so an unescaped newline in either
-    // forges a sibling entry. `ui.name` is bundle-authored and is the one that
+    // forges a sibling entry. `ui.name` is connector-authored and is the one that
     // can carry one; `app.name` is a slug unless an operator hand-sets
     // `ref.serverName`. Sanitized together because the line is shared.
     const uiLabel = app.ui ? `has UI: ${sanitizeLineField(app.ui.name)}` : "no UI";
@@ -882,7 +882,7 @@ function formatAppsSection(apps: PromptAppInfo[], hasProxiedTools?: boolean): st
       lines.push(wrapContained("app-description", app.description));
     }
     if (app.instructions) {
-      // Neutralize any attempt by the bundle author to close the containment
+      // Neutralize any attempt by the connector author to close the containment
       // tag early and inject a forged system section. We do NOT strip
       // arbitrary XML, only the specific tag we use for containment.
       lines.push(wrapContained("app-instructions", app.instructions));
@@ -891,7 +891,7 @@ function formatAppsSection(apps: PromptAppInfo[], hasProxiedTools?: boolean): st
       // Mirror the `<app-instructions>` containment escape byte-for-byte —
       // this is a prompt-injection mitigation. The overlay text comes from
       // the workspace admin (via the platform instructions store), not from
-      // the bundle author, but the same containment guarantee applies.
+      // the connector author, but the same containment guarantee applies.
       lines.push(wrapContained("app-custom-instructions", app.customInstructions));
     }
   }
@@ -928,13 +928,13 @@ function formatFocusedAppSection(focusedApp: FocusedAppInfo): string {
   lines.push("");
   lines.push("### App Guide");
   lines.push("");
-  // Trust is enforced at install time, not per-prompt: if a bundle is active
+  // Trust is enforced at install time, not per-prompt: if a connector is active
   // in the workspace its tools are already callable, so suppressing the
   // workflow guidance that teaches the model how to use them safely would
   // make the situation worse, not better. Tool descriptions, tool outputs,
   // and `app://instructions` flow through ungated already.
   if (focusedApp.skillResource) {
-    // Escape any embedded `</app-guide>` so a bundle-authored skill body
+    // Escape any embedded `</app-guide>` so a connector-authored skill body
     // cannot break out of containment. Matches the pattern used for
     // `<app-state>` (l. 584), `<app-instructions>` (l. 494), and
     // `<layer3-skill>` (l. 632).
@@ -1020,7 +1020,7 @@ const CATALOG_DESCRIPTION_MAX_CHARS = 1024;
 
 /**
  * Render the skill catalog section. One `- name — description` line per
- * skill; both fields are bundle-/tenant-authored strings entering the system
+ * skill; both fields are connector-/tenant-authored strings entering the system
  * prompt, so each line is `sanitizeLineField`-flattened (no newline can forge
  * a sibling entry or a heading) and the description is capped at the
  * standard's ceiling. The closing paragraph teaches the activation move —
@@ -1057,7 +1057,7 @@ function formatSkillCatalogSection(entries: SkillCatalogEntry[]): string {
  * prefix every turn.
  *
  * Containment is the same per-prompt defense `formatLayer3SkillsSection`
- * applies (bundle trust is install-time; this is the per-prompt guard): the
+ * applies (connector trust is install-time; this is the per-prompt guard): the
  * body is wrapped in `<connector-skill>` and any literal closing tag inside it
  * is rewritten to `&lt;/connector-skill>` so an overlay author can't break out
  * of containment. Name/scope ride a sanitized provenance line.

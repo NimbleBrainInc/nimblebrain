@@ -10,7 +10,7 @@ ADR-0026 put the brokered *verbs* behind one seam: create a session, initiate,
 connect a key, probe, mount routes. The *nouns* did not follow it.
 
 Persisted connector state still carries a typed block per brokered vendor
-(`BundleRef`, `src/bundles/types.ts`) — tenant state shaped like a particular
+(`ConnectorRef`, `src/connectors/runtime/types.ts`) — tenant state shaped like a particular
 vendor's coordinates. The connector `auth-kind` taxonomy is a closed union with a
 literal per vendor, mirrored by hand in the seam, the wire `ServerDetail`, the
 catalog projection, and the registry types. Reaching a persisted block from a

@@ -1,7 +1,7 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import { type Context, Hono } from "hono";
-import { WORKSPACE_PRINCIPAL_ID } from "../../bundles/connection.ts";
-import { ConnectorBusyError } from "../../bundles/lifecycle.ts";
+import { WORKSPACE_PRINCIPAL_ID } from "../../connectors/runtime/connection.ts";
+import { ConnectorBusyError } from "../../connectors/runtime/lifecycle.ts";
 import { IdentityConnectorStore } from "../../identity/connector-store.ts";
 import { getBouncerMode } from "../../oauth/bouncer-config.ts";
 import {
@@ -27,7 +27,7 @@ import { SUCCESS_PAGE_CSP, successPageHtml } from "./oauth-success-page.ts";
  *
  * - `POST /v1/mcp-auth/initiate` (workspace-authed): launches an
  *   interactive flow. Looks up the captured authorization URL on the
- *   bundle's pending Connection, sets a session-bound `nb_oauth_state`
+ *   connector's pending Connection, sets a session-bound `nb_oauth_state`
  *   cookie scoped to the callback path, and returns the URL the client
  *   should navigate the user's browser to. **POST-only** so a malicious
  *   `<img>` or prefetch can't trigger a flow without same-origin
@@ -63,7 +63,7 @@ export function mcpAuthRoutes(ctx: AppContext) {
 
   // ── POST /v1/mcp-auth/initiate ────────────────────────────────────
   //
-  // Workspace-authed. Body: { serverName }. Stage 2: every URL bundle
+  // Workspace-authed. Body: { serverName }. Stage 2: every URL connector
   // is workspace-scoped, so the principal is always `WORKSPACE_PRINCIPAL_ID`.
   // Personal connectors bind to the user's personal workspace, which is
   // itself a workspace from the lifecycle's vantage. Calls
@@ -89,10 +89,10 @@ export function mcpAuthRoutes(ctx: AppContext) {
 
       const instance = lifecycle.getInstance(serverName, wsId);
       if (!instance) {
-        return apiError(404, "bundle_not_found", `Bundle "${serverName}" not installed.`);
+        return apiError(404, "bundle_not_found", `Connector "${serverName}" not installed.`);
       }
 
-      // Stage 2: every URL bundle is workspace-scoped (legacy `"user"`
+      // Stage 2: every URL connector is workspace-scoped (legacy `"user"`
       // literal was deleted). Personal connectors bind to the user's
       // personal workspace, so the workspace principal is the only
       // legal value here. `instance.oauthScope` is always `"workspace"`
@@ -235,7 +235,7 @@ async function parseServerName(c: Context<AppEnv>): Promise<string | Response> {
 }
 
 /**
- * Start the outbound OAuth flow via the bundle lifecycle, returning the SDK
+ * Start the outbound OAuth flow via the connector lifecycle, returning the SDK
  * authorization URL, `null` when the source connected without an interactive flow
  * (provider-minted / already-authenticated — a success, not a failure; #679), or
  * an error Response.

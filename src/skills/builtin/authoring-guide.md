@@ -1,6 +1,6 @@
 ---
 name: authoring-guide
-description: Guide for authoring NimbleBrain platform skills (voice, workflow, personal, tool routing). Use when creating, modifying, customizing, deleting, or managing a skill — its behavior, triggers, priority, scope, or allowed-tools. Vendored content shipped with the nb__skills bundle.
+description: Guide for authoring NimbleBrain platform skills (voice, workflow, personal, tool routing). Use when creating, modifying, customizing, deleting, or managing a skill — its behavior, triggers, priority, scope, or allowed-tools. Vendored content shipped with the nb__skills app.
 metadata:
   version: "1.2.0"
   nimblebrain:
@@ -61,24 +61,24 @@ with a `version` shows one, and `skills__restore` puts it back.
 ## The three layers
 
 The platform composes context in three layers. **Layer 1** is vendored
-content shipped inside a bundle (this file is Layer 1). **Layer 2** is
-per-bundle workspace customization — instructions written through a single
-bundle's settings surface, scoped to that bundle's tools. **Layer 3** is
-skills — cross-bundle context that loads across the whole agent. The
-boundary is vertical (one bundle, deep) versus horizontal (across bundles,
+content shipped inside a connector (this file is Layer 1). **Layer 2** is
+per-connector workspace customization — instructions written through a single
+connector's settings surface, scoped to that connector's tools. **Layer 3** is
+skills — cross-connector context that loads across the whole agent. The
+boundary is vertical (one connector, deep) versus horizontal (across connectors,
 shallow).
 
 ## Layer 3 vs Layer 2 — choose first
 
 Before authoring a Layer 3 skill, ask: does this apply to exactly one
-bundle's behavior?
+connector's behavior?
 
-- **Yes, one bundle.** Author it as a Layer 2 instruction through that
-  bundle's settings / instructions surface — deterministic, scoped, and
-  deletable with the bundle. A single-bundle rule in Layer 3 pollutes the
-  cross-bundle pool.
-- **No — it spans bundles or governs the agent itself** (voice, a personal
-  preference, a multi-bundle workflow). Author as a Layer 3 skill.
+- **Yes, one connector.** Author it as a Layer 2 instruction through that
+  connector's settings / instructions surface — deterministic, scoped, and
+  deletable with the connector. A single-connector rule in Layer 3 pollutes the
+  cross-connector pool.
+- **No — it spans connectors or governs the agent itself** (voice, a personal
+  preference, a multi-connector workflow). Author as a Layer 3 skill.
 
 The default is Layer 2. Layer 3 is for content that has nowhere else to live.
 
@@ -98,7 +98,7 @@ Every skill declares exactly one strategy (under `metadata.nimblebrain`):
     (fold in the words a user would actually say). Always available; needs
     no extra field.
   - **`tool-affinity`** — auto-activates when a tool in the active set
-    glob-matches an entry. Use for skills bound to specific tools / bundles.
+    glob-matches an entry. Use for skills bound to specific tools / connectors.
   - **`triggers`** — exact-phrase substring match, for deterministic
     "must-fire" activation (e.g. a compliance skill that must load the moment
     a regulated action is named, rather than relying on the model noticing
@@ -121,10 +121,10 @@ skill is never reached for.
 
 `tool-affinity` is a list of globs matched against the active tool set:
 
-- `synapse-collateral__*` — any tool from one bundle.
-- `synapse-collateral__*` plus `synapse-research__*` — across bundles (the
+- `synapse-collateral__*` — any tool from one connector.
+- `synapse-collateral__*` plus `synapse-research__*` — across connectors (the
   sweet spot for a workflow skill).
-- `*__patch_source` — a specific tool name across bundles. Use sparingly.
+- `*__patch_source` — a specific tool name across connectors. Use sparingly.
 - `*` — every tool. Almost always wrong; if you mean "always," use
   `loading-strategy: always` instead.
 
@@ -172,12 +172,12 @@ settings.
 ## What skills cannot do
 
 - Change runtime config (maxIterations, model) — that's `nimblebrain.json`.
-- Create tools — that needs an MCP server bundle.
+- Create tools — that needs an MCP server connector.
 - Override core identity (soul) — they layer on top.
 
 ## Anti-patterns
 
-- **A single-bundle rule as a Layer 3 skill.** Move it to Layer 2.
+- **A single-connector rule as a Layer 3 skill.** Move it to Layer 2.
 - **An `always` skill with kilobytes of body.** Make it `dynamic`; reserve
   `always` for short, durable rules.
 - **`tool-affinity: ["*"]`.** Be specific, or use `loading-strategy: always`.
@@ -247,8 +247,8 @@ picked up.
 
 ## Authoring checklist
 
-1. The content belongs in Layer 3 — it spans bundles or governs the agent,
-   not a single-bundle rule.
+1. The content belongs in Layer 3 — it spans connectors or governs the agent,
+   not a single-connector rule.
 2. `loading-strategy` matches the content — `always` for short durable
    rules, `dynamic` for everything else.
 3. For `dynamic`: the `description` states **when** to use it; add

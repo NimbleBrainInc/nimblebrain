@@ -31,7 +31,7 @@ The following are in scope:
 - The HTTP API server (`src/api/`)
 - The web client (`web/`)
 - The CLI (`src/cli/`)
-- Bundle lifecycle and env isolation (`src/bundles/`)
+- Connector lifecycle and env isolation (`src/connectors/`)
 - Authentication and session management
 - MCP server endpoint (`/mcp`)
 

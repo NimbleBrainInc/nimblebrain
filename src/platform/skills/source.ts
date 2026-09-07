@@ -1,7 +1,7 @@
 /**
  * Skills platform source — in-process MCP server.
  *
- * Owns Phase 2 read-only Layer 3 (cross-bundle agent orchestration) skill
+ * Owns Phase 2 read-only Layer 3 (cross-connector agent orchestration) skill
  * visibility plus a single Layer 1 vendored resource: the platform-authored
  * guide for writing good skills. Mirrors `instructions.ts` structurally.
  *
@@ -99,7 +99,7 @@ const AUTHORING_GUIDE_URI = "skill://skills/authoring-guide";
 // ── Tool descriptions (description-as-policy) ────────────────────────────
 
 const SKILLS_LIST_DESCRIPTION =
-  "List Layer 3 skills (cross-bundle agent orchestration content) and Layer 1 vendored bundle skills. " +
+  "List Layer 3 skills (cross-connector agent orchestration content) and Layer 1 vendored connector skills. " +
   "Filter by `scope` (org | workspace | user | bundle), `layer` (1 | 3), `loading_strategy` (always | dynamic), " +
   "`tool_affinity` (a tool name; returns skills whose `tool-affinity` glob matches it), " +
   "`status` (active | disabled), or `modified_since` (ISO 8601). " +
@@ -108,7 +108,7 @@ const SKILLS_LIST_DESCRIPTION =
 
 const SKILLS_READ_DESCRIPTION =
   "Read one skill by id. The `id` is either a filesystem path (returned by `skills__list`) " +
-  "or a bundle skill:// URI. Returns the full markdown body plus parsed manifest fields (name, " +
+  "or a connector skill:// URI. Returns the full markdown body plus parsed manifest fields (name, " +
   "description, loading_strategy, priority, scope, layer, tool_affinity, triggers, status). " +
   "Always call `skills__list` first to discover ids — bare names and scope-prefixed forms " +
   "(e.g. `org/foo`) are NOT valid input.";
@@ -136,7 +136,7 @@ const SKILLS_UPDATE_DESCRIPTION =
   "`body` you MUST also pass `body_mode`: `append` adds it to the skill (use this to add a " +
   "rule — it keeps everything already there), `replace` overwrites the whole body. Snapshots " +
   "the current version to `_versions/` first; `skills__history` lists those snapshots and " +
-  "`skills__restore` puts one back. Bundle (Layer 1) skills are not editable.";
+  "`skills__restore` puts one back. Connector (Layer 1) skills are not editable.";
 
 // Tool input schemas live in `./schemas/skills.ts` — see the catalog at
 // `./schemas/catalog.ts`. The LLM-facing create/update input is a SUBSET of the
@@ -160,8 +160,8 @@ const SKILLS_RESTORE_DESCRIPTION =
 const SKILLS_DELETE_DESCRIPTION =
   "Delete a Layer 3 skill. The `id` is the filesystem path returned by `skills__list`. " +
   "Snapshots to `_versions/` before removing the live file. Confirm with the user before " +
-  "deleting org- or workspace-scope skills. Bundle (Layer 1) skills cannot be deleted via " +
-  "the platform — those ship with the bundle.";
+  "deleting org- or workspace-scope skills. Connector (Layer 1) skills cannot be deleted via " +
+  "the platform — those ship with the connector.";
 
 const SKILLS_SET_STATUS_DESCRIPTION =
   "Durably enable or disable a skill by writing `status` to its frontmatter. INTERNAL: the Skills " +
@@ -178,7 +178,7 @@ const SKILLS_ACTIVATE_DESCRIPTION =
 const USE_SKILL_DESCRIPTION =
   "Load a skill from the Skill Catalog into this conversation. Pass `name` exactly as listed " +
   "in the Skill Catalog section of your instructions — the catalog is the authoritative name " +
-  "list (`skills__list` covers only authored skills, not bundle-published ones or connector " +
+  "list (`skills__list` covers only authored skills, not connector-published ones or connector " +
   "overlays); on a miss the error lists every valid name. The skill's full guidance comes " +
   "back in the tool result — apply it to the task at hand. A skill already delivered in this " +
   "conversation returns a short 'already loaded' note instead of a second copy. Read-only: " +
@@ -442,7 +442,7 @@ export function createSkillsSource(
   //
   // `FEATURE_TOOL_MAP` keys on the WIRE name and these defs carry the bare one,
   // so qualify before asking. Bare `create` / `delete` are deliberately absent
-  // from that map: they are too generic to gate globally, since any bundle may
+  // from that map: they are too generic to gate globally, since any connector may
   // name a tool `create`.
   //
   // No `features` means no filtering, matching `createSystemTools`. The
@@ -603,9 +603,9 @@ async function listSkills(
     }
   }
 
-  // Layer 1: vendored bundle resources. Phase 2 surfaces only the platform-
+  // Layer 1: vendored connector resources. Phase 2 surfaces only the platform-
   // authored authoring guide (`skill://skills/authoring-guide`). Future
-  // bundles that publish their own `skill://...` resources will be
+  // connectors that publish their own `skill://...` resources will be
   // discovered via a runtime resource scan; for Phase 2 the catalog is
   // static and small.
   if (includeLayer1) {
@@ -653,7 +653,7 @@ function buildAuthoringGuideEntry(authoringGuidePath: string): ListedSkill | nul
     scope: "bundle",
     status: skill.manifest.status,
     tokens,
-    source: { uri: AUTHORING_GUIDE_URI, path: authoringGuidePath, bundle: "nb__skills" },
+    source: { uri: AUTHORING_GUIDE_URI, path: authoringGuidePath, connector: "nb__skills" },
     ...(skill.manifest.description ? { description: skill.manifest.description } : {}),
     modifiedAt: readSkillMtime(authoringGuidePath),
     loadingStrategy: skill.manifest.loadingStrategy,
@@ -707,7 +707,7 @@ function allowedReadRoots(runtime: Runtime, authoringGuidePath: string): string[
     join(workDir, "skills"),
     join(workDir, "workspaces"),
     join(workDir, "users"),
-    ...bundleSkillRoots(authoringGuidePath),
+    ...connectorSkillRoots(authoringGuidePath),
   ].map((r) => resolve(r));
 }
 
@@ -849,7 +849,7 @@ async function readSkillById(
       id,
       layer: 1,
       scope: "bundle",
-      source: { uri: id, path: authoringGuidePath, bundle: "nb__skills" },
+      source: { uri: id, path: authoringGuidePath, connector: "nb__skills" },
       modifiedAt: readSkillMtime(authoringGuidePath),
     });
   }
@@ -891,7 +891,9 @@ async function readSkillById(
 function renderSkillVersion(id: string, version: string, isUri: boolean): ToolResult {
   if (isUri) {
     return errorResult(
-      new Error("`version` is not supported for `skill://` ids — bundle skills have no history."),
+      new Error(
+        "`version` is not supported for `skill://` ids — connector skills have no history.",
+      ),
     );
   }
   const raw = readSkillVersionRaw(id, version);
@@ -926,7 +928,7 @@ async function readSkillHandler(
 ): Promise<ToolResult> {
   const id = String(input.id ?? "");
   // Determine scope for the permission check before any FS work.
-  // skill:// URIs always resolve to the Layer 1 bundle resource;
+  // skill:// URIs always resolve to the Layer 1 connector resource;
   // anything else is path-derived.
   const isUri = id === AUTHORING_GUIDE_URI || id.startsWith(SKILL_URI_PREFIX);
   const scope = isUri ? "bundle" : scopeOfPath(runtime, id, authoringGuidePath);
@@ -1114,7 +1116,7 @@ async function handleUseSkill(
   }
 
   // Cap the delivered body with the same budget every other prompt-bound
-  // skill body gets (bundle `skill://` discovery caps at read; filesystem
+  // skill body gets (connector `skill://` discovery caps at read; filesystem
   // bodies are capped here).
   const capped = truncateMarkdownToBudget(skill.body, MAX_SKILL_BODY_CHARS);
   const tokens = approxTokens(capped.body);
@@ -1166,8 +1168,8 @@ function buildReadResult(
  * Decision matrix mirrors `stampDerivedScope` in runtime.ts so the LIST
  * tool and the READ tool agree on what's mutable. A skill under
  * `{workDir}/skills/` is real platform-tier (writable by org admins);
- * anything outside the three workDir roots is bundle-tier (vendored
- * with the platform binary or an MCP bundle, and read-only).
+ * anything outside the three workDir roots is connector-tier (vendored
+ * with the platform binary or an MCP connector, and read-only).
  */
 function inferScopeFromPath(
   path: string,
@@ -1445,7 +1447,7 @@ type AccessMode = "read" | "write";
  * to match the user-segment in the path.
  *
  * Tier rules (read | write):
- *   - bundle      — read: anyone (Layer 1 vendored). write: refused (caller side).
+ *   - connector      — read: anyone (Layer 1 vendored). write: refused (caller side).
  *   - org         — read: any tenant member.            write: org admin/owner.
  *   - workspace   — read+write: must be a member of the path's workspace.
  *                   write also requires `admin` role in that workspace.
@@ -1470,7 +1472,7 @@ async function checkPathAccess(
 
   const workDir = runtime.getWorkDir();
 
-  if (scope === "bundle") return bundleAccess(mode);
+  if (scope === "bundle") return connectorAccess(mode);
   if (scope === "org") return orgAccess(mode, ORG_ADMIN_ROLES.has(identity.orgRole));
   if (scope === "user") return userScopeAccess(path, workDir, identity);
   return workspaceScopeAccess(runtime, path, workDir, identity, mode);
@@ -1479,10 +1481,10 @@ async function checkPathAccess(
 /** Authenticated caller identity — the non-null shape `checkPathAccess` has already gated on. */
 type SkillIdentity = NonNullable<ReturnType<Runtime["getCurrentIdentity"]>>;
 
-/** Bundle-tier access: Layer 1 vendored skills are world-readable, never mutable. */
-function bundleAccess(mode: AccessMode): PermissionDecision {
+/** Connector-tier access: Layer 1 vendored skills are world-readable, never mutable. */
+function connectorAccess(mode: AccessMode): PermissionDecision {
   if (mode === "read") return { allowed: true };
-  return { allowed: false, reason: "Bundle (Layer 1) skills are vendored and not mutable" };
+  return { allowed: false, reason: "Connector (Layer 1) skills are vendored and not mutable" };
 }
 
 /** Org-tier access: any tenant member reads; only org admins/owners write. */
@@ -1588,25 +1590,25 @@ function assertValidName(name: string): void {
 }
 
 /**
- * The two filesystem roots that hold bundle-vendored skills (Layer 1):
+ * The two filesystem roots that hold connector-vendored skills (Layer 1):
  * the authoring guide's own directory (`src/skills/builtin`) and the
  * sibling core dir (`src/skills/core`). Computed from `authoringGuidePath`
- * so adding/moving bundle skill roots happens in one place.
+ * so adding/moving connector skill roots happens in one place.
  */
-function bundleSkillRoots(authoringGuidePath: string): string[] {
+function connectorSkillRoots(authoringGuidePath: string): string[] {
   return [resolve(authoringGuidePath, ".."), resolve(authoringGuidePath, "../../core")];
 }
 
 /**
  * Classify a filesystem path into a writable scope (`workspace` / `user` /
- * `org`), the read-only `bundle` tier, or `null` if the path doesn't sit
+ * `org`), the read-only `connector` tier, or `null` if the path doesn't sit
  * under any known skill root.
  *
  * Returning `null` for unclassified paths (rather than the previous "treat
- * as bundle" fallback) is load-bearing: callers — especially mutation
- * handlers — distinguish "this is a real bundle skill" from "this id is
+ * as connector" fallback) is load-bearing: callers — especially mutation
+ * handlers — distinguish "this is a real connector skill" from "this id is
  * garbage / bare name / wrong shape." The previous behavior turned every
- * mistyped path into a misleading "Bundle (Layer 1) skills are vendored"
+ * mistyped path into a misleading "Connector (Layer 1) skills are vendored"
  * error.
  */
 function scopeOfPath(
@@ -1619,7 +1621,7 @@ function scopeOfPath(
   if (real.startsWith(`${join(work, "workspaces")}/`)) return "workspace";
   if (real.startsWith(`${join(work, "users")}/`)) return "user";
   if (real.startsWith(`${join(work, "skills")}/`)) return "org";
-  for (const root of bundleSkillRoots(authoringGuidePath)) {
+  for (const root of connectorSkillRoots(authoringGuidePath)) {
     if (real === root || real.startsWith(`${root}/`)) return "bundle";
   }
   return null;
@@ -1716,29 +1718,29 @@ function currentRoleHint(runtime: Runtime, scope: WritableScope | "bundle"): str
   return identity.orgRole;
 }
 
-function bundleNotMutable(): ToolResult {
+function connectorNotMutable(): ToolResult {
   // Structured error shape per the skill management design doc — the
   // `suggested_action` discriminator lets calling agents present the
   // right next step without parsing prose.
   //
-  // TODO: the design doc shape also includes `bundle` and `bundleVersion`
-  // (e.g. `{bundle: "synapse-collateral", bundleVersion: "0.5.2"}`). Those
-  // aren't reachable here without threading bundle context through every
-  // mutation handler — for `skill://<bundle>/<name>` we'd parse the URI
-  // authority; for filesystem paths under the bundle skill roots we'd
-  // derive the bundle from the path. Both also need the runtime's bundle
+  // TODO: the design doc shape also includes `connector` and `connectorVersion`
+  // (e.g. `{connector: "synapse-collateral", connectorVersion: "0.5.2"}`). Those
+  // aren't reachable here without threading connector context through every
+  // mutation handler — for `skill://<connector>/<name>` we'd parse the URI
+  // authority; for filesystem paths under the connector skill roots we'd
+  // derive the connector from the path. Both also need the runtime's connector
   // registry for the version lookup. Filed as a follow-up.
   return {
     content: textContent(
-      "Bundle (Layer 1) skills ship with the bundle and are versioned with it. " +
-        "To change one, publish a new bundle version — the platform cannot edit it in place.",
+      "Connector (Layer 1) skills ship with the connector and are versioned with it. " +
+        "To change one, publish a new connector version — the platform cannot edit it in place.",
     ),
     structuredContent: {
       error: "skill_not_mutable_via_platform",
       layer: 1,
       suggested_action: "publish_new_bundle_version",
       message:
-        "This skill ships with the bundle and is versioned with it. To change it, publish a new bundle version.",
+        "This skill ships with the connector and is versioned with it. To change it, publish a new connector version.",
     },
     isError: true,
   };
@@ -1747,7 +1749,7 @@ function bundleNotMutable(): ToolResult {
 /**
  * Honest error message for a skill `id` that doesn't fit any known form.
  * Replaces the previous `(platform/workspace/user/builtin)` text — those
- * scope names are stale (the rename to `org/workspace/user/bundle` made
+ * scope names are stale (the rename to `org/workspace/user/connector` made
  * the message lie) and the `<scope>/<name>` shape it implied was never a
  * real input format. Tells the caller what `id` actually accepts.
  */
@@ -1756,7 +1758,7 @@ function unrecognizedIdMessage(id: string): string {
     `Skill id "${id}" is not a recognized form. Pass either ` +
     `(a) an absolute filesystem path returned by skills__list — typically under ` +
     `/data/skills, /data/workspaces/<wsId>/skills, or /data/users/<userId>/skills — ` +
-    `or (b) a skill:// URI from a bundle (e.g. skill://collateral/main).`
+    `or (b) a skill:// URI from a connector (e.g. skill://collateral/main).`
   );
 }
 
@@ -2053,9 +2055,9 @@ async function gateSkillPath(
   if (!id) return { error: errorResult(new Error("`id` is required")) };
   const snapErr = snapshotPathError(id);
   if (snapErr) return { error: snapErr };
-  if (id.startsWith(SKILL_URI_PREFIX)) return { error: bundleNotMutable() };
+  if (id.startsWith(SKILL_URI_PREFIX)) return { error: connectorNotMutable() };
   const scope = scopeOfPath(runtime, id, authoringGuidePath);
-  if (scope === "bundle") return { error: bundleNotMutable() };
+  if (scope === "bundle") return { error: connectorNotMutable() };
   if (!scope) return { error: errorResult(new Error(unrecognizedIdMessage(id))) };
   if (!existsSync(id)) {
     return {
@@ -2241,7 +2243,7 @@ async function setStatusHandler(
   }
   // The mutable set is everything that can COMPOSE into this conversation, not
   // just what can be activated on demand. `listActivatableSkills` is the
-  // catalog — `dynamic` skills plus bundle/connector guidance — and excludes
+  // catalog — `dynamic` skills plus connector guidance — and excludes
   // `always` skills by construction, since you never activate one. Those are
   // exactly the skills a user most wants muted (the always-on voice skill is
   // the motivating case), so validating against the catalog alone rejected the
@@ -2251,7 +2253,7 @@ async function setStatusHandler(
   // catalog; anything wider accepts one the filter will not act on.
   const known = await runtime.suppressibleSkillNames(wsId, userId);
   // A path still reaches here from habit (`update`/`delete` take one), so fall
-  // back to its basename. A bundle-published skill has no path, which is why
+  // back to its basename. A connector-published skill has no path, which is why
   // the schema now asks for a name rather than relying on this.
   const resolved = known.has(name) ? name : (name.split("/").pop() ?? name).replace(/\.md$/, "");
   if (!known.has(resolved)) {

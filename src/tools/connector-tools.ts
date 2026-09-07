@@ -1,26 +1,29 @@
 import { mcpAuthCallbackUrl } from "../api/routes/mcp-auth.ts";
-import { brokeredRef } from "../bundles/brokered.ts";
-import { WORKSPACE_PRINCIPAL_ID } from "../bundles/connection.ts";
-import { sanitizePlacements } from "../bundles/defaults.ts";
+import { brokeredCatalogConfig, isBrokeredAuthKind } from "../connectors/auth-kind.ts";
+import {
+  connectorSkillIdentityFrom,
+  type SecretHeaderRef,
+} from "../connectors/catalog/server-detail.ts";
+import type {
+  ManagedConnectorProvider,
+  ManagedSession,
+} from "../connectors/providers/managed-provider.ts";
+import { brokeredRef } from "../connectors/runtime/brokered.ts";
+import { WORKSPACE_PRINCIPAL_ID } from "../connectors/runtime/connection.ts";
+import { sanitizePlacements } from "../connectors/runtime/defaults.ts";
 import {
   deriveServerName,
   isReservedServerName,
   serverNameFromRef,
   slugifyServerName,
-} from "../bundles/paths.ts";
-import { startBundleSource } from "../bundles/startup.ts";
+} from "../connectors/runtime/paths.ts";
+import { startConnectorSource } from "../connectors/runtime/startup.ts";
 import type {
   BrokeredRef,
-  BundleInstance,
-  BundleRef,
+  ConnectorInstance,
+  ConnectorRef,
   RemoteTransportConfig,
-} from "../bundles/types.ts";
-import { brokeredCatalogConfig, isBrokeredAuthKind } from "../connectors/auth-kind.ts";
-import type {
-  ManagedConnectorProvider,
-  ManagedSession,
-} from "../connectors/providers/managed-provider.ts";
-import { connectorSkillIdentityFrom, type SecretHeaderRef } from "../connectors/server-detail.ts";
+} from "../connectors/runtime/types.ts";
 import { textContent } from "../engine/content-helpers.ts";
 import { INTERNAL_TOOL_ANNOTATION, type ToolResult } from "../engine/types.ts";
 import { HookContractError, revokeHooksForConnector } from "../hooks/provisioning.ts";
@@ -59,7 +62,7 @@ import type { Tool, ToolSource } from "./types.ts";
  * from the `/w/<slug>` route); an explicit `wsId` arg overrides it for
  * direct API callers. Any workspace — personal or shared — is a valid
  * target; the tool never special-cases the target's `isPersonal` flag.
- * The bundle ref's `oauthScope` is always `"workspace"`.
+ * The connector ref's `oauthScope` is always `"workspace"`.
  *
  * Persistence: `WorkspaceStore.bundles[]` +
  * `workspaces/<wsId>/credentials/...` for tokens.
@@ -130,7 +133,7 @@ function brokerNotConfiguredMessage(entryName: string, auth: string): string {
 /** Inputs to {@link deriveConnectorStatus}. Subset of InstalledEntry's
  *  shape so the helper has a small, testable surface. */
 export interface StatusInputs {
-  /** BundleState as exposed by the lifecycle. */
+  /** ConnectionState as exposed by the lifecycle. */
   state: string;
   /** True when a static-auth catalog entry has no operator OAuth client configured. */
   missingOperatorSetup?: boolean;
@@ -263,7 +266,7 @@ export function createManageConnectorsTool(ctx: ManageConnectorsContext): InProc
         serverName: {
           type: "string",
           description:
-            "Bundle server name (required for disconnect, list_tools, get_permissions, set_permissions, grant_connector, revoke_connector).",
+            "Connector server name (required for disconnect, list_tools, get_permissions, set_permissions, grant_connector, revoke_connector).",
         },
         scope: {
           type: "string",
@@ -430,7 +433,7 @@ function resolveDispatchArgs(
     // workspace the user is viewing; it no longer carries a separately-picked
     // target. An explicit `wsId` arg still wins for direct API callers. Keeping
     // install on the same workspace selector as connect / list / status is what
-    // closes the "Bundle not installed" scope mismatch (an install seeded under
+    // closes the "Connector not installed" scope mismatch (an install seeded under
     // one workspace, then read under another).
     installWsId: input.wsId === undefined ? (wsId ?? undefined) : String(input.wsId),
     // Grant/revoke target is explicit only — never the ambient X-Workspace-Id
@@ -562,7 +565,7 @@ function handleListBoundSkills(ctx: ManageConnectorsContext, wsId: string | null
  */
 type InstalledEntry = {
   serverName: string;
-  bundleName: string;
+  connectorName: string;
   version: string;
   /**
    * The version the running server reports in its MCP `initialize` handshake
@@ -614,7 +617,7 @@ type InstalledEntry = {
   };
   /**
    * Generic, type-agnostic status the UI renders without re-deriving
-   * from the underlying BundleState + credential probes. Six values
+   * from the underlying ConnectionState + credential probes. Six values
    * collapse what would otherwise be ~10 specific failure modes —
    * the connector-type detail (which credentials missing, which
    * action label) is derived in the UI from the other fields.
@@ -646,8 +649,8 @@ interface InstalledEntryDeps {
 }
 
 /**
- * Match a bundle instance's ref to its catalog entry. Prefers a URL match;
- * EVERY brokered bundle stores a per-install session URL that misses
+ * Match a connector instance's ref to its catalog entry. Prefers a URL match;
+ * EVERY brokered connector stores a per-install session URL that misses
  * `catalogByUrl`, so they fall back to the catalog id their provider stamped on
  * the ref at install — recovered by `brokeredRef`, which owns the
  * provider list.
@@ -657,7 +660,7 @@ interface InstalledEntryDeps {
  * and every catalog-gated section of the Configure page dark.
  */
 function resolveInstanceCatalog(
-  instance: BundleInstance,
+  instance: ConnectorInstance,
   catalogByUrl: Map<string, ConnectorCatalogEntry>,
   catalogById: Map<string, ConnectorCatalogEntry>,
 ): { url: string | undefined; cat: ConnectorCatalogEntry | undefined } {
@@ -728,8 +731,8 @@ async function probeToolCountAndVersion(
  */
 async function applyRemoteConnectionState(
   entry: InstalledEntry,
-  instance: BundleInstance,
-  ref: BundleRef,
+  instance: ConnectorInstance,
+  ref: ConnectorRef,
   url: string,
   cat: ConnectorCatalogEntry | undefined,
   credStore: CredentialStore,
@@ -783,7 +786,7 @@ async function applyOperatorOAuth(
 async function applyConnectionProbes(
   entry: InstalledEntry,
   deps: InstalledEntryDeps,
-  instance: BundleInstance,
+  instance: ConnectorInstance,
   url: string | undefined,
   cat: ConnectorCatalogEntry | undefined,
 ): Promise<void> {
@@ -801,14 +804,14 @@ async function applyConnectionProbes(
 }
 
 /**
- * Build one InstalledEntry for a bundle instance, or null to skip it (wrong
+ * Build one InstalledEntry for a connector instance, or null to skip it (wrong
  * workspace, or filtered out by `onlyServerName`). All per-instance IO
  * (tools() round-trip, manifest probe, credential reads) happens here so the
  * single-connector path skips it for every non-matching instance.
  */
 async function buildInstalledEntry(
   deps: InstalledEntryDeps,
-  instance: BundleInstance,
+  instance: ConnectorInstance,
 ): Promise<InstalledEntry | null> {
   if (instance.wsId !== deps.wsId) return null;
   if (deps.onlyServerName && instance.serverName !== deps.onlyServerName) return null;
@@ -828,7 +831,7 @@ async function buildInstalledEntry(
 
   const entry: InstalledEntry = {
     serverName: instance.serverName,
-    bundleName: instance.bundleName,
+    connectorName: instance.connectorName,
     version: instance.version,
     ...(handshakeVersion ? { handshakeVersion } : {}),
     state: instance.state,
@@ -880,7 +883,7 @@ async function handleListInstalled(
   // construction concern inside the facade.
   const directory = ctx.runtime.getConnectorDirectory();
   const catalogByUrl = await directory.catalogByUrl();
-  // O(1) catalog lookups for brokered bundles whose persisted `ref.url` is a
+  // O(1) catalog lookups for brokered connectors whose persisted `ref.url` is a
   // per-install session URL and therefore misses `catalogByUrl`. Built once per
   // request.
   const catalogById = await directory.catalogByIdMap();
@@ -906,7 +909,7 @@ async function handleListInstalled(
   // registry.
   //
   // Read directly from the lifecycle's instance map, NOT the shorthand
-  // `getBundleInstancesForWorkspace` — see the rationale on that method for why
+  // `getConnectorInstancesForWorkspace` — see the rationale on that method for why
   // its registry filter is load-bearing and why this page must bypass it.
   //
   // The short version: a connector can be installed and unregistered (torn down
@@ -944,7 +947,7 @@ async function handleListInstalled(
 
 /**
  * Single-connector counterpart to `list_installed`. Returns the same
- * shape as one entry from that array, or `null` when the bundle
+ * shape as one entry from that array, or `null` when the connector
  * isn't installed in the caller's scope. Used by the Configure
  * detail page so it doesn't fetch all 15+ installed connectors just
  * to render one.
@@ -1018,7 +1021,7 @@ async function handleInstall(
   // workspace by default (X-Workspace-Id, set from the `/w/<slug>` route the
   // web shell is on) — the dispatcher passes `ctx.getWorkspaceId()` when no
   // explicit arg is given. There is still no default-to-personal fallback
-  // (Stage 1 precedent: `startBundleSource` hard-errors on missing wsId;
+  // (Stage 1 precedent: `startConnectorSource` hard-errors on missing wsId;
   // pooling credentials across tenants via a silent default is the failure
   // mode this guard forecloses). A client that calls this action with
   // neither a workspace header nor a `wsId` arg hits the guard below.
@@ -1059,7 +1062,7 @@ async function handleInstall(
  * workspaces invariably have the owner as admin, so this covers the personal
  * path uniformly. A personal workspace is a CONNECTOR space (the user's own
  * remote MCP connections, grantable into shared rooms): only `remote-oauth` is
- * admitted, keeping "a bundle in your personal workspace" == "a grantable
+ * admitted, keeping "a connector in your personal workspace" == "a grantable
  * personal connector" true by construction.
  */
 function workspaceInstallAdmission(
@@ -1086,7 +1089,7 @@ function workspaceInstallAdmission(
   if (ws.isPersonal === true && entry.install.kind !== "remote-oauth") {
     return errResult(
       `Your personal workspace is for connectors — remote MCP connections. ` +
-        `"${entry.id}" installs as a "${entry.install.kind}" bundle; install it into a shared workspace instead.`,
+        `"${entry.id}" installs as a "${entry.install.kind}" connector; install it into a shared workspace instead.`,
     );
   }
   return null;
@@ -1148,7 +1151,7 @@ async function handleInstallIdentity(
   if (entry.install.kind !== "remote-oauth") {
     return errResult(
       `Personal connectors are remote MCP connections. "${entry.id}" installs as a ` +
-        `"${entry.install.kind}" bundle — install it into a shared workspace instead.`,
+        `"${entry.install.kind}" connector — install it into a shared workspace instead.`,
     );
   }
 
@@ -1191,7 +1194,7 @@ async function handleInstallIdentity(
   // band. Workspace registries can't hit this — the real `nb` system source
   // already occupies that slot, so a colliding interactive connect is skipped
   // (`startAuthInner`'s `!hasSource`), and eager-started workspace sources also
-  // pass `startBundleSource`'s `validateServerName`. The identity registry
+  // pass `startConnectorSource`'s `validateServerName`. The identity registry
   // carries no system source, so neither applies; reject at the install boundary
   // (and again in `startIdentityAuth`) to keep a reserved-name record out of
   // connectors.json.
@@ -1256,12 +1259,12 @@ async function handleInstallIdentity(
     brokeredWiring = wiring;
   }
 
-  // Strip the `oauthScope: "workspace"` literal `buildRemoteBundleRef` stamps for
+  // Strip the `oauthScope: "workspace"` literal `buildRemoteConnectorRef` stamps for
   // the workspace path — an identity ref is user-owned structurally, by its
   // location in `connectors.json`, and carries no scope field (see
   // `IdentityConnectorStore`). The brokered marker, when present, rides the ref
   // so the Connect route and list handler key on it.
-  const ref = buildRemoteBundleRef(action, serverName, trustedUi, brokeredWiring, undefined);
+  const ref = buildRemoteConnectorRef(action, serverName, trustedUi, brokeredWiring, undefined);
   delete (ref as { oauthScope?: "workspace" }).oauthScope;
 
   // The connector-skill overlay (`syncBoundSkills`) is workspace-keyed; the
@@ -1290,7 +1293,7 @@ async function handleInstallIdentity(
  * The id of a SHARED workspace the caller belongs to that already installs
  * `serverName`, or `null`. Skips the caller's own personal workspace (the legacy
  * personal home — not a shared collision). Reads persisted `workspace.json`
- * bundles, so it's pod-independent (a self-heal / cold pod can't hide a
+ * connectors, so it's pod-independent (a self-heal / cold pod can't hide a
  * collision). Install-time enforcement only: a collision that forms later — the
  * caller joins a workspace that already installs `serverName` — isn't caught
  * here, and `resolvePermissionOwner` resolves it personal-first by a stated rule.
@@ -1505,7 +1508,7 @@ async function registerApiKeySource(
  *   - remote-oauth: `url` must parse as `http(s):` — protocol
  *     allowlist mirrors the catalog's `iconUrl` rules so a malformed
  *     entry can't slip a `javascript:` / `data:` / `file:` URL into
- *     the bundle creation path.
+ *     the connector creation path.
  *   - direct-url: parked behind an errResult in handleInstall today,
  *     so no value-shape check yet.
  *
@@ -1621,7 +1624,7 @@ async function handleInstallRemoteOAuth(
   // Single install pipeline keyed on the explicit `wsId` the caller supplied.
   // The personal vs shared-workspace distinction is a property of the target
   // workspace (`ws.isPersonal`), not a separate code path — both produce the
-  // same `BundleRef` shape and the same workspace-scoped credential layout.
+  // same `ConnectorRef` shape and the same workspace-scoped credential layout.
   // Personal-target installs surface a different message string in `content`
   // but identical `structuredContent`.
   const isPersonalTarget = ws.isPersonal === true;
@@ -1642,7 +1645,7 @@ async function handleInstallRemoteOAuth(
   // Fresh-install: resolve the wiring now that we know we're going to commit.
   const wiring = await resolveInstallWiring(ctx, wsId, ws, entry, action);
   if ("error" in wiring) return errResult(wiring.error);
-  const ref = buildRemoteBundleRef(
+  const ref = buildRemoteConnectorRef(
     action,
     serverName,
     trustedUi,
@@ -1680,9 +1683,9 @@ async function handleInstallRemoteOAuth(
   await lifecycle.seedInstance(serverName, action.url, ref, undefined, wsId);
   lifecycle.notifyInstalled(serverName, wsId);
 
-  // Static-credential URL bundles authenticate without an MCP-side OAuth flow,
+  // Static-credential URL connectors authenticate without an MCP-side OAuth flow,
   // so eager-start the source here rather than waiting for the next platform
-  // boot. For static / dcr bundles, source.start() is bound to
+  // boot. For static / dcr connectors, source.start() is bound to
   // `lifecycle.startAuth` (called from `/v1/mcp-auth/initiate`) and doesn't run
   // here. Eager-start is a UX optimization; a failure returns a warning, not an
   // error, because the install itself has still succeeded.
@@ -1776,7 +1779,7 @@ async function provisionDeclaredHooks(
 /**
  * What a brokered provider produces at install time: the minted session URL,
  * the transport that reaches it, and the coordinates the runtime persists on
- * the BundleRef so the probe and teardown can name the session later.
+ * the ConnectorRef so the probe and teardown can name the session later.
  *
  * The broker credential never appears here. The transport names a credential
  * PROVIDER (`auth: { type: "provider", provider }`), which attaches the secret
@@ -2015,17 +2018,17 @@ async function loadStaticOAuthClient(
 }
 
 /**
- * Build the BundleRef from the resolved wiring (a brokered session URL +
+ * Build the ConnectorRef from the resolved wiring (a brokered session URL +
  * transport, or static client credentials). Constructed on the fresh-install
  * branch only; the dedup branches re-use the existing persisted ref.
  */
-function buildRemoteBundleRef(
+function buildRemoteConnectorRef(
   action: RemoteOAuthInstall,
   serverName: string,
   trustedUi: ConnectorCatalogEntry["ui"],
   brokeredWiring: BrokeredWiring | undefined,
   staticOAuthClient: { clientId: string; clientSecretKey: string } | undefined,
-): BundleRef {
+): ConnectorRef {
   return {
     url: brokeredWiring?.url ?? action.url,
     serverName,
@@ -2080,7 +2083,7 @@ function buildRemoteBundleRef(
     ...(brokeredWiring ? { brokered: brokeredWiring.brokered } : {}),
     // Host UI placement from the operator-trusted catalog (see `trustedUi`).
     // Persisted on the ref so the placement survives restarts; the lifecycle
-    // registers + re-validates it via `startBundleSource` → `instance.ui`.
+    // registers + re-validates it via `startConnectorSource` → `instance.ui`.
     ...(trustedUi ? { ui: trustedUi } : {}),
   };
 }
@@ -2092,9 +2095,9 @@ function buildRemoteBundleRef(
  *
  * Dedups primarily on `serverName` — the canonical lifecycle key, derived from
  * `entry.id` and stable across installs. Matching on `b.url` would miss
- * brokered bundles whose persisted `b.url` is the per-install session URL and
+ * brokered connectors whose persisted `b.url` is the per-install session URL and
  * never equals the catalog placeholder `action.url`. Falls back to URL match
- * for legacy bundles persisted before slugify-on-install (no `serverName` field).
+ * for legacy connectors persisted before slugify-on-install (no `serverName` field).
  */
 async function handleDuplicateInstall(
   ctx: ManageConnectorsContext,
@@ -2193,23 +2196,23 @@ async function resolveInstallWiring(
  * Eager-start a freshly-installed static-credential source (brokered / provider)
  * so the tool list is available immediately, rather than waiting for the next
  * platform boot. Returns a warning string on failure — the install itself has
- * still succeeded (BundleRef persisted, seedInstance run), and the next Connect
+ * still succeeded (ConnectorRef persisted, seedInstance run), and the next Connect
  * click runs the same start path.
  */
 async function eagerStartRemoteSource(
   ctx: ManageConnectorsContext,
-  ref: BundleRef,
+  ref: ConnectorRef,
   wsRegistry: ReturnType<Runtime["getRegistryForWorkspace"]>,
   wsId: string,
   entry: DirectoryEntry,
   action: RemoteOAuthInstall,
 ): Promise<string | undefined> {
   try {
-    await startBundleSource(ref, wsRegistry, ctx.runtime.getEventSink(), {
+    await startConnectorSource(ref, wsRegistry, ctx.runtime.getEventSink(), {
       allowInsecureRemotes: ctx.runtime.getAllowInsecureRemotes(),
       wsId,
       workDir: ctx.runtime.getWorkDir(),
-      bundleMcp: ctx.runtime.getBundleMcpDeps(wsId),
+      connectorMcp: ctx.runtime.getConnectorMcpDeps(wsId),
     });
     return undefined;
   } catch (err) {
@@ -2259,7 +2262,7 @@ async function handleDisconnect(
   if (!wsId) return errResult("Workspace context required.");
   if (!identity) return errResult("Authentication required.");
   if (!lifecycle.getInstance(serverName, wsId)) {
-    return errResult(`Bundle "${serverName}" not installed in workspace.`);
+    return errResult(`Connector "${serverName}" not installed in workspace.`);
   }
   // Workspace-scope disconnect revokes OAuth tokens used by every
   // member of the workspace. A non-admin shouldn't be able to log
@@ -2291,11 +2294,11 @@ async function handleDisconnect(
 }
 
 /**
- * Uninstall a connector — full removal. For OAuth-protected URL bundles
+ * Uninstall a connector — full removal. For OAuth-protected URL connectors
  * we revoke tokens upstream first (so the user's grant in the vendor
  * portal is cleaned up), then `lifecycle.uninstall` stops the source,
  * removes the entry from `workspace.json`, clears credentials, and
- * unregisters placements. For local bundles (stdio / non-OAuth URL),
+ * unregisters placements. For local connectors (stdio / non-OAuth URL),
  * just `lifecycle.uninstall`.
  *
  * Workspace connectors only — a personal (identity-owned) connector is removed
@@ -2318,11 +2321,11 @@ async function handleUninstall(
   if (!wsId) return errResult("Workspace context required.");
   if (!identity) return errResult("Authentication required.");
   if (!lifecycle.getInstance(serverName, wsId)) {
-    return errResult(`Bundle "${serverName}" not installed in workspace.`);
+    return errResult(`Connector "${serverName}" not installed in workspace.`);
   }
   // Workspace-scope uninstall removes a connector for every member
   // of the workspace and clears the credential file. A non-admin
-  // shouldn't be able to remove a shared bundle other members rely on.
+  // shouldn't be able to remove a shared connector other members rely on.
   // Personal workspaces have a single admin (the owner) by invariant.
   const ws = await ctx.runtime.getWorkspaceStore().get(wsId);
   if (!ws) return errResult(`Workspace "${wsId}" not found.`);
@@ -2337,13 +2340,13 @@ async function handleUninstall(
 
   // Revoke OAuth tokens upstream first when applicable.
   const revokeResult = instance?.ref
-    ? await revokeUrlBundleTokens(lifecycle, ctx, serverName, wsId)
+    ? await revokeUrlConnectorTokens(lifecycle, ctx, serverName, wsId)
     : {};
 
   try {
     const registry = ctx.runtime.getRegistryForWorkspace(wsId);
     await lifecycle.uninstall(serverName, registry, wsId);
-    await stripUninstalledBundleEntry(ctx, wsId, serverName);
+    await stripUninstalledConnectorEntry(ctx, wsId, serverName);
     // Retire every hook this connector held. The door independently refuses a
     // delivery for an uninstalled connector — it needs the connector's base URL
     // to have anywhere to forward to — so this is not the only thing that stops
@@ -2360,7 +2363,7 @@ async function handleUninstall(
     // nothing routes to any more.
     stopWatchingHooks(wsId, serverName);
     // Drop tool permissions for this connector — they have no meaning
-    // once the bundle is gone.
+    // once the connector is gone.
     await ctx.runtime
       .getPermissionStore()
       .deleteConnector({ scope: "workspace", wsId }, serverName);
@@ -2375,11 +2378,11 @@ async function handleUninstall(
 }
 
 /**
- * Revoke a URL bundle's OAuth tokens upstream before local cleanup. Best-effort:
+ * Revoke a URL connector's OAuth tokens upstream before local cleanup. Best-effort:
  * a 4xx from the provider shouldn't block uninstall, since the user's intent is
  * "I want this gone."
  */
-async function revokeUrlBundleTokens(
+async function revokeUrlConnectorTokens(
   lifecycle: ReturnType<Runtime["getLifecycle"]>,
   ctx: ManageConnectorsContext,
   serverName: string,
@@ -2404,7 +2407,7 @@ async function revokeUrlBundleTokens(
  * `lifecycle.uninstall` clears its own `instances` map and the legacy global
  * `nimblebrain.json`, but not the workspace record.
  */
-async function stripUninstalledBundleEntry(
+async function stripUninstalledConnectorEntry(
   ctx: ManageConnectorsContext,
   wsId: string,
   serverName: string,
@@ -2452,14 +2455,14 @@ async function handleListTools(
   // navigator — see Q1 in STAGE_2_DESIGN_DECISIONS.md).
   if (!wsId) return errResult("Workspace context required.");
   if (!lifecycle.getInstance(serverName, wsId)) {
-    return errResult(`Bundle "${serverName}" not installed in workspace.`);
+    return errResult(`Connector "${serverName}" not installed in workspace.`);
   }
 
   const registry = ctx.runtime.getRegistryForWorkspace(wsId);
   const source = registry.getSource(serverName);
   if (!source) {
-    // Bundle is installed but not currently running (e.g. URL bundle
-    // in `not_authenticated` after disconnect, stdio bundle whose
+    // Connector is installed but not currently running (e.g. URL connector
+    // in `not_authenticated` after disconnect, stdio connector whose
     // respawn failed). No tools to enumerate. Return empty tools
     // instead of throwing — this is a normal state, not an error.
     // The hero already conveys the "needs auth / needs setup" prompt.
@@ -2516,7 +2519,7 @@ async function handleListToolsWithPermissions(
   const lifecycle = ctx.runtime.getLifecycle();
   if (!wsId) return errResult("Workspace context required.");
   if (!lifecycle.getInstance(serverName, wsId)) {
-    return errResult(`Bundle "${serverName}" not installed in workspace.`);
+    return errResult(`Connector "${serverName}" not installed in workspace.`);
   }
 
   const owner = await resolvePermissionOwner(ctx, wsId, callerId, serverName);
@@ -2525,7 +2528,7 @@ async function handleListToolsWithPermissions(
   const registry = ctx.runtime.getRegistryForWorkspace(wsId);
   const source = registry.getSource(serverName);
   if (!source) {
-    // Bundle installed but not running. Permissions still readable
+    // Connector installed but not running. Permissions still readable
     // (they're persisted independently of the source); return them
     // alongside an empty tools list so the UI can render the
     // permissions surface as "no tools currently available" without
@@ -2541,7 +2544,7 @@ async function handleListToolsWithPermissions(
   try {
     // Run the two reads in parallel — they don't depend on each
     // other and the permission store hits disk while tools/list may
-    // round-trip to the bundle subprocess.
+    // round-trip to the connector subprocess.
     const [tools, permissions] = await Promise.all([
       readConnectorTools(source),
       ctx.runtime.getPermissionStore().getConnector(owner, serverName),
@@ -2787,7 +2790,7 @@ async function handleListPersonalConnectors(
       // Auth kind + (for a brokered connector) the catalog connector id are read
       // from the stored ref, not the catalog — they're what the Connect route keys
       // on and must survive a catalog entry being renamed or removed. The brokered
-      // marker is stamped at install by `buildRemoteBundleRef`; its absence means
+      // marker is stamped at install by `buildRemoteConnectorRef`; its absence means
       // DCR.
       const brokered = brokeredRef(ref);
       // Connected = authenticated, derived from PERSISTED credentials (the stored
@@ -3088,8 +3091,8 @@ async function persistOperatorApp(
  *
  * Refuses to run while the connector is currently installed. The right
  * mental model: operator setup is a *prerequisite* for install, not a
- * peer of it. Removing setup while the bundle is live would orphan the
- * BundleRef's credential pointer — the next OAuth round-trip would 404
+ * peer of it. Removing setup while the connector is live would orphan the
+ * ConnectorRef's credential pointer — the next OAuth round-trip would 404
  * mid-flow. Caller uninstalls first, then removes setup.
  */
 async function handleRemoveOperatorSetup(
@@ -3116,7 +3119,7 @@ async function handleRemoveOperatorSetup(
   if (!entry) return errResult(`Catalog entry "${catalogId}" not found.`);
 
   // Guard: refuse if the connector is currently installed. Removing
-  // operator config out from under a live bundle leaves a dangling
+  // operator config out from under a live connector leaves a dangling
   // credential reference; force the operator through the explicit
   // uninstall path first.
   const installed = ws.bundles.some((b) => "url" in b && b.url === entry.url);

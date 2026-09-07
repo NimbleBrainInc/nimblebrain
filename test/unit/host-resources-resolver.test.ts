@@ -10,10 +10,10 @@ import {
 import { createFileStore, type FileStore } from "../../src/files/store.ts";
 import type { FileEntry } from "../../src/files/types.ts";
 
-// The resolver is the single chokepoint between a bundle's inbound
+// The resolver is the single chokepoint between a connector's inbound
 // host-resources request and the workspace-owned FileStore. Files are
 // workspace-owned: the resolver is handed a `(wsId) => FileStore` factory and
-// DELIBERATELY scopes by `ctx.workspaceId` (the workspace the bundle's tool ran
+// DELIBERATELY scopes by `ctx.workspaceId` (the workspace the connector's tool ran
 // in) — passing it to the factory so a `files://` read resolves in that
 // workspace's partition only. The URI is bare (carries just the file id); the
 // scope rides on the ctx, never the URI. It enforces the scheme allowlist and
@@ -28,14 +28,14 @@ let rootDir: string;
 // Two workspace stores standing in for two workspaces. The resolver's factory
 // selects between them by the wsId it is handed — the same shape Runtime uses
 // (`getWorkspaceFileStore(ctx.workspaceId, owner)` resolves the store for the
-// workspace the bundle ran in).
+// workspace the connector ran in).
 let storeA: FileStore;
 let storeB: FileStore;
 
-// ctx carries the bundle's workspace — the LIVE store selector. `ws_a` →
+// ctx carries the connector's workspace — the LIVE store selector. `ws_a` →
 // `storeA`, `ws_b` → `storeB` (see `storeForWorkspace`).
-const ctxA: HostResourceContext = { workspaceId: "ws_a", bundleId: "bundle_x" };
-const ctxB: HostResourceContext = { workspaceId: "ws_b", bundleId: "bundle_x" };
+const ctxA: HostResourceContext = { workspaceId: "ws_a", connectorId: "connector_x" };
+const ctxB: HostResourceContext = { workspaceId: "ws_b", connectorId: "connector_x" };
 
 /**
  * The resolver's store factory: maps `ctx.workspaceId` → that workspace's store,
@@ -138,7 +138,7 @@ describe("FileBackedHostResourcesResolver.read", () => {
   });
 
   it("collapses cross-workspace lookups into -32002 (no info leak)", async () => {
-    // A bundle running in workspace A asking for a file id that EXISTS in
+    // A connector running in workspace A asking for a file id that EXISTS in
     // workspace B. The resolver passes `ctx.workspaceId` to the factory, yields
     // A's store, which doesn't have it — "not found", the SAME response a
     // genuinely-missing id gets. This prevents cross-workspace inventory
@@ -232,12 +232,12 @@ describe("FileBackedHostResourcesResolver.list", () => {
     expect(caught?.code).toBe(INVALID_PARAMS);
   });
 
-  // Tag-shape validation. A buggy bundle sending `tags: "draft"` (string)
+  // Tag-shape validation. A buggy connector sending `tags: "draft"` (string)
   // instead of `tags: ["draft"]` (array) used to throw `TypeError: .every
   // is not a function` and surface as a generic dispatch failure — no
   // useful diagnostic. Now: reject with `-32602`, mirroring the
   // scheme-filter branch. Silently treating non-array as "no filter"
-  // was rejected as misleading (the bundle gets all files back instead
+  // was rejected as misleading (the connector gets all files back instead
   // of a clear error).
   it("rejects non-array tags filter with -32602", async () => {
     let caught: McpError | null = null;

@@ -11,7 +11,7 @@ import {
   ReadResourceRequestSchema,
   type ToolAnnotations,
 } from "@modelcontextprotocol/sdk/types.js";
-import type { PlacementDeclaration } from "../bundles/types.ts";
+import type { PlacementDeclaration } from "../connectors/runtime/types.ts";
 import type { EventSink, ToolResult } from "../engine/types.ts";
 import { bytesToBase64 } from "../util/base64.ts";
 import { coerceInputForSchema } from "./coerce-input.ts";
@@ -113,14 +113,14 @@ export interface DefineInProcessAppOptions {
   instructions?: string;
   /**
    * URI templates advertised via `resources/templates/list`. Use for
-   * parametric URIs (e.g. `instructions://bundles/{name}`) where the catalog
+   * parametric URIs (e.g. `instructions://connectors/{name}`) where the catalog
    * is dynamic but the shape is known.
    */
   templates?: ResourceTemplate[];
   /**
    * Async dynamic supplement to the static `resources` map. Entries are
    * merged into `resources/list` after the static entries on every call.
-   * Use when the catalog depends on workspace state (e.g. installed bundles).
+   * Use when the catalog depends on workspace state (e.g. installed connectors).
    */
   listResources?: () => Promise<DynamicResourceEntry[]>;
   /**

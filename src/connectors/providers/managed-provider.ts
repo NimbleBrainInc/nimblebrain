@@ -29,8 +29,8 @@
 
 import type { Hono } from "hono";
 import type { AppContext, AppEnv } from "../../api/types.ts";
-import type { ConnectionHealthProbe } from "../../bundles/connection-probe.ts";
-import type { BrokeredRef } from "../../bundles/types.ts";
+import type { ConnectionHealthProbe } from "../../connectors/runtime/connection-probe.ts";
+import type { BrokeredRef } from "../../connectors/runtime/types.ts";
 import type { ConnectorOwner } from "../../identity/connector-owner.ts";
 import type { ConnectorDirectory } from "../../registries/directory.ts";
 
@@ -68,7 +68,7 @@ export interface ManagedSession {
   headers?: Record<string, string>;
   /**
    * Opaque provider-scoped coordinates identifying the thing just minted. The
-   * runtime persists them verbatim at `BundleRef.brokered.providerRef` and
+   * runtime persists them verbatim at `ConnectorRef.brokered.providerRef` and
    * hands them back to this provider's probe and teardown.
    *
    * **Opaque end to end.** The install path validates nothing in here and the

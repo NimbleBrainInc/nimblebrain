@@ -6,7 +6,7 @@
  * view is a separate projection in src/conversation/event-reconstructor.ts.
  *
  * Types are intentionally self-contained — no imports from the runtime
- * codebase — because this bundle is deployable independently.
+ * codebase — because this app is deployable independently.
  */
 
 import { type Dirent, readdirSync } from "node:fs";
@@ -197,7 +197,7 @@ interface RunStartEvent {
 
 /**
  * Token usage shape mirrored from the runtime's canonical TokenUsage.
- * This bundle is intentionally self-contained (no imports from runtime),
+ * This app is intentionally self-contained (no imports from runtime),
  * so the shape is duplicated rather than imported. Keep in sync with
  * src/usage/types.ts — verified at test time by
  * `test/unit/platform/conversations/usage-shape-sync.test.ts`.
@@ -226,7 +226,7 @@ interface LlmResponseEvent {
  * briefing) that runs outside the agentic loop and emits no `llm.response`.
  * Mirrors the runtime's `AuxUsageEvent`. Carries no content and is never a
  * message — `reconstructFromEvents` skips it — but its usage is summed into
- * the conversation totals so the bundle matches the runtime aggregator.
+ * the conversation totals so the connector matches the runtime aggregator.
  */
 interface AuxUsageEvent {
   ts: string;
@@ -373,7 +373,7 @@ function accumulateEventMetrics(
     acc.lastModel = evt.model;
   } else if (isAuxUsage(evt)) {
     // Forked fast-slot calls (compaction/title/briefing) emit no
-    // llm.response; count their usage so the bundle's totals match the
+    // llm.response; count their usage so the app's totals match the
     // runtime aggregator (which counts aux.usage too).
     acc.totalInputTokens += evt.usage?.inputTokens ?? 0;
     acc.totalOutputTokens += evt.usage?.outputTokens ?? 0;
@@ -431,7 +431,7 @@ function applyDerivedMetrics(meta: ConversationMeta, metrics: DerivedMetrics): v
   // Reset cost too — without this, a pre-PR conversation with line-1
   // `{ totalInputTokens: 1000, totalCostUsd: 5.50 }` would read back as
   // `{ totalInputTokens: 0, totalCostUsd: 5.50 }`: incoherent. The
-  // bundle is intentionally pricing-decoupled (no model catalog), so 0
+  // app is intentionally pricing-decoupled (no model catalog), so 0
   // is the honest answer here. Consumers that want a real cost compute
   // it themselves from `(model, summed usage)`.
   meta.totalCostUsd = 0;
@@ -577,7 +577,7 @@ interface RunScan {
 /**
  * The skill's name from its id, for entries recorded before `name` was on the
  * event. Mirrors `src/skills/display-name.ts`; duplicated rather than imported
- * because this bundle is deployable independently of the runtime (see the file
+ * because this app is deployable independently of the runtime (see the file
  * header). Both id shapes put the name in the last path segment EXCEPT the
  * `skill://…/SKILL.md` entrypoint, where it is the directory holding it.
  *
@@ -1264,7 +1264,7 @@ export async function readConversationHeader(
  *   - workspace-owned: `dir` is the workspaces root; each workspace's
  *     `conversations/` holds one `<ownerId>/` partition per member.
  * A flat directory yields its own files; the workspaces root yields every
- * workspace's files. Self-contained (no runtime imports) so the bundle stays
+ * workspace's files. Self-contained (no runtime imports) so the app stays
  * independently deployable.
  */
 /** Collect `.jsonl` file paths under a workspace's `conversations/<ownerId>/` partitions. */

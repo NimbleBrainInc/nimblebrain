@@ -8,9 +8,9 @@ import { isMcpResourceMiss, McpSource } from "../../src/tools/mcp-source.ts";
  * failure. The old `catch { return null }` masked every error as a 404 with no
  * log, so a degraded source was undiagnosable. The contract now: a genuine MCP
  * miss stays a silent null; a real failure is logged — but ONLY on the
- * app-surface proxy path (`logFailures`), so discovery probes against a bundle
+ * app-surface proxy path (`logFailures`), so discovery probes against a connector
  * that simply lacks a `skill://` / `app://instructions` resource never spam,
- * whatever non-standard error shape that bundle returns.
+ * whatever non-standard error shape that connector returns.
  */
 describe("isMcpResourceMiss — allowlist of genuine misses", () => {
   it("treats resource/method/params JSON-RPC errors as misses", () => {
@@ -135,7 +135,7 @@ describe("McpSource.readResource — log scoping (no probe spam)", () => {
 });
 
 /**
- * The recovery half of issue #571: a remote bundle's `ui://` read must
+ * The recovery half of issue #571: a remote connector's `ui://` read must
  * re-initialize the session and retry after the server rolls, rather than
  * returning a null that strands the sidebar until a manual runtime bounce.
  * `tryRestart` is mocked so these stay unit-level (no real network / Bun.serve);

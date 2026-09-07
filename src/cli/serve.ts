@@ -32,7 +32,7 @@ export async function runServe(opts: ServeOptions, telemetry: TelemetryManager):
   const startupMs = Math.round(performance.now() - startupTime);
   telemetry.capture("cli.startup", {
     mode: "serve",
-    bundle_count: runtime.bundleNames().length,
+    connector_count: runtime.connectorNames().length,
     startup_ms: startupMs,
   });
   log.info("[nimblebrain] Runtime ready.");

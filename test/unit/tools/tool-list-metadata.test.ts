@@ -11,7 +11,7 @@
  * `_meta` and `annotations` are separate namespaces in the spec, and they stay
  * separate here: `_meta` is the free-form reverse-DNS bag where host
  * conventions like `ai.nimblebrain/internal` live, `annotations` is the spec's
- * own closed set of behavioural hints. Collapsing them is how a bundle would
+ * own closed set of behavioural hints. Collapsing them is how a connector would
  * get to claim `readOnlyHint` by writing a `_meta` key, or hide itself from the
  * agent by setting a spec hint.
  *

@@ -15,7 +15,7 @@ import { useCanWriteActiveWorkspace } from "../../hooks/useScopedRole";
 /**
  * Per-connector Configure page. The visual hierarchy is driven by
  * `installed.status` — a generic UI status the server derives from
- * the underlying BundleState + credential probes:
+ * the underlying ConnectionState + credential probes:
  *
  *   - The hero block carries the page's primary CTA (Configure /
  *     Set up OAuth / Connect / Reconnect) when status ≠ ready, and
@@ -59,7 +59,7 @@ export function ConnectorDetailPage() {
     setError(null);
     try {
       // Targeted single-connector fetch — avoids building entries
-      // (and tools() round-trips) for every other installed bundle
+      // (and tools() round-trips) for every other installed connector
       // when we only render one. Server resolves the connector from
       // serverName.
       const res = await getInstalledConnector(serverName);

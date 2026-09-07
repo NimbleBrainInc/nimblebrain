@@ -22,12 +22,12 @@
  * carries per-topic granularity, dynamic loading, and triggers — so org-wide
  * content that is only sometimes relevant costs nothing when it isn't.
  *
- * Per-bundle custom instructions are NOT in this module's scope. Bundles
+ * Per-connector custom instructions are NOT in this module's scope. Connectors
  * publish a `app://instructions` resource if and only if they
  * support the convention; the runtime reads it on every prompt assembly
  * and wraps it in `<app-custom-instructions>` containment alongside the
- * bundle author's static `<app-instructions>`. Storage, UI, and the agent
- * tool to write/clear all live in the bundle.
+ * connector author's static `<app-instructions>`. Storage, UI, and the agent
+ * tool to write/clear all live in the connector.
  */
 
 import { textContent } from "../../engine/content-helpers.ts";

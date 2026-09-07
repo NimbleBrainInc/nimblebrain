@@ -25,7 +25,7 @@ import {
 } from "../../src/engine/schemas/events.ts";
 import { buildContextAssembledPayload } from "../../src/runtime/runtime.ts";
 import { buildSkillsLoadedPayload } from "../../src/runtime/skills-loaded-payload.ts";
-import { synthesizeBundleSkill } from "../../src/skills/bundle-skills.ts";
+import { synthesizeConnectorSkill } from "../../src/skills/connector-skills.ts";
 import type { Skill, SkillScope } from "../../src/skills/types.ts";
 
 describe("event schemas — accept representative payloads", () => {
@@ -140,7 +140,7 @@ describe("event schemas — accept representative payloads", () => {
         toolName: "gmail__send",
         skillName: "gmail",
         skillBody: "Confirm the recipient before sending.",
-        scope: "connector",
+        scope: "bundle",
       }),
     ).toBe(true);
   });
@@ -200,7 +200,7 @@ describe("event schemas — reject malformed payloads", () => {
     expect(Value.Check(DataChangedPayload, { source: "agent" })).toBe(false);
   });
 
-  test("skill.created — rejects scope=bundle (writable scopes only)", () => {
+  test("skill.created — rejects scope=connector (writable scopes only)", () => {
     expect(
       Value.Check(SkillCreatedPayload, {
         id: "/x.md",
@@ -240,7 +240,7 @@ describe("event schemas — accept what the emitters produce", () => {
   });
 
   test("skills.loaded — every loading mechanism, including a connector skill", () => {
-    const published = synthesizeBundleSkill({
+    const published = synthesizeConnectorSkill({
       serverName: "acme-mcp",
       skillName: "billing",
       description: "",

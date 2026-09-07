@@ -11,7 +11,7 @@ import { RequireActiveWorkspace, SettingsAppPanelPage } from "./components";
  * Route: /w/:slug/settings/apps/:serverName
  *
  * Workspace-switch behavior: if the workspace named by the slug doesn't
- * have the bundle installed (e.g. user navigated to another workspace
+ * have the connector installed (e.g. user navigated to another workspace
  * while on this page), redirect to the apps index instead of rendering a
  * "not found" dead-end. This is the locked decision from the IA plan.
  */
@@ -35,7 +35,7 @@ function Inner() {
   const panel = panels.find((p) => p.serverName === serverName);
 
   if (!panel) {
-    // Bundle not installed in this workspace — redirect to index per IA contract.
+    // Connector not installed in this workspace — redirect to index per IA contract.
     return <Navigate to={`/w/${slug}/settings/apps`} replace />;
   }
 

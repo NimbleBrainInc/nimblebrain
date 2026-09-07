@@ -87,7 +87,7 @@ describe("SseEventManager — routing table", () => {
       data: {
         wsId: "ws_a",
         serverName: "granola",
-        bundleName: "https://granola.test/",
+        connectorName: "https://granola.test/",
         principalId: "_workspace",
         state: "running",
       },
@@ -98,18 +98,18 @@ describe("SseEventManager — routing table", () => {
     expect(wsB.events).not.toContain("connection.state_changed");
   });
 
-  test("bundle.* events are workspace-scoped", async () => {
+  test("connector.* events are workspace-scoped", async () => {
     const wsA = collect(mgr.addClient("ws_a"));
     const wsB = collect(mgr.addClient("ws_b"));
     released.push(wsA.release, wsB.release);
 
     mgr.emit({
       type: "bundle.installed",
-      data: { wsId: "ws_a", serverName: "ipinfo", bundleName: "@nb/ipinfo" },
+      data: { wsId: "ws_a", serverName: "ipinfo", connectorName: "@nb/ipinfo" },
     });
     mgr.emit({
       type: "bundle.uninstalled",
-      data: { wsId: "ws_b", serverName: "granola", bundleName: "https://x" },
+      data: { wsId: "ws_b", serverName: "granola", connectorName: "https://x" },
     });
     await flush();
 
@@ -127,7 +127,7 @@ describe("SseEventManager — routing table", () => {
     // neighbors, so the manager refuses.
     mgr.emit({
       type: "bundle.installed",
-      data: { serverName: "x", bundleName: "y" } as Record<string, unknown>,
+      data: { serverName: "x", connectorName: "y" } as Record<string, unknown>,
     });
     await flush();
 
@@ -299,11 +299,11 @@ describe("SseEventManager — identity-scoped clients", () => {
 
     mgr.emit({
       type: "bundle.installed",
-      data: { wsId: "ws_a", serverName: "ipinfo", bundleName: "@nb/ipinfo" },
+      data: { wsId: "ws_a", serverName: "ipinfo", connectorName: "@nb/ipinfo" },
     });
     mgr.emit({
       type: "bundle.installed",
-      data: { wsId: "ws_b", serverName: "granola", bundleName: "@nb/granola" },
+      data: { wsId: "ws_b", serverName: "granola", connectorName: "@nb/granola" },
     });
     await flush();
 
@@ -319,14 +319,14 @@ describe("SseEventManager — identity-scoped clients", () => {
 
     mgr.emit({
       type: "bundle.installed",
-      data: { wsId: "ws_a", serverName: "ipinfo", bundleName: "@nb/ipinfo" },
+      data: { wsId: "ws_a", serverName: "ipinfo", connectorName: "@nb/ipinfo" },
     });
     mgr.emit({
       type: "connection.state_changed",
       data: {
         wsId: "ws_b",
         serverName: "granola",
-        bundleName: "https://granola.test/",
+        connectorName: "https://granola.test/",
         principalId: "_workspace",
         state: "running",
       },
@@ -358,7 +358,7 @@ describe("SseEventManager — identity-scoped clients", () => {
 
     mgr.emit({
       type: "bundle.installed",
-      data: { wsId: "ws_a", serverName: "x", bundleName: "y" },
+      data: { wsId: "ws_a", serverName: "x", connectorName: "y" },
     });
     await flush();
     expect(alice.events).toEqual([]); // not yet a member
@@ -372,7 +372,7 @@ describe("SseEventManager — identity-scoped clients", () => {
 
     mgr.emit({
       type: "bundle.installed",
-      data: { wsId: "ws_a", serverName: "x", bundleName: "z" },
+      data: { wsId: "ws_a", serverName: "x", connectorName: "z" },
     });
     await flush();
 
@@ -392,7 +392,7 @@ describe("SseEventManager — identity-scoped clients", () => {
 
     mgr.emit({
       type: "bundle.installed",
-      data: { wsId: "ws_a", serverName: "x", bundleName: "y" },
+      data: { wsId: "ws_a", serverName: "x", connectorName: "y" },
     });
     await flush();
 
@@ -413,7 +413,7 @@ describe("SseEventManager — identity-scoped clients", () => {
 
     mgr.emit({
       type: "bundle.installed",
-      data: { wsId: "ws_a", serverName: "x", bundleName: "y" },
+      data: { wsId: "ws_a", serverName: "x", connectorName: "y" },
     });
     await flush();
 

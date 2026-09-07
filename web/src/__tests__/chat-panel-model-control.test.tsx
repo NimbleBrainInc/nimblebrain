@@ -74,7 +74,7 @@ import type { WorkspaceInfo } from "../context/WorkspaceContext";
 const WS_A: WorkspaceInfo = {
   id: "ws_a",
   name: "Alpha",
-  bundles: [],
+  connectors: [],
   memberCount: 1,
   isPersonal: false,
   userRole: "admin",

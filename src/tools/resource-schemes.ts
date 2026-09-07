@@ -54,15 +54,15 @@ const REGISTRY_RESOURCE_SCHEMES = ["skill", "ui", "instructions"] as const;
 /**
  * The `app://` scheme, and the single URI under it the runtime reads.
  *
- * `app://instructions` is a host convention rather than a bundle's own
- * namespace, which is why it is named here and not by a subsystem: a bundle
+ * `app://instructions` is a host convention rather than a connector's own
+ * namespace, which is why it is named here and not by a subsystem: a connector
  * publishes its custom-instructions overlay at that exact URI and
- * `Runtime.buildAppInfo` reads it off every bundle's source on every prompt
- * assembly. A fixed scheme is the point — a bundle author cannot be expected to
+ * `Runtime.buildAppInfo` reads it off every connector's source on every prompt
+ * assembly. A fixed scheme is the point — a connector author cannot be expected to
  * know the platform's server-name derivation, so the convention carries the
  * name instead.
  *
- * It is the one recognized scheme that costs a read per bundle per assembly, so
+ * It is the one recognized scheme that costs a read per connector per assembly, so
  * an outbox landing on it would be polled *and* rendered into the system
  * prompt.
  */
@@ -95,7 +95,7 @@ export const RESERVED_RESOURCE_SCHEMES = [
  * routing and `files://` belongs to an identity source composed into no
  * workspace registry, so `read_resource` reaches neither. `app://instructions`
  * it would reach — by asking each source in turn until one answers — but the
- * answer is whichever bundle replies first, which is not an address worth
+ * answer is whichever connector replies first, which is not an address worth
  * handing the model.
  */
 export const READ_RESOURCE_SCHEMES_PROSE = REGISTRY_RESOURCE_SCHEMES.map(

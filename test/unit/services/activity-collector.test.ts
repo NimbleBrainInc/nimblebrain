@@ -51,7 +51,7 @@ function makeCollector(
 	return new ActivityCollector({
 		logDir,
 		conversations: { kind: "store", list: (o, a) => store.list(o, a) },
-		bundleEvents: { kind: "sse", eventManager },
+		connectorEvents: { kind: "sse", eventManager },
 	});
 }
 
@@ -320,7 +320,7 @@ describe("ActivityCollector", () => {
 		expect(result.totals.errors).toBe(2);
 	});
 
-	it("filters bundle events from event buffer", async () => {
+	it("filters connector events from event buffer", async () => {
 		const events: BufferedEvent[] = [
 			{
 				event: "bundle.installed",
@@ -352,9 +352,9 @@ describe("ActivityCollector", () => {
 		});
 
 		expect(result.bundle_events).toHaveLength(2);
-		expect(result.bundle_events[0].bundle).toBe("@nimblebraininc/echo");
+		expect(result.bundle_events[0].connector).toBe("@nimblebraininc/echo");
 		expect(result.bundle_events[0].event).toBe("installed");
-		expect(result.bundle_events[1].bundle).toBe("@nimblebraininc/postgres");
+		expect(result.bundle_events[1].connector).toBe("@nimblebraininc/postgres");
 		expect(result.bundle_events[1].event).toBe("crashed");
 		expect(result.bundle_events[1].detail).toBe("OOM");
 	});

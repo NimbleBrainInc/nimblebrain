@@ -38,7 +38,7 @@ describe("RegistryStore", () => {
       expect(bundled?.locked).toBe(true);
       expect(bundled?.type).toBe("static");
       // Defaults to the minimal in-image curated catalog directory.
-      expect(bundled?.url).toMatch(/connectors\/curated$/);
+      expect(bundled?.url).toMatch(/connectors\/catalog\/curated$/);
     } finally {
       cleanup();
     }
@@ -61,7 +61,7 @@ describe("RegistryStore", () => {
       const { store, cleanup } = freshStore();
       try {
         const bundled = (await store.list()).find((r) => r.id === "bundled-static");
-        expect(bundled?.url).toMatch(/connectors\/curated$/);
+        expect(bundled?.url).toMatch(/connectors\/catalog\/curated$/);
       } finally {
         cleanup();
       }
@@ -162,7 +162,7 @@ describe("RegistryStore", () => {
       const store = new RegistryStore(dir);
       const bundled = (await store.list()).find((r) => r.id === "bundled-static");
       // Read-time resolution falls back to the in-image example.
-      expect(bundled?.url).toMatch(/connectors\/curated$/);
+      expect(bundled?.url).toMatch(/connectors\/catalog\/curated$/);
       // Disk is NOT rewritten — the resolution is in-memory only, so a
       // transient miss can't permanently overwrite the persisted value.
       const onDisk = JSON.parse(readFileSync(join(dir, "registries.json"), "utf-8")) as {

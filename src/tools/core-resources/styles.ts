@@ -70,15 +70,15 @@ export const SETTINGS_STYLES = `
     h1 { font-family: var(--nb-font-heading); font-size: 20px; font-weight: 600; color: var(--color-text-primary); margin-bottom: 24px; }
     .section { margin-bottom: 32px; }
     .section-title { font-size: 12px; font-weight: 600; color: var(--color-text-secondary); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 12px; }
-    .bundle { display: flex; justify-content: space-between; align-items: center; padding: 14px 16px; background: var(--color-background-secondary); border: 1px solid var(--color-border-primary); border-radius: var(--border-radius-sm); margin-bottom: 8px; }
-    .bundle-name { font-weight: 500; color: var(--color-text-primary); }
-    .bundle-status { font-size: 11px; font-weight: 600; padding: 3px 10px; border-radius: 100px; text-transform: uppercase; letter-spacing: 0.3px; }
-    .bundle-status.running { background: color-mix(in srgb, var(--nb-color-success) 15%, transparent); color: var(--nb-color-success); }
-    .bundle-status.stopped { background: var(--color-background-tertiary); color: var(--color-text-secondary); }
-    .bundle-status.crashed { background: color-mix(in srgb, var(--nb-color-danger) 15%, transparent); color: var(--nb-color-danger); }
-    .bundle-status.dead { background: color-mix(in srgb, var(--nb-color-danger) 15%, transparent); color: var(--nb-color-danger); }
-    .bundle-actions button { font-size: 12px; padding: 5px 12px; border: 1px solid var(--color-border-primary); border-radius: var(--border-radius-sm); background: var(--color-background-secondary); cursor: pointer; margin-left: 6px; color: var(--color-text-primary); transition: all 0.15s; }
-    .bundle-actions button:hover { background: var(--color-background-tertiary); border-color: var(--color-border-primary); }
+    .connector { display: flex; justify-content: space-between; align-items: center; padding: 14px 16px; background: var(--color-background-secondary); border: 1px solid var(--color-border-primary); border-radius: var(--border-radius-sm); margin-bottom: 8px; }
+    .connector-name { font-weight: 500; color: var(--color-text-primary); }
+    .connector-status { font-size: 11px; font-weight: 600; padding: 3px 10px; border-radius: 100px; text-transform: uppercase; letter-spacing: 0.3px; }
+    .connector-status.running { background: color-mix(in srgb, var(--nb-color-success) 15%, transparent); color: var(--nb-color-success); }
+    .connector-status.stopped { background: var(--color-background-tertiary); color: var(--color-text-secondary); }
+    .connector-status.crashed { background: color-mix(in srgb, var(--nb-color-danger) 15%, transparent); color: var(--nb-color-danger); }
+    .connector-status.dead { background: color-mix(in srgb, var(--nb-color-danger) 15%, transparent); color: var(--nb-color-danger); }
+    .connector-actions button { font-size: 12px; padding: 5px 12px; border: 1px solid var(--color-border-primary); border-radius: var(--border-radius-sm); background: var(--color-background-secondary); cursor: pointer; margin-left: 6px; color: var(--color-text-primary); transition: all 0.15s; }
+    .connector-actions button:hover { background: var(--color-background-tertiary); border-color: var(--color-border-primary); }
     select { padding: 9px 12px; border: 1px solid var(--color-border-primary); border-radius: var(--border-radius-sm); font-size: 14px; width: 100%; max-width: 360px; background: var(--color-background-secondary); color: var(--color-text-primary); cursor: pointer; }
     select:focus { outline: none; border-color: var(--color-ring-primary); box-shadow: 0 0 0 2px rgba(0,85,255,.15); }
     `;

@@ -91,11 +91,11 @@ export type SkillLayer = 1 | 3;
 export type SkillStatus = "active" | "disabled";
 /**
  * Source provenance for a skill — where it came from on disk or via
- * a bundle. Optional fields; at least one is populated.
+ * a connector. Optional fields; at least one is populated.
  */
 export interface SkillSource {
-    bundle?: string;
-    bundleVersion?: string;
+    connector?: string;
+    connectorVersion?: string;
     path?: string;
     uri?: string;
 }

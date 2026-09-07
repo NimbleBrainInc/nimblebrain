@@ -95,7 +95,7 @@ body {
    timeout and backoff deliberately share one hue. They are warnings on
    different axes — a run that ran too long, and an automation retrying after
    consecutive errors — and the token map has one warning for both. Rather than
-   add a hue to the shell palette for one bundle, backoff carries its own
+   add a hue to the shell palette for one app, backoff carries its own
    backoff-badge with the retry count in words, so the states stay
    distinguishable without colour being the thing that separates them.
    That pairing holds on the card and in the status section, which gate the dot
@@ -121,7 +121,7 @@ body {
    the faded frame still clears the bar on every ground. The margin is thin, so
    do not lower it by eye: test/unit/platform/animated-dot-contrast.test.ts reads
    this keyframe and reports the real number on each ground when it fails.
-   The conversations bundle's live dot has the same silhouette — full opacity at
+   The conversations app's live dot has the same silhouette — full opacity at
    the extremes, motion in the middle — but it is not precedent for the value:
    it troughs at 0.4, which is 1.93:1 on the same token. Borrow the shape from
    it, not the number. */
@@ -129,7 +129,7 @@ body {
 .dot-running { background: var(--color-text-accent); animation: dot-pulse 1.5s ease-in-out infinite; }
 .dot-skipped { background: var(--color-text-tertiary); }
 
-/* color-mix() is safe in a bundle stylesheet: no bundle runs Tailwind, so
+/* color-mix() is safe in an app stylesheet: no app runs Tailwind, so
    nothing rewrites this CSS into a first-operand fallback. That fallback is why
    the shell uses explicit alpha tokens instead. */
 .backoff-badge {

@@ -22,7 +22,7 @@ export function WorkspaceSettingsPage() {
   const workspace = slug ? wsCtx.workspaces.find((w) => toSlug(w.id) === slug) : undefined;
   const base = `/w/${slug}/settings`;
 
-  // Per-bundle settings panels (bundles' own settings UIs in the `settings`
+  // Per-connector settings panels (connectors' own settings UIs in the `settings`
   // placement slot). The placement registry is already scoped to the focused
   // workspace server-side, so this lists the right workspace's apps.
   const appPanels: PlacementEntry[] = shell ? shell.forSlot("settings") : [];

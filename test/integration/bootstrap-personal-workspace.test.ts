@@ -23,7 +23,7 @@ interface BootstrapResponse {
     name: string;
     role: "admin" | "member";
     memberCount: number;
-    bundleCount: number;
+    connectorCount: number;
     isPersonal: boolean;
   }>;
   activeWorkspace: string | null;

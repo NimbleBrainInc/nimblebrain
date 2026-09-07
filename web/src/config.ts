@@ -1,9 +1,9 @@
 /**
  * Runtime client configuration.
  *
- * The web bundle is static, so it cannot read pod env from JS. Instead Caddy
+ * The web connector is static, so it cannot read pod env from JS. Instead Caddy
  * serves `/config.js` dynamically from `NB_*` env (see web/Caddyfile), setting
- * `window.__NB_CONFIG__` before the app bundle runs. One image is therefore
+ * `window.__NB_CONFIG__` before the app connector runs. One image is therefore
  * configured per tenant via Helm env, with no per-tenant builds and no writable
  * filesystem.
  *

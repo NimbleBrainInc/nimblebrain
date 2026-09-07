@@ -90,14 +90,14 @@ function renderMd(text: string): string {
 
 /* ---------- cross-server tool call ----------------------------------------
  *
- * `synapse.callTool(name, args)` always routes to the bundle's own server.
+ * `synapse.callTool(name, args)` always routes to the calling app's own server.
  * `home` needs to invoke `briefing` on the platform's `nb` source, which is
  * a different server. The bridge supports `params.server` for internal
  * apps (see `INTERNAL_APPS` in `web/src/bridge/bridge.ts`); the SDK does
  * not expose this because it isn't part of the ext-apps spec.
  *
  * Until the SDK gains a typed cross-server API, this function is the
- * documented escape hatch. Phase 4's bundle-transport lint allowlists
+ * documented escape hatch. Phase 4's connector-transport lint allowlists
  * exactly the call inside `loadBriefing` via a `// lint-ok:` marker.
  * -------------------------------------------------------------------------- */
 

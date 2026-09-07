@@ -86,7 +86,7 @@ mock.module("@composio/core", () => ({
 // what gets hoisted, but explicit ordering keeps intent obvious).
 const sdk = await import("../../src/connectors/providers/composio/sdk.ts");
 const {
-  cleanupComposioBundle,
+  cleanupComposioConnector,
   composioUserId,
   connectComposioApiKey,
   createComposioSession,
@@ -542,15 +542,15 @@ describe("composioClient", () => {
   });
 });
 
-// ── cleanupComposioBundle ───────────────────────────────────────────
+// ── cleanupComposioConnector ───────────────────────────────────────────
 //
 // The QA review caught that `uninstall` was leaking Composio state —
 // `disconnect` did the right thing but its cleanup recipe wasn't
-// shared. `cleanupComposioBundle` is the single helper now used by
+// shared. `cleanupComposioConnector` is the single helper now used by
 // both. These tests pin the canonical recipe so a refactor of either
 // caller can't silently drop a step.
 
-describe("cleanupComposioBundle", () => {
+describe("cleanupComposioConnector", () => {
   let workDir: string;
 
   beforeEach(() => {
@@ -578,7 +578,7 @@ describe("cleanupComposioBundle", () => {
     });
     expect(hasPersistedComposioConnection(workDir, { type: "workspace", wsId: "ws_test" }, "com.google/gmail")).toBe(true);
 
-    const result = await cleanupComposioBundle({
+    const result = await cleanupComposioConnector({
       workDir,
       owner: { type: "workspace", wsId: "ws_test" },
       connectorId: "com.google/gmail",
@@ -604,7 +604,7 @@ describe("cleanupComposioBundle", () => {
       status: "ACTIVE",
     });
 
-    const result = await cleanupComposioBundle({
+    const result = await cleanupComposioConnector({
       workDir,
       owner: { type: "workspace", wsId: "ws_test" },
       connectorId: "com.google/gmail",
@@ -632,7 +632,7 @@ describe("cleanupComposioBundle", () => {
       status: "ACTIVE",
     });
 
-    const result = await cleanupComposioBundle({
+    const result = await cleanupComposioConnector({
       workDir,
       owner: { type: "workspace", wsId: "ws_test" },
       connectorId: "com.google/gmail",
@@ -655,7 +655,7 @@ describe("cleanupComposioBundle", () => {
     };
 
     // No connection.json on disk → nothing to read or delete.
-    const result = await cleanupComposioBundle({
+    const result = await cleanupComposioConnector({
       workDir,
       owner: { type: "workspace", wsId: "ws_test" },
       connectorId: "com.google/gmail",
@@ -682,7 +682,7 @@ describe("cleanupComposioBundle", () => {
 
     // Should not throw — contract is best-effort with lastError reporting.
     // (The SDK delete swallows internally; the local delete should still succeed.)
-    const result = await cleanupComposioBundle({
+    const result = await cleanupComposioConnector({
       workDir,
       owner: { type: "workspace", wsId: "ws_test" },
       connectorId: "com.google/gmail",

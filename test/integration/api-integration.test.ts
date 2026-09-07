@@ -696,10 +696,10 @@ describe("E2E: multi-step conversation -> history -> conversations list consiste
 });
 
 // =============================================================================
-// E2E Scenario 6: SSE event manager — bundle lifecycle events
+// E2E Scenario 6: SSE event manager — connector lifecycle events
 // =============================================================================
 
-describe("E2E: SSE event filtering — only bundle and data.changed events pass through", () => {
+describe("E2E: SSE event filtering — only connector and data.changed events pass through", () => {
 	it("SseEventManager.emit forwards bundle.installed but not run.start", async () => {
 		const { SseEventManager } = await import("../../src/api/events.ts");
 		const manager = new SseEventManager(60_000);
@@ -718,7 +718,7 @@ describe("E2E: SSE event filtering — only bundle and data.changed events pass 
 			data: {
 				wsId: "ws_test",
 				serverName: "tasks",
-				bundleName: "https://tasks.example.com/mcp",
+				connectorName: "https://tasks.example.com/mcp",
 				version: "1.0.0",
 				ui: null,
 			},

@@ -44,7 +44,7 @@ function truncate(text: string): string {
  * conversations; this is its sibling primitive for scheduled work.
  *
  * Decoupled (locally-typed, structurally compatible) on purpose: keeps
- * the bundle from importing runtime internals — anything providing this
+ * the app from importing runtime internals — anything providing this
  * shape can inject an executor.
  */
 export interface TaskFnRequest {
@@ -124,7 +124,7 @@ export interface ExecutorContext {
  * Recursive-call guard. An automation whose `allowedTools` includes a
  * tool that creates more automations would spawn an unbounded loop on
  * every scheduled run. The LLM-facing schema doesn't accept
- * `allowedTools`, but operator file edits and bundle-contributed
+ * `allowedTools`, but operator file edits and connector-contributed
  * schedules can still set it — so the guard lives at the executor,
  * which sees the merged Automation regardless of how it was authored.
  *
@@ -249,7 +249,7 @@ const UNREACHABLE_CONNECTOR_REASONS = new Set([
  * `DEFAULT_MAX_REPEATS`: below that threshold the supervisor itself treats
  * repeats as exploration, and a run record that disagreed with the guard about
  * what "stuck" means would flag healthy runs. Duplicated rather than imported
- * to keep this bundle off runtime internals (see `TaskFnRequest`); the two are
+ * to keep this app off runtime internals (see `TaskFnRequest`); the two are
  * a deliberate pair, so move them together.
  */
 const ABANDONED_TOOL_MIN_CALLS = 3;

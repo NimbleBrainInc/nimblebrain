@@ -54,7 +54,7 @@ describe("GET /v1/shell", () => {
 		const res = await fetch(`${baseUrl}/v1/shell`, { headers: wsHeaders });
 		const body = await res.json();
 
-		// With noDefaultBundles and no installed bundles, the placement registry
+		// With noDefaultBundles and no installed connectors, the placement registry
 		// is empty (core "nb" source does not register placements itself).
 		// Verify the response shape is valid — an empty array is expected here.
 		expect(Array.isArray(body.placements)).toBe(true);

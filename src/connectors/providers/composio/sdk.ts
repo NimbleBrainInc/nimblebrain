@@ -426,7 +426,7 @@ export async function findActiveComposioConnection(opts: {
  * the id may already be invalid. Returns true on success, false on
  * any failure (caller logs). Never throws.
  *
- * Used by `lifecycle.disconnect` for Composio-backed bundles so a
+ * Used by `lifecycle.disconnect` for Composio-backed connectors so a
  * subsequent Connect forces a fresh OAuth flow rather than adopting
  * the lingering "ACTIVE" account that disconnect-on-our-side
  * wouldn't otherwise touch.
@@ -447,14 +447,14 @@ export async function deleteComposioConnectedAccount(opts: {
 }
 
 /**
- * Tear down everything a Composio-backed bundle owns: the upstream
+ * Tear down everything a Composio-backed connector owns: the upstream
  * Composio connected account (so vendor OAuth tokens are revoked)
  * AND the local `connection.json` (so the platform doesn't think
- * the bundle is still authenticated).
+ * the connector is still authenticated).
  *
  * Idempotent and best-effort throughout: every step swallows its own
  * errors and reports them in the return value. It backs the provider's
- * `cleanup` arm, which both `disconnect` (keep the bundle installed, drop
+ * `cleanup` arm, which both `disconnect` (keep the connector installed, drop
  * credentials) and `uninstall` (full removal) call. Disconnect reads the return
  * value to surface revoke status; uninstall just calls for side-effects.
  *
@@ -472,7 +472,7 @@ export async function deleteComposioConnectedAccount(opts: {
  * review that prompted this helper). One function, one canonical
  * cleanup recipe, one seam arm.
  */
-export async function cleanupComposioBundle(opts: {
+export async function cleanupComposioConnector(opts: {
   workDir: string;
   owner: ConnectorOwner;
   connectorId: string;
@@ -534,7 +534,7 @@ export async function cleanupComposioBundle(opts: {
  * the platform uses as the remote MCP target for this connector.
  *
  * Called once at install time; the resulting URL is persisted on the
- * BundleRef and reused on subsequent starts — Composio sessions are
+ * ConnectorRef and reused on subsequent starts — Composio sessions are
  * reusable and the URL encodes the stable `sessionId`.
  *
  * `sessionPreset: "direct_tools"` exposes the toolkit's real tools

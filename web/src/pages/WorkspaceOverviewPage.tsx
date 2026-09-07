@@ -222,7 +222,7 @@ function AppCard({
 /**
  * Best-effort type pill for v1. A placement with a `route` registers UI,
  * so we render it as "MCP App · UI". A placement without a route (rare
- * in `sidebar.<group>`) is treated as tool-only. When bundle manifests
+ * in `sidebar.<group>`) is treated as tool-only. When connector manifests
  * expose richer type metadata via the placement, we can refine this.
  */
 function describePlacementType(p: PlacementEntry): string {

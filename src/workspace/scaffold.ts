@@ -22,7 +22,7 @@ export const WORKSPACE_DIRS = ["data", "credentials", "skills", "files"] as cons
  * The `credentials/` subdirectory is created with `0o700` so secrets stored
  * there are readable only by the owning user. Other subdirectories use the
  * default umask-derived mode (typically `0o755`) since they hold non-secret
- * bundle state, skills, and conversations.
+ * connector state, skills, and conversations.
  */
 export async function scaffoldWorkspace(workspacePath: string): Promise<void> {
   await Promise.all(

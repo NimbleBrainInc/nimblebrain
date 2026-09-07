@@ -27,9 +27,9 @@
  *     (Granola, Notion, HubSpot, etc.) shipped with the platform.
  *     Locked. Operator overrides via `NB_REGISTRIES` JSON.
  */
-import type { BundleUiMeta } from "../bundles/types.ts";
 import type { ConnectorAuthKind } from "../connectors/auth-kind.ts";
-import type { ComposioConnectorConfig, SecretHeaderRef, ServerDetail, SmitheryConnectorConfig } from "../connectors/server-detail.ts";
+import type { ComposioConnectorConfig, SecretHeaderRef, ServerDetail, SmitheryConnectorConfig } from "../connectors/catalog/server-detail.ts";
+import type { ConnectorUiMeta } from "../connectors/runtime/types.ts";
 import type { HookDeclaration } from "../hooks/types.ts";
 import type { NotificationsDeclaration } from "../notifications/types.ts";
 /**
@@ -129,7 +129,7 @@ export interface ConnectorCatalogEntry {
      * installability on this.
      */
     iconUrl?: string;
-    /** Remote MCP server URL — the value that goes into the bundle `url`. */
+    /** Remote MCP server URL — the value that goes into the connector `url`. */
     url: string;
     /**
      * Runtime-native kind, or the id of the brokered provider that owns this
@@ -154,7 +154,7 @@ export interface ConnectorCatalogEntry {
     /**
      * Required for `auth: "provider"` entries: the credential provider name + its
      * opaque config (e.g. `{ provider: "minted", config: { audience, scope } }`).
-     * Operator-authored; copied verbatim into the BundleRef's `transport.auth` at
+     * Operator-authored; copied verbatim into the ConnectorRef's `transport.auth` at
      * install, never derived from tenant input.
      */
     providerAuth?: {
@@ -180,7 +180,7 @@ export interface ConnectorCatalogEntry {
      * connector's placements without trusting the caller-supplied entry. Absent
      * for connectors that declare no UI.
      */
-    ui?: BundleUiMeta;
+    ui?: ConnectorUiMeta;
     /**
      * Inbound event streams the server declares in
      * `ServerDetail._meta["ai.nimblebrain/host"].hooks`. Carried here from the
@@ -210,7 +210,7 @@ export interface ConnectorCatalogEntry {
 export type InstallAction = RemoteOAuthInstall | DirectUrlInstall;
 /**
  * Curated remote OAuth service. The existing connector catalog flow:
- * lifecycle.install adds the URL bundle to workspace.json, then
+ * lifecycle.install adds the URL connector to workspace.json, then
  * /v1/mcp-auth/initiate kicks off the OAuth round-trip.
  */
 export interface RemoteOAuthInstall {
@@ -218,7 +218,7 @@ export interface RemoteOAuthInstall {
     url: string;
     /**
      * Transport class the vendor advertises in `ServerDetail.remotes[].type`.
-     * Threaded into the BundleRef's `transport.type` at install so
+     * Threaded into the ConnectorRef's `transport.type` at install so
      * `createRemoteTransport` instantiates the right SDK client class.
      * Without this, every install defaults to `streamable-http` and SSE-
      * only servers (PayPal, Cloudflare Bindings, Webflow, Wix) would fail
@@ -250,7 +250,7 @@ export interface RemoteOAuthInstall {
      * Required for `auth: "provider"`. Names the credential provider and its
      * opaque config (e.g. `{ provider: "minted", config: { audience, scope } }`).
      * Operator-authored in the catalog — the install path copies it verbatim into
-     * the BundleRef's `transport.auth`, NEVER taking provider/config from tenant
+     * the ConnectorRef's `transport.auth`, NEVER taking provider/config from tenant
      * input. That is what keeps a self-installable platform connector safe.
      */
     providerAuth?: {
@@ -261,7 +261,7 @@ export interface RemoteOAuthInstall {
      * Workspace-owned secrets bound to outgoing headers, as credential references
      * (see `NimbleBrainConnectorMeta.secretHeaders`). Operator-authored in the
      * catalog and re-read from the trusted entry at install, then copied verbatim
-     * into the BundleRef's `transport.headers` — a caller-supplied value is
+     * into the ConnectorRef's `transport.headers` — a caller-supplied value is
      * discarded, because a forged header name would let a workspace admin decide
      * what a fleet-trusted connection sends.
      */

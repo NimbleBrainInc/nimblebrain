@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, statSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { connectorSlug } from "../../src/bundles/brokered.ts";
+import { connectorSlug } from "../../src/connectors/runtime/brokered.ts";
 import {
   composioConnectionPath,
   composioConnectorDir,

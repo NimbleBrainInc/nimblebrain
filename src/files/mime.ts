@@ -1,6 +1,6 @@
 /**
  * Text/blob mime classification shared between the agent-side
- * `files__read` tool and the bundle-side host-resources resolver.
+ * `files__read` tool and the connector-side host-resources resolver.
  *
  * Single source of truth — if one path supports a new text-extractable
  * mime (e.g. `application/jsonl`), both pick it up automatically. Prior

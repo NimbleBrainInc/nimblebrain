@@ -2,7 +2,7 @@
  * Pure validation for operator-supplied `additionalAuthorizationParams`.
  *
  * Kept free of the `WorkspaceOAuthProvider` module's dependency surface
- * (MCP SDK auth, the OAuth flow registry, `validateBundleUrl`, crypto/fs)
+ * (MCP SDK auth, the OAuth flow registry, `validateConnectorUrl`, crypto/fs)
  * so the registry / config-load layers can run the reserved-key check
  * without dragging the full provider in. Same rationale as `url.ts` —
  * pure helpers live in `src/util/`.
@@ -35,7 +35,7 @@ export const RESERVED_AUTHORIZE_PARAMS = [
 
 /**
  * Throw if any reserved key appears in the params map. Called at the
- * boundary where `workspace.json` is parsed — bundle install /
+ * boundary where `workspace.json` is parsed — connector install /
  * `seedInstance` — so a bad config fails loud rather than at OAuth-
  * flow time.
  */

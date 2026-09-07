@@ -19,7 +19,7 @@
  *
  * Severity floor: `NB_LOG_LEVEL` (debug|info|warn|error, default `info`) drops
  * anything below it for the info/warn/error methods. `debug` (NB_DEBUG
- * namespaces) and `bundle` are separate always-available channels and bypass it.
+ * namespaces) and `connector` are separate always-available channels and bypass it.
  *
  * Secret-safety: structured `fields` pass through a key-denylist redactor
  * (secret / password / api_key / authorization / cookie / credential / a bare
@@ -46,11 +46,11 @@
  * Keep this list in sync with the CLAUDE.md "Debug Logging" section so it's
  * discoverable without reading source.
  *
- * `log.bundle(sourceName, line)` is intentionally NOT gated. Bundle stderr
- * is the bundle author's deliberate diagnostic output (tracebacks, warnings,
+ * `log.connector(sourceName, line)` is intentionally NOT gated. Connector stderr
+ * is the connector author's deliberate diagnostic output (tracebacks, warnings,
  * logs) — different concern than NB's protocol tracing, and the dev-loop
  * cost of hiding it (see issue #116) outweighs the cost of dimmed lines on
- * a chatty bundle. Visual prefix + dim formatting makes it tunable by eye.
+ * a chatty connector. Visual prefix + dim formatting makes it tunable by eye.
  */
 
 import { requestIdentityAttrs } from "./identity.ts";
@@ -75,7 +75,7 @@ const TENANT_ID = process.env.NB_TENANT_ID;
 
 // Severity floor. `NB_LOG_LEVEL` (deploy-time, read at call time for test
 // control) drops anything below it for the info/warn/error methods. `debug`
-// (NB_DEBUG) and `bundle` are separate channels and intentionally bypass this
+// (NB_DEBUG) and `connector` are separate channels and intentionally bypass this
 // floor. NB_-namespaced to match the other knobs and avoid a stray `LOG_LEVEL`
 // (aimed at some other tool) silently re-flooring our logs.
 const LEVELS: Record<Level, number> = { debug: 10, info: 20, warn: 30, error: 40 };
@@ -201,13 +201,13 @@ export const log = {
   /** Check whether a namespace is enabled, e.g. to skip expensive log args. */
   debugEnabled: isDebugEnabled,
   /**
-   * Emit a single line of bundle subprocess stderr output. Default-on,
-   * dimmed, prefixed `[bundle:<name>]` so it's visually distinct from NB's
+   * Emit a single line of connector subprocess stderr output. Default-on,
+   * dimmed, prefixed `[connector:<name>]` so it's visually distinct from NB's
    * own output. In JSON mode it becomes a structured `bundle.stderr` record
-   * carrying the raw line, so it stays queryable per bundle. See file header.
+   * carrying the raw line, so it stays queryable per connector. See file header.
    */
-  bundle: (sourceName: string, line: string) => {
-    if (isJson()) emitJson("info", "bundle.stderr", { bundle: sourceName, line }, "bundle");
-    else console.error(dim(`[bundle:${sourceName}] ${line}`));
+  connector: (sourceName: string, line: string) => {
+    if (isJson()) emitJson("info", "bundle.stderr", { connector: sourceName, line }, "bundle");
+    else console.error(dim(`[connector:${sourceName}] ${line}`));
   },
 };

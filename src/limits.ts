@@ -50,7 +50,7 @@ export const DEFAULT_MAX_DIRECT_TOOLS = 30;
  * whole response budget, which is how a caller ends up silently working from a
  * partial view it believes is complete.
  *
- * Lives here rather than beside the schema because the bundle handler needs the
+ * Lives here rather than beside the schema because the connector handler needs the
  * value at runtime and the schema needs it at module load; importing it from
  * the schema module closes a cycle (TDZ at first call).
  */

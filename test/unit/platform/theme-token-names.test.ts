@@ -1,5 +1,5 @@
 /**
- * Every theme token a bundle UI reads, and every one the docs publish, must be
+ * Every theme token a connector UI reads, and every one the docs publish, must be
  * a name the host actually injects.
  *
  * A misspelled token is the quietest failure in the theming system. `var(--x,
@@ -9,7 +9,7 @@
  * the fallback that was never meant to be used becomes the only value. The
  * observed shape: an input whose `background` fell back to `#fff` beside a
  * `color` that resolved to the injected `#fafafa`, giving 1.044:1 — invisible
- * text, in a bundle whose stylesheet spells the same token correctly 22 times.
+ * text, in a connector whose stylesheet spells the same token correctly 22 times.
  *
  * The docs half is the same failure aimed at app authors. `theming.mdx`
  * publishes the token *names* by hand (round 4 removed the values, which drift
@@ -43,7 +43,7 @@ describe("themed trees only read tokens the host injects", () => {
 
       for (const file of sourceFiles(dir)) {
         const source = readFileSync(file, "utf8");
-        // Anything the bundle defines for itself is fair game to read.
+        // Anything the connector defines for itself is fair game to read.
         for (const m of source.matchAll(/(--[a-z0-9-]+)\s*:/g)) declared.add(m[1] as string);
         for (const m of source.matchAll(/var\(\s*(--[a-z0-9-]+)/g)) {
           if (!read.has(m[1] as string)) read.set(m[1] as string, file);

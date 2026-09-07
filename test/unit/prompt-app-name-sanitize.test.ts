@@ -1,10 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { hostMetaToUiMeta, sanitizePlacements } from "../../src/bundles/defaults.ts";
+import { hostMetaToUiMeta, sanitizePlacements } from "../../src/connectors/runtime/defaults.ts";
 import { composeSystemPrompt, type PromptAppInfo } from "../../src/prompt/compose.ts";
 
 /**
  * `## Installed Apps` is a line-oriented list: one `- ` bullet per app. Both
- * names on that line are bundle-authored, so an unescaped newline in either
+ * names on that line are connector-authored, so an unescaped newline in either
  * forges a sibling entry. `sanitizeLineField` is the existing mitigation —
  * its own doc comment names "app name" — and it was applied to the focused-app
  * surface but not this one.
@@ -24,7 +24,7 @@ function appBullets(prompt: string): string[] {
   return (end === -1 ? rest : rest.slice(0, end)).filter((l) => l.startsWith("- "));
 }
 
-describe("formatAppsSection sanitizes bundle-authored names", () => {
+describe("formatAppsSection sanitizes connector-authored names", () => {
   // The forged text is not erased — `sanitizeLineField` folds the newline to a
   // space, so it survives as inert text on the app's own bullet. What must not
   // happen is a SECOND bullet: that is the structural forgery.
@@ -69,7 +69,7 @@ describe("formatAppsSection sanitizes bundle-authored names", () => {
   });
 });
 
-describe("hostMetaToUiMeta bounds bundle-authored display strings", () => {
+describe("hostMetaToUiMeta bounds connector-authored display strings", () => {
   test("name and icon are truncated to the shared bound", () => {
     const ui = hostMetaToUiMeta({ name: "n".repeat(500), icon: "i".repeat(500) });
     expect(ui?.name).toHaveLength(128);

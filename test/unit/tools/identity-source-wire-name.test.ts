@@ -9,7 +9,7 @@
  * source, so the broadcast refetches an unrelated app on a private tool call.
  *
  * This is pinned as a SOURCE-LEVEL invariant, not per call site, because the
- * per-call-site version was missed twice: `startBundleSource` was marked and
+ * per-call-site version was missed twice: `startConnectorSource` was marked and
  * `startIdentityAuth` — which hand-rolls its own construction — was not. The
  * second miss was invisible in normal testing, since the lazy path that does
  * mark is what runs after a pod restart.

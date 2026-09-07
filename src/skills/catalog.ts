@@ -3,7 +3,7 @@
  *
  * Pure functions over the pools the request path already computes: the
  * conversation tiers' `dynamic` (capability) skills, the focused workspace's
- * `dynamic` bundle skills, and the curated connector-overlay candidates. The
+ * `dynamic` connector skills, and the curated connector-overlay candidates. The
  * catalog lists what CAN be activated; it never encodes what IS loaded —
  * entries are name + description only, sorted and deduplicated, so the
  * rendered section is byte-stable between install/authoring events and safe
@@ -24,7 +24,7 @@ export interface ActivatableSkill {
   name: string;
   description?: string;
   body: string;
-  /** Provenance label for the activation block (`org` / `workspace` / `user` / `bundle` / `connector`). */
+  /** Provenance label for the activation block (`org` / `workspace` / `user` / `connector` / `connector`). */
   scope: string;
 }
 
@@ -37,13 +37,13 @@ export interface SkillCatalogEntry {
 /**
  * Merge the three activatable pools into one deterministic list.
  *
- * - `fsCapability` / `bundleCapability` are `dynamic` skills (the capability
+ * - `fsCapability` / `connectorCapability` are `dynamic` skills (the capability
  *   half of `partitionSkillsByRole`); disabled ones are dropped here — the
  *   catalog must not offer a skill an operator muted.
  * - `connectorCandidates` are the curated overlays (always active by
  *   materialization).
  *
- * Deduplicated by name — first pool wins (filesystem > bundle > connector,
+ * Deduplicated by name — first pool wins (filesystem > connector > connector,
  * matching the tier-override direction of `mergeScopedSkills`) — then sorted
  * by name via codepoint comparison (never locale-sensitive collation), so the
  * output is byte-stable for identical inputs.
@@ -56,7 +56,7 @@ export interface SkillCatalogEntry {
  */
 export function collectActivatableSkills(pools: {
   fsCapability: Skill[];
-  bundleCapability: Skill[];
+  connectorCapability: Skill[];
   connectorCandidates: ConnectorSkillCandidate[];
 }): ActivatableSkill[] {
   const byName = new Map<string, ActivatableSkill>();
@@ -71,7 +71,7 @@ export function collectActivatableSkills(pools: {
     });
   };
   for (const s of pools.fsCapability) addSkill(s);
-  for (const s of pools.bundleCapability) addSkill(s);
+  for (const s of pools.connectorCapability) addSkill(s);
   for (const c of pools.connectorCandidates) {
     if (byName.has(c.name)) continue;
     byName.set(c.name, {

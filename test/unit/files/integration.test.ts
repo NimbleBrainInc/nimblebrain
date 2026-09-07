@@ -171,7 +171,7 @@ describe("Integration: FileStore save → registry → read round-trip", () => {
   });
 });
 
-describe("Integration: files bundle write → read round-trip (filesystem)", () => {
+describe("Integration: files app write → read round-trip (filesystem)", () => {
   test("file written to {workDir}/files/ with registry entry can be read back", async () => {
     const filesDir = join(workDir, "files");
     await mkdir(filesDir, { recursive: true });
@@ -181,11 +181,11 @@ describe("Integration: files bundle write → read round-trip (filesystem)", () 
     const filename = "document.md";
     const content = Buffer.from("# Hello World\n\nThis is a markdown document.");
 
-    // Write file to disk (mimicking bundle write)
+    // Write file to disk (mimicking connector write)
     const diskName = `${fileId}_${filename}`;
     await writeFile(join(filesDir, diskName), content);
 
-    // Append registry entry (mimicking bundle registry append)
+    // Append registry entry (mimicking connector registry append)
     const entry: FileEntry = {
       id: fileId,
       filename,
@@ -211,7 +211,7 @@ describe("Integration: files bundle write → read round-trip (filesystem)", () 
   });
 });
 
-describe("Integration: files bundle search by filename", () => {
+describe("Integration: files app search by filename", () => {
   test("filtering registry by filename substring finds correct matches", async () => {
     const store = createFileStore(join(workDir, "files"));
 
@@ -266,7 +266,7 @@ describe("Integration: files bundle search by filename", () => {
   });
 });
 
-describe("Integration: files bundle delete (tombstone)", () => {
+describe("Integration: files app delete (tombstone)", () => {
   test("tombstoned file is excluded from registry read", async () => {
     const store = createFileStore(join(workDir, "files"));
 

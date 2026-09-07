@@ -30,7 +30,7 @@ interface Workspace {
   id: string;
   name: string;
   memberCount: number;
-  bundles?: Array<{ name?: string; path?: string }>;
+  connectors?: Array<{ name?: string; path?: string }>;
   createdAt?: string;
 }
 
@@ -344,8 +344,8 @@ export function WorkspaceDetailPage() {
         </div>
       </Section>
 
-      <Section title="Installed Bundles" icon={<Package className="h-4 w-4" />}>
-        <BundlesList bundles={workspace?.bundles} />
+      <Section title="Installed Connectors" icon={<Package className="h-4 w-4" />}>
+        <ConnectorsList connectors={workspace?.connectors} />
       </Section>
     </div>
   );
@@ -501,17 +501,17 @@ function MembersTable({
   );
 }
 
-/** Renders the installed-bundle cards, or an empty state when none are present. */
-function BundlesList({ bundles }: { bundles?: Array<{ name?: string; path?: string }> }) {
-  if (!bundles || bundles.length === 0) {
-    return <EmptyState message="No bundles installed." />;
+/** Renders the installed-connector cards, or an empty state when none are present. */
+function ConnectorsList({ connectors }: { connectors?: Array<{ name?: string; path?: string }> }) {
+  if (!connectors || connectors.length === 0) {
+    return <EmptyState message="No connectors installed." />;
   }
   return (
     <div className="space-y-2">
-      {bundles.map((b, i) => (
+      {connectors.map((b, i) => (
         <Card key={b.name ?? b.path ?? i}>
           <CardContent className="py-3 px-4">
-            <span className="text-sm font-medium">{b.name ?? b.path ?? "Unknown bundle"}</span>
+            <span className="text-sm font-medium">{b.name ?? b.path ?? "Unknown connector"}</span>
           </CardContent>
         </Card>
       ))}

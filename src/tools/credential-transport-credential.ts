@@ -13,7 +13,7 @@
  *
  * The invariant is the one every credential provider holds: **persisted state
  * names *what* credential it needs, never *where* the value comes from.** An
- * install copies `providerAuth.config` verbatim into the `BundleRef`, so the
+ * install copies `providerAuth.config` verbatim into the `ConnectorRef`, so the
  * config here carries a store KEY (`{ key: "acme.db_url" }`) — a name inside the
  * workspace's own store, meaningless outside it — and never an env var name or a
  * value.

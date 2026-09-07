@@ -16,15 +16,15 @@ export interface UseEventsOptions {
   onConfigChanged?: (event: ConfigChangedEvent) => void;
   /** Called when an auto-generated conversation title arrives. */
   onConversationTitle?: (event: ConversationTitleEvent) => void;
-  /** Called when a per-Connection state transition fires (URL bundles). */
+  /** Called when a per-Connection state transition fires (URL connectors). */
   onConnectionStateChanged?: (event: ConnectionStateChangedEvent) => void;
   /**
-   * Called on bundle install / uninstall. Both events affect the shell
+   * Called on connector install / uninstall. Both events affect the shell
    * (placements appear / disappear), so consumers typically wire this
    * to a shell refetch. The two events share a callback because the
    * downstream action is the same.
    */
-  onBundleLifecycleChanged?: () => void;
+  onConnectorLifecycleChanged?: () => void;
   /**
    * Called when a connector's notification lands in a workspace inbox this
    * identity can see. The frame is a summary; consumers refetch the list
@@ -78,8 +78,8 @@ export function useEvents(
   onConversationTitleRef.current = options?.onConversationTitle;
   const onConnectionStateChangedRef = useRef(options?.onConnectionStateChanged);
   onConnectionStateChangedRef.current = options?.onConnectionStateChanged;
-  const onBundleLifecycleChangedRef = useRef(options?.onBundleLifecycleChanged);
-  onBundleLifecycleChangedRef.current = options?.onBundleLifecycleChanged;
+  const onConnectorLifecycleChangedRef = useRef(options?.onConnectorLifecycleChanged);
+  onConnectorLifecycleChangedRef.current = options?.onConnectorLifecycleChanged;
   const onNotificationCreatedRef = useRef(options?.onNotificationCreated);
   onNotificationCreatedRef.current = options?.onNotificationCreated;
   const onNotificationDeliveryRef = useRef(options?.onNotificationDelivery);
@@ -115,12 +115,12 @@ export function useEvents(
     );
     unsubs.push(
       subscribe("bundle.installed", () => {
-        onBundleLifecycleChangedRef.current?.();
+        onConnectorLifecycleChangedRef.current?.();
       }),
     );
     unsubs.push(
       subscribe("bundle.uninstalled", () => {
-        onBundleLifecycleChangedRef.current?.();
+        onConnectorLifecycleChangedRef.current?.();
       }),
     );
     unsubs.push(

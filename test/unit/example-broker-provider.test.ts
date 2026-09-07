@@ -20,11 +20,11 @@ import { existsSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
-import { brokeredConnectorDir } from "../../src/bundles/brokered.ts";
-import { WORKSPACE_PRINCIPAL_ID } from "../../src/bundles/connection.ts";
-import type { ConnectionLiveness, ProbeTarget } from "../../src/bundles/connection-probe.ts";
-import { BundleLifecycleManager } from "../../src/bundles/lifecycle.ts";
-import type { BundleRef } from "../../src/bundles/types.ts";
+import { brokeredConnectorDir } from "../../src/connectors/runtime/brokered.ts";
+import { WORKSPACE_PRINCIPAL_ID } from "../../src/connectors/runtime/connection.ts";
+import type { ConnectionLiveness, ProbeTarget } from "../../src/connectors/runtime/connection-probe.ts";
+import { ConnectorLifecycleManager } from "../../src/connectors/runtime/lifecycle.ts";
+import type { ConnectorRef } from "../../src/connectors/runtime/types.ts";
 import type {
   BrokeredStateOptions,
   ManagedConnectorProvider,
@@ -107,7 +107,7 @@ interface Harness {
   workDir: string;
   wsId: string;
   workspaceStore: WorkspaceStore;
-  lifecycle: BundleLifecycleManager;
+  lifecycle: ConnectorLifecycleManager;
   runtime: Runtime;
 }
 
@@ -156,7 +156,7 @@ function buildHarness(provider: ManagedConnectorProvider): Harness {
 
   const registryStore = new RegistryStore(workDir);
   const registry = managedConnectorRegistryOf([provider]);
-  const lifecycle = new BundleLifecycleManager(new NoopEventSink(), undefined);
+  const lifecycle = new ConnectorLifecycleManager(new NoopEventSink(), undefined);
   lifecycle.setManagedConnectorRegistry(registry);
   lifecycle.setWorkDir(workDir);
   const workspaceRegistry = new ToolRegistry();
@@ -177,7 +177,7 @@ function buildHarness(provider: ManagedConnectorProvider): Harness {
       revokeConnector: async () => {},
     }),
     getUserStore: () => ({ get: async () => null }),
-    getBundleInstancesForWorkspace: () => lifecycle.getInstances(),
+    getConnectorInstancesForWorkspace: () => lifecycle.getInstances(),
     getManagedConnectorRegistry: () => registry,
   } as unknown as Runtime;
 
@@ -209,7 +209,7 @@ function widgetsEntry(): DirectoryEntry {
 }
 
 /** The ref an install of this connector persists. */
-function installedRef(): BundleRef {
+function installedRef(): ConnectorRef {
   return {
     url: "https://broker.example/acme/acme.sprockets.ws:ws_test/mcp",
     serverName: "com-example-widgets",

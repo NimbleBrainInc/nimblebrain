@@ -29,7 +29,7 @@
  *
  * Scope: this is Layer 1 of the tool-display aggregation stack. It does
  * NOT understand verb synonymy (that's Layer 2, a future taxonomy) and
- * has no plugin/registry hook (that's Layer 3, deferred until a bundle
+ * has no plugin/registry hook (that's Layer 3, deferred until a connector
  * actually needs it). Resist adding either here.
  */
 

@@ -69,7 +69,7 @@ export function ConnectorList({ configureBasePath }: { configureBasePath: string
     const q = query.trim().toLowerCase();
     return sorted.filter((c) => {
       const name = displayName(c).toLowerCase();
-      return name.includes(q) || c.bundleName.toLowerCase().includes(q);
+      return name.includes(q) || c.connectorName.toLowerCase().includes(q);
     });
   }, [installed, query]);
 

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { HostManifestMeta } from "../../src/bundles/types.ts";
+import type { HostManifestMeta } from "../../src/connectors/runtime/types.ts";
 import {
   isForwardablePath,
   isStrippedRequestHeader,

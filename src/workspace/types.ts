@@ -1,4 +1,4 @@
-import type { BundleRef } from "../bundles/types.ts";
+import type { ConnectorRef } from "../connectors/runtime/types.ts";
 import type { HookRegistration } from "../hooks/types.ts";
 import type { WorkspaceNotificationsConfig } from "../notifications/config.ts";
 import type { ModelSlots } from "../runtime/types.ts";
@@ -12,12 +12,12 @@ export interface WorkspaceMember {
   role: WorkspaceRole;
 }
 
-/** A workspace groups users and bundles. */
+/** A workspace groups users and connectors. */
 export interface Workspace {
   id: string;
   name: string;
   members: WorkspaceMember[];
-  bundles: BundleRef[];
+  bundles: ConnectorRef[];
   createdAt: string;
   updatedAt: string;
 
@@ -68,10 +68,10 @@ export interface Workspace {
    * different vendors to different customers without maintaining
    * separate catalog ConfigMaps.
    *
-   * Filters the catalog only — does NOT affect bundles already
+   * Filters the catalog only — does NOT affect connectors already
    * installed in `bundles[]` (those continue to function regardless of
    * allow-list state). Removing an id from the allow-list while a
-   * bundle of the same name is installed is permitted; the bundle
+   * connector of the same name is installed is permitted; the connector
    * stays running but won't appear in the catalog UI.
    */
   connectorsAllowList?: string[];
@@ -86,7 +86,7 @@ export interface Workspace {
    * separate so the secret never sits next to non-secret config and
    * the type system isn't carrying a `Redacted` for what's a public id.
    *
-   * Lifecycle is independent of bundle install: setting up an OAuth
+   * Lifecycle is independent of connector install: setting up an OAuth
    * app makes the connector installable for the whole workspace;
    * uninstalling the connector does NOT remove this config (so a
    * later re-install reuses it). Explicit removal goes through
@@ -100,7 +100,7 @@ export interface Workspace {
    *
    * Beside `oauthOperatorApps` because it is the same kind of record:
    * operator-plane, workspace-scoped, with a lifecycle related to but not
-   * identical to a bundle install. It holds the current and previous key ids
+   * identical to a connector install. It holds the current and previous key ids
    * for each minted URL and the route each forwards to — **never a token**,
    * which the runtime does not store and must not reconstruct on demand.
    *

@@ -111,14 +111,14 @@ export function loadSkillDir(dir: string, label = "local"): Skill[] {
  *     `_versions/`, `_archived/`) — these are reserved by Phase 3 for
  *     versioning and archived storage.
  *   - Recurses up to `MAX_SUBDIR_DEPTH` (currently 2) levels deep so
- *     `bundles/<bundle>/<skill>.md` under a workspace skill dir is
+ *     `bundles/<connector>/<skill>.md` under a workspace skill dir is
  *     discovered. The path is convention only; the loader stamps the
  *     scope passed in regardless of nesting depth.
  *   - Returns `[]` if the directory does not exist (caller-friendly —
  *     missing user/workspace dirs are not an error).
  *
  * Phase 2: callers stamp the scope based on which dir they're loading.
- * No frontmatter override — if the user puts `scope: bundle` in a file
+ * No frontmatter override — if the user puts `scope: connector` in a file
  * that lives under `workspaces/.../skills/`, the loader still stamps
  * `workspace`. Scope follows the filesystem.
  */
@@ -133,8 +133,8 @@ export function loadScopedSkills(dir: string, scope: SkillScope): Skill[] {
 /**
  * Maximum subdirectory depth the multi-scope loader will recurse to find
  * `*.md` skill files. Depth 0 = the dir passed to `loadScopedSkills`.
- * Depth 2 lets us discover `bundles/<bundle>/<skill>.md` (the workspace
- * convention for bundle-scoped skills) without opening up unbounded
+ * Depth 2 lets us discover `bundles/<connector>/<skill>.md` (the workspace
+ * convention for connector-scoped skills) without opening up unbounded
  * recursion.
  */
 const MAX_SUBDIR_DEPTH = 2;

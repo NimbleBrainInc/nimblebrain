@@ -143,7 +143,7 @@ describe("nb__manage_workspaces", () => {
       expect(parsed.workspace.id).toBe("ws_custom_slug");
     });
 
-    test("creates workspace with connectors", async () => {
+    test("creates workspace with bundles", async () => {
       const result = await tool.handler({
         action: "create",
         name: "Connector Workspace",
@@ -270,7 +270,7 @@ describe("nb__manage_workspaces", () => {
       expect(updated.workspace.name).toBe("Updated");
     });
 
-    test("updates workspace connectors", async () => {
+    test("updates workspace bundles", async () => {
       const createResult = await tool.handler({
         action: "create",
         name: "Connector Update",

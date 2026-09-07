@@ -22,7 +22,7 @@ import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../../helpers/test-wo
 
 // ── Fake tool sources ───────────────────────────────────────────────
 
-/** A tool source that represents a workspace-scoped bundle. */
+/** A tool source that represents a workspace-scoped connector. */
 class FakeToolSource implements ToolSource {
   constructor(
     readonly name: string,
@@ -52,9 +52,9 @@ let baseUrl: string;
 let workDir: string;
 
 // Source names
-const ALLOWED_SOURCE = "allowed-bundle";
-const DENIED_SOURCE = "denied-bundle";
-const PROTECTED_SOURCE = "protected-bundle";
+const ALLOWED_SOURCE = "allowed-connector";
+const DENIED_SOURCE = "denied-connector";
+const PROTECTED_SOURCE = "protected-connector";
 
 beforeAll(async () => {
   workDir = await mkdtemp(join(tmpdir(), "nb-mcp-ws-scope-"));
@@ -154,14 +154,14 @@ describe("MCP workspace scoping", () => {
       expect(names).toContain(`${ALLOWED_SOURCE}__greet`);
       expect(names).toContain(`${PROTECTED_SOURCE}__admin`);
 
-      // Should NOT include denied bundle's tools
+      // Should NOT include denied connector's tools
       expect(names).not.toContain(`${DENIED_SOURCE}__secret`);
     } finally {
       await client.close();
     }
   });
 
-  it("CallTool to allowed bundle succeeds", async () => {
+  it("CallTool to allowed connector succeeds", async () => {
     const client = await createMcpClient();
     try {
       const result = await client.callTool({
@@ -177,7 +177,7 @@ describe("MCP workspace scoping", () => {
     }
   });
 
-  it("CallTool to protected bundle succeeds", async () => {
+  it("CallTool to protected connector succeeds", async () => {
     const client = await createMcpClient();
     try {
       const result = await client.callTool({
@@ -190,7 +190,7 @@ describe("MCP workspace scoping", () => {
     }
   });
 
-  it("CallTool to non-workspace bundle returns a JSON-RPC error (unknown_tool_source)", async () => {
+  it("CallTool to non-workspace connector returns a JSON-RPC error (unknown_tool_source)", async () => {
     const client = await createMcpClient();
     try {
       // Stage 2: a source not in the target workspace's registry

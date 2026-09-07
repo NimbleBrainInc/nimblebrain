@@ -146,11 +146,11 @@ export async function handleFork(
   // KNOWN REGRESSION from StoredMessage era:
   // The old shape persisted `costUsd` per assistant message (computed by
   // the runtime at write-time using its own price table). DisplayMessage
-  // intentionally doesn't carry cost — the bundle is decoupled from the
+  // intentionally doesn't carry cost — the app is decoupled from the
   // runtime's pricing logic, and `totalCostUsd` on the parent conversation
   // file is an aggregate across all messages, not per-message.
   //
-  // Rather than duplicate a price table inside the bundle, forks start at
+  // Rather than duplicate a price table inside the app, forks start at
   // totalCostUsd=0; it can be recomputed live from (inputTokens, outputTokens,
   // model) by any consumer that owns pricing. Documented in CHANGELOG.
   const totalCostUsd = 0;

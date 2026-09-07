@@ -76,13 +76,13 @@ describe("always-on cost by tier", () => {
     expect(status.content).toMatch(/- user: 1 skill\(s\), ~\d/);
     expect(status.content).toMatch(/- workspace: 1 skill\(s\), ~\d/);
     expect(status.content).toContain("Total ~");
-    // Vendored core gets its own row. The loader stamps it `bundle` to say it
+    // Vendored core gets its own row. The loader stamps it `connector` to say it
     // is immutable, but an operator cannot move it, so counting it beside the
     // tiers they CAN move from would price an action that does not exist.
-    // Nothing here publishes an always-on bundle skill, so a `bundle` row
+    // Nothing here publishes an always-on connector skill, so a `connector` row
     // would mean core leaked back into it.
     expect(status.content).toMatch(/- core: \d+ skill\(s\), ~\d/);
-    expect(status.content).not.toContain("- bundle:");
+    expect(status.content).not.toContain("- connector:");
   });
 
   it("the user tier's cost dominates when a skill is authored at the wrong scope", async () => {

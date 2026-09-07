@@ -6,14 +6,14 @@
  * nothing out of it. This module is where that blob becomes Composio's typed
  * coordinates — the provider's boundary, not the kernel's.
  *
- * {@link ComposioConnectorConfig} in `connectors/server-detail.ts` remains the
+ * {@link ComposioConnectorConfig} in `connectors/catalog/server-detail.ts` remains the
  * declared shape for catalog authors and for the surfaces that render it (the
  * API-key form). This parser is deliberately defensive anyway: the value
  * reaching it came off a YAML file or a registry response, so a typed field is
  * a claim, not a fact.
  */
 
-import type { ComposioConnectField, ComposioConnectorConfig } from "../../server-detail.ts";
+import type { ComposioConnectField, ComposioConnectorConfig } from "../../catalog/server-detail.ts";
 
 /** Parse the catalog block, or return why it is unusable. */
 export function parseComposioCatalogConfig(

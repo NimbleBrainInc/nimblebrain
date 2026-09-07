@@ -11,7 +11,7 @@ export interface WorkspaceInfo {
   id: string;
   name: string;
   memberCount: number;
-  bundles: Array<{ name?: string; path?: string }>;
+  connectors: Array<{ name?: string; path?: string }>;
   /** The signed-in user's role within this workspace, when they're a member. */
   userRole?: "admin" | "member";
   /**

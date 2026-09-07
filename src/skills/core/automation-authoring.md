@@ -48,7 +48,7 @@ Write the prompt as if the user typed it:
 
 Automations can chain multiple tools across different apps in a single run.
 For example: "Run the pipeline report, generate a PDF, and add a TODO" will
-use tools from reports, typst, and todo bundles in sequence.
+use tools from reports, typst, and todo connectors in sequence.
 
 ## Before Creating — Tool Validation
 
@@ -57,7 +57,7 @@ Before proposing an automation, verify the tools it needs actually exist:
 1. Identify the key tools/capabilities the prompt requires
 2. Call `nb__search` with `scope: "tools"` and relevant keywords to confirm they're available
 3. If no matching tools found, warn the user: "The tools needed for this
-   automation don't appear to be installed. Consider installing [bundle] first."
+   automation don't appear to be installed. Consider installing [connector] first."
 
 Do not create automations that reference tools that don't exist — they will
 burn tokens failing on every run.

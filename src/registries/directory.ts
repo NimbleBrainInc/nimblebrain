@@ -24,7 +24,7 @@
  * returns a fresh instance per request, keeping the lifetime short.
  */
 
-import type { ServerDetail } from "../connectors/server-detail.ts";
+import type { ServerDetail } from "../connectors/catalog/server-detail.ts";
 import { log } from "../observability/log.ts";
 import {
   projectServerDetailToDirectoryEntry,
@@ -106,7 +106,7 @@ export class ConnectorDirectory {
       if (!entry) {
         // Projection returned null = entry isn't installable by this
         // runtime (no remotes, or an unsupported transport — a
-        // `packages[]`-only entry is a downloadable bundle, which this
+        // `packages[]`-only entry is a downloadable connector, which this
         // runtime does not acquire). Log so an operator debugging "why
         // doesn't my entry appear in Browse?" sees the cause instead of a
         // silent omission.
@@ -154,7 +154,7 @@ export class ConnectorDirectory {
   }
 
   /**
-   * Lookup table for handleListInstalled: remote bundles match their
+   * Lookup table for handleListInstalled: remote connectors match their
    * URL to a catalog entry to render the icon, name, and operator-setup
    * affordance. Built once from the cached projection.
    */
@@ -170,10 +170,10 @@ export class ConnectorDirectory {
   }
 
   /**
-   * Lookup table for installed-bundle loops that need a per-bundle
+   * Lookup table for installed-connector loops that need a per-connector
    * catalog match keyed by the persisted composio connectorId.
    * Symmetric to `catalogByUrl` — built once per call rather than
-   * re-scanning `catalogEntries()` per bundle inside a loop.
+   * re-scanning `catalogEntries()` per connector inside a loop.
    */
   async catalogByIdMap(): Promise<Map<string, ConnectorCatalogEntry>> {
     const entries = await this.catalogEntries();

@@ -1,20 +1,26 @@
-/** UI metadata for a bundle (sidebar entry, icon). */
-export interface BundleUiMeta {
+/** UI metadata for a connector (sidebar entry, icon). */
+export interface ConnectorUiMeta {
   name: string;
   icon: string;
 }
 
-/** Bundle lifecycle states. */
-export type BundleState = "starting" | "running" | "crashed" | "dead" | "stopped" | "pending_auth";
+/** Connector lifecycle states. */
+export type ConnectionState =
+  | "starting"
+  | "running"
+  | "crashed"
+  | "dead"
+  | "stopped"
+  | "pending_auth";
 
 /** App info returned by GET /v1/apps. */
 export interface AppInfo {
   name: string;
-  bundleName: string;
+  connectorName: string;
   version: string;
-  status: BundleState;
+  status: ConnectionState;
   toolCount: number;
-  ui: BundleUiMeta | null;
+  ui: ConnectorUiMeta | null;
 }
 
 /** Tool call result from POST /v1/tools/call. */
@@ -95,24 +101,24 @@ export interface HealthInfo {
   version: string;
   buildSha: string | null;
   uptime: number;
-  bundles: Array<{ name: string; state: BundleState }>;
+  connectors: Array<{ name: string; state: ConnectionState }>;
 }
 
 // --- SSE Event Types ---
 
-// All bundle.* events are workspace-scoped at the SSE layer (server filters
+// All connector.* events are workspace-scoped at the SSE layer (server filters
 // by wsId before fan-out). The wsId is included on the payload so consumers
 // can disambiguate when they hold state across multiple workspace sessions.
 
-export interface BundleInstalledEvent {
+export interface ConnectorInstalledEvent {
   wsId: string;
   name: string;
-  bundleName: string;
-  status: BundleState;
-  ui: BundleUiMeta | null;
+  connectorName: string;
+  status: ConnectionState;
+  ui: ConnectorUiMeta | null;
 }
 
-export interface BundleUninstalledEvent {
+export interface ConnectorUninstalledEvent {
   wsId: string;
   name: string;
 }
@@ -120,9 +126,9 @@ export interface BundleUninstalledEvent {
 export interface ConnectionStateChangedEvent {
   wsId: string;
   serverName: string;
-  bundleName: string;
+  connectorName: string;
   principalId: string;
-  state: BundleState;
+  state: ConnectionState;
   /** Populated only when state === "pending_auth". */
   authorizationUrl?: string;
   /** Populated when state === "dead" or "crashed". */
@@ -192,8 +198,8 @@ export interface NotificationDeliveryEvent {
 
 /** SSE event type to payload mapping. */
 export interface SseEventMap {
-  "bundle.installed": BundleInstalledEvent;
-  "bundle.uninstalled": BundleUninstalledEvent;
+  "bundle.installed": ConnectorInstalledEvent;
+  "bundle.uninstalled": ConnectorUninstalledEvent;
   "connection.state_changed": ConnectionStateChangedEvent;
   "data.changed": DataChangedEvent;
   "conversation.title": ConversationTitleEvent;
@@ -321,7 +327,7 @@ export type LedgerSkillScope = "org" | "workspace" | "user" | "bundle";
  * `name` is required here even though the wire field is optional: every path
  * that reaches this type resolves it — the live event carries it from
  * `buildSkillsLoadedPayload`, and both read paths (the `compose` tool and the
- * conversations bundle's replay projection) fill it in for runs recorded before
+ * conversations app's replay projection) fill it in for runs recorded before
  * the field existed. That is what lets a renderer print `skill.name` instead of
  * picking a name out of `id`.
  */
@@ -410,7 +416,7 @@ export interface BootstrapResponse {
      */
     role: "admin" | "member";
     memberCount: number;
-    bundleCount: number;
+    connectorCount: number;
     /**
      * `true` for the user's personal workspace. Pre-Stage-1 deployments
      * return `false` for every workspace until the

@@ -6,7 +6,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
-import { BundleLifecycleManager } from "../../src/bundles/lifecycle.ts";
+import { ConnectorLifecycleManager } from "../../src/connectors/runtime/lifecycle.ts";
 import { IdentityConnectorStore } from "../../src/identity/connector-store.ts";
 import type { ToolSource } from "../../src/tools/types.ts";
 
@@ -14,7 +14,7 @@ import type { ToolSource } from "../../src/tools/types.ts";
  * Integration: `getIdentityConnectorSource` lazy-starts a user's personal
  * connector from the persisted `connectors.json` record and holds it in the
  * user's registry. Drives a real Streamable-HTTP MCP server so the whole
- * `startBundleSource` → `{type:"user"}` provider → registry path runs end to
+ * `startConnectorSource` → `{type:"user"}` provider → registry path runs end to
  * end (no auth on the fake server — the DCR provider is built but never
  * challenged).
  */
@@ -72,14 +72,14 @@ function startFakeServer(): FakeServer {
 describe("getIdentityConnectorSource — lazy-start", () => {
   let workDir: string;
   let server: FakeServer;
-  let lifecycle: BundleLifecycleManager;
+  let lifecycle: ConnectorLifecycleManager;
   const started: ToolSource[] = [];
 
   beforeEach(() => {
     workDir = mkdtempSync(join(tmpdir(), "nb-idc-lazy-"));
     server = startFakeServer();
     // allowInsecureRemotes: true so the localhost fake server passes SSRF checks.
-    lifecycle = new BundleLifecycleManager(new NoopEventSink(), undefined, true);
+    lifecycle = new ConnectorLifecycleManager(new NoopEventSink(), undefined, true);
   });
 
   afterEach(async () => {

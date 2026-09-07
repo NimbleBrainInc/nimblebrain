@@ -149,13 +149,13 @@ describe("UC-W4: Same app, different workspaces", () => {
   test("same connector in two workspaces produces separate inventory entries", () => {
     workDir = makeTmpDir();
 
-    const crmBundle = { url: "https://crm.example.com/mcp", serverName: "crm" };
+    const crmConnector = { url: "https://crm.example.com/mcp", serverName: "crm" };
 
     const engineering: Workspace = {
       id: "ws_engineering",
       name: "Engineering",
       members: [],
-      bundles: [crmBundle],
+      bundles: [crmConnector],
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
@@ -164,7 +164,7 @@ describe("UC-W4: Same app, different workspaces", () => {
       id: "ws_marketing",
       name: "Marketing",
       members: [],
-      bundles: [crmBundle],
+      bundles: [crmConnector],
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
@@ -229,22 +229,22 @@ describe("UC-W5: New user onboarding", () => {
 });
 
 // ---------------------------------------------------------------------------
-// UC-W6: Workspace admin manages bundles
+// UC-W6: Workspace admin manages connectors
 // ---------------------------------------------------------------------------
 
-describe("UC-W6: Workspace admin manages bundles", () => {
+describe("UC-W6: Workspace admin manages connectors", () => {
   let workDir: string;
 
   afterEach(() => {
     if (workDir) rmSync(workDir, { recursive: true, force: true });
   });
 
-  test("admin adds bundles to workspace, buildProcessInventory reflects them", async () => {
+  test("admin adds connectors to workspace, buildProcessInventory reflects them", async () => {
     workDir = makeTmpDir();
 
     const wsStore = new WorkspaceStore(workDir);
 
-    // Admin creates workspace with no bundles
+    // Admin creates workspace with no connectors
     const eng = await wsStore.create("Engineering", "engineering");
     expect(eng.bundles).toHaveLength(0);
 
@@ -252,14 +252,14 @@ describe("UC-W6: Workspace admin manages bundles", () => {
     let inventory = buildProcessInventory([eng], workDir);
     expect(inventory).toHaveLength(0);
 
-    // Admin adds bundles via update
+    // Admin adds connectors via update
     const updated = await wsStore.update(eng.id, {
       bundles: [{ url: "https://crm.example.com/mcp", serverName: "crm" }],
     });
     expect(updated).not.toBeNull();
     expect(updated!.bundles).toHaveLength(1);
 
-    // Inventory now reflects the new bundle
+    // Inventory now reflects the new connector
     inventory = buildProcessInventory([updated!], workDir);
     expect(inventory).toHaveLength(1);
     expect(inventory[0]!.serverName).toBe("crm");

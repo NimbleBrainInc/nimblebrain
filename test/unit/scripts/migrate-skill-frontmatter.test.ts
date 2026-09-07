@@ -86,7 +86,7 @@ describe("migrateFrontmatterToManifest", () => {
       type: "skill",
       version: "1.0.0",
       scope: "org",
-      "requires-bundles": ["@nonexistent/bundle"],
+      "requires-bundles": ["@nonexistent/connector"],
       metadata: { keywords: ["k1", "k2"], version: "2.0.0" },
     });
     // version is a canonical conventional field — carried across (top-level wins).
@@ -112,7 +112,7 @@ describe("migrateSkillContent", () => {
     "applies-to-tools:",
     "  - nb__*",
     "requires-bundles:",
-    "  - '@nonexistent/bundle'",
+    "  - '@nonexistent/connector'",
     "metadata:",
     "  triggers:",
     "    - do the thing",

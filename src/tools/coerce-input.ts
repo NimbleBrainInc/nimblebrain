@@ -39,7 +39,7 @@
  *
  * Pydantic v2 encodes `Optional[T]` / `T | None` as
  * `{ anyOf: [{ type: <T-shape> }, { type: "null" }] }` — the canonical
- * shape for any optional structural parameter on a FastMCP bundle. We
+ * shape for any optional structural parameter on a FastMCP connector. We
  * resolve such unions before coercing: `null` branches carry no
  * structural shape, so we drop them; what remains is the effective
  * sub-schema. For the dominant `T | null` case this collapses to a single
@@ -52,13 +52,13 @@
  * value is a misencoding, which only holds when the schema can't accept a
  * string; a union that accepts a string accepts the value as-is, so coercing
  * it would silently change a legitimate value's type. The validator
- * adjudicates. Disambiguation can be added additively if a real bundle ever
+ * adjudicates. Disambiguation can be added additively if a real connector ever
  * ships such a param.
  *
  * `allOf` and `$ref` are out of scope. A property declared with either
  * passes through unchanged at that level — the validator still gets to
  * speak. The bug class this helper solves (`Optional[list[...]]` /
- * `Optional[dict[...]]` on FastMCP bundles) does not require them.
+ * `Optional[dict[...]]` on FastMCP connectors) does not require them.
  */
 
 type Schema = Record<string, unknown> | undefined;
@@ -155,7 +155,7 @@ function structuralBranches(schema: Schema): Array<Record<string, unknown>> {
  * the string as-is, so coercing it would silently change a legitimate
  * value's type. Return the original union and let the validator adjudicate;
  * the caller's pass-through then leaves the value untouched. Disambiguation
- * can be added additively if a real bundle ever ships such a param.
+ * can be added additively if a real connector ever ships such a param.
  */
 function effectiveSchemaFor(schema: Schema): Schema {
   if (!schema || schema.type !== undefined) return schema;

@@ -1,4 +1,4 @@
-import type { PlacementDeclaration, PlacementEntry } from "../bundles/types.ts";
+import type { PlacementDeclaration, PlacementEntry } from "../connectors/runtime/types.ts";
 
 /**
  * In-memory registry of UI placements.
@@ -6,7 +6,7 @@ import type { PlacementDeclaration, PlacementEntry } from "../bundles/types.ts";
  *
  * Placements are either ambient (no wsId — platform-provided entries like
  * Home, Conversations, Files; always shown) or workspace-scoped (has wsId —
- * installed bundles that render only for members of that workspace). Every
+ * installed connectors that render only for members of that workspace). Every
  * legitimate read in this product wants "ambient + scoped-for-this-workspace"
  * merged, so that is the single read method exposed. No `all()` or
  * slot-agnostic accessor — the shape of the API makes it impossible to
@@ -17,12 +17,12 @@ export class PlacementRegistry {
   private entries: PlacementEntry[] = [];
 
   /**
-   * Register placements from a bundle's manifest metadata.
+   * Register placements from a connector's manifest metadata.
    *
    * Scoped to (serverName, wsId): the idempotent cleanup before insertion only
    * removes entries for this server in this workspace. Omitting wsId means
    * ambient (platform/system sources) — scoped to entries whose wsId is also
-   * undefined. Without this scoping, re-seeding the same bundle in a second
+   * undefined. Without this scoping, re-seeding the same connector in a second
    * workspace would wipe out the first workspace's nav entries.
    */
   register(serverName: string, placements: PlacementDeclaration[], wsId?: string): void {

@@ -94,7 +94,7 @@ function checkNoInlineTypeImports(): CheckResult {
 /**
  * Rule: Containment tags may only be opened through `wrapContained`.
  *
- * `src/prompt/compose.ts` wraps untrusted body content (bundle authors,
+ * `src/prompt/compose.ts` wraps untrusted body content (connector authors,
  * tenant skills, workspace overlays) in XML containment tags before it
  * crosses into the trusted system prompt. The open tag, the escaped close
  * form, and the trailing close must all derive from the single `tag`

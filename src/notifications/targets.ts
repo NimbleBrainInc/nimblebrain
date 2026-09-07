@@ -1,5 +1,5 @@
-import { WORKSPACE_PRINCIPAL_ID } from "../bundles/connection.ts";
-import type { BundleLifecycleManager } from "../bundles/lifecycle.ts";
+import { WORKSPACE_PRINCIPAL_ID } from "../connectors/runtime/connection.ts";
+import type { ConnectorLifecycleManager } from "../connectors/runtime/lifecycle.ts";
 import type { PollTarget } from "./poller.ts";
 import type { NotificationsDeclaration } from "./types.ts";
 
@@ -30,7 +30,7 @@ import type { NotificationsDeclaration } from "./types.ts";
  *     notifications under whoever happened to be connected.
  *
  * **Personal connectors are not polled.** An identity-plane connector is not a
- * `BundleInstance` at all: it is lazy-started per pod on the owner's first
+ * `ConnectorInstance` at all: it is lazy-started per pod on the owner's first
  * dispatch and rests cold otherwise, so polling one would mean starting a
  * transport on a timer for a user who is not here — the opposite of the rule
  * that a source's own backoff is never overridden to fit a poll. When a
@@ -44,7 +44,7 @@ import type { NotificationsDeclaration } from "./types.ts";
  * re-ask, rather than restarting a source whose own backoff is still running.
  */
 export async function collectPollTargets(
-  lifecycle: BundleLifecycleManager,
+  lifecycle: ConnectorLifecycleManager,
   declarationFor: (serverName: string) => Promise<NotificationsDeclaration | undefined>,
 ): Promise<PollTarget[]> {
   // One lookup per distinct connector per sweep. The catalog is shared across

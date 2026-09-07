@@ -58,7 +58,7 @@ is constrained to a dotted-namespace shape and rejects traversal.
 
 **Non-interactive machine credentials name a provider, not a value.** The
 transport auth union's `{ type: "provider", provider, config }` arm
-(`src/bundles/types.ts`) names a registered credential provider and hands it an
+(`src/connectors/runtime/types.ts`) names a registered credential provider and hands it an
 opaque config. `TransportCredentialProvider` (`src/tools/credential-provider.ts`)
 is the kernel's one generic seam for that: the kernel never learns what a
 provider's config means — issuer, audience, fleet — it asks for a credential for

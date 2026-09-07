@@ -18,12 +18,12 @@
  * failures there. Never throws.
  */
 
-import { brokeredRef } from "../../../bundles/brokered.ts";
+import { brokeredRef } from "../../../connectors/runtime/brokered.ts";
 import type {
   ConnectionHealthProbe,
   ConnectionLiveness,
   ProbeTarget,
-} from "../../../bundles/connection-probe.ts";
+} from "../../../connectors/runtime/connection-probe.ts";
 import { log } from "../../../observability/log.ts";
 import type { SmitheryClientOptions } from "./client.ts";
 import { smitheryCoordinatesFrom } from "./coordinates.ts";

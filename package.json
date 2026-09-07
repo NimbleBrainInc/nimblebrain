@@ -69,7 +69,7 @@
     "check:resource-schemes": "bun run scripts/check-resource-schemes.ts",
     "check:code-style": "bun run scripts/check-code-style.ts",
     "check:no-raw-console": "bun run scripts/check-no-raw-console.ts",
-    "check:catalog-schema": "bun run scripts/check-catalog-schema.ts src/connectors/curated",
+    "check:catalog-schema": "bun run scripts/check-catalog-schema.ts src/connectors/catalog/curated",
     "check:no-sentry-in-kernel": "bun run scripts/check-no-sentry-in-kernel.ts",
     "check:usage-record": "bun run scripts/check-usage-record.ts",
     "migrate:usage-ledger": "bun run scripts/backfill-usage-ledger.ts",

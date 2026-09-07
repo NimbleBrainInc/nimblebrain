@@ -6,11 +6,11 @@
 //   1. Each section renders only when its credential lifecycle is
 //      relevant to the connector. The page composes all three and
 //      relies on `null` returns to skip irrelevant ones — without that
-//      a stdio bundle would render an empty OAuth section, and a
+//      a stdio connector would render an empty OAuth section, and a
 //      Granola DCR connector would render an empty operator section.
 //
 //   2. State→affordance mapping on OAuthConnectionSection mirrors the
-//      BundleState union exactly (running → Disconnect; reauth_required
+//      ConnectionState union exactly (running → Disconnect; reauth_required
 //      / crashed / dead → Reconnect; not_authenticated → Connect;
 //      pending_auth / starting → no button). A regression here would
 //      strand the user with no way to recover a broken connection.
@@ -150,7 +150,7 @@ beforeEach(() => {
 function uncataloguedConnector(over: Partial<InstalledConnector> = {}): InstalledConnector {
   return {
     serverName: "ipinfo",
-    bundleName: "https://ipinfo.example.com/mcp",
+    connectorName: "https://ipinfo.example.com/mcp",
     version: "1.0.0",
     state: "running",
     status: "ready",
@@ -164,7 +164,7 @@ function uncataloguedConnector(over: Partial<InstalledConnector> = {}): Installe
 function dcrConnector(over: Partial<InstalledConnector> = {}): InstalledConnector {
   return {
     serverName: "granola",
-    bundleName: "granola",
+    connectorName: "granola",
     version: "remote",
     type: "remote",
     state: "running",
@@ -191,7 +191,7 @@ function composioApiKeyConnector(over: Partial<InstalledConnector> = {}): Instal
   return {
     ...dcrConnector(),
     serverName: "posthog",
-    bundleName: "posthog",
+    connectorName: "posthog",
     catalogId: "com.posthog/analytics",
     catalog: {
       id: "com.posthog/analytics",
@@ -209,7 +209,7 @@ function composioApiKeyConnector(over: Partial<InstalledConnector> = {}): Instal
 function staticAuthConnector(over: Partial<InstalledConnector> = {}): InstalledConnector {
   return {
     serverName: "asana",
-    bundleName: "asana",
+    connectorName: "asana",
     version: "remote",
     type: "remote",
     state: "running",
@@ -390,8 +390,8 @@ describe("OperatorOAuthSection", () => {
   });
 });
 
-// BundleConfigSection was deleted in the header-action redesign.
-// Bundle credentials are now triggered from a top-right Configure
+// ConnectorConfigSection was deleted in the header-action redesign.
+// Connector credentials are now triggered from a top-right Configure
 // affordances on ConnectorDetailPage
 // directly. The modal owns its own Clear-configuration affordance,
 // so the inline section had no remaining job.
@@ -572,7 +572,7 @@ describe("ConnectorStatusHero", () => {
     expect(onChanged).toHaveBeenCalled();
   });
 
-  test("status=failed on remote bundle → 'Reconnect' + statusReason", async () => {
+  test("status=failed on remote connector → 'Reconnect' + statusReason", async () => {
     mounted = await mount(
       <ConnectorStatusHero
         installed={dcrConnector({
@@ -747,7 +747,7 @@ describe("ConnectorStatusHero", () => {
   });
 
   test("a composio API-key connector in `failed` is gated too, not just reauth_required", async () => {
-    // `failed` is the other arm of the rotation predicate — a remote bundle
+    // `failed` is the other arm of the rotation predicate — a remote connector
     // that died still offers Reconnect, and for an API-key connector that is
     // the same admin-gated rotation.
     mounted = await mount(

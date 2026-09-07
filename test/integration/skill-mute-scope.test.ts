@@ -28,17 +28,17 @@ import { createMockModel } from "../helpers/mock-model.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
 
 const SKILL_NAME = "house-voice";
-const BUNDLE_SERVER = "ai-nimblebrain-guide-mcp";
-const BUNDLE_SKILL = `bundle:${BUNDLE_SERVER}:guide`;
-const BUNDLE_MARKER = "BUNDLE-MARKER-XRAY";
+const GUIDE_SERVER = "ai-nimblebrain-guide-mcp";
+const GUIDE_SKILL = `bundle:${GUIDE_SERVER}:guide`;
+const GUIDE_MARKER = "GUIDE-MARKER-XRAY";
 const MARKER = "VOICE-MARKER-WHISKEY";
 const CONNECTOR_SERVER = "gmail";
 const CONNECTOR_SKILL = "gmail-threading";
 
-function createGuideBundle(dir: string): string {
+function createGuideConnector(dir: string): string {
   mkdirSync(dir, { recursive: true });
   const nm = join(import.meta.dir, "../..", "node_modules");
-  const body = `---\nname: guide\ndescription: Bundle guidance.\nmetadata:\n  nimblebrain:\n    loading-strategy: always\n---\n\n# guide\n\n${BUNDLE_MARKER} — always applies.`;
+  const body = `---\nname: guide\ndescription: Connector guidance.\nmetadata:\n  nimblebrain:\n    loading-strategy: always\n---\n\n# guide\n\n${GUIDE_MARKER} — always applies.`;
   writeFileSync(
     join(dir, "server.cjs"),
     `
@@ -179,12 +179,12 @@ beforeAll(async () => {
   });
   expect(created.isError).toBe(false);
   const guide = new McpSource(
-    BUNDLE_SERVER,
+    GUIDE_SERVER,
     {
       type: "stdio",
       spawn: {
         command: "node",
-        args: [join(createGuideBundle(join(testDir, "guide")), "server.cjs")],
+        args: [join(createGuideConnector(join(testDir, "guide")), "server.cjs")],
         env: process.env as Record<string, string>,
       },
     },
@@ -296,23 +296,23 @@ describe("muting a skill is conversation-scoped", () => {
 });
 
 describe("muting reaches every channel a skill can compose through", () => {
-  it("mutes a bundle-published `always` skill, not just filesystem ones", async () => {
+  it("mutes a connector-published `always` skill, not just filesystem ones", async () => {
     // The tool validates names against the activatable union, which includes
-    // bundle-published guidance — so the model learns these names from the
+    // connector-published guidance — so the model learns these names from the
     // Skill Catalog and can name one here. If the mute only covers the
     // filesystem tiers, this reports success and the skill composes anyway:
     // the silent no-op the handler's own guard exists to refuse.
     const conv = await chat("first turn");
-    expect(promptText()).toContain(BUNDLE_MARKER);
+    expect(promptText()).toContain(GUIDE_MARKER);
 
     pendingCall = { trigger: "PLEASE-TOGGLE", tool: "skills__deactivate" };
-    pendingName = BUNDLE_SKILL;
+    pendingName = GUIDE_SKILL;
     await chat("PLEASE-TOGGLE", conv);
     pendingCall = null;
     pendingName = null;
 
     await chat("next turn", conv);
-    expect(promptText()).not.toContain(BUNDLE_MARKER);
+    expect(promptText()).not.toContain(GUIDE_MARKER);
   });
 
   it("mutes a connector overlay — it leaves the catalog the model reads", async () => {

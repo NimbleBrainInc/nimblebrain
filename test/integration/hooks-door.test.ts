@@ -195,7 +195,7 @@ describe("a legitimate delivery", () => {
   });
 
   test("returns the connector's own status to the vendor", async () => {
-    // The bundle is the party that knows whether a delivery was accepted, so a
+    // The connector is the party that knows whether a delivery was accepted, so a
     // runtime that rewrote this would be deciding on its behalf whether the
     // vendor should retry.
     upstreamResponse = () => new Response("busy", { status: 503 });
@@ -326,7 +326,7 @@ describe("the response the vendor gets", () => {
     // COMPRESSED `content-length` on the response. Copying either tells the
     // vendor gzip and hands it plaintext: its client fails to decode, scores the
     // delivery failed, and redelivers — inverting the "a 2xx means durably
-    // recorded" contract the docs give a bundle author.
+    // recorded" contract the docs give a connector author.
     upstreamResponse = () =>
       new Response('{"ok":true}', {
         status: 202,

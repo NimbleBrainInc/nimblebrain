@@ -1,5 +1,5 @@
 import type { FetchLike } from "@modelcontextprotocol/sdk/shared/transport.js";
-import type { RemoteTransportConfig } from "../bundles/types.ts";
+import type { RemoteTransportConfig } from "../connectors/runtime/types.ts";
 import {
   registerCredentialProvider,
   type TransportCredential,
@@ -17,7 +17,7 @@ export const MINTED_PROVIDER = "minted";
 
 /**
  * Whether a transport is the operator-provisioned fleet rail — the one carrying
- * the catalog provenance that `validateBundleUrl`'s `fleetInternal` exception
+ * the catalog provenance that `validateConnectorUrl`'s `fleetInternal` exception
  * assumes (in-cluster `.svc` over plain HTTP).
  *
  * Keyed on the provider NAME, deliberately. `auth.type === "provider"` used to be

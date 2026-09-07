@@ -3,13 +3,13 @@ import type {
   ConnectionHealthProbe,
   ConnectionLiveness,
   ProbeTarget,
-} from "../../src/bundles/connection-probe.ts";
+} from "../../src/connectors/runtime/connection-probe.ts";
 import {
   ConnectionRevalidator,
   revalidatorIntervalMsFromEnv,
-} from "../../src/bundles/connection-revalidator.ts";
-import type { BundleLifecycleManager } from "../../src/bundles/lifecycle.ts";
-import type { ConnectionState } from "../../src/bundles/connection.ts";
+} from "../../src/connectors/runtime/connection-revalidator.ts";
+import type { ConnectorLifecycleManager } from "../../src/connectors/runtime/lifecycle.ts";
+import type { ConnectionState } from "../../src/connectors/runtime/connection.ts";
 import { log } from "../../src/observability/log.ts";
 
 // ---------------------------------------------------------------------------
@@ -64,7 +64,7 @@ function fakeLifecycle(instances: FakeInstance[]) {
       if (conn) conn.state = newState;
       if (inst) inst.state = newState;
     },
-  } as unknown as BundleLifecycleManager;
+  } as unknown as ConnectorLifecycleManager;
   return { lifecycle, flips };
 }
 

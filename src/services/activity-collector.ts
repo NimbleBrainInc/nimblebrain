@@ -8,7 +8,7 @@ import type {
   ListOptions,
 } from "../conversation/types.ts";
 import type {
-  ActivityBundleEvent,
+  ActivityConnectorEvent,
   ActivityConversationSummary,
   ActivityInput,
   ActivityOutput,
@@ -39,12 +39,12 @@ type ConversationSource =
   | { kind: "store"; list: ScopedConversationLister }
   | { kind: "jsonl"; conversationsDir: string };
 
-type BundleEventSource = { kind: "sse"; eventManager: SseEventManager } | { kind: "none" };
+type ConnectorEventSource = { kind: "sse"; eventManager: SseEventManager } | { kind: "none" };
 
 export interface ActivityCollectorOptions {
   logDir: string;
   conversations: ConversationSource;
-  bundleEvents?: BundleEventSource;
+  connectorEvents?: ConnectorEventSource;
   automationRunsDir?: string;
   /**
    * Caller's identity context for ownership filtering. REQUIRED for
@@ -53,7 +53,7 @@ export interface ActivityCollectorOptions {
    * `store.list()` would leak peer conversations into the activity
    * summary. Omit only for trusted internal callers operating outside
    * a request context (e.g. CLI background tasks); the standalone
-   * home bundle server uses the `jsonl` source and gets workspace
+   * home app server uses the `jsonl` source and gets workspace
    * isolation from the file layout it sees.
    */
   access?: ConversationAccessContext;
@@ -63,20 +63,20 @@ export interface ActivityCollectorOptions {
  * Unified activity collector for both runtime modes.
  *
  * In-process platform callers use the ConversationStore-backed source.
- * The standalone home bundle server uses the JSONL-backed source because it
+ * The standalone home app server uses the JSONL-backed source because it
  * runs outside Runtime and only has access to workspace files.
  */
 export class ActivityCollector {
   private logDir: string;
   private conversations: ConversationSource;
-  private bundleEvents: BundleEventSource;
+  private connectorEvents: ConnectorEventSource;
   private automationRunsDir?: string;
   private access?: ConversationAccessContext;
 
   constructor(options: ActivityCollectorOptions) {
     this.logDir = options.logDir;
     this.conversations = options.conversations;
-    this.bundleEvents = options.bundleEvents ?? { kind: "none" };
+    this.connectorEvents = options.connectorEvents ?? { kind: "none" };
     this.automationRunsDir = options.automationRunsDir;
     this.access = options.access;
   }
@@ -88,11 +88,13 @@ export class ActivityCollector {
     const limit = input.limit ?? 50;
     const category = input.category;
 
-    const [conversations, bundleEvents, { toolUsage, errors }, automations] = await Promise.all([
+    const [conversations, connectorEvents, { toolUsage, errors }, automations] = await Promise.all([
       !category || category === "conversations"
         ? this.collectConversations(since, until, limit)
         : Promise.resolve([]),
-      !category || category === "bundles" ? this.collectBundleEvents(since) : Promise.resolve([]),
+      !category || category === "bundles"
+        ? this.collectConnectorEvents(since)
+        : Promise.resolve([]),
       !category || category === "tools" || category === "errors"
         ? this.collectFromLogs(since, until, limit, category)
         : Promise.resolve({
@@ -118,7 +120,7 @@ export class ActivityCollector {
     const output: ActivityOutput = {
       period: { since, until },
       conversations,
-      bundle_events: bundleEvents,
+      bundle_events: connectorEvents,
       tool_usage: toolUsage,
       errors,
       totals: {
@@ -221,25 +223,25 @@ export class ActivityCollector {
     return summaries;
   }
 
-  private collectBundleEvents(since: string): ActivityBundleEvent[] {
-    if (this.bundleEvents.kind !== "sse") return [];
-    const events = this.bundleEvents.eventManager.getEventsSince(since);
-    const bundleEvents: ActivityBundleEvent[] = [];
+  private collectConnectorEvents(since: string): ActivityConnectorEvent[] {
+    if (this.connectorEvents.kind !== "sse") return [];
+    const events = this.connectorEvents.eventManager.getEventsSince(since);
+    const connectorEvents: ActivityConnectorEvent[] = [];
 
     for (const e of events) {
       if (!e.event.startsWith("bundle.")) continue;
-      const eventType = e.event.replace("bundle.", "") as ActivityBundleEvent["event"];
+      const eventType = e.event.replace("bundle.", "") as ActivityConnectorEvent["event"];
       if (!["installed", "uninstalled", "crashed", "recovered", "dead"].includes(eventType))
         continue;
 
-      bundleEvents.push({
-        bundle: (e.data.name as string) ?? (e.data.bundle as string) ?? "unknown",
+      connectorEvents.push({
+        connector: (e.data.name as string) ?? (e.data.connector as string) ?? "unknown",
         event: eventType,
         timestamp: e.timestamp,
         detail: (e.data.detail as string) ?? (e.data.reason as string) ?? undefined,
       });
     }
-    return bundleEvents;
+    return connectorEvents;
   }
 
   private async collectAutomationRuns(
@@ -363,7 +365,7 @@ export class ActivityCollector {
     return allLines;
   }
 
-  /** Extract server/bundle name from a tool name like "server__toolName". */
+  /** Extract server/connector name from a tool name like "server__toolName". */
   private extractServer(toolName: string): string {
     const idx = toolName.indexOf("__");
     return idx > 0 ? toolName.slice(0, idx) : "system";

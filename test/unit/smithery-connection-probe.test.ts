@@ -9,8 +9,8 @@
  */
 
 import { afterEach, describe, expect, it } from "bun:test";
-import type { ProbeTarget } from "../../src/bundles/connection-probe.ts";
-import type { BundleRef } from "../../src/bundles/types.ts";
+import type { ProbeTarget } from "../../src/connectors/runtime/connection-probe.ts";
+import type { ConnectorRef } from "../../src/connectors/runtime/types.ts";
 import { SmitheryConnectionProbe } from "../../src/connectors/providers/smithery/connection-probe.ts";
 
 const OPTIONS = { apiKey: "sk_test", baseUrl: "https://api.smithery.ai", namespace: "test-ns" };
@@ -20,7 +20,7 @@ afterEach(() => {
   globalThis.fetch = realFetch;
 });
 
-function refWithMarker(): BundleRef {
+function refWithMarker(): ConnectorRef {
   return {
     url: "https://api.smithery.ai/connect/test-ns/nb-x/mcp",
     serverName: "ai-bassethound-mcp",
@@ -38,7 +38,7 @@ function refWithMarker(): BundleRef {
 }
 
 /** The pre-`brokered` shape still on disk for an install made by an older runtime. */
-function legacyRefWithMarker(): BundleRef {
+function legacyRefWithMarker(): ConnectorRef {
   return {
     url: "https://api.smithery.ai/connect/test-ns/nb-x/mcp",
     serverName: "ai-bassethound-mcp",
@@ -49,10 +49,10 @@ function legacyRefWithMarker(): BundleRef {
       namespace: "test-ns",
       baseUrl: "https://api.smithery.ai",
     },
-  } as unknown as BundleRef;
+  } as unknown as ConnectorRef;
 }
 
-function targetOf(ref: BundleRef): ProbeTarget {
+function targetOf(ref: ConnectorRef): ProbeTarget {
   return { serverName: "ai-bassethound-mcp", wsId: "ws_01abc", principalId: "u_1", ref };
 }
 
@@ -170,7 +170,7 @@ describe("SmitheryConnectionProbe — liveness mapping", () => {
 
   it("reports indeterminate for a ref carrying no brokered marker", async () => {
     const probe = new SmitheryConnectionProbe(OPTIONS);
-    const bare = { url: "https://x/mcp", serverName: "x" } as BundleRef;
+    const bare = { url: "https://x/mcp", serverName: "x" } as ConnectorRef;
     expect(await probe.probe(targetOf(bare), new AbortController().signal)).toBe("indeterminate");
   });
 

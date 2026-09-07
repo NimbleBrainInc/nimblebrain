@@ -13,12 +13,12 @@
  * one, so the defect only surfaces in dark mode. That is not hypothetical; it
  * is how an input came to sit at 1.044:1 against its own label.
  *
- * One other state has no host and so did read the fallbacks: a bundle UI run
- * standalone under its own `vite dev`, which every bundle has. That is a real
+ * One other state has no host and so did read the fallbacks: a connector UI run
+ * standalone under its own `vite dev`, which every connector has. That is a real
  * cost and it was taken deliberately — the app has no parent bridge there, so
  * it renders no data whatever its colours are, and unstyled is the honest
  * signal that you are looking at it outside the platform rather than a
- * light-mode approximation of it. If a bundle ever needs to be developed
+ * light-mode approximation of it. If a connector ever needs to be developed
  * standalone in earnest, the answer is one dev-only stylesheet declaring the
  * token set, not a fallback re-typed at each of several hundred call sites.
  *

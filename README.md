@@ -5,7 +5,7 @@
 [![Bun](https://img.shields.io/badge/runtime-Bun-f9f1e1?logo=bun)](https://bun.sh)
 [![MCP](https://img.shields.io/badge/protocol-MCP-8A2BE2)](https://modelcontextprotocol.io)
 
-A self-hosted platform for [MCP Apps](https://modelcontextprotocol.io/extensions/apps/overview) and agent automations. Install an MCP bundle and you get more than tools — you get an interactive UI in the sidebar with live agent-UI data sync, and the ability to run the agent on demand or on a cron schedule. Full [ext-apps](https://apps.extensions.modelcontextprotocol.io/api/) host support on top of an agentic loop with skill-driven prompt composition.
+A self-hosted platform for [MCP Apps](https://modelcontextprotocol.io/extensions/apps/overview) and agent automations. Install an MCP connector and you get more than tools — you get an interactive UI in the sidebar with live agent-UI data sync, and the ability to run the agent on demand or on a cron schedule. Full [ext-apps](https://apps.extensions.modelcontextprotocol.io/api/) host support on top of an agentic loop with skill-driven prompt composition.
 
 Ships as container images on GHCR (`ghcr.io/nimblebraininc/nimblebrain`, `ghcr.io/nimblebraininc/nimblebrain-web`). Also exposes itself as an MCP server via Streamable HTTP so external MCP clients can consume the aggregated toolset.
 
@@ -114,7 +114,7 @@ All endpoints require authentication (Bearer token or session cookie) unless not
 
 ## Architecture
 
-NimbleBrain is both an MCP **client** (connecting to installed bundles via stdio/HTTP) and an MCP **server** (exposing composed tools to external hosts via the `/mcp` Streamable HTTP endpoint). The `ToolRegistry` aggregates tools from all connected MCP servers into a single namespace, while skills scope tool access per task.
+NimbleBrain is both an MCP **client** (connecting to installed connectors via stdio/HTTP) and an MCP **server** (exposing composed tools to external hosts via the `/mcp` Streamable HTTP endpoint). The `ToolRegistry` aggregates tools from all connected MCP servers into a single namespace, while skills scope tool access per task.
 
 Three port interfaces isolate concerns:
 
@@ -130,7 +130,7 @@ All system tools are prefixed with `nb__` (the `nb` source name + `__` separator
 
 | Tool | Purpose |
 |-----------|---------|
-| `nb__status` | Platform status: overview, bundles, skills, or config (scope param) |
+| `nb__status` | Platform status: overview, connectors, skills, or config (scope param) |
 | `nb__search` | Unified search: installed tools or the connector registries (scope param) |
 | `nb__read_resource` | Read a `skill://` / `ui://` resource from an installed app's MCP server |
 | `nb__set_preferences` | Set user preferences (name, timezone, theme) |
@@ -180,9 +180,9 @@ No connectors are installed by default. Platform apps (home, conversations, file
 NimbleBrain splits configuration across two files:
 
 - **`nimblebrain.json`** — instance-level settings (models, HTTP, logging, limits, feature flags). One file per deployment.
-- **`workspace.json`** — per-workspace settings (bundles, skill directories, optional model + identity overrides). One file per workspace under `<workDir>/workspaces/<ws-id>/`.
+- **`workspace.json`** — per-workspace settings (connectors, skill directories, optional model + identity overrides). One file per workspace under `<workDir>/workspaces/<ws-id>/`.
 
-This split is the workspace isolation boundary: two workspaces in the same deployment can install different bundles without touching the instance config. See [Workspace Isolation](#workspace-isolation) below.
+This split is the workspace isolation boundary: two workspaces in the same deployment can install different connectors without touching the instance config. See [Workspace Isolation](#workspace-isolation) below.
 
 ### `nimblebrain.json` (instance config)
 
@@ -251,9 +251,9 @@ Each workspace has its own config at `<workDir>/workspaces/<ws-id>/workspace.jso
 
 ### Workspace Isolation
 
-Bundles, tool registries, and conversation data are scoped to a workspace. Every tool handler resolves its workspace via `runtime.requireWorkspaceId()` before touching data. In dev mode this returns `"_dev"`; behind auth it resolves from the request's session or API key.
+Connectors, tool registries, and conversation data are scoped to a workspace. Every tool handler resolves its workspace via `runtime.requireWorkspaceId()` before touching data. In dev mode this returns `"_dev"`; behind auth it resolves from the request's session or API key.
 
-Two workspaces that install the same bundle spawn independent subprocesses with data directories under `<workDir>/workspaces/<wsId>/data/<bundle>/`, so their entity data never crosses. Sidebar placements, briefing facets, and the app list are filtered per workspace.
+Two workspaces that install the same connector spawn independent subprocesses with data directories under `<workDir>/workspaces/<wsId>/data/<connector>/`, so their entity data never crosses. Sidebar placements, briefing facets, and the app list are filtered per workspace.
 
 ### Running the runtime
 
@@ -264,7 +264,7 @@ bun run start    # serve: HTTP API server (production)
 bun run dev      # dev mode: API with file watching + web HMR
 ```
 
-`bun run start` is `bun run src/cli/index.ts serve`; that explicit form (with `--config`, `--port`) is exactly what the container runs. Everything else — bundles, skills, credentials, automations, telemetry — is managed from the web UI and the agent's tools, not the CLI.
+`bun run start` is `bun run src/cli/index.ts serve`; that explicit form (with `--config`, `--port`) is exactly what the container runs. Everything else — connectors, skills, credentials, automations, telemetry — is managed from the web UI and the agent's tools, not the CLI.
 
 ### Flags
 
@@ -302,7 +302,7 @@ The working directory is set via `NB_WORK_DIR` (see Environment Variables).
 | `MCP_SESSION_TTL_SECONDS` | MCP session idle TTL in seconds; drives both transport-map sweep and registry TTL (default: 28800, i.e. 8h) |
 | `NB_CHAT_RATE_LIMIT` | Chat requests per minute per user (default: 20) |
 | `NB_TOOL_RATE_LIMIT` | Tool calls per minute per user (default: 60) |
-| `NB_BUNDLE_START_CONCURRENCY` | Max bundle subprocesses spawned in parallel at boot (default: 4, set to 1 for sequential) |
+| `NB_BUNDLE_START_CONCURRENCY` | Max connector subprocesses spawned in parallel at boot (default: 4, set to 1 for sequential) |
 | `NB_TIMEZONE` | Default IANA timezone for time-aware features |
 | `NB_HOST_URL` | Public host URL for OAuth redirects |
 | `NB_HSTS` | `Strict-Transport-Security` value (default: `max-age=31536000; includeSubDomains`). Set to `""` to disable — e.g., when a reverse proxy already emits this header |
@@ -313,7 +313,7 @@ The working directory is set via `NB_WORK_DIR` (see Environment Variables).
 | Variable | Purpose |
 |----------|---------|
 | `WORKOS_API_KEY` | WorkOS API key (when `auth.adapter: "workos"` in `instance.json`) |
-| `NB_INTERNAL_TOKEN` | Shared secret for service-to-service calls (never forwarded to bundles) |
+| `NB_INTERNAL_TOKEN` | Shared secret for service-to-service calls (never forwarded to connectors) |
 | `POSTHOG_API_KEY` | PostHog key for anonymous product telemetry |
 | `NB_TELEMETRY_DISABLED` | Set to `1` to disable telemetry (also `DO_NOT_TRACK=1`) |
 
@@ -393,12 +393,14 @@ src/
 │   ├── workspace-store.ts  Workspace CRUD operations
 │   ├── types.ts          Workspace, WorkspaceMember, WorkspaceRole
 │   └── scaffold.ts       Workspace initialization helpers
-├── bundles/              MCPB bundle lifecycle
-│   ├── lifecycle.ts      Bundle install/uninstall/start/stop state machine
-│   ├── manifest.ts       MCPB manifest validation (ajv, v0.3/v0.4)
-│   ├── resolve.ts        Local bundle resolution
-│   ├── types.ts          BundleRef, BundleManifest, BundleInstance
-│   └── schemas/          Vendored MCPB JSON Schemas (v0.3, v0.4)
+├── connectors/           Connectors, split by the question each part answers
+│   ├── runtime/          A live connection's life: lifecycle, startup, auth, probes
+│   │   ├── lifecycle.ts    Install/uninstall/start/stop state machine
+│   │   ├── connection.ts   Per-(connector, principal) connection state machine
+│   │   └── types.ts        ConnectorRef, ConnectorInstance, host manifest meta
+│   ├── catalog/          What can be installed: server detail, curated entries, schemas
+│   ├── providers/        Who brokers auth and session (composio, smithery)
+│   └── gateways/         Hosted-MCP vendors authenticated with one account key
 ├── api/                  HTTP API (Hono framework)
 │   ├── app.ts            Hono app factory, route registration
 │   ├── server.ts         HTTP server startup
@@ -462,7 +464,7 @@ docker compose up
 
 Images are published to GHCR on every release:
 
-- `ghcr.io/nimblebraininc/nimblebrain-runtime` — runtime (Bun; Node 24 builds the in-image bundle UIs). Also published as `ghcr.io/nimblebraininc/nimblebrain` (transitional alias).
+- `ghcr.io/nimblebraininc/nimblebrain-runtime` — runtime (Bun; Node 24 builds the in-image connector UIs). Also published as `ghcr.io/nimblebraininc/nimblebrain` (transitional alias).
 - `ghcr.io/nimblebraininc/nimblebrain-web` — Caddy serving the SPA, proxying `/v1/*` to the platform
 
 Each release is tagged with the version (e.g. `v1.2.3`) and the short git SHA. Stable releases also move `:latest` forward; pre-releases (e.g. `v0.4.0-beta.1`) do not. Pin to a version tag in production. Pass `--build` to `docker compose` to build from source instead.
@@ -499,7 +501,7 @@ When total tools ≤30, all are surfaced directly. Above 30 with no skill matche
 
 ### Connector Lifecycle
 
-`BundleLifecycleManager` (`src/bundles/lifecycle.ts`) tracks connector states:
+`ConnectorLifecycleManager` (`src/connectors/runtime/lifecycle.ts`) tracks connector states:
 
 - **Install**: resolve the catalog entry → persist the `url` ref (with its transport, OAuth config, and host UI metadata) on the workspace → connect → register → emit event
 - **Uninstall**: stop the connection → remove source → clear the workspace's OAuth state and revoke any brokered connection → atomic config removal → emit event (data NOT deleted)
@@ -532,11 +534,11 @@ Each request carries a `UserIdentity` (id, name, email, role) threaded through `
 
 Multi-tenant workspace isolation (`src/workspace/`). Key types: `Workspace`, `WorkspaceMember`, `WorkspaceRole` (owner, admin, member).
 
-Bundles can be installed per-workspace (tracked via `BundleInstance.wsId`). Each workspace gets its own `ToolRegistry` with unqualified tool names. `WorkspaceRuntime` handles per-workspace bundle spawning.
+Connectors can be installed per-workspace (tracked via `ConnectorInstance.wsId`). Each workspace gets its own `ToolRegistry` with unqualified tool names. `WorkspaceRuntime` handles per-workspace connector spawning.
 
 `createSystemTools()` takes `getRegistry: () => ToolRegistry` (callback) instead of a direct registry reference, enabling dynamic workspace-scoped registries. The runtime maintains a `_workspaceRegistries` map keyed by workspace ID.
 
-**Workspace isolation in tool handlers:** All tool handlers that access data must use `runtime.requireWorkspaceId()` (throws if missing). Do not use `getCurrentWorkspaceId()` (nullable) or `getBundleInstances()` (unfiltered) in tool handlers. In dev mode, `requireWorkspaceId()` returns `"_dev"`.
+**Workspace isolation in tool handlers:** All tool handlers that access data must use `runtime.requireWorkspaceId()` (throws if missing). Do not use `getCurrentWorkspaceId()` (nullable) or `getConnectorInstances()` (unfiltered) in tool handlers. In dev mode, `requireWorkspaceId()` returns `"_dev"`.
 
 ### System Prompt Composition
 
@@ -631,11 +633,11 @@ All default to `true`. What `false` does depends on the flag: most withhold a to
 
 Full reference: [Feature flags](https://docs.nimblebrain.ai/config/features/) on docs.nimblebrain.ai.
 
-#### Bundle Env Isolation
+#### Connector Env Isolation
 
-Bundle processes receive a **filtered** host environment. Default allowlist: `PATH`, `HOME`, `USER`, `SHELL`, `LANG`, `LC_ALL`, `LC_CTYPE`, `TERM`, `TMPDIR`, `TZ`, `XDG_DATA_HOME`, `XDG_CONFIG_HOME`, `NODE_ENV`, `BUN_ENV`, `NB_WORK_DIR`, `UPJACK_ROOT`, `PYTHONPATH`, `VIRTUAL_ENV`, `NODE_PATH`. Hard deny (never passed): `NB_API_KEY`, `NB_INTERNAL_TOKEN`. Opt in via `allowedEnv` in bundle config.
+Connector processes receive a **filtered** host environment. Default allowlist: `PATH`, `HOME`, `USER`, `SHELL`, `LANG`, `LC_ALL`, `LC_CTYPE`, `TERM`, `TMPDIR`, `TZ`, `XDG_DATA_HOME`, `XDG_CONFIG_HOME`, `NODE_ENV`, `BUN_ENV`, `NB_WORK_DIR`, `UPJACK_ROOT`, `PYTHONPATH`, `VIRTUAL_ENV`, `NODE_PATH`. Hard deny (never passed): `NB_API_KEY`, `NB_INTERNAL_TOKEN`. Opt in via `allowedEnv` in connector config.
 
-#### Remote Bundle Security
+#### Remote Connector Security
 
 - Protocol must be `https:` (SSRF protection)
 - Private IP ranges rejected: `10.x`, `172.16-31.x`, `192.168.x`, `169.254.x`, `::1`
@@ -645,8 +647,8 @@ Bundle processes receive a **filtered** host environment. Default allowlist: `PA
 
 #### Source Name Protection
 
-1. **Reserved prefix** — `nb` cannot be used as a bundle source name
-2. **No duplicate sources** — registry rejects duplicates; built-in bundles register first
+1. **Reserved prefix** — `nb` cannot be used as a connector source name
+2. **No duplicate sources** — registry rejects duplicates; built-in connectors register first
 
 ### MCP App Bridge Invariants
 
@@ -687,7 +689,7 @@ These are non-negotiable patterns. Violating them causes production bugs:
 | Max output tokens | 16,384 |
 | Max history messages | 40 |
 | Max tool result size | 1,000,000 chars (0 disables) |
-| Default bundles | none (platform capabilities are built in) |
+| Default connectors | none (platform capabilities are built in) |
 | Work directory | `~/.nimblebrain` |
 | HTTP port | 27247 |
 | HTTP host | `127.0.0.1` |
@@ -712,7 +714,7 @@ These are non-negotiable patterns. Violating them causes production bugs:
 ### Observability
 
 - **`StructuredLogSink`** — Per-conversation JSONL logs with LLM/tool latency, cache tokens, cost. Disable with `logging.disabled: true`.
-- **`WorkspaceLogSink`** — Workspace-level daily rolling JSONL logs. Only persists workspace events (bundle lifecycle, data/config changes, skill/file operations).
+- **`WorkspaceLogSink`** — Workspace-level daily rolling JSONL logs. Only persists workspace events (connector lifecycle, data/config changes, skill/file operations).
 - **`ConsoleEventSink`** — Human-readable stderr for development.
 - **`DebugEventSink`** — Verbose JSON dumps (`--debug`).
 - **`CallbackEventSink`** — Bridges run events to the in-process chat handler (`POST /v1/chat`).

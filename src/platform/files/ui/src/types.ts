@@ -1,5 +1,5 @@
 // Wire shape of a file as returned by the platform's `files` source.
-// Mirrors `src/files/types.ts:FileEntry` but kept local because the bundle
+// Mirrors `src/files/types.ts:FileEntry` but kept local because the app
 // UI talks to the server over MCP — coupling its types to server-side TS
 // would defeat the protocol abstraction.
 export interface FileEntry {

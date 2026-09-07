@@ -10,7 +10,7 @@
  *   1. Reachability — `HEAD <remotes[0].url>`. Anything non-network-error
  *      counts; vendors return 200 / 401 / 405 depending on auth state.
  *      DNS failure / timeout / 5xx = the URL is dead.
- *   2. RFC 9728 protected-resource metadata — `GET <bundle-origin>/
+ *   2. RFC 9728 protected-resource metadata — `GET <connector-origin>/
  *      .well-known/oauth-protected-resource`. Optional but preferred;
  *      yields the authorization-server origin(s).
  *   3. RFC 8414 authorization-server metadata — `GET <as-origin>/
@@ -52,7 +52,10 @@
  * OAuth app for the workspace) is workspace-state, not catalog-rot.
  */
 
-import { getNimbleBrainConnectorMeta, type ServerDetail } from "../src/connectors/server-detail.ts";
+import {
+  getNimbleBrainConnectorMeta,
+  type ServerDetail,
+} from "../src/connectors/catalog/server-detail.ts";
 import { readStaticServers } from "../src/registries/static-source.ts";
 
 const REQUEST_TIMEOUT_MS = 10_000;
@@ -165,8 +168,8 @@ async function checkEntry(s: ServerDetail): Promise<CheckResult> {
 
   // 2 + 3. OAuth metadata discovery — same chain as
   // workspace-oauth-provider.discoverAuthorizationServerOrigins.
-  const bundleOrigin = new URL(url).origin;
-  const asOrigins = await discoverAuthorizationServerOrigins(bundleOrigin);
+  const connectorOrigin = new URL(url).origin;
+  const asOrigins = await discoverAuthorizationServerOrigins(connectorOrigin);
 
   let asMetadata: { registration_endpoint: string; authorization_endpoint?: string } | null = null;
   for (const asOrigin of asOrigins) {
@@ -239,10 +242,10 @@ async function probeReachable(
   }
 }
 
-async function discoverAuthorizationServerOrigins(bundleOrigin: string): Promise<string[]> {
+async function discoverAuthorizationServerOrigins(connectorOrigin: string): Promise<string[]> {
   const origins = new Set<string>();
   try {
-    const prMetadataUrl = `${bundleOrigin}/.well-known/oauth-protected-resource`;
+    const prMetadataUrl = `${connectorOrigin}/.well-known/oauth-protected-resource`;
     const res = await fetch(prMetadataUrl, {
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
@@ -260,9 +263,9 @@ async function discoverAuthorizationServerOrigins(bundleOrigin: string): Promise
       }
     }
   } catch {
-    // RFC 9728 not advertised — bundle origin fallback below covers it.
+    // RFC 9728 not advertised — connector origin fallback below covers it.
   }
-  origins.add(bundleOrigin);
+  origins.add(connectorOrigin);
   return [...origins];
 }
 

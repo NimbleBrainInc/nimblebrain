@@ -228,7 +228,7 @@ function classifyRunFailure(err: unknown): {
   // the run (`executeTask` throws `WorkspaceMembershipRevokedError`). SKIPPED, not a
   // failure — it must not count toward consecutiveErrors or trip the auto-disable,
   // so the automation self-heals the moment the owner is re-added. Matched by the
-  // error's stable `code`, which crosses the in-process runtime→bundle boundary.
+  // error's stable `code`, which crosses the in-process runtime→app boundary.
   if ((err as { code?: string })?.code === "workspace_membership_revoked") {
     return { status: "skipped", suffix: "skip", error: errorMsg, transient: false };
   }

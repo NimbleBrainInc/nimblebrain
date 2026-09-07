@@ -262,12 +262,12 @@ describe("execute (tools/call) — unified recovery", () => {
   // The other half of the trust boundary. `_meta` is stripped at the wire, but
   // the marker DECISION reads the classifier, and three of its classes match on
   // the server's own error text. An `McpError` is the server answering, so it can
-  // never earn the marker however its message is spelled — otherwise a bundle
+  // never earn the marker however its message is spelled — otherwise a connector
   // raising `Exception("Rate limit exceeded")` (FastMCP's default for an
   // unhandled exception) would exempt itself from the loop guard for the whole
-  // run, and a bundle relaying a persistent upstream 429 would be exempted
+  // run, and a connector relaying a persistent upstream 429 would be exempted
   // exactly when the guard should trip.
-  const BUNDLE_AUTHORED: ReadonlyArray<[string, number, string]> = [
+  const CONNECTOR_AUTHORED: ReadonlyArray<[string, number, string]> = [
     ["rate-limit wording", -32603, "Rate limit exceeded for this account"],
     ["throttled wording", -32603, "Upstream API throttled the request"],
     ["invalid-params claiming a throttle", -32602, "parameter 'window' throttled to 100/day"],
@@ -275,8 +275,8 @@ describe("execute (tools/call) — unified recovery", () => {
     ["session wording", -32603, "session not found in my application db"],
   ];
 
-  for (const [label, code, message] of BUNDLE_AUTHORED) {
-    it(`does NOT mark a bundle-authored error: ${label}`, async () => {
+  for (const [label, code, message] of CONNECTOR_AUTHORED) {
+    it(`does NOT mark a connector-authored error: ${label}`, async () => {
       const source = remoteSource({ callTool: () => Promise.reject(new McpError(code, message)) });
       const restart = spyRestart(source, false);
       try {
@@ -289,16 +289,16 @@ describe("execute (tools/call) — unified recovery", () => {
     });
   }
 
-  it("strips the infrastructure marker a bundle set on its own result", async () => {
+  it("strips the infrastructure marker a connector set on its own result", async () => {
     // The supervisor trusts this marker unconditionally, and a trip is the only
-    // thing that drops a tool from the model's toolset mid-run. A bundle able to
+    // thing that drops a tool from the model's toolset mid-run. A connector able to
     // set it on a deterministic rejection would exempt itself from the guard for
     // the whole run — so it is host-owned and stripped at the wire boundary.
     const source = remoteSource({
       callTool: async () => ({
         content: [{ type: "text", text: "Invalid params: missing 'id'" }],
         isError: true,
-        _meta: { [INFRA_ERROR_META_KEY]: true, "bundle.own/hint": "keep me" },
+        _meta: { [INFRA_ERROR_META_KEY]: true, "connector.own/hint": "keep me" },
       }),
     });
 
@@ -306,10 +306,10 @@ describe("execute (tools/call) — unified recovery", () => {
     expect(result.isError).toBe(true);
     expect(result._meta?.[INFRA_ERROR_META_KEY]).toBeUndefined();
     // Targeted strip, not a decision to stop forwarding `_meta`.
-    expect(result._meta?.["bundle.own/hint"]).toBe("keep me");
+    expect(result._meta?.["connector.own/hint"]).toBe("keep me");
   });
 
-  it("strips the skill-activation marker a wire bundle set on its own result", async () => {
+  it("strips the skill-activation marker a wire connector set on its own result", async () => {
     // The engine trusts this marker to mark a skill as already-delivered
     // (suppressing future guidance delivery), so it is host-owned on real
     // transports. Only in-process platform sources may carry it — covered by
@@ -321,7 +321,7 @@ describe("execute (tools/call) — unified recovery", () => {
         isError: false,
         _meta: {
           [SKILL_ACTIVATED_META_KEY]: { skillName: "gmail", scope: "connector", tokens: 1 },
-          "bundle.own/hint": "keep me",
+          "connector.own/hint": "keep me",
         },
       }),
     });
@@ -329,7 +329,7 @@ describe("execute (tools/call) — unified recovery", () => {
     const result = await source.execute("write", {});
     expect(result._meta?.[SKILL_ACTIVATED_META_KEY]).toBeUndefined();
     // Targeted strip, not a decision to stop forwarding `_meta`.
-    expect(result._meta?.["bundle.own/hint"]).toBe("keep me");
+    expect(result._meta?.["connector.own/hint"]).toBe("keep me");
   });
 
   it("strips the infrastructure marker on the TASK path too", async () => {
@@ -356,7 +356,7 @@ describe("execute (tools/call) — unified recovery", () => {
             result: {
               content: [{ type: "text", text: "Invalid params" }],
               isError: true,
-              _meta: { [INFRA_ERROR_META_KEY]: true, "bundle.own/hint": "keep me" },
+              _meta: { [INFRA_ERROR_META_KEY]: true, "connector.own/hint": "keep me" },
             },
           };
         },
@@ -365,7 +365,7 @@ describe("execute (tools/call) — unified recovery", () => {
 
     const result = await source.execute("long_job", {});
     expect(result._meta?.[INFRA_ERROR_META_KEY]).toBeUndefined();
-    expect(result._meta?.["bundle.own/hint"]).toBe("keep me");
+    expect(result._meta?.["connector.own/hint"]).toBe("keep me");
   });
 
   it("does NOT mark a reauth surface", async () => {
@@ -445,7 +445,7 @@ describe("execute (tools/call) — unified recovery", () => {
   });
 
   it("surfaces a request timeout WITHOUT restarting the source (no #581 cascade)", async () => {
-    // A slow tool that times out must NOT restart the bundle — that would tear it
+    // A slow tool that times out must NOT restart the connector — that would tear it
     // down for its sibling tools. Surface a clean error; source stays alive + no crash.
     const events: EngineEvent[] = [];
     const sink: EventSink = { emit: (e) => events.push(e) };

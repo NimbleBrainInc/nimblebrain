@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { ServerDetail } from "../../src/connectors/server-detail.ts";
+import type { ServerDetail } from "../../src/connectors/catalog/server-detail.ts";
 import {
   projectServerDetailToDirectoryEntry,
   serverDetailToCatalogEntry,

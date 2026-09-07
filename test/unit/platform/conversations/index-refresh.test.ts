@@ -29,7 +29,7 @@ const OWNER = "usr_alice";
 const CONV = "conv_00000000000000a1";
 
 beforeEach(() => {
-  workDir = mkdtempSync(join(tmpdir(), "nb-bundle-index-"));
+  workDir = mkdtempSync(join(tmpdir(), "nb-connector-index-"));
 });
 
 afterEach(() => {

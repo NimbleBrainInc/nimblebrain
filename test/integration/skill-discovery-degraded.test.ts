@@ -3,7 +3,7 @@
  * complete.
  *
  * The composition-flap incident's real defect was not the flap: it was that a
- * workspace whose bundles publish `always` skills composed none of them and
+ * workspace whose connectors publish `always` skills composed none of them and
  * nothing said so, because `skills: 0` is indistinguishable from "this
  * workspace has no skills". These pin the two halves of the guard — the signal
  * carries a machine-readable reason, and a short result never becomes the
@@ -22,7 +22,7 @@ import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
-import type { BundleRef } from "../../src/bundles/types.ts";
+import type { ConnectorRef } from "../../src/connectors/runtime/types.ts";
 import { log } from "../../src/observability/log.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { McpSource } from "../../src/tools/mcp-source.ts";
@@ -49,7 +49,7 @@ metadata:
 HEALTHY-MARKER — this rule must be in context on every turn.`;
 
 /** Server whose `resources/list` throws; `tools/list` still answers. */
-function createFailingBundle(dir: string): string {
+function createFailingConnector(dir: string): string {
   mkdirSync(dir, { recursive: true });
   const nm = join(import.meta.dir, "../..", "node_modules");
   writeFileSync(
@@ -83,7 +83,7 @@ main();
 }
 
 /** Server whose `resources/list` always returns a cursor — never finishes. */
-function createTruncatedBundle(dir: string): string {
+function createTruncatedConnector(dir: string): string {
   mkdirSync(dir, { recursive: true });
   const nm = join(import.meta.dir, "../..", "node_modules");
   writeFileSync(
@@ -122,7 +122,7 @@ main();
 }
 
 /** Server that LISTS one skill entrypoint but throws on every read. */
-function createUnreadableBundle(dir: string): string {
+function createUnreadableConnector(dir: string): string {
   mkdirSync(dir, { recursive: true });
   const nm = join(import.meta.dir, "../..", "node_modules");
   writeFileSync(
@@ -161,7 +161,7 @@ main();
 }
 
 /** Ordinary server publishing one `always` skill — the control. */
-function createHealthyBundle(dir: string): string {
+function createHealthyConnector(dir: string): string {
   mkdirSync(dir, { recursive: true });
   const nm = join(import.meta.dir, "../..", "node_modules");
   writeFileSync(
@@ -237,10 +237,10 @@ beforeAll(async () => {
     telemetry: { enabled: false },
   });
   await provisionTestWorkspace(runtime);
-  failing = await startSource(FAILING_NAME, createFailingBundle(join(testDir, "failing")));
-  healthy = await startSource(HEALTHY_NAME, createHealthyBundle(join(testDir, "healthy")));
-  truncated = await startSource(TRUNCATED_NAME, createTruncatedBundle(join(testDir, "truncated")));
-  unreadable = await startSource(UNREADABLE_NAME, createUnreadableBundle(join(testDir, "unreadable")));
+  failing = await startSource(FAILING_NAME, createFailingConnector(join(testDir, "failing")));
+  healthy = await startSource(HEALTHY_NAME, createHealthyConnector(join(testDir, "healthy")));
+  truncated = await startSource(TRUNCATED_NAME, createTruncatedConnector(join(testDir, "truncated")));
+  unreadable = await startSource(UNREADABLE_NAME, createUnreadableConnector(join(testDir, "unreadable")));
 });
 
 afterAll(async () => {
@@ -365,14 +365,14 @@ describe("degraded skill discovery", () => {
     expect(typeof response).toBe("string");
     const pool = await (
       runtime as unknown as {
-        loadBundleSkills: (wsId: string) => Promise<Array<{ body: string; manifest: unknown }>>;
+        loadConnectorSkills: (wsId: string) => Promise<Array<{ body: string; manifest: unknown }>>;
       }
-    ).loadBundleSkills(TEST_WORKSPACE_ID);
+    ).loadConnectorSkills(TEST_WORKSPACE_ID);
     const healthySkill = pool.find((s) => s.body.includes("HEALTHY-MARKER"));
     expect(healthySkill).toBeDefined();
   });
 
-  it("reports source_unavailable only for a bundle believed running — an auth-resting connector stays silent", async () => {
+  it("reports source_unavailable only for a connector believed running — an auth-resting connector stays silent", async () => {
     // A URL connector nobody has connected seeds `not_authenticated` with no
     // registry source BY DESIGN — the ordinary state of every never-connected
     // and every disconnected connector. Reporting it would fire on every turn
@@ -386,7 +386,7 @@ describe("degraded skill discovery", () => {
       serverName: GHOST_NAME,
       transport: { type: "streamable-http" },
       oauthScope: "workspace",
-    } as unknown as BundleRef;
+    } as unknown as ConnectorRef;
     await lifecycle.seedInstance(
       GHOST_NAME,
       "@nimblebraininc/ghost",

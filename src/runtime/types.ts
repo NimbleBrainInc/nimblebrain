@@ -29,7 +29,7 @@ export interface RuntimeConfig {
   /** Multi-provider configuration. Takes precedence over `model` when set. */
   providers?: ProvidersConfig["providers"];
 
-  /** Allow HTTP (non-TLS) remote bundle connections. Dev only. */
+  /** Allow HTTP (non-TLS) remote connector connections. Dev only. */
   allowInsecureRemotes?: boolean;
 
   /** Directories to scan for skill files. */
@@ -400,7 +400,7 @@ export interface ChatResult {
  *                             focused-workspace briefing). `nb__search`
  *                             discovers the rest of that one bound
  *                             workspace on demand — there is no
- *                             cross-workspace union, and Layer 3 bundle
+ *                             cross-workspace union, and Layer 3 connector
  *                             skills come from the bound workspace only.
  *
  * Each call is a one-shot run owned by `identity` that produces a
@@ -466,10 +466,10 @@ export interface TaskRequest {
  *
  * Modeled on `ChatResult` but with chat-specific fields removed:
  *  - No `skillName` — task mode does not perform skill matching on the
- *    prompt; bundle-affined skills still surface via Layer 3.
+ *    prompt; connector-affined skills still surface via Layer 3.
  *  - `response` renamed to `output` to reflect the deliverable contract.
  *  - `runId` is a traceability anchor — the id of the run, under which the
- *    caller (the automations bundle) persists the run result (output +
+ *    caller (the automations app) persists the run result (output +
  *    activity log + output-file refs). No conversation is created.
  *
  * Always returned on completion — including timeout, max_iterations,

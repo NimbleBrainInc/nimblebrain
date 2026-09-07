@@ -273,13 +273,13 @@ function AuthenticatedAppContent({
       chatStore.setTitle(conversationId, title);
       forwardConversationTitleToIframes(conversationId, title);
     },
-    // Bundle install / uninstall changes the placement set; refetch
+    // Connector install / uninstall changes the placement set; refetch
     // the shell so the sidebar's Apps group reflects the new state
     // without a page reload.
-    onBundleLifecycleChanged: () => {
+    onConnectorLifecycleChanged: () => {
       void refreshShell();
     },
-    // After a reconnect, any bundle / config events emitted during the
+    // After a reconnect, any connector / config events emitted during the
     // disconnect gap were dropped (the workspace stream has no
     // Last-Event-Id replay). Refetch the two state owners that consume
     // those events so the UI snaps back to truth.
@@ -342,7 +342,7 @@ function AuthenticatedAppContent({
       // Exact route match first
       const exact = all.find((p) => p.route === name);
       if (exact) return exact.route!;
-      // Match by serverName (what bundles know themselves as)
+      // Match by serverName (what connectors know themselves as)
       const byServer = all.find((p) => p.serverName === name);
       if (byServer?.route) return byServer.route;
       return null;
@@ -365,10 +365,10 @@ function AuthenticatedAppContent({
     }
   }
 
-  // App placements: everything routable except the bundle-home placement
+  // App placements: everything routable except the connector-home placement
   // (route "/"), which the shell no longer renders directly. Home `/` is
   // now `GlobalHomePage` (workspace-agnostic) and `/w/<slug>/` is
-  // `WorkspaceOverviewPage` (app grid). The bundle-home concept stays in
+  // `WorkspaceOverviewPage` (app grid). The connector-home concept stays in
   // the placement registry for now in case a future surface needs it.
   // Identity apps (conversations, …) are also excluded from the app grid set —
   // they render at their own segment under `/w/<slug>` (see

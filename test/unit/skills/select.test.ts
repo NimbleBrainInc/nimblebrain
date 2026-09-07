@@ -47,13 +47,13 @@ describe("toolMatches", () => {
     expect(toolMatches("", "*")).toBe(true);
   });
 
-  test("`<bundle>__*` matches any tool from that bundle", () => {
+  test("`<connector>__*` matches any tool from that connector", () => {
     expect(toolMatches("synapse-collateral__patch_source", "synapse-collateral__*")).toBe(true);
     expect(toolMatches("synapse-collateral__set_source", "synapse-collateral__*")).toBe(true);
     expect(toolMatches("synapse-crm__contact", "synapse-collateral__*")).toBe(false);
   });
 
-  test("`*__<tool>` matches a specific tool name across bundles", () => {
+  test("`*__<tool>` matches a specific tool name across connectors", () => {
     expect(toolMatches("synapse-collateral__patch_source", "*__patch_source")).toBe(true);
     expect(toolMatches("synapse-crm__patch_source", "*__patch_source")).toBe(true);
     expect(toolMatches("synapse-collateral__set_source", "*__patch_source")).toBe(false);

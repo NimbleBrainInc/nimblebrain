@@ -75,7 +75,7 @@ const appStateStore = new Map<string, AppStateEntry>();
 const widgetStateStore = new Map<string, WidgetStateEntry>();
 
 /**
- * Internal bundle names allowed to cross-call other sources by setting
+ * Internal app names allowed to cross-call other sources by setting
  * `params.server` on tools/call or resources/read. External iframe apps
  * are strictly scoped to their own server. Defined once at module scope so
  * both message-type cases share the same trust list.
@@ -550,7 +550,7 @@ function handleInitialize(
         // `origin` is the platform's window.location.origin. SDK helpers
         // use it as `targetOrigin` on outbound postMessage and to
         // validate `event.origin` on inbound — closing the gap that
-        // bundles can't otherwise discover the host origin from a
+        // connectors can't otherwise discover the host origin from a
         // srcdoc iframe (which itself runs in the "null" origin).
         origin: window.location.origin,
         theme: extMode,
@@ -586,7 +586,7 @@ function handleToolsCall(
   postToIframe: PostToIframe,
 ): void {
   // Security: tool calls are scoped to appName by default. Internal
-  // bundles (`INTERNAL_APPS`) can specify `params.server` to
+  // connectors (`INTERNAL_APPS`) can specify `params.server` to
   // cross-call other sources. The `/mcp` endpoint is workspace-
   // scoped but doesn't know about the "internal app" concept, so
   // this authz check stays in the bridge.
@@ -614,8 +614,8 @@ function handleResourcesRead(
   postToIframe: PostToIframe,
 ): void {
   // Same trust list as tools/call. The URI itself passes through
-  // verbatim to the server — SSRF safety lives in the bundle, not
-  // the host, because only URIs the bundle advertises via
+  // verbatim to the server — SSRF safety lives in the connector, not
+  // the host, because only URIs the connector advertises via
   // resources/list will resolve anyway.
   const server = INTERNAL_APPS.has(appName) && params.server ? params.server : appName;
 
@@ -883,7 +883,7 @@ async function callToolViaMcp(
  */
 async function readResourceViaMcp(server: string, uri: string): Promise<{ contents: unknown[] }> {
   // Per spec, `resources/read` carries only the URI — the resource is
-  // namespaced by the bundle that authored it, not by request params.
+  // namespaced by the connector that authored it, not by request params.
   // `server` is consumed by the INTERNAL_APPS authz at the call site
   // (cross-call permission); it doesn't appear on the wire here.
   void server;

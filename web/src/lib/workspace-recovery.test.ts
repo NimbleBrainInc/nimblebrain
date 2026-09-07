@@ -12,7 +12,7 @@ import type { WorkspaceInfo } from "../context/WorkspaceContext";
 import { recoverFromWorkspaceError } from "./workspace-recovery";
 
 function ws(id: string, opts: Partial<WorkspaceInfo> = {}): WorkspaceInfo {
-  return { id, name: id, memberCount: 1, bundles: [], ...opts };
+  return { id, name: id, memberCount: 1, connectors: [], ...opts };
 }
 
 describe("recoverFromWorkspaceError", () => {

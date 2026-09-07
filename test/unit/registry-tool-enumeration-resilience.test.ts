@@ -7,7 +7,7 @@ import type { Tool, ToolSource } from "../../src/tools/types.ts";
 /**
  * Resilience guard around `ToolRegistry.availableTools()`. The agent
  * loop calls this on every chat turn to assemble the tool list for the
- * LLM. A single bad source (notably a remote OAuth bundle in
+ * LLM. A single bad source (notably a remote OAuth connector in
  * `pending_auth` / `starting` state with `this.client === null` —
  * `McpSource.tools()` throws `<name> not started` in that case) MUST
  * NOT take down the whole list. Every other workspace tool stays

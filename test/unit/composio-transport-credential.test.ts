@@ -13,7 +13,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import type { RemoteTransportConfig } from "../../src/bundles/types.ts";
+import type { RemoteTransportConfig } from "../../src/connectors/runtime/types.ts";
 import { _resetComposioConfigForTest } from "../../src/connectors/providers/composio/config.ts";
 import {
   COMPOSIO_CREDENTIAL_PROVIDER,
@@ -184,7 +184,7 @@ describe("legacy refs map forward on read", () => {
 
 describe("the transport's own SSRF posture, not just the URL gate's", () => {
   // `startAuthInner` (Reconnect / `POST /v1/mcp-auth/initiate`) builds its source
-  // WITHOUT calling `validateBundleUrl` — grep it: the only call sites are
+  // WITHOUT calling `validateConnectorUrl` — grep it: the only call sites are
   // `startup.ts`, `ssrf-guarded-fetch.ts` and `workspace-oauth-provider.ts`. So on
   // that path `isMintedFleetSource` inside `createRemoteTransport` is the ONLY
   // thing deciding whether a brokered session URL reaches an in-cluster service

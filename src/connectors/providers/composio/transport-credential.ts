@@ -6,7 +6,7 @@
  * it needs, never *where* the value comes from.**
  *
  * A Composio install used to persist the literal string `${COMPOSIO_API_KEY}`
- * into its `BundleRef` transport headers, resolved from `process.env` at
+ * into its `ConnectorRef` transport headers, resolved from `process.env` at
  * transport-build time by a generic env-template expansion. That kept the secret
  * out of `workspace.json` — the goal — but it did so by writing a durable
  * *pointer into the environment namespace* into tenant state. The consequences
@@ -25,7 +25,7 @@
  * template was a second, weaker mechanism competing with it.
  */
 
-import type { RemoteTransportConfig } from "../../../bundles/types.ts";
+import type { RemoteTransportConfig } from "../../../connectors/runtime/types.ts";
 import {
   registerCredentialProvider,
   type TransportCredential,
@@ -75,7 +75,7 @@ export const composioCredentialProvider: TransportCredentialProvider = {
 /**
  * Register the credential provider at the composition root.
  *
- * Must run before `startWorkspaceBundles`: a connected Composio connector starts
+ * Must run before `startWorkspaceConnectors`: a connected Composio connector starts
  * at boot, and `applyProviderAuth` throws for an unregistered name — which would
  * drop the source from the registry and take the connector's tools down on every
  * restart. Registering from the provider factory instead is too late, because the

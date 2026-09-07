@@ -3,8 +3,8 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
-import { BundleLifecycleManager } from "../../src/bundles/lifecycle.ts";
-import type { BundleRef } from "../../src/bundles/types.ts";
+import { ConnectorLifecycleManager } from "../../src/connectors/runtime/lifecycle.ts";
+import type { ConnectorRef } from "../../src/connectors/runtime/types.ts";
 import type { UserIdentity } from "../../src/identity/provider.ts";
 import { ConnectorDirectory } from "../../src/registries/directory.ts";
 import { RegistryStore } from "../../src/registries/registry-store.ts";
@@ -34,12 +34,12 @@ const TEST_READ = { caller: "test", purpose: "assert the store holds what the ha
  *   - `remove_operator_setup` — admin-only teardown, install-aware
  *   - `list_directory` — `operatorConfigured` flag for static entries
  *   - `install` for static-auth — refuses when setup is missing, persists
- *     the credential ref in the workspace BundleRef on success
+ *     the credential ref in the workspace ConnectorRef on success
  *
  * The handlers only touch a small slice of `Runtime`: `getWorkspaceStore`,
  * `getWorkDir`, `getRegistryStore`, `getLifecycle`, `getRegistryForWorkspace`.
  * We build a thin stub around real WorkspaceStore / CredentialStore /
- * RegistryStore / BundleLifecycleManager / ToolRegistry instances —
+ * RegistryStore / ConnectorLifecycleManager / ToolRegistry instances —
  * sufficient to drive the production code without spinning up a full
  * `Runtime.start()` (which would pull in identity, model, transport, etc.).
  */
@@ -124,7 +124,7 @@ interface Harness {
   workspaceStore: WorkspaceStore;
   credStore: CredentialStore;
   registryStore: RegistryStore;
-  lifecycle: BundleLifecycleManager;
+  lifecycle: ConnectorLifecycleManager;
   workspaceRegistry: ToolRegistry;
   runtime: Runtime;
   /** Tool-policy writes the stub permission store received, newest last. */
@@ -171,7 +171,7 @@ function buildHarness(opts: { adminId?: string } = {}): Harness {
     }),
   );
   const registryStore = new RegistryStore(workDir);
-  const lifecycle = new BundleLifecycleManager(new NoopEventSink(), undefined);
+  const lifecycle = new ConnectorLifecycleManager(new NoopEventSink(), undefined);
   const workspaceRegistry = new ToolRegistry();
 
   const runtime = {
@@ -188,7 +188,7 @@ function buildHarness(opts: { adminId?: string } = {}): Harness {
     // the production-shaped behavior is exercised by integration
     // tests; here we just need the methods to exist with sane
     // return shapes so the handler doesn't blow up looking up
-    // tangential metadata (user display names, user-scope bundles).
+    // tangential metadata (user display names, user-scope connectors).
     getPermissionStore: () => ({
       deleteConnector: async (
         _owner: { scope: "workspace" | "user"; wsId?: string; userId?: string },
@@ -208,7 +208,7 @@ function buildHarness(opts: { adminId?: string } = {}): Harness {
     getUserStore: () => ({
       get: async (_id: string) => null,
     }),
-    getBundleInstancesForWorkspace: (_wsId: string) => lifecycle.getInstances(),
+    getConnectorInstancesForWorkspace: (_wsId: string) => lifecycle.getInstances(),
     getAllowInsecureRemotes: () => false,
   } as unknown as Runtime;
 
@@ -532,13 +532,13 @@ describe("manage_connectors.remove_operator_setup", () => {
       clientId: "cid",
       clientSecret: "sec",
     });
-    // Simulate an installed connector by appending the BundleRef directly.
+    // Simulate an installed connector by appending the ConnectorRef directly.
     const ws = await h.workspaceStore.get(h.wsId);
     expect(ws).not.toBeNull();
     await h.workspaceStore.update(h.wsId, {
       bundles: [
         ...(ws?.bundles ?? []),
-        { url: DROPBOX_URL, serverName: DROPBOX_ID } as BundleRef,
+        { url: DROPBOX_URL, serverName: DROPBOX_ID } as ConnectorRef,
       ],
     });
 
@@ -571,8 +571,8 @@ describe("manage_connectors.remove_operator_setup", () => {
     expect(wrapped).toBeNull();
   });
 
-  test("succeeds on a workspace where the bundle was never installed", async () => {
-    // `bundles[]` empty + setup configured + no install ⇒ removable.
+  test("succeeds on a workspace where the connector was never installed", async () => {
+    // `connectors[]` empty + setup configured + no install ⇒ removable.
     const tool = buildTool(h, ADMIN_USER);
     await tool.handler({
       action: "setup_operator",
@@ -612,8 +612,8 @@ describe("manage_connectors.list_directory", () => {
     const result = await tool.handler({ action: "list_directory" });
     expect(result.isError).toBe(false);
     const entries = structured(result).entries ?? [];
-    const fromBundled = entries.filter((e) => e.registryId === "bundled-static");
-    expect(fromBundled.length).toBeGreaterThan(0);
+    const fromConnectord = entries.filter((e) => e.registryId === "bundled-static");
+    expect(fromConnectord.length).toBeGreaterThan(0);
   });
 
   test("static entry shows operatorConfigured: false before setup_operator runs", async () => {
@@ -696,7 +696,7 @@ describe("manage_connectors.install (static-auth)", () => {
     expect(text.toLowerCase()).toContain("client_secret");
   });
 
-  test("on success the BundleRef in workspace.bundles carries oauthClient pointing at the credential", async () => {
+  test("on success the ConnectorRef in workspace.bundles carries oauthClient pointing at the credential", async () => {
     const tool = buildTool(h, ADMIN_USER);
     await tool.handler({
       action: "setup_operator",
@@ -718,7 +718,7 @@ describe("manage_connectors.install (static-auth)", () => {
 
     const ws = await h.workspaceStore.get(h.wsId);
     const installed = ws?.bundles.find(
-      (b): b is Extract<BundleRef, { url: string }> => "url" in b && b.url === DROPBOX_URL,
+      (b): b is Extract<ConnectorRef, { url: string }> => "url" in b && b.url === DROPBOX_URL,
     );
     expect(installed).toBeDefined();
     expect(installed?.oauthClient?.clientId).toBe("cid-public");
@@ -803,8 +803,8 @@ describe("manage_connectors.install", () => {
     expect(text).toMatch(/not a recognized platform connector/i);
     // Nothing forged was persisted into workspace.json.
     const ws = await h.workspaceStore.get(h.wsId);
-    const bundles = (ws?.bundles ?? []) as Array<{ url?: string }>;
-    expect(bundles.some((b) => (b.url ?? "").includes("mcp-authorizer"))).toBe(false);
+    const connectors = (ws?.bundles ?? []) as Array<{ url?: string }>;
+    expect(connectors.some((b) => (b.url ?? "").includes("mcp-authorizer"))).toBe(false);
   });
 
   test("install hard-errors when there is no workspace in context (no session, no wsId arg)", async () => {
@@ -851,7 +851,7 @@ describe("manage_connectors.install", () => {
   test("returns permission_denied when caller is not workspace admin", async () => {
     // Workspace-scope install widens the shared workspace surface
     // (placements, tools, credential inheritance). Non-admin members
-    // can't unilaterally add bundles every other member then sees.
+    // can't unilaterally add connectors every other member then sees.
     const tool = buildTool(h, NON_ADMIN_USER);
     const result = await tool.handler({
       action: "install",
@@ -949,7 +949,7 @@ describe("manage_connectors.install", () => {
     //     template literal — `check:personal-workspace-id` is `src/`-
     //     only but assertion through the helper keeps the test
     //     coupled to the real construction site).
-    //   - The persisted BundleRef carries `oauthScope: "workspace"`.
+    //   - The persisted ConnectorRef carries `oauthScope: "workspace"`.
     //     The "user" literal is gone (T008) and stays gone.
     //   - The slug-shaped serverName is unchanged.
     const adminPersonalWsId = personalWorkspaceIdFor(ADMIN_USER.id);
@@ -989,7 +989,7 @@ describe("manage_connectors.install", () => {
     // (the legacy "user" literal does not exist in this codebase).
     const personalWs = await h.workspaceStore.get(adminPersonalWsId);
     const installed = personalWs?.bundles.find(
-      (b): b is Extract<BundleRef, { url: string }> =>
+      (b): b is Extract<ConnectorRef, { url: string }> =>
         "url" in b && b.url === "https://mcp.canva.com/mcp",
     );
     expect(installed).toBeDefined();
@@ -1127,11 +1127,11 @@ describe("manage_connectors.get_installed", () => {
     rmSync(h.workDir, { recursive: true, force: true });
   });
 
-  test("returns { installed: null } when the bundle isn't installed in any scope", async () => {
+  test("returns { installed: null } when the connector isn't installed in any scope", async () => {
     const tool = buildTool(h, ADMIN_USER);
     const result = await tool.handler({
       action: "get_installed",
-      serverName: "no-such-bundle",
+      serverName: "no-such-connector",
     });
     expect(result.isError).toBe(false);
     const sc = result.structuredContent as { installed: unknown };
@@ -1180,7 +1180,7 @@ describe("manage_connectors.uninstall", () => {
   });
 
   test("returns permission_denied when caller is not workspace admin", async () => {
-    // Uninstall removes a bundle every workspace member relies on
+    // Uninstall removes a connector every workspace member relies on
     // and clears the credential file. Non-admin can't unilaterally
     // strip a shared connector.
     const tool = buildTool(h, NON_ADMIN_USER);
@@ -1192,7 +1192,7 @@ describe("manage_connectors.uninstall", () => {
     expect(result.isError).toBe(true);
     expect(structured(result).error).toBe("permission_denied");
 
-    // And the bundle is still in workspace.json — non-admin gate
+    // And the connector is still in workspace.json — non-admin gate
     // didn't accidentally tear down state before the check.
     const wsAfter = await h.workspaceStore.get(h.wsId);
     expect(wsAfter?.bundles ?? []).toHaveLength(1);
@@ -1279,7 +1279,7 @@ describe("deriveConnectorStatus", () => {
   });
 
   test("setup priority outranks needs_auth — same logic, finer level", () => {
-    // A bundle in needs_auth state with missing operator setup should
+    // A connector in needs_auth state with missing operator setup should
     // still surface as needs_setup; the user can't auth against an
     // OAuth app that doesn't exist yet.
     const result = deriveConnectorStatus({

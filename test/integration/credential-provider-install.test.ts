@@ -11,7 +11,7 @@
  * It covers the two halves separately because they fail separately:
  *
  *   - the INSTALL half — `providerAuth.config` is copied verbatim from the
- *     SERVER-trusted catalog entry into the persisted `BundleRef`, carrying the
+ *     SERVER-trusted catalog entry into the persisted `ConnectorRef`, carrying the
  *     key and no value. A caller-forged `providerAuth` is discarded, which
  *     matters more here than for the fleet rail: a workspace admin who could
  *     forge `config.key` would name another key in their own store, so the blast
@@ -26,8 +26,8 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
-import { BundleLifecycleManager } from "../../src/bundles/lifecycle.ts";
-import type { BundleRef } from "../../src/bundles/types.ts";
+import { ConnectorLifecycleManager } from "../../src/connectors/runtime/lifecycle.ts";
+import type { ConnectorRef } from "../../src/connectors/runtime/types.ts";
 import type { UserIdentity } from "../../src/identity/provider.ts";
 import { ConnectorDirectory } from "../../src/registries/directory.ts";
 import { RegistryStore } from "../../src/registries/registry-store.ts";
@@ -85,7 +85,7 @@ function entry(): DirectoryEntry {
 }
 
 function toolFor(sessionWsId: string) {
-  const lifecycle = new BundleLifecycleManager(new NoopEventSink(), undefined);
+  const lifecycle = new ConnectorLifecycleManager(new NoopEventSink(), undefined);
   const registryStore = new RegistryStore(workDir);
   const workspaceRegistry = new ToolRegistry();
   const runtime = {
@@ -100,7 +100,7 @@ function toolFor(sessionWsId: string) {
     getRegistryForWorkspace: (_id: string) => workspaceRegistry,
     getPermissionStore: () => ({ deleteConnector: async () => {} }),
     getUserStore: () => ({ get: async () => null }),
-    getBundleInstancesForWorkspace: (_wsId: string) => lifecycle.getInstances(),
+    getConnectorInstancesForWorkspace: (_wsId: string) => lifecycle.getInstances(),
     getAllowInsecureRemotes: () => false,
   } as unknown as Runtime;
   return createManageConnectorsTool({
@@ -111,10 +111,10 @@ function toolFor(sessionWsId: string) {
 }
 
 /** The persisted ref for the installed connector, read off disk. */
-function persistedRef(wsId: string): BundleRef {
+function persistedRef(wsId: string): ConnectorRef {
   const ws = JSON.parse(
     readFileSync(join(workDir, "workspaces", wsId, "workspace.json"), "utf-8"),
-  ) as { bundles: BundleRef[] };
+  ) as { bundles: ConnectorRef[] };
   const ref = ws.bundles.find((b) => b.url === "https://mcp.acme.test/mcp");
   if (!ref) throw new Error(`no acme ref in ${wsId}`);
   return ref;

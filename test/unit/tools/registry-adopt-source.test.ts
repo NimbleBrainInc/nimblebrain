@@ -5,7 +5,7 @@ import type { Tool, ToolSource } from "../../../src/tools/types.ts";
 /**
  * `adoptSource` is the canonical "register a freshly-built source" path. It
  * exists because a source can now be registered AND dead — the boot loop
- * retains a failed URL bundle so it stays visible and healable — which makes the
+ * retains a failed URL connector so it stays visible and healable — which makes the
  * obvious `if (!hasSource) addSource` silently drop the fresh source and leave
  * the corpse routing every call.
  */
@@ -108,7 +108,7 @@ describe("ToolRegistry.hasEstablishedSource", () => {
     // heals in place via reconnectOnDemand and the next sweep. Treating it as
     // absent runs a destructive re-spawn: it stop()s a working source, and the
     // replacement object is missing from HealthMonitor's boot snapshot, so the
-    // bundle loses monitoring for the life of the process.
+    // connector loses monitoring for the life of the process.
     const registry = new ToolRegistry();
     registry.addSource(downSource("people", true));
     expect(registry.hasEstablishedSource("people")).toBe(true);

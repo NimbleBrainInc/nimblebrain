@@ -61,7 +61,7 @@ engine's surface-once hook: matched by tool-affinity at call time and delivered
 into the history a single time per conversation. They never enter the cached
 system prefix, so guidance for a connector the turn never touches costs nothing.
 
-**Boot is the reconcile point** (`src/bundles/connector-skill-reconcile.ts`).
+**Boot is the reconcile point** (`src/connectors/runtime/connector-skill-reconcile.ts`).
 The pin only changes with a new image, which means a restart, so boot is exactly
 when it can have moved. The reconcile re-binds any connector whose lock is stale
 or absent. It is version-gated (a connector already at the pin does no fetch and

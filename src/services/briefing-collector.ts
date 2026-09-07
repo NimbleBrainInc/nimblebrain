@@ -11,7 +11,11 @@
  * the runtime reading that server's files.
  */
 
-import type { BriefingBlock, BriefingFacet, BundleInstance } from "../bundles/types.ts";
+import type {
+  BriefingBlock,
+  BriefingFacet,
+  ConnectorInstance,
+} from "../connectors/runtime/types.ts";
 import { McpSource } from "../tools/mcp-source.ts";
 import type { ToolRegistry } from "../tools/registry.ts";
 import type { ToolSource } from "../tools/types.ts";
@@ -49,13 +53,13 @@ const PRIORITY_ORDER: Record<string, number> = { high: 0, medium: 1, low: 2 };
  * Each connector with a briefing block in _meta["ai.nimblebrain/host"] contributes facets.
  */
 export async function collectBriefingFacets(
-  instances: BundleInstance[],
+  instances: ConnectorInstance[],
   registry: ToolRegistry,
   period: { since: string; until: string },
 ): Promise<BriefingContext> {
   // Gather apps with briefing declarations, sorted by priority
   const appsWithBriefing: Array<{
-    instance: BundleInstance;
+    instance: ConnectorInstance;
     briefing: BriefingBlock;
   }> = [];
 
@@ -75,7 +79,7 @@ export async function collectBriefingFacets(
   const results: FacetResult[] = [];
 
   for (const { instance, briefing } of appsWithBriefing) {
-    const appName = instance.ui?.name ?? instance.bundleName;
+    const appName = instance.ui?.name ?? instance.connectorName;
     const appRoute = instance.ui?.placements?.[0]?.route ?? null;
 
     const facetPromises = briefing.facets.map((facet) =>

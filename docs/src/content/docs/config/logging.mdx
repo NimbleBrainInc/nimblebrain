@@ -59,7 +59,7 @@ A new file is created automatically each day. Examples:
 Every log line is a JSON object: a timestamp, the event type, and the event's own data fields spread alongside them.
 
 ```json
-{"ts":"2026-03-25T14:30:00.123Z","event":"bundle.installed","serverName":"postgres","bundleName":"@nimblebraininc/postgres","version":"1.2.0"}
+{"ts":"2026-03-25T14:30:00.123Z","event":"bundle.installed","serverName":"postgres","connectorName":"@nimblebraininc/postgres","version":"1.2.0"}
 ```
 
 ### Common fields
@@ -78,7 +78,7 @@ Only workspace-level events are written to this log; conversation streaming even
 **Connector lifecycle** — `bundle.installed`, `bundle.uninstalled`. Track connectors entering and leaving the workspace.
 
 ```json
-{"ts":"2026-03-25T14:30:00.123Z","event":"bundle.installed","wsId":"ws_product","serverName":"com-example-postgres","bundleName":"https://mcp.example.com/mcp","version":"remote (12 tools)"}
+{"ts":"2026-03-25T14:30:00.123Z","event":"bundle.installed","wsId":"ws_product","serverName":"com-example-postgres","connectorName":"https://mcp.example.com/mcp","version":"remote (12 tools)"}
 ```
 
 **`data.changed`** — A tool mutated workspace data. Carries the `server` and `tool` that wrote, and `source: "agent"` when emitted from the agent's tool dispatch.
@@ -134,9 +134,9 @@ Only workspace-level events are written to this log; conversation streaming even
 Log files are plain JSONL, so you can use standard command-line tools:
 
 ```bash
-# Bundles installed today
+# Connectors installed today
 cat ~/.nimblebrain/logs/workspace/2026-03-25.jsonl \
-  | jq 'select(.event == "bundle.installed") | {bundleName, version}'
+  | jq 'select(.event == "bundle.installed") | {connectorName, version}'
 
 # Audit events only
 cat ~/.nimblebrain/logs/workspace/2026-03-25.jsonl \

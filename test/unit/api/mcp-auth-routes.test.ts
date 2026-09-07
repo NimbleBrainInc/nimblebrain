@@ -7,7 +7,7 @@ import { Hono } from "hono";
 import { securityHeaders } from "../../../src/api/middleware/security-headers.ts";
 import { mcpAuthRoutes } from "../../../src/api/routes/mcp-auth.ts";
 import type { AppContext, AppEnv } from "../../../src/api/types.ts";
-import { ConnectorBusyError } from "../../../src/bundles/lifecycle.ts";
+import { ConnectorBusyError } from "../../../src/connectors/runtime/lifecycle.ts";
 import { IdentityConnectorStore } from "../../../src/identity/connector-store.ts";
 import { _clearAll, register as registerFlow } from "../../../src/tools/oauth-flow-registry.ts";
 
@@ -182,11 +182,11 @@ describe("POST /v1/mcp-auth/initiate", () => {
     expect(res.headers.get("Set-Cookie")).toBeNull();
   });
 
-  test("returns 404 with no cookie when bundle is not installed", async () => {
+  test("returns 404 with no cookie when connector is not installed", async () => {
     const res = await app.request("http://localhost/v1/mcp-auth/initiate", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ serverName: "no-such-bundle" }),
+      body: JSON.stringify({ serverName: "no-such-connector" }),
     });
 
     expect(res.status).toBe(404);
