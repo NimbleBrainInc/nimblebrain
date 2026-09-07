@@ -102,6 +102,17 @@ export function CredentialFieldsModal({
 
   if (!open) return null;
 
+  // Every required field has a non-blank value. Derived from `collectFieldValues`
+  // rather than re-implemented, so the button and the submit path can never
+  // disagree about what "complete" means.
+  //
+  // The button is disabled until this holds. That is a deliberate trade: a
+  // disabled control cannot explain itself, which is why the per-field error
+  // path below is kept for the cases the predicate cannot express (a value the
+  // server rejects). It is not a substitute for saying which fields are needed —
+  // optional ones are marked, so an unmarked field is required.
+  const complete = !("error" in collectFieldValues(fields, values));
+
   const submit = async () => {
     if (busy) return;
     const result = collectFieldValues(fields, values);
@@ -184,7 +195,12 @@ export function CredentialFieldsModal({
             <Button type="button" variant="outline" size="sm" onClick={onClose} disabled={busy}>
               Cancel
             </Button>
-            <Button type="button" size="sm" onClick={() => void submit()} disabled={busy}>
+            <Button
+              type="button"
+              size="sm"
+              onClick={() => void submit()}
+              disabled={busy || !complete}
+            >
               {busy ? busyLabel : submitLabel}
             </Button>
           </div>
