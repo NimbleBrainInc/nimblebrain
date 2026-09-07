@@ -62,8 +62,9 @@ export function wrapContained(tag: ContainmentTag, body: string): string {
  *
  * `subItems` is populated for sections that aggregate multiple operator-
  * authored entries (apps, layer3 skills). It lets debug tools render per-
- * item attribution, filter by connector, and detect content drift on a
- * per-skill basis without re-parsing the section text.
+ * item attribution and detect content drift on a per-skill basis without
+ * re-parsing the section text; the apps entries also carry the connector
+ * the `connector` filter matches on.
  */
 export interface TracedLayer {
   kind: TracedLayerKind;

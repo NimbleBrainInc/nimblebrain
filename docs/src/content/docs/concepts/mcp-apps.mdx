@@ -80,7 +80,7 @@ See [MCP App Bridge](/apps/bridge) for the complete protocol reference.
 
 Any MCP server can become an MCP App by:
 
-1. Adding `_meta["ai.nimblebrain/host"]` to its `manifest.json` with UI placements
+1. Declaring `_meta["ai.nimblebrain/host"]` with UI placements
 2. Serving HTML via `ui://` resource URIs from the MCP server
 3. Implementing the ext-apps handshake in the frontend code (or using the `@nimblebrain/synapse` SDK)
 

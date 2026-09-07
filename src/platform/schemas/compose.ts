@@ -19,8 +19,8 @@ export const ComposeEffectiveContextInput = Type.Object({
   connector: Type.Optional(
     Type.String({
       description:
-        "Filter the response to one connector's contributions (apps section " +
-        "row + layer-3 skills under the connector's affined directory).",
+        "Filter the response to that connector's contributions (the apps " +
+        "section and its focused-app section).",
     }),
   ),
 });
