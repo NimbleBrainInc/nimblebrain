@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { DirectoryEntry } from "../api/client";
+import type { CatalogListing } from "../api/client";
 import { labelForCredentialKey, secretHeaderFields } from "./secret-headers";
 
 /**
@@ -10,14 +10,14 @@ import { labelForCredentialKey, secretHeaderFields } from "./secret-headers";
 function install(
   secretHeaders?: Record<string, unknown>,
   auth = "provider",
-): DirectoryEntry["install"] {
+): CatalogListing["install"] {
   return {
     kind: "remote-oauth",
     url: "https://mcp.example.test/mcp",
     transportType: "streamable-http",
     auth,
     ...(secretHeaders ? { secretHeaders } : {}),
-  } as DirectoryEntry["install"];
+  } as CatalogListing["install"];
 }
 
 describe("labelForCredentialKey", () => {

@@ -30,9 +30,8 @@ import type {
   ManagedConnectorProvider,
 } from "../../src/connectors/providers/managed-provider.ts";
 import { managedConnectorRegistryOf } from "../../src/connectors/providers/registry.ts";
-import { ConnectorDirectory } from "../../src/registries/directory.ts";
-import { RegistryStore } from "../../src/registries/registry-store.ts";
-import type { DirectoryEntry } from "../../src/registries/types.ts";
+import { ConnectorCatalog } from "../../src/connectors/catalog/catalog.ts";
+import type { CatalogListing } from "../../src/connectors/catalog/types.ts";
 import type { Runtime } from "../../src/runtime/runtime.ts";
 import {
   createManageConnectorsTool,
@@ -137,24 +136,7 @@ function buildHarness(provider: ManagedConnectorProvider): Harness {
   const workDir = mkdtempSync(join(tmpdir(), "nb-example-broker-"));
   const wsId = "ws_test";
   const workspaceStore = new WorkspaceStore(workDir);
-  writeFileSync(
-    join(workDir, "registries.json"),
-    JSON.stringify({
-      registries: [
-        {
-          id: "bundled-static",
-          name: "Curated",
-          type: "static",
-          enabled: true,
-          locked: true,
-          url: join(workDir, "catalog.yaml"),
-        },
-      ],
-    }),
-  );
   writeFileSync(join(workDir, "catalog.yaml"), catalogYaml());
-
-  const registryStore = new RegistryStore(workDir);
   const registry = managedConnectorRegistryOf([provider]);
   const lifecycle = new ConnectorLifecycleManager(new NoopEventSink());
   lifecycle.setManagedConnectorRegistry(registry);
@@ -164,8 +146,7 @@ function buildHarness(provider: ManagedConnectorProvider): Harness {
   const runtime = {
     getWorkDir: () => workDir,
     getWorkspaceStore: () => workspaceStore,
-    getRegistryStore: () => registryStore,
-    getConnectorDirectory: () => new ConnectorDirectory(registryStore),
+    getConnectorCatalog: () => new ConnectorCatalog(join(workDir, "catalog.yaml")),
     getLifecycle: () => lifecycle,
     getRegistryForWorkspace: () => workspaceRegistry,
     getAllowInsecureRemotes: () => false,
@@ -192,12 +173,11 @@ function buildTool(h: Harness) {
   } as unknown as ManageConnectorsContext);
 }
 
-function widgetsEntry(): DirectoryEntry {
+function widgetsEntry(): CatalogListing {
   return {
     id: CONNECTOR_ID,
     name: "Widgets",
     description: "Widgets, brokered",
-    registryId: "bundled-static",
     install: {
       kind: "remote-oauth",
       url: "https://widgets.example/mcp",
@@ -205,7 +185,7 @@ function widgetsEntry(): DirectoryEntry {
       auth: PROVIDER_ID,
       [PROVIDER_ID]: { realm: "acme", widget: "sprockets" },
     },
-  } as unknown as DirectoryEntry;
+  } as unknown as CatalogListing;
 }
 
 /** The ref an install of this connector persists. */
@@ -312,7 +292,7 @@ describe("example-broker — probe", () => {
 
   test("the registered probe is dispatched by the ref's provider id", async () => {
     const provider = h.runtime.getManagedConnectorRegistry().get(PROVIDER_ID);
-    const probe = provider?.probe?.(h.runtime.getConnectorDirectory());
+    const probe = provider?.probe?.(h.runtime.getConnectorCatalog());
     expect(probe?.providerId).toBe(PROVIDER_ID);
 
     const target: ProbeTarget = {

@@ -10,13 +10,13 @@
 
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { realClient } from "../../test/setup";
-import type { DirectoryEntry, PersonalConnector } from "../api/client";
+import type { CatalogListing, PersonalConnector } from "../api/client";
 import type { WorkspaceInfo } from "../context/WorkspaceContext";
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 let nextConnectors: PersonalConnector[] = [];
-let nextCatalog: DirectoryEntry[] = [];
+let nextCatalog: CatalogListing[] = [];
 let nextError: Error | null = null;
 let nextCatalogError: Error | null = null;
 const listPersonalConnectors = mock(async () => {
@@ -142,11 +142,9 @@ function click(el: Element | null | undefined): Promise<void> {
   });
 }
 
-function catalogEntry(overrides: Partial<DirectoryEntry> = {}): DirectoryEntry {
+function catalogEntry(overrides: Partial<CatalogListing> = {}): CatalogListing {
   return {
     id: "ai.granola/mcp",
-    registryId: "curated",
-    registryType: "static",
     name: "Granola",
     description: "Meeting notes and transcripts",
     personal: true,

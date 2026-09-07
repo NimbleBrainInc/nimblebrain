@@ -26,9 +26,8 @@ import { ConnectorLifecycleManager } from "../../src/connectors/runtime/lifecycl
 import type { ConnectorMcpDeps } from "../../src/connectors/runtime/startup.ts";
 import type { UserIdentity } from "../../src/identity/provider.ts";
 import { MINTED_PROVIDER } from "../../src/oauth/minted-credential-provider.ts";
-import { ConnectorDirectory } from "../../src/registries/directory.ts";
-import { RegistryStore } from "../../src/registries/registry-store.ts";
-import type { DirectoryEntry } from "../../src/registries/types.ts";
+import { ConnectorCatalog } from "../../src/connectors/catalog/catalog.ts";
+import type { CatalogListing } from "../../src/connectors/catalog/types.ts";
 import type { Runtime } from "../../src/runtime/runtime.ts";
 import { createManageConnectorsTool } from "../../src/tools/connector-tools.ts";
 import {
@@ -111,11 +110,9 @@ function writeCatalog(url: string): void {
   );
 }
 
-function entry(url: string): DirectoryEntry {
+function entry(url: string): CatalogListing {
   return {
     id: ENTRY_ID,
-    registryId: "bundled-static",
-    registryType: "static",
     name: "Acme DB Query",
     description: "Read-only queries against the workspace's own database",
     install: {
@@ -141,15 +138,13 @@ function connectorMcpDeps(wsId: string): ConnectorMcpDeps {
 }
 
 function tool() {
-  const registryStore = new RegistryStore(workDir);
   const runtime = {
     getWorkDir: () => workDir,
     getCredentialStore: () => store,
     getEventSink: () => new NoopEventSink(),
     getWorkspaceStore: () => workspaceStore,
     getWorkspaceContext: (id: string) => new WorkspaceContext({ wsId: id, workDir }),
-    getRegistryStore: () => registryStore,
-    getConnectorDirectory: () => new ConnectorDirectory(registryStore),
+    getConnectorCatalog: () => new ConnectorCatalog(catalogDir),
     getLifecycle: () => lifecycle,
     getRegistryForWorkspace: (_id: string) => workspaceRegistry,
     getPermissionStore: () => ({ deleteConnector: async () => {} }),
@@ -170,22 +165,6 @@ beforeEach(async () => {
   catalogDir = mkdtempSync(join(tmpdir(), "nb-secret-conn-catalog-"));
   upstream = startFakeConnectorServer(["query"]);
   writeCatalog(upstream.url);
-  writeFileSync(
-    join(workDir, "registries.json"),
-    JSON.stringify({
-      registries: [
-        {
-          id: "bundled-static",
-          name: "Curated services",
-          type: "static",
-          enabled: true,
-          locked: true,
-          url: catalogDir,
-        },
-        { id: "mpak", name: "mpak.dev", type: "mpak", enabled: false },
-      ],
-    }),
-  );
   store = new FileCredentialStore(workDir);
   setCredentialStore(store);
   _resetCredentialProvidersForTest();

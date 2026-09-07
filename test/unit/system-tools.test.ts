@@ -22,8 +22,7 @@ import {
 import type { ConfirmationGate } from "../../src/config/privilege.ts";
 import { resolveFeatures } from "../../src/config/features.ts";
 import { isToolEligibleForPromotion } from "../../src/runtime/tool-eligibility.ts";
-import { ConnectorDirectory } from "../../src/registries/directory.ts";
-import { RegistryStore } from "../../src/registries/registry-store.ts";
+import { ConnectorCatalog } from "../../src/connectors/catalog/catalog.ts";
 import type { Runtime } from "../../src/runtime/runtime.ts";
 
 const noopSink = new NoopEventSink();
@@ -854,8 +853,8 @@ describe("search — feature flag gating", () => {
 	it("scope=tools returns error when toolDiscovery is disabled", async () => {
 		const registry = await makeRegistry();
 		const features = {
-			bundleManagement: true, skillManagement: true,
-			toolDiscovery: false, bundleDiscovery: true,
+			skillManagement: true,
+			toolDiscovery: false, catalogSearch: true,
 			fileContext: true, userManagement: true, workspaceManagement: true,
 		};
 		const systemTools = await createSystemTools(
@@ -868,11 +867,11 @@ describe("search — feature flag gating", () => {
 		expect(extractText(result.content)).toContain("disabled");
 	});
 
-	it("scope=registry returns error when bundleDiscovery is disabled", async () => {
+	it("scope=catalog returns error when catalogSearch is disabled", async () => {
 		const registry = await makeRegistry();
 		const features = {
-			bundleManagement: true, skillManagement: true,
-			toolDiscovery: true, bundleDiscovery: false,
+			skillManagement: true,
+			toolDiscovery: true, catalogSearch: false,
 			fileContext: true, userManagement: true, workspaceManagement: true,
 		};
 		const systemTools = await createSystemTools(
@@ -880,7 +879,7 @@ describe("search — feature flag gating", () => {
 			undefined, undefined, undefined, undefined, undefined, undefined,
 			undefined, undefined, features,
 		);
-		const result = await systemTools.execute("search", { scope: "registry", query: "test" });
+		const result = await systemTools.execute("search", { scope: "catalog", query: "test" });
 		expect(result.isError).toBe(true);
 		expect(extractText(result.content)).toContain("disabled");
 	});
@@ -888,8 +887,8 @@ describe("search — feature flag gating", () => {
 	it("scope=tools works when toolDiscovery is enabled", async () => {
 		const registry = await makeRegistry();
 		const features = {
-			bundleManagement: true, skillManagement: true,
-			toolDiscovery: true, bundleDiscovery: false,
+			skillManagement: true,
+			toolDiscovery: true, catalogSearch: false,
 			fileContext: true, userManagement: true, workspaceManagement: true,
 		};
 		const systemTools = await createSystemTools(
@@ -903,10 +902,10 @@ describe("search — feature flag gating", () => {
 });
 
 // ---------------------------------------------------------------------------
-// search — scope: registry (publisher scoping through ConnectorDirectory)
+// search — scope: registry (publisher scoping through ConnectorCatalog)
 // ---------------------------------------------------------------------------
 
-describe("search — scope: registry", () => {
+describe("search — scope: catalog", () => {
 	let workDir: string | undefined;
 
 	afterEach(() => {
@@ -930,44 +929,14 @@ describe("search — scope: registry", () => {
 		},
 	];
 
-	/**
-	 * Build a runtime whose ConnectorDirectory is backed by one curated
-	 * registry with the given scopes (omit for an unscoped registry).
-	 */
-	function runtimeWithCatalog(scopes?: string[], servers = TWO_SERVERS): Runtime {
-		workDir = mkdtempSync(join(tmpdir(), "nb-search-registry-"));
-		const catalog = join(workDir, "catalog.json");
-		writeFileSync(catalog, JSON.stringify({ servers }));
-		writeFileSync(
-			join(workDir, "registries.json"),
-			JSON.stringify({
-				// Disabled `bundled-static` placeholder: the store injects one
-				// pointing at the shipped catalog when it is missing, which would
-				// add entries no test asked for.
-				registries: [
-					{
-						id: "bundled-static",
-						name: "Curated services",
-						type: "static",
-						enabled: false,
-						locked: true,
-						url: join(workDir, "missing-on-purpose.yaml"),
-					},
-					{
-						id: "curated",
-						name: "Curated catalog",
-						type: "static",
-						enabled: true,
-						url: catalog,
-						...(scopes ? { scopes } : {}),
-					},
-				],
-			}),
-		);
-		const store = new RegistryStore(workDir);
+	/** Build a runtime whose ConnectorCatalog reads a directory holding `servers`. */
+	function runtimeWithCatalog(servers = TWO_SERVERS): Runtime {
+		workDir = mkdtempSync(join(tmpdir(), "nb-search-catalog-"));
+		const catalogDir = join(workDir, "catalog");
+		mkdirSync(catalogDir);
+		writeFileSync(join(catalogDir, "catalog.json"), JSON.stringify({ servers }));
 		return {
-			getConnectorDirectory: () => new ConnectorDirectory(store),
-			getRegistryStore: () => store,
+			getConnectorCatalog: () => new ConnectorCatalog(catalogDir),
 		} as unknown as Runtime;
 	}
 
@@ -986,11 +955,11 @@ describe("search — scope: registry", () => {
 			undefined,
 			runtime,
 		);
-		return systemTools.execute("search", { scope: "registry", query });
+		return systemTools.execute("search", { scope: "catalog", query });
 	}
 
-	it("renders an in-scope server as **<id>** (<name>)", async () => {
-		const result = await search(runtimeWithCatalog(["ai.nimblebrain"]), "ipinfo");
+	it("renders a matching server as **<id>** (<name>)", async () => {
+		const result = await search(runtimeWithCatalog(), "ipinfo");
 		expect(result.isError).toBe(false);
 		const text = extractText(result.content);
 		expect(text).toContain("ai.nimblebrain/ipinfo");
@@ -998,12 +967,12 @@ describe("search — scope: registry", () => {
 	});
 
 	it("does not surface a packages-only entry — Browse drops it as not installable", async () => {
-		// The agent's registry view is the projected directory, so it can never
+		// The agent's catalog view is the projected catalog, so it can never
 		// find (and try to install) a server the catalog already refused. Matching
 		// pre-projection also matched on `packages[].identifier`, naming code this
 		// runtime does not download.
 		const result = await search(
-			runtimeWithCatalog(undefined, [
+			runtimeWithCatalog([
 				{
 					name: "com.acme/cli",
 					description: "A downloadable CLI",
@@ -1018,73 +987,42 @@ describe("search — scope: registry", () => {
 		expect(extractText(result.content)).toContain("No servers found");
 	});
 
-	it("drops servers from other publishers even when the name matches", async () => {
-		// "asana" matches dev.acme/asana by name, but it's out of scope for the
-		// ai.nimblebrain-scoped registry.
-		const result = await search(runtimeWithCatalog(["ai.nimblebrain"]), "asana");
-		const text = extractText(result.content);
-		expect(text).not.toContain("dev.acme/asana");
-		expect(text).toContain("No servers found");
-	});
-
-	it("an unscoped registry surfaces all publishers", async () => {
-		const result = await search(runtimeWithCatalog(undefined), "asana");
+	it("surfaces every publisher the catalog carries", async () => {
+		const result = await search(runtimeWithCatalog(), "asana");
 		expect(extractText(result.content)).toContain("dev.acme/asana");
 	});
 
-	it("searches every enabled source, not just one type", async () => {
-		// The agent's registry view is the same set Browse shows: whatever the
-		// enabled sources return, with no source-type filter narrowing it.
-		const result = await search(runtimeWithCatalog(undefined), "");
+	it("searches the whole catalog, not one file", async () => {
+		// The agent's catalog view is the same set Browse shows.
+		const result = await search(runtimeWithCatalog(), "");
 		const text = extractText(result.content);
 		expect(text).toContain("ai.nimblebrain/ipinfo");
 		expect(text).toContain("dev.acme/asana");
 	});
 
-	it("returns no results when there is no runtime (no directory to query)", async () => {
+	it("returns no results when there is no runtime (no catalog to query)", async () => {
 		const registry = await makeRegistry();
 		const systemTools = await createSystemTools(() => registry);
-		const result = await systemTools.execute("search", { scope: "registry", query: "ipinfo" });
+		const result = await systemTools.execute("search", { scope: "catalog", query: "ipinfo" });
 		expect(result.isError).toBe(false);
 		expect(extractText(result.content)).toContain("No servers found");
 	});
 
-	it("reports failure (not 'No servers found') when every source errored", async () => {
-		// servers() aggregates a source failure into errors instead of throwing;
-		// the handler must not mistake an outage for an empty result and tell the
-		// agent the server doesn't exist.
-		workDir = mkdtempSync(join(tmpdir(), "nb-search-registry-"));
+	it("reports failure (not 'No servers found') when the catalog cannot be read", async () => {
+		// The read collects a file-level failure into errors instead of throwing;
+		// the handler must not mistake that for an empty result and tell the agent
+		// the server doesn't exist.
+		workDir = mkdtempSync(join(tmpdir(), "nb-search-catalog-"));
 		const unreadable = join(workDir, "unreadable");
 		mkdirSync(unreadable);
 		chmodSync(unreadable, 0o000);
-		writeFileSync(
-			join(workDir, "registries.json"),
-			JSON.stringify({
-				// The store auto-injects a `bundled-static` row pointing at the
-				// shipped catalog when one is missing; a disabled placeholder keeps
-				// it from supplying entries the broken source is meant to be alone with.
-				registries: [
-					{
-						id: "bundled-static",
-						name: "Curated services",
-						type: "static",
-						enabled: false,
-						locked: true,
-						url: join(workDir, "missing-on-purpose.yaml"),
-					},
-					{ id: "broken", name: "Broken", type: "static", enabled: true, url: unreadable },
-				],
-			}),
-		);
-		const store = new RegistryStore(workDir);
 		const runtime = {
-			getConnectorDirectory: () => new ConnectorDirectory(store),
-			getRegistryStore: () => store,
+			getConnectorCatalog: () => new ConnectorCatalog(unreadable),
 		} as unknown as Runtime;
 		try {
 			const result = await search(runtime, "asana");
 			expect(result.isError).toBe(true);
-			expect(extractText(result.content)).toContain("Failed to search the connector registries");
+			expect(extractText(result.content)).toContain("Failed to search the connector catalog");
 		} finally {
 			chmodSync(unreadable, 0o700);
 		}

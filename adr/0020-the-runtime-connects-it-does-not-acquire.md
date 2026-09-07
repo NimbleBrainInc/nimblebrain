@@ -34,15 +34,15 @@ OAuth, and overlay-lock fields that describe how to reach that URL and who it
 speaks as. There is no by-name and no by-path variant, because there is nothing
 to resolve a name or a path into.
 
-**Discovery is a catalog, behind one source interface.** `ConnectorSource`
-(`src/registries/types.ts`) does one thing: `fetch()` returns raw upstream
-`ServerDetail` entries for its instance. Everything uniform — scope filtering,
-safety scrubbing, projection, deduplication, error aggregation — lives once in
-the `ConnectorDirectory` facade, so callers ask the directory and never
-construct or aggregate sources by hand. `RegistryType` is an open string keyed
-into a source-factory map rather than a closed enum, so a new source is one
-factory entry and one file rather than an enum edit that ripples through every
-`switch` that ever matched on it.
+**Discovery is a catalog: one directory of upstream `ServerDetail` files.**
+`ConnectorCatalog` (`src/connectors/catalog/`) reads the directory
+`NB_CURATED_CATALOG_DIR` names, and everything uniform — validation, safety
+scrubbing, projection, deduplication, per-file error reporting — lives there
+once, so callers ask the catalog and never assemble entries by hand. The
+extension point is the directory itself rather than an interface: whatever
+writes `ServerDetail` files into it — a GitOps ConfigMap, an operator, a job
+mirroring an upstream index — feeds the catalog without runtime code, because
+the file format is already the ecosystem's.
 
 **An entry that only describes a package is not installable.** A `packages[]`-only
 `ServerDetail` describes code to download, which this runtime does not do, so it

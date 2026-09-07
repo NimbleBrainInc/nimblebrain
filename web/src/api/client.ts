@@ -3,12 +3,12 @@ import type {
   ComposioConnectField,
   ComposioConnectorConfig,
   SecretHeaderRef,
-} from "../_generated/connector-registry/connectors/catalog/server-detail";
+} from "../_generated/connector-catalog/connectors/catalog/server-detail";
 import type {
+  CatalogListing,
   ConnectorCatalogEntry,
-  DirectoryEntry,
   RemoteOAuthInstall,
-} from "../_generated/connector-registry/registries/types";
+} from "../_generated/connector-catalog/connectors/catalog/types";
 import type { ToolInput } from "../_generated/platform-schemas/catalog";
 import { addAuthBreadcrumb, captureLogout, setSentryWorkspace } from "../sentry";
 import type {
@@ -805,7 +805,7 @@ export async function listPersonalConnectors(): Promise<{ connectors: PersonalCo
  * `/profile`, which has no active workspace); the server filters to DCR
  * connectors the caller hasn't already installed on their identity.
  */
-export async function listPersonalCatalog(): Promise<{ catalog: DirectoryEntry[] }> {
+export async function listPersonalCatalog(): Promise<{ catalog: CatalogListing[] }> {
   const result = await callTool("nb", "manage_connectors", {
     action: "list_personal_catalog",
   });
@@ -909,7 +909,7 @@ export async function uninstallConnector(
 }
 
 /**
- * Install a connector. Pass the full `DirectoryEntry` the user clicked.
+ * Install a connector. Pass the full `CatalogListing` the user clicked.
  * The connector installs into the workspace the shell is currently in —
  * the `X-Workspace-Id` header `callTool` already sends (set from the
  * `/w/<slug>` route). That's the same workspace every follow-up call
@@ -921,7 +921,7 @@ export async function uninstallConnector(
  * for remote-OAuth installs.
  */
 export async function installConnector(
-  entry: DirectoryEntry,
+  entry: CatalogListing,
   wsId?: string,
 ): Promise<{
   ok: boolean;
@@ -950,7 +950,7 @@ export async function installConnector(
  * initiate (`initiateIdentityConnect` / `initiateComposioIdentityConnect`).
  */
 export async function installPersonalConnector(
-  entry: DirectoryEntry,
+  entry: CatalogListing,
 ): Promise<{ ok: boolean; alreadyInstalled?: boolean; serverName: string; scope: "identity" }> {
   const result = await callTool("nb", "manage_connectors", {
     action: "install",
@@ -998,21 +998,21 @@ export async function listWorkspaceSecretKeys(): Promise<{ keys: WorkspaceSecret
  * The connector-directory wire shapes, as the server declares them.
  *
  * These are re-exports, not declarations. The web shell held its own copies of
- * `DirectoryEntry` and `ConnectorCatalogEntry` and they drifted — `providerAuth`
+ * `CatalogListing` and `ConnectorCatalogEntry` and they drifted — `providerAuth`
  * and `secretHeaders` rode the wire for a release with neither field on the
  * client, so a whole credential class was invisible to the UI and nothing in the
- * build noticed. The `_generated/connector-registry` tree comes from
- * `src/registries/types.ts` via `bun run codegen`, and `check:codegen` fails CI
+ * build noticed. The `_generated/connector-catalog` tree comes from
+ * `src/connectors/catalog/types.ts` via `bun run codegen`, and `check:codegen` fails CI
  * when the server type moves without a regen.
  *
  * `ComposioConfig` / `ComposioField` keep their shell-side names because the
  * components read better for it; the shapes are the server's.
  */
 export type {
+  CatalogListing,
   ComposioConnectField as ComposioField,
   ComposioConnectorConfig as ComposioConfig,
   ConnectorCatalogEntry,
-  DirectoryEntry,
   RemoteOAuthInstall,
   SecretHeaderRef,
 };
@@ -1024,8 +1024,8 @@ export interface ConnectorTool {
 }
 
 export interface DirectoryResult {
-  entries: DirectoryEntry[];
-  errors: Array<{ registryId: string; message: string }>;
+  entries: CatalogListing[];
+  errors: Array<{ file: string; message: string }>;
 }
 
 export async function listDirectory(): Promise<DirectoryResult> {
@@ -1083,31 +1083,6 @@ export async function getOAuthRedirectUri(): Promise<{ redirectUri: string }> {
     action: "get_redirect_uri",
   });
   return unwrapStructured(result, "get_redirect_uri");
-}
-
-export interface RegistryConfig {
-  id: string;
-  name: string;
-  type: string;
-  enabled: boolean;
-  url?: string;
-  locked?: boolean;
-}
-
-export async function listRegistries(): Promise<{ registries: RegistryConfig[] }> {
-  const result = await callTool("nb", "manage_registries", { action: "list" });
-  return unwrapStructured(result, "list");
-}
-
-export async function setRegistryEnabled(
-  id: string,
-  enabled: boolean,
-): Promise<{ ok: boolean; registry: RegistryConfig }> {
-  const result = await callTool("nb", "manage_registries", {
-    action: enabled ? "enable" : "disable",
-    id,
-  });
-  return unwrapStructured(result, enabled ? "enable" : "disable");
 }
 
 export type ToolPolicy = "allow" | "disallow";

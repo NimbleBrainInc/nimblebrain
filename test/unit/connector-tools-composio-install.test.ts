@@ -84,8 +84,7 @@ mock.module("@composio/core", () => ({
 // the mocks resolve first even though they appear textually above —
 // keeping the order explicit makes the precondition obvious to a
 // future reader.
-import { ConnectorDirectory } from "../../src/registries/directory.ts";
-import { RegistryStore } from "../../src/registries/registry-store.ts";
+import { ConnectorCatalog } from "../../src/connectors/catalog/catalog.ts";
 import { ConnectorLifecycleManager } from "../../src/connectors/runtime/lifecycle.ts";
 import type { ConnectorRef } from "../../src/connectors/runtime/types.ts";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
@@ -118,16 +117,14 @@ import {
 //
 // The composio install branch reads the catalog entry shape:
 // auth=composio + composio.toolkit. Synthesized as
-// a `DirectoryEntry` per the install-handler signature.
+// a `CatalogListing` per the install-handler signature.
 
 const GMAIL_ID = "com.google/gmail";
 const GMAIL_URL = "https://backend.composio.dev/v3/mcp";
 
-function gmailEntry(): import("../../src/registries/types.ts").DirectoryEntry {
+function gmailEntry(): import("../../src/connectors/catalog/types.ts").CatalogListing {
   return {
     id: GMAIL_ID,
-    registryId: "bundled-static",
-    registryType: "static",
     name: "Gmail",
     description: "Read, send, and draft mail",
     install: {
@@ -163,24 +160,6 @@ function buildHarness(): Harness {
   const wsId = "ws_test";
   const workspaceStore = new WorkspaceStore(workDir);
 
-  // Disable mpak in the test registry config to keep the test
-  // offline. Same reason as in connector-tools.test.ts.
-  writeFileSync(
-    join(workDir, "registries.json"),
-    JSON.stringify({
-      registries: [
-        {
-          id: "bundled-static",
-          name: "Curated",
-          type: "static",
-          enabled: true,
-          locked: true,
-          url: join(workDir, "empty-catalog.yaml"),
-        },
-        { id: "mpak", name: "mpak", type: "mpak", enabled: false },
-      ],
-    }),
-  );
   // The catalog must PUBLISH the entry: a brokered install is permitted only
   // for a connector the operator's own catalog names, so an empty catalog now
   // (correctly) rejects every one. Mirrors a real deployment pointing
@@ -204,7 +183,6 @@ function buildHarness(): Harness {
       "",
     ].join("\n"),
   );
-  const registryStore = new RegistryStore(workDir);
   const lifecycle = new ConnectorLifecycleManager(new NoopEventSink());
   // What Runtime wires at startup. Delegating rather than snapshotting because
   // these tests move `COMPOSIO_API_KEY` between cases, and a snapshot taken at
@@ -220,8 +198,7 @@ function buildHarness(): Harness {
     getWorkDir: () => workDir,
     getCredentialStore: () => credStore,
     getWorkspaceStore: () => workspaceStore,
-    getRegistryStore: () => registryStore,
-    getConnectorDirectory: () => new ConnectorDirectory(registryStore),
+    getConnectorCatalog: () => new ConnectorCatalog(join(workDir, "empty-catalog.yaml")),
     getLifecycle: () => lifecycle,
     getRegistryForWorkspace: () => workspaceRegistry,
     getAllowInsecureRemotes: () => false,
@@ -485,7 +462,7 @@ describe("manage_connectors.install (composio-auth)", () => {
 
   // The overlay identity is interpolated into the curated repo's fetch path, so
   // whatever chooses it chooses which repository is read. It must come from the
-  // operator's catalog, never from the caller's action — `parseDirectoryEntry`
+  // operator's catalog, never from the caller's action — `parseCatalogListing`
   // strips no unknown install fields, and a `dcr` action is returned verbatim,
   // so a `composio` block on a non-composio entry is caller input all the way
   // through.
@@ -501,8 +478,6 @@ describe("manage_connectors.install (composio-auth)", () => {
     try {
       const forged = {
         id: "com.evil/mcp",
-        registryId: "bundled-static",
-        registryType: "static",
         name: "Evil",
         description: "Not in the catalog",
         install: {
@@ -511,7 +486,7 @@ describe("manage_connectors.install (composio-auth)", () => {
           auth: "dcr",
           composio: { toolkit: "../../../evil-org/evil-repo/main/payload" },
         },
-      } as unknown as import("../../src/registries/types.ts").DirectoryEntry;
+      } as unknown as import("../../src/connectors/catalog/types.ts").CatalogListing;
 
       await buildTool(h).handler({ action: "install", entry: forged, wsId: h.wsId });
 

@@ -8,7 +8,7 @@ import { textContent } from "../../src/engine/content-helpers.ts";
 import type { ToolResult } from "../../src/engine/types.ts";
 import type { UserIdentity } from "../../src/identity/provider.ts";
 import { PermissionStore } from "../../src/permissions/permission-store.ts";
-import { RegistryStore } from "../../src/registries/registry-store.ts";
+import { installTestCredentialStore } from "../helpers/credential-store.ts";
 import type { Runtime } from "../../src/runtime/runtime.ts";
 import {
   createManageConnectorsTool,
@@ -78,8 +78,7 @@ interface Harness {
   workDir: string;
   wsId: string;
   workspaceStore: WorkspaceStore;
-  credStore: FileCredentialStore;
-  registryStore: RegistryStore;
+  credStore: CredentialStore;
   permissionStore: PermissionStore;
   lifecycle: ConnectorLifecycleManager;
   registry: ToolRegistry;
@@ -91,8 +90,7 @@ async function buildHarness(): Promise<Harness> {
   const workDir = mkdtempSync(join(tmpdir(), "nb-policy-e2e-"));
   const wsId = "ws_acme";
   const workspaceStore = new WorkspaceStore(workDir);
-  const credStore = new FileCredentialStore(workDir);
-  const registryStore = new RegistryStore(workDir);
+  const credStore = installTestCredentialStore(workDir);
   const permissionStore = new PermissionStore(workDir);
   const lifecycle = new ConnectorLifecycleManager(new NoopEventSink());
   const registry = new ToolRegistry();
@@ -123,7 +121,6 @@ async function buildHarness(): Promise<Harness> {
       getWorkDir: () => workDir,
       getCredentialStore: () => credStore,
       getWorkspaceStore: () => workspaceStore,
-      getRegistryStore: () => registryStore,
       getPermissionStore: () => permissionStore,
       getLifecycle: () => lifecycle,
       getRegistryForWorkspace: () => registry,
@@ -138,7 +135,6 @@ async function buildHarness(): Promise<Harness> {
     wsId,
     workspaceStore,
     credStore,
-    registryStore,
     permissionStore,
     lifecycle,
     registry,

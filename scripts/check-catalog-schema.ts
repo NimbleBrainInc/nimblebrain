@@ -19,7 +19,7 @@
  * exact failure has shipped four times, always on `description`, which
  * upstream caps at 100 characters.
  *
- * It runs the real `validateStaticCatalog` rather than a second
+ * It runs the real `validateCatalog` rather than a second
  * validator, so the gate cannot drift from what production does — if
  * this passes, the runtime keeps every entry.
  *
@@ -31,7 +31,7 @@
  *   bun run check:catalog-schema          # the in-repo example catalog
  */
 
-import { validateStaticCatalog } from "../src/registries/static-source.ts";
+import { validateCatalog } from "../src/connectors/catalog/read.ts";
 
 function main(): void {
   const path = process.argv[2];
@@ -40,7 +40,7 @@ function main(): void {
     process.exit(2);
   }
 
-  const diagnostics = validateStaticCatalog(path);
+  const diagnostics = validateCatalog(path);
   if (diagnostics.length === 0) {
     console.log(`✓ ${path}: every entry reaches Browse (schema, safety, installable)`);
     return;

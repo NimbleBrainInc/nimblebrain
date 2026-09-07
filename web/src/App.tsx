@@ -53,7 +53,6 @@ import { ConnectorBrowsePage } from "./pages/settings/ConnectorBrowsePage";
 import { ConnectorDetailPage } from "./pages/settings/ConnectorDetailPage";
 import { ModelTab } from "./pages/settings/ModelTab";
 import { OrgAboutTab } from "./pages/settings/OrgAboutTab";
-import { OrgRegistriesTab } from "./pages/settings/OrgRegistriesTab";
 import { OrgSettingsPage } from "./pages/settings/OrgSettingsPage";
 import { OrgSkillsTab } from "./pages/settings/OrgSkillsTab";
 import { OrgUsageTab } from "./pages/settings/OrgUsageTab";
@@ -478,7 +477,7 @@ function AuthenticatedAppContent({
 
             {/* Organization settings — dedicated top-level home, org-admin
                 scoped. Everything here affects the org as a whole (global
-                model config, the full workspace/user roster, registries), so
+                model config, the full workspace/user roster), so
                 it lives outside any workspace URL. About is role-exempt. */}
             <Route path="/org" element={<OrgSettingsPage />}>
               <Route index element={<Navigate to="/org/workspaces" replace />} />
@@ -519,14 +518,6 @@ function AuthenticatedAppContent({
                 element={
                   <RouteGuard requireRole="org_admin">
                     <OrgUsageTab />
-                  </RouteGuard>
-                }
-              />
-              <Route
-                path="registries"
-                element={
-                  <RouteGuard requireRole="org_admin">
-                    <OrgRegistriesTab />
                   </RouteGuard>
                 }
               />

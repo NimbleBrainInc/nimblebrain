@@ -80,8 +80,7 @@ import { _resetComposioConfigForTest } from "../../src/connectors/providers/comp
 import { connectComposioApiKey } from "../../src/connectors/providers/composio/sdk.ts";
 import { buildManagedConnectorRegistry } from "../../src/connectors/providers/registry.ts";
 import type { UserIdentity } from "../../src/identity/provider.ts";
-import { ConnectorDirectory } from "../../src/registries/directory.ts";
-import { RegistryStore } from "../../src/registries/registry-store.ts";
+import { ConnectorCatalog } from "../../src/connectors/catalog/catalog.ts";
 import type { Runtime } from "../../src/runtime/runtime.ts";
 import {
   createManageConnectorsTool,
@@ -165,31 +164,13 @@ function buildHarness(): Harness {
   const workspaceStore = new WorkspaceStore(workDir);
   const catalogPath = join(workDir, "catalog.yaml");
   writeFileSync(catalogPath, CATALOG_YAML);
-  writeFileSync(
-    join(workDir, "registries.json"),
-    JSON.stringify({
-      registries: [
-        {
-          id: "bundled-static",
-          name: "Curated",
-          type: "static",
-          enabled: true,
-          locked: true,
-          url: catalogPath,
-        },
-        { id: "mpak", name: "mpak", type: "mpak", enabled: false },
-      ],
-    }),
-  );
-  const registryStore = new RegistryStore(workDir);
   const lifecycle = new ConnectorLifecycleManager(new NoopEventSink());
   const workspaceRegistry = new ToolRegistry();
 
   const runtime = {
     getWorkDir: () => workDir,
     getWorkspaceStore: () => workspaceStore,
-    getRegistryStore: () => registryStore,
-    getConnectorDirectory: () => new ConnectorDirectory(registryStore),
+    getConnectorCatalog: () => new ConnectorCatalog(catalogPath),
     getLifecycle: () => lifecycle,
     getRegistryForWorkspace: () => workspaceRegistry,
     getAllowInsecureRemotes: () => false,
@@ -424,7 +405,7 @@ function stubCtx(opts: {
         connectors: opts.connectors ?? [],
       }),
     }),
-    getConnectorDirectory: () => ({
+    getConnectorCatalog: () => ({
       catalogById: async (id: string) =>
         opts.entry && (opts.entry as { id: string }).id === id ? opts.entry : null,
     }),

@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { sanitizePlacements } from "../../src/connectors/runtime/defaults.ts";
 import type { PlacementDeclaration } from "../../src/connectors/runtime/types.ts";
 import type { ServerDetail } from "../../src/connectors/catalog/server-detail.ts";
-import { serverDetailToCatalogEntry } from "../../src/registries/projection.ts";
+import { serverDetailToCatalogEntry } from "../../src/connectors/catalog/projection.ts";
 import { PlacementRegistry } from "../../src/runtime/placement-registry.ts";
 
 // A fleet connector ServerDetail with a host-placement _meta block, mirroring

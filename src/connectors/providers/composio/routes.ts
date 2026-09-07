@@ -13,7 +13,7 @@ import { slugifyServerName } from "../../../connectors/runtime/paths.ts";
 import { type ConnectorOwner, connectorOwnerKey } from "../../../identity/connector-owner.ts";
 import { IdentityConnectorStore } from "../../../identity/connector-store.ts";
 import { log } from "../../../observability/log.ts";
-import type { ConnectorCatalogEntry } from "../../../registries/types.ts";
+import type { ConnectorCatalogEntry } from "../../catalog/types.ts";
 import { composioAuthConfigId, validateComposioConfig } from "./config.ts";
 import { consumeConnectFlow, registerConnectFlow } from "./connect-flow-registry.ts";
 import { type ComposioConnection, saveComposioConnection } from "./connection.ts";
@@ -283,7 +283,7 @@ async function loadInitiateCatalogEntry(
   ctx: AppContext,
   connectorId: string,
 ): Promise<ComposioCatalogEntry | Response> {
-  const directory = ctx.runtime.getConnectorDirectory();
+  const directory = ctx.runtime.getConnectorCatalog();
   const entry = await directory.catalogById(connectorId);
   if (!entry) {
     return apiError(404, "connector_not_found", `Connector "${connectorId}" not in catalog.`);
@@ -617,7 +617,7 @@ async function loadCallbackCatalogEntry(
   c: Context<AppEnv>,
   cid: string,
 ): Promise<ComposioCatalogEntry | Response> {
-  const directory = ctx.runtime.getConnectorDirectory();
+  const directory = ctx.runtime.getConnectorCatalog();
   const entry = await directory.catalogById(cid);
   if (!entry || entry.auth !== "composio" || !entry.composio) {
     return c.text(`connector "${cid}" is not Composio-backed`, 400);

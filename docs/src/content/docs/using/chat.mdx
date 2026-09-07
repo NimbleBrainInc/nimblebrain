@@ -46,7 +46,7 @@ The agent has access to:
 
 | Tool | Purpose |
 |------|---------|
-| `nb__search` | Search installed tools (`scope: "tools"`) or the connector registries (`scope: "registry"`) |
+| `nb__search` | Search installed tools (`scope: "tools"`) or the connector catalog (`scope: "catalog"`) |
 | `nb__status` | Platform status; `scope: "connectors"` for per-connector health, `scope: "skills"` for loaded skills |
 
 The agent also has identity-level tools for managing your apps, connectors, conversations, files, and automations. It uses these when you ask it to install a capability or set up a scheduled run.
@@ -114,7 +114,7 @@ For example, with a calendar app open, asking "What's on my schedule?" leads the
 
 - **Be specific about what you want.** "Search for MCP servers related to Slack" works better than "find me something."
 - **Name the app when relevant.** If you have multiple apps installed, say "Use Granola to list my meetings" rather than just "list my meetings."
-- **Ask the agent to install what it needs.** The agent can search the connector registries and install a connector on its own.
+- **Ask the agent to install what it needs.** The agent can search the connector catalog and install a connector on its own.
 
 ## Cost transparency
 

@@ -25,9 +25,8 @@ import {
 import { buildManagedConnectorRegistry } from "../../src/connectors/providers/registry.ts";
 import { _resetSmitheryConfigForTest } from "../../src/connectors/providers/smithery/config.ts";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
-import { ConnectorDirectory } from "../../src/registries/directory.ts";
-import { RegistryStore } from "../../src/registries/registry-store.ts";
-import type { DirectoryEntry } from "../../src/registries/types.ts";
+import { ConnectorCatalog } from "../../src/connectors/catalog/catalog.ts";
+import type { CatalogListing } from "../../src/connectors/catalog/types.ts";
 import type { Runtime } from "../../src/runtime/runtime.ts";
 import {
   createManageConnectorsTool,
@@ -40,12 +39,11 @@ const BASSETHOUND_ID = "ai.bassethound/mcp";
 const SERVER = "nimblebrain/bassethound";
 const ADMIN = { id: "usr_admin", name: "Admin", email: "admin@test" };
 
-function bassethoundEntry(): DirectoryEntry {
+function bassethoundEntry(): CatalogListing {
   return {
     id: BASSETHOUND_ID,
     name: "Bassethound",
     description: "Company intelligence for AI agents",
-    registryId: "bundled-static",
     install: {
       kind: "remote-oauth",
       url: "https://mcp.bassethound.ai/mcp",
@@ -53,7 +51,7 @@ function bassethoundEntry(): DirectoryEntry {
       auth: "smithery",
       smithery: { server: SERVER },
     },
-  } as unknown as DirectoryEntry;
+  } as unknown as CatalogListing;
 }
 
 interface Harness {
@@ -67,22 +65,6 @@ function buildHarness(): Harness {
   const workDir = mkdtempSync(join(tmpdir(), "nb-smithery-install-"));
   const wsId = "ws_test";
   const workspaceStore = new WorkspaceStore(workDir);
-  writeFileSync(
-    join(workDir, "registries.json"),
-    JSON.stringify({
-      registries: [
-        {
-          id: "bundled-static",
-          name: "Curated",
-          type: "static",
-          enabled: true,
-          locked: true,
-          url: join(workDir, "catalog.yaml"),
-        },
-        { id: "mpak", name: "mpak", type: "mpak", enabled: false },
-      ],
-    }),
-  );
   // The catalog must PUBLISH the entry: a smithery install is permitted only for
   // a server the operator's own catalog names, so an empty catalog would (now
   // correctly) reject every install. This mirrors a real deployment pointing
@@ -106,15 +88,13 @@ function buildHarness(): Harness {
       "",
     ].join("\n"),
   );
-  const registryStore = new RegistryStore(workDir);
   const lifecycle = new ConnectorLifecycleManager(new NoopEventSink());
   const workspaceRegistry = new ToolRegistry();
 
   const runtime = {
     getWorkDir: () => workDir,
     getWorkspaceStore: () => workspaceStore,
-    getRegistryStore: () => registryStore,
-    getConnectorDirectory: () => new ConnectorDirectory(registryStore),
+    getConnectorCatalog: () => new ConnectorCatalog(join(workDir, "catalog.yaml")),
     getLifecycle: () => lifecycle,
     getRegistryForWorkspace: () => workspaceRegistry,
     getAllowInsecureRemotes: () => false,

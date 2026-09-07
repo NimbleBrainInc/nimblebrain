@@ -6,9 +6,8 @@ import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import { ConnectorLifecycleManager } from "../../src/connectors/runtime/lifecycle.ts";
 import { IdentityConnectorStore } from "../../src/identity/connector-store.ts";
 import type { UserIdentity } from "../../src/identity/provider.ts";
-import { ConnectorDirectory } from "../../src/registries/directory.ts";
-import { RegistryStore } from "../../src/registries/registry-store.ts";
-import type { DirectoryEntry } from "../../src/registries/types.ts";
+import { ConnectorCatalog } from "../../src/connectors/catalog/catalog.ts";
+import type { CatalogListing } from "../../src/connectors/catalog/types.ts";
 import type { Runtime } from "../../src/runtime/runtime.ts";
 import {
   createManageConnectorsTool,
@@ -44,11 +43,9 @@ const USER: UserIdentity = {
   preferences: {},
 };
 
-function dcrEntry(): DirectoryEntry {
+function dcrEntry(): CatalogListing {
   return {
     id: "ai.granola/mcp",
-    registryId: "bundled-static",
-    registryType: "static",
     name: "Granola",
     description: "Meeting notes",
     install: {
@@ -60,11 +57,9 @@ function dcrEntry(): DirectoryEntry {
   };
 }
 
-function composioEntry(): DirectoryEntry {
+function composioEntry(): CatalogListing {
   return {
     id: "com.example/gmail",
-    registryId: "bundled-static",
-    registryType: "static",
     name: "Gmail",
     description: "Email",
     install: {
@@ -77,11 +72,9 @@ function composioEntry(): DirectoryEntry {
   };
 }
 
-function unsupportedEntry(): DirectoryEntry {
+function unsupportedEntry(): CatalogListing {
   return {
     id: "dev.example/tool",
-    registryId: "bundled-static",
-    registryType: "static",
     name: "Some Tool",
     description: "A pasted-URL entry (the direct-url kind, not yet supported)",
     install: { kind: "direct-url", url: "https://tool.example.com/mcp" },
@@ -99,29 +92,10 @@ interface Harness {
 async function buildHarness(): Promise<Harness> {
   const workDir = mkdtempSync(join(tmpdir(), "nb-identity-install-"));
 
-  // Disable mpak so ConnectorDirectory doesn't try to fetch; serve the curated
-  // fixture catalog statically.
-  writeFileSync(
-    join(workDir, "registries.json"),
-    JSON.stringify({
-      registries: [
-        {
-          id: "bundled-static",
-          name: "Curated services",
-          type: "static",
-          enabled: true,
-          locked: true,
-          url: CONNECTOR_FIXTURE_DIR,
-        },
-        { id: "mpak", name: "mpak.dev", type: "mpak", enabled: false },
-      ],
-    }),
-  );
 
   const workspaceStore = new WorkspaceStore(workDir);
   const lifecycle = new ConnectorLifecycleManager(new NoopEventSink());
   const workspaceRegistry = new ToolRegistry();
-  const registryStore = new RegistryStore(workDir);
 
   // One shared workspace (admin) + the caller's personal workspace.
   await workspaceStore.create("Helix", "helix");
@@ -140,8 +114,7 @@ async function buildHarness(): Promise<Harness> {
     getWorkDir: () => workDir,
     getWorkspaceStore: () => workspaceStore,
     getWorkspaceContext: (id: string) => new WorkspaceContext({ wsId: id, workDir }),
-    getRegistryStore: () => registryStore,
-    getConnectorDirectory: () => new ConnectorDirectory(registryStore),
+    getConnectorCatalog: () => new ConnectorCatalog(CONNECTOR_FIXTURE_DIR),
     getLifecycle: () => lifecycle,
     getRegistryForWorkspace: (_id: string) => workspaceRegistry,
     getPermissionStore: () => ({
@@ -259,10 +232,8 @@ describe("manage_connectors.install scope:identity — DCR personal-connector in
     // A DCR entry whose id slugifies to `nb` would surface its tools as `nb__…`
     // in the trusted system band. Install refuses it at the boundary, so no
     // reserved-name record ever reaches connectors.json.
-    const reserved: DirectoryEntry = {
+    const reserved: CatalogListing = {
       id: "nb",
-      registryId: "bundled-static",
-      registryType: "static",
       name: "Reserved",
       description: "collides with the system-tool prefix",
       install: {

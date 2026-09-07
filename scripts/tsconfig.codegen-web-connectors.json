@@ -12,5 +12,5 @@
     "strict": true,
     "esModuleInterop": true
   },
-  "include": ["../src/registries/types.ts"]
+  "include": ["../src/connectors/catalog/types.ts"]
 }

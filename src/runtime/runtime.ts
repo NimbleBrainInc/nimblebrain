@@ -13,6 +13,11 @@ import { WorkspaceLogSink } from "../adapters/workspace-log-sink.ts";
 import { isToolVisibleToRole, type ResolvedFeatures, resolveFeatures } from "../config/features.ts";
 import { deriveOverridePath } from "../config/overrides.ts";
 import { createPrivilegeHook, NoopConfirmationGate } from "../config/privilege.ts";
+import {
+  ConnectorCatalog,
+  catalogPath,
+  warnIfCatalogEmpty,
+} from "../connectors/catalog/catalog.ts";
 import { registerGatewayCredentialProviders } from "../connectors/gateways/transport-credential.ts";
 import { bootAuditComposioAuthConfigs } from "../connectors/providers/composio/auth-config-audit.ts";
 import { registerComposioCredentialProvider } from "../connectors/providers/composio/transport-credential.ts";
@@ -128,8 +133,6 @@ import type {
   PromptAppInfo,
 } from "../prompt/compose.ts";
 import { composeSystemSegments } from "../prompt/compose.ts";
-import { ConnectorDirectory } from "../registries/directory.ts";
-import { RegistryStore, warnIfCuratedCatalogEmpty } from "../registries/registry-store.ts";
 import {
   type ActivatableSkill,
   collectActivatableSkills,
@@ -343,7 +346,6 @@ export class Runtime {
   private _workspaceStore: WorkspaceStore;
   private _permissionStore: PermissionStore | null = null;
   private _credentialStore: CredentialStore | null = null;
-  private _registryStore: RegistryStore | null = null;
   private _managedConnectorRegistry: ManagedConnectorRegistry | null = null;
   private _identityProvider: IdentityProvider | null;
   /** Getter for the current request identity — reads from AsyncLocalStorage. */
@@ -839,8 +841,8 @@ export class Runtime {
       updateWorkspaceConnectors: (wsId, connectors) => workspaceStore.update(wsId, { connectors }),
       syncBoundSkills: (identity, serverName, wsId, wd) =>
         lifecycle.syncBoundSkills(identity, serverName, wsId, wd),
-      catalogByIdMap: () => rt.getConnectorDirectory().catalogByIdMap(),
-      catalogByUrl: () => rt.getConnectorDirectory().catalogByUrl(),
+      catalogByIdMap: () => rt.getConnectorCatalog().catalogByIdMap(),
+      catalogByUrl: () => rt.getConnectorCatalog().catalogByUrl(),
     });
 
     // Report Composio auth-config wiring across the whole catalog. Resolution is
@@ -849,7 +851,7 @@ export class Runtime {
     // env fallback is unused (#789), or for catching an `authConfigs` key that
     // matches no toolkit. Read-only and best-effort.
     await bootAuditComposioAuthConfigs({
-      catalogEntries: () => rt.getConnectorDirectory().catalogEntries(),
+      catalogEntries: () => rt.getConnectorCatalog().catalogEntries(),
     });
 
     // Boot-time visibility: the locked curated registry is the platform's
@@ -857,7 +859,7 @@ export class Runtime {
     // path yields zero entries (missing/empty mount, mis-set
     // NB_CURATED_CATALOG_DIR) so an empty Browse is diagnosable rather
     // than silent.
-    await warnIfCuratedCatalogEmpty(rt.getRegistryStore());
+    await warnIfCatalogEmpty(rt.getConnectorCatalog());
 
     return rt;
   }
@@ -3666,7 +3668,7 @@ export class Runtime {
   async getNotificationsDeclaration(
     serverName: string,
   ): Promise<NotificationsDeclaration | undefined> {
-    const entries = await this.getConnectorDirectory().catalogEntries();
+    const entries = await this.getConnectorCatalog().catalogEntries();
     const entry = entries.find((e) => slugifyServerName(e.id) === serverName);
     return entry?.notifications;
   }
@@ -3686,7 +3688,7 @@ export class Runtime {
   ): Promise<Array<{ source: string; label: string; description?: string }>> {
     const registry = await this.ensureWorkspaceRegistry(wsId);
     const installed = new Set(registry.sourceNames());
-    const entries = await this.getConnectorDirectory().catalogEntries();
+    const entries = await this.getConnectorCatalog().catalogEntries();
     const out: Array<{ source: string; label: string; description?: string }> = [];
     for (const entry of entries) {
       if (!entry.notifications) continue;
@@ -3727,7 +3729,7 @@ export class Runtime {
         // (`slugifyServerName(entry.id) === serverName`). Deriving it rather
         // than storing a second copy is what keeps the two from disagreeing
         // after a catalog edit.
-        const entries = await this.getConnectorDirectory().catalogEntries();
+        const entries = await this.getConnectorCatalog().catalogEntries();
         const entry = entries.find((e) => slugifyServerName(e.id) === serverName);
         return entry?.hooks ?? [];
       },
@@ -3758,33 +3760,12 @@ export class Runtime {
   }
 
   /**
-   * Get the RegistryStore — instance-level config of which connector
-   * registries (curated / future) are enabled. Auto-seeds with
-   * sensible defaults on first read.
-   *
-   * Reserved for admin / mutation paths (the admin tool that updates
-   * `enabled` / `url` / `scopes`). Read-side callers should use
-   * `getConnectorDirectory()` instead — the directory facade owns the
-   * source-construction, scope filter, projection, and lookup tables
-   * uniformly.
+   * Build a fresh `ConnectorCatalog` — the one seam for where connectors
+   * come from. Per-request instance so its read cache lives exactly as
+   * long as the request that opened it.
    */
-  getRegistryStore(): RegistryStore {
-    if (!this._registryStore) {
-      this._registryStore = new RegistryStore(this.getWorkDir());
-    }
-    return this._registryStore;
-  }
-
-  /**
-   * Build a fresh `ConnectorDirectory` — the single read-side seam for
-   * everything connector-catalog-shaped (Browse rows, raw
-   * `ServerDetail[]`, lookup tables for Configure / installed-list).
-   * Returns a new instance per call so per-instance memoization stays
-   * scoped to one tool invocation; the underlying source caches (HTTP
-   * HTTP TTL, etc.) are still shared module-wide.
-   */
-  getConnectorDirectory(): ConnectorDirectory {
-    return new ConnectorDirectory(this.getRegistryStore());
+  getConnectorCatalog(): ConnectorCatalog {
+    return new ConnectorCatalog(catalogPath());
   }
 
   /**
