@@ -33,7 +33,7 @@ You only need to include flags you want to change. Omitted flags use their defau
 |------|---------|----------|---------------|
 | `skillManagement` | `true` | Create, edit, delete, and activate user skills | `skills__create`, `skills__update`, `skills__delete`, `skills__activate`, `skills__deactivate`, `skills__history`, `skills__restore`, `skills__set_status` |
 | `toolDiscovery` | `true` | Search installed tools by keyword | `nb__search` (`scope: "tools"`) |
-| `connectorDiscovery` | `true` | Search registries for connectors | `nb__search` (`scope: "registry"`) |
+| `connectorDiscovery` | `true` | The registry scope of `nb__search` (not the catalog itself — `manage_connectors` reads it ungated) | `nb__search` (`scope: "registry"`) |
 | `fileContext` | `true` | File upload and context extraction | File processing pipeline |
 | `userManagement` | `true` | Create, update, and delete users | `nb__manage_users` |
 | `workspaceManagement` | `true` | CRUD workspaces and manage members | `nb__manage_workspaces` |
@@ -52,5 +52,5 @@ Tools not listed in the table above are never gated by feature flags. They regis
 Feature flags are enforced at tool registration. A gated tool whose flag is `false` is excluded at startup — it never appears in `tools/list` for the LLM, the web shell, or external MCP clients, and a direct call to it is rejected. `compaction` is enforced differently: it changes engine behavior at run start rather than gating a tool.
 
 <Aside type="tip">
-Use feature flags to lock down a production deployment. For example, disable `skillManagement` to prevent the agent from mutating skills, or disable `connectorDiscovery` to keep the agent out of the registry, while leaving the rest of the platform intact.
+Use feature flags to narrow a deployment's tool surface — for example, disable `skillManagement` to stop the agent mutating skills. Treat them as tool-surface configuration, not as a security boundary: `connectorDiscovery` withholds `nb__search`'s registry scope, but `manage_connectors` reads the same catalog and is not feature-gated, so turning the flag off narrows how the agent reaches the registry rather than whether it can.
 </Aside>
