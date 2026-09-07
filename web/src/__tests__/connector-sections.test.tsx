@@ -837,7 +837,7 @@ describe("ComposioApiKeyModal", () => {
     expect(inputs[1]?.type).toBe("text"); // subdomain
   });
 
-  test("a missing required field blocks submit (no connect call, shows error)", async () => {
+  test("a missing required field leaves Connect disabled (no connect call)", async () => {
     mounted = await mount(
       <ComposioApiKeyModal
         catalogId="com.posthog/analytics"
@@ -848,14 +848,15 @@ describe("ComposioApiKeyModal", () => {
         onConnected={() => {}}
       />,
     );
+    const connect = findButton(mounted.container, "Connect");
+    expect(connect?.disabled).toBe(true);
     await act(async () => {
-      findButton(mounted!.container, "Connect")?.click();
+      connect?.click();
     });
     await act(async () => {
       await Promise.resolve();
     });
     expect(connectComposioApiKey).not.toHaveBeenCalled();
-    expect(mounted.container.textContent).toContain("required");
   });
 
   test("filled fields submit → connectComposioApiKey(catalogId, values) + onConnected", async () => {
