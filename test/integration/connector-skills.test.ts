@@ -31,7 +31,7 @@ import { createEchoModel } from "../helpers/echo-model.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
 
 /** The synthesized name for the fixture connector's skill. */
-const CONNECTOR_SKILL_NAME = "connector:ai-nimblebrain-test-mcp:test";
+const CONNECTOR_SKILL_NAME = "bundle:ai-nimblebrain-test-mcp:test";
 
 const SKILL_BODY = `---
 name: test
@@ -516,7 +516,7 @@ describe("connector-skill adapter — mid-turn tool promotion", () => {
       | { skillName: string; skillBody: string; scope: string; toolName: string }
       | undefined;
     expect(injected).toBeDefined();
-    expect(injected?.skillName).toBe("connector:ai-nimblebrain-test-mcp:test");
+    expect(injected?.skillName).toBe("bundle:ai-nimblebrain-test-mcp:test");
     expect(injected?.skillBody).toContain("How to use the test server");
 
     // And it rides the conversation history as a `<connector-skill>` block —

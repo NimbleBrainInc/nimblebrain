@@ -39,7 +39,7 @@ import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-works
 
 /** Reverse-DNS slug, like a real fleet connector — never the skill's own name. */
 const SERVER_NAME = "ai-nimblebrain-capture-mcp";
-const CONNECTOR_SKILL_NAME = `connector:${SERVER_NAME}:capture`;
+const CONNECTOR_SKILL_NAME = `bundle:${SERVER_NAME}:capture`;
 const TOOL_NAME = `${SERVER_NAME}__record`;
 
 /** Declared on the server skill. Distinctive enough that nothing else matches it. */

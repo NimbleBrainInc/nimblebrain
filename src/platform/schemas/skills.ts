@@ -256,7 +256,7 @@ const SkillNameInput = Type.Object(
     id: Type.String({
       description:
         "Skill name, exactly as `skills__list` or the Skill Catalog reports it " +
-        "(e.g. `house-voice`, `connector:<server>:<skill>`). Not a filesystem path.",
+        "(e.g. `house-voice`, `bundle:<server>:<skill>`). Not a filesystem path.",
     }),
   },
   { required: ["id"] },

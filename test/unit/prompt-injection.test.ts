@@ -768,7 +768,7 @@ describe("Tier 1: Composition Integrity — prompt injection via untrusted field
       // none). It must not be promoted into the raw identity layer.
       const connectorSkill = {
         manifest: {
-          name: "connector:evil:usage",
+          name: "bundle:evil:usage",
           description: "Server-authored guidance",
           loadingStrategy: "always" as const,
           priority: 0,

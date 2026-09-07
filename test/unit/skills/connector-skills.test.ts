@@ -148,13 +148,13 @@ describe("connector skill identity round-trip", () => {
   test("returns null for a name this module did not build", () => {
     expect(parseConnectorSkillName("release-notes")).toBeNull();
     expect(parseConnectorSkillName("identity-override")).toBeNull();
-    expect(parseConnectorSkillName("connector:")).toBeNull();
-    expect(parseConnectorSkillName("connector::name")).toBeNull();
-    expect(parseConnectorSkillName("connector:connector:")).toBeNull();
+    expect(parseConnectorSkillName("bundle:")).toBeNull();
+    expect(parseConnectorSkillName("bundle::name")).toBeNull();
+    expect(parseConnectorSkillName("bundle:connector:")).toBeNull();
   });
 
   test("a skill name containing a colon keeps its whole tail", () => {
-    expect(parseConnectorSkillName("connector:acme:billing:refunds")).toEqual({
+    expect(parseConnectorSkillName("bundle:acme:billing:refunds")).toEqual({
       connector: "acme",
       name: "billing:refunds",
     });
@@ -172,7 +172,7 @@ describe("synthesizeConnectorSkill", () => {
     });
     // Decoupling is the fix: affinity keys on the (reverse-DNS slug) server name,
     // identity uses the skill's own name — discovery works when they differ.
-    expect(skill.manifest.name).toBe("connector:ai-nimblebrain-foo-mcp:foo");
+    expect(skill.manifest.name).toBe("bundle:ai-nimblebrain-foo-mcp:foo");
     expect(skill.manifest.toolAffinity).toEqual(["ai-nimblebrain-foo-mcp__*"]);
     expect(skill.manifest.loadingStrategy).toBe("dynamic");
     expect(skill.manifest.scope).toBe("bundle");
@@ -271,7 +271,7 @@ describe("SkillMatcher over synthesized connector skills", () => {
     const matcher = new SkillMatcher();
     matcher.load([capture]);
     const hit = matcher.match("Actually That Is Wrong — we do not target dentists");
-    expect(hit?.skill.manifest.name).toBe("connector:ai-nimblebrain-foo-mcp:capture");
+    expect(hit?.skill.manifest.name).toBe("bundle:ai-nimblebrain-foo-mcp:capture");
     expect(hit?.trigger).toBe("that is wrong");
   });
 
@@ -319,8 +319,8 @@ describe("partitionSkillsByRole routes synthesized connector skills by declared 
       // no strategy → defaults to dynamic
     });
     const { context, capability } = partitionSkillsByRole([always, dynamic]);
-    expect(context.map((s) => s.manifest.name)).toEqual(["connector:foo:workflow"]);
-    expect(capability.map((s) => s.manifest.name)).toEqual(["connector:bar:usage"]);
+    expect(context.map((s) => s.manifest.name)).toEqual(["bundle:foo:workflow"]);
+    expect(capability.map((s) => s.manifest.name)).toEqual(["bundle:bar:usage"]);
   });
 
   test("an `always` connector skill is NOT selected by tool-affinity even when its tools are active", () => {
@@ -355,7 +355,7 @@ describe("selectLayer3Skills with server skills", () => {
       activeTools: ["foo__do_it", "other__noop"],
     });
     expect(result).toHaveLength(1);
-    expect(result[0]?.skill.manifest.name).toBe("connector:foo:foo");
+    expect(result[0]?.skill.manifest.name).toBe("bundle:foo:foo");
     expect(result[0]?.loadedBy).toBe("tool_affinity");
     expect(result[0]?.reason).toContain("foo__*");
   });
@@ -379,6 +379,6 @@ describe("selectLayer3Skills with server skills", () => {
       activeTools: ["synapse-collateral__patch_source"],
     });
     expect(result).toHaveLength(1);
-    expect(result[0]?.skill.manifest.name).toBe("connector:synapse-collateral:synapse-collateral");
+    expect(result[0]?.skill.manifest.name).toBe("bundle:synapse-collateral:synapse-collateral");
   });
 });

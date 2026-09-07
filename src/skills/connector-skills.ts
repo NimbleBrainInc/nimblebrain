@@ -55,7 +55,7 @@ import matter from "gray-matter";
 import type { Skill, SkillLoadingStrategy, SkillScope } from "./types.ts";
 
 /** Scope tag used on synthesized server skills. */
-export const CONNECTOR_SKILL_SCOPE: SkillScope = "bundle";
+export const PUBLISHED_SKILL_SCOPE: SkillScope = "bundle";
 
 /**
  * Default priority for a synthesized server skill that declares none. Mid-range —
@@ -74,7 +74,7 @@ const DEFAULT_CONNECTOR_LOADING_STRATEGY: SkillLoadingStrategy = "dynamic";
  * names match `SKILL_NAME_PATTERN` (lowercase alphanumerics and hyphens, no
  * colons), so a name carrying this prefix can only have been built here.
  */
-const CONNECTOR_SKILL_NAME_PREFIX = "connector:";
+const CONNECTOR_SKILL_NAME_PREFIX = "bundle:";
 
 /** Manifest name (identity) for a skill published by `connector`. */
 export function connectorSkillManifestName(connector: string, skillName: string): string {
@@ -285,7 +285,7 @@ export function synthesizeConnectorSkill(input: ConnectorSkillInput): Skill {
       name: connectorSkillManifestName(serverName, skillName),
       description: description || `Workflow guidance from the ${serverName} server`,
       priority: priority ?? CONNECTOR_SKILL_PRIORITY,
-      scope: CONNECTOR_SKILL_SCOPE,
+      scope: PUBLISHED_SKILL_SCOPE,
       loadingStrategy: loadingStrategy ?? DEFAULT_CONNECTOR_LOADING_STRATEGY,
       toolAffinity: [`${serverName}__*`],
       ...(triggers?.length ? { triggers } : {}),

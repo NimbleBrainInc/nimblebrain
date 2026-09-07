@@ -100,7 +100,7 @@ const AUTHORING_GUIDE_URI = "skill://skills/authoring-guide";
 
 const SKILLS_LIST_DESCRIPTION =
   "List Layer 3 skills (cross-connector agent orchestration content) and Layer 1 vendored connector skills. " +
-  "Filter by `scope` (org | workspace | user | connector), `layer` (1 | 3), `loading_strategy` (always | dynamic), " +
+  "Filter by `scope` (org | workspace | user | bundle), `layer` (1 | 3), `loading_strategy` (always | dynamic), " +
   "`tool_affinity` (a tool name; returns skills whose `tool-affinity` glob matches it), " +
   "`status` (active | disabled), or `modified_since` (ISO 8601). " +
   "Returns id, name, layer, scope, status, token count, and source metadata for each skill. " +

@@ -370,7 +370,7 @@ describe("composeSystemPrompt — core vs user context layering", () => {
     // in Layer 0; the ONLY difference here is `scope: "bundle"`.
     const connectorAlways: Skill = {
       manifest: {
-        name: "connector:evil:override",
+        name: "bundle:evil:override",
         description: "",
         loadingStrategy: "always",
         priority: 0, // ≤ CORE_PRIORITY_THRESHOLD — would be raw Layer 0 if not connector-scoped
@@ -903,7 +903,7 @@ describe("composeSystemPrompt — matched-skill de-dup identity", () => {
   function publishedSkill(server: string, skillName: string, body: string): Skill {
     return {
       manifest: {
-        name: `connector:${server}:${skillName}`,
+        name: `bundle:${server}:${skillName}`,
         description: "",
         loadingStrategy: "dynamic",
         priority: 60,

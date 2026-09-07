@@ -142,9 +142,9 @@ import {
   readConnectorSkillCandidates,
 } from "../skills/connector-skill-store.ts";
 import {
-  CONNECTOR_SKILL_SCOPE,
   type DiscoveredSkill,
   isSkillEntrypointUri,
+  PUBLISHED_SKILL_SCOPE,
   parseSkillMarkdown,
   synthesizeConnectorSkill,
 } from "../skills/connector-skills.ts";
@@ -4455,7 +4455,7 @@ export class Runtime {
       .map((s) => ({
         name: s.manifest.name,
         body: s.body,
-        scope: s.manifest.scope ?? CONNECTOR_SKILL_SCOPE,
+        scope: s.manifest.scope ?? PUBLISHED_SKILL_SCOPE,
         toolAffinity: s.manifest.toolAffinity ?? [],
       }));
   }

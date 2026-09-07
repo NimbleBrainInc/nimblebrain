@@ -29,7 +29,7 @@ import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-works
 
 const SKILL_NAME = "house-voice";
 const GUIDE_SERVER = "ai-nimblebrain-guide-mcp";
-const GUIDE_SKILL = `connector:${GUIDE_SERVER}:guide`;
+const GUIDE_SKILL = `bundle:${GUIDE_SERVER}:guide`;
 const GUIDE_MARKER = "GUIDE-MARKER-XRAY";
 const MARKER = "VOICE-MARKER-WHISKEY";
 const CONNECTOR_SERVER = "gmail";
