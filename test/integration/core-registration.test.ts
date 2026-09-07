@@ -21,7 +21,6 @@ beforeAll(async () => {
 	mkdirSync(workDir, { recursive: true });
 	runtime = await Runtime.start({
 		model: { provider: "custom", adapter: createEchoModel() },
-		noDefaultBundles: true,
 		workDir,
 		logging: { disabled: true },
 	});

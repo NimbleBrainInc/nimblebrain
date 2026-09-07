@@ -5,7 +5,7 @@ description: Configure a workspace's remote MCP connectors in workspace.json.
 
 import { Tabs, TabItem, Aside } from '@astrojs/starlight/components';
 
-The `bundles` array lives in [`workspace.json`](/config/workspace-json/), **not** `nimblebrain.json`. Each workspace declares its own connectors; a `bundles` array placed at the top level of `nimblebrain.json` is silently stripped on load. This page documents the shape of a single entry — the same shape whether it was written by hand, by the connectors install flow, or by the CLI.
+The `connectors` array lives in [`workspace.json`](/config/workspace-json/), **not** `nimblebrain.json` — where the name `connectors` belongs to the [provider and gateway block](/config/nimblebrain-json/#connectors) instead. Each workspace declares its own connectors. This page documents the shape of a single entry — the same shape whether it was written by hand, by the connectors install flow, or by the CLI.
 
 Every entry is one remote MCP server, addressed by URL. The runtime orchestrates over remote MCP: it connects to a URL with a credential, and does not download, verify, or execute a server's code. There is no by-name or by-path entry, and nothing runs as a subprocess of the platform.
 
@@ -19,7 +19,7 @@ NimbleBrain ships with no connectors by default. Platform capabilities (home, co
 
 ```json
 {
-  "bundles": [
+  "connectors": [
     {
       "url": "https://mcp.example.com/mcp",
       "serverName": "example",
@@ -160,7 +160,7 @@ Control how NimbleBrain handles dropped connections to remote servers.
 {
   "id": "ws_product",
   "name": "Product",
-  "bundles": [
+  "connectors": [
     {
       "url": "https://mcp.example.com/mcp",
       "serverName": "example-remote",

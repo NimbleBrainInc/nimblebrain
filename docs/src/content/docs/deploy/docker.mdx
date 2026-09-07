@@ -71,7 +71,7 @@ The `web` container runs Caddy, which serves the static UI files and reverse-pro
 
 | Volume/Mount | Container path | Purpose |
 |---|---|---|
-| `workspace` (named volume) | `/data` | Working directory (`NB_WORK_DIR`) — conversations, logs, installed bundles, and `nimblebrain.json` |
+| `workspace` (named volume) | `/data` | Working directory (`NB_WORK_DIR`) — conversations, logs, installed connectors, and `nimblebrain.json` |
 | `./skills` (bind mount, read-only) | `/app/skills` | Custom skill files |
 
 ### Environment variables
@@ -155,7 +155,7 @@ The `web` service uses `depends_on` with `condition: service_healthy`, so it onl
    ```
 
    ```json
-   {"status":"ok","version":"1.2.3","buildSha":"abc1234","bundles":[]}
+   {"status":"ok","version":"1.2.3","buildSha":"abc1234","connectors":[]}
    ```
 
 4. **Open the UI**

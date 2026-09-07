@@ -53,7 +53,7 @@ describe("boot-start failure — seeding an installed-but-not-running URL connec
 
   beforeEach(() => {
     sink = new CapturingSink();
-    lifecycle = new ConnectorLifecycleManager(sink, undefined);
+    lifecycle = new ConnectorLifecycleManager(sink);
   });
 
   test("seedInstance_withStartError_recordsDeadNotRunning", async () => {

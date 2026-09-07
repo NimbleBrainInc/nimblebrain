@@ -21,7 +21,7 @@ import { createEchoModel } from "../helpers/echo-model.ts";
 import { startServer } from "../../src/api/server.ts";
 import type { ServerHandle } from "../../src/api/server.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
-import { getValidator } from "../../src/config/index.ts";
+import { getConnectorRefValidator } from "../../src/config/index.ts";
 import { deriveServerName } from "../../src/connectors/runtime/paths.ts";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import { startConnectorSource } from "../../src/connectors/runtime/startup.ts";
@@ -134,22 +134,18 @@ describe("Remote integration: config → validate → load → tools", () => {
 
 	it("config with url entry passes schema validation and starts a working source", async () => {
 		// Step 1: Build a config object with a url connector
-		const config = {
-			bundles: [
-				{
-					url: mockServer.url,
-					serverName: "validated-remote",
-				},
-			],
+		const entry = {
+			url: mockServer.url,
+			serverName: "validated-remote",
 		};
 
-		// Step 2: Validate against JSON Schema (same validator used at startup)
-		const validate = getValidator();
-		expect(validate(config)).toBe(true);
+		// Step 2: Validate against JSON Schema (the published connector-ref shape)
+		const validate = getConnectorRefValidator();
+		expect(validate(entry)).toBe(true);
 
 		// Step 3: Start connector source from the validated ref
 		const registry = new ToolRegistry();
-		const ref: ConnectorRef = config.bundles[0] as ConnectorRef;
+		const ref: ConnectorRef = entry as ConnectorRef;
 		const meta = await startConnectorSource(ref, registry, new NoopEventSink(), { allowInsecureRemotes: true, wsId: "ws_test" });
 
 		expect(meta).not.toBeNull();
@@ -166,27 +162,23 @@ describe("Remote integration: config → validate → load → tools", () => {
 	}, 15_000);
 
 	it("config with url + transport + auth validates and source starts", async () => {
-		const config = {
-			bundles: [
-				{
-					url: mockServer.url,
-					serverName: "authed-remote",
-					transport: {
-						type: "streamable-http",
-						auth: { type: "bearer", token: "test-token-123" },
-						headers: { "X-Custom": "value" },
-					},
-				},
-			],
+		const entry = {
+			url: mockServer.url,
+			serverName: "authed-remote",
+			transport: {
+				type: "streamable-http",
+				auth: { type: "bearer", token: "test-token-123" },
+				headers: { "X-Custom": "value" },
+			},
 		};
 
 		// Schema validation
-		const validate = getValidator();
-		expect(validate(config)).toBe(true);
+		const validate = getConnectorRefValidator();
+		expect(validate(entry)).toBe(true);
 
 		// Start source (auth headers won't affect our mock server)
 		const registry = new ToolRegistry();
-		const ref: ConnectorRef = config.bundles[0] as ConnectorRef;
+		const ref: ConnectorRef = entry as ConnectorRef;
 		const meta = await startConnectorSource(ref, registry, new NoopEventSink(), { allowInsecureRemotes: true, wsId: "ws_test" });
 
 		expect(meta).not.toBeNull();
@@ -196,20 +188,16 @@ describe("Remote integration: config → validate → load → tools", () => {
 	}, 15_000);
 
 	it("config with url entry that fails connection does not leave orphan in registry", async () => {
-		const config = {
-			bundles: [
-				{
-					url: "http://127.0.0.1:1/mcp",
-					serverName: "dead-remote",
-				},
-			],
+		const entry = {
+			url: "http://127.0.0.1:1/mcp",
+			serverName: "dead-remote",
 		};
 
-		const validate = getValidator();
-		expect(validate(config)).toBe(true);
+		const validate = getConnectorRefValidator();
+		expect(validate(entry)).toBe(true);
 
 		const registry = new ToolRegistry();
-		const ref: ConnectorRef = config.bundles[0] as ConnectorRef;
+		const ref: ConnectorRef = entry as ConnectorRef;
 
 		const results = await Promise.allSettled([startConnectorSource(ref, registry, new NoopEventSink(), { allowInsecureRemotes: true, wsId: "ws_test" })]);
 		expect(results[0]!.status).toBe("rejected");
@@ -264,12 +252,11 @@ describe.skip("Remote integration: POST /v1/apps/install with url", () => {
 		mockServer = startMockRemoteServer(4);
 
 		const configPath = join(testDir, `config-api-${Date.now()}.json`);
-		writeFileSync(configPath, JSON.stringify({ bundles: [] }, null, 2));
+		writeFileSync(configPath, JSON.stringify({ version: "1" }, null, 2));
 
 		runtime = await Runtime.start({
 			workDir: testDir,
 			model: { provider: "custom", adapter: createEchoModel() },
-			noDefaultBundles: true,
 			logging: { disabled: true },
 			configPath,
 		});
@@ -395,7 +382,6 @@ describe("Remote integration: registering remote connectors in workspace registr
 		const runtime = await Runtime.start({
 			workDir: testDir,
 			model: { provider: "custom", adapter: createEchoModel() },
-			noDefaultBundles: true,
 			logging: { disabled: true },
 			allowInsecureRemotes: true,
 		});
@@ -421,7 +407,6 @@ describe("Remote integration: registering remote connectors in workspace registr
 		const runtime = await Runtime.start({
 			workDir: testDir,
 			model: { provider: "custom", adapter: createEchoModel() },
-			noDefaultBundles: true,
 			logging: { disabled: true },
 			allowInsecureRemotes: true,
 		});

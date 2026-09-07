@@ -63,7 +63,6 @@ beforeAll(async () => {
   runtime = await Runtime.start({
     model: { provider: "custom", adapter: model },
     models: { fast: CONFIGURED_FAST_MODEL },
-    noDefaultBundles: true,
     logging: { disabled: true },
     workDir,
     features: { compaction: true },

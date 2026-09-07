@@ -73,9 +73,8 @@ export function parseWorkspaceListResponse(raw: unknown): WorkspaceInfo[] {
         id: String(ws.id ?? ""),
         name: String(ws.name ?? ""),
         memberCount: typeof ws.memberCount === "number" ? ws.memberCount : 0,
-        // `manage_workspaces.list` still names this array `bundles` on the wire.
-        connectors: Array.isArray(ws.bundles)
-          ? (ws.bundles as Array<{ name?: string; path?: string }>)
+        connectors: Array.isArray(ws.connectors)
+          ? (ws.connectors as Array<{ name?: string; path?: string }>)
           : [],
         ...(userRole ? { userRole } : {}),
         // Pass through `isPersonal` from either contract. Bootstrap

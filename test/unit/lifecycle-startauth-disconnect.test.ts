@@ -82,7 +82,7 @@ describe("ConnectorLifecycleManager.startAuth — validation & idempotence", () 
 
   beforeEach(() => {
     sink = new CapturingSink();
-    lifecycle = new ConnectorLifecycleManager(sink, undefined);
+    lifecycle = new ConnectorLifecycleManager(sink);
   });
 
   test("rejects when connector is not installed", async () => {
@@ -139,7 +139,7 @@ describe("ConnectorLifecycleManager.disconnect — symmetric teardown", () => {
 
   beforeEach(() => {
     sink = new CapturingSink();
-    lifecycle = new ConnectorLifecycleManager(sink, undefined);
+    lifecycle = new ConnectorLifecycleManager(sink);
   });
 
   test("rejects when connector is not installed", async () => {
@@ -196,7 +196,7 @@ describe("ConnectorLifecycleManager.disconnect — symmetric teardown", () => {
 describe("ConnectorLifecycleManager.startAuthBackground — headless / already-authenticated connect (#679)", () => {
   test("resolves the auth-URL promise with null (not reject) and transitions to running", async () => {
     const sink = new CapturingSink();
-    const lifecycle = new ConnectorLifecycleManager(sink, undefined);
+    const lifecycle = new ConnectorLifecycleManager(sink);
     seedInstance(lifecycle, "minted", "ws_test"); // so the running transition can emit
     const resolveAuthUrl = mock((_url: string | null) => {});
     const rejectAuthUrl = mock((_err: Error) => {});

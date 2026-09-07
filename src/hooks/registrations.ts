@@ -11,7 +11,7 @@ import { HOOK_ROTATION_GRACE_MS, type HookRegistration } from "./types.ts";
  * in every dimension that matters: operator-plane, workspace-scoped, and with a
  * lifecycle that is related to but not identical to a connector install. Putting
  * them there also makes the delivery path ONE read — the door already has to
- * load the workspace to resolve `bundles[]` into a forward target, and a
+ * load the workspace to resolve `connectors[]` into a forward target, and a
  * separate store would make it two on the one path the spec insists stays thin.
  *
  * Writes are SERIALIZED PER WORKSPACE (`updateRegistrations`), and that is not

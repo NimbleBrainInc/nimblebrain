@@ -100,7 +100,7 @@ async function buildHarness(opts: { sessionWsId: string | null } = { sessionWsId
   );
 
   const workspaceStore = new WorkspaceStore(workDir);
-  const lifecycle = new ConnectorLifecycleManager(new NoopEventSink(), undefined);
+  const lifecycle = new ConnectorLifecycleManager(new NoopEventSink());
   const workspaceRegistry = new ToolRegistry();
   const registryStore = new RegistryStore(workDir);
 
@@ -186,7 +186,7 @@ describe("manage_connectors.install (T010) — persisted shape + hard-error", ()
     const wsDoc = JSON.parse(
       readFileSync(join(h.workDir, "workspaces", h.sharedWsId, "workspace.json"), "utf-8"),
     );
-    const installed = (wsDoc.bundles as Array<{ url?: string; oauthScope?: string }>).find(
+    const installed = (wsDoc.connectors as Array<{ url?: string; oauthScope?: string }>).find(
       (b) => b.url === "https://api.granola.test/mcp",
     );
     expect(installed).toBeDefined();
@@ -227,7 +227,7 @@ describe("manage_connectors.install (T010) — persisted shape + hard-error", ()
     const wsDoc = JSON.parse(
       readFileSync(join(h.workDir, "workspaces", personalWsId, "workspace.json"), "utf-8"),
     );
-    const installed = (wsDoc.bundles as Array<{ url?: string; oauthScope?: string }>).find(
+    const installed = (wsDoc.connectors as Array<{ url?: string; oauthScope?: string }>).find(
       (b) => b.url === "https://api.granola.test/mcp",
     );
     expect(installed?.oauthScope).toBe("workspace");
@@ -257,8 +257,8 @@ describe("manage_connectors.install (T010) — persisted shape + hard-error", ()
         "utf-8",
       ),
     );
-    expect((sharedDoc.bundles as unknown[]).length).toBe(0);
-    expect((personalDoc.bundles as unknown[]).length).toBe(0);
+    expect((sharedDoc.connectors as unknown[]).length).toBe(0);
+    expect((personalDoc.connectors as unknown[]).length).toBe(0);
   });
 
   test("install with no wsId arg defaults to the session-header workspace", async () => {
@@ -276,7 +276,7 @@ describe("manage_connectors.install (T010) — persisted shape + hard-error", ()
     const sharedDoc = JSON.parse(
       readFileSync(join(h.workDir, "workspaces", h.sharedWsId, "workspace.json"), "utf-8"),
     );
-    expect((sharedDoc.bundles as unknown[]).length).toBe(1);
+    expect((sharedDoc.connectors as unknown[]).length).toBe(1);
   });
 
   test("explicit wsId arg overrides the session-header workspace", async () => {
@@ -300,8 +300,8 @@ describe("manage_connectors.install (T010) — persisted shape + hard-error", ()
     const personalDoc = JSON.parse(
       readFileSync(join(h.workDir, "workspaces", personalWsId, "workspace.json"), "utf-8"),
     );
-    expect((sharedDoc.bundles as unknown[]).length).toBe(0);
-    expect((personalDoc.bundles as unknown[]).length).toBe(1);
+    expect((sharedDoc.connectors as unknown[]).length).toBe(0);
+    expect((personalDoc.connectors as unknown[]).length).toBe(1);
   });
 
   test("DCR connector binds its overlay via the canonical (reverse-DNS) identity, not the slug", async () => {
@@ -331,7 +331,7 @@ describe("manage_connectors.install (T010) — persisted shape + hard-error", ()
       readFileSync(join(h.workDir, "workspaces", h.sharedWsId, "workspace.json"), "utf-8"),
     );
     const installed = (
-      wsDoc.bundles as Array<{ url?: string; skillsLock?: Array<{ identity: string }> }>
+      wsDoc.connectors as Array<{ url?: string; skillsLock?: Array<{ identity: string }> }>
     ).find((b) => b.url === "https://api.granola.test/mcp");
     expect(installed?.skillsLock?.[0]?.identity).toBe("granola");
   });

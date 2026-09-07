@@ -85,7 +85,7 @@ function entry(): DirectoryEntry {
 }
 
 function toolFor(sessionWsId: string) {
-  const lifecycle = new ConnectorLifecycleManager(new NoopEventSink(), undefined);
+  const lifecycle = new ConnectorLifecycleManager(new NoopEventSink());
   const registryStore = new RegistryStore(workDir);
   const workspaceRegistry = new ToolRegistry();
   const runtime = {
@@ -114,8 +114,8 @@ function toolFor(sessionWsId: string) {
 function persistedRef(wsId: string): ConnectorRef {
   const ws = JSON.parse(
     readFileSync(join(workDir, "workspaces", wsId, "workspace.json"), "utf-8"),
-  ) as { bundles: ConnectorRef[] };
-  const ref = ws.bundles.find((b) => b.url === "https://mcp.acme.test/mcp");
+  ) as { connectors: ConnectorRef[] };
+  const ref = ws.connectors.find((b) => b.url === "https://mcp.acme.test/mcp");
   if (!ref) throw new Error(`no acme ref in ${wsId}`);
   return ref;
 }

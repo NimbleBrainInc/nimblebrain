@@ -63,7 +63,7 @@ let lifecycle: ConnectorLifecycleManager;
 let registries: Map<string, ToolRegistry>;
 
 beforeEach(() => {
-  lifecycle = new ConnectorLifecycleManager(new NoopEventSink(), undefined);
+  lifecycle = new ConnectorLifecycleManager(new NoopEventSink());
   registries = new Map();
   lifecycle.bindWorkspaceRegistries(() => registries);
 });

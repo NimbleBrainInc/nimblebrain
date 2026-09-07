@@ -13,7 +13,7 @@ metadata:
 
 - **nb__search** — Unified search tool. Use `scope: "tools"` to search installed tools by keyword (empty query lists everything). Use `scope: "registry"` to search the connector registries for installable servers.
 - **nb__manage_tools** — Patch your active tool list in one call. Input: `{ add?: ["source__tool", ...], remove?: ["source__tool", ...] }`. System tools `nb__*` cannot be released. When to promote and when to release: see Tool Discovery Workflow below.
-- **nb__status** — Platform status. Default gives an overview (model, app count, skill count). Use `scope: "bundles"` for per-app health/version, `scope: "skills"` for loaded skills, `scope: "config"` for model and limit details.
+- **nb__status** — Platform status. Default gives an overview (model, app count, skill count). Use `scope: "connectors"` for per-connector health/version, `scope: "skills"` for loaded skills, `scope: "config"` for model and limit details.
 
 ## Tool Discovery Workflow
 

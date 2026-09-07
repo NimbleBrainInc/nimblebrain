@@ -141,7 +141,6 @@ beforeAll(async () => {
         return { content: [{ type: "text", text: "ok" }] };
       }),
     },
-    noDefaultBundles: true,
     logging: { disabled: true },
     workDir: testDir,
     telemetry: { enabled: false },

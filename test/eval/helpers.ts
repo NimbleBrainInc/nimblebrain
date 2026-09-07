@@ -48,7 +48,6 @@ export async function getEvalRuntime(): Promise<Runtime> {
   _runtime = await Runtime.start({
     model: { provider: "anthropic", apiKey },
     defaultModel: DEFAULT_MODEL,
-    noDefaultBundles: true,
     workDir: _workDir,
     maxIterations: DEFAULT_MAX_ITERATIONS,
     telemetry: { enabled: false },

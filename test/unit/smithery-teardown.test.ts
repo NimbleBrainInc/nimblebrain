@@ -194,7 +194,7 @@ describe("uninstall → broker teardown wiring", () => {
 
     const workDir = mkdtempSync(join(tmpdir(), "nb-smithery-uninstall-"));
     try {
-      const lifecycle = new ConnectorLifecycleManager(new NoopEventSink(), undefined);
+      const lifecycle = new ConnectorLifecycleManager(new NoopEventSink());
       lifecycle.setManagedConnectorRegistry(managedConnectorRegistryOf([createSmitheryProvider()]));
       const ref: ConnectorRef = {
         url: "https://api.smithery.ai/connect/install-time-ns/nb-abc/mcp",

@@ -193,7 +193,7 @@ beforeEach(async () => {
 
   // `allowInsecureRemotes` on the constructor: `tryRecoverSource` reads the
   // lifecycle's own flag, not the install path's, and the fake upstream is http.
-  lifecycle = new ConnectorLifecycleManager(new NoopEventSink(), undefined, true);
+  lifecycle = new ConnectorLifecycleManager(new NoopEventSink(), true);
   lifecycle.setConnectorMcpDepsFactory(connectorMcpDeps);
   workspaceRegistry = new ToolRegistry();
   // What `Runtime.start` binds — `tryRecoverSource` and the eager start both

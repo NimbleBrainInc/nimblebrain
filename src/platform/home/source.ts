@@ -66,7 +66,7 @@ export function createHomeSource(runtime: Runtime, eventSink: EventSink): McpSou
             until: (input.until as string | undefined) ?? defaults.until,
             category: input.category as
               | "conversations"
-              | "bundles"
+              | "connectors"
               | "tools"
               | "errors"
               | undefined,

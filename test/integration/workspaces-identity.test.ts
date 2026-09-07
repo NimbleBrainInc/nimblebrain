@@ -155,7 +155,7 @@ describe("UC-W4: Same app, different workspaces", () => {
       id: "ws_engineering",
       name: "Engineering",
       members: [],
-      bundles: [crmConnector],
+      connectors: [crmConnector],
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
@@ -164,7 +164,7 @@ describe("UC-W4: Same app, different workspaces", () => {
       id: "ws_marketing",
       name: "Marketing",
       members: [],
-      bundles: [crmConnector],
+      connectors: [crmConnector],
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
@@ -246,7 +246,7 @@ describe("UC-W6: Workspace admin manages connectors", () => {
 
     // Admin creates workspace with no connectors
     const eng = await wsStore.create("Engineering", "engineering");
-    expect(eng.bundles).toHaveLength(0);
+    expect(eng.connectors).toHaveLength(0);
 
     // Initial inventory is empty
     let inventory = buildProcessInventory([eng], workDir);
@@ -254,10 +254,10 @@ describe("UC-W6: Workspace admin manages connectors", () => {
 
     // Admin adds connectors via update
     const updated = await wsStore.update(eng.id, {
-      bundles: [{ url: "https://crm.example.com/mcp", serverName: "crm" }],
+      connectors: [{ url: "https://crm.example.com/mcp", serverName: "crm" }],
     });
     expect(updated).not.toBeNull();
-    expect(updated!.bundles).toHaveLength(1);
+    expect(updated!.connectors).toHaveLength(1);
 
     // Inventory now reflects the new connector
     inventory = buildProcessInventory([updated!], workDir);

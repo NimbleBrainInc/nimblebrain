@@ -154,13 +154,21 @@ function applyOverride(
   }
 }
 
-/** Delete workspace-owned fields; they now live in workspace.json and are ignored here. */
+/**
+ * Delete workspace-owned fields; they now live in workspace.json and are
+ * ignored here.
+ *
+ * A workspace's connector array is deliberately absent from this list. In this
+ * file the name `connectors` belongs to the instance-level provider/gateway
+ * block, which is live config — deleting it would drop every declared provider
+ * and gateway at boot. A workspace-shaped `connectors` here is an array where
+ * the schema requires an object, so validation rejects it by type before
+ * anything reaches this function.
+ */
 function stripWorkspaceFields(fileConfig: FileConfig): void {
-  delete fileConfig.bundles;
   delete fileConfig.skillDirs;
   delete fileConfig.preferences;
   delete fileConfig.home;
-  delete fileConfig.noDefaultBundles;
   delete fileConfig.skills; // legacy field
 }
 
@@ -204,9 +212,10 @@ export function loadConfig(flags: CliFlags = {}): RuntimeConfig {
   stripWorkspaceFields(fileConfig);
   warnDeprecatedFields(fileConfig, configPath);
 
-  // CLI flags override file config — workspace-owned fields (connectors,
-  // skillDirs, preferences, home, noDefaultBundles) are intentionally omitted;
-  // they were deleted above and now live in workspace.json.
+  // CLI flags override file config — workspace-owned fields (skillDirs,
+  // preferences, home) are intentionally omitted; they were deleted above and
+  // now live in workspace.json. `connectors` below is the instance-level
+  // provider/gateway block, not a workspace's connector array.
   const config: RuntimeConfig = {
     model: fileConfig.model ?? { provider: "anthropic" },
     providers: fileConfig.providers as RuntimeConfig["providers"],

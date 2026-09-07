@@ -133,7 +133,6 @@ describe("runtime.chat — single-owner ownership check", () => {
     mkdirSync(workDir, { recursive: true });
     runtime = await Runtime.start({
       model: { provider: "custom", adapter: createEchoModel() },
-      noDefaultBundles: true,
       logging: { disabled: true },
       workDir,
     });
@@ -246,7 +245,6 @@ describe("runtime.chat — identity-provider gate", () => {
     });
     runtime = await Runtime.start({
       model: { provider: "custom", adapter: createEchoModel() },
-      noDefaultBundles: true,
       logging: { disabled: true },
       workDir,
     });
@@ -297,7 +295,6 @@ describe("HTTP/SSE — ConversationAccessDeniedError mapping", () => {
     mkdirSync(workDir, { recursive: true });
     runtime = await Runtime.start({
       model: { provider: "custom", adapter: createEchoModel() },
-      noDefaultBundles: true,
       logging: { disabled: true },
       workDir,
     });

@@ -5,7 +5,7 @@ export const HomeActivityInput = Type.Object({
   since: Type.Optional(Type.String({ description: "ISO timestamp. Default: 24 hours ago." })),
   until: Type.Optional(Type.String({ description: "ISO timestamp. Default: now." })),
   category: Type.Optional(
-    StringEnum(["conversations", "bundles", "tools", "errors"] as const, {
+    StringEnum(["conversations", "connectors", "tools", "errors"] as const, {
       description: "Filter to one category.",
     }),
   ),

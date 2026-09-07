@@ -101,7 +101,6 @@ describe("what nb__status reports about the running model", () => {
           ],
         }),
       },
-      noDefaultBundles: true,
       logging: { disabled: true },
       workDir,
       models: { default: PINNED, fast: PINNED },
@@ -160,7 +159,6 @@ describe("what nb__status reports about the running model", () => {
         provider: "custom",
         adapter: createEchoModel({ responses: statusThenReply("t_1") }),
       },
-      noDefaultBundles: true,
       logging: { disabled: true },
       workDir,
       // Default deliberately differs from what the run is told to use, or the
@@ -231,7 +229,6 @@ describe("what nb__status reports about the running model", () => {
           ],
         }),
       },
-      noDefaultBundles: true,
       logging: { disabled: true },
       workDir,
       models: { default: PINNED, fast: PINNED },

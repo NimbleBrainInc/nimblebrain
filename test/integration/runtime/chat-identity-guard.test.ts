@@ -68,7 +68,6 @@ describe("runtime.chat() with auth configured", () => {
 
     const runtime = await Runtime.start({
       workDir,
-      noDefaultBundles: true,
       model: { provider: "custom", adapter: createEchoModel() },
     });
 
@@ -87,7 +86,6 @@ describe("runtime.chat() with auth configured", () => {
 
     const runtime = await Runtime.start({
       workDir,
-      noDefaultBundles: true,
       model: { provider: "custom", adapter: createEchoModel() },
     });
 
@@ -122,7 +120,6 @@ describe("runtime.chat() in dev mode (no auth)", () => {
 
     const runtime = await Runtime.start({
       workDir,
-      noDefaultBundles: true,
       model: { provider: "custom", adapter: createEchoModel() },
     });
 

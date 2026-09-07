@@ -57,7 +57,6 @@ describe("the run-start door gates workspace membership for every trigger", () =
     mkdirSync(workDir, { recursive: true });
     const runtime = await Runtime.start({
       model: { provider: "custom", adapter: createEchoModel() },
-      noDefaultBundles: true,
       logging: { disabled: true },
       workDir,
     });

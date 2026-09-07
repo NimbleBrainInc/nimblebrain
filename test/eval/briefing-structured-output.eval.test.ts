@@ -72,7 +72,7 @@ function richActivity(): ActivityOutput {
         had_errors: true,
       },
     ],
-    bundle_events: [
+    connector_events: [
       { connector: "@nimblebraininc/granola", event: "crashed", timestamp: "2026-04-13T11:00:00Z", detail: "Connection timeout" },
       { connector: "@nimblebraininc/granola", event: "recovered", timestamp: "2026-04-13T11:02:00Z" },
     ],

@@ -119,7 +119,7 @@ async function buildHarness(): Promise<Harness> {
   );
 
   const workspaceStore = new WorkspaceStore(workDir);
-  const lifecycle = new ConnectorLifecycleManager(new NoopEventSink(), undefined);
+  const lifecycle = new ConnectorLifecycleManager(new NoopEventSink());
   const workspaceRegistry = new ToolRegistry();
   const registryStore = new RegistryStore(workDir);
 
@@ -435,7 +435,7 @@ describe("startIdentityAuth reserved-name guard", () => {
     // still fail closed before constructing a source named `nb`.
     const workDir = mkdtempSync(join(tmpdir(), "nb-startauth-reserved-"));
     try {
-      const lifecycle = new ConnectorLifecycleManager(new NoopEventSink(), undefined);
+      const lifecycle = new ConnectorLifecycleManager(new NoopEventSink());
       await expect(lifecycle.startIdentityAuth("nb", USER.id, { workDir })).rejects.toThrow(
         /reserved/i,
       );

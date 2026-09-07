@@ -78,7 +78,6 @@ it("a chat in a shared workspace uses THAT workspace's model overrides, not the 
 
   runtime = await Runtime.start({
     model: { provider: "custom", adapter: model },
-    noDefaultBundles: true,
     logging: { disabled: true },
     workDir,
   });

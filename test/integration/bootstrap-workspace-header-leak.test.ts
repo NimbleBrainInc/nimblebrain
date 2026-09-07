@@ -87,7 +87,6 @@ describe("bootstrap does not enforce workspace membership (middleware-leak regre
     mkdirSync(workDir, { recursive: true });
     runtime = await Runtime.start({
       model: { provider: "custom", adapter: createEchoModel() },
-      noDefaultBundles: true,
       logging: { disabled: true },
       workDir,
     });

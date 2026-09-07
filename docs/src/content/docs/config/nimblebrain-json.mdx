@@ -8,9 +8,9 @@ import { Tabs, TabItem, Aside } from '@astrojs/starlight/components';
 NimbleBrain splits configuration into two files:
 
 - **`nimblebrain.json`** — instance-level settings (models, HTTP, logging, limits, feature flags). One file per deployment. **This page.**
-- **`workspace.json`** — per-workspace settings (bundles, skill directories, optional model + identity overrides). See [`workspace.json`](/config/workspace-json).
+- **`workspace.json`** — per-workspace settings (connectors, skill directories, optional model + identity overrides). See [`workspace.json`](/config/workspace-json).
 
-Top-level `bundles`, `skillDirs`, `home`, and `preferences` entries in `nimblebrain.json` are silently stripped at load — they belong in `workspace.json` now. See [workspace configuration](/config/workspace-json) for where they live.
+Top-level `skillDirs`, `home`, and `preferences` entries in `nimblebrain.json` are stripped at load — they belong in `workspace.json` now. See [workspace configuration](/config/workspace-json) for where they live. A workspace's `connectors` array belongs there too; in this file the name `connectors` is the [provider and gateway block](#connectors).
 
 ## Config resolution
 
@@ -125,7 +125,7 @@ A sibling `nimblebrain.overrides.json` next to the resolved config file is **dee
 | `workDir` | `string` | `"~/.nimblebrain"` | Working directory for runtime state (conversations, logs, workspaces). |
 
 <Aside type="note">
-  **Workspace-owned fields** — `bundles`, `skillDirs`, `home`, `preferences`, `noDefaultBundles` — are silently stripped if placed at the top level. They live in [`workspace.json`](/config/workspace-json). A top-level `skills` array is a **legacy** field and is silently stripped too; skill directories belong in `workspace.json` as `skillDirs`.
+  **Workspace-owned fields** — `skillDirs`, `home`, `preferences` — are stripped if placed at the top level. They live in [`workspace.json`](/config/workspace-json). A top-level `skills` array is a **legacy** field and is stripped too; skill directories belong in `workspace.json` as `skillDirs`. A workspace-shaped `connectors` **array** is rejected outright, because in this file that name is the [provider and gateway block](#connectors) and takes an object.
 
   **Deprecated fields** — `identity` and `contextFile` are ignored with a warning. Use a skill with `type: "context"` instead.
 </Aside>
@@ -679,7 +679,7 @@ NimbleBrain validates `nimblebrain.json` at startup against the [JSON Schema (dr
 
 - **Unknown keys** produce a warning on stderr and are ignored.
 - **Structural errors** (wrong types, missing required fields) throw an error and prevent startup.
-- **Workspace-owned and legacy keys** (`bundles`, `skillDirs`, `home`, `preferences`, `noDefaultBundles`, and the legacy `skills`) are silently stripped — no warning.
+- **Workspace-owned and legacy keys** (`skillDirs`, `home`, `preferences`, and the legacy `skills`) warn as unknown keys and are stripped before the runtime config is built.
 - The **override file** (`nimblebrain.overrides.json`) is validated structurally, but unknown-key warnings are suppressed for it. Every key `set_model_config` writes is in the published schema; the suppression is for version drift, since the file is preserved across deploys and can outlive the schema of whichever image reads it.
 - **Deprecated keys** (`identity`, `contextFile`) produce a warning pointing at context skills.
 
@@ -715,4 +715,4 @@ The smallest valid config file:
 }
 ```
 
-This uses all defaults: Anthropic provider (key from `ANTHROPIC_API_KEY`), default model, no MCP bundles installed (platform capabilities are built in), in-memory conversation storage, and structured logging enabled.
+This uses all defaults: Anthropic provider (key from `ANTHROPIC_API_KEY`), default model, no connectors installed (platform capabilities are built in), in-memory conversation storage, and structured logging enabled.

@@ -32,7 +32,7 @@ async function seedWorkspaceWithLegacyConnector(workDir: string, userId: string)
     id: wsId,
     name: "Personal",
     members: [{ userId, role: "admin" }],
-    bundles: [
+    connectors: [
       // Legacy on-disk shape: pre-Stage-2 records carried oauthScope: "user".
       {
         url: "https://granola.so/mcp",
@@ -67,7 +67,6 @@ describe("Stage 2 — legacy oauthScope on disk hard-errors at boot", () => {
     try {
       const rt = await Runtime.start({
         model: { provider: "custom", adapter: createEchoModel() },
-        noDefaultBundles: true,
         logging: { disabled: true },
         workDir,
       });

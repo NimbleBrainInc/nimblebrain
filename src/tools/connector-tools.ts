@@ -64,7 +64,7 @@ import type { Tool, ToolSource } from "./types.ts";
  * target; the tool never special-cases the target's `isPersonal` flag.
  * The connector ref's `oauthScope` is always `"workspace"`.
  *
- * Persistence: `WorkspaceStore.bundles[]` +
+ * Persistence: `WorkspaceStore.connectors[]` +
  * `workspaces/<wsId>/credentials/...` for tokens.
  *
  * The `/v1/mcp-auth/{initiate,callback}` routes stay routes — the
@@ -1306,7 +1306,7 @@ async function findSharedWorkspaceInstall(
   const workspaces = await ctx.runtime.getWorkspaceStore().getWorkspacesForUser(callerId);
   for (const ws of workspaces) {
     if (ws.isPersonal === true) continue;
-    if (ws.bundles.some((b) => serverNameFromRef(b) === serverName)) return ws.id;
+    if (ws.connectors.some((b) => serverNameFromRef(b) === serverName)) return ws.id;
   }
   return null;
 }
@@ -1487,7 +1487,7 @@ async function registerApiKeySource(
     // Distinguish on whether a ref exists so the message points at the right
     // fix (mirrors the OAuth adopt path's two messages).
     const isInstalled =
-      Array.isArray(ws.bundles) && ws.bundles.some((b) => b.serverName === serverName);
+      Array.isArray(ws.connectors) && ws.connectors.some((b) => b.serverName === serverName);
     return isInstalled
       ? `Connector "${catalogId}" is installed but its MCP source could not start. ` +
           "Try Disconnect, then Connect again."
@@ -1678,7 +1678,7 @@ async function handleInstallRemoteOAuth(
     ctx.runtime.getWorkDir(),
   );
   if (skillsLock.length > 0) ref.skillsLock = skillsLock;
-  await ctx.runtime.getWorkspaceStore().update(wsId, { bundles: [...ws.bundles, ref] });
+  await ctx.runtime.getWorkspaceStore().update(wsId, { connectors: [...ws.connectors, ref] });
   const wsRegistry = ctx.runtime.getRegistryForWorkspace(wsId);
   await lifecycle.seedInstance(serverName, action.url, ref, undefined, wsId);
   lifecycle.notifyInstalled(serverName, wsId);
@@ -2109,7 +2109,7 @@ async function handleDuplicateInstall(
   isPersonalTarget: boolean,
 ): Promise<ToolResult | null> {
   const lifecycle = ctx.runtime.getLifecycle();
-  const dup = ws.bundles.find((b) => {
+  const dup = ws.connectors.find((b) => {
     if (!("url" in b)) return false;
     if ("serverName" in b && b.serverName) return b.serverName === serverName;
     return b.url === action.url;
@@ -2403,7 +2403,7 @@ async function revokeUrlConnectorTokens(
 }
 
 /**
- * Strip the just-uninstalled connector from `workspace.json#bundles[]`.
+ * Strip the just-uninstalled connector from `workspace.json#connectors[]`.
  * `lifecycle.uninstall` clears its own `instances` map and the legacy global
  * `nimblebrain.json`, but not the workspace record.
  */
@@ -2417,13 +2417,13 @@ async function stripUninstalledConnectorEntry(
   // `deriveServerName` needs a string; a legacy or malformed row has no `url`,
   // and throwing here would fail the uninstall of a *different*, healthy
   // connector. Such a row matches nothing, so it is retained untouched.
-  const filtered = wsAfter.bundles.filter((b) => {
+  const filtered = wsAfter.connectors.filter((b) => {
     if (b.serverName) return b.serverName !== serverName;
     if (typeof b.url !== "string" || b.url.length === 0) return true;
     return deriveServerName(b.url) !== serverName;
   });
-  if (filtered.length !== wsAfter.bundles.length) {
-    await ctx.runtime.getWorkspaceStore().update(wsId, { bundles: filtered });
+  if (filtered.length !== wsAfter.connectors.length) {
+    await ctx.runtime.getWorkspaceStore().update(wsId, { connectors: filtered });
   }
 }
 
@@ -3122,7 +3122,7 @@ async function handleRemoveOperatorSetup(
   // operator config out from under a live connector leaves a dangling
   // credential reference; force the operator through the explicit
   // uninstall path first.
-  const installed = ws.bundles.some((b) => "url" in b && b.url === entry.url);
+  const installed = ws.connectors.some((b) => "url" in b && b.url === entry.url);
   if (installed) {
     return errResult(
       `"${entry.name}" is installed — uninstall it first, then remove the OAuth app config.`,

@@ -71,7 +71,7 @@ describe("startWorkspaceConnectors — unreachable URL connector at boot", () =>
   test("failedUrlConnector_keepsInventoryEntryCarryingStartError", async () => {
     const store = new WorkspaceStore(workDir);
     const ws = await store.create("Fleet");
-    await store.update(ws.id, { bundles: [unreachableConnector("unreachable")] });
+    await store.update(ws.id, { connectors: [unreachableConnector("unreachable")] });
 
     const { entries } = await startWorkspaceConnectors(
       store,
@@ -102,11 +102,10 @@ describe("startWorkspaceConnectors — unreachable URL connector at boot", () =>
     // stillRecordsRunning` actively certifies as correct.
     const store = new WorkspaceStore(workDir);
     const ws = await store.create("Fleet");
-    await store.update(ws.id, { bundles: [unreachableConnector("unreachable")] });
+    await store.update(ws.id, { connectors: [unreachableConnector("unreachable")] });
 
     const runtime = await Runtime.start({
       model: { provider: "custom", adapter: createEchoModel() },
-      noDefaultBundles: true,
       logging: { disabled: true },
       allowInsecureRemotes: true,
       workDir,
@@ -141,7 +140,7 @@ describe("startWorkspaceConnectors — unreachable URL connector at boot", () =>
     const ws = await store.create("Fleet");
     // No transport auth and no persisted tokens, so boot skips it entirely.
     await store.update(ws.id, {
-      bundles: [
+      connectors: [
         {
           url: UNREACHABLE,
           serverName: "no-tokens",
@@ -158,7 +157,6 @@ describe("startWorkspaceConnectors — unreachable URL connector at boot", () =>
     try {
       runtime = await Runtime.start({
         model: { provider: "custom", adapter: createEchoModel() },
-        noDefaultBundles: true,
         logging: { disabled: true },
         allowInsecureRemotes: true,
         workDir,
@@ -189,7 +187,7 @@ describe("startWorkspaceConnectors — unreachable URL connector at boot", () =>
     // mcp-server-endpoint.test.ts.
     const store = new WorkspaceStore(workDir);
     const ws = await store.create("Fleet");
-    await store.update(ws.id, { bundles: [unreachableConnector("unreachable")] });
+    await store.update(ws.id, { connectors: [unreachableConnector("unreachable")] });
 
     const lines: string[] = [];
     const origInfo = log.info;
@@ -219,7 +217,7 @@ describe("startWorkspaceConnectors — unreachable URL connector at boot", () =>
     // still reads "unavailable" to callers and still gets recovered.
     const store = new WorkspaceStore(workDir);
     const ws = await store.create("Fleet");
-    await store.update(ws.id, { bundles: [unreachableConnector("unreachable")] });
+    await store.update(ws.id, { connectors: [unreachableConnector("unreachable")] });
 
     const { registries } = await startWorkspaceConnectors(
       store,
@@ -246,7 +244,7 @@ describe("startWorkspaceConnectors — unreachable URL connector at boot", () =>
     // in the pre-change trap with no path out.
     const store = new WorkspaceStore(workDir);
     const ws = await store.create("Fleet");
-    await store.update(ws.id, { bundles: [unreachableConnector("still-down")] });
+    await store.update(ws.id, { connectors: [unreachableConnector("still-down")] });
 
     const { registries } = await startWorkspaceConnectors(
       store,

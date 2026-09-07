@@ -26,7 +26,6 @@ async function start(name: string, allowlist?: string[]) {
     model: { provider: "custom", adapter: createEchoModel() },
     models: { default: CONFIGURED_DEFAULT, fast: CONFIGURED_DEFAULT },
     ...(allowlist ? { providers: { anthropic: { apiKey: "k", models: allowlist } } } : {}),
-    noDefaultBundles: true,
     workDir,
   });
   await provisionTestWorkspace(runtime);
@@ -229,7 +228,6 @@ describe("a caller's own choice never becomes everyone's default", () => {
     mkdirSync(workDir, { recursive: true });
     const runtime = await Runtime.start({
       model: { provider: "custom", adapter: createEchoModel() },
-      noDefaultBundles: true,
       workDir,
     });
     await provisionTestWorkspace(runtime);
@@ -265,7 +263,6 @@ describe("the settings view is the configured one", () => {
     const runtime = await Runtime.start({
       model: { provider: "custom", adapter: createEchoModel() },
       models: { default: CONFIGURED_DEFAULT, fast: CONFIGURED_DEFAULT },
-      noDefaultBundles: true,
       workDir,
     });
     await provisionTestWorkspace(runtime);

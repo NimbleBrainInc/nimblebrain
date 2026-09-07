@@ -165,7 +165,6 @@ async function chat(message: string, conversationId?: string): Promise<string> {
 beforeAll(async () => {
   runtime = await Runtime.start({
     model: { provider: "custom", adapter: capturingModel() },
-    noDefaultBundles: true,
     logging: { disabled: true },
     workDir: testDir,
     telemetry: { enabled: false },

@@ -18,7 +18,6 @@ beforeAll(async () => {
 	mkdirSync(testDir, { recursive: true });
 	runtime = await Runtime.start({
 		model: { provider: "custom", adapter: createEchoModel() },
-		noDefaultBundles: true,
 		logging: { disabled: true },
 		workDir: testDir,
 	});
@@ -186,9 +185,9 @@ describe("GET /v1/health", () => {
 		const body = await res.json();
 		expect(body.status).toBe("ok");
 		expect(body.uptime).toBeUndefined();
-		expect(Array.isArray(body.bundles)).toBe(true);
+		expect(Array.isArray(body.connectors)).toBe(true);
 		// Each connector entry should have name and state (not just a string)
-		for (const b of body.bundles) {
+		for (const b of body.connectors) {
 			expect(typeof b.name).toBe("string");
 			expect(typeof b.state).toBe("string");
 		}
@@ -248,7 +247,6 @@ describe("Bearer token authentication", () => {
 		mkdirSync(authDir, { recursive: true });
 		authRuntime = await Runtime.start({
 			model: { provider: "custom", adapter: createEchoModel() },
-			noDefaultBundles: true,
 			logging: { disabled: true },
 			workDir: authDir,
 		});
@@ -533,7 +531,6 @@ describe("auth enforcement on new endpoints", () => {
 		mkdirSync(authDir2, { recursive: true });
 		authRuntime2 = await Runtime.start({
 			model: { provider: "custom", adapter: createEchoModel() },
-			noDefaultBundles: true,
 			logging: { disabled: true },
 			workDir: authDir2,
 		});

@@ -612,7 +612,7 @@ export function handleHealth(healthMonitor: HealthMonitor | null): Response {
     status: "ok",
     version: VERSION,
     buildSha: process.env.NB_BUILD_SHA || null,
-    bundles: connectorHealth.map((b) => ({ name: b.name, state: b.state })),
+    connectors: connectorHealth.map((b) => ({ name: b.name, state: b.state })),
   });
 }
 
@@ -1634,7 +1634,7 @@ export async function handleBootstrap(
       name: ws.name,
       role: ws.members.find((m) => m.userId === identity.id)!.role,
       memberCount: ws.members.length,
-      connectorCount: ws.bundles.length,
+      connectorCount: ws.connectors.length,
       // `isPersonal` defaults to `false` on disk for pre-Stage-1 workspaces;
       // backfilled eagerly by the personal-workspace migration.
       isPersonal: ws.isPersonal === true,

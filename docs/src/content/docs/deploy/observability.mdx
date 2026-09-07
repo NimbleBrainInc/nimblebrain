@@ -143,7 +143,7 @@ To confirm the poller found anything after a restart, look for `[notifications] 
 
 ## Health and readiness probes
 
-The platform serves a liveness/readiness endpoint at `GET /v1/health`. It is unauthenticated and returns the build identity plus the state of each installed bundle:
+The platform serves a liveness/readiness endpoint at `GET /v1/health`. It is unauthenticated and returns the build identity plus the state of each installed connector:
 
 ```bash
 curl http://platform:27247/v1/health
@@ -154,9 +154,9 @@ curl http://platform:27247/v1/health
   "status": "ok",
   "version": "1.2.3",
   "buildSha": "abc1234",
-  "bundles": [
-    { "name": "@nimblebraininc/ipinfo", "state": "healthy" },
-    { "name": "@nimblebraininc/ipinfo", "state": "restarting" }
+  "connectors": [
+    { "name": "example", "state": "healthy" },
+    { "name": "example", "state": "restarting" }
   ]
 }
 ```
@@ -166,12 +166,12 @@ curl http://platform:27247/v1/health
 | `status` | `"ok"` once the server is serving |
 | `version` | The platform version |
 | `buildSha` | The build commit SHA (`null` if not stamped) |
-| `bundles` | One entry per running bundle **instance** and its lifecycle state. Entries are **not unique by name**: a bundle installed in several workspaces is monitored separately in each, so it appears once per workspace. Don't build a `name → state` map from this — later entries would silently overwrite earlier ones. |
+| `connectors` | One entry per running connector **instance** and its lifecycle state. Entries are **not unique by name**: a connector installed in several workspaces is monitored separately in each, so it appears once per workspace. Don't build a `name → state` map from this — later entries would silently overwrite earlier ones. |
 
 The Docker image already wires this into its `HEALTHCHECK` (`curl -f http://localhost:27247/v1/health`), and Compose gates the `web` service on it via `depends_on: condition: service_healthy`. In Kubernetes, use the same path for both `livenessProbe` and `readinessProbe`.
 
 <Aside type="note">
-There is no `uptime` field. Use `version` / `buildSha` to confirm which build is live and `bundles[].state` to confirm bundles started cleanly.
+There is no `uptime` field. Use `version` / `buildSha` to confirm which build is live and `connectors[].state` to confirm connectors started cleanly.
 </Aside>
 
 ## Multi-replica session storage

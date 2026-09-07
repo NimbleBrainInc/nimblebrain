@@ -166,7 +166,7 @@ export async function createSystemTools(
         runtime,
         getIdentity: manageWorkspacesCtx.getIdentity,
         // Workspace id is per-call — pull from the runtime's current
-        // workspace context to know which workspace's bundles[] to mutate.
+        // workspace context to know which workspace's connectors[] to mutate.
         getWorkspaceId: () => runtime.getCurrentWorkspaceId(),
       }),
     );
@@ -313,15 +313,15 @@ function createStatusTool(
   return {
     name: "status",
     description:
-      "Get platform status. Default scope shows a concise overview. Use 'bundles' for per-app health, 'skills' for loaded skills, or 'config' for model and limit details.",
+      "Get platform status. Default scope shows a concise overview. Use 'connectors' for per-connector health, 'skills' for loaded skills, or 'config' for model and limit details.",
     inputSchema: {
       type: "object",
       properties: {
         scope: {
           type: "string",
-          enum: ["overview", "bundles", "skills", "config"],
+          enum: ["overview", "connectors", "skills", "config"],
           description:
-            "What to report. 'overview' (default): concise self-portrait. 'bundles': per-app health/version. 'skills': loaded skills by category. 'config': model slots, providers, limits.",
+            "What to report. 'overview' (default): concise self-portrait. 'connectors': per-connector health/version. 'skills': loaded skills by category. 'config': model slots, providers, limits.",
         },
         name: {
           type: "string",
@@ -355,7 +355,7 @@ async function resolveStatusScope(
   getSkills: GetSkillsFn | undefined,
   runtime: Runtime | undefined,
 ): Promise<ToolResult> {
-  if (scope === "bundles") {
+  if (scope === "connectors") {
     return handleConnectorStatus(getRegistry, nameQuery);
   }
   if (scope === "skills") {
@@ -401,7 +401,7 @@ async function handleConnectorStatus(
  * `pending_auth` / `dead` state has `client === null` and throws
  * `"<name>" not started` from `tools()`. A status call is exactly where a down
  * connector must be REPORTED, not where it aborts the whole report: without
- * this guard one dead source's throw rejects `nb__status(scope="bundles")` for
+ * this guard one dead source's throw rejects `nb__status(scope="connectors")` for
  * every connector (the tool's top-level catch then replaces the entire report
  * with that one error). Returns null when the count is unknowable so the caller
  * omits the Tools line rather than fabricating `Tools: 0` for a live-but-down

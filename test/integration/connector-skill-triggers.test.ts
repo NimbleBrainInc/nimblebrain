@@ -190,7 +190,6 @@ beforeAll(async () => {
 
   runtime = await Runtime.start({
     model: { provider: "custom", adapter: createCapturingModel() },
-    noDefaultBundles: true,
     logging: { disabled: true },
     workDir: testDir,
     telemetry: { enabled: false },

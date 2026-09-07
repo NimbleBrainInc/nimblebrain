@@ -46,7 +46,6 @@ async function start(): Promise<Runtime> {
     model: { provider: "custom", adapter: createMockModel(() => ({
       content: [{ type: "text", text: "ok" }],
     })) },
-    noDefaultBundles: true,
     logging: { disabled: true },
     workDir,
   });

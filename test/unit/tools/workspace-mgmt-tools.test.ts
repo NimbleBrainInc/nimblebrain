@@ -143,20 +143,20 @@ describe("nb__manage_workspaces", () => {
       expect(parsed.workspace.id).toBe("ws_custom_slug");
     });
 
-    test("creates workspace with bundles", async () => {
+    test("creates workspace with connectors", async () => {
       const result = await tool.handler({
         action: "create",
         name: "Connector Workspace",
-        bundles: [{ url: "https://echo.example.com/mcp", serverName: "echo" }],
+        connectors: [{ url: "https://echo.example.com/mcp", serverName: "echo" }],
       });
 
       expect(result.isError).toBe(false);
       const parsed = parseResult(result) as {
-        workspace: { bundles: Array<{ url: string; serverName?: string }> };
+        workspace: { connectors: Array<{ url: string; serverName?: string }> };
       };
-      expect(parsed.workspace.bundles).toHaveLength(1);
-      expect(parsed.workspace.bundles[0].url).toBe("https://echo.example.com/mcp");
-      expect(parsed.workspace.bundles[0].serverName).toBe("echo");
+      expect(parsed.workspace.connectors).toHaveLength(1);
+      expect(parsed.workspace.connectors[0].url).toBe("https://echo.example.com/mcp");
+      expect(parsed.workspace.connectors[0].serverName).toBe("echo");
     });
 
     test("requires name", async () => {
@@ -270,7 +270,7 @@ describe("nb__manage_workspaces", () => {
       expect(updated.workspace.name).toBe("Updated");
     });
 
-    test("updates workspace bundles", async () => {
+    test("updates workspace connectors", async () => {
       const createResult = await tool.handler({
         action: "create",
         name: "Connector Update",
@@ -280,7 +280,7 @@ describe("nb__manage_workspaces", () => {
       const updateResult = await tool.handler({
         action: "update",
         workspaceId: created.workspace.id,
-        bundles: [
+        connectors: [
           { url: "https://echo.example.com/mcp", serverName: "echo" },
           { url: "https://bash.example.com/mcp", serverName: "bash" },
         ],
@@ -288,10 +288,10 @@ describe("nb__manage_workspaces", () => {
 
       expect(updateResult.isError).toBe(false);
       const updated = parseResult(updateResult) as {
-        workspace: { bundles: Array<{ url: string }> };
+        workspace: { connectors: Array<{ url: string }> };
       };
-      expect(updated.workspace.bundles).toHaveLength(2);
-      expect(updated.workspace.bundles[0]?.url).toBe("https://echo.example.com/mcp");
+      expect(updated.workspace.connectors).toHaveLength(2);
+      expect(updated.workspace.connectors[0]?.url).toBe("https://echo.example.com/mcp");
     });
 
     test("refuses a connector row with no reachable url", async () => {
@@ -308,7 +308,7 @@ describe("nb__manage_workspaces", () => {
         const result = await tool.handler({
           action: "update",
           workspaceId: created.workspace.id,
-          bundles: [bad],
+          connectors: [bad],
         });
         expect(result.isError).toBe(true);
         expect(extractText(result)).toContain("http(s) URL");
@@ -396,7 +396,7 @@ describe("nb__manage_workspaces", () => {
   });
 
   describe("list", () => {
-    test("returns all workspaces with member counts and bundles", async () => {
+    test("returns all workspaces with member counts and connectors", async () => {
       await tool.handler({ action: "create", name: "Alpha" });
       await tool.handler({ action: "create", name: "Beta" });
 
@@ -408,7 +408,7 @@ describe("nb__manage_workspaces", () => {
           id: string;
           name: string;
           memberCount: number;
-          bundles: unknown[];
+          connectors: unknown[];
           createdAt: string;
         }>;
       };
@@ -418,7 +418,7 @@ describe("nb__manage_workspaces", () => {
       // The creator is auto-seated as an admin member on create, so each
       // freshly created shared workspace starts with exactly one member.
       expect(sorted[0].memberCount).toBe(1);
-      expect(sorted[0].bundles).toEqual([]);
+      expect(sorted[0].connectors).toEqual([]);
       expect(sorted[1].name).toBe("Beta");
     });
 

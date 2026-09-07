@@ -319,8 +319,6 @@ export interface ConnectorInstance {
     serverName: string;
     /** Scoped manifest name (e.g. "@nimblebraininc/ipinfo"). Used for identity/display. */
     connectorName: string;
-    /** The config key used to find this connector in nimblebrain.json (the url value). */
-    configKey?: string;
     /** Version from manifest. */
     version: string;
     /** Human-readable description from the manifest. */

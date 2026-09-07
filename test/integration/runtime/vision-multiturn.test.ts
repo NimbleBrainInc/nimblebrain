@@ -117,7 +117,6 @@ beforeAll(async () => {
 
   runtime = await Runtime.start({
     model: { provider: "custom", adapter: model },
-    noDefaultBundles: true,
     logging: { disabled: true },
     workDir: testDir,
   });

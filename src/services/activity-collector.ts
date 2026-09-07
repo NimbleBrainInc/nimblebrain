@@ -92,7 +92,7 @@ export class ActivityCollector {
       !category || category === "conversations"
         ? this.collectConversations(since, until, limit)
         : Promise.resolve([]),
-      !category || category === "bundles"
+      !category || category === "connectors"
         ? this.collectConnectorEvents(since)
         : Promise.resolve([]),
       !category || category === "tools" || category === "errors"
@@ -120,7 +120,7 @@ export class ActivityCollector {
     const output: ActivityOutput = {
       period: { since, until },
       conversations,
-      bundle_events: connectorEvents,
+      connector_events: connectorEvents,
       tool_usage: toolUsage,
       errors,
       totals: {

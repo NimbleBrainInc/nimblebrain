@@ -564,11 +564,7 @@ export class Runtime {
 
     // Create placement registry and lifecycle manager
     const placementRegistry = new PlacementRegistry();
-    const lifecycle = new ConnectorLifecycleManager(
-      events,
-      config.configPath,
-      config.allowInsecureRemotes,
-    );
+    const lifecycle = new ConnectorLifecycleManager(events, config.allowInsecureRemotes);
     lifecycle.setPlacementRegistry(placementRegistry);
     // Connector-skill cleanup on uninstall resolves the `connector-skills/`
     // store from this same workDir that install + the per-turn loader use, so
@@ -840,8 +836,7 @@ export class Runtime {
     await bootReconcileConnectorSkills({
       workDir: rt.getWorkDir(),
       listWorkspaces: () => workspaceStore.list(),
-      updateWorkspaceConnectors: (wsId, connectors) =>
-        workspaceStore.update(wsId, { bundles: connectors }),
+      updateWorkspaceConnectors: (wsId, connectors) => workspaceStore.update(wsId, { connectors }),
       syncBoundSkills: (identity, serverName, wsId, wd) =>
         lifecycle.syncBoundSkills(identity, serverName, wsId, wd),
       catalogByIdMap: () => rt.getConnectorDirectory().catalogByIdMap(),

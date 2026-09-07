@@ -50,7 +50,6 @@ describe("conversation persistence — workspace layout", () => {
 
     const runtime = await Runtime.start({
       model: { provider: "custom", adapter: createEchoModel() },
-      noDefaultBundles: true,
       workDir,
     });
 
@@ -82,7 +81,6 @@ describe("conversation persistence — workspace layout", () => {
 
     const runtime = await Runtime.start({
       model: { provider: "custom", adapter: createEchoModel() },
-      noDefaultBundles: true,
       workDir,
     });
 
@@ -109,7 +107,6 @@ describe("conversation persistence — workspace layout", () => {
 
     const runtime = await Runtime.start({
       model: { provider: "custom", adapter: createEchoModel() },
-      noDefaultBundles: true,
       workDir,
     });
 
@@ -142,7 +139,6 @@ describe("conversation persistence — workspace layout", () => {
 
     const runtime = await Runtime.start({
       model: { provider: "custom", adapter: createEchoModel() },
-      noDefaultBundles: true,
       workDir,
     });
 
@@ -176,7 +172,6 @@ describe("conversation persistence — workspace layout", () => {
 
     const runtime = await Runtime.start({
       model: { provider: "custom", adapter: createEchoModel() },
-      noDefaultBundles: true,
       workDir,
     });
 
@@ -220,7 +215,6 @@ describe("conversation persistence — workspace layout", () => {
 
     const runtime = await Runtime.start({
       model: { provider: "custom", adapter: createEchoModel() },
-      noDefaultBundles: true,
       workDir,
     });
 

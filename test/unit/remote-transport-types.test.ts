@@ -1,19 +1,19 @@
 import { describe, expect, it } from "bun:test";
-import { getValidator } from "../../src/config/index.ts";
+import { getConnectorRefValidator } from "../../src/config/index.ts";
 import type { ConnectorRef, RemoteTransportConfig } from "../../src/connectors/runtime/types.ts";
 
 describe("Remote transport — JSON Schema validation", () => {
-	const validate = getValidator();
+	const validate = getConnectorRefValidator();
 
-	function isValid(config: Record<string, unknown>): boolean {
-		return validate(config) as boolean;
+	function isValid(ref: Record<string, unknown>): boolean {
+		return validate(ref) as boolean;
 	}
 
 	it("accepts a url connector and refuses one without a url", () => {
 		// Every connector is a remote MCP endpoint; `url` is the only addressing form.
-		expect(isValid({ bundles: [{ url: "https://example.com/mcp" }] })).toBe(true);
-		expect(isValid({ bundles: [{ name: "@nimblebraininc/echo" }] })).toBe(false);
-		expect(isValid({ bundles: [{ path: "../mcp-servers/hello" }] })).toBe(false);
+		expect(isValid({ url: "https://example.com/mcp" })).toBe(true);
+		expect(isValid({ name: "@nimblebraininc/echo" })).toBe(false);
+		expect(isValid({ path: "../mcp-servers/hello" })).toBe(false);
 	});
 });
 

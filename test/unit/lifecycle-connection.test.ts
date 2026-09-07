@@ -41,7 +41,7 @@ describe("ConnectorLifecycleManager — Connection state transitions", () => {
 
   beforeEach(() => {
     sink = new CapturingSink();
-    lifecycle = new ConnectorLifecycleManager(sink, undefined);
+    lifecycle = new ConnectorLifecycleManager(sink);
   });
 
   test("recordConnectionStateChange creates the connection on first call", () => {

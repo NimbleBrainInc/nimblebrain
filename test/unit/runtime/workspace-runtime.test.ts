@@ -17,7 +17,7 @@ function makeWorkspace(id: string, name: string, connectors: ConnectorRef[]): Wo
     id,
     name,
     members: [],
-    bundles: connectors,
+    connectors: connectors,
     createdAt: "2026-01-01T00:00:00Z",
     updatedAt: "2026-01-01T00:00:00Z",
   };
@@ -183,15 +183,15 @@ describe("buildProcessInventory", () => {
 // ---------------------------------------------------------------------------
 
 describe("resolveConnectorStartConcurrency", () => {
-  const original = process.env.NB_BUNDLE_START_CONCURRENCY;
+  const original = process.env.NB_CONNECTOR_START_CONCURRENCY;
 
   beforeEach(() => {
-    delete process.env.NB_BUNDLE_START_CONCURRENCY;
+    delete process.env.NB_CONNECTOR_START_CONCURRENCY;
   });
 
   afterEach(() => {
-    if (original === undefined) delete process.env.NB_BUNDLE_START_CONCURRENCY;
-    else process.env.NB_BUNDLE_START_CONCURRENCY = original;
+    if (original === undefined) delete process.env.NB_CONNECTOR_START_CONCURRENCY;
+    else process.env.NB_CONNECTOR_START_CONCURRENCY = original;
   });
 
   it("defaults to 4 when unset", () => {
@@ -199,26 +199,26 @@ describe("resolveConnectorStartConcurrency", () => {
   });
 
   it("defaults to 4 for empty string", () => {
-    process.env.NB_BUNDLE_START_CONCURRENCY = "";
+    process.env.NB_CONNECTOR_START_CONCURRENCY = "";
     expect(resolveConnectorStartConcurrency()).toBe(4);
   });
 
   it("honors a valid positive integer", () => {
-    process.env.NB_BUNDLE_START_CONCURRENCY = "8";
+    process.env.NB_CONNECTOR_START_CONCURRENCY = "8";
     expect(resolveConnectorStartConcurrency()).toBe(8);
   });
 
   it("accepts 1 as the legacy sequential value", () => {
-    process.env.NB_BUNDLE_START_CONCURRENCY = "1";
+    process.env.NB_CONNECTOR_START_CONCURRENCY = "1";
     expect(resolveConnectorStartConcurrency()).toBe(1);
   });
 
   it("falls back to default on zero, negatives, or garbage", () => {
-    process.env.NB_BUNDLE_START_CONCURRENCY = "0";
+    process.env.NB_CONNECTOR_START_CONCURRENCY = "0";
     expect(resolveConnectorStartConcurrency()).toBe(4);
-    process.env.NB_BUNDLE_START_CONCURRENCY = "-2";
+    process.env.NB_CONNECTOR_START_CONCURRENCY = "-2";
     expect(resolveConnectorStartConcurrency()).toBe(4);
-    process.env.NB_BUNDLE_START_CONCURRENCY = "abc";
+    process.env.NB_CONNECTOR_START_CONCURRENCY = "abc";
     expect(resolveConnectorStartConcurrency()).toBe(4);
   });
 });

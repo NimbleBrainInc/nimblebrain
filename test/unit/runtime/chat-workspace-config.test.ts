@@ -12,7 +12,7 @@ function makeWorkspace(overrides: Partial<Workspace> = {}): Workspace {
     id: "ws-test",
     name: "Test Workspace",
     members: [],
-    bundles: [],
+    connectors: [],
     createdAt: "2025-01-01T00:00:00Z",
     updatedAt: "2025-01-01T00:00:00Z",
     ...overrides,

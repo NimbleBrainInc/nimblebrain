@@ -79,7 +79,6 @@ describe("POST /v1/chat/stream — concurrency protection", () => {
     runtime = await Runtime.start({
       workDir: makeWorkDir(),
       model: { provider: "custom", adapter: gatedModel },
-      noDefaultBundles: true,
       logging: { disabled: true },
     });
     await provisionTestWorkspace(runtime);
@@ -125,7 +124,6 @@ describe("POST /v1/chat/stream — concurrency protection", () => {
     runtime = await Runtime.start({
       workDir: makeWorkDir(),
       model: { provider: "custom", adapter: createEchoModel() },
-      noDefaultBundles: true,
       logging: { disabled: true },
     });
     await provisionTestWorkspace(runtime);

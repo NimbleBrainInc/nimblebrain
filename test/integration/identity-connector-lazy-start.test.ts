@@ -79,7 +79,7 @@ describe("getIdentityConnectorSource — lazy-start", () => {
     workDir = mkdtempSync(join(tmpdir(), "nb-idc-lazy-"));
     server = startFakeServer();
     // allowInsecureRemotes: true so the localhost fake server passes SSRF checks.
-    lifecycle = new ConnectorLifecycleManager(new NoopEventSink(), undefined, true);
+    lifecycle = new ConnectorLifecycleManager(new NoopEventSink(), true);
   });
 
   afterEach(async () => {

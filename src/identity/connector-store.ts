@@ -7,7 +7,7 @@ import { IdentityContext } from "./context.ts";
 
 /**
  * Per-user connector install record — the identity-plane analog of the
- * `bundles[]` slice of `workspace.json`.
+ * `connectors[]` slice of `workspace.json`.
  *
  * A personal connector is a remote MCP connection a user installs on their
  * own identity (Gmail / Granola / Composio / …), reachable across every

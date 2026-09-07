@@ -34,7 +34,6 @@ describe("Runtime identity stores wiring", () => {
 
     const rt = await Runtime.start({
       workDir,
-      noDefaultBundles: true,
       model: { provider: "custom", adapter: createEchoModel() },
     });
 
@@ -73,7 +72,6 @@ describe("Runtime identity stores wiring", () => {
 
     const rt = await Runtime.start({
       workDir,
-      noDefaultBundles: true,
       model: { provider: "custom", adapter: createEchoModel() },
     });
 
@@ -87,7 +85,6 @@ describe("Runtime identity stores wiring", () => {
 
     const rt = await Runtime.start({
       workDir,
-      noDefaultBundles: true,
       model: { provider: "custom", adapter: createEchoModel() },
     });
 
@@ -113,7 +110,6 @@ describe("Runtime identity stores wiring", () => {
 
     const rt = await Runtime.start({
       workDir,
-      noDefaultBundles: true,
       model: { provider: "custom", adapter: createEchoModel() },
     });
 
@@ -137,7 +133,6 @@ describe("Runtime identity stores wiring", () => {
 
     const rt = await Runtime.start({
       workDir,
-      noDefaultBundles: true,
       model: { provider: "custom", adapter: createEchoModel() },
     });
 

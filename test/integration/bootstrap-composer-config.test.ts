@@ -84,7 +84,6 @@ describe("the two config routes agree", () => {
       model: { provider: "custom", adapter: createEchoModel() },
       models: { default: "anthropic:claude-sonnet-5", fast: "anthropic:claude-sonnet-5" },
       providers: { anthropic: { apiKey: "k" } },
-      noDefaultBundles: true,
       logging: { disabled: true },
       workDir,
     });

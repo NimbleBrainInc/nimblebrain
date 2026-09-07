@@ -28,6 +28,7 @@ import { ToolRegistry } from "../tools/registry.ts";
 import type { ToolSource } from "../tools/types.ts";
 import { mapWithConcurrency } from "../util/concurrency.ts";
 import { isHttpUrl } from "../util/url.ts";
+import { assertWorkspaceIsMigrated } from "../workspace/migration-guard.ts";
 import type { Workspace } from "../workspace/types.ts";
 import type { WorkspaceStore } from "../workspace/workspace-store.ts";
 
@@ -62,7 +63,7 @@ export interface ProcessInventoryEntry {
 // ---------------------------------------------------------------------------
 
 /**
- * Name an unusable `bundles[]` row for an operator, without assuming its shape.
+ * Name an unusable `connectors[]` row for an operator, without assuming its shape.
  * A legacy row carries `name:` or `path:` where `url` should be; a malformed
  * one carries neither.
  */
@@ -88,14 +89,18 @@ export function buildProcessInventory(
   const entries: ProcessInventoryEntry[] = [];
 
   for (const ws of workspaces) {
-    for (const connector of ws.bundles) {
+    // Disk-read boundary: a workspace.json that still declares its connectors
+    // under the pre-rename key hard-errors here, naming the one-shot the
+    // operator runs. The runtime does not rewrite tenant state on boot.
+    assertWorkspaceIsMigrated(ws);
+    for (const connector of ws.connectors) {
       // Disk-read boundary: refs carrying the legacy `oauthScope: "user"`
       // literal hard-error here. Operators are expected to have run
       // `bun run migrate:user-creds` before deploying Stage 2 — see
       // the Stage 2 deploy runbook.
       assertConnectorRefIsPostStage2(connector);
       // A row this build can neither name nor reach is skipped, not thrown on.
-      // Boot reads every workspace's `bundles[]` in one pass before any
+      // Boot reads every workspace's `connectors[]` in one pass before any
       // per-entry containment, so throwing here takes the whole instance down
       // over one bad row — a legacy `name:`/`path:` entry that predates the
       // URL-only ref, or a url that is blank or unparseable. Dropping just
@@ -437,12 +442,12 @@ export async function startWorkspaceConnectors(
 
 /**
  * Max connectors to start in parallel during `startWorkspaceConnectors`. Override with
- * `NB_BUNDLE_START_CONCURRENCY`. Default 4 keeps peak memory/CPU bounded on a
+ * `NB_CONNECTOR_START_CONCURRENCY`. Default 4 keeps peak memory/CPU bounded on a
  * 2-CPU/4Gi pod while capturing most of the serial→parallel win. Set to 1 for
  * legacy sequential behavior.
  */
 export function resolveConnectorStartConcurrency(): number {
-  const raw = process.env.NB_BUNDLE_START_CONCURRENCY;
+  const raw = process.env.NB_CONNECTOR_START_CONCURRENCY;
   if (raw === undefined || raw === "") return 4;
   const n = Number.parseInt(raw, 10);
   return Number.isFinite(n) && n >= 1 ? n : 4;

@@ -163,7 +163,6 @@ describe("compose_effective_context — live mode", () => {
     const workDir = join(testDir, "live-basic");
     const runtime = await Runtime.start({
       model: { provider: "custom", adapter: makeModel() },
-      noDefaultBundles: true,
       workDir,
       logging: { disabled: true },
       telemetry: { enabled: false },
@@ -227,7 +226,6 @@ describe("compose_effective_context — live mode", () => {
     const workDir = join(testDir, "live-workspace-identity");
     const runtime = await Runtime.start({
       model: { provider: "custom", adapter: makeModel() },
-      noDefaultBundles: true,
       workDir,
       logging: { disabled: true },
       telemetry: { enabled: false },
@@ -262,7 +260,6 @@ describe("compose_effective_context — live mode", () => {
     const workDir = join(testDir, "live-ws");
     const runtime = await Runtime.start({
       model: { provider: "custom", adapter: makeModel() },
-      noDefaultBundles: true,
       workDir,
       logging: { disabled: true },
       telemetry: { enabled: false },
@@ -282,7 +279,6 @@ describe("compose_effective_context — live mode", () => {
     const workDir = join(testDir, "no-conv");
     const runtime = await Runtime.start({
       model: { provider: "custom", adapter: makeModel() },
-      noDefaultBundles: true,
       workDir,
       logging: { disabled: true },
       telemetry: { enabled: false },
@@ -303,7 +299,6 @@ describe("compose_effective_context — historical mode", () => {
     const workDir = join(testDir, "historical-match");
     const runtime = await Runtime.start({
       model: { provider: "custom", adapter: makeModel() },
-      noDefaultBundles: true,
       workDir,
       logging: { disabled: true },
       telemetry: { enabled: false },
@@ -369,7 +364,6 @@ describe("compose_effective_context — historical mode", () => {
     const workDir = join(testDir, "historical-escape");
     const runtime = await Runtime.start({
       model: { provider: "custom", adapter: makeModel() },
-      noDefaultBundles: true,
       workDir,
       logging: { disabled: true },
       telemetry: { enabled: false },
@@ -409,7 +403,6 @@ describe("compose_effective_context — historical mode", () => {
     const workDir = join(testDir, "historical-drift");
     const runtime = await Runtime.start({
       model: { provider: "custom", adapter: makeModel() },
-      noDefaultBundles: true,
       workDir,
       logging: { disabled: true },
       telemetry: { enabled: false },
@@ -466,7 +459,6 @@ describe("compose_effective_context — historical mode", () => {
     const workDir = join(testDir, "historical-recovered");
     const runtime = await Runtime.start({
       model: { provider: "custom", adapter: makeModel() },
-      noDefaultBundles: true,
       workDir,
       logging: { disabled: true },
       telemetry: { enabled: false },
@@ -527,7 +519,6 @@ describe("compose_effective_context — connector filter", () => {
     const workDir = join(testDir, "connector-filter");
     const runtime = await Runtime.start({
       model: { provider: "custom", adapter: makeModel() },
-      noDefaultBundles: true,
       workDir,
       logging: { disabled: true },
       telemetry: { enabled: false },
@@ -588,7 +579,6 @@ describe("compose_effective_context — conversation_id resolution", () => {
     const workDir = join(testDir, "ctx-fallback");
     const runtime = await Runtime.start({
       model: { provider: "custom", adapter: makeModel() },
-      noDefaultBundles: true,
       workDir,
       logging: { disabled: true },
       telemetry: { enabled: false },
@@ -606,7 +596,6 @@ describe("compose_effective_context — conversation_id resolution", () => {
     const workDir = join(testDir, "explicit-wins");
     const runtime = await Runtime.start({
       model: { provider: "custom", adapter: makeModel() },
-      noDefaultBundles: true,
       workDir,
       logging: { disabled: true },
       telemetry: { enabled: false },

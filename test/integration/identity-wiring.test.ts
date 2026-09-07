@@ -46,7 +46,6 @@ describe("Runtime.start() dev mode identity wiring", () => {
     const workDir = makeTempDir("user-store");
     const runtime = await Runtime.start({
       workDir,
-      noDefaultBundles: true,
       model: { provider: "custom", adapter: createEchoModel() },
     });
 
@@ -71,7 +70,6 @@ describe("Runtime.start() dev mode identity wiring", () => {
     const workDir = makeTempDir("ws-store");
     const runtime = await Runtime.start({
       workDir,
-      noDefaultBundles: true,
       model: { provider: "custom", adapter: createEchoModel() },
     });
 
@@ -94,7 +92,6 @@ describe("Runtime.start() dev mode identity wiring", () => {
     const workDir = makeTempDir("no-auth");
     const runtime = await Runtime.start({
       workDir,
-      noDefaultBundles: true,
       model: { provider: "custom", adapter: createEchoModel() },
     });
 
@@ -114,7 +111,6 @@ describe("Management tools in registry", () => {
     const workDir = makeTempDir("mgmt-tools");
     const runtime = await Runtime.start({
       workDir,
-      noDefaultBundles: true,
       model: { provider: "custom", adapter: createEchoModel() },
     });
 
@@ -151,7 +147,6 @@ describe("Chat is identity-bound (Stage 2 / T006)", () => {
     const workDir = makeTempDir("identity-bound-chat");
     const runtime = await Runtime.start({
       workDir,
-      noDefaultBundles: true,
       model: { provider: "custom", adapter: createEchoModel() },
     });
 
@@ -196,7 +191,6 @@ describe("Chat is identity-bound (Stage 2 / T006)", () => {
     const workDir = makeTempDir("dev-mode-chat");
     const runtime = await Runtime.start({
       workDir,
-      noDefaultBundles: true,
       model: { provider: "custom", adapter: createEchoModel() },
     });
 

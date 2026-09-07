@@ -89,7 +89,7 @@ export function mcpAuthRoutes(ctx: AppContext) {
 
       const instance = lifecycle.getInstance(serverName, wsId);
       if (!instance) {
-        return apiError(404, "bundle_not_found", `Connector "${serverName}" not installed.`);
+        return apiError(404, "connector_not_found", `Connector "${serverName}" not installed.`);
       }
 
       // Stage 2: every URL connector is workspace-scoped (legacy `"user"`

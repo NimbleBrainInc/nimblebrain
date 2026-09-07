@@ -22,7 +22,6 @@ beforeAll(async () => {
   mkdirSync(testDir, { recursive: true });
   runtime = await Runtime.start({
     model: { provider: "custom", adapter: createEchoModel() },
-    noDefaultBundles: true,
     logging: { disabled: true },
     workDir: testDir,
   });
@@ -210,7 +209,6 @@ describe("cancel delivers a terminal frame to live viewers (Stop button)", () =>
           return { content: [{ type: "text", text: "unreached" }] };
         }),
       },
-      noDefaultBundles: true,
       logging: { disabled: true },
       workDir: dir,
     });
@@ -266,7 +264,6 @@ describe("shutdown aborts in-flight detached turns (RunBus teardown)", () => {
           return { content: [{ type: "text", text: "unreached" }] };
         }),
       },
-      noDefaultBundles: true,
       logging: { disabled: true },
       workDir: dir,
     });

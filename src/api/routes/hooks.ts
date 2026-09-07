@@ -282,7 +282,7 @@ async function admitDelivery(
       // target comes from, so this is a required lookup rather than an extra
       // check. An uninstall drops the registration too; this is what still holds
       // if a workspace record is edited by hand or a cleanup path is missed.
-      const ref = findInstalledConnector(ws.bundles ?? [], registration.connector);
+      const ref = findInstalledConnector(ws.connectors ?? [], registration.connector);
       if (!ref || !("url" in ref)) return undefined;
 
       return { wsId: ws.id, registration, ref };

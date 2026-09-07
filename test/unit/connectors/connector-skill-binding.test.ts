@@ -41,7 +41,7 @@ function workDir(): string {
 }
 
 function manager(routes: Record<string, { status: number; body?: string }>): ConnectorLifecycleManager {
-  const m = new ConnectorLifecycleManager(new NoopEventSink(), undefined);
+  const m = new ConnectorLifecycleManager(new NoopEventSink());
   m.setConnectorSkillFetch((async (url: string | URL | Request) => {
     const u = typeof url === "string" ? url : url.toString();
     const r = routes[u];
@@ -79,7 +79,7 @@ describe("ConnectorLifecycleManager.syncBoundSkills (P4)", () => {
 
   it("is non-fatal (returns []) when the fetch fails", async () => {
     const wd = workDir();
-    const m = new ConnectorLifecycleManager(new NoopEventSink(), undefined);
+    const m = new ConnectorLifecycleManager(new NoopEventSink());
     m.setConnectorSkillFetch((() => {
       throw new Error("network down");
     }) as unknown as typeof fetch);

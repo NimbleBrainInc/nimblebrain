@@ -80,7 +80,6 @@ describe("runtime.executeTask", () => {
     mkdirSync(workDir, { recursive: true });
     const r = await Runtime.start({
       model: { provider: "custom", adapter: createEchoModel(echoResponses) },
-      noDefaultBundles: true,
       logging: { disabled: true },
       workDir,
     });

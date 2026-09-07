@@ -318,7 +318,7 @@ export class BriefingGenerator {
   private isEmpty(activity: ActivityOutput): boolean {
     return (
       activity.conversations.length === 0 &&
-      activity.bundle_events.length === 0 &&
+      activity.connector_events.length === 0 &&
       activity.tool_usage.length === 0 &&
       activity.errors.length === 0
     );
@@ -438,7 +438,7 @@ export class BriefingGenerator {
         activity.totals.tool_calls > 0
           ? `${((activity.totals.errors / activity.totals.tool_calls) * 100).toFixed(1)}%`
           : "0%",
-      bundle_events: activity.bundle_events,
+      connector_events: activity.connector_events,
     };
     return userPayload;
   }
