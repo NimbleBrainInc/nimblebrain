@@ -56,10 +56,10 @@ export function WorkspaceAppIconsProvider({
   // connection.state_changed: a single install drives the connection
   // through starting → pending_auth → running, but the icon for a row
   // resolves from catalog metadata that's already present at
-  // bundle.installed time — connection state never changes it. Wiring
+  // connector.installed time — connection state never changes it. Wiring
   // those transitions to refresh() turned one Install click into a
-  // 3-4× manage_connectors burst (#317). bundle.installed /
-  // bundle.uninstalled are the only events that change the icon set.
+  // 3-4× manage_connectors burst (#317). connector.installed /
+  // connector.uninstalled are the only events that change the icon set.
   useEvents(token, workspaceId, {
     onConnectorLifecycleChanged: () => {
       void refresh();

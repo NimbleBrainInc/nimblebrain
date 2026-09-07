@@ -203,11 +203,12 @@ export const log = {
   /**
    * Emit a single line of connector subprocess stderr output. Default-on,
    * dimmed, prefixed `[connector:<name>]` so it's visually distinct from NB's
-   * own output. In JSON mode it becomes a structured `bundle.stderr` record
+   * own output. In JSON mode it becomes a structured `connector.stderr` record
    * carrying the raw line, so it stays queryable per connector. See file header.
    */
   connector: (sourceName: string, line: string) => {
-    if (isJson()) emitJson("info", "bundle.stderr", { connector: sourceName, line }, "bundle");
+    if (isJson())
+      emitJson("info", "connector.stderr", { connector: sourceName, line }, "connector");
     else console.error(dim(`[connector:${sourceName}] ${line}`));
   },
 };

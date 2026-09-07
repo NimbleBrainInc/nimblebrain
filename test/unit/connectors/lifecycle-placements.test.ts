@@ -82,7 +82,7 @@ describe("ConnectorLifecycleManager — placement registration on install", () =
 		expect(main).toHaveLength(1);
 		expect(main[0].route).toBe("echo");
 
-		const installEvent = sink.events.find((e) => e.type === "bundle.installed");
+		const installEvent = sink.events.find((e) => e.type === "connector.installed");
 		expect(installEvent!.data.placements).toHaveLength(2);
 	});
 

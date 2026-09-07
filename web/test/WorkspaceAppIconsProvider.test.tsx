@@ -86,7 +86,7 @@ describe("WorkspaceAppIconsProvider — SSE refetch surface (#317)", () => {
 
     // A bundle install drives the connection through starting → pending_auth →
     // running. Icons resolve from catalog metadata available at
-    // bundle.installed time and do NOT depend on connection state, so none of
+    // connector.installed time and do NOT depend on connection state, so none of
     // these transitions should re-hit manage_connectors. Pre-fix the provider
     // wired onConnectionStateChanged → refresh(), turning one click into a
     // 3-call burst here.
@@ -97,7 +97,7 @@ describe("WorkspaceAppIconsProvider — SSE refetch surface (#317)", () => {
     expect(mockGetInstalled).toHaveBeenCalledTimes(1);
   });
 
-  it("still refetches on bundle.installed / bundle.uninstalled", async () => {
+  it("still refetches on connector.installed / connector.uninstalled", async () => {
     render(
       <WorkspaceAppIconsProvider token="tok" workspaceId="ws-1">
         <div />
@@ -107,10 +107,10 @@ describe("WorkspaceAppIconsProvider — SSE refetch surface (#317)", () => {
     await waitFor(() => expect(mockGetInstalled).toHaveBeenCalledTimes(1));
 
     // These genuinely add/remove an app — the icon set must be refetched.
-    fire("bundle.installed", {});
+    fire("connector.installed", {});
     await waitFor(() => expect(mockGetInstalled).toHaveBeenCalledTimes(2));
 
-    fire("bundle.uninstalled", {});
+    fire("connector.uninstalled", {});
     await waitFor(() => expect(mockGetInstalled).toHaveBeenCalledTimes(3));
   });
 });

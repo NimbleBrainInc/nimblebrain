@@ -4,11 +4,11 @@ import { SseEventManager } from "../../../src/api/events.ts";
 describe("SseEventManager event buffer", () => {
 	test("broadcasting an event adds it to the buffer", () => {
 		const mgr = new SseEventManager();
-		mgr.broadcast("bundle.installed", { name: "test-connector" });
+		mgr.broadcast("connector.installed", { name: "test-connector" });
 
 		const events = mgr.getEventsSince("1970-01-01T00:00:00.000Z");
 		expect(events).toHaveLength(1);
-		expect(events[0].event).toBe("bundle.installed");
+		expect(events[0].event).toBe("connector.installed");
 		expect(events[0].data).toEqual({ name: "test-connector" });
 		expect(events[0].timestamp).toBeTruthy();
 	});
@@ -72,7 +72,7 @@ describe("SseEventManager event buffer", () => {
 		});
 
 		mgr.broadcast("data.changed", { source: "test" });
-		mgr.broadcast("bundle.installed", { name: "bad" });
+		mgr.broadcast("connector.installed", { name: "bad" });
 
 		expect(received).toHaveLength(2);
 		expect(received[0]).toEqual({
@@ -80,7 +80,7 @@ describe("SseEventManager event buffer", () => {
 			data: { source: "test" },
 		});
 		expect(received[1]).toEqual({
-			event: "bundle.installed",
+			event: "connector.installed",
 			data: { name: "bad" },
 		});
 	});

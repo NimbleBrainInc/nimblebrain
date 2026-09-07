@@ -108,7 +108,7 @@ describe("WorkspaceOAuthProvider — record roundtrips", () => {
     // host later drifted to Y. The registration is durable identity — silent
     // refresh reuses its client_id (no redirect_uri sent) — so a BACKGROUND read
     // must NOT discard it. Discarding orphaned the refresh token and forced a
-    // headless interactive flow that timed out (the bundle.crashed loop). Only a
+    // headless interactive flow that timed out (the connector.crashed loop). Only a
     // user-initiated interactive reauth re-registers against the current host.
     const stalePath = "http://localhost:27247/v1/mcp-auth/callback";
     const livePath = "https://hq.platform.nimblebrain.ai/v1/mcp-auth/callback";

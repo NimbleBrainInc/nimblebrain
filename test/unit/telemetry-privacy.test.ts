@@ -164,10 +164,10 @@ describe("Telemetry Privacy", () => {
           conversationId: "conv-123",
         },
       },
-      "bundle.installed": {
-        telemetryEvent: "bundle.installed",
+      "connector.installed": {
+        telemetryEvent: "connector.installed",
         allowed: new Set(["source", "has_ui", "trust_score", ...COMMON_KEYS]),
-        engineType: "bundle.installed",
+        engineType: "connector.installed",
         emitData: {
           serverName: "tasks",
           connectorName: "@nimblebraininc/tasks",
@@ -178,10 +178,10 @@ describe("Telemetry Privacy", () => {
           manifest: { name: "tasks" },
         },
       },
-      "bundle.uninstalled": {
-        telemetryEvent: "bundle.uninstalled",
+      "connector.uninstalled": {
+        telemetryEvent: "connector.uninstalled",
         allowed: new Set(["source", ...COMMON_KEYS]),
-        engineType: "bundle.uninstalled",
+        engineType: "connector.uninstalled",
         emitData: {
           serverName: "tasks",
           connectorName: "@nimblebraininc/tasks",
@@ -256,12 +256,12 @@ describe("Telemetry Privacy", () => {
         error: Object.assign(new Error("ENOENT: /home/user/.ssh/id_rsa"), { code: "ENOENT" }),
       });
 
-      emit(sink, "bundle.installed", {
+      emit(sink, "connector.installed", {
         name: "@nimblebraininc/tasks",
         path: "/Users/john/connectors",
       });
 
-      emit(sink, "bundle.uninstalled", {
+      emit(sink, "connector.uninstalled", {
         name: "@nimblebraininc/tasks",
         path: "/Users/john/connectors",
       });
@@ -300,8 +300,8 @@ describe("Telemetry Privacy", () => {
   // -----------------------------------------------------------------------
 
   describe("connector name exclusion", () => {
-    it("bundle.installed does not contain connector name", () => {
-      emit(sink, "bundle.installed", {
+    it("connector.installed does not contain connector name", () => {
+      emit(sink, "connector.installed", {
         name: "@nimblebraininc/tasks",
         connectorName: "@nimblebraininc/tasks",
       });
@@ -314,8 +314,8 @@ describe("Telemetry Privacy", () => {
       }
     });
 
-    it("bundle.installed does not contain connector path", () => {
-      emit(sink, "bundle.installed", {
+    it("connector.installed does not contain connector path", () => {
+      emit(sink, "connector.installed", {
         name: "@nimblebraininc/tasks",
         path: "/Users/john/secret-project/connector",
       });
@@ -402,8 +402,8 @@ describe("Telemetry Privacy", () => {
           { type: "run.start", data: { runId: "r1", toolNames: ["bash"] } },
           { type: "run.done", data: { runId: "r1", stopReason: "complete", inputTokens: 100, outputTokens: 50 } },
           { type: "run.error", data: { runId: "r2", error: new Error("fail") } },
-          { type: "bundle.installed", data: { name: "test" } },
-          { type: "bundle.uninstalled", data: { name: "test" } },
+          { type: "connector.installed", data: { name: "test" } },
+          { type: "connector.uninstalled", data: { name: "test" } },
         ];
 
         for (const evt of allEvents) {

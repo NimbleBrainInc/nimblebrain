@@ -21,9 +21,9 @@ describe("WorkspaceLogSink", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  it("writes bundle.installed event to workspace log", () => {
+  it("writes connector.installed event to workspace log", () => {
     const sink = new WorkspaceLogSink({ dir });
-    sink.emit(makeEvent("bundle.installed", { name: "@test/foo" }));
+    sink.emit(makeEvent("connector.installed", { name: "@test/foo" }));
 
     const files = readdirSync(join(dir, "workspace"));
     expect(files).toHaveLength(1);
@@ -33,7 +33,7 @@ describe("WorkspaceLogSink", () => {
     expect(lines).toHaveLength(1);
 
     const record = JSON.parse(lines[0]);
-    expect(record.event).toBe("bundle.installed");
+    expect(record.event).toBe("connector.installed");
     expect(record.name).toBe("@test/foo");
     expect(record.ts).toBeDefined();
   });
@@ -53,8 +53,8 @@ describe("WorkspaceLogSink", () => {
 
   it("writes multiple events on the same day to the same file", () => {
     const sink = new WorkspaceLogSink({ dir });
-    sink.emit(makeEvent("bundle.installed", { name: "@test/a" }));
-    sink.emit(makeEvent("bundle.uninstalled", { name: "@test/b" }));
+    sink.emit(makeEvent("connector.installed", { name: "@test/a" }));
+    sink.emit(makeEvent("connector.uninstalled", { name: "@test/b" }));
     sink.emit(makeEvent("data.changed", { source: "crm" }));
     sink.emit(makeEvent("config.changed", { key: "model" }));
     sink.emit(makeEvent("skill.created", { name: "greet" }));
@@ -67,8 +67,8 @@ describe("WorkspaceLogSink", () => {
 
     const events = lines.map((l) => JSON.parse(l).event);
     expect(events).toEqual([
-      "bundle.installed",
-      "bundle.uninstalled",
+      "connector.installed",
+      "connector.uninstalled",
       "data.changed",
       "config.changed",
       "skill.created",
@@ -87,8 +87,8 @@ describe("WorkspaceLogSink", () => {
   it("writes all workspace event types", () => {
     const sink = new WorkspaceLogSink({ dir });
     const workspaceTypes = [
-      "bundle.installed",
-      "bundle.uninstalled",
+      "connector.installed",
+      "connector.uninstalled",
       "data.changed",
       "config.changed",
       "skill.created",
@@ -127,8 +127,8 @@ describe("WorkspaceLogSink", () => {
     mkdirSync(logFile);
     const warn = spyOn(log, "warn").mockImplementation(() => {});
     try {
-      expect(() => sink.emit(makeEvent("bundle.installed", { name: "@a" }))).not.toThrow();
-      expect(() => sink.emit(makeEvent("bundle.uninstalled", { name: "@b" }))).not.toThrow();
+      expect(() => sink.emit(makeEvent("connector.installed", { name: "@a" }))).not.toThrow();
+      expect(() => sink.emit(makeEvent("connector.uninstalled", { name: "@b" }))).not.toThrow();
       expect(warn).toHaveBeenCalledTimes(1); // suppressed after the first
 
       // A successful write re-arms the warning for the next failure episode.

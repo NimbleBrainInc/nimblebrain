@@ -190,11 +190,11 @@ describe("connector crash metric", () => {
     const sink = new MetricsEventSink();
     const labels = { source: "com-dropbox-mcp", remote: "true" };
     const before = await read(connectorCrashedTotal, labels);
-    // Mirrors HealthMonitor's emission: run.error with a nested bundle.crashed
+    // Mirrors HealthMonitor's emission: run.error with a nested connector.crashed
     // event, a `source` name, and `remote: true`. No runId.
     sink.emit({
       type: "run.error",
-      data: { source: "com-dropbox-mcp", event: "bundle.crashed", remote: true },
+      data: { source: "com-dropbox-mcp", event: "connector.crashed", remote: true },
     });
     expect((await read(connectorCrashedTotal, labels)) - before).toBe(1);
   });
@@ -206,7 +206,7 @@ describe("connector crash metric", () => {
     // A local stdio connector: HealthMonitor omits the `remote` field entirely.
     sink.emit({
       type: "run.error",
-      data: { source: "synapse-crm", event: "bundle.crashed" },
+      data: { source: "synapse-crm", event: "connector.crashed" },
     });
     expect((await read(connectorCrashedTotal, labels)) - before).toBe(1);
   });
@@ -215,12 +215,12 @@ describe("connector crash metric", () => {
     const sink = new MetricsEventSink();
     const before = await readTotal(connectorCrashedTotal);
     // An ordinary run error and a normal run completion must not touch the
-    // crash counter — only the nested bundle.crashed discriminator counts.
+    // crash counter — only the nested connector.crashed discriminator counts.
     sink.emit({ type: "run.error", data: { runId: "r1" } });
     sink.emit({ type: "run.done", data: { runId: "r2" } });
     sink.emit({
       type: "run.error",
-      data: { source: "com-dropbox-mcp", event: "bundle.restarting", remote: true },
+      data: { source: "com-dropbox-mcp", event: "connector.restarting", remote: true },
     });
     expect((await readTotal(connectorCrashedTotal)) - before).toBe(0);
   });
