@@ -14,10 +14,11 @@
  *   - `createSkill` surfaces the resolved mechanism in its confirmation note.
  *   - the skills editor renders the verdict live while the form is being
  *     filled, so a dead skill is visible at the moment it is authored rather
- *     than after a save. It reads a verbatim copy of THIS file emitted to
- *     `web/src/_generated/skill-loading.ts` by `bun run codegen`, which is why
- *     the module imports nothing: a copy with an import would not resolve in
- *     the web package, and a hand-written second predicate would drift.
+ *     than after a save. It reads `web/src/_generated/skill-loading.ts`, which
+ *     `bun run codegen` emits as a verbatim copy of `src/skills/loading.ts` —
+ *     which is why that module imports nothing: a copy with an import would not
+ *     resolve in the web package, and a hand-written second predicate would
+ *     drift.
  *
  * The precedence below mirrors the real loader/selector/matcher behavior:
  *   - `loading-strategy: always` → the always-on context channel

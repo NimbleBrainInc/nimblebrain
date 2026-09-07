@@ -66,6 +66,12 @@ export type AbsorbedFrontmatter =
  * So the mapper supplies the VALUES and the raw frontmatter decides which keys
  * were declared. Field names are reported as they appear in the file, so the
  * list a caller reads back matches the document in front of them.
+ *
+ * One asymmetry follows from reading declarations rather than presence: the
+ * mapper drops empty arrays, so a document writing `triggers: []` declares
+ * nothing and the caller's list stands. A pasted document can therefore ADD a
+ * loading signal but never clear one — clearing stays with the editor's own
+ * fields, which send their empty forms deliberately.
  */
 function declaredFields(fm: SkillFrontmatter): {
   fields: Partial<AbsorbedManifestFields>;

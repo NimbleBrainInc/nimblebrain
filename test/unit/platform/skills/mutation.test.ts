@@ -610,6 +610,93 @@ describe("a pasted SKILL.md in the body", () => {
     );
   });
 
+  test("a document cannot write itself into the reserved core priority band", async () => {
+    // The band is a containment boundary, not a style rule: `partitionContextSkills`
+    // renders a non-connector skill at or below the core threshold RAW in Layer 0
+    // instead of inside `<context-skill>`. The pasted block is validated against
+    // the on-disk contract, which allows 0–100 because the platform's own core
+    // skills live there — so the tool layer holds the narrower write band.
+    //
+    // `update` is the path that matters: `create` would also be caught downstream
+    // by `validateSkill`, but nothing on the update path bounds priority at all.
+    const src = await buildSource();
+    const client = src.getClient()!;
+    await client.callTool({
+      name: "create",
+      arguments: {
+        scope: "org",
+        manifest: { name: "victim", description: "A normal rule.", loadingStrategy: "always" },
+        body: "Original body.",
+      },
+    });
+    const id = join(workDir, "skills", "victim.md");
+
+    const escalate = await client.callTool({
+      name: "update",
+      arguments: {
+        id,
+        body: [
+          "---",
+          "name: victim",
+          "description: Escalated.",
+          "metadata:",
+          "  nimblebrain:",
+          "    loading-strategy: always",
+          "    priority: 0",
+          "---",
+          "",
+          "Prose that would render raw in Layer 0.",
+        ].join("\n"),
+        body_mode: "replace",
+      },
+    });
+    expect(escalate.isError).toBe(true);
+    expect(textOf(escalate)).toContain("metadata.nimblebrain.priority");
+    expect(textOf(escalate)).toContain("reserved");
+
+    // Refused before the writer — the file is untouched, not half-written.
+    const after = parseSkillContent(readFileSync(id, "utf-8"), id, { cap: false });
+    expect(after?.manifest.priority).toBe(50);
+    expect(after?.body).toBe("Original body.");
+
+    // Create refuses it at the same seam, so the two paths answer alike.
+    const created = await client.callTool({
+      name: "create",
+      arguments: {
+        scope: "org",
+        manifest: { name: "born-core", description: "Title." },
+        body: "---\nname: born-core\ndescription: Real.\nmetadata:\n  nimblebrain:\n    loading-strategy: always\n    priority: 5\n---\n\nBody.",
+      },
+    });
+    expect(created.isError).toBe(true);
+    expect(existsSync(join(workDir, "skills", "born-core.md"))).toBe(false);
+
+    // An in-band priority still rides through untouched.
+    const ok = await client.callTool({
+      name: "update",
+      arguments: {
+        id,
+        body: [
+          "---",
+          "name: victim",
+          "description: Fine.",
+          "metadata:",
+          "  nimblebrain:",
+          "    loading-strategy: always",
+          "    priority: 25",
+          "---",
+          "",
+          "New body.",
+        ].join("\n"),
+        body_mode: "replace",
+      },
+    });
+    expect(ok.isError).toBeFalsy();
+    expect(parseSkillContent(readFileSync(id, "utf-8"), id, { cap: false })?.manifest.priority).toBe(
+      25,
+    );
+  });
+
   test("a body-replacing update absorbs it; an append leaves it as prose", async () => {
     const src = await buildSource();
     const client = src.getClient()!;

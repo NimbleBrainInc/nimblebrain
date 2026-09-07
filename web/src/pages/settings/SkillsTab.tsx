@@ -1035,10 +1035,15 @@ function parseLines(value: string): string[] {
  * YAML yields keys) and refuses anything that fails it. This only decides
  * whether to warn that the fields below may be overridden on save, so it is
  * deliberately the looser test — over-warning costs a sentence, under-warning
- * costs the surprise this whole change exists to remove.
+ * costs the surprise this whole change exists to remove, and takes the opt-out
+ * checkbox with it because the notice is what carries it.
+ *
+ * Tested against the TRIMMED body, which is what save sends, and tolerating
+ * trailing space on the fence line, which the server's own line check does:
+ * either one silently absorbs while a stricter hint says nothing.
  */
 function looksLikeFrontmatter(body: string): boolean {
-  return /^---\r?\n/.test(body);
+  return /^---[ \t]*\r?\n/.test(body.trim());
 }
 
 /**

@@ -99,6 +99,40 @@ describe("absorbFrontmatter", () => {
     expect(result.applied).not.toContain("tool-affinity");
   });
 
+  test("a declared priority is absorbed, including one the tool schema forbids", () => {
+    // The parser answers to the ON-DISK contract (0–100), which is wider than
+    // the band a tool caller may write. Narrowing here would be wrong — a
+    // vendored core skill legitimately sits at 0–10 — so the tool layer is
+    // where the write band is enforced (`isToolWritablePriority`), and this
+    // pins that this function is not the one holding that line.
+    const at = (priority: number) =>
+      absorbFrontmatter(
+        [
+          "---",
+          "name: banded",
+          "description: A real one.",
+          "metadata:",
+          "  nimblebrain:",
+          "    loading-strategy: always",
+          `    priority: ${priority}`,
+          "---",
+          "",
+          "Body.",
+        ].join("\n"),
+      );
+
+    const inBand = at(25);
+    expect(inBand.kind).toBe("applied");
+    if (inBand.kind !== "applied") return;
+    expect(inBand.fields.priority).toBe(25);
+    expect(inBand.applied).toContain("priority");
+
+    const reserved = at(0);
+    expect(reserved.kind).toBe("applied");
+    if (reserved.kind !== "applied") return;
+    expect(reserved.fields.priority).toBe(0);
+  });
+
   test("frontmatter missing a required field is invalid, and the error names it", () => {
     const result = absorbFrontmatter("---\nname: no-description\n---\n\nBody.");
     expect(result.kind).toBe("invalid");

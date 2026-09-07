@@ -3,6 +3,19 @@
  * Regenerate: bun run codegen. AI agents: edit the source, not this file.
  */
 import { type Static } from "@sinclair/typebox";
+/**
+ * The priority band a TOOL caller may write — narrower than the on-disk schema,
+ * which allows 0–100 because the platform's own vendored core skills live in
+ * 0–10. That band is not decoration: `partitionContextSkills` renders a
+ * non-connector skill at or below `CORE_PRIORITY_THRESHOLD` raw in Layer 0
+ * rather than inside `<context-skill>` containment, so it is the boundary
+ * separating first-party identity from tenant-authored prose.
+ *
+ * Exported so the one place that admits manifest fields from outside this
+ * schema — a pasted SKILL.md, validated against the on-disk contract — can
+ * check against this band rather than restate it.
+ */
+export declare const SkillPriority: import("@sinclair/typebox").TNumber;
 export declare const SkillsListInput: import("@sinclair/typebox").TObject<{
     scope: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"user" | "bundle" | "org" | "workspace">>;
     layer: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<3 | 1>>;

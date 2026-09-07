@@ -24,6 +24,7 @@
 
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import { Value } from "@sinclair/typebox/value";
 import { isToolEnabled, type ResolvedFeatures } from "../../config/features.ts";
 import { collectDeliveredSkillNames } from "../../conversation/event-reconstructor.ts";
 import type { ConversationEvent } from "../../conversation/types.ts";
@@ -50,7 +51,7 @@ import {
   type SkillLoadRow,
 } from "../../skills/load-ledger.ts";
 import { parseSkillContent, parseSkillFile, readSkillMtime } from "../../skills/loader.ts";
-import { resolveLoadingMechanism } from "../../skills/loading.ts";
+import { resolveLoadingMechanism, type SkillLoadingMechanism } from "../../skills/loading.ts";
 import { SKILL_NAME_PATTERN } from "../../skills/schemas/skill-manifest.ts";
 import { toolMatches } from "../../skills/select.ts";
 import { approxTokens } from "../../skills/tokens.ts";
@@ -84,6 +85,7 @@ import type {
   SkillsWriteOutput,
 } from "../schemas/skills.ts";
 import {
+  SkillPriority,
   SkillsActivateInput,
   SkillsCreateInput,
   SkillsDeactivateInput,
@@ -1835,6 +1837,17 @@ type PastedFrontmatter = { error: ToolResult } | PastedFields;
  * values the document contradicts, and the result reads healthy in every list
  * that shows it — which is precisely the failure this path exists to remove.
  */
+/**
+ * Is a pasted document's `priority` one a tool caller may write?
+ *
+ * Checked against the tool schema's own band rather than a restated 11/99, so
+ * the two cannot drift apart. An absent priority is fine — the document simply
+ * did not declare one, and the caller's value stands.
+ */
+function isToolWritablePriority(priority: number | undefined): boolean {
+  return priority === undefined || Value.Check(SkillPriority, priority);
+}
+
 function absorbPastedFrontmatter(
   body: string,
   mode: "apply" | "ignore" | undefined,
@@ -1846,6 +1859,23 @@ function absorbPastedFrontmatter(
 
   const absorbed = absorbFrontmatter(body);
   if (absorbed.kind === "absent") return { body, fields: {} };
+  // A document validated against the ON-DISK contract can still declare what a
+  // TOOL caller may not. `priority` is where the two bands differ: 0–10 is the
+  // reserved core range, and a skill written into it renders raw in Layer 0
+  // instead of inside `<context-skill>` containment. `skills__create` would
+  // catch it downstream in `validateSkill`; `skills__update` calls nothing of
+  // the sort, so the check belongs here — the one seam both writes cross.
+  if (absorbed.kind === "applied" && !isToolWritablePriority(absorbed.fields.priority)) {
+    return {
+      error: errorResult(
+        new Error(
+          `metadata.nimblebrain.priority: ${absorbed.fields.priority} is outside the range a ` +
+            "skill may be authored into. Use 11–99; 0–10 is reserved for the platform's own " +
+            "core skills.",
+        ),
+      ),
+    };
+  }
   if (absorbed.kind === "invalid") {
     return {
       error: errorResult(
@@ -1863,6 +1893,17 @@ function absorbPastedFrontmatter(
     applied: absorbed.applied,
     declaredName: absorbed.declaredName,
   };
+}
+
+/**
+ * How a written skill loads, said in a way a caller can act on. `none` is the
+ * dead case, so it names the two signals that would revive it rather than
+ * reporting a status word nothing follows from.
+ */
+function loadsNote(mechanism: SkillLoadingMechanism): string {
+  return mechanism === "none"
+    ? "catalog-only — won't auto-load yet; add a trigger or tool-affinity, or set loading-strategy: always"
+    : mechanism;
 }
 
 /**
@@ -1969,10 +2010,6 @@ async function createSkill(
     data: { id: target, name, scope },
   });
 
-  const loadsNote =
-    mechanism === "none"
-      ? "catalog-only — won't auto-load yet; add a trigger or tool-affinity, or set loading-strategy: always"
-      : mechanism;
   // Cast at the wire boundary for the reason `listSkills` states: the envelope
   // is `Record<string, unknown>`, which TS won't infer a structural interface
   // into. The declaration above is what gets checked.
@@ -1986,7 +2023,7 @@ async function createSkill(
   };
   return {
     content: textContent(
-      `Created ${scope} skill "${name}" → ${target} (loads: ${loadsNote})${frontmatterNote(pasted, name)}`,
+      `Created ${scope} skill "${name}" → ${target} (loads: ${loadsNote(mechanism)})${frontmatterNote(pasted, name)}`,
     ),
     structuredContent: out as unknown as Record<string, unknown>,
     isError: false,
@@ -2177,8 +2214,13 @@ async function updateSkillHandler(
 
   eventSink.emit({ type: "skill.updated", data: { id, name, scope } });
   const out = describeWrittenSkill(id, name, scope, dir, pasted);
+  // The same verdict create states. An update can move a skill into or out of
+  // reach of every loader path, so the answer is owed on both writes.
+  const loads = out.loading ? ` (loads: ${loadsNote(out.loading.mechanism)})` : "";
   return {
-    content: textContent(`Updated ${scope} skill "${name}"${frontmatterNote(pasted, name)}`),
+    content: textContent(
+      `Updated ${scope} skill "${name}"${loads}${frontmatterNote(pasted, name)}`,
+    ),
     // Cast at the wire boundary for the reason `listSkills` states.
     structuredContent: out as unknown as Record<string, unknown>,
     isError: false,

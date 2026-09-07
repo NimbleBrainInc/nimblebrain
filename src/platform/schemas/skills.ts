@@ -28,7 +28,27 @@ const FrontmatterMode = StringEnum(["apply", "ignore"] as const, {
   description:
     "`apply` (default): a leading `---` block in `body` is read as SKILL.md frontmatter — " +
     "its fields override `manifest` and it is stripped from the stored body; invalid " +
-    "frontmatter is an error, never stored as prose. `ignore`: keep the block as body text.",
+    "frontmatter is an error, never stored as prose. `ignore`: keep the block as body text. " +
+    'Ignored under `body_mode: "append"` — an appended fragment is not a document ' +
+    "declaring itself, so a leading `---` there stays prose either way.",
+});
+
+/**
+ * The priority band a TOOL caller may write — narrower than the on-disk schema,
+ * which allows 0–100 because the platform's own vendored core skills live in
+ * 0–10. That band is not decoration: `partitionContextSkills` renders a
+ * non-connector skill at or below `CORE_PRIORITY_THRESHOLD` raw in Layer 0
+ * rather than inside `<context-skill>` containment, so it is the boundary
+ * separating first-party identity from tenant-authored prose.
+ *
+ * Exported so the one place that admits manifest fields from outside this
+ * schema — a pasted SKILL.md, validated against the on-disk contract — can
+ * check against this band rather than restate it.
+ */
+export const SkillPriority = Type.Number({
+  minimum: 11,
+  maximum: 99,
+  description: "Selection priority. 11–99 for non-core (0–10 reserved for core). Default 50.",
 });
 
 // LLM-facing manifest fields shared by create + update — a flat `Pick` of the
@@ -46,13 +66,7 @@ const ManifestFields = {
     description: "What the skill does AND when to use it (the catalog activation signal).",
   }),
   loadingStrategy: Type.Optional(LoadingStrategy),
-  priority: Type.Optional(
-    Type.Number({
-      minimum: 11,
-      maximum: 99,
-      description: "Selection priority. 11–99 for non-core (0–10 reserved for core). Default 50.",
-    }),
-  ),
+  priority: Type.Optional(SkillPriority),
   status: Type.Optional(SkillStatus),
   toolAffinity: Type.Optional(
     Type.Array(Type.String(), {

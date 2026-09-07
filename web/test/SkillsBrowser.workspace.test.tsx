@@ -1029,6 +1029,22 @@ describe("SkillsBrowser authoring — the loading verdict and a pasted SKILL.md"
     expect(createCall?.args.body).toContain("---");
   });
 
+  test("the notice tracks the body save actually sends, not the raw textarea", async () => {
+    // Save trims the body, and the server tolerates trailing space on the fence
+    // line. A stricter hint than either misses documents that DO absorb — and
+    // the notice is what carries the opt-out checkbox, so a missed notice makes
+    // "keep as body text" unreachable.
+    for (const open of ["---   ", "\n---", "\n---  "]) {
+      mounted?.unmount();
+      mounted = await openCreateForm();
+      await typeInto(
+        mounted.container.querySelector("#rule-body"),
+        `${open}\nname: x\ndescription: A real one.\n---\n\nBody.`,
+      );
+      expect(mounted.container.textContent).toContain("Keep it as body text instead");
+    }
+  });
+
   test("keep-as-text sends the escape hatch instead", async () => {
     mounted = await openCreateForm();
     await typeInto(mounted.container.querySelector("#rule-name"), "about-frontmatter");
