@@ -371,6 +371,61 @@ describe("tools/call — INTERNAL_APPS authz", () => {
     const [callParams] = mcpCallTool.mock.calls[0] ?? [];
     expect((callParams as { name: string }).name).toBe("home__briefing");
   });
+
+  // `params.server` is not the only way to name a source: a qualified tool
+  // name carries one too, and it used to reach `/mcp` untouched because the
+  // transport helper only prefixes a BARE name. A connector iframe could
+  // therefore call any tool in the workspace by sending the qualified form.
+  test("external app cannot reach another server via a QUALIFIED tool name", async () => {
+    const frame = mount("db-query");
+
+    frame.send({
+      jsonrpc: "2.0",
+      id: "a6",
+      method: "tools/call",
+      params: { name: "files__create", arguments: { manifest: {}, body: "" } },
+    });
+
+    const reply = (await frame.waitFor((m) => (m as { id?: string })?.id === "a6")) as {
+      error?: { code: number; message: string };
+    };
+    expect(reply.error?.code).toBe(-32000);
+    expect(reply.error?.message).toContain("scoped");
+    // Refused in the bridge — the call never reaches the shared `/mcp` session.
+    expect(mcpCallTool).not.toHaveBeenCalled();
+  });
+
+  test("external app may qualify a name with its OWN server", async () => {
+    const frame = mount("db-query");
+
+    frame.send({
+      jsonrpc: "2.0",
+      id: "a7",
+      method: "tools/call",
+      params: { name: "db-query__describe_tables", arguments: {} },
+    });
+    await frame.waitFor((m) => (m as { id?: string })?.id === "a7");
+
+    expect(mcpCallTool).toHaveBeenCalledTimes(1);
+    const [callParams] = mcpCallTool.mock.calls[0] ?? [];
+    expect((callParams as { name: string }).name).toBe("db-query__describe_tables");
+  });
+
+  test("internal app keeps its qualified-name cross-call", async () => {
+    const frame = mount("nb");
+
+    frame.send({
+      jsonrpc: "2.0",
+      id: "a8",
+      method: "tools/call",
+      params: { name: "home__briefing", arguments: {} },
+    });
+    await frame.waitFor((m) => (m as { id?: string })?.id === "a8");
+
+    expect(mcpCallTool).toHaveBeenCalledTimes(1);
+    const [callParams] = mcpCallTool.mock.calls[0] ?? [];
+    expect((callParams as { name: string }).name).toBe("home__briefing");
+  });
 });
 
 describe("resources/read — MCP transport", () => {

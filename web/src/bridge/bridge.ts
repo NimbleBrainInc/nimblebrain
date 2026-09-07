@@ -34,6 +34,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { getActiveWorkspaceId, uploadResource } from "../api/client";
 import { isIdentityApp } from "../lib/identity-apps";
+import { appNameFromToolName } from "../lib/namespaced-tool";
 import { getMcpBridgeClient, withSessionRetry } from "../mcp-bridge-client";
 import { getHostThemeMode, getSpecThemeTokens, getThemeTokens } from "./theme";
 import type {
@@ -590,7 +591,29 @@ function handleToolsCall(
   // cross-call other sources. The `/mcp` endpoint is workspace-
   // scoped but doesn't know about the "internal app" concept, so
   // this authz check stays in the bridge.
-  const server = INTERNAL_APPS.has(appName) && params.server ? params.server : appName;
+  const internal = INTERNAL_APPS.has(appName);
+  const server = internal && params.server ? params.server : appName;
+
+  // A qualified tool name names a source too, so it is a second way to ask
+  // for one — and it has to be held to the same rule as `params.server`.
+  // `callToolViaMcp` only prefixes a BARE name, so without this an external
+  // iframe reaches any tool in the workspace by sending the qualified form
+  // it wants (`files__create`) instead of the bare one it is entitled to.
+  // This is the only place the scope can be enforced: the browser holds ONE
+  // `/mcp` session shared by every iframe and the agent, so the server sees
+  // no caller to attribute a call to.
+  const named = appNameFromToolName(params.name);
+  if (!internal && named !== undefined && named !== server) {
+    postToIframe({
+      jsonrpc: "2.0",
+      id,
+      error: {
+        code: -32000,
+        message: `Tool calls from "${server}" are scoped to that server; "${params.name}" names another.`,
+      },
+    } satisfies UiToolResultError);
+    return;
+  }
 
   callToolViaMcp(server, params, id).then(postToIframe, (err: unknown) => {
     const errorMsg = err instanceof Error ? err.message : "Tool call failed";
@@ -786,8 +809,11 @@ async function callToolViaMcp(
   // Two transformations:
   //
   //   1. Qualified: iframes pass either `<tool>` (bare) or
-  //      `<source>__<tool>` (already qualified). Normalize to the qualified
-  //      form using the post-INTERNAL_APPS-authz `server`.
+  //      `<source>__<tool>` (already qualified). A bare name is qualified
+  //      here with the post-INTERNAL_APPS-authz `server`; an already-qualified
+  //      one passes through, having been held to that same authz by the call
+  //      site (`handleToolsCall`) — which is where it must happen, because by
+  //      here the app the call came from is no longer in scope.
   //   2. Scoped: BOTH doors dispatch the same bare `<source>__<tool>` form.
   //      Identity apps (conversations, …) always did. Workspace apps used to
   //      prefix `ws_<active>-`; they no longer do, because the workspace a call
