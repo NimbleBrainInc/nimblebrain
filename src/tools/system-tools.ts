@@ -773,7 +773,7 @@ function checkSearchScopeGate(scope: string, features?: ResolvedFeatures): ToolR
   if (scope === "tools" && features && !features.toolDiscovery) {
     return { content: textContent("Tool discovery is disabled."), isError: true };
   }
-  if (scope === "registry" && features && !features.bundleDiscovery) {
+  if (scope === "registry" && features && !features.connectorDiscovery) {
     return { content: textContent("Registry discovery is disabled."), isError: true };
   }
   return null;

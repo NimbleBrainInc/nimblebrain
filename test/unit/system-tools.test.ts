@@ -854,8 +854,8 @@ describe("search — feature flag gating", () => {
 	it("scope=tools returns error when toolDiscovery is disabled", async () => {
 		const registry = await makeRegistry();
 		const features = {
-			bundleManagement: true, skillManagement: true,
-			toolDiscovery: false, bundleDiscovery: true,
+			skillManagement: true,
+			toolDiscovery: false, connectorDiscovery: true,
 			fileContext: true, userManagement: true, workspaceManagement: true,
 		};
 		const systemTools = await createSystemTools(
@@ -868,11 +868,11 @@ describe("search — feature flag gating", () => {
 		expect(extractText(result.content)).toContain("disabled");
 	});
 
-	it("scope=registry returns error when bundleDiscovery is disabled", async () => {
+	it("scope=registry returns error when connectorDiscovery is disabled", async () => {
 		const registry = await makeRegistry();
 		const features = {
-			bundleManagement: true, skillManagement: true,
-			toolDiscovery: true, bundleDiscovery: false,
+			skillManagement: true,
+			toolDiscovery: true, connectorDiscovery: false,
 			fileContext: true, userManagement: true, workspaceManagement: true,
 		};
 		const systemTools = await createSystemTools(
@@ -888,8 +888,8 @@ describe("search — feature flag gating", () => {
 	it("scope=tools works when toolDiscovery is enabled", async () => {
 		const registry = await makeRegistry();
 		const features = {
-			bundleManagement: true, skillManagement: true,
-			toolDiscovery: true, bundleDiscovery: false,
+			skillManagement: true,
+			toolDiscovery: true, connectorDiscovery: false,
 			fileContext: true, userManagement: true, workspaceManagement: true,
 		};
 		const systemTools = await createSystemTools(

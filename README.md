@@ -214,7 +214,7 @@ A fully specified example:
   "store":     { "type": "jsonl", "dir": "~/.nimblebrain/conversations" },
   "telemetry": { "enabled": true },
   "files":     { "maxFileSize": 26214400, "maxFilesPerMessage": 10 },
-  "features":  { "bundleManagement": true },
+  "features":  { "connectorDiscovery": true },
   "maxIterations": 25,
   "maxInputTokens": 500000,
   "maxOutputTokens": 16384,
@@ -615,20 +615,19 @@ Each entry in `workspace.json → connectors[]` is one remote MCP server:
 
 #### Feature Flags
 
-All default to `true`. What `false` does depends on the flag: most withhold a tool, two narrow one tool's behavior, and two gate no tool at all.
+All default to `true`. What `false` does depends on the flag: most withhold a tool, two narrow one tool's behavior, and one gates no tool at all.
 
 | Flag | Controls | Effect when `false` |
 |------|----------|---------------------|
-| `bundleManagement` | Reserved — gates no tool today | None on the current tool set |
 | `skillManagement` | Create, edit, delete, and activate skills | `skills__create`, `skills__update`, `skills__delete`, `skills__activate`, `skills__deactivate`, `skills__history`, `skills__restore`, `skills__set_status` are never built |
 | `toolDiscovery` | Tool search | `nb__search` stays; `scope: "tools"` returns an error |
-| `bundleDiscovery` | Registry search | `nb__search` stays; `scope: "registry"` returns an error |
+| `connectorDiscovery` | Registry search | `nb__search` stays; `scope: "registry"` returns an error |
 | `fileContext` | File upload, serving, and context extraction | The file endpoints refuse (404, or 415 on a multipart upload) |
 | `userManagement` | Create, update, and delete users | `nb__manage_users` is not registered |
 | `workspaceManagement` | Workspaces, members, sharing | `nb__manage_workspaces` is not registered |
 | `compaction` | Folding the oldest turns of a long conversation into a summary at run start | Full history replays every turn (event-sourced stores only) |
 
-**Enforcement.** For the flags that withhold a tool, three layers: (1) the tool is not built into its source at startup, so it reaches no tool list and no dispatcher; (2) `POST /v1/tools/call` returns `403 feature_disabled`; (3) MCP `tools/list` filters it and `tools/call` returns an error. `toolDiscovery`, `bundleDiscovery`, and `fileContext` are enforced inside the handler instead — the tool or endpoint is present and refuses. `compaction` gates no call path at all. Tools outside the table (`nb__status`, the read-only platform surfaces, `nb__search` itself) are never gated.
+**Enforcement.** For the flags that withhold a tool, three layers: (1) the tool is not built into its source at startup, so it reaches no tool list and no dispatcher; (2) `POST /v1/tools/call` returns `403 feature_disabled`; (3) MCP `tools/list` filters it and `tools/call` returns an error. `toolDiscovery`, `connectorDiscovery`, and `fileContext` are enforced inside the handler instead — the tool or endpoint is present and refuses. `compaction` gates no call path at all. Tools outside the table (`nb__status`, the read-only platform surfaces, `nb__search` itself) are never gated.
 
 Full reference: [Feature flags](https://docs.nimblebrain.ai/config/features/) on docs.nimblebrain.ai.
 

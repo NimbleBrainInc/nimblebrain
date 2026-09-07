@@ -315,11 +315,6 @@
       "description": "Feature flags to enable/disable capabilities. All default to true. Set to false to disable.",
       "type": "object",
       "properties": {
-        "bundleManagement": {
-          "type": "boolean",
-          "description": "Enable app install/uninstall/configure via nb__manage_app. Default: true.",
-          "default": true
-        },
         "skillManagement": {
           "type": "boolean",
           "description": "Enable the skill write surface via the nb__skills tools: create, update, delete, history, restore, set_status, and the conversation-scoped activate/deactivate. Default: true.",
@@ -330,7 +325,7 @@
           "description": "Enable tool search via nb__search scope=tools. Default: true.",
           "default": true
         },
-        "bundleDiscovery": {
+        "connectorDiscovery": {
           "type": "boolean",
           "description": "Enable registry search via nb__search scope=registry. Default: true.",
           "default": true

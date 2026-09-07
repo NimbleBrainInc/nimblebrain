@@ -89,14 +89,14 @@ describe("loadConfig", () => {
   it("loads features from config file", () => {
     const configPath = writeTestConfig("features.json", {
       features: {
-        bundleDiscovery: false,
+        connectorDiscovery: false,
         workspaceManagement: false,
       },
     });
 
     const config = loadConfig({ config: configPath });
     expect(config.features).toEqual({
-      bundleDiscovery: false,
+      connectorDiscovery: false,
       workspaceManagement: false,
     });
   });

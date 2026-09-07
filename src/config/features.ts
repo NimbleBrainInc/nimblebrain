@@ -6,17 +6,10 @@ import { ORG_ADMIN_ROLES, type OrgRole } from "../identity/types.ts";
  * (for a tool-gated flag) or disables the behavior (`compaction`).
  */
 export interface FeatureFlags {
-  /**
-   * Reserved. Gated conversational connector install/uninstall/configure via
-   * `nb__manage_app`, which was removed (install/configure now live in the
-   * Apps catalog + CLI). Kept as a stable operator config knob for the
-   * connector-management tool a future design may reintroduce (single tool,
-   * explicit workspace param, per-call admin auth).
-   */
-  bundleManagement?: boolean;
   skillManagement?: boolean;
   toolDiscovery?: boolean;
-  bundleDiscovery?: boolean;
+  /** Registry search via `nb__search` scope=registry. */
+  connectorDiscovery?: boolean;
   fileContext?: boolean;
   userManagement?: boolean;
   workspaceManagement?: boolean;
@@ -34,10 +27,9 @@ export interface FeatureFlags {
 export type ResolvedFeatures = Required<FeatureFlags>;
 
 const DEFAULTS: ResolvedFeatures = {
-  bundleManagement: true,
   skillManagement: true,
   toolDiscovery: true,
-  bundleDiscovery: true,
+  connectorDiscovery: true,
   fileContext: true,
   userManagement: true,
   workspaceManagement: true,
@@ -48,10 +40,9 @@ const DEFAULTS: ResolvedFeatures = {
 export function resolveFeatures(config?: FeatureFlags): ResolvedFeatures {
   if (!config) return { ...DEFAULTS };
   return {
-    bundleManagement: config.bundleManagement ?? true,
     skillManagement: config.skillManagement ?? true,
     toolDiscovery: config.toolDiscovery ?? true,
-    bundleDiscovery: config.bundleDiscovery ?? true,
+    connectorDiscovery: config.connectorDiscovery ?? true,
     fileContext: config.fileContext ?? true,
     userManagement: config.userManagement ?? true,
     workspaceManagement: config.workspaceManagement ?? true,

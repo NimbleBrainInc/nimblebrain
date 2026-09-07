@@ -242,7 +242,7 @@ describe("createPrivilegeHook audit emission", () => {
       confirm: async () => false,
     };
 
-    const hook = createPrivilegeHook(denyGate, captureSink, { bundleManagement: true, skillManagement: true, toolDiscovery: true, bundleDiscovery: true, fileContext: true, userManagement: true, workspaceManagement: true });
+    const hook = createPrivilegeHook(denyGate, captureSink, { skillManagement: true, toolDiscovery: true, connectorDiscovery: true, fileContext: true, userManagement: true, workspaceManagement: true });
 
     const result = await hook({
       id: "call_1",
