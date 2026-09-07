@@ -41,7 +41,7 @@ export interface UseEventsOptions {
   /**
    * Called after every successful reconnection (NOT the initial
    * connect). The workspace stream has no `Last-Event-Id` replay, so
-   * during the disconnect gap consumers can miss `bundle.installed` /
+   * during the disconnect gap consumers can miss `connector.installed` /
    * `config.changed` / state-change events and silently drift out of
    * sync. Consumers wire this to a refetch of whatever state they
    * derive from those events (typically the shell + workspace config).
@@ -114,12 +114,12 @@ export function useEvents(
       }),
     );
     unsubs.push(
-      subscribe("bundle.installed", () => {
+      subscribe("connector.installed", () => {
         onConnectorLifecycleChangedRef.current?.();
       }),
     );
     unsubs.push(
-      subscribe("bundle.uninstalled", () => {
+      subscribe("connector.uninstalled", () => {
         onConnectorLifecycleChangedRef.current?.();
       }),
     );

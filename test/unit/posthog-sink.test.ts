@@ -158,17 +158,17 @@ describe("PostHogEventSink", () => {
 		expect(errorEvent!.properties.message).toBeUndefined();
 	});
 
-	it("maps bundle.installed as a remote install, carrying only UI presence", () => {
+	it("maps connector.installed as a remote install, carrying only UI presence", () => {
 		const { mock, sink } = createTestSetup();
 
-		emit(sink, "bundle.installed", { name: "remote-thing", url: "https://example.com/mcp" });
-		emit(sink, "bundle.installed", {
+		emit(sink, "connector.installed", { name: "remote-thing", url: "https://example.com/mcp" });
+		emit(sink, "connector.installed", {
 			name: "ui-thing",
 			url: "https://example.com/mcp",
 			ui: { name: "UI" },
 		});
 
-		const installs = mock.events.filter((e) => e.event === "bundle.installed");
+		const installs = mock.events.filter((e) => e.event === "connector.installed");
 		expect(installs).toHaveLength(2);
 		expect(installs[0].properties.source).toBe("remote");
 		expect(installs[0].properties.has_ui).toBe(false);

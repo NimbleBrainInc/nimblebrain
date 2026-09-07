@@ -415,7 +415,7 @@ describe("SSE Event Manager", () => {
 		const reader = stream.getReader();
 
 		// Broadcast a test event
-		manager.broadcast("bundle.installed", {
+		manager.broadcast("connector.installed", {
 			name: "test-app",
 			connectorName: "@test/app",
 			status: "running",
@@ -425,7 +425,7 @@ describe("SSE Event Manager", () => {
 		expect(done).toBe(false);
 
 		const text = new TextDecoder().decode(value);
-		expect(text).toContain("event: bundle.installed");
+		expect(text).toContain("event: connector.installed");
 		expect(text).toContain('"name":"test-app"');
 
 		reader.cancel();
@@ -498,17 +498,17 @@ describe("SSE Event Manager", () => {
 			data: { runId: "test" },
 		});
 
-		// Emit a bundle.installed event — SHOULD be forwarded
+		// Emit a connector.installed event — SHOULD be forwarded
 		manager.emit({
-			type: "bundle.installed",
+			type: "connector.installed",
 			data: { wsId: "ws_test", serverName: "weather", connectorName: "@test/weather" },
 		});
 
 		const { value } = await reader.read();
 		const text = new TextDecoder().decode(value);
 
-		// Should only contain the bundle.installed event
-		expect(text).toContain("event: bundle.installed");
+		// Should only contain the connector.installed event
+		expect(text).toContain("event: connector.installed");
 		expect(text).not.toContain("run.start");
 
 		reader.cancel();

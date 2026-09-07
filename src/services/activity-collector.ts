@@ -229,8 +229,8 @@ export class ActivityCollector {
     const connectorEvents: ActivityConnectorEvent[] = [];
 
     for (const e of events) {
-      if (!e.event.startsWith("bundle.")) continue;
-      const eventType = e.event.replace("bundle.", "") as ActivityConnectorEvent["event"];
+      if (!e.event.startsWith("connector.")) continue;
+      const eventType = e.event.replace("connector.", "") as ActivityConnectorEvent["event"];
       if (!["installed", "uninstalled", "crashed", "recovered", "dead"].includes(eventType))
         continue;
 

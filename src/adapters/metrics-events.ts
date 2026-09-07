@@ -139,12 +139,12 @@ export class MetricsEventSink implements EventSink {
   /** Record a connector crash when signaled, then flush the run's promotion samples. */
   private onRunError(data: EventData): void {
     // The HealthMonitor reports connector liveness via `run.error`
-    // with a nested `event` discriminator (bundle.crashed / restarting /
-    // cooldown / recovered) and no runId. `bundle.crashed` is the canonical
+    // with a nested `event` discriminator (connector.crashed / restarting /
+    // cooldown / recovered) and no runId. `connector.crashed` is the canonical
     // crash signal and counting here is 1:1 with a real detection — counts
     // once per HealthMonitor sweep a source is found down, the per-sweep
     // cadence the alert thresholds on.
-    if (data.event === "bundle.crashed") {
+    if (data.event === "connector.crashed") {
       recordConnectorCrash(data.source as string | undefined, data.remote === true);
     }
     this.finalizeRun(data.runId as string | undefined);

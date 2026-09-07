@@ -305,8 +305,8 @@ export type EngineEventType =
    * resume count (bounded by MAX_LENGTH_CONTINUATIONS).
    */
   | "context.length_continuation"
-  | "bundle.installed"
-  | "bundle.uninstalled"
+  | "connector.installed"
+  | "connector.uninstalled"
   /**
    * Per-principal connection state change for a remote URL connector.
    * Payload: { wsId, serverName, principalId, state, authorizationUrl? }.

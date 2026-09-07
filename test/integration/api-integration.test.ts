@@ -693,7 +693,7 @@ describe("E2E: multi-step conversation -> history -> conversations list consiste
 // =============================================================================
 
 describe("E2E: SSE event filtering — only connector and data.changed events pass through", () => {
-	it("SseEventManager.emit forwards bundle.installed but not run.start", async () => {
+	it("SseEventManager.emit forwards connector.installed but not run.start", async () => {
 		const { SseEventManager } = await import("../../src/api/events.ts");
 		const manager = new SseEventManager(60_000);
 
@@ -707,7 +707,7 @@ describe("E2E: SSE event filtering — only connector and data.changed events pa
 		});
 
 		manager.emit({
-			type: "bundle.installed",
+			type: "connector.installed",
 			data: {
 				wsId: "ws_test",
 				serverName: "tasks",
@@ -720,8 +720,8 @@ describe("E2E: SSE event filtering — only connector and data.changed events pa
 		const { value } = await reader.read();
 		const text = new TextDecoder().decode(value);
 
-		// Should only contain the bundle.installed event, not run.start
-		expect(text).toContain("event: bundle.installed");
+		// Should only contain the connector.installed event, not run.start
+		expect(text).toContain("event: connector.installed");
 		expect(text).toContain('"serverName":"tasks"');
 		expect(text).not.toContain("run.start");
 

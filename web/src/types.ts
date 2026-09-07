@@ -198,8 +198,8 @@ export interface NotificationDeliveryEvent {
 
 /** SSE event type to payload mapping. */
 export interface SseEventMap {
-  "bundle.installed": ConnectorInstalledEvent;
-  "bundle.uninstalled": ConnectorUninstalledEvent;
+  "connector.installed": ConnectorInstalledEvent;
+  "connector.uninstalled": ConnectorUninstalledEvent;
   "connection.state_changed": ConnectionStateChangedEvent;
   "data.changed": DataChangedEvent;
   "conversation.title": ConversationTitleEvent;

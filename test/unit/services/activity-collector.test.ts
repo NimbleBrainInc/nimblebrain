@@ -323,7 +323,7 @@ describe("ActivityCollector", () => {
 	it("filters connector events from event buffer", async () => {
 		const events: BufferedEvent[] = [
 			{
-				event: "bundle.installed",
+				event: "connector.installed",
 				data: { name: "@nimblebraininc/echo" },
 				timestamp: "2025-01-01T10:00:00Z",
 			},
@@ -333,7 +333,7 @@ describe("ActivityCollector", () => {
 				timestamp: "2025-01-01T10:01:00Z",
 			},
 			{
-				event: "bundle.crashed",
+				event: "connector.crashed",
 				data: { name: "@nimblebraininc/postgres", reason: "OOM" },
 				timestamp: "2025-01-01T10:05:00Z",
 			},
@@ -385,7 +385,7 @@ describe("ActivityCollector", () => {
 
 		const events: BufferedEvent[] = [
 			{
-				event: "bundle.installed",
+				event: "connector.installed",
 				data: { name: "test" },
 				timestamp: "2025-01-01T10:00:00Z",
 			},
