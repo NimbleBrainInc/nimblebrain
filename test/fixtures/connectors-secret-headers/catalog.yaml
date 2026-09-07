@@ -67,3 +67,51 @@ servers:
           config:
             audience: mcp-fleet
             scope: mcp:invoke
+
+  # The OTHER place a provider-auth entry names a workspace key: the built-in
+  # `credential` provider resolves `config.key` from the workspace store on every
+  # request, and an entry using this shape declares no `secretHeaders` at all.
+  #
+  # It names `acme.db_url` on purpose — the same key `com.acme/db-query` binds to
+  # a header, mirroring the two examples in `docs/config/secrets.mdx`. Two
+  # installed connectors on one key is what the uninstall reference check exists
+  # to survive.
+  - name: com.acme/db-direct
+    title: Acme DB Direct
+    description: Authenticates as the workspace's own database credential
+    version: "1.0.0"
+    remotes:
+      - type: streamable-http
+        url: https://mcp.acme.test/direct/mcp
+    _meta:
+      ai.nimblebrain/connector:
+        auth: provider
+        providerAuth:
+          provider: credential
+          config:
+            key: acme.db_url
+        tags: [database]
+
+  # The THIRD place a ref names a workspace key: a static-auth entry's
+  # `operatorSetup.clientSecretKey`, which `resolveStaticOAuthClient` resolves
+  # from this same store. Uninstall never deletes it — `remove_operator_setup`
+  # owns it, and it is the workspace's app secret for a whole vendor rather than
+  # one connector's credential — but it is still a reason not to delete it out
+  # from under this entry on some OTHER connector's uninstall.
+  #
+  # It names `acme.db_url` on purpose, same as the two above.
+  - name: com.acme/db-operator
+    title: Acme DB Operator App
+    description: Connects through the workspace's own registered OAuth app
+    version: "1.0.0"
+    remotes:
+      - type: streamable-http
+        url: https://mcp.acme.test/operator/mcp
+    _meta:
+      ai.nimblebrain/connector:
+        auth: static
+        operatorSetup:
+          portalUrl: https://acme.test/developers
+          hint: Create an app, paste the client id and secret
+          clientSecretKey: acme.db_url
+        tags: [database]

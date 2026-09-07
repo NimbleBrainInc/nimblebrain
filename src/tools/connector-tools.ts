@@ -46,6 +46,7 @@ import { canWriteWorkspaceScoped } from "../workspace/authz.ts";
 import type { Workspace } from "../workspace/types.ts";
 import { type CredentialRef, isCredentialRef } from "./credential-ref.ts";
 import type { CredentialStore } from "./credential-store.ts";
+import { CREDENTIAL_PROVIDER } from "./credential-transport-credential.ts";
 import type { InProcessTool } from "./in-process-app.ts";
 import { hasMcpOAuthTokens } from "./mcp-oauth-records.ts";
 import { McpSource } from "./mcp-source.ts";
@@ -2294,12 +2295,138 @@ async function handleDisconnect(
 }
 
 /**
+ * Whether a persisted `workspace.json` row IS the named connector.
+ *
+ * `deriveServerName` needs a string; a legacy or malformed row has no `url`, and
+ * throwing here would fail the uninstall of a *different*, healthy connector.
+ * Such a row matches nothing, so it is left alone — which also makes it a
+ * referrer for the reference check below, the safe direction for a row nothing
+ * can identify.
+ */
+function matchesServerName(row: ConnectorRef, serverName: string): boolean {
+  if (row.serverName) return row.serverName === serverName;
+  if (typeof row.url !== "string" || row.url.length === 0) return false;
+  return deriveServerName(row.url) === serverName;
+}
+
+/**
+ * The workspace credential keys a persisted connector names AND OWNS — the
+ * ones an uninstall may take with it.
+ *
+ * Two places on the ref, and both count:
+ *
+ *   - `transport.headers` — the `secretHeaders` declaration, copied verbatim at
+ *     install. The workspace's own secret on a named outgoing header.
+ *   - `transport.auth` for the built-in `credential` provider — `config.key`,
+ *     which `credentialTransportCredentialProvider` resolves from the
+ *     workspace store on EVERY request. A connector using this shape declares
+ *     no `secretHeaders` at all (see the `com.acme/db` example in
+ *     `docs/config/secrets.mdx`), so reading only the headers would miss its
+ *     one credential entirely.
+ *
+ * A THIRD site names a workspace key and is deliberately not here:
+ * `oauthClient.clientSecret`, which `resolveStaticOAuthClient` dereferences
+ * against this same store. That key is the workspace's OAuth app setup for a
+ * whole vendor rather than this connector's own credential — `setup_operator`
+ * writes it and `remove_operator_setup` takes it away — so an uninstall must
+ * not delete it. It is still a reason not to delete SOMEONE ELSE's key, which
+ * is why `deletableSecretKeys` reads it on the referrer side only.
+ *
+ * Read from the PERSISTED REF rather than the catalog entry, deliberately. The
+ * ref is what the transport resolves on the next request, so it is the honest
+ * answer to both questions this is asked — "what does this connector own" and
+ * "does anything still need this key" — and it stays right for a connector
+ * whose source never started or whose catalog entry has since moved.
+ *
+ * Deduplicated: two headers may name one key, and deleting it twice would
+ * report a key the store no longer has.
+ */
+function workspaceKeysNamedBy(ref: ConnectorRef | undefined): string[] {
+  const keys = new Set<string>();
+  const transport = ref?.transport;
+  if (!transport) return [];
+  for (const value of Object.values(transport.headers ?? {})) {
+    if (isCredentialRef(value)) keys.add(value.key);
+  }
+  const auth = transport.auth;
+  if (auth?.type === "provider" && auth.provider === CREDENTIAL_PROVIDER) {
+    const key = (auth.config as { key?: unknown } | undefined)?.key;
+    if (typeof key === "string" && key.length > 0) keys.add(key);
+  }
+  return [...keys];
+}
+
+/**
+ * The keys this uninstall may delete: the ones the connector names, less any
+ * the workspace's OTHER installed connectors still name.
+ *
+ * The subtraction is the whole of it. A workspace key is a value the operator
+ * put there once, and nothing stops two entries pointing at it — the two
+ * examples in `docs/config/secrets.mdx` both name `acme.db_url`, one through
+ * `providerAuth`, one through `secretHeaders`. Without this, uninstalling
+ * either one breaks the survivor on its next request, naming a key whose value
+ * is now unrecoverable. That is a worse failure than the orphan this whole
+ * change exists to prevent, and it is one an agent-driven uninstall would hit
+ * with no dialog in front of it.
+ *
+ * Read off `workspace.json`, which is the connector's persistence of record, so
+ * a sibling whose source failed to start still counts as a referrer. The
+ * runtime's `getConnectorInstancesForWorkspace` would NOT do here: it filters to
+ * sources the registry has established, so a broken-but-installed sibling would
+ * be invisible and its key deleted.
+ *
+ * A referrer is anything that RESOLVES the key, which is a wider set than what
+ * a connector owns: a sibling's `oauthClient.clientSecret` counts here even
+ * though its own uninstall would never delete it. The asymmetry is the point —
+ * a key nothing may delete is still a key nothing else may delete either.
+ */
+function deletableSecretKeys(ws: Workspace, serverName: string, ownRef: ConnectorRef | undefined) {
+  const own = workspaceKeysNamedBy(ownRef);
+  if (own.length === 0) return { deletable: [], retained: [] };
+  const stillNamed = new Set<string>();
+  for (const other of ws.connectors) {
+    if (matchesServerName(other, serverName)) continue;
+    for (const key of workspaceKeysNamedBy(other)) stillNamed.add(key);
+    // The third site. Owned by `setup_operator` rather than by this connector,
+    // so it is a referrer and never a deletion — see `workspaceKeysNamedBy`.
+    const clientSecretKey = other.oauthClient?.clientSecret?.key;
+    if (clientSecretKey) stillNamed.add(clientSecretKey);
+  }
+  return {
+    deletable: own.filter((k) => !stillNamed.has(k)),
+    retained: own.filter((k) => stillNamed.has(k)),
+  };
+}
+
+/**
  * Uninstall a connector — full removal. For OAuth-protected URL connectors
  * we revoke tokens upstream first (so the user's grant in the vendor
  * portal is cleaned up), then `lifecycle.uninstall` stops the source,
  * removes the entry from `workspace.json`, clears credentials, and
  * unregisters placements. For local connectors (stdio / non-OAuth URL),
  * just `lifecycle.uninstall`.
+ *
+ * The workspace secrets the connector declares go with it, unconditionally. A
+ * connector owns its secrets, so removing the connector resolves them — leaving
+ * them behind strands a live outbound capability (a customer's database,
+ * someone's API) on a volume with nothing referencing it and no surface
+ * admitting it exists, since the rotation section renders only for an INSTALLED
+ * connector.
+ *
+ * There is no keep-them flag, because there is nothing for one to preserve: a
+ * connector declaring `secretHeaders` cannot be installed without supplying
+ * every value, so a reinstall re-collects and overwrites whatever was held back.
+ * The flag would keep a value the next install replaces, and leave the orphan.
+ *
+ * The keys come from the connector's own declaration, read here rather than
+ * from the call: a caller-named key would be a delete primitive pointed at any
+ * secret in the workspace.
+ *
+ * Order is uninstall-then-delete, and it matters. A delete that ran first and
+ * was followed by a failed uninstall would leave a connector installed and
+ * unable to connect. The reverse leaves the connector gone and a key behind,
+ * which is the state before this change and one the caller can act on — so a
+ * failed delete is reported, not rolled back.
  *
  * Workspace connectors only — a personal (identity-owned) connector is removed
  * via `handleDisconnectIdentity` (the dispatcher routes `scope:"identity"` there).
@@ -2320,7 +2447,10 @@ async function handleUninstall(
   // before reaching here) — so this path always has a workspace.
   if (!wsId) return errResult("Workspace context required.");
   if (!identity) return errResult("Authentication required.");
-  if (!lifecycle.getInstance(serverName, wsId)) {
+  // One lookup, and the guard is what makes `instance` non-null for the rest of
+  // this handler — both the reference check and the revoke read its ref.
+  const instance = lifecycle.getInstance(serverName, wsId);
+  if (!instance) {
     return errResult(`Connector "${serverName}" not installed in workspace.`);
   }
   // Workspace-scope uninstall removes a connector for every member
@@ -2336,10 +2466,17 @@ async function handleUninstall(
       isError: true,
     };
   }
-  const instance = lifecycle.getInstance(serverName, wsId);
+  // Resolved BEFORE the uninstall, off the workspace record as it stands now:
+  // `lifecycle.uninstall` drops the instance and `stripUninstalledConnectorEntry`
+  // drops the row, and both are inputs here.
+  const { deletable: secretKeys, retained: retainedKeys } = deletableSecretKeys(
+    ws,
+    serverName,
+    instance.ref,
+  );
 
   // Revoke OAuth tokens upstream first when applicable.
-  const revokeResult = instance?.ref
+  const revokeResult = instance.ref
     ? await revokeUrlConnectorTokens(lifecycle, ctx, serverName, wsId)
     : {};
 
@@ -2367,14 +2504,109 @@ async function handleUninstall(
     await ctx.runtime
       .getPermissionStore()
       .deleteConnector({ scope: "workspace", wsId }, serverName);
+    const secrets = await deleteOwnedSecrets(ctx, wsId, secretKeys);
     return {
-      content: textContent(`Uninstalled "${serverName}" from workspace.`),
-      structuredContent: { ok: true, scope: "workspace", serverName, ...revokeResult },
+      content: textContent(
+        `Uninstalled "${serverName}" from workspace.` +
+          describeSecretOutcome(secrets, retainedKeys),
+      ),
+      structuredContent: {
+        ok: true,
+        scope: "workspace",
+        serverName,
+        deletedSecretKeys: secrets.deleted,
+        // Named, not just counted: the Configure page goes with the connector,
+        // so this notice is the last place a surviving key is nameable.
+        ...(secrets.failed.length > 0 ? { failedSecretKeys: secrets.failed } : {}),
+        ...(secrets.error ? { secretDeleteError: secrets.error } : {}),
+        // Keys another installed connector still resolves. Reported so the
+        // absence of a delete is visible rather than looking like a miss.
+        ...(retainedKeys.length > 0 ? { retainedSecretKeys: retainedKeys } : {}),
+        ...revokeResult,
+      },
       isError: false,
     };
   } catch (err) {
+    // Nothing has been deleted yet — the secrets go after the uninstall, so a
+    // connector that is still installed still has its credentials.
     return errResult(err instanceof Error ? err.message : String(err));
   }
+}
+
+/**
+ * Remove the keys an uninstalled connector owned, reporting what went.
+ *
+ * Every key is attempted even after one fails: a partial delete that stopped at
+ * the first error would leave the rest orphaned with nothing to say so. The
+ * result is not an error — the uninstall succeeded, and the connector is gone
+ * whether or not its key went with it.
+ */
+async function deleteOwnedSecrets(
+  ctx: ManageConnectorsContext,
+  wsId: string,
+  keys: string[],
+): Promise<{ deleted: string[]; failed: string[]; error?: string }> {
+  if (keys.length === 0) return { deleted: [], failed: [] };
+  const deleted: string[] = [];
+  const failed: string[] = [];
+  let firstError: string | undefined;
+  // Inside the try with the deletes: `getCredentialStore` falls through to
+  // `requireCredentialStore`, which THROWS when nothing installed a store. Left
+  // outside, that throw reaches the caller's outer try and turns an uninstall
+  // that already completed into a reported failure — the one thing the
+  // uninstall-then-delete order exists to avoid claiming.
+  try {
+    const store = ctx.runtime.getCredentialStore();
+    for (const key of keys) {
+      try {
+        await store.delete({ kind: "workspace", wsId }, key);
+        deleted.push(key);
+      } catch (err) {
+        failed.push(key);
+        firstError ??= err instanceof Error ? err.message : String(err);
+      }
+    }
+  } catch (err) {
+    // No store at all: every key is unresolved, and none of them went.
+    return {
+      deleted,
+      failed: keys.filter((k) => !deleted.includes(k)),
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+  return { deleted, failed, ...(firstError ? { error: firstError } : {}) };
+}
+
+/**
+ * What became of the connector's keys, as sentences — silent when none was in
+ * play. Three outcomes, and they are not exclusive: some deleted, some failed,
+ * some deliberately kept because another connector still names them.
+ */
+function describeSecretOutcome(
+  secrets: { deleted: string[]; failed: string[] },
+  retained: string[],
+): string {
+  const parts: string[] = [];
+  if (secrets.deleted.length > 0) {
+    parts.push(
+      ` Removed ${secrets.deleted.length === 1 ? "secret" : "secrets"} ${quoteKeys(secrets.deleted)}.`,
+    );
+  }
+  if (secrets.failed.length > 0) {
+    parts.push(
+      ` The connector is gone, but ${quoteKeys(secrets.failed)} could not be removed and ${secrets.failed.length === 1 ? "is" : "are"} still stored.`,
+    );
+  }
+  if (retained.length > 0) {
+    parts.push(
+      ` Kept ${quoteKeys(retained)} — another installed connector still uses ${retained.length === 1 ? "it" : "them"}.`,
+    );
+  }
+  return parts.join("");
+}
+
+function quoteKeys(keys: string[]): string {
+  return keys.map((k) => `"${k}"`).join(", ");
 }
 
 /**
@@ -2414,14 +2646,7 @@ async function stripUninstalledConnectorEntry(
 ): Promise<void> {
   const wsAfter = await ctx.runtime.getWorkspaceStore().get(wsId);
   if (!wsAfter) return;
-  // `deriveServerName` needs a string; a legacy or malformed row has no `url`,
-  // and throwing here would fail the uninstall of a *different*, healthy
-  // connector. Such a row matches nothing, so it is retained untouched.
-  const filtered = wsAfter.connectors.filter((b) => {
-    if (b.serverName) return b.serverName !== serverName;
-    if (typeof b.url !== "string" || b.url.length === 0) return true;
-    return deriveServerName(b.url) !== serverName;
-  });
+  const filtered = wsAfter.connectors.filter((b) => !matchesServerName(b, serverName));
   if (filtered.length !== wsAfter.connectors.length) {
     await ctx.runtime.getWorkspaceStore().update(wsId, { connectors: filtered });
   }

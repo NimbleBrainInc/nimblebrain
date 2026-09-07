@@ -101,6 +101,37 @@ export function secretHeaderFields(install: CatalogListing["install"]): SecretHe
 }
 
 /**
+ * Every workspace credential key a catalog entry names, for a surface that must
+ * account for all of them rather than ask for the ones a person types.
+ *
+ * Two declaration sites, and a `provider`-auth entry may use either:
+ * `secretHeaders` binds a key to a named outgoing header, and `providerAuth`
+ * for the built-in `credential` provider names one in `config.key`, which the
+ * transport resolves on every request. An entry using the second shape usually
+ * declares no `secretHeaders` at all, so reading only those would report it as
+ * having no credentials.
+ *
+ * Deliberately separate from `secretHeaderFieldsFrom`, which is the *collection*
+ * derivation — a `providerAuth` key has no rotation dialog behind it today, so
+ * folding it in there would offer to replace a value through a form that does
+ * not exist. This answers "which keys" and nothing else.
+ */
+export function workspaceKeysDeclaredBy(cat: {
+  auth?: string;
+  secretHeaders?: Record<string, SecretHeaderRef> | undefined;
+  providerAuth?: { provider: string; config: Record<string, unknown> } | undefined;
+}): string[] {
+  if (cat.auth !== "provider") return [];
+  const keys = new Set<string>();
+  for (const field of secretHeaderFieldsFrom(cat.secretHeaders)) keys.add(field.key);
+  if (cat.providerAuth?.provider === "credential") {
+    const key = cat.providerAuth.config?.key;
+    if (typeof key === "string" && key.length > 0) keys.add(key);
+  }
+  return [...keys];
+}
+
+/**
  * The same derivation from a bare declaration — what the Configure page has,
  * since an installed connector carries its catalog entry rather than a
  * directory row.
