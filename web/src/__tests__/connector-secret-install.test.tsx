@@ -230,15 +230,33 @@ describe("a Browse entry that declares secretHeaders", () => {
     expect(setWorkspaceSecret).not.toHaveBeenCalled();
   });
 
-  test("a blank required value blocks the whole flow, install included", async () => {
+  test("a blank required value leaves submit disabled, so nothing runs", async () => {
     mounted = await openDialog();
+    const submit = findButton(document.body as unknown as HTMLElement, "Save and install");
+    expect(submit?.disabled).toBe(true);
+
+    // Clicking a disabled control is a no-op; assert the flow stayed put rather
+    // than trusting the attribute alone.
     await act(async () => {
-      findButton(document.body as unknown as HTMLElement, "Save and install")?.click();
+      submit?.click();
     });
     await act(async () => {
       await Promise.resolve();
     });
-    expect(document.body.textContent).toContain("required");
     expect(calls).toEqual([]);
+  });
+
+  test("filling the required value enables submit", async () => {
+    mounted = await openDialog();
+    expect(findButton(document.body as unknown as HTMLElement, "Save and install")?.disabled).toBe(
+      true,
+    );
+    const input = document.body.getElementsByTagName("input")[1] as HTMLInputElement;
+    await act(async () => {
+      setInputValue(input, "postgres://a.acme.test/db");
+    });
+    expect(findButton(document.body as unknown as HTMLElement, "Save and install")?.disabled).toBe(
+      false,
+    );
   });
 });
