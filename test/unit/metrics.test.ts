@@ -5,6 +5,8 @@ import type { Counter } from "prom-client";
 import {
   connectorCrashedTotal,
   connectorUnhealthy,
+  retiredBundleCrashedTotal,
+  retiredBundleUnhealthy,
   llmCallsTotal,
   llmErrorsTotal,
   llmInputTokensEstimatedTotal,
@@ -236,7 +238,7 @@ describe("connector crash metric", () => {
 });
 
 describe("connector unhealthy gauge", () => {
-  // Read one `nb_bundle_unhealthy` series; `.get()` triggers the collect
+  // Read one `nb_connector_unhealthy` series; `.get()` triggers the collect
   // callback. Returns undefined when the series is absent (collect resets each
   // scrape, so a recovered source disappears entirely rather than going to 0).
   async function readGauge(source: string): Promise<number | undefined> {
@@ -255,19 +257,19 @@ describe("connector unhealthy gauge", () => {
   // collect with a stale provider).
   afterAll(() => registerConnectorHealthGauge(() => []));
 
-  it("test_bundle_unhealthy_gauge_excludes_deliberately_stopped_dead_source", async () => {
+  it("test_connector_unhealthy_gauge_excludes_deliberately_stopped_dead_source", async () => {
     // `dead` is now reachable only via deliberate teardown (disconnect /
     // uninstall) — not an involuntary outage, so it must NOT page.
     registerConnectorHealthGauge(() => status({ name: "com-dropbox-mcp", state: "dead" }));
     expect(await readGauge("com-dropbox-mcp")).toBeUndefined();
   });
 
-  it("test_bundle_unhealthy_gauge_absent_for_healthy_source", async () => {
+  it("test_connector_unhealthy_gauge_absent_for_healthy_source", async () => {
     registerConnectorHealthGauge(() => status({ name: "synapse-crm", state: "healthy" }));
     expect(await readGauge("synapse-crm")).toBeUndefined();
   });
 
-  it("test_bundle_unhealthy_gauge_reports_1_for_restarting_source", async () => {
+  it("test_connector_unhealthy_gauge_reports_1_for_restarting_source", async () => {
     // `restarting` (an active backoff burst) is one of the two involuntary-down
     // states — it must assert so the series stays continuous across the
     // burst→cooldown→burst cycle (the `for: 10m` alert needs that continuity; a
@@ -276,14 +278,14 @@ describe("connector unhealthy gauge", () => {
     expect(await readGauge("ai-granola-mcp")).toBe(1);
   });
 
-  it("test_bundle_unhealthy_gauge_reports_1_for_cooldown_source", async () => {
+  it("test_connector_unhealthy_gauge_reports_1_for_cooldown_source", async () => {
     // `cooldown` (crashed, spent its quick-retry budget, now on slow re-probe)
     // can stay down indefinitely — the other involuntary-down state.
     registerConnectorHealthGauge(() => status({ name: "com-example-enrich-mcp", state: "cooldown" }));
     expect(await readGauge("com-example-enrich-mcp")).toBe(1);
   });
 
-  it("test_bundle_unhealthy_gauge_resolves_when_source_recovers", async () => {
+  it("test_connector_unhealthy_gauge_resolves_when_source_recovers", async () => {
     registerConnectorHealthGauge(() => status({ name: "com-dropbox-mcp", state: "cooldown" }));
     expect(await readGauge("com-dropbox-mcp")).toBe(1);
     // Source recovers → collect resets → series disappears → alert can resolve.
@@ -291,7 +293,7 @@ describe("connector unhealthy gauge", () => {
     expect(await readGauge("com-dropbox-mcp")).toBeUndefined();
   });
 
-  it("test_bundle_unhealthy_gauge_separate_series_per_source", async () => {
+  it("test_connector_unhealthy_gauge_separate_series_per_source", async () => {
     registerConnectorHealthGauge(() =>
       status(
         { name: "com-dropbox-mcp", state: "cooldown" },
@@ -304,9 +306,35 @@ describe("connector unhealthy gauge", () => {
     expect(await readGauge("synapse-crm")).toBeUndefined();
   });
 
-  it("test_bundle_unhealthy_gauge_unsafe_source_buckets_to_other", async () => {
+  it("test_connector_unhealthy_gauge_unsafe_source_buckets_to_other", async () => {
     registerConnectorHealthGauge(() => status({ name: "Weird Name!! /etc", state: "cooldown" }));
     expect(await readGauge("other")).toBe(1);
+  });
+});
+
+describe("retired nb_bundle_* series", () => {
+  // The `nb_bundle_*` duplicates carry identical values to `nb_connector_*` so a
+  // consumer can be repointed in its own release. If they ever diverge, the
+  // alert and the dashboard disagree about whether a connector is down.
+  afterAll(() => registerConnectorHealthGauge(() => []));
+
+  it("test_retired_crash_counter_tracks_the_connector_counter", async () => {
+    const labels = { source: "com-dropbox-mcp", remote: "true" };
+    const beforeConnector = await read(connectorCrashedTotal, labels);
+    const beforeRetired = await read(retiredBundleCrashedTotal, labels);
+    recordConnectorCrash("com-dropbox-mcp", true);
+    expect((await read(connectorCrashedTotal, labels)) - beforeConnector).toBe(1);
+    expect((await read(retiredBundleCrashedTotal, labels)) - beforeRetired).toBe(1);
+  });
+
+  it("test_retired_unhealthy_gauge_tracks_the_connector_gauge", async () => {
+    registerConnectorHealthGauge(() => [
+      { name: "ai-granola-mcp", state: "cooldown", uptime: null, restartCount: 0 },
+    ]);
+    const seriesOf = async (gauge: typeof connectorUnhealthy) =>
+      (await gauge.get()).values.map((s) => [s.labels.source, s.value]);
+    expect(await seriesOf(retiredBundleUnhealthy)).toEqual(await seriesOf(connectorUnhealthy));
+    expect(await seriesOf(connectorUnhealthy)).toEqual([["ai-granola-mcp", 1]]);
   });
 });
 
