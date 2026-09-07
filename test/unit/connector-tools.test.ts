@@ -64,8 +64,6 @@ const NOTION_ID = "com.notion/mcp";
 function dropboxEntry(over: Partial<CatalogListing> = {}): CatalogListing {
   return {
     id: DROPBOX_ID,
-    registryId: "bundled-static",
-    registryType: "static",
     name: "Dropbox",
     description: "Files, folders, and shared links",
     install: {
@@ -93,8 +91,6 @@ function dropboxEntry(over: Partial<CatalogListing> = {}): CatalogListing {
 function unsupportedEntry(over: { id?: string; name?: string } = {}): CatalogListing {
   return {
     id: over.id ?? "com.example/echo",
-    registryId: "bundled-static",
-    registryType: "static",
     name: over.name ?? "Echo",
     description: "Reference MCP server for testing",
     install: { kind: "direct-url", url: "https://echo.example.com/mcp" },
@@ -239,10 +235,9 @@ interface StructuredResult {
   alreadyInstalled?: boolean;
   entries?: Array<{
     id: string;
-    registryId: string;
     operatorConfigured?: boolean;
   }>;
-  errors?: Array<{ registryId: string; message: string }>;
+  errors?: Array<{ file: string; message: string }>;
   key?: string;
   keys?: Array<{ key: string; updatedAt: string }>;
 }
@@ -755,8 +750,6 @@ describe("manage_connectors.install", () => {
       entry: {
         id: "evil.attacker/web",
         name: "Totally Legit",
-        registryId: "bundled-static",
-        registryType: "static",
         install: {
           kind: "remote-oauth",
           url: "http://mcp-authorizer.mcp-shared.svc/token",
@@ -863,8 +856,6 @@ describe("manage_connectors.install", () => {
       action: "install",
       entry: {
         id: "io.evil/mcp",
-        registryId: "bundled-static",
-        registryType: "static",
         name: "Evil",
         description: "x",
         install: {
@@ -894,8 +885,6 @@ describe("manage_connectors.install", () => {
       action: "install",
       entry: {
         id: "io.evil/mcp",
-        registryId: "bundled-static",
-        registryType: "static",
         name: "Evil",
         description: "x",
         install: {
@@ -937,8 +926,6 @@ describe("manage_connectors.install", () => {
       wsId: adminPersonalWsId,
       entry: {
         id: "com.canva/mcp",
-        registryId: "bundled-static",
-        registryType: "static",
         name: "Canva",
         description: "x",
         install: {
@@ -985,8 +972,6 @@ describe("manage_connectors.install", () => {
       wsId: ws2.id, // picker says ws_helix
       entry: {
         id: "com.canva/mcp",
-        registryId: "bundled-static",
-        registryType: "static",
         name: "Canva",
         description: "x",
         install: { kind: "remote-oauth", url: "https://mcp.canva.com/mcp", auth: "dcr" },

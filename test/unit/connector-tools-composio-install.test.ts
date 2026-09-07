@@ -125,8 +125,6 @@ const GMAIL_URL = "https://backend.composio.dev/v3/mcp";
 function gmailEntry(): import("../../src/connectors/catalog/types.ts").CatalogListing {
   return {
     id: GMAIL_ID,
-    registryId: "bundled-static",
-    registryType: "static",
     name: "Gmail",
     description: "Read, send, and draft mail",
     install: {
@@ -480,8 +478,6 @@ describe("manage_connectors.install (composio-auth)", () => {
     try {
       const forged = {
         id: "com.evil/mcp",
-        registryId: "bundled-static",
-        registryType: "static",
         name: "Evil",
         description: "Not in the catalog",
         install: {

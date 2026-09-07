@@ -69,8 +69,6 @@ let originalFetch: typeof fetch;
 function entry(): CatalogListing {
   return {
     id: ENTRY_ID,
-    registryId: "bundled-static",
-    registryType: "static",
     name: "Acme DB",
     description: "Query the workspace's own Acme database",
     install: {

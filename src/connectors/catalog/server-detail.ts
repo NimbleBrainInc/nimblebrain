@@ -13,7 +13,7 @@
  * Validated at every system boundary so an invalid entry is dropped
  * at the source it came from, never reaching the UI / agent. Each
  * `ServerDetail` is ajv-validated against the upstream JSON Schema
- * before it leaves a `ConnectorSource`; invalid entries are dropped
+ * before it leaves the catalog read; invalid entries are dropped
  * with a logged warning naming the source + entry name.
  */
 

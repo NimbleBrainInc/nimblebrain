@@ -179,7 +179,7 @@ export function serverDetailToCatalogEntry(s: ServerDetail): ConnectorCatalogEnt
 /**
  * Defense-in-depth safety check on a `ServerDetail` regardless of which
  * source emitted it. Runs at the directory boundary so registry-published
- * entries are scrubbed identically to bundled-static / NB_REGISTRIES
+ * entries are scrubbed identically wherever they came from
  * static entries — pre-fix only static-source ran this check, so a
  * malicious publisher on a non-curated registry could ship
  * `_meta.docsUrl: "javascript:..."` and the Configure page would render

@@ -8,7 +8,7 @@ import { ORG_ADMIN_ROLES, type OrgRole } from "../identity/types.ts";
 export interface FeatureFlags {
   skillManagement?: boolean;
   toolDiscovery?: boolean;
-  /** Registry search via `nb__search` scope=registry. */
+  /** Catalog search via `nb__search` scope=catalog. */
   catalogSearch?: boolean;
   fileContext?: boolean;
   userManagement?: boolean;

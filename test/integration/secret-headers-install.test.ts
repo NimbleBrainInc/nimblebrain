@@ -90,8 +90,6 @@ function registerStubMintedProvider(): void {
 function entry(): CatalogListing {
   return {
     id: ENTRY_ID,
-    registryId: "bundled-static",
-    registryType: "static",
     name: "Acme DB Query",
     description: "Read-only queries against the workspace's own database",
     install: {

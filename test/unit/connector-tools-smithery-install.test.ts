@@ -44,7 +44,6 @@ function bassethoundEntry(): CatalogListing {
     id: BASSETHOUND_ID,
     name: "Bassethound",
     description: "Company intelligence for AI agents",
-    registryId: "bundled-static",
     install: {
       kind: "remote-oauth",
       url: "https://mcp.bassethound.ai/mcp",

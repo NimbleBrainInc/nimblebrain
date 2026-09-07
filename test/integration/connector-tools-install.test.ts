@@ -127,8 +127,6 @@ async function buildHarness(opts: { sessionWsId: string | null } = { sessionWsId
 function dcrEntry(): CatalogListing {
   return {
     id: "ai.granola/mcp",
-    registryId: "bundled-static",
-    registryType: "static",
     name: "Granola",
     description: "Meeting notes",
     install: {

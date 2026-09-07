@@ -3,29 +3,15 @@
  * Regenerate: bun run codegen. AI agents: edit the source, not this file.
  */
 /**
- * The connector registry layer surfaces installable connectors from a
- * configurable set of sources (curated YAML, a future upstream MCP
- * registry, etc.) through one facade — `ConnectorCatalog`. Clients
- * never construct sources or aggregate them by hand; they ask the
- * directory for `list()`, `catalogByUrl()`, `catalogById()`, etc.,
- * and uniform behavior (scope filtering, error aggregation,
- * projection, dedup) lives in one place.
+ * Wire types for the connector catalog: the Browse row (`CatalogListing`)
+ * and the flat record the connector handlers and Configure page read
+ * (`ConnectorCatalogEntry`). Both are projected from an upstream
+ * `ServerDetail` by `projection.ts`; `ConnectorCatalog` owns reading the
+ * catalog directory, the safety scrub, dedup, and the lookup tables.
  *
- * Source contracts are deliberately narrow: a `ConnectorSource` does
- * one thing — `fetch()` returns the raw upstream `ServerDetail[]` for
- * its instance. Caching is the source's private business; filtering,
- * projection, and lookup tables live in the directory.
- *
- * Configuration drives which sources are loaded. Operators can
- * configure multiple instances of the same source type with different
- * `RegistryConfig` rows — e.g. two curated catalogs at different paths —
- * because each row gets its own `ConnectorSource` instance.
- *
- * The catalog directory:
- *
- *   - `static`  — bundled curated catalog of remote OAuth services
- *     (Granola, Notion, HubSpot, etc.) shipped with the platform.
- *     Locked. Operator overrides via `NB_REGISTRIES` JSON.
+ * This file is the codegen source for the web shell's copies of these
+ * types (`web/src/_generated/connector-catalog/`), so it carries no
+ * implementation detail the client has no business knowing.
  */
 import type { ConnectorAuthKind } from "../../connectors/auth-kind.ts";
 import type { ConnectorUiMeta } from "../../connectors/runtime/types.ts";

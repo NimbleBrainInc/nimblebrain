@@ -178,7 +178,6 @@ function widgetsEntry(): CatalogListing {
     id: CONNECTOR_ID,
     name: "Widgets",
     description: "Widgets, brokered",
-    registryId: "bundled-static",
     install: {
       kind: "remote-oauth",
       url: "https://widgets.example/mcp",

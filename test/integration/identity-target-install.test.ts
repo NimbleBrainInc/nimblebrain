@@ -46,8 +46,6 @@ const USER: UserIdentity = {
 function dcrEntry(): CatalogListing {
   return {
     id: "ai.granola/mcp",
-    registryId: "bundled-static",
-    registryType: "static",
     name: "Granola",
     description: "Meeting notes",
     install: {
@@ -62,8 +60,6 @@ function dcrEntry(): CatalogListing {
 function composioEntry(): CatalogListing {
   return {
     id: "com.example/gmail",
-    registryId: "bundled-static",
-    registryType: "static",
     name: "Gmail",
     description: "Email",
     install: {
@@ -79,8 +75,6 @@ function composioEntry(): CatalogListing {
 function unsupportedEntry(): CatalogListing {
   return {
     id: "dev.example/tool",
-    registryId: "bundled-static",
-    registryType: "static",
     name: "Some Tool",
     description: "A pasted-URL entry (the direct-url kind, not yet supported)",
     install: { kind: "direct-url", url: "https://tool.example.com/mcp" },
@@ -240,8 +234,6 @@ describe("manage_connectors.install scope:identity — DCR personal-connector in
     // reserved-name record ever reaches connectors.json.
     const reserved: CatalogListing = {
       id: "nb",
-      registryId: "bundled-static",
-      registryType: "static",
       name: "Reserved",
       description: "collides with the system-tool prefix",
       install: {
