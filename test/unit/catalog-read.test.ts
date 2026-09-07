@@ -3,10 +3,10 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { log } from "../../src/observability/log.ts";
-import { readStaticServers } from "../../src/registries/static-source.ts";
+import { readCatalogServers } from "../../src/connectors/catalog/read.ts";
 
 /**
- * Directory-reading mechanics for `StaticSource`. A static registry's
+ * Directory-reading mechanics for the catalog read. A static registry's
  * path may be a single file (legacy) or a directory of catalog files
  * (the GitOps shape — split curation across files that roll up to one
  * registry). These pin the aggregation, dedup, ordering, and
@@ -33,13 +33,13 @@ function catalog(...entries: string[]): string {
   return `servers:\n${entries.join("")}`;
 }
 
-describe("StaticSource directory reading", () => {
+describe("the catalog read directory reading", () => {
   test("aggregates entries across every catalog file in the directory", () => {
     const { dir, cleanup } = tmpDir();
     try {
       writeFileSync(join(dir, "curated.yaml"), catalog(entry("com.a/mcp")));
       writeFileSync(join(dir, "composio.yaml"), catalog(entry("com.b/mcp")));
-      const names = readStaticServers(dir).map((s) => s.name);
+      const names = readCatalogServers(dir).map((s) => s.name);
       expect(names.sort()).toEqual(["com.a/mcp", "com.b/mcp"]);
     } finally {
       cleanup();
@@ -63,7 +63,7 @@ describe("StaticSource directory reading", () => {
           ],
         }),
       );
-      const names = readStaticServers(dir).map((s) => s.name);
+      const names = readCatalogServers(dir).map((s) => s.name);
       expect(names.sort()).toEqual(["com.a/mcp", "com.b/mcp"]);
     } finally {
       cleanup();
@@ -77,7 +77,7 @@ describe("StaticSource directory reading", () => {
       // description survives.
       writeFileSync(join(dir, "a.yaml"), catalog(entry("com.dup/mcp", "from a")));
       writeFileSync(join(dir, "b.yaml"), catalog(entry("com.dup/mcp", "from b")));
-      const servers = readStaticServers(dir);
+      const servers = readCatalogServers(dir);
       expect(servers).toHaveLength(1);
       expect(servers[0]?.description).toBe("from a");
     } finally {
@@ -91,7 +91,7 @@ describe("StaticSource directory reading", () => {
       writeFileSync(join(dir, "curated.yaml"), catalog(entry("com.a/mcp")));
       writeFileSync(join(dir, "README.md"), "# not a catalog\n");
       writeFileSync(join(dir, "notes.txt"), "ignore me");
-      const names = readStaticServers(dir).map((s) => s.name);
+      const names = readCatalogServers(dir).map((s) => s.name);
       expect(names).toEqual(["com.a/mcp"]);
     } finally {
       cleanup();
@@ -114,7 +114,7 @@ describe("StaticSource directory reading", () => {
         url: https://example.com/mcp
 `,
       );
-      readStaticServers(dir);
+      readCatalogServers(dir);
       const dropLine = warn.mock.calls
         .map((c) => String(c[0]))
         .find((m) => m.includes("com.bad/mcp") && m.includes("dropped"));
@@ -132,7 +132,7 @@ describe("StaticSource directory reading", () => {
     try {
       writeFileSync(join(dir, "good.yaml"), catalog(entry("com.good/mcp")));
       writeFileSync(join(dir, "broken.yaml"), "servers: [ this: is: not: valid yaml");
-      const names = readStaticServers(dir).map((s) => s.name);
+      const names = readCatalogServers(dir).map((s) => s.name);
       expect(names).toEqual(["com.good/mcp"]);
     } finally {
       cleanup();
@@ -142,14 +142,14 @@ describe("StaticSource directory reading", () => {
   test("an empty directory yields no servers", () => {
     const { dir, cleanup } = tmpDir();
     try {
-      expect(readStaticServers(dir)).toEqual([]);
+      expect(readCatalogServers(dir)).toEqual([]);
     } finally {
       cleanup();
     }
   });
 
   test("a missing path yields no servers", () => {
-    expect(readStaticServers(join(tmpdir(), "nb-does-not-exist-xyz"))).toEqual([]);
+    expect(readCatalogServers(join(tmpdir(), "nb-does-not-exist-xyz"))).toEqual([]);
   });
 
   test("still reads a single file (non-directory path)", () => {
@@ -157,7 +157,7 @@ describe("StaticSource directory reading", () => {
     try {
       const file = join(dir, "catalog.yaml");
       writeFileSync(file, catalog(entry("com.a/mcp"), entry("com.b/mcp")));
-      const names = readStaticServers(file).map((s) => s.name);
+      const names = readCatalogServers(file).map((s) => s.name);
       expect(names.sort()).toEqual(["com.a/mcp", "com.b/mcp"]);
     } finally {
       cleanup();

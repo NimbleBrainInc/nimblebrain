@@ -5,6 +5,11 @@ import {
   type SecretHeaderRef,
 } from "../connectors/catalog/server-detail.ts";
 import type {
+  CatalogListing,
+  ConnectorCatalogEntry,
+  RemoteOAuthInstall,
+} from "../connectors/catalog/types.ts";
+import type {
   ManagedConnectorProvider,
   ManagedSession,
 } from "../connectors/providers/managed-provider.ts";
@@ -34,11 +39,6 @@ import type { UserIdentity } from "../identity/provider.ts";
 import { clearCursor } from "../notifications/cursors.ts";
 import { log } from "../observability/log.ts";
 import type { PermissionOwner } from "../permissions/permission-store.ts";
-import type {
-  ConnectorCatalogEntry,
-  DirectoryEntry,
-  RemoteOAuthInstall,
-} from "../registries/types.ts";
 import type { Runtime } from "../runtime/runtime.ts";
 import { validateAdditionalAuthorizationParams } from "../util/oauth-params.ts";
 import { isHttpUrl } from "../util/url.ts";
@@ -248,7 +248,7 @@ export function createManageConnectorsTool(ctx: ManageConnectorsContext): InProc
         entry: {
           type: "object",
           description:
-            "DirectoryEntry to install (required for `install`). The same shape returned by list_directory — server dispatches by entry.install.kind. No id-to-action lookup; the registry that produced the entry is the source of truth for the install payload.",
+            "CatalogListing to install (required for `install`). The same shape returned by list_directory — server dispatches by entry.install.kind. No id-to-action lookup; the registry that produced the entry is the source of truth for the install payload.",
         },
         wsId: {
           type: "string",
@@ -473,7 +473,7 @@ async function handleListCatalog(
   ctx: ManageConnectorsContext,
   wsId: string | null,
 ): Promise<ToolResult> {
-  const catalog = await ctx.runtime.getConnectorDirectory().catalogEntries();
+  const catalog = await ctx.runtime.getConnectorCatalog().catalogEntries();
   const ws = wsId ? await ctx.runtime.getWorkspaceStore().get(wsId) : null;
   const allowList = ws?.connectorsAllowList;
   const filtered =
@@ -502,7 +502,7 @@ async function handleListDirectory(
   ctx: ManageConnectorsContext,
   wsId: string | null,
 ): Promise<ToolResult> {
-  const directory = ctx.runtime.getConnectorDirectory();
+  const directory = ctx.runtime.getConnectorCatalog();
 
   // Hoist the workspace fetch + credential-store handle out of the
   // closure so the closure does at most one disk read per static-auth
@@ -881,7 +881,7 @@ async function handleListInstalled(
   // though they're called separately. Reaching for the lookup tables
   // (rather than the raw catalog list + manual map-build) keeps the
   // construction concern inside the facade.
-  const directory = ctx.runtime.getConnectorDirectory();
+  const directory = ctx.runtime.getConnectorCatalog();
   const catalogByUrl = await directory.catalogByUrl();
   // O(1) catalog lookups for brokered connectors whose persisted `ref.url` is a
   // per-install session URL and therefore misses `catalogByUrl`. Built once per
@@ -977,7 +977,7 @@ async function handleGetInstalled(
 }
 
 /**
- * Install a connector. Takes the full `DirectoryEntry` the UI was
+ * Install a connector. Takes the full `CatalogListing` the UI was
  * already showing the user — server dispatches by `entry.install.kind`.
  *
  * No id-to-action lookup. The registry that produced the entry IS the
@@ -989,7 +989,7 @@ async function handleGetInstalled(
  *   - No name-collision bugs between catalogs (the "Catalog entry not
  *     found" class of error doesn't exist in this design).
  *
- * Defense-in-depth on the wire payload: `parseDirectoryEntry` re-runs
+ * Defense-in-depth on the wire payload: `parseCatalogListing` re-runs
  * the value-shape gate (`isHttpUrl` for remote URLs,
  * reserved-OAuth-params for the install action). The entry came from a client over the tool surface, not
  * directly from a trusted source instance, so trust-but-verify at the
@@ -1006,7 +1006,7 @@ async function handleInstall(
   wsIdArg: string | undefined,
   scope: string | undefined,
 ): Promise<ToolResult> {
-  const entry = parseDirectoryEntry(rawEntry);
+  const entry = parseCatalogListing(rawEntry);
   if (!entry) return errResult("entry with install action is required.");
   if (!identity) return errResult("Authentication required.");
 
@@ -1068,7 +1068,7 @@ async function handleInstall(
 function workspaceInstallAdmission(
   ws: Workspace,
   identity: UserIdentity,
-  entry: DirectoryEntry,
+  entry: CatalogListing,
 ): ToolResult | null {
   if (!isWorkspaceAdmin(ws, identity)) {
     return {
@@ -1107,7 +1107,7 @@ async function personalConnectorCollisionGuard(
   ctx: ManageConnectorsContext,
   callerId: string,
   ws: Workspace,
-  entry: DirectoryEntry,
+  entry: CatalogListing,
 ): Promise<ToolResult | null> {
   if (ws.isPersonal === true) return null;
   const serverName = slugifyServerName(entry.id);
@@ -1142,7 +1142,7 @@ async function personalConnectorCollisionGuard(
 async function handleInstallIdentity(
   ctx: ManageConnectorsContext,
   identity: UserIdentity,
-  entry: DirectoryEntry,
+  entry: CatalogListing,
 ): Promise<ToolResult> {
   const callerId = identity.id;
 
@@ -1182,7 +1182,7 @@ async function handleInstallIdentity(
   // trusted catalog — the same bound the workspace path applies, and the reason
   // the caller's own block never reaches `createSession`. static/provider are
   // already rejected above. The action shape is validated upstream by
-  // `parseDirectoryEntry`.
+  // `parseCatalogListing`.
   const validated = await validateRemoteOAuthInstall(ctx, entry, entry.install);
   if ("error" in validated) return errResult(validated.error);
   const action = validated.action;
@@ -1238,7 +1238,7 @@ async function handleInstallIdentity(
 
   // Host UI placement is SERVER-authored: resolve from the operator-trusted
   // catalog by id, never the caller's entry (a forged entry can't inject chrome).
-  const trustedUi = (await ctx.runtime.getConnectorDirectory().catalogById(entry.id))?.ui;
+  const trustedUi = (await ctx.runtime.getConnectorCatalog().catalogById(entry.id))?.ui;
 
   // Resolve install wiring, owner-generic. DCR carries none (no session, no
   // client secret). A brokered connector creates the upstream session bound to
@@ -1444,7 +1444,7 @@ async function resolveApiKeyConnector(
     }
   | { error: string }
 > {
-  const entry = await ctx.runtime.getConnectorDirectory().catalogById(catalogId);
+  const entry = await ctx.runtime.getConnectorCatalog().catalogById(catalogId);
   if (!entry) return { error: `Connector "${catalogId}" not in catalog.` };
   const config = brokeredCatalogConfig(entry);
   if (!config) return { error: `Connector "${catalogId}" is not brokered (auth=${entry.auth}).` };
@@ -1497,7 +1497,7 @@ async function registerApiKeySource(
 }
 
 /**
- * Validate the wire payload as a `DirectoryEntry`. Tools/JSON arrive
+ * Validate the wire payload as a `CatalogListing`. Tools/JSON arrive
  * as `unknown` from the dispatcher and the entry came from a client,
  * not the registry — anyone with API access can construct a payload.
  * Same threat model as the catalog `iconUrl` allowlist (a malicious
@@ -1515,7 +1515,7 @@ async function registerApiKeySource(
  * Workspace `connectorsAllowList` (when set) further narrows the
  * accepted ids — but it's optional, so this is the always-on gate.
  */
-function parseDirectoryEntry(input: unknown): DirectoryEntry | null {
+function parseCatalogListing(input: unknown): CatalogListing | null {
   if (!input || typeof input !== "object") return null;
   const e = input as Record<string, unknown>;
   if (typeof e.id !== "string" || !e.id) return null;
@@ -1525,11 +1525,11 @@ function parseDirectoryEntry(input: unknown): DirectoryEntry | null {
   if (!isValidInstallKind(install.kind)) return null;
   if (!isInstallPayloadValid(install)) return null;
   // additionalAuthorizationParams live at `install.additionalAuthorizationParams`
-  // per RemoteOAuthInstall (src/registries/types.ts), NOT on the top-level entry.
+  // per RemoteOAuthInstall (src/connectors/catalog/types.ts), NOT on the top-level entry.
   const additionalParams = (install as { additionalAuthorizationParams?: unknown })
     .additionalAuthorizationParams;
   if (!areAdditionalAuthParamsValid(additionalParams)) return null;
-  return input as DirectoryEntry;
+  return input as CatalogListing;
 }
 
 /** The closed set of install action kinds the dispatch understands. */
@@ -1590,7 +1590,7 @@ async function handleInstallRemoteOAuth(
   ctx: ManageConnectorsContext,
   wsId: string,
   ws: Workspace,
-  entry: DirectoryEntry,
+  entry: CatalogListing,
 ): Promise<ToolResult> {
   if (entry.install.kind !== "remote-oauth") {
     return errResult("invariant violated: handleInstallRemoteOAuth requires remote-oauth entry");
@@ -1611,7 +1611,7 @@ async function handleInstallRemoteOAuth(
   // entry — so a forged entry can't inject host chrome. Cached by the directory
   // facade. Undefined when the id isn't a known catalog connector. Placements
   // are re-validated at registration (`sanitizePlacements`).
-  const trusted = await ctx.runtime.getConnectorDirectory().catalogById(entry.id);
+  const trusted = await ctx.runtime.getConnectorCatalog().catalogById(entry.id);
   const trustedUi = trusted?.ui;
 
   // serverName is the slugified canonical reverse-DNS form — opaque,
@@ -1663,7 +1663,7 @@ async function handleInstallRemoteOAuth(
       // identity is interpolated into the overlay fetch path, so a field the
       // caller controls chooses which repository is read. `action` carries the
       // caller's own object for every auth kind the install does not re-resolve
-      // (`parseDirectoryEntry` strips no unknown install fields), which is
+      // (`parseCatalogListing` strips no unknown install fields), which is
       // exactly the provenance this must not depend on. Same source
       // `connector-skill-reconcile` reads it from.
       trusted?.composio?.toolkit,
@@ -1852,14 +1852,14 @@ function validateSecretHeaders(
  */
 async function validateRemoteOAuthInstall(
   ctx: ManageConnectorsContext,
-  entry: DirectoryEntry,
+  entry: CatalogListing,
   action: RemoteOAuthInstall,
 ): Promise<{ action: RemoteOAuthInstall } | { error: string }> {
   if (action.auth === "static" && !action.operatorSetup) {
     return { error: `"${entry.name}" is static-auth but missing operatorSetup config.` };
   }
   if (action.auth === "provider") {
-    const trusted = await ctx.runtime.getConnectorDirectory().catalogById(entry.id);
+    const trusted = await ctx.runtime.getConnectorCatalog().catalogById(entry.id);
     if (!trusted || trusted.auth !== "provider" || !trusted.providerAuth) {
       return {
         error: `"${entry.name}" is not a recognized platform connector — refusing a provider-auth install from an unverified entry.`,
@@ -1888,7 +1888,7 @@ async function validateRemoteOAuthInstall(
     };
   }
   if (isBrokeredAuthKind(action.auth)) {
-    const trusted = await ctx.runtime.getConnectorDirectory().catalogById(entry.id);
+    const trusted = await ctx.runtime.getConnectorCatalog().catalogById(entry.id);
     const config = trusted?.auth === action.auth ? brokeredCatalogConfig(trusted) : undefined;
     if (!config) {
       return {
@@ -1991,7 +1991,7 @@ async function loadStaticOAuthClient(
   ctx: ManageConnectorsContext,
   wsId: string,
   ws: Workspace,
-  entry: DirectoryEntry,
+  entry: CatalogListing,
   action: RemoteOAuthInstall,
 ): Promise<{ clientId: string; clientSecretKey: string } | { __err: string }> {
   if (action.auth !== "static" || !action.operatorSetup) {
@@ -2103,7 +2103,7 @@ async function handleDuplicateInstall(
   ctx: ManageConnectorsContext,
   wsId: string,
   ws: Workspace,
-  entry: DirectoryEntry,
+  entry: CatalogListing,
   action: RemoteOAuthInstall,
   serverName: string,
   isPersonalTarget: boolean,
@@ -2162,7 +2162,7 @@ async function resolveInstallWiring(
   ctx: ManageConnectorsContext,
   wsId: string,
   ws: Workspace,
-  entry: DirectoryEntry,
+  entry: CatalogListing,
   action: RemoteOAuthInstall,
 ): Promise<
   | {
@@ -2204,7 +2204,7 @@ async function eagerStartRemoteSource(
   ref: ConnectorRef,
   wsRegistry: ReturnType<Runtime["getRegistryForWorkspace"]>,
   wsId: string,
-  entry: DirectoryEntry,
+  entry: CatalogListing,
   action: RemoteOAuthInstall,
 ): Promise<string | undefined> {
   try {
@@ -2717,7 +2717,7 @@ async function handleListPersonalCatalog(
 
   // Personal connectors are identity-owned and workspace-independent: read the
   // whole directory (no wsId → no workspace allow-list) and filter.
-  const { entries } = await ctx.runtime.getConnectorDirectory().list({});
+  const { entries } = await ctx.runtime.getConnectorCatalog().list({});
 
   // Drop connectors the caller already installed on their identity.
   const installed = await new IdentityConnectorStore({ workDir: ctx.runtime.getWorkDir() }).list(
@@ -2766,7 +2766,7 @@ async function handleListPersonalConnectors(
   // Enrich display metadata from the operator-trusted catalog (keyed by the same
   // slug the ref stamps) — the URL ref carries no human name/description. Falls
   // back to the slug when the catalog no longer lists the connector.
-  const catalog = await ctx.runtime.getConnectorDirectory().catalogEntries();
+  const catalog = await ctx.runtime.getConnectorCatalog().catalogEntries();
   const byServerName = new Map(catalog.map((e) => [slugifyServerName(e.id), e]));
 
   const workDir = ctx.runtime.getWorkDir();
@@ -3014,7 +3014,7 @@ async function handleSetupOperator(
     };
   }
 
-  const entry = await ctx.runtime.getConnectorDirectory().catalogById(catalogId);
+  const entry = await ctx.runtime.getConnectorCatalog().catalogById(catalogId);
   if (!entry) return errResult(`Catalog entry "${catalogId}" not found.`);
   if (entry.auth !== "static") {
     return errResult(`"${entry.name}" is a DCR connector — operator setup not required.`);
@@ -3115,7 +3115,7 @@ async function handleRemoveOperatorSetup(
     };
   }
 
-  const entry = await ctx.runtime.getConnectorDirectory().catalogById(catalogId);
+  const entry = await ctx.runtime.getConnectorCatalog().catalogById(catalogId);
   if (!entry) return errResult(`Catalog entry "${catalogId}" not found.`);
 
   // Guard: refuse if the connector is currently installed. Removing

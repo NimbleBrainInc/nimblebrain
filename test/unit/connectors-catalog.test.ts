@@ -3,7 +3,7 @@ import {
   getNimbleBrainConnectorMeta,
   validateServerDetail,
 } from "../../src/connectors/catalog/server-detail.ts";
-import { readStaticServers } from "../../src/registries/static-source.ts";
+import { readCatalogServers } from "../../src/connectors/catalog/read.ts";
 import { CONNECTOR_FIXTURE_DIR } from "../helpers/connector-fixtures.ts";
 
 // The catalog *contract* — the shape rules every curated catalog file
@@ -13,7 +13,7 @@ import { CONNECTOR_FIXTURE_DIR } from "../helpers/connector-fixtures.ts";
 // this suite to it would break the contract test on every curation edit.
 describe("curated catalog contract", () => {
   test("parses + validates as ServerDetail with zero drops", () => {
-    const servers = readStaticServers(CONNECTOR_FIXTURE_DIR);
+    const servers = readCatalogServers(CONNECTOR_FIXTURE_DIR);
     expect(servers.length).toBeGreaterThan(0);
     for (const s of servers) {
       const result = validateServerDetail(s);
@@ -22,13 +22,13 @@ describe("curated catalog contract", () => {
   });
 
   test("all reverse-DNS names are unique", () => {
-    const servers = readStaticServers(CONNECTOR_FIXTURE_DIR);
+    const servers = readCatalogServers(CONNECTOR_FIXTURE_DIR);
     const names = servers.map((s) => s.name);
     expect(new Set(names).size).toBe(names.length);
   });
 
   test("static-auth entries all have operatorSetup with clientSecretKey", () => {
-    const servers = readStaticServers(CONNECTOR_FIXTURE_DIR);
+    const servers = readCatalogServers(CONNECTOR_FIXTURE_DIR);
     let staticSeen = 0;
     for (const s of servers) {
       const meta = getNimbleBrainConnectorMeta(s);
@@ -51,7 +51,7 @@ describe("curated catalog contract", () => {
     // the key the deployment's `connectors.providers.composio.authConfigs`
     // is looked up under, so an entry needs nothing else to be resolvable.
     let composioSeen = 0;
-    for (const s of readStaticServers(CONNECTOR_FIXTURE_DIR)) {
+    for (const s of readCatalogServers(CONNECTOR_FIXTURE_DIR)) {
       const meta = getNimbleBrainConnectorMeta(s);
       if (meta?.auth !== "composio") continue;
       composioSeen++;
@@ -67,7 +67,7 @@ describe("curated catalog contract", () => {
   });
 
   test("every entry carries an icon (Browse renders <img src>)", () => {
-    const servers = readStaticServers(CONNECTOR_FIXTURE_DIR);
+    const servers = readCatalogServers(CONNECTOR_FIXTURE_DIR);
     for (const s of servers) {
       const icon = s.icons?.[0];
       expect(icon).toBeDefined();

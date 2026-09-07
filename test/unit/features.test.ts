@@ -6,13 +6,13 @@ describe("resolveFeatures", () => {
 		const features = resolveFeatures();
 		expect(features.skillManagement).toBe(true);
 		expect(features.toolDiscovery).toBe(true);
-		expect(features.connectorDiscovery).toBe(true);
+		expect(features.catalogSearch).toBe(true);
 		expect(features.compaction).toBe(true);
 	});
 
 	it("merges partial config correctly", () => {
-		const features = resolveFeatures({ connectorDiscovery: false });
-		expect(features.connectorDiscovery).toBe(false);
+		const features = resolveFeatures({ catalogSearch: false });
+		expect(features.catalogSearch).toBe(false);
 		expect(features.skillManagement).toBe(true);
 		expect(features.toolDiscovery).toBe(true);
 	});

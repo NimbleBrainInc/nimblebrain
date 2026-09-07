@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+
 /**
  * Catalog rot detector for DCR remote-OAuth connectors.
  *
@@ -52,11 +53,11 @@
  * OAuth app for the workspace) is workspace-state, not catalog-rot.
  */
 
+import { readCatalogServers } from "../src/connectors/catalog/read.ts";
 import {
   getNimbleBrainConnectorMeta,
   type ServerDetail,
 } from "../src/connectors/catalog/server-detail.ts";
-import { readStaticServers } from "../src/registries/static-source.ts";
 
 const REQUEST_TIMEOUT_MS = 10_000;
 
@@ -109,7 +110,7 @@ async function main(): Promise<void> {
     );
     process.exit(2);
   }
-  const dcrEntries = selectDcrEntries(readStaticServers(catalogPath));
+  const dcrEntries = selectDcrEntries(readCatalogServers(catalogPath));
 
   if (dcrEntries.length === 0) {
     console.log("No DCR entries found in catalog. Nothing to check.");

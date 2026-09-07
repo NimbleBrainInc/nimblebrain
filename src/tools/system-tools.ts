@@ -1,13 +1,13 @@
 import { NoopEventSink } from "../adapters/noop-events.ts";
 import { isToolEnabled, type ResolvedFeatures } from "../config/features.ts";
 import type { ConfirmationGate } from "../config/privilege.ts";
+import type { CatalogListing } from "../connectors/catalog/types.ts";
 import type { ConnectorLifecycleManager } from "../connectors/runtime/lifecycle.ts";
 import { textContent } from "../engine/content-helpers.ts";
 import type { EventSink, ToolPromotionControls, ToolResult, ToolSchema } from "../engine/types.ts";
 import { isInternalTool, NON_ADVANCING_META_KEY } from "../engine/types.ts";
 import { log } from "../observability/log.ts";
 import { createUseSkillToolDef } from "../platform/skills/source.ts";
-import type { DirectoryEntry } from "../registries/types.ts";
 import { getRequestContext } from "../runtime/request-context.ts";
 import type { Runtime } from "../runtime/runtime.ts";
 import type { SelectedSkill } from "../skills/select.ts";
@@ -20,7 +20,6 @@ import { defineInProcessApp, type InProcessTool } from "./in-process-app.ts";
 import { createManageToolsToolDefs } from "./manage-tools.ts";
 import { McpSource } from "./mcp-source.ts";
 import type { ToolRegistry } from "./registry.ts";
-import { createManageRegistriesTool } from "./registry-tools.ts";
 import { READ_RESOURCE_SCHEMES_PROSE } from "./resource-schemes.ts";
 import { rankToolSearchResults } from "./search-ranking.ts";
 import { createManageUsersTool, type ManageUsersContext } from "./user-tools.ts";
@@ -74,8 +73,8 @@ export async function createSystemTools(
   eventSink?: EventSink,
   features?: ResolvedFeatures,
   runtime?: Runtime,
-  // Reserved slot — was a registry-SDK home for a legacy connector-discovery
-  // path. Registry search now goes through ConnectorDirectory.servers()
+  // Reserved slot — was a home for a legacy connector-discovery
+  // path. Registry search now goes through ConnectorCatalog.servers()
   // (Browse's own cached, scoped fetch). Keep the positional slot stable so
   // every call site's arity holds.
   _reservedRegistryHome?: string,
@@ -97,14 +96,14 @@ export async function createSystemTools(
     {
       name: "search",
       description:
-        "Search installed tools by keyword (scope: tools) or the connector registries for servers to install (scope: registry). Returns matches as a list; to call a matched tool, activate it first with nb__manage_tools.",
+        "Search installed tools by keyword (scope: tools) or the connector catalog for servers to install (scope: catalog). Returns matches as a list; to call a matched tool, activate it first with nb__manage_tools.",
       inputSchema: {
         type: "object",
         properties: {
           scope: {
             type: "string",
-            enum: ["tools", "registry"],
-            description: "Search installed tools or the connector registries for new servers.",
+            enum: ["tools", "catalog"],
+            description: "Search installed tools or the connector catalog for new servers.",
           },
           query: {
             type: "string",
@@ -122,8 +121,8 @@ export async function createSystemTools(
         const gateError = checkSearchScopeGate(scope, features);
         if (gateError) return gateError;
 
-        if (scope === "registry") {
-          return searchRegistry(runtime, query);
+        if (scope === "catalog") {
+          return searchCatalog(runtime, query);
         }
         // scope === "tools" (default)
         return searchTools(runtime, getRegistry, toolEligibilityCtx, query);
@@ -168,12 +167,6 @@ export async function createSystemTools(
         // Workspace id is per-call — pull from the runtime's current
         // workspace context to know which workspace's connectors[] to mutate.
         getWorkspaceId: () => runtime.getCurrentWorkspaceId(),
-      }),
-    );
-    systemToolDefs.push(
-      createManageRegistriesTool({
-        runtime,
-        getIdentity: manageWorkspacesCtx.getIdentity,
       }),
     );
   }
@@ -723,11 +716,11 @@ function formatUptime(ms: number): string {
 }
 
 /**
- * Keyword match over the projected directory for agent registry search.
+ * Keyword match over the projected catalog for agent catalog search.
  * Empty query returns everything; otherwise every whitespace-separated term
  * must appear (case-insensitive) in the id, name, description, or a tag.
  *
- * Matches over `DirectoryEntry`, not the raw `ServerDetail`, because that is
+ * Matches over `CatalogListing`, not the raw `ServerDetail`, because that is
  * the set a caller can act on: the projection is what drops an entry this
  * runtime cannot install. Matching pre-projection would let the agent find —
  * and try to install — a server the catalog already refused, and would match
@@ -740,7 +733,7 @@ function formatUptime(ms: number): string {
  * connector. They are not meant to return identical sets, only to run over
  * the same underlying entries. No shared backend matcher exists.
  */
-function matchEntriesByQuery(entries: DirectoryEntry[], query: string): DirectoryEntry[] {
+function matchEntriesByQuery(entries: CatalogListing[], query: string): CatalogListing[] {
   const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
   if (terms.length === 0) return entries;
   return entries.filter((e) => {
@@ -773,41 +766,39 @@ function checkSearchScopeGate(scope: string, features?: ResolvedFeatures): ToolR
   if (scope === "tools" && features && !features.toolDiscovery) {
     return { content: textContent("Tool discovery is disabled."), isError: true };
   }
-  if (scope === "registry" && features && !features.connectorDiscovery) {
-    return { content: textContent("Registry discovery is disabled."), isError: true };
+  if (scope === "catalog" && features && !features.catalogSearch) {
+    return { content: textContent("Catalog search is disabled."), isError: true };
   }
   return null;
 }
 
-/** `search` scope=registry — keyword-match installable entries from the connector directory. */
-async function searchRegistry(runtime: Runtime | undefined, query: string): Promise<ToolResult> {
+/** `search` scope=catalog — keyword-match installable entries from the connector catalog. */
+async function searchCatalog(runtime: Runtime | undefined, query: string): Promise<ToolResult> {
   try {
     // Route agent discovery through the SAME method Browse uses —
-    // ConnectorDirectory.list(). It fetches every enabled source, applies
-    // each registry's OWN scopes per-source (so mixed-scope multi-registry
-    // configs filter exactly as Browse does), runs the icon/URL safety scrub,
-    // projects, dedups, caches, and aggregates errors. One method, not two
-    // parallel fetch/filter paths, so the sets cannot drift — and the
+    // ConnectorCatalog.list(). It reads the catalog directory, runs the
+    // icon/URL safety scrub, projects, dedups and caches. One method, not
+    // two parallel read/filter paths, so the sets cannot drift — and the
     // projection is load-bearing here, not incidental: it is what drops an
     // entry this runtime cannot install, so the agent is never shown a
     // connector whose install would be refused downstream.
     //
-    // No runtime (non-agent/test paths) ⇒ no directory ⇒ no results;
+    // No runtime (non-agent/test paths) ⇒ no catalog ⇒ no results;
     // the production agent always has one.
-    const directory = runtime?.getConnectorDirectory();
-    const aggregated = directory ? await directory.list() : null;
+    const catalog = runtime?.getConnectorCatalog();
+    const aggregated = catalog ? await catalog.list() : null;
     const results = matchEntriesByQuery(aggregated?.entries ?? [], query);
     if (results.length === 0) {
-      // Distinguish "registry unreachable" from "no such server".
-      // list() aggregates a source failure into `errors` instead of throwing,
-      // so an outage yields zero entries silently. If a source errored and we
-      // got nothing back at all, surface a failure rather than telling the
-      // agent the server doesn't exist. With several registries where one is
-      // up and the down one held the queried entry, this reports "no servers
-      // found" — matching Browse's partial-results semantics.
+      // Distinguish "the catalog could not be read" from "no such server".
+      // list() collects a file-level failure into `errors` instead of
+      // throwing, so an unreadable catalog yields zero entries silently. If
+      // a file errored and we got nothing back at all, surface a failure
+      // rather than telling the agent the server doesn't exist. When one
+      // file of several is broken and the rest loaded, this reports "no
+      // servers found" — matching Browse's partial-results semantics.
       if ((aggregated?.entries ?? []).length === 0 && (aggregated?.errors ?? []).length > 0) {
         return {
-          content: textContent(`Failed to search the connector registries for "${query}".`),
+          content: textContent(`Failed to search the connector catalog for "${query}".`),
           isError: true,
         };
       }
@@ -823,7 +814,7 @@ async function searchRegistry(runtime: Runtime | undefined, query: string): Prom
     return { content: textContent(lines.join("\n")), isError: false };
   } catch {
     return {
-      content: textContent(`Failed to search the connector registries for "${query}".`),
+      content: textContent(`Failed to search the connector catalog for "${query}".`),
       isError: true,
     };
   }

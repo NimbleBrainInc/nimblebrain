@@ -34,8 +34,6 @@ let calls: string[] = [];
 
 const ENTRY = {
   id: "com.acme/db-query",
-  registryId: "bundled-static",
-  registryType: "static",
   name: "Acme DB Query",
   description: "Read-only queries against the workspace's own database",
   install: {

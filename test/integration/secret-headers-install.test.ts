@@ -28,9 +28,8 @@ import { ConnectorLifecycleManager } from "../../src/connectors/runtime/lifecycl
 import type { ConnectorRef } from "../../src/connectors/runtime/types.ts";
 import type { UserIdentity } from "../../src/identity/provider.ts";
 import { MINTED_PROVIDER } from "../../src/oauth/minted-credential-provider.ts";
-import { ConnectorDirectory } from "../../src/registries/directory.ts";
-import { RegistryStore } from "../../src/registries/registry-store.ts";
-import type { DirectoryEntry } from "../../src/registries/types.ts";
+import { ConnectorCatalog } from "../../src/connectors/catalog/catalog.ts";
+import type { CatalogListing } from "../../src/connectors/catalog/types.ts";
 import type { Runtime } from "../../src/runtime/runtime.ts";
 import { createManageConnectorsTool } from "../../src/tools/connector-tools.ts";
 import {
@@ -88,7 +87,7 @@ function registerStubMintedProvider(): void {
 }
 
 /** The catalog entry as `list_directory` projects it — what the web shell hands `install`. */
-function entry(): DirectoryEntry {
+function entry(): CatalogListing {
   return {
     id: ENTRY_ID,
     registryId: "bundled-static",
@@ -108,7 +107,6 @@ function entry(): DirectoryEntry {
 
 function toolFor(sessionWsId: string) {
   const lifecycle = new ConnectorLifecycleManager(new NoopEventSink());
-  const registryStore = new RegistryStore(workDir);
   const workspaceRegistry = new ToolRegistry();
   const runtime = {
     getWorkDir: () => workDir,
@@ -116,8 +114,7 @@ function toolFor(sessionWsId: string) {
     getEventSink: () => new NoopEventSink(),
     getWorkspaceStore: () => workspaceStore,
     getWorkspaceContext: (id: string) => new WorkspaceContext({ wsId: id, workDir }),
-    getRegistryStore: () => registryStore,
-    getConnectorDirectory: () => new ConnectorDirectory(registryStore),
+    getConnectorCatalog: () => new ConnectorCatalog(CATALOG_DIR),
     getLifecycle: () => lifecycle,
     getRegistryForWorkspace: (_id: string) => workspaceRegistry,
     getPermissionStore: () => ({ deleteConnector: async () => {} }),
@@ -159,22 +156,6 @@ async function send(wsId: string): Promise<Headers> {
 
 beforeEach(async () => {
   workDir = mkdtempSync(join(tmpdir(), "nb-secret-headers-"));
-  writeFileSync(
-    join(workDir, "registries.json"),
-    JSON.stringify({
-      registries: [
-        {
-          id: "bundled-static",
-          name: "Curated services",
-          type: "static",
-          enabled: true,
-          locked: true,
-          url: CATALOG_DIR,
-        },
-        { id: "mpak", name: "mpak.dev", type: "mpak", enabled: false },
-      ],
-    }),
-  );
   store = new FileCredentialStore(workDir);
   setCredentialStore(store);
   _resetCredentialProvidersForTest();
@@ -217,7 +198,7 @@ describe("a catalog entry that binds a workspace secret to a header", () => {
       secretHeaders: {
         Authorization: { ref: "credential", key: "someone.elses_key" },
       },
-    } as DirectoryEntry["install"];
+    } as CatalogListing["install"];
 
     await toolFor("ws_tenanta").handler({ action: "install", entry: forged });
     expect(persistedRef("ws_tenanta").transport?.headers).toEqual({
@@ -284,7 +265,7 @@ describe("a catalog entry that binds a workspace secret to a header", () => {
       secretHeaders: {
         "X-Acme-Impersonate": { ref: "credential", key: "attacker.chosen" },
       },
-    } as DirectoryEntry["install"];
+    } as CatalogListing["install"];
 
     const result = await toolFor("ws_tenanta").handler({ action: "install", entry: forged });
     expect(result.isError).toBe(false);
@@ -305,7 +286,7 @@ describe("a catalog entry that binds a workspace secret to a header", () => {
       ...literal.install,
       url: "https://mcp.acme.test/literal/mcp",
       secretHeaders: undefined,
-    } as DirectoryEntry["install"];
+    } as CatalogListing["install"];
 
     const result = await toolFor("ws_tenanta").handler({ action: "install", entry: literal });
     expect(result.isError).toBe(true);

@@ -1,4 +1,4 @@
-import type { DirectoryEntry, SecretHeaderRef } from "../api/client";
+import type { CatalogListing, SecretHeaderRef } from "../api/client";
 
 /**
  * A `secretHeaders` declaration, turned into something a person can be asked.
@@ -90,7 +90,7 @@ function isSecretHeaderRef(value: unknown): value is SecretHeaderRef {
  * Order follows the declaration, so the dialog's fields sit in the order the
  * operator wrote them.
  */
-export function secretHeaderFields(install: DirectoryEntry["install"]): SecretHeaderField[] {
+export function secretHeaderFields(install: CatalogListing["install"]): SecretHeaderField[] {
   // Gated on `auth` as well as `kind`. The projection carries `secretHeaders`
   // through for every auth kind and no catalog check rejects it, but only the
   // `provider` branch of the install ever wires the header — so on any other

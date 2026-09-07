@@ -1,11 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import type { ServerDetail } from "../../src/connectors/catalog/server-detail.ts";
 import {
-  projectServerDetailToDirectoryEntry,
+  projectServerDetailToCatalogListing,
   serverDetailToCatalogEntry,
-} from "../../src/registries/projection.ts";
-
-const CTX = { registryId: "test", registryType: "static" as const };
+} from "../../src/connectors/catalog/projection.ts";
 
 function detail(over: Partial<ServerDetail> = {}): ServerDetail {
   return {
@@ -17,38 +15,35 @@ function detail(over: Partial<ServerDetail> = {}): ServerDetail {
   };
 }
 
-describe("projectServerDetailToDirectoryEntry", () => {
-  test("uses ServerDetail.name as the DirectoryEntry id", () => {
-    const e = projectServerDetailToDirectoryEntry(
+describe("projectServerDetailToCatalogListing", () => {
+  test("uses ServerDetail.name as the CatalogListing id", () => {
+    const e = projectServerDetailToCatalogListing(
       detail({
         remotes: [{ type: "streamable-http", url: "https://example.com/mcp" }],
       }),
-      CTX,
     );
     expect(e?.id).toBe("io.example/test");
   });
 
   test("uses title for display name; falls back to name when title is absent", () => {
-    const titled = projectServerDetailToDirectoryEntry(
+    const titled = projectServerDetailToCatalogListing(
       detail({
         title: "My Title",
         remotes: [{ type: "streamable-http", url: "https://example.com/mcp" }],
       }),
-      CTX,
     );
     expect(titled?.name).toBe("My Title");
-    const untitled = projectServerDetailToDirectoryEntry(
+    const untitled = projectServerDetailToCatalogListing(
       detail({
         title: undefined,
         remotes: [{ type: "streamable-http", url: "https://example.com/mcp" }],
       }),
-      CTX,
     );
     expect(untitled?.name).toBe("io.example/test");
   });
 
   test("picks the first icon as iconUrl (theme-aware picking is a follow-up)", () => {
-    const e = projectServerDetailToDirectoryEntry(
+    const e = projectServerDetailToCatalogListing(
       detail({
         icons: [
           { src: "https://a.svg", sizes: ["any"] },
@@ -56,44 +51,40 @@ describe("projectServerDetailToDirectoryEntry", () => {
         ],
         remotes: [{ type: "streamable-http", url: "https://example.com/mcp" }],
       }),
-      CTX,
     );
     expect(e?.iconUrl).toBe("https://a.svg");
   });
 
   test("omits iconUrl when no icons are present", () => {
-    const e = projectServerDetailToDirectoryEntry(
+    const e = projectServerDetailToCatalogListing(
       detail({
         remotes: [{ type: "streamable-http", url: "https://example.com/mcp" }],
       }),
-      CTX,
     );
     expect(e?.iconUrl).toBeUndefined();
   });
 
   test("a packages-only entry is not installable — this runtime acquires nothing", () => {
-    const e = projectServerDetailToDirectoryEntry(
+    const e = projectServerDetailToCatalogListing(
       detail({
         packages: [{ registryType: "npm", identifier: "@x/y", transport: { type: "stdio" } }],
       }),
-      CTX,
     );
     expect(e).toBeNull();
   });
 
   test("an entry advertising both packages and remotes surfaces its remote", () => {
-    const e = projectServerDetailToDirectoryEntry(
+    const e = projectServerDetailToCatalogListing(
       detail({
         packages: [{ registryType: "npm", identifier: "@x/y", transport: { type: "stdio" } }],
         remotes: [{ type: "streamable-http", url: "https://example.com/mcp" }],
       }),
-      CTX,
     );
     expect(e?.install.kind).toBe("remote-oauth");
   });
 
   test("derives remote-oauth install with NimbleBrain meta auth + scopes", () => {
-    const e = projectServerDetailToDirectoryEntry(
+    const e = projectServerDetailToCatalogListing(
       detail({
         remotes: [{ type: "streamable-http", url: "https://example.com/mcp" }],
         _meta: {
@@ -110,7 +101,6 @@ describe("projectServerDetailToDirectoryEntry", () => {
           },
         },
       }),
-      CTX,
     );
     expect(e?.install.kind).toBe("remote-oauth");
     expect(e?.tags).toEqual(["email"]);
@@ -123,7 +113,7 @@ describe("projectServerDetailToDirectoryEntry", () => {
   });
 
   test("projects provider auth + providerAuth (the platform-connector class)", () => {
-    const e = projectServerDetailToDirectoryEntry(
+    const e = projectServerDetailToCatalogListing(
       detail({
         remotes: [{ type: "streamable-http", url: "http://mcp-web.mcp-shared.svc/mcp" }],
         _meta: {
@@ -133,7 +123,6 @@ describe("projectServerDetailToDirectoryEntry", () => {
           },
         },
       }),
-      CTX,
     );
     expect(e?.install.kind).toBe("remote-oauth");
     if (e?.install.kind === "remote-oauth") {
@@ -148,11 +137,10 @@ describe("projectServerDetailToDirectoryEntry", () => {
   });
 
   test("threads streamable-http transport type from remotes[0] to install action", () => {
-    const e = projectServerDetailToDirectoryEntry(
+    const e = projectServerDetailToCatalogListing(
       detail({
         remotes: [{ type: "streamable-http", url: "https://example.com/mcp" }],
       }),
-      CTX,
     );
     expect(e?.install.kind).toBe("remote-oauth");
     if (e?.install.kind === "remote-oauth") {
@@ -165,11 +153,10 @@ describe("projectServerDetailToDirectoryEntry", () => {
     // streamable-http transport against an SSE server and the
     // handshake would fail. Pinning the transport at projection time
     // is the only place the source's `remote.type` is in scope.
-    const e = projectServerDetailToDirectoryEntry(
+    const e = projectServerDetailToCatalogListing(
       detail({
         remotes: [{ type: "sse", url: "https://example.com/sse" }],
       }),
-      CTX,
     );
     expect(e?.install.kind).toBe("remote-oauth");
     if (e?.install.kind === "remote-oauth") {
@@ -179,11 +166,10 @@ describe("projectServerDetailToDirectoryEntry", () => {
 
 
   test("defaults remote auth to 'dcr' when meta is absent", () => {
-    const e = projectServerDetailToDirectoryEntry(
+    const e = projectServerDetailToCatalogListing(
       detail({
         remotes: [{ type: "streamable-http", url: "https://example.com/mcp" }],
       }),
-      CTX,
     );
     if (e?.install.kind === "remote-oauth") {
       expect(e.install.auth).toBe("dcr");
@@ -193,7 +179,7 @@ describe("projectServerDetailToDirectoryEntry", () => {
   });
 
   test("returns null when neither packages nor remotes are present", () => {
-    const e = projectServerDetailToDirectoryEntry(detail(), CTX);
+    const e = projectServerDetailToCatalogListing(detail());
     expect(e).toBeNull();
   });
 
@@ -202,11 +188,10 @@ describe("projectServerDetailToDirectoryEntry", () => {
     // we collapse both into the same `remote-oauth` install kind because
     // the install dispatcher cares about the URL, not the transport
     // variant.
-    const e = projectServerDetailToDirectoryEntry(
+    const e = projectServerDetailToCatalogListing(
       detail({
         remotes: [{ type: "sse", url: "https://example.com/sse" }],
       }),
-      CTX,
     );
     expect(e?.install.kind).toBe("remote-oauth");
     if (e?.install.kind === "remote-oauth") {
@@ -281,7 +266,7 @@ describe("serverDetailToCatalogEntry", () => {
 
 describe("directory and catalog projections agree on shared meta auth fields", () => {
   // Regression guard for #464 (and the #462 divergence it prevents): the
-  // Browse/install path (`projectServerDetailToDirectoryEntry(...).install`)
+  // Browse/install path (`projectServerDetailToCatalogListing(...).install`)
   // and the Configure/catalog path (`serverDetailToCatalogEntry(...)`)
   // derive the SAME `_meta`-sourced auth fields. They are now a single
   // helper; if a future change re-forks the derivation, these assertions
@@ -304,7 +289,7 @@ describe("directory and catalog projections agree on shared meta auth fields", (
       },
     });
 
-    const dir = projectServerDetailToDirectoryEntry(s, CTX);
+    const dir = projectServerDetailToCatalogListing(s);
     const cat = serverDetailToCatalogEntry(s);
     expect(dir?.install.kind).toBe("remote-oauth");
     expect(cat).not.toBeNull();
@@ -341,7 +326,7 @@ describe("directory and catalog projections agree on shared meta auth fields", (
       },
     });
 
-    const dir = projectServerDetailToDirectoryEntry(s, CTX);
+    const dir = projectServerDetailToCatalogListing(s);
     const cat = serverDetailToCatalogEntry(s);
     if (dir?.install.kind !== "remote-oauth" || !cat) {
       throw new Error("expected a remote-oauth directory install and a catalog entry");
@@ -368,7 +353,7 @@ describe("directory and catalog projections agree on shared meta auth fields", (
       },
     });
 
-    const dir = projectServerDetailToDirectoryEntry(s, CTX);
+    const dir = projectServerDetailToCatalogListing(s);
     const cat = serverDetailToCatalogEntry(s);
     if (dir?.install.kind !== "remote-oauth" || !cat) {
       throw new Error("expected a remote-oauth directory install and a catalog entry");
@@ -388,7 +373,7 @@ describe("directory and catalog projections agree on shared meta auth fields", (
       remotes: [{ type: "streamable-http", url: "https://example.com/mcp" }],
     });
 
-    const dir = projectServerDetailToDirectoryEntry(s, CTX);
+    const dir = projectServerDetailToCatalogListing(s);
     const cat = serverDetailToCatalogEntry(s);
     if (dir?.install.kind !== "remote-oauth" || !cat) {
       throw new Error("expected a remote-oauth directory install and a catalog entry");

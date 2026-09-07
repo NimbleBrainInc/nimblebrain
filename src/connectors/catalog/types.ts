@@ -1,7 +1,7 @@
 /**
  * The connector registry layer surfaces installable connectors from a
  * configurable set of sources (curated YAML, a future upstream MCP
- * registry, etc.) through one facade — `ConnectorDirectory`. Clients
+ * registry, etc.) through one facade — `ConnectorCatalog`. Clients
  * never construct sources or aggregate them by hand; they ask the
  * directory for `list()`, `catalogByUrl()`, `catalogById()`, etc.,
  * and uniform behavior (scope filtering, error aggregation,
@@ -17,80 +17,34 @@
  * `RegistryConfig` rows — e.g. two curated catalogs at different paths —
  * because each row gets its own `ConnectorSource` instance.
  *
- * Seeded default (see `RegistryStore`):
+ * The catalog directory:
  *
  *   - `static`  — bundled curated catalog of remote OAuth services
  *     (Granola, Notion, HubSpot, etc.) shipped with the platform.
  *     Locked. Operator overrides via `NB_REGISTRIES` JSON.
  */
 
-import type { ConnectorAuthKind } from "../connectors/auth-kind.ts";
+import type { ConnectorAuthKind } from "../../connectors/auth-kind.ts";
+import type { ConnectorUiMeta } from "../../connectors/runtime/types.ts";
+import type { HookDeclaration } from "../../hooks/types.ts";
+import type { NotificationsDeclaration } from "../../notifications/types.ts";
 import type {
   ComposioConnectorConfig,
   SecretHeaderRef,
-  ServerDetail,
   SmitheryConnectorConfig,
-} from "../connectors/catalog/server-detail.ts";
-import type { ConnectorUiMeta } from "../connectors/runtime/types.ts";
-import type { HookDeclaration } from "../hooks/types.ts";
-import type { NotificationsDeclaration } from "../notifications/types.ts";
+} from "./server-detail.ts";
 
 /**
- * Registry kind, keyed into the directory's source-factory map. Open on
- * purpose: a build that does not carry a source for some type surfaces no
- * entries from that registry rather than failing to compile against a closed
- * enum, so adding the upstream MCP registry source is one factory entry and
- * one file.
+ * One row in the Browse list. The install dispatch happens via the
+ * `install` discriminated union.
  */
-export type RegistryType = string;
-
-/** Persistable configuration for a registry. Stored in `registries.json`. */
-export interface RegistryConfig {
-  id: string;
-  name: string;
-  type: RegistryType;
-  enabled: boolean;
-  /**
-   * For `static`: filesystem path to the directory of YAML/JSON
-   * `ServerDetail` files. For an HTTP-backed source: the registry base URL.
-   */
-  url?: string;
-  /**
-   * Restrict this registry's surfaced entries to one or more
-   * namespaces. Match is OR-of-prefixes against either:
-   *
-   *   - `ServerDetail.name` reverse-DNS prefix (e.g. `ai.nimblebrain`
-   *     matches `ai.nimblebrain/echo`), OR
-   *   - the npm scope of any `packages[].identifier` (e.g.
-   *     `acme` matches `@acme/echo`).
-   *
-   * Either match is sufficient. Empty / undefined = no filter.
-   * Applied uniformly by the facade across every source type.
-   */
-  scopes?: string[];
-  /**
-   * Locked registries can't be disabled or removed by the admin UI —
-   * the bundled static registry is locked because it ships with the
-   * platform and removing it would leave first-time users with nothing.
-   */
-  locked?: boolean;
-}
-
-/**
- * One row in the Browse directory. The shape is uniform across
- * registry types so the UI doesn't have to special-case rendering;
- * the install dispatch happens via the `install` discriminated
- * union.
- */
-export interface DirectoryEntry {
+export interface CatalogListing {
   /**
    * Stable identifier — the upstream `ServerDetail.name` (reverse-DNS
-   * form). Unique within `(registryId, id)`; registries can repeat ids
-   * across themselves.
+   * form). Unique across the catalog; the first file (sorted) wins when
+   * two files carry the same id.
    */
   id: string;
-  registryId: string;
-  registryType: RegistryType;
   name: string;
   description: string;
   iconUrl?: string;
@@ -272,7 +226,7 @@ export interface DirectUrlInstall {
 }
 
 /**
- * Per-call context handed to `ConnectorDirectory.list`. Carries the
+ * Per-call context handed to `ConnectorCatalog.list`. Carries the
  * pieces a workspace-aware projection might need (e.g.
  * `operatorConfigured` on static entries) without coupling the
  * directory to the runtime singleton.
@@ -288,22 +242,4 @@ export interface ListEntriesContext {
    * as "I can't compute this; leave the field undefined."
    */
   isOperatorConfigured?: (catalogId: string, clientSecretKey: string) => Promise<boolean>;
-}
-
-/**
- * A connector source. Narrowed to one method on purpose: returns the
- * raw upstream `ServerDetail[]` for this source's instance. Caching,
- * freshness strategy, and backend-specific quirks (HTTP vs file vs
- * SDK) are private to the implementation — the directory doesn't see
- * them. Filtering, projection, error aggregation, and lookup tables
- * are the directory's job, not the source's.
- *
- * Implementations: `StaticSource`. Future: an upstream-MCP-registry
- * source, `DirectUrlSource`.
- */
-export interface ConnectorSource {
-  /** Stable id from the source's `RegistryConfig` — used in error tags. */
-  readonly id: string;
-  /** Backend-specific fetch. May throw on transport / parse errors. */
-  fetch(): Promise<ServerDetail[]>;
 }

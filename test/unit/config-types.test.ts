@@ -56,7 +56,7 @@ describe("JSON Schema validation", () => {
 		expect(
 			isValid({
 				features: {
-					connectorDiscovery: false,
+					catalogSearch: false,
 				},
 			}),
 		).toBe(true);

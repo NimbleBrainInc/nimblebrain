@@ -2,7 +2,7 @@
  * Project the canonical `ServerDetail` wire shape into the platform's
  * row-shaped views. Two projections, one source of truth:
  *
- *   - `projectServerDetailToDirectoryEntry` — the Browse-row contract.
+ *   - `projectServerDetailToCatalogListing` — the Browse-row contract.
  *     Opaque-id + install-action discriminator. Used by every source
  *     so Browse / install dispatch see one consistent shape.
  *   - `serverDetailToCatalogEntry` — the flat catalog record the
@@ -16,7 +16,12 @@
  * never invoke these directly.
  */
 
-import { brokeredCatalogConfig, type ConnectorAuthKind } from "../connectors/auth-kind.ts";
+import { brokeredCatalogConfig, type ConnectorAuthKind } from "../../connectors/auth-kind.ts";
+import { hostMetaToUiMeta, sanitizePlacements } from "../../connectors/runtime/defaults.ts";
+import { parseHookDeclarations } from "../../hooks/declaration.ts";
+import { parseNotificationsDeclaration } from "../../notifications/declaration.ts";
+import { validateAdditionalAuthorizationParams } from "../../util/oauth-params.ts";
+import { isHttpUrl } from "../../util/url.ts";
 import {
   type ComposioConnectorConfig,
   getNimbleBrainConnectorMeta,
@@ -25,22 +30,12 @@ import {
   type SecretHeaderRef,
   type ServerDetail,
   type SmitheryConnectorConfig,
-} from "../connectors/catalog/server-detail.ts";
-import { hostMetaToUiMeta, sanitizePlacements } from "../connectors/runtime/defaults.ts";
-import { parseHookDeclarations } from "../hooks/declaration.ts";
-import { parseNotificationsDeclaration } from "../notifications/declaration.ts";
-import { validateAdditionalAuthorizationParams } from "../util/oauth-params.ts";
-import { isHttpUrl } from "../util/url.ts";
-import type { ConnectorCatalogEntry, DirectoryEntry, RegistryType } from "./types.ts";
-
-export interface ProjectionContext {
-  registryId: string;
-  registryType: RegistryType;
-}
+} from "./server-detail.ts";
+import type { CatalogListing, ConnectorCatalogEntry } from "./types.ts";
 
 /**
- * The auth/connection fields the directory (`deriveInstall`'s remote-oauth
- * action) and the catalog (`serverDetailToCatalogEntry`) BOTH derive from
+ * The auth/connection fields the Browse listing (`deriveInstall`'s remote-oauth
+ * action) and the flat catalog record (`serverDetailToCatalogEntry`) BOTH derive from
  * the `_meta["ai.nimblebrain/connector"]` extension, derived exactly once.
  *
  * These two projections render the same `ServerDetail` for different
@@ -100,12 +95,9 @@ function connectorMetaAuthFields(meta: NimbleBrainConnectorMeta | undefined): {
  *
  * Returns null if the entry isn't installable (no packages, no remotes,
  * or unsupported transport — e.g. an SSE-only remote when we don't ship
- * an SSE installer). The directory drops nulls with a logged note.
+ * an SSE installer). The catalog drops nulls with a logged note.
  */
-export function projectServerDetailToDirectoryEntry(
-  s: ServerDetail,
-  ctx: ProjectionContext,
-): DirectoryEntry | null {
+export function projectServerDetailToCatalogListing(s: ServerDetail): CatalogListing | null {
   const install = deriveInstall(s);
   if (!install) return null;
 
@@ -114,8 +106,6 @@ export function projectServerDetailToDirectoryEntry(
 
   return {
     id: s.name,
-    registryId: ctx.registryId,
-    registryType: ctx.registryType,
     name: s.title ?? s.name,
     description: s.description,
     ...(iconUrl ? { iconUrl } : {}),
@@ -133,7 +123,7 @@ export function projectServerDetailToDirectoryEntry(
  * dropped from Browse. An entry advertising both (a vendor shipping a CLI
  * and a hosted endpoint) surfaces its remote.
  */
-function deriveInstall(s: ServerDetail): DirectoryEntry["install"] | null {
+function deriveInstall(s: ServerDetail): CatalogListing["install"] | null {
   const remote = s.remotes?.[0];
   if (remote && (remote.type === "streamable-http" || remote.type === "sse")) {
     return {

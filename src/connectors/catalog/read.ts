@@ -1,27 +1,27 @@
 /**
- * `StaticSource` reads `ServerDetail[]` from a YAML/JSON file — or a
- * directory of them — on disk. It's the curated-services source we
- * ship with the platform (the minimal in-image example under
- * `src/connectors/catalog/curated/`, overridden in deployments by a mounted
- * catalog directory) and any operator-override source mounted via
- * `NB_REGISTRIES` with `type: "static"`.
+ * Reading the catalog directory: files in, validated `ServerDetail`
+ * records plus diagnostics out.
  *
- * The contract is just `fetch(): Promise<ServerDetail[]>`. Filtering,
- * projection, error aggregation, and lookup tables live in
- * `ConnectorDirectory` — this class is a pure file-to-validated-records
- * adapter. Re-reads on every call so operator edits to a mounted
- * ConfigMap take effect without a restart.
+ * The path is a directory of `*.yaml`/`*.yml`/`*.json` (a single file
+ * is also accepted). Every file is read in sorted filename order and
+ * validated independently, so a diagnostic names the file it came
+ * from; a shared name-dedup set across files gives "first file
+ * (sorted) wins". Splitting curation across files — `curated.yaml`,
+ * `composio.yaml` — is a GitOps convenience that still rolls up to one
+ * catalog. Re-read on every call so an operator edit to a mounted
+ * ConfigMap takes effect without a restart.
  *
- * Wire format is the upstream MCP registry's `ServerDetail` shape
- * (see `src/connectors/catalog/server-detail.ts`). Every entry is ajv-validated
- * before it leaves the source. Invalid entries are dropped with a
- * logged warning naming the source path and the entry name (or index,
- * when `name` is missing); the surviving subset flows up.
+ * A missing path yields no entries. An unreadable or unparseable file
+ * is skipped and reported, while the rest still load — one bad file
+ * must not empty the catalog.
  *
- * Top-level YAML/JSON shape:
+ * Wire format is the upstream MCP registry's `ServerDetail` shape (see
+ * `server-detail.ts`). Every entry is ajv-validated before it leaves
+ * this module.
  *
- *   YAML:  { servers: [ ServerDetail, ... ] }
- *   JSON:  { servers: [ ServerDetail, ... ] }
+ * Top-level shape:
+ *
+ *   YAML / JSON:  { servers: [ ServerDetail, ... ] }
  *
  * Bare-array JSON (`[ ServerDetail, ... ]`) is also accepted for
  * minimal override files.
@@ -29,34 +29,9 @@
 
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { extname, join } from "node:path";
-import { type ServerDetail, validateServerDetail } from "../connectors/catalog/server-detail.ts";
-import { log } from "../observability/log.ts";
-import {
-  type ProjectionContext,
-  projectServerDetailToDirectoryEntry,
-  validateServerDetailSafety,
-} from "./projection.ts";
-import type { ConnectorSource } from "./types.ts";
-
-export class StaticSource implements ConnectorSource {
-  /**
-   * @param id Stable source id (from `RegistryConfig.id`) — used by
-   *   the directory in error-tagged log lines.
-   * @param path Absolute path to a YAML/JSON file holding the
-   *   `ServerDetail[]`, OR a directory of such files (every
-   *   `*.yaml`/`*.yml`/`*.json` in it, read in sorted filename order
-   *   and aggregated). Read on every `fetch()` call so operator edits
-   *   to a mounted ConfigMap take effect without a restart.
-   */
-  constructor(
-    public readonly id: string,
-    private readonly path: string,
-  ) {}
-
-  async fetch(): Promise<ServerDetail[]> {
-    return readStaticServers(this.path);
-  }
-}
+import { log } from "../../observability/log.ts";
+import { projectServerDetailToCatalogListing, validateServerDetailSafety } from "./projection.ts";
+import { type ServerDetail, validateServerDetail } from "./server-detail.ts";
 
 const CATALOG_EXTENSIONS = new Set([".yaml", ".yml", ".json"]);
 
@@ -66,7 +41,7 @@ const CATALOG_EXTENSIONS = new Set([".yaml", ".yml", ".json"]);
  * validation and was therefore dropped.
  *
  * `message` is the operator-facing sentence, formatted identically to
- * what `readStaticServers` logs (minus the `[static-source] ` prefix).
+ * what `readCatalogServers` logs (minus the `[catalog] ` prefix).
  * The structured fields let a reporter group by file without re-parsing
  * that sentence.
  */
@@ -82,14 +57,14 @@ export interface CatalogDiagnostic {
 }
 
 /** A surviving entry, kept with where it came from so a later stage can name it. */
-interface CatalogEntry {
+export interface CatalogEntry {
   detail: ServerDetail;
   source: string;
   index: number;
 }
 
 /** A catalog read: the entries that survived, and everything that did not. */
-interface CatalogRead {
+export interface CatalogRead {
   entries: CatalogEntry[];
   diagnostics: CatalogDiagnostic[];
 }
@@ -105,9 +80,9 @@ interface CatalogRead {
  * missing path returns empty; an unreadable / unparseable individual
  * file is skipped with a logged warning while the rest still load.
  */
-export function readStaticServers(path: string): ServerDetail[] {
-  const { entries, diagnostics } = readCatalog(path);
-  for (const d of diagnostics) log.warn(`[static-source] ${d.message}`);
+export function readCatalogServers(path: string): ServerDetail[] {
+  const { entries, diagnostics } = readCatalogEntries(path);
+  for (const d of diagnostics) log.warn(`[catalog] ${d.message}`);
   return entries.map((e) => e.detail);
 }
 
@@ -127,12 +102,12 @@ export function readStaticServers(path: string): ServerDetail[] {
  *
  * Stages 2 and 3 delegate to the functions the directory itself calls,
  * so this reports the runtime's decisions rather than restating its
- * rules. They run over survivors and never drop: `readStaticServers`
+ * rules. They run over survivors and never drop: `readCatalogServers`
  * returns what it always did, and the directory boundary stays the one
  * place an entry is actually removed.
  *
  * This is a hand-composed pipeline, and it has already been short by a
- * stage twice. The drift-proof form diffs a real `ConnectorDirectory`
+ * stage twice. The drift-proof form diffs a real `ConnectorCatalog`
  * list against its input, which cannot live here — `directory.ts`
  * imports this module, so the edge would be a cycle. Tracked as a
  * follow-up.
@@ -145,8 +120,8 @@ export function readStaticServers(path: string): ServerDetail[] {
  * does not exist is itself a diagnostic: a gate pointed at the wrong
  * directory must fail, not pass empty.
  */
-export function validateStaticCatalog(path: string): CatalogDiagnostic[] {
-  const { entries, diagnostics } = readCatalog(path);
+export function validateCatalog(path: string): CatalogDiagnostic[] {
+  const { entries, diagnostics } = readCatalogEntries(path);
   for (const { detail, source, index } of entries) {
     const tag = `${source}[${index}:${detail.name}]`;
     const safetyError = validateServerDetailSafety(detail);
@@ -162,7 +137,7 @@ export function validateStaticCatalog(path: string): CatalogDiagnostic[] {
     // The registry coordinates only label the projected entry; nothing
     // the projection can reject depends on them, so a placeholder here
     // gives the same verdict every real registry would.
-    if (projectServerDetailToDirectoryEntry(detail, PROBE_CONTEXT) === null) {
+    if (projectServerDetailToCatalogListing(detail) === null) {
       diagnostics.push({
         source,
         index,
@@ -175,17 +150,11 @@ export function validateStaticCatalog(path: string): CatalogDiagnostic[] {
 }
 
 /**
- * Registry coordinates for the projection probe above. `validateStaticCatalog`
- * checks a file, not a configured registry, so there are no real ones to pass.
- */
-const PROBE_CONTEXT: ProjectionContext = { registryId: "catalog-check", registryType: "static" };
-
-/**
  * The single read both entry points share. Collects rather than logs,
  * so the caller decides whether a problem is a warning to carry on
  * past (the runtime) or a failure (the gate).
  */
-function readCatalog(path: string): CatalogRead {
+export function readCatalogEntries(path: string): CatalogRead {
   if (!existsSync(path)) {
     return {
       entries: [],

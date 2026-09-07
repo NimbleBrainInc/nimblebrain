@@ -2,8 +2,8 @@
 /**
  * Generates the `.d.ts` trees under `web/src/_generated/` from the server-side
  * sources that own their shapes: the TypeBox schemas at
- * `src/platform/schemas/`, and the connector-registry wire types at
- * `src/registries/types.ts`.
+ * `src/platform/schemas/`, and the connector-catalog wire types at
+ * `src/connectors/catalog/types.ts`.
  *
  * Why this exists: web is a separate package (its own Dockerfile,
  * package.json, build context). The web shell needs the catalog's
@@ -40,7 +40,7 @@ const WEB_DEST = join(REPO_ROOT, "web/src/_generated/platform-schemas");
 const WORKSPACE_ID_PATTERN_SRC = join(REPO_ROOT, "src/workspace/workspace-id-pattern.ts");
 const WORKSPACE_ID_PATTERN_DEST = join(REPO_ROOT, "web/src/_generated/workspace-id-pattern.ts");
 const CONNECTOR_TYPES_TMP = join(REPO_ROOT, ".tmp-codegen-connectors");
-const CONNECTOR_TYPES_DEST = join(REPO_ROOT, "web/src/_generated/connector-registry");
+const CONNECTOR_TYPES_DEST = join(REPO_ROOT, "web/src/_generated/connector-catalog");
 const IDENTITY_SOURCES_SRC = join(REPO_ROOT, "src/tools/identity-sources.ts");
 /**
  * Zero-import runtime modules mirrored verbatim into the web tree.
@@ -219,22 +219,22 @@ injectHeaders(WEB_DEST, WEB_DEST, "src/platform/schemas");
 
 console.log(`[codegen] OK → ${WEB_DEST.replace(REPO_ROOT, ".")}`);
 
-// ── connector-registry wire types ──────────────────────────────────
+// ── connector-catalog wire types ──────────────────────────────────
 //
-// `web/src/api/client.ts` used to re-declare `DirectoryEntry` /
+// `web/src/api/client.ts` used to re-declare `CatalogListing` /
 // `ConnectorCatalogEntry` by hand, and the copy drifted: `providerAuth` and
 // `secretHeaders` were on the wire and absent from the client, which made a
 // whole credential class invisible to the UI with nothing to notice. The web
 // shell now imports these, and `check:codegen` fails the build when the server
 // type moves without a regen.
 //
-// Only the type closure of `src/registries/types.ts` is emitted — a small set
+// Only the type closure of `src/connectors/catalog/types.ts` is emitted — a small set
 // of leaf type modules. `ConnectorCatalogEntry` lives there beside
-// `DirectoryEntry` for that reason: the projection module that builds it also
+// `CatalogListing` for that reason: the projection module that builds it also
 // imports half the runtime, and rooting the emit at a module with runtime
 // imports pulls ~80 files into a tree the web shell has no use for.
 
-console.log("[codegen] connector-registry → web/src/_generated/connector-registry/");
+console.log("[codegen] connector-catalog → web/src/_generated/connector-catalog/");
 
 rmSync(CONNECTOR_TYPES_TMP, { recursive: true, force: true });
 rmSync(CONNECTOR_TYPES_DEST, { recursive: true, force: true });

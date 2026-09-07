@@ -325,9 +325,9 @@
           "description": "Enable tool search via nb__search scope=tools. Default: true.",
           "default": true
         },
-        "connectorDiscovery": {
+        "catalogSearch": {
           "type": "boolean",
-          "description": "Enable registry search via nb__search scope=registry. Default: true.",
+          "description": "Enable catalog search via nb__search scope=catalog. Default: true.",
           "default": true
         },
         "fileContext": {

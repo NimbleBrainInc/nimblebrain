@@ -197,7 +197,7 @@ export interface SecretHeaderRef extends CredentialRef {
  * fields that don't fit upstream slots: OAuth flow type, operator-setup
  * pointers, recommended scope, search tags, and UI hints.
  *
- * Authored on entries we curate (loaded by `StaticSource` from the
+ * Authored on entries we curate (loaded by the catalog read from the
  * curated catalog directory) and absent on entries from a registry that
  * doesn't carry it (the projection leaves it undefined).
  */

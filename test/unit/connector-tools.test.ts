@@ -6,10 +6,9 @@ import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import { ConnectorLifecycleManager } from "../../src/connectors/runtime/lifecycle.ts";
 import type { ConnectorRef } from "../../src/connectors/runtime/types.ts";
 import type { UserIdentity } from "../../src/identity/provider.ts";
-import { ConnectorDirectory } from "../../src/registries/directory.ts";
-import { RegistryStore } from "../../src/registries/registry-store.ts";
+import { ConnectorCatalog } from "../../src/connectors/catalog/catalog.ts";
 import { CONNECTOR_FIXTURE_DIR } from "../helpers/connector-fixtures.ts";
-import type { DirectoryEntry } from "../../src/registries/types.ts";
+import type { CatalogListing } from "../../src/connectors/catalog/types.ts";
 import type { Runtime } from "../../src/runtime/runtime.ts";
 import type { CredentialStore } from "../../src/tools/credential-store.ts";
 import {
@@ -37,9 +36,9 @@ const TEST_READ = { caller: "test", purpose: "assert the store holds what the ha
  *     the credential ref in the workspace ConnectorRef on success
  *
  * The handlers only touch a small slice of `Runtime`: `getWorkspaceStore`,
- * `getWorkDir`, `getRegistryStore`, `getLifecycle`, `getRegistryForWorkspace`.
+ * `getWorkDir`, `getConnectorCatalog`, `getLifecycle`, `getRegistryForWorkspace`.
  * We build a thin stub around real WorkspaceStore / CredentialStore /
- * RegistryStore / ConnectorLifecycleManager / ToolRegistry instances —
+ * ConnectorLifecycleManager / ToolRegistry instances —
  * sufficient to drive the production code without spinning up a full
  * `Runtime.start()` (which would pull in identity, model, transport, etc.).
  */
@@ -57,12 +56,12 @@ const DROPBOX_SECRET_KEY = "dropbox.client_secret";
 const NOTION_ID = "com.notion/mcp";
 
 /**
- * Build a DirectoryEntry shaped like what `StaticSource` projects for
+ * Build a CatalogListing shaped like what the catalog read projects for
  * Dropbox — used by install tests since the install API takes the full
  * entry, not an id. Field set matches the real source output; tests
  * can override pieces (operatorSetup, install) per case.
  */
-function dropboxEntry(over: Partial<DirectoryEntry> = {}): DirectoryEntry {
+function dropboxEntry(over: Partial<CatalogListing> = {}): CatalogListing {
   return {
     id: DROPBOX_ID,
     registryId: "bundled-static",
@@ -84,14 +83,14 @@ function dropboxEntry(over: Partial<DirectoryEntry> = {}): DirectoryEntry {
 }
 
 /**
- * Build a DirectoryEntry for the not-yet-supported `direct-url` kind. Used to
+ * Build a CatalogListing for the not-yet-supported `direct-url` kind. Used to
  * drive the admission checks that run BEFORE the per-kind install dispatch
  * (workspace resolution, membership, admin role, allow-list, the
  * personal-workspace connectors-only rule): every one of those rejects before
  * the kind is reached, and a call that gets past them lands on the
  * `direct-url` errResult rather than touching a real endpoint.
  */
-function unsupportedEntry(over: { id?: string; name?: string } = {}): DirectoryEntry {
+function unsupportedEntry(over: { id?: string; name?: string } = {}): CatalogListing {
   return {
     id: over.id ?? "com.example/echo",
     registryId: "bundled-static",
@@ -123,7 +122,6 @@ interface Harness {
   wsId: string;
   workspaceStore: WorkspaceStore;
   credStore: CredentialStore;
-  registryStore: RegistryStore;
   lifecycle: ConnectorLifecycleManager;
   workspaceRegistry: ToolRegistry;
   runtime: Runtime;
@@ -152,25 +150,6 @@ function buildHarness(opts: { adminId?: string } = {}): Harness {
   // records the install path seeds Connection state from reach the store
   // through `requireCredentialStore()`, exactly as they do in production.
   const credStore = installTestCredentialStore(workDir);
-  // Pre-seed registries.json so RegistryStore.list() reads it instead of
-  // auto-seeding the production defaults, and point the bundled-static row
-  // at the fixture catalog (tests look up real catalog ids like DROPBOX_ID).
-  writeFileSync(
-    join(workDir, "registries.json"),
-    JSON.stringify({
-      registries: [
-        {
-          id: "bundled-static",
-          name: "Curated services",
-          type: "static",
-          enabled: true,
-          locked: true,
-          url: CONNECTOR_FIXTURE_DIR,
-        },
-      ],
-    }),
-  );
-  const registryStore = new RegistryStore(workDir);
   const lifecycle = new ConnectorLifecycleManager(new NoopEventSink());
   const workspaceRegistry = new ToolRegistry();
 
@@ -179,8 +158,7 @@ function buildHarness(opts: { adminId?: string } = {}): Harness {
     getCredentialStore: () => credStore,
     getWorkspaceStore: () => workspaceStore,
     getWorkspaceContext: (id: string) => new WorkspaceContext({ wsId: id, workDir }),
-    getRegistryStore: () => registryStore,
-    getConnectorDirectory: () => new ConnectorDirectory(registryStore),
+    getConnectorCatalog: () => new ConnectorCatalog(CONNECTOR_FIXTURE_DIR),
     getLifecycle: () => lifecycle,
     getRegistryForWorkspace: (_id: string) => workspaceRegistry,
     // Minimal stubs for the runtime services list_installed touches
@@ -217,7 +195,6 @@ function buildHarness(opts: { adminId?: string } = {}): Harness {
     wsId,
     workspaceStore,
     credStore,
-    registryStore,
     lifecycle,
     workspaceRegistry,
     runtime,
@@ -607,21 +584,18 @@ describe("manage_connectors.list_directory", () => {
     rmSync(h.workDir, { recursive: true, force: true });
   });
 
-  test("aggregates entries from the bundled-static registry by default", async () => {
+  test("aggregates entries from the catalog directory by default", async () => {
     const tool = buildTool(h, ADMIN_USER);
     const result = await tool.handler({ action: "list_directory" });
     expect(result.isError).toBe(false);
     const entries = structured(result).entries ?? [];
-    const fromConnectord = entries.filter((e) => e.registryId === "bundled-static");
-    expect(fromConnectord.length).toBeGreaterThan(0);
+    expect(entries.length).toBeGreaterThan(0);
   });
 
   test("static entry shows operatorConfigured: false before setup_operator runs", async () => {
     const tool = buildTool(h, ADMIN_USER);
     const result = await tool.handler({ action: "list_directory" });
-    const dropbox = (structured(result).entries ?? []).find(
-      (e) => e.registryId === "bundled-static" && e.id === DROPBOX_ID,
-    );
+    const dropbox = (structured(result).entries ?? []).find((e) => e.id === DROPBOX_ID);
     expect(dropbox).toBeDefined();
     expect(dropbox?.operatorConfigured).toBe(false);
   });
@@ -636,9 +610,7 @@ describe("manage_connectors.list_directory", () => {
     });
 
     const result = await tool.handler({ action: "list_directory" });
-    const dropbox = (structured(result).entries ?? []).find(
-      (e) => e.registryId === "bundled-static" && e.id === DROPBOX_ID,
-    );
+    const dropbox = (structured(result).entries ?? []).find((e) => e.id === DROPBOX_ID);
     expect(dropbox?.operatorConfigured).toBe(true);
   });
 });
