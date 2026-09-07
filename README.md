@@ -131,7 +131,7 @@ All system tools are prefixed with `nb__` (the `nb` source name + `__` separator
 | Tool | Purpose |
 |-----------|---------|
 | `nb__status` | Platform status: overview, connectors, skills, or config (scope param) |
-| `nb__search` | Unified search: installed tools or the connector registries (scope param) |
+| `nb__search` | Unified search: installed tools or the connector catalog (scope param) |
 | `nb__read_resource` | Read a `skill://` / `ui://` resource from an installed app's MCP server |
 | `nb__set_preferences` | Set user preferences (name, timezone, theme) |
 | `nb__manage_tools` | Promote/release tools in the active set |
@@ -495,7 +495,6 @@ When total tools ≤30, all are surfaced directly. Above 30 with no skill matche
 | `nb__briefing` | Generate personalized activity briefing (home dashboard) |
 | `nb__manage_users` | Create, update, delete, or list users (admin only) |
 | `nb__manage_workspaces` | Workspace CRUD + member management (admin only) |
-| `nb__manage_registries` | List and configure connector registries (admin only) |
 | `nb__manage_connectors` | Browse, install, configure, and disconnect connectors |
 
 ### Connector Lifecycle
@@ -621,7 +620,7 @@ All default to `true`. What `false` does depends on the flag: most withhold a to
 |------|----------|---------------------|
 | `skillManagement` | Create, edit, delete, and activate skills | `skills__create`, `skills__update`, `skills__delete`, `skills__activate`, `skills__deactivate`, `skills__history`, `skills__restore`, `skills__set_status` are never built |
 | `toolDiscovery` | Tool search | `nb__search` stays; `scope: "tools"` returns an error |
-| `catalogSearch` | Registry search | `nb__search` stays; `scope: "registry"` returns an error |
+| `catalogSearch` | Catalog search | `nb__search` stays; `scope: "catalog"` returns an error |
 | `fileContext` | File upload, serving, and context extraction | The file endpoints refuse (404, or 415 on a multipart upload) |
 | `userManagement` | Create, update, and delete users | `nb__manage_users` is not registered |
 | `workspaceManagement` | Workspaces, members, sharing | `nb__manage_workspaces` is not registered |

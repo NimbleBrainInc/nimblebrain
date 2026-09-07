@@ -100,7 +100,7 @@ holds tenant credentials.
 
 ### Sources
 
-Connectors are installed per workspace and tracked in `workspace.json` (not `nimblebrain.json` — entries placed there are stripped on load). They are discovered through the **connectors catalog**: one or more registries aggregated into a single Browse list, installed point-and-click or via `manage_connectors`. See [Connectors Catalog](/config/connectors-catalog/).
+Connectors are installed per workspace and tracked in `workspace.json` (not `nimblebrain.json` — entries placed there are stripped on load). They are discovered through the **connectors catalog**: a directory of `ServerDetail` files read into a single Browse list, installed point-and-click or via `manage_connectors`. See [Connectors Catalog](/config/connectors-catalog/).
 
 ### Lifecycle states
 
@@ -211,11 +211,10 @@ Every NimbleBrain instance has these `nb__*` tools available:
 
 | Tool | Description |
 |------|-------------|
-| `nb__search` | Search installed tools (`scope: "tools"`) or the connector registries (`scope: "registry"`) |
+| `nb__search` | Search installed tools (`scope: "tools"`) or the connector catalog (`scope: "catalog"`) |
 | `nb__status` | Platform status; `scope: "connectors"` for per-connector health, `scope: "skills"` for loaded skills, `scope: "config"` for model and limits |
 | `nb__read_resource` | Read an MCP resource by URI |
 | `manage_connectors` | List the connector catalog, install/disconnect remote MCP connectors per workspace or per user |
-| `manage_registries` | Org-level management of the connector registries Browse pulls from |
 | `manage_workspaces` | Create and manage workspaces |
 | `manage_members` | Manage workspace membership |
 | `manage_users` | Manage users (when a managed identity adapter is configured) |
