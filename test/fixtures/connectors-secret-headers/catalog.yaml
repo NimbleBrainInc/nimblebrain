@@ -91,3 +91,27 @@ servers:
           config:
             key: acme.db_url
         tags: [database]
+
+  # The THIRD place a ref names a workspace key: a static-auth entry's
+  # `operatorSetup.clientSecretKey`, which `resolveStaticOAuthClient` resolves
+  # from this same store. Uninstall never deletes it — `remove_operator_setup`
+  # owns it, and it is the workspace's app secret for a whole vendor rather than
+  # one connector's credential — but it is still a reason not to delete it out
+  # from under this entry on some OTHER connector's uninstall.
+  #
+  # It names `acme.db_url` on purpose, same as the two above.
+  - name: com.acme/db-operator
+    title: Acme DB Operator App
+    description: Connects through the workspace's own registered OAuth app
+    version: "1.0.0"
+    remotes:
+      - type: streamable-http
+        url: https://mcp.acme.test/operator/mcp
+    _meta:
+      ai.nimblebrain/connector:
+        auth: static
+        operatorSetup:
+          portalUrl: https://acme.test/developers
+          hint: Create an app, paste the client id and secret
+          clientSecretKey: acme.db_url
+        tags: [database]

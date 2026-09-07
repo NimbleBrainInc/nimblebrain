@@ -28,6 +28,44 @@ import { ConfirmDialog } from "../ui/confirm-dialog";
  * and no read that could produce either — the key and when it was written are
  * the whole of what a confirmation needs.
  */
+/**
+ * What to say once the connector is gone, or nothing when there is nothing to
+ * say. This notice replaces the Configure page, which goes with the connector —
+ * it is the last surface on which a key that outlived it can be named at all.
+ *
+ * Two survivals, and they are not the same news. A STRANDED key is a delete
+ * that failed: the credential is still live with nothing referencing it, which
+ * is the state this whole dialog exists to prevent, and the user has to act on
+ * it. A RETAINED key is the reference check doing its job — an installed
+ * sibling still resolves it, so it stays. The dialog has already said that key
+ * would be deleted, so saying nothing would leave that standing as the last
+ * word; saying it in the destructive tone would make the safe outcome read as
+ * the failure.
+ */
+function uninstallNotice(
+  displayName: string,
+  res: Awaited<ReturnType<typeof uninstallConnector>>,
+): { text: string; tone: "error" | "info" } | undefined {
+  if (res.secretDeleteError) {
+    const stranded = res.failedSecretKeys ?? [];
+    const what =
+      stranded.length > 0
+        ? `${stranded.join(", ")} ${stranded.length === 1 ? "is" : "are"} still stored`
+        : "its stored credentials could not be removed";
+    return {
+      tone: "error",
+      text: `${displayName} was uninstalled, but ${what}: ${res.secretDeleteError}`,
+    };
+  }
+  const retained = res.retainedSecretKeys ?? [];
+  if (retained.length === 0) return undefined;
+  const why =
+    retained.length === 1
+      ? "was kept — another installed connector uses it"
+      : "were kept — other installed connectors use them";
+  return { tone: "info", text: `${displayName} was uninstalled. ${retained.join(", ")} ${why}.` };
+}
+
 export function UninstallConnectorDialog({
   installed,
   open,
@@ -37,8 +75,15 @@ export function UninstallConnectorDialog({
   installed: InstalledConnector;
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  /** Called after the connector is gone. Receives a message when a key outlived it. */
-  onUninstalled: (warning?: string) => void;
+  /**
+   * Called after the connector is gone. Receives a notice when a key outlived
+   * it — either stranded (the delete failed, and it is still live) or retained
+   * on purpose (a sibling still resolves it). `tone` separates the two: one is
+   * a state the user has to act on, the other is the answer to a question the
+   * dialog already asked, and rendering a deliberate retention in red would
+   * make the safe outcome read as the failure.
+   */
+  onUninstalled: (notice?: { text: string; tone: "error" | "info" }) => void;
 }) {
   const cat = installed.catalog;
   const displayName = cat?.name ?? installed.connectorName ?? installed.serverName;
@@ -96,19 +141,8 @@ export function UninstallConnectorDialog({
       pendingLabel="Uninstalling…"
       destructive
       onConfirm={async () => {
-        const res = await uninstallConnector(installed.serverName, "workspace");
-        // Name the survivors. This notice replaces the Configure page, which
-        // goes with the connector — it is the last surface on which a key that
-        // outlived its connector can be identified at all.
-        const stranded = res.failedSecretKeys ?? [];
         onUninstalled(
-          res.secretDeleteError
-            ? `${displayName} was uninstalled, but ${
-                stranded.length > 0
-                  ? `${stranded.join(", ")} ${stranded.length === 1 ? "is" : "are"} still stored`
-                  : "its stored credentials could not be removed"
-              }: ${res.secretDeleteError}`
-            : undefined,
+          uninstallNotice(displayName, await uninstallConnector(installed.serverName, "workspace")),
         );
       }}
     >

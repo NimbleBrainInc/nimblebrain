@@ -58,6 +58,9 @@ const SERVER_NAME = slugifyServerName(ENTRY_ID);
 const DIRECT_ID = "com.acme/db-direct";
 const DIRECT_URL = "https://mcp.acme.test/direct/mcp";
 const DIRECT_SERVER_NAME = slugifyServerName(DIRECT_ID);
+/** The static-auth sibling naming the same key as its OAuth app's client secret. */
+const OPERATOR_ID = "com.acme/db-operator";
+const OPERATOR_URL = "https://mcp.acme.test/operator/mcp";
 
 const ADMIN: UserIdentity = {
   id: "usr_admin_secret_headers",
@@ -128,6 +131,28 @@ function directEntry(): DirectoryEntry {
   };
 }
 
+/** The static-auth entry whose operator app secret lives at `KEY`. */
+function operatorEntry(): CatalogListing {
+  return {
+    id: OPERATOR_ID,
+    registryId: "bundled-static",
+    registryType: "static",
+    name: "Acme DB Operator App",
+    description: "Connects through the workspace's own registered OAuth app",
+    install: {
+      kind: "remote-oauth",
+      url: OPERATOR_URL,
+      transportType: "streamable-http",
+      auth: "static",
+      operatorSetup: {
+        portalUrl: "https://acme.test/developers",
+        hint: "Create an app, paste the client id and secret",
+        clientSecretKey: KEY,
+      },
+    },
+  } as unknown as CatalogListing;
+}
+
 /**
  * `lifecycle` is injectable so a test can make `uninstall` throw — the ordering
  * invariant has no other seam, and the handler holds the manager internally.
@@ -159,6 +184,7 @@ function toolFor(sessionWsId: string, injected?: ConnectorLifecycleManager) {
 /** The structured half of a tool result, typed to what these tests read. */
 function structured(result: { structuredContent?: unknown }): {
   deletedSecretKeys?: string[];
+  retainedSecretKeys?: string[];
   secretDeleteError?: string;
   keys?: Array<{ key: string; updatedAt: string }>;
 } {
@@ -442,6 +468,30 @@ describe("a catalog entry that binds a workspace secret to a header", () => {
     const last = await tool.handler({ action: "uninstall", serverName: DIRECT_SERVER_NAME });
     expect(structured(last).deletedSecretKeys).toEqual([KEY]);
     expect(structured(await tool.handler({ action: "list_secret_keys" })).keys).toEqual([]);
+  });
+
+  test("a key a static-auth sibling's client secret names is kept", async () => {
+    // The third declaration site, and the asymmetric one: an uninstall never
+    // deletes an `oauthClient.clientSecret` key (`remove_operator_setup` owns
+    // it), but it is still a reason not to delete it on someone else's
+    // uninstall. Without the referrer read, uninstalling the header connector
+    // takes the operator app's secret with it and the static connector can no
+    // longer complete a token exchange, on a value nothing returns.
+    const tool = toolFor("ws_tenanta");
+    await tool.handler({
+      action: "setup_operator",
+      catalogId: OPERATOR_ID,
+      clientId: "acme-client-id",
+      clientSecret: "operator-app-secret",
+    });
+    await tool.handler({ action: "install", entry: operatorEntry() });
+    await tool.handler({ action: "install", entry: entry() });
+
+    const result = await tool.handler({ action: "uninstall", serverName: SERVER_NAME });
+    expect(result.isError).toBe(false);
+    expect(structured(result).deletedSecretKeys).toEqual([]);
+    expect(structured(result).retainedSecretKeys).toEqual([KEY]);
+    expect(structured(await tool.handler({ action: "list_secret_keys" })).keys?.[0]?.key).toBe(KEY);
   });
 
   // The complement of the forged-pair test above, and the one that matters more:

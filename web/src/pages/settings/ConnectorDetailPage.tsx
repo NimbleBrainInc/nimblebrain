@@ -40,10 +40,15 @@ export function ConnectorDetailPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [confirmingUninstall, setConfirmingUninstall] = useState(false);
-  // Set only when an uninstall succeeded and a credential outlived it. The
-  // connector is gone, so this page has nothing left to configure — the notice
-  // takes its place rather than following a navigation nothing would render.
-  const [orphanNotice, setOrphanNotice] = useState<string | null>(null);
+  // Set only when an uninstall succeeded and a credential outlived it — either
+  // stranded by a failed delete or kept for a sibling that still resolves it.
+  // The connector is gone, so this page has nothing left to configure — the
+  // notice takes its place rather than following a navigation nothing would
+  // render.
+  const [orphanNotice, setOrphanNotice] = useState<{
+    text: string;
+    tone: "error" | "info";
+  } | null>(null);
 
   // Edit gates ride on workspace-admin *membership*, matching the server's
   // `canWriteWorkspaceScoped`. In a personal workspace the sole owner is its
@@ -80,7 +85,15 @@ export function ConnectorDetailPage() {
         <Link to={backPath} className="text-xs text-muted-foreground hover:underline">
           ← All connectors
         </Link>
-        <p className="text-sm text-destructive">{orphanNotice}</p>
+        <p
+          className={
+            orphanNotice.tone === "error"
+              ? "text-sm text-destructive"
+              : "text-sm text-muted-foreground"
+          }
+        >
+          {orphanNotice.text}
+        </p>
       </div>
     );
   }
@@ -149,12 +162,12 @@ export function ConnectorDetailPage() {
           open={confirmingUninstall}
           onOpenChange={setConfirmingUninstall}
           // A clean uninstall leaves nothing to configure, so the page goes with
-          // it. A credential that outlived the connector is the one thing the
-          // user can still act on, and navigating away is where it would be
-          // lost — so that case stays put and says so.
-          onUninstalled={(warning) => {
+          // it. A key that outlived the connector is the one thing left to say —
+          // stranded and still live, or kept for a sibling — and navigating away
+          // is where it would be lost, so that case stays put and says so.
+          onUninstalled={(notice) => {
             setConfirmingUninstall(false);
-            if (warning) setOrphanNotice(warning);
+            if (notice) setOrphanNotice(notice);
             else navigate(backPath);
           }}
         />

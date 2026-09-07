@@ -2310,9 +2310,10 @@ function matchesServerName(row: ConnectorRef, serverName: string): boolean {
 }
 
 /**
- * Every workspace credential key a persisted connector resolves.
+ * The workspace credential keys a persisted connector names AND OWNS — the
+ * ones an uninstall may take with it.
  *
- * There are two places a ref names one, and both count:
+ * Two places on the ref, and both count:
  *
  *   - `transport.headers` — the `secretHeaders` declaration, copied verbatim at
  *     install. The workspace's own secret on a named outgoing header.
@@ -2322,6 +2323,14 @@ function matchesServerName(row: ConnectorRef, serverName: string): boolean {
  *     no `secretHeaders` at all (see the `com.acme/db` example in
  *     `docs/config/secrets.mdx`), so reading only the headers would miss its
  *     one credential entirely.
+ *
+ * A THIRD site names a workspace key and is deliberately not here:
+ * `oauthClient.clientSecret`, which `resolveStaticOAuthClient` dereferences
+ * against this same store. That key is the workspace's OAuth app setup for a
+ * whole vendor rather than this connector's own credential — `setup_operator`
+ * writes it and `remove_operator_setup` takes it away — so an uninstall must
+ * not delete it. It is still a reason not to delete SOMEONE ELSE's key, which
+ * is why `deletableSecretKeys` reads it on the referrer side only.
  *
  * Read from the PERSISTED REF rather than the catalog entry, deliberately. The
  * ref is what the transport resolves on the next request, so it is the honest
@@ -2365,6 +2374,11 @@ function workspaceKeysNamedBy(ref: ConnectorRef | undefined): string[] {
  * runtime's `getConnectorInstancesForWorkspace` would NOT do here: it filters to
  * sources the registry has established, so a broken-but-installed sibling would
  * be invisible and its key deleted.
+ *
+ * A referrer is anything that RESOLVES the key, which is a wider set than what
+ * a connector owns: a sibling's `oauthClient.clientSecret` counts here even
+ * though its own uninstall would never delete it. The asymmetry is the point —
+ * a key nothing may delete is still a key nothing else may delete either.
  */
 function deletableSecretKeys(ws: Workspace, serverName: string, ownRef: ConnectorRef | undefined) {
   const own = workspaceKeysNamedBy(ownRef);
@@ -2373,6 +2387,10 @@ function deletableSecretKeys(ws: Workspace, serverName: string, ownRef: Connecto
   for (const other of ws.connectors) {
     if (matchesServerName(other, serverName)) continue;
     for (const key of workspaceKeysNamedBy(other)) stillNamed.add(key);
+    // The third site. Owned by `setup_operator` rather than by this connector,
+    // so it is a referrer and never a deletion — see `workspaceKeysNamedBy`.
+    const clientSecretKey = other.oauthClient?.clientSecret?.key;
+    if (clientSecretKey) stillNamed.add(clientSecretKey);
   }
   return {
     deletable: own.filter((k) => !stillNamed.has(k)),

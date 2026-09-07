@@ -111,7 +111,7 @@ interface Mounted {
 }
 
 let mounted: Mounted | null = null;
-let uninstalledWith: Array<string | undefined> = [];
+let uninstalledWith: Array<{ text: string; tone: "error" | "info" } | undefined> = [];
 
 afterEach(() => {
   mounted?.unmount();
@@ -162,7 +162,7 @@ async function open(connector: InstalledConnector): Promise<Mounted> {
       installed={connector}
       open
       onOpenChange={() => {}}
-      onUninstalled={(warning) => uninstalledWith.push(warning)}
+      onUninstalled={(notice) => uninstalledWith.push(notice)}
     />,
   );
 }
@@ -315,9 +315,30 @@ describe("UninstallConnectorDialog — reporting", () => {
     mounted = await open(installed({ secretHeaders: DECLARED }));
     await click(dialogButton("Uninstall"));
     expect(uninstalledWith).toHaveLength(1);
-    expect(uninstalledWith[0]).toContain("acme.db_url");
-    expect(uninstalledWith[0]).toContain("still stored");
-    expect(uninstalledWith[0]).toContain("EACCES");
+    expect(uninstalledWith[0]?.tone).toBe("error");
+    expect(uninstalledWith[0]?.text).toContain("acme.db_url");
+    expect(uninstalledWith[0]?.text).toContain("still stored");
+    expect(uninstalledWith[0]?.text).toContain("EACCES");
+  });
+
+  test("a key kept for a sibling is named too, and not as a failure", async () => {
+    // The dialog has already said this key would be deleted, so silence would
+    // leave that standing as the last word. It is not the stranded case: the
+    // key is still owned by an installed connector, so reporting it in the
+    // destructive tone would make the safe outcome read as the failure.
+    uninstallResult = async () => ({
+      ok: true,
+      scope: "workspace" as const,
+      serverName: "com-acme-db-query",
+      deletedSecretKeys: [],
+      retainedSecretKeys: ["acme.db_url"],
+    });
+    mounted = await open(installed({ secretHeaders: DECLARED }));
+    await click(dialogButton("Uninstall"));
+    expect(uninstalledWith).toHaveLength(1);
+    expect(uninstalledWith[0]?.tone).toBe("info");
+    expect(uninstalledWith[0]?.text).toContain("acme.db_url");
+    expect(uninstalledWith[0]?.text).toContain("was kept");
   });
 
   test("a failed uninstall keeps the dialog open with the reason", async () => {
