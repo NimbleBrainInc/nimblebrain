@@ -1119,12 +1119,12 @@ describe("composeSystemPromptTraced", () => {
     ]);
   });
 
-  it("layer3_skills section carries one subItem per skill, with connector attribution where applicable", () => {
-    const connectorAffined: Layer3SkillEntry = {
+  it("layer3_skills section carries one subItem per skill, keyed on its source path", () => {
+    const collateral: Layer3SkillEntry = {
       name: "collateral-rules",
       body: "Use patch_source.",
       scope: "workspace",
-      sourcePath: "/work/skills/bundles/synapse-collateral/collateral-rules.md",
+      sourcePath: "/work/skills/collateral-rules.md",
       loadedBy: "tool_affinity",
       reason: "applies_to_tools matched synapse-collateral__*",
     };
@@ -1146,15 +1146,18 @@ describe("composeSystemPromptTraced", () => {
       undefined,
       undefined,
       undefined,
-      [connectorAffined, standalone],
+      [collateral, standalone],
     );
     const section = traced.layers.find((l) => l.kind === "layer3_skills");
     expect(section).toBeDefined();
     expect(section!.subItems).toHaveLength(2);
-    const collateralSub = section!.subItems!.find((s) => s.id.includes("collateral-rules"));
-    expect(collateralSub?.connector).toBe("synapse-collateral");
-    const voiceSub = section!.subItems!.find((s) => s.id.includes("voice-rules"));
-    expect(voiceSub?.connector).toBeUndefined();
+    expect(section!.subItems!.map((s) => s.id).sort()).toEqual([
+      "/work/skills/collateral-rules.md",
+      "/work/skills/voice-rules.md",
+    ]);
+    for (const sub of section!.subItems!) {
+      expect(sub.kind).toBe("layer3_skill");
+    }
   });
 
   it("apps section carries one subItem per app with connector attribution", () => {

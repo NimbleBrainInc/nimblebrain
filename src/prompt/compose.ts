@@ -86,9 +86,9 @@ export interface TracedLayer {
   /** Approximate tokens for `text`. */
   tokens: number;
   /**
-   * Connector attribution, when applicable. For the apps section / focused-app
-   * section / layer3-skills under a connectors/<name>/ subdir. Used by the
-   * compose-effective-context tool's `connector` filter.
+   * Connector attribution, when applicable — the apps section and the
+   * focused-app section. Used by the compose-effective-context tool's
+   * `connector` filter.
    */
   connector?: string;
   /**
@@ -626,21 +626,17 @@ function layer3SkillsLayers(layer3Skills?: Layer3SkillEntry[]): PendingLayer[] {
       tokens: approxTokens(section),
       subItems: layer3Skills
         .filter((entry) => entry.body && entry.body.trim().length > 0)
-        .map((entry) => {
-          const connector = deriveConnectorFromSkillPath(entry.sourcePath);
-          return {
-            kind: "layer3_skill" as const,
-            id: entry.sourcePath ?? `nb:layer3:${entry.name}`,
-            source: entry.sourcePath ?? entry.name,
-            ...(connector !== undefined ? { connector } : {}),
-            metadata: {
-              name: entry.name,
-              scope: entry.scope,
-              loadedBy: entry.loadedBy,
-              reason: entry.reason,
-            },
-          };
-        }),
+        .map((entry) => ({
+          kind: "layer3_skill" as const,
+          id: entry.sourcePath ?? `nb:layer3:${entry.name}`,
+          source: entry.sourcePath ?? entry.name,
+          metadata: {
+            name: entry.name,
+            scope: entry.scope,
+            loadedBy: entry.loadedBy,
+            reason: entry.reason,
+          },
+        })),
     },
   ];
 }
@@ -850,23 +846,6 @@ export function composeSystemSegments(
     layers: composed.layers,
     totalTokens: composed.totalTokens,
   };
-}
-
-/**
- * Heuristic: if a Layer 3 skill lives under `.../skills/bundles/<name>/`
- * (the documented convention for connector-affined L3 skills), attribute it
- * to that connector. Otherwise return undefined — the skill is connector-
- * agnostic and the `connector` filter shouldn't claim it.
- *
- * Exported so other surfaces (e.g. the historical-audit path in
- * `platform/compose/source.ts`) classify skills the same way as the live
- * trace — drift between the two would silently mis-attribute the connector
- * filter.
- */
-export function deriveConnectorFromSkillPath(sourcePath?: string): string | undefined {
-  if (!sourcePath) return undefined;
-  const m = sourcePath.match(/\/skills\/bundles\/([^/]+)\//);
-  return m?.[1];
 }
 
 function formatAppsSection(apps: PromptAppInfo[], hasProxiedTools?: boolean): string {

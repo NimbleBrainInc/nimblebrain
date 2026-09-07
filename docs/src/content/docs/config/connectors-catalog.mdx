@@ -402,8 +402,8 @@ bun run scripts/check-catalog-dcr.ts <catalog-file-or-dir>
 Steps 1–4 are the discovery chain the production OAuth provider uses; steps 5 and 6 then exercise the flow for real against the vendor.
 
 1. **Reachability** — `HEAD <remotes[0].url>`.
-2. **RFC 9728** — `GET <bundle-origin>/.well-known/oauth-protected-resource` to discover the authorization server origin.
-3. **RFC 8414** — `GET <as-origin>/.well-known/oauth-authorization-server` against each candidate AS origin (RFC 9728 advertised, plus bundle origin as fallback).
+2. **RFC 9728** — `GET <connector-origin>/.well-known/oauth-protected-resource` to discover the authorization server origin.
+3. **RFC 8414** — `GET <as-origin>/.well-known/oauth-authorization-server` against each candidate AS origin (RFC 9728 advertised, plus the connector origin as fallback).
 4. **RFC 7591** — the AS metadata document must include `registration_endpoint`.
 5. **DCR registration** — POST a synthetic client to the `registration_endpoint` with a representative redirect URI. Catches vendors that advertise DCR but enforce a redirect-URI host allowlist (Intercom, Vercel).
 6. **Authorize** — `GET` the `authorization_endpoint` with that `client_id` and the same redirect URI. Catches vendors that accept the registration but reject the redirect URI one step later (Canva).
@@ -433,7 +433,7 @@ Operators upgrading from a release before the `ServerDetail` alignment landed sh
 - **`NB_CATALOG_PATH` and `NB_STDIO_CATALOG_PATH` removed.** Point `NB_CURATED_CATALOG_DIR` at a directory of `ServerDetail` YAML / JSON files.
 - **Catalog id format.** A catalog listing's `id` (and `InstalledConnector.catalogId`) is now the reverse-DNS `ServerDetail.name` (`io.asana/mcp`) instead of a bare slug (`asana`). Catalog-keyed state — `workspace.json#oauthOperatorApps[<id>]` and the matching `<clientSecretKey>` credential entries — must be rekeyed to the reverse-DNS form before existing static-auth connectors will resolve. There's no auto-migration; rekey workspace by workspace through the admin Connectors UI.
 - **Connector `serverName` slug.** New catalog installs persist a slugified canonical reverse-DNS form (`com-canva-mcp`) instead of a short brand slug. Existing installs keep their persisted `serverName` via a fallback. Operators querying by `serverName` (logs, audit) need both forms during the transition.
-- **Downloadable bundles removed.** The runtime no longer acquires or spawns a server's code, so a catalog entry advertising only `packages[]` is not installable and no longer appears in Browse. Publish the server behind a URL and give the entry a `remotes[]` endpoint.
+- **`packages[]`-only entries are not installable.** The runtime does not acquire or spawn a server's code, so a catalog entry advertising only `packages[]` never appears in Browse. Publish the server behind a URL and give the entry a `remotes[]` endpoint.
 
 ## Related
 

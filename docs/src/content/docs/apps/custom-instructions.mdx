@@ -5,9 +5,9 @@ description: Let users save per-app guidance that the agent picks up on every tu
 
 import { Aside } from '@astrojs/starlight/components';
 
-NimbleBrain wraps any app's user-supplied custom instructions in `<app-custom-instructions>` containment in the agent's system prompt — automatically, on every conversation turn, for every active bundle. As an app author you opt in to that behavior by publishing a single MCP resource at a reserved URI.
+NimbleBrain wraps any app's user-supplied custom instructions in `<app-custom-instructions>` containment in the agent's system prompt — automatically, on every conversation turn, for every active app. As an app author you opt in to that behavior by publishing a single MCP resource at a reserved URI.
 
-This is the platform's "bottom-up" pattern for per-app guidance: the host enforces the convention, the bundle owns everything else (storage, UI, tool name, validation).
+This is the platform's "bottom-up" pattern for per-app guidance: the host enforces the convention, the app owns everything else (storage, UI, tool name, validation).
 
 ## The convention
 
@@ -33,8 +33,8 @@ Everything except the URI convention and the prompt-side wrapping:
 
 ## What the platform owns
 
-- **The URI.** Bundle authors don't pick a scheme; just publish at `app://instructions`.
-- **Containment escape.** If a saved body happens to contain a literal `</app-custom-instructions>` closing tag, the platform HTML-escapes it before wrapping so it can't break out of containment. Prompt-injection mitigation — you don't need to handle it on the bundle side.
+- **The URI.** App authors don't pick a scheme; just publish at `app://instructions`.
+- **Containment escape.** If a saved body happens to contain a literal `</app-custom-instructions>` closing tag, the platform HTML-escapes it before wrapping so it can't break out of containment. Prompt-injection mitigation — you don't need to handle it on the app side.
 - **Read on every assembly.** Bodies are read fresh per chat turn (no caching), so edits apply mid-conversation without restart.
 - **Visibility gating.** Tool-only servers that don't publish the resource are naturally excluded — no flag to set, no negotiation.
 
@@ -104,13 +104,13 @@ See the [Manifest reference](/apps/manifest/#settings-sections) for the `"settin
 
 ## Why this convention
 
-- **Discoverability.** Every bundle that wants instructions support uses the same URI. Users don't have to learn per-app conventions; agents don't have to discover per-bundle write tools to know "where do my instructions live for this app."
-- **Security.** Containment escape happens platform-side, uniformly. Bundle authors writing the prompt-injection mitigation is something that *will* be gotten wrong over time.
-- **Composability.** The pattern stacks with `<app-instructions>` (your bundle author's static guidance) and the host's workspace overlay. The system prompt layers cleanly: workspace policy → per-app author guidance → per-app user instructions.
-- **Bottom-up.** Your bundle decides if it supports custom instructions and how rich the UX is. The platform doesn't synthesize anything you don't opt into.
+- **Discoverability.** Every app that wants instructions support uses the same URI. Users don't have to learn per-app conventions; agents don't have to discover per-app write tools to know "where do my instructions live for this app."
+- **Security.** Containment escape happens platform-side, uniformly. App authors writing the prompt-injection mitigation is something that *will* be gotten wrong over time.
+- **Composability.** The pattern stacks with `<app-instructions>` (the app author's static guidance) and the host's workspace overlay. The system prompt layers cleanly: workspace policy → per-app author guidance → per-app user instructions.
+- **Bottom-up.** Your app decides if it supports custom instructions and how rich the UX is. The platform doesn't synthesize anything you don't opt into.
 
 ## Related
 
-- [The workspace overlay](/guide/settings/) — managed by the host, not by your bundle. Written by workspace admins in the workspace settings UI; the agent drafts suggested text but does not write the overlay itself. Guidance that should reach every workspace in the organization is an org-tier skill instead.
+- [The workspace overlay](/guide/settings/) — managed by the host, not by your app. Written by workspace admins in the workspace settings UI; the agent drafts suggested text but does not write the overlay itself. Guidance that should reach every workspace in the organization is an org-tier skill instead.
 - [Manifest reference](/apps/manifest/) — full `_meta["ai.nimblebrain/host"]` schema, including the `"settings"` placement slot.
 - [Placements & Navigation](/apps/placements/) — sidebar and main slots for your app's views.

@@ -5,7 +5,7 @@ description: Start the NimbleBrain HTTP API server for production use.
 
 import { Aside } from '@astrojs/starlight/components';
 
-`bun run start` launches the NimbleBrain runtime and starts an HTTP API server. This is the production entry point -- it boots the agent engine, loads all configured bundles, and listens for HTTP requests.
+`bun run start` launches the NimbleBrain runtime and starts an HTTP API server. This is the production entry point -- it boots the agent engine, loads all configured connectors, and listens for HTTP requests.
 
 ## Usage
 
@@ -53,7 +53,7 @@ PORT=8080 bun run start
 ## What happens at startup
 
 1. The config file is loaded and validated
-2. The runtime initializes -- loading bundles, skills, and model configuration
+2. The runtime initializes -- loading connectors, skills, and model configuration
 3. Structured logging is disabled unless `--debug` is set (keeps stdout/stderr clean for production)
 4. The HTTP server starts listening on the configured port
 

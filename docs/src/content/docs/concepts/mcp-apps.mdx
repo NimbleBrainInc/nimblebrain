@@ -15,7 +15,7 @@ MCP Apps solve a fundamental problem: AI agents can call tools, but many workflo
 
 NimbleBrain implements the ext-apps specification (2026-01-26), making it a full MCP Apps host alongside Claude Desktop, VS Code GitHub Copilot, Goose, and Postman.
 
-When you install a bundle that declares UI resources, NimbleBrain:
+When you install a connector that declares UI resources, NimbleBrain:
 
 1. Reads the `_meta["ai.nimblebrain/host"]` manifest metadata for placements and views
 2. Registers sidebar entries, routes, and navigation items in the shell layout
@@ -78,7 +78,7 @@ See [MCP App Bridge](/apps/bridge) for the complete protocol reference.
 
 ## Building an MCP App
 
-Any MCPB bundle can become an MCP App by:
+Any MCP server can become an MCP App by:
 
 1. Adding `_meta["ai.nimblebrain/host"]` to its `manifest.json` with UI placements
 2. Serving HTML via `ui://` resource URIs from the MCP server

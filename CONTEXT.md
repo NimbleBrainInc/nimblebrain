@@ -104,8 +104,9 @@ source can tell them apart.
 
 The runtime **connects**; it does not acquire, verify, or execute a server's
 code (ADR-0020). A persisted reference is a URL plus how to reach it and who it
-speaks as, and discovery is a catalog of published `ServerDetail` entries behind
-one source interface.
+speaks as, and discovery is one catalog over a directory of published
+`ServerDetail` files — the shape the upstream MCP registry publishes, so
+anything that can write files can populate it.
 
 The transport arm is also a trust boundary: in-memory means the bytes never left
 the process, which is what host-owned `_meta` markers are conditioned on

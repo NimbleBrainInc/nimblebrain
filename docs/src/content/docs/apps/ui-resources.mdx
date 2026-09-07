@@ -109,7 +109,7 @@ GET /v1/apps/:name/resources/:path
 
 | Parameter | Description |
 |-----------|-------------|
-| `:name` | The server name (derived from the bundle name). |
+| `:name` | The source name — a connector's `serverName`, or a platform app's name. |
 | `:path` | The full path after `ui://` in your resource URI. |
 
 Resource URIs are independent of your app's package name. You can name them whatever makes sense for your domain:
@@ -184,11 +184,11 @@ For inline or compact views, send `ui/notifications/size-changed` messages to te
 
 NimbleBrain's own surfaces — the home dashboard, conversation list, files, and automations — use the exact same `ui://` pattern as third-party apps. There is no separate "core" code path. Each built-in is an **in-process MCP server**: it runs inside the platform process (over an in-memory transport) and registers `ui://` resources just like a remote connector does.
 
-When the resource proxy receives a request for a built-in's view, it calls `resources/read` on that in-process bundle through the same dispatch path it uses for any other server:
+When the resource proxy receives a request for a built-in's view, it calls `resources/read` on that in-process app through the same dispatch path it uses for any other server:
 
 ```
-GET /v1/apps/home/resources/primary   → home bundle's ui:// resource
-GET /v1/apps/files/resources/primary  → files bundle's ui:// resource
+GET /v1/apps/home/resources/primary   → home app's ui:// resource
+GET /v1/apps/files/resources/primary  → files app's ui:// resource
 ```
 
 This means the built-ins and your app are governed by one contract. Anything the platform's own UI can do through `ui://` and the bridge, your app can do too.

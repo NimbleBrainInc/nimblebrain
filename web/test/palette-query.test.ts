@@ -18,7 +18,7 @@ import type { PlacementEntry } from "../src/types";
 const SOURCES = [workspacesSource, appsSource, actionsSource];
 
 function ws(id: string, name: string, extra?: Partial<WorkspaceInfo>): WorkspaceInfo {
-  return { id, name, memberCount: 1, bundles: [], ...extra };
+  return { id, name, memberCount: 1, ...extra };
 }
 
 const apps: PlacementEntry[] = [

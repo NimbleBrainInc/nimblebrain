@@ -126,15 +126,15 @@ The `size` field provides a hint to the slot renderer:
 
 ## Placement registry internals
 
-The `PlacementRegistry` is an in-memory store that tracks all active placements. It is updated when bundles are installed or uninstalled.
+The `PlacementRegistry` is an in-memory store that tracks all active placements. It is updated when connectors are installed or uninstalled.
 
-Every entry is either **ambient** (no `wsId` — platform-provided views like Home, Conversations, Files, Settings; always present inside any workspace) or **workspace-scoped** (installed bundles, visible only to members of that workspace). The registry exposes a single read method, `forWorkspace(wsId)`, which returns ambient + scoped entries merged and sorted. There is deliberately no "return everything" accessor — in a multi-tenant host, no legitimate caller wants placements unrelated to a workspace.
+Every entry is either **ambient** (no `wsId` — platform apps like Home, Conversations, Files, Automations; always present inside any workspace) or **workspace-scoped** (installed connectors, visible only to members of that workspace). The registry exposes a single read method, `forWorkspace(wsId)`, which returns ambient + scoped entries merged and sorted. There is deliberately no "return everything" accessor — in a multi-tenant host, no legitimate caller wants placements unrelated to a workspace.
 
-**Registration** — When a bundle starts, its declared `placements` are registered via `register(serverName, placements, wsId)` against the installing workspace's `wsId`. Platform built-ins register ambient (no `wsId`). The virtual `primary` resource path then resolves to the first registered placement's `resourceUri`.
+**Registration** — When a connector starts, its declared `placements` are registered via `register(serverName, placements, wsId)` against the installing workspace's `wsId`. Platform apps register ambient (no `wsId`). The virtual `primary` resource path then resolves to the first registered placement's `resourceUri`.
 
 **Querying** — `forWorkspace(wsId)` returns ambient entries plus entries scoped to `wsId`, sorted by slot then priority (lower first).
 
-**Unregistration** — When a bundle is uninstalled, its placements for that workspace are removed. Other workspaces' entries for the same bundle are untouched.
+**Unregistration** — When a connector is uninstalled, its placements for that workspace are removed. Other workspaces' entries for the same connector are untouched.
 
 ```typescript
 // Register explicit placements, scoped to a workspace

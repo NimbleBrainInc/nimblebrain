@@ -514,66 +514,6 @@ describe("compose_effective_context — historical mode", () => {
   });
 });
 
-describe("compose_effective_context — connector filter", () => {
-  it("narrows layers and subItems to the filtered connector", async () => {
-    const workDir = join(testDir, "connector-filter");
-    const runtime = await Runtime.start({
-      model: { provider: "custom", adapter: makeModel() },
-      workDir,
-      logging: { disabled: true },
-      telemetry: { enabled: false },
-    });
-    await provisionTestWorkspace(runtime);
-
-    // Plant two skills under connector-affined directories so the connector
-    // attribution heuristic kicks in.
-    const collateralDir = join(workDir, "skills", "bundles", "synapse-collateral");
-    const crmDir = join(workDir, "skills", "bundles", "synapse-crm");
-    mkdirSync(collateralDir, { recursive: true });
-    mkdirSync(crmDir, { recursive: true });
-    writeFileSync(
-      join(collateralDir, "rules.md"),
-      `---\nname: collateral-rules\ndescription: CR\nmetadata:\n  nimblebrain:\n    loading-strategy: dynamic\n    priority: 30\n    tool-affinity: ['nb__*']\n---\n\nCollateral content.\n`,
-    );
-    writeFileSync(
-      join(crmDir, "rules.md"),
-      `---\nname: crm-rules\ndescription: CR\nmetadata:\n  nimblebrain:\n    loading-strategy: dynamic\n    priority: 30\n    tool-affinity: ['nb__*']\n---\n\nCRM content.\n`,
-    );
-    await runtime.reloadSkills();
-
-    // Both planted skills appear in the unfiltered L3 section. Other L3
-    // skills (e.g. the bundled authoring-guide if its tool-affinity matches
-    // the platform's own tools) may also be present — the test asserts our
-    // two skills made it in, not exact count.
-    const unfiltered = await callCompose(runtime, {}, "conv_cccccccccccccccc");
-    const l3Section = unfiltered.structured!.layers.find((l) => l.kind === "layer3_skills");
-    expect(l3Section).toBeDefined();
-    const unfilteredConnectors = (l3Section!.subItems ?? [])
-      .map((s) => s.connector)
-      .filter((b): b is string => b !== undefined);
-    expect(unfilteredConnectors).toContain("synapse-collateral");
-    expect(unfilteredConnectors).toContain("synapse-crm");
-
-    // With connector=synapse-collateral, only the collateral skill survives.
-    // Non-connector subItems get dropped (their `connector` is undefined, not
-    // matching the filter), so the section's subItems should be exactly
-    // [{connector: "synapse-collateral", ...}] — anything else would be a
-    // bug in the filter.
-    const filtered = await callCompose(
-      runtime,
-      { connector: "synapse-collateral" },
-      "conv_cccccccccccccccc",
-    );
-    expect(filtered.isError).toBe(false);
-    const l3Filtered = filtered.structured!.layers.find((l) => l.kind === "layer3_skills");
-    expect(l3Filtered).toBeDefined();
-    expect(l3Filtered!.subItems!.length).toBe(1);
-    expect(l3Filtered!.subItems![0]!.connector).toBe("synapse-collateral");
-
-    await runtime.shutdown();
-  });
-});
-
 describe("compose_effective_context — conversation_id resolution", () => {
   it("falls back to RequestContext.conversationId when input omits the id", async () => {
     const workDir = join(testDir, "ctx-fallback");

@@ -22,7 +22,7 @@ NimbleBrain uses pluggable authentication adapters configured via `instance.json
 The adapter is selected by the `auth.adapter` field in `instance.json`. With no `instance.json` present, the platform runs in dev mode.
 
 <Aside type="danger">
-Running without an `instance.json` (dev mode) disables all authentication. The CORS policy falls back to `Access-Control-Allow-Origin: *`. Anyone who can reach the server has full access to the agent, including shell execution via the bash bundle.
+Running without an `instance.json` (dev mode) disables all authentication. The CORS policy falls back to `Access-Control-Allow-Origin: *`. Anyone who can reach the server has full access to the agent, including shell execution via the bash connector.
 </Aside>
 
 ### How authentication works
@@ -350,6 +350,6 @@ Use this checklist before exposing NimbleBrain to any network:
 | Platform port (27247) not exposed | `docker compose ps` shows no host port mapping for platform service |
 | TLS enabled | `curl -I https://nb.example.com` returns a valid certificate |
 | `X-Forwarded-For` header set by proxy | Check auth failure logs for real IPs, not `"direct"` |
-| Bundle list reviewed | `cat nimblebrain.json` — only bundles you trust are listed |
+| Connector list reviewed | `cat workspaces/<wsId>/workspace.json` — only connectors you trust are installed |
 | Firewall restricts inbound ports | Only 443 (HTTPS) and 22 (SSH) reachable from the internet |
 | Backups configured | Test your volume backup and restore procedure |

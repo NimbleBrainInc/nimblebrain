@@ -11,9 +11,6 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const BUILTIN_DIR = join(__dirname, "builtin");
 const CORE_DIR = join(__dirname, "core");
 
-/** Subdirectories that the multi-scope loader must skip. */
-const RESERVED_SUBDIR_PREFIX = "_";
-
 /** Load built-in skills shipped with the package. */
 export function loadBuiltinSkills(): Skill[] {
   return loadSkillDir(BUILTIN_DIR, "builtin").map(markVendored);
@@ -45,19 +42,16 @@ function markVendored(skill: Skill): Skill {
  * (`existsSync` passed) but couldn't be listed — permissions, I/O, or a TOCTOU
  * race where it was removed/rewritten under us. The old bare `return` dropped
  * the whole pool with zero signal; `[]` + a log keeps the failure visible. The
- * `label` and `depth` only shape the message.
+ * `label` only shapes the message.
  */
-function readSkillDirEntries(dir: string, label: string, depth: number): Dirent[] {
+function readSkillDirEntries(dir: string, label: string): Dirent[] {
   try {
     return readdirSync(dir, { withFileTypes: true });
   } catch (err) {
     const code = (err as NodeJS.ErrnoException)?.code ?? "unknown";
     log.error(
-      `[skill] Could not read ${label} skills dir "${dir}" (${code})` +
-        (depth === 0
-          ? " — it contributes no skills this load"
-          : ` at depth ${depth} — this subtree is skipped`),
-      { dir, label, depth, code },
+      `[skill] Could not read ${label} skills dir "${dir}" (${code}) — it contributes no skills this load`,
+      { dir, label, code },
     );
     return [];
   }
@@ -94,7 +88,7 @@ export function loadSkillDir(dir: string, label = "local"): Skill[] {
   if (!existsSync(dir)) return [];
 
   const skills: Skill[] = [];
-  for (const entry of readSkillDirEntries(dir, label, 0)) {
+  for (const entry of readSkillDirEntries(dir, label)) {
     if (entry.isFile() && entry.name.toLowerCase().endsWith(".md")) {
       const skill = parseSkillFileGuarded(join(dir, entry.name));
       if (skill) skills.push(skill);
@@ -106,38 +100,24 @@ export function loadSkillDir(dir: string, label = "local"): Skill[] {
 /**
  * Load skills from a directory and stamp `manifest.scope` on each result.
  *
- * Behavior:
- *   - Skips reserved subdirectories whose name begins with `_` (e.g.
- *     `_versions/`, `_archived/`) — these are reserved by Phase 3 for
- *     versioning and archived storage.
- *   - Recurses up to `MAX_SUBDIR_DEPTH` (currently 2) levels deep so
- *     `bundles/<connector>/<skill>.md` under a workspace skill dir is
- *     discovered. The path is convention only; the loader stamps the
- *     scope passed in regardless of nesting depth.
- *   - Returns `[]` if the directory does not exist (caller-friendly —
- *     missing user/workspace dirs are not an error).
+ * A skill tier is one flat directory of `*.md` files. Subdirectories are not
+ * read, which is what keeps a `_versions/` snapshot from loading as a live
+ * skill alongside the file it snapshots. Returns `[]` if the directory does
+ * not exist — caller-friendly, since a user or workspace that has authored
+ * nothing has no dir.
  *
- * Phase 2: callers stamp the scope based on which dir they're loading.
- * No frontmatter override — if the user puts `scope: connector` in a file
- * that lives under `workspaces/.../skills/`, the loader still stamps
- * `workspace`. Scope follows the filesystem.
+ * Callers stamp the scope based on which dir they're loading. There is no
+ * frontmatter override — if a file under `workspaces/.../skills/` declares
+ * `scope: connector`, the loader still stamps `workspace`. Scope follows
+ * the filesystem.
  */
 export function loadScopedSkills(dir: string, scope: SkillScope): Skill[] {
   if (!existsSync(dir)) return [];
 
   const skills: Skill[] = [];
-  collectScopedSkills(dir, scope, skills, 0);
+  collectScopedSkills(dir, scope, skills);
   return skills;
 }
-
-/**
- * Maximum subdirectory depth the multi-scope loader will recurse to find
- * `*.md` skill files. Depth 0 = the dir passed to `loadScopedSkills`.
- * Depth 2 lets us discover `bundles/<connector>/<skill>.md` (the workspace
- * convention for connector-scoped skills) without opening up unbounded
- * recursion.
- */
-const MAX_SUBDIR_DEPTH = 2;
 
 /**
  * Merge platform / workspace / user skill pools by `manifest.name` with
@@ -158,25 +138,18 @@ export function mergeScopedSkills(platform: Skill[], workspace: Skill[], user: S
   return Array.from(byName.values());
 }
 
-function collectScopedSkills(dir: string, scope: SkillScope, out: Skill[], depth: number): void {
+function collectScopedSkills(dir: string, scope: SkillScope, out: Skill[]): void {
   // Shared read/parse guards (see `readSkillDirEntries` / `parseSkillFileGuarded`):
   // `loadScopedSkills` already returned [] for a non-existent top-level dir, so a
   // read failure here means the dir existed but couldn't be listed — logged, not
   // swallowed (the old bare `return` dropped the whole scope with zero signal,
   // the production incident this fix targets). One bad file drops only itself.
-  for (const entry of readSkillDirEntries(dir, `${scope}-scope`, depth)) {
-    if (entry.isFile() && entry.name.toLowerCase().endsWith(".md")) {
-      const skill = parseSkillFileGuarded(join(dir, entry.name));
-      if (skill) {
-        skill.manifest.scope = scope;
-        out.push(skill);
-      }
-      continue;
-    }
-    if (entry.isDirectory()) {
-      if (entry.name.startsWith(RESERVED_SUBDIR_PREFIX)) continue;
-      if (depth >= MAX_SUBDIR_DEPTH) continue;
-      collectScopedSkills(join(dir, entry.name), scope, out, depth + 1);
+  for (const entry of readSkillDirEntries(dir, `${scope}-scope`)) {
+    if (!entry.isFile() || !entry.name.toLowerCase().endsWith(".md")) continue;
+    const skill = parseSkillFileGuarded(join(dir, entry.name));
+    if (skill) {
+      skill.manifest.scope = scope;
+      out.push(skill);
     }
   }
 }
