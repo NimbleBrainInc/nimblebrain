@@ -24,6 +24,7 @@
 
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import { Value } from "@sinclair/typebox/value";
 import { isToolEnabled, type ResolvedFeatures } from "../../config/features.ts";
 import { collectDeliveredSkillNames } from "../../conversation/event-reconstructor.ts";
 import type { ConversationEvent } from "../../conversation/types.ts";
@@ -41,12 +42,16 @@ import { formatActivatedSkillBlock } from "../../prompt/compose.ts";
 import { getRequestContext } from "../../runtime/request-context.ts";
 import type { Runtime } from "../../runtime/runtime.ts";
 import {
+  type AbsorbedManifestFields,
+  absorbFrontmatter,
+} from "../../skills/authored-frontmatter.ts";
+import {
   projectSkillLoads,
   type SkillLoadedBy,
   type SkillLoadRow,
 } from "../../skills/load-ledger.ts";
 import { parseSkillContent, parseSkillFile, readSkillMtime } from "../../skills/loader.ts";
-import { resolveLoadingMechanism } from "../../skills/loading.ts";
+import { resolveLoadingMechanism, type SkillLoadingMechanism } from "../../skills/loading.ts";
 import { SKILL_NAME_PATTERN } from "../../skills/schemas/skill-manifest.ts";
 import { toolMatches } from "../../skills/select.ts";
 import { approxTokens } from "../../skills/tokens.ts";
@@ -59,19 +64,28 @@ import {
   readSkillVersionRaw,
   snapshotSkillVersion,
 } from "../../skills/versions.ts";
-import { deleteSkill, readSkill, updateSkill, writeSkill } from "../../skills/writer.ts";
+import {
+  deleteSkill,
+  readSkill,
+  type SkillBodyMode,
+  updateSkill,
+  writeSkill,
+} from "../../skills/writer.ts";
 import { defineInProcessApp, type InProcessTool } from "../../tools/in-process-app.ts";
 import type { McpSource } from "../../tools/mcp-source.ts";
 import { splitInnerToolName } from "../../util/tool-name.ts";
 import { canWriteWorkspaceScoped } from "../../workspace/authz.ts";
 import type {
   SkillDetail,
+  SkillLoading,
   SkillSummary,
   SkillsListOutput,
   SkillsReadOutput,
   SkillsUseOutput,
+  SkillsWriteOutput,
 } from "../schemas/skills.ts";
 import {
+  SkillPriority,
   SkillsActivateInput,
   SkillsCreateInput,
   SkillsDeactivateInput,
@@ -1799,6 +1813,116 @@ function buildCreateManifest(
   };
 }
 
+/** What a pasted `SKILL.md` contributes to a write. */
+interface PastedFields {
+  /** The body as it will be stored — the document below the frontmatter, if there was any. */
+  body: string;
+  fields: Partial<AbsorbedManifestFields>;
+  /** On-disk field names taken from the document; absent when it carried none. */
+  applied?: string[];
+  /** Reported when the document names itself something other than the file being written. */
+  declaredName?: string;
+}
+
+type PastedFrontmatter = { error: ToolResult } | PastedFields;
+
+/**
+ * Read a pasted `SKILL.md` out of a write's body, or refuse it.
+ *
+ * The canonical skill artifact is a whole file, so a caller handing one over is
+ * the ordinary case — the editor's most natural gesture is to paste one. Both
+ * write paths therefore run the body through the runtime's own frontmatter
+ * parser before anything is stored.
+ *
+ * Invalid frontmatter is a refusal, never a quiet fallback to prose. Storing it
+ * would inject dead YAML into every prompt while the manifest silently kept
+ * values the document contradicts, and the result reads healthy in every list
+ * that shows it — which is precisely the failure this path exists to remove.
+ */
+/**
+ * Is a pasted document's `priority` one a tool caller may write?
+ *
+ * Checked against the tool schema's own band rather than a restated 11/99, so
+ * the two cannot drift apart. An absent priority is fine — the document simply
+ * did not declare one, and the caller's value stands.
+ */
+function isToolWritablePriority(priority: number | undefined): boolean {
+  return priority === undefined || Value.Check(SkillPriority, priority);
+}
+
+function absorbPastedFrontmatter(
+  body: string,
+  mode: "apply" | "ignore" | undefined,
+): PastedFrontmatter {
+  // `ignore` is the escape hatch for a body whose leading `---` is genuinely
+  // prose — a skill *about* frontmatter, say. It is opt-in precisely because
+  // the silent version of it is the bug.
+  if (mode === "ignore") return { body, fields: {} };
+
+  const absorbed = absorbFrontmatter(body);
+  if (absorbed.kind === "absent") return { body, fields: {} };
+  // A document validated against the ON-DISK contract can still declare what a
+  // TOOL caller may not. `priority` is where the two bands differ: 0–10 is the
+  // reserved core range, and a skill written into it renders raw in Layer 0
+  // instead of inside `<context-skill>` containment. `skills__create` would
+  // catch it downstream in `validateSkill`; `skills__update` calls nothing of
+  // the sort, so the check belongs here — the one seam both writes cross.
+  if (absorbed.kind === "applied" && !isToolWritablePriority(absorbed.fields.priority)) {
+    return {
+      error: errorResult(
+        new Error(
+          `metadata.nimblebrain.priority: ${absorbed.fields.priority} is outside the range a ` +
+            "skill may be authored into. Use 11–99; 0–10 is reserved for the platform's own " +
+            "core skills.",
+        ),
+      ),
+    };
+  }
+  if (absorbed.kind === "invalid") {
+    return {
+      error: errorResult(
+        new Error(
+          "`body` opens with a `---` block that is not valid SKILL.md frontmatter — " +
+            `${absorbed.errors.join("; ")}. Fix those fields, or keep the block as body text ` +
+            '(`frontmatter: "ignore"`).',
+        ),
+      ),
+    };
+  }
+  return {
+    body: absorbed.body,
+    fields: absorbed.fields,
+    applied: absorbed.applied,
+    declaredName: absorbed.declaredName,
+  };
+}
+
+/**
+ * How a written skill loads, said in a way a caller can act on. `none` is the
+ * dead case, so it names the two signals that would revive it rather than
+ * reporting a status word nothing follows from.
+ */
+function loadsNote(mechanism: SkillLoadingMechanism): string {
+  return mechanism === "none"
+    ? "catalog-only — won't auto-load yet; add a trigger or tool-affinity, or set loading-strategy: always"
+    : mechanism;
+}
+
+/**
+ * The trailing sentence that tells a caller their manifest was overridden by
+ * the document they pasted. Silence here is half the original defect: a user
+ * who pastes a file and gets a changed strategy, priority and description with
+ * no acknowledgement has been surprised twice.
+ */
+function frontmatterNote(absorbed: PastedFields | null, name: string): string {
+  if (!absorbed?.applied?.length) return "";
+  const renamed =
+    absorbed.declaredName && absorbed.declaredName !== name
+      ? `; its own name (\`${absorbed.declaredName}\`) was not applied — the file is \`${name}\``
+      : "";
+  return ` — applied frontmatter from the pasted document: ${absorbed.applied.join(", ")}${renamed}`;
+}
+
 // Input shape for `skills__create`. Derived from the TypeBox schema in
 // `./schemas/skills.ts`; the validator (validateToolInput) has already
 // rejected anything that doesn't match before this runs, so the handler
@@ -1809,7 +1933,7 @@ async function createSkill(
   input: Record<string, unknown>,
   eventSink: EventSink,
 ): Promise<ToolResult> {
-  const { scope, manifest, body } = input as unknown as SkillsCreateInput;
+  const { scope, manifest, body, frontmatter } = input as unknown as SkillsCreateInput;
   const { name } = manifest;
   assertValidName(name);
 
@@ -1844,13 +1968,23 @@ async function createSkill(
   const statusError = durableStatusError(manifest);
   if (statusError) return statusError;
 
+  // A whole SKILL.md in `body` states its own manifest; that statement is more
+  // deliberate than the caller's surrounding defaults, so it wins for the
+  // fields it declares. `name` is the exception — the permission gate and the
+  // existence check above already ran against the caller's path.
+  const pasted = absorbPastedFrontmatter(body, frontmatter);
+  if ("error" in pasted) return pasted.error;
+
   // Build the runtime manifest from the flat LLM-facing input and stamp
   // provenance (never author-supplied — see schema). The writer maps this to
   // the nested on-disk `metadata.nimblebrain.*` shape.
   const ctx = getRequestContext();
   const createdBy = runtime.getCurrentIdentity()?.id;
   const now = new Date().toISOString();
-  const fullManifest = buildCreateManifest(manifest, ctx, createdBy, now);
+  const fullManifest: SkillManifest = {
+    ...buildCreateManifest(manifest, ctx, createdBy, now),
+    ...pasted.fields,
+  };
 
   // A `dynamic` skill with neither tool-affinity nor triggers is catalog-only:
   // it won't auto-load until the catalog ships (P3). We honor that rather than
@@ -1858,7 +1992,7 @@ async function createSkill(
   // or set `loading-strategy: always`, to make it load now.
   const mechanism = resolveLoadingMechanism(fullManifest);
 
-  const validation = validateSkill(name, fullManifest, body);
+  const validation = validateSkill(name, fullManifest, pasted.body);
   if (!validation.valid) {
     return errorResult(new Error(`Validation failed — ${validation.errors.join("; ")}`));
   }
@@ -1868,7 +2002,7 @@ async function createSkill(
   // behind. (validateSkill above already covered name/priority/override; this
   // catches the on-disk schema shape, e.g. an empty description.)
   try {
-    writeSkill(dir, name, fullManifest, body);
+    writeSkill(dir, name, fullManifest, pasted.body);
   } catch (err) {
     return errorResult(err instanceof Error ? err : new Error(String(err)));
   }
@@ -1878,18 +2012,22 @@ async function createSkill(
     data: { id: target, name, scope },
   });
 
-  const loadsNote =
-    mechanism === "none"
-      ? "catalog-only — won't auto-load yet; add a trigger or tool-affinity, or set loading-strategy: always"
-      : mechanism;
+  // Cast at the wire boundary for the reason `listSkills` states: the envelope
+  // is `Record<string, unknown>`, which TS won't infer a structural interface
+  // into. The declaration above is what gets checked.
+  const out: SkillsWriteOutput = {
+    id: target,
+    name,
+    scope,
+    loadingStrategy: fullManifest.loadingStrategy,
+    loading: { wouldLoad: mechanism !== "none", mechanism },
+    ...(pasted.applied?.length ? { frontmatterApplied: pasted.applied } : {}),
+  };
   return {
-    content: textContent(`Created ${scope} skill "${name}" → ${target} (loads: ${loadsNote})`),
-    structuredContent: {
-      id: target,
-      name,
-      scope,
-      loadingStrategy: fullManifest.loadingStrategy,
-    },
+    content: textContent(
+      `Created ${scope} skill "${name}" → ${target} (loads: ${loadsNote(mechanism)})${frontmatterNote(pasted, name)}`,
+    ),
+    structuredContent: out as unknown as Record<string, unknown>,
     isError: false,
   };
 }
@@ -1972,6 +2110,48 @@ function snapshotPathError(id: string): ToolResult | null {
   );
 }
 
+/**
+ * Every refusal `skills__update` owes before it touches disk.
+ *
+ * Grouped because they share one placement rule: each must run AFTER the
+ * permission gate — answering "body_mode is required" to a caller who may not
+ * write at all is a fix that gets them nowhere — and BEFORE the version
+ * snapshot, so a call that writes nothing leaves no duplicate behind in
+ * `skills__history`.
+ */
+function updatePreWriteRefusal(
+  body: string | undefined,
+  bodyMode: unknown,
+  patch: unknown,
+  allowStatus: boolean,
+): ToolResult | null {
+  const modeError = bodyModeError(body, bodyMode);
+  if (modeError) return modeError;
+  // `set_status` is the one door to the durable off switch, and only it passes
+  // `allowStatus`.
+  if (allowStatus) return null;
+  return durableStatusError(patch);
+}
+
+/**
+ * The pasted document a body-replacing update carries, if any.
+ *
+ * A replaced body may be a whole SKILL.md — the editor is a full-document
+ * textarea, so pasting one there is the natural gesture. An APPENDED body is a
+ * fragment being added to a document that already has a manifest, so a leading
+ * `---` in it is prose and stays prose: reading it as a header would let a
+ * snippet silently re-declare the skill it was appended to.
+ */
+function absorbForUpdate(
+  body: string | undefined,
+  mode: SkillBodyMode,
+  frontmatter: "apply" | "ignore" | undefined,
+): { error: ToolResult } | { pasted: PastedFields | null } {
+  if (body === undefined || mode === "append") return { pasted: null };
+  const absorbed = absorbPastedFrontmatter(body, frontmatter);
+  return "error" in absorbed ? absorbed : { pasted: absorbed };
+}
+
 async function updateSkillHandler(
   runtime: Runtime,
   input: Record<string, unknown>,
@@ -1986,7 +2166,13 @@ async function updateSkillHandler(
    */
   opts: { allowStatus?: boolean } = {},
 ): Promise<ToolResult> {
-  const { id, manifest: patch, body, body_mode: bodyMode } = input as unknown as SkillsUpdateInput;
+  const {
+    id,
+    manifest: patch,
+    body,
+    body_mode: bodyMode,
+    frontmatter,
+  } = input as unknown as SkillsUpdateInput;
 
   // Same gate the history/restore pair runs: scope, existence-before-permission,
   // write authority, and the symlink-boundary check that stops a link from
@@ -1999,19 +2185,13 @@ async function updateSkillHandler(
   const name = (id.split("/").pop() ?? "").replace(/\.md$/, "");
   if (!name) return errorResult(new Error(`Cannot derive skill name from path "${id}"`));
 
-  // Checked HERE, after the gate and immediately before the first destructive
-  // act. Validating it earlier would answer "body_mode is required" to a caller
-  // who is not allowed to write at all — a fix that gets them nowhere, hiding
-  // the denial that actually applies.
-  const modeError = bodyModeError(body, bodyMode);
-  if (modeError) return modeError;
-  // Above the snapshot, with the other refusals: a call that writes nothing
-  // must leave no version behind, or `skills__history` fills with duplicates
-  // of a state that never changed.
-  if (!opts.allowStatus) {
-    const statusError = durableStatusError(patch);
-    if (statusError) return statusError;
-  }
+  const refusal = updatePreWriteRefusal(body, bodyMode, patch, opts.allowStatus === true);
+  if (refusal) return refusal;
+
+  const effectiveMode = bodyMode ?? "replace";
+  const absorbed = absorbForUpdate(body, effectiveMode, frontmatter);
+  if ("error" in absorbed) return absorbed.error;
+  const pasted = absorbed.pasted;
 
   snapshotSkillVersion(id);
 
@@ -2020,22 +2200,62 @@ async function updateSkillHandler(
   const status = (patch as { status?: "active" | "disabled" } | undefined)?.status;
   const partial = {
     ...buildUpdatePatch(patch),
+    // The pasted document is the more deliberate statement, so it wins over
+    // the patch for every field it declares.
+    ...(pasted?.fields ?? {}),
     ...(opts.allowStatus && status !== undefined ? { status } : {}),
   };
   // Merged result is canonically validated by the writer before write; a patch
   // that would make the skill unloadable fails cleanly, leaving the file as-is.
   try {
-    updateSkill(dir, name, partial, body, bodyMode ?? "replace");
+    updateSkill(dir, name, partial, pasted ? pasted.body : body, effectiveMode);
   } catch (err) {
     return errorResult(err instanceof Error ? err : new Error(String(err)));
   }
   await reloadBootSkills(runtime);
 
   eventSink.emit({ type: "skill.updated", data: { id, name, scope } });
+  const out = describeWrittenSkill(id, name, scope, dir, pasted);
+  // The same verdict create states. An update can move a skill into or out of
+  // reach of every loader path, so the answer is owed on both writes.
+  const loads = out.loading ? ` (loads: ${loadsNote(out.loading.mechanism)})` : "";
   return {
-    content: textContent(`Updated ${scope} skill "${name}"`),
-    structuredContent: { id, name, scope },
+    content: textContent(
+      `Updated ${scope} skill "${name}"${loads}${frontmatterNote(pasted, name)}`,
+    ),
+    // Cast at the wire boundary for the reason `listSkills` states.
+    structuredContent: out as unknown as Record<string, unknown>,
     isError: false,
+  };
+}
+
+/**
+ * The write result for a skill that now exists on disk.
+ *
+ * Read back rather than derived from the patch: the loading verdict has to
+ * describe the merged file, and a patch only names the fields it changed. A
+ * read that fails leaves the verdict absent rather than guessed — the write
+ * itself already succeeded, so this is reporting, not control flow.
+ */
+function describeWrittenSkill(
+  id: string,
+  name: string,
+  scope: string,
+  dir: string,
+  pasted: PastedFields | null,
+): SkillsWriteOutput {
+  const written = readSkill(dir, name);
+  const mechanism = written ? resolveLoadingMechanism(written.manifest) : undefined;
+  const loading: SkillLoading | undefined = mechanism
+    ? { wouldLoad: mechanism !== "none", mechanism }
+    : undefined;
+  return {
+    id,
+    name,
+    scope,
+    ...(written ? { loadingStrategy: written.manifest.loadingStrategy } : {}),
+    ...(loading ? { loading } : {}),
+    ...(pasted?.applied?.length ? { frontmatterApplied: pasted.applied } : {}),
   };
 }
 

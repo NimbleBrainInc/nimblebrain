@@ -485,6 +485,274 @@ describe("skills__create — loading-strategy", () => {
   });
 });
 
+// ── pasted SKILL.md ──────────────────────────────────────────────────────
+
+describe("a pasted SKILL.md in the body", () => {
+  const AUTHORING_GUIDE = join(
+    import.meta.dirname ?? __dirname,
+    "../../../../src/skills/builtin/authoring-guide.md",
+  );
+
+  function textOf(result: unknown): string {
+    return ((result as { content: Array<{ text?: string }> }).content ?? [])
+      .map((c) => c.text ?? "")
+      .join("");
+  }
+
+  test("create takes the document's manifest, not the caller's defaults", async () => {
+    // The whole defect in one call: the editor sends its own always-on default
+    // and the human title as the description, and hands over a complete file.
+    // The file states otherwise, and the file wins.
+    const src = await buildSource();
+    const client = src.getClient()!;
+    const result = await client.callTool({
+      name: "create",
+      arguments: {
+        scope: "org",
+        manifest: {
+          name: "pasted-guide",
+          description: "Pasted guide",
+          loadingStrategy: "always",
+          priority: 50,
+        },
+        body: readFileSync(AUTHORING_GUIDE, "utf-8"),
+      },
+    });
+    expect(result.isError).toBeFalsy();
+
+    const written = parseSkillContent(
+      readFileSync(join(workDir, "skills", "pasted-guide.md"), "utf-8"),
+      "pasted-guide.md",
+      { cap: false },
+    );
+    expect(written?.manifest.loadingStrategy).toBe("dynamic");
+    expect(written?.manifest.priority).toBe(25);
+    expect(written?.manifest.toolAffinity).toEqual(["skills__*"]);
+    expect(written?.manifest.triggers).toHaveLength(8);
+    expect(written?.manifest.description).toContain("Guide for authoring");
+    // The filename is the caller's — it is what the permission gate ran against.
+    expect(written?.manifest.name).toBe("pasted-guide");
+    // And the YAML is not sitting in the prompt as prose.
+    expect(written?.body.startsWith("---")).toBe(false);
+    expect(written?.body).not.toContain("name: authoring-guide");
+
+    const text = textOf(result);
+    expect(text).toContain("applied frontmatter from the pasted document");
+    expect(text).toContain("tool-affinity");
+    expect(text).toContain("`authoring-guide`");
+  });
+
+  test("the write result reports the loading verdict and the fields it took", async () => {
+    const src = await buildSource();
+    const client = src.getClient()!;
+    const result = await client.callTool({
+      name: "create",
+      arguments: {
+        scope: "org",
+        manifest: { name: "reported", description: "Title", loadingStrategy: "always" },
+        body: [
+          "---",
+          "name: reported",
+          "description: A real sentence about when to use this.",
+          "metadata:",
+          "  nimblebrain:",
+          "    loading-strategy: dynamic",
+          "    tool-affinity:",
+          "      - files__*",
+          "---",
+          "",
+          "Do the thing.",
+        ].join("\n"),
+      },
+    });
+    const out = result.structuredContent as {
+      loading?: { wouldLoad: boolean; mechanism: string };
+      frontmatterApplied?: string[];
+    };
+    expect(out.loading).toEqual({ wouldLoad: true, mechanism: "tool_affinity" });
+    expect(out.frontmatterApplied).toEqual(["description", "loading-strategy", "tool-affinity"]);
+  });
+
+  test("invalid frontmatter is refused by field name, and nothing is written", async () => {
+    const src = await buildSource();
+    const client = src.getClient()!;
+    const result = await client.callTool({
+      name: "create",
+      arguments: {
+        scope: "org",
+        manifest: { name: "broken", description: "Title" },
+        body: "---\nname: broken\n---\n\nNo description in the frontmatter.",
+      },
+    });
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toContain("/description");
+    expect(existsSync(join(workDir, "skills", "broken.md"))).toBe(false);
+  });
+
+  test("`frontmatter: \"ignore\"` keeps the block as body text", async () => {
+    // The escape hatch: a skill whose body is genuinely ABOUT frontmatter.
+    const src = await buildSource();
+    const client = src.getClient()!;
+    const result = await client.callTool({
+      name: "create",
+      arguments: {
+        scope: "org",
+        manifest: { name: "kept-as-text", description: "Title", loadingStrategy: "always" },
+        body: "---\nname: broken\n---\n\nThis block is an example, not a header.",
+        frontmatter: "ignore",
+      },
+    });
+    expect(result.isError).toBeFalsy();
+    const raw = readFileSync(join(workDir, "skills", "kept-as-text.md"), "utf-8");
+    expect(raw).toContain("This block is an example, not a header.");
+    expect(readManifestField(join(workDir, "skills", "kept-as-text.md"), "description")).toBe(
+      "Title",
+    );
+  });
+
+  test("a document cannot write itself into the reserved core priority band", async () => {
+    // The band is a containment boundary, not a style rule: `partitionContextSkills`
+    // renders a non-connector skill at or below the core threshold RAW in Layer 0
+    // instead of inside `<context-skill>`. The pasted block is validated against
+    // the on-disk contract, which allows 0–100 because the platform's own core
+    // skills live there — so the tool layer holds the narrower write band.
+    //
+    // `update` is the path that matters: `create` would also be caught downstream
+    // by `validateSkill`, but nothing on the update path bounds priority at all.
+    const src = await buildSource();
+    const client = src.getClient()!;
+    await client.callTool({
+      name: "create",
+      arguments: {
+        scope: "org",
+        manifest: { name: "victim", description: "A normal rule.", loadingStrategy: "always" },
+        body: "Original body.",
+      },
+    });
+    const id = join(workDir, "skills", "victim.md");
+
+    const escalate = await client.callTool({
+      name: "update",
+      arguments: {
+        id,
+        body: [
+          "---",
+          "name: victim",
+          "description: Escalated.",
+          "metadata:",
+          "  nimblebrain:",
+          "    loading-strategy: always",
+          "    priority: 0",
+          "---",
+          "",
+          "Prose that would render raw in Layer 0.",
+        ].join("\n"),
+        body_mode: "replace",
+      },
+    });
+    expect(escalate.isError).toBe(true);
+    expect(textOf(escalate)).toContain("metadata.nimblebrain.priority");
+    expect(textOf(escalate)).toContain("reserved");
+
+    // Refused before the writer — the file is untouched, not half-written.
+    const after = parseSkillContent(readFileSync(id, "utf-8"), id, { cap: false });
+    expect(after?.manifest.priority).toBe(50);
+    expect(after?.body).toBe("Original body.");
+
+    // Create refuses it at the same seam, so the two paths answer alike.
+    const created = await client.callTool({
+      name: "create",
+      arguments: {
+        scope: "org",
+        manifest: { name: "born-core", description: "Title." },
+        body: "---\nname: born-core\ndescription: Real.\nmetadata:\n  nimblebrain:\n    loading-strategy: always\n    priority: 5\n---\n\nBody.",
+      },
+    });
+    expect(created.isError).toBe(true);
+    expect(existsSync(join(workDir, "skills", "born-core.md"))).toBe(false);
+
+    // An in-band priority still rides through untouched.
+    const ok = await client.callTool({
+      name: "update",
+      arguments: {
+        id,
+        body: [
+          "---",
+          "name: victim",
+          "description: Fine.",
+          "metadata:",
+          "  nimblebrain:",
+          "    loading-strategy: always",
+          "    priority: 25",
+          "---",
+          "",
+          "New body.",
+        ].join("\n"),
+        body_mode: "replace",
+      },
+    });
+    expect(ok.isError).toBeFalsy();
+    expect(parseSkillContent(readFileSync(id, "utf-8"), id, { cap: false })?.manifest.priority).toBe(
+      25,
+    );
+  });
+
+  test("a body-replacing update absorbs it; an append leaves it as prose", async () => {
+    const src = await buildSource();
+    const client = src.getClient()!;
+    await client.callTool({
+      name: "create",
+      arguments: {
+        scope: "org",
+        manifest: { name: "evolving", description: "Title", loadingStrategy: "always" },
+        body: "Original.",
+      },
+    });
+    const id = join(workDir, "skills", "evolving.md");
+
+    const pasted = [
+      "---",
+      "name: evolving",
+      "description: Now a real description.",
+      "metadata:",
+      "  nimblebrain:",
+      "    loading-strategy: dynamic",
+      "    triggers:",
+      '      - "do the thing"',
+      "---",
+      "",
+      "Replaced.",
+    ].join("\n");
+
+    const replaced = await client.callTool({
+      name: "update",
+      arguments: { id, body: pasted, body_mode: "replace" },
+    });
+    expect(replaced.isError).toBeFalsy();
+    expect(
+      (replaced.structuredContent as { loading?: { mechanism: string } }).loading?.mechanism,
+    ).toBe("trigger");
+    let written = parseSkillContent(readFileSync(id, "utf-8"), id, { cap: false });
+    expect(written?.manifest.triggers).toEqual(["do the thing"]);
+    expect(written?.body).toBe("Replaced.");
+
+    // An appended fragment is not a document declaring itself — a snippet must
+    // not be able to re-declare the skill it was added to.
+    const appended = await client.callTool({
+      name: "update",
+      arguments: {
+        id,
+        body: "---\nname: evolving\ndescription: Hijacked.\n---\n\nAppended.",
+        body_mode: "append",
+      },
+    });
+    expect(appended.isError).toBeFalsy();
+    written = parseSkillContent(readFileSync(id, "utf-8"), id, { cap: false });
+    expect(written?.manifest.description).toBe("Now a real description.");
+    expect(written?.body).toContain("name: evolving");
+  });
+});
+
 // ── update ───────────────────────────────────────────────────────────────
 
 describe("skills__update", () => {
