@@ -2400,7 +2400,7 @@ async function handleUninstall(
 
   // Resolved BEFORE the uninstall: `lifecycle.uninstall` drops the instance,
   // and the instance is what matches this connector to its catalog entry.
-  const directory = ctx.runtime.getConnectorDirectory();
+  const directory = ctx.runtime.getConnectorCatalog();
   const secretKeys = keepSecrets
     ? []
     : ownedSecretKeys(
