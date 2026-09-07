@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import {
-  type DirectoryEntry,
+  type CatalogListing,
   disconnectPersonalConnector,
   grantConnector,
   initiateComposioIdentityConnect,
@@ -36,7 +36,7 @@ import { EmptyState, InlineError, Section, SettingsPageHeader } from "./componen
 export function ProfileConnectorsTab() {
   const { workspaces } = useWorkspaceContext();
   const [connectors, setConnectors] = useState<PersonalConnector[]>([]);
-  const [available, setAvailable] = useState<DirectoryEntry[]>([]);
+  const [available, setAvailable] = useState<CatalogListing[]>([]);
   const [loading, setLoading] = useState(true);
   // A load failure blocks the page; an action failure is a banner above the
   // still-valid lists — two separate slots.
@@ -109,7 +109,7 @@ export function ProfileConnectorsTab() {
   // catalog only offers DCR + composio, so map the entry's auth to the Connect
   // route (`entry.id` is the composio connector id).
   const onConnectNew = useCallback(
-    async (entry: DirectoryEntry) => {
+    async (entry: CatalogListing) => {
       setActionError(null);
       setBusyKey(entry.id);
       try {
@@ -405,7 +405,7 @@ function AvailableConnectorRow({
   busy,
   onConnect,
 }: {
-  entry: DirectoryEntry;
+  entry: CatalogListing;
   busy: boolean;
   onConnect: () => void;
 }) {

@@ -5,7 +5,7 @@ import {
   reconcileConnectorSkills,
 } from "../../../src/connectors/runtime/connector-skill-reconcile.ts";
 import type { ConnectorRef, ConnectorSkillLockEntry } from "../../../src/connectors/runtime/types.ts";
-import type { ConnectorCatalogEntry } from "../../../src/registries/types.ts";
+import type { ConnectorCatalogEntry } from "../../../src/connectors/catalog/types.ts";
 
 const PIN = "v0.3.0";
 

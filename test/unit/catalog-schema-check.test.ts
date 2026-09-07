@@ -3,10 +3,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { CONNECTOR_FIXTURE_DIR } from "../helpers/connector-fixtures.ts";
-import { readStaticServers, validateStaticCatalog } from "../../src/registries/static-source.ts";
+import { readCatalogServers, validateCatalog } from "../../src/connectors/catalog/read.ts";
 
 /**
- * `validateStaticCatalog` is what a pre-merge gate runs over a catalog
+ * `validateCatalog` is what a pre-merge gate runs over a catalog
  * before it ships (`scripts/check-catalog-schema.ts`). It has to account
  * for **both** stages that silently remove an entry — this source's own
  * schema/dedup drops, and the safety scrub at the directory boundary —
@@ -40,17 +40,17 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-describe("validateStaticCatalog", () => {
+describe("validateCatalog", () => {
   test("clean catalog yields no diagnostics", () => {
     writeCatalog("catalog.json", [VALID_ENTRY]);
-    expect(validateStaticCatalog(dir)).toEqual([]);
+    expect(validateCatalog(dir)).toEqual([]);
   });
 
   test("description over the 100-char cap is reported, not silently dropped", () => {
     const overLong = { ...VALID_ENTRY, description: "x".repeat(101) };
     writeCatalog("catalog.json", [overLong]);
 
-    const diagnostics = validateStaticCatalog(dir);
+    const diagnostics = validateCatalog(dir);
     expect(diagnostics).toHaveLength(1);
     expect(diagnostics[0]?.name).toBe("com.example/mcp");
     expect(diagnostics[0]?.index).toBe(0);
@@ -59,7 +59,7 @@ describe("validateStaticCatalog", () => {
 
   test("a description at exactly 100 chars is valid", () => {
     writeCatalog("catalog.json", [{ ...VALID_ENTRY, description: "x".repeat(100) }]);
-    expect(validateStaticCatalog(dir)).toEqual([]);
+    expect(validateCatalog(dir)).toEqual([]);
   });
 
   test("reports every bad entry, not just the first", () => {
@@ -68,14 +68,14 @@ describe("validateStaticCatalog", () => {
       { ...VALID_ENTRY, name: "com.other/mcp", version: undefined },
       VALID_ENTRY,
     ]);
-    expect(validateStaticCatalog(dir)).toHaveLength(2);
+    expect(validateCatalog(dir)).toHaveLength(2);
   });
 
   test("a duplicate name across files is reported against the losing file", () => {
     writeCatalog("a-first.json", [VALID_ENTRY]);
     writeCatalog("b-second.json", [VALID_ENTRY]);
 
-    const diagnostics = validateStaticCatalog(dir);
+    const diagnostics = validateCatalog(dir);
     expect(diagnostics).toHaveLength(1);
     expect(diagnostics[0]?.source).toContain("b-second.json");
     expect(diagnostics[0]?.message).toContain("duplicate name");
@@ -85,27 +85,27 @@ describe("validateStaticCatalog", () => {
     writeFileSync(join(dir, "a-broken.json"), "{ not json");
     writeCatalog("b-fine.json", [VALID_ENTRY]);
 
-    const diagnostics = validateStaticCatalog(dir);
+    const diagnostics = validateCatalog(dir);
     expect(diagnostics).toHaveLength(1);
     expect(diagnostics[0]?.source).toContain("a-broken.json");
-    expect(readStaticServers(dir).map((s) => s.name)).toEqual(["com.example/mcp"]);
+    expect(readCatalogServers(dir).map((s) => s.name)).toEqual(["com.example/mcp"]);
   });
 
   test("a nonexistent path is a diagnostic, so a misaimed gate fails rather than passes empty", () => {
-    const diagnostics = validateStaticCatalog(join(dir, "nope"));
+    const diagnostics = validateCatalog(join(dir, "nope"));
     expect(diagnostics).toHaveLength(1);
     expect(diagnostics[0]?.message).toContain("not found");
   });
 
-  test("diagnostics account for exactly what readStaticServers drops", () => {
+  test("diagnostics account for exactly what readCatalogServers drops", () => {
     writeCatalog("catalog.json", [
       VALID_ENTRY,
       { ...VALID_ENTRY, name: "com.second/mcp", description: "y".repeat(101) },
       { ...VALID_ENTRY, name: "com.third/mcp" },
     ]);
 
-    expect(readStaticServers(dir)).toHaveLength(2);
-    expect(validateStaticCatalog(dir)).toHaveLength(1);
+    expect(readCatalogServers(dir)).toHaveLength(2);
+    expect(validateCatalog(dir)).toHaveLength(1);
   });
 
   test("an unsafe icon src is reported even though it passes ServerDetail", () => {
@@ -117,9 +117,9 @@ describe("validateStaticCatalog", () => {
       { ...VALID_ENTRY, icons: [{ src: "javascript:alert(1)", sizes: ["any"] }] },
     ]);
 
-    expect(readStaticServers(dir)).toHaveLength(1);
+    expect(readCatalogServers(dir)).toHaveLength(1);
 
-    const diagnostics = validateStaticCatalog(dir);
+    const diagnostics = validateCatalog(dir);
     expect(diagnostics).toHaveLength(1);
     expect(diagnostics[0]?.name).toBe("com.example/mcp");
     expect(diagnostics[0]?.message).toContain("directory boundary");
@@ -139,7 +139,7 @@ describe("validateStaticCatalog", () => {
       },
     ]);
 
-    const diagnostics = validateStaticCatalog(dir);
+    const diagnostics = validateCatalog(dir);
     expect(diagnostics).toHaveLength(1);
     expect(diagnostics[0]?.message).toContain("directory boundary");
   });
@@ -153,7 +153,7 @@ describe("validateStaticCatalog", () => {
       },
     ]);
 
-    const diagnostics = validateStaticCatalog(dir);
+    const diagnostics = validateCatalog(dir);
     expect(diagnostics).toHaveLength(1);
     expect(diagnostics[0]?.message).toContain("must NOT have more than 100 characters");
   });
@@ -165,9 +165,9 @@ describe("validateStaticCatalog", () => {
     const { remotes, ...noInstall } = VALID_ENTRY;
     writeCatalog("catalog.json", [noInstall]);
 
-    expect(readStaticServers(dir)).toHaveLength(1);
+    expect(readCatalogServers(dir)).toHaveLength(1);
 
-    const diagnostics = validateStaticCatalog(dir);
+    const diagnostics = validateCatalog(dir);
     expect(diagnostics).toHaveLength(1);
     expect(diagnostics[0]?.name).toBe("com.example/mcp");
     expect(diagnostics[0]?.message).toContain("not installable");
@@ -188,7 +188,7 @@ describe("validateStaticCatalog", () => {
         ],
       },
     ]);
-    const diagnostics = validateStaticCatalog(dir);
+    const diagnostics = validateCatalog(dir);
     expect(diagnostics).toHaveLength(1);
     expect(diagnostics[0]?.message).toContain("not installable");
   });
@@ -201,7 +201,7 @@ describe("validateStaticCatalog", () => {
     // to cover it.
     writeCatalog("catalog.json", [{ ...VALID_ENTRY, remotes: [{ type: "stdio" }] }]);
 
-    const diagnostics = validateStaticCatalog(dir);
+    const diagnostics = validateCatalog(dir);
     expect(diagnostics).toHaveLength(1);
     expect(diagnostics[0]?.message).toContain("invalid ServerDetail");
   });
@@ -214,7 +214,7 @@ describe("validateStaticCatalog", () => {
       { ...noInstall, icons: [{ src: "javascript:alert(1)", sizes: ["any"] }] },
     ]);
 
-    const diagnostics = validateStaticCatalog(dir);
+    const diagnostics = validateCatalog(dir);
     expect(diagnostics).toHaveLength(1);
     expect(diagnostics[0]?.message).toContain("icon src must be http(s)");
   });
@@ -223,7 +223,7 @@ describe("validateStaticCatalog", () => {
     // `check:catalog-schema` runs the gate over src/connectors/catalog/curated in
     // `verify:static`; this keeps the fixture catalog honest too, so a
     // fixture edit cannot quietly start relying on a dropped entry.
-    expect(validateStaticCatalog("src/connectors/catalog/curated")).toEqual([]);
-    expect(validateStaticCatalog(CONNECTOR_FIXTURE_DIR)).toEqual([]);
+    expect(validateCatalog("src/connectors/catalog/curated")).toEqual([]);
+    expect(validateCatalog(CONNECTOR_FIXTURE_DIR)).toEqual([]);
   });
 });

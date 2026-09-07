@@ -39,7 +39,7 @@ still a silent no-op.
 
 **B. Name the overlay on the operator-published catalog entry.** The entry
 already carries operator-trusted, server-declared host metadata for
-`ui`, `hooks`, and the notifications outbox (`src/registries/projection.ts`).
+`ui`, `hooks`, and the notifications outbox (`src/connectors/catalog/projection.ts`).
 An overlay reference would sit beside them, and the install would read a name
 rather than compute one. Cost: one more hand-maintained field per entry, and a
 second place a curated overlay's existence is recorded.

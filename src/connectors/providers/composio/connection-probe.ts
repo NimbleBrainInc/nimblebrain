@@ -23,7 +23,7 @@ import type {
   ProbeTarget,
 } from "../../../connectors/runtime/connection-probe.ts";
 import { log } from "../../../observability/log.ts";
-import type { ConnectorDirectory } from "../../../registries/directory.ts";
+import type { ConnectorCatalog } from "../../catalog/catalog.ts";
 import { composioAuthConfigId, validateComposioConfig } from "./config.ts";
 import { COMPOSIO_PROVIDER_ID } from "./id.ts";
 import { composioUserId, findActiveComposioConnection } from "./sdk.ts";
@@ -31,7 +31,7 @@ import { composioUserId, findActiveComposioConnection } from "./sdk.ts";
 export class ComposioConnectionProbe implements ConnectionHealthProbe {
   readonly providerId = COMPOSIO_PROVIDER_ID;
 
-  constructor(private readonly directory: ConnectorDirectory) {}
+  constructor(private readonly directory: ConnectorCatalog) {}
 
   async probe(target: ProbeTarget, signal: AbortSignal): Promise<ConnectionLiveness> {
     if (signal.aborted) return "indeterminate";

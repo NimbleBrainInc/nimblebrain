@@ -171,7 +171,7 @@ function stubCtx(
     },
   };
   const runtime = {
-    getConnectorDirectory() {
+    getConnectorCatalog() {
       return {
         catalogById: async (id: string) =>
           catalogEntry && catalogEntry.id === id ? catalogEntry : null,

@@ -4,17 +4,15 @@ import { resolveFeatures, isToolEnabled, isToolVisibleToRole } from "../../src/c
 describe("resolveFeatures", () => {
 	it("defaults all flags to true when called with no args", () => {
 		const features = resolveFeatures();
-		expect(features.bundleManagement).toBe(true);
 		expect(features.skillManagement).toBe(true);
 		expect(features.toolDiscovery).toBe(true);
-		expect(features.bundleDiscovery).toBe(true);
+		expect(features.catalogSearch).toBe(true);
 		expect(features.compaction).toBe(true);
 	});
 
 	it("merges partial config correctly", () => {
-		const features = resolveFeatures({ bundleDiscovery: false });
-		expect(features.bundleDiscovery).toBe(false);
-		expect(features.bundleManagement).toBe(true);
+		const features = resolveFeatures({ catalogSearch: false });
+		expect(features.catalogSearch).toBe(false);
 		expect(features.skillManagement).toBe(true);
 		expect(features.toolDiscovery).toBe(true);
 	});

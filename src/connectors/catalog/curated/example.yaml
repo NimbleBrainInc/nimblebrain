@@ -1,10 +1,10 @@
 # Minimal curated catalog shipped in the image.
 #
-# This is the in-image fallback for the locked `bundled-static`
-# ("Curated services") registry — just enough for a fresh / OSS / dev
-# install to have a non-empty Browse list and a working reference for
-# the `ServerDetail` wire shape (the upstream MCP registry schema,
-# ajv-validated against `schemas/server.schema.json`).
+# This is the in-image fallback, used when NB_CURATED_CATALOG_DIR is
+# unset — just enough for a fresh / OSS / dev install to have a
+# non-empty Browse list and a working reference for the `ServerDetail`
+# wire shape (the upstream MCP registry schema, ajv-validated against
+# `schemas/server.schema.json`).
 #
 # It deliberately ships ONLY plain DCR entries — every entry here must
 # install with zero operator setup. Production curation — the full
@@ -13,8 +13,8 @@
 # code: a deployment points `NB_CURATED_CATALOG_DIR` at a mounted
 # directory of catalog files, which replaces this example wholesale.
 #
-# `StaticSource` reads every `*.yaml`/`*.yml`/`*.json` in this directory
-# in sorted filename order and aggregates them into the one registry, so
+# The catalog reads every `*.yaml`/`*.yml`/`*.json` in this directory
+# in sorted filename order and aggregates them into one list, so
 # additional example files can be dropped here without further wiring.
 
 servers:

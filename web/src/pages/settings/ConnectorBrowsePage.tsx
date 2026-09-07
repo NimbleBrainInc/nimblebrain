@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import {
-  type DirectoryEntry,
+  type CatalogListing,
   getInstalledConnectors,
   type InstalledConnector,
   initiateComposioOAuth,
@@ -29,19 +29,19 @@ import { type SecretHeaderField, secretHeaderFields } from "../../lib/secret-hea
  * horizontal space.
  */
 export function ConnectorBrowsePage() {
-  const [entries, setEntries] = useState<DirectoryEntry[]>([]);
-  const [errors, setErrors] = useState<Array<{ registryId: string; message: string }>>([]);
+  const [entries, setEntries] = useState<CatalogListing[]>([]);
+  const [errors, setErrors] = useState<Array<{ file: string; message: string }>>([]);
   const [installed, setInstalled] = useState<InstalledConnector[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [query, setQuery] = useState("");
-  const [setupModalEntry, setSetupModalEntry] = useState<DirectoryEntry | null>(null);
+  const [setupModalEntry, setSetupModalEntry] = useState<CatalogListing | null>(null);
   // API-key Composio connector: after install we collect the key fields in a
   // modal (no OAuth redirect), then call connect_api_key. Holds the entry +
   // its installed serverName so success can route to Configure.
   const [apiKeyModal, setApiKeyModal] = useState<{
-    entry: DirectoryEntry;
+    entry: CatalogListing;
     serverName: string;
   } | null>(null);
   // A connector declaring `secretHeaders` needs its values BEFORE the install:
@@ -49,7 +49,7 @@ export function ConnectorBrowsePage() {
   // unresolvable reference fails with CredentialNotFoundError. Collecting
   // afterwards would show the user that failure and then ask them to fix it.
   const [secretsModal, setSecretsModal] = useState<{
-    entry: DirectoryEntry;
+    entry: CatalogListing;
     fields: SecretHeaderField[];
   } | null>(null);
 
@@ -109,7 +109,7 @@ export function ConnectorBrowsePage() {
   // (its identity changes only when installedUrls does — the same trigger the
   // memo needs to drop newly-installed connectors from the list).
   const isInstalled = useCallback(
-    (entry: DirectoryEntry): boolean =>
+    (entry: CatalogListing): boolean =>
       entry.install.kind === "remote-oauth" && installedUrls.has(entry.install.url),
     [installedUrls],
   );
@@ -133,7 +133,7 @@ export function ConnectorBrowsePage() {
   // Configure, API-key Composio to the key modal, and everything else into the
   // vendor's OAuth redirect.
   const routeRemoteOAuthInstall = async (
-    entry: DirectoryEntry,
+    entry: CatalogListing,
     install: RemoteOAuthInstall,
     serverName: string,
   ) => {
@@ -186,9 +186,9 @@ export function ConnectorBrowsePage() {
   // and its connect step can't land in different workspaces. (The prior
   // target-picker let them diverge, which surfaced as "Connector not
   // installed" on Connect.)
-  const runInstall = async (entry: DirectoryEntry) => {
+  const runInstall = async (entry: CatalogListing) => {
     setLoadError(null);
-    setBusyId(`${entry.registryId}::${entry.id}`);
+    setBusyId(entry.id);
     try {
       const result = await installConnector(entry);
       // Remote OAuth: kick the user into the vendor's auth flow.
@@ -212,7 +212,7 @@ export function ConnectorBrowsePage() {
   // wrote the keys, those values stay in the store with no connector attached —
   // deliberately: a retry reuses them, and unwinding a write to the credential
   // store on an unrelated failure is a delete this path has no business making.
-  const onInstall = async (entry: DirectoryEntry) => {
+  const onInstall = async (entry: CatalogListing) => {
     const fields = secretHeaderFields(entry.install);
     if (fields.length > 0) {
       setLoadError(null);
@@ -248,8 +248,8 @@ export function ConnectorBrowsePage() {
       {errors.length > 0 && (
         <div className="text-xs text-amber-600">
           {errors.map((e) => (
-            <div key={e.registryId}>
-              Couldn't reach <span className="font-medium">{e.registryId}</span>: {e.message}
+            <div key={e.file}>
+              Couldn't read <span className="font-medium">{e.file}</span>: {e.message}
             </div>
           ))}
         </div>
@@ -267,9 +267,9 @@ export function ConnectorBrowsePage() {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           {visibleEntries.map((entry) => (
             <DirectoryCard
-              key={`${entry.registryId}::${entry.id}`}
+              key={entry.id}
               entry={entry}
-              busy={busyId === `${entry.registryId}::${entry.id}`}
+              busy={busyId === entry.id}
               canManage={canManage}
               onInstall={() => onInstall(entry)}
               onSetUp={() => setSetupModalEntry(entry)}
@@ -360,7 +360,7 @@ function DirectoryCard({
   onInstall,
   onSetUp,
 }: {
-  entry: DirectoryEntry;
+  entry: CatalogListing;
   busy: boolean;
   canManage: boolean;
   onInstall: () => void;

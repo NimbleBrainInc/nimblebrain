@@ -32,7 +32,7 @@ import type { AppContext, AppEnv } from "../../api/types.ts";
 import type { ConnectionHealthProbe } from "../../connectors/runtime/connection-probe.ts";
 import type { BrokeredRef } from "../../connectors/runtime/types.ts";
 import type { ConnectorOwner } from "../../identity/connector-owner.ts";
-import type { ConnectorDirectory } from "../../registries/directory.ts";
+import type { ConnectorCatalog } from "../catalog/catalog.ts";
 
 /**
  * The auth-kind taxonomy, re-exported so the seam and its taxonomy read as one
@@ -267,7 +267,7 @@ export interface ManagedConnectorProvider {
   hasConnection?(opts: BrokeredStateOptions): boolean;
 
   /** A liveness probe for the connection revalidator, wired iff the provider supplies one. */
-  probe?(directory: ConnectorDirectory): ConnectionHealthProbe;
+  probe?(directory: ConnectorCatalog): ConnectionHealthProbe;
 
   /** The provider's HTTP callback surface, mounted iff the provider supplies it. */
   routes?(ctx: AppContext): Hono<AppEnv>;

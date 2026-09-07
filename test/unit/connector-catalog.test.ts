@@ -2,53 +2,34 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ConnectorDirectory } from "../../src/registries/directory.ts";
-import { RegistryStore } from "../../src/registries/registry-store.ts";
+import { ConnectorCatalog } from "../../src/connectors/catalog/catalog.ts";
 
 /**
- * `ConnectorDirectory` is the only thing tool handlers should call.
- * These tests pin the contract that uniform behavior — scope
- * filtering, error isolation, dedup, projection, lookup tables —
- * lives in one place regardless of which sources are configured.
+ * `ConnectorCatalog` is the only thing tool handlers should call.
+ * These tests pin the contract that composition across the catalog's
+ * files — error isolation, dedup, projection, the safety scrub, the
+ * lookup tables — lives in one place.
  *
- * Sources are stubbed by writing small static catalog files; two
- * `static` rows stand in for "more than one enabled source", which is
- * all the aggregation and isolation contracts care about.
+ * A catalog is a directory of `ServerDetail` files, so a test writes
+ * the files it wants and points the catalog at the directory. Two
+ * files stand in for "curation split across more than one file",
+ * which is what the aggregation and isolation contracts care about.
  */
 
 let workDir: string;
+let catalogDir: string;
 
-function freshStore(): RegistryStore {
-  workDir = mkdtempSync(join(tmpdir(), "directory-test-"));
-  return new RegistryStore(workDir);
+function freshCatalog(): string {
+  workDir = mkdtempSync(join(tmpdir(), "catalog-test-"));
+  catalogDir = join(workDir, "catalog");
+  mkdirSync(catalogDir);
+  return catalogDir;
 }
 
 function writeStaticCatalog(servers: Record<string, unknown>[], file = "catalog.yaml"): string {
-  const path = join(workDir, file);
+  const path = join(catalogDir, file);
   writeFileSync(path, `servers:\n${servers.map((s) => `  - ${JSON.stringify(s)}`).join("\n")}\n`);
   return path;
-}
-
-function configureRegistries(_store: RegistryStore, configs: object[]): Promise<void> {
-  // RegistryStore.load() auto-injects a `bundled-static` row pointing at
-  // the platform's shipped catalog directory when missing — that row would
-  // pollute every test with a fixed set of entries. Pre-seed an empty
-  // bundled-static placeholder pointing at a missing path so
-  // readStaticServers gracefully returns []; tests then add only the
-  // sources they want.
-  const bundledPlaceholder = {
-    id: "bundled-static",
-    name: "Curated services",
-    type: "static",
-    enabled: false,
-    locked: true,
-    url: "/dev/null/missing-on-purpose.yaml",
-  };
-  writeFileSync(
-    join(workDir, "registries.json"),
-    JSON.stringify({ registries: [bundledPlaceholder, ...configs] }),
-  );
-  return Promise.resolve();
 }
 
 /** A minimal installable `ServerDetail` — one remote, one icon. */
@@ -66,9 +47,9 @@ afterEach(() => {
   if (workDir) rmSync(workDir, { recursive: true, force: true });
 });
 
-describe("ConnectorDirectory.list", () => {
-  test("aggregates entries from every enabled source, projecting to DirectoryEntry", async () => {
-    const store = freshStore();
+describe("ConnectorCatalog.list", () => {
+  test("aggregates entries from every catalog file, projecting to CatalogListing", async () => {
+    const catalogDir = freshCatalog();
     const granola = writeStaticCatalog(
       [
         {
@@ -93,12 +74,8 @@ describe("ConnectorDirectory.list", () => {
       ],
       "echo.yaml",
     );
-    await configureRegistries(store, [
-      { id: "a", name: "A", type: "static", enabled: true, url: granola },
-      { id: "b", name: "B", type: "static", enabled: true, url: echo },
-    ]);
 
-    const result = await new ConnectorDirectory(store).list();
+    const result = await new ConnectorCatalog(catalogDir).list();
     expect(result.errors).toEqual([]);
     expect(result.entries.map((e) => e.id).sort()).toEqual([
       "ai.granola/mcp",
@@ -106,12 +83,12 @@ describe("ConnectorDirectory.list", () => {
     ]);
   });
 
-  test("a source with no implementation for its type yields no entries and no crash", async () => {
-    // `RegistryType` is an open string keyed into the directory's
-    // source-factory map. A config naming a type this build does not carry
-    // must degrade to "no entries from that registry", not a throw.
-    const store = freshStore();
-    const path = writeStaticCatalog([
+  test("isolates per-file failures — an unreadable catalog file doesn't blank the rest", async () => {
+    // A catalog file the process cannot read (bad ConfigMap permissions)
+    // must be reported against that file and leave every other file's
+    // entries intact — one bad file must never empty the catalog.
+    const catalogDir = freshCatalog();
+    writeStaticCatalog([
       {
         name: "ai.granola/mcp",
         description: "Granola",
@@ -120,52 +97,31 @@ describe("ConnectorDirectory.list", () => {
         remotes: [{ type: "streamable-http", url: "https://api.granola.test/mcp" }],
       },
     ]);
-    await configureRegistries(store, [
-      { id: "static", name: "Static", type: "static", enabled: true, url: path },
-      { id: "future", name: "Upstream MCP registry", type: "mcp", enabled: true },
-    ]);
-
-    const result = await new ConnectorDirectory(store).list();
-    expect(result.entries.map((e) => e.id)).toEqual(["ai.granola/mcp"]);
-    expect(result.errors).toEqual([]);
-  });
-
-  test("isolates per-source failures — an unreadable source doesn't blank the others", async () => {
-    // A mounted catalog directory the process cannot list (bad ConfigMap
-    // permissions) throws out of that source's `fetch()`. The directory must
-    // record it under that registry id and still return every other source's
-    // entries.
-    const store = freshStore();
-    const path = writeStaticCatalog([
-      {
-        name: "ai.granola/mcp",
-        description: "Granola",
-        version: "1.0.0",
-        icons: [{ src: "https://x.test/granola.svg" }],
-        remotes: [{ type: "streamable-http", url: "https://api.granola.test/mcp" }],
-      },
-    ]);
-    const unreadable = join(workDir, "unreadable");
-    mkdirSync(unreadable);
+    const unreadable = writeStaticCatalog(
+      [
+        {
+          name: "ai.other/mcp",
+          description: "Other",
+          version: "1.0.0",
+          remotes: [{ type: "streamable-http", url: "https://other.test/mcp" }],
+        },
+      ],
+      "unreadable.yaml",
+    );
     chmodSync(unreadable, 0o000);
     try {
-      await configureRegistries(store, [
-        { id: "static", name: "Static", type: "static", enabled: true, url: path },
-        { id: "broken", name: "Broken", type: "static", enabled: true, url: unreadable },
-      ]);
-
-      const result = await new ConnectorDirectory(store).list();
+      const result = await new ConnectorCatalog(catalogDir).list();
       expect(result.entries.map((e) => e.id)).toEqual(["ai.granola/mcp"]);
       expect(result.errors.length).toBe(1);
-      expect(result.errors[0]?.registryId).toBe("broken");
+      expect(result.errors[0]?.file).toBe(unreadable);
     } finally {
       // Restore so afterEach can remove the tree.
       chmodSync(unreadable, 0o700);
     }
   });
 
-  test("dedups entries within a single source by (registryId, id)", async () => {
-    const store = freshStore();
+  test("dedups entries by id across the catalog", async () => {
+    const catalogDir = freshCatalog();
     const path = writeStaticCatalog([
       {
         name: "ai.granola/mcp",
@@ -182,104 +138,14 @@ describe("ConnectorDirectory.list", () => {
         remotes: [{ type: "streamable-http", url: "https://api.granola.test/mcp" }],
       },
     ]);
-    await configureRegistries(store, [
-      { id: "static", name: "Static", type: "static", enabled: true, url: path },
-    ]);
 
-    const result = await new ConnectorDirectory(store).list();
+    const result = await new ConnectorCatalog(catalogDir).list();
     expect(result.entries.length).toBe(1);
     expect(result.entries[0]?.description).toBe("first");
   });
 
-  test("scope filter: matches by reverse-DNS prefix (ai.nimblebrain → ai.nimblebrain/echo)", async () => {
-    const store = freshStore();
-    const path = writeStaticCatalog([
-      {
-        name: "ai.nimblebrain/echo",
-        description: "Echo",
-        version: "1.0.0",
-        remotes: [{ type: "streamable-http", url: "https://echo.test/mcp" }],
-      },
-      {
-        name: "com.acme/widget",
-        description: "Acme widget",
-        version: "1.0.0",
-        remotes: [{ type: "streamable-http", url: "https://widget.test/mcp" }],
-      },
-    ]);
-    await configureRegistries(store, [
-      {
-        id: "scoped",
-        name: "Scoped",
-        type: "static",
-        enabled: true,
-        url: path,
-        scopes: ["ai.nimblebrain"],
-      },
-    ]);
-
-    const result = await new ConnectorDirectory(store).list();
-    expect(result.entries.map((e) => e.id)).toEqual(["ai.nimblebrain/echo"]);
-  });
-
-  test("scope filter: matches by npm scope (acme → @acme/widget)", async () => {
-    const store = freshStore();
-    const path = writeStaticCatalog([
-      {
-        name: "ai.nimblebrain/echo",
-        description: "Echo",
-        version: "1.0.0",
-        remotes: [{ type: "streamable-http", url: "https://echo.test/mcp" }],
-      },
-      {
-        name: "com.acme/widget",
-        description: "Acme widget",
-        version: "1.0.0",
-        remotes: [{ type: "streamable-http", url: "https://widget.test/mcp" }],
-        packages: [
-          {
-            registryType: "npm",
-            identifier: "@acme/widget",
-            version: "1.0.0",
-            transport: { type: "stdio" },
-          },
-        ],
-      },
-    ]);
-    await configureRegistries(store, [
-      { id: "scoped", name: "Scoped", type: "static", enabled: true, url: path, scopes: ["acme"] },
-    ]);
-
-    const result = await new ConnectorDirectory(store).list();
-    expect(result.entries.map((e) => e.id)).toEqual(["com.acme/widget"]);
-  });
-
-  test("empty / undefined scopes = no filter (unchanged behavior)", async () => {
-    const store = freshStore();
-    const path = writeStaticCatalog([
-      {
-        name: "ai.nimblebrain/echo",
-        description: "Echo",
-        version: "1.0.0",
-        remotes: [{ type: "streamable-http", url: "https://echo.test/mcp" }],
-      },
-      {
-        name: "com.acme/widget",
-        description: "Acme",
-        version: "1.0.0",
-        remotes: [{ type: "streamable-http", url: "https://widget.test/mcp" }],
-      },
-    ]);
-    await configureRegistries(store, [
-      { id: "all", name: "All", type: "static", enabled: true, url: path },
-    ]);
-
-    const result = await new ConnectorDirectory(store).list();
-    expect(result.entries.length).toBe(2);
-  });
-
   test("operatorConfigured probe runs only for static-auth entries with operatorSetup", async () => {
-    const store = freshStore();
+    const catalogDir = freshCatalog();
     const path = writeStaticCatalog([
       {
         name: "io.asana/mcp",
@@ -309,11 +175,8 @@ describe("ConnectorDirectory.list", () => {
         },
       },
     ]);
-    await configureRegistries(store, [
-      { id: "static", name: "Static", type: "static", enabled: true, url: path },
-    ]);
     const probe = mock(async () => true);
-    const result = await new ConnectorDirectory(store).list({ isOperatorConfigured: probe });
+    const result = await new ConnectorCatalog(catalogDir).list({ isOperatorConfigured: probe });
     // Only Asana (static-auth + operatorSetup) gets probed; Granola (dcr) doesn't.
     expect(probe).toHaveBeenCalledTimes(1);
     const asana = result.entries.find((e) => e.id === "io.asana/mcp");
@@ -321,7 +184,7 @@ describe("ConnectorDirectory.list", () => {
   });
 
   test("a packages-only entry is dropped — this runtime installs no downloaded code", async () => {
-    const store = freshStore();
+    const catalogDir = freshCatalog();
     const path = writeStaticCatalog([
       {
         name: "ai.nimblebrain/echo",
@@ -337,18 +200,15 @@ describe("ConnectorDirectory.list", () => {
         ],
       },
     ]);
-    await configureRegistries(store, [
-      { id: "static", name: "Static", type: "static", enabled: true, url: path },
-    ]);
 
-    const result = await new ConnectorDirectory(store).list();
+    const result = await new ConnectorCatalog(catalogDir).list();
     expect(result.entries).toEqual([]);
   });
 });
 
-describe("ConnectorDirectory lookup tables", () => {
+describe("ConnectorCatalog lookup tables", () => {
   test("catalogByUrl + catalogById are built from one shared read (memoized)", async () => {
-    const store = freshStore();
+    const catalogDir = freshCatalog();
     const path = writeStaticCatalog([
       {
         name: "ai.nimblebrain/echo",
@@ -358,11 +218,8 @@ describe("ConnectorDirectory lookup tables", () => {
         remotes: [{ type: "streamable-http", url: "https://echo.test/mcp" }],
       },
     ]);
-    await configureRegistries(store, [
-      { id: "static", name: "Static", type: "static", enabled: true, url: path },
-    ]);
 
-    const directory = new ConnectorDirectory(store);
+    const directory = new ConnectorCatalog(catalogDir);
     await directory.list();
     // Delete the catalog out from under the directory: a second read would
     // now fail, so surviving these calls proves the fetch was memoized.
@@ -378,7 +235,7 @@ describe("ConnectorDirectory lookup tables", () => {
     // catalogById returned null and the provider-auth install failed with
     // "not a recognized platform connector". Icons are cosmetic — a missing
     // icon must never make a connector non-functional.
-    const store = freshStore();
+    const catalogDir = freshCatalog();
     const path = writeStaticCatalog([
       {
         name: "ai.nimblebrain/web",
@@ -394,11 +251,8 @@ describe("ConnectorDirectory lookup tables", () => {
         },
       },
     ]);
-    await configureRegistries(store, [
-      { id: "static", name: "Static", type: "static", enabled: true, url: path },
-    ]);
 
-    const entry = await new ConnectorDirectory(store).catalogById("ai.nimblebrain/web");
+    const entry = await new ConnectorCatalog(catalogDir).catalogById("ai.nimblebrain/web");
     expect(entry).not.toBeNull();
     expect(entry?.id).toBe("ai.nimblebrain/web");
     expect(entry?.iconUrl).toBeUndefined();
@@ -407,22 +261,19 @@ describe("ConnectorDirectory lookup tables", () => {
   });
 });
 
-describe("ConnectorDirectory safety scrub (XSS via _meta extension URLs)", () => {
+describe("ConnectorCatalog safety scrub (XSS via _meta extension URLs)", () => {
   // Pre-fix only static-source ran the URL-scheme allowlist + reserved
   // OAuth-param check, so an entry from any other source reached projection
   // unchecked: a publisher could ship `_meta.docsUrl: "javascript:..."` and
   // the Configure page would render it as a clickable `<a href>`
   // (target="_blank" rel="noopener noreferrer" does NOT block javascript:
-  // URI execution). The check lives in ConnectorDirectory.fetchAll so every
+  // URI execution). The check lives in ConnectorCatalog.fetchAll so every
   // source is scrubbed at one boundary.
 
   async function listWith(server: Record<string, unknown>) {
-    const store = freshStore();
+    const catalogDir = freshCatalog();
     const path = writeStaticCatalog([server]);
-    await configureRegistries(store, [
-      { id: "static", name: "Static", type: "static", enabled: true, url: path },
-    ]);
-    return new ConnectorDirectory(store).list();
+    return new ConnectorCatalog(catalogDir).list();
   }
 
   test("drops an entry whose _meta.docsUrl carries a javascript: scheme", async () => {

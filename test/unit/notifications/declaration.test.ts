@@ -15,7 +15,7 @@ import {
   isOutboxResource,
   parseNotificationsDeclaration,
 } from "../../../src/notifications/declaration.ts";
-import { serverDetailToCatalogEntry } from "../../../src/registries/projection.ts";
+import { serverDetailToCatalogEntry } from "../../../src/connectors/catalog/projection.ts";
 import {
   isReservedResourceScheme,
   RESERVED_RESOURCE_SCHEMES,

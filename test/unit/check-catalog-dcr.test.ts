@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { readStaticServers } from "../../src/registries/static-source.ts";
+import { readCatalogServers } from "../../src/connectors/catalog/read.ts";
 import { selectDcrEntries } from "../../scripts/check-catalog-dcr.ts";
 import { CONNECTOR_FIXTURE_DIR } from "../helpers/connector-fixtures.ts";
 
@@ -15,7 +15,7 @@ import { CONNECTOR_FIXTURE_DIR } from "../helpers/connector-fixtures.ts";
  */
 describe("check-catalog-dcr selectDcrEntries", () => {
   test("picks dcr entries and skips static-auth + composio", () => {
-    const servers = readStaticServers(CONNECTOR_FIXTURE_DIR);
+    const servers = readCatalogServers(CONNECTOR_FIXTURE_DIR);
     const names = selectDcrEntries(servers).map((s) => s.name);
     // Fixture: Notion (dcr), Dropbox (static), Asana (composio).
     expect(names).toContain("com.notion/mcp");

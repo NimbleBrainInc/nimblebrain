@@ -17,7 +17,7 @@
  * Validated at every system boundary so an invalid entry is dropped
  * at the source it came from, never reaching the UI / agent. Each
  * `ServerDetail` is ajv-validated against the upstream JSON Schema
- * before it leaves a `ConnectorSource`; invalid entries are dropped
+ * before it leaves the catalog read; invalid entries are dropped
  * with a logged warning naming the source + entry name.
  */
 import type { CredentialRef } from "../../tools/credential-ref.ts";
@@ -182,7 +182,7 @@ export interface SecretHeaderRef extends CredentialRef {
  * fields that don't fit upstream slots: OAuth flow type, operator-setup
  * pointers, recommended scope, search tags, and UI hints.
  *
- * Authored on entries we curate (loaded by `StaticSource` from the
+ * Authored on entries we curate (loaded by the catalog read from the
  * curated catalog directory) and absent on entries from a registry that
  * doesn't carry it (the projection leaves it undefined).
  */

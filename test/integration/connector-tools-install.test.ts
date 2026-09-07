@@ -6,10 +6,10 @@ import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import { ConnectorLifecycleManager } from "../../src/connectors/runtime/lifecycle.ts";
 import { textContent } from "../../src/engine/content-helpers.ts";
 import type { UserIdentity } from "../../src/identity/provider.ts";
-import { ConnectorDirectory } from "../../src/registries/directory.ts";
-import { RegistryStore } from "../../src/registries/registry-store.ts";
-import type { DirectoryEntry } from "../../src/registries/types.ts";
+import { ConnectorCatalog } from "../../src/connectors/catalog/catalog.ts";
+import type { CatalogListing } from "../../src/connectors/catalog/types.ts";
 import type { Runtime } from "../../src/runtime/runtime.ts";
+import { installTestCredentialStore } from "../helpers/credential-store.ts";
 import {
   createManageConnectorsTool,
   type ManageConnectorsContext,
@@ -81,28 +81,11 @@ async function buildHarness(opts: { sessionWsId: string | null } = { sessionWsId
   const sharedWsId = "ws_helix";
   const personalWsId = personalWorkspaceIdFor(ADMIN.id);
 
-  // Disable mpak so ConnectorDirectory doesn't try to fetch.
-  writeFileSync(
-    join(workDir, "registries.json"),
-    JSON.stringify({
-      registries: [
-        {
-          id: "bundled-static",
-          name: "Curated services",
-          type: "static",
-          enabled: true,
-          locked: true,
-          url: CONNECTOR_FIXTURE_DIR,
-        },
-        { id: "mpak", name: "mpak.dev", type: "mpak", enabled: false },
-      ],
-    }),
-  );
 
+  const credStore = installTestCredentialStore(workDir);
   const workspaceStore = new WorkspaceStore(workDir);
   const lifecycle = new ConnectorLifecycleManager(new NoopEventSink());
   const workspaceRegistry = new ToolRegistry();
-  const registryStore = new RegistryStore(workDir);
 
   // Two workspaces:
   //   - shared (admin role) — non-personal
@@ -116,11 +99,10 @@ async function buildHarness(opts: { sessionWsId: string | null } = { sessionWsId
 
   const runtime = {
     getWorkDir: () => workDir,
-    getCredentialStore: () => new FileCredentialStore(workDir),
+    getCredentialStore: () => credStore,
     getWorkspaceStore: () => workspaceStore,
     getWorkspaceContext: (id: string) => new WorkspaceContext({ wsId: id, workDir }),
-    getRegistryStore: () => registryStore,
-    getConnectorDirectory: () => new ConnectorDirectory(registryStore),
+    getConnectorCatalog: () => new ConnectorCatalog(CONNECTOR_FIXTURE_DIR),
     getLifecycle: () => lifecycle,
     getRegistryForWorkspace: (_id: string) => workspaceRegistry,
     getPermissionStore: () => ({
@@ -142,11 +124,9 @@ async function buildHarness(opts: { sessionWsId: string | null } = { sessionWsId
   return { workDir, sharedWsId, personalWsId, workspaceStore, tool, runtime };
 }
 
-function dcrEntry(): DirectoryEntry {
+function dcrEntry(): CatalogListing {
   return {
     id: "ai.granola/mcp",
-    registryId: "bundled-static",
-    registryType: "static",
     name: "Granola",
     description: "Meeting notes",
     install: {

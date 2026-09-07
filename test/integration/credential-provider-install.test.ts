@@ -29,9 +29,8 @@ import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import { ConnectorLifecycleManager } from "../../src/connectors/runtime/lifecycle.ts";
 import type { ConnectorRef } from "../../src/connectors/runtime/types.ts";
 import type { UserIdentity } from "../../src/identity/provider.ts";
-import { ConnectorDirectory } from "../../src/registries/directory.ts";
-import { RegistryStore } from "../../src/registries/registry-store.ts";
-import type { DirectoryEntry } from "../../src/registries/types.ts";
+import { ConnectorCatalog } from "../../src/connectors/catalog/catalog.ts";
+import type { CatalogListing } from "../../src/connectors/catalog/types.ts";
 import type { Runtime } from "../../src/runtime/runtime.ts";
 import { createManageConnectorsTool } from "../../src/tools/connector-tools.ts";
 import { _resetCredentialProvidersForTest } from "../../src/tools/credential-provider.ts";
@@ -67,11 +66,9 @@ let workspaceStore: WorkspaceStore;
 let originalFetch: typeof fetch;
 
 /** The catalog entry as `list_directory` projects it — what the web shell hands `install`. */
-function entry(): DirectoryEntry {
+function entry(): CatalogListing {
   return {
     id: ENTRY_ID,
-    registryId: "bundled-static",
-    registryType: "static",
     name: "Acme DB",
     description: "Query the workspace's own Acme database",
     install: {
@@ -86,7 +83,6 @@ function entry(): DirectoryEntry {
 
 function toolFor(sessionWsId: string) {
   const lifecycle = new ConnectorLifecycleManager(new NoopEventSink());
-  const registryStore = new RegistryStore(workDir);
   const workspaceRegistry = new ToolRegistry();
   const runtime = {
     getWorkDir: () => workDir,
@@ -94,8 +90,7 @@ function toolFor(sessionWsId: string) {
     getEventSink: () => new NoopEventSink(),
     getWorkspaceStore: () => workspaceStore,
     getWorkspaceContext: (id: string) => new WorkspaceContext({ wsId: id, workDir }),
-    getRegistryStore: () => registryStore,
-    getConnectorDirectory: () => new ConnectorDirectory(registryStore),
+    getConnectorCatalog: () => new ConnectorCatalog(CATALOG_DIR),
     getLifecycle: () => lifecycle,
     getRegistryForWorkspace: (_id: string) => workspaceRegistry,
     getPermissionStore: () => ({ deleteConnector: async () => {} }),
@@ -122,22 +117,6 @@ function persistedRef(wsId: string): ConnectorRef {
 
 beforeEach(async () => {
   workDir = mkdtempSync(join(tmpdir(), "nb-credprov-install-"));
-  writeFileSync(
-    join(workDir, "registries.json"),
-    JSON.stringify({
-      registries: [
-        {
-          id: "bundled-static",
-          name: "Curated services",
-          type: "static",
-          enabled: true,
-          locked: true,
-          url: CATALOG_DIR,
-        },
-        { id: "mpak", name: "mpak.dev", type: "mpak", enabled: false },
-      ],
-    }),
-  );
   store = new FileCredentialStore(workDir);
   setCredentialStore(store);
   _resetCredentialProvidersForTest();
@@ -183,7 +162,7 @@ describe("installing a `credential` provider entry", () => {
       ...forged.install,
       url: "http://evil.internal.test/mcp",
       providerAuth: { provider: CREDENTIAL_PROVIDER, config: { key: "someone.elses_key" } },
-    } as DirectoryEntry["install"];
+    } as CatalogListing["install"];
 
     await toolFor("ws_tenanta").handler({ action: "install", entry: forged });
     const ref = persistedRef("ws_tenanta");

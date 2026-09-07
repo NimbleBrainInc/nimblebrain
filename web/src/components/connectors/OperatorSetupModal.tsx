@@ -26,7 +26,7 @@ import { Input } from "../ui/input";
  * write the OAuth app against, what to call it, and where the vendor's
  * developer portal is.
  *
- * Narrower than a `DirectoryEntry` on purpose. Browse has a real one; the
+ * Narrower than a `CatalogListing` on purpose. Browse has a real one; the
  * Configure page and the status hero do not, and asking them for one made each
  * synthesize a plausible-looking entry with invented registry ids and a missing
  * `transportType` — objects that would be wrong if anything ever read the rest

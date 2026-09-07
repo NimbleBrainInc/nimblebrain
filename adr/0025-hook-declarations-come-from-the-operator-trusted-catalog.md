@@ -33,7 +33,7 @@ identically to a first-party one has failed.
 **A hook declaration is read from the operator-published catalog entry, never
 from caller-supplied input.** The declaration is authored by the server in its
 host-extension metadata, but the copy the install path acts on is the one carried
-through the catalog projection (`src/registries/projection.ts`), and at
+through the catalog projection (`src/connectors/catalog/projection.ts`), and at
 provision time the trusted entry is found by the same slug rule the install used
 (`getHookReconcileDeps`, `src/runtime/runtime.ts`) — derived from the installed
 server's name rather than stored a second time, so the two cannot disagree after
