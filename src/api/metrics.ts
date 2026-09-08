@@ -568,11 +568,13 @@ export const notificationsTruncatedTotal = new Counter({
 /**
  * Route targets that reached a terminal ledger outcome.
  *
- * `kind` is `tool` or `agent`; `outcome` is the ledger's own vocabulary
- * (`delivered`, `denied`, `skipped`, `failed`, `deferred`). Both are closed
- * sets defined in this repo, so the series count is fixed. Deliberately NOT
- * labelled by route or by tool: a route id is admin-chosen and unbounded, and
- * the ledger on the item is where "which route, which target" is answered.
+ * `kind` is `tool` or `agent`; `outcome` is the ledger's terminal vocabulary
+ * (`delivered`, `denied`, `skipped`, `failed`) — never `pending` or `deferred`,
+ * which are the two states a target passes THROUGH, so counting one would put
+ * a target in this total twice. Both labels are closed sets defined in this
+ * repo, so the series count is fixed. Deliberately NOT labelled by route or by
+ * tool: a route id is admin-chosen and unbounded, and the ledger on the item is
+ * where "which route, which target" is answered.
  */
 export const notificationsDeliveredTotal = new Counter({
   name: "nb_notifications_delivered_total",

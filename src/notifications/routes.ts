@@ -56,14 +56,14 @@ import type {
   DeliveryOutcome,
   DeliveryRecord,
   NotificationDeliverTarget,
+  NotificationLevel,
 } from "../platform/schemas/notifications.ts";
 import type { WorkspaceStore } from "../workspace/workspace-store.ts";
 import { type NotificationRoute, readNotificationsConfig, setRouteDisabled } from "./config.ts";
-import { matchesNameGlob } from "./name-glob.ts";
+import { matchesNotification } from "./match.ts";
 import type { NotificationRef, NotificationStore } from "./store.ts";
 import { renderDeliverInput } from "./template.ts";
 import {
-  NOTIFICATION_LEVEL_RANK,
   type Notification,
   notificationEffectiveLevel,
   notificationId,
@@ -450,10 +450,10 @@ export class RouteDispatcher {
         reason: errorText(err),
       };
     }
-    if (ack.accepted) {
-      notificationsDeliveredTotal.inc({ kind: "agent", outcome: "deferred" });
-      return;
-    }
+    // Nothing is counted here. The item is in a batch, which is not an outcome
+    // the delivery counter reports — it counts targets that REACHED one, and a
+    // batch that later settles would otherwise move it twice.
+    if (ack.accepted) return;
     this.#settleWake(wsId, ref, route, target, ack);
   }
 
@@ -832,25 +832,21 @@ function seedRows(matched: readonly MatchedTarget[], at: string): DeliveryRecord
 /**
  * Whether one route's `match` admits one item, at the level routes see it at.
  *
- * `source` is exact, `name` is a glob, `level` is a minimum. All three are
- * optional and an omitted one narrows nothing, so an empty match is every
- * notification the workspace receives — legal, and the schema says so.
+ * The rules themselves are in {@link matchesNotification}, shared with the
+ * automation-side match an event schedule carries: both read the same grammar
+ * out of the same schema, and a second copy of it is a second place for a
+ * defect in it to hide.
  */
 export function routeMatches(
   route: NotificationRoute,
   item: Pick<Notification, "source"> & { envelope: { name: string } },
-  effectiveLevel: keyof typeof NOTIFICATION_LEVEL_RANK,
+  effectiveLevel: NotificationLevel,
 ): boolean {
-  const match = route.match ?? {};
-  if (match.source !== undefined && match.source !== item.source) return false;
-  if (!matchesNameGlob(item.envelope.name, match.name)) return false;
-  if (
-    match.level !== undefined &&
-    NOTIFICATION_LEVEL_RANK[effectiveLevel] < NOTIFICATION_LEVEL_RANK[match.level]
-  ) {
-    return false;
-  }
-  return true;
+  return matchesNotification(route.match, {
+    source: item.source,
+    name: item.envelope.name,
+    level: effectiveLevel,
+  });
 }
 
 /** Flatten a stored target's union into the shape the ledger and the call need. */

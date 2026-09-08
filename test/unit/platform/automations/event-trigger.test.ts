@@ -16,6 +16,7 @@ import {
   type EventWakeSettlement,
   MAX_EVENT_BATCH_ITEMS,
   renderEventBlock,
+  type RunOutcome,
 } from "../../../../src/platform/automations/event-trigger.ts";
 import type { RunInput } from "../../../../src/platform/automations/scheduler.ts";
 import type { Automation, ScheduleSpec } from "../../../../src/platform/automations/types.ts";
@@ -79,13 +80,15 @@ interface Harness {
   /** Every `disable` call, in order. */
   disabled: string[];
   /** How the stubbed run answers; the last entry repeats. */
-  answers: Array<{ run: { id: string } } | { skipped: string }>;
+  answers: Array<{ run: RunOutcome } | { skipped: string }>;
 }
 
 function harness(over: Partial<AutomationEventTriggerDeps> = {}): Harness {
   const runs: RunInput[] = [];
   const disabled: string[] = [];
-  const answers: Array<{ run: { id: string } } | { skipped: string }> = [{ run: { id: "run_1" } }];
+  const answers: Array<{ run: RunOutcome } | { skipped: string }> = [
+    { run: { id: "run_1", status: "success" } },
+  ];
   const trigger = new AutomationEventTrigger({
     automation: () => automation(),
     eventRunsSince: () => 0,
@@ -224,6 +227,44 @@ describe("batching", () => {
       classification: "run_not_started",
     });
     expect(one.settled[0]?.reason).toContain("still in flight");
+  });
+
+  /**
+   * The scheduler answers two different ways. It refuses some runs itself and
+   * says `skipped`; a refusal that comes out of the RUNTIME — the per-run
+   * membership re-check — comes back as a run RECORD whose status is `skipped`.
+   * Reading only the answer's shape reports the second as delivered, with a run
+   * id naming a run that did nothing.
+   */
+  test("a run the runtime refused is a skip, not a delivery with a run id", async () => {
+    const h = harness();
+    h.answers[0] = {
+      run: {
+        id: "run_skip",
+        status: "skipped",
+        error: "owner is no longer a member of this workspace",
+      },
+    };
+    const one = offer(h, item());
+    await settleWindow();
+
+    expect(one.settled[0]).toEqual({
+      outcome: "skipped",
+      classification: "run_not_started",
+      reason: "owner is no longer a member of this workspace",
+    });
+    expect(one.settled[0]?.runId).toBeUndefined();
+  });
+
+  test("a run that started and then failed is still a delivery", async () => {
+    // The notification reached an agent run. What the run made of it is the
+    // automation's own record, not this one's.
+    const h = harness();
+    h.answers[0] = { run: { id: "run_fail", status: "failure", error: "the model gave up" } };
+    const one = offer(h, item());
+    await settleWindow();
+
+    expect(one.settled[0]).toEqual({ outcome: "delivered", runId: "run_fail" });
   });
 
   test("stopping settles an open batch instead of losing it silently", async () => {

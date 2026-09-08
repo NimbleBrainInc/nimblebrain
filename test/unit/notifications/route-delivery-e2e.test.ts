@@ -437,7 +437,7 @@ describe("a connector's fact reaching an automation", () => {
       eventRunsSince: () => 0,
       run: async (_ws, _owner, _id, input) => {
         runs.push(input);
-        return { run: { id: "run_e2e01" } };
+        return { run: { id: "run_e2e01", status: "success" } };
       },
       disable: () => {},
       ...over,

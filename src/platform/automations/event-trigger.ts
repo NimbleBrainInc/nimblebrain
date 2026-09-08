@@ -27,9 +27,8 @@
  *     the connector's `data`, which no runtime code reads.
  */
 
-import { matchesNameGlob } from "../../notifications/name-glob.ts";
+import { matchesNotification } from "../../notifications/match.ts";
 import {
-  NOTIFICATION_LEVEL_RANK,
   type Notification,
   notificationEffectiveLevel,
   notificationId,
@@ -78,6 +77,18 @@ export interface EventWakeSettlement {
   runId?: string;
 }
 
+/**
+ * As much of a run record as this module reads.
+ *
+ * Structurally compatible with the scheduler's `AutomationRun`; narrowed here
+ * so the trigger takes no view of what else a run carries.
+ */
+export interface RunOutcome {
+  id: string;
+  status: string;
+  error?: string;
+}
+
 /** Whether an item was taken into a batch, and where it landed when it was not. */
 export type EventWakeAck = { accepted: true } | ({ accepted: false } & EventWakeSettlement);
 
@@ -110,13 +121,22 @@ export interface AutomationEventTriggerDeps {
   automation: (wsId: string, ownerId: string, id: string) => Automation | undefined;
   /** How many event-fired runs this automation has started since `since` (epoch ms). */
   eventRunsSince: (wsId: string, ownerId: string, id: string, since: number) => number;
-  /** Start the run. Resolves with the run, or with why it never started. */
+  /**
+   * Start the run. Resolves with the run record, or with why the scheduler
+   * never got as far as one.
+   *
+   * Both halves have to be read. The scheduler refuses some runs itself and
+   * says so in `skipped`, but a refusal that comes back out of the RUNTIME —
+   * the per-run membership re-check is the one that matters — arrives as a run
+   * record whose status is `skipped`, and that shape is indistinguishable from
+   * a run that happened unless the status is read.
+   */
   run: (
     wsId: string,
     ownerId: string,
     id: string,
     input: RunInput,
-  ) => Promise<{ run: { id: string } } | { skipped: string }>;
+  ) => Promise<{ run: RunOutcome } | { skipped: string }>;
   /** Turn the automation off, through the same fields auto-disable writes. */
   disable: (wsId: string, ownerId: string, id: string, reason: string) => void;
   now?: () => number;
@@ -315,6 +335,22 @@ export class AutomationEventTrigger {
         });
         return;
       }
+      // A run record whose status is `skipped` is the runtime refusing the run,
+      // not a run that happened — the automation's owner is no longer a member
+      // of the workspace, which self-heals on re-add. Recording that as
+      // `delivered` with a run id would report work nothing did, which is the
+      // one thing the ledger exists to prevent.
+      if (outcome.run.status === "skipped") {
+        settleAll(batch, {
+          outcome: "skipped",
+          classification: "run_not_started",
+          reason: outcome.run.error ?? "the runtime refused the run",
+        });
+        return;
+      }
+      // A run that started and then failed IS a delivery: the notification
+      // reached an agent run, and what that run made of it is the automation's
+      // own record rather than this one.
       settleAll(batch, { outcome: "delivered", runId: outcome.run.id });
     } catch (err) {
       const reason = errorText(err);
@@ -417,15 +453,13 @@ function settleAll(batch: PendingBatch, result: EventWakeSettlement): void {
  * automation the operator can see is enabled.
  */
 export function automationWants(auto: Automation, item: Notification): boolean {
-  const match = auto.schedule.match;
-  if (!match) return true;
-  if (match.source !== undefined && match.source !== item.source) return false;
-  if (!matchesNameGlob(item.envelope.name, match.name)) return false;
-  if (match.level !== undefined) {
-    const level = notificationEffectiveLevel(item);
-    if (NOTIFICATION_LEVEL_RANK[level] < NOTIFICATION_LEVEL_RANK[match.level]) return false;
-  }
-  return true;
+  return matchesNotification(auto.schedule.match, {
+    source: item.source,
+    name: item.envelope.name,
+    // The level the workspace's ceiling held this item to, which is the level a
+    // route was matched at — so both halves of the path agree about its urgency.
+    level: notificationEffectiveLevel(item),
+  });
 }
 
 /**
