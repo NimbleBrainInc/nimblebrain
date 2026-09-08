@@ -19,6 +19,23 @@ export function ScheduleEditor({
   const [expression, setExpression] = useState(initialExpression);
   const [timezone, setTimezone] = useState(initialTimezone);
 
+  // An event schedule is not editable here. This picker writes a cron or an
+  // interval and nothing else, so offering it for an event automation would
+  // convert one to a timer the moment anybody pressed Save — silently deleting
+  // the match and the fire ceiling. Read-only until the picker learns the shape.
+  if (initialType === "event") {
+    return (
+      <div style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>
+        Runs on routed notifications, not on a clock. Edit it from chat or the API.
+        <div style={{ marginTop: 6 }}>
+          <button type="button" className="btn" onClick={onCancel}>
+            Close
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   function handleSave() {
     if (type === "interval") {
       onSave({ type: "interval", intervalMs: Math.max(1, minutes) * 60_000 });

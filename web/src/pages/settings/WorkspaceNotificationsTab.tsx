@@ -248,13 +248,11 @@ function RoutesExecutedNotice({ executed }: { executed: boolean }) {
     );
   }
   return (
-    <p
-      data-testid="agent-routes-not-executed"
-      className="rounded-sm border border-warning/40 bg-warning/10 px-3 py-2 text-sm"
-    >
-      Routes that deliver to a <strong>tool</strong> run: a matching notification calls it as the
-      route's author, and the result is on the item in the inbox. Routes that wake an{" "}
-      <strong>automation</strong> are matched and recorded, and nothing runs them yet.
+    <p data-testid="routes-executed" className="text-sm text-muted-foreground">
+      A matching notification calls a <strong>tool</strong> target as the route's author, and wakes
+      an <strong>automation</strong> target — batched, so a burst is one run. Either way the result
+      is on the item in the inbox. Only an automation that runs on events can be woken; the picker
+      says which of yours do.
     </p>
   );
 }
@@ -554,12 +552,22 @@ function withCurrent(available: readonly string[], current: string): Option[] {
   return options;
 }
 
-/** The caller's automations, plus a stored one that is gone. */
+/**
+ * The caller's automations, plus a stored one that is gone.
+ *
+ * An automation that does not run on events stays selectable and says so rather
+ * than being hidden: it is a legal thing to name and the write accepts it, but
+ * every notification sent to it is refused, and an operator reading the ledger
+ * afterwards is the expensive way to learn that.
+ */
 function withCurrentAutomation(
-  available: readonly { id: string; name: string }[],
+  available: readonly { id: string; name: string; eventScheduled: boolean }[],
   current: string,
 ): Option[] {
-  const options = available.map((a) => ({ value: a.id, label: a.name }));
+  const options = available.map((a) => ({
+    value: a.id,
+    label: a.eventScheduled ? a.name : `${a.name} — does not run on events`,
+  }));
   if (current && !available.some((a) => a.id === current)) {
     options.unshift({ value: current, label: `${current} — no longer available` });
   }

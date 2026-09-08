@@ -23,6 +23,10 @@ import type {
   UnattendedDispatchResult,
 } from "../../../src/orchestrator/unattended-dispatch.ts";
 import { parseNotificationEnvelope } from "../../../src/notifications/envelope.ts";
+import type {
+  EventWakeAck,
+  EventWakeRequest,
+} from "../../../src/platform/automations/event-trigger.ts";
 import {
   RouteDispatcher,
   type RouteDispatcherDeps,
@@ -694,21 +698,44 @@ describe("a route naming one tool twice", () => {
 });
 
 describe("an agent target", () => {
-  test("records deferred/awaiting_wake and calls nothing", async () => {
-    await configure({
-      routes: [
-        {
-          id: "rt_triage",
-          createdBy: AUTHOR,
-          match: {},
-          deliver: [{ kind: "agent", automation: "auto_triage" }],
-        },
-      ],
-    });
+  /** Every offer the dispatcher made to the automations side, in order. */
+  let offers: EventWakeRequest[];
+  /** What the stub answers; the last entry repeats. */
+  let acks: EventWakeAck[];
+
+  beforeEach(() => {
+    offers = [];
+    acks = [{ accepted: true }];
+  });
+
+  function waking(): Partial<RouteDispatcherDeps> {
+    return {
+      wakeAutomation: (req) => {
+        offers.push(req);
+        return acks.length > 1 ? (acks.shift() as EventWakeAck) : acks[0]!;
+      },
+    };
+  }
+
+  function agentRoute(id = "rt_triage", automation = "auto_triage"): Record<string, unknown> {
+    return { id, createdBy: AUTHOR, match: {}, deliver: [{ kind: "agent", automation }] };
+  }
+
+  test("offers the item to the automation and leaves the row deferred", async () => {
+    await configure({ routes: [agentRoute()] });
     const item = seed();
-    await dispatcher().onItem(wsId, item);
+    await dispatcher(waking()).onItem(wsId, item);
 
     expect(calls).toHaveLength(0);
+    expect(offers).toHaveLength(1);
+    expect(offers[0]).toMatchObject({
+      wsId,
+      automationId: "auto_triage",
+      // The route's author is the automation's owner, which is what scopes the
+      // lookup — a route cannot reach somebody else's automation by naming it.
+      ownerId: AUTHOR,
+    });
+    expect(offers[0]?.item.envelope.eventId).toBe(item.envelope.eventId);
     expect(ledger(item)).toEqual([
       {
         routeId: "rt_triage",
@@ -717,13 +744,69 @@ describe("an agent target", () => {
         kind: "agent",
         attempts: 0,
         outcome: "deferred",
-        classification: "awaiting_wake",
+        classification: "awaiting_batch",
         updatedAt: new Date(clock).toISOString(),
       },
     ]);
-    // Not a failure: nothing gave up, and an operator watching for one should
-    // not be told a route broke because the next slice is unbuilt.
+    // Nothing has failed. A batch inside its window is not a broken route.
     expect(eventsOfType("notification.delivery_failed")).toHaveLength(0);
+  });
+
+  test("the batch settles later, and the row carries the run it started", async () => {
+    await configure({ routes: [agentRoute()] });
+    const item = seed();
+    await dispatcher(waking()).onItem(wsId, item);
+
+    advance(30_000);
+    offers[0]?.settle({ outcome: "delivered", runId: "run_abc123" });
+
+    expect(ledger(item)[0]).toEqual({
+      routeId: "rt_triage",
+      target: "auto_triage",
+      index: 0,
+      kind: "agent",
+      attempts: 1,
+      outcome: "delivered",
+      runId: "run_abc123",
+      updatedAt: new Date(clock).toISOString(),
+    });
+    expect(eventsOfType("notification.delivered")).toHaveLength(1);
+  });
+
+  test("a refused offer is terminal at once, with the outcome the automations side chose", async () => {
+    acks = [
+      {
+        accepted: false,
+        outcome: "denied",
+        classification: "not_event_scheduled",
+        reason: "that automation does not run on events",
+      },
+    ];
+    await configure({ routes: [agentRoute()] });
+    const item = seed();
+    await dispatcher(waking()).onItem(wsId, item);
+
+    expect(ledger(item)[0]).toMatchObject({
+      outcome: "denied",
+      classification: "not_event_scheduled",
+      lastError: "that automation does not run on events",
+      attempts: 1,
+    });
+    expect(eventsOfType("notification.delivery_failed")[0]).toMatchObject({
+      outcome: "denied",
+      classification: "not_event_scheduled",
+    });
+  });
+
+  test("a runtime with no automations answers the route rather than staying silent", async () => {
+    await configure({ routes: [agentRoute()] });
+    const item = seed();
+    await dispatcher().onItem(wsId, item);
+
+    expect(ledger(item)[0]).toMatchObject({
+      outcome: "denied",
+      classification: "automations_unavailable",
+    });
   });
 
   test("does not stop a tool target on the same route", async () => {
@@ -741,29 +824,45 @@ describe("an agent target", () => {
       ],
     });
     const item = seed();
-    await dispatcher().onItem(wsId, item);
+    await dispatcher(waking()).onItem(wsId, item);
 
     expect(calls).toHaveLength(1);
     expect(ledger(item).map((row) => row.outcome)).toEqual(["deferred", "delivered"]);
   });
 
-  test("is never resumed as pending work on a restart", async () => {
-    await configure({
-      routes: [
-        {
-          id: "rt_triage",
-          createdBy: AUTHOR,
-          match: {},
-          deliver: [{ kind: "agent", automation: "auto_triage" }],
-        },
-      ],
-    });
-    await dispatcher().onItem(wsId, seed());
+  test("is never resumed as a tool retry on a restart", async () => {
+    await configure({ routes: [agentRoute()] });
+    await dispatcher(waking()).onItem(wsId, seed());
 
-    const second = dispatcher();
+    const second = dispatcher(waking());
     await second.resume();
     advance(RETRY_TICK_MS * 10);
     await second.sweepRetries();
     expect(calls).toHaveLength(0);
+  });
+
+  test("a batch open at a restart is dropped, and the ledger says so", async () => {
+    await configure({ routes: [agentRoute()] });
+    const item = seed();
+    const first = dispatcher(waking());
+    await first.onItem(wsId, item);
+    expect(ledger(item)[0]).toMatchObject({ outcome: "deferred" });
+    first.stop();
+
+    // A debounce window lives only in the memory of the process that opened it.
+    // The successor must close the row rather than leave it deferred forever or
+    // re-fire a batch it cannot reconstruct.
+    offers = [];
+    const second = dispatcher(waking());
+    await second.resume();
+
+    expect(offers).toHaveLength(0);
+    expect(ledger(item)[0]).toMatchObject({
+      outcome: "failed",
+      classification: "batch_not_resumed",
+    });
+    expect(eventsOfType("notification.delivery_failed")[0]).toMatchObject({
+      classification: "batch_not_resumed",
+    });
   });
 });

@@ -308,19 +308,26 @@ export class NotificationStore {
   }
 
   /**
-   * Every ledger row still waiting on an attempt, with the item it belongs to.
+   * Every ledger row that has not reached a terminal outcome, with the item it
+   * belongs to.
    *
-   * The whole of restart recovery: retry state lives on the ledger and nowhere
-   * else, so a runtime that comes up mid-delivery finds its outstanding work by
-   * reading what it already wrote. A row that reached any terminal outcome is
-   * not returned, which is what makes "nothing already delivered is re-sent"
-   * a property of the data rather than of a guard.
+   * The whole of restart recovery: delivery state lives on the ledger and
+   * nowhere else, so a runtime that comes up mid-delivery finds its outstanding
+   * work by reading what it already wrote. A row that reached any terminal
+   * outcome is not returned, which is what makes "nothing already delivered is
+   * re-sent" a property of the data rather than of a guard.
+   *
+   * Two outcomes are non-terminal and they mean different things to the caller:
+   * `pending` is a tool target owed another attempt, and `deferred` is an agent
+   * target inside a debounce window that lives only in the memory of the
+   * process that opened it. The dispatcher resumes the first and closes out the
+   * second.
    */
   pendingDeliveries(): Array<{ item: Notification; row: DeliveryRecord }> {
     const out: Array<{ item: Notification; row: DeliveryRecord }> = [];
     for (const item of this.#loadAll()) {
       for (const row of item.deliveries ?? []) {
-        if (row.outcome === "pending") out.push({ item, row });
+        if (row.outcome === "pending" || row.outcome === "deferred") out.push({ item, row });
       }
     }
     return out;

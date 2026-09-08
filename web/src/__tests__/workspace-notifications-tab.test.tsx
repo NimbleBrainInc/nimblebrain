@@ -156,13 +156,14 @@ afterEach(() => {
 });
 
 describe("what the page tells an admin about routes", () => {
-  test("says tool targets run and automation targets do not", async () => {
+  test("says both kinds of target run, and names the one precondition", async () => {
     const container = await mount();
-    const notice = container.querySelector(
-      '[data-testid="agent-routes-not-executed"]',
-    ) as HTMLElement | null;
-    expect(notice?.textContent).toContain("run");
+    const notice = container.querySelector('[data-testid="routes-executed"]') as HTMLElement | null;
+    expect(notice?.textContent).toContain("tool");
     expect(notice?.textContent).toContain("automation");
+    // The precondition an operator has to know: naming an automation is not
+    // enough, it has to be one that runs on events.
+    expect(notice?.textContent).toContain("runs on events");
     // The blanket "nothing dispatches" notice is gone: it would be false now,
     // and a warning that is false is worse than none.
     expect(container.querySelector('[data-testid="routes-not-executed"]')).toBeNull();
@@ -175,7 +176,7 @@ describe("what the page tells an admin about routes", () => {
       '[data-testid="routes-not-executed"]',
     ) as HTMLElement | null;
     expect(notice?.textContent).toContain("not yet executed");
-    expect(container.querySelector('[data-testid="agent-routes-not-executed"]')).toBeNull();
+    expect(container.querySelector('[data-testid="routes-executed"]')).toBeNull();
   });
 
   test("a route the runtime disabled says so, with the reason, where it is edited", async () => {

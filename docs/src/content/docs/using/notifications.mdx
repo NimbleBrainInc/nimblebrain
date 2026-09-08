@@ -95,10 +95,8 @@ on it.
 
 A route says: when a notification matches, deliver it there.
 
-Routes that deliver to a **tool** run. Routes that wake an **automation** are
-matched and recorded, and nothing runs them yet — the settings tab says so, and
-the item's delivery ledger shows those targets as *waiting for the automation
-trigger*.
+Both kinds of target run: a **tool** target calls the tool, and an **automation**
+target starts an agent run carrying the matched notifications.
 
 ### Match
 
@@ -173,8 +171,23 @@ damage but does not remove it.
 
 ### Deliver to an automation
 
-Pick one of your [automations](/using/automations) and the route wakes it, handing
-it the matched notifications as its input.
+Pick one of your [automations](/using/automations) and the route wakes it,
+handing it the matched notifications as its input.
+
+The automation has to be expecting them. An **event** automation — one whose
+schedule is a set of notifications rather than a time — carries its own match,
+and runs only for items that satisfy both it and the route. Name an automation
+that runs on a clock instead and the route will match, record a *refused* row,
+and start nothing; the editor marks which of your automations can be woken.
+
+Matching items are **batched**: everything arriving inside the automation's
+debounce window (30 seconds by default) starts one run, not one run each. That
+run's ledger row carries the run id once it starts, so you can go from a
+notification to the run it caused.
+
+An event automation also carries a **fire ceiling** — by default twelve runs an
+hour — and exceeding it disables the automation rather than throttling it. See
+[Automations](/using/automations#the-fire-ceiling) for why that is the shape.
 
 ### Who a route runs as
 
@@ -204,12 +217,12 @@ exactly like one nobody routed, unless the attempt was recorded.
 
 | Line reads | Means | Retries? |
 |---|---|---|
-| **sending** | An attempt is in flight or the next one is due. | yes |
-| **delivered** | The tool ran and did not report a failure. | — |
-| **waiting for the automation trigger** | An `automation` target. Recorded, not run. | — |
-| **refused** | A permission gate said no — the author may not use that tool, or its connector grant is missing. | no |
-| **skipped** | The route's author is no longer a member of this workspace. | no |
-| **failed** | The call did not complete and the retry budget is spent. | no |
+| **sending** | A tool attempt is in flight or the next one is due. | yes |
+| **batching for the automation** | An automation target, inside its debounce window. The run has not started. | — |
+| **delivered** | The tool ran and did not report a failure, or the automation's run started. | — |
+| **refused** | A permission gate said no — the author may not use that tool, or the route names no event automation of theirs. | no |
+| **skipped** | The route's author has left the workspace, or the automation is off or did not want the item. | no |
+| **failed** | The call did not complete and the retry budget is spent, or the run was owed and did not happen. | no |
 
 **A target gets three attempts across about five minutes** — immediately, a
 minute later, and four minutes after that — and then reads *failed*. That is
@@ -217,6 +230,13 @@ long enough to ride out a connector restart or a brief outage upstream, and
 short enough that you learn the answer while you are still looking. The
 platform never retries a *refused* or *skipped* target: nothing about those
 changes until the configuration does.
+
+**An automation target gets one offer, not three.** A batch that never reaches
+its run — because the runtime restarted while the debounce window was open, or
+the automation was already running — reads *failed* or *skipped* and is not
+re-formed. Batches live only in the memory of the process that opened them, and
+re-firing hours later for events you have since dealt with is worse than saying
+plainly that the run did not happen.
 
 Retry state lives on the item itself, so a platform restart mid-delivery picks
 up where it left off, and nothing already delivered is sent again.

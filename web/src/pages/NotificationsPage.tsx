@@ -264,16 +264,16 @@ function NotificationLink({ uri, href }: { uri: string; href: string | null }) {
 /**
  * How each ledger outcome reads, and what it is coloured.
  *
- * `pending` and `deferred` are neither good nor bad — one is mid-flight and
- * the other is waiting on a capability that does not exist yet — so neither
- * takes a colour. Everything the runtime gave up on is destructive, whatever
- * the reason: an operator scanning for "did this get through" wants one signal
- * and the classification beside it for the detail.
+ * `pending` and `deferred` are neither good nor bad — one is a tool call
+ * mid-flight and the other is an automation's debounce window still open — so
+ * neither takes a colour. Everything the runtime gave up on is destructive,
+ * whatever the reason: an operator scanning for "did this get through" wants
+ * one signal and the classification beside it for the detail.
  */
 const OUTCOME_LABEL: Record<DeliveryOutcome, string> = {
   pending: "sending",
   delivered: "delivered",
-  deferred: "waiting for the automation trigger",
+  deferred: "batching for the automation",
   denied: "refused",
   skipped: "skipped",
   failed: "failed",

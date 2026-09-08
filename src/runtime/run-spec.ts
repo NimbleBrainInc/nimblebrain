@@ -43,14 +43,17 @@ export type UserResourceLinkPart = {
  *  - `chat`     — a person in a conversation (`/v1/chat*`, `startTurn`).
  *  - `schedule` — an automations cron tick (`Scheduler.dispatchRun`).
  *  - `manual`   — an operator pressing Run now (`automations__run`).
+ *  - `event`    — a notification a workspace admin routed to an automation.
  *  - `api`      — a caller driving the runtime directly (embedded, CLI, evals).
  *
  * The value is descriptive, not a policy switch: nothing branches on a
  * *specific* trigger, and `chat` is distinguished from the rest only where the
  * distinction is real — an attended run has a person in the loop, so it keeps
- * the authoring tools an unattended one must not reach.
+ * the authoring tools an unattended one must not reach. `event` is on the
+ * unattended side of that line for the same reason `schedule` is, and gets it
+ * from being anything other than `chat` rather than from a rule of its own.
  */
-export type RunTrigger = "chat" | "schedule" | "manual" | "api";
+export type RunTrigger = "chat" | "schedule" | "manual" | "event" | "api";
 
 /** Who a run acts as. */
 export interface RunPrincipal {

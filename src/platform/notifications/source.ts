@@ -20,6 +20,7 @@ import type { Runtime } from "../../runtime/runtime.ts";
 import { defineInProcessApp, type InProcessTool } from "../../tools/in-process-app.ts";
 import type { McpSource } from "../../tools/mcp-source.ts";
 import { canWriteWorkspaceScoped } from "../../workspace/authz.ts";
+import { isEventSchedule } from "../automations/types.ts";
 import {
   NOTIFICATION_PLACEHOLDERS,
   NOTIFICATION_SOURCES_MAX,
@@ -200,10 +201,10 @@ export function createNotificationsSource(runtime: Runtime, eventSink: EventSink
    * (minimal runtimes, tests): the settings page then offers no agent target,
    * which is the truthful answer, instead of failing the whole read.
    */
-  function ownAutomations(): Array<{ id: string; name: string }> {
+  function ownAutomations(): Array<{ id: string; name: string; eventScheduled: boolean }> {
     try {
       return [...runtime.getAutomationsContext().definitions().values()]
-        .map((a) => ({ id: a.id, name: a.name }))
+        .map((a) => ({ id: a.id, name: a.name, eventScheduled: isEventSchedule(a.schedule) }))
         .sort((a, b) => a.name.localeCompare(b.name));
     } catch {
       return [];
@@ -411,6 +412,11 @@ export function createNotificationsSource(runtime: Runtime, eventSink: EventSink
     workspaceStore: runtime.getWorkspaceStore(),
     storeFor: (wsId) => runtime.getNotificationStore(wsId),
     dispatch: (opts) => runtime.dispatchUnattended(opts),
+    // The only path from a delivery to an agent run. Reached through the
+    // runtime rather than imported so neither platform source depends on the
+    // other's construction order, and so a runtime built without automations
+    // answers the route rather than failing it.
+    wakeAutomation: (req) => runtime.wakeAutomationOnNotification(req),
     workspaceIds: async () => (await runtime.getWorkspaceStore().list()).map((ws) => ws.id),
     eventSink,
   });

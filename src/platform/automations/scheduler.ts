@@ -17,7 +17,12 @@ import {
   saveAutomation,
   saveRunResult,
 } from "./store.ts";
-import type { Automation, AutomationRun, AutomationRunResult } from "./types.ts";
+import {
+  type Automation,
+  type AutomationRun,
+  type AutomationRunResult,
+  isEventSchedule,
+} from "./types.ts";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -53,7 +58,21 @@ const TRANSIENT_PATTERNS: RegExp[] = [
  * `getExecutorContext`). A `manual` run is a user clicking "test", dispatched
  * synchronously inside that user's request context, which it legitimately uses.
  */
-export type AutomationRunTrigger = "scheduled" | "manual";
+export type AutomationRunTrigger = "scheduled" | "manual" | "event";
+
+/**
+ * Per-run input, for a trigger that carries something the stored prompt does
+ * not. An `event` run carries the batch of notifications that fired it; a
+ * `scheduled` or `manual` run carries nothing and passes none.
+ *
+ * It is prepended to the prompt rather than merged into it, and it is never
+ * persisted on the automation: inbox content is one run's input, not part of
+ * the definition and not part of any cached prefix.
+ */
+export interface RunInput {
+  /** Goes ahead of the automation's own prompt, separated by a blank line. */
+  preamble: string;
+}
 
 /**
  * The executor function that the scheduler delegates to. Returns the run summary
@@ -65,6 +84,7 @@ export type Executor = (
   automation: Automation,
   signal: AbortSignal,
   trigger: AutomationRunTrigger,
+  input?: RunInput,
 ) => Promise<{ run: AutomationRun; result: AutomationRunResult | null }>;
 
 export interface SchedulerConfig {
@@ -131,6 +151,11 @@ export function computeNextRunAt(
 ): number | null {
   const { schedule } = automation;
 
+  // An event schedule has no position in time. Null is what every caller here
+  // already reads as "leave nextRunAt alone", so the timer never arms for it
+  // and no backoff or skip path invents a moment for it either.
+  if (isEventSchedule(schedule)) return null;
+
   if (schedule.type === "cron" && schedule.expression) {
     const tz = schedule.timezone ?? defaultTimezone;
     const cron = new Cron(schedule.expression, { timezone: tz });
@@ -154,6 +179,12 @@ export function computeNextRunAt(
  */
 export function isDue(automation: Automation, now: number): boolean {
   if (!automation.enabled) return false;
+  // Never due from the timer. The absent `nextRunAt` below means "due
+  // immediately" for a clock schedule that has not run yet, and an event
+  // schedule has no `nextRunAt` by construction — so without this test the
+  // timer would fire it on every tick and the run would carry the wrong
+  // trigger, an empty batch, and none of the fire ceiling.
+  if (isEventSchedule(automation.schedule)) return false;
   if (!automation.nextRunAt) return true; // No nextRunAt → due immediately (interval first-run)
   return now >= new Date(automation.nextRunAt).getTime();
 }
@@ -427,6 +458,7 @@ export class Scheduler {
     const now = Date.now();
     const dirty: Automation[] = [];
     for (const auto of this.definitions.values()) {
+      if (isEventSchedule(auto.schedule)) continue;
       if (auto.enabled && !auto.nextRunAt && auto.ownerId && auto.workspaceId) {
         const next = computeNextRunAt(auto, now, this.config.defaultTimezone);
         if (next !== null) {
@@ -496,6 +528,39 @@ export class Scheduler {
   }
 
   /**
+   * Run one automation from a batch of notifications, bypassing schedule and
+   * backoff the way {@link runNow} does, and carrying the batch as this run's
+   * input.
+   *
+   * Separate from `runNow` for two reasons that are not cosmetic: the run must
+   * carry `trigger: "event"` so its record says what woke it and the fire
+   * ceiling can count it, and the caller needs to be told the run did not start
+   * — a per-automation collision is a ledger row, not a silent no-op.
+   */
+  async runFromEvent(
+    wsId: string,
+    ownerId: string,
+    automationId: string,
+    input: RunInput,
+  ): Promise<{ run: AutomationRun } | { skipped: string }> {
+    const key = Scheduler.keyOf({ id: automationId, ownerId, workspaceId: wsId });
+    const auto = this.definitions.get(key);
+    if (!auto) return { skipped: "the automation is no longer in this workspace" };
+    if (!auto.enabled) return { skipped: "the automation is disabled" };
+    if (this.activeRuns.has(key)) {
+      this.recordSkipped(auto, "Already running (event)");
+      return { skipped: "a previous run of this automation is still in flight" };
+    }
+    if (this.activeRuns.size >= this.maxConcurrentRuns) {
+      this.recordSkipped(auto, `Global concurrent run limit (${this.maxConcurrentRuns}) reached`);
+      return {
+        skipped: `the runtime was already at its concurrent-run limit (${this.maxConcurrentRuns})`,
+      };
+    }
+    return { run: await this.dispatchRun(auto, "event", input) };
+  }
+
+  /**
    * Get the current definitions (for inspection/testing).
    */
   getDefinitions(): Map<string, Automation> {
@@ -544,6 +609,10 @@ export class Scheduler {
 
     for (const auto of this.definitions.values()) {
       if (!auto.enabled) continue;
+      // Never arms a timer: an event schedule's absent `nextRunAt` is not a
+      // pending first run, and reading it as one would spin the timer at zero
+      // delay for as long as such an automation exists.
+      if (isEventSchedule(auto.schedule)) continue;
       if (!auto.nextRunAt) {
         // Due immediately
         minDelay = 0;
@@ -612,6 +681,7 @@ export class Scheduler {
   private async dispatchRun(
     auto: Automation,
     trigger: AutomationRunTrigger,
+    input?: RunInput,
   ): Promise<AutomationRun> {
     const key = Scheduler.keyOf(auto);
     const controller = new AbortController();
@@ -624,7 +694,7 @@ export class Scheduler {
     const startedAt = new Date().toISOString();
 
     try {
-      const { run, result } = await this.executor(auto, controller.signal, trigger);
+      const { run, result } = await this.executor(auto, controller.signal, trigger, input);
       this.activeRuns.delete(key);
       this.updateAfterRun(auto, run);
       // Persist the full deliverable sidecar alongside the run summary. Present
@@ -647,6 +717,7 @@ export class Scheduler {
         iterations: 0,
         error,
         transient,
+        trigger,
       };
       this.updateAfterRun(auto, failedRun);
       return failedRun;

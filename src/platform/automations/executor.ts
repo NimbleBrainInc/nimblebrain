@@ -10,7 +10,7 @@
  * No retry logic — the scheduler handles backoff.
  */
 
-import { type AutomationRunTrigger, isTransientError } from "./scheduler.ts";
+import { type AutomationRunTrigger, isTransientError, type RunInput } from "./scheduler.ts";
 import type {
   Automation,
   AutomationRun,
@@ -55,7 +55,7 @@ export interface TaskFnRequest {
    * `schedule`, an operator's Run now is `manual`. The run-start door stamps it
    * on the run's `agent.turn` span.
    */
-  trigger?: "schedule" | "manual";
+  trigger?: "schedule" | "manual" | "event";
   model?: string;
   maxIterations?: number;
   maxInputTokens?: number;
@@ -155,6 +155,7 @@ function buildRequest(
   automation: Automation,
   trigger: AutomationRunTrigger,
   ctx?: ExecutorContext,
+  input?: RunInput,
 ): TaskFnRequest {
   const offending = containsRecursiveTool(automation.allowedTools);
   if (offending !== null) {
@@ -168,12 +169,19 @@ function buildRequest(
   // The task surface owns the "you are running unattended, produce a
   // deliverable" framing in its system prompt — the automation's prompt
   // goes in as the plain task description, not wrapped or prefixed here.
+  // Per-run input goes AHEAD of the stored prompt and nowhere else: it is one
+  // run's material, so it must not reach the automation's definition and must
+  // not reach a cached prefix. The automation's own instruction stays last, so
+  // the thing the agent is being asked to do is the thing it reads last.
+  const prompt = input?.preamble ? `${input.preamble}\n\n${automation.prompt}` : automation.prompt;
+
   const req: TaskFnRequest = {
-    prompt: automation.prompt,
+    prompt,
     // The scheduler's vocabulary is per-automation ("scheduled" runs vs. a
-    // "manual" one); the runtime's is per-run and spans every door. One name
-    // each way, translated at the boundary rather than aliased on both sides.
-    trigger: trigger === "manual" ? "manual" : "schedule",
+    // "manual" one, vs. one fired by a notification); the runtime's is per-run
+    // and spans every door. One name each way, translated at the boundary
+    // rather than aliased on both sides.
+    trigger: taskTrigger(trigger),
     metadata: {
       source: "automation",
       automationId: automation.id,
@@ -187,6 +195,13 @@ function buildRequest(
   if (ctx?.workspaceId) req.workspaceId = ctx.workspaceId;
   if (ctx?.identity) req.identity = ctx.identity;
   return req;
+}
+
+/** The runtime's name for what woke this run. */
+function taskTrigger(trigger: AutomationRunTrigger): NonNullable<TaskFnRequest["trigger"]> {
+  if (trigger === "manual") return "manual";
+  if (trigger === "event") return "event";
+  return "schedule";
 }
 
 /**
@@ -302,6 +317,7 @@ function mapResultToRun(
   automation: Automation,
   startedAt: string,
   data: TaskFnResult,
+  trigger: AutomationRunTrigger,
 ): AutomationRun {
   const stopReason = data.stopReason as AutomationRun["stopReason"];
   let status: AutomationRun["status"] = mapStopReasonToStatus(stopReason);
@@ -365,6 +381,7 @@ function mapResultToRun(
     // AutomationRunResult sidecar (see `buildRunResult`).
     resultPreview: data.output ? truncate(data.output) : undefined,
     stopReason,
+    trigger,
     ...(error ? { error } : {}),
   };
 }
@@ -537,6 +554,7 @@ export function createDirectExecutor(
     automation: Automation,
     externalSignal?: AbortSignal,
     trigger: AutomationRunTrigger = "scheduled",
+    input?: RunInput,
   ): Promise<{ run: AutomationRun; result: AutomationRunResult | null }> {
     const startedAt = new Date().toISOString();
     const timeoutMs = automation.maxRunDurationMs ?? DEFAULT_TIMEOUT_MS;
@@ -567,10 +585,10 @@ export function createDirectExecutor(
 
     try {
       const data = await taskFn({
-        ...buildRequest(automation, trigger, ctx),
+        ...buildRequest(automation, trigger, ctx, input),
         signal: runController.signal,
       });
-      const run = mapResultToRun(automation, startedAt, data);
+      const run = mapResultToRun(automation, startedAt, data, trigger);
       // Build the result sidecar from the same data — non-null on every normal
       // return, INCLUDING the aborted-partial path below (the partial usage and
       // activity log accumulated before the abort are still a real deliverable

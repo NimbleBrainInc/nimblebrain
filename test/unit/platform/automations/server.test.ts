@@ -27,6 +27,7 @@ import {
 	handleRun,
 	handleCancel,
 	validateAutomationFields,
+	estimateRunsPerDay,
 	type ToolContext,
 } from "../../../../src/platform/automations/server.ts";
 
@@ -1259,5 +1260,87 @@ describe("automation ownership", () => {
 		expect(result.created).toBe(true);
 		expect(result.automation.ownerId).toBe(OWNER);
 		expect(result.automation.workspaceId).toBe(WS);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// event schedules
+// ---------------------------------------------------------------------------
+
+describe("event schedules", () => {
+	const match = { source: "precision-outbound", name: "reply.*" };
+
+	test("format as the notifications they wait for", () => {
+		expect(formatSchedule({ type: "event", match })).toBe(
+			"On notifications from precision-outbound, matching reply.*",
+		);
+		expect(formatSchedule({ type: "event", match: { level: "urgent" } })).toBe(
+			"On notifications at urgent or above",
+		);
+		expect(formatSchedule({ type: "event", match: {} })).toBe("On any routed notification");
+	});
+
+	// How often it fires is a property of the connector, not of the definition,
+	// so a per-day cost figure would be a number nothing supports.
+	test("estimate no runs per day", () => {
+		expect(estimateRunsPerDay({ type: "event", match })).toBe(0);
+	});
+
+	test("require a match", () => {
+		expect(() =>
+			validateAutomationFields({ schedule: { type: "event" } }),
+		).toThrow(/match is required/);
+		expect(() => validateAutomationFields({ schedule: { type: "event", match } })).not.toThrow();
+	});
+
+	test("bound the debounce window on both sides", () => {
+		expect(() =>
+			validateAutomationFields({ schedule: { type: "event", match, debounceMs: 500 } }),
+		).toThrow(/debounceMs/);
+		expect(() =>
+			validateAutomationFields({ schedule: { type: "event", match, debounceMs: 900_001 } }),
+		).toThrow(/debounceMs/);
+		expect(() =>
+			validateAutomationFields({ schedule: { type: "event", match, debounceMs: 60_000 } }),
+		).not.toThrow();
+	});
+
+	test("bound the fire ceiling on both sides, and require a whole number", () => {
+		for (const maxFiresPerHour of [0, 61, 2.5]) {
+			expect(() =>
+				validateAutomationFields({ schedule: { type: "event", match, maxFiresPerHour } }),
+			).toThrow(/maxFiresPerHour/);
+		}
+		expect(() =>
+			validateAutomationFields({ schedule: { type: "event", match, maxFiresPerHour: 6 } }),
+		).not.toThrow();
+	});
+
+	test("are created and read back through the tool surface", async () => {
+		const ctx = makeCtx();
+		const created = await handleCreate(
+			{
+				manifest: {
+					name: "Reply triage",
+					schedule: { type: "event", match, debounceMs: 60_000, maxFiresPerHour: 6 },
+				},
+				body: "Triage the replies in the event block.",
+			},
+			ctx,
+		);
+		expect(created.created).toBe(true);
+
+		const status = await handleStatus({ name: "Reply triage" }, ctx);
+		expect(status.automation.schedule).toEqual({
+			type: "event",
+			match,
+			debounceMs: 60_000,
+			maxFiresPerHour: 6,
+		});
+		expect(status.automation.scheduleHuman).toBe(
+			"On notifications from precision-outbound, matching reply.*",
+		);
+		expect(status.automation.nextRunAt).toBeUndefined();
+		expect(status.automation.estimatedCostPerDay).toBe(0);
 	});
 });

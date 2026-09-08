@@ -301,3 +301,90 @@ describe("createAutomation / deleteAutomation — internal caller path", () => {
     expect(ctx.definitions().size).toBe(0);
   });
 });
+
+describe("an event schedule", () => {
+  const eventSchedule = {
+    type: "event" as const,
+    match: { source: "precision-outbound", name: "reply.*" },
+  };
+
+  test("carries no nextRunAt, because it has no position in time", () => {
+    const ctx = makeCtx();
+    const { automation } = createAutomation(
+      { name: "Reply triage", prompt: "Triage.", schedule: eventSchedule, source: "user" },
+      ctx,
+    );
+    expect(automation.nextRunAt).toBeUndefined();
+  });
+
+  // A clock schedule leaves a nextRunAt behind. The timer ignores it, but the
+  // status surface reads it, so a moment nothing will ever act on is worse than
+  // none at all.
+  test("clears a nextRunAt left over from the clock schedule it replaced", () => {
+    const ctx = makeCtx();
+    createAutomation(
+      {
+        name: "Reply triage",
+        prompt: "Triage.",
+        schedule: { type: "interval", intervalMs: 3_600_000 },
+        source: "user",
+      },
+      ctx,
+    );
+    const before = ctx.definitions().get("reply-triage");
+    expect(before?.nextRunAt).toBeDefined();
+
+    updateAutomation("Reply triage", { schedule: eventSchedule }, ctx);
+    expect(ctx.definitions().get("reply-triage")?.nextRunAt).toBeUndefined();
+  });
+
+  /**
+   * A connector that could give itself an automation subscribed to its own
+   * outbox has written a self-wake loop with no operator anywhere in it. The
+   * tool schema cannot carry `source` at all, so this is the only door the
+   * check can sit on.
+   */
+  test("is refused for a provenance outside user and agent", () => {
+    const ctx = makeCtx();
+    expect(() =>
+      createAutomation(
+        {
+          name: "Self wake",
+          prompt: "Go.",
+          schedule: eventSchedule,
+          source: "bundle" as never,
+        },
+        ctx,
+      ),
+    ).toThrow(/cannot run on events/);
+    expect(ctx.definitions().size).toBe(0);
+  });
+
+  test("cannot be patched onto an automation with such a provenance either", () => {
+    const ctx = makeCtx();
+    createAutomation(
+      {
+        name: "Bundle job",
+        prompt: "Go.",
+        schedule: { type: "interval", intervalMs: 3_600_000 },
+        source: "bundle" as never,
+      },
+      ctx,
+    );
+    expect(() =>
+      updateAutomation("Bundle job", { schedule: eventSchedule }, ctx),
+    ).toThrow(/cannot run on events/);
+    expect(ctx.definitions().get("bundle-job")?.schedule.type).toBe("interval");
+  });
+
+  test("is allowed for a user and for the agent acting on one's instruction", () => {
+    const ctx = makeCtx();
+    for (const source of ["user", "agent"] as const) {
+      const { automation } = createAutomation(
+        { name: `Triage ${source}`, prompt: "Triage.", schedule: eventSchedule, source },
+        ctx,
+      );
+      expect(automation.schedule.type).toBe("event");
+    }
+  });
+});

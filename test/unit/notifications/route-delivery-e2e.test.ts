@@ -27,6 +27,12 @@ import {
 import { resolvePollConfig } from "../../../src/notifications/poll-config.ts";
 import { NotificationPoller, type PollTarget } from "../../../src/notifications/poller.ts";
 import { RouteDispatcher } from "../../../src/notifications/routes.ts";
+import {
+  AutomationEventTrigger,
+  type AutomationEventTriggerDeps,
+} from "../../../src/platform/automations/event-trigger.ts";
+import type { Automation, ScheduleSpec } from "../../../src/platform/automations/types.ts";
+import type { RunInput } from "../../../src/platform/automations/scheduler.ts";
 import { NotificationStore } from "../../../src/notifications/store.ts";
 import type { Notification } from "../../../src/notifications/types.ts";
 import type { Tool, ToolSource } from "../../../src/tools/types.ts";
@@ -150,13 +156,17 @@ async function outbox(): Promise<OutboxFixture> {
 let inFlight: Array<Promise<void>>;
 
 /** The whole loop, wired the way `createNotificationsSource` wires it. */
-function loop(target: PollTarget): { poller: NotificationPoller; routes: RouteDispatcher } {
+function loop(
+  target: PollTarget,
+  trigger?: AutomationEventTrigger,
+): { poller: NotificationPoller; routes: RouteDispatcher } {
   const runtime = dispatchRuntime();
   const routes = new RouteDispatcher({
     workspaceStore,
     storeFor,
     workspaceIds: async () => (await workspaceStore.list()).map((ws) => ws.id),
     dispatch: (opts) => dispatchUnattended(runtime, opts),
+    ...(trigger ? { wakeAutomation: (req) => trigger.offer(req) } : {}),
     eventSink: { emit: (event) => events.push(event) },
     now: () => clock,
   });
@@ -382,5 +392,186 @@ describe("a connector's fact reaching a Slack channel", () => {
 
     expect(inbox()).toHaveLength(1);
     expect(slackCalls).toHaveLength(1);
+  });
+});
+
+describe("a connector's fact reaching an automation", () => {
+  const AUTOMATION = "reply-triage";
+  /** Short enough that a batching test finishes in milliseconds. */
+  const DEBOUNCE = 20;
+
+  /** Every run the trigger started, and the input it carried. */
+  let runs: RunInput[];
+
+  function automation(schedule: Partial<ScheduleSpec> = {}): Automation {
+    return {
+      id: AUTOMATION,
+      name: "Reply triage",
+      prompt: "Triage.",
+      schedule: {
+        type: "event",
+        match: { source: OUTBOX_SOURCE, name: "domain.*" },
+        debounceMs: DEBOUNCE,
+        ...schedule,
+      } as ScheduleSpec,
+      enabled: true,
+      ownerId: AUTHOR,
+      workspaceId: wsId,
+      source: "user",
+      createdAt: "2026-09-01T00:00:00.000Z",
+      updatedAt: "2026-09-01T00:00:00.000Z",
+      runCount: 0,
+      consecutiveErrors: 0,
+      cumulativeInputTokens: 0,
+      cumulativeOutputTokens: 0,
+    };
+  }
+
+  /** The real trigger, with only the store and the scheduler stubbed out. */
+  function trigger(over: Partial<AutomationEventTriggerDeps> = {}): AutomationEventTrigger {
+    runs = [];
+    const made = new AutomationEventTrigger({
+      // Scoped by owner: the route's author is who the dispatcher passes, and a
+      // mismatch is what makes another user's automation unreachable.
+      automation: (_ws, owner) => (owner === AUTHOR ? automation() : undefined),
+      eventRunsSince: () => 0,
+      run: async (_ws, _owner, _id, input) => {
+        runs.push(input);
+        return { run: { id: "run_e2e01" } };
+      },
+      disable: () => {},
+      ...over,
+    });
+    teardown.push(() => made.stop());
+    return made;
+  }
+
+  async function configureAgentRoute(): Promise<void> {
+    await workspaceStore.update(wsId, {
+      notifications: {
+        sources: { [OUTBOX_SOURCE]: { maxLevel: "urgent" } },
+        routes: [
+          {
+            id: "rt_triage",
+            createdBy: AUTHOR,
+            match: { source: OUTBOX_SOURCE, name: "domain.*" },
+            deliver: [{ kind: "agent", automation: AUTOMATION }],
+          },
+        ],
+      },
+    } as never);
+  }
+
+  /** Let the debounce window close and the stubbed run settle. */
+  async function settleWindow(): Promise<void> {
+    await new Promise((resolve) => setTimeout(resolve, DEBOUNCE + 20));
+  }
+
+  test("goes outbox → inbox → route → batch → run, and the ledger names the run", async () => {
+    await configureAgentRoute();
+    const fixture = await outbox();
+    const { poller } = loop(targetFor(fixture), trigger());
+
+    await sweepAndSettle(poller);
+    fixture.emit(fixtureEvent("evt_domain_active"));
+    clock += PAST_ANY_BACKOFF_MS;
+    await sweepAndSettle(poller);
+
+    // Inside the window: the item is durable and the row is honest about
+    // waiting, and nothing has run.
+    expect(inbox().map((item) => item.envelope.eventId)).toEqual(["evt_domain_active"]);
+    expect(inbox()[0]?.deliveries?.[0]).toMatchObject({
+      kind: "agent",
+      outcome: "deferred",
+      classification: "awaiting_batch",
+    });
+    expect(runs).toHaveLength(0);
+
+    await settleWindow();
+
+    expect(runs).toHaveLength(1);
+    expect(runs[0]?.preamble).toContain("<event>");
+    expect(runs[0]?.preamble).toContain("evt_domain_active.example");
+    expect(inbox()[0]?.deliveries?.[0]).toMatchObject({
+      kind: "agent",
+      outcome: "delivered",
+      runId: "run_e2e01",
+      attempts: 1,
+    });
+    expect(
+      events.filter((e) => e.type === "notification.delivered").map((e) => e.data),
+    ).toHaveLength(1);
+  });
+
+  test("two facts arriving in one window are one run", async () => {
+    await configureAgentRoute();
+    const fixture = await outbox();
+    const { poller } = loop(targetFor(fixture), trigger());
+
+    await sweepAndSettle(poller);
+    fixture.emit(fixtureEvent("evt_first"));
+    fixture.emit(fixtureEvent("evt_second"));
+    clock += PAST_ANY_BACKOFF_MS;
+    await sweepAndSettle(poller);
+    await settleWindow();
+
+    expect(runs).toHaveLength(1);
+    expect(runs[0]?.preamble).toContain("2 notifications matched");
+    for (const item of inbox()) {
+      expect(item.deliveries?.[0]).toMatchObject({ outcome: "delivered", runId: "run_e2e01" });
+    }
+  });
+
+  test("a route naming a clock automation is refused, and the ledger says why", async () => {
+    await configureAgentRoute();
+    const fixture = await outbox();
+    const { poller } = loop(
+      targetFor(fixture),
+      trigger({
+        automation: () => ({
+          ...automation(),
+          schedule: { type: "cron", expression: "0 9 * * *" },
+        }),
+      }),
+    );
+
+    await sweepAndSettle(poller);
+    fixture.emit(fixtureEvent("evt_domain_active"));
+    clock += PAST_ANY_BACKOFF_MS;
+    await sweepAndSettle(poller);
+
+    expect(runs).toHaveLength(0);
+    expect(inbox()[0]?.deliveries?.[0]).toMatchObject({
+      outcome: "denied",
+      classification: "not_event_scheduled",
+    });
+  });
+
+  test("the source ceiling holds the wake back exactly as it holds a tool back", async () => {
+    // No `sources` entry, so the connector sits at the `info` default while the
+    // fixture emits `attention` and the automation's own match asks for it.
+    await workspaceStore.update(wsId, {
+      notifications: {
+        routes: [
+          {
+            id: "rt_triage",
+            createdBy: AUTHOR,
+            match: { source: OUTBOX_SOURCE, level: "attention" },
+            deliver: [{ kind: "agent", automation: AUTOMATION }],
+          },
+        ],
+      },
+    } as never);
+
+    const fixture = await outbox();
+    const { poller } = loop(targetFor(fixture), trigger());
+    await sweepAndSettle(poller);
+    fixture.emit(fixtureEvent("evt_domain_active"));
+    clock += PAST_ANY_BACKOFF_MS;
+    await sweepAndSettle(poller);
+    await settleWindow();
+
+    expect(runs).toHaveLength(0);
+    expect(inbox()[0]?.deliveries ?? []).toEqual([]);
   });
 });

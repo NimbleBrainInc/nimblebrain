@@ -35,6 +35,17 @@ describe("resolveExecutorContext", () => {
     expect(ctx.identity).toEqual({ id: "usr_owner_a" });
   });
 
+  // An event run is dispatched from the notifications poller's tick, which
+  // carries whatever ambient context the last request left behind — the same
+  // hazard the scheduled path has, arriving by a different door. It acts as the
+  // automation's owner, which is what makes the membership re-check in
+  // `executeTask` ask about the right person.
+  test("event run ignores an ambient (leaked) workspace context", () => {
+    const ctx = resolveExecutorContext(automation, "event", otherWorkspaceCtx);
+    expect(ctx.workspaceId).toBe("ws_a_shared");
+    expect(ctx.identity).toEqual({ id: "usr_owner_a" });
+  });
+
   // A manual test-button run is dispatched synchronously inside the clicking
   // user's genuine context, so it legitimately uses it.
   test("manual run uses the ambient request context", () => {

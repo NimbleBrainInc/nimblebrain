@@ -18,12 +18,17 @@
 
 import { type Static, Type } from "@sinclair/typebox";
 import { StringEnum } from "./_shared.ts";
+import { NotificationRouteMatch } from "./notifications.ts";
 
 // ── Shared sub-schemas ───────────────────────────────────────────────────
 
 const Schedule = Type.Object(
   {
-    type: StringEnum(["cron", "interval"] as const),
+    type: StringEnum(["cron", "interval", "event"] as const, {
+      description:
+        "`cron` and `interval` are positions in time. `event` has no next run: the automation " +
+        "fires when a notification a workspace admin routed to it arrives.",
+    }),
     expression: Type.Optional(
       Type.String({ description: "5-field cron expression (when type=cron)." }),
     ),
@@ -34,6 +39,39 @@ const Schedule = Type.Object(
       Type.Number({
         minimum: 60000,
         description: "Interval in ms (when type=interval). Min 60000.",
+      }),
+    ),
+    match: Type.Optional(
+      Type.Object(NotificationRouteMatch.properties, {
+        additionalProperties: false,
+        description:
+          "Which notifications this automation wants (when type=event). Required for an event " +
+          "schedule. A workspace admin must ALSO have written a delivery route naming this " +
+          "automation — this narrows what arrives down that route, it does not open one.",
+      }),
+    ),
+    debounceMs: Type.Optional(
+      // Bounds mirror DEFAULT_EVENT_DEBOUNCE_MS / MAX_EVENT_DEBOUNCE_MS in
+      // src/platform/automations/types.ts. Literals for the same reason as
+      // maxIterations below: this schema is codegen'd under a strict rootDir
+      // that forbids importing from outside src/platform/schemas/.
+      Type.Number({
+        minimum: 1000,
+        maximum: 900000,
+        description:
+          "How long matching notifications coalesce into one batch before the run starts, in " +
+          "ms (when type=event). Default 30000, max 900000. A burst becomes one run with a " +
+          "list in it, not one run per item.",
+      }),
+    ),
+    maxFiresPerHour: Type.Optional(
+      Type.Number({
+        minimum: 1,
+        maximum: 60,
+        description:
+          "Most runs this automation may fire from events in a rolling hour (when type=event). " +
+          "Default 12, max 60. Exceeding it disables the automation — it is what terminates a " +
+          "loop in which a run's own work produces the event that fires it again.",
       }),
     ),
   },
@@ -310,6 +348,7 @@ export interface AutomationRunRecord {
   iterations: number;
   error?: string;
   transient?: boolean;
+  trigger?: "scheduled" | "manual" | "event";
   resultPreview?: string;
   stopReason?: "complete" | "max_iterations" | "length" | "content_filter" | "error" | "other";
 }
@@ -366,10 +405,13 @@ export interface AutomationTokenBudget {
  * Schedule spec block on a stored automation. Mirror of `ScheduleSpec`.
  */
 export interface AutomationScheduleSpec {
-  type: "cron" | "interval";
+  type: "cron" | "interval" | "event";
   expression?: string;
   timezone?: string;
   intervalMs?: number;
+  match?: NotificationRouteMatch;
+  debounceMs?: number;
+  maxFiresPerHour?: number;
 }
 
 /**

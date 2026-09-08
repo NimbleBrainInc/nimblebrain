@@ -683,3 +683,62 @@ describe("createDirectExecutor — recursive-call guard", () => {
 		expect(caughtMessage).not.toMatch(/timed out after/);
 	});
 });
+
+// ---------------------------------------------------------------------------
+// createDirectExecutor — per-run input
+// ---------------------------------------------------------------------------
+
+describe("createDirectExecutor — an event run's input", () => {
+	function capturing(): { taskFn: TaskFn; seen: { prompt?: string; trigger?: string } } {
+		const seen: { prompt?: string; trigger?: string } = {};
+		const taskFn: TaskFn = async (req) => {
+			seen.prompt = req.prompt;
+			seen.trigger = req.trigger;
+			return {
+				output: "ok",
+				runId: "run_test000000",
+				toolCalls: [],
+				stopReason: "complete",
+				usage: { inputTokens: 100, outputTokens: 50, iterations: 1 },
+			};
+		};
+		return { taskFn, seen };
+	}
+
+	test("goes ahead of the stored prompt, and the stored prompt is not rewritten", async () => {
+		const { taskFn, seen } = capturing();
+		const executor = createDirectExecutor(taskFn, () => ({}));
+		const automation = makeAutomation({ prompt: "Triage the replies." });
+
+		const { run } = await executor(automation, undefined, "event", {
+			preamble: "<event>\nOne notification matched.\n</event>",
+		});
+
+		expect(seen.prompt).toBe("<event>\nOne notification matched.\n</event>\n\nTriage the replies.");
+		// The batch is one run's input. It must not reach the definition, which
+		// is what would put inbox content in every later run and in the prefix.
+		expect(automation.prompt).toBe("Triage the replies.");
+		expect(run.trigger).toBe("event");
+	});
+
+	test("translates the trigger into the runtime's vocabulary", async () => {
+		const { taskFn, seen } = capturing();
+		const executor = createDirectExecutor(taskFn, () => ({}));
+
+		await executor(makeAutomation(), undefined, "event");
+		expect(seen.trigger).toBe("event");
+
+		await executor(makeAutomation(), undefined, "scheduled");
+		expect(seen.trigger).toBe("schedule");
+
+		await executor(makeAutomation(), undefined, "manual");
+		expect(seen.trigger).toBe("manual");
+	});
+
+	test("a run with no per-run input sends the prompt unchanged", async () => {
+		const { taskFn, seen } = capturing();
+		const executor = createDirectExecutor(taskFn, () => ({}));
+		await executor(makeAutomation({ prompt: "Just this." }), undefined, "scheduled");
+		expect(seen.prompt).toBe("Just this.");
+	});
+});

@@ -20,7 +20,7 @@ export declare const NOTIFICATION_LIST_DEFAULT_LIMIT = 20;
 export declare const NOTIFICATION_LIST_MAX_LIMIT = 100;
 export declare const NotificationsListInput: import("@sinclair/typebox").TObject<{
     unreadOnly: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TBoolean>;
-    level: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"attention" | "info" | "urgent">>;
+    level: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"info" | "attention" | "urgent">>;
     source: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     after: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
     order: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"desc" | "asc">>;
@@ -34,23 +34,26 @@ export type NotificationsMarkReadInput = Static<typeof NotificationsMarkReadInpu
 /**
  * Where one route target stands for one notification.
  *
- * Three of the six are terminal because retrying changes nothing until
- * configuration does, and the split is the dispatch's own, read rather than
- * re-derived:
+ * Four of the six are terminal because retrying changes nothing until
+ * configuration does, and the split is the delivering side's own — the
+ * unattended dispatch's for a tool, the automations event trigger's for an
+ * agent — read rather than re-derived:
  *
  * | Outcome | Terminal | Means |
  * |---|---|---|
- * | `pending` | no | written before the attempt; a retry is due |
- * | `delivered` | yes | the tool ran and did not report failure |
- * | `deferred` | yes for now | an agent target, waiting on the slice that wakes one |
- * | `denied` | yes | a gate refused the author this tool |
- * | `skipped` | yes | the author is no longer a member of the workspace |
- * | `failed` | yes | the call did not complete, and the retry budget is spent |
+ * | `pending` | no | a tool target, written before the attempt; a retry is due |
+ * | `deferred` | no | an agent target inside its automation's debounce window |
+ * | `delivered` | yes | the tool ran, or the automation's run started |
+ * | `denied` | yes | a gate refused the author this tool, or the route names no automation of theirs that takes events |
+ * | `skipped` | yes | the author is no longer a member, or the automation is off or declined the item |
+ * | `failed` | yes | the work was owed and did not happen |
  *
- * `pending` is what makes the ledger the retry state rather than a report of
- * it: the row is written before the first attempt, so a runtime that restarts
- * mid-delivery finds the work on disk and resumes it. There is no queue
- * anywhere else holding the same fact.
+ * The two non-terminal outcomes are what make the ledger the delivery state
+ * rather than a report of it: the row is written before the first attempt, so a
+ * runtime that restarts mid-delivery finds the work on disk. It resumes a
+ * `pending` tool row; it closes out a `deferred` agent row, because a debounce
+ * window lives only in the memory of the process that opened it. There is no
+ * queue anywhere else holding either fact.
  */
 export type DeliveryOutcome = "pending" | "delivered" | "deferred" | "denied" | "skipped" | "failed";
 /**
@@ -94,6 +97,13 @@ export interface DeliveryRecord {
     updatedAt: string;
     /** ISO 8601 instant the next attempt is due. Present only while `pending`. */
     nextAttemptAt?: string;
+    /**
+     * The automation run this notification's batch started. Agent targets only,
+     * and present only once a run actually started — which is exactly the
+     * question an operator asks of a route that wakes an automation, and the
+     * answer `automations__run_result` is addressed with.
+     */
+    runId?: string;
 }
 /**
  * The wire shape of one inbox item — what `notifications__list` returns, and
@@ -203,7 +213,7 @@ export type NotificationPlaceholder = (typeof NOTIFICATION_PLACEHOLDERS)[number]
 export declare const NotificationRouteMatch: import("@sinclair/typebox").TObject<{
     source: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     name: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-    level: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"attention" | "info" | "urgent">>;
+    level: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"info" | "attention" | "urgent">>;
 }>;
 export type NotificationRouteMatch = Static<typeof NotificationRouteMatch>;
 export declare const NotificationDeliverTarget: import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TObject<{
@@ -243,7 +253,7 @@ export declare const NotificationRouteInput: import("@sinclair/typebox").TObject
     match: import("@sinclair/typebox").TObject<{
         source: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         name: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-        level: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"attention" | "info" | "urgent">>;
+        level: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"info" | "attention" | "urgent">>;
     }>;
     deliver: import("@sinclair/typebox").TArray<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TObject<{
         kind: import("@sinclair/typebox").TLiteral<"tool">;
@@ -261,7 +271,7 @@ export declare const NotificationsSetRoutesInput: import("@sinclair/typebox").TO
         match: import("@sinclair/typebox").TObject<{
             source: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
             name: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-            level: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"attention" | "info" | "urgent">>;
+            level: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"info" | "attention" | "urgent">>;
         }>;
         deliver: import("@sinclair/typebox").TArray<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TObject<{
             kind: import("@sinclair/typebox").TLiteral<"tool">;
@@ -276,7 +286,7 @@ export declare const NotificationsSetRoutesInput: import("@sinclair/typebox").TO
 export type NotificationsSetRoutesInput = Static<typeof NotificationsSetRoutesInput>;
 export declare const NotificationsSetSourceLevelInput: import("@sinclair/typebox").TObject<{
     source: import("@sinclair/typebox").TString;
-    maxLevel: import("@sinclair/typebox").TUnsafe<"attention" | "info" | "urgent">;
+    maxLevel: import("@sinclair/typebox").TUnsafe<"info" | "attention" | "urgent">;
 }>;
 export type NotificationsSetSourceLevelInput = Static<typeof NotificationsSetSourceLevelInput>;
 export declare const NotificationsSettingsInput: import("@sinclair/typebox").TObject<{}>;
@@ -337,18 +347,29 @@ export interface NotificationsSettingsOutput {
     routes: NotificationRouteView[];
     /** Tool names a `kind: "tool"` target may name — this workspace's installed set. */
     deliverableTools: string[];
-    /** Automations the caller owns in this workspace, for a `kind: "agent"` target. */
+    /**
+     * Automations the caller owns in this workspace, for a `kind: "agent"`
+     * target, with whether each one is actually wakeable.
+     *
+     * An automation without an event schedule can be named by a route and will
+     * refuse every item it is sent, so the editor can say so at write time rather
+     * than leaving an operator to find it in the ledger.
+     */
     automations: {
         id: string;
         name: string;
+        eventScheduled: boolean;
     }[];
     /** The placeholders a tool input may carry. */
     placeholders: readonly string[];
     /**
-     * Whether a matching route's **tool** targets actually run. An `agent`
-     * target is stored, matched and recorded in the ledger as deferred, and the
-     * slice that wakes an automation is unbuilt — so the editor narrows its
-     * notice to that kind rather than dropping it.
+     * Whether a matching route's targets actually run. True for both kinds: a
+     * tool target dispatches, and an agent target wakes the automation it names.
+     *
+     * Kept as a field rather than dropped now that it is unconditionally true —
+     * the editor reads it to decide what to say about a saved route, and a client
+     * that has to know the answer from its own version is a client that gets it
+     * wrong after a rollback.
      */
     routesExecuted: boolean;
 }

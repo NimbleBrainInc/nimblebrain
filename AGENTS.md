@@ -432,11 +432,19 @@ Three more rules that are load-bearing, not stylistic:
   branch on — including the too-old case, which must never throw: the door scans
   every workspace, so one stale record raising would answer **500** for
   deliveries belonging to workspaces that are entirely current.
-- **No agent-facing surface.** Nothing mints or rotates a hook from a tool the
-  model can reach, and no path leads from a delivery to an agent run.
+- **No agent-facing surface, and one operator-authored path out.** Nothing mints
+  or rotates a hook from a tool the model can reach.
   `hooks__list_webhooks` / `hooks__rotate_webhook` carry
   `INTERNAL_TOOL_ANNOTATION` — stripped from the chat tool list and from
   `tools/list`, reached by the web shell's Webhooks settings tab.
+  A path from a delivery to an agent run now exists, and its bounds are what
+  make it safe rather than its absence: it runs only through a delivery route a
+  workspace **admin** wrote, two durable hops from the door (the door writes to
+  a connector's own store; the runtime polls that store into a workspace inbox;
+  a route matches an inbox item), only into an automation whose own schedule
+  asked for those notifications, batched, and capped by a fires-per-hour ceiling
+  that disables the automation rather than throttling it. A delivery still
+  reaches nothing on its own, which is the property this rule was protecting.
 
 **The URL's secret is an opaque delivery id** — 256 bits of randomness, and the
 whole capability. It names one registration; the connector, vendor and route are

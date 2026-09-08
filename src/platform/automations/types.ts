@@ -3,6 +3,8 @@
  * Matches SPEC_ADDENDUM_AUTOMATIONS.md §5.1–5.3.
  */
 
+import type { NotificationRouteMatch } from "../schemas/notifications.ts";
+
 // ---------------------------------------------------------------------------
 // §5.1 — Automation Definition
 // ---------------------------------------------------------------------------
@@ -115,8 +117,51 @@ export interface TokenBudget {
 // §5.2 — Schedule Specification
 // ---------------------------------------------------------------------------
 
+/**
+ * Default debounce window for an event schedule.
+ *
+ * A connector that learns forty things at once (a bounce sweep, a batch of
+ * replies) emits forty envelopes within a second or two. Long enough that such
+ * a burst becomes one run with forty items in it; short enough that a single
+ * reply is acted on while the person who sent it is still at their desk.
+ */
+export const DEFAULT_EVENT_DEBOUNCE_MS = 30_000;
+
+/** Widest debounce window an event schedule may ask for. */
+export const MAX_EVENT_DEBOUNCE_MS = 900_000;
+
+/**
+ * Default ceiling on how often an event schedule may fire, per hour.
+ *
+ * The run limits an automation already carries bound how much ONE run costs;
+ * none of them bounds how many runs there are, because a run that succeeds
+ * every time never trips consecutive-error auto-disable. A self-feeding loop —
+ * a run approves something, the connector emits the fact, the route fires the
+ * run — is exactly that shape, so this is the bound that terminates it.
+ */
+export const DEFAULT_EVENT_MAX_FIRES_PER_HOUR = 12;
+
+/** Highest fire ceiling an event schedule may ask for. */
+export const MAX_EVENT_MAX_FIRES_PER_HOUR = 60;
+
+/** What `disabledReason` says when the fire ceiling turned an automation off. */
+export const EVENT_FIRE_CEILING_REASON = "event_fire_ceiling";
+
+/**
+ * When an automation runs.
+ *
+ * Three kinds, discriminated by `type`, with each kind's own fields optional on
+ * the shared shape — the arrangement `cron` and `interval` already had.
+ *
+ * `cron` and `interval` are positions in time and the scheduler's timer arms
+ * itself to them. `event` is not: it has no next run, the timer never arms for
+ * it, and it fires when a notification the workspace routed to it arrives.
+ * Reaching an automation that way is an operator's decision twice over — an
+ * admin writes the route that names it, and the automation's own `match` says
+ * which of the routed items it wants — so neither half alone opens the path.
+ */
 export interface ScheduleSpec {
-  type: "cron" | "interval";
+  type: "cron" | "interval" | "event";
 
   /** Standard 5-field cron expression. Required when type is "cron". */
   expression?: string;
@@ -126,6 +171,34 @@ export interface ScheduleSpec {
 
   /** Interval in milliseconds. Required when type is "interval". Minimum: 60_000 (1 min). */
   intervalMs?: number;
+
+  /**
+   * Which notifications this automation wants. Required when type is "event".
+   *
+   * The same match expression a delivery route carries, imported rather than
+   * restated so one grammar governs both ends: a route decides that a path from
+   * the inbox to this automation exists at all, and this decides which of the
+   * items arriving down it are worth a run.
+   */
+  match?: NotificationRouteMatch;
+
+  /**
+   * How long matching items coalesce into one batch before the run starts, in
+   * milliseconds. Default {@link DEFAULT_EVENT_DEBOUNCE_MS}.
+   */
+  debounceMs?: number;
+
+  /**
+   * Most runs this automation may fire from events in any rolling hour.
+   * Default {@link DEFAULT_EVENT_MAX_FIRES_PER_HOUR}. Exceeding it disables the
+   * automation, through the same fields consecutive-error auto-disable uses.
+   */
+  maxFiresPerHour?: number;
+}
+
+/** Whether a schedule fires from notifications rather than from the clock. */
+export function isEventSchedule(schedule: ScheduleSpec | undefined): boolean {
+  return schedule?.type === "event";
 }
 
 // ---------------------------------------------------------------------------
@@ -145,6 +218,15 @@ export interface AutomationRun {
   error?: string;
   /** Whether this failure was classified as transient (eligible for backoff retry). */
   transient?: boolean;
+  /**
+   * What started this run — the scheduler's timer, an operator's Run now, or a
+   * notification a route delivered here.
+   *
+   * Absent on records written before the field existed, which is why the fire
+   * ceiling counts `"event"` explicitly rather than counting everything that is
+   * not scheduled.
+   */
+  trigger?: "scheduled" | "manual" | "event";
   /** Final agent response, truncated for the run list. The full deliverable,
    *  activity log, and output-file refs live in the run's `AutomationRunResult`
    *  sidecar (see {@link AutomationRunResult}). */
