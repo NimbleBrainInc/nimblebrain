@@ -20,15 +20,23 @@
  * never by an authoring caller.
  */
 import { type Static } from "@sinclair/typebox";
+import { NotificationRouteMatch } from "./notifications.ts";
 export declare const AutomationsCreateInput: import("@sinclair/typebox").TObject<{
     manifest: import("@sinclair/typebox").TObject<{
         name: import("@sinclair/typebox").TString;
         description: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         schedule: import("@sinclair/typebox").TObject<{
-            type: import("@sinclair/typebox").TUnsafe<"cron" | "interval">;
+            type: import("@sinclair/typebox").TUnsafe<"cron" | "interval" | "event">;
             expression: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
             timezone: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
             intervalMs: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
+            match: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
+                source: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+                name: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+                level: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"info" | "attention" | "urgent">>;
+            }>>;
+            debounceMs: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
+            maxFiresPerHour: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
         }>;
         enabled: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TBoolean>;
         skill: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
@@ -50,10 +58,17 @@ export declare const AutomationsUpdateInput: import("@sinclair/typebox").TObject
     manifest: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
         description: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         schedule: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
-            type: import("@sinclair/typebox").TUnsafe<"cron" | "interval">;
+            type: import("@sinclair/typebox").TUnsafe<"cron" | "interval" | "event">;
             expression: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
             timezone: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
             intervalMs: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
+            match: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
+                source: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+                name: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+                level: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"info" | "attention" | "urgent">>;
+            }>>;
+            debounceMs: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
+            maxFiresPerHour: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
         }>>;
         enabled: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TBoolean>;
         skill: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
@@ -76,7 +91,7 @@ export declare const AutomationsDeleteInput: import("@sinclair/typebox").TObject
 export type AutomationsDeleteInput = Static<typeof AutomationsDeleteInput>;
 export declare const AutomationsListInput: import("@sinclair/typebox").TObject<{
     enabled: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TBoolean>;
-    source: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"user" | "agent">>;
+    source: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"agent" | "user">>;
     limit: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TInteger>;
     cursor: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
 }>;
@@ -88,7 +103,7 @@ export declare const AutomationsStatusInput: import("@sinclair/typebox").TObject
 export type AutomationsStatusInput = Static<typeof AutomationsStatusInput>;
 export declare const AutomationsRunsInput: import("@sinclair/typebox").TObject<{
     automationId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-    status: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"running" | "success" | "failure" | "timeout" | "cancelled" | "skipped">>;
+    status: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"skipped" | "running" | "success" | "failure" | "timeout" | "cancelled">>;
     since: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     limit: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
 }>;
@@ -179,6 +194,7 @@ export interface AutomationRunRecord {
     iterations: number;
     error?: string;
     transient?: boolean;
+    trigger?: "scheduled" | "manual" | "event";
     resultPreview?: string;
     stopReason?: "complete" | "max_iterations" | "length" | "content_filter" | "error" | "other";
 }
@@ -234,10 +250,13 @@ export interface AutomationTokenBudget {
  * Schedule spec block on a stored automation. Mirror of `ScheduleSpec`.
  */
 export interface AutomationScheduleSpec {
-    type: "cron" | "interval";
+    type: "cron" | "interval" | "event";
     expression?: string;
     timezone?: string;
     intervalMs?: number;
+    match?: NotificationRouteMatch;
+    debounceMs?: number;
+    maxFiresPerHour?: number;
 }
 /**
  * Automation detail returned by `handleStatus`. Spreads the stored

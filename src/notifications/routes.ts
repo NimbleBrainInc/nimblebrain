@@ -46,19 +46,24 @@ import type {
   UnattendedDispatchOptions,
   UnattendedDispatchResult,
 } from "../orchestrator/unattended-dispatch.ts";
+import type {
+  EventWakeAck,
+  EventWakeRequest,
+  EventWakeSettlement,
+} from "../platform/automations/event-trigger.ts";
 import { backoffDelay } from "../platform/automations/scheduler.ts";
 import type {
   DeliveryOutcome,
   DeliveryRecord,
   NotificationDeliverTarget,
+  NotificationLevel,
 } from "../platform/schemas/notifications.ts";
 import type { WorkspaceStore } from "../workspace/workspace-store.ts";
 import { type NotificationRoute, readNotificationsConfig, setRouteDisabled } from "./config.ts";
-import { matchesNameGlob } from "./name-glob.ts";
+import { matchesNotification } from "./match.ts";
 import type { NotificationRef, NotificationStore } from "./store.ts";
 import { renderDeliverInput } from "./template.ts";
 import {
-  NOTIFICATION_LEVEL_RANK,
   type Notification,
   notificationEffectiveLevel,
   notificationId,
@@ -115,6 +120,15 @@ export interface RouteDispatcherDeps {
    * a router itself — is not even in scope here.
    */
   dispatch: (opts: UnattendedDispatchOptions) => Promise<UnattendedDispatchResult>;
+  /**
+   * The automations end of a `kind: "agent"` target — the only path from a
+   * delivery to an agent run, and injected for the reason `dispatch` is: this
+   * module must not be able to reach a scheduler on its own.
+   *
+   * Absent in a runtime built without automations, in which case a route naming
+   * one gets a ledger row saying so rather than silence.
+   */
+  wakeAutomation?: (req: EventWakeRequest) => EventWakeAck;
   /**
    * Every workspace with an inbox, for the one-time resume scan.
    *
@@ -228,10 +242,19 @@ export class RouteDispatcher {
       return;
     }
     for (const { item, row } of rows) {
-      // Only a tool target is ever left pending; an agent target is written
-      // terminal. A row that says otherwise came off an edited record and has
-      // nothing this slice can do for it.
-      if (row.kind !== "tool") continue;
+      // An agent target left `deferred` is a debounce window that died with the
+      // process that opened it. The batch is NOT re-formed: the items that were
+      // in it are unknown (the window is memory, deliberately — it is one run's
+      // input and never definition), and re-firing from what a single row names
+      // would start a run for a fraction of a batch, minutes or hours late, for
+      // events an operator may since have handled. Closed out instead, so the
+      // ledger says the run did not happen rather than leaving a row that
+      // nothing in this process will ever look at again.
+      if (row.kind === "agent") {
+        if (row.outcome === "deferred") this.#closeLostBatch(wsId, item, row);
+        continue;
+      }
+      if (row.outcome !== "pending") continue;
       const due = row.nextAttemptAt ? Date.parse(row.nextAttemptAt) : this.#now();
       this.#pending.set(pendingKey(wsId, item, row), {
         wsId,
@@ -364,10 +387,13 @@ export class RouteDispatcher {
     const seeded = seedRows(matched, new Date(this.#now()).toISOString());
     if (!this.#writeLedger(wsId, ref, seeded)) return;
 
-    for (const { target } of matched) {
-      if (target.kind === "agent") {
-        notificationsDeliveredTotal.inc({ kind: "agent", outcome: "deferred" });
-      }
+    // Agent targets first and without awaiting anything: handing an item to the
+    // automations source is a synchronous offer into a debounce window, and it
+    // must not queue behind a tool target's minute-long timeout — the whole
+    // point of the window is that a burst arriving together lands in one batch.
+    for (const { route, target } of matched) {
+      if (target.kind !== "agent") continue;
+      this.#wake(wsId, item, ref, route, target);
     }
 
     for (const { route, target } of matched) {
@@ -375,6 +401,100 @@ export class RouteDispatcher {
       if (target.kind !== "tool") continue;
       await this.#attempt(wsId, item, ref, route, target, 0);
     }
+  }
+
+  // -- an agent target ---------------------------------------------------
+
+  /**
+   * Offer one item to the automation a route names.
+   *
+   * The seeded row already says `deferred`, so an accepted offer writes
+   * nothing: the item is in a batch and the row is honest about it until the
+   * batch settles. A refusal is terminal and is written straight away, with the
+   * outcome the automations side chose rather than one derived from its reason
+   * — the same split the tool path has with the unattended dispatch.
+   */
+  #wake(
+    wsId: string,
+    item: Notification,
+    ref: NotificationRef,
+    route: NotificationRoute,
+    target: ResolvedTarget,
+  ): void {
+    const wake = this.#deps.wakeAutomation;
+    let ack: EventWakeAck;
+    try {
+      ack = wake
+        ? wake({
+            wsId,
+            automationId: target.name,
+            // The route's author owns the automation: the settings surface only
+            // offers a route the caller's own, and an automation is stored under
+            // its owner. So this is the lookup's scope, not just its principal —
+            // an automation belonging to somebody else is not found at all.
+            ownerId: route.createdBy,
+            item,
+            settle: (result) => this.#settleWake(wsId, ref, route, target, result),
+          })
+        : {
+            accepted: false,
+            outcome: "denied",
+            classification: "automations_unavailable",
+            reason: "this runtime has no automations source, so nothing can be woken",
+          };
+    } catch (err) {
+      ack = {
+        accepted: false,
+        outcome: "failed",
+        classification: "wake_error",
+        reason: errorText(err),
+      };
+    }
+    // Nothing is counted here. The item is in a batch, which is not an outcome
+    // the delivery counter reports — it counts targets that REACHED one, and a
+    // batch that later settles would otherwise move it twice.
+    if (ack.accepted) return;
+    this.#settleWake(wsId, ref, route, target, ack);
+  }
+
+  /**
+   * Write where one item's wake ended up.
+   *
+   * Called once per item: straight away when the offer was refused, or a
+   * debounce window and a run later when the batch it joined settled. Reads the
+   * item back off the store because a settlement arrives long after `#evaluate`
+   * returned, and the emitted event names the item.
+   */
+  #settleWake(
+    wsId: string,
+    ref: NotificationRef,
+    route: NotificationRoute,
+    target: ResolvedTarget,
+    result: EventWakeSettlement,
+  ): void {
+    const row: DeliveryRecord = {
+      routeId: route.id,
+      target: target.name,
+      index: target.index,
+      kind: "agent",
+      // The run either started or it did not; there is no second attempt at a
+      // batch, so this counts the one offer that was made.
+      attempts: 1,
+      outcome: result.outcome,
+      updatedAt: new Date(this.#now()).toISOString(),
+      ...(result.classification ? { classification: result.classification } : {}),
+      ...(result.reason ? { lastError: truncateError(result.reason) } : {}),
+      ...(result.runId ? { runId: result.runId } : {}),
+    };
+    this.#writeLedger(wsId, ref, [row]);
+    notificationsDeliveredTotal.inc({ kind: "agent", outcome: result.outcome });
+    let item: Notification | undefined;
+    try {
+      item = this.#deps.storeFor(wsId).get(ref.source, ref.eventId);
+    } catch (err) {
+      log.warn(`[notifications] could not read item to report a wake: ${errorText(err)}`, { wsId });
+    }
+    if (item) this.#emitOutcome(wsId, item, row);
   }
 
   // -- one target --------------------------------------------------------
@@ -499,6 +619,28 @@ export class RouteDispatcher {
     }
 
     await this.#attempt(entry.wsId, item, entry.ref, route, target, entry.attempts);
+  }
+
+  /**
+   * Close out an agent row whose batch did not survive a restart.
+   *
+   * `failed` rather than `skipped`: work was owed — the automation had accepted
+   * these items — and it did not happen. An operator reading the ledger should
+   * see that, not a row that reads as though nothing was ever due.
+   */
+  #closeLostBatch(wsId: string, item: Notification, row: DeliveryRecord): void {
+    const closed: DeliveryRecord = {
+      ...row,
+      outcome: "failed",
+      classification: "batch_not_resumed",
+      lastError:
+        "the runtime restarted before this notification's batch reached its automation; " +
+        "batches are not re-formed across a restart",
+      updatedAt: new Date(this.#now()).toISOString(),
+    };
+    this.#writeLedger(wsId, { source: item.source, eventId: item.envelope.eventId }, [closed]);
+    notificationsDeliveredTotal.inc({ kind: "agent", outcome: "failed" });
+    this.#emitOutcome(wsId, item, closed);
   }
 
   /**
@@ -655,10 +797,11 @@ function matchTargets(routes: readonly NotificationRoute[], item: Notification):
 /**
  * The ledger rows a match produces, before anything has been attempted.
  *
- * A tool target starts `pending` and due now; an agent target is written
- * terminal in the same pass, because this slice's whole contribution to it is
- * recording that it matched. Both carry `updatedAt` from one instant, so the
- * rows for one item share a timestamp rather than drifting across the loop.
+ * A tool target starts `pending` and due now. An agent target starts
+ * `deferred`, which is honest for however long the automation's debounce window
+ * stays open, and is rewritten when the batch settles — or straight away if the
+ * offer was refused. Both carry `updatedAt` from one instant, so the rows for
+ * one item share a timestamp rather than drifting across the loop.
  */
 function seedRows(matched: readonly MatchedTarget[], at: string): DeliveryRecord[] {
   return matched.map(({ route, target }) =>
@@ -670,7 +813,7 @@ function seedRows(matched: readonly MatchedTarget[], at: string): DeliveryRecord
           kind: "agent",
           attempts: 0,
           outcome: "deferred",
-          classification: "awaiting_wake",
+          classification: "awaiting_batch",
           updatedAt: at,
         }
       : {
@@ -689,25 +832,21 @@ function seedRows(matched: readonly MatchedTarget[], at: string): DeliveryRecord
 /**
  * Whether one route's `match` admits one item, at the level routes see it at.
  *
- * `source` is exact, `name` is a glob, `level` is a minimum. All three are
- * optional and an omitted one narrows nothing, so an empty match is every
- * notification the workspace receives — legal, and the schema says so.
+ * The rules themselves are in {@link matchesNotification}, shared with the
+ * automation-side match an event schedule carries: both read the same grammar
+ * out of the same schema, and a second copy of it is a second place for a
+ * defect in it to hide.
  */
 export function routeMatches(
   route: NotificationRoute,
   item: Pick<Notification, "source"> & { envelope: { name: string } },
-  effectiveLevel: keyof typeof NOTIFICATION_LEVEL_RANK,
+  effectiveLevel: NotificationLevel,
 ): boolean {
-  const match = route.match ?? {};
-  if (match.source !== undefined && match.source !== item.source) return false;
-  if (!matchesNameGlob(item.envelope.name, match.name)) return false;
-  if (
-    match.level !== undefined &&
-    NOTIFICATION_LEVEL_RANK[effectiveLevel] < NOTIFICATION_LEVEL_RANK[match.level]
-  ) {
-    return false;
-  }
-  return true;
+  return matchesNotification(route.match, {
+    source: item.source,
+    name: item.envelope.name,
+    level: effectiveLevel,
+  });
 }
 
 /** Flatten a stored target's union into the shape the ledger and the call need. */

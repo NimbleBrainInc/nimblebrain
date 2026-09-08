@@ -6,6 +6,7 @@ import type { TaskRequest } from "../../runtime/types.ts";
 import { isTaskForbiddenIdentityTool } from "../../tools/identity-sources.ts";
 import { defineInProcessApp, type InProcessTool } from "../../tools/in-process-app.ts";
 import type { McpSource } from "../../tools/mcp-source.ts";
+import { AutomationEventTrigger } from "./event-trigger.ts";
 import { createDirectExecutor, type ExecutorContext } from "./executor.ts";
 import { type AutomationRunTrigger, Scheduler } from "./scheduler.ts";
 import { TOOL_SCHEMAS } from "./schemas.ts";
@@ -23,6 +24,7 @@ import {
 } from "./server.ts";
 import {
   deleteAutomationDefinition,
+  loadAutomation,
   loadOwnerAutomations,
   readAllRuns,
   readRunResult,
@@ -124,6 +126,32 @@ export async function createAutomationsSource(
   );
   const scheduler = new Scheduler(executor, { workDir, defaultTimezone });
   scheduler.start();
+
+  // The event trigger: the automations end of the path from a routed
+  // notification to an agent run. It reads and writes through the same store
+  // and scheduler the tools do — there is no second copy of an automation's
+  // state anywhere in it — and the runtime holds the reference so the
+  // notifications source can reach it without either source importing the
+  // other.
+  const eventTrigger = new AutomationEventTrigger({
+    automation: (wsId, owner, id) => loadAutomation(workDir, wsId, owner, id) ?? undefined,
+    eventRunsSince: (wsId, owner, id, since) =>
+      readRuns(workDir, wsId, owner, id, { since: new Date(since).toISOString() }).filter(
+        (run) => run.trigger === "event",
+      ).length,
+    run: (wsId, owner, id, input) => scheduler.runFromEvent(wsId, owner, id, input),
+    disable: (wsId, owner, id, reason) => {
+      const auto = loadAutomation(workDir, wsId, owner, id);
+      if (!auto) return;
+      auto.enabled = false;
+      auto.disabledAt = new Date().toISOString();
+      auto.disabledReason = reason;
+      auto.updatedAt = auto.disabledAt;
+      saveAutomation(workDir, wsId, owner, auto);
+      scheduler.reload();
+    },
+  });
+  runtime.registerAutomationEventTrigger(eventTrigger);
 
   /**
    * The caller's owner id. Automations are workspace-owned with the owner as a
@@ -288,6 +316,7 @@ export async function createAutomationsSource(
   const originalStop = source.stop.bind(source);
   source.stop = async () => {
     try {
+      eventTrigger.stop();
       scheduler.stop();
     } finally {
       await originalStop();

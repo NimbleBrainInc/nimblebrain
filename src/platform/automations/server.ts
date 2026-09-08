@@ -24,7 +24,17 @@ import type {
 } from "../schemas/automations.ts";
 import { createAutomation, deleteAutomation, updateAutomation } from "./domain.ts";
 import type { ReadRunsOptions } from "./store.ts";
-import type { Automation, AutomationRun, AutomationRunResult, ScheduleSpec } from "./types.ts";
+import {
+  type Automation,
+  type AutomationRun,
+  type AutomationRunResult,
+  DEFAULT_EVENT_DEBOUNCE_MS,
+  DEFAULT_EVENT_MAX_FIRES_PER_HOUR,
+  isEventSchedule,
+  MAX_EVENT_DEBOUNCE_MS,
+  MAX_EVENT_MAX_FIRES_PER_HOUR,
+  type ScheduleSpec,
+} from "./types.ts";
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -50,7 +60,24 @@ export function formatSchedule(schedule: ScheduleSpec): string {
     return formatCronExpression(schedule.expression, schedule.timezone);
   }
 
+  if (isEventSchedule(schedule)) return formatEventSchedule(schedule);
+
   return "Unknown schedule";
+}
+
+/**
+ * Render an event schedule as the notifications it waits for.
+ *
+ * There is no time in it to render, so this names the match — which is the
+ * whole of what an operator needs to recognise the automation in a list.
+ */
+function formatEventSchedule(schedule: ScheduleSpec): string {
+  const match = schedule.match ?? {};
+  const parts: string[] = [];
+  if (match.source) parts.push(`from ${match.source}`);
+  if (match.name) parts.push(`matching ${match.name}`);
+  if (match.level) parts.push(`at ${match.level} or above`);
+  return parts.length > 0 ? `On notifications ${parts.join(", ")}` : "On any routed notification";
 }
 
 /** Render an interval (in ms) as "Every N minutes/hours/days". */
@@ -191,6 +218,13 @@ export function estimateRunsPerDay(schedule: ScheduleSpec): number {
   if (schedule.type === "interval" && schedule.intervalMs) {
     return 86_400_000 / schedule.intervalMs;
   }
+  // An event schedule's run rate is a property of the connector, not of the
+  // definition, so there is nothing here to estimate from — the fire ceiling is
+  // the only number this side knows, and it is a bound rather than a rate.
+  // Zero, so a cost projection reads as "not from the schedule" rather than as
+  // a daily figure nothing supports.
+  if (isEventSchedule(schedule)) return 0;
+
   if (schedule.type === "cron" && schedule.expression) {
     const parts = schedule.expression.trim().split(/\s+/);
     if (parts.length !== 5) return 1;
@@ -290,6 +324,40 @@ export function validateAutomationFields(args: ValidatableAutomationFields): voi
   validateNumericLimits(args);
 }
 
+/**
+ * Validate an event schedule's own fields. Throws on invalid input.
+ *
+ * `match` is required because an event schedule without one runs on everything
+ * a route sends it, which is a decision worth writing down rather than falling
+ * into. Both bounds are two-sided: a debounce of a day is a run nobody connects
+ * to the thing that caused it, and a ceiling of a thousand is not a ceiling.
+ */
+function validateEventSchedule(schedule: ScheduleSpec): void {
+  if (!schedule.match) {
+    throw new Error(
+      "match is required for event schedules — say which notifications should run this " +
+        'automation, e.g. { source: "acme", name: "reply.*" }',
+    );
+  }
+  const debounce = schedule.debounceMs;
+  if (debounce != null && (debounce < 1000 || debounce > MAX_EVENT_DEBOUNCE_MS)) {
+    throw new Error(
+      `debounceMs must be between 1000 and ${MAX_EVENT_DEBOUNCE_MS} ` +
+        `(default ${DEFAULT_EVENT_DEBOUNCE_MS})`,
+    );
+  }
+  const fires = schedule.maxFiresPerHour;
+  if (
+    fires != null &&
+    (!Number.isInteger(fires) || fires < 1 || fires > MAX_EVENT_MAX_FIRES_PER_HOUR)
+  ) {
+    throw new Error(
+      `maxFiresPerHour must be a whole number between 1 and ${MAX_EVENT_MAX_FIRES_PER_HOUR} ` +
+        `(default ${DEFAULT_EVENT_MAX_FIRES_PER_HOUR})`,
+    );
+  }
+}
+
 /** Validate a schedule spec's type-specific fields. Throws on invalid input. */
 function validateSchedule(schedule: ScheduleSpec): void {
   if (schedule.type === "interval") {
@@ -299,6 +367,10 @@ function validateSchedule(schedule: ScheduleSpec): void {
     if (schedule.intervalMs < 60_000) {
       throw new Error("Interval must be at least 1 minute (60000ms)");
     }
+  }
+  if (isEventSchedule(schedule)) {
+    validateEventSchedule(schedule);
+    return;
   }
   if (schedule.type === "cron") {
     if (!schedule.expression) {

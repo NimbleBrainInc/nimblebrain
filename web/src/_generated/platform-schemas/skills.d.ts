@@ -18,7 +18,7 @@ import { type Static } from "@sinclair/typebox";
 export declare const SkillPriority: import("@sinclair/typebox").TNumber;
 export declare const SkillsListInput: import("@sinclair/typebox").TObject<{
     scope: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"user" | "org" | "workspace" | "provided">>;
-    layer: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<1 | 3>>;
+    layer: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<3 | 1>>;
     loading_strategy: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"always" | "dynamic">>;
     tool_affinity: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     status: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"active" | "disabled">>;

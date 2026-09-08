@@ -1,11 +1,11 @@
 ---
 title: Automations
-description: Schedule the agent to run on its own — cron and interval agent runs that produce deliverables.
+description: Schedule the agent to run on its own — cron, interval, and event-triggered agent runs that produce deliverables.
 ---
 
 import { Steps, Tabs, TabItem, Aside } from '@astrojs/starlight/components';
 
-Automations are scheduled agent runs. Instead of you typing a prompt, NimbleBrain runs a saved prompt on a schedule — a daily digest, a recurring report, a periodic check — and the agent executes it unattended, with access to your tools and connectors.
+Automations are unattended agent runs. Instead of you typing a prompt, NimbleBrain runs a saved prompt on a schedule — a daily digest, a recurring report, a periodic check — or when a connector reports something worth acting on, and the agent executes it unattended, with access to your tools and connectors.
 
 Each automation is a prompt plus a schedule. When it fires, the runtime starts an agent run framed around producing a deliverable rather than a back-and-forth conversation.
 
@@ -15,7 +15,7 @@ An automation has:
 
 - **A name** — becomes a kebab-case ID (for example, "Weekly Report" → `weekly-report`)
 - **A prompt** — the instruction sent to the agent on each run
-- **A schedule** — either a cron expression or a fixed interval
+- **A schedule** — a cron expression, a fixed interval, or a set of notifications to run on
 - **Optional run-time policy** — a model override, a forced skill match, iteration and token caps
 
 ## Who an automation runs as
@@ -30,10 +30,67 @@ Automation runs use your **timezone** for cron scheduling. The default is `Pacif
 
 ## Schedules
 
-Two schedule types:
+Three schedule types:
 
 - **Cron** — a standard 5-field cron expression (for example, `0 9 * * 1` for 9:00 AM every Monday)
 - **Interval** — a fixed interval in milliseconds, minimum 60000 (one minute)
+- **Event** — no time at all: the automation runs when a notification reaches it
+
+## Running on an event
+
+A connector can record facts nobody asked for — a domain went active, a reply
+landed, a payment bounced — and those arrive in the workspace [inbox](/using/notifications).
+An **event** automation runs when one of them reaches it.
+
+Two things have to agree before a single run happens, and they are written by
+different people:
+
+<Steps>
+
+1. **A workspace admin writes a delivery route** in workspace settings that
+   matches some notifications and delivers them to this automation. Only an
+   admin can do this — not the agent, and not a connector. Without a route, an
+   event automation never runs, however its match is written.
+
+2. **The automation's own `match`** says which of the notifications arriving
+   down that route it actually wants — by source, by an event-name glob, and by
+   a minimum level.
+
+</Steps>
+
+That is the whole of the path from a connector's report to an agent run: an
+operator authored both ends of it, and neither half opens it alone.
+
+### What a run receives
+
+Notifications that match within the automation's **debounce window** (default 30
+seconds) coalesce into one run. A burst of forty bounces is one run with forty
+entries in it, not forty runs.
+
+The run opens with an `<event>` block listing them — each item's source, event
+name, timestamp, title, subject, body and link. The connector's own structured
+payload is **not** included: the runtime does not read it, so it does not put it
+in front of the agent either. Everything in the block is data a third-party
+server wrote, and the agent is told to treat it that way — something to report
+and reason about, never an instruction to follow.
+
+### The fire ceiling
+
+An event automation carries **`maxFiresPerHour`** (default 12, maximum 60). If it
+fires more often than that in a rolling hour, it is **disabled** — the same way
+an automation that fails ten times in a row is.
+
+This is not a rate limit, it is a termination proof. Every other bound on an
+automation caps what one run costs; none of them stops a loop in which the run's
+own work produces the event that fires it again, because that loop succeeds
+every time. Re-enabling is a deliberate action, like any other auto-disable:
+break the loop first.
+
+<Aside type="caution">
+An automation whose run writes something the same connector reports on is the
+loop this ceiling exists for. Keep the ceiling low for anything shaped that way,
+and prefer a prompt that reads and classifies over one that writes.
+</Aside>
 
 ## Creating an automation
 
@@ -45,6 +102,17 @@ Every weekday at 8am, summarize my unread email and post it to the
 ```
 
 The agent creates the automation for you, generating the schedule and the prompt. You can ask it to list, pause, resume, or delete automations the same way.
+
+For an event automation, describe the trigger instead of a time:
+
+```
+When a reply lands in the outbound campaign, read the thread, classify it as
+interested / not interested / out of office, and log the classification against
+the contact. Don't send anything.
+```
+
+The agent will create it with an event schedule — and should tell you that it
+will not run until a workspace admin routes those notifications to it.
 
 ## Managing automations
 

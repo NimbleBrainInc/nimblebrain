@@ -25,7 +25,13 @@
  */
 
 import { computeBudgetResetAt, computeNextRunAt } from "./scheduler.ts";
-import type { Automation, AutomationSource, ScheduleSpec, TokenBudget } from "./types.ts";
+import {
+  type Automation,
+  type AutomationSource,
+  isEventSchedule,
+  type ScheduleSpec,
+  type TokenBudget,
+} from "./types.ts";
 
 // ---------------------------------------------------------------------------
 // Domain context — the minimum each operation needs
@@ -137,6 +143,42 @@ export interface DomainUpdatePatch {
 // Helpers
 // ---------------------------------------------------------------------------
 
+/**
+ * Who may own an automation that wakes on events.
+ *
+ * A person, or the agent acting on a person's instruction. Not a bundle: a
+ * connector that could give itself an automation subscribed to its own outbox
+ * would have written a self-wake loop with no operator anywhere in it, and the
+ * whole reason this path is safe is that an operator authored both ends of it.
+ *
+ * Stated as the set that MAY rather than the one that may not, so a third
+ * provenance added later is refused until somebody decides otherwise — a list
+ * of exclusions silently admits whatever it has not heard of.
+ */
+const EVENT_SCHEDULE_SOURCES: readonly AutomationSource[] = ["user", "agent"];
+
+/**
+ * Refuse an event schedule on an automation whose provenance may not have one.
+ *
+ * Enforced here rather than in the tool schema because the tool schema does not
+ * carry `source` at all — it is an operator/runtime field, so the only caller
+ * that can set it is an internal one coming through this module.
+ */
+export function assertEventScheduleAllowed(
+  schedule: ScheduleSpec | undefined,
+  source: AutomationSource | undefined,
+  name: string,
+): void {
+  if (!isEventSchedule(schedule)) return;
+  if (source !== undefined && !EVENT_SCHEDULE_SOURCES.includes(source)) {
+    throw new Error(
+      `Automation "${name}" has source "${source}" and cannot run on events. ` +
+        "An event schedule is reachable only through a delivery route a workspace admin " +
+        "wrote, and only a user or the agent acting for one may own the automation it names.",
+    );
+  }
+}
+
 export function toKebabCase(s: string): string {
   return s
     .trim()
@@ -177,6 +219,8 @@ export function createAutomation(
       message: `Automation "${input.name}" already exists (id: ${id}). Returning existing.`,
     };
   }
+
+  assertEventScheduleAllowed(input.schedule, input.source ?? "agent", input.name);
 
   const now = new Date().toISOString();
   const automation: Automation = {
@@ -253,6 +297,22 @@ const UPDATABLE_FIELDS = [
   "tokenBudget",
 ] as const satisfies readonly (keyof DomainUpdatePatch)[];
 
+/**
+ * Move `nextRunAt` onto the schedule the automation now has.
+ *
+ * An event schedule has no next run, so one left over from the clock schedule
+ * it replaced is cleared rather than kept: the timer ignores it, but the status
+ * surface reads it, and a moment nothing will ever act on is worse than none.
+ */
+function reanchorNextRunAt(automation: Automation, defaultTimezone?: string): void {
+  const nextRun = computeNextRunAt(automation, Date.now(), defaultTimezone);
+  if (nextRun !== null) {
+    automation.nextRunAt = new Date(nextRun).toISOString();
+  } else if (isEventSchedule(automation.schedule)) {
+    automation.nextRunAt = undefined;
+  }
+}
+
 export function updateAutomation(
   name: string,
   patch: DomainUpdatePatch,
@@ -263,6 +323,8 @@ export function updateAutomation(
   if (!automation) {
     throw new Error(`Automation not found: "${name}"`);
   }
+
+  assertEventScheduleAllowed(patch.schedule, automation.source, automation.name);
 
   // Snapshot before the loop overwrites it — the window reset is gated on a real
   // budget change, not merely a write (see `tokenBudgetsEqual`).
@@ -286,13 +348,7 @@ export function updateAutomation(
   if (changed) {
     automation.updatedAt = new Date().toISOString();
 
-    // Recompute nextRunAt if schedule changed
-    if ("schedule" in patch) {
-      const nextRun = computeNextRunAt(automation, Date.now(), ctx.defaultTimezone);
-      if (nextRun !== null) {
-        automation.nextRunAt = new Date(nextRun).toISOString();
-      }
-    }
+    if ("schedule" in patch) reanchorNextRunAt(automation, ctx.defaultTimezone);
 
     // A CHANGED budget starts a fresh accounting window (cf. the nextRunAt
     // recompute on a schedule change above): spend from the prior budget must

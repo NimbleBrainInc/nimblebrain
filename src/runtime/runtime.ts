@@ -125,6 +125,11 @@ import {
   PermissionStore,
 } from "../permissions/permission-store.ts";
 import type { AutomationDomainContext } from "../platform/automations/domain.ts";
+import type {
+  AutomationEventTrigger,
+  EventWakeAck,
+  EventWakeRequest,
+} from "../platform/automations/event-trigger.ts";
 import { isTaskForbiddenSkillTool } from "../platform/skills/source.ts";
 import type {
   AppStateInfo,
@@ -380,6 +385,7 @@ export class Runtime {
    * `src/platform/AGENTS.md` § 1.4.
    */
   private _automationsContextGetter: (() => AutomationDomainContext) | null = null;
+  private _automationEventTrigger: AutomationEventTrigger | null = null;
   /**
    * Per-workspace host-resources deps factory. Set in `Runtime.start()`
    * after the resolver + rate-limit are constructed; consumed by every
@@ -3874,6 +3880,40 @@ export class Runtime {
       );
     }
     return this._automationsContextGetter();
+  }
+
+  /**
+   * Register the automations event trigger. Called by the automations platform
+   * source during construction; the notifications source reads it back through
+   * {@link wakeAutomationOnNotification}.
+   *
+   * A registration rather than a direct import for the reason
+   * {@link registerAutomationsContext} is one: the two sources are built
+   * independently and neither may depend on the other's construction order. A
+   * runtime without automations simply has no trigger, and a route naming one
+   * gets a ledger row saying so.
+   */
+  registerAutomationEventTrigger(trigger: AutomationEventTrigger): void {
+    this._automationEventTrigger = trigger;
+  }
+
+  /**
+   * Hand one routed notification to an automation.
+   *
+   * The only path from a delivery to an agent run, and it starts at a route a
+   * workspace admin wrote — this function does not decide that a path exists,
+   * it carries an item down one that already does.
+   */
+  wakeAutomationOnNotification(req: EventWakeRequest): EventWakeAck {
+    if (!this._automationEventTrigger) {
+      return {
+        accepted: false,
+        outcome: "denied",
+        classification: "automations_unavailable",
+        reason: "this runtime has no automations source, so nothing can be woken",
+      };
+    }
+    return this._automationEventTrigger.offer(req);
   }
 
   /** Get the loaded InstanceConfig (null when no instance.json exists — dev mode). */

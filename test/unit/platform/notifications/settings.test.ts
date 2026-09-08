@@ -37,7 +37,16 @@ const TOOL = "slack__send_message";
 class FakeRuntime {
   identity: { id: string } | null = { id: USER };
   workspaces = new Map<string, Workspace>();
-  automations = [{ id: "auto_triage", name: "Triage replies" }];
+  automations = [
+    {
+      id: "auto_triage",
+      name: "Triage replies",
+      schedule: { type: "event", match: { source: "precision-outbound" } },
+    },
+    // A clock automation is a legal thing for a route to name and a useless
+    // one, so the picker has to be able to say so.
+    { id: "auto_digest", name: "Weekly digest", schedule: { type: "cron", expression: "0 9 * * 1" } },
+  ];
 
   getCurrentIdentity() {
     return this.identity;
@@ -368,18 +377,26 @@ describe("a route may only name what the workspace has", () => {
 });
 
 describe("what the editor is told", () => {
-  test("tool targets are reported as executed, which narrows the editor's notice", async () => {
+  test("routes are reported as executed, for both kinds of target", async () => {
     // The editor draws its whole claim from this one flag: true means a
-    // matching route calls its tool targets, and the notice that remains is
-    // about agent targets only.
+    // matching route both calls its tool targets and wakes its agent ones.
     expect((await settings()).routesExecuted).toBe(true);
   });
 
   test("the pickers are the sets the write validates against", async () => {
     const out = await settings();
     expect(out.deliverableTools).toEqual(["slack__list_channels", TOOL]);
-    expect(out.automations).toEqual([{ id: "auto_triage", name: "Triage replies" }]);
     expect(out.placeholders).toEqual(["title", "body", "subject", "link.resource"]);
+  });
+
+  test("the automation picker says which of them can actually be woken", async () => {
+    // A route may name an automation that runs on a clock — the write accepts
+    // it and every notification sent to it is then refused. Saying so at write
+    // time is cheaper than an operator finding it in the delivery ledger.
+    expect((await settings()).automations).toEqual([
+      { id: "auto_triage", name: "Triage replies", eventScheduled: true },
+      { id: "auto_digest", name: "Weekly digest", eventScheduled: false },
+    ]);
   });
 });
 

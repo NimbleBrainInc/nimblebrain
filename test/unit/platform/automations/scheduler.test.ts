@@ -1622,3 +1622,114 @@ describe("Scheduler — run trigger", () => {
 		expect(triggers).toEqual(["manual"]);
 	});
 });
+
+// ---------------------------------------------------------------------------
+// Tests: an event schedule is never due from the timer
+// ---------------------------------------------------------------------------
+
+describe("Scheduler — event schedules", () => {
+	let workDir: string;
+
+	beforeEach(() => {
+		workDir = makeTmpDir();
+	});
+
+	afterEach(() => {
+		rmSync(workDir, { recursive: true, force: true });
+	});
+
+	function eventAutomation(overrides: Partial<Automation> = {}): Automation {
+		return makeAutomation({
+			id: "reply-triage",
+			schedule: {
+				type: "event",
+				match: { source: "precision-outbound", name: "reply.*" },
+			},
+			...overrides,
+		});
+	}
+
+	it("has no next run", () => {
+		expect(computeNextRunAt(eventAutomation(), Date.now())).toBeNull();
+	});
+
+	// An absent `nextRunAt` means "due immediately" for a clock schedule that has
+	// not run yet, and an event schedule has none by construction. Without the
+	// explicit test, the timer fires it on every tick.
+	it("is never due, even with no nextRunAt", () => {
+		expect(isDue(eventAutomation(), Date.now())).toBe(false);
+		expect(isDue(eventAutomation({ nextRunAt: new Date(0).toISOString() }), Date.now())).toBe(
+			false,
+		);
+	});
+
+	it("is not seeded with a nextRunAt at start", () => {
+		seedDefs(workDir, new Map([["reply-triage", eventAutomation()]]));
+		const scheduler = new Scheduler(createMockExecutor(), { workDir });
+		scheduler.start();
+		expect(defOf(scheduler, "reply-triage")?.nextRunAt).toBeUndefined();
+		expect(loadDefs(workDir).get("reply-triage")?.nextRunAt).toBeUndefined();
+		scheduler.stop();
+	});
+
+	it("does not arm the timer at zero delay, and the tick never runs it", async () => {
+		seedDefs(workDir, new Map([["reply-triage", eventAutomation()]]));
+		const executor = createMockExecutor();
+		const scheduler = new Scheduler(executor, { workDir });
+		scheduler.start();
+		await scheduler.onTimer();
+		expect(executor).not.toHaveBeenCalled();
+		scheduler.stop();
+	});
+
+	it("runFromEvent runs it anyway, and the run says what woke it", async () => {
+		seedDefs(workDir, new Map([["reply-triage", eventAutomation()]]));
+		const executor = createMockExecutor();
+		const scheduler = new Scheduler(executor, { workDir });
+		scheduler.start();
+
+		const outcome = await scheduler.runFromEvent(WS, OWNER, "reply-triage", {
+			preamble: "<event>…</event>",
+		});
+
+		expect("run" in outcome).toBe(true);
+		expect(executor).toHaveBeenCalledTimes(1);
+		const [, , trigger, input] = (executor as unknown as { mock: { calls: unknown[][] } }).mock
+			.calls[0]!;
+		expect(trigger).toBe("event");
+		expect(input).toEqual({ preamble: "<event>…</event>" });
+		scheduler.stop();
+	});
+
+	it("reports why a run did not start rather than failing silently", async () => {
+		seedDefs(
+			workDir,
+			new Map([["reply-triage", eventAutomation({ enabled: false })]]),
+		);
+		const executor = createMockExecutor();
+		const scheduler = new Scheduler(executor, { workDir });
+		scheduler.start();
+
+		const outcome = await scheduler.runFromEvent(WS, OWNER, "reply-triage", { preamble: "x" });
+		expect(outcome).toEqual({ skipped: "the automation is disabled" });
+		expect(executor).not.toHaveBeenCalled();
+
+		const missing = await scheduler.runFromEvent(WS, OWNER, "nope", { preamble: "x" });
+		expect(missing).toEqual({
+			skipped: "the automation is no longer in this workspace",
+		});
+		scheduler.stop();
+	});
+
+	// A run's synthesized failure record has to carry the trigger too, or the
+	// fire ceiling — which counts event runs off the run index — undercounts
+	// exactly the runs a runaway loop produces.
+	it("stamps the trigger on a run that threw", async () => {
+		seedDefs(workDir, new Map([["reply-triage", eventAutomation()]]));
+		const scheduler = new Scheduler(createThrowingExecutor(new Error("boom")), { workDir });
+		scheduler.start();
+		const outcome = await scheduler.runFromEvent(WS, OWNER, "reply-triage", { preamble: "x" });
+		expect("run" in outcome && outcome.run.trigger).toBe("event");
+		scheduler.stop();
+	});
+});

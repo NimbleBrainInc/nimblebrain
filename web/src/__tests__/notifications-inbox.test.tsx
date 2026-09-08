@@ -267,9 +267,9 @@ describe("the delivery ledger", () => {
     expect(ledger?.textContent).toContain("channel_not_found");
   });
 
-  test("an agent target reads as waiting, not as a failure", async () => {
-    // The row is terminal for this version and nothing is wrong with it. An
-    // operator scanning for red must not find one here.
+  test("an agent target inside its window reads as waiting, not as a failure", async () => {
+    // A batch that has not closed yet is mid-flight, not broken. An operator
+    // scanning for red must not find one here.
     const { container } = await mount({
       items: [
         item({
@@ -281,7 +281,7 @@ describe("the delivery ledger", () => {
               kind: "agent",
               attempts: 0,
               outcome: "deferred",
-              classification: "awaiting_wake",
+              classification: "awaiting_batch",
               updatedAt: "2026-09-01T19:00:00.000Z",
             },
           ],
@@ -292,7 +292,7 @@ describe("the delivery ledger", () => {
 
     const ledger = container.querySelector('[data-testid="delivery-ledger"]');
     expect(ledger?.textContent).toContain("auto_triage");
-    expect(ledger?.textContent).toContain("waiting for the automation trigger");
+    expect(ledger?.textContent).toContain("batching for the automation");
     expect(ledger?.querySelector(".text-destructive")).toBeNull();
   });
 });
