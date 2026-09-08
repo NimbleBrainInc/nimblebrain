@@ -207,11 +207,18 @@ export function startServer(options: ServerOptions): ServerHandle {
       // parent `useDataSync` forwarder — not here.
       log.debug(
         "sse",
-        `broadcast data.changed from=${event.type} server=${target.server} tool=${target.tool} clients=${sseManager.clientCount}`,
+        `broadcast data.changed from=${event.type} server=${target.server} tool=${target.tool} ws=${target.wsId ?? "-"} clients=${sseManager.clientCount}`,
       );
       sseManager.broadcast("data.changed", {
         server: target.server,
         tool: target.tool,
+        // Which workspace the change happened in, so a listener can ignore one
+        // that is not its own. Still broadcast globally rather than routed:
+        // `data.changed` is `scope: "global"` in SSE_ROUTES, and narrowing the
+        // ROUTE would drop the event for a client whose membership list the
+        // server cannot see. Carrying the id lets the browser decide, which is
+        // where the active workspace is actually known.
+        wsId: target.wsId,
         timestamp: new Date().toISOString(),
       });
     }

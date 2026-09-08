@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef } from "react";
+import { getActiveWorkspaceId } from "../api/client";
 import type { UiDataChangedMessage } from "../bridge/types";
 import { debug } from "../lib/debug";
 import type { DataChangedEvent } from "../types";
@@ -17,10 +18,11 @@ const DEBOUNCE_MS = 100;
  * Hook that buffers `data.changed` SSE events and forwards them to
  * matching iframes via postMessage.
  *
- * When a `data.changed` event arrives, it is buffered for up to 100ms.
- * After the debounce window closes, a single `ui/datachanged` message
- * is sent to each iframe whose `data-app` attribute matches the event's
- * server name.
+ * When a `data.changed` event arrives for the active workspace, it is buffered
+ * for up to 100ms. After the debounce window closes, a single `ui/datachanged`
+ * message is sent to each iframe whose `data-app` attribute matches the event's
+ * server name. An event stamped with a different workspace is dropped here —
+ * see the note at the workspace check for why the filter is client-side.
  *
  * Returns a stable callback to be wired into the SSE event handler.
  */
@@ -89,7 +91,28 @@ export function useDataSync(): (event: DataChangedEvent) => void {
       // Confirms the SSE connection is delivering `data.changed` events to
       // the browser. If this never fires, the break is upstream (server sink
       // wrap not installed, SSE connection closed, etc.).
-      debug("sync", `SSE data.changed server=${event.server} tool=${event.tool}`);
+      debug(
+        "sync",
+        `SSE data.changed server=${event.server} tool=${event.tool} ws=${event.wsId ?? "-"}`,
+      );
+
+      // The same app installed in two workspaces has the same bare `data-app`,
+      // so a write in workspace A would otherwise postMessage-match a mounted
+      // workspace-B iframe and send it to re-fetch data that did not change.
+      // The broadcast stays global on purpose — the server cannot see which
+      // workspaces a client may read — so the decision belongs here, where the
+      // active workspace is actually known.
+      //
+      // Only drop on a POSITIVE mismatch. An event with no `wsId` is an
+      // identity-door call and belongs to no workspace; a browser with no active
+      // workspace has nothing to compare. Either way, deliver — the old
+      // behaviour, kept for the cases the field cannot speak to.
+      const activeWsId = getActiveWorkspaceId();
+      if (event.wsId && activeWsId && event.wsId !== activeWsId) {
+        debug("sync", `drop: ws=${event.wsId} is not the active ${activeWsId}`);
+        return;
+      }
+
       const change: DataChange = {
         source: "agent",
         server: event.server,

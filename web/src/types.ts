@@ -138,6 +138,13 @@ export interface ConnectionStateChangedEvent {
 export interface DataChangedEvent {
   server: string;
   tool: string;
+  /**
+   * The workspace the change happened in. Absent for an identity-door call
+   * (`conversations`, `files`, `automations`), which belongs to no workspace —
+   * absent means "everyone", which is what every consumer did before the field
+   * existed.
+   */
+  wsId?: string;
   timestamp: string;
 }
 
