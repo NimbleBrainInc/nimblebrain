@@ -189,6 +189,31 @@ An event automation also carries a **fire ceiling** — by default twelve runs a
 hour — and exceeding it disables the automation rather than throttling it. See
 [Automations](/using/automations#the-fire-ceiling) for why that is the shape.
 
+### Check it works, before you need it
+
+Every way a route can fail is invisible from this page. The connector is
+installed but nobody finished connecting the account behind it. The tool does not
+take the argument your template writes. Your grant to a personal connector was
+revoked. The ceiling above sits below the level this route asks for. All four
+save cleanly, look correct, and quietly deliver nothing — and you find out when
+somebody asks why they never heard.
+
+**Send test** on a saved route answers that. It puts a real item in your inbox,
+clearly marked as a test, and dispatches *only that route* — the same ceiling,
+the same permission gates, the same delivery ledger a real notification meets.
+Then it tells you one of three things:
+
+| It says | It means |
+|---|---|
+| **Delivered. Check the channel.** | The tool ran and did not report a failure. Go look — if nothing is there, the tool accepted the call and dropped it, which is the connector's end. |
+| **The ceiling on … is …** | The route never matched, so nothing was dispatched. Raise that source's ceiling above, or lower the route's minimum level. |
+| a target and an outcome | The dispatch was refused or failed. The wording is the ledger's — see [the delivery ledger](#the-delivery-ledger) for what each outcome means. |
+
+It tests **what is saved**, not what is on screen, so save your edits first — a
+route only fires from the stored copy. A test also does not check that the
+connector's outbox is being *polled*; that is a different question, answered by
+whether the inbox fills at all.
+
 ### Who a route runs as
 
 Every route carries an author, and it dispatches under that person's identity —

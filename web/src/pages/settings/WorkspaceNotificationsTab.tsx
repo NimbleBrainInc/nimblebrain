@@ -8,8 +8,10 @@ import {
   type NotificationRouteMatch,
   type NotificationRouteView,
   type NotificationSourceView,
+  type NotificationsSendTestOutput,
   type NotificationsSettingsOutput,
   readNotificationSettings,
+  sendTestNotification,
   setNotificationRoutes,
   setNotificationSourceLevel,
 } from "../../api/notifications";
@@ -19,6 +21,7 @@ import { Label } from "../../components/ui/label";
 import { Select } from "../../components/ui/select";
 import { Textarea } from "../../components/ui/textarea";
 import { NOTIFICATION_LEVELS } from "../../lib/notification-levels";
+import { cn } from "../../lib/utils";
 import {
   EmptyState,
   InlineError,
@@ -306,6 +309,91 @@ function SourceList({
   );
 }
 
+/**
+ * "Send test" for one route, and what came back.
+ *
+ * Its own component because the answer has three shapes and the route editor is
+ * already the largest thing on this page — but mostly because the answer is the
+ * feature. A button that said only "sent" would be the same silence this exists
+ * to break: the failures worth catching (a connector with no upstream account,
+ * a tool that refuses the arguments, an author whose grant was revoked, a
+ * ceiling below what the route asks for) all look identical from outside.
+ *
+ * Only a SAVED route can be tested: the server looks it up by id in the stored
+ * config, which is also the honest thing to test — what is stored is what will
+ * fire at three in the morning, not what is on screen.
+ */
+function RouteTest({ routeId }: { routeId?: string }) {
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<NotificationsSendTestOutput | null>(null);
+  const [failed, setFailed] = useState<string | null>(null);
+
+  if (!routeId) {
+    return <span className="text-xs text-muted-foreground">Save to test</span>;
+  }
+
+  const run = async () => {
+    setBusy(true);
+    setResult(null);
+    setFailed(null);
+    try {
+      setResult(await sendTestNotification({ routeId }));
+    } catch (err) {
+      setFailed(err instanceof Error ? err.message : "Could not send a test notification");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="flex items-center gap-2">
+      {result || failed ? (
+        <span
+          data-testid="route-test-result"
+          className={cn(
+            "text-xs",
+            testTone(result, failed) === "ok" ? "text-muted-foreground" : "text-warning",
+          )}
+        >
+          {testMessage(result, failed)}
+        </span>
+      ) : null}
+      <Button variant="outline" size="sm" disabled={busy} onClick={() => void run()}>
+        {busy ? "Sending…" : "Send test"}
+      </Button>
+    </div>
+  );
+}
+
+/** Whether the test says the route works. */
+function testTone(result: NotificationsSendTestOutput | null, failed: string | null) {
+  if (failed || !result) return failed ? "bad" : "ok";
+  if (!result.matched) return "bad";
+  return result.deliveries.every((d) => d.outcome === "delivered" || d.outcome === "deferred")
+    ? "ok"
+    : "bad";
+}
+
+/**
+ * The one line an admin reads.
+ *
+ * Ordered by what they can act on: a route that never matched is a ceiling they
+ * can raise one row above, and it comes first because an empty ledger would
+ * otherwise read as "delivered nothing" rather than "never ran".
+ */
+function testMessage(result: NotificationsSendTestOutput | null, failed: string | null): string {
+  if (failed) return failed;
+  if (!result) return "";
+  if (!result.matched) return result.reason ?? "This route did not match the test notification.";
+  if (result.deliveries.length === 0) return "Matched, but nothing was dispatched.";
+  const bad = result.deliveries.filter(
+    (d) => d.outcome !== "delivered" && d.outcome !== "deferred",
+  );
+  if (bad.length === 0) return "Delivered. Check the channel.";
+  const first = bad[0];
+  return `${first?.target}: ${first?.outcome}${first?.lastError ? ` — ${first.lastError}` : ""}`;
+}
+
 function RouteEditor({
   route,
   settings,
@@ -342,9 +430,12 @@ function RouteEditor({
             </p>
           ) : null}
         </div>
-        <Button variant="ghost" size="sm" onClick={onRemove} aria-label="Remove route">
-          <Trash2 className="size-3.5" />
-        </Button>
+        <div className="flex items-center gap-1 shrink-0">
+          <RouteTest routeId={route.id} />
+          <Button variant="ghost" size="sm" onClick={onRemove} aria-label="Remove route">
+            <Trash2 className="size-3.5" />
+          </Button>
+        </div>
       </div>
 
       <div className="grid gap-3 grid-cols-[repeat(auto-fit,minmax(11rem,1fr))]">

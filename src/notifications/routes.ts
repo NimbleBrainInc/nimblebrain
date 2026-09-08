@@ -291,6 +291,31 @@ export class RouteDispatcher {
   }
 
   /**
+   * Deliver one item through ONE route, ignoring every other route the
+   * workspace holds.
+   *
+   * The affordance behind "send a test message". It runs the real evaluation —
+   * the same ceiling, the same match, the same unattended dispatch, the same
+   * ledger — so what comes back is what a real notification of that shape would
+   * do, not a simulation of it. Restricted to the named route because the
+   * operator asked about that one: firing every other matching route would post
+   * to channels they did not ask to be tested.
+   *
+   * Awaits the tool targets, so a caller that awaits this can read the ledger
+   * immediately. Agent targets are offered into their debounce window and stay
+   * `deferred`, which is the honest answer for a target whose run has not begun.
+   */
+  async dispatchOne(wsId: string, item: Notification, routeId: string): Promise<void> {
+    await this.#enqueue(wsId, async () => {
+      try {
+        await this.#evaluate(wsId, item, routeId);
+      } catch (err) {
+        log.warn(`[notifications] test dispatch failed: ${errorText(err)}`, { wsId, routeId });
+      }
+    });
+  }
+
+  /**
    * Run every retry that has come due. Public for tests; the timer calls it.
    *
    * The entry is taken out of the index before its attempt runs, and
@@ -372,9 +397,14 @@ export class RouteDispatcher {
 
   // -- evaluation --------------------------------------------------------
 
-  async #evaluate(wsId: string, item: Notification): Promise<void> {
+  async #evaluate(wsId: string, item: Notification, onlyRouteId?: string): Promise<void> {
     const ws = await this.#deps.workspaceStore.get(wsId);
-    const routes = readNotificationsConfig(ws).routes ?? [];
+    const declared = readNotificationsConfig(ws).routes ?? [];
+    // A test names one route. Narrowing the LIST rather than the match keeps
+    // every rule below identical to a real delivery's — the ceiling still
+    // clamps, `routeMatches` still decides, and a route whose ceiling blocks it
+    // still writes nothing. That is the answer an operator is testing for.
+    const routes = onlyRouteId ? declared.filter((r) => r.id === onlyRouteId) : declared;
     if (routes.length === 0) return;
 
     const matched = matchTargets(routes, item);
