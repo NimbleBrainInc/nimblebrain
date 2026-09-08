@@ -67,8 +67,4 @@ describe("notificationInboxUrl", () => {
       "https://tenant.example/w/team/notifications?item=acme%2Fmcp%3Aevt%3Fa%3D1%26b%3D2",
     );
   });
-
-  test("falls back to the inbox itself when no item is named", () => {
-    expect(notificationInboxUrl("ws_team")).toBe("https://tenant.example/w/team/notifications");
-  });
 });

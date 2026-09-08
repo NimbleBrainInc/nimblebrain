@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// The inbox panel — the four things it must never get wrong.
+// The inbox panel — the five things it must never get wrong.
 //
 // Pins:
 //   1. A connector's `body` is TEXT. Markdown and HTML in it reach the screen

@@ -65,7 +65,7 @@ describe("the five placeholders", () => {
   });
 });
 
-describe("a placeholder outside the four", () => {
+describe("a placeholder outside the five", () => {
   test("renders empty and is counted", () => {
     const { input, misses } = render({ text: "a{{data.domain}}b" }, FULL);
     expect(input.text).toBe("ab");
@@ -113,7 +113,7 @@ describe("what is rendered", () => {
 describe("what it does not do", () => {
   test("no sections, no inversions — Mustache logic is text here", () => {
     const { input, misses } = render({ text: "{{#body}}x{{/body}}" }, FULL);
-    // Both tags name something outside the four, so both render empty. What
+    // Both tags name something outside the five, so both render empty. What
     // matters is that neither is interpreted as control flow.
     expect(input.text).toBe("x");
     expect(misses).toBe(2);

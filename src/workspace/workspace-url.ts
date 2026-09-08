@@ -45,7 +45,7 @@ export function workspaceUrl(wsId: string, path: string): string {
  * perfectly good answer on its own when the item has aged out. A reader with a
  * stale link lands on the list rather than a 404.
  */
-export function notificationInboxUrl(wsId: string, notificationId?: string): string {
+export function notificationInboxUrl(wsId: string, notificationId: string): string {
   const base = workspaceUrl(wsId, "/notifications");
-  return notificationId ? `${base}?item=${encodeURIComponent(notificationId)}` : base;
+  return `${base}?item=${encodeURIComponent(notificationId)}`;
 }
