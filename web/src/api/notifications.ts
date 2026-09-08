@@ -16,6 +16,8 @@ import type {
   NotificationsListInput,
   NotificationsListOutput,
   NotificationsMarkReadOutput,
+  NotificationsSendTestInput,
+  NotificationsSendTestOutput,
   NotificationsSetRoutesInput,
   NotificationsSetSourceLevelInput,
   // Imported as well as re-exported below, and both are load-bearing: the
@@ -36,6 +38,7 @@ export type {
   NotificationRouteMatch,
   NotificationRouteView,
   NotificationSourceView,
+  NotificationsSendTestOutput,
   NotificationsSettingsOutput,
   NotificationView,
 } from "../_generated/platform-schemas/notifications";
@@ -78,5 +81,21 @@ export async function setNotificationRoutes(
 ): Promise<NotificationsSettingsOutput> {
   return parseToolResult<NotificationsSettingsOutput>(
     await callTool("notifications", "set_routes", args),
+  );
+}
+
+/**
+ * Send a test notification through one route.
+ *
+ * Writes a real inbox item and dispatches only the named route, so what comes
+ * back is the ledger a real notification of that shape would have produced —
+ * including `matched: false` and the reason, for a route whose source ceiling
+ * sits below the level it asks for.
+ */
+export async function sendTestNotification(
+  args: NotificationsSendTestInput,
+): Promise<NotificationsSendTestOutput> {
+  return parseToolResult<NotificationsSendTestOutput>(
+    await callTool("notifications", "send_test", args),
   );
 }

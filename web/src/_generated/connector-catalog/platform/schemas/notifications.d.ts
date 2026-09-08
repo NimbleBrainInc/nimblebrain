@@ -299,6 +299,33 @@ export declare const NotificationsSetSourceLevelInput: import("@sinclair/typebox
 export type NotificationsSetSourceLevelInput = Static<typeof NotificationsSetSourceLevelInput>;
 export declare const NotificationsSettingsInput: import("@sinclair/typebox").TObject<{}>;
 export type NotificationsSettingsInput = Static<typeof NotificationsSettingsInput>;
+export declare const NotificationsSendTestInput: import("@sinclair/typebox").TObject<{
+    routeId: import("@sinclair/typebox").TString;
+}>;
+export type NotificationsSendTestInput = Static<typeof NotificationsSendTestInput>;
+/**
+ * What one test send did — the inbox item it created and where each of the
+ * route's targets ended up.
+ *
+ * `matched: false` is the answer worth having and the reason this returns a
+ * shape rather than a bare ok: a route whose minimum level is above its source's
+ * ceiling writes no ledger row at all, which from the outside is
+ * indistinguishable from a route that fired and delivered nothing.
+ */
+export interface NotificationsSendTestOutput {
+    /** `<source>:<eventId>` of the item written to the inbox. */
+    notificationId: string;
+    /** The source it was attributed to, and whose ceiling therefore applied. */
+    source: string;
+    /** The level the item was stored at, after the ceiling clamped it. */
+    effectiveLevel: NotificationLevel;
+    /** Whether the route matched the test item at all. */
+    matched: boolean;
+    /** Why not, when `matched` is false — operator-facing prose. */
+    reason?: string;
+    /** Each target's ledger row, as it stood when the dispatch returned. */
+    deliveries: DeliveryRecord[];
+}
 /** One connector that declares an outbox, and the ceiling it is held to. */
 export interface NotificationSourceView {
     /** The connector's server name — what the runtime stamps on an item's `source`. */
