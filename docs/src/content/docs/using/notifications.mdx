@@ -135,7 +135,7 @@ Pick any tool installed in this workspace and give it the arguments its own
 schema expects, as a JSON object. A tool the workspace does not have is refused
 when you save.
 
-Four placeholders are replaced with the notification's fields:
+Five placeholders are replaced with the notification's fields:
 
 | Placeholder | Value |
 |---|---|
@@ -143,15 +143,28 @@ Four placeholders are replaced with the notification's fields:
 | `{{body}}` | Its body, if the connector wrote one. |
 | `{{subject}}` | What it is about, if the connector said. |
 | `{{link.resource}}` | The linked resource URI, if the connector supplied one. |
+| `{{inbox.url}}` | A web address for this item in your inbox. **The only one that works outside NimbleBrain.** |
 
 ```json
 {
-  "channel": "#outbound",
-  "text": "{{title}}\n{{body}}\n{{link.resource}}"
+  "channel": "alerts",
+  "text": "{{title}}\n{{body}}\n{{inbox.url}}"
 }
 ```
 
-Those four are the whole list. There is no placeholder for the connector's
+:::tip[Use `{{inbox.url}}`, not `{{link.resource}}`, for anything a person reads elsewhere]
+`{{link.resource}}` is whatever address the *connector* chose. Those are usually
+internal URIs like `acme://campaigns/42` — the inbox turns one into an **Open**
+button because it knows how, but Slack, email and WhatsApp cannot, so it arrives
+as unhelpful text.
+
+`{{inbox.url}}` is a normal `https://` link the platform builds, pointing at this
+item in your inbox. Someone who clicks it lands on the notification, expanded,
+with its body, the connector's raw data, and the delivery ledger — and can go
+deeper from there. Put it in every route that leaves the platform.
+:::
+
+Those five are the whole list. There is no placeholder for the connector's
 `data` payload, because the runtime does not read it. Any other `{{…}}` is
 refused when you save rather than delivered as literal braces in somebody's
 Slack channel.

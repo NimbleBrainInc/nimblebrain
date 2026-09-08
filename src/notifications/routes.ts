@@ -59,6 +59,7 @@ import type {
   NotificationLevel,
 } from "../platform/schemas/notifications.ts";
 import type { WorkspaceStore } from "../workspace/workspace-store.ts";
+import { notificationInboxUrl } from "../workspace/workspace-url.ts";
 import { type NotificationRoute, readNotificationsConfig, setRouteDisabled } from "./config.ts";
 import { matchesNotification } from "./match.ts";
 import type { NotificationRef, NotificationStore } from "./store.ts";
@@ -546,7 +547,9 @@ export class RouteDispatcher {
     priorAttempts: number,
   ): Promise<void> {
     const presentation = notificationPresentation(item.envelope);
-    const rendered = renderDeliverInput(target.input, presentation);
+    const rendered = renderDeliverInput(target.input, presentation, {
+      inboxUrl: inboxUrlFor(wsId, item),
+    });
     if (rendered.misses > 0) {
       notificationsTemplateMissesTotal.inc(rendered.misses);
       log.warn(
@@ -906,6 +909,32 @@ function rowIndex(row: DeliveryRecord): number {
  * `skipped` is a dormant author, which comes back on its own; `error` is a
  * call that did not complete and is worth a retry until the budget runs out.
  */
+/**
+ * The item's address in the workspace inbox, or `""` when one cannot be built.
+ *
+ * `webOrigin()` throws on a malformed configured origin — a boot-time
+ * misconfiguration rather than anything about this delivery. Swallowing it here
+ * is deliberate: a route that reaches Slack with an empty link has delivered
+ * most of what it was asked to, while one that threw would be recorded as a
+ * `tool_error` and retried three times, reporting a channel outage for a
+ * configuration fault nobody would find from the ledger.
+ *
+ * Logged once per occurrence at `warn` rather than counted: if it is broken it
+ * is broken for every delivery in the process, so a counter would only measure
+ * traffic.
+ */
+function inboxUrlFor(wsId: string, item: Notification): string {
+  try {
+    return notificationInboxUrl(wsId, notificationId(item));
+  } catch (err) {
+    log.warn(
+      `[notifications] could not build an inbox URL for a route template: ${errorText(err)}`,
+      { wsId },
+    );
+    return "";
+  }
+}
+
 function ledgerOutcome(result: UnattendedDispatchResult, attempts: number): DeliveryOutcome {
   switch (result.outcome) {
     case "ok":

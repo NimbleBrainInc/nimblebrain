@@ -275,13 +275,27 @@ const ROUTE_NAME_GLOB_PATTERN = "^[a-zA-Z0-9._*-]{1,200}$";
 /**
  * The only placeholders a `kind: "tool"` input may carry.
  *
- * Resolved from the notification's presentation block — which is why `data` is
- * absent: the runtime does not read a connector's payload, so it cannot
- * template out of one. Mustache-style, no logic. A route naming anything else
- * is rejected at write time rather than rendering the literal braces into
+ * Four are resolved from the notification's presentation block — which is why
+ * `data` is absent: the runtime does not read a connector's payload, so it
+ * cannot template out of one. Mustache-style, no logic. A route naming anything
+ * else is rejected at write time rather than rendering the literal braces into
  * somebody's Slack channel.
+ *
+ * **`inbox.url` is the host's own, and it is the only one a reader outside the
+ * shell can act on.** `link.resource` is whatever URI the emitting server chose
+ * — usually a `ui://` or a scheme of its own — and only the web shell can
+ * resolve one of those into a page. Delivered to Slack, mail or WhatsApp it is
+ * inert text. `inbox.url` is an absolute `https://` address of the item in this
+ * workspace's inbox, so a route that reaches a human somewhere else can give
+ * them a way back.
  */
-export const NOTIFICATION_PLACEHOLDERS = ["title", "body", "subject", "link.resource"] as const;
+export const NOTIFICATION_PLACEHOLDERS = [
+  "title",
+  "body",
+  "subject",
+  "link.resource",
+  "inbox.url",
+] as const;
 export type NotificationPlaceholder = (typeof NOTIFICATION_PLACEHOLDERS)[number];
 
 export const NotificationRouteMatch = Type.Object(

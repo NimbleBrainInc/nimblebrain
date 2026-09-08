@@ -640,8 +640,10 @@ function TargetEditor({
             onChange={(e) => onChange(target, e.target.value)}
           />
           <p className="text-2xs text-muted-foreground">
-            The tool's own arguments. {placeholders} are replaced with the notification's fields;
-            any other {"{{…}}"} is refused, because it would be delivered as literal text.
+            The tool's own arguments. {placeholders} are replaced when the route fires; any other{" "}
+            {"{{…}}"} is refused, because it would be delivered as literal text. For a tool a person
+            reads outside NimbleBrain, link with {"{{inbox.url}}"} — {"{{link.resource}}"} is the
+            connector's own URI, which Slack and mail cannot open.
           </p>
         </div>
       ) : null}

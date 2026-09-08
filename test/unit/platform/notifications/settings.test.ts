@@ -386,7 +386,15 @@ describe("what the editor is told", () => {
   test("the pickers are the sets the write validates against", async () => {
     const out = await settings();
     expect(out.deliverableTools).toEqual(["slack__list_channels", TOOL]);
-    expect(out.placeholders).toEqual(["title", "body", "subject", "link.resource"]);
+    // Four the connector supplies, and `inbox.url`, which only the runtime can
+    // build — the editor offers all five because the write accepts all five.
+    expect(out.placeholders).toEqual([
+      "title",
+      "body",
+      "subject",
+      "link.resource",
+      "inbox.url",
+    ]);
   });
 
   test("the automation picker says which of them can actually be woken", async () => {
