@@ -37,13 +37,14 @@ interface ToolCall {
 let calls: ToolCall[] = [];
 let current = settings();
 /** What `notifications__send_test` answers with, per test. */
-let testSendResult: Record<string, unknown> | Error = {
+const DELIVERED_NOTHING: Record<string, unknown> = {
   notificationId: "acme:evt",
   source: "acme",
   effectiveLevel: "info",
   matched: true,
   deliveries: [],
 };
+let testSendResult: Record<string, unknown> | Error = DELIVERED_NOTHING;
 
 function settings(over: Record<string, unknown> = {}): Record<string, unknown> {
   return {
@@ -165,6 +166,7 @@ afterEach(() => {
   unmount = null;
   calls = [];
   current = settings();
+  testSendResult = DELIVERED_NOTHING;
 });
 
 describe("what the page tells an admin about routes", () => {
@@ -289,7 +291,7 @@ describe("saving routes", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Send test — the three-shape answer is the feature, so all three are asserted.
+// Send test — the answer is the feature, so every shape it takes is asserted.
 // A button that only ever said "sent" would be the same silence it exists to
 // break.
 // ---------------------------------------------------------------------------
@@ -413,6 +415,46 @@ describe("send test", () => {
     expect(text).toContain("attempt failed");
     expect(text).toContain("retries");
     expect(text).not.toBe("slack__send_message: pending");
+  });
+
+  test("an agent target still inside its debounce window is not 'delivered'", async () => {
+    // `deferred` is non-terminal: the run has not started, there is no channel
+    // to check, and the row can still settle `denied` or `skipped`.
+    current = settings({ routes: [SAVED_ROUTE] });
+    testSendResult = {
+      notificationId: "acme:evt",
+      source: "acme",
+      effectiveLevel: "attention",
+      matched: true,
+      deliveries: [
+        {
+          routeId: "rt_slack",
+          target: "aut_daily",
+          index: 0,
+          kind: "agent",
+          attempts: 0,
+          outcome: "deferred",
+          classification: "awaiting_batch",
+          updatedAt: "2026-01-01T00:00:00Z",
+        },
+      ],
+    };
+    const container = await mount();
+    await sendTest(container);
+
+    const text = testResultText(container) ?? "";
+    expect(text).toContain("aut_daily");
+    expect(text).toContain("queued");
+    expect(text).not.toContain("Delivered");
+  });
+
+  test("a call that never reached the server shows the error", async () => {
+    current = settings({ routes: [SAVED_ROUTE] });
+    testSendResult = new Error("Failed to fetch");
+    const container = await mount();
+    await sendTest(container);
+
+    expect(testResultText(container)).toBe("Failed to fetch");
   });
 
   test("an unsaved route offers no test", async () => {

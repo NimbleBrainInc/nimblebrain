@@ -312,6 +312,18 @@ describe("a route that names no source", () => {
     expect(calls).toHaveLength(0);
   });
 
+  test("a workspace with no outbox says so, rather than naming the placeholder", async () => {
+    // With nothing declared the item takes a reserved source name, which
+    // appears nowhere on the settings page. Reporting it as this workspace's
+    // best ceiling would send an admin looking for a connector that is absent.
+    const out = await sendAcross({});
+
+    expect(out.source).toBe("notifications");
+    expect(out.matched).toBe(false);
+    expect(out.reason).toContain("No connector in this workspace publishes notifications");
+    expect(out.reason).not.toContain("highest ceiling");
+  });
+
   test("a route with no level filter fires whatever the ceilings are", async () => {
     // `match.level` absent means the level clause is skipped entirely — it must
     // not be read as the ceiling default, which is a different `"info"`.

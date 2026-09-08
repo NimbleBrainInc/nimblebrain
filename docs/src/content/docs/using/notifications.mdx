@@ -201,7 +201,7 @@ somebody asks why they never heard.
 **Send test** on a saved route answers that. It puts a real item in your inbox,
 clearly marked as a test, and dispatches *only that route* — the same ceiling,
 the same permission gates, the same delivery ledger a real notification meets.
-Then it tells you one of three things:
+Then it tells you what happened:
 
 | It says | It means |
 |---|---|
@@ -210,6 +210,7 @@ Then it tells you one of three things:
 | **… attempt failed … it retries for about five minutes** | The call did not complete. The platform will try twice more, so the test message may still reach the channel after you have stopped looking. |
 | a target and an outcome | The dispatch was refused or skipped. The wording is the ledger's — see [the delivery ledger](#the-delivery-ledger) for what each outcome means. |
 | **Matched, but nothing was dispatched.** | The route matched and names no target the platform could act on. Check its **Deliver to** rows. |
+| **… queued for its automation's next run** | The route delivers to an agent, and the batch is still inside that automation's debounce window. Nothing has been sent; the run starts when the window closes. |
 
 It tests **what is saved**, not what is on screen, so save your edits first — a
 route only fires from the stored copy. A test also does not check that the

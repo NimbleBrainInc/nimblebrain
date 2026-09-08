@@ -312,12 +312,13 @@ function SourceList({
 /**
  * "Send test" for one route, and what came back.
  *
- * Its own component because the answer has three shapes and the route editor is
- * already the largest thing on this page — but mostly because the answer is the
- * feature. A button that said only "sent" would be the same silence this exists
- * to break: the failures worth catching (a connector with no upstream account,
- * a tool that refuses the arguments, an author whose grant was revoked, a
- * ceiling below what the route asks for) all look identical from outside.
+ * Its own component because the answer has several shapes and the route editor
+ * is already the largest thing on this page — but mostly because the answer is
+ * the feature. A button that said only "sent" would be the same silence this
+ * exists to break: the failures worth catching (a connector with no upstream
+ * account, a tool that refuses the arguments, an author whose grant was
+ * revoked, a ceiling below what the route asks for) all look identical from
+ * outside.
  *
  * Only a SAVED route can be tested: the server looks it up by id in the stored
  * config, which is also the honest thing to test — what is stored is what will
@@ -352,10 +353,10 @@ function RouteTest({ routeId }: { routeId?: string }) {
           data-testid="route-test-result"
           className={cn(
             "text-xs",
-            result && testTone(result, failed) === "ok" ? "text-muted-foreground" : "text-warning",
+            result && testTone(result) === "ok" ? "text-muted-foreground" : "text-warning",
           )}
         >
-          {result ? testMessage(result, failed) : failed}
+          {result ? testMessage(result) : failed}
         </span>
       ) : null}
       <Button variant="outline" size="sm" disabled={busy} onClick={() => void run()}>
@@ -366,17 +367,18 @@ function RouteTest({ routeId }: { routeId?: string }) {
 }
 
 /**
- * Outcomes that are not a failure to report.
+ * Outcomes that do not make the answer a warning.
  *
- * `deferred` is an agent target inside its automation's debounce window and
- * `pending` is a first attempt that has not settled — neither is good news, but
- * neither is the route being broken, and only `pending` needs saying out loud.
+ * `deferred` is an agent target inside its automation's debounce window: the
+ * route is not broken, so the tone stays quiet — but nothing has been sent
+ * either, which is {@link testMessage}'s job to say. `pending` is deliberately
+ * absent: a first attempt that has not settled reads as a failure until it
+ * does.
  */
 const SETTLED_OK: ReadonlySet<string> = new Set(["delivered", "deferred"]);
 
 /** Whether the test says the route works. */
-function testTone(result: NotificationsSendTestOutput, failed: string | null): "ok" | "bad" {
-  if (failed) return "bad";
+function testTone(result: NotificationsSendTestOutput): "ok" | "bad" {
   if (!result.matched) return "bad";
   return result.deliveries.every((d) => SETTLED_OK.has(d.outcome)) ? "ok" : "bad";
 }
@@ -388,12 +390,20 @@ function testTone(result: NotificationsSendTestOutput, failed: string | null): "
  * can raise one row above, and it comes first because an empty ledger would
  * otherwise read as "delivered nothing" rather than "never ran".
  */
-function testMessage(result: NotificationsSendTestOutput, failed: string | null): string {
-  if (failed) return failed;
+function testMessage(result: NotificationsSendTestOutput): string {
   if (!result.matched) return result.reason ?? "This route did not match the test notification.";
   if (result.deliveries.length === 0) return "Matched, but nothing was dispatched.";
   const bad = result.deliveries.filter((d) => !SETTLED_OK.has(d.outcome));
-  if (bad.length === 0) return "Delivered. Check the channel.";
+  if (bad.length === 0) {
+    // An agent target sits `deferred` for as long as its automation's debounce
+    // window is open: the run has not started, there is no channel to look at,
+    // and the row can still settle `denied` or `skipped`. "Delivered" here is
+    // the same false green `pending` would be.
+    const deferred = result.deliveries.find((d) => d.outcome === "deferred");
+    return deferred
+      ? `${deferred.target}: queued for its automation's next run — nothing has been sent yet.`
+      : "Delivered. Check the channel.";
+  }
   const first = bad[0];
   const detail = first?.lastError ? ` — ${first.lastError}` : "";
   // `pending` is not a verdict, and reading it as one is the trap: the runtime

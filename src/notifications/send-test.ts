@@ -106,7 +106,7 @@ function unmatchedReason(
   subject: MatchSubject,
   source: string,
   ceiling: NotificationLevel,
-  anySource: boolean,
+  declared: readonly string[],
 ): string {
   const blockedOnLevel = matchesNotification(
     route.match ? { ...route.match, level: undefined } : undefined,
@@ -116,6 +116,18 @@ function unmatchedReason(
     return "The test notification did not match this route. Check the source and event name.";
   }
   const asked = route.match?.level ?? DEFAULT_SOURCE_MAX_LEVEL;
+  const anySource = route.match?.source === undefined;
+  // A workspace with no outbox has no ceiling to raise and no source to name:
+  // `source` is the reserved placeholder, which appears nowhere on the settings
+  // page. Naming it as this workspace's best ceiling would send an admin to
+  // look for a connector that is not there.
+  if (anySource && declared.length === 0) {
+    return (
+      "No connector in this workspace publishes notifications, so nothing can reach this " +
+      `route yet — the test item took the default ceiling "${ceiling}", below the "${asked}" ` +
+      "this route asks for. Install a connector with a notification outbox."
+    );
+  }
   const which = anySource
     ? `The highest ceiling among this workspace's sources is "${ceiling}" (on "${source}")`
     : `The ceiling on "${source}" is "${ceiling}"`;
@@ -130,7 +142,6 @@ export async function sendTestNotification(
   opts: SendTestOptions,
 ): Promise<NotificationsSendTestOutput> {
   const { wsId, route, config, store, dispatcher } = opts;
-  const anySource = route.match?.source === undefined;
   const source = sourceFor(route, opts.declaredSources, config);
   const ceiling = sourceMaxLevel(config, source);
 
@@ -166,7 +177,7 @@ export async function sendTestNotification(
         { source: item.source, name: item.envelope.name, level: effectiveLevel },
         source,
         ceiling,
-        anySource,
+        opts.declaredSources,
       ),
       deliveries: [],
     };
