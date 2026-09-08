@@ -48,6 +48,14 @@ import {
 /** Longer than any backoff a default-configured source reaches. */
 const PAST_ANY_BACKOFF_MS = 600_000;
 
+/**
+ * Pinned so `{{inbox.url}}` renders a literal this test can assert whole.
+ * `webOrigin()` reads it per call, so setting it here reaches the dispatcher.
+ */
+const WEB_ORIGIN_ENV = "NB_WEB_URL";
+const WEB_ORIGIN = "https://tenant.example";
+let savedWebOrigin: string | undefined;
+
 const AUTHOR = "usr_admin";
 const OUTBOX_SOURCE = "fixture-outbox";
 
@@ -75,11 +83,15 @@ beforeEach(async () => {
   members = [AUTHOR];
   events = [];
   inFlight = [];
+  savedWebOrigin = process.env[WEB_ORIGIN_ENV];
+  process.env[WEB_ORIGIN_ENV] = WEB_ORIGIN;
 });
 
 afterEach(async () => {
   for (const stop of teardown.splice(0)) await stop();
   rmSync(workDir, { recursive: true, force: true });
+  if (savedWebOrigin === undefined) delete process.env[WEB_ORIGIN_ENV];
+  else process.env[WEB_ORIGIN_ENV] = savedWebOrigin;
 });
 
 /**
@@ -220,7 +232,11 @@ describe("a connector's fact reaching a Slack channel", () => {
               {
                 kind: "tool",
                 tool: "slack__send_message",
-                input: { channel: "#outbound", text: "{{title}} — {{subject}}" },
+                input: {
+                  channel: "#outbound",
+                  text: "{{title}} — {{subject}}",
+                  url: "{{inbox.url}}",
+                },
               },
             ],
           },
@@ -243,13 +259,21 @@ describe("a connector's fact reaching a Slack channel", () => {
     // It reached the inbox …
     expect(inbox().map((item) => item.envelope.eventId)).toEqual(["evt_domain_active"]);
 
-    // … and it reached Slack, as the route's author, rendered.
+    // … and it reached Slack, as the route's author, rendered. `url` is the one
+    // placeholder no server can supply: the dispatcher has to pair THIS
+    // workspace with THIS item's `<source>:<eventId>` id, and neither half is
+    // checked by the renderer's own tests — they are handed a host block
+    // already built. Spelled out rather than composed from the helpers under
+    // test, so a wrong argument at the seam cannot agree with itself.
     expect(slackCalls).toEqual([
       {
         toolName: "send_message",
         input: {
           channel: "#outbound",
           text: "evt_domain_active.example is active — evt_domain_active.example",
+          url:
+            `${WEB_ORIGIN}/w/${wsId.slice("ws_".length)}/notifications` +
+            `?item=${OUTBOX_SOURCE}%3Aevt_domain_active`,
         },
       },
     ]);

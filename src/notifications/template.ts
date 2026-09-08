@@ -3,12 +3,19 @@
  *
  * A Mustache subset and nothing more: `{{name}}` is replaced by a value, and
  * there are no sections, no inversions, no partials, no lambdas and no
- * filters. The whole vocabulary is four names — `title`, `body`, `subject` and
- * `link.resource` — resolved from the notification's presentation block.
+ * filters. The whole vocabulary is five names. Four — `title`, `body`,
+ * `subject` and `link.resource` — are the emitting server's, resolved from the
+ * notification's presentation block. The fifth, `inbox.url`, is the host's own.
+ *
+ * **The host contributes `inbox.url` because the server cannot.** A server's
+ * `link.resource` is a URI in its own namespace and only this shell knows how
+ * to resolve one; delivered to Slack or mail it is inert text. The address of
+ * the item in the workspace inbox is something only the runtime can build, and
+ * without it a route that reaches a human off-platform gives them no way back.
  *
  * **`data` is deliberately absent.** It is the emitting server's structured
  * payload and no runtime code reads a field of it, so there is nothing to
- * template out of. A route that needs a fifth name is a design question, not a
+ * template out of. A route that needs a sixth name is a design question, not a
  * missing placeholder.
  *
  * **No escaping, because there is no markup.** Mustache's `{{ }}` / `{{{ }}}`
@@ -41,7 +48,7 @@ const PLACEHOLDERS = new Set<string>(NOTIFICATION_PLACEHOLDERS);
 export interface RenderedInput {
   input: Record<string, unknown>;
   /**
-   * Placeholders that named something outside the four. Each renders empty.
+   * Placeholders that named something outside the five. Each renders empty.
    *
    * Counted rather than refused: the write-time validator already refuses
    * them, so anything reaching here came off a record written by an older
@@ -49,10 +56,11 @@ export interface RenderedInput {
    * are to deliver something or nothing. Empty is the honest render — literal
    * braces in a Slack channel look like the connector wrote them.
    *
-   * A *known* name whose value is absent (`{{body}}` on an item with no body)
-   * is not a miss. It is the ordinary case, it renders empty by design, and
-   * counting it would make the metric a measure of how many notifications have
-   * short bodies.
+   * A *known* name whose value is absent (`{{body}}` on an item with no body,
+   * or `{{inbox.url}}` when the configured origin would not parse) is not a
+   * miss. It is the ordinary case, it renders empty by design, and counting it
+   * would make the metric a measure of how many notifications have short
+   * bodies.
    */
   misses: number;
 }
@@ -68,25 +76,40 @@ export interface RenderedInput {
 export function renderDeliverInput(
   input: Record<string, unknown> | undefined,
   presentation: NotificationPresentation,
+  host: HostPlaceholders,
 ): RenderedInput {
   if (input === undefined) return { input: {}, misses: 0 };
   const state = { misses: 0 };
-  const values = placeholderValues(presentation);
+  const values = placeholderValues(presentation, host);
   return {
     input: renderValue(input, values, state) as Record<string, unknown>,
     misses: state.misses,
   };
 }
 
-/** The four names, resolved. An absent optional renders as the empty string. */
+/**
+ * The placeholder values the runtime supplies rather than the connector.
+ *
+ * `inboxUrl` is empty when the runtime could not build one — a misconfigured
+ * public origin. Empty rather than absent, and never a throw: a delivery that
+ * failed because a link could not be built would report a Slack outage for a
+ * configuration error, and the rest of the message is still worth sending.
+ */
+export interface HostPlaceholders {
+  inboxUrl: string;
+}
+
+/** The five names, resolved. An absent optional renders as the empty string. */
 function placeholderValues(
   presentation: NotificationPresentation,
+  host: HostPlaceholders,
 ): Readonly<Record<NotificationPlaceholder, string>> {
   return {
     title: presentation.title,
     body: presentation.body ?? "",
     subject: presentation.subject ?? "",
     "link.resource": presentation.link?.resource ?? "",
+    "inbox.url": host.inboxUrl,
   };
 }
 

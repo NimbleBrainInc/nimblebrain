@@ -74,7 +74,7 @@ In dev mode (no [`instance.json`](/config/instance-json/), no auth configured) t
           {
             "kind": "tool",
             "tool": "slack__send_message",
-            "input": { "channel": "#outbound", "text": "{{title}}\n{{body}}" }
+            "input": { "channel": "alerts", "text": "{{title}}\n{{inbox.url}}" }
           }
         ]
       }
