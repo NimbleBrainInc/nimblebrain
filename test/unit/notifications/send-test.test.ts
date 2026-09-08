@@ -254,3 +254,71 @@ describe("only the route under test", () => {
     expect(calls[0]?.input.channel).toBe("alerts");
   });
 });
+
+describe("a route that names no source", () => {
+  /**
+   * Such a route fires if ANY declared source can reach its minimum level, so
+   * the test has to be attributed to the source with the highest ceiling.
+   * Attributing to an arbitrary one reports "this route will never fire" for a
+   * route that delivers perfectly well, and sends the admin to raise a ceiling
+   * the route does not depend on — a privilege-adjacent change to an unrelated
+   * connector.
+   */
+  const ANY_SOURCE: NotificationRoute = {
+    id: "rt_any",
+    createdBy: AUTHOR,
+    match: { level: "attention" },
+    deliver: [{ kind: "tool", tool: "slack__send_message", input: { channel: "alerts" } }],
+  };
+
+  async function sendAcross(
+    ceilings: Record<string, "info" | "attention" | "urgent">,
+    route = ANY_SOURCE,
+  ) {
+    const config = {
+      sources: Object.fromEntries(
+        Object.entries(ceilings).map(([k, v]) => [k, { maxLevel: v }]),
+      ),
+      routes: [route],
+    };
+    await workspaceStore.update(wsId, { notifications: config });
+    return sendTestNotification({
+      wsId,
+      route,
+      config,
+      requestedBy: AUTHOR,
+      store: storeFor(wsId),
+      dispatcher: dispatcher(),
+      // As `listNotificationSources` hands them over: sorted by source.
+      declaredSources: Object.keys(ceilings).sort(),
+    });
+  }
+
+  test("is tested against the highest ceiling, not the alphabetically first", async () => {
+    const out = await sendAcross({ "aaa-mcp": "info", "zzz-mcp": "urgent" });
+
+    expect(out.source).toBe("zzz-mcp");
+    expect(out.matched).toBe(true);
+    expect(out.deliveries[0]?.outcome).toBe("delivered");
+  });
+
+  test("reports blocked only when no source can reach the route's level", async () => {
+    const out = await sendAcross({ "aaa-mcp": "info", "zzz-mcp": "info" });
+
+    expect(out.matched).toBe(false);
+    expect(out.deliveries).toEqual([]);
+    // Names it as the best available rather than as if it were the only one.
+    expect(out.reason).toContain("highest ceiling");
+    expect(calls).toHaveLength(0);
+  });
+
+  test("a route with no level filter fires whatever the ceilings are", async () => {
+    // `match.level` absent means the level clause is skipped entirely — it must
+    // not be read as the ceiling default, which is a different `"info"`.
+    const noLevel: NotificationRoute = { ...ANY_SOURCE, id: "rt_nolevel", match: {} };
+    const out = await sendAcross({ "aaa-mcp": "info" }, noLevel);
+
+    expect(out.matched).toBe(true);
+    expect(out.deliveries[0]?.outcome).toBe("delivered");
+  });
+});

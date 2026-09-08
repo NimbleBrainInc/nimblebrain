@@ -32,10 +32,16 @@ import {
   sourceMaxLevel,
   type WorkspaceNotificationsConfig,
 } from "./config.ts";
-import type { RouteDispatcher } from "./routes.ts";
+import { type MatchSubject, matchesNotification } from "./match.ts";
+import { type RouteDispatcher, routeMatches } from "./routes.ts";
 import type { NotificationStore } from "./store.ts";
 import { testEnvelopeFor } from "./test-envelope.ts";
-import { clampLevel, NOTIFICATION_LEVEL_RANK, notificationId } from "./types.ts";
+import {
+  clampLevel,
+  NOTIFICATION_LEVEL_RANK,
+  type NotificationLevel,
+  notificationId,
+} from "./types.ts";
 
 export interface SendTestOptions {
   wsId: string;
@@ -54,29 +60,69 @@ export interface SendTestOptions {
  *
  * A route that names a source is tested as that source: the ceiling is half of
  * what makes a route fire, so borrowing the name is what makes the test honest
- * rather than a lie of convenience. A route that matches every source has no
- * such answer, so it takes the first declared one — and when the workspace has
- * no outbox at all, a reserved name, which carries the default ceiling and is
- * visibly not a connector.
+ * rather than a lie of convenience.
+ *
+ * A route that matches EVERY source has no such answer, and the choice matters
+ * more than it looks. Such a route fires if *any* declared source can reach its
+ * minimum level, so the honest test is against the source with the **highest**
+ * ceiling: picking an arbitrary one — the first, say — reports "this route will
+ * never fire" whenever that one happens to sit low, while the route delivers
+ * perfectly well for every other connector in the workspace. Worse, the reason
+ * would then name a ceiling the route does not depend on, and send the admin to
+ * raise it. Highest-first makes `matched` mean "this route can fire at all".
+ *
+ * A workspace with no outbox at all takes a reserved name, which carries the
+ * default ceiling and is visibly not a connector.
  */
-function sourceFor(route: NotificationRoute, declared: readonly string[]): string {
-  return route.match?.source ?? declared[0] ?? "notifications";
+function sourceFor(
+  route: NotificationRoute,
+  declared: readonly string[],
+  config: WorkspaceNotificationsConfig,
+): string {
+  if (route.match?.source !== undefined) return route.match.source;
+  if (declared.length === 0) return "notifications";
+  // `declared` arrives sorted, so ties resolve to the alphabetically-first —
+  // stable across calls, which keeps a repeated test answering the same way.
+  return declared.reduce((best, next) =>
+    NOTIFICATION_LEVEL_RANK[sourceMaxLevel(config, next)] >
+    NOTIFICATION_LEVEL_RANK[sourceMaxLevel(config, best)]
+      ? next
+      : best,
+  );
 }
 
 /**
  * Why a test item did not match the route it was built for.
  *
- * Only one cause is reachable: the envelope is constructed from the route's own
- * `match`, so its source and name agree by construction and the level is the
- * only field the workspace can override. Saying so specifically is the point —
- * "no ledger row" is what a blocked route and a broken route look like alike,
- * and the ceiling is the one an operator can fix in the row above.
+ * The level is the only cause a workspace can produce: the envelope is built
+ * from the route's own `match`, so its source and name agree by construction.
+ * That is asserted by re-running the shared matcher with the level clause
+ * removed rather than by re-deriving the comparison — if everything else
+ * agrees, the level is what blocked it, and if it does not, this says so
+ * instead of blaming a ceiling that is fine.
  */
-function unmatchedReason(source: string, ceiling: string, asked: string): string {
+function unmatchedReason(
+  route: NotificationRoute,
+  subject: MatchSubject,
+  source: string,
+  ceiling: NotificationLevel,
+  anySource: boolean,
+): string {
+  const blockedOnLevel = matchesNotification(
+    route.match ? { ...route.match, level: undefined } : undefined,
+    subject,
+  );
+  if (!blockedOnLevel) {
+    return "The test notification did not match this route. Check the source and event name.";
+  }
+  const asked = route.match?.level ?? DEFAULT_SOURCE_MAX_LEVEL;
+  const which = anySource
+    ? `The highest ceiling among this workspace's sources is "${ceiling}" (on "${source}")`
+    : `The ceiling on "${source}" is "${ceiling}"`;
   return (
-    `The ceiling on "${source}" is "${ceiling}", so its notifications reach a route at ` +
-    `"${ceiling}" at most — and this route asks for "${asked}" or above. Raise the ceiling ` +
-    "for this source, or lower the route's minimum level."
+    `${which}, so its notifications reach a route at "${ceiling}" at most — and this route ` +
+    `asks for "${asked}" or above. Raise that source's ceiling, or lower the route's ` +
+    "minimum level."
   );
 }
 
@@ -84,7 +130,8 @@ export async function sendTestNotification(
   opts: SendTestOptions,
 ): Promise<NotificationsSendTestOutput> {
   const { wsId, route, config, store, dispatcher } = opts;
-  const source = sourceFor(route, opts.declaredSources);
+  const anySource = route.match?.source === undefined;
+  const source = sourceFor(route, opts.declaredSources, config);
   const ceiling = sourceMaxLevel(config, source);
 
   const envelope = testEnvelopeFor(route, {
@@ -96,7 +143,6 @@ export async function sendTestNotification(
     nonce: randomUUID(),
   });
 
-  const asked = route.match?.level ?? DEFAULT_SOURCE_MAX_LEVEL;
   const effectiveLevel = clampLevel(
     envelope._meta?.["ai.nimblebrain/notification"]?.level ?? DEFAULT_SOURCE_MAX_LEVEL,
     ceiling,
@@ -104,17 +150,24 @@ export async function sendTestNotification(
   const { item } = store.append(source, envelope, effectiveLevel);
   const id = notificationId(item);
 
-  // Checked here and not inferred from an empty ledger: the dispatcher writes
-  // nothing when nothing matches, so "no rows" alone cannot tell a blocked
-  // route from one whose every target failed to write.
-  const matched = NOTIFICATION_LEVEL_RANK[effectiveLevel] >= NOTIFICATION_LEVEL_RANK[asked];
-  if (!matched) {
+  // The real predicate, not a second copy of it. Asked here as well as inside
+  // the dispatcher because the dispatcher writes nothing when nothing matches,
+  // and an empty ledger cannot tell a blocked route from one whose every target
+  // failed to write — which is the distinction this whole affordance exists to
+  // draw.
+  if (!routeMatches(route, item, effectiveLevel)) {
     return {
       notificationId: id,
       source,
       effectiveLevel,
       matched: false,
-      reason: unmatchedReason(source, ceiling, asked),
+      reason: unmatchedReason(
+        route,
+        { source: item.source, name: item.envelope.name, level: effectiveLevel },
+        source,
+        ceiling,
+        anySource,
+      ),
       deliveries: [],
     };
   }

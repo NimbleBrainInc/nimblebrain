@@ -206,8 +206,10 @@ Then it tells you one of three things:
 | It says | It means |
 |---|---|
 | **Delivered. Check the channel.** | The tool ran and did not report a failure. Go look — if nothing is there, the tool accepted the call and dropped it, which is the connector's end. |
-| **The ceiling on … is …** | The route never matched, so nothing was dispatched. Raise that source's ceiling above, or lower the route's minimum level. |
-| a target and an outcome | The dispatch was refused or failed. The wording is the ledger's — see [the delivery ledger](#the-delivery-ledger) for what each outcome means. |
+| **The ceiling on … is …** | The route never matched, so nothing was dispatched. Raise that source's ceiling above, or lower the route's minimum level. For a route that matches *any* source, the ceiling named is the highest one in the workspace — if that cannot reach the route's level, nothing can. |
+| **… attempt failed … it retries for about five minutes** | The call did not complete. The platform will try twice more, so the test message may still reach the channel after you have stopped looking. |
+| a target and an outcome | The dispatch was refused or skipped. The wording is the ledger's — see [the delivery ledger](#the-delivery-ledger) for what each outcome means. |
+| **Matched, but nothing was dispatched.** | The route matched and names no target the platform could act on. Check its **Deliver to** rows. |
 
 It tests **what is saved**, not what is on screen, so save your edits first — a
 route only fires from the stored copy. A test also does not check that the

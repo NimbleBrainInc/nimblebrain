@@ -347,15 +347,15 @@ function RouteTest({ routeId }: { routeId?: string }) {
 
   return (
     <div className="flex items-center gap-2">
-      {result || failed ? (
+      {(result ?? failed) ? (
         <span
           data-testid="route-test-result"
           className={cn(
             "text-xs",
-            testTone(result, failed) === "ok" ? "text-muted-foreground" : "text-warning",
+            result && testTone(result, failed) === "ok" ? "text-muted-foreground" : "text-warning",
           )}
         >
-          {testMessage(result, failed)}
+          {result ? testMessage(result, failed) : failed}
         </span>
       ) : null}
       <Button variant="outline" size="sm" disabled={busy} onClick={() => void run()}>
@@ -365,13 +365,20 @@ function RouteTest({ routeId }: { routeId?: string }) {
   );
 }
 
+/**
+ * Outcomes that are not a failure to report.
+ *
+ * `deferred` is an agent target inside its automation's debounce window and
+ * `pending` is a first attempt that has not settled — neither is good news, but
+ * neither is the route being broken, and only `pending` needs saying out loud.
+ */
+const SETTLED_OK: ReadonlySet<string> = new Set(["delivered", "deferred"]);
+
 /** Whether the test says the route works. */
-function testTone(result: NotificationsSendTestOutput | null, failed: string | null) {
-  if (failed || !result) return failed ? "bad" : "ok";
+function testTone(result: NotificationsSendTestOutput, failed: string | null): "ok" | "bad" {
+  if (failed) return "bad";
   if (!result.matched) return "bad";
-  return result.deliveries.every((d) => d.outcome === "delivered" || d.outcome === "deferred")
-    ? "ok"
-    : "bad";
+  return result.deliveries.every((d) => SETTLED_OK.has(d.outcome)) ? "ok" : "bad";
 }
 
 /**
@@ -381,17 +388,22 @@ function testTone(result: NotificationsSendTestOutput | null, failed: string | n
  * can raise one row above, and it comes first because an empty ledger would
  * otherwise read as "delivered nothing" rather than "never ran".
  */
-function testMessage(result: NotificationsSendTestOutput | null, failed: string | null): string {
+function testMessage(result: NotificationsSendTestOutput, failed: string | null): string {
   if (failed) return failed;
-  if (!result) return "";
   if (!result.matched) return result.reason ?? "This route did not match the test notification.";
   if (result.deliveries.length === 0) return "Matched, but nothing was dispatched.";
-  const bad = result.deliveries.filter(
-    (d) => d.outcome !== "delivered" && d.outcome !== "deferred",
-  );
+  const bad = result.deliveries.filter((d) => !SETTLED_OK.has(d.outcome));
   if (bad.length === 0) return "Delivered. Check the channel.";
   const first = bad[0];
-  return `${first?.target}: ${first?.outcome}${first?.lastError ? ` — ${first.lastError}` : ""}`;
+  const detail = first?.lastError ? ` — ${first.lastError}` : "";
+  // `pending` is not a verdict, and reading it as one is the trap: the runtime
+  // has the test item on its retry ladder and will call the tool twice more
+  // over about five minutes, so it may reach the real channel long after the
+  // admin has stopped looking at this page.
+  if (first?.outcome === "pending") {
+    return `${first.target}: attempt failed${detail}. It retries for about five minutes, so it may still arrive.`;
+  }
+  return `${first?.target}: ${first?.outcome}${detail}`;
 }
 
 function RouteEditor({

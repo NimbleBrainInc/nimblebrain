@@ -36,6 +36,14 @@ interface ToolCall {
 
 let calls: ToolCall[] = [];
 let current = settings();
+/** What `notifications__send_test` answers with, per test. */
+let testSendResult: Record<string, unknown> | Error = {
+  notificationId: "acme:evt",
+  source: "acme",
+  effectiveLevel: "info",
+  matched: true,
+  deliveries: [],
+};
 
 function settings(over: Record<string, unknown> = {}): Record<string, unknown> {
   return {
@@ -61,6 +69,10 @@ mock.module("../api/client", () => ({
   ...realClient,
   callTool: mock(async (_source: string, tool: string, args: Record<string, unknown>) => {
     calls.push({ tool, args });
+    if (tool === "send_test") {
+      if (testSendResult instanceof Error) throw testSendResult;
+      return { content: [{ type: "text", text: JSON.stringify(testSendResult) }] };
+    }
     return { content: [{ type: "text", text: JSON.stringify(current) }] };
   }),
 }));
@@ -273,5 +285,144 @@ describe("saving routes", () => {
 
     expect(container.textContent).toContain("not valid JSON");
     expect(calls.some((c) => c.tool === "set_routes")).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Send test — the three-shape answer is the feature, so all three are asserted.
+// A button that only ever said "sent" would be the same silence it exists to
+// break.
+// ---------------------------------------------------------------------------
+
+const SAVED_ROUTE = {
+  id: "rt_slack",
+  createdBy: "usr_admin",
+  match: { source: "acme", level: "attention" },
+  deliver: [{ kind: "tool", tool: "slack__send_message", input: { channel: "alerts" } }],
+};
+
+function testResultText(container: HTMLElement): string | null {
+  const el = container.querySelector('[data-testid="route-test-result"]');
+  return el ? (el.textContent ?? "") : null;
+}
+
+async function sendTest(container: HTMLElement): Promise<void> {
+  await act(async () => {
+    buttonLabelled(container, "Send test").click();
+  });
+}
+
+describe("send test", () => {
+  test("a delivered route says so", async () => {
+    current = settings({ routes: [SAVED_ROUTE] });
+    testSendResult = {
+      notificationId: "acme:evt",
+      source: "acme",
+      effectiveLevel: "attention",
+      matched: true,
+      deliveries: [
+        {
+          routeId: "rt_slack",
+          target: "slack__send_message",
+          index: 0,
+          kind: "tool",
+          attempts: 1,
+          outcome: "delivered",
+          updatedAt: "2026-01-01T00:00:00Z",
+        },
+      ],
+    };
+    const container = await mount();
+    await sendTest(container);
+
+    expect(calls.some((c) => c.tool === "send_test")).toBe(true);
+    expect(testResultText(container)).toContain("Delivered");
+  });
+
+  test("a route the ceiling blocks reports the reason, not an empty ledger", async () => {
+    current = settings({ routes: [SAVED_ROUTE] });
+    testSendResult = {
+      notificationId: "acme:evt",
+      source: "acme",
+      effectiveLevel: "info",
+      matched: false,
+      reason: 'The ceiling on "acme" is "info" — raise it.',
+      deliveries: [],
+    };
+    const container = await mount();
+    await sendTest(container);
+
+    expect(testResultText(container)).toContain('ceiling on "acme"');
+  });
+
+  test("a failed target names the target and the error", async () => {
+    current = settings({ routes: [SAVED_ROUTE] });
+    testSendResult = {
+      notificationId: "acme:evt",
+      source: "acme",
+      effectiveLevel: "attention",
+      matched: true,
+      deliveries: [
+        {
+          routeId: "rt_slack",
+          target: "slack__send_message",
+          index: 0,
+          kind: "tool",
+          attempts: 1,
+          outcome: "denied",
+          classification: "tool_not_allowed",
+          lastError: "not available to an unattended dispatch",
+          updatedAt: "2026-01-01T00:00:00Z",
+        },
+      ],
+    };
+    const container = await mount();
+    await sendTest(container);
+
+    const text = testResultText(container) ?? "";
+    expect(text).toContain("slack__send_message");
+    expect(text).toContain("denied");
+  });
+
+  test("a first attempt that failed says it will retry, not just 'pending'", async () => {
+    // `pending` reads as neither pass nor fail, and the runtime has the item on
+    // its retry ladder — it can reach the real channel minutes later.
+    current = settings({ routes: [SAVED_ROUTE] });
+    testSendResult = {
+      notificationId: "acme:evt",
+      source: "acme",
+      effectiveLevel: "attention",
+      matched: true,
+      deliveries: [
+        {
+          routeId: "rt_slack",
+          target: "slack__send_message",
+          index: 0,
+          kind: "tool",
+          attempts: 1,
+          outcome: "pending",
+          lastError: "connection refused",
+          updatedAt: "2026-01-01T00:00:00Z",
+        },
+      ],
+    };
+    const container = await mount();
+    await sendTest(container);
+
+    const text = testResultText(container) ?? "";
+    expect(text).toContain("attempt failed");
+    expect(text).toContain("retries");
+    expect(text).not.toBe("slack__send_message: pending");
+  });
+
+  test("an unsaved route offers no test", async () => {
+    current = settings({ routes: [] });
+    const container = await mount();
+    await act(async () => {
+      buttonLabelled(container, "Add route").click();
+    });
+
+    expect(container.textContent).toContain("Save to test");
+    expect(() => buttonLabelled(container, "Send test")).toThrow();
   });
 });
