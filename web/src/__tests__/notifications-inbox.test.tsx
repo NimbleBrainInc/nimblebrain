@@ -10,6 +10,9 @@
 //      nothing is worse than one that never claimed to exist.
 //   3. Opening an item marks it read — once, and not again on close.
 //   4. The delivery ledger renders only when there is one.
+//   5. `?item=` opens the row it names. That query parameter is the tail of the
+//      `{{inbox.url}}` a route rendered into Slack or mail, so a reader who
+//      followed it must land on the item, not on a list to search.
 //
 // Renders the page against a supplied context value rather than a mocked API:
 // the provider's fetching is a separate contract (see
@@ -70,6 +73,7 @@ let unmount: (() => void) | null = null;
 async function mount(
   over: Partial<NotificationsValue> = {},
   placements: Array<Record<string, unknown>> = [],
+  entry = "/w/ws-outbound/notifications",
 ): Promise<{
   container: HTMLDivElement;
   markRead: ReturnType<typeof mock>;
@@ -93,7 +97,7 @@ async function mount(
     root.render(
       React.createElement(
         MemoryRouter,
-        { initialEntries: ["/w/ws-outbound/notifications"] },
+        { initialEntries: [entry] },
         React.createElement(
           ShellProvider,
           {
@@ -332,5 +336,44 @@ describe("ordering and the empty state", () => {
   test("an empty inbox says what fills it, not nothing", async () => {
     const { container } = await mount({ items: [] });
     expect(container.textContent).toContain("declares an outbox");
+  });
+});
+
+describe("?item= — where a link from outside the shell lands", () => {
+  test("opens the row it names, and marks it read", async () => {
+    const { container, markRead } = await mount(
+      {
+        items: [
+          item({ id: "acme:evt_1", body: "DNS propagated." }),
+          item({ id: "acme:evt_2", seq: 2 }),
+        ],
+      },
+      [],
+      "/w/ws-outbound/notifications?item=acme%3Aevt_1",
+    );
+    // Expanded without a click: the body is on screen.
+    expect(container.textContent).toContain("DNS propagated.");
+    expect(markRead).toHaveBeenCalledTimes(1);
+    expect(markRead.mock.calls[0]?.[0]).toEqual(["acme:evt_1"]);
+  });
+
+  test("an id that names nothing lands on the list and marks nothing", async () => {
+    // A link to an item that has aged out of the 90-day window, or to another
+    // workspace's. The reader gets the inbox rather than an error.
+    const { container, markRead } = await mount(
+      { items: [item({ id: "acme:evt_1" })] },
+      [],
+      "/w/ws-outbound/notifications?item=acme%3Agone",
+    );
+    expect(rows(container)).toHaveLength(1);
+    expect(markRead).not.toHaveBeenCalled();
+  });
+
+  test("no ?item= opens nothing", async () => {
+    const { container, markRead } = await mount({
+      items: [item({ body: "DNS propagated." })],
+    });
+    expect(container.textContent).not.toContain("DNS propagated.");
+    expect(markRead).not.toHaveBeenCalled();
   });
 });

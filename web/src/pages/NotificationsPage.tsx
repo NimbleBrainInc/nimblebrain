@@ -1,6 +1,6 @@
 import { AlertTriangle, Bell, ChevronRight, Info, Zap } from "lucide-react";
-import { useCallback, useMemo, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Link, useParams, useSearchParams } from "react-router-dom";
 import type {
   DeliveryOutcome,
   DeliveryRecord,
@@ -53,7 +53,13 @@ export function NotificationsPage() {
   const { slug } = useParams<{ slug: string }>();
   const shell = useShellContext();
   const { items, unread, loading, error, atPageLimit, markRead, markAllRead } = useNotifications();
-  const [open, setOpen] = useState<Set<string>>(() => new Set());
+  // `?item=` is how a delivered notification links back here from outside the
+  // shell — the `{{inbox.url}}` a route template rendered into Slack or mail.
+  // The reader followed a link to one item, so it opens expanded and scrolled
+  // to rather than leaving them to find it in a list of a hundred.
+  const [searchParams] = useSearchParams();
+  const focusId = searchParams.get("item");
+  const [open, setOpen] = useState<Set<string>>(() => new Set(focusId ? [focusId] : []));
 
   const placements = useMemo(
     () => (shell ? [...shell.forSlot("sidebar"), ...shell.forSlot("main")] : []),
@@ -81,6 +87,18 @@ export function NotificationsPage() {
     },
     [open, markRead],
   );
+
+  // Following a link to an item is reading it, on the same rule `toggle` uses.
+  // Guarded on the item existing: a link to something pruned, or to another
+  // workspace's item, marks nothing and simply lands on the list.
+  const focusPresent = focusId !== null && items.some((i) => i.id === focusId);
+  const marked = useRef(false);
+  useEffect(() => {
+    if (!focusPresent || marked.current) return;
+    marked.current = true;
+    const item = items.find((i) => i.id === focusId);
+    if (item && !item.readAt) void markRead([item.id]);
+  }, [focusPresent, focusId, items, markRead]);
 
   return (
     <div className="h-full overflow-y-auto">
@@ -128,6 +146,7 @@ export function NotificationsPage() {
               key={item.id}
               item={item}
               expanded={open.has(item.id)}
+              focused={item.id === focusId}
               onToggle={() => toggle(item)}
               href={
                 item.link ? resolveNotificationLink(item.link.resource, placements, slug) : null
@@ -147,23 +166,55 @@ export function NotificationsPage() {
   );
 }
 
+/**
+ * A ref that scrolls its element into view when `active` becomes true.
+ *
+ * Extracted from the row rather than inlined: exactly one row in the list is
+ * ever `active` (the one `?item=` names), so this is a single call on a single
+ * mount rather than a scroll war, and saying that once here is cheaper than
+ * re-reading it out of the row's render.
+ */
+function useScrollIntoViewWhen<T extends HTMLElement>(active: boolean) {
+  const ref = useRef<T>(null);
+  useEffect(() => {
+    if (active) ref.current?.scrollIntoView({ block: "center", behavior: "smooth" });
+  }, [active]);
+  return ref;
+}
+
+/**
+ * The row's own border, which doubles as the "this is the one you followed a
+ * link to" marker. A named function rather than a ternary inside the row so the
+ * row's complexity stays about the row.
+ */
+function rowChrome(focused: boolean): string {
+  return cn(
+    "rounded-sm border bg-card",
+    focused ? "border-primary ring-1 ring-primary" : "border-border/60",
+  );
+}
+
 function NotificationRow({
   item,
   expanded,
+  focused,
   onToggle,
   href,
 }: {
   item: NotificationView;
   expanded: boolean;
+  /** Named by `?item=` — the row a link from outside the shell points at. */
+  focused: boolean;
   onToggle: () => void;
   href: string | null;
 }) {
   const level = LEVEL_META[item.level];
   const LevelIcon = level.icon;
   const unread = !item.readAt;
+  const ref = useScrollIntoViewWhen<HTMLLIElement>(focused);
 
   return (
-    <li className="rounded-sm border border-border/60 bg-card">
+    <li ref={ref} className={rowChrome(focused)}>
       <button
         type="button"
         onClick={onToggle}
