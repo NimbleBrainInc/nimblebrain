@@ -1,11 +1,11 @@
-import type { Synapse } from "@nimblebrain/synapse";
-import { useSynapse } from "@nimblebrain/synapse/react";
+import type { App } from "@nimblebrain/synapse";
+import { useApp } from "@nimblebrain/synapse/react";
 import { useCallback, useEffect, useState } from "react";
 
 export type FileUrlState = "idle" | "loading" | "loaded" | "error";
 
 /**
- * Read a stored file's bytes through the Synapse bridge (`resources/read`
+ * Read a stored file's bytes through the host bridge (`resources/read`
  * on `files://<id>`) and return them as a Blob.
  *
  * The bridge is the right path — not `/v1/files/:id` directly. The app
@@ -15,11 +15,11 @@ export type FileUrlState = "idle" | "loading" | "loaded" | "error";
  * in dev. The bridge already holds the authenticated MCP session.
  */
 export async function fetchFileBlob(
-  synapse: Synapse,
+  app: App,
   fileId: string,
   mimeType: string | undefined,
 ): Promise<Blob> {
-  const result = await synapse.readResource(`files://${fileId}`);
+  const result = await app.readServerResource({ uri: `files://${fileId}` });
   const part = result.contents?.[0];
   // Binary resources arrive as base64 in `blob`; text resources as `text`.
   if (part && "blob" in part && typeof part.blob === "string") {
@@ -45,7 +45,7 @@ export function useFileObjectUrl(
   mimeType: string | undefined,
   enabled: boolean,
 ): { url: string | null; state: FileUrlState } {
-  const synapse = useSynapse();
+  const app = useApp();
   const [url, setUrl] = useState<string | null>(null);
   const [state, setState] = useState<FileUrlState>("idle");
 
@@ -61,7 +61,7 @@ export function useFileObjectUrl(
 
     (async () => {
       try {
-        const blob = await fetchFileBlob(synapse, fileId, mimeType);
+        const blob = await fetchFileBlob(app, fileId, mimeType);
         objectUrl = URL.createObjectURL(blob);
         if (cancelled) {
           URL.revokeObjectURL(objectUrl);
@@ -79,7 +79,7 @@ export function useFileObjectUrl(
       if (objectUrl) URL.revokeObjectURL(objectUrl);
       setUrl(null);
     };
-  }, [synapse, fileId, mimeType, enabled]);
+  }, [app, fileId, mimeType, enabled]);
 
   return { url, state };
 }
@@ -95,10 +95,10 @@ export function useFileDownload(): (file: {
   filename: string;
   mimeType?: string;
 }) => Promise<void> {
-  const synapse = useSynapse();
+  const app = useApp();
   return useCallback(
     async (file) => {
-      const blob = await fetchFileBlob(synapse, file.id, file.mimeType);
+      const blob = await fetchFileBlob(app, file.id, file.mimeType);
       const objectUrl = URL.createObjectURL(blob);
       try {
         const anchor = document.createElement("a");
@@ -111,7 +111,7 @@ export function useFileDownload(): (file: {
         URL.revokeObjectURL(objectUrl);
       }
     },
-    [synapse],
+    [app],
   );
 }
 

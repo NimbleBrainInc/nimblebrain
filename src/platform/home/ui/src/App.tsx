@@ -1,8 +1,9 @@
 import {
-  SynapseProvider,
+  AppProvider,
+  useAction,
+  useApp,
   useDataSync,
   useHostContext,
-  useSynapse,
 } from "@nimblebrain/synapse/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
@@ -90,7 +91,7 @@ function renderMd(text: string): string {
 
 /* ---------- cross-server tool call ----------------------------------------
  *
- * `synapse.callTool(name, args)` always routes to the calling app's own server.
+ * `app.callTool(name, args)` always routes to the calling app's own server.
  * `home` needs to invoke `briefing` on the platform's `nb` source, which is
  * a different server. The bridge supports `params.server` for internal
  * apps (see `INTERNAL_APPS` in `web/src/bridge/bridge.ts`); the SDK does
@@ -210,7 +211,8 @@ function SectionGroup({
 }
 
 function Dashboard() {
-  const synapse = useSynapse();
+  const app = useApp();
+  const action = useAction();
   // The host publishes the active workspace as `hostContext.workspace` on
   // every workspace switch. Keying the briefing fetch on `workspace.id`
   // refetches the (workspace-scoped) briefing without remounting this iframe.
@@ -278,9 +280,9 @@ function Dashboard() {
   const handleAction = useCallback(
     (action: BriefingAction) => {
       const { type, label: _label, ...params } = action;
-      synapse.action(type, params);
+      action(type, params);
     },
-    [synapse],
+    [action],
   );
 
   const categories: Array<{
@@ -351,8 +353,8 @@ function Dashboard() {
 
 export function App() {
   return (
-    <SynapseProvider name="@nimblebraininc/home" version="0.1.0">
+    <AppProvider name="@nimblebraininc/home" version="0.1.0" forwardKeys>
       <Dashboard />
-    </SynapseProvider>
+    </AppProvider>
   );
 }
