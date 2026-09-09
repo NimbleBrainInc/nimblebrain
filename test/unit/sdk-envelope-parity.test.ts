@@ -1,8 +1,9 @@
 /**
  * SDK ⇄ host bridge schema parity.
  *
- * The platform app UIs under `src/platform/*\/ui` construct postMessage
- * envelopes through `@nimblebrain/synapse`, never by hand. The bridge
+ * The platform app UIs under `src/platform/*\/ui`, and the core-resource
+ * scripts through the IIFE, construct postMessage envelopes through
+ * `@nimblebrain/synapse`, never by hand. The bridge
  * (`web/src/bridge/validate.ts`) drops any envelope that fails its
  * TypeBox schema. If the SDK ever emits an envelope that
  * doesn't match the host schemas, every internal app silently breaks.
@@ -60,6 +61,10 @@ beforeEach(() => {
       style: { setProperty: () => {} },
       classList: { contains: () => false },
     },
+    // `connect()` measures the document and sends a size before it sends
+    // `ui/initialize`, so the shim needs a body with dimensions on it — a
+    // getter-less plain object is enough, nothing here reads it back.
+    body: { scrollWidth: 800, scrollHeight: 600, offsetWidth: 800, offsetHeight: 600 },
     // SDK installs a keydown forwarder; needs a real-shaped addEventListener.
     addEventListener: () => {},
     removeEventListener: () => {},
@@ -122,7 +127,7 @@ function lastEnvelopeWithMethod(method: string): Record<string, unknown> | undef
   return undefined;
 }
 
-/** Drive the SDK through a successful handshake so non-init envelopes can flow. */
+/** Answer `ui/initialize` so the `connect()` promise can resolve. */
 function completeHandshake(): void {
   const init = lastEnvelopeWithMethod("ui/initialize") as
     | { id: string | number }
@@ -152,6 +157,21 @@ function completeHandshake(): void {
   });
 }
 
+/**
+ * Open a connection and drive it through the handshake.
+ *
+ * `connect()` resolves only once the host answers, so the answer has to be
+ * dispatched between calling it and awaiting it — which is the whole reason
+ * this is a helper rather than two lines at each call site.
+ */
+async function connectAndHandshake(): Promise<import("@nimblebrain/synapse").App> {
+  const { connect } = await import("@nimblebrain/synapse");
+  const pending = connect({ name: "test-app", version: "1.0.0" });
+  await Promise.resolve();
+  completeHandshake();
+  return pending;
+}
+
 /** Assert that every captured envelope to date passes the bridge validator. */
 function expectAllCapturedValid(): void {
   for (const env of captured) {
@@ -165,10 +185,9 @@ function expectAllCapturedValid(): void {
 
 describe("Synapse SDK ⇄ host bridge schema parity", () => {
   it("ui/initialize handshake envelope passes the bridge validator", async () => {
-    const { createSynapse } = await import("@nimblebrain/synapse");
-    createSynapse({ name: "test-app", version: "1.0.0" });
-    // microtask flush — the SDK constructs and posts init via a microtask in
-    // some configurations
+    const { connect } = await import("@nimblebrain/synapse");
+    void connect({ name: "test-app", version: "1.0.0" });
+    // microtask flush — the SDK posts init via a microtask
     await Promise.resolve();
     const init = lastEnvelopeWithMethod("ui/initialize");
     expect(init, "SDK must emit ui/initialize on instantiation").toBeDefined();
@@ -177,10 +196,7 @@ describe("Synapse SDK ⇄ host bridge schema parity", () => {
   });
 
   it("ui/notifications/initialized notification passes the validator", async () => {
-    const { createSynapse } = await import("@nimblebrain/synapse");
-    createSynapse({ name: "test-app", version: "1.0.0" });
-    await Promise.resolve();
-    completeHandshake();
+    await connectAndHandshake();
     await Promise.resolve();
     const notif = lastEnvelopeWithMethod("ui/notifications/initialized");
     expect(notif, "SDK must emit initialized after handshake").toBeDefined();
@@ -188,15 +204,11 @@ describe("Synapse SDK ⇄ host bridge schema parity", () => {
     expect(v.ok, `initialized: ${v.reason}`).toBe(true);
   });
 
-  it("synapse.callTool emits a schema-valid tools/call envelope", async () => {
-    const { createSynapse } = await import("@nimblebrain/synapse");
-    const synapse = createSynapse({ name: "test-app", version: "1.0.0" });
-    await Promise.resolve();
-    completeHandshake();
-    await synapse.ready;
+  it("app.callTool emits a schema-valid tools/call envelope", async () => {
+    const app = await connectAndHandshake();
 
     // Don't await — we only care about the envelope being posted.
-    void synapse.callTool("report", { period: "week" });
+    void app.callTool("report", { period: "week" });
     await Promise.resolve();
 
     const env = lastEnvelopeWithMethod("tools/call");
@@ -205,23 +217,19 @@ describe("Synapse SDK ⇄ host bridge schema parity", () => {
     expect(v.ok, `tools/call: ${v.reason}`).toBe(true);
   });
 
-  it("synapse.setVisibleState emits a schema-valid notification (no id)", async () => {
+  it("app.updateModelContext emits a schema-valid notification (no id)", async () => {
     // Regression: the host previously required `id` on
-    // `ui/update-model-context`, dropping every `useVisibleState` push from
-    // every synapse-app. The SDK sends this as a JSON-RPC notification via
+    // `ui/update-model-context`, dropping every model-context push from every
+    // synapse-app. The SDK sends this as a JSON-RPC notification via
     // `transport.send(...)` — no `id` field. Schema must admit that shape.
-    const { createSynapse } = await import("@nimblebrain/synapse");
-    const synapse = createSynapse({ name: "test-app", version: "1.0.0" });
-    await Promise.resolve();
-    completeHandshake();
-    await synapse.ready;
+    const app = await connectAndHandshake();
 
-    synapse.setVisibleState({ foo: "bar" }, "summary text");
-    // setVisibleState debounces by 250ms before flushing the envelope.
-    await new Promise((r) => setTimeout(r, 300));
+    // Sends immediately; the 250ms debounce moved into `useModelContext`.
+    app.updateModelContext({ foo: "bar" }, "summary text");
+    await Promise.resolve();
 
     const env = lastEnvelopeWithMethod("ui/update-model-context");
-    expect(env, "SDK must emit ui/update-model-context after setVisibleState").toBeDefined();
+    expect(env, "SDK must emit ui/update-model-context after updateModelContext").toBeDefined();
     // Confirm the SDK is in fact sending the notification shape (no id).
     expect("id" in (env as Record<string, unknown>)).toBe(false);
     const v = validateAppToHostMessage(env);
@@ -253,14 +261,11 @@ describe("Synapse SDK ⇄ host bridge schema parity", () => {
     expect(reqResult.ok, `request: ${reqResult.reason}`).toBe(true);
   });
 
-  it("synapse.action emits a schema-valid synapse/action envelope", async () => {
-    const { createSynapse } = await import("@nimblebrain/synapse");
-    const synapse = createSynapse({ name: "test-app", version: "1.0.0" });
-    await Promise.resolve();
-    completeHandshake();
-    await synapse.ready;
+  it("action() emits a schema-valid synapse/action envelope", async () => {
+    const { action } = await import("@nimblebrain/synapse");
+    const app = await connectAndHandshake();
 
-    synapse.action("openConversation", { id: "abc-123" });
+    action(app, "openConversation", { id: "abc-123" });
 
     const env = lastEnvelopeWithMethod("synapse/action");
     expect(env).toBeDefined();
@@ -272,14 +277,11 @@ describe("Synapse SDK ⇄ host bridge schema parity", () => {
     // Aggregate check: nothing the SDK emits across init + a call + an action
     // is allowed to be malformed. This catches drift in envelopes we didn't
     // think to test individually (e.g., size-changed notifications).
-    const { createSynapse } = await import("@nimblebrain/synapse");
-    const synapse = createSynapse({ name: "test-app", version: "1.0.0" });
-    await Promise.resolve();
-    completeHandshake();
-    await synapse.ready;
+    const { action } = await import("@nimblebrain/synapse");
+    const app = await connectAndHandshake();
 
-    void synapse.callTool("report", {});
-    synapse.action("openConversation", { id: "x" });
+    void app.callTool("report", {});
+    action(app, "openConversation", { id: "x" });
     await Promise.resolve();
 
     expectAllCapturedValid();
