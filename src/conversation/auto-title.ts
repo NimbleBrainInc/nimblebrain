@@ -1,5 +1,5 @@
-import type { LanguageModelV3 } from "@ai-sdk/provider";
-import { type TokenUsage, tokenUsageFromV3 } from "../usage/types.ts";
+import type { LanguageModelV4 } from "@ai-sdk/provider";
+import { type TokenUsage, tokenUsageFromV4 } from "../usage/types.ts";
 import { escapeClosingTags } from "./escape-closing-tags.ts";
 
 /** Bound the (non-streaming) title call so a stalled provider can't leak a
@@ -16,7 +16,7 @@ const TITLE_TIMEOUT_MS = 45_000;
  * usage aggregator.
  */
 export async function generateTitle(
-  model: LanguageModelV3,
+  model: LanguageModelV4,
   userMessage: string,
   assistantResponse: string,
   onUsage?: (usage: TokenUsage, llmMs: number) => void,
@@ -45,7 +45,7 @@ export async function generateTitle(
       maxOutputTokens: 30,
       abortSignal: AbortSignal.timeout(TITLE_TIMEOUT_MS),
     });
-    onUsage?.(tokenUsageFromV3(result.usage), Date.now() - startedAt);
+    onUsage?.(tokenUsageFromV4(result.usage), Date.now() - startedAt);
     const textBlock = result.content.find((b) => b.type === "text");
     if (textBlock?.type === "text") {
       return sanitizeGeneratedTitle(textBlock.text, userMessage);

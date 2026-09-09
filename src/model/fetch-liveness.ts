@@ -2,7 +2,7 @@
  * Transport-liveness tap for provider model streams.
  *
  * The model-stream watchdog (`stream.ts`) re-arms only on decoded
- * `LanguageModelV3StreamPart`s. But a provider keeps a slow generation alive
+ * `LanguageModelV4StreamPart`s. But a provider keeps a slow generation alive
  * with keep-alive frames the AI SDK swallows before they ever become parts:
  * Anthropic emits periodic `ping` events, and `@ai-sdk/anthropic` drops them
  * in its SSE transform (`case "ping": return`). So a healthy-but-slow stream —

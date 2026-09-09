@@ -1,18 +1,18 @@
 import { describe, expect, test } from "bun:test";
 import type {
-  LanguageModelV3FunctionTool,
-  LanguageModelV3Message,
+  LanguageModelV4FunctionTool,
+  LanguageModelV4Message,
 } from "@ai-sdk/provider";
 import { applyCachePolicy } from "../../src/model/cache-policy.ts";
 
 // --- builders mirroring the engine's per-iteration append pattern ----------
 
-function userMsg(text: string): LanguageModelV3Message {
+function userMsg(text: string): LanguageModelV4Message {
   return { role: "user", content: [{ type: "text", text }] };
 }
 
 /** One assistant turn with `nCalls` tool-call blocks (a "step"). */
-function assistantStep(turn: number, nCalls: number): LanguageModelV3Message {
+function assistantStep(turn: number, nCalls: number): LanguageModelV4Message {
   return {
     role: "assistant",
     content: [
@@ -27,7 +27,7 @@ function assistantStep(turn: number, nCalls: number): LanguageModelV3Message {
   };
 }
 
-function toolResult(turn: number, i: number): LanguageModelV3Message {
+function toolResult(turn: number, i: number): LanguageModelV4Message {
   return {
     role: "tool",
     content: [
@@ -42,12 +42,12 @@ function toolResult(turn: number, i: number): LanguageModelV3Message {
 }
 
 /** Append one full agentic step (assistant + its tool results) in place. */
-function appendStep(history: LanguageModelV3Message[], turn: number, nCalls: number): void {
+function appendStep(history: LanguageModelV4Message[], turn: number, nCalls: number): void {
   history.push(assistantStep(turn, nCalls));
   for (let i = 0; i < nCalls; i++) history.push(toolResult(turn, i));
 }
 
-const TOOLS: LanguageModelV3FunctionTool[] = ["search", "fetch", "log"].map((name) => ({
+const TOOLS: LanguageModelV4FunctionTool[] = ["search", "fetch", "log"].map((name) => ({
   type: "function",
   name,
   description: `${name} tool`,
@@ -66,13 +66,13 @@ function ttlOf(m: { providerOptions?: Record<string, unknown> } | undefined): st
 }
 
 /** Indices into result.prompt (incl. the system message at 0) that carry a breakpoint. */
-function breakpointIdxs(prompt: LanguageModelV3Message[]): number[] {
+function breakpointIdxs(prompt: LanguageModelV4Message[]): number[] {
   return prompt.map((m, i) => (hasCache(m) ? i : -1)).filter((i) => i >= 0);
 }
 
 /** Strip cache annotations so we compare underlying content, not breakpoint markers. */
-function contentOnly(m: LanguageModelV3Message): string {
-  const { providerOptions: _drop, ...rest } = m as LanguageModelV3Message & {
+function contentOnly(m: LanguageModelV4Message): string {
+  const { providerOptions: _drop, ...rest } = m as LanguageModelV4Message & {
     providerOptions?: unknown;
   };
   return JSON.stringify(rest);
@@ -201,7 +201,7 @@ describe("applyCachePolicy — the chaining invariant (cache correctness)", () =
     const history = [userMsg("go")];
     appendStep(history, 0, 3); // one normal tool step to seed a real prefix
 
-    const anchorOf = (msgs: LanguageModelV3Message[]): number => {
+    const anchorOf = (msgs: LanguageModelV4Message[]): number => {
       const { prompt } = applyCachePolicy({
         provider: "anthropic",
         systemPrompt: "sys",

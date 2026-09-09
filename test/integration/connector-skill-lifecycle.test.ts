@@ -1,4 +1,4 @@
-import type { LanguageModelV3 } from "@ai-sdk/provider";
+import type { LanguageModelV4 } from "@ai-sdk/provider";
 import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -39,7 +39,7 @@ metadata:
 Confirm the recipient before calling gmail__send.
 `;
 
-function fixtureModel(): LanguageModelV3 {
+function fixtureModel(): LanguageModelV4 {
   return createMockModel(() => ({ content: [{ type: "text", text: "ok" }] }));
 }
 

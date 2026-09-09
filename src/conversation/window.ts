@@ -1,4 +1,4 @@
-import type { LanguageModelV3Message } from "@ai-sdk/provider";
+import type { LanguageModelV4Message } from "@ai-sdk/provider";
 import { estimateMessageTokens } from "../engine/token-estimate.ts";
 
 /**
@@ -12,14 +12,14 @@ import { estimateMessageTokens } from "../engine/token-estimate.ts";
  * `{"0":n,"1":n,…}`), which caused excessive trimming when images were
  * present even though the provider would charge the image ~1.5K tokens.
  */
-function estimateTokens(msg: LanguageModelV3Message): number {
+function estimateTokens(msg: LanguageModelV4Message): number {
   return estimateMessageTokens(msg);
 }
 
 /**
  * Check whether a message contains tool-call parts (assistant calling tools).
  */
-function hasToolUse(msg: LanguageModelV3Message): boolean {
+function hasToolUse(msg: LanguageModelV4Message): boolean {
   if (typeof msg.content === "string") return false;
   return (
     Array.isArray(msg.content) && msg.content.some((b) => "type" in b && b.type === "tool-call")
@@ -29,7 +29,7 @@ function hasToolUse(msg: LanguageModelV3Message): boolean {
 /**
  * Check whether a message contains tool-result parts (tool providing results).
  */
-function hasToolResult(msg: LanguageModelV3Message): boolean {
+function hasToolResult(msg: LanguageModelV4Message): boolean {
   if (typeof msg.content === "string") return false;
   return (
     Array.isArray(msg.content) && msg.content.some((b) => "type" in b && b.type === "tool-result")
@@ -47,8 +47,8 @@ function hasToolResult(msg: LanguageModelV3Message): boolean {
  * message per tool call (e.g., 4 parallel tool calls → 1 assistant + 4 tool messages).
  * Regular messages are groups of size 1.
  */
-export function groupMessages(messages: LanguageModelV3Message[]): LanguageModelV3Message[][] {
-  const groups: LanguageModelV3Message[][] = [];
+export function groupMessages(messages: LanguageModelV4Message[]): LanguageModelV4Message[][] {
+  const groups: LanguageModelV4Message[][] = [];
   let i = 0;
   while (i < messages.length) {
     const msg = messages[i]!;
@@ -60,7 +60,7 @@ export function groupMessages(messages: LanguageModelV3Message[]): LanguageModel
       hasToolResult(messages[i + 1]!)
     ) {
       // Collect all consecutive tool-result messages that follow this assistant
-      const group: LanguageModelV3Message[] = [msg];
+      const group: LanguageModelV4Message[] = [msg];
       let j = i + 1;
       while (j < messages.length && messages[j]?.role === "tool" && hasToolResult(messages[j]!)) {
         group.push(messages[j]!);
@@ -103,9 +103,9 @@ export function groupMessages(messages: LanguageModelV3Message[]): LanguageModel
  * frozen prefix), not here per turn.
  */
 export function applyReasoningReplayPolicy(
-  messages: LanguageModelV3Message[],
+  messages: LanguageModelV4Message[],
   _provider: string,
-): LanguageModelV3Message[] {
+): LanguageModelV4Message[] {
   return messages;
 }
 
@@ -120,9 +120,9 @@ export function applyReasoningReplayPolicy(
  * parts is never separated from its corresponding tool message with tool-result parts.
  */
 export function windowMessages(
-  messages: LanguageModelV3Message[],
+  messages: LanguageModelV4Message[],
   maxTokens: number,
-): LanguageModelV3Message[] {
+): LanguageModelV4Message[] {
   if (messages.length === 0) return [];
 
   const totalTokens = messages.reduce((sum, m) => sum + estimateTokens(m), 0);
@@ -159,7 +159,7 @@ export function windowMessages(
   let budget = maxTokens - firstTokens - lastGroupTokens;
 
   // Walk backward from the second-to-last group, accumulating what still fits.
-  const kept: LanguageModelV3Message[][] = [];
+  const kept: LanguageModelV4Message[][] = [];
   for (let i = groups.length - 2; i >= 0; i--) {
     const groupTokens = groups[i]!.reduce((sum, m) => sum + estimateTokens(m), 0);
     if (budget - groupTokens < 0) break;

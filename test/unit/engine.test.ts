@@ -22,7 +22,7 @@ import {
   runWithRequestContext,
   type RequestContext,
 } from "../../src/runtime/request-context.ts";
-import type { LanguageModelV3, LanguageModelV3Message } from "@ai-sdk/provider";
+import type { LanguageModelV4, LanguageModelV4Message } from "@ai-sdk/provider";
 
 const defaultConfig: EngineConfig = {
   model: "test-model",
@@ -32,7 +32,7 @@ const defaultConfig: EngineConfig = {
 };
 
 function makeEngine(
-  model?: LanguageModelV3,
+  model?: LanguageModelV4,
   tools?: { schemas: ToolSchema[]; handler: (call: ToolCall) => ToolResult | Promise<ToolResult> },
   events?: EventSink,
 ) {
@@ -1670,7 +1670,7 @@ describe("AgentEngine", () => {
       // Sonnet 4.6 supports the `enabled` shape directly — the engine
       // passes the budget through verbatim.
       const capturedOptions: Array<Record<string, unknown>> = [];
-      const recordingModel: LanguageModelV3 = {
+      const recordingModel: LanguageModelV4 = {
         ...createEchoModel({ responses: [{ text: "ok" }] }),
       };
       const orig = recordingModel.doStream.bind(recordingModel);
@@ -1710,7 +1710,7 @@ describe("AgentEngine", () => {
         maxOutputTokens?: number,
       ): Promise<Record<string, Record<string, unknown>>> {
         const captured: Array<Record<string, unknown>> = [];
-        const m: LanguageModelV3 = { ...createEchoModel({ responses: [{ text: "ok" }] }) };
+        const m: LanguageModelV4 = { ...createEchoModel({ responses: [{ text: "ok" }] }) };
         const orig = m.doStream.bind(m);
         m.doStream = async (o) => {
           captured.push(o as unknown as Record<string, unknown>);
@@ -2103,7 +2103,7 @@ describe("AgentEngine", () => {
 
     it("translates thinking=adaptive without budget", async () => {
       const captured: Array<Record<string, unknown>> = [];
-      const model: LanguageModelV3 = { ...createEchoModel({ responses: [{ text: "ok" }] }) };
+      const model: LanguageModelV4 = { ...createEchoModel({ responses: [{ text: "ok" }] }) };
       const orig = model.doStream.bind(model);
       model.doStream = async (o) => {
         captured.push(o as unknown as Record<string, unknown>);
@@ -2129,7 +2129,7 @@ describe("AgentEngine", () => {
 
     it("does NOT set providerOptions when thinking is undefined", async () => {
       const captured: Array<Record<string, unknown>> = [];
-      const model: LanguageModelV3 = { ...createEchoModel({ responses: [{ text: "ok" }] }) };
+      const model: LanguageModelV4 = { ...createEchoModel({ responses: [{ text: "ok" }] }) };
       const orig = model.doStream.bind(model);
       model.doStream = async (o) => {
         captured.push(o as unknown as Record<string, unknown>);
@@ -2155,8 +2155,8 @@ describe("AgentEngine", () => {
       // providerOptions on that history entry, otherwise the AI SDK
       // Anthropic provider would silently drop the block as
       // "unsupported reasoning metadata" on the second prompt.
-      const sentMessages: LanguageModelV3Message[][] = [];
-      const recordingModel: LanguageModelV3 = {
+      const sentMessages: LanguageModelV4Message[][] = [];
+      const recordingModel: LanguageModelV4 = {
         ...createEchoModel({
           responses: [
             {
@@ -2465,7 +2465,7 @@ describe("AgentEngine", () => {
   });
 
   it("does not mutate the caller's message array", async () => {
-    const messages: LanguageModelV3Message[] = [{ role: "user", content: [{ type: "text", text: "Hello" }] }];
+    const messages: LanguageModelV4Message[] = [{ role: "user", content: [{ type: "text", text: "Hello" }] }];
     const original = [...messages];
 
     const engine = makeEngine();
@@ -2539,7 +2539,7 @@ describe("AgentEngine", () => {
   });
 
   it("transformContext hook modifies messages before LLM call", async () => {
-    let receivedMessages: LanguageModelV3Message[] = [];
+    let receivedMessages: LanguageModelV4Message[] = [];
     const model = createMockModel((options) => {
       receivedMessages = options.prompt.filter((m) => m.role !== "system");
       return {
@@ -2891,7 +2891,7 @@ describe("AgentEngine", () => {
 
 describe("prompt caching", () => {
   it("sets cacheControl on the system message", async () => {
-    let capturedPrompt: LanguageModelV3Message[] = [];
+    let capturedPrompt: LanguageModelV4Message[] = [];
     const model = createMockModel((options) => {
       capturedPrompt = options.prompt;
       return {
@@ -2919,7 +2919,7 @@ describe("prompt caching", () => {
   });
 
   it("sets cacheControl on the last user message", async () => {
-    let capturedPrompt: LanguageModelV3Message[] = [];
+    let capturedPrompt: LanguageModelV4Message[] = [];
     const model = createMockModel((options) => {
       capturedPrompt = options.prompt;
       return {
@@ -2960,7 +2960,7 @@ describe("prompt caching", () => {
   });
 
   it("does not mutate original messages when adding cache breakpoint", async () => {
-    const originalMsg: LanguageModelV3Message = {
+    const originalMsg: LanguageModelV4Message = {
       role: "user",
       content: [{ type: "text", text: "Hello" }],
     };
@@ -3193,7 +3193,7 @@ describe("audience filtering", () => {
 
 describe("message sanitization", () => {
   it("filters out empty text blocks from assistant messages", async () => {
-    let capturedPrompt: LanguageModelV3Message[] = [];
+    let capturedPrompt: LanguageModelV4Message[] = [];
     const model = createMockModel((options) => {
       capturedPrompt = options.prompt;
       return {
@@ -3217,7 +3217,7 @@ describe("message sanitization", () => {
           { type: "text", text: "" },
           { type: "text", text: "actual content" },
         ],
-      } as LanguageModelV3Message,
+      } as LanguageModelV4Message,
       { role: "user", content: [{ type: "text", text: "Hello" }] },
     ], []);
 
@@ -3229,7 +3229,7 @@ describe("message sanitization", () => {
   });
 
   it("replaces all-empty content with (empty) placeholder", async () => {
-    let capturedPrompt: LanguageModelV3Message[] = [];
+    let capturedPrompt: LanguageModelV4Message[] = [];
     const model = createMockModel((options) => {
       capturedPrompt = options.prompt;
       return {
@@ -3250,7 +3250,7 @@ describe("message sanitization", () => {
       {
         role: "assistant",
         content: [{ type: "text", text: "" }],
-      } as LanguageModelV3Message,
+      } as LanguageModelV4Message,
       { role: "user", content: [{ type: "text", text: "Hello" }] },
     ], []);
 
@@ -3262,7 +3262,7 @@ describe("message sanitization", () => {
   });
 
   it("passes system messages through unchanged", async () => {
-    let capturedPrompt: LanguageModelV3Message[] = [];
+    let capturedPrompt: LanguageModelV4Message[] = [];
     const model = createMockModel((options) => {
       capturedPrompt = options.prompt;
       return {
@@ -3295,7 +3295,7 @@ describe("message sanitization", () => {
 
 describe("cache breakpoint edge cases", () => {
   it("handles messages with no user message (all assistant)", async () => {
-    let capturedPrompt: LanguageModelV3Message[] = [];
+    let capturedPrompt: LanguageModelV4Message[] = [];
     const model = createMockModel((options) => {
       capturedPrompt = options.prompt;
       return {
@@ -3314,7 +3314,7 @@ describe("cache breakpoint edge cases", () => {
     // Only pass assistant messages — no user message to add breakpoint to.
     // The engine should still work without crashing.
     await engine.run(defaultConfig, "", [
-      { role: "assistant", content: [{ type: "text", text: "prior turn" }] } as LanguageModelV3Message,
+      { role: "assistant", content: [{ type: "text", text: "prior turn" }] } as LanguageModelV4Message,
       { role: "user", content: [{ type: "text", text: "Hello" }] },
     ], []);
 
@@ -4137,7 +4137,7 @@ describe("AgentEngine — connector-skill surface-once (P4)", () => {
       role: "assistant",
       content: [{ type: "text", text: "<connector-skill>...</connector-skill>" }],
       metadata: { synthetic: "connector_skill_injected", skill: "gmail" },
-    } as unknown as LanguageModelV3Message;
+    } as unknown as LanguageModelV4Message;
 
     await engine.run(
       { ...defaultConfig, connectorSkillCandidates: [GMAIL_CANDIDATE] },
@@ -4371,7 +4371,7 @@ describe("AgentEngine — skill activation (nb__use_skill `_meta` marker)", () =
         },
       ],
       metadata: { synthetic: "skill_activated", skill: "gmail" },
-    } as unknown as LanguageModelV3Message;
+    } as unknown as LanguageModelV4Message;
 
     await engine.run(
       { ...defaultConfig, connectorSkillCandidates: [GMAIL_CANDIDATE] },

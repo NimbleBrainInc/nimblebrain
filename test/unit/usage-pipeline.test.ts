@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import type {
-  LanguageModelV3,
-  LanguageModelV3FinishReason,
-  LanguageModelV3StreamPart,
-  LanguageModelV3Usage,
+  LanguageModelV4,
+  LanguageModelV4FinishReason,
+  LanguageModelV4StreamPart,
+  LanguageModelV4Usage,
 } from "@ai-sdk/provider";
 import { AgentEngine } from "../../src/engine/engine.ts";
 import { StaticToolRouter } from "../../src/adapters/static-router.ts";
@@ -35,10 +35,10 @@ const config: EngineConfig = {
 };
 
 /** A model that returns a fixed usage shape including cache writes. */
-function modelWithUsage(usage: LanguageModelV3Usage): LanguageModelV3 {
-  const finishReason: LanguageModelV3FinishReason = { unified: "stop", raw: undefined };
+function modelWithUsage(usage: LanguageModelV4Usage): LanguageModelV4 {
+  const finishReason: LanguageModelV4FinishReason = { unified: "stop", raw: undefined };
   return {
-    specificationVersion: "v3",
+    specificationVersion: "v4",
     provider: "test",
     modelId: "test-cache-heavy",
     supportedUrls: {},
@@ -53,7 +53,7 @@ function modelWithUsage(usage: LanguageModelV3Usage): LanguageModelV3 {
     },
 
     async doStream() {
-      const parts: LanguageModelV3StreamPart[] = [
+      const parts: LanguageModelV4StreamPart[] = [
         { type: "stream-start", warnings: [] },
         { type: "text-start", id: "t0" },
         { type: "text-delta", id: "t0", delta: "ok" },
@@ -61,7 +61,7 @@ function modelWithUsage(usage: LanguageModelV3Usage): LanguageModelV3 {
         { type: "finish", usage, finishReason },
       ];
       return {
-        stream: new ReadableStream<LanguageModelV3StreamPart>({
+        stream: new ReadableStream<LanguageModelV4StreamPart>({
           start(controller) {
             for (const p of parts) controller.enqueue(p);
             controller.close();

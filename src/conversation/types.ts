@@ -1,9 +1,9 @@
 import { resolve } from "node:path";
 import type {
-  LanguageModelV3Content,
-  LanguageModelV3Message,
-  LanguageModelV3TextPart,
-  SharedV3ProviderOptions,
+  LanguageModelV4Content,
+  LanguageModelV4Message,
+  LanguageModelV4TextPart,
+  SharedV4ProviderOptions,
 } from "@ai-sdk/provider";
 import type { ResourceLinkInfo } from "../engine/content-helpers.ts";
 import type { ContextAssembledSource, SkillsLoadedEntry } from "../engine/types.ts";
@@ -253,10 +253,10 @@ export interface ResourceLinkContentPart {
 
 /**
  * User-message content shape — text plus MCP `resource_link` blocks.
- * Narrower than `LanguageModelV3UserMessage["content"]` (which also
+ * Narrower than `LanguageModelV4UserMessage["content"]` (which also
  * permits inline file parts): callers persist references, not bytes.
  */
-export type UserContentPart = LanguageModelV3TextPart | ResourceLinkContentPart;
+export type UserContentPart = LanguageModelV4TextPart | ResourceLinkContentPart;
 
 interface StoredMessageMetadata {
   skill?: string | null;
@@ -309,7 +309,7 @@ interface StoredMessageExtras {
 /**
  * In-memory message shape used by the runtime and event store.
  *
- * For non-user roles, this is `LanguageModelV3Message` plus the platform's
+ * For non-user roles, this is `LanguageModelV4Message` plus the platform's
  * timestamp/metadata extras. For user role we widen the content union to
  * include `resource_link` blocks so attached images survive end-to-end as
  * URI references; the runtime rehydrates them to AI SDK `file` parts before
@@ -317,8 +317,8 @@ interface StoredMessageExtras {
  */
 export type StoredMessage = StoredMessageExtras &
   (
-    | { role: "user"; content: UserContentPart[]; providerOptions?: SharedV3ProviderOptions }
-    | Exclude<LanguageModelV3Message, { role: "user" }>
+    | { role: "user"; content: UserContentPart[]; providerOptions?: SharedV4ProviderOptions }
+    | Exclude<LanguageModelV4Message, { role: "user" }>
   );
 
 // ---------------------------------------------------------------------------
@@ -384,7 +384,7 @@ export interface LlmResponseEvent {
    * collapsed-by-default; bare absence on a turn with non-stop
    * finishReason is what indicates a real empty turn.
    */
-  content: LanguageModelV3Content[];
+  content: LanguageModelV4Content[];
   /** Token usage for this single LLM call (canonical AI SDK V3 shape). */
   usage: TokenUsage;
   llmMs: number;

@@ -1,12 +1,12 @@
 import type {
-  LanguageModelV3,
-  LanguageModelV3CallOptions,
-  LanguageModelV3Content,
-  LanguageModelV3FinishReason,
-  LanguageModelV3Message,
-  LanguageModelV3StreamPart,
-  LanguageModelV3ToolCall,
-  LanguageModelV3Usage,
+  LanguageModelV4,
+  LanguageModelV4CallOptions,
+  LanguageModelV4Content,
+  LanguageModelV4FinishReason,
+  LanguageModelV4Message,
+  LanguageModelV4StreamPart,
+  LanguageModelV4ToolCall,
+  LanguageModelV4Usage,
 } from "@ai-sdk/provider";
 
 /**
@@ -17,14 +17,14 @@ import type {
  *   - { type: "tool-call", toolCallId: "...", toolName: "...", input: "..." }
  */
 export interface MockModelResponse {
-  content: LanguageModelV3Content[];
+  content: LanguageModelV4Content[];
   inputTokens?: number;
   outputTokens?: number;
   /** "stop" (default for no tool calls) or "tool-calls" */
   finishReason?: "stop" | "tool-calls";
 }
 
-export type MockCallFn = (options: LanguageModelV3CallOptions) => MockModelResponse | Promise<MockModelResponse>;
+export type MockCallFn = (options: LanguageModelV4CallOptions) => MockModelResponse | Promise<MockModelResponse>;
 
 /**
  * Extract the `<runtime-context>` head the runtime prepends to the latest user
@@ -33,7 +33,7 @@ export type MockCallFn = (options: LanguageModelV3CallOptions) => MockModelRespo
  * system block onto this head. Tests that assert on "what the model sees" append
  * it to the captured system message. Returns "" when no head is present.
  */
-export function runtimeContextHead(prompt: LanguageModelV3CallOptions["prompt"]): string {
+export function runtimeContextHead(prompt: LanguageModelV4CallOptions["prompt"]): string {
   for (let i = prompt.length - 1; i >= 0; i--) {
     const m = prompt[i];
     if (m.role !== "user") continue;
@@ -50,15 +50,15 @@ export function runtimeContextHead(prompt: LanguageModelV3CallOptions["prompt"])
 }
 
 /**
- * Creates a LanguageModelV3 from a function that returns MockModelResponse.
+ * Creates a LanguageModelV4 from a function that returns MockModelResponse.
  * This makes it easy to port old ModelPort-style mocks.
  *
  * The onTextDelta callback is NOT wired (since the engine uses the stream,
  * not the mock's internal signaling). Text deltas are emitted as stream parts.
  */
-export function createMockModel(callFn: MockCallFn): LanguageModelV3 {
+export function createMockModel(callFn: MockCallFn): LanguageModelV4 {
   return {
-    specificationVersion: "v3",
+    specificationVersion: "v4",
     provider: "mock",
     modelId: "mock-model",
     supportedUrls: {},
@@ -75,7 +75,7 @@ export function createMockModel(callFn: MockCallFn): LanguageModelV3 {
 
     async doStream(options) {
       const resp = await callFn(options);
-      const parts: LanguageModelV3StreamPart[] = [];
+      const parts: LanguageModelV4StreamPart[] = [];
 
       parts.push({ type: "stream-start", warnings: [] });
 
@@ -85,7 +85,7 @@ export function createMockModel(callFn: MockCallFn): LanguageModelV3 {
           parts.push({ type: "text-delta", id: "text-0", delta: item.text });
           parts.push({ type: "text-end", id: "text-0" });
         } else if (item.type === "tool-call") {
-          const tc = item as LanguageModelV3ToolCall;
+          const tc = item as LanguageModelV4ToolCall;
           parts.push({
             type: "tool-call",
             toolCallId: tc.toolCallId,
@@ -101,7 +101,7 @@ export function createMockModel(callFn: MockCallFn): LanguageModelV3 {
         finishReason: buildFinishReason(resp),
       });
 
-      const stream = new ReadableStream<LanguageModelV3StreamPart>({
+      const stream = new ReadableStream<LanguageModelV4StreamPart>({
         start(controller) {
           for (const part of parts) {
             controller.enqueue(part);
@@ -115,7 +115,7 @@ export function createMockModel(callFn: MockCallFn): LanguageModelV3 {
   };
 }
 
-function buildFinishReason(resp: MockModelResponse): LanguageModelV3FinishReason {
+function buildFinishReason(resp: MockModelResponse): LanguageModelV4FinishReason {
   if (resp.finishReason) {
     return { unified: resp.finishReason, raw: undefined };
   }
@@ -126,7 +126,7 @@ function buildFinishReason(resp: MockModelResponse): LanguageModelV3FinishReason
   };
 }
 
-function buildUsage(resp: MockModelResponse): LanguageModelV3Usage {
+function buildUsage(resp: MockModelResponse): LanguageModelV4Usage {
   return {
     inputTokens: {
       total: resp.inputTokens ?? 10,

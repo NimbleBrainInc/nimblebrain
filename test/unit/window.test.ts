@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import type { LanguageModelV3Message } from "@ai-sdk/provider";
+import type { LanguageModelV4Message } from "@ai-sdk/provider";
 import {
 	applyReasoningReplayPolicy,
 	windowMessages,
@@ -9,7 +9,7 @@ import {
 function assistantWithReasoning(
 	reasoningText: string,
 	visibleText: string,
-): LanguageModelV3Message {
+): LanguageModelV4Message {
 	return {
 		role: "assistant",
 		content: [
@@ -20,12 +20,12 @@ function assistantWithReasoning(
 }
 
 /** Helper: create a simple text message. */
-function textMsg(role: "user" | "assistant", text: string): LanguageModelV3Message {
+function textMsg(role: "user" | "assistant", text: string): LanguageModelV4Message {
 	return { role, content: [{ type: "text" as const, text }] };
 }
 
 /** Helper: create an assistant message with one or more tool-call blocks. */
-function toolCallMsg(...toolCallIds: string[]): LanguageModelV3Message {
+function toolCallMsg(...toolCallIds: string[]): LanguageModelV4Message {
 	return {
 		role: "assistant",
 		content: toolCallIds.map((id) => ({
@@ -38,7 +38,7 @@ function toolCallMsg(...toolCallIds: string[]): LanguageModelV3Message {
 }
 
 /** Helper: create a tool message with a tool-result block. */
-function toolResultMsg(toolCallId: string, result = "ok"): LanguageModelV3Message {
+function toolResultMsg(toolCallId: string, result = "ok"): LanguageModelV4Message {
 	return {
 		role: "tool",
 		content: [
@@ -57,7 +57,7 @@ function toolResultMsg(toolCallId: string, result = "ok"): LanguageModelV3Messag
  * assistant message containing the corresponding tool-call.
  * This is the invariant that the Claude API enforces.
  */
-function assertNoOrphanedToolResults(msgs: LanguageModelV3Message[]) {
+function assertNoOrphanedToolResults(msgs: LanguageModelV4Message[]) {
 	for (let i = 0; i < msgs.length; i++) {
 		const msg = msgs[i]!;
 		if (msg.role !== "tool") continue;
@@ -96,7 +96,7 @@ describe("windowMessages", () => {
 	});
 
 	it("returns messages unchanged when within budget", () => {
-		const msgs: LanguageModelV3Message[] = [
+		const msgs: LanguageModelV4Message[] = [
 			textMsg("user", "Hello"),
 			textMsg("assistant", "Hi there"),
 			textMsg("user", "How are you?"),
@@ -108,7 +108,7 @@ describe("windowMessages", () => {
 
 	it("preserves first message and keeps recent messages that fit", () => {
 		// Create 100 messages with predictable sizes
-		const msgs: LanguageModelV3Message[] = [];
+		const msgs: LanguageModelV4Message[] = [];
 		for (let i = 0; i < 100; i++) {
 			const role = i % 2 === 0 ? "user" : "assistant";
 			// Each message ~100 chars = ~25 tokens
@@ -131,7 +131,7 @@ describe("windowMessages", () => {
 	});
 
 	it("keeps tool-call/tool-result pairs atomic — never splits them", () => {
-		const msgs: LanguageModelV3Message[] = [
+		const msgs: LanguageModelV4Message[] = [
 			textMsg("user", "Do something"),                           // 0 - first, always kept
 			textMsg("assistant", "Sure, let me use a tool"),           // 1
 			toolCallMsg("call_1"),                                     // 2 - tool-call
@@ -156,7 +156,7 @@ describe("windowMessages", () => {
 
 	it("windowed history has valid message sequence (no orphaned tool results)", () => {
 		// Build a long conversation with interleaved tool calls
-		const msgs: LanguageModelV3Message[] = [textMsg("user", "Start")];
+		const msgs: LanguageModelV4Message[] = [textMsg("user", "Start")];
 		for (let i = 0; i < 20; i++) {
 			const callId = `call_${i}`;
 			msgs.push(toolCallMsg(callId));
@@ -179,7 +179,7 @@ describe("windowMessages", () => {
 		// reconstructor emits 1 assistant + 4 separate tool messages.
 		// Without proper grouping, windowing can drop the assistant but keep
 		// orphaned tool results, causing Claude API "unexpected tool_use_id" errors.
-		const msgs: LanguageModelV3Message[] = [
+		const msgs: LanguageModelV4Message[] = [
 			textMsg("user", "Read all the files"),
 			// First round: 4 parallel tool calls
 			toolCallMsg("call_a", "call_b", "call_c", "call_d"),
@@ -211,7 +211,7 @@ describe("windowMessages", () => {
 	});
 
 	it("handles structured content token estimation correctly", () => {
-		const structuredMsg: LanguageModelV3Message = {
+		const structuredMsg: LanguageModelV4Message = {
 			role: "tool",
 			content: [
 				{
@@ -226,7 +226,7 @@ describe("windowMessages", () => {
 		// With a budget smaller than this message, windowing should drop it
 		// Note: the tool-result is paired with a tool-call assistant message
 		const assistantMsg = toolCallMsg("call_1");
-		const msgs: LanguageModelV3Message[] = [
+		const msgs: LanguageModelV4Message[] = [
 			textMsg("user", "Hi"),
 			assistantMsg,
 			structuredMsg,
@@ -246,7 +246,7 @@ describe("windowMessages", () => {
 	});
 
 	it("returns all messages when exactly at budget", () => {
-		const msgs: LanguageModelV3Message[] = [
+		const msgs: LanguageModelV4Message[] = [
 			textMsg("user", "Hello"),       // 5 chars / 4 = 2 tokens
 			textMsg("assistant", "World"),   // 5 chars / 4 = 2 tokens
 		];
@@ -256,7 +256,7 @@ describe("windowMessages", () => {
 	});
 
 	it("returns all messages for 2 or fewer messages even if over budget", () => {
-		const msgs: LanguageModelV3Message[] = [
+		const msgs: LanguageModelV4Message[] = [
 			textMsg("user", "x".repeat(1000)),
 			textMsg("assistant", "y".repeat(1000)),
 		];
@@ -269,7 +269,7 @@ describe("windowMessages", () => {
 		// A huge anchor plus small later turns, with a budget below the anchor's
 		// size. Previously windowMessages returned only the oldest message here,
 		// so the model answered without ever seeing the recent turn.
-		const msgs: LanguageModelV3Message[] = [
+		const msgs: LanguageModelV4Message[] = [
 			textMsg("user", "x".repeat(2000)), // huge anchor
 			textMsg("assistant", "ok"),
 			textMsg("user", "what is my name?"), // the recent turn
@@ -285,7 +285,7 @@ describe("windowMessages", () => {
 		// Mid-tool-loop the last atomic group is [assistant(tool-call), tool].
 		// Dropping the anchor here would emit an assistant-first message list,
 		// which Anthropic 400s on. The anchor must lead.
-		const msgs: LanguageModelV3Message[] = [
+		const msgs: LanguageModelV4Message[] = [
 			textMsg("user", "x".repeat(1200)), // huge anchor
 			textMsg("user", "kick off work"),
 			toolCallMsg("call_z"), // last group: tool-call...
@@ -303,7 +303,7 @@ describe("windowMessages", () => {
 });
 
 describe("applyReasoningReplayPolicy", () => {
-	const replayHistoryWithToolCall = (): LanguageModelV3Message[] => [
+	const replayHistoryWithToolCall = (): LanguageModelV4Message[] => [
 		textMsg("user", "do something"),
 		{
 			role: "assistant",
@@ -347,7 +347,7 @@ describe("applyReasoningReplayPolicy", () => {
 		// Simulate the engine appending a new step: the previously-latest
 		// assistant must NOT change bytes when a newer assistant arrives, or the
 		// rolling cache anchor just behind it misses every turn.
-		const turnK: LanguageModelV3Message[] = [
+		const turnK: LanguageModelV4Message[] = [
 			textMsg("user", "go"),
 			assistantWithReasoning("thinking A", "answer A"),
 			toolResultMsg("call_a"),

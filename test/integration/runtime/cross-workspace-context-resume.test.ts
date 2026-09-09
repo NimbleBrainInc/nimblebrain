@@ -21,7 +21,7 @@ import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { LanguageModelV3, LanguageModelV3CallOptions } from "@ai-sdk/provider";
+import type { LanguageModelV4, LanguageModelV4CallOptions } from "@ai-sdk/provider";
 import { DEV_IDENTITY } from "../../../src/identity/providers/dev.ts";
 import { Runtime } from "../../../src/runtime/runtime.ts";
 import { personalWorkspaceIdFor } from "../../../src/workspace/workspace-store.ts";
@@ -49,7 +49,7 @@ const RESUME_MSG = "which workspace am I in";
  * full prompt the model receives, regardless of whether the runtime carries the
  * "## Workspace" block as a system message or an injected runtime-context part.
  */
-function serializePrompt(opts: LanguageModelV3CallOptions): string {
+function serializePrompt(opts: LanguageModelV4CallOptions): string {
   const chunks: string[] = [];
   for (const msg of opts.prompt) {
     if (typeof msg.content === "string") {
@@ -63,7 +63,7 @@ function serializePrompt(opts: LanguageModelV3CallOptions): string {
   return chunks.join("\n");
 }
 
-function lastUserText(opts: LanguageModelV3CallOptions): string {
+function lastUserText(opts: LanguageModelV4CallOptions): string {
   for (let i = opts.prompt.length - 1; i >= 0; i--) {
     const msg = opts.prompt[i];
     if (msg.role === "user" && Array.isArray(msg.content)) {
@@ -91,9 +91,9 @@ interface Captured {
  * DIRECTLY (the namespaced `ws_<id>-…` names the model can call), not only
  * transitively through the `## Workspace` narration block.
  */
-function createCapturingModel(captured: Captured[]): LanguageModelV3 {
+function createCapturingModel(captured: Captured[]): LanguageModelV4 {
   const echo = createEchoModel();
-  const record = (opts: LanguageModelV3CallOptions): void => {
+  const record = (opts: LanguageModelV4CallOptions): void => {
     if (lastUserText(opts) !== RESUME_MSG) return;
     captured.push({
       prompt: serializePrompt(opts),
@@ -101,7 +101,7 @@ function createCapturingModel(captured: Captured[]): LanguageModelV3 {
     });
   };
   return {
-    specificationVersion: "v3",
+    specificationVersion: "v4",
     provider: "echo",
     modelId: "echo-1",
     supportedUrls: {},

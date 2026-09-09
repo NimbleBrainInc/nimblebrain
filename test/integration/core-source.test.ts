@@ -2,7 +2,7 @@ import { describe, expect, it, afterAll } from "bun:test";
 import { mkdirSync, writeFileSync, rmSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import type { LanguageModelV3 } from "@ai-sdk/provider";
+import type { LanguageModelV4 } from "@ai-sdk/provider";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { runWithRequestContext } from "../../src/runtime/request-context.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
@@ -26,12 +26,12 @@ import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-works
  * call fails, the tool should not cache the error result, so a
  * subsequent call regenerates (and the model is called again). */
 function createThrowingModel(err: Error): {
-	model: LanguageModelV3;
+	model: LanguageModelV4;
 	getCalls: () => number;
 } {
 	let calls = 0;
-	const model: LanguageModelV3 = {
-		specificationVersion: "v3",
+	const model: LanguageModelV4 = {
+		specificationVersion: "v4",
 		provider: "mock-throwing",
 		modelId: "mock-throwing-model",
 		supportedUrls: {},

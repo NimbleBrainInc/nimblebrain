@@ -1,7 +1,7 @@
 import type {
-  LanguageModelV3FunctionTool,
-  LanguageModelV3Message,
-  SharedV3ProviderOptions,
+  LanguageModelV4FunctionTool,
+  LanguageModelV4Message,
+  SharedV4ProviderOptions,
 } from "@ai-sdk/provider";
 
 /**
@@ -66,10 +66,10 @@ import type {
  * Net: pay the premium only where it earns its keep. Costing is TTL-aware — the
  * 1h/5m split is captured per call (see `usage/cost.ts`).
  */
-export const CACHE_CONTROL_1H: SharedV3ProviderOptions = {
+export const CACHE_CONTROL_1H: SharedV4ProviderOptions = {
   anthropic: { cacheControl: { type: "ephemeral", ttl: "1h" } },
 };
-export const CACHE_CONTROL_5M: SharedV3ProviderOptions = {
+export const CACHE_CONTROL_5M: SharedV4ProviderOptions = {
   anthropic: { cacheControl: { type: "ephemeral", ttl: "5m" } },
 };
 
@@ -79,16 +79,16 @@ export interface CachePolicyInput {
   /** System prompt text (sent as the prompt's leading system message). */
   systemPrompt: string;
   /** Conversation messages (post windowing/replay transforms). */
-  messages: LanguageModelV3Message[];
+  messages: LanguageModelV4Message[];
   /** The model's tool definitions for this call. */
-  tools: LanguageModelV3FunctionTool[];
+  tools: LanguageModelV4FunctionTool[];
 }
 
 export interface CachePolicyResult {
   /** Full prompt array (system message + messages) ready for `callModel`. */
-  prompt: LanguageModelV3Message[];
+  prompt: LanguageModelV4Message[];
   /** Tools, with a cache breakpoint on the last definition where applicable. */
-  tools: LanguageModelV3FunctionTool[];
+  tools: LanguageModelV4FunctionTool[];
 }
 
 /**
@@ -107,13 +107,13 @@ export type CacheStrategy = (input: CachePolicyInput) => CachePolicyResult;
 
 /** Merge the given cache control onto a message's existing providerOptions. */
 function withCacheControl(
-  message: LanguageModelV3Message,
-  control: SharedV3ProviderOptions,
-): LanguageModelV3Message {
+  message: LanguageModelV4Message,
+  control: SharedV4ProviderOptions,
+): LanguageModelV4Message {
   return {
     ...message,
     providerOptions: { ...message.providerOptions, ...control },
-  } as LanguageModelV3Message;
+  } as LanguageModelV4Message;
 }
 
 /**
@@ -124,7 +124,7 @@ function withCacheControl(
  * is no such message (first iteration of a run — no assistant turn yet, or the
  * latest assistant turn is the very first message).
  */
-function stepAnchorIndex(messages: LanguageModelV3Message[]): number {
+function stepAnchorIndex(messages: LanguageModelV4Message[]): number {
   let lastAssistant = -1;
   for (let i = messages.length - 1; i >= 0; i--) {
     if (messages[i]!.role === "assistant") {
@@ -135,8 +135,8 @@ function stepAnchorIndex(messages: LanguageModelV3Message[]): number {
   return lastAssistant > 0 ? lastAssistant - 1 : -1;
 }
 
-function systemMessageOf(systemPrompt: string): LanguageModelV3Message {
-  return { role: "system" as const, content: systemPrompt } as unknown as LanguageModelV3Message;
+function systemMessageOf(systemPrompt: string): LanguageModelV4Message {
+  return { role: "system" as const, content: systemPrompt } as unknown as LanguageModelV4Message;
 }
 
 /**
@@ -182,7 +182,7 @@ const anthropicStrategy: CacheStrategy = ({ systemPrompt, messages, tools }) => 
             ? ({
                 ...t,
                 providerOptions: { ...t.providerOptions, ...CACHE_CONTROL_1H },
-              } as LanguageModelV3FunctionTool)
+              } as LanguageModelV4FunctionTool)
             : t,
         );
 

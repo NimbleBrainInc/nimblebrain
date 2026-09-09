@@ -3,9 +3,9 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type {
-  LanguageModelV3,
-  LanguageModelV3Message,
-  LanguageModelV3TextPart,
+  LanguageModelV4,
+  LanguageModelV4Message,
+  LanguageModelV4TextPart,
 } from "@ai-sdk/provider";
 import { MetricsEventSink } from "../adapters/metrics-events.ts";
 import { NoopEventSink } from "../adapters/noop-events.ts";
@@ -328,7 +328,7 @@ export interface ConversationChange extends ConversationMutation {
 }
 
 export class Runtime {
-  private resolveModelFn: (modelString: string) => LanguageModelV3;
+  private resolveModelFn: (modelString: string) => LanguageModelV4;
   private skillMatcher: SkillMatcher;
   private config: RuntimeConfig;
   private contextSkills: Skill[];
@@ -436,7 +436,7 @@ export class Runtime {
   private readonly runBus = new RunBus();
 
   private constructor(
-    resolveModelFn: (modelString: string) => LanguageModelV3,
+    resolveModelFn: (modelString: string) => LanguageModelV4,
     skillMatcher: SkillMatcher,
     config: RuntimeConfig,
     contextSkills: Skill[],
@@ -2314,7 +2314,7 @@ export class Runtime {
     // unconfigured provider throws here — synchronously, ahead of the promise
     // chain whose `.catch` handles every other failure — and would surface as a
     // 500 on a turn that already completed. Titling is best-effort; skip it.
-    let titleModel: LanguageModelV3;
+    let titleModel: LanguageModelV4;
     try {
       titleModel = this.resolveModelFn(titleSlot);
     } catch (err) {
@@ -4064,7 +4064,7 @@ export class Runtime {
     // a workspace can name a model whose provider is not configured, and
     // resolution throws — which must not reject the turn. Skipping the fold
     // leaves the full history, exactly as the best-effort contract above says.
-    let model: LanguageModelV3;
+    let model: LanguageModelV4;
     try {
       model = this.resolveModelFn(fastSlot);
     } catch (err) {
@@ -4140,7 +4140,7 @@ export class Runtime {
   private async summarizeForMidTurnFold(
     store: EventSourcedConversationStore,
     conversationId: string,
-    messages: LanguageModelV3Message[],
+    messages: LanguageModelV4Message[],
     signal?: AbortSignal,
   ): Promise<string> {
     const fastSlot = this.getModelSlot("fast");
@@ -4834,8 +4834,8 @@ export class Runtime {
     };
   }
 
-  /** Resolve a model string to a LanguageModelV3 instance. */
-  resolveModel(modelString: string): LanguageModelV3 {
+  /** Resolve a model string to a LanguageModelV4 instance. */
+  resolveModel(modelString: string): LanguageModelV4 {
     return this.resolveModelFn(modelString);
   }
 
@@ -5097,7 +5097,7 @@ async function seedWorkspaceConnectorInstances(
   }
 }
 
-function resolveModel(config: RuntimeConfig): (modelString: string) => LanguageModelV3 {
+function resolveModel(config: RuntimeConfig): (modelString: string) => LanguageModelV4 {
   // New multi-provider config takes precedence
   if (config.providers) {
     return buildModelResolver({
@@ -5255,13 +5255,13 @@ function stampDerivedScope(workDir: string, skill: Skill): Skill {
  * the head back into the system string so nothing is dropped).
  */
 function prependRuntimeContextToLastUserMessage(
-  messages: LanguageModelV3Message[],
+  messages: LanguageModelV4Message[],
   volatileHead: string,
 ): boolean {
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i];
     if (!m || m.role !== "user") continue;
-    const headPart: LanguageModelV3TextPart = { type: "text", text: volatileHead };
+    const headPart: LanguageModelV4TextPart = { type: "text", text: volatileHead };
     messages[i] = { ...m, content: [headPart, ...m.content] };
     return true;
   }
@@ -5285,7 +5285,7 @@ function foldVolatileHead(stableSystem: string, volatileHead: string): string {
  * head back into the system string so nothing is dropped. Mutates `messages`.
  */
 function resolveEngineSystem(
-  messages: LanguageModelV3Message[],
+  messages: LanguageModelV4Message[],
   stableSystem: string,
   volatileHead: string,
 ): string {
@@ -5607,7 +5607,7 @@ export function buildTransformContext(
 export function buildContextAssembledPayload(input: {
   systemPrompt: string;
   activeTools: ToolSchema[];
-  messages: LanguageModelV3Message[];
+  messages: LanguageModelV4Message[];
   skillsLoaded: SkillsLoadedPayload;
 }): ContextAssembledPayload {
   const promptTokens = approxTokens(input.systemPrompt);

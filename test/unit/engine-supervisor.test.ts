@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import type { LanguageModelV3Message } from "@ai-sdk/provider";
+import type { LanguageModelV4Message } from "@ai-sdk/provider";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import { StaticToolRouter } from "../../src/adapters/static-router.ts";
 import { textContent } from "../../src/engine/content-helpers.ts";
@@ -84,7 +84,7 @@ describe("engine ↔ supervisor wiring", () => {
       collect(events),
     );
 
-    const messages: LanguageModelV3Message[] = [
+    const messages: LanguageModelV4Message[] = [
       { role: "user", content: [{ type: "text", text: "do the thing" }] },
     ];
 

@@ -1,14 +1,14 @@
 import { describe, expect, it } from "bun:test";
-import type { LanguageModelV3CallOptions } from "@ai-sdk/provider";
+import type { LanguageModelV4CallOptions } from "@ai-sdk/provider";
 import { createEchoModel } from "../helpers/echo-model.ts";
 
-function userPrompt(text: string): LanguageModelV3CallOptions {
+function userPrompt(text: string): LanguageModelV4CallOptions {
   return {
     prompt: [{ role: "user" as const, content: [{ type: "text" as const, text }] }],
   };
 }
 
-function systemOnlyPrompt(text: string): LanguageModelV3CallOptions {
+function systemOnlyPrompt(text: string): LanguageModelV4CallOptions {
   return {
     prompt: [{ role: "system" as const, content: text }],
   };

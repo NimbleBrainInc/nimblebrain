@@ -17,7 +17,7 @@ import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { LanguageModelV3 } from "@ai-sdk/provider";
+import type { LanguageModelV4 } from "@ai-sdk/provider";
 import { EventSourcedConversationStore } from "../../src/conversation/event-sourced-store.ts";
 import { extractText } from "../../src/engine/content-helpers.ts";
 import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
@@ -33,7 +33,7 @@ afterAll(() => {
   if (existsSync(testDir)) rmSync(testDir, { recursive: true });
 });
 
-function makeModel(): LanguageModelV3 {
+function makeModel(): LanguageModelV4 {
   return createMockModel(() => ({
     content: [{ type: "text", text: "ok" }],
     inputTokens: 10,

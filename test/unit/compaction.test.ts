@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { LanguageModelV3 } from "@ai-sdk/provider";
+import type { LanguageModelV4 } from "@ai-sdk/provider";
 import { reconstructMessages } from "../../src/conversation/event-reconstructor.ts";
 import {
   compactConversationMessages,
@@ -40,10 +40,10 @@ function conversation(turns: number, charsPerMsg: number): StoredMessage[] {
 }
 
 /** Minimal fake model whose doGenerate returns a fixed text block. */
-function fakeModel(text: string): LanguageModelV3 {
+function fakeModel(text: string): LanguageModelV4 {
   return {
     doGenerate: async () => ({ content: text ? [{ type: "text", text }] : [] }),
-  } as unknown as LanguageModelV3;
+  } as unknown as LanguageModelV4;
 }
 
 // --- planCompaction --------------------------------------------------------
@@ -121,7 +121,7 @@ describe("summarizeMessages + runCompaction", () => {
           outputTokens: { total: 40 },
         },
       }),
-    } as unknown as LanguageModelV3;
+    } as unknown as LanguageModelV4;
     let seen:
       | { usage: { inputTokens: number; outputTokens: number; cacheReadTokens?: number }; ms: number }
       | undefined;
@@ -151,7 +151,7 @@ describe("summarizeMessages + runCompaction", () => {
         captured = JSON.stringify(opts.prompt.find((p) => p.role === "user")?.content ?? "");
         return { content: [{ type: "text", text: "summary" }] };
       },
-    } as unknown as LanguageModelV3;
+    } as unknown as LanguageModelV4;
 
     const msgs = [
       user("look up the weather", ts(0)),
@@ -184,7 +184,7 @@ describe("summarizeMessages + runCompaction", () => {
 
   test("runCompaction returns null below threshold (model never called)", async () => {
     let called = false;
-    const model = { doGenerate: async () => ((called = true), { content: [] }) } as unknown as LanguageModelV3;
+    const model = { doGenerate: async () => ((called = true), { content: [] }) } as unknown as LanguageModelV4;
     const out = await runCompaction(model, conversation(2, 40), { budget: 100_000 });
     expect(out).toBeNull();
     expect(called).toBe(false);
@@ -204,7 +204,7 @@ describe("summarizeMessages + runCompaction", () => {
 // --- summarizer context bounding (regression: large folds silently no-op'd) ---
 
 /** Mimics the provider rejecting an over-context prompt, like the real API. */
-function contextLimitedModel(summaryText: string, contextTokens: number): LanguageModelV3 {
+function contextLimitedModel(summaryText: string, contextTokens: number): LanguageModelV4 {
   return {
     doGenerate: async (opts: { prompt: unknown }) => {
       const tokens = Math.ceil(JSON.stringify(opts.prompt).length / 4);
@@ -213,18 +213,18 @@ function contextLimitedModel(summaryText: string, contextTokens: number): Langua
       }
       return { content: [{ type: "text", text: summaryText }] };
     },
-  } as unknown as LanguageModelV3;
+  } as unknown as LanguageModelV4;
 }
 
 /** Records the prompt-token size the model was actually handed. */
-function sizeCapturingModel(): { model: LanguageModelV3; lastPromptTokens: () => number } {
+function sizeCapturingModel(): { model: LanguageModelV4; lastPromptTokens: () => number } {
   let last = 0;
   const model = {
     doGenerate: async (opts: { prompt: unknown }) => {
       last = Math.ceil(JSON.stringify(opts.prompt).length / 4);
       return { content: [{ type: "text", text: "s" }] };
     },
-  } as unknown as LanguageModelV3;
+  } as unknown as LanguageModelV4;
   return { model, lastPromptTokens: () => last };
 }
 

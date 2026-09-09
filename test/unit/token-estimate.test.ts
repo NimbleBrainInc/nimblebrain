@@ -9,7 +9,7 @@
  * spurious compaction and corrupted cost dashboards.
  */
 
-import type { LanguageModelV3Message } from "@ai-sdk/provider";
+import type { LanguageModelV4Message } from "@ai-sdk/provider";
 import { describe, expect, test } from "bun:test";
 import {
   estimateMessageTokens,
@@ -46,7 +46,7 @@ function makePngWithDimensions(width: number, height: number): Uint8Array {
 
 describe("estimateMessageTokens — text-only", () => {
   test("user message with a single text part — tokens scale with text length", () => {
-    const msg: LanguageModelV3Message = {
+    const msg: LanguageModelV4Message = {
       role: "user",
       content: [{ type: "text", text: "hello world" }],
     };
@@ -55,7 +55,7 @@ describe("estimateMessageTokens — text-only", () => {
   });
 
   test("system message — content is a bare string", () => {
-    const msg: LanguageModelV3Message = {
+    const msg: LanguageModelV4Message = {
       role: "system",
       content: "you are a helpful agent",
     };
@@ -63,7 +63,7 @@ describe("estimateMessageTokens — text-only", () => {
   });
 
   test("empty user content — zero tokens, no throw", () => {
-    const msg: LanguageModelV3Message = { role: "user", content: [] };
+    const msg: LanguageModelV4Message = { role: "user", content: [] };
     expect(estimateMessageTokens(msg)).toBe(0);
   });
 });
@@ -80,7 +80,7 @@ describe("estimateMessageTokens — image regression", () => {
     // IHDR header; padding bytes are ignored.
     const padded = new Uint8Array(207_007);
     padded.set(bytes, 0);
-    const msg: LanguageModelV3Message = {
+    const msg: LanguageModelV4Message = {
       role: "user",
       content: [{ type: "file", mediaType: "image/png", data: padded, filename: "screenshot.png" }],
     };
@@ -97,7 +97,7 @@ describe("estimateMessageTokens — image regression", () => {
     const bytes = makePngWithDimensions(4000, 3000);
     const padded = new Uint8Array(711_000);
     padded.set(bytes, 0);
-    const msg: LanguageModelV3Message = {
+    const msg: LanguageModelV4Message = {
       role: "user",
       content: [{ type: "file", mediaType: "image/png", data: padded }],
     };
@@ -112,7 +112,7 @@ describe("estimateMessageTokens — image regression", () => {
     a.set(makePngWithDimensions(1024, 768), 0);
     const b = new Uint8Array(711_000);
     b.set(makePngWithDimensions(2400, 1800), 0);
-    const msg: LanguageModelV3Message = {
+    const msg: LanguageModelV4Message = {
       role: "user",
       content: [
         { type: "text", text: "Look at these screenshots" },
@@ -124,7 +124,7 @@ describe("estimateMessageTokens — image regression", () => {
   });
 
   test("image without a recognizable header falls back to flat estimate", () => {
-    const msg: LanguageModelV3Message = {
+    const msg: LanguageModelV4Message = {
       role: "user",
       content: [
         { type: "file", mediaType: "image/png", data: new Uint8Array(200_000) },
@@ -148,7 +148,7 @@ describe("estimateMessageTokens — image regression", () => {
 
 describe("estimateMessageTokens — non-image files", () => {
   test("PDF attachment is tokenized as metadata, not bytes", () => {
-    const msg: LanguageModelV3Message = {
+    const msg: LanguageModelV4Message = {
       role: "user",
       content: [
         {
@@ -168,7 +168,7 @@ describe("estimateMessageTokens — non-image files", () => {
 
 describe("estimateMessageTokens — tool-call parts", () => {
   test("tool-call serializes input args, not surrounding shell", () => {
-    const msg: LanguageModelV3Message = {
+    const msg: LanguageModelV4Message = {
       role: "assistant",
       content: [
         {
@@ -185,7 +185,7 @@ describe("estimateMessageTokens — tool-call parts", () => {
   });
 
   test("tool-call with nested object args", () => {
-    const msg: LanguageModelV3Message = {
+    const msg: LanguageModelV4Message = {
       role: "assistant",
       content: [
         {
@@ -202,7 +202,7 @@ describe("estimateMessageTokens — tool-call parts", () => {
 
 describe("estimateMessageTokens — tool-result parts", () => {
   test("text output is tokenized straightforwardly", () => {
-    const msg: LanguageModelV3Message = {
+    const msg: LanguageModelV4Message = {
       role: "tool",
       content: [
         {
@@ -225,7 +225,7 @@ describe("estimateMessageTokens — tool-result parts", () => {
     // serialize to — and verify the estimator stays inside the image
     // clamp rather than reporting ~175K tokens (700K/4).
     const fakeBase64 = "A".repeat(700_000);
-    const msg: LanguageModelV3Message = {
+    const msg: LanguageModelV4Message = {
       role: "tool",
       content: [
         {
@@ -249,7 +249,7 @@ describe("estimateMessageTokens — tool-result parts", () => {
   });
 
   test("json output is tokenized by serialized length", () => {
-    const msg: LanguageModelV3Message = {
+    const msg: LanguageModelV4Message = {
       role: "tool",
       content: [
         {
@@ -266,7 +266,7 @@ describe("estimateMessageTokens — tool-result parts", () => {
 
 describe("estimateMessageTokens — reasoning parts", () => {
   test("reasoning text contributes its char-count tokens", () => {
-    const msg: LanguageModelV3Message = {
+    const msg: LanguageModelV4Message = {
       role: "assistant",
       content: [{ type: "reasoning", text: "let me think about this carefully" }],
     };
@@ -278,7 +278,7 @@ describe("estimateMessageTokens — reasoning parts", () => {
 
 describe("estimateMessageTokens — tiny PNG dimension decoding", () => {
   test("decodes 1×1 PNG header and applies the clamp", () => {
-    const msg: LanguageModelV3Message = {
+    const msg: LanguageModelV4Message = {
       role: "user",
       content: [{ type: "file", mediaType: "image/png", data: makeTinyPng() }],
     };
@@ -314,7 +314,7 @@ describe("estimateToolDescriptionTokens", () => {
 });
 
 describe("estimateToolDescriptionTokens — provider-facing tool shape", () => {
-  // The provider's LanguageModelV3FunctionTool has an OPTIONAL description,
+  // The provider's LanguageModelV4FunctionTool has an OPTIONAL description,
   // which is why the parameter is the structural minimum rather than
   // ToolSchema. Taking the estimate over the tools actually sent is what makes
   // it comparable to the provider's reported usage.

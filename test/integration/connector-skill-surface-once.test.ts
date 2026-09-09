@@ -21,7 +21,7 @@
  * the duplication survived the existing connector-skill suite.
  */
 
-import type { LanguageModelV3CallOptions } from "@ai-sdk/provider";
+import type { LanguageModelV4CallOptions } from "@ai-sdk/provider";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -97,10 +97,10 @@ main();
 }
 
 /** Every prompt the model was called with this turn, in order. */
-let prompts: LanguageModelV3CallOptions["prompt"][] = [];
+let prompts: LanguageModelV4CallOptions["prompt"][] = [];
 let modelCalls = 0;
 
-function promptText(p: LanguageModelV3CallOptions["prompt"]): string {
+function promptText(p: LanguageModelV4CallOptions["prompt"]): string {
   return p
     .map((m) =>
       typeof m.content === "string"

@@ -18,7 +18,7 @@
  * `loadedBy: "tool_affinity"`.
  */
 
-import type { LanguageModelV3, LanguageModelV3CallOptions } from "@ai-sdk/provider";
+import type { LanguageModelV4, LanguageModelV4CallOptions } from "@ai-sdk/provider";
 import { afterAll, beforeAll, describe, expect, it, spyOn } from "bun:test";
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -155,13 +155,13 @@ main();
 
 // Captures the prompt the model receives so the test can assert on the assembled
 // system prompt (the <app-guide> reference hint), which no event carries.
-let lastPrompt: LanguageModelV3CallOptions["prompt"] | undefined;
+let lastPrompt: LanguageModelV4CallOptions["prompt"] | undefined;
 
-function createCapturingModel(): LanguageModelV3 {
+function createCapturingModel(): LanguageModelV4 {
   const echo = createEchoModel();
   return {
     ...echo,
-    doStream: (options: LanguageModelV3CallOptions) => {
+    doStream: (options: LanguageModelV4CallOptions) => {
       lastPrompt = options.prompt;
       return echo.doStream(options);
     },
@@ -620,7 +620,7 @@ const multiDir = join(tmpdir(), `nimblebrain-connector-skills-multi-${Date.now()
 let multiRuntime: Runtime;
 let multiSource: McpSource;
 // Captures the composed prompt for the multi-skill runtime.
-let multiPrompt: LanguageModelV3CallOptions["prompt"] | undefined;
+let multiPrompt: LanguageModelV4CallOptions["prompt"] | undefined;
 
 function multiPromptText(): string {
   if (!multiPrompt) return "";
@@ -637,9 +637,9 @@ describe("connector-skill adapter — honors declared loading-strategy", () => {
   beforeAll(async () => {
     mkdirSync(multiDir, { recursive: true });
     const echo = createEchoModel();
-    const capturing: LanguageModelV3 = {
+    const capturing: LanguageModelV4 = {
       ...echo,
-      doStream: (options: LanguageModelV3CallOptions) => {
+      doStream: (options: LanguageModelV4CallOptions) => {
         multiPrompt = options.prompt;
         return echo.doStream(options);
       },

@@ -2,7 +2,7 @@
  * Canonical token-usage shape — used by engine, runtime, conversation
  * events, storage, and cost computation.
  *
- * Provider-aligned with AI SDK V3 (LanguageModelV3Usage):
+ * Provider-aligned with AI SDK V3 (LanguageModelV4Usage):
  *   inputTokens  = grand total of input-side tokens
  *                = noCache + cacheRead + cacheWrite
  *   outputTokens = grand total of output-side tokens
@@ -16,7 +16,7 @@
  * compiler enforces that callers supply the full struct, which is what
  * keeps cost computation from silently dropping a field.
  */
-import type { LanguageModelV3Usage } from "@ai-sdk/provider";
+import type { LanguageModelV4Usage } from "@ai-sdk/provider";
 
 /**
  * Who a priced LLM call was made on behalf of, as distinct from *which slot*
@@ -160,7 +160,7 @@ export interface TokenUsage {
  * issue raw `doGenerate` with no breakpoints, so `cacheWriteTokens` is ~0); the
  * engine layers the 1h split on top of this for the main loop.
  */
-export function tokenUsageFromV3(usage: LanguageModelV3Usage): TokenUsage {
+export function tokenUsageFromV4(usage: LanguageModelV4Usage): TokenUsage {
   return {
     inputTokens: usage.inputTokens.total ?? 0,
     outputTokens: usage.outputTokens.total ?? 0,

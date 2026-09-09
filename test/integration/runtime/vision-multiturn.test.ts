@@ -15,39 +15,39 @@ import { mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type {
-  LanguageModelV3,
-  LanguageModelV3CallOptions,
-  LanguageModelV3FilePart,
-  LanguageModelV3StreamPart,
+  LanguageModelV4,
+  LanguageModelV4CallOptions,
+  LanguageModelV4FilePart,
+  LanguageModelV4StreamPart,
 } from "@ai-sdk/provider";
 import { type ServerHandle, startServer } from "../../../src/api/server.ts";
 import { Runtime } from "../../../src/runtime/runtime.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../../helpers/test-workspace.ts";
 
 /**
- * A LanguageModelV3 that records every prompt it receives and returns
+ * A LanguageModelV4 that records every prompt it receives and returns
  * scripted responses. Lets the test inspect the user-message content the
  * engine actually sent to `model.doStream` on each iteration.
  */
 function createRecordingModel(scripted: Array<{ text: string; toolCalls?: { id: string; name: string; input: string }[] }>): {
-  model: LanguageModelV3;
-  prompts: LanguageModelV3CallOptions["prompt"][];
+  model: LanguageModelV4;
+  prompts: LanguageModelV4CallOptions["prompt"][];
 } {
-  const prompts: LanguageModelV3CallOptions["prompt"][] = [];
+  const prompts: LanguageModelV4CallOptions["prompt"][] = [];
   let i = 0;
 
-  const model: LanguageModelV3 = {
-    specificationVersion: "v3",
+  const model: LanguageModelV4 = {
+    specificationVersion: "v4",
     provider: "test",
     modelId: "test-recording",
     supportedUrls: {},
     async doGenerate() {
       throw new Error("doGenerate not used in this test");
     },
-    async doStream(options: LanguageModelV3CallOptions) {
+    async doStream(options: LanguageModelV4CallOptions) {
       prompts.push(options.prompt);
       const turn = scripted[i++] ?? scripted[scripted.length - 1]!;
-      const stream = new ReadableStream<LanguageModelV3StreamPart>({
+      const stream = new ReadableStream<LanguageModelV4StreamPart>({
         start(controller) {
           controller.enqueue({ type: "stream-start", warnings: [] });
           if (turn.text) {
@@ -96,7 +96,7 @@ const PNG_BYTES = Buffer.from([
 let runtime: Runtime;
 let handle: ServerHandle;
 let baseUrl: string;
-let recorded: { prompts: LanguageModelV3CallOptions["prompt"][] };
+let recorded: { prompts: LanguageModelV4CallOptions["prompt"][] };
 const testDir = join(tmpdir(), `nb-vision-multiturn-${Date.now()}`);
 
 beforeAll(async () => {
@@ -157,13 +157,19 @@ describe("vision survives the multi-turn agent loop", () => {
       if (!userMsg || userMsg.role !== "user") return;
 
       const filePart = userMsg.content.find(
-        (c): c is LanguageModelV3FilePart => c.type === "file",
+        (c): c is LanguageModelV4FilePart => c.type === "file",
       );
       expect(filePart).toBeDefined();
       if (!filePart) return;
       expect(filePart.mediaType).toBe("image/png");
-      expect(filePart.data).toBeInstanceOf(Uint8Array);
-      const bytes = filePart.data as Uint8Array;
+      // `data` is the tagged `SharedV4FileData` union. The `data` variant is the
+      // one every provider converter can inline; a bare `Uint8Array` here
+      // matches no arm of the Anthropic converter's switch and the attachment
+      // is dropped from the request with no error.
+      expect(filePart.data.type).toBe("data");
+      if (filePart.data.type !== "data") return;
+      expect(filePart.data.data).toBeInstanceOf(Uint8Array);
+      const bytes = filePart.data.data as Uint8Array;
       expect(Buffer.from(bytes).equals(PNG_BYTES)).toBe(true);
     }
   });

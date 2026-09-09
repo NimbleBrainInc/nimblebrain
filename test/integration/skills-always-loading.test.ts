@@ -24,7 +24,7 @@
  * body phrase makes "did it load?" an unambiguous substring check.
  */
 
-import type { LanguageModelV3 } from "@ai-sdk/provider";
+import type { LanguageModelV4 } from "@ai-sdk/provider";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -45,7 +45,7 @@ let runtime: Runtime;
 let getSystem: () => string;
 
 /** Model that captures the composed system prompt (ignores auto-title calls). */
-function createCapturingModel(): { model: LanguageModelV3; getSystem: () => string } {
+function createCapturingModel(): { model: LanguageModelV4; getSystem: () => string } {
   let captured = "";
   const model = createMockModel((options) => {
     const systemMsg = options.prompt.find((m) => m.role === "system");

@@ -1,4 +1,4 @@
-import type { LanguageModelV3Message } from "@ai-sdk/provider";
+import type { LanguageModelV4Message } from "@ai-sdk/provider";
 import type { RecordedCall } from "./recording-model.ts";
 
 /**
@@ -38,14 +38,14 @@ function ttlOf(x: { providerOptions?: Record<string, unknown> } | undefined): st
 }
 
 /** Underlying message content, stripped of cache markers (so we compare bytes, not breakpoints). */
-function contentOnly(m: LanguageModelV3Message): string {
-  const { providerOptions: _drop, ...rest } = m as LanguageModelV3Message & {
+function contentOnly(m: LanguageModelV4Message): string {
+  const { providerOptions: _drop, ...rest } = m as LanguageModelV4Message & {
     providerOptions?: unknown;
   };
   return JSON.stringify(rest);
 }
 
-function systemTextOf(prompt: LanguageModelV3Message[]): string {
+function systemTextOf(prompt: LanguageModelV4Message[]): string {
   const head = prompt[0];
   if (head && head.role === "system") {
     return typeof head.content === "string" ? head.content : JSON.stringify(head.content);

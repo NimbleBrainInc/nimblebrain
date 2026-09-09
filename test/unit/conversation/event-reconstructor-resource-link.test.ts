@@ -4,7 +4,7 @@ import type { ConversationEvent } from "../../../src/conversation/types.ts";
 
 /**
  * Regression: the reconstructor used to map user-message content through
- * the assistant-side `LanguageModelV3Content` projection, which dropped
+ * the assistant-side `LanguageModelV4Content` projection, which dropped
  * everything that wasn't text. Image attachments were silently lost on
  * every reload — vision worked on turn 1 (in-memory message hadn't been
  * round-tripped) and broke on turn 2+. The fix: a user-content-aware

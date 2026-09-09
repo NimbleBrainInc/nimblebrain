@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import type { LanguageModelV3Message } from "@ai-sdk/provider";
+import type { LanguageModelV4Message } from "@ai-sdk/provider";
 import { AgentEngine } from "../../src/engine/engine.ts";
 import { StaticToolRouter } from "../../src/adapters/static-router.ts";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
@@ -138,7 +138,7 @@ describe("token-shape regression (Tier 1: deterministic, no provider API)", () =
         ? systemHead.content
         : JSON.stringify(systemHead.content);
     expect(systemText).not.toContain("final step");
-    const tail = lastPrompt[lastPrompt.length - 1] as LanguageModelV3Message;
+    const tail = lastPrompt[lastPrompt.length - 1] as LanguageModelV4Message;
     expect(JSON.stringify(tail)).toContain("final step");
   });
 

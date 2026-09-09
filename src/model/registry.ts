@@ -2,7 +2,7 @@ import { createAnthropic } from "@ai-sdk/anthropic";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { createOpenAI } from "@ai-sdk/openai";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
-import type { LanguageModelV3, ProviderV3 } from "@ai-sdk/provider";
+import type { LanguageModelV4, ProviderV4 } from "@ai-sdk/provider";
 import { createXai } from "@ai-sdk/xai";
 import { createProviderRegistry, type Provider } from "ai";
 import { findProviderForModelId } from "./catalog.ts";
@@ -28,7 +28,7 @@ const NEBIUS_DEFAULT_BASE_URL = "https://api.tokenfactory.nebius.com/v1";
 export function buildRegistry(config: ProvidersConfig): Provider {
   const providersCfg = config.providers ?? { anthropic: {} };
 
-  const providers: Record<string, ProviderV3> = {};
+  const providers: Record<string, ProviderV4> = {};
 
   if (providersCfg.anthropic) {
     const { apiKey } = providersCfg.anthropic;
@@ -110,13 +110,13 @@ export function buildRegistry(config: ProvidersConfig): Provider {
     // absent config key is the normal working case. See the nebius branch above
     // for the rule.
     //
-    // `.languageModel()` binds Chat Completions on this adapter version
-    // (XaiChatLanguageModel, provider "xai.chat"), so no `.chat()` re-wrap is
-    // needed — the adapter also exposes `.responses()`, which is opt-in. The
-    // registry test pins `provider === "xai.chat"`, so a dependency bump that
-    // moves that default fails there rather than silently changing the API this
-    // talks to.
-    providers.xai = createXai({ apiKey, baseURL });
+    // Chat Completions is the API this runtime talks to on xai, so `.chat()` is
+    // named rather than taken from `.languageModel()`'s default — that default
+    // is the adapter's own choice and has moved between adapter majors. The
+    // registry test pins `provider === "xai.chat"`; adopting `.responses()` is a
+    // deliberate change to make there, not one to inherit from a version bump.
+    const xai = createXai({ apiKey, baseURL });
+    providers.xai = { ...xai, languageModel: (modelId: string) => xai.chat(modelId) };
   }
 
   return createProviderRegistry(providers);
@@ -147,16 +147,16 @@ export function resolveModelString(model: string): string {
 }
 
 /**
- * Build a function that resolves model strings to LanguageModelV3 instances.
+ * Build a function that resolves model strings to LanguageModelV4 instances.
  * If no providers configured, defaults to anthropic with env var fallback.
  */
 export function buildModelResolver(
   config: ProvidersConfig,
-): (modelString: string) => LanguageModelV3 {
+): (modelString: string) => LanguageModelV4 {
   const provider = buildRegistry(config);
 
-  return (modelString: string): LanguageModelV3 => {
+  return (modelString: string): LanguageModelV4 => {
     const resolved = resolveModelString(modelString);
-    return provider.languageModel(resolved) as LanguageModelV3;
+    return provider.languageModel(resolved) as LanguageModelV4;
   };
 }

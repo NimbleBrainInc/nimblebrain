@@ -1,14 +1,14 @@
 import { describe, expect, it } from "bun:test";
 import type {
-  LanguageModelV3,
-  LanguageModelV3CallOptions,
-  LanguageModelV3StreamPart,
+  LanguageModelV4,
+  LanguageModelV4CallOptions,
+  LanguageModelV4StreamPart,
 } from "@ai-sdk/provider";
 import { withRetry } from "../../src/engine/retry.ts";
 import { callModel, ModelStreamStallError } from "../../src/model/stream.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 
-function userPrompt(text: string): LanguageModelV3CallOptions {
+function userPrompt(text: string): LanguageModelV4CallOptions {
   return {
     prompt: [{ role: "user" as const, content: [{ type: "text" as const, text }] }],
   };
@@ -164,17 +164,17 @@ const USAGE = {
 };
 
 /**
- * Minimal LanguageModelV3 whose per-call stream is scripted by the caller.
+ * Minimal LanguageModelV4 whose per-call stream is scripted by the caller.
  * Each function produces the stream for one `doStream` invocation (the last
  * entry repeats) and receives the abortSignal so it can mirror a provider
  * aborting the underlying fetch.
  */
 function scriptedModel(
-  scripts: Array<(signal: AbortSignal | undefined) => ReadableStream<LanguageModelV3StreamPart>>,
-): LanguageModelV3 {
+  scripts: Array<(signal: AbortSignal | undefined) => ReadableStream<LanguageModelV4StreamPart>>,
+): LanguageModelV4 {
   let call = 0;
   return {
-    specificationVersion: "v3",
+    specificationVersion: "v4",
     provider: "test",
     modelId: "test-1",
     supportedUrls: {},
@@ -193,7 +193,7 @@ function scriptedModel(
  *  AI SDK aborting the fetch on `abortSignal`). */
 function stallingStream(
   signal: AbortSignal | undefined,
-): ReadableStream<LanguageModelV3StreamPart> {
+): ReadableStream<LanguageModelV4StreamPart> {
   return new ReadableStream({
     start(controller) {
       controller.enqueue({ type: "stream-start", warnings: [] });
@@ -206,7 +206,7 @@ function stallingStream(
 }
 
 /** A complete, healthy single-shot text stream. */
-function textStream(text: string): ReadableStream<LanguageModelV3StreamPart> {
+function textStream(text: string): ReadableStream<LanguageModelV4StreamPart> {
   return new ReadableStream({
     start(controller) {
       controller.enqueue({ type: "stream-start", warnings: [] });
@@ -221,7 +221,7 @@ function textStream(text: string): ReadableStream<LanguageModelV3StreamPart> {
 
 /** Text stream paced so each inter-part gap is `gapMs`. Total duration exceeds
  *  the idle window, but no single gap does — exercises the idle reset. */
-function pacedStream(deltas: number, gapMs: number): ReadableStream<LanguageModelV3StreamPart> {
+function pacedStream(deltas: number, gapMs: number): ReadableStream<LanguageModelV4StreamPart> {
   return new ReadableStream({
     start(controller) {
       controller.enqueue({ type: "stream-start", warnings: [] });
@@ -247,7 +247,7 @@ function pacedStream(deltas: number, gapMs: number): ReadableStream<LanguageMode
  *  begun. Errors when its signal aborts. */
 function partialThenStallStream(
   signal: AbortSignal | undefined,
-): ReadableStream<LanguageModelV3StreamPart> {
+): ReadableStream<LanguageModelV4StreamPart> {
   return new ReadableStream({
     start(controller) {
       controller.enqueue({ type: "stream-start", warnings: [] });
@@ -264,9 +264,9 @@ function partialThenStallStream(
 /** Model whose `doStream()` never resolves until the call is aborted — mirrors
  *  a connect / first-chunk hang (providers like Anthropic don't resolve
  *  doStream until the first SSE event arrives). */
-function hangingDoStreamModel(): LanguageModelV3 {
+function hangingDoStreamModel(): LanguageModelV4 {
   return {
-    specificationVersion: "v3",
+    specificationVersion: "v4",
     provider: "test",
     modelId: "test-1",
     supportedUrls: {},
@@ -393,7 +393,7 @@ describe("callModel — stream idle watchdog", () => {
 // ---------------------------------------------------------------------------
 
 /** stream-start then finish, with NO output part — an empty completion. */
-function noOutputStream(): ReadableStream<LanguageModelV3StreamPart> {
+function noOutputStream(): ReadableStream<LanguageModelV4StreamPart> {
   return new ReadableStream({
     start(controller) {
       controller.enqueue({ type: "stream-start", warnings: [] });
@@ -406,7 +406,7 @@ function noOutputStream(): ReadableStream<LanguageModelV3StreamPart> {
 /** First text-delta immediately, then a `gapMs` pause before the rest finishes.
  *  TTFT (first output) is near-zero; the LAST output part lands ~gapMs later — so
  *  a large ttft would prove the metric captured the wrong (last) part. */
-function fastFirstThenGapStream(gapMs: number): ReadableStream<LanguageModelV3StreamPart> {
+function fastFirstThenGapStream(gapMs: number): ReadableStream<LanguageModelV4StreamPart> {
   return new ReadableStream({
     start(controller) {
       controller.enqueue({ type: "stream-start", warnings: [] });
@@ -424,7 +424,7 @@ function fastFirstThenGapStream(gapMs: number): ReadableStream<LanguageModelV3St
 
 /** Reasoning (thinking) tokens precede any text — the reasoning-heavy shape whose
  *  long decode is exactly what TTFT must see past. */
-function reasoningFirstStream(): ReadableStream<LanguageModelV3StreamPart> {
+function reasoningFirstStream(): ReadableStream<LanguageModelV4StreamPart> {
   return new ReadableStream({
     start(controller) {
       controller.enqueue({ type: "stream-start", warnings: [] });

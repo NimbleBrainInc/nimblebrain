@@ -17,7 +17,7 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { LanguageModelV3, LanguageModelV3CallOptions } from "@ai-sdk/provider";
+import type { LanguageModelV4, LanguageModelV4CallOptions } from "@ai-sdk/provider";
 import { extractText } from "../../src/engine/content-helpers.ts";
 import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 import { runWithRequestContext } from "../../src/runtime/request-context.ts";
@@ -68,7 +68,7 @@ main();
 
 const testDir = join(tmpdir(), `nimblebrain-skill-mute-${Date.now()}`);
 let runtime: Runtime;
-let lastPrompt: LanguageModelV3CallOptions["prompt"] | undefined;
+let lastPrompt: LanguageModelV4CallOptions["prompt"] | undefined;
 let skillPath = "";
 
 /**
@@ -78,7 +78,7 @@ let skillPath = "";
  * turns it into the conversation event. A registry call made outside a run
  * would never persist anything.
  */
-function capturingModel(): LanguageModelV3 {
+function capturingModel(): LanguageModelV4 {
   return createMockModel((options) => {
     const system = options.prompt.find((m) => m.role === "system");
     const isTitle =

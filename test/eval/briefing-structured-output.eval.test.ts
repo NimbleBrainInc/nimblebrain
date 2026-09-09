@@ -10,7 +10,7 @@
  * Run: bun run eval
  */
 import { describe, expect, it } from "bun:test";
-import type { LanguageModelV3 } from "@ai-sdk/provider";
+import type { LanguageModelV4 } from "@ai-sdk/provider";
 import { buildModelResolver } from "../../src/model/registry.ts";
 import type { BriefingContext } from "../../src/services/briefing-collector.ts";
 import { BriefingGenerator } from "../../src/services/briefing-generator.ts";
@@ -184,7 +184,7 @@ function assertValidBriefing(briefing: BriefingOutput, label: string): void {
 // Eval suite
 // ---------------------------------------------------------------------------
 
-function resolveModel(spec: ProviderSpec): LanguageModelV3 | null {
+function resolveModel(spec: ProviderSpec): LanguageModelV4 | null {
   const apiKey = process.env[spec.envVar];
   if (!apiKey) return null;
 

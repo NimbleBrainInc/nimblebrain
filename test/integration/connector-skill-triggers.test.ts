@@ -26,7 +26,7 @@
  * body off the prompt the model actually received.
  */
 
-import type { LanguageModelV3, LanguageModelV3CallOptions } from "@ai-sdk/provider";
+import type { LanguageModelV4, LanguageModelV4CallOptions } from "@ai-sdk/provider";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -136,13 +136,13 @@ main();
 
 // Captures the prompt the model receives, so the test can assert on the
 // assembled system prompt — no event carries the composed text.
-let lastPrompt: LanguageModelV3CallOptions["prompt"] | undefined;
+let lastPrompt: LanguageModelV4CallOptions["prompt"] | undefined;
 
-function createCapturingModel(): LanguageModelV3 {
+function createCapturingModel(): LanguageModelV4 {
   const echo = createEchoModel();
   return {
     ...echo,
-    doStream: (options: LanguageModelV3CallOptions) => {
+    doStream: (options: LanguageModelV4CallOptions) => {
       lastPrompt = options.prompt;
       return echo.doStream(options);
     },

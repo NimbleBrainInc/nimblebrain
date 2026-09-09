@@ -57,7 +57,7 @@ describe("buildRegistry", () => {
     const registry = buildRegistry({ providers: { anthropic: {} } });
     const model = registry.languageModel("anthropic:claude-sonnet-4-6");
     expect(model).toBeDefined();
-    expect(model.specificationVersion).toBe("v3");
+    expect(model.specificationVersion).toBe("v4");
     expect(model.provider).toContain("anthropic");
     expect(model.modelId).toContain("claude-sonnet");
   });
@@ -68,7 +68,7 @@ describe("buildRegistry", () => {
     expect(model).toBeDefined();
     expect(model.provider).toContain("anthropic");
     // Verify it has the same spec version as explicit config
-    expect(model.specificationVersion).toBe("v3");
+    expect(model.specificationVersion).toBe("v4");
   });
 
   it("throws for unregistered provider prefix", () => {
@@ -80,7 +80,7 @@ describe("buildRegistry", () => {
     const registry = buildRegistry({ providers: { nebius: { apiKey: "nb-test-key" } } });
     const model = registry.languageModel("nebius:deepseek-ai/DeepSeek-V4-Pro");
     expect(model).toBeDefined();
-    expect(model.specificationVersion).toBe("v3");
+    expect(model.specificationVersion).toBe("v4");
     // Chat Completions, which this adapter binds natively — Nebius serves no
     // Responses API. Pinned so a swap back to a Responses-defaulting adapter
     // fails here rather than at the first chat turn.
@@ -106,7 +106,7 @@ describe("buildRegistry", () => {
     const registry = buildRegistry({ providers: { xai: { apiKey: "xai-test-key" } } });
     const model = registry.languageModel("xai:grok-4.5");
     expect(model).toBeDefined();
-    expect(model.specificationVersion).toBe("v3");
+    expect(model.specificationVersion).toBe("v4");
     // `.languageModel()` binds Chat Completions on this adapter version; the
     // Responses API is opt-in via `.responses()`. Pinned so a dependency bump
     // that moves that default fails here rather than silently changing which

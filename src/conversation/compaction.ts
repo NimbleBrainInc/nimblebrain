@@ -1,5 +1,5 @@
-import type { LanguageModelV3 } from "@ai-sdk/provider";
-import { type TokenUsage, tokenUsageFromV3 } from "../usage/types.ts";
+import type { LanguageModelV4 } from "@ai-sdk/provider";
+import { type TokenUsage, tokenUsageFromV4 } from "../usage/types.ts";
 import { escapeClosingTags } from "./escape-closing-tags.ts";
 import type { HistoryCompactedEvent, StoredMessage } from "./types.ts";
 
@@ -500,7 +500,7 @@ const SUMMARIZE_SYSTEM =
  * compaction as best-effort and falls back to the un-compacted history.
  */
 export async function summarizeMessages(
-  model: LanguageModelV3,
+  model: LanguageModelV4,
   messages: readonly SummarizableMessage[],
   opts: {
     maxOutputTokens?: number;
@@ -531,7 +531,7 @@ export async function summarizeMessages(
   });
   // Report usage before the empty-summary guard — the call was billed
   // regardless of whether its output is usable.
-  opts.onUsage?.(tokenUsageFromV3(result.usage), Date.now() - startedAt);
+  opts.onUsage?.(tokenUsageFromV4(result.usage), Date.now() - startedAt);
   const textBlock = result.content.find((b) => b.type === "text");
   const summary = textBlock?.type === "text" ? textBlock.text.trim() : "";
   if (!summary) throw new Error("compaction summary was empty");
@@ -544,7 +544,7 @@ export async function summarizeMessages(
  * caller catches and proceeds with the un-compacted history.
  */
 export async function runCompaction(
-  model: LanguageModelV3,
+  model: LanguageModelV4,
   messages: readonly StoredMessage[],
   opts: CompactionOptions,
 ): Promise<CompactionOutcome | null> {
@@ -573,7 +573,7 @@ export async function runCompaction(
  * pre-existing overflow path's job, not a hard error here.
  */
 export async function compactConversationMessages(
-  model: LanguageModelV3,
+  model: LanguageModelV4,
   messages: StoredMessage[],
   opts: CompactionOptions & {
     now: string;

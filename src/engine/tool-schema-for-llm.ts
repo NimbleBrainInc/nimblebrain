@@ -21,7 +21,7 @@ import { log } from "../observability/log.ts";
  * ## Strategy
  *
  * Single transform at the one boundary every tool crosses (engine.ts →
- * LanguageModelV3FunctionTool). The MCP source layer remains a faithful
+ * LanguageModelV4FunctionTool). The MCP source layer remains a faithful
  * pass-through of the vendor-emitted schema; downstream consumers
  * (validation, audit, debugging) see the original.
  *

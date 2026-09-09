@@ -1,15 +1,15 @@
 import { describe, expect, it } from "bun:test";
-import type { LanguageModelV3Message } from "@ai-sdk/provider";
+import type { LanguageModelV4Message } from "@ai-sdk/provider";
 import { buildTransformContext } from "../../src/runtime/runtime.ts";
 
 // --- builders (mirroring window.test.ts / the engine's per-step append) -------
 
-function userMsg(text: string): LanguageModelV3Message {
+function userMsg(text: string): LanguageModelV4Message {
 	return { role: "user", content: [{ type: "text" as const, text }] };
 }
 
 /** One agentic step = an assistant tool-call + its tool-result (one group). */
-function step(i: number): LanguageModelV3Message[] {
+function step(i: number): LanguageModelV4Message[] {
 	return [
 		{
 			role: "assistant",
@@ -32,8 +32,8 @@ function step(i: number): LanguageModelV3Message[] {
 }
 
 /** history = initial user message + `nSteps` groups. */
-function history(nSteps: number): LanguageModelV3Message[] {
-	const msgs: LanguageModelV3Message[] = [userMsg("go")];
+function history(nSteps: number): LanguageModelV4Message[] {
+	const msgs: LanguageModelV4Message[] = [userMsg("go")];
 	for (let i = 0; i < nSteps; i++) msgs.push(...step(i));
 	return msgs;
 }

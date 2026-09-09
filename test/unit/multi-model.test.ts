@@ -10,7 +10,7 @@ import type {
 	EngineEvent,
 	EventSink,
 } from "../../src/engine/types.ts";
-import type { LanguageModelV3, LanguageModelV3Message } from "@ai-sdk/provider";
+import type { LanguageModelV4, LanguageModelV4Message } from "@ai-sdk/provider";
 
 const defaultConfig: EngineConfig = {
 	model: "test-model",
@@ -29,7 +29,7 @@ describe("multi-model routing", () => {
 			}));
 			const engine = new AgentEngine(echoModel, router, new NoopEventSink());
 
-			const messages: LanguageModelV3Message[] = [
+			const messages: LanguageModelV4Message[] = [
 				{ role: "user", content: [{ type: "text", text: "hello" }] },
 			];
 
@@ -54,7 +54,7 @@ describe("multi-model routing", () => {
 
 			expect(echoModel.provider).toBe("custom-provider");
 			expect(echoModel.modelId).toBe("custom-model-v1");
-			expect(echoModel.specificationVersion).toBe("v3");
+			expect(echoModel.specificationVersion).toBe("v4");
 		});
 	});
 
@@ -75,7 +75,7 @@ describe("multi-model routing", () => {
 			});
 			const model = resolver("claude-sonnet-4-6");
 			expect(model).toBeDefined();
-			expect(model.specificationVersion).toBe("v3");
+			expect(model.specificationVersion).toBe("v4");
 		});
 	});
 
@@ -121,7 +121,7 @@ describe("multi-model routing", () => {
 	// block from this file — it was duplicate AND mis-describing the
 	// function's actual behavior after the catalog-fallback fix.
 
-	describe("engine works with LanguageModelV3 end-to-end", () => {
+	describe("engine works with LanguageModelV4 end-to-end", () => {
 		it("engine processes multiple turns with echo model", async () => {
 			const echoModel = createEchoModel({
 				responses: [
