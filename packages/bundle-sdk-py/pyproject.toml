@@ -36,7 +36,7 @@ dependencies = [
     # tighten input validation and break us at runtime (not import time).
     # Bump after verifying against the next minor release; cut a SDK
     # major if the dispatch shape needs to change.
-    "mcp>=1.27.0,<2.0.0",
+    "mcp>=2.1.1,<2.2.0",
 ]
 
 [project.urls]
