@@ -123,8 +123,12 @@ to the connector; the platform renders your template and makes the call.
 | `automation` | One of your automations, by id |
 
 The automation must be [scheduled on events](/using/automations) to accept one.
-Matching items are batched for about 30 seconds before the run starts, and an
-automation has a ceiling on how many runs events may start for it in an hour.
+Matching items are batched for about 30 seconds before the run starts.
+
+An automation may start at most **12 runs an hour** from events by default.
+Crossing that ceiling switches the automation off and settles every waiting item
+`failed` — see
+[failed](/using/notification-troubleshooting#failed).
 
 ## Placeholders
 

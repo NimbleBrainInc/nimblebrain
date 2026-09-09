@@ -99,14 +99,31 @@ are worth a run.
 
 ### failed
 
-Three attempts happened and none completed. The last error is on the line. Most
-often it is the connector: a disconnected account, a channel the app was never
-invited to, or arguments the tool rejects.
+For a **tool** target: three attempts happened and none completed. The last
+error is on the line, and most often it is the connector — a disconnected
+account, a channel the app was never invited to, or arguments the tool rejects.
 
-<Aside type="caution" title="`failed` does not mean nothing was sent">
+For an **automation** target there were no attempts at all. A wake is offered
+once and settled once, so `failed` here means the run was owed and did not
+happen. Read the classification on the line rather than looking for a
+connector:
+
+- **The automation hit its
+  [fire ceiling](/using/notification-reference#agent).** Crossing it **switches
+  the automation off** and settles every waiting item `failed`, so the thing to fix
+  is not the route: re-enable the automation, and work out what was firing it in
+  a loop. A run whose own work produces the event that wakes it again is the
+  case the ceiling exists for.
+- **The batch never reached its run.** The window it was coalescing in was lost
+  — the platform restarted while it was open, for instance. Batches are not
+  re-formed, because re-firing hours later for events you have since dealt with
+  is worse than saying plainly that the run did not happen.
+
+<Aside type="caution" title="A failed tool target does not mean nothing was sent">
 A call that times out may have run anyway — the platform only knows no answer
 came back, so it retries. A route pointing at something that is not safe to
-repeat should be written knowing that.
+repeat should be written knowing that. An automation target has no such
+ambiguity: it is offered once.
 </Aside>
 
 ## Nothing matched
