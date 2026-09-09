@@ -8,8 +8,10 @@
  * to make a call the platform itself rejects. This check keeps that prose and
  * the statically declared contracts in lockstep without constructing a runtime.
  *
- * Scope: backticked references in Markdown files directly under
- * `src/skills/core/`. Tool contracts come from TypeScript files under
+ * Scope: backticked and bold-marked references in Markdown files directly
+ * under `src/skills/core/`. Both shapes declare contracts in these prompts — a
+ * bullet names its tool in bold and its arguments in backticks — so both are
+ * checked. Tool contracts come from TypeScript files under
  * `src/tools/` (`nb__*`) and each platform app's `source.ts` / `schemas.ts`
  * declarations (`<source>__*`). Explicit examples for dynamically installed
  * connectors are syntax examples, so only their namespace shape is static.
@@ -25,10 +27,14 @@ const CORE_SKILLS_ROOT = join(ROOT, "src", "skills", "core");
 const TOOLS_ROOT = join(ROOT, "src", "tools");
 const PLATFORM_ROOT = join(ROOT, "src", "platform");
 
-const MARKDOWN_REFERENCE_SPAN_RE = /`([^`]+)`/g;
+const MARKDOWN_REFERENCE_SPANS: Array<{ re: RegExp; delimiter: number }> = [
+  { re: /`([^`]+)`/g, delimiter: 1 },
+  { re: /\*\*([^*]+)\*\*/g, delimiter: 2 },
+];
 const TOOL_REF_RE = /\b([a-z][a-z0-9-]*)__([a-z][a-z0-9_-]*|\*)(?![a-z0-9_-])/g;
 const SCOPE_REF_RE = /\bscope:\s*"([^"]+)"/g;
 const EXAMPLE_PREFIX_RE = /(?:\be\.g\.|\bfor example)[,:]?\s*$/i;
+const BLOCK_BREAK_RE = /^\s*(?:#|$)/;
 
 export interface ToolContract {
   source: string;
@@ -178,28 +184,33 @@ function markdownReferences(line: string): {
   ownerTools: LocatedReference[];
   scopes: Array<{ token: string; value: string; index: number }>;
 } {
-  const tools: LocatedReference[] = [];
-  const scopes: Array<{ token: string; value: string; index: number }> = [];
+  const tools = new Map<number, LocatedReference>();
+  const scopes = new Map<number, { token: string; value: string; index: number }>();
 
-  for (const span of line.matchAll(MARKDOWN_REFERENCE_SPAN_RE)) {
-    const text = span[1] ?? "";
-    const spanIndex = span.index ?? 0;
-    const start = spanIndex + 1;
-    const allowUnknownSource = EXAMPLE_PREFIX_RE.test(line.slice(0, spanIndex));
-    tools.push(...toolReferences(text, start, allowUnknownSource));
-    for (const match of text.matchAll(SCOPE_REF_RE)) {
-      scopes.push({
-        token: match[0],
-        value: match[1] ?? "",
-        index: start + (match.index ?? 0),
-      });
+  for (const { re, delimiter } of MARKDOWN_REFERENCE_SPANS) {
+    for (const span of line.matchAll(re)) {
+      const text = span[1] ?? "";
+      const spanIndex = span.index ?? 0;
+      const start = spanIndex + delimiter;
+      const allowUnknownSource = EXAMPLE_PREFIX_RE.test(line.slice(0, spanIndex));
+      for (const ref of toolReferences(text, start, allowUnknownSource)) {
+        tools.set(ref.index, ref);
+      }
+      for (const match of text.matchAll(SCOPE_REF_RE)) {
+        const index = start + (match.index ?? 0);
+        scopes.set(index, { token: match[0], value: match[1] ?? "", index });
+      }
     }
   }
 
-  // A scope may be backticked next to a bold tool heading. Use all tool-shaped
-  // text on that line to find the owner, while only backticked spans above are
-  // themselves part of the checked prompt surface.
-  return { tools, ownerTools: toolReferences(line, 0), scopes };
+  // A nested span (`**\`nb__search\`**`) matches under both shapes at the same
+  // offset, so keying by offset keeps one reference per occurrence. Owner
+  // resolution reads every tool-shaped token on the line, marked up or not.
+  return {
+    tools: [...tools.values()],
+    ownerTools: toolReferences(line, 0),
+    scopes: [...scopes.values()],
+  };
 }
 
 function acceptedToolsBySource(contracts: ToolContract[]): Map<string, string[]> {
@@ -212,17 +223,36 @@ function acceptedToolsBySource(contracts: ToolContract[]): Map<string, string[]>
   return accepted;
 }
 
+interface DeclaredTool {
+  index: number;
+  contract: ToolContract;
+}
+
+function declaredTools(
+  refs: LocatedReference[],
+  contracts: Map<string, ToolContract>,
+): DeclaredTool[] {
+  return refs.flatMap((ref) => {
+    const contract = ref.name === "*" ? undefined : contracts.get(`${ref.source}__${ref.name}`);
+    return contract ? [{ index: ref.index, contract }] : [];
+  });
+}
+
+/**
+ * The tool a scope value belongs to: the nearest declaration before it on the
+ * line, else the block's standing owner — a bullet hard-wrapped across several
+ * lines still describes the tool it opened with — else one named later on the
+ * line.
+ */
 function owningTool(
   refs: LocatedReference[],
   scopeIndex: number,
   contracts: Map<string, ToolContract>,
+  blockOwner: ToolContract | null,
 ): ToolContract | null {
-  const concrete = refs.filter(
-    (ref) => ref.name !== "*" && contracts.has(`${ref.source}__${ref.name}`),
-  );
-  const preceding = concrete.filter((ref) => ref.index <= scopeIndex);
-  const ref = preceding.at(-1) ?? concrete[0];
-  return ref ? (contracts.get(`${ref.source}__${ref.name}`) ?? null) : null;
+  const declared = declaredTools(refs, contracts);
+  const preceding = declared.filter((tool) => tool.index <= scopeIndex);
+  return preceding.at(-1)?.contract ?? blockOwner ?? declared[0]?.contract ?? null;
 }
 
 interface ValidationContext {
@@ -262,8 +292,9 @@ function validateScopeReference(
   scope: { token: string; value: string; index: number },
   tools: LocatedReference[],
   context: ValidationContext,
+  blockOwner: ToolContract | null,
 ): ReferenceViolation | null {
-  const owner = owningTool(tools, scope.index, context.index);
+  const owner = owningTool(tools, scope.index, context.index, blockOwner);
   if (!owner) {
     return {
       file: context.file,
@@ -286,6 +317,49 @@ function validateScopeReference(
   };
 }
 
+interface LineValidation {
+  references: string[];
+  violations: ReferenceViolation[];
+  /** The tool whose description continues onto the next line, if any. */
+  blockOwner: ToolContract | null;
+}
+
+function validateMarkdownLine(
+  line: string,
+  context: ValidationContext,
+  blockOwner: ToolContract | null,
+): LineValidation {
+  const { tools, ownerTools, scopes } = markdownReferences(line);
+  const references: string[] = [];
+  const violations: ReferenceViolation[] = [];
+
+  for (const ref of tools) {
+    if (isGenericPlaceholder(ref)) continue;
+    references.push(ref.token);
+    const violation = validateToolReference(ref, context);
+    if (violation) violations.push(violation);
+  }
+
+  // A line naming no tool continues the previous line's subject; one naming a
+  // tool that does not resolve starts a subject we cannot identify, so the
+  // standing owner lapses rather than mis-attributing its scopes.
+  const standingOwner: ToolContract | null = ownerTools.length === 0 ? blockOwner : null;
+
+  for (const scope of scopes) {
+    references.push(scope.token);
+    const violation = validateScopeReference(scope, ownerTools, context, standingOwner);
+    if (violation) violations.push(violation);
+  }
+
+  return {
+    references,
+    violations,
+    blockOwner: BLOCK_BREAK_RE.test(line)
+      ? null
+      : (declaredTools(ownerTools, context.index).at(-1)?.contract ?? standingOwner),
+  };
+}
+
 /** Validate one Markdown core skill against already-extracted contracts. */
 export function validateCoreSkill(
   file: string,
@@ -303,23 +377,14 @@ export function validateCoreSkill(
   const references = new Set<string>();
   const violations: ReferenceViolation[] = [];
   const lines = markdown.split("\n");
+  let blockOwner: ToolContract | null = null;
 
   for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
-    const { tools, ownerTools, scopes } = markdownReferences(lines[lineIndex] ?? "");
     context.line = lineIndex + 1;
-
-    for (const ref of tools) {
-      if (isGenericPlaceholder(ref)) continue;
-      references.add(ref.token);
-      const violation = validateToolReference(ref, context);
-      if (violation) violations.push(violation);
-    }
-
-    for (const scope of scopes) {
-      references.add(scope.token);
-      const violation = validateScopeReference(scope, ownerTools, context);
-      if (violation) violations.push(violation);
-    }
+    const line = validateMarkdownLine(lines[lineIndex] ?? "", context, blockOwner);
+    for (const reference of line.references) references.add(reference);
+    violations.push(...line.violations);
+    blockOwner = line.blockOwner;
   }
 
   return { references: [...references].sort(), violations };

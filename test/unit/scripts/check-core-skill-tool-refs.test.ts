@@ -128,15 +128,62 @@ describe("check-core-skill-tool-refs — prompt validation", () => {
     expect(result.violations).toEqual([]);
   });
 
-  test("checks only backticked tokens while using bold tools as scope owners", () => {
+  test("checks bold-marked declarations, not only backticked ones", () => {
     const result = validateCoreSkill(
       "src/skills/core/bootstrap.md",
-      '- **nb__search** — use `scope: "tools"`; prose may mention **retired__tool**.',
+      '- **nb__search** — use `scope: "tools"`; **retired__tool** is gone.',
       CONTRACTS,
     );
 
-    expect(result.references).toEqual(['scope: "tools"']);
+    expect(result.references).toEqual(["nb__search", "retired__tool", 'scope: "tools"']);
+    expect(result.violations).toEqual([
+      {
+        file: "src/skills/core/bootstrap.md",
+        line: 1,
+        token: "retired__tool",
+        owner: "static tool source",
+        accepted: ["automations", "nb"],
+      },
+    ]);
+  });
+
+  test("counts a bold-and-backticked reference once", () => {
+    const result = validateCoreSkill(
+      "src/skills/core/bootstrap.md",
+      "- **`nb__serch`** — promote before calling.",
+      CONTRACTS,
+    );
+
+    expect(result.references).toEqual(["nb__serch"]);
+    expect(result.violations).toHaveLength(1);
+  });
+
+  test("a hard-wrapped bullet still owns the scopes on its continuation lines", () => {
+    const result = validateCoreSkill(
+      "src/skills/core/bootstrap.md",
+      ["- **nb__status** — platform status. Use", '  `scope: "connectors"` for health.'].join("\n"),
+      CONTRACTS,
+    );
+
     expect(result.violations).toEqual([]);
+  });
+
+  test("the owning tool does not carry past a blank line", () => {
+    const result = validateCoreSkill(
+      "src/skills/core/bootstrap.md",
+      ["- **nb__status** — platform status.", "", 'Elsewhere, `scope: "connectors"`.'].join("\n"),
+      CONTRACTS,
+    );
+
+    expect(result.violations).toEqual([
+      {
+        file: "src/skills/core/bootstrap.md",
+        line: 3,
+        token: 'scope: "connectors"',
+        owner: "unresolved tool",
+        accepted: ["nb__search", "nb__status"],
+      },
+    ]);
   });
 });
 
