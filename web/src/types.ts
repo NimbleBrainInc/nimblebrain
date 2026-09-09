@@ -51,7 +51,7 @@ export interface ToolCallRecord {
 export interface AppContext {
   appName: string;
   serverName: string;
-  /** UI state pushed by the app via Synapse setVisibleState(). */
+  /** UI state pushed by the app via Synapse updateModelContext(). */
   appState?: {
     state: Record<string, unknown>;
     summary?: string;

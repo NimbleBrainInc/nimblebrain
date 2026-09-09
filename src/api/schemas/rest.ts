@@ -89,7 +89,7 @@ export const ChatRequestBody = Type.Object(
     ),
     appContext: Type.Optional(
       // Mirrors `AppContext` in `src/runtime/types.ts`. `appState` is the
-      // UI state pushed by the app via Synapse `setVisibleState()` —
+      // UI state pushed by the app via Synapse `updateModelContext()` —
       // optional, but when present the web enriches the request with it
       // (see `web/src/hooks/useChat.ts`). Schema must include it so the
       // derived TS type doesn't silently strip it from `parsed.appContext`.

@@ -2,7 +2,15 @@
  * Bridge helper for core resource client scripts.
  *
  * Connects through the Synapse IIFE that `render.tsx` injects, and exposes the
- * three functions those scripts call: `callTool`, `navigate`, `parseResult`.
+ * three functions those scripts call — `callTool`, `navigate`, `parseResult` —
+ * over a fourth, `action`, which is the host channel `navigate` rides on.
+ *
+ * `callTool` resolves to the tool's own payload: the SDK normalizes a
+ * `CallToolResult` down to `data` (structured content, or the first text block
+ * parsed as JSON), and the helper hands back that. `parseResult` therefore only
+ * has anything left to do for a tool that nests a `structuredContent` key
+ * inside its own output; the served scripts unwrap defensively rather than
+ * because a live host has ever handed them the envelope.
  *
  * `connect()` resolves only once the host has answered `ui/initialize`, so
  * `_ready` is the promise every helper sequences behind. Scripts never await it

@@ -68,9 +68,6 @@ beforeEach(() => {
     // SDK installs a keydown forwarder; needs a real-shaped addEventListener.
     addEventListener: () => {},
     removeEventListener: () => {},
-    getElementById: () => null,
-    createElement: () => ({ style: {}, setAttribute: () => {}, appendChild: () => {} }),
-    head: { appendChild: () => {} },
   };
 
   // MessageEvent is a browser global; Bun's test runtime doesn't ship it.
