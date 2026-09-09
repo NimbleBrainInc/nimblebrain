@@ -87,13 +87,17 @@ function renderMd(text: string): string {
  *
  * `app.callTool(name, args)` always routes to the calling app's own server.
  * `home` needs to invoke `briefing` on the platform's `nb` source, which is
- * a different server. The bridge supports `params.server` for internal
- * apps (see `INTERNAL_APPS` in `web/src/bridge/bridge.ts`); the SDK does
- * not expose this because it isn't part of the ext-apps spec.
+ * a different server. The bridge routes on `params.server` for internal apps
+ * (see `INTERNAL_APPS` in `web/src/bridge/bridge.ts`), and the SDK reaches
+ * that with `app.callTool(name, args, { server: "nb" })`.
  *
- * Until the SDK gains a typed cross-server API, this function is the
- * documented escape hatch. Phase 4's connector-transport lint allowlists
- * exactly the call inside `loadBriefing` via a `// lint-ok:` marker.
+ * This call stays hand-rolled for one reason: the SDK's transport has no
+ * request timeout, so a `briefing` the server never answers would leave the
+ * panel spinning with nothing to retry. The 60s deadline below is what the
+ * escape hatch buys. Move to `callTool` once the SDK can carry a deadline.
+ *
+ * Phase 4's connector-transport lint allowlists exactly the call inside
+ * `loadBriefing` via a `// lint-ok:` marker.
  * -------------------------------------------------------------------------- */
 
 let _rpcId = 0;
