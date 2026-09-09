@@ -128,9 +128,9 @@ automation has a ceiling on how many runs events may start for it in an hour.
 
 ## Placeholders
 
-String values in a tool target's `input` may carry these, and nothing else. Any
-other `{{…}}` is refused when you save, rather than delivered as literal braces
-into somebody's channel.
+Strings in a tool target's `input` may carry these, and nothing else — values
+and object keys alike, both of which are walked. Any other `{{…}}` is refused
+when you save, rather than delivered as literal braces into somebody's channel.
 
 | Placeholder | Value | Set by |
 |---|---|---|
@@ -157,11 +157,11 @@ One ledger line per target, per notification.
 | Outcome | Terminal | Means | Retries |
 |---|---|---|---|
 | `sending` | no | An attempt is in flight or the next is due | yes |
-| `delivered` | yes | The tool ran, or the automation's run started | — |
+| `delivered` | yes | The tool ran and did not report a failure, or the automation's run started | — |
 | `batching for the automation` | no | An agent target inside its batching window | — |
-| `refused` | yes | A permission gate said no | no |
+| `refused` | yes | A gate said no: the author may not use that tool, or the route names no event-scheduled automation of theirs | no |
 | `skipped` | yes | The author has left the workspace, or the automation is off or did not want the item | no |
-| `failed` | yes | The work was owed and did not happen | no |
+| `failed` | yes | A tool call did not complete and the retry budget is spent, or a run was owed and did not happen | no |
 
 **Three attempts across about five minutes** — immediately, then after a minute,
 then after four more. Retry state lives on the item, so a restart mid-delivery

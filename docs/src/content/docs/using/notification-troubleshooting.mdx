@@ -54,14 +54,9 @@ An item with no lines at all matched no route. That is the single most common
 answer, and it is a *match* problem, not a delivery problem — jump to
 [nothing matched](#nothing-matched).
 
-| Line reads | Means | Retries? |
-|---|---|---|
-| **sending** | An attempt is in flight, or the next is due | yes |
-| **delivered** | The tool ran and did not report a failure | — |
-| **batching for the automation** | An agent target inside its batching window; the run has not started | — |
-| **refused** | A permission check said no | no |
-| **skipped** | The author has left the workspace, or the automation is off or did not want the item | no |
-| **failed** | The call did not complete and the retry budget is spent | no |
+What each line can read, and whether it retries, is in
+[the reference](/using/notification-reference#delivery-outcomes). The three that
+send you somewhere are below.
 
 **A target gets three attempts across about five minutes** — immediately, a
 minute later, and four minutes after that. `refused` and `skipped` are never
@@ -69,7 +64,7 @@ retried: nothing about either changes until configuration does.
 
 ### refused
 
-A gate said no. The two causes:
+A gate said no. For a **tool** target:
 
 - **The tool is not one an unattended call may use.** A route may not reach
   anything that would widen its author's own reach — creating automations,
@@ -79,14 +74,28 @@ A gate said no. The two causes:
   author must have granted it to this workspace. Revoking that grant stops the
   route.
 
+For an **automation** target:
+
+- **The route names no automation of the author's** in this workspace. Names are
+  resolved against the author's own automations, so one written by somebody else
+  is not found.
+- **The automation does not run on events.** A clock-scheduled automation can be
+  picked in the editor and is then refused at every delivery. Give it an event
+  schedule — see [automations](/using/automations).
+
 ### skipped
 
-The route's author is no longer a member of this workspace. The route is
-dormant, not broken: **re-adding them turns it back on by itself**, and nothing
-needs saving. The route editor shows *Not dispatching* with the reason.
+For a **tool** target: the route's author is no longer a member of this
+workspace. The route is dormant, not broken — **re-adding them turns it back on
+by itself**, and nothing needs saving. The route editor shows *Not dispatching*
+with the reason. This is why
+[who a route runs as](/using/notifications#who-a-route-runs-as) matters: a route
+written by somebody who has since left stops silently.
 
-This is why [who a route runs as](/using/notifications#who-a-route-runs-as)
-matters — a route written by somebody who has since left stops silently.
+For an **automation** target: the automation is switched off, or it declined
+this item because its own `match` did not want it. A route decides that a path
+to the automation exists; the automation decides which items arriving down it
+are worth a run.
 
 ### failed
 

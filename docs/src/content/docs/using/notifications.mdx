@@ -139,7 +139,7 @@ Five placeholders are replaced with the notification's fields:
 ```json
 {
   "channel": "alerts",
-  "text": "{{title}}\n{{body}}\n{{inbox.url}}"
+  "markdown_text": "{{title}}\n{{body}}\n{{inbox.url}}"
 }
 ```
 
@@ -239,14 +239,10 @@ That ledger is the point of routing being visible at all. A notification that
 reached the inbox and never reached the Slack channel it was routed to looks
 exactly like one nobody routed, unless the attempt was recorded.
 
-| Line reads | Means | Retries? |
-|---|---|---|
-| **sending** | A tool attempt is in flight or the next one is due. | yes |
-| **batching for the automation** | An automation target, inside its debounce window. The run has not started. | — |
-| **delivered** | The tool ran and did not report a failure, or the automation's run started. | — |
-| **refused** | A permission gate said no — the author may not use that tool, or the route names no event automation of theirs. | no |
-| **skipped** | The route's author has left the workspace, or the automation is off or did not want the item. | no |
-| **failed** | The call did not complete and the retry budget is spent, or the run was owed and did not happen. | no |
+Every line it can read, and whether each retries, is in
+[the reference](/using/notification-reference#delivery-outcomes); what to do
+about one is in
+[when a notification doesn't arrive](/using/notification-troubleshooting).
 
 **A target gets three attempts across about five minutes** — immediately, a
 minute later, and four minutes after that — and then reads *failed*. That is

@@ -30,7 +30,8 @@ Whatever the destination, you write the same three things under **Settings →
 Notifications**:
 
 1. **Match** — which notifications this route is for.
-2. **Deliver to** — a tool, picked from the ones this workspace has.
+2. **Deliver to** — a tool, picked from the ones this workspace has. Tool names
+   are `<connector>__<tool>`, and the picker shows them that way.
 3. **Arguments** — a JSON object matching *that tool's own* input schema, with
    [placeholders](/using/notification-reference#placeholders) for the
    notification's fields.
@@ -71,7 +72,7 @@ list its tools while the account behind it was never connected.
 
 | | |
 |---|---|
-| **Deliver to** | `SLACK_SEND_MESSAGE` |
+| **Deliver to** | `com-slack-messaging__SLACK_SEND_MESSAGE` |
 | **Arguments** | `channel`, and one of `markdown_text` or `blocks` |
 
 ```json
