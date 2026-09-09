@@ -1,0 +1,197 @@
+---
+title: Notification route reference
+description: Every field of a route, every match rule, every placeholder and every delivery outcome.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Precise definitions for the pieces of a route. For what any of it is *for*, see
+[Notifications](/using/notifications); for worked examples,
+[delivering to a channel](/using/notification-channels).
+
+Routes are edited at **Settings → Notifications** and stored on the workspace
+record as [`notifications.routes`](/config/workspace-json). Workspace admins
+only.
+
+## Levels
+
+| Level | Rank |
+|---|---|
+| `info` | lowest |
+| `attention` | middle |
+| `urgent` | highest |
+
+Levels are **advisory** — the connector chooses one for each notification, and
+nothing treats it as authority. They are used in two places: the inbox sorts by
+them, and a route may match on one as a **minimum** (`attention` also matches
+`urgent`).
+
+## The source ceiling
+
+Each connector that declares an outbox is held to a ceiling. A newly declared
+source starts at **`info`**.
+
+| | |
+|---|---|
+| **What it limits** | The highest level that source's items may reach a **route** at |
+| **What it does not limit** | The inbox. Every item still lands, at the level the connector chose |
+| **Default** | `info` |
+| **Changed by** | A workspace admin, per source |
+
+The level a route is compared against is the **clamped** one. If the ceiling is
+`info` and the connector sent `urgent`, a route asking for `attention` does not
+fire. The item's expanded row shows the level it was routed at.
+
+A ceiling for a connector that has since been removed stays listed, so it can
+still be seen and lowered; re-installing lands back on it.
+
+## Route fields
+
+| Field | Required | Meaning |
+|---|---|---|
+| `id` | assigned | Stable identifier for the route |
+| `createdBy` | stamped | The identity it dispatches under. Set from whoever saved it; it cannot be supplied |
+| `match` | no | Which notifications this route is for. Omitted matches everything |
+| `deliver` | yes | Up to 5 targets |
+| `disabled` | written | Present when the platform turned the route off, with the reason |
+
+Limits: **50 routes** per workspace, **5 targets** per route, **200 sources**
+with a stored ceiling.
+
+<Aside type="caution" title="Saving replaces the whole list">
+A save writes this workspace's entire route list and stamps you as the author of
+every route in it — including ones you did not touch. That is deliberate: an
+admin who could edit another admin's route while keeping their principal could
+reach tools their own grants do not.
+</Aside>
+
+## Match
+
+All three parts are optional. An omitted part narrows nothing, so an empty
+match is every notification the workspace receives.
+
+| Field | Meaning |
+|---|---|
+| `source` | Exactly one connector, by its exact server name |
+| `name` | A glob over the connector's own event name |
+| `level` | A **minimum**, compared against the clamped level |
+
+### Event name globs
+
+Event names are the connector's own dotted strings. The platform never
+enumerates them; its documentation lists what it emits.
+
+| Pattern | Matches | Does not match |
+|---|---|---|
+| `domain.active` | `domain.active` | anything else |
+| `domain.*` | `domain.active`, `domain.pending` | `domain.dns.ready`, `domain` |
+| `domain.**` | `domain.active`, `domain.dns.ready` | `domain` |
+| `*.received` | `reply.received` | `mail.reply.received` |
+| `**` | every name | — |
+
+`*` matches within one dotted segment; `**` matches across as many as it likes.
+Nothing else is a wildcard — a `.` means a dot, not "any character". A trailing
+`**` still requires the separator before it, so `domain.**` does not match the
+bare name `domain`.
+
+## Deliver
+
+Each target is one of two kinds.
+
+### `tool`
+
+| Field | Meaning |
+|---|---|
+| `tool` | A tool installed in this workspace, as `<connector>__<tool>` |
+| `input` | Arguments as that tool's own schema expects them |
+
+A name outside the workspace's installed tools is refused when you save.
+
+**Passing that check is not the same as being deliverable.** Some tools a route
+may name are still refused at delivery, because an unattended call may not widen
+its author's own reach — creating automations, authoring skills, installing
+connectors. Those fail with `refused` and are never retried; see
+[the unattended door](/deploy/security).
+
+`input` is **not** checked against the target tool's schema. That schema belongs
+to the connector; the platform renders your template and makes the call.
+
+### `agent`
+
+| Field | Meaning |
+|---|---|
+| `automation` | One of your automations, by id |
+
+The automation must be [scheduled on events](/using/automations) to accept one.
+Matching items are batched for about 30 seconds before the run starts.
+
+An automation may start at most **12 runs an hour** from events by default.
+Crossing that ceiling switches the automation off and settles every waiting item
+`failed` — see
+[failed](/using/notification-troubleshooting#failed).
+
+## Placeholders
+
+Strings in a tool target's `input` may carry these, and nothing else — values
+and object keys alike, both of which are walked. Any other `{{…}}` is refused
+when you save, rather than delivered as literal braces into somebody's channel.
+
+| Placeholder | Value | Set by |
+|---|---|---|
+| `{{title}}` | The item's one-line title | the connector |
+| `{{body}}` | Its body, if the connector wrote one | the connector |
+| `{{subject}}` | What it is about, if the connector said | the connector |
+| `{{link.resource}}` | The linked resource URI, if supplied | the connector |
+| `{{inbox.url}}` | A web address for this item in your inbox | **the platform** |
+
+`{{inbox.url}}` is the only one a reader outside NimbleBrain can act on — see
+[the note on it](/using/notification-channels#the-shape-of-every-route).
+
+There is **no placeholder for the connector's `data` payload**, because the
+platform does not read it.
+
+A placeholder whose value is absent renders as nothing. There is no logic — no
+conditionals, no loops, no defaults. Whatever the connector wrote is inserted as
+text, and the tool decides what text means.
+
+## Delivery outcomes
+
+One ledger line per target, per notification.
+
+| Outcome | Terminal | Means | Retries |
+|---|---|---|---|
+| `sending` | no | An attempt is in flight or the next is due | yes |
+| `delivered` | yes | The tool ran and did not report a failure, or the automation's run started | — |
+| `batching for the automation` | no | An agent target inside its batching window | — |
+| `refused` | yes | A gate said no: the author may not use that tool, or the route names no event-scheduled automation of theirs | no |
+| `skipped` | yes | The author has left the workspace, or the automation is off or did not want the item | no |
+| `failed` | yes | A tool call did not complete and the retry budget is spent, or a run was owed and did not happen | no |
+
+**Three attempts across about five minutes** — immediately, then after a minute,
+then after four more. Retry state lives on the item, so a restart mid-delivery
+resumes rather than starting over, and nothing already delivered is sent again.
+
+A route the ceiling blocked writes **no line at all**.
+
+<Aside type="caution" title="Delivery is at-least-once">
+A call that times out may have run; the platform knows only that no answer came
+back, so it retries. A route naming something that is not safe to repeat — one
+that mints, charges, or sends something a person reads — should be written
+knowing that. Bounded retries limit the damage; they do not remove it.
+</Aside>
+
+## Retention
+
+| | |
+|---|---|
+| Inbox items | 90 days |
+| Items shown in the view | the most recent 100 — ask the agent for older ones |
+| Read state | shared across the workspace, recording who cleared it |
+
+## Related
+
+- [Notifications](/using/notifications) — what all of this is for
+- [Delivering to a channel](/using/notification-channels) — worked examples
+- [When a notification doesn't arrive](/using/notification-troubleshooting)
+- [workspace.json](/config/workspace-json) — where ceilings and routes are stored
+- [Notifications for app authors](/apps/notifications) — the emitting side

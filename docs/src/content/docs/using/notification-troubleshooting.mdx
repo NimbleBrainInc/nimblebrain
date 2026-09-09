@@ -1,0 +1,214 @@
+---
+title: When a notification doesn't arrive
+description: Work out where a notification stopped — the route, the ceiling, the connector or the poll — using Send test and the delivery ledger.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Something should have reached Slack and did not. This page finds out where it
+stopped, in the order that costs you the least time.
+
+The useful thing to know before you start: **a notification that reaches the
+inbox and never reaches its channel looks exactly like one nobody routed**,
+unless you look at the record. That record is the delivery ledger, and most of
+this page is learning to read it.
+
+## Start with Send test
+
+Do not wait for a real notification to reproduce the problem. On **Settings →
+Notifications**, every saved route has a **Send test** button. It puts a real
+item in your inbox, marked as a test, and dispatches that one route through the
+same path a real notification takes — the same ceiling, the same permission
+checks, the same ledger.
+
+It answers with one line.
+
+| It says | What it means | What to do |
+|---|---|---|
+| **Delivered. Check the channel.** | The tool ran and reported no failure | If the channel is still empty, the problem is past the platform — see [it says delivered but nothing arrived](#it-says-delivered-but-nothing-arrived) |
+| **The ceiling on … is …** | The route never matched. Nothing was dispatched | [Raise the ceiling](#the-ceiling-is-blocking-it), or lower the route's minimum level |
+| **… attempt failed … it retries** | The call did not complete | Read the error on the line; the platform will try twice more over about five minutes |
+| **… refused** / **… skipped** | A permission check stopped it | See [refused](#refused) and [skipped](#skipped) below |
+| **… queued for its automation's next run** | The route delivers to an agent and the batch is inside that automation's window | Nothing is wrong; the run starts when the window closes |
+| **Matched, but nothing was dispatched.** | The route matched and names no target the platform could act on | Check its **Deliver to** rows |
+
+<Aside type="note" title="It tests what is saved">
+Save your edits first. A route only ever fires from the stored copy, so testing
+an edited-but-unsaved route tells you about the old one.
+</Aside>
+
+Two things Send test does **not** cover:
+
+- **Whether the connector's outbox is being read at all.** That is the poll —
+  see [nothing from this connector, ever](#nothing-from-this-connector-ever).
+- **Whether the connector delivered what it accepted.** The platform only knows
+  the tool did not report a failure.
+
+## Reading the delivery ledger
+
+Open any item in the **Inbox** and, if a route matched it, you get one line per
+target: what it aimed at, where it stands, how many attempts, and the last
+error.
+
+An item with no lines at all matched no route. That is the single most common
+answer, and it is a *match* problem, not a delivery problem — jump to
+[nothing matched](#nothing-matched).
+
+What each line can read, and whether it retries, is in
+[the reference](/using/notification-reference#delivery-outcomes). The three that
+send you somewhere are below.
+
+**A target gets three attempts across about five minutes** — immediately, a
+minute later, and four minutes after that. `refused` and `skipped` are never
+retried: nothing about either changes until configuration does.
+
+### refused
+
+A gate said no. For a **tool** target:
+
+- **The tool is not one an unattended call may use.** A route may not reach
+  anything that would widen its author's own reach — creating automations,
+  authoring skills, installing connectors. See
+  [the unattended door](/deploy/security).
+- **The author lacks the grant.** For a personal (`my_`) connector, the route's
+  author must have granted it to this workspace. Revoking that grant stops the
+  route.
+
+For an **automation** target:
+
+- **The route names no automation of the author's** in this workspace. Names are
+  resolved against the author's own automations, so one written by somebody else
+  is not found.
+- **The automation does not run on events.** A clock-scheduled automation can be
+  picked in the editor and is then refused at every delivery. Give it an event
+  schedule — see [automations](/using/automations).
+
+### skipped
+
+For a **tool** target: the route's author is no longer a member of this
+workspace. The route is dormant, not broken — **re-adding them turns it back on
+by itself**, and nothing needs saving. The route editor shows *Not dispatching*
+with the reason. This is why
+[who a route runs as](/using/notifications#who-a-route-runs-as) matters: a route
+written by somebody who has since left stops silently.
+
+For an **automation** target: the automation is switched off, or it declined
+this item because its own `match` did not want it. A route decides that a path
+to the automation exists; the automation decides which items arriving down it
+are worth a run.
+
+### failed
+
+For a **tool** target: three attempts happened and none completed. The last
+error is on the line, and most often it is the connector — a disconnected
+account, a channel the app was never invited to, or arguments the tool rejects.
+
+For an **automation** target there were no attempts at all. A wake is offered
+once and settled once, so `failed` here means the run was owed and did not
+happen. Read the classification on the line rather than looking for a
+connector:
+
+- **The automation hit its
+  [fire ceiling](/using/notification-reference#agent).** Crossing it **switches
+  the automation off** and settles every waiting item `failed`, so the thing to fix
+  is not the route: re-enable the automation, and work out what was firing it in
+  a loop. A run whose own work produces the event that wakes it again is the
+  case the ceiling exists for.
+- **The batch never reached its run.** The window it was coalescing in was lost
+  — the platform restarted while it was open, for instance. Batches are not
+  re-formed, because re-firing hours later for events you have since dealt with
+  is worse than saying plainly that the run did not happen.
+- **The run threw, or the attempt to start it did.** The error is on the line.
+  There is no retry behind it, unlike a tool target: the wake was the one offer.
+
+<Aside type="caution" title="A failed tool target does not mean nothing was sent">
+A call that times out may have run anyway — the platform only knows no answer
+came back, so it retries. A route pointing at something that is not safe to
+repeat should be written knowing that. An automation target has no such
+ambiguity: it is offered once.
+</Aside>
+
+## Nothing matched
+
+The item is in the inbox and the ledger is empty. Check, in this order:
+
+1. **Is the source right?** A route naming a source matches that connector's
+   server name exactly. The name is on the item's **Source** line.
+2. **Is the event name right?** The glob is matched against the connector's own
+   event name, shown on the expanded item. `domain.*` does not match
+   `domain.dns.ready` — that needs `domain.**`. See
+   [name globs](/using/notification-reference#event-name-globs).
+3. **Is the level clearing the ceiling?** This is the one that surprises people.
+
+### The ceiling is blocking it
+
+Every connector is held to a **level ceiling**, and a new one starts at `info`.
+A route matching on `attention` or above never fires for that connector until
+an admin raises it.
+
+The item still arrives in the inbox at whatever level the connector chose — the
+ceiling only decides how high it may reach a *route*. The expanded row shows
+the level it was **routed at**, which is the number the route is compared
+against.
+
+Fix it at **Settings → Notifications** by raising that source's ceiling, or by
+lowering the route's minimum level. Raising the ceiling is a deliberate grant:
+it is what lets that connector reach a person, so it is a separate decision from
+installing it.
+
+<Aside type="note" title="No ledger line is written at all">
+A route blocked by the ceiling writes **nothing** — not a line saying it was
+blocked. From the item alone, "the ceiling stopped it" and "no route wanted it"
+are indistinguishable, which is exactly why Send test exists: it says which.
+</Aside>
+
+## It says delivered but nothing arrived
+
+`delivered` means the tool was called and did not report a failure. Everything
+past that is the connector's.
+
+- **Wrong destination.** A channel name that resolved to something else, or a
+  recipient with a typo. The arguments are on the route.
+- **The app is not in the channel.** Some chat tools accept the call and drop
+  the message.
+- **The account behind the connector changed.** A revoked token can surface as
+  an accepted call that does nothing.
+
+Open the connector under **Settings → Connectors** and use the same tool by
+hand with the same arguments. If that fails, the route was never the problem.
+
+## Nothing from this connector, ever
+
+No items in the inbox from a connector at all — not a routing problem, a
+**polling** one. The platform reads each connector's outbox on a schedule; if
+it is not reading, nothing downstream can happen.
+
+- **Does the connector declare an outbox?** Only some do. **Settings →
+  Notifications** lists every connector in the workspace that does. A connector
+  missing from that list emits no notifications, by its own design.
+- **Is it connected?** A connector that is installed but not authenticated is
+  not polled.
+- **Has it actually had anything to report?** Many of these events are rare by
+  nature. An empty inbox from a healthy connector is the normal state.
+
+If you run the platform yourself, [observability](/deploy/observability) covers
+the poll's own metrics and the `targets=N` line that says how many outboxes the
+poller found.
+
+## The inbox is filling but items are missing
+
+The platform reports a **gap** when a connector dropped events before they could
+be read — its outbox filled up faster than the poll drained it, usually because
+polling stopped for a while. Those events are gone; they are not recoverable.
+
+Operators see this in the logs and metrics
+([observability](/deploy/observability)). If it happens repeatedly, the
+connector is emitting faster than its outbox holds, and that is a conversation
+with whoever runs it.
+
+## Related
+
+- [Notifications](/using/notifications) — the inbox, levels and routes
+- [Delivering to a channel](/using/notification-channels) — Slack, Teams, email and the rest
+- [Route reference](/using/notification-reference) — every field and outcome, precisely
+- [Security](/deploy/security) — what an unattended dispatch may and may not do

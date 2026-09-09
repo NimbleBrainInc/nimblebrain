@@ -110,19 +110,10 @@ workspace receives — legal, and rarely what you want.
 | **Minimum level** | `attention` also matches `urgent`. Omit for any level. |
 
 The event-name glob has two wildcards, and the difference between them is
-whether a dot may be crossed:
-
-| Pattern | Matches | Does not match |
-|---|---|---|
-| `domain.active` | `domain.active` | anything else |
-| `domain.*` | `domain.active`, `domain.pending` | `domain.dns.ready`, `domain` |
-| `domain.**` | `domain.active`, `domain.dns.ready` | `domain` |
-| `*.received` | `reply.received` | `mail.reply.received` |
-| `**` | every name | — |
-
-`*` matches within one dotted segment; `**` matches across as many as it likes.
-Nothing else is a wildcard — a pattern is otherwise matched as literal text, so
-a `.` means a dot and not "any character".
+whether a dot may be crossed: `*` matches within one dotted segment, `**`
+matches across as many as it likes. Nothing else is a wildcard — a `.` means a
+dot and not "any character". The
+[full table](/using/notification-reference#event-name-globs) has every case.
 
 **The level a route matches against is the clamped one.** If the source's
 ceiling is `info` and the connector sent `urgent`, a route asking for
@@ -148,7 +139,7 @@ Five placeholders are replaced with the notification's fields:
 ```json
 {
   "channel": "alerts",
-  "text": "{{title}}\n{{body}}\n{{inbox.url}}"
+  "markdown_text": "{{title}}\n{{body}}\n{{inbox.url}}"
 }
 ```
 
@@ -214,16 +205,8 @@ somebody asks why they never heard.
 **Send test** on a saved route answers that. It puts a real item in your inbox,
 clearly marked as a test, and dispatches *only that route* — the same ceiling,
 the same permission gates, the same delivery ledger a real notification meets.
-Then it tells you what happened:
-
-| It says | It means |
-|---|---|
-| **Delivered. Check the channel.** | The tool ran and did not report a failure. Go look — if nothing is there, the tool accepted the call and dropped it, which is the connector's end. |
-| **The ceiling on … is …** | The route never matched, so nothing was dispatched. Raise that source's ceiling above, or lower the route's minimum level. For a route that matches *any* source, the ceiling named is the highest one in the workspace — if that cannot reach the route's level, nothing can. |
-| **… attempt failed … it retries for about five minutes** | The call did not complete. The platform will try twice more, so the test message may still reach the channel after you have stopped looking. |
-| a target and an outcome | The dispatch was refused or skipped. The wording is the ledger's — see [the delivery ledger](#the-delivery-ledger) for what each outcome means. |
-| **Matched, but nothing was dispatched.** | The route matched and names no target the platform could act on. Check its **Deliver to** rows. |
-| **… queued for its automation's next run** | The route delivers to an agent, and the batch is still inside that automation's debounce window. Nothing has been sent; the run starts when the window closes. |
+Then it tells you what happened, in one line —
+[what each answer means and what to do about it](/using/notification-troubleshooting#start-with-send-test).
 
 It tests **what is saved**, not what is on screen, so save your edits first — a
 route only fires from the stored copy. A test also does not check that the
@@ -256,14 +239,10 @@ That ledger is the point of routing being visible at all. A notification that
 reached the inbox and never reached the Slack channel it was routed to looks
 exactly like one nobody routed, unless the attempt was recorded.
 
-| Line reads | Means | Retries? |
-|---|---|---|
-| **sending** | A tool attempt is in flight or the next one is due. | yes |
-| **batching for the automation** | An automation target, inside its debounce window. The run has not started. | — |
-| **delivered** | The tool ran and did not report a failure, or the automation's run started. | — |
-| **refused** | A permission gate said no — the author may not use that tool, or the route names no event automation of theirs. | no |
-| **skipped** | The route's author has left the workspace, or the automation is off or did not want the item. | no |
-| **failed** | The call did not complete and the retry budget is spent, or the run was owed and did not happen. | no |
+Every line it can read, and whether each retries, is in
+[the reference](/using/notification-reference#delivery-outcomes); what to do
+about one is in
+[when a notification doesn't arrive](/using/notification-troubleshooting).
 
 **A target gets three attempts across about five minutes** — immediately, a
 minute later, and four minutes after that — and then reads *failed*. That is
@@ -308,6 +287,12 @@ them: it cannot raise a ceiling and it cannot author a route.
 
 ## Related
 
+- [Delivering to a channel](/using/notification-channels) — Slack, Teams, email,
+  WhatsApp and anywhere else, with the arguments each one takes.
+- [When a notification doesn't arrive](/using/notification-troubleshooting) —
+  Send test, the delivery ledger, and where a notification stops.
+- [Route reference](/using/notification-reference) — every field, match rule,
+  placeholder and outcome, precisely.
 - [Notifications for app authors](/apps/notifications) — declaring an outbox,
   the event envelope, and the levels, from the connector's side.
 - [Connectors](/using/connectors) — installing the connector a route delivers through.
