@@ -118,6 +118,8 @@ connector:
   — the platform restarted while it was open, for instance. Batches are not
   re-formed, because re-firing hours later for events you have since dealt with
   is worse than saying plainly that the run did not happen.
+- **The run threw, or the attempt to start it did.** The error is on the line.
+  There is no retry behind it, unlike a tool target: the wake was the one offer.
 
 <Aside type="caution" title="A failed tool target does not mean nothing was sent">
 A call that times out may have run anyway — the platform only knows no answer
