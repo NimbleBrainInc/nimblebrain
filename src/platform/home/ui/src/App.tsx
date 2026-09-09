@@ -1,10 +1,4 @@
-import {
-  AppProvider,
-  useAction,
-  useApp,
-  useDataSync,
-  useHostContext,
-} from "@nimblebrain/synapse/react";
+import { AppProvider, useAction, useDataSync, useHostContext } from "@nimblebrain/synapse/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 /* ---------- types ---------- */
@@ -211,8 +205,7 @@ function SectionGroup({
 }
 
 function Dashboard() {
-  const app = useApp();
-  const action = useAction();
+  const triggerAction = useAction();
   // The host publishes the active workspace as `hostContext.workspace` on
   // every workspace switch. Keying the briefing fetch on `workspace.id`
   // refetches the (workspace-scoped) briefing without remounting this iframe.
@@ -280,9 +273,9 @@ function Dashboard() {
   const handleAction = useCallback(
     (action: BriefingAction) => {
       const { type, label: _label, ...params } = action;
-      action(type, params);
+      triggerAction(type, params);
     },
-    [action],
+    [triggerAction],
   );
 
   const categories: Array<{

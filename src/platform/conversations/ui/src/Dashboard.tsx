@@ -1,4 +1,4 @@
-import { useAction, useDataSync, useHostContext, useApp } from "@nimblebrain/synapse/react";
+import { useAction, useApp, useDataSync, useHostContext } from "@nimblebrain/synapse/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ConversationList } from "./ConversationList";
 import { groupByDate } from "./dateUtils";

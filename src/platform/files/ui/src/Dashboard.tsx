@@ -1,4 +1,4 @@
-import { useDataSync, useFileUpload, useApp } from "@nimblebrain/synapse/react";
+import { useApp, useDataSync, useFileUpload } from "@nimblebrain/synapse/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { DetailOverlay } from "./DetailOverlay";
 import { FileGrid } from "./FileGrid";
@@ -136,7 +136,7 @@ export function Dashboard() {
     } finally {
       setDeleting(false);
     }
-  }, [detailFile, deleting, synapse, loadFiles]);
+  }, [detailFile, deleting, app, loadFiles]);
 
   // Compose the visible file list = type filter ∩ tag filter.
   const visibleFiles = useMemo(() => {
