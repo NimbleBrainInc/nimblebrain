@@ -1,11 +1,11 @@
 import type {
-  LanguageModelV3,
-  LanguageModelV3CallOptions,
-  LanguageModelV3Content,
-  LanguageModelV3FinishReason,
-  LanguageModelV3StreamPart,
-  LanguageModelV3Usage,
-  SharedV3ProviderMetadata,
+  LanguageModelV4,
+  LanguageModelV4CallOptions,
+  LanguageModelV4Content,
+  LanguageModelV4FinishReason,
+  LanguageModelV4StreamPart,
+  LanguageModelV4Usage,
+  SharedV4ProviderMetadata,
 } from "@ai-sdk/provider";
 import { withSpan } from "../observability/index.ts";
 import { registerLiveness, unregisterLiveness } from "./fetch-liveness.ts";
@@ -70,9 +70,9 @@ export class ModelStreamStallError extends Error {
 }
 
 export interface StreamResult {
-  content: LanguageModelV3Content[];
-  usage: LanguageModelV3Usage;
-  finishReason: LanguageModelV3FinishReason;
+  content: LanguageModelV4Content[];
+  usage: LanguageModelV4Usage;
+  finishReason: LanguageModelV4FinishReason;
   /**
    * Time-to-first-token in milliseconds: from stream start (pre-`doStream`) to
    * the first output part (text / reasoning / tool-input). Approximates connect
@@ -92,9 +92,9 @@ interface StreamCallbacks {
 
 /** Mutable accumulator folded over the stream parts to build a StreamResult. */
 interface StreamState {
-  content: LanguageModelV3Content[];
-  usage: LanguageModelV3Usage;
-  finishReason: LanguageModelV3FinishReason;
+  content: LanguageModelV4Content[];
+  usage: LanguageModelV4Usage;
+  finishReason: LanguageModelV4FinishReason;
   accumulatedText: string;
   accumulatedReasoning: string;
   // Reasoning provider metadata accumulator. Anthropic transports the
@@ -104,7 +104,7 @@ interface StreamState {
   // signature, the next iteration's prompt fails to round-trip the
   // reasoning block — the AI SDK provider drops it as "unsupported
   // reasoning metadata" and Anthropic 400s the request.
-  reasoningProviderMetadata: SharedV3ProviderMetadata | undefined;
+  reasoningProviderMetadata: SharedV4ProviderMetadata | undefined;
 }
 
 /**
@@ -113,8 +113,8 @@ interface StreamState {
  * counts, finish reason. Prompt and completion content are NEVER recorded.
  */
 export async function callModel(
-  model: LanguageModelV3,
-  options: LanguageModelV3CallOptions,
+  model: LanguageModelV4,
+  options: LanguageModelV4CallOptions,
   onTextDelta: (text: string) => void,
   onReasoningDelta?: (text: string) => void,
   onToolInputStart?: (id: string, toolName: string) => void,
@@ -146,8 +146,8 @@ export async function callModel(
 }
 
 async function callModelInner(
-  model: LanguageModelV3,
-  options: LanguageModelV3CallOptions,
+  model: LanguageModelV4,
+  options: LanguageModelV4CallOptions,
   onTextDelta: (text: string) => void,
   onReasoningDelta?: (text: string) => void,
   /**
@@ -156,7 +156,7 @@ async function callModelInner(
    * during the dark gap where the model is streaming a large tool
    * input — `tool.start` only fires after `callModel` returns.
    *
-   * Provider-agnostic: AI SDK V3 normalizes `tool-input-start` across
+   * Provider-agnostic: AI SDK V4 normalizes `tool-input-start` across
    * Anthropic / OpenAI / Google. Providers that never emit it simply
    * skip the callback (engine falls back to `tool.start`-only signals,
    * matching legacy behavior).
@@ -175,7 +175,7 @@ async function callModelInner(
       outputTokens: { total: 0, text: undefined, reasoning: undefined },
     },
     // Default if the stream ends without a `finish` part. "other" is the
-    // V3-defined catch-all for unclassified stops; using it directly avoids
+    // V4-defined catch-all for unclassified stops; using it directly avoids
     // the runtime-vs-type lie of `"unknown" as "other"`.
     finishReason: { unified: "other", raw: undefined },
     accumulatedText: "",
@@ -241,7 +241,7 @@ async function callModelInner(
  * Returns when the stream ends; rejects if a read is aborted (stall or cancel).
  */
 async function pumpStream(
-  stream: ReadableStream<LanguageModelV3StreamPart>,
+  stream: ReadableStream<LanguageModelV4StreamPart>,
   state: StreamState,
   callbacks: StreamCallbacks,
   watchdog: StreamWatchdog,
@@ -358,7 +358,7 @@ function createStreamWatchdog(
  * stall is non-retryable (its deltas already reached the client). Structural
  * parts (`stream-start`, `text-start`, `finish`, …) don't count.
  */
-function isOutputPart(part: LanguageModelV3StreamPart): boolean {
+function isOutputPart(part: LanguageModelV4StreamPart): boolean {
   return (
     part.type === "text-delta" ||
     part.type === "reasoning-delta" ||
@@ -370,7 +370,7 @@ function isOutputPart(part: LanguageModelV3StreamPart): boolean {
 /** Fold one stream part into the accumulating StreamState, emitting deltas via the callbacks. */
 function applyPart(
   state: StreamState,
-  part: LanguageModelV3StreamPart,
+  part: LanguageModelV4StreamPart,
   callbacks: StreamCallbacks,
 ): void {
   switch (part.type) {
@@ -473,11 +473,11 @@ function flushReasoning(state: StreamState): void {
  * so a deeper merge isn't needed.
  */
 function mergeProviderMetadata(
-  a: SharedV3ProviderMetadata | undefined,
-  b: SharedV3ProviderMetadata,
-): SharedV3ProviderMetadata {
+  a: SharedV4ProviderMetadata | undefined,
+  b: SharedV4ProviderMetadata,
+): SharedV4ProviderMetadata {
   if (!a) return { ...b };
-  const out: SharedV3ProviderMetadata = { ...a };
+  const out: SharedV4ProviderMetadata = { ...a };
   for (const [provider, meta] of Object.entries(b)) {
     out[provider] = { ...(out[provider] ?? {}), ...(meta ?? {}) };
   }

@@ -1,9 +1,9 @@
 import { resolve } from "node:path";
 import type {
-  LanguageModelV3Content,
-  LanguageModelV3Message,
-  LanguageModelV3TextPart,
-  SharedV3ProviderOptions,
+  LanguageModelV4Content,
+  LanguageModelV4Message,
+  LanguageModelV4TextPart,
+  SharedV4ProviderOptions,
 } from "@ai-sdk/provider";
 import type { ResourceLinkInfo } from "../engine/content-helpers.ts";
 import type { ContextAssembledSource, SkillsLoadedEntry } from "../engine/types.ts";
@@ -240,7 +240,7 @@ export interface Conversation {
  * (typically `files://<id>`) by URI. The bytes live in the resource's
  * owning store; the conversation log carries only the link.
  *
- * The runtime rehydrates image links to AI SDK V3 `file` parts at the
+ * The runtime rehydrates image links to AI SDK V4 `file` parts at the
  * `model.doStream` boundary so vision content reaches the model without
  * the JSONL ever holding raw bytes.
  */
@@ -253,10 +253,10 @@ export interface ResourceLinkContentPart {
 
 /**
  * User-message content shape — text plus MCP `resource_link` blocks.
- * Narrower than `LanguageModelV3UserMessage["content"]` (which also
+ * Narrower than `LanguageModelV4UserMessage["content"]` (which also
  * permits inline file parts): callers persist references, not bytes.
  */
-export type UserContentPart = LanguageModelV3TextPart | ResourceLinkContentPart;
+export type UserContentPart = LanguageModelV4TextPart | ResourceLinkContentPart;
 
 interface StoredMessageMetadata {
   skill?: string | null;
@@ -309,7 +309,7 @@ interface StoredMessageExtras {
 /**
  * In-memory message shape used by the runtime and event store.
  *
- * For non-user roles, this is `LanguageModelV3Message` plus the platform's
+ * For non-user roles, this is `LanguageModelV4Message` plus the platform's
  * timestamp/metadata extras. For user role we widen the content union to
  * include `resource_link` blocks so attached images survive end-to-end as
  * URI references; the runtime rehydrates them to AI SDK `file` parts before
@@ -317,8 +317,8 @@ interface StoredMessageExtras {
  */
 export type StoredMessage = StoredMessageExtras &
   (
-    | { role: "user"; content: UserContentPart[]; providerOptions?: SharedV3ProviderOptions }
-    | Exclude<LanguageModelV3Message, { role: "user" }>
+    | { role: "user"; content: UserContentPart[]; providerOptions?: SharedV4ProviderOptions }
+    | Exclude<LanguageModelV4Message, { role: "user" }>
   );
 
 // ---------------------------------------------------------------------------
@@ -379,17 +379,17 @@ export interface LlmResponseEvent {
   runId: string;
   model: string;
   /**
-   * V3 content blocks. Includes `text`, `tool-call`, and `reasoning`
+   * V4 content blocks. Includes `text`, `tool-call`, and `reasoning`
    * (extended thinking) parts. Reasoning blocks are surfaced to the UI
    * collapsed-by-default; bare absence on a turn with non-stop
    * finishReason is what indicates a real empty turn.
    */
-  content: LanguageModelV3Content[];
-  /** Token usage for this single LLM call (canonical AI SDK V3 shape). */
+  content: LanguageModelV4Content[];
+  /** Token usage for this single LLM call (canonical AI SDK V4 shape). */
   usage: TokenUsage;
   llmMs: number;
   /**
-   * Per-call finish reason from the provider (AI SDK V3 unified value).
+   * Per-call finish reason from the provider (AI SDK V4 unified value).
    * Optional for backward-compat with conversations recorded before this
    * field existed.
    */

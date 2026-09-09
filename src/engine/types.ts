@@ -1,4 +1,4 @@
-import type { LanguageModelV3Message } from "@ai-sdk/provider";
+import type { LanguageModelV4Message } from "@ai-sdk/provider";
 import type {
   ContentBlock,
   TextContent,
@@ -411,9 +411,9 @@ export interface EngineHooks {
    * for that call to finish.
    */
   rewriteHistory?: (
-    messages: LanguageModelV3Message[],
+    messages: LanguageModelV4Message[],
     opts: { iteration: number; signal?: AbortSignal },
-  ) => Promise<LanguageModelV3Message[] | null>;
+  ) => Promise<LanguageModelV4Message[] | null>;
 
   /**
    * Modify messages before LLM call (e.g., windowing, context injection).
@@ -425,9 +425,9 @@ export interface EngineHooks {
    * Hooks that don't care about recovery can ignore the second argument.
    */
   transformContext?: (
-    messages: LanguageModelV3Message[],
+    messages: LanguageModelV4Message[],
     opts?: { overflowAttempt?: number },
-  ) => LanguageModelV3Message[];
+  ) => LanguageModelV4Message[];
 
   /** Gate or modify tool calls before execution. Return null to skip the tool. */
   beforeToolCall?: (call: ToolCall) => ToolCall | null | Promise<ToolCall | null>;
@@ -706,7 +706,7 @@ export interface ContextAssembledSource {
 }
 
 /**
- * Per-LLM-call finish reason (mirrors AI SDK V3 `LanguageModelV3FinishReason.unified`).
+ * Per-LLM-call finish reason (mirrors AI SDK V4 `LanguageModelV4FinishReason.unified`).
  * Persisted on `llm.response` events so post-hoc analysis can tell a clean
  * stop from a length-truncated turn from a content-filter rejection.
  */
@@ -726,7 +726,7 @@ export type FinishReason = "stop" | "length" | "content-filter" | "tool-calls" |
  * `error` here is the *finish-reason* error category, not a thrown engine
  * error — the latter still emits `run.error` instead.
  *
- * Note the casing asymmetry vs `FinishReason`: the V3 spec uses
+ * Note the casing asymmetry vs `FinishReason`: the V4 spec uses
  * kebab-case (`content-filter`, `tool-calls`); our run-level union uses
  * snake_case to match the legacy `max_iterations` value already in
  * persisted JSONL. They're related but not identical — see

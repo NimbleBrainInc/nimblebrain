@@ -12,7 +12,7 @@
  * the provider's count, but not by 50×).
  */
 
-import type { LanguageModelV3Message } from "@ai-sdk/provider";
+import type { LanguageModelV4Message } from "@ai-sdk/provider";
 import { describe, expect, test } from "bun:test";
 import { buildContextAssembledPayload } from "../../src/runtime/runtime.ts";
 
@@ -35,13 +35,13 @@ describe("context.assembled — image-attached message regression", () => {
     a.set(makePngWithDimensions(1024, 768), 0);
     const b = new Uint8Array(711_000);
     b.set(makePngWithDimensions(2400, 1800), 0);
-    const messages: LanguageModelV3Message[] = [
+    const messages: LanguageModelV4Message[] = [
       {
         role: "user",
         content: [
           { type: "text", text: "Look at these screenshots — what's broken?" },
-          { type: "file", mediaType: "image/png", data: a, filename: "before.png" },
-          { type: "file", mediaType: "image/png", data: b, filename: "after.png" },
+          { type: "file", mediaType: "image/png", data: { type: "data", data: a }, filename: "before.png" },
+          { type: "file", mediaType: "image/png", data: { type: "data", data: b }, filename: "after.png" },
         ],
       },
     ];
@@ -62,7 +62,7 @@ describe("context.assembled — image-attached message regression", () => {
   });
 
   test("text-only history is unaffected — heuristic identical for text parts", () => {
-    const messages: LanguageModelV3Message[] = [
+    const messages: LanguageModelV4Message[] = [
       { role: "user", content: [{ type: "text", text: "hello world" }] },
       { role: "assistant", content: [{ type: "text", text: "hi there" }] },
     ];

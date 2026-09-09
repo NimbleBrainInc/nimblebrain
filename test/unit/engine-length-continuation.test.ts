@@ -12,7 +12,7 @@ import type {
   ToolResult,
   ToolSchema,
 } from "../../src/engine/types.ts";
-import type { LanguageModelV3 } from "@ai-sdk/provider";
+import type { LanguageModelV4 } from "@ai-sdk/provider";
 
 const config: EngineConfig = {
   model: "test-model",
@@ -27,7 +27,7 @@ function collectingSink(): { sink: EventSink; events: EngineEvent[] } {
 }
 
 function makeEngine(
-  model: LanguageModelV3,
+  model: LanguageModelV4,
   sink: EventSink,
   tools?: { schemas: ToolSchema[]; handler: (call: ToolCall) => ToolResult | Promise<ToolResult> },
 ) {

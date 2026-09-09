@@ -1,4 +1,4 @@
-import type { LanguageModelV3 } from "@ai-sdk/provider";
+import type { LanguageModelV4 } from "@ai-sdk/provider";
 import type { FeatureFlags } from "../config/features.ts";
 import type { ConfirmationGate } from "../config/privilege.ts";
 import type { ConnectorsConfig } from "../connectors/providers/config.ts";
@@ -24,7 +24,7 @@ export interface RuntimeConfig {
     | { provider: "anthropic"; apiKey?: string }
     | { provider: "openai"; apiKey?: string; baseURL?: string }
     | { provider: "google"; apiKey?: string }
-    | { provider: "custom"; adapter: LanguageModelV3 };
+    | { provider: "custom"; adapter: LanguageModelV4 };
 
   /** Multi-provider configuration. Takes precedence over `model` when set. */
   providers?: ProvidersConfig["providers"];

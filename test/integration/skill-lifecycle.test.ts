@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { runWithRequestContext } from "../../src/runtime/request-context.ts";
-import type { LanguageModelV3 } from "@ai-sdk/provider";
+import type { LanguageModelV4 } from "@ai-sdk/provider";
 import { createMockModel, runtimeContextHead } from "../helpers/mock-model.ts";
 import { extractText } from "../../src/engine/content-helpers.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
@@ -16,7 +16,7 @@ afterAll(() => {
 });
 
 /** Model adapter that captures the system prompt for inspection. Ignores auto-title calls. */
-function createCapturingModel(): { model: LanguageModelV3; getSystem: () => string } {
+function createCapturingModel(): { model: LanguageModelV4; getSystem: () => string } {
 	let capturedSystem = "";
 	const model = createMockModel((options) => {
 		const systemMsg = options.prompt.find((m) => m.role === "system");

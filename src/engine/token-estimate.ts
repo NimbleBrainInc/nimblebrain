@@ -1,5 +1,5 @@
 /**
- * Part-aware pre-flight token estimator for `LanguageModelV3Message`s and
+ * Part-aware pre-flight token estimator for `LanguageModelV4Message`s and
  * tool schemas.
  *
  * The naive `approxTokens(JSON.stringify(m))` inflates by 30-100× whenever a
@@ -26,12 +26,12 @@
  */
 
 import type {
-  LanguageModelV3FilePart,
-  LanguageModelV3Message,
-  LanguageModelV3ReasoningPart,
-  LanguageModelV3TextPart,
-  LanguageModelV3ToolCallPart,
-  LanguageModelV3ToolResultPart,
+  LanguageModelV4FilePart,
+  LanguageModelV4Message,
+  LanguageModelV4ReasoningPart,
+  LanguageModelV4TextPart,
+  LanguageModelV4ToolCallPart,
+  LanguageModelV4ToolResultPart,
 } from "@ai-sdk/provider";
 
 /** Anthropic vision tokens-per-pixel divisor and clamp bounds. */
@@ -192,13 +192,14 @@ export function imageTokensFromDimensions(width: number, height: number): number
   return raw;
 }
 
-function tokensForImageFilePart(part: LanguageModelV3FilePart): number {
-  // `data` may be Uint8Array, base64 string, or URL. We only attempt decode
-  // for bytes; the other shapes get the flat fallback. The fallback sits
-  // inside the [800, 1600] Anthropic clamp so we never overpay by an order
-  // of magnitude regardless of dimensions.
-  if (part.data instanceof Uint8Array) {
-    const dims = decodeImageDimensions(part.data);
+function tokensForImageFilePart(part: LanguageModelV4FilePart): number {
+  // `data` is the tagged `SharedV4FileData` union: the `data` variant carries
+  // either raw bytes or a base64 string, and `url` / `reference` / `text` carry
+  // no bytes at all. Only raw bytes are decoded — everything else takes the
+  // flat fallback, which sits inside the [800, 1600] Anthropic clamp so we
+  // never misprice by an order of magnitude regardless of dimensions.
+  if (part.data.type === "data" && part.data.data instanceof Uint8Array) {
+    const dims = decodeImageDimensions(part.data.data);
     if (dims && dims.width > 0 && dims.height > 0) {
       return imageTokensFromDimensions(dims.width, dims.height);
     }
@@ -206,7 +207,7 @@ function tokensForImageFilePart(part: LanguageModelV3FilePart): number {
   return IMAGE_TOKEN_FALLBACK;
 }
 
-function tokensForFilePart(part: LanguageModelV3FilePart): number {
+function tokensForFilePart(part: LanguageModelV4FilePart): number {
   if (part.mediaType.startsWith("image/")) {
     return tokensForImageFilePart(part);
   }
@@ -217,7 +218,7 @@ function tokensForFilePart(part: LanguageModelV3FilePart): number {
   return tokensForChars(metaLen) + FILE_METADATA_OVERHEAD_TOKENS;
 }
 
-function tokensForToolCallPart(part: LanguageModelV3ToolCallPart): number {
+function tokensForToolCallPart(part: LanguageModelV4ToolCallPart): number {
   // `JSON.stringify(undefined)` returns undefined; default to "{}" for
   // shape-only calls. Args are JSON-encoded by the provider — chars/4 is the
   // same heuristic the provider's tokenizer approximates.
@@ -228,33 +229,41 @@ function tokensForToolCallPart(part: LanguageModelV3ToolCallPart): number {
 
 /** Elements of a tool-result `content` output's `value` array. */
 type ToolResultContentValue = Extract<
-  LanguageModelV3ToolResultPart["output"],
+  LanguageModelV4ToolResultPart["output"],
   { type: "content" }
 >["value"];
 type ToolResultContentItem = ToolResultContentValue[number];
 
-/** Tokens for one tool-result content item, walking file/image shapes without `JSON.stringify`-ing bytes. */
+/** Tokens for one tool-result content item, walking file shapes without `JSON.stringify`-ing bytes. */
 function tokensForToolResultContentItem(item: ToolResultContentItem): number {
   switch (item.type) {
     case "text":
       return tokensForText(item.text);
-    case "file-data":
-      // Base64-encoded image: same flat fallback as the file-part path (we
-      // don't decode dimensions from the b64 wire shape) so over/underestimate
-      // is bounded. Non-image: tokenize only the relayed metadata.
-      return item.mediaType.startsWith("image/")
-        ? IMAGE_TOKEN_FALLBACK
-        : tokensForChars(item.mediaType.length + (item.filename?.length ?? 0)) +
-            FILE_METADATA_OVERHEAD_TOKENS;
-    case "file-url":
-    case "file-id": {
-      // Reference-only; tokenize the small pointer. Neither shape carries
-      // `mediaType` in the V3 union, so cost is dominated by the overhead.
-      const ref = "url" in item ? item.url : JSON.stringify(item.fileId);
-      return tokensForChars(ref.length) + FILE_METADATA_OVERHEAD_TOKENS;
-    }
-    case "image-data":
-      return IMAGE_TOKEN_FALLBACK;
+    case "file":
+      switch (item.data.type) {
+        case "data":
+          // Inline bytes or base64. Images get the same flat fallback as the
+          // file-part path (we don't decode dimensions from the wire shape) so
+          // over/underestimate is bounded. Non-image: tokenize only the
+          // relayed metadata rather than the payload.
+          return item.mediaType.startsWith("image/")
+            ? IMAGE_TOKEN_FALLBACK
+            : tokensForChars(item.mediaType.length + (item.filename?.length ?? 0)) +
+                FILE_METADATA_OVERHEAD_TOKENS;
+        case "text":
+          // An inline text document: the text itself is what reaches the model.
+          return tokensForText(item.data.text);
+        case "url":
+          return tokensForChars(item.data.url.toString().length) + FILE_METADATA_OVERHEAD_TOKENS;
+        case "reference":
+          // Reference-only; tokenize the small pointer, not the file behind it.
+          return (
+            tokensForChars(JSON.stringify(item.data.reference).length) +
+            FILE_METADATA_OVERHEAD_TOKENS
+          );
+        default:
+          return 0;
+      }
     default:
       return 0;
   }
@@ -272,7 +281,7 @@ function tokensForToolResultContent(items: ToolResultContentValue): number {
   return sum;
 }
 
-function tokensForToolResultPart(part: LanguageModelV3ToolResultPart): number {
+function tokensForToolResultPart(part: LanguageModelV4ToolResultPart): number {
   const output = part.output;
   switch (output.type) {
     case "text":
@@ -290,11 +299,11 @@ function tokensForToolResultPart(part: LanguageModelV3ToolResultPart): number {
   }
 }
 
-function tokensForTextPart(part: LanguageModelV3TextPart): number {
+function tokensForTextPart(part: LanguageModelV4TextPart): number {
   return tokensForText(part.text);
 }
 
-function tokensForReasoningPart(part: LanguageModelV3ReasoningPart): number {
+function tokensForReasoningPart(part: LanguageModelV4ReasoningPart): number {
   return tokensForText(part.text);
 }
 
@@ -310,7 +319,7 @@ function tokensForReasoningPart(part: LanguageModelV3ReasoningPart): number {
  * try to model here. The conversation-store still has the truth from
  * `usage` after the call.
  */
-export function estimateMessageTokens(message: LanguageModelV3Message): number {
+export function estimateMessageTokens(message: LanguageModelV4Message): number {
   if (message.role === "system") {
     return tokensForText(message.content);
   }
@@ -342,7 +351,7 @@ export function estimateMessageTokens(message: LanguageModelV3Message): number {
 /**
  * The structural minimum `estimateToolDescriptionTokens` reads. Satisfied by
  * both the internal `ToolSchema` and the provider-facing
- * `LanguageModelV3FunctionTool`.
+ * `LanguageModelV4FunctionTool`.
  */
 export interface EstimatableTool {
   name?: string;
@@ -358,7 +367,7 @@ export interface EstimatableTool {
  * may eventually carry binary defaults, so we centralize the call site.
  *
  * Takes the structural minimum rather than `ToolSchema` so it also accepts the
- * provider-facing `LanguageModelV3FunctionTool`, whose `description` is
+ * provider-facing `LanguageModelV4FunctionTool`, whose `description` is
  * optional. The body already treats every field as absent-able; the parameter
  * type now says so, which is what lets the same estimate be taken over the
  * tools actually sent rather than only over the internal schema.

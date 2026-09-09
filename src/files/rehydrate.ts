@@ -1,5 +1,5 @@
 /**
- * Rehydrate `resource_link` blocks in user messages into AI SDK V3
+ * Rehydrate `resource_link` blocks in user messages into AI SDK V4
  * `file` parts at the `model.doStream` boundary.
  *
  * The conversation log persists rehydratable attachments as MCP
@@ -15,9 +15,9 @@
  */
 
 import type {
-  LanguageModelV3FilePart,
-  LanguageModelV3Message,
-  LanguageModelV3TextPart,
+  LanguageModelV4FilePart,
+  LanguageModelV4Message,
+  LanguageModelV4TextPart,
 } from "@ai-sdk/provider";
 import type { StoredMessage, UserContentPart } from "../conversation/types.ts";
 import type { FileInputPolicy } from "../model/file-capabilities.ts";
@@ -55,7 +55,7 @@ export async function rehydrateUserResources(
   messages: StoredMessage[],
   fileStore: FileStore,
   options: RehydrateOptions,
-): Promise<LanguageModelV3Message[]> {
+): Promise<LanguageModelV4Message[]> {
   const policy = getFileInputPolicy(options.model);
   // PDF-only guard for provider file-input limits. Existing image inlining is
   // intentionally unchanged here; full request-byte budgeting is separate.
@@ -63,23 +63,23 @@ export async function rehydrateUserResources(
     pdfRemainingBytes: policy.pdf?.maxTotalBytes ?? 0,
   };
   const currentUserMessageIndex = findLastUserMessageIndex(messages);
-  const out: LanguageModelV3Message[] = [];
+  const out: LanguageModelV4Message[] = [];
   for (let i = 0; i < messages.length; i++) {
     const msg = messages[i]!;
     if (msg.role !== "user") {
       // Strip the platform extras (timestamp, userId, metadata) so the
-      // returned shape is exactly `LanguageModelV3Message` — what the
+      // returned shape is exactly `LanguageModelV4Message` — what the
       // engine and `model.doStream` expect.
       const { role, content, providerOptions } = msg;
       out.push(
         providerOptions
-          ? ({ role, content, providerOptions } as LanguageModelV3Message)
-          : ({ role, content } as LanguageModelV3Message),
+          ? ({ role, content, providerOptions } as LanguageModelV4Message)
+          : ({ role, content } as LanguageModelV4Message),
       );
       continue;
     }
 
-    const newContent: Array<LanguageModelV3TextPart | LanguageModelV3FilePart> = [];
+    const newContent: Array<LanguageModelV4TextPart | LanguageModelV4FilePart> = [];
     for (const part of msg.content) {
       newContent.push(
         await rehydratePart(part, fileStore, policy, budget, {
@@ -110,7 +110,7 @@ async function rehydratePart(
   policy: FileInputPolicy,
   budget: PdfRehydrationBudget,
   options: { isCurrentUserMessage: boolean; maxExtractedTextSize: number },
-): Promise<LanguageModelV3TextPart | LanguageModelV3FilePart> {
+): Promise<LanguageModelV4TextPart | LanguageModelV4FilePart> {
   if (part.type === "text") {
     return { type: "text", text: part.text };
   }
@@ -127,7 +127,7 @@ async function rehydratePart(
 async function rehydrateImagePart(
   part: Extract<UserContentPart, { type: "resource_link" }>,
   fileStore: FileStore,
-): Promise<LanguageModelV3TextPart | LanguageModelV3FilePart> {
+): Promise<LanguageModelV4TextPart | LanguageModelV4FilePart> {
   const id = uriToFileId(part.uri);
   if (!id) {
     return { type: "text", text: `[Attached: ${part.name}]` };
@@ -145,7 +145,7 @@ async function rehydrateImagePart(
     return {
       type: "file",
       mediaType: read.mimeType,
-      data: new Uint8Array(read.data),
+      data: { type: "data", data: new Uint8Array(read.data) },
       filename: part.name,
     };
   } catch {
@@ -162,7 +162,7 @@ async function rehydratePdfPart(
   policy: FileInputPolicy,
   budget: PdfRehydrationBudget,
   options: { isCurrentUserMessage: boolean; maxExtractedTextSize: number },
-): Promise<LanguageModelV3TextPart | LanguageModelV3FilePart> {
+): Promise<LanguageModelV4TextPart | LanguageModelV4FilePart> {
   const id = uriToFileId(part.uri);
   if (!id) {
     return { type: "text", text: `[Attached: ${part.name}]` };
@@ -204,7 +204,7 @@ async function rehydratePdfPart(
       return {
         type: "file",
         mediaType: read.mimeType,
-        data: new Uint8Array(read.data),
+        data: { type: "data", data: new Uint8Array(read.data) },
         filename: part.name,
       };
     }
@@ -313,7 +313,7 @@ function formatPdfFallback(
   id: string,
   size: number,
   text: string,
-): LanguageModelV3TextPart {
+): LanguageModelV4TextPart {
   const hint = `To inspect pages beyond this preview, call files__read_pdf_pages with id "${id}" and specific 1-based page numbers.`;
   return {
     type: "text",
@@ -327,7 +327,7 @@ function humanSize(bytes: number): string {
   return `${(bytes / 1_048_576).toFixed(1)} MB`;
 }
 
-function textMarker(name: string, mimeType: string): LanguageModelV3TextPart {
+function textMarker(name: string, mimeType: string): LanguageModelV4TextPart {
   return {
     type: "text",
     text: `[Attached: ${name} (${mimeType}) — call files__read to access]`,

@@ -1,4 +1,4 @@
-import type { LanguageModelV3Message } from "@ai-sdk/provider";
+import type { LanguageModelV4Message } from "@ai-sdk/provider";
 import { COMPACTION_DEFAULTS, compactionSummaryMessages } from "../conversation/compaction.ts";
 import { groupMessages } from "../conversation/window.ts";
 import { estimateMessageTokens } from "../engine/token-estimate.ts";
@@ -102,7 +102,7 @@ export interface MidTurnCompactionDeps {
    * Summarize the folded-away messages. Throws on failure — the caller treats a
    * throw as "skip the fold", never as a failed turn.
    */
-  summarize: (messages: LanguageModelV3Message[], signal?: AbortSignal) => Promise<string>;
+  summarize: (messages: LanguageModelV4Message[], signal?: AbortSignal) => Promise<string>;
 }
 
 /**
@@ -124,7 +124,7 @@ export interface MidTurnCompactionDeps {
 const MID_TURN_TRIGGER_RATIO = 1;
 
 /** The prompt-sized estimate: what these messages will cost when sent. */
-function estimateTokens(messages: readonly LanguageModelV3Message[]): number {
+function estimateTokens(messages: readonly LanguageModelV4Message[]): number {
   let total = 0;
   for (const m of messages) total += estimateMessageTokens(m);
   return total;
@@ -136,7 +136,7 @@ function estimateTokens(messages: readonly LanguageModelV3Message[]): number {
  * front of the cut to be worth a summarizer call. Pure.
  */
 export function planMidTurnFold(
-  messages: readonly LanguageModelV3Message[],
+  messages: readonly LanguageModelV4Message[],
   budget: number,
 ): number | null {
   if (estimateTokens(messages) <= MID_TURN_TRIGGER_RATIO * budget) return null;
@@ -166,13 +166,13 @@ export function planMidTurnFold(
  * only when the tail opens on a user message; a tail opening on an assistant
  * message already alternates against the summary turn.
  */
-function foldedHistory(summary: string, tail: LanguageModelV3Message[]): LanguageModelV3Message[] {
+function foldedHistory(summary: string, tail: LanguageModelV4Message[]): LanguageModelV4Message[] {
   // Empty timestamp, and the extras are stripped below: this seed lives for the
   // rest of the turn and is never stored, so it has no timestamp to carry.
   const seed = compactionSummaryMessages(summary, "");
   const head = tail[0]?.role === "user" ? seed : seed.slice(0, 1);
   return [
-    ...head.map(({ role, content }) => ({ role, content }) as LanguageModelV3Message),
+    ...head.map(({ role, content }) => ({ role, content }) as LanguageModelV4Message),
     ...tail,
   ];
 }

@@ -58,7 +58,7 @@
       "groupName": "react"
     },
     {
-      "description": "The AI SDK core and its providers release in lockstep against a shared LanguageModelV3 surface.",
+      "description": "The AI SDK core and its providers release in lockstep against a shared LanguageModelV4 surface. A major here can move that spec version, which is a code migration — not a lockfile bump.",
       "matchPackageNames": ["ai", "@ai-sdk/**"],
       "groupName": "ai sdk"
     },

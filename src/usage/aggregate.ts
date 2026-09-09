@@ -188,7 +188,7 @@ function createCostBreakdown(): CostBreakdown {
  * comes from `costBreakdown` in src/usage/cost.ts — single source of
  * truth, so the dashboard total can't drift from the live per-turn
  * `usage.costUsd`. Token-side math: `usage.inputTokens` is the AI SDK
- * V3 grand total (includes cacheRead and cacheWrite); the `input`
+ * V4 grand total (includes cacheRead and cacheWrite); the `input`
  * bucket is the non-cached portion. Clamp to 0 guards against corrupted
  * records where the cache subtotals exceed the total.
  */

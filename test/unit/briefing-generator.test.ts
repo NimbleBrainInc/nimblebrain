@@ -1,10 +1,10 @@
 import { describe, expect, it } from "bun:test";
-import type { LanguageModelV3, LanguageModelV3CallOptions } from "@ai-sdk/provider";
+import type { LanguageModelV4, LanguageModelV4CallOptions } from "@ai-sdk/provider";
 import type { ActivityOutput, HomeConfig } from "../../src/services/home-types.ts";
 import { BriefingGenerator } from "../../src/services/briefing-generator.ts";
 import { createMockModel } from "../helpers/mock-model.ts";
 
-function createMockModelV3(responseText: string): LanguageModelV3 {
+function createMockModelV4(responseText: string): LanguageModelV4 {
 	return createMockModel(() => ({
 		content: [{ type: "text", text: responseText }],
 		inputTokens: 100,
@@ -12,13 +12,13 @@ function createMockModelV3(responseText: string): LanguageModelV3 {
 	}));
 }
 
-function createTrackingModelV3(responseText: string): {
-	model: LanguageModelV3;
-	calls: LanguageModelV3CallOptions[];
+function createTrackingModelV4(responseText: string): {
+	model: LanguageModelV4;
+	calls: LanguageModelV4CallOptions[];
 } {
-	const calls: LanguageModelV3CallOptions[] = [];
-	const model: LanguageModelV3 = {
-		specificationVersion: "v3",
+	const calls: LanguageModelV4CallOptions[] = [];
+	const model: LanguageModelV4 = {
+		specificationVersion: "v4",
 		provider: "mock",
 		modelId: "mock-model",
 		supportedUrls: {},
@@ -46,9 +46,9 @@ function createTrackingModelV3(responseText: string): {
 	return { model, calls };
 }
 
-function createTruncatedModelV3(responseText: string): LanguageModelV3 {
+function createTruncatedModelV4(responseText: string): LanguageModelV4 {
 	return {
-		specificationVersion: "v3",
+		specificationVersion: "v4",
 		provider: "mock",
 		modelId: "mock-model",
 		supportedUrls: {},
@@ -85,7 +85,7 @@ function makeConfig(overrides: Partial<HomeConfig> = {}): HomeConfig {
 
 /** Build a generator with the simplified (model, modelString, config) ctor. */
 function makeGen(
-	model: LanguageModelV3,
+	model: LanguageModelV4,
 	modelString: string | null = "anthropic:claude-sonnet-4-6",
 	config: HomeConfig = makeConfig(),
 ): BriefingGenerator {
@@ -149,7 +149,7 @@ function activeActivity(): ActivityOutput {
 describe("briefing-generator", () => {
 	describe("empty activity", () => {
 		it("returns quiet state without calling the model", async () => {
-			const { model, calls } = createTrackingModelV3("should not be called");
+			const { model, calls } = createTrackingModelV4("should not be called");
 			const gen = makeGen(model);
 			const result = await gen.generate(emptyActivity());
 
@@ -163,7 +163,7 @@ describe("briefing-generator", () => {
 
 	describe("greeting", () => {
 		it("greets the user by name", async () => {
-			const { model } = createTrackingModelV3("{}");
+			const { model } = createTrackingModelV4("{}");
 			const gen = makeGen(model, null, makeConfig({ timezone: "Pacific/Honolulu" }));
 			const result = await gen.generate(emptyActivity());
 
@@ -176,7 +176,7 @@ describe("briefing-generator", () => {
 		});
 
 		it("falls back when timezone is empty", async () => {
-			const { model } = createTrackingModelV3("{}");
+			const { model } = createTrackingModelV4("{}");
 			const gen = makeGen(model, null, makeConfig({ timezone: "" }));
 			const result = await gen.generate(emptyActivity());
 
@@ -184,7 +184,7 @@ describe("briefing-generator", () => {
 		});
 
 		it("falls back when timezone is invalid", async () => {
-			const { model } = createTrackingModelV3("{}");
+			const { model } = createTrackingModelV4("{}");
 			const gen = makeGen(model, null, makeConfig({ timezone: "Invalid/Zone" }));
 			const result = await gen.generate(emptyActivity());
 
@@ -194,7 +194,7 @@ describe("briefing-generator", () => {
 
 	describe("date formatting", () => {
 		it("formats date as weekday, month day, year", async () => {
-			const model = createMockModelV3("{}");
+			const model = createMockModelV4("{}");
 			const gen = makeGen(model);
 			const result = await gen.generate(emptyActivity());
 
@@ -215,7 +215,7 @@ describe("briefing-generator", () => {
 					},
 				],
 			});
-			const model = createMockModelV3(llmResponse);
+			const model = createMockModelV4(llmResponse);
 			const gen = makeGen(model);
 			const result = await gen.generate(activeActivity());
 
@@ -238,7 +238,7 @@ describe("briefing-generator", () => {
 				],
 			});
 			const llmResponse = `\`\`\`json\n${json}\n\`\`\``;
-			const model = createMockModelV3(llmResponse);
+			const model = createMockModelV4(llmResponse);
 			const gen = makeGen(model);
 			const result = await gen.generate(activeActivity());
 
@@ -250,21 +250,21 @@ describe("briefing-generator", () => {
 			// Failures are no longer hidden by a heuristic fallback —
 			// generate() throws and the caller (core-source.ts) renders
 			// an error result the UI shows as a clear retry state.
-			const model = createMockModelV3("This is not JSON at all");
+			const model = createMockModelV4("This is not JSON at all");
 			const gen = makeGen(model);
 
 			await expect(gen.generate(activeActivity())).rejects.toThrow();
 		});
 
 		it("throws when JSON is missing lede", async () => {
-			const model = createMockModelV3(JSON.stringify({ sections: [] }));
+			const model = createMockModelV4(JSON.stringify({ sections: [] }));
 			const gen = makeGen(model);
 
 			await expect(gen.generate(activeActivity())).rejects.toThrow();
 		});
 
 		it("throws when JSON is missing sections", async () => {
-			const model = createMockModelV3(JSON.stringify({ lede: "Hi" }));
+			const model = createMockModelV4(JSON.stringify({ lede: "Hi" }));
 			const gen = makeGen(model);
 
 			await expect(gen.generate(activeActivity())).rejects.toThrow();
@@ -272,7 +272,7 @@ describe("briefing-generator", () => {
 
 		it("repairs truncated JSON when finishReason is length", async () => {
 			const truncated = `{"lede": "3 follow-ups overdue.", "sections": [{"id": "followups", "text": "3 follow-ups need attention in CRM.", "type": "warning", "category": "attention"}, {"id": "tasks", "text": "You have 1 high-priority task du`;
-			const model = createTruncatedModelV3(truncated);
+			const model = createTruncatedModelV4(truncated);
 			const gen = makeGen(model);
 			const result = await gen.generate(activeActivity());
 
@@ -289,7 +289,7 @@ describe("briefing-generator", () => {
 					{"id": "b", "text": "Second.", "type": "neutral", "category": "recent"},
 				]
 			}`;
-			const model = createMockModelV3(jsonWithTrailingCommas);
+			const model = createMockModelV4(jsonWithTrailingCommas);
 			const gen = makeGen(model);
 			const result = await gen.generate(activeActivity());
 
@@ -300,7 +300,7 @@ describe("briefing-generator", () => {
 		it("repairs truncated JSON wrapped in markdown fences", async () => {
 			const truncated =
 				'```json\n{"lede": "All clear.", "sections": [{"id": "status", "text": "Running smoothly.", "type": "positive", "category": "recent"}';
-			const model = createTruncatedModelV3(truncated);
+			const model = createTruncatedModelV4(truncated);
 			const gen = makeGen(model);
 			const result = await gen.generate(activeActivity());
 
@@ -318,7 +318,7 @@ describe("briefing-generator", () => {
 					{ id: "b", text: "Also good", type: "positive", category: "recent" },
 				],
 			});
-			const model = createMockModelV3(llmResponse);
+			const model = createMockModelV4(llmResponse);
 			const gen = makeGen(model);
 			const result = await gen.generate(activeActivity());
 
@@ -333,7 +333,7 @@ describe("briefing-generator", () => {
 					{ id: "b", text: "Problem", type: "warning", category: "attention" },
 				],
 			});
-			const model = createMockModelV3(llmResponse);
+			const model = createMockModelV4(llmResponse);
 			const gen = makeGen(model);
 			const result = await gen.generate(activeActivity());
 
@@ -348,7 +348,7 @@ describe("briefing-generator", () => {
 					{ id: "b", text: "Okay", type: "neutral", category: "recent" },
 				],
 			});
-			const model = createMockModelV3(llmResponse);
+			const model = createMockModelV4(llmResponse);
 			const gen = makeGen(model);
 			const result = await gen.generate(activeActivity());
 
@@ -359,7 +359,7 @@ describe("briefing-generator", () => {
 	describe("model call parameters", () => {
 		it("passes calibrated maxOutputTokens, JSON response format, and timeout", async () => {
 			const llmResponse = JSON.stringify({ lede: "Ok.", sections: [] });
-			const { model, calls } = createTrackingModelV3(llmResponse);
+			const { model, calls } = createTrackingModelV4(llmResponse);
 			const gen = makeGen(model);
 			await gen.generate(activeActivity());
 
@@ -373,7 +373,7 @@ describe("briefing-generator", () => {
 
 		it("reports the generation's usage via onUsage", async () => {
 			const llmResponse = JSON.stringify({ lede: "Ok.", sections: [] });
-			const { model } = createTrackingModelV3(llmResponse);
+			const { model } = createTrackingModelV4(llmResponse);
 			let seen: { inputTokens: number; outputTokens: number } | undefined;
 			const gen = new BriefingGenerator(
 				model,
@@ -391,7 +391,7 @@ describe("briefing-generator", () => {
 
 		it("disables Anthropic thinking for reasoning-capable Claude models", async () => {
 			const llmResponse = JSON.stringify({ lede: "Ok.", sections: [] });
-			const { model, calls } = createTrackingModelV3(llmResponse);
+			const { model, calls } = createTrackingModelV4(llmResponse);
 			const gen = makeGen(model, "anthropic:claude-sonnet-4-6");
 			await gen.generate(activeActivity());
 
@@ -402,7 +402,7 @@ describe("briefing-generator", () => {
 
 		it("omits Anthropic thinking option for non-reasoning Claude models", async () => {
 			const llmResponse = JSON.stringify({ lede: "Ok.", sections: [] });
-			const { model, calls } = createTrackingModelV3(llmResponse);
+			const { model, calls } = createTrackingModelV4(llmResponse);
 			const gen = makeGen(model, "anthropic:claude-3-5-haiku-latest");
 			await gen.generate(activeActivity());
 
@@ -411,7 +411,7 @@ describe("briefing-generator", () => {
 
 		it("disables Gemini thinking budget for 2.5 series", async () => {
 			const llmResponse = JSON.stringify({ lede: "Ok.", sections: [] });
-			const { model, calls } = createTrackingModelV3(llmResponse);
+			const { model, calls } = createTrackingModelV4(llmResponse);
 			const gen = makeGen(model, "google:gemini-2.5-flash");
 			await gen.generate(activeActivity());
 
@@ -424,7 +424,7 @@ describe("briefing-generator", () => {
 			// The dialects do not overlap. A budget sent to a Gemini 3 model is
 			// rejected outright — measured: gemini-3.6-flash 400s on "invalid
 			// argument" — and this path runs on every home load.
-			const { model, calls } = createTrackingModelV3(
+			const { model, calls } = createTrackingModelV4(
 				JSON.stringify({ lede: "Ok.", sections: [] }),
 			);
 			await makeGen(model, "google:gemini-3.6-flash").generate(activeActivity());
@@ -439,7 +439,7 @@ describe("briefing-generator", () => {
 			// engine sends nothing here for `thinking: "off"`, but this caller
 			// wants the cheapest call, and sending nothing means the model's own
 			// default, which is the expensive branch.
-			const { model, calls } = createTrackingModelV3(
+			const { model, calls } = createTrackingModelV4(
 				JSON.stringify({ lede: "Ok.", sections: [] }),
 			);
 			await makeGen(model, "google:gemini-3.1-pro-preview").generate(activeActivity());
@@ -455,7 +455,7 @@ describe("briefing-generator", () => {
 			// deep-research-*. All of them used to get thinkingBudget: 0. An
 			// absent row means no verified answer, so guessing a dialect is how
 			// the briefing starts 400ing, which is the defect this PR fixes.
-			const { model, calls } = createTrackingModelV3(
+			const { model, calls } = createTrackingModelV4(
 				JSON.stringify({ lede: "Ok.", sections: [] }),
 			);
 			await makeGen(model, "google:gemini-flash-latest").generate(activeActivity());
@@ -465,7 +465,7 @@ describe("briefing-generator", () => {
 		it("sends nothing to a Gemini 2.5 model that cannot disable thinking", async () => {
 			// gemini-2.5-pro has no level dialect and no zero budget available,
 			// so there is nothing to ask for.
-			const { model, calls } = createTrackingModelV3(
+			const { model, calls } = createTrackingModelV4(
 				JSON.stringify({ lede: "Ok.", sections: [] }),
 			);
 			await makeGen(model, "google:gemini-2.5-pro").generate(activeActivity());
@@ -474,7 +474,7 @@ describe("briefing-generator", () => {
 
 		it("sets reasoningEffort=minimal for the OpenAI models that take it", async () => {
 			const llmResponse = JSON.stringify({ lede: "Ok.", sections: [] });
-			const { model, calls } = createTrackingModelV3(llmResponse);
+			const { model, calls } = createTrackingModelV4(llmResponse);
 			const gen = makeGen(model, "openai:gpt-5");
 			await gen.generate(activeActivity());
 
@@ -489,7 +489,7 @@ describe("briefing-generator", () => {
 			// model from gpt-5.1 on and the whole o-series. Sending it 400s the
 			// briefing — and this runs on every home load.
 			for (const m of ["openai:gpt-5.1", "openai:o3", "openai:gpt-5-pro"]) {
-				const { model, calls } = createTrackingModelV3(
+				const { model, calls } = createTrackingModelV4(
 					JSON.stringify({ lede: "Ok.", sections: [] }),
 				);
 				await makeGen(model, m).generate(activeActivity());
@@ -501,7 +501,7 @@ describe("briefing-generator", () => {
 			// The only true suppressor any provider here offers — `none` zeroes
 			// the trace rather than asking for less of it. Worth sending on a
 			// call that runs on every home load.
-			const { model, calls } = createTrackingModelV3(
+			const { model, calls } = createTrackingModelV4(
 				JSON.stringify({ lede: "Ok.", sections: [] }),
 			);
 			await makeGen(model, "xai:grok-4.3").generate(activeActivity());
@@ -518,7 +518,7 @@ describe("briefing-generator", () => {
 			// gate is a per-model set membership test on a hand-maintained
 			// table — so it needs a test per shape, not per provider.
 			for (const m of ["xai:grok-4.5", "xai:grok-4.20-0309-reasoning", "xai:grok-build-0.1"]) {
-				const { model, calls } = createTrackingModelV3(
+				const { model, calls } = createTrackingModelV4(
 					JSON.stringify({ lede: "Ok.", sections: [] }),
 				);
 				await makeGen(model, m).generate(activeActivity());
@@ -528,7 +528,7 @@ describe("briefing-generator", () => {
 
 		it("omits providerOptions for non-reasoning models", async () => {
 			const llmResponse = JSON.stringify({ lede: "Ok.", sections: [] });
-			const { model, calls } = createTrackingModelV3(llmResponse);
+			const { model, calls } = createTrackingModelV4(llmResponse);
 			const gen = makeGen(model, "openai:gpt-4o");
 			await gen.generate(activeActivity());
 
@@ -537,7 +537,7 @@ describe("briefing-generator", () => {
 
 		it("omits providerOptions when modelString is null", async () => {
 			const llmResponse = JSON.stringify({ lede: "Ok.", sections: [] });
-			const { model, calls } = createTrackingModelV3(llmResponse);
+			const { model, calls } = createTrackingModelV4(llmResponse);
 			const gen = makeGen(model, null);
 			await gen.generate(activeActivity());
 
@@ -546,7 +546,7 @@ describe("briefing-generator", () => {
 
 		it("sends activity as user message JSON", async () => {
 			const llmResponse = JSON.stringify({ lede: "Ok.", sections: [] });
-			const { model, calls } = createTrackingModelV3(llmResponse);
+			const { model, calls } = createTrackingModelV4(llmResponse);
 			const gen = makeGen(model);
 			const activity = activeActivity();
 			await gen.generate(activity);
@@ -568,7 +568,7 @@ describe("briefing-generator", () => {
 	describe("input bounding", () => {
 		it("truncates large facet data payloads", async () => {
 			const llmResponse = JSON.stringify({ lede: "Ok.", sections: [] });
-			const { model, calls } = createTrackingModelV3(llmResponse);
+			const { model, calls } = createTrackingModelV4(llmResponse);
 			const gen = makeGen(model);
 			const bigData = "x".repeat(5000);
 			const facetContext = {

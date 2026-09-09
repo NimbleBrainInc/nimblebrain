@@ -1,4 +1,4 @@
-import type { LanguageModelV3, LanguageModelV3Message } from "@ai-sdk/provider";
+import type { LanguageModelV4, LanguageModelV4Message } from "@ai-sdk/provider";
 import { afterAll, describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -54,7 +54,7 @@ function config(): EngineConfig {
 }
 
 /** Model that calls `gmail__send` on the first iteration, then answers. */
-function sendThenAnswer(): LanguageModelV3 {
+function sendThenAnswer(): LanguageModelV4 {
   let n = 0;
   return createMockModel(() => {
     n++;
@@ -83,12 +83,12 @@ async function appendUser(
   });
 }
 
-function systemContent(prompt: LanguageModelV3Message[]): string {
+function systemContent(prompt: LanguageModelV4Message[]): string {
   const sys = prompt.find((m) => m.role === "system");
   return sys && typeof sys.content === "string" ? sys.content : "";
 }
 
-function containsOverlay(m: LanguageModelV3Message): boolean {
+function containsOverlay(m: LanguageModelV4Message): boolean {
   return (
     m.role !== "system" &&
     Array.isArray(m.content) &&
@@ -96,7 +96,7 @@ function containsOverlay(m: LanguageModelV3Message): boolean {
   );
 }
 
-function messagesContainOverlay(prompt: LanguageModelV3Message[]): boolean {
+function messagesContainOverlay(prompt: LanguageModelV4Message[]): boolean {
   return prompt.some(containsOverlay);
 }
 
@@ -153,7 +153,7 @@ describe("connector-skill surface-once (engine + event store)", () => {
     // PREFIX of it. Prefix equality is also the property that matters: it is
     // the cached span the next turn reuses.
     const replayShape = (await store.history(conv)).map((m) =>
-      containsOverlay(m as unknown as LanguageModelV3Message) ? "OVERLAY" : m.role,
+      containsOverlay(m as unknown as LanguageModelV4Message) ? "OVERLAY" : m.role,
     );
 
     expect(liveShape).toContain("OVERLAY");

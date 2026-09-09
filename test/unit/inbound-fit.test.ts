@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import type { LanguageModelV3Content } from "@ai-sdk/provider";
+import type { LanguageModelV4Content } from "@ai-sdk/provider";
 import { normalizeForReplay } from "../../src/model/inbound-fit.ts";
 
 describe("normalizeForReplay", () => {
@@ -8,7 +8,7 @@ describe("normalizeForReplay", () => {
 	});
 
 	it("parses string-encoded tool-call input into an object", () => {
-		const input: LanguageModelV3Content[] = [
+		const input: LanguageModelV4Content[] = [
 			{
 				type: "tool-call",
 				toolCallId: "tc-1",
@@ -26,7 +26,7 @@ describe("normalizeForReplay", () => {
 	});
 
 	it("falls back to empty object on unparseable tool-call input", () => {
-		const input: LanguageModelV3Content[] = [
+		const input: LanguageModelV4Content[] = [
 			{
 				type: "tool-call",
 				toolCallId: "tc-1",
@@ -42,7 +42,7 @@ describe("normalizeForReplay", () => {
 	});
 
 	it("copies providerMetadata to providerOptions on reasoning blocks (Anthropic signature path)", () => {
-		const input: LanguageModelV3Content[] = [
+		const input: LanguageModelV4Content[] = [
 			{
 				type: "reasoning",
 				text: "Need to look this up.",
@@ -66,7 +66,7 @@ describe("normalizeForReplay", () => {
 		// so the prompt-side converter forwards it on the next call. Without
 		// this, Gemini 400s with "Function call is missing a thought_signature
 		// in functionCall parts."
-		const input: LanguageModelV3Content[] = [
+		const input: LanguageModelV4Content[] = [
 			{
 				type: "tool-call",
 				toolCallId: "tc-1",
@@ -89,7 +89,7 @@ describe("normalizeForReplay", () => {
 	it("copies providerMetadata to providerOptions on text blocks (Gemini thoughtSignature on text)", () => {
 		// Gemini also attaches thoughtSignature to text parts; same treatment
 		// keeps replay correct without a per-type branch.
-		const input: LanguageModelV3Content[] = [
+		const input: LanguageModelV4Content[] = [
 			{
 				type: "text",
 				text: "Result is 42.",
@@ -104,7 +104,7 @@ describe("normalizeForReplay", () => {
 	});
 
 	it("leaves parts without providerMetadata unchanged", () => {
-		const input: LanguageModelV3Content[] = [
+		const input: LanguageModelV4Content[] = [
 			{ type: "text", text: "plain" },
 			{
 				type: "tool-call",
@@ -126,7 +126,7 @@ describe("normalizeForReplay", () => {
 	});
 
 	it("is idempotent — applying twice produces the same result", () => {
-		const input: LanguageModelV3Content[] = [
+		const input: LanguageModelV4Content[] = [
 			{
 				type: "tool-call",
 				toolCallId: "tc-1",
@@ -149,7 +149,7 @@ describe("normalizeForReplay", () => {
 		// The Gemini `nb__status` failure exercised exactly this shape:
 		// stream-encoded JSON-string input + thoughtSignature metadata.
 		// Both transformations must apply to the same part.
-		const input: LanguageModelV3Content[] = [
+		const input: LanguageModelV4Content[] = [
 			{
 				type: "tool-call",
 				toolCallId: "tc-1",
@@ -174,7 +174,7 @@ describe("normalizeForReplay", () => {
 		// by removing the filter — they'd silently mis-shape ToolResultPart
 		// (stream `result` field vs prompt `output` field) and produce
 		// confusing SDK validation errors downstream.
-		const input: LanguageModelV3Content[] = [
+		const input: LanguageModelV4Content[] = [
 			{ type: "text", text: "kept" },
 			{
 				type: "tool-result",
@@ -207,7 +207,7 @@ describe("normalizeForReplay", () => {
 	});
 
 	it("does not mutate the input array or its parts", () => {
-		const original: LanguageModelV3Content[] = [
+		const original: LanguageModelV4Content[] = [
 			{
 				type: "reasoning",
 				text: "thoughts",

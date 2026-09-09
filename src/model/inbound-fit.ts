@@ -1,7 +1,7 @@
 /**
  * Normalize provider response content for the next iteration's prompt.
  *
- * The Vercel AI SDK V3 has a field-name asymmetry: provider-specific
+ * The Vercel AI SDK V4 has a field-name asymmetry: provider-specific
  * metadata arrives on inbound (stream) parts as `providerMetadata`
  * (Anthropic's thinking-block signature, Google's thoughtSignature, etc.),
  * but the prompt-side converters that build the next request read from
@@ -34,34 +34,34 @@
  * is harmless and keeps any downstream telemetry that introspects
  * inbound metadata working.
  *
- * Return type is the *prompt-side* part union (`LanguageModelV3*Part`)
+ * Return type is the *prompt-side* part union (`LanguageModelV4*Part`)
  * because that's what the function actually produces — the function
- * literally translates stream-side content (`LanguageModelV3Content`,
+ * literally translates stream-side content (`LanguageModelV4Content`,
  * which lacks `providerOptions`) into the prompt-side shape the AI SDK
  * converters consume. Typing it that way removes the need for unsafe
  * casts when adding `providerOptions` to a part.
  */
 
 import type {
-  LanguageModelV3Content,
-  LanguageModelV3FilePart,
-  LanguageModelV3ReasoningPart,
-  LanguageModelV3TextPart,
-  LanguageModelV3ToolCallPart,
-  LanguageModelV3ToolResultPart,
+  LanguageModelV4Content,
+  LanguageModelV4FilePart,
+  LanguageModelV4ReasoningPart,
+  LanguageModelV4TextPart,
+  LanguageModelV4ToolCallPart,
+  LanguageModelV4ToolResultPart,
 } from "@ai-sdk/provider";
 
 /** Prompt-side assistant-message content union — the shape the AI SDK
- *  converters expect on the way out. Mirror of `LanguageModelV3Message`'s
+ *  converters expect on the way out. Mirror of `LanguageModelV4Message`'s
  *  assistant-role content array element type. Unexported because no
  *  caller outside this module needs the name; callers receive the same
- *  shape via `LanguageModelV3Message`'s assistant variant. */
+ *  shape via `LanguageModelV4Message`'s assistant variant. */
 type ReplayContent =
-  | LanguageModelV3TextPart
-  | LanguageModelV3ReasoningPart
-  | LanguageModelV3FilePart
-  | LanguageModelV3ToolCallPart
-  | LanguageModelV3ToolResultPart;
+  | LanguageModelV4TextPart
+  | LanguageModelV4ReasoningPart
+  | LanguageModelV4FilePart
+  | LanguageModelV4ToolCallPart
+  | LanguageModelV4ToolResultPart;
 
 function safeJsonParse(s: string): unknown {
   try {
@@ -71,7 +71,7 @@ function safeJsonParse(s: string): unknown {
   }
 }
 
-export function normalizeForReplay(content: readonly LanguageModelV3Content[]): ReplayContent[] {
+export function normalizeForReplay(content: readonly LanguageModelV4Content[]): ReplayContent[] {
   const out: ReplayContent[] = [];
   for (const part of content) {
     if (part.type === "tool-call") {

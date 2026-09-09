@@ -20,7 +20,7 @@ import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { LanguageModelV3, LanguageModelV3CallOptions } from "@ai-sdk/provider";
+import type { LanguageModelV4, LanguageModelV4CallOptions } from "@ai-sdk/provider";
 import type { FileStore } from "../../../src/files/store.ts";
 import { DEV_IDENTITY } from "../../../src/identity/providers/dev.ts";
 import { Runtime } from "../../../src/runtime/runtime.ts";
@@ -53,7 +53,7 @@ const RESUME_MSG = "list my files on resume";
  * (which calls the model on a separate prompt) can't consume the scripted
  * tool-call response and make the test flaky.
  */
-function createResumeFileToolModel(): LanguageModelV3 {
+function createResumeFileToolModel(): LanguageModelV4 {
   const echo = createEchoModel();
   const toolModel = createEchoModel({
     responses: [
@@ -62,7 +62,7 @@ function createResumeFileToolModel(): LanguageModelV3 {
     ],
   });
 
-  function lastUserText(opts: LanguageModelV3CallOptions): string {
+  function lastUserText(opts: LanguageModelV4CallOptions): string {
     for (let i = opts.prompt.length - 1; i >= 0; i--) {
       const msg = opts.prompt[i];
       if (msg.role === "user") {
@@ -74,11 +74,11 @@ function createResumeFileToolModel(): LanguageModelV3 {
     return "";
   }
 
-  const pick = (opts: LanguageModelV3CallOptions): LanguageModelV3 =>
+  const pick = (opts: LanguageModelV4CallOptions): LanguageModelV4 =>
     lastUserText(opts) === RESUME_MSG ? toolModel : echo;
 
   return {
-    specificationVersion: "v3",
+    specificationVersion: "v4",
     provider: "echo",
     modelId: "echo-1",
     supportedUrls: {},

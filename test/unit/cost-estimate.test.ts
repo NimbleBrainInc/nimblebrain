@@ -57,7 +57,7 @@ describe("estimateCost", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // inputTokens contract: per AI SDK V3 (LanguageModelV3Usage), `inputTokens`
+  // inputTokens contract: per AI SDK V3 (LanguageModelV4Usage), `inputTokens`
   // is the GRAND TOTAL of all input-side tokens — equal to
   // `noCache + cacheRead + cacheWrite`. The Anthropic provider explicitly
   // computes it that way:

@@ -26,7 +26,7 @@
  * Run: bun run eval
  */
 import { describe, expect, it } from "bun:test";
-import type { LanguageModelV3 } from "@ai-sdk/provider";
+import type { LanguageModelV4 } from "@ai-sdk/provider";
 import { AgentEngine } from "../../src/engine/engine.ts";
 import { StaticToolRouter } from "../../src/adapters/static-router.ts";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
@@ -100,7 +100,7 @@ interface ScenarioResult {
   iterations: number;
 }
 
-function resolveModel(spec: ProviderSpec): LanguageModelV3 {
+function resolveModel(spec: ProviderSpec): LanguageModelV4 {
   const apiKey = process.env[spec.envVar]!;
   const resolver = buildModelResolver({ providers: { [spec.name]: { apiKey } } });
   return resolver(spec.modelString);

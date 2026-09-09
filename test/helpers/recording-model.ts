@@ -1,8 +1,8 @@
 import type {
-  LanguageModelV3,
-  LanguageModelV3CallOptions,
-  LanguageModelV3FunctionTool,
-  LanguageModelV3Message,
+  LanguageModelV4,
+  LanguageModelV4CallOptions,
+  LanguageModelV4FunctionTool,
+  LanguageModelV4Message,
 } from "@ai-sdk/provider";
 
 /**
@@ -17,19 +17,19 @@ import type {
  * provider sees is the thing that determines cost.
  */
 export interface RecordedCall {
-  prompt: LanguageModelV3Message[];
-  tools: LanguageModelV3FunctionTool[];
+  prompt: LanguageModelV4Message[];
+  tools: LanguageModelV4FunctionTool[];
 }
 
 export interface RecordingModel {
-  /** Drop-in `LanguageModelV3` that records each call, then delegates to `inner`. */
-  model: LanguageModelV3;
+  /** Drop-in `LanguageModelV4` that records each call, then delegates to `inner`. */
+  model: LanguageModelV4;
   /** Per-iteration captures, in call order. */
   calls: RecordedCall[];
 }
 
 /**
- * Wrap a `LanguageModelV3` so every `doStream` / `doGenerate` call is recorded
+ * Wrap a `LanguageModelV4` so every `doStream` / `doGenerate` call is recorded
  * before delegating to the inner model. Pair with `createEchoModel` (scripted
  * responses) to drive a deterministic agentic loop and inspect the exact
  * per-step request the engine produced — no provider API involved.
@@ -38,17 +38,17 @@ export interface RecordingModel {
  * and extends the history array across iterations) can't corrupt earlier
  * records.
  */
-export function recordingModel(inner: LanguageModelV3): RecordingModel {
+export function recordingModel(inner: LanguageModelV4): RecordingModel {
   const calls: RecordedCall[] = [];
 
-  function record(opts: LanguageModelV3CallOptions): void {
+  function record(opts: LanguageModelV4CallOptions): void {
     const tools = (opts.tools ?? []).filter(
-      (t): t is LanguageModelV3FunctionTool => t.type === "function",
+      (t): t is LanguageModelV4FunctionTool => t.type === "function",
     );
     calls.push(structuredClone({ prompt: opts.prompt, tools }));
   }
 
-  const model: LanguageModelV3 = {
+  const model: LanguageModelV4 = {
     ...inner,
     doGenerate(opts) {
       record(opts);

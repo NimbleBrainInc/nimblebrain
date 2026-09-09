@@ -19,7 +19,7 @@
  * server. `appContext` is the only variable.
  */
 
-import type { LanguageModelV3, LanguageModelV3CallOptions } from "@ai-sdk/provider";
+import type { LanguageModelV4, LanguageModelV4CallOptions } from "@ai-sdk/provider";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -170,14 +170,14 @@ main();
   return dir;
 }
 
-let lastPrompt: LanguageModelV3CallOptions["prompt"] | undefined;
+let lastPrompt: LanguageModelV4CallOptions["prompt"] | undefined;
 let lastToolCount = 0;
 
-function createCapturingModel(): LanguageModelV3 {
+function createCapturingModel(): LanguageModelV4 {
   const echo = createEchoModel();
   return {
     ...echo,
-    doStream: (options: LanguageModelV3CallOptions) => {
+    doStream: (options: LanguageModelV4CallOptions) => {
       // Ignore the auto-title call, which composes no skills.
       const isTitle = options.prompt.some(
         (m) => typeof m.content === "string" && m.content.includes("Generate a 3-6 word title"),

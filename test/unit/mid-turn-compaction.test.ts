@@ -1,4 +1,4 @@
-import type { LanguageModelV3, LanguageModelV3Message } from "@ai-sdk/provider";
+import type { LanguageModelV4, LanguageModelV4Message } from "@ai-sdk/provider";
 import { describe, expect, it } from "bun:test";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import { StaticToolRouter } from "../../src/adapters/static-router.ts";
@@ -38,8 +38,8 @@ const config: EngineConfig = {
  * that opens this turn — the shape the engine is always handed, and the reason
  * a well-formed history alternates right up to where the loop starts appending.
  */
-function openingHistory(pairs: number, chars: number): LanguageModelV3Message[] {
-  const messages: LanguageModelV3Message[] = [];
+function openingHistory(pairs: number, chars: number): LanguageModelV4Message[] {
+  const messages: LanguageModelV4Message[] = [];
   for (let i = 0; i < pairs; i++) {
     messages.push({ role: "user", content: [{ type: "text", text: "u".repeat(chars) }] });
     messages.push({ role: "assistant", content: [{ type: "text", text: "a".repeat(chars) }] });
@@ -48,17 +48,17 @@ function openingHistory(pairs: number, chars: number): LanguageModelV3Message[] 
   return messages;
 }
 
-const sizeOf = (messages: readonly LanguageModelV3Message[]) =>
+const sizeOf = (messages: readonly LanguageModelV4Message[]) =>
   messages.reduce((sum, m) => sum + estimateMessageTokens(m), 0);
 
 /** Echo model that also records the prompt it was called with. */
 function recordingEcho(responses: EchoModelResponse[]) {
   const inner = createEchoModel({ responses });
-  const prompts: LanguageModelV3Message[][] = [];
-  const model: LanguageModelV3 = {
+  const prompts: LanguageModelV4Message[][] = [];
+  const model: LanguageModelV4 = {
     ...inner,
     doStream: (options) => {
-      prompts.push(options.prompt as LanguageModelV3Message[]);
+      prompts.push(options.prompt as LanguageModelV4Message[]);
       return inner.doStream(options);
     },
   };
@@ -79,7 +79,7 @@ function toolThenAnswer(n: number): EchoModelResponse[] {
   return [...responses, { text: "done" }];
 }
 
-function engineWith(model: LanguageModelV3, resultChars: number) {
+function engineWith(model: LanguageModelV4, resultChars: number) {
   return new AgentEngine(
     model,
     new StaticToolRouter([TOOL], () => ({
@@ -93,18 +93,18 @@ function engineWith(model: LanguageModelV3, resultChars: number) {
 /** Count the summarizer calls a turn makes, and answer each with a fixed summary. */
 function countingSummarizer() {
   const folded: number[] = [];
-  const summarize = async (messages: LanguageModelV3Message[]) => {
+  const summarize = async (messages: LanguageModelV4Message[]) => {
     folded.push(messages.length);
     return SUMMARY;
   };
   return { summarize, folded };
 }
 
-const carriesSummary = (prompt: LanguageModelV3Message[]) =>
+const carriesSummary = (prompt: LanguageModelV4Message[]) =>
   JSON.stringify(prompt).includes(SUMMARY);
 
 /** The summary seed is a user turn, so a folded history must still alternate. */
-const alternates = (prompt: LanguageModelV3Message[]) =>
+const alternates = (prompt: LanguageModelV4Message[]) =>
   prompt.every((m, i) => i === 0 || m.role !== "assistant" || prompt[i - 1]?.role !== "assistant");
 
 /**
@@ -114,7 +114,7 @@ const alternates = (prompt: LanguageModelV3Message[]) =>
  * would credit this policy with the bounding windowing already does.
  */
 async function runTurn(
-  history: LanguageModelV3Message[],
+  history: LanguageModelV4Message[],
   responses: EchoModelResponse[],
   resultChars: number,
   extraHooks?: EngineHooks,
@@ -141,7 +141,7 @@ async function runTurn(
 }
 
 /** One loop step: a tool-calling assistant message plus its result. */
-function step(id: string, resultChars: number): LanguageModelV3Message[] {
+function step(id: string, resultChars: number): LanguageModelV4Message[] {
   return [
     {
       role: "assistant",
@@ -271,7 +271,7 @@ describe("mid-turn compaction", () => {
     // A tail opening on a user turn needs the seed's acknowledgement between
     // the summary turn and it. That is the ordinary case: the kept tail is this
     // turn, which starts at the user message that opened it.
-    const bigOpeningTurn: LanguageModelV3Message[] = [
+    const bigOpeningTurn: LanguageModelV4Message[] = [
       ...openingHistory(40, 400).slice(0, -1), // prior turns only
       { role: "user", content: [{ type: "text", text: "q".repeat(6_000) }] },
       ...step("c0", 200),
@@ -280,7 +280,7 @@ describe("mid-turn compaction", () => {
     expect(openingOnUser?.[2]?.role).toBe("user");
     expect(openingOnUser?.[1]?.role).toBe("assistant");
     expect(JSON.stringify(openingOnUser?.slice(0, 2))).toContain("Understood");
-    expect(alternates(openingOnUser as LanguageModelV3Message[])).toBe(true);
+    expect(alternates(openingOnUser as LanguageModelV4Message[])).toBe(true);
 
     // A tail opening on an assistant turn already alternates against the
     // summary turn, so the acknowledgement is dropped rather than doubling it.
@@ -291,7 +291,7 @@ describe("mid-turn compaction", () => {
     const openingOnAssistant = await fold(grown, { iteration: 2 });
     expect(openingOnAssistant?.[1]?.role).toBe("assistant");
     expect(JSON.stringify(openingOnAssistant?.slice(0, 2))).not.toContain("Understood");
-    expect(alternates(openingOnAssistant as LanguageModelV3Message[])).toBe(true);
+    expect(alternates(openingOnAssistant as LanguageModelV4Message[])).toBe(true);
   });
 
   it("test_a_fold_that_lands_over_the_trigger_is_not_repeated", async () => {
@@ -343,11 +343,11 @@ describe("planMidTurnFold", () => {
     // nothing to attach, so it becomes its own group and the walk-back can stop
     // on it. Cutting there would send a tail opening on a tool message whose
     // call was folded away, which the provider rejects.
-    const bare: LanguageModelV3Message = {
+    const bare: LanguageModelV4Message = {
       role: "tool",
       content: [{ type: "text", text: "x".repeat(2_000) }] as never,
     };
-    const history: LanguageModelV3Message[] = [
+    const history: LanguageModelV4Message[] = [
       ...openingHistory(10, 600),
       bare,
       ...step("c0", 2_400),
@@ -365,7 +365,7 @@ describe("planMidTurnFold", () => {
     // Over the trigger, but nearly all of it is the tail that would be kept —
     // folding would summarize a handful of messages and re-anchor the cache for
     // it. `minSummarizedMessages` is what declines that.
-    const history: LanguageModelV3Message[] = [
+    const history: LanguageModelV4Message[] = [
       { role: "user", content: [{ type: "text", text: "u".repeat(400) }] },
       ...step("c0", 12_000),
       ...step("c1", 12_000),
@@ -381,7 +381,7 @@ describe("planMidTurnFold", () => {
     // its JSON reads those bytes as a `{"0":..,"1":..}` object — hundreds of
     // times the tokens the image actually costs — and folds a conversation
     // that is nowhere near its budget.
-    const history: LanguageModelV3Message[] = [
+    const history: LanguageModelV4Message[] = [
       ...openingHistory(3, 40),
       {
         role: "user",
@@ -390,7 +390,7 @@ describe("planMidTurnFold", () => {
           {
             type: "file",
             mediaType: "image/png",
-            data: new Uint8Array(700_000),
+            data: { type: "data", data: new Uint8Array(700_000) },
             filename: "shot.png",
           },
         ],

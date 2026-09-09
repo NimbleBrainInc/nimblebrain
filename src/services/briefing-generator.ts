@@ -1,4 +1,4 @@
-import type { LanguageModelV3, SharedV3ProviderOptions } from "@ai-sdk/provider";
+import type { LanguageModelV4, SharedV4ProviderOptions } from "@ai-sdk/provider";
 import {
   GOOGLE_THINKING_LEVELS,
   getModelByString,
@@ -8,7 +8,7 @@ import {
   xaiSupportedEfforts,
 } from "../model/catalog.ts";
 import { log } from "../observability/log.ts";
-import { type TokenUsage, tokenUsageFromV3 } from "../usage/types.ts";
+import { type TokenUsage, tokenUsageFromV4 } from "../usage/types.ts";
 import type { BriefingContext } from "./briefing-collector.ts";
 import { debugBriefing } from "./briefing-debug.ts";
 import type {
@@ -128,7 +128,7 @@ const BRIEFING_RESPONSE_SCHEMA = {
 };
 
 /** Google's arm of `shortCallProviderOptions`: level dialect or budget dialect, per model. */
-function shortCallGoogleOptions(modelString: string): SharedV3ProviderOptions {
+function shortCallGoogleOptions(modelString: string): SharedV4ProviderOptions {
   // A budget is the Gemini 2.5 dialect, and the two do not overlap: sent to
   // a Gemini 3 model it is rejected outright (`gemini-3.6-flash` 400s on
   // "invalid argument", `gemini-3.1-pro-preview` with "Budget 0 is invalid.
@@ -174,7 +174,7 @@ function shortCallGoogleOptions(modelString: string): SharedV3ProviderOptions {
  * the engine's rule, kept here so one provider isn't split across two files for
  * three lines.
  */
-function shortCallProviderOptions(modelString: string | null): SharedV3ProviderOptions {
+function shortCallProviderOptions(modelString: string | null): SharedV4ProviderOptions {
   if (!modelString) return {};
   const provider = getProviderFromModel(modelString);
   const model = getModelByString(modelString);
@@ -235,7 +235,7 @@ type ScanState = { opens: string[]; inString: boolean; escaped: boolean };
 
 export class BriefingGenerator {
   constructor(
-    private model: LanguageModelV3,
+    private model: LanguageModelV4,
     private modelString: string | null,
     private config: HomeConfig,
     /**
@@ -376,7 +376,7 @@ export class BriefingGenerator {
       ...(Object.keys(providerOptions).length > 0 ? { providerOptions } : {}),
     });
 
-    this.onUsage?.(tokenUsageFromV3(response.usage), Date.now() - startedAt);
+    this.onUsage?.(tokenUsageFromV4(response.usage), Date.now() - startedAt);
 
     const finishReason = response.finishReason?.unified ?? "unknown";
     if (finishReason === "length") {

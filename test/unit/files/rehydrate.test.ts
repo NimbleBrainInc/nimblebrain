@@ -91,7 +91,7 @@ function userMessage(content: StoredMessage["content"]): StoredMessage {
 }
 
 describe("rehydrateUserResources", () => {
-  test("image resource_link -> AI SDK file part with raw bytes", async () => {
+  test("image resource_link -> AI SDK file part carrying inline bytes", async () => {
     const store = fakeStore({
       fl_test1: { data: PNG_BYTES, mimeType: "image/png", filename: "photo.png" },
     });
@@ -116,7 +116,9 @@ describe("rehydrateUserResources", () => {
     if (filePart.type !== "file") return;
     expect(filePart.mediaType).toBe("image/png");
     expect(filePart.filename).toBe("photo.png");
-    expect(Buffer.from(filePart.data as Uint8Array).equals(PNG_BYTES)).toBe(true);
+    expect(filePart.data.type).toBe("data");
+    if (filePart.data.type !== "data") return;
+    expect(Buffer.from(filePart.data.data as Uint8Array).equals(PNG_BYTES)).toBe(true);
   });
 
   test("PDF resource_link -> AI SDK file part for Anthropic Claude", async () => {
@@ -138,7 +140,9 @@ describe("rehydrateUserResources", () => {
     if (filePart.type !== "file") return;
     expect(filePart.mediaType).toBe("application/pdf");
     expect(filePart.filename).toBe("doc.pdf");
-    expect(Buffer.from(filePart.data as Uint8Array).equals(PDF_BYTES)).toBe(true);
+    expect(filePart.data.type).toBe("data");
+    if (filePart.data.type !== "data") return;
+    expect(Buffer.from(filePart.data.data as Uint8Array).equals(PDF_BYTES)).toBe(true);
   });
 
   test("PDF resource_link -> AI SDK file part for supported OpenAI models", async () => {

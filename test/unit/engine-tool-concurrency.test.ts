@@ -1,4 +1,4 @@
-import type { LanguageModelV3Message, LanguageModelV3ToolCall } from "@ai-sdk/provider";
+import type { LanguageModelV4Message, LanguageModelV4ToolCall } from "@ai-sdk/provider";
 import { describe, expect, it } from "bun:test";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import { StaticToolRouter } from "../../src/adapters/static-router.ts";
@@ -17,7 +17,7 @@ const config: EngineConfig = {
   maxOutputTokens: 16_384,
 };
 
-const USER: LanguageModelV3Message[] = [
+const USER: LanguageModelV4Message[] = [
   { role: "user", content: [{ type: "text", text: "go" }] },
 ];
 
@@ -25,7 +25,7 @@ function schema(name: string): ToolSchema {
   return { name, description: name, inputSchema: { type: "object", properties: {} } };
 }
 
-function toolCall(id: string, toolName: string): LanguageModelV3ToolCall {
+function toolCall(id: string, toolName: string): LanguageModelV4ToolCall {
   return { type: "tool-call", toolCallId: id, toolName, input: "{}" };
 }
 
@@ -56,7 +56,7 @@ function trackingRouter(tools: ToolSchema[]) {
 }
 
 /** One assistant turn emitting `calls`, then a plain text answer. */
-function twoTurnModel(calls: LanguageModelV3ToolCall[]) {
+function twoTurnModel(calls: LanguageModelV4ToolCall[]) {
   let turn = 0;
   return createMockModel(async () => {
     turn++;

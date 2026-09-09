@@ -22,7 +22,7 @@ import { runWithRequestContext } from "../../src/runtime/request-context.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { hashSkillBody } from "../../src/runtime/skills-loaded-payload.ts";
 import { extractText } from "../../src/engine/content-helpers.ts";
-import type { LanguageModelV3 } from "@ai-sdk/provider";
+import type { LanguageModelV4 } from "@ai-sdk/provider";
 import { createMockModel } from "../helpers/mock-model.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
 
@@ -32,7 +32,7 @@ afterAll(() => {
   if (existsSync(testDir)) rmSync(testDir, { recursive: true });
 });
 
-function makeModel(): LanguageModelV3 {
+function makeModel(): LanguageModelV4 {
   return createMockModel(() => ({
     content: [{ type: "text", text: "ok" }],
     inputTokens: 10,

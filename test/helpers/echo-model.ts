@@ -1,11 +1,11 @@
 import type {
-  LanguageModelV3,
-  LanguageModelV3CallOptions,
-  LanguageModelV3Content,
-  LanguageModelV3FinishReason,
-  LanguageModelV3StreamPart,
-  LanguageModelV3ToolCall,
-  LanguageModelV3Usage,
+  LanguageModelV4,
+  LanguageModelV4CallOptions,
+  LanguageModelV4Content,
+  LanguageModelV4FinishReason,
+  LanguageModelV4StreamPart,
+  LanguageModelV4ToolCall,
+  LanguageModelV4Usage,
 } from "@ai-sdk/provider";
 
 /**
@@ -51,14 +51,14 @@ export interface EchoModelOptions {
 }
 
 /**
- * Test LanguageModelV3 that echoes the last user message or returns
+ * Test LanguageModelV4 that echoes the last user message or returns
  * pre-programmed responses (including tool calls) from a queue.
  */
-export function createEchoModel(options?: EchoModelOptions): LanguageModelV3 {
+export function createEchoModel(options?: EchoModelOptions): LanguageModelV4 {
   const queue = [...(options?.responses ?? [])];
 
   function extractLastUserText(
-    callOptions: LanguageModelV3CallOptions,
+    callOptions: LanguageModelV4CallOptions,
   ): string {
     const messages = callOptions.prompt;
     for (let i = messages.length - 1; i >= 0; i--) {
@@ -78,7 +78,7 @@ export function createEchoModel(options?: EchoModelOptions): LanguageModelV3 {
     return "[echo]";
   }
 
-  function buildUsage(textLen: number, reasoningTokens?: number): LanguageModelV3Usage {
+  function buildUsage(textLen: number, reasoningTokens?: number): LanguageModelV4Usage {
     const total = textLen + (reasoningTokens ?? 0);
     return {
       inputTokens: { total: textLen, noCache: textLen, cacheRead: undefined, cacheWrite: undefined },
@@ -90,22 +90,22 @@ export function createEchoModel(options?: EchoModelOptions): LanguageModelV3 {
     };
   }
 
-  function buildFinishReason(hasToolCalls: boolean): LanguageModelV3FinishReason {
+  function buildFinishReason(hasToolCalls: boolean): LanguageModelV4FinishReason {
     return {
       unified: hasToolCalls ? "tool-calls" : "stop",
       raw: undefined,
     };
   }
 
-  function buildResult(callOptions: LanguageModelV3CallOptions): {
-    content: LanguageModelV3Content[];
-    finishReason: LanguageModelV3FinishReason;
-    usage: LanguageModelV3Usage;
+  function buildResult(callOptions: LanguageModelV4CallOptions): {
+    content: LanguageModelV4Content[];
+    finishReason: LanguageModelV4FinishReason;
+    usage: LanguageModelV4Usage;
   } {
     const queued = queue.shift();
 
     if (queued) {
-      const content: LanguageModelV3Content[] = [];
+      const content: LanguageModelV4Content[] = [];
 
       if (queued.reasoning !== undefined) {
         content.push({
@@ -128,14 +128,14 @@ export function createEchoModel(options?: EchoModelOptions): LanguageModelV3 {
             toolCallId: tc.toolCallId,
             toolName: tc.toolName,
             input: tc.input,
-          } satisfies LanguageModelV3ToolCall);
+          } satisfies LanguageModelV4ToolCall);
         }
       }
 
       const hasToolCalls = queued.toolCalls && queued.toolCalls.length > 0;
       const textLen = queued.text?.length ?? 0;
 
-      const finishReason: LanguageModelV3FinishReason = queued.finishReason
+      const finishReason: LanguageModelV4FinishReason = queued.finishReason
         ? { unified: queued.finishReason, raw: undefined }
         : buildFinishReason(!!hasToolCalls);
 
@@ -156,7 +156,7 @@ export function createEchoModel(options?: EchoModelOptions): LanguageModelV3 {
   }
 
   return {
-    specificationVersion: "v3",
+    specificationVersion: "v4",
     provider: options?.provider ?? "echo",
     modelId: options?.modelId ?? "echo-1",
     supportedUrls: {},
@@ -171,7 +171,7 @@ export function createEchoModel(options?: EchoModelOptions): LanguageModelV3 {
 
     async doStream(callOptions) {
       const result = buildResult(callOptions);
-      const parts: LanguageModelV3StreamPart[] = [];
+      const parts: LanguageModelV4StreamPart[] = [];
 
       // stream-start
       parts.push({ type: "stream-start", warnings: [] });
@@ -199,7 +199,7 @@ export function createEchoModel(options?: EchoModelOptions): LanguageModelV3 {
           parts.push({ type: "text-delta", id: "text-0", delta: item.text });
           parts.push({ type: "text-end", id: "text-0" });
         } else if (item.type === "tool-call") {
-          const tc = item as LanguageModelV3ToolCall;
+          const tc = item as LanguageModelV4ToolCall;
           // Real providers (Anthropic / OpenAI / Google) emit
           // tool-input-start, then a stream of tool-input-delta, then
           // tool-input-end *before* the assembled tool-call. Mirror
@@ -233,7 +233,7 @@ export function createEchoModel(options?: EchoModelOptions): LanguageModelV3 {
         finishReason: result.finishReason,
       });
 
-      const stream = new ReadableStream<LanguageModelV3StreamPart>({
+      const stream = new ReadableStream<LanguageModelV4StreamPart>({
         start(controller) {
           for (const part of parts) {
             controller.enqueue(part);

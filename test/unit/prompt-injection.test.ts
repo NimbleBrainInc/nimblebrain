@@ -38,7 +38,7 @@ import type {
 } from "../../src/engine/types.ts";
 import { textContent } from "../../src/engine/content-helpers.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
-import type { LanguageModelV3CallOptions } from "@ai-sdk/provider";
+import type { LanguageModelV4CallOptions } from "@ai-sdk/provider";
 
 // ---------------------------------------------------------------------------
 // Shared test fixtures
@@ -1008,7 +1008,7 @@ describe("Tier 2: Engine Behavioral — tool results, hooks", () => {
 
       // Mock model that captures the system prompt on each call
       let callCount = 0;
-      const model = createMockModel((options: LanguageModelV3CallOptions) => {
+      const model = createMockModel((options: LanguageModelV4CallOptions) => {
         // Capture the system prompt from the first message
         const sysMsg = options.prompt.find((m) => m.role === "system");
         if (sysMsg && "content" in sysMsg && typeof sysMsg.content === "string") {
@@ -1069,7 +1069,7 @@ describe("Tier 2: Engine Behavioral — tool results, hooks", () => {
       const capturedMessages: Array<{ role: string; content: unknown }> = [];
 
       let callCount = 0;
-      const model = createMockModel((options: LanguageModelV3CallOptions) => {
+      const model = createMockModel((options: LanguageModelV4CallOptions) => {
         // Capture messages on 2nd call (after tool result is fed back)
         if (callCount > 0) {
           for (const msg of options.prompt) {
@@ -1138,7 +1138,7 @@ describe("Tier 2: Engine Behavioral — tool results, hooks", () => {
       let capturedToolResult = "";
 
       let callCount = 0;
-      const model = createMockModel((options: LanguageModelV3CallOptions) => {
+      const model = createMockModel((options: LanguageModelV4CallOptions) => {
         if (callCount > 0) {
           for (const msg of options.prompt) {
             if (msg.role === "tool" && Array.isArray(msg.content)) {
@@ -1205,7 +1205,7 @@ describe("Tier 2: Engine Behavioral — tool results, hooks", () => {
       let capturedToolResult = "";
 
       let callCount = 0;
-      const model = createMockModel((options: LanguageModelV3CallOptions) => {
+      const model = createMockModel((options: LanguageModelV4CallOptions) => {
         if (callCount > 0) {
           for (const msg of options.prompt) {
             if (msg.role === "tool" && Array.isArray(msg.content)) {
@@ -1277,7 +1277,7 @@ describe("Tier 2: Engine Behavioral — tool results, hooks", () => {
       let capturedToolResult = "";
 
       let callCount = 0;
-      const model = createMockModel((options: LanguageModelV3CallOptions) => {
+      const model = createMockModel((options: LanguageModelV4CallOptions) => {
         if (callCount > 0) {
           for (const msg of options.prompt) {
             if (msg.role === "tool" && Array.isArray(msg.content)) {

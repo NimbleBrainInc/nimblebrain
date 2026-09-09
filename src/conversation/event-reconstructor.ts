@@ -6,7 +6,7 @@
  * builder, and the web client.
  */
 
-import type { LanguageModelV3Content, LanguageModelV3ReasoningPart } from "@ai-sdk/provider";
+import type { LanguageModelV4Content, LanguageModelV4ReasoningPart } from "@ai-sdk/provider";
 import { boundToolResultForModel } from "../engine/content-helpers.ts";
 import { CONNECTOR_SKILL_SYNTHETIC, SKILL_ACTIVATED_SYNTHETIC } from "../engine/types.ts";
 import { normalizeForReplay } from "../model/inbound-fit.ts";
@@ -69,7 +69,7 @@ const ABANDONED_RUN_MARKER = "[Previous turn ended without producing any respons
 
 /**
  * Parse tool-call input from its persisted form.
- * The AI SDK V3 stream emits tool-call input as a JSON string, which gets
+ * The AI SDK V4 stream emits tool-call input as a JSON string, which gets
  * written to the JSONL event log as-is. When reconstructing messages for
  * the LLM API, input must be a parsed object (dictionary), not a string.
  */
@@ -185,7 +185,7 @@ export function reconstructMessages(
 }
 
 /** One executed tool-call block from an llm.response's content array. */
-type ToolCallPart = LanguageModelV3Content & { type: "tool-call" };
+type ToolCallPart = LanguageModelV4Content & { type: "tool-call" };
 
 /** The events collected within a single run span (before message shaping). */
 interface RunCollections {
@@ -598,7 +598,7 @@ function buildPlaceholderMessage(
   metadata: ReturnType<typeof baseResponseMetadata>,
 ): StoredMessage | null {
   const reasoningWithMeta = replayContent.filter(
-    (c): c is LanguageModelV3ReasoningPart => c.type === "reasoning" && c.providerOptions != null,
+    (c): c is LanguageModelV4ReasoningPart => c.type === "reasoning" && c.providerOptions != null,
   );
   const hasAbnormalFinish = llmResp.finishReason != null && llmResp.finishReason !== "stop";
   const hasAnyReasoning = replayContent.some((c) => c.type === "reasoning");
@@ -612,7 +612,7 @@ function buildPlaceholderMessage(
   const reasoningRoundTrips = !hasOrphanedToolCalls && reasoningWithMeta.length > 0;
   // Inferred type: ReasoningPart[] | [{type:"text",text:string}]. Both are
   // assignable to the assistant variant's content union; an explicit
-  // `LanguageModelV3Content[]` annotation here is the wrong type (stream-side,
+  // `LanguageModelV4Content[]` annotation here is the wrong type (stream-side,
   // doesn't include `providerOptions`).
   const placeholderContent = reasoningRoundTrips
     ? reasoningWithMeta

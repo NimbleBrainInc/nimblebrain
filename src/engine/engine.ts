@@ -1,12 +1,12 @@
 import type {
   JSONSchema7,
-  LanguageModelV3,
-  LanguageModelV3Content,
-  LanguageModelV3FunctionTool,
-  LanguageModelV3Message,
-  LanguageModelV3ToolCall,
-  LanguageModelV3ToolResultPart,
-  SharedV3ProviderOptions,
+  LanguageModelV4,
+  LanguageModelV4Content,
+  LanguageModelV4FunctionTool,
+  LanguageModelV4Message,
+  LanguageModelV4ToolCall,
+  LanguageModelV4ToolResultPart,
+  SharedV4ProviderOptions,
 } from "@ai-sdk/provider";
 import { DEFAULT_MAX_DIRECT_TOOLS, MAX_ITERATIONS, MAX_LENGTH_CONTINUATIONS } from "../limits.ts";
 import { applyCachePolicy } from "../model/cache-policy.ts";
@@ -31,7 +31,7 @@ import { coerceInputForSchema } from "../tools/coerce-input.ts";
 import { bareToolName } from "../tools/namespace.ts";
 import { validateToolInput } from "../tools/validate-input.ts";
 import type { TokenUsage } from "../usage/types.ts";
-import { addUsage, emptyUsage, tokenUsageFromV3 } from "../usage/types.ts";
+import { addUsage, emptyUsage, tokenUsageFromV4 } from "../usage/types.ts";
 import { mapWithConcurrency } from "../util/concurrency.ts";
 import { splitInnerToolName } from "../util/tool-name.ts";
 import {
@@ -240,7 +240,7 @@ function buildAnthropicThinkingOptions(
   model: string,
   thinking: ResolvedThinking,
   maxOutputTokens: number,
-): SharedV3ProviderOptions {
+): SharedV4ProviderOptions {
   const effortShaped = !supportsEnabledThinking(model);
 
   switch (thinking.mode) {
@@ -281,7 +281,7 @@ function buildAnthropicThinkingOptions(
 function buildOpenAIThinkingOptions(
   model: string,
   thinking: ResolvedThinking,
-): SharedV3ProviderOptions {
+): SharedV4ProviderOptions {
   switch (thinking.mode) {
     case "off":
       // `reasoningEffort: "none"` exists but the adapter documents it as
@@ -320,7 +320,7 @@ function buildOpenAIThinkingOptions(
  * `sync-nebius`, so there is no unmeasured id to fail closed against. Its floor
  * is `low`, so `off` has nothing to send.
  */
-function buildNebiusThinkingOptions(thinking: ResolvedThinking): SharedV3ProviderOptions {
+function buildNebiusThinkingOptions(thinking: ResolvedThinking): SharedV4ProviderOptions {
   switch (thinking.mode) {
     case "off":
     case "adaptive":
@@ -359,7 +359,7 @@ function buildNebiusThinkingOptions(thinking: ResolvedThinking): SharedV3Provide
 function buildXaiThinkingOptions(
   model: string,
   thinking: ResolvedThinking,
-): SharedV3ProviderOptions {
+): SharedV4ProviderOptions {
   const supported = xaiSupportedEfforts(model);
   if (!supported || supported.size === 0) return {};
 
@@ -386,7 +386,7 @@ const warnedUnmappedGoogle = new Set<string>();
 function googleLevelOptions(
   thinking: ResolvedThinking,
   levels: ReadonlySet<GoogleThinkingLevel>,
-): SharedV3ProviderOptions {
+): SharedV4ProviderOptions {
   if (thinking.mode === "adaptive") return {};
   if (thinking.mode === "off") {
     // `minimal` is the only level meaning "barely think", and not every Gemini 3
@@ -411,7 +411,7 @@ function googleBudgetOptions(
   thinking: ResolvedThinking,
   support: { min: number; max: number; canDisable: boolean },
   maxOutputTokens: number,
-): SharedV3ProviderOptions {
+): SharedV4ProviderOptions {
   switch (thinking.mode) {
     case "off":
       // 2.5 Pro cannot stop thinking; a zero budget there is rejected.
@@ -455,7 +455,7 @@ function buildGoogleThinkingOptions(
   model: string,
   thinking: ResolvedThinking,
   maxOutputTokens: number,
-): SharedV3ProviderOptions {
+): SharedV4ProviderOptions {
   const support = googleThinkingSupport(model);
   if (!support) {
     // Fail closed, but not silently. This is the likelier path than the
@@ -495,7 +495,7 @@ function buildThinkingProviderOptions(
   model: string,
   thinking: ResolvedThinking | undefined,
   maxOutputTokens: number,
-): SharedV3ProviderOptions {
+): SharedV4ProviderOptions {
   if (!thinking) return {};
   switch (getProviderFromModel(model)) {
     case "anthropic":
@@ -526,7 +526,7 @@ function buildThinkingProviderOptions(
  * any reasoning block we can't confirm is signed counts as unsigned, so the
  * caller surfaces the truncation instead of risking a 400.
  */
-function hasUnsignedReasoning(content: LanguageModelV3Content[]): boolean {
+function hasUnsignedReasoning(content: LanguageModelV4Content[]): boolean {
   for (const block of content) {
     if (block.type !== "reasoning") continue;
     const meta = (block as { providerMetadata?: Record<string, unknown> }).providerMetadata;
@@ -546,7 +546,7 @@ function hasUnsignedReasoning(content: LanguageModelV3Content[]): boolean {
 function canResumeFromLength(
   finishReason: FinishReason | undefined,
   lengthContinuations: number,
-  content: LanguageModelV3Content[],
+  content: LanguageModelV4Content[],
 ): boolean {
   return (
     finishReason === "length" &&
@@ -586,8 +586,8 @@ function deriveStopReason(finish: FinishReason | undefined): StopReason {
  * Removes empty text content blocks that cause "text content blocks must be non-empty" errors.
  * This can happen when conversation history contains assistant messages from tool-only turns.
  */
-function sanitizeMessages(messages: LanguageModelV3Message[]): LanguageModelV3Message[] {
-  return messages.map((msg): LanguageModelV3Message => {
+function sanitizeMessages(messages: LanguageModelV4Message[]): LanguageModelV4Message[] {
+  return messages.map((msg): LanguageModelV4Message => {
     // System messages have string content — pass through unchanged
     if (msg.role === "system") return msg;
     if (!Array.isArray(msg.content)) return msg;
@@ -604,12 +604,12 @@ function sanitizeMessages(messages: LanguageModelV3Message[]): LanguageModelV3Me
       return {
         ...msg,
         content: [{ type: "text" as const, text: "(empty)" }],
-      } as LanguageModelV3Message;
+      } as LanguageModelV4Message;
     }
 
     return filtered.length === msg.content.length
       ? msg
-      : ({ ...msg, content: filtered } as LanguageModelV3Message);
+      : ({ ...msg, content: filtered } as LanguageModelV4Message);
   });
 }
 
@@ -622,7 +622,7 @@ function sanitizeMessages(messages: LanguageModelV3Message[]): LanguageModelV3Me
  * are no candidates.
  */
 function seedInjectedConnectorSkills(
-  history: LanguageModelV3Message[],
+  history: LanguageModelV4Message[],
   connectorSkillCandidates: ConnectorSkillCandidate[],
   injectedConnectorSkills: Set<string>,
 ): void {
@@ -690,10 +690,10 @@ function resolveCallPrompt(config: EngineConfig, systemPrompt: string): string {
  * No-op on any earlier iteration.
  */
 function appendFinalStepReminder(
-  callMessages: LanguageModelV3Message[],
+  callMessages: LanguageModelV4Message[],
   iteration: number,
   maxIter: number,
-): LanguageModelV3Message[] {
+): LanguageModelV4Message[] {
   if (iteration !== maxIter - 1) return callMessages;
   const finalStep =
     "<system-reminder>This is your final step. Do NOT call any more tools. " +
@@ -710,9 +710,9 @@ function appendFinalStepReminder(
 }
 
 /**
- * Map the AI SDK V3 usage shape into our canonical TokenUsage, plus the
- * engine-only 1h/5m cache-write split the base V3 struct doesn't carry.
- * V3's `inputTokens.total` is the grand total (noCache+cacheRead+cacheWrite);
+ * Map the AI SDK V4 usage shape into our canonical TokenUsage, plus the
+ * engine-only 1h/5m cache-write split the base V4 struct doesn't carry.
+ * V4's `inputTokens.total` is the grand total (noCache+cacheRead+cacheWrite);
  * we preserve that on TokenUsage.inputTokens and surface the cache subsets as
  * siblings. Cost computation subtracts the subsets from the totals — see
  * src/usage/cost.ts. Anthropic reports the cache-write TTL split under
@@ -727,13 +727,13 @@ function computeTurnUsage(usage: StreamResult["usage"]): TokenUsage {
   )?.cache_creation;
   const cacheWrite1h = rawCreation?.ephemeral_1h_input_tokens;
   return {
-    ...tokenUsageFromV3(usage),
+    ...tokenUsageFromV4(usage),
     ...(cacheWrite1h != null ? { cacheWrite1hTokens: cacheWrite1h } : {}),
   };
 }
 
 /** Parse a tool call's `input` into an object, tolerating the stream's JSON-string form. */
-function parseToolCallInput(input: LanguageModelV3ToolCall["input"]): Record<string, unknown> {
+function parseToolCallInput(input: LanguageModelV4ToolCall["input"]): Record<string, unknown> {
   return (typeof input === "string" ? JSON.parse(input) : (input ?? {})) as Record<string, unknown>;
 }
 
@@ -851,10 +851,10 @@ function buildToolDoneData(params: {
  * type stays a string.
  */
 function buildToolResults(toolResults: ToolExecResult[]): {
-  toolResultParts: LanguageModelV3ToolResultPart[];
+  toolResultParts: LanguageModelV4ToolResultPart[];
   toolCallRecords: ToolCallRecord[];
 } {
-  const toolResultParts: LanguageModelV3ToolResultPart[] = [];
+  const toolResultParts: LanguageModelV4ToolResultPart[] = [];
   const toolCallRecords: ToolCallRecord[] = [];
 
   for (const {
@@ -927,7 +927,7 @@ interface ToolExecContext {
 
 /** One tool call's outcome, consumed by buildToolResults to shape history + records. */
 interface ToolExecResult {
-  toolCall: LanguageModelV3ToolCall;
+  toolCall: LanguageModelV4ToolCall;
   gatedCall: ToolCall;
   result: ToolResult;
   ms: number;
@@ -938,7 +938,7 @@ interface ToolExecResult {
 
 export class AgentEngine {
   constructor(
-    private model: LanguageModelV3,
+    private model: LanguageModelV4,
     private tools: ToolRouter,
     private events: EventSink,
   ) {}
@@ -946,7 +946,7 @@ export class AgentEngine {
   async run(
     config: EngineConfig,
     systemPrompt: string,
-    messages: LanguageModelV3Message[],
+    messages: LanguageModelV4Message[],
     tools: ToolSchema[],
   ): Promise<EngineResult> {
     // Never mutate the caller's array
@@ -1199,7 +1199,7 @@ export class AgentEngine {
         //    hook is also re-invoked on a context-overflow recovery (see
         //    the call loop below) with `overflowAttempt: 1` so the hook
         //    can return more aggressively trimmed messages.
-        const runTransform = (attempt: number): LanguageModelV3Message[] =>
+        const runTransform = (attempt: number): LanguageModelV4Message[] =>
           config.hooks?.transformContext
             ? config.hooks.transformContext([...history], { overflowAttempt: attempt })
             : history;
@@ -1223,7 +1223,7 @@ export class AgentEngine {
         // `llm.done` alongside the provider's reported usage — the pair is
         // what makes estimator drift measurable instead of inferred.
         let estimatedInputTokens = 0;
-        const callOnce = (msgs: LanguageModelV3Message[]) => {
+        const callOnce = (msgs: LanguageModelV4Message[]) => {
           // Provider-scoped prompt-cache policy: places the rolling step-anchor
           // + tail breakpoints (Anthropic) so the growing prefix is read back,
           // not re-written, each iteration. See model/cache-policy.ts.
@@ -1256,7 +1256,7 @@ export class AgentEngine {
                   tools: cachedTools,
                   maxOutputTokens: config.maxOutputTokens,
                   // Forward the run-scoped signal into the model call. AI
-                  // SDK V3 providers honor `abortSignal` by aborting the
+                  // SDK V4 providers honor `abortSignal` by aborting the
                   // underlying fetch, so an in-flight stream cancels at
                   // the network layer instead of blocking the engine
                   // until the model finishes. Pairs with the iteration-
@@ -1310,7 +1310,7 @@ export class AgentEngine {
 
         // Track the model's per-call finish reason for downstream
         // observability and the run-level stop reason derivation below.
-        // `unified` is non-optional in the V3 spec and stream.ts defaults
+        // `unified` is non-optional in the V4 spec and stream.ts defaults
         // to "other" if no finish part arrives, so no fallback needed.
         lastFinishReason = response.finishReason.unified;
 
@@ -1339,7 +1339,7 @@ export class AgentEngine {
 
         // 2. Extract tool calls
         const toolCalls = response.content.filter(
-          (b): b is LanguageModelV3ToolCall => b.type === "tool-call",
+          (b): b is LanguageModelV4ToolCall => b.type === "tool-call",
         );
 
         if (toolCalls.length === 0) {
@@ -1578,7 +1578,7 @@ export class AgentEngine {
    * history itself, so only what the loop appended since is new information.
    */
   private async applyHistoryRewrite(
-    history: LanguageModelV3Message[],
+    history: LanguageModelV4Message[],
     iteration: number,
     config: EngineConfig,
   ): Promise<void> {
@@ -1601,11 +1601,11 @@ export class AgentEngine {
   private buildIterationTools(
     directTools: ToolSchema[],
     supervisor: RunSupervisor,
-  ): { modelTools: LanguageModelV3FunctionTool[]; toolSchemaMap: Map<string, ToolSchema> } {
+  ): { modelTools: LanguageModelV4FunctionTool[]; toolSchemaMap: Map<string, ToolSchema> } {
     const trippedSet = new Set(supervisor.snapshot().trippedTools);
     const usableDirectTools =
       trippedSet.size === 0 ? directTools : directTools.filter((t) => !trippedSet.has(t.name));
-    const modelTools: LanguageModelV3FunctionTool[] = usableDirectTools.map((t) => ({
+    const modelTools: LanguageModelV4FunctionTool[] = usableDirectTools.map((t) => ({
       type: "function" as const,
       name: t.name,
       description: t.description,
@@ -1668,9 +1668,9 @@ export class AgentEngine {
    * a clear "conversation too long" message rather than silently looping.
    */
   private async callModelWithOverflowRecovery(
-    callOnce: (msgs: LanguageModelV3Message[]) => Promise<StreamResult>,
-    initialMessages: LanguageModelV3Message[],
-    runTransform: (attempt: number) => LanguageModelV3Message[],
+    callOnce: (msgs: LanguageModelV4Message[]) => Promise<StreamResult>,
+    initialMessages: LanguageModelV4Message[],
+    runTransform: (attempt: number) => LanguageModelV4Message[],
     config: EngineConfig,
     runId: string,
   ): Promise<StreamResult> {
@@ -1737,7 +1737,7 @@ export class AgentEngine {
    */
   private accumulateAssistantText(
     currentOutput: string,
-    content: LanguageModelV3Content[],
+    content: LanguageModelV4Content[],
     resumingFromLength: boolean,
     runId: string,
   ): string {
@@ -1899,7 +1899,7 @@ export class AgentEngine {
    * so the cap covers 6 concurrent `nb__*` calls of any kind.
    */
   private async executeToolCallsBounded(
-    toolCalls: LanguageModelV3ToolCall[],
+    toolCalls: LanguageModelV4ToolCall[],
     ctx: ToolExecContext,
   ): Promise<ToolExecResult[]> {
     const results = new Array<ToolExecResult>(toolCalls.length);
@@ -1909,7 +1909,7 @@ export class AgentEngine {
       // already stripped of any `ws_<id>-` prefix, which holds here because that
       // form is rejected at the door before a call reaches the engine.
       const { sourcePrefix } = splitInnerToolName(
-        (toolCalls[i] as LanguageModelV3ToolCall).toolName,
+        (toolCalls[i] as LanguageModelV4ToolCall).toolName,
       );
       const group = bySource.get(sourcePrefix);
       if (group) group.push(i);
@@ -1926,7 +1926,7 @@ export class AgentEngine {
             // error result rather than throwing for tool-level problems), so no
             // per-item try/catch is needed to keep siblings running.
             results[callIndex] = await this.executeToolCall(
-              toolCalls[callIndex] as LanguageModelV3ToolCall,
+              toolCalls[callIndex] as LanguageModelV4ToolCall,
               ctx,
             );
           },
@@ -1944,7 +1944,7 @@ export class AgentEngine {
    * per-source cap) from the iteration's bounded dispatch above.
    */
   private async executeToolCall(
-    toolCall: LanguageModelV3ToolCall,
+    toolCall: LanguageModelV4ToolCall,
     ctx: ToolExecContext,
   ): Promise<ToolExecResult> {
     let parsedInput: Record<string, unknown>;
