@@ -275,13 +275,27 @@ const ROUTE_NAME_GLOB_PATTERN = "^[a-zA-Z0-9._*-]{1,200}$";
 /**
  * The only placeholders a `kind: "tool"` input may carry.
  *
- * Resolved from the notification's presentation block — which is why `data` is
- * absent: the runtime does not read a connector's payload, so it cannot
- * template out of one. Mustache-style, no logic. A route naming anything else
- * is rejected at write time rather than rendering the literal braces into
+ * Four are resolved from the notification's presentation block — which is why
+ * `data` is absent: the runtime does not read a connector's payload, so it
+ * cannot template out of one. Mustache-style, no logic. A route naming anything
+ * else is rejected at write time rather than rendering the literal braces into
  * somebody's Slack channel.
+ *
+ * **`inbox.url` is the host's own, and it is the only one a reader outside the
+ * shell can act on.** `link.resource` is whatever URI the emitting server chose
+ * — usually a `ui://` or a scheme of its own — and only the web shell can
+ * resolve one of those into a page. Delivered to Slack, mail or WhatsApp it is
+ * inert text. `inbox.url` is an absolute `https://` address of the item in this
+ * workspace's inbox, so a route that reaches a human somewhere else can give
+ * them a way back.
  */
-export const NOTIFICATION_PLACEHOLDERS = ["title", "body", "subject", "link.resource"] as const;
+export const NOTIFICATION_PLACEHOLDERS = [
+  "title",
+  "body",
+  "subject",
+  "link.resource",
+  "inbox.url",
+] as const;
 export type NotificationPlaceholder = (typeof NOTIFICATION_PLACEHOLDERS)[number];
 
 export const NotificationRouteMatch = Type.Object(
@@ -434,6 +448,41 @@ export type NotificationsSetSourceLevelInput = Static<typeof NotificationsSetSou
 
 export const NotificationsSettingsInput = Type.Object({}, { additionalProperties: false });
 export type NotificationsSettingsInput = Static<typeof NotificationsSettingsInput>;
+
+export const NotificationsSendTestInput = Type.Object(
+  {
+    routeId: Type.String({
+      maxLength: ROUTE_NAME_MAX,
+      description: "The route to test, by its id. Only this route is dispatched.",
+    }),
+  },
+  { additionalProperties: false, required: ["routeId"] },
+);
+export type NotificationsSendTestInput = Static<typeof NotificationsSendTestInput>;
+
+/**
+ * What one test send did — the inbox item it created and where each of the
+ * route's targets ended up.
+ *
+ * `matched: false` is the answer worth having and the reason this returns a
+ * shape rather than a bare ok: a route whose minimum level is above its source's
+ * ceiling writes no ledger row at all, which from the outside is
+ * indistinguishable from a route that fired and delivered nothing.
+ */
+export interface NotificationsSendTestOutput {
+  /** `<source>:<eventId>` of the item written to the inbox. */
+  notificationId: string;
+  /** The source it was attributed to, and whose ceiling therefore applied. */
+  source: string;
+  /** The level the item was stored at, after the ceiling clamped it. */
+  effectiveLevel: NotificationLevel;
+  /** Whether the route matched the test item at all. */
+  matched: boolean;
+  /** Why not, when `matched` is false — operator-facing prose. */
+  reason?: string;
+  /** Each target's ledger row, as it stood when the dispatch returned. */
+  deliveries: DeliveryRecord[];
+}
 
 // -- Settings output ------------------------------------------------------
 

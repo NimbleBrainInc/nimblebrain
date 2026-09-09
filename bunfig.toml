@@ -25,4 +25,16 @@ preload = ["./instrument/sentry.ts"]
 minimumReleaseAge = 1209600
 # `latest` here tracks the installed bun rather than naming a version, and
 # holding it back would pin types older than the runtime they describe.
-minimumReleaseAgeExcludes = ["@types/bun"]
+#
+# `@nimblebrain/synapse` is ours. The window buys time for a compromised or
+# typo-squatted publish to be caught and yanked, and neither vector reaches a
+# package we publish ourselves: there is no name to squat on that we would then
+# install, and the publish runs on npm trusted publishing (OIDC, provenance
+# attestation, no static token), so forging one means compromising the release
+# workflow of a repo we own — which two weeks of waiting does not help us
+# notice. What the window does cost here is real: this repo cannot consume a
+# fix on the day we ship it, including a fix we shipped FOR this repo.
+#
+# Scoped to the one package, not to `@nimblebrain/*`. A future first-party
+# dependency should be a decision someone makes, not one this line already made.
+minimumReleaseAgeExcludes = ["@types/bun", "@nimblebrain/synapse"]

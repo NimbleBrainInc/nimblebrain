@@ -137,3 +137,52 @@ describe("deriveDataChangedTarget", () => {
 		});
 	});
 });
+
+describe("deriveDataChangedTarget — the bridge door stays silent", () => {
+	// A UI door's traffic is mostly READS, and a read that triggers a refresh
+	// triggers a read. `files/ui` refetches on any `data.changed` for its own app
+	// with no mutation filter, so broadcasting a bridge call would spin it.
+	// That is the AGENTS.md rule "`/v1/tools/call` must NOT emit `data.changed`
+	// (causes infinite loops)", and it is enforced HERE, by omission — which is
+	// invisible, hence this test.
+	test("bridge.tool.done does NOT broadcast, however successful", () => {
+		const event: EngineEvent = {
+			type: "bridge.tool.done",
+			data: { name: "db-query__save_query", id: "c1", ok: true, ms: 4, workspaceId: WS },
+		};
+		expect(deriveDataChangedTarget(event)).toBeNull();
+	});
+
+	test("...and neither does bridge.tool.call", () => {
+		const event: EngineEvent = {
+			type: "bridge.tool.call",
+			data: { name: "db-query__save_query", id: "c1", workspaceId: WS },
+		};
+		expect(deriveDataChangedTarget(event)).toBeNull();
+	});
+});
+
+describe("deriveDataChangedTarget — which workspace changed", () => {
+	test("the workspace rides along, so a listener can ignore another's change", () => {
+		const event: EngineEvent = {
+			type: "tool.done",
+			data: { name: "db-query__save_query", ok: true, workspaceId: WS },
+		};
+		expect(deriveDataChangedTarget(event)?.wsId).toBe(WS);
+	});
+
+	test("an identity-door call carries no workspace, and that is an answer", () => {
+		// `conversations` / `files` / `automations` belong to no workspace. Absent
+		// means "everyone" — the behaviour every consumer had before the field
+		// existed — not "unknown, drop it".
+		const event: EngineEvent = {
+			type: "tool.done",
+			data: { name: "files__create", ok: true },
+		};
+		expect(deriveDataChangedTarget(event)).toEqual({
+			server: "files",
+			tool: "create",
+			wsId: undefined,
+		});
+	});
+});

@@ -207,13 +207,29 @@ export function startServer(options: ServerOptions): ServerHandle {
       // parent `useDataSync` forwarder — not here.
       log.debug(
         "sse",
-        `broadcast data.changed from=${event.type} server=${target.server} tool=${target.tool} clients=${sseManager.clientCount}`,
+        `broadcast data.changed from=${event.type} server=${target.server} tool=${target.tool} ws=${target.wsId ?? "-"} clients=${sseManager.clientCount}`,
       );
-      sseManager.broadcast("data.changed", {
-        server: target.server,
-        tool: target.tool,
-        timestamp: new Date().toISOString(),
-      });
+      sseManager.broadcast(
+        "data.changed",
+        {
+          server: target.server,
+          tool: target.tool,
+          // Which workspace the change happened in, so a listener can ignore
+          // one that is not its own.
+          wsId: target.wsId,
+          timestamp: new Date().toISOString(),
+        },
+        // Fan out to members of that workspace only. `/v1/events` is
+        // IDENTITY-scoped, so every signed-in user's tab is on this manager —
+        // without the argument the whole payload, workspace id included,
+        // reaches identities with no claim to it.
+        //
+        // `undefined` degrades to a global fan-out, which is exactly right for
+        // an identity-door event (`conversations`, `files`, `automations`):
+        // it belongs to no workspace, and every client that could act on it
+        // should still get it.
+        target.wsId,
+      );
     }
   };
 

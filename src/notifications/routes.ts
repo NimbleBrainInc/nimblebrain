@@ -59,6 +59,7 @@ import type {
   NotificationLevel,
 } from "../platform/schemas/notifications.ts";
 import type { WorkspaceStore } from "../workspace/workspace-store.ts";
+import { notificationInboxUrl } from "../workspace/workspace-url.ts";
 import { type NotificationRoute, readNotificationsConfig, setRouteDisabled } from "./config.ts";
 import { matchesNotification } from "./match.ts";
 import type { NotificationRef, NotificationStore } from "./store.ts";
@@ -291,6 +292,31 @@ export class RouteDispatcher {
   }
 
   /**
+   * Deliver one item through ONE route, ignoring every other route the
+   * workspace holds.
+   *
+   * The affordance behind "send a test message". It runs the real evaluation —
+   * the same ceiling, the same match, the same unattended dispatch, the same
+   * ledger — so what comes back is what a real notification of that shape would
+   * do, not a simulation of it. Restricted to the named route because the
+   * operator asked about that one: firing every other matching route would post
+   * to channels they did not ask to be tested.
+   *
+   * Awaits the tool targets, so a caller that awaits this can read the ledger
+   * immediately. Agent targets are offered into their debounce window and stay
+   * `deferred`, which is the honest answer for a target whose run has not begun.
+   */
+  async dispatchOne(wsId: string, item: Notification, routeId: string): Promise<void> {
+    await this.#enqueue(wsId, async () => {
+      try {
+        await this.#evaluate(wsId, item, routeId);
+      } catch (err) {
+        log.warn(`[notifications] test dispatch failed: ${errorText(err)}`, { wsId, routeId });
+      }
+    });
+  }
+
+  /**
    * Run every retry that has come due. Public for tests; the timer calls it.
    *
    * The entry is taken out of the index before its attempt runs, and
@@ -372,9 +398,14 @@ export class RouteDispatcher {
 
   // -- evaluation --------------------------------------------------------
 
-  async #evaluate(wsId: string, item: Notification): Promise<void> {
+  async #evaluate(wsId: string, item: Notification, onlyRouteId?: string): Promise<void> {
     const ws = await this.#deps.workspaceStore.get(wsId);
-    const routes = readNotificationsConfig(ws).routes ?? [];
+    const declared = readNotificationsConfig(ws).routes ?? [];
+    // A test names one route. Narrowing the LIST rather than the match keeps
+    // every rule below identical to a real delivery's — the ceiling still
+    // clamps, `routeMatches` still decides, and a route whose ceiling blocks it
+    // still writes nothing. That is the answer an operator is testing for.
+    const routes = onlyRouteId ? declared.filter((r) => r.id === onlyRouteId) : declared;
     if (routes.length === 0) return;
 
     const matched = matchTargets(routes, item);
@@ -516,7 +547,9 @@ export class RouteDispatcher {
     priorAttempts: number,
   ): Promise<void> {
     const presentation = notificationPresentation(item.envelope);
-    const rendered = renderDeliverInput(target.input, presentation);
+    const rendered = renderDeliverInput(target.input, presentation, {
+      inboxUrl: inboxUrlFor(wsId, item),
+    });
     if (rendered.misses > 0) {
       notificationsTemplateMissesTotal.inc(rendered.misses);
       log.warn(
@@ -876,6 +909,32 @@ function rowIndex(row: DeliveryRecord): number {
  * `skipped` is a dormant author, which comes back on its own; `error` is a
  * call that did not complete and is worth a retry until the budget runs out.
  */
+/**
+ * The item's address in the workspace inbox, or `""` when one cannot be built.
+ *
+ * `webOrigin()` throws on a malformed configured origin — a boot-time
+ * misconfiguration rather than anything about this delivery. Swallowing it here
+ * is deliberate: a route that reaches Slack with an empty link has delivered
+ * most of what it was asked to, while one that threw would be recorded as a
+ * `tool_error` and retried three times, reporting a channel outage for a
+ * configuration fault nobody would find from the ledger.
+ *
+ * Logged once per occurrence at `warn` rather than counted: if it is broken it
+ * is broken for every delivery in the process, so a counter would only measure
+ * traffic.
+ */
+function inboxUrlFor(wsId: string, item: Notification): string {
+  try {
+    return notificationInboxUrl(wsId, notificationId(item));
+  } catch (err) {
+    log.warn(
+      `[notifications] could not build an inbox URL for a route template: ${errorText(err)}`,
+      { wsId },
+    );
+    return "";
+  }
+}
+
 function ledgerOutcome(result: UnattendedDispatchResult, attempts: number): DeliveryOutcome {
   switch (result.outcome) {
     case "ok":

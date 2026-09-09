@@ -1,4 +1,4 @@
-import { useDataSync, useFileUpload, useSynapse } from "@nimblebrain/synapse/react";
+import { useApp, useDataSync, useFileUpload } from "@nimblebrain/synapse/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { DetailOverlay } from "./DetailOverlay";
 import { FileGrid } from "./FileGrid";
@@ -9,7 +9,7 @@ import type { FileEntry, FilterKey, ListResult } from "./types";
 const SEARCH_DEBOUNCE_MS = 300;
 
 export function Dashboard() {
-  const synapse = useSynapse();
+  const app = useApp();
   const { pickFiles } = useFileUpload();
 
   const [files, setFiles] = useState<FileEntry[]>([]);
@@ -29,7 +29,7 @@ export function Dashboard() {
     setLoading(true);
     setError(null);
     try {
-      const result = await synapse.callTool<{ limit: number }, ListResult>("list", {
+      const result = await app.callTool<ListResult>("list", {
         limit: 200,
       });
       if (result.isError) {
@@ -43,17 +43,14 @@ export function Dashboard() {
     } finally {
       setLoading(false);
     }
-  }, [synapse]);
+  }, [app]);
 
   const searchFiles = useCallback(
     async (query: string) => {
       setLoading(true);
       setError(null);
       try {
-        const result = await synapse.callTool<{ query: string; limit: number }, ListResult>(
-          "search",
-          { query, limit: 100 },
-        );
+        const result = await app.callTool<ListResult>("search", { query, limit: 100 });
         if (result.isError) {
           setError("Search failed");
           return;
@@ -66,7 +63,7 @@ export function Dashboard() {
         setLoading(false);
       }
     },
-    [synapse],
+    [app],
   );
 
   // Initial load
@@ -125,7 +122,7 @@ export function Dashboard() {
     if (!window.confirm(`Delete ${detailFile.filename}? This cannot be undone.`)) return;
     setDeleting(true);
     try {
-      const result = await synapse.callTool<{ id: string }, { ok: boolean }>("delete", {
+      const result = await app.callTool<{ ok: boolean }>("delete", {
         id: detailFile.id,
       });
       if (result.isError) {
@@ -139,7 +136,7 @@ export function Dashboard() {
     } finally {
       setDeleting(false);
     }
-  }, [detailFile, deleting, synapse, loadFiles]);
+  }, [detailFile, deleting, app, loadFiles]);
 
   // Compose the visible file list = type filter ∩ tag filter.
   const visibleFiles = useMemo(() => {

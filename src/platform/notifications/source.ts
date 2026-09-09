@@ -11,6 +11,7 @@ import {
 } from "../../notifications/config.ts";
 import { NotificationPoller } from "../../notifications/poller.ts";
 import { RouteDispatcher } from "../../notifications/routes.ts";
+import { sendTestNotification } from "../../notifications/send-test.ts";
 import type { NotificationRef, NotificationStore } from "../../notifications/store.ts";
 import { collectPollTargets } from "../../notifications/targets.ts";
 import { notificationId, parseNotificationId } from "../../notifications/types.ts";
@@ -29,6 +30,7 @@ import {
   type NotificationsListOutput,
   NotificationsMarkReadInput,
   type NotificationsMarkReadOutput,
+  NotificationsSendTestInput,
   NotificationsSetRoutesInput,
   NotificationsSetSourceLevelInput,
   NotificationsSettingsInput,
@@ -92,6 +94,12 @@ const SET_SOURCE_LEVEL_DESCRIPTION =
   "Set how high one source's notifications may reach a route. A new source starts at " +
   `"${DEFAULT_SOURCE_MAX_LEVEL}"; raising the ceiling is the grant that lets a route asking ` +
   "for urgency fire for it. Workspace admin only.";
+
+const SEND_TEST_DESCRIPTION =
+  "Send a test notification through one route, to check that it delivers. Writes a real " +
+  "item to this workspace's inbox, clearly marked as a test, and dispatches only the named " +
+  "route — the same ceiling, the same gates and the same delivery ledger a real notification " +
+  "would meet. Workspace admin only.";
 
 const SET_ROUTES_DESCRIPTION =
   "Replace this workspace's delivery routes. Each route matches on source, event-name glob " +
@@ -268,6 +276,19 @@ export function createNotificationsSource(runtime: Runtime, eventSink: EventSink
     };
   }
 
+  const dispatcher = new RouteDispatcher({
+    workspaceStore: runtime.getWorkspaceStore(),
+    storeFor: (wsId) => runtime.getNotificationStore(wsId),
+    dispatch: (opts) => runtime.dispatchUnattended(opts),
+    // The only path from a delivery to an agent run. Reached through the
+    // runtime rather than imported so neither platform source depends on the
+    // other's construction order, and so a runtime built without automations
+    // answers the route rather than failing it.
+    wakeAutomation: (req) => runtime.wakeAutomationOnNotification(req),
+    workspaceIds: async () => (await runtime.getWorkspaceStore().list()).map((ws) => ws.id),
+    eventSink,
+  });
+
   const tools: InProcessTool[] = [
     {
       name: "list",
@@ -395,6 +416,35 @@ export function createNotificationsSource(runtime: Runtime, eventSink: EventSink
         );
       },
     },
+    {
+      name: "send_test",
+      description: SEND_TEST_DESCRIPTION,
+      meta: { [INTERNAL_TOOL_ANNOTATION]: true },
+      inputSchema: NotificationsSendTestInput,
+      handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
+        const auth = await requireAdmin();
+        if (!auth.ok) return refuse(auth.reason);
+        const { routeId } = input as unknown as NotificationsSendTestInput;
+        const config = readNotificationsConfig(await runtime.getWorkspaceStore().get(auth.wsId));
+        const route = (config.routes ?? []).find((r) => r.id === routeId);
+        if (!route) return refuse(`This workspace has no route "${routeId}".`);
+
+        const out = await sendTestNotification({
+          wsId: auth.wsId,
+          route,
+          config,
+          requestedBy: currentIdentityId(),
+          store: runtime.getNotificationStore(auth.wsId),
+          dispatcher,
+          declaredSources: (await runtime.listNotificationSources(auth.wsId)).map((e) => e.source),
+        });
+        return {
+          content: textContent(JSON.stringify(out, null, 2)),
+          structuredContent: out as unknown as Record<string, unknown>,
+          isError: false,
+        };
+      },
+    },
   ];
 
   const source = defineInProcessApp({ name: "notifications", version: "1.0.0", tools }, eventSink);
@@ -408,19 +458,6 @@ export function createNotificationsSource(runtime: Runtime, eventSink: EventSink
   // ever grows a path that throws. Today it clears a timer and releases
   // listeners, and is benign; the asymmetry between "poller error" and "leaked
   // transport" is what the guard is for.
-  const dispatcher = new RouteDispatcher({
-    workspaceStore: runtime.getWorkspaceStore(),
-    storeFor: (wsId) => runtime.getNotificationStore(wsId),
-    dispatch: (opts) => runtime.dispatchUnattended(opts),
-    // The only path from a delivery to an agent run. Reached through the
-    // runtime rather than imported so neither platform source depends on the
-    // other's construction order, and so a runtime built without automations
-    // answers the route rather than failing it.
-    wakeAutomation: (req) => runtime.wakeAutomationOnNotification(req),
-    workspaceIds: async () => (await runtime.getWorkspaceStore().list()).map((ws) => ws.id),
-    eventSink,
-  });
-
   const poller = new NotificationPoller({
     targets: () =>
       collectPollTargets(runtime.getLifecycle(), (serverName) =>

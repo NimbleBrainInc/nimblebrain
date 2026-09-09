@@ -110,19 +110,10 @@ workspace receives — legal, and rarely what you want.
 | **Minimum level** | `attention` also matches `urgent`. Omit for any level. |
 
 The event-name glob has two wildcards, and the difference between them is
-whether a dot may be crossed:
-
-| Pattern | Matches | Does not match |
-|---|---|---|
-| `domain.active` | `domain.active` | anything else |
-| `domain.*` | `domain.active`, `domain.pending` | `domain.dns.ready`, `domain` |
-| `domain.**` | `domain.active`, `domain.dns.ready` | `domain` |
-| `*.received` | `reply.received` | `mail.reply.received` |
-| `**` | every name | — |
-
-`*` matches within one dotted segment; `**` matches across as many as it likes.
-Nothing else is a wildcard — a pattern is otherwise matched as literal text, so
-a `.` means a dot and not "any character".
+whether a dot may be crossed: `*` matches within one dotted segment, `**`
+matches across as many as it likes. Nothing else is a wildcard — a `.` means a
+dot and not "any character". The
+[full table](/using/notification-reference#event-name-globs) has every case.
 
 **The level a route matches against is the clamped one.** If the source's
 ceiling is `info` and the connector sent `urgent`, a route asking for
@@ -135,7 +126,7 @@ Pick any tool installed in this workspace and give it the arguments its own
 schema expects, as a JSON object. A tool the workspace does not have is refused
 when you save.
 
-Four placeholders are replaced with the notification's fields:
+Five placeholders are replaced with the notification's fields:
 
 | Placeholder | Value |
 |---|---|
@@ -143,15 +134,28 @@ Four placeholders are replaced with the notification's fields:
 | `{{body}}` | Its body, if the connector wrote one. |
 | `{{subject}}` | What it is about, if the connector said. |
 | `{{link.resource}}` | The linked resource URI, if the connector supplied one. |
+| `{{inbox.url}}` | A web address for this item in your inbox. **The only one that works outside NimbleBrain.** |
 
 ```json
 {
-  "channel": "#outbound",
-  "text": "{{title}}\n{{body}}\n{{link.resource}}"
+  "channel": "alerts",
+  "markdown_text": "{{title}}\n{{body}}\n{{inbox.url}}"
 }
 ```
 
-Those four are the whole list. There is no placeholder for the connector's
+:::tip[Use `{{inbox.url}}`, not `{{link.resource}}`, for anything a person reads elsewhere]
+`{{link.resource}}` is whatever address the *connector* chose. Those are usually
+internal URIs like `acme://campaigns/42` — the inbox turns one into an **Open**
+button because it knows how, but Slack, email and WhatsApp cannot, so it arrives
+as unhelpful text.
+
+`{{inbox.url}}` is a normal `https://` link the platform builds, pointing at this
+item in your inbox. Someone who clicks it lands on the notification, expanded,
+with its body, the connector's raw data, and the delivery ledger — and can go
+deeper from there. Put it in every route that leaves the platform.
+:::
+
+Those five are the whole list. There is no placeholder for the connector's
 `data` payload, because the runtime does not read it. Any other `{{…}}` is
 refused when you save rather than delivered as literal braces in somebody's
 Slack channel.
@@ -189,6 +193,26 @@ An event automation also carries a **fire ceiling** — by default twelve runs a
 hour — and exceeding it disables the automation rather than throttling it. See
 [Automations](/using/automations#the-fire-ceiling) for why that is the shape.
 
+### Check it works, before you need it
+
+Every way a route can fail is invisible from this page. The connector is
+installed but nobody finished connecting the account behind it. The tool does not
+take the argument your template writes. Your grant to a personal connector was
+revoked. The ceiling above sits below the level this route asks for. All four
+save cleanly, look correct, and quietly deliver nothing — and you find out when
+somebody asks why they never heard.
+
+**Send test** on a saved route answers that. It puts a real item in your inbox,
+clearly marked as a test, and dispatches *only that route* — the same ceiling,
+the same permission gates, the same delivery ledger a real notification meets.
+Then it tells you what happened, in one line —
+[what each answer means and what to do about it](/using/notification-troubleshooting#start-with-send-test).
+
+It tests **what is saved**, not what is on screen, so save your edits first — a
+route only fires from the stored copy. A test also does not check that the
+connector's outbox is being *polled*; that is a different question, answered by
+whether the inbox fills at all.
+
 ### Who a route runs as
 
 Every route carries an author, and it dispatches under that person's identity —
@@ -215,14 +239,10 @@ That ledger is the point of routing being visible at all. A notification that
 reached the inbox and never reached the Slack channel it was routed to looks
 exactly like one nobody routed, unless the attempt was recorded.
 
-| Line reads | Means | Retries? |
-|---|---|---|
-| **sending** | A tool attempt is in flight or the next one is due. | yes |
-| **batching for the automation** | An automation target, inside its debounce window. The run has not started. | — |
-| **delivered** | The tool ran and did not report a failure, or the automation's run started. | — |
-| **refused** | A permission gate said no — the author may not use that tool, or the route names no event automation of theirs. | no |
-| **skipped** | The route's author has left the workspace, or the automation is off or did not want the item. | no |
-| **failed** | The call did not complete and the retry budget is spent, or the run was owed and did not happen. | no |
+Every line it can read, and whether each retries, is in
+[the reference](/using/notification-reference#delivery-outcomes); what to do
+about one is in
+[when a notification doesn't arrive](/using/notification-troubleshooting).
 
 **A target gets three attempts across about five minutes** — immediately, a
 minute later, and four minutes after that — and then reads *failed*. That is
@@ -267,6 +287,12 @@ them: it cannot raise a ceiling and it cannot author a route.
 
 ## Related
 
+- [Delivering to a channel](/using/notification-channels) — Slack, Teams, email,
+  WhatsApp and anywhere else, with the arguments each one takes.
+- [When a notification doesn't arrive](/using/notification-troubleshooting) —
+  Send test, the delivery ledger, and where a notification stops.
+- [Route reference](/using/notification-reference) — every field, match rule,
+  placeholder and outcome, precisely.
 - [Notifications for app authors](/apps/notifications) — declaring an outbox,
   the event envelope, and the levels, from the connector's side.
 - [Connectors](/using/connectors) — installing the connector a route delivers through.
