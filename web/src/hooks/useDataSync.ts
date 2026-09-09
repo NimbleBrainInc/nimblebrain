@@ -99,14 +99,20 @@ export function useDataSync(): (event: DataChangedEvent) => void {
       // The same app installed in two workspaces has the same bare `data-app`,
       // so a write in workspace A would otherwise postMessage-match a mounted
       // workspace-B iframe and send it to re-fetch data that did not change.
-      // The broadcast stays global on purpose — the server cannot see which
-      // workspaces a client may read — so the decision belongs here, where the
-      // active workspace is actually known.
+      //
+      // The SECOND of two filters, not the only one: the server already scopes
+      // the fan-out to the caller's workspace MEMBERSHIPS. Membership is the
+      // broader set — a user in both A and B legitimately receives both — so
+      // narrowing to the workspace actually on screen belongs here, where the
+      // active workspace is known.
       //
       // Only drop on a POSITIVE mismatch. An event with no `wsId` is an
       // identity-door call and belongs to no workspace; a browser with no active
       // workspace has nothing to compare. Either way, deliver — the old
-      // behaviour, kept for the cases the field cannot speak to.
+      // behaviour, kept for the cases the field cannot speak to. That second
+      // case also covers bootstrap, where the active workspace lags the route by
+      // a render: an event arriving in that window is delivered rather than
+      // dropped.
       const activeWsId = getActiveWorkspaceId();
       if (event.wsId && activeWsId && event.wsId !== activeWsId) {
         debug("sync", `drop: ws=${event.wsId} is not the active ${activeWsId}`);

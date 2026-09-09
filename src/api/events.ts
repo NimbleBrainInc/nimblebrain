@@ -81,11 +81,16 @@ const SSE_ROUTES: Partial<Record<EngineEventType, SseRoute>> = {
   // pending-auth banner; without forwarding here, the banner never auto-clears
   // after a user completes interactive OAuth.
   "connection.state_changed": { scope: "workspace", wsIdField: "wsId" },
-  // Tool dispatch fan-out used by Synapse `useDataSync`. The data-sync
-  // refresh path is workspace-bound at the bridge level (each iframe ships
-  // X-Workspace-Id), but the payload doesn't carry wsId today — keeping the
-  // existing "broadcast to all clients in this process" behavior to avoid
-  // silently breaking iframe refresh. Revisit when payload grows wsId.
+  // Tool dispatch fan-out used by Synapse `useDataSync`. The payload carries
+  // `wsId`, and the emit site passes it to `broadcast()` — so delivery IS
+  // membership-filtered even though the ROUTE stays global.
+  //
+  // The route cannot be `scope: "workspace"`: that drops any event whose
+  // `wsIdField` is missing (see the note above), and an identity-door change
+  // (`conversations`, `files`, `automations`) belongs to no workspace, so those
+  // would stop being delivered entirely. Passing the id per-call gets the
+  // filtering without that cliff — an absent id fans out, a present one is
+  // scoped.
   "data.changed": { scope: "global" },
   // Live conversation-title update (auto-title generation completes after the
   // turn). Scoped by the event's `wsId`, which the runtime sets to the OWNER'S

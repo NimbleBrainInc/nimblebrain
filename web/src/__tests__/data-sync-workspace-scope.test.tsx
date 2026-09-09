@@ -1,10 +1,14 @@
 // ---------------------------------------------------------------------------
 // useDataSync — a change in another workspace is not your change
 //
-// The same app installed in two workspaces has the same bare `data-app`, and
-// `data.changed` is broadcast globally (`scope: "global"` in SSE_ROUTES). The
-// server cannot narrow it: it does not know which workspaces a given client may
-// read. So the browser decides, where the active workspace is actually known.
+// The same app installed in two workspaces has the same bare `data-app`, so a
+// change in one must not send the other's iframe to re-fetch.
+//
+// Two filters, and this is the narrower one. The server already scopes the
+// fan-out to the caller's workspace MEMBERSHIPS (`broadcast`'s third argument,
+// pinned in test/unit/sse-event-manager.test.ts). Membership is the broader
+// set — a user in both A and B receives both — so narrowing to the workspace
+// actually on screen still has to happen here.
 //
 // The filter is deliberately POSITIVE-mismatch only. Two cases must still be
 // delivered, and both are load-bearing:
