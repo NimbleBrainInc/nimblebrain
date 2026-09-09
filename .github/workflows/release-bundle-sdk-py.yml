@@ -36,9 +36,9 @@ jobs:
       run:
         working-directory: packages/bundle-sdk-py
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Install uv
-        uses: astral-sh/setup-uv@v9.0.0  # setup-uv dropped floating major tags (v8+); pin exact
+        uses: astral-sh/setup-uv@v10.0.1  # setup-uv dropped floating major tags (v8+); pin exact
         with:
           enable-cache: true
       - name: Install Python
@@ -67,9 +67,9 @@ jobs:
       run:
         working-directory: packages/bundle-sdk-py
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Install uv
-        uses: astral-sh/setup-uv@v9.0.0  # setup-uv dropped floating major tags (v8+); pin exact
+        uses: astral-sh/setup-uv@v10.0.1  # setup-uv dropped floating major tags (v8+); pin exact
       - name: Verify tag matches package version
         # Catches `bundle-sdk-py/v0.1.0` tagged against a pyproject.toml
         # still on `0.0.x`. Tag is the source of truth for version

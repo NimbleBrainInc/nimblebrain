@@ -58,7 +58,7 @@ jobs:
       # Check out the tagged commit (the `ref` covers both triggers). Shallow, same
       # as ci.yml's build — so `git rev-parse --short HEAD` yields the same 7-char
       # SHA ci.yml tagged the edge image with.
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           ref: ${{ github.event.inputs.tag || github.ref }}
       - uses: docker/setup-buildx-action@v4
@@ -251,7 +251,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           ref: ${{ github.event.inputs.tag || github.ref }}
           fetch-depth: 0
