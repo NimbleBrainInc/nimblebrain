@@ -101,7 +101,18 @@ export default defineConfig({
                   { label: 'File Context', slug: 'using/file-context' },
                   { label: 'Skills', slug: 'using/skills' },
                   { label: 'Automations', slug: 'using/automations' },
-                  { label: 'Notifications', slug: 'using/notifications' },
+                  {
+                    label: 'Notifications',
+                    items: [
+                      { label: 'Overview', slug: 'using/notifications' },
+                      { label: 'Delivering to a channel', slug: 'using/notification-channels' },
+                      {
+                        label: "When one doesn't arrive",
+                        slug: 'using/notification-troubleshooting',
+                      },
+                      { label: 'Route reference', slug: 'using/notification-reference' },
+                    ],
+                  },
                 ],
               },
               {

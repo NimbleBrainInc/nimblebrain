@@ -1,0 +1,177 @@
+---
+title: Delivering notifications to a channel
+description: How to send a notification to Slack, Teams, email or anywhere else — the pattern is the same for every destination, because a route delivers through a tool.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+A notification lands in the workspace inbox on its own. Getting it to Slack, to
+a mailbox, to a chat app on somebody's phone — that is a **route**, and this
+page is the recipe for each destination.
+
+## The one thing to understand first
+
+There is no list of supported notification channels, and no channel plugin. A
+route delivers by **calling a tool on a connector the workspace already has**.
+
+That means the answer to "can it send to X?" is always the same question: *is
+there a connector with a tool that sends to X?* If yes, a route can use it
+today, and nothing in the platform needed to know about X in advance. If no,
+the answer is to add one — see [when your channel is not
+here](#when-your-channel-is-not-here).
+
+It also means the destination is only ever as good as the tool. The platform
+renders your template and makes the call; what happens after that belongs to
+the connector.
+
+## The shape of every route
+
+Whatever the destination, you write the same three things under **Settings →
+Notifications**:
+
+1. **Match** — which notifications this route is for.
+2. **Deliver to** — a tool, picked from the ones this workspace has.
+3. **Arguments** — a JSON object matching *that tool's own* input schema, with
+   [placeholders](/using/notification-reference#placeholders) for the
+   notification's fields.
+
+```json
+{
+  "channel": "alerts",
+  "markdown_text": "*{{title}}*\n{{body}}\n{{inbox.url}}"
+}
+```
+
+<Aside type="tip" title="Always include `{{inbox.url}}`">
+It is the only placeholder that produces a link a person can open from outside
+NimbleBrain. `{{link.resource}}` is whatever address the *connector* chose —
+usually an internal URI that the inbox can turn into a button and that Slack,
+email and chat apps render as unhelpful text.
+
+`{{inbox.url}}` points at the item in your inbox, opened and expanded, with its
+body, the connector's raw data and the delivery ledger. It is the difference
+between a message that reports something and one somebody can act on.
+</Aside>
+
+<Aside type="caution" title="The arguments are the tool's, and nothing checks them for you">
+Saving a route checks that the tool exists in this workspace and that every
+`{{…}}` is one the platform resolves. It does **not** check your arguments
+against the tool's schema — that schema belongs to the connector. A route with
+the wrong field name saves cleanly and fails on every delivery.
+
+[Send test](/using/notification-troubleshooting#start-with-send-test) is how you
+find that out in ten seconds instead of at three in the morning.
+</Aside>
+
+## Slack
+
+Install the Slack connector under **Settings → Connectors**, then connect the
+Slack account it asks for. Confirm it works — a connector can be installed and
+list its tools while the account behind it was never connected.
+
+| | |
+|---|---|
+| **Deliver to** | `SLACK_SEND_MESSAGE` |
+| **Arguments** | `channel`, and one of `markdown_text` or `blocks` |
+
+```json
+{
+  "channel": "alerts",
+  "markdown_text": "*{{title}}*\n{{body}}\n{{inbox.url}}"
+}
+```
+
+Notes worth having before you write it:
+
+- **The channel takes a name or an id, without the `#`.** Use the id
+  (`C0ABC12345`) for a private channel, or if your Slack is on Enterprise Grid,
+  where name lookup fails. `SLACK_LIST_ALL_CHANNELS` finds ids.
+- **Invite the app to the channel.** Slack refuses to post to a channel the app
+  is not in, and the error says so.
+- **The message body field is `markdown_text`, not `text`.** This is exactly
+  the class of mistake the paragraph above warns about.
+- Slack auto-links what looks like a URL or an address, so a title containing
+  an email arrives with it linked. That is Slack, not the platform.
+
+## Microsoft Teams
+
+Install the Teams connector and connect the account.
+
+| | |
+|---|---|
+| **Deliver to** | the connector's send-message tool |
+| **Arguments** | the target conversation or channel, and the message body |
+
+The shape is the same as Slack's; only the field names differ. Read them off
+the tool in the **Deliver to** picker rather than assuming, then confirm with
+Send test.
+
+## Email
+
+Two connectors send mail — Gmail and Outlook — and either works as a route
+target. Email suits notifications that need to reach somebody who is not in
+your chat tool, and it carries more text comfortably than a chat message.
+
+| | |
+|---|---|
+| **Deliver to** | the connector's send-email tool |
+| **Arguments** | recipient, subject, body |
+
+```json
+{
+  "recipient": "ops@example.com",
+  "subject": "{{title}}",
+  "body": "{{body}}\n\nOpen it: {{inbox.url}}"
+}
+```
+
+<Aside type="caution" title="Mail is sent by the route's author">
+A route dispatches under whoever saved it, so mail sent this way comes from
+*their* mailbox, and the connector must be connected for them. See
+[who a route runs as](/using/notifications#who-a-route-runs-as).
+</Aside>
+
+## WhatsApp
+
+Install the WhatsApp connector and connect the account.
+
+WhatsApp has rules the other channels do not, and they are the vendor's, not
+the platform's: recipients must have opted in, business-initiated messages
+outside a 24-hour window have to use a pre-approved template, and each message
+is priced. A notification route is business-initiated by definition, so plan on
+templates. Check the connector's own tool descriptions for how it takes them.
+
+## Somewhere that is not a chat app
+
+The destination does not have to be a message at all. A route delivers through
+any tool, so any of these is a legitimate target:
+
+| Destination | Tool | Why |
+|---|---|---|
+| A tracker | create-issue on a Jira, Asana or GitHub connector | The notification becomes work somebody is assigned |
+| A spreadsheet | append-row on a Sheets connector | A running log you can pivot |
+| A CRM | log-activity on a CRM connector | The event lands on the customer record |
+
+The arguments are that tool's, and `{{title}}` / `{{body}}` / `{{subject}}` /
+`{{inbox.url}}` are available in all of them.
+
+## When your channel is not here
+
+If nothing installed can reach your destination, the answer is a **connector
+that can** — an MCP server exposing a send tool. That is the same door every
+channel above came through; none of them is special-cased in the platform.
+
+This is deliberate. A platform with a fixed list of channels owes you a new
+release for every destination; one that delivers through tools grows a channel
+the day somebody writes a server for it. The cost is that the quality of a
+channel is the quality of its connector.
+
+See [Building apps](/apps/overview) for writing one.
+
+## Related
+
+- [Notifications](/using/notifications) — what notifications are, and the ceiling that governs them
+- [When a notification doesn't arrive](/using/notification-troubleshooting) — Send test, and reading the delivery ledger
+- [Route reference](/using/notification-reference) — every field, match rule and placeholder
+- [Connectors](/using/connectors) — installing the connector a route delivers through
+- [Personal connectors](/using/personal-connectors) — what a `my_` tool in a route needs
