@@ -56,7 +56,7 @@ export default defineConfig({
   build: { target: "es2022" },
   resolve: {
     alias: {
-      "@": path.resolve(__dirname, "./src"),
+      "@": path.resolve(import.meta.dirname, "./src"),
     },
   },
   server: {
