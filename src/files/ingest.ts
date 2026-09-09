@@ -201,7 +201,7 @@ async function ingestOneFile(
   const extracted = await extractInto(file, saved, store, config, parts);
 
   // Rehydratable files → MCP `resource_link` content part. The runtime
-  // turns supported resource links into AI SDK V3 `file` parts (with bytes
+  // turns supported resource links into AI SDK V4 `file` parts (with bytes
   // loaded from the FileStore) at the `model.doStream` boundary, so binary
   // content survives multi-turn agentic loops without the conversation log
   // carrying bytes or extracted PDF text inline.

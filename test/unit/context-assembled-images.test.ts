@@ -40,8 +40,8 @@ describe("context.assembled — image-attached message regression", () => {
         role: "user",
         content: [
           { type: "text", text: "Look at these screenshots — what's broken?" },
-          { type: "file", mediaType: "image/png", data: a, filename: "before.png" },
-          { type: "file", mediaType: "image/png", data: b, filename: "after.png" },
+          { type: "file", mediaType: "image/png", data: { type: "data", data: a }, filename: "before.png" },
+          { type: "file", mediaType: "image/png", data: { type: "data", data: b }, filename: "after.png" },
         ],
       },
     ];

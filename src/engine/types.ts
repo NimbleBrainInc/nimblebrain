@@ -706,7 +706,7 @@ export interface ContextAssembledSource {
 }
 
 /**
- * Per-LLM-call finish reason (mirrors AI SDK V3 `LanguageModelV4FinishReason.unified`).
+ * Per-LLM-call finish reason (mirrors AI SDK V4 `LanguageModelV4FinishReason.unified`).
  * Persisted on `llm.response` events so post-hoc analysis can tell a clean
  * stop from a length-truncated turn from a content-filter rejection.
  */
@@ -726,7 +726,7 @@ export type FinishReason = "stop" | "length" | "content-filter" | "tool-calls" |
  * `error` here is the *finish-reason* error category, not a thrown engine
  * error — the latter still emits `run.error` instead.
  *
- * Note the casing asymmetry vs `FinishReason`: the V3 spec uses
+ * Note the casing asymmetry vs `FinishReason`: the V4 spec uses
  * kebab-case (`content-filter`, `tool-calls`); our run-level union uses
  * snake_case to match the legacy `max_iterations` value already in
  * persisted JSONL. They're related but not identical — see

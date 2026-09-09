@@ -1,7 +1,7 @@
 /**
  * Normalize provider response content for the next iteration's prompt.
  *
- * The Vercel AI SDK V3 has a field-name asymmetry: provider-specific
+ * The Vercel AI SDK V4 has a field-name asymmetry: provider-specific
  * metadata arrives on inbound (stream) parts as `providerMetadata`
  * (Anthropic's thinking-block signature, Google's thoughtSignature, etc.),
  * but the prompt-side converters that build the next request read from

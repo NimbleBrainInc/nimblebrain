@@ -710,9 +710,9 @@ function appendFinalStepReminder(
 }
 
 /**
- * Map the AI SDK V3 usage shape into our canonical TokenUsage, plus the
- * engine-only 1h/5m cache-write split the base V3 struct doesn't carry.
- * V3's `inputTokens.total` is the grand total (noCache+cacheRead+cacheWrite);
+ * Map the AI SDK V4 usage shape into our canonical TokenUsage, plus the
+ * engine-only 1h/5m cache-write split the base V4 struct doesn't carry.
+ * V4's `inputTokens.total` is the grand total (noCache+cacheRead+cacheWrite);
  * we preserve that on TokenUsage.inputTokens and surface the cache subsets as
  * siblings. Cost computation subtracts the subsets from the totals — see
  * src/usage/cost.ts. Anthropic reports the cache-write TTL split under
@@ -1256,7 +1256,7 @@ export class AgentEngine {
                   tools: cachedTools,
                   maxOutputTokens: config.maxOutputTokens,
                   // Forward the run-scoped signal into the model call. AI
-                  // SDK V3 providers honor `abortSignal` by aborting the
+                  // SDK V4 providers honor `abortSignal` by aborting the
                   // underlying fetch, so an in-flight stream cancels at
                   // the network layer instead of blocking the engine
                   // until the model finishes. Pairs with the iteration-
@@ -1310,7 +1310,7 @@ export class AgentEngine {
 
         // Track the model's per-call finish reason for downstream
         // observability and the run-level stop reason derivation below.
-        // `unified` is non-optional in the V3 spec and stream.ts defaults
+        // `unified` is non-optional in the V4 spec and stream.ts defaults
         // to "other" if no finish part arrives, so no fallback needed.
         lastFinishReason = response.finishReason.unified;
 

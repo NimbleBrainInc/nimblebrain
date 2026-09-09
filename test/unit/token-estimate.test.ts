@@ -82,7 +82,14 @@ describe("estimateMessageTokens — image regression", () => {
     padded.set(bytes, 0);
     const msg: LanguageModelV4Message = {
       role: "user",
-      content: [{ type: "file", mediaType: "image/png", data: padded, filename: "screenshot.png" }],
+      content: [
+        {
+          type: "file",
+          mediaType: "image/png",
+          data: { type: "data", data: padded },
+          filename: "screenshot.png",
+        },
+      ],
     };
     const tokens = estimateMessageTokens(msg);
     // 1024×768 = 786,432 pixels; 786,432/750 = 1049 → clamped to [800, 1600].
@@ -99,7 +106,7 @@ describe("estimateMessageTokens — image regression", () => {
     padded.set(bytes, 0);
     const msg: LanguageModelV4Message = {
       role: "user",
-      content: [{ type: "file", mediaType: "image/png", data: padded }],
+      content: [{ type: "file", mediaType: "image/png", data: { type: "data", data: padded } }],
     };
     const tokens = estimateMessageTokens(msg);
     expect(tokens).toBe(1600);
@@ -116,8 +123,8 @@ describe("estimateMessageTokens — image regression", () => {
       role: "user",
       content: [
         { type: "text", text: "Look at these screenshots" },
-        { type: "file", mediaType: "image/png", data: a, filename: "a.png" },
-        { type: "file", mediaType: "image/png", data: b, filename: "b.png" },
+        { type: "file", mediaType: "image/png", data: { type: "data", data: a }, filename: "a.png" },
+        { type: "file", mediaType: "image/png", data: { type: "data", data: b }, filename: "b.png" },
       ],
     };
     expect(estimateMessageTokens(msg)).toBeLessThan(10_000);
@@ -127,7 +134,11 @@ describe("estimateMessageTokens — image regression", () => {
     const msg: LanguageModelV4Message = {
       role: "user",
       content: [
-        { type: "file", mediaType: "image/png", data: new Uint8Array(200_000) },
+        {
+          type: "file",
+          mediaType: "image/png",
+          data: { type: "data", data: new Uint8Array(200_000) },
+        },
       ],
     };
     const tokens = estimateMessageTokens(msg);
@@ -154,7 +165,7 @@ describe("estimateMessageTokens — non-image files", () => {
         {
           type: "file",
           mediaType: "application/pdf",
-          data: new Uint8Array(5_000_000),
+          data: { type: "data", data: new Uint8Array(5_000_000) },
           filename: "report.pdf",
         },
       ],
@@ -236,7 +247,12 @@ describe("estimateMessageTokens — tool-result parts", () => {
             type: "content",
             value: [
               { type: "text", text: "screenshot taken" },
-              { type: "file-data", data: fakeBase64, mediaType: "image/png", filename: "out.png" },
+              {
+                type: "file",
+                data: { type: "data", data: fakeBase64 },
+                mediaType: "image/png",
+                filename: "out.png",
+              },
             ],
           },
         },
@@ -280,7 +296,7 @@ describe("estimateMessageTokens — tiny PNG dimension decoding", () => {
   test("decodes 1×1 PNG header and applies the clamp", () => {
     const msg: LanguageModelV4Message = {
       role: "user",
-      content: [{ type: "file", mediaType: "image/png", data: makeTinyPng() }],
+      content: [{ type: "file", mediaType: "image/png", data: { type: "data", data: makeTinyPng() } }],
     };
     // 1×1 pixels → ceil(1/750) = 1 → clamped up to 800.
     expect(estimateMessageTokens(msg)).toBe(800);

@@ -357,7 +357,7 @@ function formatPart(p: TranscriptPart): string {
     }
     case "tool-result": {
       const name = typeof p.toolName === "string" ? p.toolName : "";
-      // V3 tool-result output is `{ type, value }`; fall back to whole part.
+      // V4 tool-result output is `{ type, value }`; fall back to whole part.
       const out = p.output;
       const value =
         out && typeof out === "object" && "value" in out

@@ -82,7 +82,7 @@ export function resolveRates(modelString: string): UsageRates | null {
  * Decompose token usage into per-bucket cost in USD. Returns all-zeros
  * for unknown models.
  *
- * Pricing model — input side: per AI SDK V3 (LanguageModelV4Usage),
+ * Pricing model — input side: per AI SDK V4 (LanguageModelV4Usage),
  * `inputTokens` is the GRAND TOTAL of all input-side tokens, equal to
  * `noCache + cacheRead + cacheWrite`. The Anthropic provider explicitly
  * computes it that way:
@@ -94,7 +94,7 @@ export function resolveRates(modelString: string): UsageRates | null {
  * cache subtotals exceed the recorded total.
  *
  * Pricing model — output side: reasoning tokens are a SUBSET of
- * `outputTokens` per the V3 spec (`outputTokens.total = text + reasoning`).
+ * `outputTokens` per the V4 spec (`outputTokens.total = text + reasoning`).
  * When a model has a distinct `cost.reasoning` rate, reasoning tokens are
  * billed at that rate and the remainder of `outputTokens` at `cost.output`
  * — splitting rather than adding. When the model lacks `cost.reasoning`,

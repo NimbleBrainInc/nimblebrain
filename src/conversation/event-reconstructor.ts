@@ -69,7 +69,7 @@ const ABANDONED_RUN_MARKER = "[Previous turn ended without producing any respons
 
 /**
  * Parse tool-call input from its persisted form.
- * The AI SDK V3 stream emits tool-call input as a JSON string, which gets
+ * The AI SDK V4 stream emits tool-call input as a JSON string, which gets
  * written to the JSONL event log as-is. When reconstructing messages for
  * the LLM API, input must be a parsed object (dictionary), not a string.
  */

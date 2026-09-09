@@ -390,7 +390,7 @@ describe("planMidTurnFold", () => {
           {
             type: "file",
             mediaType: "image/png",
-            data: new Uint8Array(700_000),
+            data: { type: "data", data: new Uint8Array(700_000) },
             filename: "shot.png",
           },
         ],

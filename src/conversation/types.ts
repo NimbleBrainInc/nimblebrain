@@ -240,7 +240,7 @@ export interface Conversation {
  * (typically `files://<id>`) by URI. The bytes live in the resource's
  * owning store; the conversation log carries only the link.
  *
- * The runtime rehydrates image links to AI SDK V3 `file` parts at the
+ * The runtime rehydrates image links to AI SDK V4 `file` parts at the
  * `model.doStream` boundary so vision content reaches the model without
  * the JSONL ever holding raw bytes.
  */
@@ -379,17 +379,17 @@ export interface LlmResponseEvent {
   runId: string;
   model: string;
   /**
-   * V3 content blocks. Includes `text`, `tool-call`, and `reasoning`
+   * V4 content blocks. Includes `text`, `tool-call`, and `reasoning`
    * (extended thinking) parts. Reasoning blocks are surfaced to the UI
    * collapsed-by-default; bare absence on a turn with non-stop
    * finishReason is what indicates a real empty turn.
    */
   content: LanguageModelV4Content[];
-  /** Token usage for this single LLM call (canonical AI SDK V3 shape). */
+  /** Token usage for this single LLM call (canonical AI SDK V4 shape). */
   usage: TokenUsage;
   llmMs: number;
   /**
-   * Per-call finish reason from the provider (AI SDK V3 unified value).
+   * Per-call finish reason from the provider (AI SDK V4 unified value).
    * Optional for backward-compat with conversations recorded before this
    * field existed.
    */

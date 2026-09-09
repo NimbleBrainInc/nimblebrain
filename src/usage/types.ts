@@ -2,7 +2,7 @@
  * Canonical token-usage shape — used by engine, runtime, conversation
  * events, storage, and cost computation.
  *
- * Provider-aligned with AI SDK V3 (LanguageModelV4Usage):
+ * Provider-aligned with AI SDK V4 (LanguageModelV4Usage):
  *   inputTokens  = grand total of input-side tokens
  *                = noCache + cacheRead + cacheWrite
  *   outputTokens = grand total of output-side tokens
@@ -148,7 +148,7 @@ export interface TokenUsage {
 }
 
 /**
- * Map an AI SDK V3 `doGenerate`/`doStream` usage struct into the canonical
+ * Map an AI SDK V4 `doGenerate`/`doStream` usage struct into the canonical
  * `TokenUsage`.
  *
  * Deliberately omits `cacheWrite1hTokens` — that 1h/5m split comes from

@@ -193,12 +193,13 @@ export function imageTokensFromDimensions(width: number, height: number): number
 }
 
 function tokensForImageFilePart(part: LanguageModelV4FilePart): number {
-  // `data` may be Uint8Array, base64 string, or URL. We only attempt decode
-  // for bytes; the other shapes get the flat fallback. The fallback sits
-  // inside the [800, 1600] Anthropic clamp so we never overpay by an order
-  // of magnitude regardless of dimensions.
-  if (part.data instanceof Uint8Array) {
-    const dims = decodeImageDimensions(part.data);
+  // `data` is the tagged `SharedV4FileData` union: the `data` variant carries
+  // either raw bytes or a base64 string, and `url` / `reference` / `text` carry
+  // no bytes at all. Only raw bytes are decoded — everything else takes the
+  // flat fallback, which sits inside the [800, 1600] Anthropic clamp so we
+  // never misprice by an order of magnitude regardless of dimensions.
+  if (part.data.type === "data" && part.data.data instanceof Uint8Array) {
+    const dims = decodeImageDimensions(part.data.data);
     if (dims && dims.width > 0 && dims.height > 0) {
       return imageTokensFromDimensions(dims.width, dims.height);
     }

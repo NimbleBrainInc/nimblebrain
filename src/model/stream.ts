@@ -156,7 +156,7 @@ async function callModelInner(
    * during the dark gap where the model is streaming a large tool
    * input — `tool.start` only fires after `callModel` returns.
    *
-   * Provider-agnostic: AI SDK V3 normalizes `tool-input-start` across
+   * Provider-agnostic: AI SDK V4 normalizes `tool-input-start` across
    * Anthropic / OpenAI / Google. Providers that never emit it simply
    * skip the callback (engine falls back to `tool.start`-only signals,
    * matching legacy behavior).
@@ -175,7 +175,7 @@ async function callModelInner(
       outputTokens: { total: 0, text: undefined, reasoning: undefined },
     },
     // Default if the stream ends without a `finish` part. "other" is the
-    // V3-defined catch-all for unclassified stops; using it directly avoids
+    // V4-defined catch-all for unclassified stops; using it directly avoids
     // the runtime-vs-type lie of `"unknown" as "other"`.
     finishReason: { unified: "other", raw: undefined },
     accumulatedText: "",

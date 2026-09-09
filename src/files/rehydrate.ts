@@ -1,5 +1,5 @@
 /**
- * Rehydrate `resource_link` blocks in user messages into AI SDK V3
+ * Rehydrate `resource_link` blocks in user messages into AI SDK V4
  * `file` parts at the `model.doStream` boundary.
  *
  * The conversation log persists rehydratable attachments as MCP
