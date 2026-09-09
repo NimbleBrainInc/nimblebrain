@@ -81,11 +81,16 @@ const SSE_ROUTES: Partial<Record<EngineEventType, SseRoute>> = {
   // pending-auth banner; without forwarding here, the banner never auto-clears
   // after a user completes interactive OAuth.
   "connection.state_changed": { scope: "workspace", wsIdField: "wsId" },
-  // Tool dispatch fan-out used by Synapse `useDataSync`. The data-sync
-  // refresh path is workspace-bound at the bridge level (each iframe ships
-  // X-Workspace-Id), but the payload doesn't carry wsId today — keeping the
-  // existing "broadcast to all clients in this process" behavior to avoid
-  // silently breaking iframe refresh. Revisit when payload grows wsId.
+  // Tool dispatch fan-out used by Synapse `useDataSync`. The payload carries
+  // `wsId`, and the emit site passes it to `broadcast()` — so delivery IS
+  // membership-filtered even though the ROUTE stays global.
+  //
+  // The route cannot be `scope: "workspace"`: that drops any event whose
+  // `wsIdField` is missing (see the note above), and an identity-door change
+  // (`conversations`, `files`, `automations`) belongs to no workspace, so those
+  // would stop being delivered entirely. Passing the id per-call gets the
+  // filtering without that cliff — an absent id fans out, a present one is
+  // scoped.
   "data.changed": { scope: "global" },
   // Live conversation-title update (auto-title generation completes after the
   // turn). Scoped by the event's `wsId`, which the runtime sets to the OWNER'S
@@ -102,7 +107,15 @@ const SSE_ROUTES: Partial<Record<EngineEventType, SseRoute>> = {
   "skill.created": { scope: "global" },
   "skill.updated": { scope: "global" },
   "skill.deleted": { scope: "global" },
-  // Bridge tool call/done — emitted by the iframe→/v1/tools/call shim.
+  // Bridge tool call/done — a tool call an iframe made, as opposed to one the
+  // agent's run loop made (`tool.done`). Deliberately NOT read by
+  // `deriveDataChangedTarget`: a UI door's traffic is mostly READS, and a read
+  // that triggers a refresh triggers a read. Broadcasting here is what the
+  // AGENTS.md rule "`/v1/tools/call` must NOT emit `data.changed` (causes
+  // infinite loops)" is about, and the loop is live — `files/ui` refetches on
+  // any `data.changed` for its own app, with no mutation filter. Making a
+  // UI-initiated write refresh a sibling UI needs mutation gating FIRST (#358);
+  // until then this event is audit only.
   // Field name is `workspaceId` (not `wsId`) — see handlers.ts emit sites.
   "bridge.tool.call": { scope: "workspace", wsIdField: "workspaceId" },
   "bridge.tool.done": { scope: "workspace", wsIdField: "workspaceId" },
@@ -143,7 +156,7 @@ const SSE_ROUTES: Partial<Record<EngineEventType, SseRoute>> = {
  */
 export function deriveDataChangedTarget(
   event: EngineEvent,
-): { server: string; tool: string } | null {
+): { server: string; tool: string; wsId: string | undefined } | null {
   const isBroadcast =
     (event.type === "tool.done" && event.data.ok === true) || event.type === "tool.progress";
   if (!isBroadcast) return null;
@@ -181,7 +194,17 @@ export function deriveDataChangedTarget(
   // iframes re-fetch on every streaming chunk (flicker + tool-call amplification).
   if (server === "nb") return null;
 
-  return { server, tool };
+  // The workspace the call ran in, when the event carries one. Both doors stamp
+  // it — the engine via `_wrapSinkWithWorkspaceAttribution`, the bridge from the
+  // request's validated header — so this is a read, not an inference.
+  //
+  // Absent is a real answer and not a failure: an identity-door call
+  // (`conversations`, `files`, `automations`) belongs to no workspace, and those
+  // apps are workspace-blind by design. Undefined therefore means "everyone",
+  // which is the behaviour every consumer had before this field existed.
+  const wsId = typeof event.data.workspaceId === "string" ? event.data.workspaceId : undefined;
+
+  return { server, tool, wsId };
 }
 
 /** Frame an SSE event into its `event:`/`data:` wire encoding. */

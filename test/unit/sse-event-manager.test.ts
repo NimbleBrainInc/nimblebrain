@@ -336,6 +336,43 @@ describe("SseEventManager — identity-scoped clients", () => {
     expect(both.events).toEqual(["connector.installed", "connection.state_changed"]);
   });
 
+  test("a data.changed carrying a wsId reaches members of that workspace only", async () => {
+    // `data.changed` keeps `scope: "global"` in the routing table, so the
+    // membership gate comes from `broadcast`'s third argument at the emit site
+    // rather than from the route. Without it the payload — workspace id and all
+    // — lands on every signed-in identity's tab, since /v1/events is
+    // identity-scoped and they all share this manager.
+    const alice = collect(mgr.addIdentityClient("usr_alice", new Set(["ws_a"])));
+    const bob = collect(mgr.addIdentityClient("usr_bob", new Set(["ws_b"])));
+    released.push(alice.release, bob.release);
+
+    mgr.broadcast(
+      "data.changed",
+      { server: "db-query", tool: "save_query", wsId: "ws_a" },
+      "ws_a",
+    );
+    await flush();
+
+    expect(alice.events).toEqual(["data.changed"]);
+    expect(bob.events).toEqual([]);
+  });
+
+  test("a data.changed with NO wsId still reaches everyone", async () => {
+    // An identity-door change (`conversations`, `files`, `automations`) belongs
+    // to no workspace. `undefined` degrading to a global fan-out is what keeps
+    // those delivered — and is why the route cannot simply become
+    // `scope: "workspace"`, which DROPS an event whose wsIdField is missing.
+    const alice = collect(mgr.addIdentityClient("usr_alice", new Set(["ws_a"])));
+    const bob = collect(mgr.addIdentityClient("usr_bob", new Set(["ws_b"])));
+    released.push(alice.release, bob.release);
+
+    mgr.broadcast("data.changed", { server: "files", tool: "create" }, undefined);
+    await flush();
+
+    expect(alice.events).toEqual(["data.changed"]);
+    expect(bob.events).toEqual(["data.changed"]);
+  });
+
   test("global events still reach identity clients regardless of memberships", async () => {
     // Even a client with an empty membership set sees global broadcasts —
     // global events have no `wsId` and skip the membership filter.
