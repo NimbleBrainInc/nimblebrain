@@ -2,6 +2,21 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **Requires `mcp>=2.1.1,<2.2.0` and `fastmcp>=4.0.0,<5`** (was
+  `mcp>=1.27.0,<2.0.0` / `fastmcp>=3.0.0`). The two majors are coupled:
+  `fastmcp-slim` 4 requires `mcp>=2` and `fastmcp-slim` 3 requires
+  `mcp<2`, so there is no build of this SDK that spans both. Bundles
+  still on FastMCP 3 must upgrade before taking this version.
+- Capability detection reads `ClientCapabilities.extensions` as the
+  declared field it became in `mcp` 2. It was previously read out of
+  `model_extra`, which `mcp` 2 no longer populates — left unchanged,
+  a host advertising in the spec-blessed `extensions` slot would have
+  read as unavailable and every `read()`/`list()` would have raised
+  `HostCapabilityMissing`. The legacy `experimental` fallback is
+  unchanged.
+
 ## [0.1.0]
 
 Initial release. Wraps the `ai.nimblebrain/host-resources` MCP extension
