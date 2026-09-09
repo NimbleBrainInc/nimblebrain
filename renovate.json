@@ -43,8 +43,9 @@
       "groupName": "docs site"
     },
     {
-      "description": "Layer 2 — packages installed in more than one manifest. Nothing here is a workspace, so a split bump leaves two manifests disagreeing at runtime with no check to catch it.",
+      "description": "Layer 2 — packages installed in more than one manifest. Nothing here is a workspace, so a split bump leaves two manifests disagreeing at runtime with no check to catch it. No cooldown: it is our own package, published through OIDC trusted publishing, and bunfig excludes it for the same reason — a dependency should reach this repo on the same terms whether a bot or a person adds it.",
       "matchPackageNames": ["@nimblebrain/synapse"],
+      "minimumReleaseAge": null,
       "groupName": "synapse sdk"
     },
     {

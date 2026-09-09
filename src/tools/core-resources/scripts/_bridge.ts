@@ -1,53 +1,36 @@
 /**
  * Bridge helper for core resource client scripts.
  *
- * Creates a Synapse instance (from the Synapse IIFE injected by render.tsx)
- * and exposes convenience functions used by core UI scripts.
+ * Connects through the Synapse IIFE that `render.tsx` injects, and exposes the
+ * three functions those scripts call: `callTool`, `navigate`, `parseResult`.
  *
- * Provides: synapse, callTool, action, navigate, sendChat, emitAction,
- * parseResult, setVisibleState, onDataChanged, _ready
+ * `connect()` resolves only once the host has answered `ui/initialize`, so
+ * `_ready` is the promise every helper sequences behind. Scripts never await it
+ * themselves — each helper resolves it internally and hands back a promise the
+ * caller was already handling. That is the whole shape of the port from the
+ * removed synchronous API: there is no client object to hold, only a promise of
+ * one.
  */
 export const BRIDGE_HELPER = `
-  var synapse = Synapse.createSynapse({ name: "nb-core", version: "1.0.0", internal: true });
+  var _ready = Synapse.connect({ name: "nb-core", version: "1.0.0", internal: true });
 
   function callTool(name, args) {
-    // Support "server__tool" format for cross-server calls from internal apps
-    var toolName = name;
+    // "server__tool" addresses a sibling server. An internal app's calls default
+    // to its own name, so reaching another one is an explicit \`server\`.
     var sep = name.indexOf("__");
-    if (sep > 0) {
-      // Synapse callTool sends the raw name; the bridge handles server routing
-      // for internal apps via params.server. We need to pass the split names.
-      var server = name.substring(0, sep);
-      toolName = name.substring(sep + 2);
-      return synapse._request("tools/call", {
-        server: server, name: toolName, arguments: args || {}
-      }).then(function(r) { return r; });
-    }
-    return synapse.callTool(toolName, args).then(function(r) { return r.data; });
+    var tool = sep > 0 ? name.substring(sep + 2) : name;
+    var options = sep > 0 ? { server: name.substring(0, sep) } : undefined;
+    return _ready.then(function (app) {
+      return app.callTool(tool, args || {}, options).then(function (r) { return r.data; });
+    });
   }
 
-  function action(actionName, params) {
-    synapse.action(actionName, params);
+  function action(name, params) {
+    return _ready.then(function (app) { Synapse.action(app, name, params); });
   }
 
   function navigate(route) {
-    action("navigate", { route: route });
-  }
-
-  function sendChat(message) {
-    synapse.chat(message);
-  }
-
-  function emitAction(actionName, params) {
-    action(actionName, params);
-  }
-
-  function setVisibleState(state, summary) {
-    synapse.setVisibleState(state, summary);
-  }
-
-  function onDataChanged(callback) {
-    synapse.onDataChanged(callback);
+    return action("navigate", { route: route });
   }
 
   function parseResult(result) {
@@ -56,6 +39,4 @@ export const BRIDGE_HELPER = `
     }
     return result;
   }
-
-  var _ready = synapse.ready;
 `;
