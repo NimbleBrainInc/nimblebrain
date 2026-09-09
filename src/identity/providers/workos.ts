@@ -1,4 +1,4 @@
-import { GeneratePortalLinkIntent, WorkOS } from "@workos-inc/node";
+import { WorkOS } from "@workos-inc/node";
 import { isAllowedOriginScheme, publicOrigin } from "../../oauth/public-origin.ts";
 import { log } from "../../observability/log.ts";
 import { ensureUserWorkspace } from "../../workspace/provisioning.ts";
@@ -475,21 +475,6 @@ export class WorkosIdentityProvider implements IdentityProvider {
 
   invalidateUser(userId: string): void {
     this.userCache.delete(userId);
-  }
-
-  // ── WorkOS-specific methods (not on the interface) ──────────────
-
-  /** Generate the Admin Portal URL for self-serve SSO/directory setup. */
-  async getAdminPortalUrl(returnUrl: string): Promise<string> {
-    if (!this.organizationId) {
-      throw new Error("organizationId required for Admin Portal");
-    }
-    const portal = await this.workos.portal.generateLink({
-      organization: this.organizationId,
-      intent: GeneratePortalLinkIntent.SSO,
-      returnUrl,
-    });
-    return portal.link;
   }
 
   // ── Private helpers ────────────────────────────────────────────
