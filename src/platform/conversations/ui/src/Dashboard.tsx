@@ -1,4 +1,4 @@
-import { useAction, useDataSync, useHostContext, useSynapse } from "@nimblebrain/synapse/react";
+import { useAction, useApp, useDataSync, useHostContext } from "@nimblebrain/synapse/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ConversationList } from "./ConversationList";
 import { groupByDate } from "./dateUtils";
@@ -42,7 +42,7 @@ function patchConversationTitle(
 }
 
 export function Dashboard() {
-  const synapse = useSynapse();
+  const app = useApp();
   const action = useAction();
   // Both pushed by the host via hostContext. `workspace` is the workspace the
   // shell is focused on — used here ONLY as a change signal (refetch when the
@@ -86,7 +86,7 @@ export function Dashboard() {
         // scope can't be wrong here and can't be omitted into a cross-workspace
         // read — which is what happened while the host-context handshake was
         // still in flight and this app had no workspace to send.
-        const result = await synapse.callTool<Record<string, never>, ListResult>("list", {});
+        const result = await app.callTool<ListResult>("list", {});
         if (result.isError) {
           setError("Failed to load conversations");
           return;
@@ -98,7 +98,7 @@ export function Dashboard() {
         if (!opts?.background) setLoading(false);
       }
     },
-    [synapse],
+    [app],
   );
 
   const runSearch = useCallback(
@@ -111,7 +111,7 @@ export function Dashboard() {
       }
       setError(null);
       try {
-        const result = await synapse.callTool<{ query: string }, SearchResultData>("search", {
+        const result = await app.callTool<SearchResultData>("search", {
           query,
         });
         if (result.isError) {
@@ -125,7 +125,7 @@ export function Dashboard() {
         if (!opts?.background) setLoading(false);
       }
     },
-    [synapse],
+    [app],
   );
 
   // Initial load, and a reload whenever the focused workspace changes — the
