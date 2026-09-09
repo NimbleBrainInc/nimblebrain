@@ -18,7 +18,7 @@ The SDK is a thin wrapper. The contract these tests pin:
 from __future__ import annotations
 
 import pytest
-from mcp.types import ReadResourceResult
+from mcp.types import ClientCapabilities, InitializeRequestParams, ReadResourceResult
 
 from nimblebrain_bundle_sdk import (
     HOST_RESOURCES_CAPABILITY_KEY,
@@ -27,7 +27,7 @@ from nimblebrain_bundle_sdk import (
     HostCapabilityMissing,
     host,
 )
-from tests.conftest import make_ctx
+from tests.conftest import StubContext, StubSession, make_ctx
 
 # ---------------------------------------------------------------------------
 # Capability detection
@@ -63,7 +63,17 @@ def test_available_false_when_read_disabled():
 def test_available_false_on_malformed_shape():
     # A buggy host that sends a non-dict for the capability shouldn't
     # crash the bundle's availability probe.
-    ctx = make_ctx(extensions={HOST_RESOURCES_CAPABILITY_KEY: "not-a-dict"})  # type: ignore[dict-item]
+    #
+    # `mcp` types `extensions` as dict[str, dict[str, Any]] and rejects
+    # this shape during validation, so it cannot arrive over the wire.
+    # The SDK keeps its own isinstance guard as defence in depth, and
+    # `model_construct` skipping validation on both models is what
+    # reaches it.
+    caps = ClientCapabilities.model_construct(
+        extensions={HOST_RESOURCES_CAPABILITY_KEY: "not-a-dict"}  # type: ignore[dict-item]
+    )
+    params = InitializeRequestParams.model_construct(capabilities=caps)
+    ctx = StubContext(session=StubSession(client_params=params))
     assert host(ctx).available is False
 
 

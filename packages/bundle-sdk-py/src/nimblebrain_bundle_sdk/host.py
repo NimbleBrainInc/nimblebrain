@@ -35,23 +35,24 @@ from nimblebrain_bundle_sdk.methods import (
 # types. Custom methods like `ai.nimblebrain/resources/*` aren't in that
 # union, so static typing won't accept us passing them directly.
 #
-# At runtime, `send_request` only calls `request.model_dump()` on the
-# input and dumps the result onto the JSON-RPC stream (verified against
-# `mcp` 1.27.x — see `mcp.shared.session.BaseSession.send_request`).
-# Any Pydantic model with the right wire shape works. We define our
-# request types as plain `BaseModel` subclasses and `cast` them to
-# `ServerRequest` at the call site.
+# At runtime, `ServerSession.send_request` dumps the request
+# (`model_dump(by_alias=True, mode="json", exclude_none=True)`) and
+# forwards `method` and `params` onto the JSON-RPC stream raw; its
+# result validation is wrapped in `except KeyError`, which is what an
+# unregistered custom method hits. Any Pydantic model with the right
+# wire shape works, so the request types below are plain `BaseModel`
+# subclasses `cast` to `ServerRequest` at the call site.
 #
 # # Runtime contract dependency
 #
-# The `cast` is a static-type accommodation today, but it *relies on*
-# the dump-only behaviour of the mcp SDK's `send_request`. If the SDK
-# ever switches to validating inputs against the `ServerRequest`
-# RootModel (or constructing typed envelopes internally), the cast
-# would break at runtime, not at import. The `pyproject.toml` deps pin
-# `mcp<2.0` to bound this risk to minor-version drift, and the test
-# matrix exercises the integration shape against current `mcp` on every
-# CI run. Bump the pin and re-verify on the next minor release.
+# The `cast` is a static-type accommodation, but it *relies on* that
+# dump-and-forward behaviour, which mcp's public surface does not
+# guarantee. If the SDK ever validates inputs against the
+# `ServerRequest` RootModel (or builds typed envelopes internally), the
+# cast breaks at runtime rather than at import — neither the type
+# checker nor an import smoke test would catch it. That is what the
+# narrow `mcp` pin in `pyproject.toml` bounds; the rationale lives
+# there.
 
 
 class _HostResourcesReadParams(BaseModel):
@@ -248,12 +249,11 @@ class HostResources:
     def _capability_block(self) -> dict[str, Any] | None:
         """Return the raw capability dict, or None if not advertised.
 
-        Probes `ClientCapabilities.extensions` first (spec-blessed
-        location), then `experimental` (legacy fallback). Either
-        location is read via `model_extra` because the `mcp` Python
-        SDK (as of 1.27.0) declares `experimental` as a typed field
-        but not `extensions` — `extra="allow"` on the model keeps
-        unknown keys accessible.
+        Probes `ClientCapabilities.extensions` first (the spec-blessed
+        location), then `experimental` (the legacy slot some hosts
+        still advertise in). Both are typed fields on `mcp`'s
+        `ClientCapabilities`. Any malformed shape reads as "not
+        advertised" so a buggy host can't crash the probe.
         """
         client_params = getattr(self._ctx.session, "client_params", None)
         if client_params is None:
@@ -262,9 +262,8 @@ class HostResources:
         if not isinstance(caps, ClientCapabilities):
             return None
 
-        # Prefer `extensions`. Pydantic's `model_extra` holds fields not
-        # declared on the model when `extra="allow"`.
-        extensions = (caps.model_extra or {}).get("extensions")
+        # Prefer `extensions`, the spec-blessed slot.
+        extensions = caps.extensions
         if isinstance(extensions, dict):
             cap = extensions.get(HOST_RESOURCES_CAPABILITY_KEY)
             if isinstance(cap, dict):

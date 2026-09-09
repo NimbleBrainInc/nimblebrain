@@ -7,8 +7,8 @@ exposes the two attributes the SDK actually touches:
 
   - `client_params.capabilities` — for `HostResources.available` and
     `.supports_scheme`. We stash a real `ClientCapabilities` so the
-    SDK's `isinstance` guard passes; `extra="allow"` on the model lets
-    us tuck `extensions` into `model_extra`.
+    SDK's `isinstance` guard passes, with the declaration in the
+    typed `extensions` field.
 
   - `send_request(request, result_type)` — for `read` and `list`. We
     record every call (method name, dumped params) and return a
@@ -74,9 +74,11 @@ def make_capabilities(
 ) -> ClientCapabilities:
     """Build a `ClientCapabilities` carrying our extension declaration.
 
-    The Python `mcp` SDK (1.27.0) doesn't have a typed `extensions`
-    field — it lives in `model_extra` thanks to `extra="allow"`. We
-    set it via Pydantic's construction extra-fields path.
+    `extensions` and `experimental` are both typed fields on `mcp`'s
+    `ClientCapabilities`, so the payload validates like any other.
+    Shapes `mcp` rejects can't be built here — see
+    `test_available_false_on_malformed_shape` for how the SDK's own
+    defensive guard is reached.
     """
     payload: dict[str, Any] = {}
     if experimental is not None:
