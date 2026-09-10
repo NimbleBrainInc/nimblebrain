@@ -184,6 +184,14 @@ function buildHarness(opts: { adminId?: string } = {}): Harness {
     }),
     getConnectorInstancesForWorkspace: (_wsId: string) => lifecycle.getInstances(),
     getAllowInsecureRemotes: () => false,
+    // The lifecycle notification the install and uninstall handlers make. No
+    // connector here declares one, so both calls are no-ops — but the getter
+    // has to exist: `handleUninstall` reads it before any teardown, and a stub
+    // missing it fails the uninstall rather than skipping the notification.
+    getLifecycleNotifyDeps: () => ({
+      declarationFor: async () => undefined,
+      portFor: () => undefined,
+    }),
   } as unknown as Runtime;
 
   return {

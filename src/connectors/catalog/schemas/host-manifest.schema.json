@@ -9,7 +9,7 @@
   "properties": {
     "host_version": {
       "type": "string",
-      "description": "Host extension contract version. Known values: \"1.0\", \"1.1\" (introduced a host_capabilities block the host no longer reads), \"1.2\" (adds hooks), \"1.3\" (adds notifications). FORWARD-COMPATIBLE, and this tolerance is part of the contract: an unknown version is NOT rejected — the host parses the fields it understands and ignores the rest; unknown top-level keys validate and are ignored; an unknown or malformed placement slot drops only that placement, never the whole declaration. The version-to-block pairing is advisory and is not schema-enforced."
+      "description": "Host extension contract version. Known values: \"1.0\", \"1.1\" (introduced a host_capabilities block the host no longer reads), \"1.2\" (adds hooks), \"1.3\" (adds notifications), \"1.4\" (adds lifecycle). FORWARD-COMPATIBLE, and this tolerance is part of the contract: an unknown version is NOT rejected — the host parses the fields it understands and ignores the rest; unknown top-level keys validate and are ignored; an unknown or malformed placement slot drops only that placement, never the whole declaration. The version-to-block pairing is advisory and is not schema-enforced."
     },
     "name": {
       "type": "string",
@@ -54,6 +54,9 @@
     },
     "notifications": {
       "$ref": "#/$defs/NotificationsDeclaration"
+    },
+    "lifecycle": {
+      "$ref": "#/$defs/LifecycleDeclaration"
     }
   },
   "$defs": {
@@ -89,6 +92,23 @@
             "type": "string"
           },
           "description": "Rename inbound headers before the forward, as { from: to }. The forward strips the header class a caller could use to assert identity (authorization, x-api-key, x-tenant-id, x-workspace-id, …) — the same class the fleet edge strips. A vendor that authenticates its deliveries on one of those headers cannot otherwise reach its own verifier, so declaring a rename moves the value to a header the strip list does not cover. A rename whose target is itself in the stripped class is ignored."
+        }
+      }
+    },
+    "LifecycleDeclaration": {
+      "type": "object",
+      "description": "The two moments the host can tell this server about its own installation. Each value names a tool on THIS server. Both optional; a server may declare either alone. The host calls on_ready the first time the connector is reachable in a workspace and on every later transition to running, and on_removing immediately before the connector's source is torn down. There is no pre_install and no post_uninstall: the notification is a tool call on the server itself, so before it is reachable and after it is gone there is nothing to call — extension at those moments is declarative (manifest fields the host acts on), and callable only in between. Both calls are best-effort: a failed on_ready never fails the install, a failed on_removing never fails the uninstall (which waits a few seconds for the call, then proceeds without it), and neither is retried except by the next event. A declared tool that the server does not advertise, that requires any argument, or that advertises execution.taskSupport \"optional\" or \"required\", is a warning on a successful install — the host awaits these calls, so a handler must be an ordinary inline tool it can bound. Declare host_version \"1.4\" alongside this block.",
+      "additionalProperties": false,
+      "properties": {
+        "on_ready": {
+          "type": "string",
+          "maxLength": 128,
+          "description": "Tool called when the connector becomes reachable in a workspace, with { reason: \"install\" | \"resume\" } — \"install\" for the install that created it, \"resume\" for every other cause (a boot, a reconnect, a re-auth, a redeploy). Delivery is AT LEAST ONCE per connector per host boot in which its source comes up, and a fresh install delivers TWO calls in a racy order, so the handler must be idempotent. The handler must accept a call with no arguments and must ignore arguments it does not declare: the host sends reason whether or not the schema mentions it. Its text result is surfaced to the user as a notice on the install."
+        },
+        "on_removing": {
+          "type": "string",
+          "maxLength": 128,
+          "description": "Tool called with no arguments immediately before the connector is uninstalled, while its source is still reachable. This is the only moment a server can release per-workspace state it holds at a third party. It is best-effort and may not arrive at all — a server that leaks a third-party resource when it does not is relying on a call the host does not guarantee."
         }
       }
     },

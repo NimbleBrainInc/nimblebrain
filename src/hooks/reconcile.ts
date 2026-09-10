@@ -1,11 +1,7 @@
 import { log } from "../observability/log.ts";
+import { type ConnectorPort, watchToolSurface } from "../tools/connector-surface.ts";
 import type { WorkspaceStore } from "../workspace/workspace-store.ts";
-import {
-  type HookConnectorPort,
-  HookContractError,
-  type ProvisionedHook,
-  provisionHooks,
-} from "./provisioning.ts";
+import { HookContractError, type ProvisionedHook, provisionHooks } from "./provisioning.ts";
 import { findRegistration } from "./registrations.ts";
 import type { HookIdentity } from "./token.ts";
 import type { HookDeclaration } from "./types.ts";
@@ -25,9 +21,11 @@ import type { HookDeclaration } from "./types.ts";
  * It is a reconcile in shape, not a timer. It runs on the two events that make
  * both halves it needs true — a declaration to read, and a live source to call
  * `register_tool` on: a connection reaching `running`, and the connector's tool
- * set becoming enumerable (`watchToolSurface`). Nothing here polls, and nothing
- * needs to: the minted URL is stable across restarts and the server persists
- * it, so the work is bounded by those transitions rather than by a clock.
+ * set becoming enumerable (`watchToolSurface`, shared with the lifecycle
+ * notification in `src/tools/connector-surface.ts`). Nothing here polls, and
+ * nothing needs to: the minted URL is stable across restarts and the server
+ * persists it, so the work is bounded by those transitions rather than by a
+ * clock.
  */
 
 export interface HookReconcileDeps {
@@ -40,7 +38,7 @@ export interface HookReconcileDeps {
    */
   declarationsFor(serverName: string): Promise<HookDeclaration[]>;
   /** The live source for `(wsId, serverName)`, or undefined when it is not running. */
-  portFor(wsId: string, serverName: string): HookConnectorPort | undefined;
+  portFor(wsId: string, serverName: string): ConnectorPort | undefined;
   /** This runtime's hook identity, or undefined when it has no hooks door. */
   identity: HookIdentity | undefined;
 }
@@ -176,13 +174,20 @@ function singleFlight(
  * so surfacing it as a rejected promise would only produce an unhandled one. It
  * is logged at warn with the connector named — the operator's signal that a
  * manifest is wrong — and the connector keeps working without that stream.
+ *
+ * The tool-surface watch is cheap to fire: `onlyMissing` filters a
+ * fully-provisioned connector to an empty declaration set before anything
+ * reaches the source, so the common case — a healthy connector reconnecting —
+ * costs a workspace read and stops.
  */
 export function ensureHooksOnRunning(
   deps: HookReconcileDeps,
   wsId: string,
   connector: string,
 ): void {
-  watchToolSurface(deps, wsId, connector);
+  watchToolSurface("hooks", wsId, connector, deps.portFor(wsId, connector), () =>
+    retrigger(deps, wsId, connector),
+  );
   provisionInBackground(deps, wsId, connector);
 }
 
@@ -241,73 +246,4 @@ function retrigger(deps: HookReconcileDeps, wsId: string, connector: string): vo
       queuedAfterFlight.delete(key);
       provisionInBackground(deps, wsId, connector);
     });
-}
-
-/** The armed tool-set watches, one per (workspace, connector). */
-const watches = new Map<string, () => void>();
-
-/**
- * Re-run the reconcile whenever a connector's tool set changes.
- *
- * `running` is when a CONNECTION is established, which is not when its server
- * has advertised anything, and it is a one-shot: a source whose tools populate
- * after the transition has no second transition to be provisioned on, and a
- * source that reconnects — a health-monitor restart, a re-auth, a server
- * redeployed under the same URL — reconnects through the source alone and
- * records no connection state, so no second transition is observed even though
- * the connection is live again. Either way an attempt that could not finish had
- * nothing to try again, and the stream stayed unprovisioned until the runtime
- * process restarted.
- *
- * The source's own tool-set signal is the seam that covers both, and it is why
- * this needs no timer: it fires on connect, on every reconnect, and on a
- * server's native `tools/list_changed`. Its meaning — "my tools are enumerable
- * and may have changed" — is exactly the precondition provisioning was missing.
- *
- * Cheap to fire: `onlyMissing` filters a fully-provisioned connector to an empty
- * declaration set before anything reaches the source, so the common case (a
- * healthy connector reconnecting) costs a workspace read and stops.
- *
- * One watch per (workspace, connector), re-armed on each transition to `running`
- * so it always points at the source that is live NOW — a reinstall builds a new
- * source object, and a watch left on the old one would fire for a source nobody
- * routes to. {@link stopWatchingHooks} drops it on uninstall.
- */
-function watchToolSurface(deps: HookReconcileDeps, wsId: string, connector: string): void {
-  // Drop the previous watch BEFORE deciding whether a new one can be armed: a
-  // re-arm that finds no live source is the one case where the old watch is
-  // certainly pointing at a source on its way out.
-  const key = flightKey(wsId, connector);
-  watches.get(key)?.();
-  watches.delete(key);
-  const port = deps.portFor(wsId, connector);
-  if (!port?.subscribeToolsChanged) return;
-  watches.set(
-    key,
-    port.subscribeToolsChanged(() => retrigger(deps, wsId, connector)),
-  );
-}
-
-/**
- * Drop a connector's tool-set watch. Called on uninstall, beside the
- * registration revoke: the connector has no declarations left to reconcile, and
- * the closure would otherwise hold its source past the point anything routes to
- * it.
- */
-export function stopWatchingHooks(wsId: string, connector: string): void {
-  const key = flightKey(wsId, connector);
-  watches.get(key)?.();
-  watches.delete(key);
-}
-
-/**
- * Drop every armed watch. Called on runtime shutdown, which removes the sources
- * but not the module-level map that holds them: each entry retains the
- * unsubscribe closure, its source, and through the listener's `deps` the runtime
- * that built them, so a process that starts more than one runtime keeps every
- * earlier one alive.
- */
-export function stopAllHookWatches(): void {
-  for (const unwatch of watches.values()) unwatch();
-  watches.clear();
 }
