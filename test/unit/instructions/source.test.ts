@@ -15,10 +15,6 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import {
-  ResourceListChangedNotificationSchema,
-  ResourceUpdatedNotificationSchema,
-} from "@modelcontextprotocol/sdk/types.js";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { NoopEventSink } from "../../../src/adapters/noop-events.ts";
 import { InstructionsStore } from "../../../src/instructions/index.ts";
@@ -173,7 +169,7 @@ describe("instructions source — write_instructions", () => {
 
     const updates: Array<{ uri: string }> = [];
     const client = src.getClient()!;
-    client.setNotificationHandler(ResourceUpdatedNotificationSchema, (n) => {
+    client.setNotificationHandler('notifications/resources/updated', (n) => {
       updates.push({ uri: n.params.uri as string });
     });
 
@@ -465,7 +461,7 @@ describe("instructions source — connector lifecycle", () => {
     const src = await buildSource();
     const client = src.getClient()!;
     const seen: string[] = [];
-    client.setNotificationHandler(ResourceListChangedNotificationSchema, () => {
+    client.setNotificationHandler('notifications/resources/list_changed', () => {
       seen.push("list_changed");
     });
     await new Promise((r) => setTimeout(r, 5));

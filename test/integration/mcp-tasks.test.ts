@@ -16,17 +16,8 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { mkdirSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import {
-  type CallToolResult,
-  type CreateTaskResult,
-  type GetTaskResult,
-  RELATED_TASK_META_KEY,
-  type Task,
-} from "@modelcontextprotocol/sdk/types.js";
-
+import { Client, StreamableHTTPClientTransport, RELATED_TASK_META_KEY } from "@modelcontextprotocol/client";
+import type { CallToolResult, CreateTaskResult, GetTaskResult, Task } from "@modelcontextprotocol/client";
 import { startServer, type ServerHandle } from "../../src/api/server.ts";
 import { textContent } from "../../src/engine/content-helpers.ts";
 import type { ToolResult } from "../../src/engine/types.ts";

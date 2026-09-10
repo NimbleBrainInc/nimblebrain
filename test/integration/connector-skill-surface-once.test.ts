@@ -22,13 +22,7 @@
  */
 
 import type { LanguageModelV4CallOptions } from "@ai-sdk/provider";
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import {
-  CallToolRequestSchema,
-  ListResourcesRequestSchema,
-  ListToolsRequestSchema,
-  ReadResourceRequestSchema,
-} from "@modelcontextprotocol/sdk/types.js";
+import { Server } from "@modelcontextprotocol/server";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -62,19 +56,19 @@ function createFixtureServer(): Server {
     { name: "surface", version: "0.1.0" },
     { capabilities: { tools: {}, resources: {} } },
   );
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({
+  server.setRequestHandler('tools/list', async () => ({
     tools: [{ name: "doit", description: "Do it", inputSchema: { type: "object", properties: {} } }],
   }));
-  server.setRequestHandler(CallToolRequestSchema, async () => ({
+  server.setRequestHandler('tools/call', async () => ({
     content: [{ type: "text", text: "done" }],
   }));
-  server.setRequestHandler(ListResourcesRequestSchema, async () => ({
+  server.setRequestHandler('resources/list', async () => ({
     resources: [
       { uri: "skill://alpha/SKILL.md", name: "alpha", mimeType: "text/markdown" },
       { uri: "skill://beta/SKILL.md", name: "beta", mimeType: "text/markdown" },
     ],
   }));
-  server.setRequestHandler(ReadResourceRequestSchema, async (r) => {
+  server.setRequestHandler('resources/read', async (r) => {
     const text = bodies[r.params.uri];
     if (!text) throw new Error(`Resource not found: ${r.params.uri}`);
     return { contents: [{ uri: r.params.uri, mimeType: "text/markdown", text }] };

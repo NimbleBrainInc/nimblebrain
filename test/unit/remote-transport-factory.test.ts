@@ -2,8 +2,7 @@ import { randomBytes } from "node:crypto";
 import { afterEach, describe, expect, test } from "bun:test";
 import { createRemoteTransport } from "../../src/tools/remote-transport.ts";
 import { registerBuiltinCredentialProviders } from "../../src/oauth/minted-credential-provider.ts";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
+import { StreamableHTTPClientTransport, SSEClientTransport } from "@modelcontextprotocol/client";
 
 describe("createRemoteTransport", () => {
 	test("default returns StreamableHTTPClientTransport", async () => {

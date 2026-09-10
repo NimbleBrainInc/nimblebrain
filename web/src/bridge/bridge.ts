@@ -1,3 +1,6 @@
+import { CancelTaskResultSchema, CreateTaskResultSchema, GetTaskPayloadResultSchema, GetTaskResultSchema, TaskStatusNotificationSchema } from "@modelcontextprotocol/core";
+import type { CallToolRequest, CancelTaskRequest, GetTaskPayloadRequest, GetTaskRequest } from "@modelcontextprotocol/server";
+
 // ---------------------------------------------------------------------------
 // MCP App Bridge — postMessage Handler
 //
@@ -19,19 +22,6 @@
 //   synapse/persist-state, synapse/state-loaded, synapse/keydown,
 //   synapse/request-file
 // ---------------------------------------------------------------------------
-
-import {
-  type CallToolRequest,
-  CallToolResultSchema,
-  type CancelTaskRequest,
-  CancelTaskResultSchema,
-  CreateTaskResultSchema,
-  type GetTaskPayloadRequest,
-  GetTaskPayloadResultSchema,
-  type GetTaskRequest,
-  GetTaskResultSchema,
-  TaskStatusNotificationSchema,
-} from "@modelcontextprotocol/sdk/types.js";
 import { getActiveWorkspaceId, uploadResource } from "../api/client";
 import { isIdentityApp } from "../lib/identity-apps";
 import { appNameFromToolName } from "../lib/namespaced-tool";
@@ -403,8 +393,10 @@ export function createBridge(
           params: notification.params,
         });
       };
+      /* @mcp-codemod-error Task handler registration: setNotificationHandler(TaskStatusNotificationSchema, ...). The experimental tasks feature was removed in v2 (SEP-2663); the tasks/* method strings are not part of the typed RequestMethod surface. Remove this registration. See docs/migration/upgrade-to-v2.md#experimental-tasks-interception-removed. */
       client.setNotificationHandler(TaskStatusNotificationSchema, handler);
       notificationTeardown = () => {
+        /* @mcp-codemod-error removeNotificationHandler takes the method string in v2 — replace the schema-derived argument with the literal method name (no change needed if this already passes a string). */
         client.removeNotificationHandler(TASK_STATUS_METHOD);
       };
     } catch {
@@ -873,8 +865,7 @@ async function callToolViaMcp(
       {
         name: qualifiedName,
         arguments: params.arguments ?? {},
-      },
-      CallToolResultSchema,
+      }
     );
 
     if (result.isError) {

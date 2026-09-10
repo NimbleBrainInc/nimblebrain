@@ -1,16 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
-import {
-  type OAuthClientProvider,
-  selectClientAuthMethod,
-  UnauthorizedError,
-} from "@modelcontextprotocol/sdk/client/auth.js";
-import type {
-  AuthorizationServerMetadata,
-  OAuthClientInformationFull,
-  OAuthClientInformationMixed,
-  OAuthClientMetadata,
-  OAuthTokens,
-} from "@modelcontextprotocol/sdk/shared/auth.js";
+import { selectClientAuthMethod, UnauthorizedError } from "@modelcontextprotocol/client";
+import type { OAuthClientProvider, AuthorizationServerMetadata, OAuthClientInformationFull, OAuthClientInformationMixed, OAuthClientMetadata, OAuthTokens } from "@modelcontextprotocol/client";
 import { validateConnectorUrl } from "../connectors/runtime/url-validator.ts";
 import type { ConnectorOwner } from "../identity/connector-owner.ts";
 import { buildTenantAssertion } from "../oauth/fleet-assertion.ts";

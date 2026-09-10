@@ -1,8 +1,4 @@
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import {
-	ListResourcesRequestSchema,
-	ReadResourceRequestSchema,
-} from "@modelcontextprotocol/sdk/types.js";
+import { Server } from "@modelcontextprotocol/server";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import { McpSource } from "../../src/tools/mcp-source.ts";
@@ -28,10 +24,10 @@ function createMcpServer(): Server {
 		{ name: "rolling-remote", version: "0.1.0" },
 		{ capabilities: { resources: {} } },
 	);
-	server.setRequestHandler(ListResourcesRequestSchema, async () => ({
+	server.setRequestHandler('resources/list', async () => ({
 		resources: [{ uri: "ui://main", name: "main", mimeType: "text/html" }],
 	}));
-	server.setRequestHandler(ReadResourceRequestSchema, async (req) => ({
+	server.setRequestHandler('resources/read', async (req) => ({
 		contents: [{ uri: req.params.uri, mimeType: "text/html", text: UI_HTML }],
 	}));
 	return server;

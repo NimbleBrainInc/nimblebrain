@@ -2,9 +2,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
-import { ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
+import { Server, WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/server";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import { McpSource } from "../../src/tools/mcp-source.ts";
 import { WorkspaceOAuthProvider } from "../../src/tools/workspace-oauth-provider.ts";
@@ -48,7 +46,7 @@ function startMockOAuthMcpServer(): MockOAuthMcpServer {
       { name: "oauth-test-mcp", version: "0.1.0" },
       { capabilities: { tools: {} } },
     );
-    mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
+    mcpServer.setRequestHandler('tools/list', async () => ({
       tools: [
         {
           name: "noop",

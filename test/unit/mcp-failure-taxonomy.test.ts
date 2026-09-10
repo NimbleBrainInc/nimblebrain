@@ -1,5 +1,4 @@
-import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js";
-import { McpError } from "@modelcontextprotocol/sdk/types.js";
+import { UnauthorizedError, ProtocolError } from "@modelcontextprotocol/client";
 import { describe, expect, it } from "bun:test";
 import {
   classifyConnectionFailure,
@@ -23,7 +22,7 @@ describe("classifyConnectionFailure — op-independent connection classes", () =
   it("classifies session loss by message (status/code-independent)", () => {
     expect(classifyConnectionFailure(sessionLost404)).toBe("session-lost");
     // The session-message match wins even when the code is -32001 (which alone is a timeout).
-    expect(classifyConnectionFailure(new McpError(-32001, "Session not found"))).toBe(
+    expect(classifyConnectionFailure(new ProtocolError(-32001, "Session not found"))).toBe(
       "session-lost",
     );
   });
@@ -32,7 +31,7 @@ describe("classifyConnectionFailure — op-independent connection classes", () =
     // The SDK throws McpError(-32001, "Request timed out") on a request timeout.
     // It's the tool being slow, not a session loss or a broken transport — so it
     // must surface (policyFor), never restart the source (#581 cascade).
-    expect(classifyConnectionFailure(new McpError(-32001, "Request timed out"))).toBe("timeout");
+    expect(classifyConnectionFailure(new ProtocolError(-32001, "Request timed out"))).toBe("timeout");
     expect(classifyConnectionFailure({ code: -32001, message: "MCP error -32001: Request timed out" })).toBe(
       "timeout",
     );
@@ -51,7 +50,7 @@ describe("classifyConnectionFailure — op-independent connection classes", () =
     expect(classifyConnectionFailure(realProd)).toBe("session-lost");
     // Same loss carried as an in-body JSON-RPC error (HTTP 200) → McpError(-32600).
     // The message match must win over the `-32600 → none` branch, or we'd strand it.
-    expect(classifyConnectionFailure(new McpError(-32600, "Session not found"))).toBe(
+    expect(classifyConnectionFailure(new ProtocolError(-32600, "Session not found"))).toBe(
       "session-lost",
     );
     // A non-spec remote returning the loss under a different status still recovers.
@@ -74,7 +73,7 @@ describe("classifyConnectionFailure — op-independent connection classes", () =
   });
 
   it("classifies a torn transport", () => {
-    expect(classifyConnectionFailure(new McpError(-32000, "Connection closed"))).toBe(
+    expect(classifyConnectionFailure(new ProtocolError(-32000, "Connection closed"))).toBe(
       "transport-dead",
     );
     expect(classifyConnectionFailure(new Error("fetch failed"))).toBe("transport-dead");
@@ -86,16 +85,16 @@ describe("classifyConnectionFailure — op-independent connection classes", () =
   it("returns 'none' for standard JSON-RPC protocol errors the server answered with", () => {
     // The transport is fine; restarting won't change the answer. (resource-miss
     // codes are also op-scoped — isMcpResourceMiss owns them per op.)
-    expect(classifyConnectionFailure(new McpError(-32700, "Parse error"))).toBe("none");
-    expect(classifyConnectionFailure(new McpError(-32600, "Invalid request"))).toBe("none");
-    expect(classifyConnectionFailure(new McpError(-32601, "Method not found"))).toBe("none");
-    expect(classifyConnectionFailure(new McpError(-32602, "Invalid params"))).toBe("none");
-    expect(classifyConnectionFailure(new McpError(-32603, "Internal error"))).toBe("none");
-    expect(classifyConnectionFailure(new McpError(-32002, "Resource not found"))).toBe("none");
+    expect(classifyConnectionFailure(new ProtocolError(-32700, "Parse error"))).toBe("none");
+    expect(classifyConnectionFailure(new ProtocolError(-32600, "Invalid request"))).toBe("none");
+    expect(classifyConnectionFailure(new ProtocolError(-32601, "Method not found"))).toBe("none");
+    expect(classifyConnectionFailure(new ProtocolError(-32602, "Invalid params"))).toBe("none");
+    expect(classifyConnectionFailure(new ProtocolError(-32603, "Internal error"))).toBe("none");
+    expect(classifyConnectionFailure(new ProtocolError(-32002, "Resource not found"))).toBe("none");
   });
 
   it("classifies recognized torn-transport shapes as transport-dead", () => {
-    expect(classifyConnectionFailure(new McpError(-32000, "Connection closed"))).toBe(
+    expect(classifyConnectionFailure(new ProtocolError(-32000, "Connection closed"))).toBe(
       "transport-dead",
     );
     expect(classifyConnectionFailure(new Error("write EPIPE"))).toBe("transport-dead");
@@ -176,7 +175,7 @@ describe("classifyConnectionFailure — op-independent connection classes", () =
     // Not a standard protocol error, not a recognized transport shape — e.g. a
     // server-defined code or a malformed-result parse error. The tool path
     // recovers these; reads surface them. See recover()'s recoverUnknown.
-    expect(classifyConnectionFailure(new McpError(-32050, "custom server error"))).toBe("unknown");
+    expect(classifyConnectionFailure(new ProtocolError(-32050, "custom server error"))).toBe("unknown");
     expect(classifyConnectionFailure(new Error("Unexpected token < in JSON"))).toBe("unknown");
   });
 

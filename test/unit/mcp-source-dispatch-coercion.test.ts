@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import type { CallToolResult, Task } from "@modelcontextprotocol/sdk/types.js";
+import type { CallToolResult, Task } from "@modelcontextprotocol/server";
 import type { EventSink } from "../../src/engine/types.ts";
 import { McpSource } from "../../src/tools/mcp-source.ts";
 

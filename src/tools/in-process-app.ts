@@ -1,16 +1,5 @@
-import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
-import {
-  CallToolRequestSchema,
-  ErrorCode,
-  ListResourcesRequestSchema,
-  ListResourceTemplatesRequestSchema,
-  ListToolsRequestSchema,
-  McpError,
-  ReadResourceRequestSchema,
-  type ToolAnnotations,
-} from "@modelcontextprotocol/sdk/types.js";
+import { InMemoryTransport, Server, ProtocolError, ProtocolErrorCode } from "@modelcontextprotocol/server";
+import type { Transport, ToolAnnotations } from "@modelcontextprotocol/server";
 import type { PlacementDeclaration } from "../connectors/runtime/types.ts";
 import type { EventSink, ToolResult } from "../engine/types.ts";
 import { bytesToBase64 } from "../util/base64.ts";
@@ -200,7 +189,7 @@ export function defineInProcessApp(
         // Host conventions ride on `_meta` (free-form by spec); the spec's own
         // hints ride on `annotations`. Both survive the round trip and reach
         // `McpSource.tools()` under the same names.
-        server.setRequestHandler(ListToolsRequestSchema, async () => ({
+        server.setRequestHandler('tools/list', async () => ({
           tools: tools.map((t) => ({
             name: t.name,
             description: t.description,
@@ -234,7 +223,7 @@ export function defineInProcessApp(
         // trigger the source's crash-restart path — for an in-process
         // server, that's a server rebuild for every typo. The agent loop
         // already handles `isError: true` cleanly.
-        server.setRequestHandler(CallToolRequestSchema, async (request) => {
+        server.setRequestHandler('tools/call', async (request) => {
           const toolName = request.params.name;
           const tool = tools.find((t) => t.name === toolName);
           if (!tool) {
@@ -264,7 +253,7 @@ export function defineInProcessApp(
           // URI itself. Static map entries are listed first; dynamic entries
           // from `listResources()` are appended on every call so the catalog
           // can react to workspace state without restarting the server.
-          server.setRequestHandler(ListResourcesRequestSchema, async () => {
+          server.setRequestHandler('resources/list', async () => {
             const staticEntries = Array.from(resources.entries()).map(([uri, value]) => {
               const mimeType = typeof value === "string" ? "text/html" : value.mimeType;
               return {
@@ -286,11 +275,11 @@ export function defineInProcessApp(
           // resources/read — resolve the URI, then shape one `contents[]`
           // entry. A missing URI raises `-32602`, which the SDK transports as a
           // JSON-RPC error, matching how external MCP servers signal not-found.
-          server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
+          server.setRequestHandler('resources/read', async (request) => {
             const uri = request.params.uri;
             const value = await resolveResourceValue(uri, resources, resourceHandler);
             if (value === undefined) {
-              throw new McpError(ErrorCode.InvalidParams, `Resource not found: ${uri}`, { uri });
+              throw new ProtocolError(ProtocolErrorCode.InvalidParams, `Resource not found: ${uri}`, { uri });
             }
             return { contents: [await buildResourceContents(uri, value)] };
           });
@@ -299,7 +288,7 @@ export function defineInProcessApp(
           // declared. SDK rejects the request with MethodNotFound otherwise,
           // matching how a server that doesn't advertise templates behaves.
           if (hasTemplates) {
-            server.setRequestHandler(ListResourceTemplatesRequestSchema, async () => ({
+            server.setRequestHandler('resources/templates/list', async () => ({
               resourceTemplates: templates.map((t) => ({
                 uriTemplate: t.uriTemplate,
                 name: t.name,

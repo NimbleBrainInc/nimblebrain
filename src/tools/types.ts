@@ -1,4 +1,4 @@
-import type { ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
+import type { ToolAnnotations } from "@modelcontextprotocol/server";
 import type { ToolResult, ToolSchema } from "../engine/types.ts";
 
 /** A tool with source tracking. Extends ToolSchema with a source field. */

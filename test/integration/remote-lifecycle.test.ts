@@ -2,12 +2,7 @@ import { describe, expect, it, afterAll, afterEach, beforeEach } from "bun:test"
 import { mkdirSync, rmSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
-import {
-	ListToolsRequestSchema,
-	CallToolRequestSchema,
-} from "@modelcontextprotocol/sdk/types.js";
+import { Server, WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/server";
 import { ToolRegistry } from "../../src/tools/registry.ts";
 import { deriveServerName } from "../../src/connectors/runtime/paths.ts";
 import { startConnectorSource } from "../../src/connectors/runtime/startup.ts";
@@ -49,11 +44,11 @@ function createMcpServer(toolCount: number): Server {
 		},
 	}));
 
-	mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
+	mcpServer.setRequestHandler('tools/list', async () => ({
 		tools,
 	}));
 
-	mcpServer.setRequestHandler(CallToolRequestSchema, async (req) => ({
+	mcpServer.setRequestHandler('tools/call', async (req) => ({
 		content: [
 			{ type: "text", text: `Executed: ${req.params.name}` },
 		],

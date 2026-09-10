@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { McpError } from "@modelcontextprotocol/sdk/types.js";
+import { ProtocolError } from "@modelcontextprotocol/server";
 import {
   DEFAULT_BURST,
   DEFAULT_RATE_PER_SEC,
@@ -47,13 +47,13 @@ describe("TokenBucketRateLimit.check", () => {
     let now = 1000;
     const rl = new TokenBucketRateLimit({ burst: 1, ratePerSec: 10, now: () => now });
     rl.check("ws_a", "connector_x");
-    let caught: McpError | null = null;
+    let caught: ProtocolError | null = null;
     try {
       rl.check("ws_a", "connector_x");
     } catch (e) {
-      caught = e as McpError;
+      caught = e as ProtocolError;
     }
-    expect(caught).toBeInstanceOf(McpError);
+    expect(caught).toBeInstanceOf(ProtocolError);
     // Pin the JSON-RPC code so doc/impl drift fails CI rather than
     // silently shifting the contract that connector SDK retry logic
     // depends on. Rate limiting lives in the impl-defined server-error
