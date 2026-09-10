@@ -335,10 +335,25 @@ describe("loadCoreSkills", () => {
       const skills = loadCoreSkills();
       const names = skills.map((s) => s.manifest.name).sort();
 
-      expect(names).toEqual(["automation-authoring", "capabilities", "soul"]);
+      expect(names).toEqual([
+        "automation-authoring",
+        "capabilities",
+        "customer-communication",
+        "soul",
+      ]);
     } finally {
       spy.mockRestore();
     }
+  });
+
+  it("customer-communication is always-on inside the core priority band", () => {
+    const skills = loadCoreSkills();
+    const cc = skills.find((s) => s.manifest.name === "customer-communication")!;
+    expect(cc.manifest.loadingStrategy).toBe("always");
+    // Core band (<= CORE_PRIORITY_THRESHOLD) renders raw in Layer 0 as first-party
+    // identity, and sits after `soul` (0) but ahead of `capabilities` (10).
+    expect(cc.manifest.priority).toBe(1);
+    expect(cc.manifest.provenance?.origin).toBe("vendored");
   });
 
   it("capabilities is always-on (context channel)", () => {
