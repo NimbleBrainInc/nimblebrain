@@ -11,6 +11,7 @@ import {
 } from "../../src/connectors/providers/config.ts";
 import { MODEL_SLOTS } from "../../src/model/slots.ts";
 import { NOTIFICATIONS_POLL_CONFIG_KEYS } from "../../src/notifications/poll-config.ts";
+import { SECRETS_CONFIG_KEYS } from "../../src/config/secrets.ts";
 
 /**
  * Drift guard: the published config schema must stay in lockstep with the
@@ -44,6 +45,7 @@ const schema = JSON.parse(
     notifications: SchemaObject & {
       properties: { poll: SchemaObject };
     };
+    secrets: SchemaObject;
     connectors: SchemaObject & {
       properties: {
         providers: SchemaObject & {
@@ -130,4 +132,11 @@ describe("config schema ↔ notification poll config", () => {
   // The parent carries exactly one member today; declaring it keeps a future
   // `notifications.<something>` from landing in the schema alone.
   expectLockstep("notifications", schema.properties.notifications, ["poll"]);
+});
+
+describe("config schema ↔ secrets block", () => {
+  // `secrets.config` is deliberately NOT locked: it is the selected backend's
+  // own settings and the runtime holds no vocabulary for it. `secrets` itself
+  // is, so a third member cannot land in the schema alone.
+  expectLockstep("secrets", schema.properties.secrets, SECRETS_CONFIG_KEYS);
 });

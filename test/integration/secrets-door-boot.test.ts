@@ -35,6 +35,10 @@ import {
   _resetCredentialProvidersForTest,
   getCredentialProvider,
 } from "../../src/tools/credential-provider.ts";
+import {
+  _resetCredentialStoreBackendsForTest,
+  getCredentialStoreBackend,
+} from "../../src/tools/credential-store-backend.ts";
 import { requireCredentialStore } from "../../src/tools/credential-store.ts";
 import { CREDENTIAL_PROVIDER } from "../../src/tools/credential-transport-credential.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
@@ -53,6 +57,7 @@ beforeAll(async () => {
 
   _resetConnectorsConfigForTest();
   _resetCredentialProvidersForTest();
+  _resetCredentialStoreBackendsForTest();
 
   runtime = await Runtime.start({
     model: { provider: "custom", adapter: createEchoModel() },
@@ -69,10 +74,42 @@ afterAll(async () => {
   rmSync(testDir, { recursive: true, force: true });
   _resetConnectorsConfigForTest();
   _resetCredentialProvidersForTest();
+  _resetCredentialStoreBackendsForTest();
 });
 
 test("the runtime accessor and the module handle are the same store", () => {
   expect(runtime.getCredentialStore()).toBe(requireCredentialStore());
+});
+
+test("Runtime.start registers the `file` credential-store backend", () => {
+  // The registry was cleared before the boot, so this is the composition root's
+  // own registration and not a sibling suite's leftover.
+  expect(getCredentialStoreBackend("file")).toBeDefined();
+});
+
+test("a deployment with no `secrets` block still gets a store", () => {
+  // The config `start` was handed names no backend. Byte-identical default:
+  // the lookup falls through to `file` and the door opens as it always has.
+  expect(runtime.getCredentialStore()).toBeDefined();
+});
+
+test("an unregistered `secrets.backend` fails the boot, not the first read", async () => {
+  // Falling back to `file` would hand a deployment that asked for another
+  // backend a directory of plaintext files and no error. The failure has to
+  // land at start, where an operator is watching, rather than at a vendor call
+  // hours later.
+  const dir = mkdtempSync(join(tmpdir(), "secrets-backend-boot-"));
+  try {
+    const boot = Runtime.start({
+      model: { provider: "custom", adapter: createEchoModel() },
+      logging: { disabled: true },
+      workDir: dir,
+      secrets: { backend: "vault" },
+    });
+    await expect(boot).rejects.toThrow(/secrets\.backend "vault" is not a registered backend/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("Runtime.start registers the `credential` transport credential", () => {

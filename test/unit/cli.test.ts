@@ -107,6 +107,22 @@ describe("loadConfig", () => {
     expect(config.maxToolResultSize).toBe(250000);
   });
 
+  // The `secrets` block selects which backend holds every credential. Dropped
+  // here, a config naming a backend this build does not register boots clean on
+  // the plaintext file store instead of throwing — silently, and exactly for the
+  // deployment that asked not to be on plaintext.
+  it("loads the secrets block from config file", () => {
+    // `config` is empty because nothing reads it yet: the `file` backend
+    // discards it, so a seal-shaped fixture here would read as a working
+    // example of a setting that does nothing. An empty object still fails this
+    // assertion if the loader drops the key.
+    const configPath = writeTestConfig("secrets.json", {
+      secrets: { backend: "file", config: {} },
+    });
+    const config = loadConfig({ config: configPath });
+    expect(config.secrets).toEqual({ backend: "file", config: {} });
+  });
+
   it("loads files config from config file", () => {
     const configPath = writeTestConfig("files-config.json", {
       files: {
