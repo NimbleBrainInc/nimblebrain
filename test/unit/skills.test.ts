@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { parseSkillContent, loadSkillDir, loadBuiltinSkills, loadCoreSkills, partitionSkills } from "../../src/skills/loader.ts";
 import { SkillMatcher } from "../../src/skills/matcher.ts";
+import { validateSkill } from "../../src/skills/validator.ts";
 import type { Skill } from "../../src/skills/types.ts";
 
 const VALID_SKILL = `---
@@ -335,9 +336,42 @@ describe("loadCoreSkills", () => {
       const skills = loadCoreSkills();
       const names = skills.map((s) => s.manifest.name).sort();
 
-      expect(names).toEqual(["automation-authoring", "capabilities", "soul"]);
+      expect(names).toEqual([
+        "automation-authoring",
+        "capabilities",
+        "customer-communication",
+        "soul",
+      ]);
     } finally {
       spy.mockRestore();
+    }
+  });
+
+  it("customer-communication is always-on inside the core priority band", () => {
+    const skills = loadCoreSkills();
+    const cc = skills.find((s) => s.manifest.name === "customer-communication")!;
+    expect(cc.manifest.loadingStrategy).toBe("always");
+    // Core band (<= CORE_PRIORITY_THRESHOLD) renders raw in Layer 0 as first-party
+    // identity, and sits after `soul` (0) but ahead of `capabilities` (10).
+    expect(cc.manifest.priority).toBe(1);
+    expect(cc.manifest.provenance?.origin).toBe("vendored");
+  });
+
+  it("customer-communication is overridable — the name is not reserved", () => {
+    // The skill ships always-on because hiding the machinery is right for a
+    // business operator and wrong for a developer building on the platform.
+    // That only holds while a tenant can shadow it, so the name must stay off
+    // `RESERVED_NAMES` — which `soul` and `capabilities` are on, and which
+    // nothing else here would catch.
+    const override = validateSkill(
+      "customer-communication",
+      { priority: 50 },
+      "Speak however this deployment prefers.",
+    );
+    expect(override.valid).toBe(true);
+
+    for (const reserved of ["soul", "capabilities"]) {
+      expect(validateSkill(reserved, { priority: 50 }, "body").valid).toBe(false);
     }
   });
 
