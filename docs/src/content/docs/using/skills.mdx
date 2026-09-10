@@ -116,16 +116,19 @@ Files must have a `.md` extension.
 
 ### Platform defaults, and overriding one
 
-Two core skills are always-on for every workspace and need no setup:
+Three core skills are always-on for every workspace and need no setup:
 
 | Skill | What it does |
 |---|---|
 | `soul` | Base identity — use your tools, don't guess, be concise and direct. |
 | `customer-communication` | Talk about the customer's goal and the work, not the tool names, IDs, and internal state used to do it. |
+| `capabilities` | How to find the tools an app publishes and promote them into the active set. |
 
-Both ship with the platform, so they can't be edited in place — `skills__update` refuses to write a platform-vendored file. Change one by **authoring your own skill with the same name** in a scope that outranks it.
+All three ship with the platform, so they can't be edited in place — `skills__update` refuses to write a platform-vendored file. Change one by **authoring your own skill with the same name** in a scope that outranks it.
 
 Skills merge by `name`, with later tiers winning: **user > workspace > org (`~/.nimblebrain/skills/`) > platform**. So a file at `~/.nimblebrain/skills/customer-communication.md` replaces the shipped one for the whole org; the same name under a workspace or a single user narrows it further. Writing an org-scoped skill requires an org admin or owner role.
+
+`soul` and `capabilities` are reserved names — `skills__create` refuses them, so an override for those two has to be a file you write yourself. `customer-communication` is not reserved, so either route works.
 
 To turn a default off rather than reword it, give the override `status: disabled` — an always-on skill that isn't `active` is dropped before the prompt is composed. Author it directly as a file, or create the override and toggle it off in the Skills app:
 
@@ -141,7 +144,7 @@ metadata:
 ```
 
 <Aside type="note">
-  An override you author lands at `priority` 11–99; 0–10 is reserved for the platform's own core skills. That only changes where it sits in the prompt (contained user context rather than raw identity), not whether it applies.
+  An override written through `skills__create` lands at `priority` 11–99, because 0–10 is reserved for the platform's own core skills — so it sits in contained user context rather than raw identity. A file you write yourself takes whatever `priority` its frontmatter declares, the core band included. Either way it applies.
 </Aside>
 
 ## Connector skill overlays
