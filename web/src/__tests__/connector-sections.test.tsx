@@ -6,8 +6,9 @@
 //   1. Each section renders only when its credential lifecycle is
 //      relevant to the connector. The page composes all three and
 //      relies on `null` returns to skip irrelevant ones — without that
-//      a stdio connector would render an empty OAuth section, and a
-//      Granola DCR connector would render an empty operator section.
+//      a statically-authenticated connector would render an empty OAuth
+//      section, and a Granola DCR connector would render an empty
+//      operator section.
 //
 //   2. State→affordance mapping on OAuthConnectionSection mirrors the
 //      ConnectionState union exactly (running → Disconnect; reauth_required
