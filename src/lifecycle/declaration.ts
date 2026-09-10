@@ -124,6 +124,28 @@ function verifyOne(
         `The runtime calls a lifecycle handler with no required arguments.`,
     );
   }
+  // A lifecycle call is AWAITED by an operation the user is waiting on — the
+  // uninstall waits behind `on_removing`, and the install behind `on_ready` —
+  // so it has to be an operation the runtime can bound. An ordinary inline
+  // `tools/call` is: the MCP client applies its own request deadline. A
+  // task-augmented one is not: `execution.taskSupport` of "optional" or
+  // "required" routes the call through the task API, whose await settles only
+  // when the task terminates or the source is torn down — and on the uninstall
+  // path the teardown is what is waiting behind the call. Nothing else here
+  // holds a deadline, so this is the check that keeps the "never fails the
+  // uninstall" guarantee from meaning "hangs it instead".
+  //
+  // The pair of values mirrors `isTaskAugmented` in `McpSource.execute`, which
+  // is the dispatch this predicate is about; they must move together.
+  const taskSupport = tool.execution?.taskSupport;
+  if (taskSupport === "optional" || taskSupport === "required") {
+    throw new LifecycleContractError(
+      `Connector "${connector}" declares lifecycle "${event}" as "${toolName}", which advertises ` +
+        `execution.taskSupport "${taskSupport}". A lifecycle handler must be an ordinary inline ` +
+        `tool: the runtime awaits it while an install or an uninstall waits behind it, and a ` +
+        `task-augmented call has no deadline it can be bounded by.`,
+    );
+  }
 }
 
 /**

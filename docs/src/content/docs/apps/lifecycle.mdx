@@ -78,7 +78,7 @@ is not a design.
 
 ## Writing the handlers
 
-Two rules bind the tools you name.
+Three rules bind the tools you name.
 
 **They must be callable with no arguments.** The host checks your advertised
 `tools/list` at install time; a handler with any *required* property in its
@@ -91,6 +91,13 @@ requiring every server to declare a field most of them ignore would be a worse
 contract. FastMCP, the MCP TypeScript SDK, and anything built on pydantic do
 this already. A framework that rejects an undeclared argument would fail every
 call.
+
+**They must be ordinary inline tools.** A handler advertising
+`execution.taskSupport` of `"optional"` or `"required"` is reported as a
+manifest error, for the same reason as the arguments rule: the host *awaits*
+these calls while an install or an uninstall waits behind them, and a
+task-augmented call carries no deadline the host can bound it by. Long work goes
+*behind* the handler, not inside it — which is the next rule.
 
 ### Python (FastMCP)
 
@@ -136,9 +143,10 @@ server.registerTool(
 );
 ```
 
-**Return quickly.** `on_ready` runs inside the install the user is watching.
-Record the intent and let your own background work converge it; a handler that
-blocks on a vendor round-trip makes the install feel broken.
+**Return quickly.** Both handlers are awaited: `on_ready` inside the install the
+user is watching, `on_removing` inside the uninstall. Record the intent and let
+your own background work converge it; a handler that waits on a vendor
+round-trip makes the install feel broken and the uninstall feel stuck.
 
 ## What the user sees
 
@@ -156,9 +164,9 @@ Only the `install` call surfaces this way — a `resume` has nobody watching.
 
 | | |
 |---|---|
-| A handler the server does not advertise, or that requires an argument | **A warning on a successful install.** The connector installs and works; no lifecycle call is made. The check re-runs on every reconnect, so fixing the manifest and reconnecting is enough — no reinstall. |
+| A handler the server does not advertise, that requires an argument, or that is task-augmented | **A warning on a successful install.** The connector installs and works; no lifecycle call is made. The check re-runs on every reconnect, so fixing the manifest and reconnecting is enough — no reinstall. |
 | `on_ready` fails or errors | **Never fails the install.** Retried on the next reconnect, and on your next `tools/list_changed`. |
-| `on_removing` fails, errors, or cannot be reached | **Never blocks the uninstall.** Not retried — the connector is gone. |
+| `on_removing` fails, errors, or cannot be reached | **Never fails the uninstall.** The uninstall *waits* for the call — bounded by the host's ordinary request deadline — and then proceeds either way. Not retried; the connector is gone. |
 | Your server advertises no tools yet | Not an error. The host waits for your tool list and calls then. |
 
 Neither call has a retry queue. The events *are* the retry: another reconnect,

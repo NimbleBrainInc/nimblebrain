@@ -561,9 +561,12 @@ Three rules that are load-bearing rather than stylistic:
   once is the contract, handlers must be idempotent, and suppressing one needs
   "an install is in progress" state the runtime does not hold.
 - **`on_removing` fires before `lifecycle.uninstall` and before the OAuth
-  revoke**, is best-effort, and never blocks the uninstall. It also may never
-  arrive — the docs say so in those words, because a bundle that leaks a
-  third-party resource without it is relying on a call nothing guarantees.
+  revoke**, is best-effort, and never *fails* the uninstall — which does wait
+  for it, so `verifyLifecycleTools` refuses a task-augmented handler
+  (`awaitToolTaskResult` has no deadline, and the teardown is what waits behind
+  the call). It also may never arrive — the docs say so in those words, because
+  a bundle that leaks a third-party resource without it is relying on a call
+  nothing guarantees.
 
 The contract check (`verifyLifecycleTools`) mirrors `verifyRegisterTool` with a
 weaker predicate — the tool exists and takes no *required* argument — and

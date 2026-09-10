@@ -288,13 +288,14 @@ own server** that the host calls at those moments.
 | `on_removing` | `string` | No | Tool called with no arguments immediately before the connector is uninstalled, while your server is still reachable. |
 
 Both optional; declare either alone. Both handlers must be callable with **no
-required arguments**, and must ignore arguments they do not declare — the host
-sends `reason` whether or not your schema mentions it.
+required arguments**, must ignore arguments they do not declare (the host sends
+`reason` whether or not your schema mentions it), and must be **ordinary inline
+tools** — the host awaits them, so a task-augmented handler is refused.
 
 Delivery is **at least once**, and a fresh install delivers **two** `on_ready`
 calls in a racy order, so handlers must be idempotent. A failed `on_ready` never
-fails the install; a failed `on_removing` never blocks the uninstall, and it may
-not arrive at all.
+fails the install; a failed `on_removing` never fails the uninstall — which
+waits for the call and then proceeds either way — and it may not arrive at all.
 
 There is no `pre_install` and no `post_uninstall`: the call is a tool call on
 your server, so before it is reachable and after it is gone there is nothing to
