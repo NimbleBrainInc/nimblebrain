@@ -32,11 +32,13 @@ import { isUniformByte } from "../oauth/envelope.ts";
  * | `iv` | 12, fresh per seal | The AES-GCM nonce. |
  * | `ct‖tag` | n+16 | AES-256-GCM. |
  *
- * The magic is checked **unconditionally** by whoever reads a file, whether or
- * not a sealer is configured: a value matching this grammar that cannot be
- * opened must fail loudly, never be handed back as plaintext. That check is the
- * reader's, but the grammar is the format's, so it lives here as
- * {@link isSealedValue}.
+ * A reader decides "sealed" from "legacy plaintext" on the **magic alone**
+ * ({@link isSealedValue}), unconditionally — whether or not it has a sealer
+ * configured. Well-formedness is a separate question, answered by
+ * {@link parseSealedValue}, and its answer is throw rather than fall through:
+ * a value claiming to be sealed must never be handed back as a secret. The
+ * decision is the reader's to make, but the discriminator is the format's, so
+ * it lives here.
  */
 
 /**
@@ -51,21 +53,45 @@ const SALT_BYTES = 16;
 const IV_BYTES = 12;
 const DEK_BYTES = 32;
 const KID_BYTES = 8;
+const TAG_BYTES = 16;
+
+/** The magic and its separator — everything a value must start with to claim it is sealed. */
+const SEALED_VALUE_MAGIC = `${MAGIC}.`;
 
 /**
- * The grammar of a sealed value. A file matching this IS sealed, and a reader
- * that cannot open it must throw rather than return the bytes.
+ * Does this value CLAIM to be sealed? The magic alone, deliberately.
+ *
+ * This is the discriminator a reader uses to decide "sealed, so open it" from
+ * "legacy plaintext, so return it", and it has to be the weaker of the two
+ * tests, not the stronger one. Gate on the full grammar and a sealed file that
+ * gains one byte outside it — a trailing newline from an operator writing it
+ * back with `echo`, a truncated write — stops counting as sealed, falls to the
+ * plaintext path, and is handed to a vendor AS the credential. A boot re-seal
+ * sweep would then seal that string as the real value and the corruption
+ * becomes permanent.
+ *
+ * With the magic as the gate there is no such gap: anything claiming to be
+ * `NBS1` either opens or throws. The full grammar still exists — it is what
+ * {@link parseSealedValue} enforces — but it decides validity, never identity.
+ *
+ * The cost is that a legacy plaintext secret whose value literally begins
+ * `NBS1.` now fails loudly instead of being read. That is the right side of
+ * this trade: the alternative failure is silent, and it hands out ciphertext.
+ */
+export function isSealedValue(raw: string): boolean {
+  return raw.startsWith(SEALED_VALUE_MAGIC);
+}
+
+/**
+ * The grammar of a WELL-FORMED sealed value.
  *
  * `[\w-]` is the base64url alphabet (Node emits it unpadded), so a field that
  * picked up whitespace, a newline, or `+`/`/` from a standard-base64 encoder
- * fails the match rather than reaching the cipher.
+ * fails the match rather than reaching the cipher. Not exported: a caller that
+ * reached for this as a discriminator would reintroduce the gap
+ * {@link isSealedValue} exists to close.
  */
-export const SEALED_VALUE_RE = /^NBS1\.[0-9a-f]{16}\.[\w-]+\.[\w-]+\.[\w-]+$/;
-
-/** Does this look like a sealed value? Cheap, total, and never throws. */
-export function isSealedValue(raw: string): boolean {
-  return SEALED_VALUE_RE.test(raw);
-}
+const SEALED_VALUE_RE = /^NBS1\.[0-9a-f]{16}\.[\w-]+\.[\w-]+\.[\w-]+$/;
 
 /** Why an open failed. The backend turns this into an audit event and an error. */
 export type CredentialSealFailure =
@@ -125,7 +151,7 @@ function deriveDek(ringKey: Buffer, salt: Buffer, info: Buffer): Buffer {
 export function parseSealedValue(
   raw: string,
 ): { kid: string; salt: Buffer; iv: Buffer; ciphertext: Buffer } | undefined {
-  if (!isSealedValue(raw)) return undefined;
+  if (!SEALED_VALUE_RE.test(raw)) return undefined;
   const [, kid, salt, iv, ciphertext] = raw.split(".") as [string, string, string, string, string];
   const decoded = {
     kid,
@@ -134,8 +160,24 @@ export function parseSealedValue(
     ciphertext: Buffer.from(ciphertext, "base64url"),
   };
   // The grammar admits any base64url length. Lengths the cipher cannot use are
-  // a corrupt file, not a decode failure to discover three calls later.
+  // a corrupt file, not a decode failure to discover three calls later — and a
+  // ciphertext field shorter than the tag is exactly that: without this, a
+  // 4-byte field is read as a 4-byte tag and GCM verifies against it.
   if (decoded.salt.length !== SALT_BYTES || decoded.iv.length !== IV_BYTES) return undefined;
+  if (decoded.ciphertext.length < TAG_BYTES) return undefined;
+  // Encodings must be canonical. base64url is surjective onto its output, not
+  // injective: the trailing character of a 16-byte salt carries two data bits,
+  // so four distinct characters decode to the same bytes. Without this a
+  // sealed value has variants that all open — the same malleability that made
+  // a naive tamper test pass by accident — and "change any field and it fails"
+  // stops being literally true.
+  if (
+    decoded.salt.toString("base64url") !== salt ||
+    decoded.iv.toString("base64url") !== iv ||
+    decoded.ciphertext.toString("base64url") !== ciphertext
+  ) {
+    return undefined;
+  }
   return decoded;
 }
 
@@ -229,9 +271,15 @@ export function createCredentialSealer(keys: readonly [Buffer, ...Buffer[]]): Cr
       const info = infoFor(scopeLabel, key);
       const dek = deriveDek(keys[index] as Buffer, parsed.salt, info);
       try {
-        const tag = parsed.ciphertext.subarray(parsed.ciphertext.length - 16);
-        const body = parsed.ciphertext.subarray(0, parsed.ciphertext.length - 16);
-        const decipher = createDecipheriv("aes-256-gcm", dek, parsed.iv);
+        const tag = parsed.ciphertext.subarray(parsed.ciphertext.length - TAG_BYTES);
+        const body = parsed.ciphertext.subarray(0, parsed.ciphertext.length - TAG_BYTES);
+        // `authTagLength` is belt to the parse's braces. Node accepts a short
+        // GCM tag and verifies against only those bytes unless told otherwise,
+        // which turns a truncated field into a weaker forgery target rather
+        // than a rejection.
+        const decipher = createDecipheriv("aes-256-gcm", dek, parsed.iv, {
+          authTagLength: TAG_BYTES,
+        });
         decipher.setAAD(info);
         decipher.setAuthTag(tag);
         return Buffer.concat([decipher.update(body), decipher.final()]).toString("utf8");

@@ -13,7 +13,6 @@ import {
   isSealedValue,
   parseSealedValue,
   readCredentialKeyRing,
-  SEALED_VALUE_RE,
 } from "../../src/tools/credential-seal.ts";
 
 const KEY_A = Buffer.alloc(32, 0x11);
@@ -36,8 +35,8 @@ describe("the wire format", () => {
 
   test("it is one line of five dot-separated fields, with no trailing newline", () => {
     const sealed = sealerFor(KEY_A).seal(WS, "k", "v");
-    expect(sealed).toMatch(SEALED_VALUE_RE);
     expect(sealed.split(".")).toHaveLength(5);
+    expect(parseSealedValue(sealed)).toBeDefined();
     expect(sealed).not.toContain("\n");
     expect(sealed.endsWith("\n")).toBe(false);
     expect(sealed.startsWith("NBS1.")).toBe(true);
@@ -59,21 +58,31 @@ describe("the wire format", () => {
     expect(s.open(WS, "k", s.seal(WS, "k", value))).toBe(value);
   });
 
-  test("isSealedValue accepts what seal produces and rejects plaintext", () => {
-    expect(isSealedValue(sealerFor(KEY_A).seal(WS, "k", "v"))).toBe(true);
-    for (const plain of [
-      "sk-live-abcdefghijklmnop",
-      "",
-      "NBS1",
+  test("isSealedValue gates on the magic, so damage stays sealed rather than becoming plaintext", () => {
+    const sealed = sealerFor(KEY_A).seal(WS, "k", "v");
+    expect(isSealedValue(sealed)).toBe(true);
+
+    // The point of the weaker gate. Each of these is a sealed value that lost
+    // its well-formedness — an operator writing it back with `echo`, a
+    // truncated write, a cut field. Under a full-grammar gate every one reads
+    // as legacy plaintext and is handed out AS the credential; under this one
+    // they all still claim to be sealed, so `open` refuses them.
+    for (const damaged of [
+      `${sealed}\n`,
+      ` ${sealed}`.trimStart() + " ",
+      sealed.slice(0, -4),
+      sealed.split(".").slice(0, 4).join("."),
+      "NBS1.",
       "NBS1.short.a.b.c",
-      "NBS0.0011223344556677.a.b.c",
-      // Standard base64 rather than base64url: `+` and `/` are outside the
-      // grammar, so a field written by the wrong encoder never reaches the
-      // cipher.
       "NBS1.0011223344556677.a+b.c/d.e=",
-      // A newline anywhere is a file the format did not write.
-      "NBS1.0011223344556677.aa.bb.cc\n",
     ]) {
+      expect(isSealedValue(damaged)).toBe(true);
+      expect(() => sealerFor(KEY_A).open(WS, "k", damaged)).toThrow(CredentialSealError);
+    }
+
+    // Anything not claiming to be sealed is plaintext, including a near miss on
+    // the magic itself.
+    for (const plain of ["sk-live-abcdefghijklmnop", "", "NBS1", "NBS0.0011223344556677.a.b.c"]) {
       expect(isSealedValue(plain)).toBe(false);
     }
   });
@@ -93,18 +102,73 @@ describe("tampering", () => {
   // a format with a field an attacker can move.
   const FIELDS = ["magic", "kid", "salt", "iv", "ciphertext"] as const;
 
+  // Flip a bit of the DECODED field and re-encode. Editing the last character
+  // of the encoding is not a mutation: base64url's final character carries two
+  // or four data bits, so several characters decode to the same bytes and the
+  // "tampered" value opens cleanly — a test that passes on the throw of the
+  // dice rather than on the property.
   for (const [index, field] of FIELDS.entries()) {
-    test(`flipping a byte of the ${field} makes open fail`, () => {
+    test(`flipping a bit of the ${field} makes open fail`, () => {
       const s = sealerFor(KEY_A);
       const parts = s.seal(WS, "k", "supersecret").split(".");
-      const original = parts[index] as string;
-      // Change one character to another in the same alphabet, so the result
-      // still parses and the failure is the cipher's rather than the grammar's
-      // wherever that is possible.
-      parts[index] = original.slice(0, -1) + (original.endsWith("A") ? "B" : "A");
+      if (field === "magic") {
+        parts[index] = "NBS1x";
+      } else {
+        const bytes = Buffer.from(parts[index] as string, field === "kid" ? "hex" : "base64url");
+        bytes[0] = (bytes[0] as number) ^ 1;
+        parts[index] = bytes.toString(field === "kid" ? "hex" : "base64url");
+      }
       expect(() => s.open(WS, "k", parts.join("."))).toThrow(CredentialSealError);
     });
   }
+
+  test("every field's mutation is a real one", () => {
+    // The guard on the guard: a mutation that decoded back to the original
+    // would make each case above vacuous, which is exactly how the first
+    // version of this block passed.
+    const parts = sealerFor(KEY_A).seal(WS, "k", "supersecret").split(".");
+    for (const index of [1, 2, 3, 4]) {
+      const enc = index === 1 ? "hex" : "base64url";
+      const bytes = Buffer.from(parts[index] as string, enc);
+      bytes[0] = (bytes[0] as number) ^ 1;
+      expect(bytes.toString(enc)).not.toBe(parts[index]);
+    }
+  });
+
+  test("a non-canonical encoding of the same bytes is refused", () => {
+    // base64url is not injective: the trailing character of a 16-byte salt
+    // carries two data bits, so four characters decode identically. Admitting
+    // those would give every sealed value a family of variants that all open.
+    const s = sealerFor(KEY_A);
+    const parts = s.seal(WS, "k", "v").split(".");
+    const salt = parts[2] as string;
+    const last = salt.at(-1) as string;
+    const alt = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+      .split("")
+      .find(
+        (c) =>
+          c !== last &&
+          Buffer.from(salt.slice(0, -1) + c, "base64url").equals(
+            Buffer.from(salt, "base64url"),
+          ),
+      );
+    expect(alt).toBeDefined();
+    parts[2] = salt.slice(0, -1) + alt;
+    expect(() => s.open(WS, "k", parts.join("."))).toThrow(CredentialSealError);
+  });
+
+  test("a ciphertext field too short to hold a tag is refused", () => {
+    // Node verifies GCM against however many tag bytes it is handed unless the
+    // length is pinned, so a truncated field is a weaker forgery target rather
+    // than a rejection. Refused twice over: by the parse, and by authTagLength.
+    const s = sealerFor(KEY_A);
+    const parts = s.seal(WS, "k", "").split(".");
+    const full = Buffer.from(parts[4] as string, "base64url");
+    for (const n of [0, 4, 8, 15]) {
+      parts[4] = full.subarray(0, n).toString("base64url");
+      expect(() => s.open(WS, "k", parts.join("."))).toThrow(CredentialSealError);
+    }
+  });
 
   test("a kid changed to another valid hex value is an unknown kid, not a fallback", () => {
     // Within the kid's own alphabet, so the grammar passes and the failure is
@@ -131,7 +195,12 @@ describe("tampering", () => {
   test("a failed open names the reason and never the value", () => {
     const s = sealerFor(KEY_A);
     const parts = s.seal(WS, "k", "supersecret").split(".");
-    parts[4] = `${(parts[4] as string).slice(0, -1)}A`;
+    // Decoded-byte flip, for the same reason the block above uses one: editing
+    // the final character of a base64url field is a no-op whenever that
+    // character already encodes the value it would be swapped for.
+    const ct = Buffer.from(parts[4] as string, "base64url");
+    ct[0] = (ct[0] as number) ^ 1;
+    parts[4] = ct.toString("base64url");
     try {
       s.open(WS, "k", parts.join("."));
       throw new Error("expected a throw");
@@ -185,7 +254,7 @@ describe("the scope and key are bound into the value", () => {
   });
 });
 
-describe("SEC-4 — every seal gets a fresh salt and a fresh IV", () => {
+describe("every seal gets a fresh salt and a fresh IV", () => {
   // (key, IV) reuse under GCM leaks the authentication subkey and the XOR of
   // the plaintexts. This is the regression that pins the invariant against a
   // future path — the boot re-seal sweep included — that carries either field
@@ -221,14 +290,13 @@ describe("SEC-4 — every seal gets a fresh salt and a fresh IV", () => {
   });
 });
 
-describe("SEC-3 — the kid is a MAC, never a digest of key material", () => {
+describe("the kid is a MAC, never a digest of key material", () => {
   test("a kid is 16 hex characters", () => {
     expect(sealerFor(KEY_A).sealingKid).toMatch(/^[0-9a-f]{16}$/);
   });
 
   test("it is not the truncated SHA-256 of the key", () => {
-    // The defect this replaces. A raw digest of key material rides in every
-    // sealed file and in every error naming a wanted kid; under the MAC the kid
+    // A raw digest of key material rides in every sealed file and in every error naming a wanted kid; under the MAC the kid
     // discloses nothing without the key that produced it.
     const rawDigest = createHash("sha256").update(KEY_A).digest("hex").slice(0, 16);
     expect(sealerFor(KEY_A).sealingKid).not.toBe(rawDigest);
