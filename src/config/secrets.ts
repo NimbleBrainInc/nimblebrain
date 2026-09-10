@@ -111,22 +111,36 @@ function violationAt(name: string, value: unknown, path: string): string | undef
  * The walk descends through every property, `Env`-suffixed ones included — a
  * `*Env` name is a carve-out for the value it holds, not for a subtree beneath
  * it, and `{ tokenEnv: { key: "…" } }` is still a key in a config file.
+ *
+ * `owner` is the property an array sits under. Elements have no names of their
+ * own, so each is judged by that one: `keys: ["…"]` is the claim `key: "…"`
+ * makes, once per element.
  */
-export function findInlineKeyMaterial(value: unknown, path = "secrets.config"): string | undefined {
-  if (Array.isArray(value)) {
-    for (const [index, item] of value.entries()) {
-      const found = findInlineKeyMaterial(item, `${path}[${index}]`);
-      if (found) return found;
-    }
-    return undefined;
-  }
+export function findInlineKeyMaterial(
+  value: unknown,
+  path = "secrets.config",
+  owner?: string,
+): string | undefined {
+  if (Array.isArray(value)) return findInElements(value, path, owner);
   if (value === null || typeof value !== "object") return undefined;
 
   for (const [name, child] of Object.entries(value)) {
     const here = `${path}.${name}`;
     const violation = violationAt(name, child, here);
     if (violation) return violation;
-    const found = findInlineKeyMaterial(child, here);
+    const found = findInlineKeyMaterial(child, here, name);
+    if (found) return found;
+  }
+  return undefined;
+}
+
+/** The array half of the walk. Every element is judged by `owner`. */
+function findInElements(items: unknown[], path: string, owner?: string): string | undefined {
+  for (const [index, item] of items.entries()) {
+    const here = `${path}[${index}]`;
+    const violation = owner === undefined ? undefined : violationAt(owner, item, here);
+    if (violation) return violation;
+    const found = findInlineKeyMaterial(item, here, owner);
     if (found) return found;
   }
   return undefined;

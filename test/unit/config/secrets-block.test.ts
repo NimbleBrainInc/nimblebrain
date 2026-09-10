@@ -60,6 +60,11 @@ describe("secrets.config never carries key material", () => {
     ["a password", { db: { password: "correct-horse-battery" } }],
     ["a secret under a different case", { seal: { API_SECRET: "abcdefghijklmnop" } }],
     ["one inside an array", { rings: [{ keyMaterial: "abcdefghijklmnop" }] }],
+    // An array's elements have no names of their own, so each is judged by the
+    // property the array sits under.
+    ["a rotation set", { seal: { keys: ["sk-live-abcdefghijklmnop"] } }],
+    ["one buried in nested arrays", { seal: { keys: [["sk-live-abcdefghijklmnop"]] } }],
+    ["an `Env` list holding a value", { seal: { keyEnv: ["NB_CREDENTIAL_KEY", "sk-live-x"] } }],
     ["a key hiding in an `Env` name that is not a variable name", { seal: { keyEnv: "sk-live-x" } }],
   ];
 
@@ -76,6 +81,10 @@ describe("secrets.config never carries key material", () => {
     expect(isValid({ secrets: { config: { keyType: "aes" } } })).toBe(true);
     // Nothing that looks like key material at all.
     expect(isValid({ secrets: { config: { seal: { algorithm: "aes-256-gcm" } } } })).toBe(true);
+    // The `Env` carve-out composes with a list: each element names a variable.
+    expect(
+      isValid({ secrets: { config: { seal: { keyEnv: ["NB_CREDENTIAL_KEY", "NB_PRIOR_KEY"] } } } }),
+    ).toBe(true);
   });
 
   test("the error is anchored at the block, so the CLI does not print `(root)`", () => {
