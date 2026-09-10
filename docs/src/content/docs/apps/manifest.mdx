@@ -291,6 +291,8 @@ Both optional; declare either alone. Both handlers must be callable with **no
 required arguments**, must ignore arguments they do not declare (the host sends
 `reason` whether or not your schema mentions it), and must be **ordinary inline
 tools** — the host awaits them, so a task-augmented handler is refused.
+`on_removing` is additionally capped: the uninstall waits a few seconds and then
+proceeds without it.
 
 Delivery is **at least once**, and a fresh install delivers **two** `on_ready`
 calls in a racy order, so handlers must be idempotent. A failed `on_ready` never

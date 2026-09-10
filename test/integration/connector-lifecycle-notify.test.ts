@@ -262,11 +262,17 @@ describe("a fresh install", () => {
     expect(sc.warning).toContain("not_a_tool");
     expect(sc.notice).toBeUndefined();
 
-    // A contract violation describes a connector whose source started fine.
-    // Narrating it as an eager-start failure sends the operator to click
-    // Connect on a connection that is already up — so it rides
-    // `structuredContent.warning` and never this sentence.
+    // Two things at once, and they pulled against each other once already.
+    // A contract violation describes a connector whose source started fine, so
+    // narrating it as an eager-start failure sent the operator to click Connect
+    // on a live connection — it must NOT be labelled that.
     expect(messageOf(result)).not.toContain("eager-start failed");
+    // But it must still be SAID. The engine feeds the model a tool result's
+    // `content` and never its `structuredContent`, and the web client's install
+    // call types its return without `warning` — so this sentence is the only
+    // surface either audience reads, and a warning absent from it reaches
+    // nobody at all.
+    expect(messageOf(result)).toContain("not_a_tool");
   });
 
   test("a connector declaring no lifecycle block installs with no notice and no call", async () => {

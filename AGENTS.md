@@ -562,9 +562,13 @@ Three rules that are load-bearing rather than stylistic:
   "an install is in progress" state the runtime does not hold.
 - **`on_removing` fires before `lifecycle.uninstall` and before the OAuth
   revoke**, is best-effort, and never *fails* the uninstall — which does wait
-  for it, so `verifyLifecycleTools` refuses a task-augmented handler
-  (`awaitToolTaskResult` has no deadline, and the teardown is what waits behind
-  the call). It also may never arrive — the docs say so in those words, because
+  for it, bounded by a **5s deadline in `notifyRemoving` and by nothing else**.
+  `verifyLifecycleTools` refuses a task-augmented handler (`awaitToolTaskResult`
+  has no deadline of its own), but that check runs on the READY path and only
+  warns — it has never gated this call, and it says nothing about a merely slow
+  inline handler. Do not read it as the bound and delete the deadline as
+  redundant; the wait is held where the guarantee is made. It also may never
+  arrive — the docs say so in those words, because
   a bundle that leaks a third-party resource without it is relying on a call
   nothing guarantees.
 

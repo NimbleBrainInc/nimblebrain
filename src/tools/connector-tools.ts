@@ -1724,10 +1724,19 @@ async function handleInstallRemoteOAuth(
   // call entirely and take its notice with it.
   const ready = await notifyConnectorReady(ctx, wsId, serverName);
 
-  const warning = [startWarning, hookWarning, ready.warning].filter(Boolean).join(" ") || undefined;
+  // Two kinds of warning, kept apart for the message and recombined for the
+  // structured result: an eager start that threw leaves the connector
+  // unconnected, while a contract violation leaves it connected with one
+  // declaration the runtime cannot honour.
+  const contractWarning = [hookWarning, ready.warning].filter(Boolean).join(" ") || undefined;
+  const warning = [startWarning, contractWarning].filter(Boolean).join(" ") || undefined;
   return {
     content: textContent(
-      remoteInstallMessage(entry.name, isPersonalTarget, startWarning, ready.notice),
+      remoteInstallMessage(entry.name, isPersonalTarget, {
+        startWarning,
+        contractWarning,
+        notice: ready.notice,
+      }),
     ),
     structuredContent: {
       ok: true,
@@ -2287,39 +2296,51 @@ async function eagerStartRemoteSource(
   }
 }
 
+/** The three things an install may have to say beyond "installed". */
+interface RemoteInstallMessageParts {
+  /** The eager start threw: the connector is installed but not connected. */
+  startWarning?: string;
+  /**
+   * A manifest the runtime could read but not honour — a hook or lifecycle
+   * contract violation. Distinct from {@link RemoteInstallMessageParts.startWarning}
+   * because the connector is installed AND connected; only a declaration is wrong.
+   */
+  contractWarning?: string;
+  /** The bundle's own sentence about what it has started doing. */
+  notice?: string;
+}
+
 /**
- * Success `content` string for a remote-OAuth install, folding the
- * personal-workspace, eager-start-failed and bundle-notice variants.
+ * Success `content` string for a remote-OAuth install.
  *
- * **Only the eager-start warning reaches this sentence** — not the combined
- * warning the result carries. The other two, a hook contract violation and a
- * lifecycle contract violation, describe a connector whose source started
- * perfectly well; rendering them as "Source eager-start failed" sent the
- * operator to click Connect on a connection that was already up. They travel on
- * `structuredContent.warning`, where they are not narrated as something else.
+ * **All three parts belong in this sentence, and they are separate because they
+ * mean different things.** A contract violation used to be folded into the
+ * eager-start clause and rendered as "Source eager-start failed" for a connector
+ * whose source was up, sending the operator to click Connect on a live
+ * connection. Splitting them fixed the label — and then dropping the contract
+ * warning from here made it invisible, which is worse: the engine feeds the
+ * model a tool result's `content` and never its `structuredContent`, and the web
+ * client's install call types its return without `warning`. So `content` is the
+ * only surface either audience reads, and a check nobody can see is not a check.
  *
- * The notice rides both branches. It is the bundle's own sentence about what it
- * has started doing, and an operator reading an eager-start failure is exactly
- * the one who needs it. In practice the two do not co-occur — a failed eager
- * start drops the source from the registry, so there is no port left to notify
- * — but that is a coincidence of the current start path, not a property this
- * sentence should be built on.
+ * `structuredContent.warning` still carries the combined string for anything
+ * that reads the structured result.
  */
 function remoteInstallMessage(
   entryName: string,
   isPersonalTarget: boolean,
-  startWarning: string | undefined,
-  notice: string | undefined,
+  { startWarning, contractWarning, notice }: RemoteInstallMessageParts,
 ): string {
   const where = isPersonalTarget ? "your personal workspace" : "this workspace";
-  const tail = notice ? ` ${notice}` : "";
+  const parts = [`Installed "${entryName}" in ${where}.`];
   if (startWarning) {
-    return (
-      `Installed "${entryName}" in ${where}. ` +
-      `Source eager-start failed (${startWarning}) — click Connect to retry.${tail}`
-    );
+    parts.push(`Source eager-start failed (${startWarning}) — click Connect to retry.`);
   }
-  return `Installed "${entryName}" in ${where}.${tail}`;
+  if (contractWarning) parts.push(contractWarning);
+  // Last, because it is the one sentence about what happens next rather than
+  // about what went wrong.
+  if (notice) parts.push(notice);
+  return parts.join(" ");
 }
 
 async function handleDisconnect(
