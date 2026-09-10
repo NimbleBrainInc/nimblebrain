@@ -20,23 +20,33 @@ classifiers = [
 
 dependencies = [
     # FastMCP is the layer bundles build on; Context comes from there.
-    # >=3.0 matches what synapse-research and other production bundles
-    # currently pin.
-    "fastmcp>=3.0.0",
+    # FastMCP 4 is required, not merely tolerated: fastmcp-slim 4 needs
+    # mcp>=2 and fastmcp-slim 3 needs mcp<2, so the two majors move
+    # together. Declaring the floor makes a consumer still on FastMCP 3
+    # fail to resolve — visibly — instead of being force-upgraded
+    # across a major by transitive resolution.
+    "fastmcp>=4.0.0,<5",
     # The underlying MCP types (ReadResourceResult, ListResourcesResult,
     # ClientCapabilities) are imported from this. FastMCP depends on it
     # transitively; pinning explicitly so the SDK's import paths don't
     # silently break when FastMCP's transitive resolution shifts.
     #
-    # The upper bound is intentional. The SDK's custom-method dispatch
-    # (`cast(ServerRequest, ...)` in `host.py`) relies on
-    # `BaseSession.send_request` calling only `.model_dump()` on the
-    # request — a behavior verified against 1.27.x but not contractually
-    # guaranteed by mcp's public surface. A 2.0 release could plausibly
-    # tighten input validation and break us at runtime (not import time).
-    # Bump after verifying against the next minor release; cut a SDK
-    # major if the dispatch shape needs to change.
-    "mcp>=1.27.0,<2.0.0",
+    # The upper bound is intentional and deliberately narrow. The SDK's
+    # custom-method dispatch (`cast(ServerRequest, ...)` in `host.py`)
+    # relies on `ServerSession.send_request` dumping and forwarding the
+    # request rather than validating it against the `ServerRequest`
+    # union — behaviour mcp's public surface does not guarantee, and
+    # whose loss shows up at runtime, not at import. Capability
+    # detection is the same kind of surface: 2.x moved `extensions`
+    # from an `extra="allow"` passthrough to a declared field, which
+    # changed how it must be read.
+    #
+    # No pull-request job runs this package's tests, so a single-minor
+    # bound is the only thing forcing each upstream minor to be
+    # verified by hand. Widen it to a major bound once PR-time coverage
+    # exists; cut an SDK major if the dispatch shape itself has to
+    # change.
+    "mcp>=2.1.1,<2.2.0",
 ]
 
 [project.urls]
