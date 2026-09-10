@@ -1,13 +1,15 @@
 import { randomBytes } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { hookPortForSource } from "../../src/hooks/provisioning.ts";
 import {
   ensureHooks,
   ensureHooksOnRunning,
   type HookReconcileDeps,
-  stopAllHookWatches,
-  stopWatchingHooks,
 } from "../../src/hooks/reconcile.ts";
+import {
+  connectorPortForSource,
+  stopAllToolSurfaceWatches,
+  stopWatchingToolSurface,
+} from "../../src/tools/connector-surface.ts";
 import { listRegistrations } from "../../src/hooks/registrations.ts";
 import type { HookIdentity } from "../../src/hooks/token.ts";
 import type { HookDeclaration } from "../../src/hooks/types.ts";
@@ -123,7 +125,7 @@ function makeDeps(
     workspaceStore: store,
     identity: IDENTITY,
     declarationsFor: async () => [DECL],
-    portFor: () => (source ? hookPortForSource(source) : undefined),
+    portFor: () => (source ? connectorPortForSource(source) : undefined),
     ...over,
   };
 }
@@ -154,7 +156,7 @@ beforeEach(async () => {
 });
 
 afterEach(() => {
-  stopWatchingHooks(wsId, CONNECTOR);
+  stopWatchingToolSurface(wsId, CONNECTOR);
   cleanup();
 });
 
@@ -261,7 +263,7 @@ describe("a source that is running but has advertised nothing yet", () => {
     await settle();
     expect(fake.listenerCount()).toBe(1);
 
-    stopWatchingHooks(wsId, CONNECTOR);
+    stopWatchingToolSurface(wsId, CONNECTOR);
 
     expect(fake.listenerCount()).toBe(0);
     fake.advertise([advertised("set_webhook_url")]);
@@ -286,7 +288,7 @@ describe("a source that is running but has advertised nothing yet", () => {
     expect(first.listenerCount()).toBe(1);
     expect(second.listenerCount()).toBe(1);
 
-    stopAllHookWatches();
+    stopAllToolSurfaceWatches();
 
     expect(first.listenerCount()).toBe(0);
     expect(second.listenerCount()).toBe(0);

@@ -150,6 +150,7 @@ export default defineConfig({
               { label: 'Synapse SDK', slug: 'apps/synapse' },
               { label: 'Tool Results & Content Routing', slug: 'apps/tool-results' },
               { label: 'Notifications', slug: 'apps/notifications' },
+              { label: 'Lifecycle', slug: 'apps/lifecycle' },
               { label: 'MCP App Bridge', slug: 'apps/bridge' },
               { label: 'UI Resources', slug: 'apps/ui-resources' },
               { label: 'Theming', slug: 'apps/theming' },

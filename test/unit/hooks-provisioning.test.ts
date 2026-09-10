@@ -1,10 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import {
   HookContractError,
-  hookPortForSource,
   provisionHooks,
   verifyRegisterTool,
 } from "../../src/hooks/provisioning.ts";
+import { connectorPortForSource } from "../../src/tools/connector-surface.ts";
 import { buildHookUrl } from "../../src/hooks/token.ts";
 import type { Tool, ToolResult } from "../../src/tools/types.ts";
 import type { HookDeclaration, HookRegistration } from "../../src/hooks/types.ts";
@@ -139,7 +139,7 @@ describe("verifyRegisterTool", () => {
   });
 });
 
-describe("hookPortForSource", () => {
+describe("connectorPortForSource", () => {
   /**
    * A registry source advertises `<source>__<tool>` and takes the bare name on
    * `execute`. A declaration names the bare tool. Without the port translating
@@ -152,7 +152,7 @@ describe("hookPortForSource", () => {
     const executed: string[] = [];
     return {
       executed,
-      port: hookPortForSource({
+      port: connectorPortForSource({
         tools: async () => bare.map((n) => tool({ name: `acme-mcp__${n}` })),
         execute: async (toolName: string): Promise<ToolResult> => {
           executed.push(toolName);

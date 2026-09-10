@@ -32,10 +32,12 @@ import type {
 import { textContent } from "../engine/content-helpers.ts";
 import { INTERNAL_TOOL_ANNOTATION, type ToolResult } from "../engine/types.ts";
 import { HookContractError, revokeHooksForConnector } from "../hooks/provisioning.ts";
-import { ensureHooks, stopWatchingHooks } from "../hooks/reconcile.ts";
+import { ensureHooks } from "../hooks/reconcile.ts";
 import type { ConnectorOwner } from "../identity/connector-owner.ts";
 import { IdentityConnectorStore } from "../identity/connector-store.ts";
 import type { UserIdentity } from "../identity/provider.ts";
+import { LifecycleContractError } from "../lifecycle/declaration.ts";
+import { forgetReadyNotification, notifyReady, notifyRemoving } from "../lifecycle/notify.ts";
 import { clearCursor } from "../notifications/cursors.ts";
 import { log } from "../observability/log.ts";
 import type { PermissionOwner } from "../permissions/permission-store.ts";
@@ -44,6 +46,7 @@ import { validateAdditionalAuthorizationParams } from "../util/oauth-params.ts";
 import { isHttpUrl } from "../util/url.ts";
 import { canWriteWorkspaceScoped } from "../workspace/authz.ts";
 import type { Workspace } from "../workspace/types.ts";
+import { stopWatchingToolSurface } from "./connector-surface.ts";
 import { type CredentialRef, isCredentialRef } from "./credential-ref.ts";
 import type { CredentialStore } from "./credential-store.ts";
 import { CREDENTIAL_PROVIDER } from "./credential-transport-credential.ts";
@@ -1712,9 +1715,18 @@ async function handleInstallRemoteOAuth(
   // firing exactly once and then never again.
   const hookWarning = await provisionDeclaredHooks(ctx, wsId, serverName);
 
-  const warning = [startWarning, hookWarning].filter(Boolean).join(" ") || undefined;
+  // And tell the connector it is installed. Beside the hooks reconcile because
+  // it needs the same thing — a started source with an enumerable tool list —
+  // and deliberately NOT through it: this call is the install operation's own
+  // act, so it is made outside the hooks single-flight and outside the
+  // per-process dedupe the connection-running observer uses. Joining either
+  // would tell a freshly-installed connector `reason: "resume"`, or skip the
+  // call entirely and take its notice with it.
+  const ready = await notifyConnectorReady(ctx, wsId, serverName);
+
+  const warning = [startWarning, hookWarning, ready.warning].filter(Boolean).join(" ") || undefined;
   return {
-    content: textContent(remoteInstallMessage(entry.name, isPersonalTarget, warning)),
+    content: textContent(remoteInstallMessage(entry.name, isPersonalTarget, warning, ready.notice)),
     structuredContent: {
       ok: true,
       alreadyInstalled: false,
@@ -1722,6 +1734,9 @@ async function handleInstallRemoteOAuth(
       scope: "workspace",
       wsId,
       ...(warning ? { warning } : {}),
+      // Kept in its own field beside `warning`. A warning says something is
+      // wrong; a notice is the bundle telling the user what is now happening.
+      ...(ready.notice ? { notice: ready.notice } : {}),
     },
     isError: false,
   };
@@ -1760,6 +1775,50 @@ async function provisionDeclaredHooks(
       reason: err instanceof Error ? err.message : String(err),
     });
     return undefined;
+  }
+}
+
+/**
+ * Tell a freshly-installed connector it is ready, and carry back what it said.
+ *
+ * The `notice` is the bundle's own words about what is now happening — the one
+ * place a user waiting on install-time setup is told to wait. The `warning` is
+ * a manifest that names a handler the server does not serve, or one the runtime
+ * could never call with no arguments.
+ *
+ * Never an error, for the same reason the hooks contract check is not: by this
+ * line the ref is persisted, the instance is seeded and the source is running,
+ * so the install has succeeded, and reporting otherwise sends the operator to a
+ * retry `handleDuplicateInstall` short-circuits.
+ *
+ * A connector whose source starts later (interactive OAuth) has nothing to call
+ * here and gets no notice — its first `on_ready` is the connection-running
+ * observer's, which carries `resume`.
+ */
+async function notifyConnectorReady(
+  ctx: ManageConnectorsContext,
+  wsId: string,
+  serverName: string,
+): Promise<{ notice?: string; warning?: string }> {
+  try {
+    const { notice } = await notifyReady(
+      ctx.runtime.getLifecycleNotifyDeps(),
+      wsId,
+      serverName,
+      "install",
+    );
+    return notice ? { notice } : {};
+  } catch (err) {
+    if (err instanceof LifecycleContractError) return { warning: err.message };
+    // Anything else (the source went away mid-install, a transient catalog
+    // read) leaves the connector installed and the bundle un-notified — the
+    // next transition to `running` tells it, with `resume`.
+    log.warn("[lifecycle] install-time notification failed", {
+      connector: serverName,
+      workspace_id: wsId,
+      reason: err instanceof Error ? err.message : String(err),
+    });
+    return {};
   }
 }
 
@@ -2234,15 +2293,20 @@ function remoteInstallMessage(
   entryName: string,
   isPersonalTarget: boolean,
   startWarning: string | undefined,
+  notice: string | undefined,
 ): string {
+  const where = isPersonalTarget ? "your personal workspace" : "this workspace";
+  // The notice is the bundle's own sentence about what it has started doing,
+  // and it is the answer to "why is nothing working yet?" — so it survives the
+  // warning branch rather than being dropped by it.
+  const tail = notice ? ` ${notice}` : "";
   if (startWarning) {
-    return `Installed "${entryName}" in ${
-      isPersonalTarget ? "your personal workspace" : "this workspace"
-    }. Source eager-start failed (${startWarning}) — click Connect to retry.`;
+    return (
+      `Installed "${entryName}" in ${where}. ` +
+      `Source eager-start failed (${startWarning}) — click Connect to retry.${tail}`
+    );
   }
-  return isPersonalTarget
-    ? `Installed "${entryName}" in your personal workspace.`
-    : `Installed "${entryName}" in this workspace.`;
+  return `Installed "${entryName}" in ${where}.${tail}`;
 }
 
 async function handleDisconnect(
@@ -2475,6 +2539,14 @@ async function handleUninstall(
     instance.ref,
   );
 
+  // Tell the connector it is being removed, BEFORE anything is torn down —
+  // after the source is gone there is nothing left to call, and after the OAuth
+  // tokens are revoked the call would fail. Best-effort by construction:
+  // `notifyRemoving` never throws, and a bundle that cannot be reached is
+  // logged and left behind rather than blocking a user's uninstall on a
+  // vendor's availability.
+  await notifyRemoving(ctx.runtime.getLifecycleNotifyDeps(), wsId, serverName);
+
   // Revoke OAuth tokens upstream first when applicable.
   const revokeResult = instance.ref
     ? await revokeUrlConnectorTokens(lifecycle, ctx, serverName, wsId)
@@ -2496,9 +2568,12 @@ async function handleUninstall(
     // can no longer answer. Bootstrap costs only what was emitted while nobody
     // was installed to receive it.
     await clearCursor(ctx.runtime.getWorkspaceStore(), wsId, serverName);
-    // And drop the tool-set watch, whose closure would otherwise hold a source
-    // nothing routes to any more.
-    stopWatchingHooks(wsId, serverName);
+    // And drop the tool-set watches, whose closures would otherwise hold a
+    // source nothing routes to any more, along with the per-process record that
+    // this connector has already been told it is ready — a reinstall is a new
+    // installation and must be told so.
+    stopWatchingToolSurface(wsId, serverName);
+    forgetReadyNotification(wsId, serverName);
     // Drop tool permissions for this connector — they have no meaning
     // once the connector is gone.
     await ctx.runtime

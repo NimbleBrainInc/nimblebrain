@@ -18,6 +18,7 @@ import {
   catalogPath,
   warnIfCatalogEmpty,
 } from "../connectors/catalog/catalog.ts";
+import type { ConnectorCatalogEntry } from "../connectors/catalog/types.ts";
 import { registerGatewayCredentialProviders } from "../connectors/gateways/transport-credential.ts";
 import { bootAuditComposioAuthConfigs } from "../connectors/providers/composio/auth-config-audit.ts";
 import { registerComposioCredentialProvider } from "../connectors/providers/composio/transport-credential.ts";
@@ -86,9 +87,8 @@ import { workspaceFilesDir } from "../files/paths.ts";
 import { rehydrateUserResources } from "../files/rehydrate.ts";
 import { createFileStore, type FileStore } from "../files/store.ts";
 import { DEFAULT_FILE_CONFIG, type FileConfig } from "../files/types.ts";
-import { hookPortForSource } from "../hooks/provisioning.ts";
 import type { HookReconcileDeps } from "../hooks/reconcile.ts";
-import { ensureHooksOnRunning, stopAllHookWatches } from "../hooks/reconcile.ts";
+import { ensureHooksOnRunning } from "../hooks/reconcile.ts";
 import { readHookIdentity } from "../hooks/token.ts";
 import { FileBackedHostResourcesResolver, TokenBucketRateLimit } from "../host-resources/index.ts";
 import { IdentityContext } from "../identity/context.ts";
@@ -100,6 +100,8 @@ import { createIdentityProvider } from "../identity/provider.ts";
 import { DEV_IDENTITY } from "../identity/providers/dev.ts";
 import { UserStore } from "../identity/user.ts";
 import { InstructionsStore } from "../instructions/index.ts";
+import type { LifecycleNotifyDeps } from "../lifecycle/notify.ts";
+import { notifyReadyOnRunning, resetReadyNotifications } from "../lifecycle/notify.ts";
 import {
   getModelByString,
   getProviderFromModel,
@@ -171,6 +173,11 @@ import { MAX_SKILL_BODY_CHARS, truncateMarkdownToBudget } from "../skills/trunca
 import type { Skill } from "../skills/types.ts";
 import { TelemetryManager } from "../telemetry/manager.ts";
 import { PostHogEventSink } from "../telemetry/posthog-sink.ts";
+import {
+  type ConnectorPort,
+  connectorPortForSource,
+  stopAllToolSurfaceWatches,
+} from "../tools/connector-surface.ts";
 import {
   type CredentialStore,
   FileCredentialStore,
@@ -743,8 +750,13 @@ export class Runtime {
     // returned, without that logic appearing on three paths. The reconcile
     // provisions only what is MISSING, so an already-registered stream costs
     // nothing on a boot or a source self-heal.
+    // The same transition carries the connector's lifecycle notification, as a
+    // second reconcile rather than a step inside the first: the two ask
+    // different questions of the connector and coalesce differently (see
+    // `src/lifecycle/notify.ts`), so neither calls the other.
     lifecycle.setConnectionRunningObserver((wsId, serverName) => {
       ensureHooksOnRunning(rt.getHookReconcileDeps(), wsId, serverName);
+      notifyReadyOnRunning(rt.getLifecycleNotifyDeps(), wsId, serverName);
     });
     rt._getIdentity = getIdentity;
     rt._getWorkspaceId = getWorkspaceId;
@@ -3728,27 +3740,60 @@ export class Runtime {
       workspaceStore: this._workspaceStore,
       identity: readHookIdentity(),
       declarationsFor: async (serverName: string) => {
-        // The installed ref does not persist the catalog id it came from, so
-        // the trusted entry is found by the same slug rule the install used
-        // (`slugifyServerName(entry.id) === serverName`). Deriving it rather
-        // than storing a second copy is what keeps the two from disagreeing
-        // after a catalog edit.
-        const entries = await this.getConnectorCatalog().catalogEntries();
-        const entry = entries.find((e) => slugifyServerName(e.id) === serverName);
+        const entry = await this.trustedCatalogEntryFor(serverName);
         return entry?.hooks ?? [];
       },
-      portFor: (wsId: string, serverName: string) => {
-        let registry: ToolRegistry;
-        try {
-          registry = this.getRegistryForWorkspace(wsId);
-        } catch {
-          return undefined;
-        }
-        const source = registry.getSources().find((src) => src.name === serverName);
-        if (!source) return undefined;
-        return hookPortForSource(source);
-      },
+      portFor: (wsId, serverName) => this.connectorPortFor(wsId, serverName),
     };
+  }
+
+  /**
+   * Dependencies the lifecycle notification needs.
+   *
+   * Assembled beside {@link getHookReconcileDeps} and from the same two places —
+   * the operator-trusted catalog entry and the per-workspace registry — because
+   * both reconciles ask a connector's declaration and its live source the same
+   * two questions. They stay separate objects because they are separate
+   * contracts: this one holds no workspace store and no hook identity, and
+   * neither reconcile may grow a dependency on the other's.
+   */
+  getLifecycleNotifyDeps(): LifecycleNotifyDeps {
+    return {
+      declarationFor: async (serverName: string) => {
+        const entry = await this.trustedCatalogEntryFor(serverName);
+        return entry?.lifecycle;
+      },
+      portFor: (wsId, serverName) => this.connectorPortFor(wsId, serverName),
+    };
+  }
+
+  /**
+   * The operator-trusted catalog entry an installed connector came from.
+   *
+   * The installed ref does not persist the catalog id, so the entry is found by
+   * the same slug rule the install used (`slugifyServerName(entry.id) ===
+   * serverName`). Deriving it rather than storing a second copy is what keeps
+   * the two from disagreeing after a catalog edit.
+   */
+  private async trustedCatalogEntryFor(
+    serverName: string,
+  ): Promise<ConnectorCatalogEntry | undefined> {
+    const entries = await this.getConnectorCatalog().catalogEntries();
+    return entries.find((e) => slugifyServerName(e.id) === serverName);
+  }
+
+  /** The live source for `(wsId, serverName)` as a reconcile port, or undefined
+   *  when it is not running. */
+  private connectorPortFor(wsId: string, serverName: string): ConnectorPort | undefined {
+    let registry: ToolRegistry;
+    try {
+      registry = this.getRegistryForWorkspace(wsId);
+    } catch {
+      return undefined;
+    }
+    const source = registry.getSources().find((src) => src.name === serverName);
+    if (!source) return undefined;
+    return connectorPortForSource(source);
   }
 
   /**
@@ -5002,9 +5047,12 @@ export class Runtime {
 
   async shutdown(): Promise<void> {
     await this.telemetryManager.shutdown();
-    // Detach the hook tool-set watches first: each holds a source, and through
-    // its listener the reconcile deps that close over this runtime.
-    stopAllHookWatches();
+    // Detach the tool-set watches first: each holds a source, and through its
+    // listener the reconcile deps that close over this runtime. The lifecycle
+    // dedupe set holds no source, but it is per-process, so a second runtime in
+    // this process would otherwise inherit this one's suppressions.
+    stopAllToolSurfaceWatches();
+    resetReadyNotifications();
     // Abort every in-flight detached turn BEFORE removing the sources they
     // depend on. A detached turn's lifecycle is decoupled from any HTTP
     // request (it runs to completion server-side), so without this a turn
