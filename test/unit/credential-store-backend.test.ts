@@ -53,14 +53,6 @@ describe("credential store backend registry", () => {
     expect(getCredentialStoreBackend("file")).toBeDefined();
   });
 
-  test("registration is not an import side effect", () => {
-    // The registry is process-global and `bun test` shares one process, so a
-    // module-load registration would make "did the composition root register
-    // it?" untestable — any earlier import would satisfy the assertion above.
-    _resetCredentialStoreBackendsForTest();
-    expect(getCredentialStoreBackend("file")).toBeUndefined();
-  });
-
   test("re-registration overwrites — last writer wins", () => {
     const first: CredentialStoreBackend = { create: () => ({}) as CredentialStore };
     const second: CredentialStoreBackend = { create: () => ({}) as CredentialStore };

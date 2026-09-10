@@ -38,15 +38,11 @@ function createAjv(): Ajv {
     if (schemaValue !== true) return true;
     const reason = findInlineKeyMaterial(data);
     if (!reason) return true;
-    validate.errors = [
-      {
-        keyword: NO_INLINE_KEY_MATERIAL_KEYWORD,
-        instancePath: "",
-        schemaPath: "",
-        params: {},
-        message: reason,
-      },
-    ];
+    // `instancePath` and `schemaPath` are deliberately left to AJV, which fills
+    // them from where the keyword sits. Setting them here to "" is what makes a
+    // violation inside `secrets.config` print as `(root)` — the one field an
+    // operator reads to find it.
+    validate.errors = [{ keyword: NO_INLINE_KEY_MATERIAL_KEYWORD, params: {}, message: reason }];
     return false;
   };
   ajv.addKeyword({

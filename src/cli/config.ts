@@ -241,6 +241,7 @@ export function loadConfig(flags: CliFlags = {}): RuntimeConfig {
     configOverridePath,
     workDir: absoluteWorkDir(fileConfig, flags),
     telemetry: fileConfig.telemetry as RuntimeConfig["telemetry"],
+    secrets: fileConfig.secrets as RuntimeConfig["secrets"],
   };
 
   return config;

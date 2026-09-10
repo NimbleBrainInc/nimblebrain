@@ -107,6 +107,21 @@ describe("loadConfig", () => {
     expect(config.maxToolResultSize).toBe(250000);
   });
 
+  // The `secrets` block selects which backend holds every credential. Dropped
+  // here, a config naming a backend this build does not register boots clean on
+  // the plaintext file store instead of throwing — silently, and exactly for the
+  // deployment that asked not to be on plaintext.
+  it("loads the secrets block from config file", () => {
+    const configPath = writeTestConfig("secrets.json", {
+      secrets: { backend: "file", config: { seal: { keyEnv: "NB_CREDENTIAL_KEY" } } },
+    });
+    const config = loadConfig({ config: configPath });
+    expect(config.secrets).toEqual({
+      backend: "file",
+      config: { seal: { keyEnv: "NB_CREDENTIAL_KEY" } },
+    });
+  });
+
   it("loads files config from config file", () => {
     const configPath = writeTestConfig("files-config.json", {
       files: {

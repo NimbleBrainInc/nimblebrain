@@ -78,6 +78,12 @@ describe("secrets.config never carries key material", () => {
     expect(isValid({ secrets: { config: { seal: { algorithm: "aes-256-gcm" } } } })).toBe(true);
   });
 
+  test("the error is anchored at the block, so the CLI does not print `(root)`", () => {
+    validate({ secrets: { config: { seal: { key: "sk-live-abcdefghijklmnop" } } } });
+    const err = (validate.errors ?? []).find((e) => e.keyword === "nbNoInlineKeyMaterial");
+    expect(err?.instancePath).toBe("/secrets/config");
+  });
+
   test("the rejection names the path and never quotes the value", () => {
     const value = "sk-live-do-not-log-me";
     const messages = errorsFor({ secrets: { config: { seal: { key: value } } } });
