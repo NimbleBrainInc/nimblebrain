@@ -173,10 +173,13 @@ import { TelemetryManager } from "../telemetry/manager.ts";
 import { PostHogEventSink } from "../telemetry/posthog-sink.ts";
 import {
   type CredentialStore,
-  FileCredentialStore,
   requireCredentialStore,
   setCredentialStore,
 } from "../tools/credential-store.ts";
+import {
+  createCredentialStore,
+  registerBuiltinCredentialStoreBackends,
+} from "../tools/credential-store-backend.ts";
 import { registerCredentialTransportCredentialProvider } from "../tools/credential-transport-credential.ts";
 import {
   isIdentitySource,
@@ -501,13 +504,24 @@ export class Runtime {
     // for the leaf readers (`remote-transport.ts` resolving a header, the
     // static-OAuth-client resolver) and handed to the runtime below, so there is
     // one instance, one sink, and one audit trail.
+    //
+    // WHICH store that is comes from `secrets.backend`, looked up in the
+    // backend registry. Registration happens here rather than at module load
+    // so a suite can clear the registry and assert what a composition root put
+    // in it — the same reason `registerBuiltinCredentialProviders` is called
+    // below rather than run as an import side effect.
     const workDir = resolveWorkDir(declaredConfig);
     const telemetryManager = TelemetryManager.create({
       workDir,
       enabled: declaredConfig.telemetry?.enabled,
     });
     const events = buildRuntimeEventSink(declaredConfig, telemetryManager);
-    const credentialStore = new FileCredentialStore(workDir, { eventSink: events });
+    registerBuiltinCredentialStoreBackends();
+    const credentialStore = createCredentialStore({
+      workDir,
+      eventSink: events,
+      secrets: declaredConfig.secrets,
+    });
     setCredentialStore(credentialStore);
     let config = await resolveInstanceCredentialRefs(declaredConfig);
 

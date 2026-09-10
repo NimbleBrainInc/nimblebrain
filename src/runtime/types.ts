@@ -1,6 +1,7 @@
 import type { LanguageModelV4 } from "@ai-sdk/provider";
 import type { FeatureFlags } from "../config/features.ts";
 import type { ConfirmationGate } from "../config/privilege.ts";
+import type { SecretsConfig } from "../config/secrets.ts";
 import type { ConnectorsConfig } from "../connectors/providers/config.ts";
 import type { EventSink, ThinkingEffort } from "../engine/types.ts";
 import type { ContentPart, FileReference } from "../files/types.ts";
@@ -209,6 +210,13 @@ export interface RuntimeConfig {
    * Subdirectories: conversations/, skills/, cache/
    */
   workDir?: string;
+
+  /**
+   * Which backend holds this deployment's secrets, and that backend's own
+   * settings. Omit for the default: one plaintext file per secret under
+   * `workDir`. See {@link SecretsConfig}.
+   */
+  secrets?: SecretsConfig;
 
   /** Anonymous telemetry configuration. */
   telemetry?: {

@@ -1,7 +1,8 @@
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { ValidateFunction } from "ajv";
+import type { SchemaValidateFunction, ValidateFunction } from "ajv";
 import Ajv from "ajv";
+import { findInlineKeyMaterial } from "./secrets.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -13,6 +14,50 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
  */
 export const SCHEMA_PATH = resolve(__dirname, "nimblebrain-config.schema.json");
 
+/**
+ * Schema keyword: this subtree must not carry key material. Declared on
+ * `secrets.config`, whose whole contract is to name where a key lives rather
+ * than to hold one.
+ *
+ * A keyword rather than a check bolted onto one caller, so the rule travels
+ * with the schema — the published document a reader consults says the subtree
+ * is guarded, and every compile of that schema enforces it. See
+ * `secrets.ts` for why it is enforced at all.
+ */
+export const NO_INLINE_KEY_MATERIAL_KEYWORD = "nbNoInlineKeyMaterial";
+
+/**
+ * One AJV instance shape for every compile of this schema. A second factory
+ * that forgot the keyword would compile the same document with the guard
+ * silently absent — AJV runs non-strict, so an unknown keyword is ignored
+ * rather than rejected.
+ */
+function createAjv(): Ajv {
+  const ajv = new Ajv({ allErrors: true, strict: false });
+  const validate: SchemaValidateFunction = (schemaValue: unknown, data: unknown) => {
+    if (schemaValue !== true) return true;
+    const reason = findInlineKeyMaterial(data);
+    if (!reason) return true;
+    validate.errors = [
+      {
+        keyword: NO_INLINE_KEY_MATERIAL_KEYWORD,
+        instancePath: "",
+        schemaPath: "",
+        params: {},
+        message: reason,
+      },
+    ];
+    return false;
+  };
+  ajv.addKeyword({
+    keyword: NO_INLINE_KEY_MATERIAL_KEYWORD,
+    schemaType: "boolean",
+    errors: true,
+    validate,
+  });
+  return ajv;
+}
+
 let _validate: ValidateFunction | null = null;
 let _connectorRefValidate: ValidateFunction | null = null;
 
@@ -20,8 +65,7 @@ let _connectorRefValidate: ValidateFunction | null = null;
 export function getValidator(): ValidateFunction {
   if (!_validate) {
     const schema = require(SCHEMA_PATH);
-    const ajv = new Ajv({ allErrors: true, strict: false });
-    _validate = ajv.compile(schema);
+    _validate = createAjv().compile(schema);
   }
   return _validate;
 }
@@ -37,8 +81,10 @@ export function getValidator(): ValidateFunction {
 export function getConnectorRefValidator(): ValidateFunction {
   if (!_connectorRefValidate) {
     const schema = require(SCHEMA_PATH);
-    const ajv = new Ajv({ allErrors: true, strict: false });
-    _connectorRefValidate = ajv.compile({ ...schema.$defs.connectorRef, $defs: schema.$defs });
+    _connectorRefValidate = createAjv().compile({
+      ...schema.$defs.connectorRef,
+      $defs: schema.$defs,
+    });
   }
   return _connectorRefValidate;
 }
