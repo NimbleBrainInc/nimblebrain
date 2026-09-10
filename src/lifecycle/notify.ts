@@ -230,23 +230,44 @@ function resumeInBackground(deps: LifecycleNotifyDeps, wsId: string, connector: 
 }
 
 /**
+ * How long an uninstall waits for `on_removing` before proceeding without it.
+ *
+ * Short on purpose. The handler's job is to record the intent and return — the
+ * contract says so in those words — and an admin is watching the uninstall.
+ */
+const REMOVING_DEADLINE_MS = 5_000;
+
+/**
  * Tell a connector it is being removed, before anything is torn down.
  *
- * **Best-effort, and never throws.** A failure is a warn with the connector
- * named and the uninstall proceeds: blocking a user's uninstall on a vendor's
- * availability would be the wrong trade in both directions. A bundle author
- * must therefore not assume this call arrives — a bundle that leaks a
+ * **Best-effort, never throws, and bounded.** A failure is a warn with the
+ * connector named and the uninstall proceeds: blocking a user's uninstall on a
+ * vendor's availability would be the wrong trade in both directions. A bundle
+ * author must therefore not assume this call arrives — a bundle that leaks a
  * third-party resource when it does not is the failure this seam exists to
  * prevent, and hoping is not a design.
  *
- * No contract check runs here. It ran at ready time over the whole declaration,
- * where a violation could still be reported to somebody; re-deriving it at
- * uninstall would only produce a message on the way out.
+ * **The deadline is what makes "best-effort" true rather than aspirational,
+ * and it is held HERE rather than inferred from a check made elsewhere.**
+ * Everything behind this call waits on it — the OAuth revoke, the source
+ * teardown, the hook revoke, the secret deletion — so without a bound, the
+ * duration of a workspace admin's uninstall is chosen by the connector being
+ * removed. `verifyLifecycleTools` refuses a task-augmented handler, whose await
+ * has no deadline of its own, but that check runs on the READY path and only
+ * warns: it never gated this call, and it says nothing about a merely slow
+ * inline one.
+ *
+ * Abandoning the call does not cancel the server's work; it stops the uninstall
+ * waiting for it, which is all that was ever promised. `Promise.race` keeps a
+ * reaction attached to the abandoned call, so a late rejection — the source
+ * being torn down under it — is handled rather than surfacing as an unhandled
+ * rejection.
  */
 export async function notifyRemoving(
   deps: LifecycleNotifyDeps,
   wsId: string,
   connector: string,
+  opts: { deadlineMs?: number } = {},
 ): Promise<void> {
   // Resolved before the call so the warn line can name the handler even when
   // what failed was reading the declaration or reaching the source.
@@ -262,11 +283,47 @@ export async function notifyRemoving(
       );
       return;
     }
-    const result = await port.execute(handler, {});
+    const result = await withDeadline(
+      port.execute(handler, {}),
+      opts.deadlineMs ?? REMOVING_DEADLINE_MS,
+    );
+    if (result === DEADLINE) {
+      warnRemoving(
+        connector,
+        handler,
+        `did not answer within ${opts.deadlineMs ?? REMOVING_DEADLINE_MS}ms`,
+      );
+      return;
+    }
     if (!result.isError) return;
     warnRemoving(connector, handler, summarizeToolError(result));
   } catch (err) {
     warnRemoving(connector, handler, err instanceof Error ? err.message : String(err));
+  }
+}
+
+/** What {@link withDeadline} returns when the call did not answer in time. */
+const DEADLINE = Symbol("lifecycle-deadline");
+
+/**
+ * Resolve with the call's result, or with {@link DEADLINE} once `ms` has
+ * passed — whichever comes first.
+ *
+ * The timer is cleared on both paths: a pending 5-second timer per uninstall
+ * would keep a process alive past the work it belongs to.
+ */
+async function withDeadline(
+  call: Promise<ToolResult>,
+  ms: number,
+): Promise<ToolResult | typeof DEADLINE> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<typeof DEADLINE>((resolve) => {
+    timer = setTimeout(() => resolve(DEADLINE), ms);
+  });
+  try {
+    return await Promise.race([call, deadline]);
+  } finally {
+    if (timer) clearTimeout(timer);
   }
 }
 

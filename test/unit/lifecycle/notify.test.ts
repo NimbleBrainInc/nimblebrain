@@ -294,6 +294,64 @@ describe("on_removing", () => {
     await notifyRemoving(makeDeps(undefined), WS, CONNECTOR);
   });
 
+  test("a handler that never answers does not hold the uninstall open", async () => {
+    // r2c1's regression test. `verifyLifecycleTools` runs on the READY path
+    // only — it warns, it does not gate this call — so a server advertising a
+    // task-augmented `on_removing` from its very first `tools/list` installs
+    // with a warning and then reaches `port.execute` at uninstall anyway, where
+    // the task API's await has no deadline of its own. Everything behind this
+    // call waits on it: the OAuth revoke, the teardown, the hook revoke, the
+    // secret deletion. The bound has to live here.
+    const deps: LifecycleNotifyDeps = {
+      declarationFor: async () => DECL,
+      portFor: () => ({
+        tools: async () => [handler("workspace_removing")],
+        // Never resolves — a task-augmented handle whose task never terminates.
+        execute: () => new Promise<ToolResult>(() => {}),
+      }),
+    };
+
+    const started = Date.now();
+    await notifyRemoving(deps, WS, CONNECTOR, { deadlineMs: 25 });
+    const waited = Date.now() - started;
+
+    // Bounded by the deadline, not by the suite's own timeout — an assertion
+    // that only proves "it returned eventually" would pass against a hang
+    // shorter than bun's limit and fail for a reason unrelated to the bound.
+    expect(waited).toBeGreaterThanOrEqual(20);
+    expect(waited).toBeLessThan(1_000);
+  });
+
+  test("a late rejection from an abandoned call does not escape", async () => {
+    // Abandoning the call does not cancel the server's work, and the source is
+    // torn down under it moments later. `Promise.race` has to keep a reaction
+    // attached or that rejection surfaces as an unhandled one, killing the
+    // process well after the uninstall reported success.
+    let rejectLate: ((err: Error) => void) | undefined;
+    const deps: LifecycleNotifyDeps = {
+      declarationFor: async () => DECL,
+      portFor: () => ({
+        tools: async () => [handler("workspace_removing")],
+        execute: () =>
+          new Promise<ToolResult>((_resolve, reject) => {
+            rejectLate = reject;
+          }),
+      }),
+    };
+
+    await notifyRemoving(deps, WS, CONNECTOR, { deadlineMs: 25 });
+    rejectLate?.(new Error("source torn down under the call"));
+    // Give the rejection a turn to surface if nothing is holding it.
+    await new Promise((r) => setTimeout(r, 20));
+  });
+
+  test("a handler that answers inside the deadline is still awaited normally", async () => {
+    // The bound must not turn a working handler into an abandoned one.
+    const fake = makeFake([handler("workspace_ready"), handler("workspace_removing")]);
+    await notifyRemoving(makeDeps(fake), WS, CONNECTOR, { deadlineMs: 5_000 });
+    expect(fake.calls).toEqual([{ tool: "workspace_removing", input: {} }]);
+  });
+
   test("a connector that declares no on_removing is a no-op", async () => {
     const fake = makeFake([handler("workspace_ready")]);
     await notifyRemoving(makeDeps(fake, { on_ready: "workspace_ready" }), WS, CONNECTOR);

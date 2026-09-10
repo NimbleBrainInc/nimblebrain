@@ -1726,7 +1726,9 @@ async function handleInstallRemoteOAuth(
 
   const warning = [startWarning, hookWarning, ready.warning].filter(Boolean).join(" ") || undefined;
   return {
-    content: textContent(remoteInstallMessage(entry.name, isPersonalTarget, warning, ready.notice)),
+    content: textContent(
+      remoteInstallMessage(entry.name, isPersonalTarget, startWarning, ready.notice),
+    ),
     structuredContent: {
       ok: true,
       alreadyInstalled: false,
@@ -2287,7 +2289,21 @@ async function eagerStartRemoteSource(
 
 /**
  * Success `content` string for a remote-OAuth install, folding the
- * personal-workspace and eager-start-failed variants.
+ * personal-workspace, eager-start-failed and bundle-notice variants.
+ *
+ * **Only the eager-start warning reaches this sentence** — not the combined
+ * warning the result carries. The other two, a hook contract violation and a
+ * lifecycle contract violation, describe a connector whose source started
+ * perfectly well; rendering them as "Source eager-start failed" sent the
+ * operator to click Connect on a connection that was already up. They travel on
+ * `structuredContent.warning`, where they are not narrated as something else.
+ *
+ * The notice rides both branches. It is the bundle's own sentence about what it
+ * has started doing, and an operator reading an eager-start failure is exactly
+ * the one who needs it. In practice the two do not co-occur — a failed eager
+ * start drops the source from the registry, so there is no port left to notify
+ * — but that is a coincidence of the current start path, not a property this
+ * sentence should be built on.
  */
 function remoteInstallMessage(
   entryName: string,
@@ -2296,9 +2312,6 @@ function remoteInstallMessage(
   notice: string | undefined,
 ): string {
   const where = isPersonalTarget ? "your personal workspace" : "this workspace";
-  // The notice is the bundle's own sentence about what it has started doing,
-  // and it is the answer to "why is nothing working yet?" — so it survives the
-  // warning branch rather than being dropped by it.
   const tail = notice ? ` ${notice}` : "";
   if (startWarning) {
     return (

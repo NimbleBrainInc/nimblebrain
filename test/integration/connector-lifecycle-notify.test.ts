@@ -261,6 +261,12 @@ describe("a fresh install", () => {
     expect(sc.ok).toBe(true);
     expect(sc.warning).toContain("not_a_tool");
     expect(sc.notice).toBeUndefined();
+
+    // A contract violation describes a connector whose source started fine.
+    // Narrating it as an eager-start failure sends the operator to click
+    // Connect on a connection that is already up — so it rides
+    // `structuredContent.warning` and never this sentence.
+    expect(messageOf(result)).not.toContain("eager-start failed");
   });
 
   test("a connector declaring no lifecycle block installs with no notice and no call", async () => {

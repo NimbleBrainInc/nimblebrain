@@ -164,9 +164,9 @@ Only the `install` call surfaces this way — a `resume` has nobody watching.
 
 | | |
 |---|---|
-| A handler the server does not advertise, that requires an argument, or that is task-augmented | **A warning on a successful install.** The connector installs and works; no lifecycle call is made. The check re-runs on every reconnect, so fixing the manifest and reconnecting is enough — no reinstall. |
+| A handler the server does not advertise, that requires an argument, or that is task-augmented | **A warning on a successful install.** The connector installs and works, and no `on_ready` call is made. The check re-runs on every reconnect, so fixing the manifest and reconnecting is enough — no reinstall. It is a warning, not a gate: `on_removing` is still attempted at uninstall, under the deadline below. |
 | `on_ready` fails or errors | **Never fails the install.** Retried on the next reconnect, and on your next `tools/list_changed`. |
-| `on_removing` fails, errors, or cannot be reached | **Never fails the uninstall.** The uninstall *waits* for the call — bounded by the host's ordinary request deadline — and then proceeds either way. Not retried; the connector is gone. |
+| `on_removing` fails, errors, or cannot be reached | **Never fails the uninstall.** The uninstall waits for the call for a few seconds and then proceeds without it. Not retried; the connector is gone. |
 | Your server advertises no tools yet | Not an error. The host waits for your tool list and calls then. |
 
 Neither call has a retry queue. The events *are* the retry: another reconnect,
