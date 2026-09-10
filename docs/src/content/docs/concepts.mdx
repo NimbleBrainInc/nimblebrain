@@ -31,7 +31,7 @@ Three mechanisms make this composable:
 
 | Mechanism | What it does |
 |-----------|-------------|
-| **Tool aggregation** | The `ToolRegistry` collects tools from every MCP source (local stdio, remote HTTP/SSE) and presents them as a flat namespace. The agent doesn't know or care which server owns a tool. |
+| **Tool aggregation** | The `ToolRegistry` collects tools from every MCP source (remote HTTP/SSE servers, and the platform's own in-process ones) and presents them as a flat namespace. The agent doesn't know or care which server owns a tool. |
 | **Skill-scoped filtering** | Each skill declares `allowed-tools` glob patterns. When a skill matches, only tools matching those patterns (plus system tools) are visible to the agent. This scopes the agent's capabilities per task. |
 | **4-layer prompt composition** | System prompts are assembled from: (1) identity, (2) core context, (3) installed app metadata with trust scores, and (4) the matched skill's prompt. Every layer adds awareness without the agent needing to discover it. |
 

@@ -36,8 +36,8 @@ interface Harness {
 function buildSource(
   resultMeta?: Record<string, unknown>,
   mode: ConstructorParameters<typeof McpSource>[1] = {
-    type: "stdio",
-    spawn: { command: "echo", args: [], env: {} },
+    type: "remote",
+    url: new URL("http://localhost:0/mcp"),
   },
 ): Harness {
   const source = new McpSource("crm", mode, noopSink);

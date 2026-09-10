@@ -26,6 +26,12 @@ that varies is which arm of one transport union it was constructed with.** The
 class owns connection, listing, dispatch, task augmentation, resource reads,
 recovery, and `_meta` handling once, for all of them.
 
+**The union is a URL or this process.** `remote` reaches a server over streamable
+HTTP or SSE; `inProcess` reaches one across an in-memory linked pair. There is no
+third arm, because the runtime does not acquire or execute a server's code
+(ADR-0020) — a server it did not reach over a network is one it is hosting
+itself.
+
 **The kernel's own capabilities are MCP servers to themselves.**
 `defineInProcessApp` (`src/tools/in-process-app.ts`) builds a real MCP `Server`
 and connects it to an `McpSource` over an in-memory linked-pair transport. The

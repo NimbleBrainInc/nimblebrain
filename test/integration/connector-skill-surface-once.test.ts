@@ -22,14 +22,22 @@
  */
 
 import type { LanguageModelV4CallOptions } from "@ai-sdk/provider";
+import { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import {
+  CallToolRequestSchema,
+  ListResourcesRequestSchema,
+  ListToolsRequestSchema,
+  ReadResourceRequestSchema,
+} from "@modelcontextprotocol/sdk/types.js";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { McpSource } from "../../src/tools/mcp-source.ts";
 import { createMockModel } from "../helpers/mock-model.ts";
+import { type RemoteMcpFixture, startRemoteMcpServer } from "../helpers/remote-mcp-fixture.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
 
 /** Reverse-DNS slug, like a fleet connector — never the skills' own names. */
@@ -44,35 +52,18 @@ function skillMd(name: string, marker: string): string {
   return `---\nname: ${name}\ndescription: Guidance ${name}.\n---\n\n# ${name}\n\n${marker}`;
 }
 
-function createFixtureServer(dir: string): string {
-  mkdirSync(dir, { recursive: true });
-  const nm = join(import.meta.dir, "../..", "node_modules");
-  writeFileSync(
-    join(dir, "server.cjs"),
-    `
-const { Server } = require("${nm}/@modelcontextprotocol/sdk/dist/cjs/server/index.js");
-const { StdioServerTransport } = require("${nm}/@modelcontextprotocol/sdk/dist/cjs/server/stdio.js");
-const {
-  ListToolsRequestSchema,
-  CallToolRequestSchema,
-  ListResourcesRequestSchema,
-  ReadResourceRequestSchema,
-} = require("${nm}/@modelcontextprotocol/sdk/dist/cjs/types.js");
+function createFixtureServer(): Server {
+  const bodies: Record<string, string> = {
+    "skill://alpha/SKILL.md": skillMd("alpha", MARKER_A),
+    "skill://beta/SKILL.md": skillMd("beta", MARKER_B),
+  };
 
-const BODIES = {
-  "skill://alpha/SKILL.md": ${JSON.stringify(skillMd("alpha", MARKER_A))},
-  "skill://beta/SKILL.md": ${JSON.stringify(skillMd("beta", MARKER_B))},
-};
-
-async function main() {
   const server = new Server(
     { name: "surface", version: "0.1.0" },
     { capabilities: { tools: {}, resources: {} } },
   );
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: [
-      { name: "doit", description: "Do it", inputSchema: { type: "object", properties: {} } },
-    ],
+    tools: [{ name: "doit", description: "Do it", inputSchema: { type: "object", properties: {} } }],
   }));
   server.setRequestHandler(CallToolRequestSchema, async () => ({
     content: [{ type: "text", text: "done" }],
@@ -84,16 +75,11 @@ async function main() {
     ],
   }));
   server.setRequestHandler(ReadResourceRequestSchema, async (r) => {
-    const text = BODIES[r.params.uri];
-    if (!text) throw new Error("Resource not found: " + r.params.uri);
+    const text = bodies[r.params.uri];
+    if (!text) throw new Error(`Resource not found: ${r.params.uri}`);
     return { contents: [{ uri: r.params.uri, mimeType: "text/markdown", text }] };
   });
-  await server.connect(new StdioServerTransport());
-}
-main();
-`,
-  );
-  return dir;
+  return server;
 }
 
 /** Every prompt the model was called with this turn, in order. */
@@ -118,6 +104,7 @@ function peakOccurrences(marker: string): number {
 const testDir = join(tmpdir(), `nimblebrain-connector-surface-once-${Date.now()}`);
 let runtime: Runtime;
 let source: McpSource;
+let server: RemoteMcpFixture;
 
 beforeAll(async () => {
   mkdirSync(testDir, { recursive: true });
@@ -147,16 +134,10 @@ beforeAll(async () => {
   });
   await provisionTestWorkspace(runtime);
 
+  server = startRemoteMcpServer(createFixtureServer);
   source = new McpSource(
     SERVER,
-    {
-      type: "stdio",
-      spawn: {
-        command: "node",
-        args: [join(createFixtureServer(join(testDir, "server")), "server.cjs")],
-        env: process.env as Record<string, string>,
-      },
-    },
+    { type: "remote", url: new URL(server.url), allowInsecure: true },
     new NoopEventSink(),
   );
   await source.start();
@@ -169,6 +150,7 @@ afterAll(async () => {
   } catch {
     // already stopped
   }
+  server.close();
   await runtime.shutdown();
   if (existsSync(testDir)) rmSync(testDir, { recursive: true });
 });

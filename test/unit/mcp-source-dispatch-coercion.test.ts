@@ -44,7 +44,7 @@ interface DispatchCapture {
 function buildInlineSource(schema: Record<string, unknown>): DispatchCapture {
   const source = new McpSource(
     "outlook",
-    { type: "stdio", spawn: { command: "echo", args: [], env: {} } },
+    { type: "remote", url: new URL("http://localhost:0/mcp") },
     noopSink,
   );
 
@@ -156,7 +156,7 @@ describe("McpSource.execute — dispatch-boundary coercion", () => {
 function buildTaskSource(schema: Record<string, unknown>): DispatchCapture {
   const source = new McpSource(
     "outlook",
-    { type: "stdio", spawn: { command: "echo", args: [], env: {} } },
+    { type: "remote", url: new URL("http://localhost:0/mcp") },
     noopSink,
   );
 

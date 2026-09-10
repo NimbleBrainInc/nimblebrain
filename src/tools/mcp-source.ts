@@ -1,6 +1,5 @@
 import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import type { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type {
@@ -80,14 +79,6 @@ const TASK_SWEEPER_INTERVAL_MS = 60_000;
 const TASK_CREATED_TIMEOUT_MS = 60_000;
 
 /**
- * Connector stderr ring buffer cap. Keeps the last N lines of subprocess
- * stderr so we can attach them to a `source.crashed` event payload — long
- * enough for a typical Python traceback, short enough not to drown the
- * event payload in a runaway log.
- */
-const STDERR_TAIL_MAX_LINES = 50;
-
-/**
  * Per-connector context threaded into McpSource so its Client can answer
  * inbound `ai.nimblebrain/resources/*` requests. Owned by the caller
  * (lifecycle, workspace-ops) which knows the workspace; passed into the
@@ -117,21 +108,7 @@ const NbListResourcesRequestSchema = ListResourcesRequestSchema.extend({
   method: z.literal(HOST_RESOURCES_LIST_METHOD),
 });
 
-/**
- * Hard cap on a single stderr line we'll log or buffer. A connector that
- * writes a 100MB single line should not OOM the host or balloon an event
- * payload. Truncation is marked so the developer knows it happened.
- */
-const STDERR_LINE_MAX_CHARS = 8192;
-
 export type { ResourceData } from "./types.ts";
-
-export interface McpSpawnConfig {
-  command: string;
-  args: string[];
-  env: Record<string, string>;
-  cwd?: string;
-}
 
 /**
  * Narrow shape for a transport that can complete an OAuth authorization
@@ -145,7 +122,6 @@ type AuthFinishableTransport = Transport & {
 
 /** Discriminated union for how McpSource connects to its MCP server. */
 export type McpTransportMode =
-  | { type: "stdio"; spawn: McpSpawnConfig }
   | {
       type: "remote";
       url: URL;
@@ -316,7 +292,7 @@ export function toolListChanged(a: readonly Tool[], b: readonly Tool[]): boolean
 }
 
 /**
- * ToolSource wrapping a single MCP server (stdio subprocess or remote HTTP/SSE).
+ * ToolSource wrapping a single MCP server (remote HTTP/SSE, or in-process).
  * Lazy tool loading: first tools() call triggers listTools(), then caches.
  * Crash recovery: on execute failure, attempts one restart + retry.
  */
@@ -391,25 +367,6 @@ export class McpSource implements ToolSource {
   /** Sweeper interval. Kept so `stop()` can cancel it. */
   private sweeperInterval: ReturnType<typeof setInterval> | null = null;
 
-  /**
-   * Last-N lines of subprocess stderr, fed by `attachStderrReader`. Read
-   * by the `transport.onclose` handler to attach `stderrTail` to the
-   * outgoing `source.crashed` event so postmortem consumers (console event
-   * sink, web UI later) can render the traceback. Reset at the top of
-   * every `start()` so a restart doesn't inherit a dead instance's tail.
-   *
-   * Empty (and stays empty) for `remote` and `inProcess` modes — they
-   * don't have a subprocess and there is no stderr to drain.
-   */
-  private stderrTail: string[] = [];
-  /**
-   * Holds bytes received from the stderr stream that haven't yet been
-   * terminated by a newline. Pythonic `print(end="")` and progress-bar
-   * carriage-return updates don't terminate with `\n`, so we accumulate
-   * here until we see one (or the stream ends, at which point the
-   * partial-line is flushed verbatim).
-   */
-  private stderrLineBuf = "";
   /**
    * Set inside `stop()` so the transport's `onclose` handler — which
    * fires synchronously during `transport.close()` — can distinguish a
@@ -517,10 +474,6 @@ export class McpSource implements ToolSource {
   }
 
   async start(): Promise<void> {
-    // Fresh stderr state on every start. Restart cycles must not bleed
-    // a dead instance's tail into the new instance's crash report.
-    this.stderrTail = [];
-    this.stderrLineBuf = "";
     // Clear deliberate-teardown flags so a restart re-enables crash detection
     // on the new transport. Set in `stop()` to suppress onclose-emitted
     // `source.crashed` events during graceful teardown.
@@ -614,40 +567,12 @@ export class McpSource implements ToolSource {
   /**
    * Construct `this.transport` (and, for in-process, `this.inProcessServer`)
    * for the current `mode`. Wires the crash-detection `onclose` handler for
-   * stdio and in-process immediately; remote's is wired in `start()` AFTER a
-   * successful connect (see the remote branch note) so a close during the
-   * handshake isn't misclassified as a mid-session crash.
+   * in-process immediately; remote's is wired in `start()` AFTER a successful
+   * connect (see the remote branch note) so a close during the handshake
+   * isn't misclassified as a mid-session crash.
    */
   private async initTransport(): Promise<void> {
-    if (this.mode.type === "stdio") {
-      const stdioTransport = new StdioClientTransport({
-        command: this.mode.spawn.command,
-        args: this.mode.spawn.args,
-        env: this.mode.spawn.env,
-        cwd: this.mode.spawn.cwd,
-        stderr: "pipe",
-      });
-      this.transport = stdioTransport;
-
-      // Attach the stderr drain BEFORE connect. The SDK exposes
-      // `transport.stderr` as a PassThrough synchronously from the
-      // constructor (see node_modules/.../client/stdio.js — the comment
-      // there explicitly notes this is to avoid losing early child output),
-      // so listeners attached now will catch bytes written during
-      // initialize-time crashes.
-      // SDK types `stderr` as bare `Stream | null`, but the actual return
-      // is always a Node Readable (`PassThrough` when piped, otherwise
-      // `child_process.stderr`). Narrow at the boundary.
-      this.attachStderrReader(stdioTransport.stderr as NodeJS.ReadableStream | null);
-
-      // Stdio close handler. The SDK's Protocol.connect() chains existing
-      // onclose handlers (it captures the prior callback and calls it
-      // before its own _onclose), so setting this before connect is
-      // correct and survives the handshake. Without this handler, a
-      // subprocess that exits mid-session is only detected lazily inside
-      // execute()'s catch branch — issue #116 root cause #2.
-      stdioTransport.onclose = () => this.emitSourceCrashed("Stdio subprocess exited");
-    } else if (this.mode.type === "remote") {
+    if (this.mode.type === "remote") {
       this.transport = await createRemoteTransport(
         this.mode.url,
         this.mode.transportConfig,
@@ -822,15 +747,11 @@ export class McpSource implements ToolSource {
    *
    *   - `dead` — set on first death-observation. The transport's
    *     `onclose` and `execute()`'s catch can BOTH observe a single
-   *     subprocess death (the call throws because the pipe broke; the
-   *     subprocess exit also fires onclose). Without this guard,
-   *     listeners would see two `source.crashed` events for one death,
-   *     which any deduplicating consumer (UI, telemetry) gets wrong.
-   *     Whichever path runs first wins; its payload is canonical.
-   *
-   * `stderrTail` is sourced from the ring buffer, so it's empty for
-   * non-stdio modes (which never populate it) and populated for stdio
-   * regardless of which path triggered the emit.
+   *     connection loss (the call throws because the connection broke;
+   *     the close also fires onclose). Without this guard, listeners
+   *     would see two `source.crashed` events for one death, which any
+   *     deduplicating consumer (UI, telemetry) gets wrong. Whichever
+   *     path runs first wins; its payload is canonical.
    */
   private emitSourceCrashed(error: string): void {
     if (this.stopping || this.dead) return;
@@ -841,7 +762,6 @@ export class McpSource implements ToolSource {
         source: this.eventSourceName,
         event: "source.crashed",
         error,
-        stderrTail: this.stderrTail.join("\n"),
       },
     });
   }
@@ -872,95 +792,6 @@ export class McpSource implements ToolSource {
     // flow, not a mid-session crash. The OAuth retry path that calls
     // this method is precisely the case we want NOT to surface as
     // `source.crashed`.
-  }
-
-  /**
-   * Drain the stdio subprocess's stderr stream into the developer's
-   * terminal and a bounded in-memory ring buffer.
-   *
-   * Why default-on (not gated behind `NB_DEBUG`): connector stderr is the
-   * connector author's deliberate diagnostic output — tracebacks, warnings,
-   * runtime logs. That's a different concern than NB's own protocol
-   * tracing (`NB_DEBUG=mcp`). Hiding signal that costs hours to recreate
-   * (issue #116) is a worse default than dimmed lines a developer can
-   * scan past or silence at the connector level. Visual prefix + dim
-   * formatting via `log.connector` makes the channel tunable by eye.
-   *
-   * Why a ring buffer in addition to live print: when the subprocess
-   * exits, the `transport.onclose` handler attaches `stderrTail` to the
-   * outgoing `source.crashed` event so non-CLI consumers (web UI later,
-   * persisted event logs) can render the cause-of-death without us
-   * keeping the entire log around.
-   *
-   * Stream contract: `transport.stderr` is a Node-style Readable
-   * (PassThrough in the SDK). Listeners attached here run for the
-   * lifetime of the subprocess; the stream's `end` event fires on
-   * subprocess exit and the listeners are released by the transport's
-   * own teardown — no explicit unsubscribe needed.
-   */
-  private attachStderrReader(stream: NodeJS.ReadableStream | null): void {
-    if (!stream) return;
-    const decoder = new TextDecoder("utf-8", { fatal: false });
-
-    stream.on("data", (chunk: unknown) => {
-      let text: string;
-      if (typeof chunk === "string") {
-        text = chunk;
-      } else if (chunk instanceof Uint8Array) {
-        text = decoder.decode(chunk, { stream: true });
-      } else {
-        text = String(chunk);
-      }
-      this.stderrLineBuf += text;
-
-      // Drain complete lines.
-      let nl = this.stderrLineBuf.indexOf("\n");
-      while (nl !== -1) {
-        let line = this.stderrLineBuf.slice(0, nl);
-        this.stderrLineBuf = this.stderrLineBuf.slice(nl + 1);
-        if (line.endsWith("\r")) line = line.slice(0, -1);
-        this.recordStderrLine(line);
-        nl = this.stderrLineBuf.indexOf("\n");
-      }
-
-      // Guard against an unbounded line — flush whatever we have, marked.
-      if (this.stderrLineBuf.length > STDERR_LINE_MAX_CHARS) {
-        const truncated = `${this.stderrLineBuf.slice(0, STDERR_LINE_MAX_CHARS)} […truncated]`;
-        this.stderrLineBuf = "";
-        this.recordStderrLine(truncated);
-      }
-    });
-
-    // Stream end: flush any pending bytes from the decoder + line buffer
-    // so a `print(end="")`-style final write is not silently dropped.
-    stream.on("end", () => {
-      const trailing = decoder.decode();
-      if (trailing) this.stderrLineBuf += trailing;
-      if (this.stderrLineBuf.length > 0) {
-        this.recordStderrLine(this.stderrLineBuf);
-        this.stderrLineBuf = "";
-      }
-    });
-
-    // Don't crash the host on a stream-level error from the pipe — log
-    // and let the subprocess's own close path handle source death.
-    stream.on("error", (err: unknown) => {
-      log.debug("mcp", `[${this.name}] stderr stream error: ${String(err)}`);
-    });
-  }
-
-  /** Push one logical stderr line: live render + ring buffer. */
-  private recordStderrLine(line: string): void {
-    if (line.length === 0) return;
-    const capped =
-      line.length > STDERR_LINE_MAX_CHARS
-        ? `${line.slice(0, STDERR_LINE_MAX_CHARS)} […truncated]`
-        : line;
-    log.connector(this.name, capped);
-    this.stderrTail.push(capped);
-    if (this.stderrTail.length > STDERR_TAIL_MAX_LINES) {
-      this.stderrTail.shift();
-    }
   }
 
   /**
@@ -1349,9 +1180,9 @@ export class McpSource implements ToolSource {
    * filtered server-side). Callers do not need to track per-subscriber state.
    *
    * Only meaningful for `inProcess` sources, where this `McpSource` owns the
-   * server end of the linked-pair transport. For `stdio` and `remote` modes,
-   * the source is a *client* of an external server and has nothing to emit
-   * on — call becomes a silent no-op.
+   * server end of the linked-pair transport. For `remote` mode the source
+   * is a *client* of an external server and has nothing to emit on — call
+   * becomes a silent no-op.
    *
    * Drops silently between `stop()` and the next successful `start()` (the
    * `inProcessServer` field is cleared in those windows). This matches the
@@ -1398,7 +1229,7 @@ export class McpSource implements ToolSource {
 
   /**
    * UI placements declared by this source. Populated for `inProcess` mode
-   * (platform built-ins); `[]` for stdio/remote sources, whose placements
+   * (platform built-ins); `[]` for remote sources, whose placements
    * come from the connector manifest and are tracked separately by the
    * connector lifecycle.
    *
@@ -2714,21 +2545,6 @@ export class McpSource implements ToolSource {
    */
   _taskHandleCountForTesting(): number {
     return this.taskHandles.size;
-  }
-
-  /**
-   * Test-only — drive the stderr reader against a synthetic Readable so
-   * tests can exercise chunk-boundary, CRLF, partial-line, and runaway-
-   * line handling without spawning a real subprocess.
-   * Production code MUST NOT call this.
-   */
-  _attachStderrReaderForTesting(stream: NodeJS.ReadableStream): void {
-    this.attachStderrReader(stream);
-  }
-
-  /** Test-only — read the current stderr ring-buffer contents. */
-  _stderrTailForTesting(): readonly string[] {
-    return this.stderrTail;
   }
 
   /** Test-only — observe `dead` to verify the de-dup guard. */

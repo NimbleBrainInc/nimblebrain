@@ -17,8 +17,15 @@
  * uninstall.
  */
 
+import { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import {
+  CallToolRequestSchema,
+  ListResourcesRequestSchema,
+  ListToolsRequestSchema,
+  ReadResourceRequestSchema,
+} from "@modelcontextprotocol/sdk/types.js";
 import { afterAll, beforeAll, describe, expect, it, spyOn } from "bun:test";
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
@@ -27,6 +34,7 @@ import { log } from "../../src/observability/log.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { McpSource } from "../../src/tools/mcp-source.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
+import { type RemoteMcpFixture, startRemoteMcpServer } from "../helpers/remote-mcp-fixture.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
 
 const FAILING_NAME = "ai-nimblebrain-failing-mcp";
@@ -48,155 +56,79 @@ metadata:
 
 HEALTHY-MARKER — this rule must be in context on every turn.`;
 
-/** Server whose `resources/list` throws; `tools/list` still answers. */
-function createFailingConnector(dir: string): string {
-  mkdirSync(dir, { recursive: true });
-  const nm = join(import.meta.dir, "../..", "node_modules");
-  writeFileSync(
-    join(dir, "server.cjs"),
-    `
-const { Server } = require("${nm}/@modelcontextprotocol/sdk/dist/cjs/server/index.js");
-const { StdioServerTransport } = require("${nm}/@modelcontextprotocol/sdk/dist/cjs/server/stdio.js");
-const { ListToolsRequestSchema, CallToolRequestSchema, ListResourcesRequestSchema } =
-  require("${nm}/@modelcontextprotocol/sdk/dist/cjs/types.js");
-
-async function main() {
-  const server = new Server(
-    { name: "failing", version: "0.1.0" },
-    { capabilities: { tools: {}, resources: {} } },
-  );
+/** The two verbs every fixture below answers the same way. */
+function withPingTool(server: Server, toolName = "ping"): Server {
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: [{ name: "ping", description: "Ping", inputSchema: { type: "object", properties: {} } }],
+    tools: [
+      { name: toolName, description: "Ping", inputSchema: { type: "object", properties: {} } },
+    ],
   }));
   server.setRequestHandler(CallToolRequestSchema, async () => ({
     content: [{ type: "text", text: "done" }],
   }));
+  return server;
+}
+
+/** Server whose `resources/list` throws; `tools/list` still answers. */
+function createFailingServer(): Server {
+  const server = withPingTool(
+    new Server({ name: "failing", version: "0.1.0" }, { capabilities: { tools: {}, resources: {} } }),
+  );
   server.setRequestHandler(ListResourcesRequestSchema, async () => {
     throw new Error("resources/list is unavailable");
   });
-  await server.connect(new StdioServerTransport());
-}
-main();
-`,
-  );
-  return dir;
+  return server;
 }
 
 /** Server whose `resources/list` always returns a cursor — never finishes. */
-function createTruncatedConnector(dir: string): string {
-  mkdirSync(dir, { recursive: true });
-  const nm = join(import.meta.dir, "../..", "node_modules");
-  writeFileSync(
-    join(dir, "server.cjs"),
-    `
-const { Server } = require("${nm}/@modelcontextprotocol/sdk/dist/cjs/server/index.js");
-const { StdioServerTransport } = require("${nm}/@modelcontextprotocol/sdk/dist/cjs/server/stdio.js");
-const { ListToolsRequestSchema, CallToolRequestSchema, ListResourcesRequestSchema } =
-  require("${nm}/@modelcontextprotocol/sdk/dist/cjs/types.js");
-
-async function main() {
-  const server = new Server(
-    { name: "truncated", version: "0.1.0" },
-    { capabilities: { tools: {}, resources: {} } },
+function createTruncatedServer(): Server {
+  const server = withPingTool(
+    new Server(
+      { name: "truncated", version: "0.1.0" },
+      { capabilities: { tools: {}, resources: {} } },
+    ),
   );
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: [{ name: "ping", description: "Ping", inputSchema: { type: "object", properties: {} } }],
-  }));
-  server.setRequestHandler(CallToolRequestSchema, async () => ({
-    content: [{ type: "text", text: "done" }],
-  }));
   let page = 0;
   server.setRequestHandler(ListResourcesRequestSchema, async () => {
     page++;
     return {
-      resources: [{ uri: "res://filler/" + page, name: "filler-" + page }],
-      nextCursor: "page-" + page,
+      resources: [{ uri: `res://filler/${page}`, name: `filler-${page}` }],
+      nextCursor: `page-${page}`,
     };
   });
-  await server.connect(new StdioServerTransport());
-}
-main();
-`,
-  );
-  return dir;
+  return server;
 }
 
 /** Server that LISTS one skill entrypoint but throws on every read. */
-function createUnreadableConnector(dir: string): string {
-  mkdirSync(dir, { recursive: true });
-  const nm = join(import.meta.dir, "../..", "node_modules");
-  writeFileSync(
-    join(dir, "server.cjs"),
-    `
-const { Server } = require("${nm}/@modelcontextprotocol/sdk/dist/cjs/server/index.js");
-const { StdioServerTransport } = require("${nm}/@modelcontextprotocol/sdk/dist/cjs/server/stdio.js");
-const {
-  ListToolsRequestSchema, CallToolRequestSchema,
-  ListResourcesRequestSchema, ReadResourceRequestSchema,
-} = require("${nm}/@modelcontextprotocol/sdk/dist/cjs/types.js");
-
-async function main() {
-  const server = new Server(
-    { name: "unreadable", version: "0.1.0" },
-    { capabilities: { tools: {}, resources: {} } },
+function createUnreadableServer(): Server {
+  const server = withPingTool(
+    new Server(
+      { name: "unreadable", version: "0.1.0" },
+      { capabilities: { tools: {}, resources: {} } },
+    ),
   );
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: [{ name: "ping", description: "Ping", inputSchema: { type: "object", properties: {} } }],
-  }));
-  server.setRequestHandler(CallToolRequestSchema, async () => ({
-    content: [{ type: "text", text: "done" }],
-  }));
   server.setRequestHandler(ListResourcesRequestSchema, async () => ({
     resources: [{ uri: "skill://broken/SKILL.md", name: "broken", mimeType: "text/markdown" }],
   }));
   server.setRequestHandler(ReadResourceRequestSchema, async () => {
     throw new Error("resources/read is unavailable");
   });
-  await server.connect(new StdioServerTransport());
-}
-main();
-`,
-  );
-  return dir;
+  return server;
 }
 
 /** Ordinary server publishing one `always` skill — the control. */
-function createHealthyConnector(dir: string): string {
-  mkdirSync(dir, { recursive: true });
-  const nm = join(import.meta.dir, "../..", "node_modules");
-  writeFileSync(
-    join(dir, "server.cjs"),
-    `
-const { Server } = require("${nm}/@modelcontextprotocol/sdk/dist/cjs/server/index.js");
-const { StdioServerTransport } = require("${nm}/@modelcontextprotocol/sdk/dist/cjs/server/stdio.js");
-const {
-  ListToolsRequestSchema, CallToolRequestSchema,
-  ListResourcesRequestSchema, ReadResourceRequestSchema,
-} = require("${nm}/@modelcontextprotocol/sdk/dist/cjs/types.js");
-
-async function main() {
-  const server = new Server(
-    { name: "healthy", version: "0.1.0" },
-    { capabilities: { tools: {}, resources: {} } },
+function createHealthyServer(): Server {
+  const server = withPingTool(
+    new Server({ name: "healthy", version: "0.1.0" }, { capabilities: { tools: {}, resources: {} } }),
+    "go",
   );
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: [{ name: "go", description: "Go", inputSchema: { type: "object", properties: {} } }],
-  }));
-  server.setRequestHandler(CallToolRequestSchema, async () => ({
-    content: [{ type: "text", text: "done" }],
-  }));
   server.setRequestHandler(ListResourcesRequestSchema, async () => ({
     resources: [{ uri: "skill://guide/SKILL.md", name: "guide", mimeType: "text/markdown" }],
   }));
   server.setRequestHandler(ReadResourceRequestSchema, async (req) => ({
-    contents: [{ uri: req.params.uri, mimeType: "text/markdown", text: ${JSON.stringify(SKILL_BODY)} }],
+    contents: [{ uri: req.params.uri, mimeType: "text/markdown", text: SKILL_BODY }],
   }));
-  await server.connect(new StdioServerTransport());
-}
-main();
-`,
-  );
-  return dir;
+  return server;
 }
 
 const testDir = join(tmpdir(), `nimblebrain-skill-degraded-${Date.now()}`);
@@ -205,6 +137,7 @@ let failing: McpSource;
 let healthy: McpSource;
 let truncated: McpSource;
 let unreadable: McpSource;
+const servers: RemoteMcpFixture[] = [];
 
 /** Fields of every `skills.composition.degraded` warn recorded by a spy. */
 function degradedCalls(spy: ReturnType<typeof spyOn>): Array<Record<string, unknown>> {
@@ -213,13 +146,12 @@ function degradedCalls(spy: ReturnType<typeof spyOn>): Array<Record<string, unkn
     .filter((f): f is Record<string, unknown> => f?.event === "skills.composition.degraded");
 }
 
-async function startSource(name: string, dir: string): Promise<McpSource> {
+async function startSource(name: string, makeServer: () => Server): Promise<McpSource> {
+  const server = startRemoteMcpServer(makeServer);
+  servers.push(server);
   const src = new McpSource(
     name,
-    {
-      type: "stdio",
-      spawn: { command: "node", args: [join(dir, "server.cjs")], env: process.env as Record<string, string> },
-    },
+    { type: "remote", url: new URL(server.url), allowInsecure: true },
     new NoopEventSink(),
   );
   await src.start();
@@ -236,10 +168,10 @@ beforeAll(async () => {
     telemetry: { enabled: false },
   });
   await provisionTestWorkspace(runtime);
-  failing = await startSource(FAILING_NAME, createFailingConnector(join(testDir, "failing")));
-  healthy = await startSource(HEALTHY_NAME, createHealthyConnector(join(testDir, "healthy")));
-  truncated = await startSource(TRUNCATED_NAME, createTruncatedConnector(join(testDir, "truncated")));
-  unreadable = await startSource(UNREADABLE_NAME, createUnreadableConnector(join(testDir, "unreadable")));
+  failing = await startSource(FAILING_NAME, createFailingServer);
+  healthy = await startSource(HEALTHY_NAME, createHealthyServer);
+  truncated = await startSource(TRUNCATED_NAME, createTruncatedServer);
+  unreadable = await startSource(UNREADABLE_NAME, createUnreadableServer);
 });
 
 afterAll(async () => {
@@ -250,6 +182,7 @@ afterAll(async () => {
       // already stopped
     }
   }
+  for (const server of servers) server.close();
   await runtime.shutdown();
   if (existsSync(testDir)) rmSync(testDir, { recursive: true, force: true });
 });

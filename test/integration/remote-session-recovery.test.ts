@@ -1,5 +1,4 @@
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import {
 	ListResourcesRequestSchema,
 	ReadResourceRequestSchema,
@@ -7,6 +6,7 @@ import {
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import { McpSource } from "../../src/tools/mcp-source.ts";
+import { type RemoteMcpFixture, startRemoteMcpServer } from "../helpers/remote-mcp-fixture.ts";
 
 /**
  * End-to-end recovery half of issue #571: when a remote MCP server rolls and
@@ -23,14 +23,6 @@ import { McpSource } from "../../src/tools/mcp-source.ts";
 
 const UI_HTML = "<html><body>main</body></html>";
 
-interface MockRollingServer {
-	url: string;
-	/** Drop all live sessions — the next request on an old session id 404s,
-	 *  exactly as a rolling deploy's fresh pod does. */
-	roll: () => void;
-	close: () => void;
-}
-
 function createMcpServer(): Server {
 	const server = new Server(
 		{ name: "rolling-remote", version: "0.1.0" },
@@ -45,67 +37,12 @@ function createMcpServer(): Server {
 	return server;
 }
 
-function startRollingServer(): MockRollingServer {
-	let counter = 0;
-	const transports = new Map<string, WebStandardStreamableHTTPServerTransport>();
-
-	const httpServer = Bun.serve({
-		port: 0,
-		async fetch(req: Request) {
-			const url = new URL(req.url);
-			if (url.pathname !== "/mcp") return new Response("Not found", { status: 404 });
-
-			const sid = req.headers.get("mcp-session-id");
-
-			// Known session — route to its transport.
-			if (sid) {
-				const existing = transports.get(sid);
-				if (existing) return existing.handleRequest(req);
-				// Stale session (server rolled). This is the REAL wire shape the fleet
-				// servers' Python MCP SDK emits (streamable_http_manager.py): HTTP 404
-				// with a `{"code":-32600,"message":"Session not found"}` body and the
-				// `id:"server-error"` sentinel. The SDK client surfaces it as
-				// `StreamableHTTPError(404, "...Session not found...")`.
-				return new Response(
-					JSON.stringify({
-						jsonrpc: "2.0",
-						id: "server-error",
-						error: { code: -32600, message: "Session not found" },
-					}),
-					{ status: 404, headers: { "content-type": "application/json" } },
-				);
-			}
-
-			// No session id → a fresh `initialize`. Mint a session + transport.
-			const transport = new WebStandardStreamableHTTPServerTransport({
-				sessionIdGenerator: () => `sess-${++counter}`,
-				onsessioninitialized: (id) => transports.set(id, transport),
-			});
-			await createMcpServer().connect(transport);
-			return transport.handleRequest(req);
-		},
-	});
-
-	return {
-		url: `http://localhost:${httpServer.port}/mcp`,
-		roll() {
-			for (const t of transports.values()) t.close().catch(() => {});
-			transports.clear();
-		},
-		close() {
-			httpServer.stop(true);
-			for (const t of transports.values()) t.close().catch(() => {});
-			transports.clear();
-		},
-	};
-}
-
 describe("McpSource — remote session recovery (issue #571)", () => {
-	let server: MockRollingServer;
+	let server: RemoteMcpFixture;
 	let source: McpSource;
 
 	beforeEach(() => {
-		server = startRollingServer();
+		server = startRemoteMcpServer(createMcpServer);
 	});
 
 	afterEach(async () => {
