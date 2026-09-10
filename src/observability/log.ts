@@ -19,7 +19,7 @@
  *
  * Severity floor: `NB_LOG_LEVEL` (debug|info|warn|error, default `info`) drops
  * anything below it for the info/warn/error methods. `debug` (NB_DEBUG
- * namespaces) and `connector` are separate always-available channels and bypass it.
+ * namespaces) is a separate always-available channel and bypasses it.
  *
  * Secret-safety: structured `fields` pass through a key-denylist redactor
  * (secret / password / api_key / authorization / cookie / credential / a bare
@@ -45,12 +45,6 @@
  *
  * Keep this list in sync with the CLAUDE.md "Debug Logging" section so it's
  * discoverable without reading source.
- *
- * `log.connector(sourceName, line)` is intentionally NOT gated. Connector stderr
- * is the connector author's deliberate diagnostic output (tracebacks, warnings,
- * logs) — different concern than NB's protocol tracing, and the dev-loop
- * cost of hiding it (see issue #116) outweighs the cost of dimmed lines on
- * a chatty connector. Visual prefix + dim formatting makes it tunable by eye.
  */
 
 import { requestIdentityAttrs } from "./identity.ts";
@@ -75,9 +69,9 @@ const TENANT_ID = process.env.NB_TENANT_ID;
 
 // Severity floor. `NB_LOG_LEVEL` (deploy-time, read at call time for test
 // control) drops anything below it for the info/warn/error methods. `debug`
-// (NB_DEBUG) and `connector` are separate channels and intentionally bypass this
-// floor. NB_-namespaced to match the other knobs and avoid a stray `LOG_LEVEL`
-// (aimed at some other tool) silently re-flooring our logs.
+// (NB_DEBUG) is a separate channel and intentionally bypasses this floor.
+// NB_-namespaced to match the other knobs and avoid a stray `LOG_LEVEL` (aimed
+// at some other tool) silently re-flooring our logs.
 const LEVELS: Record<Level, number> = { debug: 10, info: 20, warn: 30, error: 40 };
 function levelEnabled(level: Level): boolean {
   const floor = LEVELS[(process.env.NB_LOG_LEVEL ?? "info").toLowerCase() as Level] ?? LEVELS.info;
@@ -200,15 +194,4 @@ export const log = {
   },
   /** Check whether a namespace is enabled, e.g. to skip expensive log args. */
   debugEnabled: isDebugEnabled,
-  /**
-   * Emit a single line of connector subprocess stderr output. Default-on,
-   * dimmed, prefixed `[connector:<name>]` so it's visually distinct from NB's
-   * own output. In JSON mode it becomes a structured `connector.stderr` record
-   * carrying the raw line, so it stays queryable per connector. See file header.
-   */
-  connector: (sourceName: string, line: string) => {
-    if (isJson())
-      emitJson("info", "connector.stderr", { connector: sourceName, line }, "connector");
-    else console.error(dim(`[connector:${sourceName}] ${line}`));
-  },
 };

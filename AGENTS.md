@@ -305,10 +305,6 @@ Namespaces (`src/observability/log.ts`):
 
 Add a namespace by calling `log.debug("ns", "message")` (from `src/observability/log.ts`). Keep this table and the `log.ts` doc comment in sync.
 
-### Connector subprocess stderr (default-on)
-
-Lines a connector writes to stderr — Python tracebacks, warnings, application logs — are surfaced verbatim and prefixed `[connector:<sourceName>]`, dimmed. **No flag required.** This is the connector author's deliberate diagnostic output, separate from NB's own `NB_DEBUG=mcp` tracing; hiding it costs hours when a connector crashes. To quiet a chatty connector, silence at the connector level (logger config) or redirect at the shell (`bun run dev 2> >(grep -v '\[connector:')`). The last 50 lines are also captured into the `source.crashed` event payload as `stderrTail`, so post-mortem consumers see the cause-of-death.
-
 ### Browser (`localStorage.nb_debug`)
 
 ```js

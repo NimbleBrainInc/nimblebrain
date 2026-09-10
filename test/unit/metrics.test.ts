@@ -203,7 +203,7 @@ describe("connector crash metric", () => {
     const sink = new MetricsEventSink();
     const labels = { source: "synapse-crm", remote: "false" };
     const before = await read(connectorCrashedTotal, labels);
-    // A local stdio connector: HealthMonitor omits the `remote` field entirely.
+    // An in-process source: HealthMonitor omits the `remote` field entirely.
     sink.emit({
       type: "run.error",
       data: { source: "synapse-crm", event: "connector.crashed" },

@@ -19,8 +19,15 @@
  */
 
 import type { LanguageModelV4, LanguageModelV4CallOptions } from "@ai-sdk/provider";
+import { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import {
+  CallToolRequestSchema,
+  ListResourcesRequestSchema,
+  ListToolsRequestSchema,
+  ReadResourceRequestSchema,
+} from "@modelcontextprotocol/sdk/types.js";
 import { afterAll, beforeAll, describe, expect, it, spyOn } from "bun:test";
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
@@ -28,6 +35,7 @@ import { reconstructMessages } from "../../src/conversation/event-reconstructor.
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { McpSource } from "../../src/tools/mcp-source.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
+import { type RemoteMcpFixture, startRemoteMcpServer } from "../helpers/remote-mcp-fixture.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
 
 /** The synthesized name for the fixture connector's skill. */
@@ -42,20 +50,7 @@ description: How to use the test server.
 
 Always call test__doit before anything else.`;
 
-function createSkillFixtureConnector(dir: string): string {
-  mkdirSync(dir, { recursive: true });
-  const nodeModulesPath = join(import.meta.dir, "../..", "node_modules");
-  const serverCode = `
-const { Server } = require("${nodeModulesPath}/@modelcontextprotocol/sdk/dist/cjs/server/index.js");
-const { StdioServerTransport } = require("${nodeModulesPath}/@modelcontextprotocol/sdk/dist/cjs/server/stdio.js");
-const {
-  ListToolsRequestSchema,
-  CallToolRequestSchema,
-  ListResourcesRequestSchema,
-  ReadResourceRequestSchema,
-} = require("${nodeModulesPath}/@modelcontextprotocol/sdk/dist/cjs/types.js");
-
-async function main() {
+function createSkillFixtureServer(): Server {
   const server = new Server(
     { name: "test", version: "0.1.0" },
     { capabilities: { tools: {}, resources: {} } },
@@ -63,11 +58,7 @@ async function main() {
 
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
     tools: [
-      {
-        name: "doit",
-        description: "Do the thing",
-        inputSchema: { type: "object", properties: {} },
-      },
+      { name: "doit", description: "Do the thing", inputSchema: { type: "object", properties: {} } },
     ],
   }));
 
@@ -82,39 +73,17 @@ async function main() {
     ],
   }));
 
+  const bodies: Record<string, string> = {
+    "skill://test/SKILL.md": SKILL_BODY,
+    "skill://test/reference": "# Reference. Detailed tool catalog and error recovery.",
+  };
   server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
-    if (request.params.uri === "skill://test/SKILL.md") {
-      return {
-        contents: [
-          {
-            uri: request.params.uri,
-            mimeType: "text/markdown",
-            text: ${JSON.stringify(SKILL_BODY)},
-          },
-        ],
-      };
-    }
-    if (request.params.uri === "skill://test/reference") {
-      return {
-        contents: [
-          {
-            uri: request.params.uri,
-            mimeType: "text/markdown",
-            text: "# Reference. Detailed tool catalog and error recovery.",
-          },
-        ],
-      };
-    }
-    throw new Error("Resource not found: " + request.params.uri);
+    const text = bodies[request.params.uri];
+    if (text === undefined) throw new Error(`Resource not found: ${request.params.uri}`);
+    return { contents: [{ uri: request.params.uri, mimeType: "text/markdown", text }] };
   });
 
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
-}
-main();
-`;
-  writeFileSync(join(dir, "server.cjs"), serverCode);
-  return dir;
+  return server;
 }
 
 /**
@@ -122,35 +91,21 @@ main();
  * resources — one workspace's instance of a connector that has nothing to say.
  * Used to prove a neighbour's discovery cannot speak for it.
  */
-function createSkilllessFixtureConnector(dir: string): string {
-  mkdirSync(dir, { recursive: true });
-  const nodeModulesPath = join(import.meta.dir, "../..", "node_modules");
-  writeFileSync(
-    join(dir, "server.cjs"),
-    `
-const { Server } = require("${nodeModulesPath}/@modelcontextprotocol/sdk/dist/cjs/server/index.js");
-const { StdioServerTransport } = require("${nodeModulesPath}/@modelcontextprotocol/sdk/dist/cjs/server/stdio.js");
-const { ListToolsRequestSchema, CallToolRequestSchema, ListResourcesRequestSchema } =
-  require("${nodeModulesPath}/@modelcontextprotocol/sdk/dist/cjs/types.js");
-
-async function main() {
+function createSkilllessFixtureServer(): Server {
   const server = new Server(
     { name: "test", version: "0.1.0" },
     { capabilities: { tools: {}, resources: {} } },
   );
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: [{ name: "doit", description: "Do the thing", inputSchema: { type: "object", properties: {} } }],
+    tools: [
+      { name: "doit", description: "Do the thing", inputSchema: { type: "object", properties: {} } },
+    ],
   }));
   server.setRequestHandler(CallToolRequestSchema, async () => ({
     content: [{ type: "text", text: "done" }],
   }));
   server.setRequestHandler(ListResourcesRequestSchema, async () => ({ resources: [] }));
-  await server.connect(new StdioServerTransport());
-}
-main();
-`,
-  );
-  return dir;
+  return server;
 }
 
 // Captures the prompt the model receives so the test can assert on the assembled
@@ -183,6 +138,7 @@ function lastPromptText(): string {
 const testDir = join(tmpdir(), `nimblebrain-connector-skills-${Date.now()}`);
 let runtime: Runtime;
 let testSource: McpSource;
+let testServer: RemoteMcpFixture;
 
 beforeAll(async () => {
   mkdirSync(testDir, { recursive: true });
@@ -195,17 +151,10 @@ beforeAll(async () => {
   });
   await provisionTestWorkspace(runtime);
 
-  const connectorDir = createSkillFixtureConnector(join(testDir, "connector"));
+  testServer = startRemoteMcpServer(createSkillFixtureServer);
   testSource = new McpSource(
     "ai-nimblebrain-test-mcp",
-    {
-      type: "stdio",
-      spawn: {
-        command: "node",
-        args: [join(connectorDir, "server.cjs")],
-        env: process.env as Record<string, string>,
-      },
-    },
+    { type: "remote", url: new URL(testServer.url), allowInsecure: true },
     new NoopEventSink(),
   );
   await testSource.start();
@@ -218,6 +167,7 @@ afterAll(async () => {
   } catch {
     // already stopped
   }
+  testServer.close();
   await runtime.shutdown();
   if (existsSync(testDir)) rmSync(testDir, { recursive: true });
 });
@@ -339,17 +289,10 @@ describe("connector-skill adapter — end-to-end", () => {
     const otherWsId = "ws_other_tenant";
     await provisionTestWorkspace(runtime, otherWsId);
 
-    const barrenDir = createSkilllessFixtureConnector(join(testDir, "barren"));
+    const barrenServer = startRemoteMcpServer(createSkilllessFixtureServer);
     const barrenSource = new McpSource(
       "ai-nimblebrain-test-mcp", // same name, different instance
-      {
-        type: "stdio",
-        spawn: {
-          command: "node",
-          args: [join(barrenDir, "server.cjs")],
-          env: process.env as Record<string, string>,
-        },
-      },
+      { type: "remote", url: new URL(barrenServer.url), allowInsecure: true },
       new NoopEventSink(),
     );
     await barrenSource.start();
@@ -366,6 +309,7 @@ describe("connector-skill adapter — end-to-end", () => {
       expect(other.some((s) => s.name === CONNECTOR_SKILL_NAME)).toBe(false);
     } finally {
       await barrenSource.stop();
+      barrenServer.close();
     }
   });
 
@@ -415,6 +359,7 @@ describe("connector-skill adapter — end-to-end", () => {
 const promoDir = join(tmpdir(), `nimblebrain-connector-skills-promo-${Date.now()}`);
 let promoRuntime: Runtime;
 let promoSource: McpSource;
+let promoServer: RemoteMcpFixture;
 
 // The fixture tool is not in the turn-start active set (behind progressive
 // disclosure); the model promotes it by its workspace-namespaced name.
@@ -452,17 +397,10 @@ describe("connector-skill adapter — mid-turn tool promotion", () => {
     });
     await provisionTestWorkspace(promoRuntime);
 
-    const connectorDir = createSkillFixtureConnector(join(promoDir, "connector"));
+    promoServer = startRemoteMcpServer(createSkillFixtureServer);
     promoSource = new McpSource(
       "ai-nimblebrain-test-mcp",
-      {
-        type: "stdio",
-        spawn: {
-          command: "node",
-          args: [join(connectorDir, "server.cjs")],
-          env: process.env as Record<string, string>,
-        },
-      },
+      { type: "remote", url: new URL(promoServer.url), allowInsecure: true },
       new NoopEventSink(),
     );
     await promoSource.start();
@@ -475,6 +413,7 @@ describe("connector-skill adapter — mid-turn tool promotion", () => {
     } catch {
       // already stopped
     }
+    promoServer.close();
     await promoRuntime.shutdown();
     if (existsSync(promoDir)) rmSync(promoDir, { recursive: true });
   });
@@ -561,20 +500,7 @@ description: How to call the multi server's tools.
 
 DYNAMIC_USAGE_MARKER — call multi__doit correctly.`;
 
-function createMultiSkillFixtureConnector(dir: string): string {
-  mkdirSync(dir, { recursive: true });
-  const nodeModulesPath = join(import.meta.dir, "../..", "node_modules");
-  const serverCode = `
-const { Server } = require("${nodeModulesPath}/@modelcontextprotocol/sdk/dist/cjs/server/index.js");
-const { StdioServerTransport } = require("${nodeModulesPath}/@modelcontextprotocol/sdk/dist/cjs/server/stdio.js");
-const {
-  ListToolsRequestSchema,
-  CallToolRequestSchema,
-  ListResourcesRequestSchema,
-  ReadResourceRequestSchema,
-} = require("${nodeModulesPath}/@modelcontextprotocol/sdk/dist/cjs/types.js");
-
-async function main() {
+function createMultiSkillFixtureServer(): Server {
   const server = new Server(
     { name: "multi", version: "0.1.0" },
     { capabilities: { tools: {}, resources: {} } },
@@ -597,28 +523,23 @@ async function main() {
     ],
   }));
 
-  const bodies = {
-    "skill://always-guide/SKILL.md": ${JSON.stringify(ALWAYS_SKILL_BODY)},
-    "skill://dynamic-usage/SKILL.md": ${JSON.stringify(DYNAMIC_SKILL_BODY)},
+  const bodies: Record<string, string> = {
+    "skill://always-guide/SKILL.md": ALWAYS_SKILL_BODY,
+    "skill://dynamic-usage/SKILL.md": DYNAMIC_SKILL_BODY,
   };
   server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
     const text = bodies[request.params.uri];
-    if (text === undefined) throw new Error("Resource not found: " + request.params.uri);
+    if (text === undefined) throw new Error(`Resource not found: ${request.params.uri}`);
     return { contents: [{ uri: request.params.uri, mimeType: "text/markdown", text }] };
   });
 
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
-}
-main();
-`;
-  writeFileSync(join(dir, "server.cjs"), serverCode);
-  return dir;
+  return server;
 }
 
 const multiDir = join(tmpdir(), `nimblebrain-connector-skills-multi-${Date.now()}`);
 let multiRuntime: Runtime;
 let multiSource: McpSource;
+let multiServer: RemoteMcpFixture;
 // Captures the composed prompt for the multi-skill runtime.
 let multiPrompt: LanguageModelV4CallOptions["prompt"] | undefined;
 
@@ -653,17 +574,10 @@ describe("connector-skill adapter — honors declared loading-strategy", () => {
     });
     await provisionTestWorkspace(multiRuntime);
 
-    const connectorDir = createMultiSkillFixtureConnector(join(multiDir, "connector"));
+    multiServer = startRemoteMcpServer(createMultiSkillFixtureServer);
     multiSource = new McpSource(
       "ai-nimblebrain-multi-mcp",
-      {
-        type: "stdio",
-        spawn: {
-          command: "node",
-          args: [join(connectorDir, "server.cjs")],
-          env: process.env as Record<string, string>,
-        },
-      },
+      { type: "remote", url: new URL(multiServer.url), allowInsecure: true },
       new NoopEventSink(),
     );
     await multiSource.start();
@@ -676,6 +590,7 @@ describe("connector-skill adapter — honors declared loading-strategy", () => {
     } catch {
       // already stopped
     }
+    multiServer.close();
     await multiRuntime.shutdown();
     if (existsSync(multiDir)) rmSync(multiDir, { recursive: true });
   });

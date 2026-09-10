@@ -1,22 +1,11 @@
-import { describe, expect, it, afterAll, beforeEach } from "bun:test";
-import { mkdirSync, writeFileSync, rmSync, existsSync } from "node:fs";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
+import { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { McpSource } from "../../src/tools/mcp-source.ts";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import { ToolRegistry } from "../../src/tools/registry.ts";
 import { extractText } from "../../src/engine/content-helpers.ts";
-
-const testDir = join(tmpdir(), `nimblebrain-connectors-${Date.now()}`);
-
-function setupTestDir() {
-  if (existsSync(testDir)) rmSync(testDir, { recursive: true });
-  mkdirSync(testDir, { recursive: true });
-}
-
-afterAll(() => {
-  if (existsSync(testDir)) rmSync(testDir, { recursive: true });
-});
+import { type RemoteMcpFixture, startRemoteMcpServer } from "../helpers/remote-mcp-fixture.ts";
 
 describe("ToolRegistry", () => {
   it("starts empty with no sources", async () => {
@@ -50,70 +39,48 @@ describe("ToolRegistry", () => {
   });
 });
 
-/** Helper: create a minimal echo MCP server connector on disk. */
-function createEchoConnector(dir: string): string {
-  mkdirSync(dir, { recursive: true });
+/** A minimal echo MCP server — the shape a third-party connector presents. */
+function createEchoServer(): Server {
+  const server = new Server({ name: "echo-test", version: "0.1.0" }, { capabilities: { tools: {} } });
 
-  const nodeModulesPath = join(import.meta.dir, "../..", "node_modules");
-  const serverCode = `
-const { Server } = require("${nodeModulesPath}/@modelcontextprotocol/sdk/dist/cjs/server/index.js");
-const { StdioServerTransport } = require("${nodeModulesPath}/@modelcontextprotocol/sdk/dist/cjs/server/stdio.js");
-const { ListToolsRequestSchema, CallToolRequestSchema } = require("${nodeModulesPath}/@modelcontextprotocol/sdk/dist/cjs/types.js");
-
-async function main() {
-  const server = new Server(
-    { name: "echo-test", version: "0.1.0" },
-    { capabilities: { tools: {} } },
-  );
-
-  server.setRequestHandler(
-    ListToolsRequestSchema,
-    async () => ({
-      tools: [
-        {
-          name: "echo",
-          description: "Echo back the input",
-          inputSchema: {
-            type: "object",
-            properties: { message: { type: "string" } },
-            required: ["message"],
-          },
+  server.setRequestHandler(ListToolsRequestSchema, async () => ({
+    tools: [
+      {
+        name: "echo",
+        description: "Echo back the input",
+        inputSchema: {
+          type: "object",
+          properties: { message: { type: "string" } },
+          required: ["message"],
         },
-      ],
-    }),
-  );
+      },
+    ],
+  }));
 
-  server.setRequestHandler(
-    CallToolRequestSchema,
-    async (request) => ({
-      content: [{ type: "text", text: "Echo: " + request.params.arguments?.message }],
-    }),
-  );
+  server.setRequestHandler(CallToolRequestSchema, async (request) => ({
+    content: [{ type: "text", text: `Echo: ${request.params.arguments?.message}` }],
+  }));
 
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
-}
-main();
-`;
-
-  writeFileSync(join(dir, "server.cjs"), serverCode);
-  return dir;
+  return server;
 }
 
 describe("McpSource (integration)", () => {
-  beforeEach(setupTestDir);
+  let server: RemoteMcpFixture;
 
-  it("spawns a local MCP server and executes tools", async () => {
-    const connectorDir = createEchoConnector(join(testDir, "echo-connector"));
+  beforeEach(() => {
+    server = startRemoteMcpServer(createEchoServer);
+  });
 
-    const source = new McpSource("echo-test", {
-      type: "stdio",
-      spawn: {
-        command: "node",
-        args: [join(connectorDir, "server.cjs")],
-        env: process.env as Record<string, string>,
-      },
-    }, new NoopEventSink());
+  afterEach(() => {
+    server.close();
+  });
+
+  it("connects to a remote MCP server and executes tools", async () => {
+    const source = new McpSource(
+      "echo-test",
+      { type: "remote", url: new URL(server.url), allowInsecure: true },
+      new NoopEventSink(),
+    );
 
     await source.start();
 
@@ -136,16 +103,11 @@ describe("McpSource (integration)", () => {
   }, 15_000);
 
   it("works through ToolRegistry", async () => {
-    const connectorDir = createEchoConnector(join(testDir, "echo-registry"));
-
-    const source = new McpSource("echo-test", {
-      type: "stdio",
-      spawn: {
-        command: "node",
-        args: [join(connectorDir, "server.cjs")],
-        env: process.env as Record<string, string>,
-      },
-    }, new NoopEventSink());
+    const source = new McpSource(
+      "echo-test",
+      { type: "remote", url: new URL(server.url), allowInsecure: true },
+      new NoopEventSink(),
+    );
     await source.start();
 
     const registry = new ToolRegistry();
