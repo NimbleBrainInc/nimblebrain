@@ -1,5 +1,11 @@
 import { InMemoryTransport, Server, ProtocolError, ProtocolErrorCode } from "@modelcontextprotocol/server";
-import type { Transport, ToolAnnotations } from "@modelcontextprotocol/server";
+import type {
+  BlobResourceContents,
+  TextResourceContents,
+  Tool,
+  Transport,
+  ToolAnnotations,
+} from "@modelcontextprotocol/server";
 import type { PlacementDeclaration } from "../connectors/runtime/types.ts";
 import type { EventSink, ToolResult } from "../engine/types.ts";
 import { bytesToBase64 } from "../util/base64.ts";
@@ -193,19 +199,12 @@ export function defineInProcessApp(
           tools: tools.map((t) => ({
             name: t.name,
             description: t.description,
-            inputSchema: t.inputSchema as {
-              type: "object";
-              properties?: Record<string, unknown>;
-              required?: string[];
-            },
+            // The SDK's own schema types, not a restated copy — the spec
+            // tightened what a JSON Schema value may hold, and a hand-written
+            // shape here would go stale the next time it moves.
+            inputSchema: t.inputSchema as Tool["inputSchema"],
             ...(t.outputSchema
-              ? {
-                  outputSchema: t.outputSchema as {
-                    type: "object";
-                    properties?: Record<string, unknown>;
-                    required?: string[];
-                  },
-                }
+              ? { outputSchema: t.outputSchema as NonNullable<Tool["outputSchema"]> }
               : {}),
             ...(t.annotations ? { annotations: t.annotations } : {}),
             ...(t.meta ? { _meta: t.meta } : {}),
@@ -362,21 +361,21 @@ async function resolveResourceValue(
 async function buildResourceContents(
   uri: string,
   value: InProcessResource,
-): Promise<Record<string, unknown>> {
+): Promise<TextResourceContents | BlobResourceContents> {
   if (typeof value === "string") {
     return { uri, mimeType: "text/html", text: value };
   }
-  const entry: Record<string, unknown> = { uri };
-  if (value.mimeType) entry.mimeType = value.mimeType;
-  if (value.blob) {
-    // SDK schema accepts base64-encoded blob strings.
-    entry.blob = bytesToBase64(value.blob);
-  } else {
-    const text = value.text;
-    entry.text = typeof text === "function" ? await text() : (text ?? "");
-  }
-  if (value.meta) entry._meta = value.meta;
-  return entry;
+  // Built per arm rather than mutated into place: `ResourceContents` is a union
+  // of a text entry and a blob entry, and only one of the two keys may be set.
+  const base = {
+    uri,
+    ...(value.mimeType ? { mimeType: value.mimeType } : {}),
+    ...(value.meta ? { _meta: value.meta } : {}),
+  };
+  // SDK schema accepts base64-encoded blob strings.
+  if (value.blob) return { ...base, blob: bytesToBase64(value.blob) };
+  const text = value.text;
+  return { ...base, text: typeof text === "function" ? await text() : (text ?? "") };
 }
 
 /**

@@ -19,34 +19,36 @@
  * `caps.read.range` for the v2 range-read sub-capability.
  */
 
+import type { ClientCapabilities } from "@modelcontextprotocol/client";
+
 export const HOST_RESOURCES_CAPABILITY_KEY = "ai.nimblebrain/host-resources" as const;
 
 /** v1 cap on whole-file reads (lifts to unbounded when `read.range` is true in v2). */
 export const HOST_RESOURCES_MAX_READ_SIZE = 10 * 1024 * 1024; // 10 MiB
 
-export interface HostResourcesReadCapability {
+export type HostResourcesReadCapability = {
   enabled: boolean;
   /** v2: bounded `offset`/`length` reads. */
   range: boolean;
   /** Whole-response byte cap. Connectors exceeding this get -32005 ResponseTooLarge. */
   maxSize: number;
-}
+};
 
-export interface HostResourcesListCapability {
+export type HostResourcesListCapability = {
   enabled: boolean;
-}
+};
 
-export interface HostResourcesWriteCapability {
+export type HostResourcesWriteCapability = {
   enabled: boolean;
-}
+};
 
-export interface HostResourcesCapability {
+export type HostResourcesCapability = {
   read: HostResourcesReadCapability;
   list: HostResourcesListCapability;
   write: HostResourcesWriteCapability;
   /** URI scheme allowlist. Connectors requesting URIs outside this set get -32602. */
   schemes: string[];
-}
+};
 
 export const HOST_RESOURCES_CAPABILITY_V1: HostResourcesCapability = {
   read: {
@@ -70,7 +72,7 @@ export const HOST_RESOURCES_CAPABILITY_V1: HostResourcesCapability = {
  * vendor-namespaced capability declarations — not the older `experimental`
  * field, which is kept by the SDK for backward compatibility.
  */
-export function hostExtensions(): Record<string, object> {
+export function hostExtensions(): NonNullable<ClientCapabilities["extensions"]> {
   return {
     [HOST_RESOURCES_CAPABILITY_KEY]: HOST_RESOURCES_CAPABILITY_V1,
   };

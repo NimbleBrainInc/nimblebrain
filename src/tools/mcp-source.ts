@@ -1,8 +1,7 @@
-import { CallToolResultSchema, ListResourcesRequestSchema, ReadResourceRequestSchema } from "@modelcontextprotocol/core";
+import { ListResourcesRequestSchema, ReadResourceRequestSchema } from "@modelcontextprotocol/core";
 import { ProtocolError } from "@modelcontextprotocol/server";
 import type { Server, Transport, CallToolResult, CreateTaskResult, ServerCapabilities, Task } from "@modelcontextprotocol/server";
 import { UnauthorizedError, Client } from "@modelcontextprotocol/client";
-import { z } from "zod";
 import type { PlacementDeclaration, RemoteTransportConfig } from "../connectors/runtime/types.ts";
 import { textContent } from "../engine/content-helpers.ts";
 import {
@@ -25,6 +24,12 @@ import { requestIdentityAttrs, withSpan } from "../observability/index.ts";
 import { log } from "../observability/log.ts";
 import { getRequestContext } from "../runtime/request-context.ts";
 import { coerceInputForSchema } from "./coerce-input.ts";
+import {
+  callToolAsTaskStream,
+  getTask as fetchTask,
+  getTaskResult as fetchTaskResult,
+  type TaskStreamMessage,
+} from "./mcp-task-client.ts";
 import { promoteHiddenErrors } from "./promote-hidden-errors.ts";
 import { createRemoteTransport } from "./remote-transport.ts";
 import { scrubArgsForDispatch } from "./scrub-args.ts";
@@ -81,18 +86,17 @@ export interface ConnectorMcpContext {
 }
 
 /**
- * Inbound request schemas — the standard MCP `resources/{read,list}`
- * shapes with the method literal swapped for our namespaced extension.
- * `ZodObject.extend` overrides the matching key, so the schema's params
- * shape (uri / cursor / filter) carries through unchanged from the
- * spec-blessed types. Layer 3 migration is just `s/ai.nimblebrain\///`.
+ * Inbound params schemas for the two namespaced host-resource methods, taken
+ * from the spec `resources/{read,list}` requests' own `params` so the shape
+ * (uri / cursor / `_meta`) stays spec-blessed rather than restated here.
+ * Layer 3 migration is just `s/ai.nimblebrain\///`.
+ *
+ * Params rather than whole requests because these are custom (non-spec)
+ * methods: the SDK's 3-arg registration validates the params against the
+ * supplied schema and hands the handler the parsed params, not the envelope.
  */
-const NbReadResourceRequestSchema = ReadResourceRequestSchema.extend({
-  method: z.literal(HOST_RESOURCES_READ_METHOD),
-});
-const NbListResourcesRequestSchema = ListResourcesRequestSchema.extend({
-  method: z.literal(HOST_RESOURCES_LIST_METHOD),
-});
+const NbReadResourceParamsSchema = ReadResourceRequestSchema.shape.params;
+const NbListResourcesParamsSchema = ListResourcesRequestSchema.shape.params;
 
 export type { ResourceData } from "./types.ts";
 
@@ -836,19 +840,24 @@ export class McpSource implements ToolSource {
     const ctx = this.connectorContext;
     if (!ctx) return;
 
-    /* @mcp-codemod-error Custom method handler: setRequestHandler(NbReadResourceRequestSchema, ...). In v2, use the 3-arg form: setRequestHandler('method/name', { params, result? }, handler). See docs/migration/upgrade-to-v2.md for details. */
-    client.setRequestHandler(NbReadResourceRequestSchema, async (request) => {
-      ctx.rateLimit.check(ctx.workspaceId, ctx.connectorId);
-      return ctx.hostResources.read(request.params.uri, {
-        workspaceId: ctx.workspaceId,
-        connectorId: ctx.connectorId,
-      });
-    });
+    client.setRequestHandler(
+      HOST_RESOURCES_READ_METHOD,
+      { params: NbReadResourceParamsSchema },
+      async (params) => {
+        ctx.rateLimit.check(ctx.workspaceId, ctx.connectorId);
+        return ctx.hostResources.read(params.uri, {
+          workspaceId: ctx.workspaceId,
+          connectorId: ctx.connectorId,
+        });
+      },
+    );
 
-    /* @mcp-codemod-error Custom method handler: setRequestHandler(NbListResourcesRequestSchema, ...). In v2, use the 3-arg form: setRequestHandler('method/name', { params, result? }, handler). See docs/migration/upgrade-to-v2.md for details. */
-    client.setRequestHandler(NbListResourcesRequestSchema, async (request) => {
+    client.setRequestHandler(
+      HOST_RESOURCES_LIST_METHOD,
+      { params: NbListResourcesParamsSchema },
+      async (parsed) => {
+      const params = parsed ?? {};
       ctx.rateLimit.check(ctx.workspaceId, ctx.connectorId);
-      const params = request.params ?? {};
       return ctx.hostResources.list(
         // Connector-supplied filter rides in `_meta` per MCP convention for
         // extension-carried request data — spec `ListResourcesRequest`
@@ -863,7 +872,8 @@ export class McpSource implements ToolSource {
         },
         { workspaceId: ctx.workspaceId, connectorId: ctx.connectorId },
       );
-    });
+      },
+    );
   }
 
   /**
@@ -2055,20 +2065,10 @@ export class McpSource implements ToolSource {
       else externalSignal.addEventListener("abort", () => abortController.abort(), { once: true });
     }
 
-    // Pass `task: { ttl }` via *options*, NOT inside `params`. The SDK's
-    // `Protocol.request` stamps `params.task = options.task` AFTER reading
-    // the caller's params, so any ttl we set in `params.task` here is
-    // overridden by the SDK's `optionsWithTask.task` (which auto-fills `{}`
-    // for tools advertising `taskSupport`). Putting it in options threads
-    // through correctly. See `@modelcontextprotocol/sdk` `protocol.js:654`
-    // and `experimental/tasks/client.js:67`.
-    const stream = client.experimental.tasks.callToolStream(
+    const stream = callToolAsTaskStream(
+      client,
       { name: toolName, arguments: args, ...unattendedCallMeta() },
-      undefined,
-      {
-        signal: abortController.signal,
-        task: { ttl: opts.ttlMs ?? DEFAULT_TASK_TTL_MS },
-      },
+      { signal: abortController.signal, ttlMs: opts.ttlMs ?? DEFAULT_TASK_TTL_MS },
     );
 
     // Race the stream's first message against a hard ceiling. The SDK
@@ -2083,7 +2083,7 @@ export class McpSource implements ToolSource {
     if (first.done) {
       throw new Error(`Stream from ${this.name}:${toolName} ended before yielding taskCreated`);
     }
-    const firstMsg = first.value as { type: string; task?: Task; error?: { message?: string } };
+    const firstMsg: TaskStreamMessage = first.value;
     if (firstMsg.type === "error") {
       throw new Error(
         firstMsg.error?.message ?? `Task creation failed for ${this.name}:${toolName}`,
@@ -2174,7 +2174,7 @@ export class McpSource implements ToolSource {
     const client = this.client;
     if (client) {
       try {
-        const upstream = await client.experimental.tasks.getTask(taskId);
+        const upstream = await fetchTask(client, taskId);
         handle.latestTask = upstream;
         handle.expiresAt = computeExpiry(upstream);
         return upstream;
@@ -2266,17 +2266,11 @@ export class McpSource implements ToolSource {
    */
   private async drainTaskStream(
     handle: TaskHandle,
-    stream: AsyncGenerator<unknown, void, void>,
+    stream: AsyncGenerator<TaskStreamMessage, void, void>,
     toolName: string,
   ): Promise<void> {
     try {
-      for await (const raw of stream) {
-        const message = raw as {
-          type: string;
-          task?: Task;
-          result?: CallToolResult;
-          error?: { message?: string };
-        };
+      for await (const message of stream) {
         switch (message.type) {
           case "taskStatus":
             this.applyTaskStatus(handle, message.task, toolName);
@@ -2416,10 +2410,7 @@ export class McpSource implements ToolSource {
     const isGenericTaskFailed = message.endsWith(`Task ${handle.taskId} failed`);
     if (isAborted || !this.client || !isGenericTaskFailed) return null;
     try {
-      const recovered = await this.client.experimental.tasks.getTaskResult(
-        handle.taskId,
-        CallToolResultSchema,
-      );
+      const recovered = await fetchTaskResult(this.client, handle.taskId);
       log.debug("mcp", `recovered tasks/result for failed task ${handle.taskId} on ${this.name}`);
       return recovered;
     } catch {

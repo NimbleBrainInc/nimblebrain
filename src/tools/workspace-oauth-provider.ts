@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import { selectClientAuthMethod, UnauthorizedError } from "@modelcontextprotocol/client";
-import type { OAuthClientProvider, AuthorizationServerMetadata, OAuthClientInformationFull, OAuthClientInformationMixed, OAuthClientMetadata, OAuthTokens } from "@modelcontextprotocol/client";
+import type { OAuthClientProvider, AuthorizationServerMetadata, OAuthClientInformationFull, OAuthClientInformationMixed, OAuthClientMetadata, OAuthClientInformationContext, OAuthTokens } from "@modelcontextprotocol/client";
 import { validateConnectorUrl } from "../connectors/runtime/url-validator.ts";
 import type { ConnectorOwner } from "../identity/connector-owner.ts";
 import { buildTenantAssertion } from "../oauth/fleet-assertion.ts";
@@ -1025,15 +1025,25 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
   }
 
   /**
-   * The persisted token pair, or `undefined`.
+   * The persisted token pair, or `undefined`. The `OAuthClientProvider` seam.
    *
-   * `purpose` is what the audit line says the read was for. The SDK's call is
-   * `"transport"`: one `tokens()` serves both presenting the access token and
-   * exchanging the refresh token, and which of the two follows is decided
-   * inside the SDK, after the read — so a separate `"refresh"` purpose would be
-   * a guess. `revokeAndDeleteTokens` passes `"revoke"`, which it does know.
+   * `ctx.issuer` is the authorization server a provider would key persisted
+   * credentials by. This one has nothing to key: a provider instance is already
+   * scoped to one (workspace, server) pair and holds exactly one token set, so
+   * the parameter is accepted and ignored.
+   *
+   * Every SDK-side read is a `"transport"` read for audit purposes: one
+   * `tokens()` serves both presenting the access token and exchanging the
+   * refresh token, and which of the two follows is decided inside the SDK,
+   * after the read — so a separate `"refresh"` purpose would be a guess. The
+   * one call site that knows better goes through `readTokens` directly.
    */
-  async tokens(purpose: "transport" | "revoke" = "transport"): Promise<OAuthTokens | undefined> {
+  async tokens(_ctx?: OAuthClientInformationContext): Promise<OAuthTokens | undefined> {
+    return this.readTokens("transport");
+  }
+
+  /** The token read proper. `purpose` is what the audit line says it was for. */
+  private async readTokens(purpose: "transport" | "revoke"): Promise<OAuthTokens | undefined> {
     if (this.cachedTokens) return this.cachedTokens;
     const data = await this.records.read<OAuthTokens>("tokens", {
       caller: "oauth:tokens",
@@ -1643,7 +1653,7 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
     const fetcher: typeof fetch = signal
       ? (((input, init) => baseFetcher(input, { ...init, signal })) as typeof fetch)
       : baseFetcher;
-    const tokens = await this.tokens("revoke");
+    const tokens = await this.readTokens("revoke");
     const clientInfo = await this.clientInformation();
     const result: {
       revoked: { access?: boolean; refresh?: boolean };

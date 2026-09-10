@@ -72,7 +72,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { Server, WebStandardStreamableHTTPServerTransport, isInitializeRequest, ProtocolError, ProtocolErrorCode } from "@modelcontextprotocol/server";
-import type { CallToolRequest, CreateTaskResult, ReadResourceResult, Resource, ServerCapabilities } from "@modelcontextprotocol/server";
+import type { CallToolRequest, CreateTaskResult, ReadResourceResult, Resource, ServerCapabilities, Tool } from "@modelcontextprotocol/server";
 import { isToolEnabled, isToolVisibleToRole, type ResolvedFeatures } from "../config/features.ts";
 import { isInternalTool, type ToolResult } from "../engine/types.ts";
 import type { UserIdentity } from "../identity/provider.ts";
@@ -763,19 +763,13 @@ function createServer(
         .map((t) => ({
           name: t.name,
           description: t.description,
-          inputSchema: t.inputSchema as {
-            type: "object";
-            properties?: Record<string, unknown>;
-            required?: string[];
-          },
+          // Cast to the SDK's own schema types rather than a restated shape:
+          // the spec tightened what a JSON Schema value may hold, and a
+          // hand-written copy of that shape goes stale the next time it moves.
+          // The value itself is validated upstream, at the source's listing.
+          inputSchema: t.inputSchema as Tool["inputSchema"],
           ...(t.outputSchema
-            ? {
-                outputSchema: t.outputSchema as {
-                  type: "object";
-                  properties?: Record<string, unknown>;
-                  required?: string[];
-                },
-              }
+            ? { outputSchema: t.outputSchema as NonNullable<Tool["outputSchema"]> }
             : {}),
           ...(t.annotations ? { annotations: t.annotations } : {}),
           ...(t.meta ? { _meta: t.meta } : {}),
