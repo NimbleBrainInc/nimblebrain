@@ -73,6 +73,6 @@ describe("McpSource event source name", () => {
   test("and a workspace source of that name still broadcasts", () => {
     const s = new McpSource("gmail", remote as never, sink as never);
     const event = { type: "tool.progress", data: { source: emittedName(s), tool: "send" } };
-    expect(deriveDataChangedTarget(event as never)).toEqual({ server: "gmail", tool: "send" });
+    expect(deriveDataChangedTarget(event as never)).toEqual({ source: "agent", server: "gmail", tool: "send" });
   });
 });

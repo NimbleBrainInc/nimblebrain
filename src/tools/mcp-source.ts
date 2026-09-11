@@ -13,6 +13,7 @@ import {
   ListResourcesRequestSchema,
   McpError,
   ReadResourceRequestSchema,
+  ResourceListChangedNotificationSchema,
   ResourceUpdatedNotificationSchema,
   ToolListChangedNotificationSchema,
 } from "@modelcontextprotocol/sdk/types.js";
@@ -407,6 +408,16 @@ export class McpSource implements ToolSource {
   private readonly resourceUpdatedListeners = new Set<(uri: string) => void>();
 
   /**
+   * Listeners notified when the server pushes
+   * `notifications/resources/list_changed` — the server's own statement that
+   * the resources it serves changed. `ToolRegistry` subscribes one per
+   * registry the source belongs to, and the workspace registry turns it into a
+   * `data.changed` broadcast to that server's views. See
+   * {@link ToolSource.subscribeResourcesListChanged}.
+   */
+  private readonly resourcesListChangedListeners = new Set<() => void>();
+
+  /**
    * Resource URIs this source has asked the server to push updates for.
    *
    * Kept because a subscription belongs to a *connection*: an idle-close or a
@@ -491,9 +502,11 @@ export class McpSource implements ToolSource {
     // connect so a notification arriving immediately after `initialize` isn't
     // dropped.
     this.registerToolsChangedHandler(this.client);
-    // Same reason, for `resources/updated`: a server that pushes one the
-    // instant it answers `initialize` must not find the handler missing.
+    // Same reason, for `resources/updated` and `resources/list_changed`: a
+    // server that pushes one the instant it answers `initialize` must not find
+    // the handler missing.
     this.registerResourceUpdatedHandler(this.client);
+    this.registerResourcesListChangedHandler(this.client);
 
     // Timeout MCP handshake — remote gets shorter timeout (15s vs 30s)
     const CONNECT_TIMEOUT = this.mode.type === "remote" ? 15_000 : 30_000;
@@ -667,6 +680,7 @@ export class McpSource implements ToolSource {
       this.registerConnectorHandlers(this.client);
       this.registerToolsChangedHandler(this.client);
       this.registerResourceUpdatedHandler(this.client);
+      this.registerResourcesListChangedHandler(this.client);
       // Re-arm crash detection for the retry: cleanupOnStartFailure set
       // `stopping = true` to suppress its own teardown noise; we need it false
       // again before the new transport's onclose can fire usefully. If this
@@ -1017,6 +1031,52 @@ export class McpSource implements ToolSource {
         log.debug(
           "mcp",
           `[${this.name}] resourceUpdated listener threw — ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
+    }
+  }
+
+  /**
+   * Register the client-side handler for `notifications/resources/list_changed`.
+   *
+   * Called once per Client lifecycle, beside {@link registerResourceUpdatedHandler}
+   * and for the same reason: handler tables do not carry across SDK Client
+   * instances.
+   *
+   * Needs no subscription: per spec a server that advertises
+   * `resources.listChanged` sends this whenever what it serves changes, and a
+   * server that sends it from inside a tool call sends it to the session that
+   * made the call. This source holds nothing derived from the listing, so the
+   * handler only fans the signal out; what it means belongs to the subscriber.
+   */
+  private registerResourcesListChangedHandler(client: Client): void {
+    client.setNotificationHandler(ResourceListChangedNotificationSchema, () => {
+      this.emitResourcesListChanged();
+    });
+  }
+
+  /**
+   * Listen for `notifications/resources/list_changed`. Returns an unsubscribe
+   * function. See {@link ToolSource.subscribeResourcesListChanged}.
+   */
+  subscribeResourcesListChanged(listener: () => void): () => void {
+    this.resourcesListChangedListeners.add(listener);
+    return () => {
+      this.resourcesListChangedListeners.delete(listener);
+    };
+  }
+
+  /** Fan out a resources-list-changed signal to subscribers, isolating failures. */
+  private emitResourcesListChanged(): void {
+    for (const listener of this.resourcesListChangedListeners) {
+      try {
+        listener();
+      } catch (err) {
+        log.debug(
+          "mcp",
+          `[${this.name}] resourcesListChanged listener threw — ${
             err instanceof Error ? err.message : String(err)
           }`,
         );

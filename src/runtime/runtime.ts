@@ -3409,7 +3409,12 @@ export class Runtime {
       throw new Error(`Workspace "${wsId}" does not exist`);
     }
 
-    const wsRegistry = createWorkspaceRegistry(this._workspaceSources, this._systemSource);
+    const wsRegistry = createWorkspaceRegistry(
+      wsId,
+      this._workspaceSources,
+      this._systemSource,
+      this.defaultEvents,
+    );
     // Wire permission context so the registry can gate disallowed tools
     // before they reach the source.execute() path.
     wsRegistry.setPermissionContext(wsId, this.getPermissionStore());

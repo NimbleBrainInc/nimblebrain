@@ -109,6 +109,16 @@ export interface ToolSource {
    * bridges this per-source signal to its own invalidation listener.
    */
   subscribeToolsChanged?(listener: () => void): () => void;
+  /**
+   * Subscribe to the server's `notifications/resources/list_changed` — its own
+   * statement that the resources it serves changed. Returns an unsubscribe
+   * function.
+   *
+   * Optional: only MCP-backed sources receive the notification. `ToolRegistry`
+   * is the single consumer; a workspace registry turns the signal into a
+   * `data.changed` broadcast to that server's views in that workspace.
+   */
+  subscribeResourcesListChanged?(listener: () => void): () => void;
 }
 
 export type { ToolResult } from "../engine/types.ts";

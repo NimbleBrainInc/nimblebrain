@@ -390,6 +390,20 @@ export type ExtAppsHostContextChangedNotification = Static<
   typeof ExtAppsHostContextChangedNotification
 >;
 
+/**
+ * The MCP server's own `notifications/resources/list_changed`, forwarded to the
+ * view. The ext-apps spec defines this forwarding under host capability
+ * `serverResources.listChanged`, which `ui/initialize` advertises.
+ */
+export const ExtAppsResourcesListChangedNotification = Type.Object({
+  jsonrpc: JsonRpcVersion,
+  method: Type.Literal("notifications/resources/list_changed"),
+  params: Type.Optional(UnknownRecord),
+});
+export type ExtAppsResourcesListChangedNotification = Static<
+  typeof ExtAppsResourcesListChangedNotification
+>;
+
 // ── Host → App messages (NimbleBrain extensions) ─────────────────────────
 
 export const UiDataChangedMessage = Type.Object({
@@ -427,5 +441,6 @@ export const HostToAppMessage = Type.Union([
   ExtAppsToolInputNotification,
   ExtAppsToolResultNotification,
   ExtAppsHostContextChangedNotification,
+  ExtAppsResourcesListChangedNotification,
 ]);
 export type HostToAppMessage = Static<typeof HostToAppMessage>;

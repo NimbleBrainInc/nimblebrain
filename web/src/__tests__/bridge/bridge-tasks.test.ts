@@ -250,6 +250,30 @@ describe("ui/initialize — tasks capability", () => {
     // Existing capabilities preserved.
     expect(reply.result.hostCapabilities.openLinks).toEqual({});
   });
+
+  test("hostCapabilities.serverResources.listChanged is advertised, in the spec's shape", async () => {
+    // The host forwards the app server's `notifications/resources/list_changed`
+    // to its views (hooks/useDataSync.ts); this is the promise that it does.
+    const { McpUiHostCapabilitiesSchema } = await import("@modelcontextprotocol/ext-apps");
+    const frame = mount("synapse-research");
+
+    frame.send({
+      jsonrpc: "2.0",
+      id: "init-2",
+      method: "ui/initialize",
+      params: {
+        protocolVersion: "2026-01-26",
+        clientInfo: { name: "iframe", version: "1.0.0" },
+        capabilities: {},
+      },
+    });
+
+    const reply = (await frame.waitFor((m) => (m as { id?: string })?.id === "init-2")) as {
+      result: { hostCapabilities: Record<string, unknown> };
+    };
+    expect(reply.result.hostCapabilities.serverResources).toEqual({ listChanged: true });
+    expect(McpUiHostCapabilitiesSchema.safeParse(reply.result.hostCapabilities).success).toBe(true);
+  });
 });
 
 // ---------------------------------------------------------------------------

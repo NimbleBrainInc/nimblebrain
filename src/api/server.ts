@@ -176,14 +176,19 @@ export function startServer(options: ServerOptions): ServerHandle {
     // Answers "is the event source actually firing into the SSE wrap?" —
     // the first thing to check when a connector's UI isn't updating live.
     // Run with `NB_DEBUG=sse` to enable.
-    if ((event.type === "tool.progress" || event.type === "tool.done") && log.debugEnabled("sse")) {
+    if (
+      (event.type === "tool.progress" ||
+        event.type === "tool.done" ||
+        event.type === "resources.list_changed") &&
+      log.debugEnabled("sse")
+    ) {
       log.debug("sse", `sink got ${event.type} data=${JSON.stringify(event.data).slice(0, 160)}`);
     }
     originalEmit(event);
     sseManager.emit(event);
 
     // Broadcast `data.changed` so connector iframes (Synapse useDataSync) know to
-    // refresh. We broadcast in two situations:
+    // refresh. We broadcast in three situations:
     //
     //   (1) tool.done (ok)      — the call completed; any entity writes have
     //                             landed and downstream views should refresh.
@@ -194,8 +199,13 @@ export function startServer(options: ServerOptions): ServerHandle {
     //                             the work-in-progress, not only the final
     //                             result. Without this, a `useDataSync`-driven
     //                             view stays stale for the full task duration.
+    //   (3) resources.list_changed — the app's own server announced that what
+    //                             it serves changed. This is the one producer
+    //                             that is not a guess from a tool call, so it
+    //                             covers a write made from an app's iframe, or
+    //                             anywhere else the server writes.
     //
-    // `deriveDataChangedTarget` normalizes both event shapes to the bare
+    // `deriveDataChangedTarget` normalizes every event shape to the bare
     // source name (stripping the Stage-2 `ws_<id>-` namespace) and drops
     // system tools (`nb__*`) — see its doc comment for why the bare form is
     // required for the iframe data-app match.
@@ -207,13 +217,14 @@ export function startServer(options: ServerOptions): ServerHandle {
       // parent `useDataSync` forwarder — not here.
       log.debug(
         "sse",
-        `broadcast data.changed from=${event.type} server=${target.server} tool=${target.tool} ws=${target.wsId ?? "-"} clients=${sseManager.clientCount}`,
+        `broadcast data.changed from=${event.type} source=${target.source} server=${target.server} tool=${target.source === "agent" ? target.tool : "-"} ws=${target.wsId ?? "-"} clients=${sseManager.clientCount}`,
       );
       sseManager.broadcast(
         "data.changed",
         {
+          source: target.source,
           server: target.server,
-          tool: target.tool,
+          ...(target.source === "agent" ? { tool: target.tool } : {}),
           // Which workspace the change happened in, so a listener can ignore
           // one that is not its own.
           wsId: target.wsId,

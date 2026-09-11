@@ -144,12 +144,24 @@ export function buildProcessInventory(
  * (after the first call client/transport/server are nulled and subsequent
  * calls early-return), so the only place this matters is `Runtime.shutdown()`,
  * which already wants the source closed exactly once.
+ *
+ * Every workspace registry reports a source's server announcing a resource-list
+ * change as `resources.list_changed` on `eventSink`, stamped with this
+ * workspace. That is where the workspace is known: a server sends the
+ * notification on the session this workspace's registry holds, so the registry
+ * is the one place that can say whose change it was. Personal-connector and
+ * identity registries are not built here and report nothing.
  */
 export function createWorkspaceRegistry(
+  wsId: string,
   platformSources: ToolSource[],
   systemSource: ToolSource | null,
+  eventSink: EventSink,
 ): ToolRegistry {
   const wsRegistry = new ToolRegistry();
+  wsRegistry.setResourcesListChangedListener((server) => {
+    eventSink.emit({ type: "resources.list_changed", data: { server, workspaceId: wsId } });
+  });
 
   for (const src of platformSources) {
     wsRegistry.addSource(src);
@@ -296,7 +308,7 @@ export async function startWorkspaceConnectors(
 
   const registries = new Map<string, ToolRegistry>();
   for (const wsId of byWorkspace.keys()) {
-    registries.set(wsId, createWorkspaceRegistry(platformSources, systemSource));
+    registries.set(wsId, createWorkspaceRegistry(wsId, platformSources, systemSource, eventSink));
   }
 
   // Flatten (wsId, entry) pairs and start them through a bounded worker pool.

@@ -69,6 +69,10 @@ export class SharedSourceRef implements ToolSource {
   subscribeToolsChanged(listener: () => void): () => void {
     return this.inner.subscribeToolsChanged?.(listener) ?? (() => {});
   }
+  /** Forward resource-list subscriptions for the same reason. */
+  subscribeResourcesListChanged(listener: () => void): () => void {
+    return this.inner.subscribeResourcesListChanged?.(listener) ?? (() => {});
+  }
   /** Unwrap to the underlying source — used by task-aware dispatch. */
   unwrap(): ToolSource {
     return this.inner;
@@ -97,6 +101,15 @@ export class ToolRegistry implements ToolRouter {
   /** Per-source unsubscribe handles for readiness subscriptions, so
    *  `removeSource` can detach the listener it attached in `addSource`. */
   private toolsChangedUnsubs = new Map<string, () => void>();
+  /**
+   * Fired with a source's name when that source's server pushes
+   * `notifications/resources/list_changed`. A workspace registry wires this to
+   * the runtime event sink (see `createWorkspaceRegistry`); null for registries
+   * with no consumer.
+   */
+  private resourcesListChangedListener: ((sourceName: string) => void) | null = null;
+  /** Per-source unsubscribe handles for resource-list subscriptions. */
+  private resourcesListChangedUnsubs = new Map<string, () => void>();
 
   /**
    * Configure permission enforcement context. Called once when the
@@ -124,6 +137,15 @@ export class ToolRegistry implements ToolRouter {
     this.invalidationListener?.();
   }
 
+  /**
+   * Wire the resource-list listener. Read at the moment a notification
+   * arrives, not captured at `addSource`, so it covers sources added before it
+   * was set. Idempotent.
+   */
+  setResourcesListChangedListener(listener: (sourceName: string) => void): void {
+    this.resourcesListChangedListener = listener;
+  }
+
   addSource(source: ToolSource): void {
     if (this.sources.has(source.name)) {
       throw new Error(`Source "${source.name}" is already registered`);
@@ -136,6 +158,10 @@ export class ToolRegistry implements ToolRouter {
     // pending-auth start completes long after the source was registered.
     const unsub = source.subscribeToolsChanged?.(() => this.fireInvalidation());
     if (unsub) this.toolsChangedUnsubs.set(source.name, unsub);
+    const unsubResources = source.subscribeResourcesListChanged?.(() =>
+      this.resourcesListChangedListener?.(source.name),
+    );
+    if (unsubResources) this.resourcesListChangedUnsubs.set(source.name, unsubResources);
     // The membership change itself is also an invalidation trigger.
     this.fireInvalidation();
   }
@@ -145,6 +171,8 @@ export class ToolRegistry implements ToolRouter {
     if (source) {
       this.toolsChangedUnsubs.get(name)?.();
       this.toolsChangedUnsubs.delete(name);
+      this.resourcesListChangedUnsubs.get(name)?.();
+      this.resourcesListChangedUnsubs.delete(name);
       await source.stop();
       this.sources.delete(name);
       this.fireInvalidation();

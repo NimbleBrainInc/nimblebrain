@@ -33,6 +33,7 @@ All messages use `window.postMessage` with JSON-RPC 2.0 envelopes:
 | `ui/notifications/tool-input` | Notification | Tool arguments being sent to a tool on the app's server. |
 | `ui/notifications/host-context-changed` | Notification | Host context changed (theme toggle, locale, etc.). |
 | `notifications/tasks/status` | Notification | Status update for a long-running task. Forwarded verbatim from the MCP server. See [Tasks](#tasks). |
+| `notifications/resources/list_changed` | Notification | The app's MCP server announced that the resources it serves changed. See [below](#notificationsresourceslist_changed). |
 
 #### App to Host
 
@@ -57,7 +58,7 @@ These have no spec equivalent and degrade to no-ops in non-NimbleBrain hosts.
 
 | Method | Direction | Description |
 |--------|-----------|-------------|
-| `synapse/data-changed` | Host → App | Data changed on a server — the app should refresh. |
+| `synapse/data-changed` | Host → App | The agent called a tool on the app's server — the app should refresh. |
 | `synapse/action` | App → Host | Request a semantic action from the shell. |
 | `synapse/download-file` | App → Host | Trigger a file download in the browser. |
 | `synapse/persist-state` | App → Host | Persist widget state across sessions. |
@@ -97,6 +98,7 @@ The app initiates the handshake per the ext-apps spec:
     "hostCapabilities": {
       "openLinks": {},
       "serverTools": {},
+      "serverResources": { "listChanged": true },
       "logging": {},
       "tasks": { "cancel": {}, "requests": { "tools": { "call": {} } } }
     },
@@ -175,9 +177,24 @@ Sent when the agent is calling a tool on your app's server. The params contain t
 }
 ```
 
+### `notifications/resources/list_changed`
+
+Sent when the app's own MCP server sends `notifications/resources/list_changed`: the server announced that what it serves changed. The host forwards it to that server's views in the workspace where it happened, as the MCP Apps spec defines under `serverResources.listChanged`. Re-read what you show.
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "notifications/resources/list_changed"
+}
+```
+
+This is the one change signal that comes from the server rather than being inferred by the host, so it covers every write the server makes — a call from your own iframe, the agent's, or one the server makes on its own. To use it, have your server send the notification when its data changes; a server that advertises `resources.listChanged` (FastMCP and the TypeScript SDK both do when they serve resources) can send it from inside the tool call that made the write. A server sends it only for a real change, so a view that re-reads on it cannot loop.
+
+Several announcements inside the host's 100 ms debounce window arrive as one: the notification carries no payload, so repeats add nothing.
+
 ### `synapse/data-changed`
 
-Sent when a tool call completes on a server, indicating the app's data may have changed. Use this to refresh your UI.
+Sent when the agent calls a tool on the app's server and the call completes, indicating the app's data may have changed. Use this to refresh your UI.
 
 ```json
 {
@@ -192,7 +209,7 @@ Sent when a tool call completes on a server, indicating the app's data may have 
 ```
 
 <Aside type="caution">
-Iframe-initiated tool calls (via `tools/call`) do **not** trigger `synapse/data-changed`. Only agent-side tool calls produce this event. This prevents infinite refresh loops.
+Iframe-initiated tool calls (via `tools/call`) do **not** trigger `synapse/data-changed`. Only agent-side tool calls produce this event, which prevents infinite refresh loops. For a write made from your iframe to refresh the app's other views, have the server announce it with [`notifications/resources/list_changed`](#notificationsresourceslist_changed).
 </Aside>
 
 ## App to Host messages

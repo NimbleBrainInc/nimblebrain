@@ -68,7 +68,7 @@ describe("identity-owned sources", () => {
         type: "tool.progress",
         data: { source: emitted(ws), tool: "send" },
       } as never),
-    ).toEqual({ server: "gmail", tool: "send" });
+    ).toEqual({ source: "agent", server: "gmail", tool: "send" });
   });
 
   test("an unmarked identity source WOULD collide — why this test exists", () => {
@@ -79,6 +79,6 @@ describe("identity-owned sources", () => {
         type: "tool.progress",
         data: { source: emitted(wrong), tool: "send" },
       } as never),
-    ).toEqual({ server: "gmail", tool: "send" });
+    ).toEqual({ source: "agent", server: "gmail", tool: "send" });
   });
 });

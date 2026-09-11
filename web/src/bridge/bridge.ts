@@ -13,6 +13,8 @@
 //
 // Spec-compliant notifications forwarded host→iframe:
 //   notifications/tasks/status (subscribed once per bridge instance)
+//   notifications/resources/list_changed (the app server's own, via the
+//     `data.changed` SSE fan-out in hooks/useDataSync.ts)
 //
 // NimbleBrain extensions (synapse/ namespace — no spec equivalent):
 //   synapse/action, synapse/download-file, synapse/data-changed,
@@ -533,6 +535,10 @@ function handleInitialize(
   const hostCapabilities = {
     openLinks: {},
     serverTools: {},
+    // Resource reads are proxied (`resources/read` above), and the app
+    // server's `notifications/resources/list_changed` is forwarded to its
+    // views (hooks/useDataSync.ts).
+    serverResources: { listChanged: true },
     logging: {},
     tasks: {
       cancel: {},

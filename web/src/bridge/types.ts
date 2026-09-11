@@ -20,6 +20,7 @@ export type {
   ExtAppsInitializeRequest,
   ExtAppsInitializeResponse,
   ExtAppsRequestTeardownNotification,
+  ExtAppsResourcesListChangedNotification,
   ExtAppsToolInputNotification,
   ExtAppsToolResultNotification,
   HostToAppMessage,

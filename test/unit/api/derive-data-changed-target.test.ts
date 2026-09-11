@@ -17,6 +17,7 @@ describe("deriveDataChangedTarget", () => {
 			data: { name: `${WS}-synapse-db-query__present_result`, ok: true },
 		};
 		expect(deriveDataChangedTarget(event)).toEqual({
+			source: "agent",
 			server: "synapse-db-query",
 			tool: "present_result",
 		});
@@ -30,6 +31,7 @@ describe("deriveDataChangedTarget", () => {
 			data: { name: "synapse-db-query__present_result", ok: true },
 		};
 		expect(deriveDataChangedTarget(event)).toEqual({
+			source: "agent",
 			server: "synapse-db-query",
 			tool: "present_result",
 		});
@@ -41,6 +43,7 @@ describe("deriveDataChangedTarget", () => {
 			data: { source: "synapse-db-query", tool: "run_research" },
 		};
 		expect(deriveDataChangedTarget(event)).toEqual({
+			source: "agent",
 			server: "synapse-db-query",
 			tool: "run_research",
 		});
@@ -115,6 +118,7 @@ describe("deriveDataChangedTarget", () => {
 				data: { name: "notes__append", ok: true },
 			};
 			expect(deriveDataChangedTarget(event)).toEqual({
+				source: "agent",
 				server: "notes",
 				tool: "append",
 			});
@@ -180,9 +184,53 @@ describe("deriveDataChangedTarget — which workspace changed", () => {
 			data: { name: "files__create", ok: true },
 		};
 		expect(deriveDataChangedTarget(event)).toEqual({
+			source: "agent",
 			server: "files",
 			tool: "create",
 			wsId: undefined,
 		});
+	});
+});
+
+describe("deriveDataChangedTarget — the server announces its own change", () => {
+	// An app's server sends `notifications/resources/list_changed` when what it
+	// serves changes; the workspace registry that received it reports
+	// `resources.list_changed`. It names no tool, because none is implied: the
+	// change may have come from an iframe's call, the agent's, or a webhook.
+	test("resources.list_changed broadcasts to that app, in that workspace", () => {
+		const event: EngineEvent = {
+			type: "resources.list_changed",
+			data: { server: "notes", workspaceId: WS },
+		};
+		expect(deriveDataChangedTarget(event)).toEqual({
+			source: "server",
+			server: "notes",
+			wsId: WS,
+		});
+	});
+
+	test("it carries no tool, so a listener cannot mistake it for a tool call", () => {
+		const target = deriveDataChangedTarget({
+			type: "resources.list_changed",
+			data: { server: "notes", workspaceId: WS },
+		});
+		expect(target && "tool" in target).toBe(false);
+	});
+
+	test("the system source and a personal connector are refused, as on the agent path", () => {
+		for (const server of ["nb", "my_notes"]) {
+			expect(
+				deriveDataChangedTarget({
+					type: "resources.list_changed",
+					data: { server, workspaceId: WS },
+				}),
+			).toBeNull();
+		}
+	});
+
+	test("a malformed event with no server does not broadcast", () => {
+		expect(
+			deriveDataChangedTarget({ type: "resources.list_changed", data: { workspaceId: WS } }),
+		).toBeNull();
 	});
 });

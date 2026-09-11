@@ -136,8 +136,15 @@ export interface ConnectionStateChangedEvent {
 }
 
 export interface DataChangedEvent {
+  /**
+   * Who detected the change. `"agent"`: the host saw a tool call complete.
+   * `"server"`: the app's own server announced `resources/list_changed`.
+   * Absent reads as `"agent"`, the only producer before the field existed.
+   */
+  source?: "agent" | "server";
   server: string;
-  tool: string;
+  /** The tool that ran. Absent on a server-announced change. */
+  tool?: string;
   /**
    * The workspace the change happened in. Absent for an identity-door call
    * (`conversations`, `files`, `automations`), which belongs to no workspace —

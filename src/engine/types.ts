@@ -315,6 +315,13 @@ export type EngineEventType =
    */
   | "connection.state_changed"
   | "data.changed"
+  /**
+   * A workspace connector's server pushed `notifications/resources/list_changed`:
+   * the resources it serves changed. Not forwarded to SSE as itself — the API
+   * layer turns it into a `data.changed` broadcast to that server's views.
+   * Payload: { server, workspaceId }.
+   */
+  | "resources.list_changed"
   | "conversation.title"
   | "config.changed"
   | "skill.created"
