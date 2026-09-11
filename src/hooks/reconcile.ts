@@ -45,8 +45,10 @@ export interface HookReconcileDeps {
 
 export interface EnsureHooksOptions {
   /**
-   * Skip streams that already hold a registration entirely — no re-mint and no
-   * `register_tool` call.
+   * Skip streams that already hold an ADDRESSABLE registration entirely — no
+   * re-mint and no `register_tool` call. A registration with no `deliveryId`
+   * counts as missing: the door refuses it, so the stream is as dead as one
+   * that was never provisioned.
    *
    * Set on the connection-reached-running path, where re-registering every
    * already-live stream on every boot and every self-heal would call the
@@ -147,10 +149,14 @@ export async function ensureHooks(
  *
  * The flight is entered AFTER the `onlyMissing` filter and the not-running
  * return, deliberately. That is what keeps the two callers from coalescing on
- * divergent intent: the only path where both have work to do is the fresh
- * install, where their declaration sets are identical because neither has a
- * registration to filter. On a reinstall the observer's set is already empty
- * and it returns before the flight, leaving the install to re-register alone.
+ * divergent intent: on a fresh install their declaration sets are identical
+ * because neither has a registration to filter, and where a registration
+ * already has an address the observer's set is empty and it returns before the
+ * flight, leaving the install to re-register alone. The one gap is a
+ * registration with no address, which the observer counts as missing: beside
+ * addressable streams on the same connector, the install can join the
+ * observer's narrower pass and skip re-handing the live URLs that once. Nothing
+ * writes an address-less record, so that population only shrinks.
  */
 const flights = new Map<string, Promise<ProvisionedHook[]>>();
 
