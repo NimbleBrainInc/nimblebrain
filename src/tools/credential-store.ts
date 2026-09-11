@@ -9,6 +9,7 @@ import { type CredentialValue, isCredentialRef } from "./credential-ref.ts";
 import {
   CredentialSealError,
   type CredentialSealer,
+  type CredentialSealFailure,
   isSealedValue,
   parseSealedValue,
 } from "./credential-seal.ts";
@@ -177,6 +178,24 @@ function legacyPlaintext(raw: string): string {
 }
 
 /**
+ * What an operator does about each way an open can fail. Separate strings
+ * because they are separate repairs: put the key back, restore the byte-exact
+ * file, or find out who wrote a file this runtime never sealed.
+ */
+const REMEDIES: Record<CredentialSealFailure, (kids: readonly string[]) => string> = {
+  unknown_kid: (kids) =>
+    `no key in the ring produced that kid (ring: ${kids.join(", ")}). Load the key that did — ` +
+    "a key dropped from the ring stops opening everything sealed under it",
+  auth_failed: () =>
+    "it failed authentication — the file was modified after sealing, or the key behind its kid " +
+    "is not the one that sealed it",
+  malformed: () =>
+    "it starts with the sealed-value magic but is not a well-formed sealed value. Sealed bytes are " +
+    "exact: a copy made with `echo` appends a newline and a truncated write cuts a field. Restore " +
+    "the file byte-for-byte, or set the secret again",
+};
+
+/**
  * A secret that reports its own use.
  *
  * The audit event fires on `reveal()`, not on the read that produced it, so the
@@ -191,20 +210,47 @@ function legacyPlaintext(raw: string): string {
  * one secret would write a line per outbound HTTP request.
  */
 class AuditedSecret extends Redacted<string> {
+  /** Set only for a value still sealed on disk. Called at most once. */
+  #open: (() => string) | undefined;
+  #outcome: { ok: true; value: string } | { ok: false; error: unknown } | undefined;
   #onFirstReveal: (() => void) | undefined;
 
-  constructor(value: string, onFirstReveal: () => void) {
-    super(value);
+  constructor(source: string | (() => string), onFirstReveal: () => void) {
+    // A lazy source has nothing to hand the base class, and the sealed bytes
+    // deliberately do NOT go there — `reveal` is overridden and the base's field
+    // is private, so the placeholder is unreachable, but a later
+    // `super.reveal()` over ciphertext is the exact mistake this file exists to
+    // prevent.
+    super(typeof source === "string" ? source : "");
+    if (typeof source !== "string") this.#open = source;
     this.#onFirstReveal = onFirstReveal;
   }
 
   override reveal(): string {
+    // Opening comes first: a value that could not be opened was never revealed,
+    // so it must not write an `audit.credential_read` line saying it was.
+    const value = this.#resolve();
     const emit = this.#onFirstReveal;
     if (emit) {
       this.#onFirstReveal = undefined;
       emit();
     }
-    return super.reveal();
+    return value;
+  }
+
+  /** Open once, then answer from the outcome — success or failure alike, so a
+   *  caller that reveals twice does not audit one failure twice. */
+  #resolve(): string {
+    if (!this.#open) return super.reveal();
+    if (!this.#outcome) {
+      try {
+        this.#outcome = { ok: true, value: this.#open() };
+      } catch (error) {
+        this.#outcome = { ok: false, error };
+      }
+    }
+    if (!this.#outcome.ok) throw this.#outcome.error;
+    return this.#outcome.value;
   }
 }
 
@@ -229,7 +275,7 @@ class AuditedSecret extends Redacted<string> {
  *
  * The two are not two stores. The file mechanics are identical, the audit is
  * identical, and a deployment that turns sealing on keeps reading the plaintext
- * files already there until the boot sweep re-wraps them.
+ * files already there — each is re-wrapped when something next writes it.
  */
 export class FileCredentialStore implements CredentialStore {
   readonly #workDir: string;
@@ -282,7 +328,16 @@ export class FileCredentialStore implements CredentialStore {
     const path = this.#filePath(scope, key);
     if (!existsSync(path)) return null;
     const raw = await readFile(path, "utf-8");
-    const value = isSealedValue(raw) ? this.#open(scope, key, raw) : legacyPlaintext(raw);
+    // A sealed value is opened on the first `reveal()`, never here. `get`
+    // WITHOUT a reveal is the presence probe: connection-state derivation runs
+    // it over every installed connector on a page load, and boot runs it over
+    // every URL connector before starting any of them. Opening here makes one
+    // unopenable value throw at all of those — a single bad secret fails the
+    // whole tenant's boot and hides the UI that would repair it. Deferring puts
+    // the failure on the one connection that uses the secret, which is already
+    // isolated per connector. It is the same reason the audit line fires on the
+    // reveal rather than on the read that produced it.
+    const value = isSealedValue(raw) ? () => this.#open(scope, key, raw) : legacyPlaintext(raw);
     return new AuditedSecret(value, () => this.#auditReveal(scope, key, read));
   }
 
@@ -355,14 +410,19 @@ export class FileCredentialStore implements CredentialStore {
    * caused it: removing the config block, or rolling the image back below the
    * release that introduced sealing. A loud failure at that moment is recoverable
    * and a quiet one is not.
+   *
+   * Reached from the first `reveal()`, never from `get`.
    */
   #open(scope: CredentialScope, key: string, raw: string): string {
     const label = credentialScopeLabel(scope);
     const wantedKid = parseSealedValue(raw)?.kid;
-    const fail = (reason: string, remedy: string): never => {
+    // The codec's own reason travels, onto the error and onto the audit line.
+    // These are different operator problems with different repairs, and
+    // collapsing them makes a stray trailing newline read as a wrong key.
+    const fail = (reason: CredentialSealFailure | "no_sealer", remedy: string): never => {
       this.#auditSealFailure(scope, key, wantedKid, reason);
       throw new CredentialSealError(
-        reason === "no_sealer" ? "unknown_kid" : "auth_failed",
+        reason === "no_sealer" ? "unknown_kid" : reason,
         `the value at key "${key}" in scope ${label} is sealed${
           wantedKid ? ` under kid ${wantedKid}` : ""
         } and cannot be opened: ${remedy}`,
@@ -378,15 +438,8 @@ export class FileCredentialStore implements CredentialStore {
     try {
       return this.#sealer.open(label, key, raw);
     } catch (err) {
-      const reason = err instanceof CredentialSealError ? err.reason : "unknown";
-      return fail(
-        reason,
-        reason === "unknown_kid"
-          ? `no key in the ring produced that kid (ring: ${this.#sealer.kids.join(", ")}). ` +
-              "An outgoing key was probably dropped before the re-seal sweep reached this value"
-          : "it failed authentication — the file was modified after sealing, the key behind its kid " +
-              "is not the one that sealed it, or it was written back by something that does not preserve bytes exactly",
-      );
+      const reason = err instanceof CredentialSealError ? err.reason : "auth_failed";
+      return fail(reason, REMEDIES[reason](this.#sealer.kids));
     }
   }
 

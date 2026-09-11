@@ -22,6 +22,11 @@ const WORKSPACE_EVENTS = new Set<EngineEventType>([
   // The workspace log is where an operator answers "what read this key, and
   // when" — the question a credential store exists to be able to answer.
   "audit.credential_read",
+  // And every secret the platform could NOT open. A failed open is either
+  // tampering or a key that went missing, and both are answered from the same
+  // log as the reads — an operator asking "why did this connector stop" needs
+  // the two lines side by side.
+  "audit.credential_seal_failure",
   // A dispatch made from stored configuration has no session, no transcript and
   // no run result — this line is the only place it appears.
   "audit.unattended_dispatch",

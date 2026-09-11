@@ -102,20 +102,21 @@ function sealConfigFrom(config: Record<string, unknown>): { keyEnv: string } | u
 /**
  * A fixed value sealed and reopened before the store serves anything.
  *
- * **What it catches:** a ring that parsed into unusable key material, and a
- * runtime whose crypto cannot do what this codec asks of it. Both would
- * otherwise surface at the first `put` — which for an instance key is the first
- * connector start, and for a workspace key is a user in a settings page.
+ * **Its purpose is narrow, and worth stating precisely so nobody later mistakes
+ * it for more.** The ring parse has already rejected every malformed, short,
+ * placeholder and non-canonical ring by the time this runs, so what is left for
+ * the canary is a runtime that cannot do AES-256-GCM or HKDF-SHA256 — a stripped
+ * build, a FIPS-restricted OpenSSL, a platform change. Narrow, but the
+ * alternative is discovering it at the first `put`, which for an instance key is
+ * the first connector start and for a workspace key is a user in a settings page.
  *
- * **What it does NOT catch, despite being an obvious thing to expect of it: a
- * key that is well-formed but simply the wrong 32 bytes.** Seal-then-open under
- * one key round-trips whatever that key is. Detecting a wrong key needs
- * something sealed under the *right* one to open, which is what the boot
- * re-seal sweep does against every real secret — that is where wrong-key
- * detection actually lives, not here.
+ * **It cannot detect a key that is well-formed and simply the wrong 32 bytes.**
+ * Seal-then-open under one key round-trips whatever that key is. Detecting a
+ * wrong key needs something sealed under the *right* one to open, which nothing
+ * at boot does today.
  *
- * Exported so its failure path has a test. A control whose failure path is
- * never exercised is a comment.
+ * Exported so its failure path has a test. A control whose failure path is never
+ * exercised is a comment.
  */
 export function runSealCanary(sealer: CredentialSealer, keyEnv: string): void {
   const label = "instance";

@@ -4,9 +4,18 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { WorkspaceLogSink } from "../../src/adapters/workspace-log-sink.ts";
 import type { EngineEvent } from "../../src/engine/types.ts";
 import {
   createCredentialSealer,
@@ -53,32 +62,39 @@ function seed(dir: string, key: string, contents: string): string {
 // is exactly when it fires, which is why it is the first test in this file.
 
 describe("a value that claims to be sealed is never read as plaintext", () => {
-  test("with NO sealer configured, get throws rather than returning the bytes", async () => {
+  test("with NO sealer configured, reveal throws rather than returning the bytes", async () => {
     const sealed = createCredentialSealer([KEY_A]).seal("workspace:ws_test", "acme.key", "s3cret");
     const { store, dir, cleanup } = fresh(); // deliberately no sealer
     try {
       seed(dir, "acme.key", sealed);
-      await expect(store.get(WS, "acme.key", READ)).rejects.toThrow();
+      const got = await store.get(WS, "acme.key", READ);
+      expect(() => got?.reveal()).toThrow();
       // And specifically not this, which is the whole defect:
-      const got = await store.get(WS, "acme.key", READ).catch(() => null);
-      expect(got?.reveal()).not.toBe(sealed);
+      let revealed: string | undefined;
+      try {
+        revealed = got?.reveal();
+      } catch {
+        // expected
+      }
+      expect(revealed).toBeUndefined();
     } finally {
       cleanup();
     }
   });
 
-  test("under a ring that does not hold its kid, get throws", async () => {
+  test("under a ring that does not hold its kid, reveal throws", async () => {
     const sealed = createCredentialSealer([KEY_A]).seal("workspace:ws_test", "acme.key", "s3cret");
     const { store, dir, cleanup } = fresh(createCredentialSealer([KEY_B]));
     try {
       seed(dir, "acme.key", sealed);
-      await expect(store.get(WS, "acme.key", READ)).rejects.toThrow(/cannot be opened/);
+      const got = await store.get(WS, "acme.key", READ);
+      expect(() => got?.reveal()).toThrow(/cannot be opened/);
     } finally {
       cleanup();
     }
   });
 
-  test("with a failed authentication tag, get throws", async () => {
+  test("with a failed authentication tag, reveal throws", async () => {
     const sealer = createCredentialSealer([KEY_A]);
     const parts = sealer.seal("workspace:ws_test", "acme.key", "s3cret").split(".");
     const ct = Buffer.from(parts[4] as string, "base64url");
@@ -87,7 +103,8 @@ describe("a value that claims to be sealed is never read as plaintext", () => {
     const { store, dir, cleanup } = fresh(sealer);
     try {
       seed(dir, "acme.key", parts.join("."));
-      await expect(store.get(WS, "acme.key", READ)).rejects.toThrow(/failed authentication/);
+      const got = await store.get(WS, "acme.key", READ);
+      expect(() => got?.reveal()).toThrow(/failed authentication/);
     } finally {
       cleanup();
     }
@@ -102,7 +119,8 @@ describe("a value that claims to be sealed is never read as plaintext", () => {
       const { store, dir, cleanup } = fresh(createCredentialSealer([KEY_A]));
       try {
         seed(dir, "acme.key", damaged);
-        await expect(store.get(WS, "acme.key", READ)).rejects.toThrow();
+        const got = await store.get(WS, "acme.key", READ);
+        expect(() => got?.reveal()).toThrow();
       } finally {
         cleanup();
       }
@@ -115,7 +133,7 @@ describe("a value that claims to be sealed is never read as plaintext", () => {
     const { store, dir, cleanup } = fresh(createCredentialSealer([KEY_B]));
     try {
       seed(dir, "acme.key", sealed);
-      await store.get(WS, "acme.key", READ);
+      (await store.get(WS, "acme.key", READ))?.reveal();
       throw new Error("expected a throw");
     } catch (err) {
       const message = (err as Error).message;
@@ -135,7 +153,8 @@ describe("a value that claims to be sealed is never read as plaintext", () => {
     const { store, dir, events, cleanup } = fresh(createCredentialSealer([KEY_B]));
     try {
       seed(dir, "acme.key", sealed);
-      await store.get(WS, "acme.key", READ).catch(() => null);
+      const got = await store.get(WS, "acme.key", READ);
+      expect(() => got?.reveal()).toThrow();
       expect(events).toHaveLength(1);
       expect(events[0]).toEqual({
         type: "audit.credential_seal_failure",
@@ -159,8 +178,143 @@ describe("a value that claims to be sealed is never read as plaintext", () => {
     const { store, dir, events, cleanup } = fresh();
     try {
       seed(dir, "acme.key", sealed);
-      await store.get(WS, "acme.key", READ).catch(() => null);
+      const got = await store.get(WS, "acme.key", READ);
+      expect(() => got?.reveal()).toThrow();
       expect(events[0]?.data).toMatchObject({ reason: "no_sealer", key: "acme.key" });
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+describe("a presence probe never opens anything", () => {
+  // `get` without a `reveal` is how the runtime asks whether a secret EXISTS:
+  // connection-state derivation runs it over every installed connector on a page
+  // load, and boot runs it over every URL connector before starting any of them.
+  // Opening eagerly made one unopenable value throw at all of those — so a
+  // single bad secret failed the whole tenant's boot and hid the UI that would
+  // repair it. The failure belongs on the connection that uses the secret.
+
+  test("an unopenable value is still probeable — get resolves, reveal throws", async () => {
+    const sealed = createCredentialSealer([KEY_A]).seal("workspace:ws_test", "acme.key", "s3cret");
+    const { store, dir, cleanup } = fresh(createCredentialSealer([KEY_B]));
+    try {
+      seed(dir, "acme.key", sealed);
+      const got = await store.get(WS, "acme.key", READ);
+      expect(got).not.toBeNull(); // the probe answers "set"
+      expect(() => got?.reveal()).toThrow(/cannot be opened/);
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("a probe over a mix of good and bad values reaches every one", async () => {
+    // The boot shape: one connector's record is unopenable and the healthy ones
+    // must still start.
+    const sealer = createCredentialSealer([KEY_A]);
+    const { store, dir, cleanup } = fresh(sealer);
+    try {
+      await store.put(WS, "good.one", "v1");
+      seed(dir, "bad.one", createCredentialSealer([KEY_B]).seal("workspace:ws_test", "bad.one", "x"));
+      await store.put(WS, "good.two", "v2");
+      const probes = await Promise.all(
+        ["good.one", "bad.one", "good.two"].map((k) => store.get(WS, k, READ)),
+      );
+      expect(probes.every((p) => p !== null)).toBe(true);
+      expect(probes[0]?.reveal()).toBe("v1");
+      expect(probes[2]?.reveal()).toBe("v2");
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("a probe that never reveals writes no audit line at all", async () => {
+    const sealed = createCredentialSealer([KEY_A]).seal("workspace:ws_test", "acme.key", "s3cret");
+    const { store, dir, events, cleanup } = fresh(createCredentialSealer([KEY_B]));
+    try {
+      seed(dir, "acme.key", sealed);
+      await store.get(WS, "acme.key", READ);
+      // Not even the failure: nothing was attempted, so nothing failed.
+      expect(events).toEqual([]);
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("revealing twice audits the failure once", async () => {
+    const sealed = createCredentialSealer([KEY_A]).seal("workspace:ws_test", "acme.key", "s3cret");
+    const { store, dir, events, cleanup } = fresh(createCredentialSealer([KEY_B]));
+    try {
+      seed(dir, "acme.key", sealed);
+      const got = await store.get(WS, "acme.key", READ);
+      expect(() => got?.reveal()).toThrow();
+      expect(() => got?.reveal()).toThrow();
+      expect(events).toHaveLength(1);
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("a failed open writes no credential_read line", async () => {
+    // It was not revealed. A log saying it was would be false in the one
+    // direction that matters.
+    const sealed = createCredentialSealer([KEY_A]).seal("workspace:ws_test", "acme.key", "s3cret");
+    const { store, dir, events, cleanup } = fresh(createCredentialSealer([KEY_B]));
+    try {
+      seed(dir, "acme.key", sealed);
+      const got = await store.get(WS, "acme.key", READ);
+      expect(() => got?.reveal()).toThrow();
+      expect(events.map((e) => e.type)).toEqual(["audit.credential_seal_failure"]);
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("a redacted unopenable value still prints as [redacted]", async () => {
+    const sealed = createCredentialSealer([KEY_A]).seal("workspace:ws_test", "acme.key", "s3cret");
+    const { store, dir, cleanup } = fresh(createCredentialSealer([KEY_B]));
+    try {
+      seed(dir, "acme.key", sealed);
+      const got = await store.get(WS, "acme.key", READ);
+      expect(`${got}`).toBe("[redacted]");
+      expect(JSON.stringify({ got })).not.toContain("NBS1");
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+describe("each way an open can fail says which one it was", () => {
+  // Collapsing these makes a stray trailing newline read as a wrong key, and
+  // sends an operator to rotate a key that was never the problem.
+  const cases: [string, string, RegExp][] = [
+    ["a kid the ring does not hold", "unknown_kid", /Load the key that did/],
+    ["bytes that fail the tag", "auth_failed", /failed authentication/],
+    ["a value damaged out of its grammar", "malformed", /not a well-formed sealed value/],
+  ];
+
+  test.each(cases)("%s is reported as %s", async (_label, reason, remedy) => {
+    const sealer = createCredentialSealer([KEY_A]);
+    const sealed = sealer.seal("workspace:ws_test", "acme.key", "s3cret");
+    let onDisk = sealed;
+    let ring = sealer;
+    if (reason === "unknown_kid") {
+      ring = createCredentialSealer([KEY_B]);
+    } else if (reason === "auth_failed") {
+      const parts = sealed.split(".");
+      const ct = Buffer.from(parts[4] as string, "base64url");
+      ct[0] = (ct[0] as number) ^ 1;
+      parts[4] = ct.toString("base64url");
+      onDisk = parts.join(".");
+    } else {
+      onDisk = `${sealed}\n`;
+    }
+    const { store, dir, events, cleanup } = fresh(ring);
+    try {
+      seed(dir, "acme.key", onDisk);
+      const got = await store.get(WS, "acme.key", READ);
+      expect(() => got?.reveal()).toThrow(remedy);
+      expect(events[0]?.data.reason).toBe(reason);
     } finally {
       cleanup();
     }
@@ -243,8 +397,8 @@ describe("the trailing newline splits", () => {
 
 describe("legacy plaintext under a sealer", () => {
   test("a hand-seeded plaintext file is still read", async () => {
-    // A deployment that turns sealing on keeps working before the boot sweep
-    // has re-wrapped anything.
+    // A deployment that turns sealing on keeps working on the files already
+    // there; each becomes sealed when something next writes it.
     const { store, dir, cleanup } = fresh(createCredentialSealer([KEY_A]));
     try {
       seed(dir, "acme.key", "gw-from-store\n");
@@ -255,9 +409,8 @@ describe("legacy plaintext under a sealer", () => {
   });
 
   test("reading one does not rewrite it", async () => {
-    // One write mechanism, the sweep's — not two. A read that sealed on the fly
-    // would be a second migration path with different failure modes and no
-    // audit line saying it ran.
+    // A read that sealed on the fly would be a write nobody asked for, on the
+    // path that runs most often, with no audit line saying it ran.
     const { store, dir, cleanup } = fresh(createCredentialSealer([KEY_A]));
     try {
       const path = seed(dir, "acme.key", "gw-from-store");
@@ -359,6 +512,43 @@ describe("selecting the sealing backend from config", () => {
       expect(raw.startsWith("NBS1.")).toBe(true);
       expect((await store.get(WS, "k", READ))?.reveal()).toBe("s3cret");
     } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("the failure reaches a real sink, not just a test array", () => {
+  // Every other test in this file captures events into an in-memory array, which
+  // proves the store emits and nothing about whether anything records it. The
+  // workspace log has an allowlist, and an event type missing from it is dropped
+  // silently — so an audit event nobody writes down is the same as no audit
+  // event, and no in-memory assertion can tell the difference.
+  test("a failed open is written to the workspace log", async () => {
+    const logDir = mkdtempSync(join(tmpdir(), "nb-sealed-log-"));
+    const dir = mkdtempSync(join(tmpdir(), "nb-sealed-"));
+    try {
+      const store = new FileCredentialStore(dir, {
+        eventSink: new WorkspaceLogSink({ dir: logDir }),
+        sealer: createCredentialSealer([KEY_B]),
+      });
+      const sealed = createCredentialSealer([KEY_A]).seal(
+        "workspace:ws_test",
+        "acme.key",
+        "s3cret",
+      );
+      seed(dir, "acme.key", sealed);
+      const got = await store.get(WS, "acme.key", READ);
+      expect(() => got?.reveal()).toThrow();
+
+      const files = readdirSync(join(logDir, "workspace"));
+      const written = readFileSync(join(logDir, "workspace", files[0] as string), "utf-8")
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as { event: string });
+      expect(written.map((r) => r.event)).toEqual(["audit.credential_seal_failure"]);
+      expect(JSON.stringify(written)).not.toContain(sealed);
+    } finally {
+      rmSync(logDir, { recursive: true, force: true });
       rmSync(dir, { recursive: true, force: true });
     }
   });
