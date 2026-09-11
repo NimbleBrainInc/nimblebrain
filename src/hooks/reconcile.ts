@@ -92,7 +92,16 @@ export async function ensureHooks(
   if (opts.onlyMissing) {
     const ws = await deps.workspaceStore.get(wsId);
     if (!ws) return [];
-    declarations = declarations.filter((d) => !findRegistration(ws, connector, d.vendor));
+    // MISSING MEANS UNADDRESSABLE, not merely unrecorded. A registration written
+    // before the URL became an opaque id has a `kid` and no address, and the door
+    // refuses it — so the stream is as dead as one that was never provisioned,
+    // and a filter keyed on the record's existence skips it on every boot for
+    // ever. That is why such a record survived: nothing was missing, so nothing
+    // reconciled it, and the only thing that noticed was a vendor never
+    // delivering.
+    declarations = declarations.filter(
+      (d) => !findRegistration(ws, connector, d.vendor)?.deliveryId,
+    );
     if (declarations.length === 0) return [];
   }
 

@@ -123,7 +123,7 @@ async function rotate(
       JSON.stringify({
         connector,
         vendor,
-        url: rotated ? buildHookUrl(rotated.deliveryId) : null,
+        url: rotated?.deliveryId ? buildHookUrl(rotated.deliveryId) : null,
         // Whether the CONNECTOR took the new URL. False is the recoverable case
         // and has to be said: the URL is minted and the door admits it, but the
         // vendor is still delivering to the old one, which the grace window is

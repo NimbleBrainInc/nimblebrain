@@ -47,7 +47,7 @@ import type { HookDeclaration, HookRegistration } from "./types.ts";
  *     the vendor's API is down) — records the `kid` and logs. A connector is
  *     useful without its webhook; the receiving connector's own reconcile poll is
  *     the designed backstop for a stream that never arrives, and the recorded
- *     registration means a later `rotate_hook` or re-install retries it.
+ *     registration means a later `hooks__rotate_webhook` or re-install retries it.
  */
 
 /** What a server must accept on its declared registration tool. */
@@ -119,10 +119,10 @@ export interface ProvisionHooksOptions {
   declarations: HookDeclaration[];
   port: ConnectorPort;
   /** Mint a fresh `kid` for every declaration even if one is already recorded.
-   *  This is what `rotate_hook` sets; an install reuses a live `kid` so a
+   *  This is what `hooks__rotate_webhook` sets; an install reuses a live `kid` so a
    *  reinstall does not invalidate a URL the vendor is happily delivering to. */
   rotate?: boolean;
-  /** Restrict the operation to one vendor. Used by `rotate_hook`. */
+  /** Restrict the operation to one vendor. Used by `hooks__rotate_webhook`. */
   onlyVendor?: string;
 }
 
@@ -145,6 +145,14 @@ interface MintedHook {
 }
 
 /**
+ * A registration that HAS an address. Every path out of {@link nextRegistration}
+ * either reuses a stored `deliveryId` or mints one, so the caller can build a
+ * URL without a guard — and if a future branch forgets to mint, this is what
+ * fails the build rather than shipping `/v1/hooks/undefined`.
+ */
+type Addressable = HookRegistration & { deliveryId: string };
+
+/**
  * The registration this declaration should hold after the operation.
  *
  * An install REUSES a live `kid`: re-minting on every reinstall would silently
@@ -158,15 +166,30 @@ function nextRegistration(
   existing: HookRegistration | undefined,
   opts: ProvisionHooksOptions,
   decl: HookDeclaration,
-): { reg: HookRegistration } {
-  const kid = existing && !opts.rotate ? existing.kid : newKid();
-  if (existing && kid === existing.kid) {
+): { reg: Addressable } {
+  // **Reusable means there is an address to reuse**, which is not the same as
+  // "a record exists". A registration written before the URL became an opaque
+  // id carries a `kid` and no `deliveryId`: the door refuses it, so there is no
+  // URL a vendor is happily delivering to and nothing for the branch below to
+  // hand back. Treating that as reusable produced an address of the literal
+  // string `undefined` — a URL that looks real, registers at some vendors, and
+  // can never admit a delivery.
+  const reusable = existing?.deliveryId !== undefined && !opts.rotate;
+  const kid = reusable && existing ? existing.kid : newKid();
+  if (reusable && existing?.deliveryId !== undefined && kid === existing.kid) {
     // Unchanged, and the SAME id is handed over again. Re-registering a URL the
     // server already holds is a no-op there and the cheapest possible self-heal
     // here: a server that lost its URL — reinstalled, restored, or simply never
     // recorded it — gets it back from an ordinary reconcile rather than needing
     // a rotation, which would retire a URL the vendor is happily delivering to.
-    return { reg: { ...existing, route: decl.route, headerRenames: decl.header_renames } };
+    return {
+      reg: {
+        ...existing,
+        deliveryId: existing.deliveryId,
+        route: decl.route,
+        headerRenames: decl.header_renames,
+      },
+    };
   }
   return {
     reg: withRotatedKid(existing, {
@@ -176,7 +199,7 @@ function nextRegistration(
       deliveryId: newDeliveryId(),
       route: decl.route,
       headerRenames: decl.header_renames,
-    }),
+    }) as Addressable,
   };
 }
 
@@ -249,7 +272,7 @@ export async function provisionHooks(opts: ProvisionHooksOptions): Promise<Provi
  * A failure here is NOT fatal and NOT an error-level event. The connector is
  * installed and useful; the receiving connector's own reconcile poll is the
  * designed backstop for a stream that never arrives; and the registration is
- * already recorded, so a later `rotate_hook` or reinstall retries. What the
+ * already recorded, so a later `hooks__rotate_webhook` or reinstall retries. What the
  * operator needs is to know the stream is not live yet, which the warn line and
  * `list_hooks` both give them.
  */

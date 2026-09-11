@@ -1779,7 +1779,7 @@ async function provisionDeclaredHooks(
     if (err instanceof HookContractError) return err.message;
     // Anything else (the source went away mid-install, a transient store
     // error) leaves the connector installed and the stream unprovisioned —
-    // recoverable with `rotate_hook`, and not worth failing an install over.
+    // recoverable with `hooks__rotate_webhook`, and not worth failing an install over.
     log.warn("[hooks] install-time provisioning failed", {
       connector: serverName,
       workspace_id: wsId,
