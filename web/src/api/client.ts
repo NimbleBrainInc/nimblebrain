@@ -16,7 +16,6 @@ import type {
   BootstrapResponse,
   ChatRequest,
   ChatResult,
-  HealthInfo,
   PlacementEntry,
   ToolCallResult,
 } from "../types";
@@ -524,21 +523,6 @@ export async function cancelChatTurn(conversationId: string): Promise<void> {
   ).catch(() => {
     // Best-effort — the turn may have already finished.
   });
-}
-
-// ---------------------------------------------------------------------------
-// Health
-// ---------------------------------------------------------------------------
-
-/** Platform health check (unauthenticated). */
-export async function getHealth(): Promise<HealthInfo> {
-  const res = await fetch(`${API_BASE}/v1/health`, {
-    credentials: "include",
-  });
-  if (!res.ok) {
-    throw new ApiClientError("health_error", res.statusText, res.status);
-  }
-  return res.json() as Promise<HealthInfo>;
 }
 
 // ---------------------------------------------------------------------------
