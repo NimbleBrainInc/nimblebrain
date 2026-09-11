@@ -8,7 +8,8 @@
 //     (`callTool` / `readResource`), with the wire name qualified by the
 //     calling app's server.
 //   - `INTERNAL_APPS` trust-list authz: external apps cannot cross-call
-//     another server via `params.server`; internal apps (e.g. `nb`) can.
+//     another server, whether they name it in `_meta` or in the legacy
+//     top-level `server`; internal apps (e.g. `nb`) can, via either.
 //   - Task-augmented `tools/call` (`params.task` present) routes through
 //     the SDK's generic `request()` path so `CreateTaskResult` flows back
 //     to the iframe verbatim within the fast-path budget.
@@ -370,6 +371,92 @@ describe("tools/call — INTERNAL_APPS authz", () => {
     expect(mcpCallTool).toHaveBeenCalledTimes(1);
     const [callParams] = mcpCallTool.mock.calls[0] ?? [];
     expect((callParams as { name: string }).name).toBe("home__briefing");
+  });
+
+  // The target source's home is `_meta`, because that is the only place a
+  // params extension survives a spec client or host on the path. Both
+  // locations resolve to the same authz rule, and the same trust list.
+  test("internal app cross-calls via _meta", async () => {
+    const frame = mount("nb");
+
+    frame.send({
+      jsonrpc: "2.0",
+      id: "a4m",
+      method: "tools/call",
+      params: {
+        name: "briefing",
+        arguments: {},
+        _meta: { "ai.nimblebrain/server": "home" },
+      },
+    });
+    await frame.waitFor((m) => (m as { id?: string })?.id === "a4m");
+
+    expect(mcpCallTool).toHaveBeenCalledTimes(1);
+    const [callParams] = mcpCallTool.mock.calls[0] ?? [];
+    expect((callParams as { name: string }).name).toBe("home__briefing");
+  });
+
+  test("external app with a _meta target is locked to its own server", async () => {
+    const frame = mount("db-query");
+
+    frame.send({
+      jsonrpc: "2.0",
+      id: "a2m",
+      method: "tools/call",
+      params: {
+        name: "t",
+        arguments: {},
+        _meta: { "ai.nimblebrain/server": "nb" },
+      },
+    });
+    await frame.waitFor((m) => (m as { id?: string })?.id === "a2m");
+
+    expect(mcpCallTool).toHaveBeenCalledTimes(1);
+    const [callParams] = mcpCallTool.mock.calls[0] ?? [];
+    expect((callParams as { name: string }).name).toBe("db-query__t");
+  });
+
+  // An app mid-upgrade can carry both: the SDK it was built against sends the
+  // old field, a newer one sends `_meta`. `_meta` is the real home, so it
+  // wins — otherwise a stale sibling field would silently outrank the value
+  // the current SDK actually put there.
+  test("_meta outranks the legacy top-level server", async () => {
+    const frame = mount("nb");
+
+    frame.send({
+      jsonrpc: "2.0",
+      id: "a4b",
+      method: "tools/call",
+      params: {
+        name: "briefing",
+        arguments: {},
+        server: "usage",
+        _meta: { "ai.nimblebrain/server": "home" },
+      },
+    });
+    await frame.waitFor((m) => (m as { id?: string })?.id === "a4b");
+
+    const [callParams] = mcpCallTool.mock.calls[0] ?? [];
+    expect((callParams as { name: string }).name).toBe("home__briefing");
+  });
+
+  test("a _meta with no target falls back to the app's own server", async () => {
+    const frame = mount("nb");
+
+    frame.send({
+      jsonrpc: "2.0",
+      id: "a4c",
+      method: "tools/call",
+      params: {
+        name: "briefing",
+        arguments: {},
+        _meta: { "io.modelcontextprotocol/related-task": { taskId: "t1" } },
+      },
+    });
+    await frame.waitFor((m) => (m as { id?: string })?.id === "a4c");
+
+    const [callParams] = mcpCallTool.mock.calls[0] ?? [];
+    expect((callParams as { name: string }).name).toBe("nb__briefing");
   });
 
   // `params.server` is not the only way to name a source: a qualified tool
