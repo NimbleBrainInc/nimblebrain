@@ -124,7 +124,7 @@ export function listRegistrations(ws: Pick<Workspace, "hooks">): HookRegistratio
  *
  * The whole read-through-write runs inside `serializePerWorkspace`, which every
  * writer of a workspace record shares — see its doc for why the lock is keyed by
- * workspace rather than by field. It also closes the `rotate_hook`-vs-reconcile
+ * workspace rather than by field. It also closes the `hooks__rotate_webhook`-vs-reconcile
  * window that `ensureHooks` leaves open by bypassing the flight for a rotation:
  * the two can still run concurrently, but they can no longer interleave inside
  * the write.
