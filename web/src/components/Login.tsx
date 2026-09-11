@@ -81,7 +81,7 @@ export function Login({ onLogin }: LoginProps) {
     return (
       <div className="flex items-center justify-center h-screen bg-background">
         <div className="flex flex-col items-center gap-4">
-          <Logo variant="full" height={28} />
+          <Logo />
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <Loader2 className="w-4 h-4 animate-spin" />
             <span>Connecting...</span>
@@ -97,7 +97,7 @@ export function Login({ onLogin }: LoginProps) {
       <Card className="w-full max-w-md">
         <CardHeader>
           <CardTitle className="flex items-center">
-            <Logo variant="full" height={28} />
+            <Logo />
           </CardTitle>
           <CardDescription>Sign in to continue.</CardDescription>
         </CardHeader>

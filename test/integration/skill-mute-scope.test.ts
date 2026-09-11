@@ -13,6 +13,13 @@
  * is untouched.
  */
 
+import { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import {
+  CallToolRequestSchema,
+  ListResourcesRequestSchema,
+  ListToolsRequestSchema,
+  ReadResourceRequestSchema,
+} from "@modelcontextprotocol/sdk/types.js";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -25,6 +32,7 @@ import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { McpSource } from "../../src/tools/mcp-source.ts";
 import { createMockModel } from "../helpers/mock-model.ts";
+import { type RemoteMcpFixture, startRemoteMcpServer } from "../helpers/remote-mcp-fixture.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
 
 const SKILL_NAME = "house-voice";
@@ -35,39 +43,32 @@ const MARKER = "VOICE-MARKER-WHISKEY";
 const CONNECTOR_SERVER = "gmail";
 const CONNECTOR_SKILL = "gmail-threading";
 
-function createGuideConnector(dir: string): string {
-  mkdirSync(dir, { recursive: true });
-  const nm = join(import.meta.dir, "../..", "node_modules");
+function createGuideServer(): Server {
   const body = `---\nname: guide\ndescription: Connector guidance.\nmetadata:\n  nimblebrain:\n    loading-strategy: always\n---\n\n# guide\n\n${GUIDE_MARKER} — always applies.`;
-  writeFileSync(
-    join(dir, "server.cjs"),
-    `
-const { Server } = require("${nm}/@modelcontextprotocol/sdk/dist/cjs/server/index.js");
-const { StdioServerTransport } = require("${nm}/@modelcontextprotocol/sdk/dist/cjs/server/stdio.js");
-const { ListToolsRequestSchema, CallToolRequestSchema, ListResourcesRequestSchema, ReadResourceRequestSchema } =
-  require("${nm}/@modelcontextprotocol/sdk/dist/cjs/types.js");
-async function main() {
-  const server = new Server({ name: "guide", version: "0.1.0" }, { capabilities: { tools: {}, resources: {} } });
+
+  const server = new Server(
+    { name: "guide", version: "0.1.0" },
+    { capabilities: { tools: {}, resources: {} } },
+  );
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
     tools: [{ name: "go", description: "Go", inputSchema: { type: "object", properties: {} } }],
   }));
-  server.setRequestHandler(CallToolRequestSchema, async () => ({ content: [{ type: "text", text: "ok" }] }));
+  server.setRequestHandler(CallToolRequestSchema, async () => ({
+    content: [{ type: "text", text: "ok" }],
+  }));
   server.setRequestHandler(ListResourcesRequestSchema, async () => ({
     resources: [{ uri: "skill://guide/SKILL.md", name: "guide", mimeType: "text/markdown" }],
   }));
   server.setRequestHandler(ReadResourceRequestSchema, async (req) => ({
-    contents: [{ uri: req.params.uri, mimeType: "text/markdown", text: ${JSON.stringify(body)} }],
+    contents: [{ uri: req.params.uri, mimeType: "text/markdown", text: body }],
   }));
-  await server.connect(new StdioServerTransport());
-}
-main();
-`,
-  );
-  return dir;
+
+  return server;
 }
 
 const testDir = join(tmpdir(), `nimblebrain-skill-mute-${Date.now()}`);
 let runtime: Runtime;
+let guideServer: RemoteMcpFixture;
 let lastPrompt: LanguageModelV4CallOptions["prompt"] | undefined;
 let skillPath = "";
 
@@ -177,16 +178,10 @@ beforeAll(async () => {
     body: `${MARKER} — always speak in the house voice.`,
   });
   expect(created.isError).toBe(false);
+  guideServer = startRemoteMcpServer(createGuideServer);
   const guide = new McpSource(
     GUIDE_SERVER,
-    {
-      type: "stdio",
-      spawn: {
-        command: "node",
-        args: [join(createGuideConnector(join(testDir, "guide")), "server.cjs")],
-        env: process.env as Record<string, string>,
-      },
-    },
+    { type: "remote", url: new URL(guideServer.url), allowInsecure: true },
     new NoopEventSink(),
   );
   await guide.start();
@@ -211,6 +206,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  guideServer?.close();
   await runtime.shutdown();
   if (existsSync(testDir)) rmSync(testDir, { recursive: true, force: true });
 });

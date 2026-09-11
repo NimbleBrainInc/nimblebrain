@@ -6,7 +6,8 @@ import { disconnectConnector, type InstalledConnector } from "../../api/client";
  * surface for an established connection. Renders only when the
  * connector is `running` AND remote-OAuth: anything else is either
  * the hero's responsibility (Connect / Reconnect / surface failures)
- * or simply not relevant (stdio connectors never connect).
+ * or simply not relevant (a connector authenticated by a static
+ * header has no connection to show).
  *
  * The visible content is intentionally minimal: a one-line "Connected
  * as ..." label plus a small Disconnect link for admins. Disconnect

@@ -54,7 +54,7 @@ NimbleBrain doesn't just run MCP servers — it **composes** them:
 
 | Component | What it does |
 |-----------|-------------|
-| **ToolRegistry** | Aggregates tools from multiple MCP sources (stdio, HTTP, SSE) into one namespace |
+| **ToolRegistry** | Aggregates tools from every MCP source — remote HTTP/SSE servers and the platform's own in-process ones — into one namespace |
 | **Agent Engine** | Agentic loop: call Claude, extract tool uses, execute tools in parallel, repeat |
 | **MCP App Bridge** | [ext-apps spec](https://modelcontextprotocol.io/extensions/apps/overview) host — renders app UIs in sandboxed iframes with bidirectional tool access |
 | **Connectors (Apps)** | Remote MCP servers a workspace connects to by URL, discovered through the connectors catalog |

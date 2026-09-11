@@ -43,8 +43,8 @@ export default defineConfig({
       title: 'NimbleBrain',
       favicon: '/favicon.ico',
       logo: {
-        light: './src/assets/logo-light.png',
-        dark: './src/assets/logo-dark.png',
+        light: './src/assets/nb-logo-full-light.svg',
+        dark: './src/assets/nb-logo-full-dark.svg',
         alt: 'NimbleBrain',
         replacesTitle: true,
       },
@@ -150,6 +150,7 @@ export default defineConfig({
               { label: 'Synapse SDK', slug: 'apps/synapse' },
               { label: 'Tool Results & Content Routing', slug: 'apps/tool-results' },
               { label: 'Notifications', slug: 'apps/notifications' },
+              { label: 'Lifecycle', slug: 'apps/lifecycle' },
               { label: 'MCP App Bridge', slug: 'apps/bridge' },
               { label: 'UI Resources', slug: 'apps/ui-resources' },
               { label: 'Theming', slug: 'apps/theming' },

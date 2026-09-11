@@ -114,7 +114,7 @@ All endpoints require authentication (Bearer token or session cookie) unless not
 
 ## Architecture
 
-NimbleBrain is both an MCP **client** (connecting to installed connectors via stdio/HTTP) and an MCP **server** (exposing composed tools to external hosts via the `/mcp` Streamable HTTP endpoint). The `ToolRegistry` aggregates tools from all connected MCP servers into a single namespace, while skills scope tool access per task.
+NimbleBrain is both an MCP **client** (connecting to remote connectors over HTTP/SSE, and to the platform's own capabilities in-process) and an MCP **server** (exposing composed tools to external hosts via the `/mcp` Streamable HTTP endpoint). The `ToolRegistry` aggregates tools from all connected MCP servers into a single namespace, while skills scope tool access per task.
 
 Three port interfaces isolate concerns:
 
@@ -701,7 +701,7 @@ These are non-negotiable patterns. Violating them causes production bugs:
 | `@ai-sdk/anthropic` | Anthropic provider (prompt caching, streaming) |
 | `@ai-sdk/openai` | OpenAI provider |
 | `@ai-sdk/google` | Google Gemini provider |
-| `@modelcontextprotocol/sdk` | MCP client (stdio transport) |
+| `@modelcontextprotocol/sdk` | MCP client and server (Streamable HTTP, SSE, in-memory) |
 | `ajv` + `ajv-formats` | JSON Schema validation for MCPB manifests |
 | `gray-matter` | YAML frontmatter parsing for skill files |
 | `posthog-node` | Anonymous product telemetry (server-side) |

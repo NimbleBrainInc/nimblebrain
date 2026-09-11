@@ -299,6 +299,22 @@
       },
       "additionalProperties": false
     },
+    "secrets": {
+      "description": "Which backend holds the deployment's secrets. Omit the block for the default: one plaintext file per secret under the work directory. See /config/secrets/.",
+      "type": "object",
+      "properties": {
+        "backend": {
+          "type": "string",
+          "description": "Registered credential-store backend name. Default: \"file\". An unregistered name fails startup rather than falling back — a deployment that asked for one backend and silently got plaintext files is the outcome this refuses."
+        },
+        "config": {
+          "type": "object",
+          "description": "That backend's own settings, passed through verbatim. MUST NOT contain key material: this file is commonly rendered from a values file in version control, so a key written here is a key committed to a repository. Name an environment variable instead — a property whose name ends in \"Env\" holds the NAME of one.",
+          "nbNoInlineKeyMaterial": true
+        }
+      },
+      "additionalProperties": false
+    },
     "telemetry": {
       "description": "Anonymous usage telemetry. Disable with telemetry.enabled: false, NB_TELEMETRY_DISABLED=1, or DO_NOT_TRACK=1.",
       "type": "object",

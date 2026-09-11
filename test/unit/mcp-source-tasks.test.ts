@@ -137,7 +137,7 @@ interface BuildOptions {
 function buildTaskAugmentedSource(sink: EventSink, opts: BuildOptions): McpSource {
   const source = new McpSource(
     "test",
-    { type: "stdio", spawn: { command: "echo", args: [], env: {} } },
+    { type: "remote", url: new URL("http://localhost:0/mcp") },
     sink,
   );
 

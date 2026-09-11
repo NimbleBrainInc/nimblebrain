@@ -20,14 +20,22 @@
  */
 
 import type { LanguageModelV4, LanguageModelV4CallOptions } from "@ai-sdk/provider";
+import { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import {
+  CallToolRequestSchema,
+  ListResourcesRequestSchema,
+  ListToolsRequestSchema,
+  ReadResourceRequestSchema,
+} from "@modelcontextprotocol/sdk/types.js";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { McpSource } from "../../src/tools/mcp-source.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
+import { type RemoteMcpFixture, startRemoteMcpServer } from "../helpers/remote-mcp-fixture.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
 
 const SERVER_NAME = "ai-nimblebrain-multiskill-mcp";
@@ -59,60 +67,39 @@ metadata:
 ${phrase} — this rule must be in context on every turn.`;
 }
 
-function createMultiSkillConnector(dir: string): string {
-  mkdirSync(dir, { recursive: true });
-  const nodeModulesPath = join(import.meta.dir, "../..", "node_modules");
-  const resources = SKILLS.map((s) => ({
-    uri: `skill://${s.slug}/SKILL.md`,
-    name: s.slug,
-    mimeType: "text/markdown",
-  }));
-  const bodies = Object.fromEntries(
+function createMultiSkillServer(): Server {
+  const bodies: Record<string, string> = Object.fromEntries(
     SKILLS.map((s) => [`skill://${s.slug}/SKILL.md`, skillBody(s.slug, s.phrase)]),
   );
-  const tools = TOOL_NAMES.map((n) => ({
-    name: n,
-    description: `Do ${n}`,
-    inputSchema: { type: "object", properties: {} },
-  }));
 
-  writeFileSync(
-    join(dir, "server.cjs"),
-    `
-const { Server } = require("${nodeModulesPath}/@modelcontextprotocol/sdk/dist/cjs/server/index.js");
-const { StdioServerTransport } = require("${nodeModulesPath}/@modelcontextprotocol/sdk/dist/cjs/server/stdio.js");
-const {
-  ListToolsRequestSchema,
-  CallToolRequestSchema,
-  ListResourcesRequestSchema,
-  ReadResourceRequestSchema,
-} = require("${nodeModulesPath}/@modelcontextprotocol/sdk/dist/cjs/types.js");
-
-const BODIES = ${JSON.stringify(bodies)};
-
-async function main() {
   const server = new Server(
     { name: "multiskill", version: "0.1.0" },
     { capabilities: { tools: {}, resources: {} } },
   );
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: ${JSON.stringify(tools)} }));
+  server.setRequestHandler(ListToolsRequestSchema, async () => ({
+    tools: TOOL_NAMES.map((n) => ({
+      name: n,
+      description: `Do ${n}`,
+      inputSchema: { type: "object", properties: {} },
+    })),
+  }));
   server.setRequestHandler(CallToolRequestSchema, async () => ({
     content: [{ type: "text", text: "done" }],
   }));
   server.setRequestHandler(ListResourcesRequestSchema, async () => ({
-    resources: ${JSON.stringify(resources)},
+    resources: SKILLS.map((s) => ({
+      uri: `skill://${s.slug}/SKILL.md`,
+      name: s.slug,
+      mimeType: "text/markdown",
+    })),
   }));
   server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
-    const text = BODIES[request.params.uri];
-    if (!text) throw new Error("Resource not found: " + request.params.uri);
+    const text = bodies[request.params.uri];
+    if (!text) throw new Error(`Resource not found: ${request.params.uri}`);
     return { contents: [{ uri: request.params.uri, mimeType: "text/markdown", text }] };
   });
-  await server.connect(new StdioServerTransport());
-}
-main();
-`,
-  );
-  return dir;
+
+  return server;
 }
 
 /**
@@ -124,24 +111,21 @@ main();
 const NEIGHBOUR_NAME = "ai-nimblebrain-neighbour-mcp";
 const NEIGHBOUR_PHRASE = "NEIGHBOUR-MARKER-GOLF";
 
-function createNeighbourConnector(dir: string): string {
-  mkdirSync(dir, { recursive: true });
-  const nodeModulesPath = join(import.meta.dir, "../..", "node_modules");
+function createNeighbourServer(): Server {
   // Same path as SKILLS[0] — `skill://orientation/SKILL.md`.
   const uri = `skill://${SKILLS[0]?.slug}/SKILL.md`;
-  writeFileSync(
-    join(dir, "server.cjs"),
-    `
-const { Server } = require("${nodeModulesPath}/@modelcontextprotocol/sdk/dist/cjs/server/index.js");
-const { StdioServerTransport } = require("${nodeModulesPath}/@modelcontextprotocol/sdk/dist/cjs/server/stdio.js");
-const {
-  ListToolsRequestSchema,
-  CallToolRequestSchema,
-  ListResourcesRequestSchema,
-  ReadResourceRequestSchema,
-} = require("${nodeModulesPath}/@modelcontextprotocol/sdk/dist/cjs/types.js");
+  const body = `---
+name: orientation
+description: Neighbour guidance.
+metadata:
+  nimblebrain:
+    loading-strategy: always
+---
 
-async function main() {
+# orientation
+
+${NEIGHBOUR_PHRASE} — this rule must be in context on every turn.`;
+
   const server = new Server(
     { name: "neighbour", version: "0.1.0" },
     { capabilities: { tools: {}, resources: {} } },
@@ -153,23 +137,17 @@ async function main() {
     content: [{ type: "text", text: "done" }],
   }));
   server.setRequestHandler(ListResourcesRequestSchema, async () => ({
-    resources: [{ uri: ${JSON.stringify(uri)}, name: "orientation", mimeType: "text/markdown" }],
+    resources: [{ uri, name: "orientation", mimeType: "text/markdown" }],
   }));
   server.setRequestHandler(ReadResourceRequestSchema, async () => ({
-    contents: [{
-      uri: ${JSON.stringify(uri)},
-      mimeType: "text/markdown",
-      text: ${JSON.stringify("---\nname: orientation\ndescription: Neighbour guidance.\nmetadata:\n  nimblebrain:\n    loading-strategy: always\n---\n\n# orientation\n\nNEIGHBOUR-MARKER-GOLF — this rule must be in context on every turn.")},
-    }],
+    contents: [{ uri, mimeType: "text/markdown", text: body }],
   }));
-  await server.connect(new StdioServerTransport());
-}
-main();
-`,
-  );
-  return dir;
+
+  return server;
 }
 
+let multiServer: RemoteMcpFixture;
+let neighbourServer: RemoteMcpFixture;
 let lastPrompt: LanguageModelV4CallOptions["prompt"] | undefined;
 let lastToolCount = 0;
 
@@ -217,33 +195,19 @@ beforeAll(async () => {
   });
   await provisionTestWorkspace(runtime);
 
-  const connectorDir = createMultiSkillConnector(join(testDir, "connector"));
+  multiServer = startRemoteMcpServer(createMultiSkillServer);
   source = new McpSource(
     SERVER_NAME,
-    {
-      type: "stdio",
-      spawn: {
-        command: "node",
-        args: [join(connectorDir, "server.cjs")],
-        env: process.env as Record<string, string>,
-      },
-    },
+    { type: "remote", url: new URL(multiServer.url), allowInsecure: true },
     new NoopEventSink(),
   );
   await source.start();
   runtime.getRegistryForWorkspace(TEST_WORKSPACE_ID).addSource(source);
 
-  const neighbourDir = createNeighbourConnector(join(testDir, "neighbour"));
+  neighbourServer = startRemoteMcpServer(createNeighbourServer);
   neighbour = new McpSource(
     NEIGHBOUR_NAME,
-    {
-      type: "stdio",
-      spawn: {
-        command: "node",
-        args: [join(neighbourDir, "server.cjs")],
-        env: process.env as Record<string, string>,
-      },
-    },
+    { type: "remote", url: new URL(neighbourServer.url), allowInsecure: true },
     new NoopEventSink(),
   );
   await neighbour.start();
@@ -258,6 +222,8 @@ afterAll(async () => {
       // already stopped
     }
   }
+  multiServer?.close();
+  neighbourServer?.close();
   await runtime.shutdown();
   if (existsSync(testDir)) rmSync(testDir, { recursive: true, force: true });
 });

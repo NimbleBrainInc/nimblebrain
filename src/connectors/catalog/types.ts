@@ -13,6 +13,7 @@
 import type { ConnectorAuthKind } from "../../connectors/auth-kind.ts";
 import type { ConnectorUiMeta } from "../../connectors/runtime/types.ts";
 import type { HookDeclaration } from "../../hooks/types.ts";
+import type { LifecycleDeclaration } from "../../lifecycle/types.ts";
 import type { NotificationsDeclaration } from "../../notifications/types.ts";
 import type {
   ComposioConnectorConfig,
@@ -144,6 +145,22 @@ export interface ConnectorCatalogEntry {
    * connectors that declare no outbox.
    */
   notifications?: NotificationsDeclaration;
+  /**
+   * The lifecycle handlers the server declares in
+   * `ServerDetail._meta["ai.nimblebrain/host"].lifecycle` — the tools the
+   * runtime calls when the connector first becomes reachable in a workspace and
+   * when it is about to be removed.
+   *
+   * Carried from the operator-trusted catalog beside `hooks`, though for a
+   * middle reason. A hook declaration must be operator-trusted because it
+   * chooses where a delivery is sent with a platform token attached; this one
+   * chooses only which of the server's OWN tools the runtime calls, with no
+   * required arguments, on the server that declared it — a reach the caller
+   * already has. It is read from the same place because that is where the host
+   * extension is published, not because a forged one would be dangerous.
+   * Absent for connectors that declare no lifecycle block.
+   */
+  lifecycle?: LifecycleDeclaration;
 }
 
 /** How to install an entry — varies by source type. */

@@ -52,7 +52,7 @@ servers:
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `host_version` | `string` | Yes | Host extension contract version: `"1.0"`, `"1.1"`, `"1.2"`, or `"1.3"`. `1.2` adds `hooks` and `1.3` adds `notifications` — set the version that matches the newest block you declare. |
+| `host_version` | `string` | Yes | Host extension contract version: `"1.0"`, `"1.1"`, `"1.2"`, `"1.3"`, or `"1.4"`. `1.2` adds `hooks`, `1.3` adds `notifications`, `1.4` adds `lifecycle` — set the version that matches the newest block you declare. |
 | `name` | `string` | Recommended | Display name shown in the sidebar and app list. Without a `name` the host surfaces no UI for the connector, so it's required in practice for any app with a presence in the shell. |
 | `icon` | `string` | No | [Lucide icon](https://lucide.dev/icons) name in kebab-case (e.g., `"database"`, `"message-square"`, `"hand"`). Defaults to `""`. |
 | `category` | `string` | No | Reserved, free-form string. Not currently consumed by the host — declare it only as forward-looking metadata. |
@@ -60,6 +60,7 @@ servers:
 | `briefing` | `object` | No | Daily briefing contribution. See [briefing](#briefing-object) below. |
 | `hooks` | `HookDeclaration[]` | No | Inbound event streams your server accepts from a vendor over plain HTTPS. Declare `host_version: "1.2"` alongside it. See [hooks](#hooks-inbound-webhooks) below. |
 | `notifications` | `object` | No | The outbox your server exposes — one resource the host polls for facts nobody asked for. Declare `host_version: "1.3"` alongside it. See [notifications](#notifications-the-outbox) below and the full guide at [Notifications](/apps/notifications). |
+| `lifecycle` | `object` | No | Tools the host calls when your connector becomes reachable in a workspace and just before it is removed. Declare `host_version: "1.4"` alongside it. See [lifecycle](#lifecycle-install-and-uninstall-events) below and the full guide at [Lifecycle](/apps/lifecycle). |
 
 ### Settings sections
 
@@ -261,6 +262,47 @@ cadence and per-workspace budget.
 
 The resource shape, the poll result, the event envelope, and what the host reads
 and never reads are all on the [Notifications](/apps/notifications) page.
+
+## `lifecycle`: install and uninstall events
+
+Some servers need to do something the first time they are installed into a
+workspace — mint a tenancy at a vendor, register a sending domain — and undo it
+when they are removed. Declaring a `lifecycle` block names two tools on **your
+own server** that the host calls at those moments.
+
+```json
+"_meta": {
+  "ai.nimblebrain/host": {
+    "host_version": "1.4",
+    "lifecycle": {
+      "on_ready": "workspace_ready",
+      "on_removing": "workspace_removing"
+    }
+  }
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `on_ready` | `string` | No | Tool called when your server first becomes reachable in a workspace, with `{ reason: "install" \| "resume" }`. Its text result is shown to the user as a notice on the install. |
+| `on_removing` | `string` | No | Tool called with no arguments immediately before the connector is uninstalled, while your server is still reachable. |
+
+Both optional; declare either alone. Both handlers must be callable with **no
+required arguments**, must ignore arguments they do not declare (the host sends
+`reason` whether or not your schema mentions it), and must be **ordinary inline
+tools** — the host awaits them, so a task-augmented handler is refused.
+`on_removing` is additionally capped: the uninstall waits a few seconds and then
+proceeds without it.
+
+Delivery is **at least once**, and a fresh install delivers **two** `on_ready`
+calls in a racy order, so handlers must be idempotent. A failed `on_ready` never
+fails the install; a failed `on_removing` never fails the uninstall — which
+waits for the call and then proceeds either way — and it may not arrive at all.
+
+There is no `pre_install` and no `post_uninstall`: the call is a tool call on
+your server, so before it is reachable and after it is gone there is nothing to
+call. The full reasoning, the delivery contract, worked handlers, and the
+failure table are on the [Lifecycle](/apps/lifecycle) page.
 
 ## Registering your main view
 

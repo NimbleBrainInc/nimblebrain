@@ -68,8 +68,8 @@ function makeMockRemoteSource(
   return mock;
 }
 
-/** Mock stdio source — no isRemote() method (or returns false). */
-function makeMockStdioSource(
+/** Mock in-process source — no isRemote() method (or returns false). */
+function makeMockLocalSource(
   name: string,
 ): McpSource & { alive: boolean; stopped: boolean; restartResult: boolean; restartCalls: number } {
   let startedAt: number | null = Date.now();
@@ -254,12 +254,12 @@ describe("HealthMonitor — remote sources", () => {
     monitor.stop();
   });
 
-  it("subprocess sources still work identically (no regression)", async () => {
-    const source = makeMockStdioSource("stdio-connector");
+  it("in-process sources still work identically (no regression)", async () => {
+    const source = makeMockLocalSource("local-connector");
     const sink = makeEventCollector();
     const monitor = new HealthMonitor([source], sink, { checkIntervalMs: 60_000, baseDelayMs: 1 });
 
-    // Kill the subprocess
+    // Kill the source
     source.alive = false;
     await monitor.check();
 
@@ -278,19 +278,19 @@ describe("HealthMonitor — remote sources", () => {
     monitor.stop();
   });
 
-  it("mixed remote and stdio sources both work in same monitor", async () => {
+  it("mixed remote and in-process sources both work in same monitor", async () => {
     const remote = makeMockRemoteSource("remote-one");
-    const stdio = makeMockStdioSource("stdio-one");
+    const local = makeMockLocalSource("local-one");
     const sink = makeEventCollector();
     const monitor = new HealthMonitor(
-      [remote as unknown as McpSource, stdio as unknown as McpSource],
+      [remote as unknown as McpSource, local as unknown as McpSource],
       sink,
       { checkIntervalMs: 60_000, baseDelayMs: 1 },
     );
 
     // Kill both
     remote.alive = false;
-    stdio.alive = false;
+    local.alive = false;
 
     await monitor.check();
 
@@ -301,21 +301,21 @@ describe("HealthMonitor — remote sources", () => {
     expect(status[1]!.state).toBe("healthy");
     expect(status[1]!.restartCount).toBe(1);
 
-    // Remote events should have remote: true, stdio should not
+    // Remote events should have remote: true, in-process should not
     const remoteEvents = eventData(sink).filter((d) => d.source === "remote-one");
-    const stdioEvents = eventData(sink).filter((d) => d.source === "stdio-one");
+    const localEvents = eventData(sink).filter((d) => d.source === "local-one");
 
     for (const ev of remoteEvents) {
       expect(ev.remote).toBe(true);
     }
-    for (const ev of stdioEvents) {
+    for (const ev of localEvents) {
       expect(ev.remote).toBeUndefined();
     }
 
-    // Remote reconnect drove one stop()+start() via restart(); stdio used restart().
+    // Remote reconnect drove one stop()+start() via restart(); in-process used restart().
     expect(remote.stopCalls).toBe(1);
     expect(remote.startCalls).toBe(1);
-    expect(stdio.restartCalls).toBe(1);
+    expect(local.restartCalls).toBe(1);
 
     monitor.stop();
   });

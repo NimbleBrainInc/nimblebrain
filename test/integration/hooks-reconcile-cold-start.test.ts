@@ -1,13 +1,15 @@
 import { randomBytes } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { hookPortForSource } from "../../src/hooks/provisioning.ts";
 import {
   ensureHooks,
   ensureHooksOnRunning,
   type HookReconcileDeps,
-  stopAllHookWatches,
-  stopWatchingHooks,
 } from "../../src/hooks/reconcile.ts";
+import {
+  connectorPortForSource,
+  stopAllToolSurfaceWatches,
+  stopWatchingToolSurface,
+} from "../../src/tools/connector-surface.ts";
 import { listRegistrations } from "../../src/hooks/registrations.ts";
 import type { HookIdentity } from "../../src/hooks/token.ts";
 import type { HookDeclaration } from "../../src/hooks/types.ts";
@@ -123,7 +125,7 @@ function makeDeps(
     workspaceStore: store,
     identity: IDENTITY,
     declarationsFor: async () => [DECL],
-    portFor: () => (source ? hookPortForSource(source) : undefined),
+    portFor: () => (source ? connectorPortForSource(source) : undefined),
     ...over,
   };
 }
@@ -154,7 +156,7 @@ beforeEach(async () => {
 });
 
 afterEach(() => {
-  stopWatchingHooks(wsId, CONNECTOR);
+  stopWatchingToolSurface(wsId, CONNECTOR);
   cleanup();
 });
 
@@ -254,6 +256,36 @@ describe("a source that is running but has advertised nothing yet", () => {
     expect(fake.calls).toHaveLength(1);
   });
 
+  test("a recorded registration with no address counts as missing and is healed", async () => {
+    // `onlyMissing` asks whether a stream is provisioned, and a record written
+    // before the URL became an opaque id makes that question answer yes while the
+    // door refuses every delivery to it. Keyed on the record's existence, the
+    // filter skipped such a stream on every boot for ever — nothing was missing,
+    // so nothing reconciled it, and the only symptom was a vendor that never
+    // delivered. The predicate is the ADDRESS, so this heals on the next pass.
+    await store.update(wsId, {
+      hooks: {
+        [`${CONNECTOR}/${DECL.vendor}`]: {
+          connector: CONNECTOR,
+          vendor: DECL.vendor,
+          kid: "hk_before_delivery_ids",
+          route: DECL.route,
+        },
+      },
+    } as never);
+
+    const fake = makeSource([advertised("set_webhook_url")]);
+    const provisioned = await ensureHooks(makeDeps(fake.source), wsId, CONNECTOR, {
+      onlyMissing: true,
+    });
+
+    expect(provisioned).toHaveLength(1);
+    const ws = await store.get(wsId);
+    const healed = ws?.hooks?.[`${CONNECTOR}/${DECL.vendor}`];
+    expect(healed?.deliveryId).toBeTruthy();
+    expect(fake.calls[0]?.url).not.toContain("undefined");
+  });
+
   test("the watch is dropped when the connector is uninstalled", async () => {
     const fake = makeSource([]);
     ensureHooksOnRunning(makeDeps(fake.source), wsId, CONNECTOR);
@@ -261,7 +293,7 @@ describe("a source that is running but has advertised nothing yet", () => {
     await settle();
     expect(fake.listenerCount()).toBe(1);
 
-    stopWatchingHooks(wsId, CONNECTOR);
+    stopWatchingToolSurface(wsId, CONNECTOR);
 
     expect(fake.listenerCount()).toBe(0);
     fake.advertise([advertised("set_webhook_url")]);
@@ -286,7 +318,7 @@ describe("a source that is running but has advertised nothing yet", () => {
     expect(first.listenerCount()).toBe(1);
     expect(second.listenerCount()).toBe(1);
 
-    stopAllHookWatches();
+    stopAllToolSurfaceWatches();
 
     expect(first.listenerCount()).toBe(0);
     expect(second.listenerCount()).toBe(0);

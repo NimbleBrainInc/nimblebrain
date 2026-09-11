@@ -1,10 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import {
   HookContractError,
-  hookPortForSource,
   provisionHooks,
   verifyRegisterTool,
 } from "../../src/hooks/provisioning.ts";
+import { connectorPortForSource } from "../../src/tools/connector-surface.ts";
 import { buildHookUrl } from "../../src/hooks/token.ts";
 import type { Tool, ToolResult } from "../../src/tools/types.ts";
 import type { HookDeclaration, HookRegistration } from "../../src/hooks/types.ts";
@@ -139,7 +139,7 @@ describe("verifyRegisterTool", () => {
   });
 });
 
-describe("hookPortForSource", () => {
+describe("connectorPortForSource", () => {
   /**
    * A registry source advertises `<source>__<tool>` and takes the bare name on
    * `execute`. A declaration names the bare tool. Without the port translating
@@ -152,7 +152,7 @@ describe("hookPortForSource", () => {
     const executed: string[] = [];
     return {
       executed,
-      port: hookPortForSource({
+      port: connectorPortForSource({
         tools: async () => bare.map((n) => tool({ name: `acme-mcp__${n}` })),
         execute: async (toolName: string): Promise<ToolResult> => {
           executed.push(toolName);
@@ -204,8 +204,8 @@ describe("hookPortForSource", () => {
 });
 
 describe("provisionHooks", () => {
-  function harness() {
-    const ws: { hooks?: Record<string, HookRegistration> } = {};
+  function harness(seed?: Record<string, HookRegistration>) {
+    const ws: { hooks?: Record<string, HookRegistration> } = seed ? { hooks: seed } : {};
     const handed: Array<Record<string, unknown>> = [];
     return {
       handed,
@@ -268,5 +268,49 @@ describe("provisionHooks", () => {
     expect(after?.prevDeliveryId).toBe(before as string);
     expect(after?.rotatedAt).toBeTruthy();
     expect(h.handed[1]?.url).toBe(buildHookUrl(after?.deliveryId as string));
+  });
+
+  test("a record with no address is given one rather than handed over as it is", async () => {
+    // A registration written before the URL became an opaque id: it has a `kid`
+    // and no `deliveryId`. The door refuses it, so there is no address to reuse —
+    // and reusing one anyway built the string `/v1/hooks/undefined` and handed it
+    // to the server as though it were a URL. It is plausible enough that a vendor
+    // stores it, which is what made the failure silent: every signal reads
+    // registered and no delivery can ever be admitted.
+    const legacy = {
+      connector: "acme-mcp",
+      vendor: "acme",
+      kid: "hk_legacy",
+      route: "/ingest/acme",
+    } as unknown as HookRegistration;
+    const h = harness({ "acme-mcp/acme": legacy });
+
+    await provisionHooks(h.opts);
+
+    const stored = h.registrations[0];
+    expect(stored?.deliveryId).toBeTruthy();
+    expect(h.handed[0]?.url).toBe(buildHookUrl(stored?.deliveryId as string));
+    expect(h.handed[0]?.url).not.toContain("undefined");
+  });
+
+  test("a record that already has an address keeps it", async () => {
+    // The other half of the same branch, and the reason it cannot simply always
+    // mint: re-handing the SAME id is the cheap self-heal for a server that lost
+    // its URL, and minting instead would retire an address the vendor is happily
+    // delivering to.
+    const live = {
+      connector: "acme-mcp",
+      vendor: "acme",
+      kid: "hk_live",
+      deliveryId: "an-existing-delivery-id",
+      route: "/ingest/acme",
+    } as HookRegistration;
+    const h = harness({ "acme-mcp/acme": live });
+
+    await provisionHooks(h.opts);
+
+    expect(h.registrations[0]?.deliveryId).toBe("an-existing-delivery-id");
+    expect(h.registrations[0]?.kid).toBe("hk_live");
+    expect(h.handed[0]?.url).toBe(buildHookUrl("an-existing-delivery-id"));
   });
 });

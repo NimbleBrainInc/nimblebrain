@@ -1,0 +1,218 @@
+---
+title: Lifecycle
+description: Be told when your connector becomes reachable in a workspace, and when it is about to be removed — so per-workspace state you hold elsewhere is set up and released with it.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Some servers need to do something the first time they are installed into a
+workspace — mint a tenancy at a vendor, create a bucket, register a sending
+domain — and undo it when they are removed. Nothing in MCP tells you either
+moment: a tool call arrives when a user asks for something, and the install and
+the uninstall are not that.
+
+A `lifecycle` block asks the host to tell you. It names two tools on **your own
+server**, and the host calls them.
+
+```json title="manifest.json"
+"_meta": {
+  "ai.nimblebrain/host": {
+    "host_version": "1.4",
+    "lifecycle": {
+      "on_ready": "workspace_ready",
+      "on_removing": "workspace_removing"
+    }
+  }
+}
+```
+
+Both are optional; declare either alone. Nothing else in the block, and nothing
+else is planned: the host says *you were installed*, and what that means is
+yours.
+
+## The two events
+
+| Field | Called | Arguments |
+|---|---|---|
+| `on_ready` | The first time your server is reachable in a workspace, and on every later reconnect until one call succeeds | `{ "reason": "install" \| "resume" }` |
+| `on_removing` | Immediately before the connector is uninstalled, while your server is still reachable | none |
+
+`reason` answers exactly one question: *was this the user's install?*
+`"install"` means it was. `"resume"` is every other cause — a host restart, a
+reconnect, a re-auth, your server redeployed at the same URL. They are one value
+because you have nothing to do differently with them and the host frequently
+cannot tell them apart.
+
+A server that ignores `reason` entirely is still correct. What it loses is the
+ability to tell the user's act from the system's state — which is mostly useful
+for what you *say*, not for what you *write*.
+
+## Delivery: at least once, and twice on a fresh install
+
+The contract is **at least once per workspace per host boot in which your source
+comes up**. Concretely:
+
+- **A fresh install of a connector that starts eagerly delivers two `on_ready`
+  calls, in a racy order** — one `install` from the install itself and one
+  `resume` from the connection coming up. This is intended, not a bug to work
+  around: they are two different notifications and collapsing them would mean
+  telling a freshly-installed connector `"resume"`.
+- A connector whose source starts later (an interactive OAuth flow) gets **no**
+  `install` call at all — there was no server to call when the install
+  returned. Its first `on_ready` carries `"resume"`.
+- After one call succeeds, later reconnects in the same host process do not call
+  again.
+
+**So your handler must be idempotent.** Write it as "make this true", not as
+"do this once": an upsert, not an insert.
+
+<Aside type="caution" title="You must not assume `on_removing` arrives">
+It is best-effort and it can be skipped entirely — the host was down when the
+user uninstalled, your server was unreachable, the workspace was deleted
+outright. **A server that leaks a third-party resource when `on_removing` does
+not arrive is relying on a call nothing guarantees.** Pair it with something of
+your own that converges: a sweep for resources whose workspace has stopped
+checking in, or a record with a last-seen stamp an operator can act on. Hoping
+is not a design.
+</Aside>
+
+## Writing the handlers
+
+Three rules bind the tools you name.
+
+**They must be callable with no arguments.** The host checks your advertised
+`tools/list` at install time; a handler with any *required* property in its
+`inputSchema` is reported as a manifest error. Declare your arguments optional,
+or declare none.
+
+**They must accept and ignore arguments they do not declare.** The host sends
+`{ reason }` to `on_ready` whether or not your schema mentions it — because
+requiring every server to declare a field most of them ignore would be a worse
+contract. FastMCP, the MCP TypeScript SDK, and anything built on pydantic do
+this already. A framework that rejects an undeclared argument would fail every
+call.
+
+**They must be ordinary inline tools.** A handler advertising
+`execution.taskSupport` of `"optional"` or `"required"` is reported as a
+manifest error, for the same reason as the arguments rule: the host *awaits*
+these calls while an install or an uninstall waits behind them, and a
+task-augmented call carries no deadline the host can bound it by. Long work goes
+*behind* the handler, not inside it — which is the next rule.
+
+### Python (FastMCP)
+
+```python
+from fastmcp import FastMCP
+
+mcp = FastMCP("acme")
+
+@mcp.tool()
+def workspace_ready(reason: str = "resume") -> str:
+    # Idempotent by construction: record that this workspace wants a tenancy,
+    # and let your own reconciler converge it. Do NOT do the slow vendor call
+    # inline — the user is waiting on the install.
+    state = request_tenancy(current_workspace())   # upsert, not insert
+    if reason == "install":
+        return "Setting up your sending workspace. It will be ready in a few seconds."
+    return f"Sending workspace: {state}."
+
+@mcp.tool()
+def workspace_removing() -> str:
+    # Mark it for release and return. The same reconciler does the vendor call.
+    release_tenancy(current_workspace())
+    return "Releasing your sending workspace."
+```
+
+### TypeScript
+
+```ts
+server.registerTool(
+  "workspace_ready",
+  {
+    description: "Called by the host when this connector becomes reachable in a workspace.",
+    inputSchema: { reason: z.string().optional() },
+  },
+  async ({ reason }) => {
+    const state = await requestTenancy(currentWorkspace());
+    const text =
+      reason === "install"
+        ? "Setting up your sending workspace. It will be ready in a few seconds."
+        : `Sending workspace: ${state}.`;
+    return { content: [{ type: "text", text }] };
+  },
+);
+```
+
+**Return quickly.** Both handlers are awaited: `on_ready` inside the install the
+user is watching, `on_removing` inside the uninstall. Record the intent and let
+your own background work converge it; a handler that waits on a vendor
+round-trip makes the install feel broken and the uninstall feel stuck.
+
+## What the user sees
+
+`on_ready`'s **text result becomes a notice on the install**, shown beside the
+"Installed …" confirmation. That is the one place a user waiting on setup you
+started is told to wait, so write it for them:
+
+> Installed "Acme Outreach" in this workspace. Setting up your sending
+> workspace. It will be ready in a few seconds.
+
+Only the `install` call surfaces this way — a `resume` has nobody watching.
+`on_removing`'s result is not shown; the uninstall has its own confirmation.
+
+## Failure semantics
+
+| | |
+|---|---|
+| A handler the server does not advertise, that requires an argument, or that is task-augmented | **A warning on a successful install.** The connector installs and works, and no `on_ready` call is made. The check re-runs on every reconnect, so fixing the manifest and reconnecting is enough — no reinstall. It is a warning, not a gate: `on_removing` is still attempted at uninstall, under the deadline below. |
+| `on_ready` fails or errors | **Never fails the install.** Retried on the next reconnect, and on your next `tools/list_changed`. |
+| `on_removing` fails, errors, or cannot be reached | **Never fails the uninstall.** The uninstall waits for the call for a few seconds and then proceeds without it. Not retried; the connector is gone. |
+| Your server advertises no tools yet | Not an error. The host waits for your tool list and calls then. |
+
+Neither call has a retry queue. The events *are* the retry: another reconnect,
+another install.
+
+## Where `pre_install` and `post_uninstall` went
+
+If you have written a Helm chart (`pre-install` … `post-delete`) or an npm
+package (`preinstall` … `postuninstall`), you will look for the full matrix.
+There isn't one, and the reason is structural rather than a roadmap item.
+
+**The notification is a tool call on your own server.** That single fact decides
+the set:
+
+| Transition | Callable? | |
+|---|---|---|
+| not installed → installing | **no** | there is no server to call |
+| installing → installed | **no** | the connector exists but its source may not be up (interactive OAuth) |
+| → running, or reconnected | **yes** | the first moment your server is reachable at all |
+| running → disconnected | **no** | unreachability *is* the event |
+| installed → uninstalling | **yes, but only before teardown** | after it there is nothing to call |
+| uninstalling → gone | **no** | — |
+
+Exactly two moments are reachable, and "was this the install?" is not a third —
+it is a property of the first, which is what `reason` carries.
+
+The rule that falls out:
+
+> **Before a connector is reachable and after it is gone, extension is
+> DECLARATIVE — the manifest tells the host what to do. In between, extension is
+> CALLABLE — the host calls your server.**
+
+So the "missing" events are not gaps, and some of them already ship.
+Install-time secret collection is the pre-install extension point, declared as
+*what I need* rather than as a call. Retiring your webhook registrations and
+deleting the secrets you declared are the post-uninstall ones, performed by the
+host off the connector's own record.
+
+Helm and npm carry the full matrix because the manager runs the hook in a
+context **it** controls — a Job, a shell script — and never calls into the thing
+being managed. Every system shaped like this one converges on two, with the same
+asymmetry: Kubernetes `lifecycle: { postStart, preStop }`, VS Code
+`activate`/`deactivate`, Chrome `onInstalled`/`onSuspend`.
+
+## Related
+
+- [Manifest Reference](/apps/manifest) — the `lifecycle` block in context.
+- [Notifications](/apps/notifications) — telling the host about facts you learn
+  later, which is the other half of a server that does work between calls.

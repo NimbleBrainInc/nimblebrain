@@ -143,12 +143,17 @@ describe("McpSource tool-list freshness", () => {
     const { source: remote } = buildRemoteSource([{ name: "validate_email" }]);
     expect(remote.isRemote()).toBe(true);
 
-    const stdio = new McpSource(
+    const local = new McpSource(
       "local",
-      { type: "stdio", spawn: { command: "echo", args: [], env: {} } },
+      {
+        type: "inProcess",
+        createServer: () => {
+          throw new Error("not started in this test");
+        },
+      },
       noopSink,
     );
-    expect(stdio.isRemote()).toBe(false);
+    expect(local.isRemote()).toBe(false);
   });
 
   it("dedupes concurrent refreshTools to a single tools/list round-trip", async () => {

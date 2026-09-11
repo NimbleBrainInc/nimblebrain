@@ -1,9 +1,18 @@
 import { log } from "../observability/log.ts";
-import type { Tool, ToolResult, ToolSource } from "../tools/types.ts";
-import { splitInnerToolName } from "../util/tool-name.ts";
+import {
+  type ConnectorPort,
+  summarizeToolError,
+  summarizeToolNames,
+} from "../tools/connector-surface.ts";
+import type { Tool } from "../tools/types.ts";
 import type { WorkspaceStore } from "../workspace/workspace-store.ts";
 import { assertForwardablePath } from "./declaration.ts";
-import { registrationKey, updateRegistrations, withRotatedKid } from "./registrations.ts";
+import {
+  type Addressable,
+  registrationKey,
+  updateRegistrations,
+  withRotatedKid,
+} from "./registrations.ts";
 import { buildHookUrl, newDeliveryId, newKid } from "./token.ts";
 import type { HookDeclaration, HookRegistration } from "./types.ts";
 
@@ -43,7 +52,7 @@ import type { HookDeclaration, HookRegistration } from "./types.ts";
  *     the vendor's API is down) — records the `kid` and logs. A connector is
  *     useful without its webhook; the receiving connector's own reconcile poll is
  *     the designed backstop for a stream that never arrives, and the recorded
- *     registration means a later `rotate_hook` or re-install retries it.
+ *     registration means a later `hooks__rotate_webhook` or re-install retries it.
  */
 
 /** What a server must accept on its declared registration tool. */
@@ -108,67 +117,17 @@ export function verifyRegisterTool(tools: Tool[], decl: HookDeclaration, connect
   }
 }
 
-/**
- * The narrow slice of a connector's source that provisioning needs.
- *
- * **Both halves speak the BARE tool name** — the same vocabulary a declaration's
- * `register_tool` is written in. A registry source does not: it advertises
- * `<source>__<tool>` and takes the bare name on `execute`, because the
- * qualified form is what routes a call to the right source in a workspace-wide
- * tool list. Provisioning is already inside one source and has no such
- * question to answer, so the port answers in one vocabulary and
- * {@link hookPortForSource} is the single place the two meet.
- */
-export interface HookConnectorPort {
-  /** Advertised tools, named as a declaration names them. For the contract check. */
-  tools(): Promise<Tool[]>;
-  /** Invoke a tool by its bare name, through the ordinary MCP dispatch path. */
-  execute(toolName: string, input: Record<string, unknown>): Promise<ToolResult>;
-  /**
-   * Subscribe to "this source's tool set may have changed", returning an
-   * unsubscribe. The reconcile's retrigger; see `watchToolSurface` in
-   * `reconcile.ts` for why provisioning needs one.
-   *
-   * Optional because the underlying `ToolSource` method is: a source whose
-   * tools are fixed at construction never fires one, and a port without it
-   * simply has no retrigger.
-   */
-  subscribeToolsChanged?(listener: () => void): () => void;
-}
-
-/** The `tools()`/`execute()`/`subscribeToolsChanged()` slice of a registry source. */
-type HookSourceLike = Pick<ToolSource, "tools" | "execute" | "subscribeToolsChanged">;
-
-/**
- * Adapt a registry source to the port, translating its advertised
- * `<source>__<tool>` names down to the bare names a declaration uses.
- *
- * Without the translation every declared `register_tool` is absent from every
- * tool list, so a correct manifest is reported as a contract violation and no
- * stream is ever provisioned. The two names are decomposed by
- * `splitInnerToolName`, the one grammar every door shares — a hand-rolled
- * `slice` here would be a second one.
- */
-export function hookPortForSource(source: HookSourceLike): HookConnectorPort {
-  return {
-    tools: async () =>
-      (await source.tools()).map((t) => ({ ...t, name: splitInnerToolName(t.name).bareToolName })),
-    execute: (toolName, input) => source.execute(toolName, input),
-    subscribeToolsChanged: source.subscribeToolsChanged?.bind(source),
-  };
-}
-
 export interface ProvisionHooksOptions {
   store: WorkspaceStore;
   wsId: string;
   connector: string;
   declarations: HookDeclaration[];
-  port: HookConnectorPort;
+  port: ConnectorPort;
   /** Mint a fresh `kid` for every declaration even if one is already recorded.
-   *  This is what `rotate_hook` sets; an install reuses a live `kid` so a
+   *  This is what `hooks__rotate_webhook` sets; an install reuses a live `kid` so a
    *  reinstall does not invalidate a URL the vendor is happily delivering to. */
   rotate?: boolean;
-  /** Restrict the operation to one vendor. Used by `rotate_hook`. */
+  /** Restrict the operation to one vendor. Used by `hooks__rotate_webhook`. */
   onlyVendor?: string;
 }
 
@@ -204,15 +163,30 @@ function nextRegistration(
   existing: HookRegistration | undefined,
   opts: ProvisionHooksOptions,
   decl: HookDeclaration,
-): { reg: HookRegistration } {
-  const kid = existing && !opts.rotate ? existing.kid : newKid();
-  if (existing && kid === existing.kid) {
+): { reg: Addressable } {
+  // **Reusable means there is an address to reuse**, which is not the same as
+  // "a record exists". A registration written before the URL became an opaque
+  // id carries a `kid` and no `deliveryId`: the door refuses it, so there is no
+  // URL a vendor is happily delivering to and nothing for the branch below to
+  // hand back. Treating that as reusable produced an address of the literal
+  // string `undefined` — a URL that looks real, registers at some vendors, and
+  // can never admit a delivery.
+  const reusable = existing?.deliveryId !== undefined && !opts.rotate;
+  const kid = reusable && existing ? existing.kid : newKid();
+  if (reusable && existing?.deliveryId !== undefined && kid === existing.kid) {
     // Unchanged, and the SAME id is handed over again. Re-registering a URL the
     // server already holds is a no-op there and the cheapest possible self-heal
     // here: a server that lost its URL — reinstalled, restored, or simply never
     // recorded it — gets it back from an ordinary reconcile rather than needing
     // a rotation, which would retire a URL the vendor is happily delivering to.
-    return { reg: { ...existing, route: decl.route, headerRenames: decl.header_renames } };
+    return {
+      reg: {
+        ...existing,
+        deliveryId: existing.deliveryId,
+        route: decl.route,
+        headerRenames: decl.header_renames,
+      },
+    };
   }
   return {
     reg: withRotatedKid(existing, {
@@ -295,9 +269,9 @@ export async function provisionHooks(opts: ProvisionHooksOptions): Promise<Provi
  * A failure here is NOT fatal and NOT an error-level event. The connector is
  * installed and useful; the receiving connector's own reconcile poll is the
  * designed backstop for a stream that never arrives; and the registration is
- * already recorded, so a later `rotate_hook` or reinstall retries. What the
+ * already recorded, so a later `hooks__rotate_webhook` or reinstall retries. What the
  * operator needs is to know the stream is not live yet, which the warn line and
- * `list_hooks` both give them.
+ * `hooks__list_webhooks` both give them.
  */
 async function handOverUrl(
   opts: ProvisionHooksOptions,
@@ -349,28 +323,4 @@ export async function revokeHooksForConnector(
     return removed > 0 ? current : null;
   });
   return removed;
-}
-
-/**
- * The advertised names, for a contract error that has to be actionable.
- *
- * A message that only names what is MISSING sends the reader to re-read a
- * manifest; naming what the server actually serves lets them see the mismatch —
- * a rename, a tool behind a flag the deployment does not set.
- *
- * Bounded on BOTH axes, because both are the server's to choose: a hundred tools
- * named at a hundred characters each is the same unbounded log line as a
- * thousand tools, and the names come off the wire.
- */
-function summarizeToolNames(tools: Tool[]): string {
-  const shown = tools.slice(0, 12).map((t) => t.name.slice(0, 60));
-  const joined = shown.join(", ");
-  return tools.length > shown.length ? `${joined}, …` : joined;
-}
-
-/** First line of a tool error result, for a log field. Bounded so a verbose
- *  server cannot write an unbounded log line. */
-function summarizeToolError(result: ToolResult): string {
-  const text = result.content?.find((c) => c.type === "text")?.text;
-  return (text ?? "tool returned an error").split("\n")[0]?.slice(0, 200) ?? "tool error";
 }

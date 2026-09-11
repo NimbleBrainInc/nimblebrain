@@ -121,8 +121,17 @@ export interface HookRegistration {
      * address more strongly than the connector credentials beside it. What bounds
      * the exposure is that reading it needs workspace-admin, and rotating is one
      * action.
+     *
+     * **Optional because a stored record can predate it.** Registrations written
+     * before the URL became an opaque id carry a `kid` and no address, and the
+     * door refuses them — so every reader has to decide what to do with a
+     * registration that is recorded and not addressable. Declaring it required
+     * did not make those records disappear; it only stopped the compiler asking.
+     * Two readers guarded anyway and one did not, and the one that did not built
+     * `/v1/hooks/undefined` and handed it to a connector as though it were an
+     * address.
      */
-    deliveryId: string;
+    deliveryId?: string;
     /**
      * The id this one replaced, admissible for {@link HOOK_ROTATION_GRACE_MS} after
      * `rotatedAt` — the same grace `prevKid` gets, for the same reason: a vendor's

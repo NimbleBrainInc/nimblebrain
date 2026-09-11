@@ -151,7 +151,7 @@ export const ShellLayout = memo(function ShellLayout({
         {isHidden && (
           <header className="flex items-center gap-2 px-3 py-2 border-b border-border bg-card shrink-0">
             <SidebarToggle />
-            <Logo variant="full" height={22} />
+            <Logo />
           </header>
         )}
         <div className="flex-1 min-h-0 overflow-hidden">{children}</div>

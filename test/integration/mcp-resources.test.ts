@@ -1,23 +1,31 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import {
+  CallToolRequestSchema,
+  ListResourcesRequestSchema,
+  ListToolsRequestSchema,
+  ReadResourceRequestSchema,
+} from "@modelcontextprotocol/sdk/types.js";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import type { ServerHandle } from "../../src/api/server.ts";
 import { startServer } from "../../src/api/server.ts";
 import { McpSource } from "../../src/tools/mcp-source.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
+import { type RemoteMcpFixture, startRemoteMcpServer } from "../helpers/remote-mcp-fixture.ts";
 import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
 
 // ---------------------------------------------------------------------------
-// Fixture: stdio MCP server with two resources
+// Fixture: a remote MCP server with two resources
 //
 // Exposes one tool (so tools/list is still populated) plus:
-//   - ui://fixture/dashboard         → text/html payload
-//   - text://fixture/greeting         → plain-text payload
+//   - ui://<namespace>/dashboard      → text/html payload
+//   - text://<namespace>/greeting     → plain-text payload
 // ---------------------------------------------------------------------------
 const FIXTURE_HTML = "<h1>Fixture Dashboard</h1><p>hello from a test resource</p>";
 const FIXTURE_TEXT = "hello greetings from fixture";
@@ -28,34 +36,18 @@ interface FixtureConfig {
   textBody: string;
 }
 
-function createFixtureConnector(dir: string, config: FixtureConfig): string {
-  mkdirSync(dir, { recursive: true });
-  const nodeModulesPath = join(import.meta.dir, "../..", "node_modules");
+function createFixtureServer(config: FixtureConfig): Server {
   const dashboardUri = `ui://${config.namespace}/dashboard`;
   const greetingUri = `text://${config.namespace}/greeting`;
-  const serverCode = `
-const { Server } = require("${nodeModulesPath}/@modelcontextprotocol/sdk/dist/cjs/server/index.js");
-const { StdioServerTransport } = require("${nodeModulesPath}/@modelcontextprotocol/sdk/dist/cjs/server/stdio.js");
-const {
-  ListToolsRequestSchema,
-  CallToolRequestSchema,
-  ListResourcesRequestSchema,
-  ReadResourceRequestSchema,
-} = require("${nodeModulesPath}/@modelcontextprotocol/sdk/dist/cjs/types.js");
 
-async function main() {
   const server = new Server(
-    { name: ${JSON.stringify(config.namespace)}, version: "0.1.0" },
+    { name: config.namespace, version: "0.1.0" },
     { capabilities: { tools: {}, resources: {} } },
   );
 
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
     tools: [
-      {
-        name: "ping",
-        description: "Returns pong",
-        inputSchema: { type: "object", properties: {} },
-      },
+      { name: "ping", description: "Returns pong", inputSchema: { type: "object", properties: {} } },
     ],
   }));
 
@@ -65,44 +57,26 @@ async function main() {
 
   server.setRequestHandler(ListResourcesRequestSchema, async () => ({
     resources: [
-      { uri: ${JSON.stringify(dashboardUri)}, name: "Dashboard", mimeType: "text/html" },
-      { uri: ${JSON.stringify(greetingUri)}, name: "Greeting", mimeType: "text/plain" },
+      { uri: dashboardUri, name: "Dashboard", mimeType: "text/html" },
+      { uri: greetingUri, name: "Greeting", mimeType: "text/plain" },
     ],
   }));
 
   server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
-    if (request.params.uri === ${JSON.stringify(dashboardUri)}) {
+    if (request.params.uri === dashboardUri) {
       return {
-        contents: [
-          {
-            uri: request.params.uri,
-            mimeType: "text/html",
-            text: ${JSON.stringify(config.htmlBody)},
-          },
-        ],
+        contents: [{ uri: request.params.uri, mimeType: "text/html", text: config.htmlBody }],
       };
     }
-    if (request.params.uri === ${JSON.stringify(greetingUri)}) {
+    if (request.params.uri === greetingUri) {
       return {
-        contents: [
-          {
-            uri: request.params.uri,
-            mimeType: "text/plain",
-            text: ${JSON.stringify(config.textBody)},
-          },
-        ],
+        contents: [{ uri: request.params.uri, mimeType: "text/plain", text: config.textBody }],
       };
     }
-    throw new Error("Resource not found: " + request.params.uri);
+    throw new Error(`Resource not found: ${request.params.uri}`);
   });
 
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
-}
-main();
-`;
-  writeFileSync(join(dir, "server.cjs"), serverCode);
-  return dir;
+  return server;
 }
 
 // ---------------------------------------------------------------------------
@@ -116,6 +90,8 @@ let handle: ServerHandle;
 let baseUrl: string;
 let fixtureSource: McpSource;
 let otherSource: McpSource;
+let fixtureServer: RemoteMcpFixture;
+let otherServer: RemoteMcpFixture;
 
 beforeAll(async () => {
   mkdirSync(testDir, { recursive: true });
@@ -128,21 +104,12 @@ beforeAll(async () => {
 
   // Provision the primary workspace and register the fixture MCP source in it.
   await provisionTestWorkspace(runtime);
-  const fixtureDir = createFixtureConnector(join(testDir, "fixture"), {
-    namespace: "fixture",
-    htmlBody: FIXTURE_HTML,
-    textBody: FIXTURE_TEXT,
-  });
+  fixtureServer = startRemoteMcpServer(() =>
+    createFixtureServer({ namespace: "fixture", htmlBody: FIXTURE_HTML, textBody: FIXTURE_TEXT }),
+  );
   fixtureSource = new McpSource(
     "fixture",
-    {
-      type: "stdio",
-      spawn: {
-        command: "node",
-        args: [join(fixtureDir, "server.cjs")],
-        env: process.env as Record<string, string>,
-      },
-    },
+    { type: "remote", url: new URL(fixtureServer.url), allowInsecure: true },
     new NoopEventSink(),
   );
   await fixtureSource.start();
@@ -152,21 +119,16 @@ beforeAll(async () => {
   // Provision a second workspace with its own MCP source and a distinct
   // namespace — `ui://other/dashboard` is only reachable from this workspace.
   await provisionTestWorkspace(runtime, OTHER_WORKSPACE_ID, "Other Workspace");
-  const otherDir = createFixtureConnector(join(testDir, "other"), {
-    namespace: "other",
-    htmlBody: "<h1>Other Workspace</h1>",
-    textBody: "other greetings",
-  });
+  otherServer = startRemoteMcpServer(() =>
+    createFixtureServer({
+      namespace: "other",
+      htmlBody: "<h1>Other Workspace</h1>",
+      textBody: "other greetings",
+    }),
+  );
   otherSource = new McpSource(
     "other",
-    {
-      type: "stdio",
-      spawn: {
-        command: "node",
-        args: [join(otherDir, "server.cjs")],
-        env: process.env as Record<string, string>,
-      },
-    },
+    { type: "remote", url: new URL(otherServer.url), allowInsecure: true },
     new NoopEventSink(),
   );
   await otherSource.start();
@@ -176,17 +138,16 @@ beforeAll(async () => {
   handle = startServer({ runtime, port: 0 });
   baseUrl = `http://localhost:${handle.port}`;
   // Generous hook timeout: this setup starts a Runtime, provisions two
-  // workspaces, and spawns two Node MCP subprocesses. The 5s default hook
-  // timeout is too tight under CI load and flaked on subprocess spawn
-  // ("killed 1 dangling process"). 30s leaves ample headroom without
-  // masking a genuine hang.
+  // workspaces, and stands up two MCP servers. The 5s default hook timeout
+  // is too tight under CI load. 30s leaves ample headroom without masking a
+  // genuine hang.
 }, 30_000);
 
 afterAll(async () => {
   // Optional-chain every teardown step: if `beforeAll` timed out partway,
   // these vars may be unassigned. Without the guards a setup flake surfaces
   // as a misleading `TypeError: undefined is not an object` from teardown,
-  // burying the real cause (the spawn timeout).
+  // burying the real cause (the setup timeout).
   handle?.stop(true);
   try {
     await fixtureSource?.stop();
@@ -198,6 +159,8 @@ afterAll(async () => {
   } catch {
     // already stopped
   }
+  fixtureServer?.close();
+  otherServer?.close();
   await runtime?.shutdown();
   if (existsSync(testDir)) rmSync(testDir, { recursive: true });
 }, 30_000);

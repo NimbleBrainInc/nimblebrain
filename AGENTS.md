@@ -305,10 +305,6 @@ Namespaces (`src/observability/log.ts`):
 
 Add a namespace by calling `log.debug("ns", "message")` (from `src/observability/log.ts`). Keep this table and the `log.ts` doc comment in sync.
 
-### Connector subprocess stderr (default-on)
-
-Lines a connector writes to stderr — Python tracebacks, warnings, application logs — are surfaced verbatim and prefixed `[connector:<sourceName>]`, dimmed. **No flag required.** This is the connector author's deliberate diagnostic output, separate from NB's own `NB_DEBUG=mcp` tracing; hiding it costs hours when a connector crashes. To quiet a chatty connector, silence at the connector level (logger config) or redirect at the shell (`bun run dev 2> >(grep -v '\[connector:')`). The last 50 lines are also captured into the `source.crashed` event payload as `stderrTail`, so post-mortem consumers see the cause-of-death.
-
 ### Browser (`localStorage.nb_debug`)
 
 ```js
@@ -406,7 +402,7 @@ Long-running entities can get orphaned if the connector subprocess dies mid-run.
 
 ## Inbound Webhooks — the hooks door
 
-`POST /v1/hooks/:connector/:vendor/:token` (`src/api/routes/hooks.ts`, backed by
+`POST /v1/hooks/:deliveryId` (`src/api/routes/hooks.ts`, backed by
 `src/hooks/`). One generic door for vendor deliveries that cannot carry a platform
 token. The runtime opens the capability in the path, mints its ordinary
 workspace-scoped platform token, and forwards the bytes to a route the connector
@@ -503,10 +499,15 @@ after the door stopped taking it.
 **Provisioning is a reconcile, not an install step.** `ensureHooks` runs when a
 connection reaches `running` (`setConnectionRunningObserver`), which covers a
 fresh install, a boot, and an interactive OAuth flow completing long after the
-install returned — one path instead of three that drift. A declared
-`register_tool` that is missing or does not accept `{vendor, url}` **fails the
-install**; a `register_tool` call that merely errors does not (the connector is
-useful without its webhook, and the `kid` is recorded so a rotation retries).
+install returned — one path instead of three that drift. It provisions only
+what is missing, and **missing means unaddressable**: a registration with no
+`deliveryId` is refused by the door, so it counts as missing and the next pass
+gives it an address rather than skipping it. A declared `register_tool` that is
+missing or does not accept `{vendor, url}` **provisions nothing** and is reported
+as a warning on the install, which has already committed, and re-logged on every
+transition to `running`. A `register_tool` call that merely errors leaves the
+registration recorded (the connector is useful without its webhook, and a
+rotation or reinstall retries).
 
 **The forward adds no header, and the `kid` does not travel.** The fleet edge
 strips the reserved `x-nb-*` namespace by RULE (it cannot tell a runtime-stamped
@@ -525,6 +526,65 @@ headers the runtime cannot enumerate have to reach the receiving verifier.
 load-bearing `X-Forwarded-For` reader — right-most back `NB_TRUSTED_PROXY_HOPS`
 (default 1), never left-most. The two other readers (`auth-middleware.ts`,
 `mcp-server.ts`) feed log lines and decide nothing; do not add a third that does.
+
+## Connector lifecycle — the two callable moments
+
+`src/lifecycle/` (`declaration.ts` parses, `notify.ts` calls) tells a connector
+it became reachable in a workspace (`on_ready`, with
+`{ reason: "install" | "resume" }`) and that it is about to be removed
+(`on_removing`, no arguments). Declared as `_meta["ai.nimblebrain/host"].lifecycle`,
+`host_version: "1.4"`; each value names a tool on that same server. Developer
+contract: [`docs/apps/lifecycle.mdx`](./docs/src/content/docs/apps/lifecycle.mdx).
+
+**Two moments, because the notification is a tool call on the bundle.** Before a
+connector is reachable there is no server to call; after teardown there is
+nothing left. So extension is DECLARATIVE outside that window (install-time
+secret collection, the uninstall-time hook revoke — both runtime acts off the
+connector's record) and CALLABLE inside it. A `pre_install` proposal is a
+proposal to run bundle code outside a bundle. Do not add events without that
+argument.
+
+**No vendor vocabulary.** Same line `HostManifestMeta.hooks` holds: the kernel
+says *you were installed*, and what that means is the bundle's business. A
+`provisioning:` block describing what to provision is the taxonomy trap.
+
+Three rules that are load-bearing rather than stylistic:
+
+- **`on_ready` does NOT reuse `singleFlight`, and this is the thing most likely
+  to be "tidied up" back into a bug.** That flight exists to stop two concurrent
+  MINTS diverging; `on_ready` mints nothing, so joining it tells a
+  freshly-installed connector `resume` — or, once the dedupe set has the
+  observer's success, skips the install call and takes the install notice with
+  it. The install-path call is ungated; only the connection-running observer is
+  deduped, by a per-`(workspace, connector)` **set**, never a timer.
+  `test/integration/connector-lifecycle-notify.test.ts` pins both halves.
+- **A fresh install therefore delivers TWO `on_ready` calls, racily.** At least
+  once is the contract, handlers must be idempotent, and suppressing one needs
+  "an install is in progress" state the runtime does not hold.
+- **`on_removing` fires before `lifecycle.uninstall` and before the OAuth
+  revoke**, is best-effort, and never *fails* the uninstall — which does wait
+  for it, bounded by a **5s deadline in `notifyRemoving` and by nothing else**.
+  `verifyLifecycleTools` refuses a task-augmented handler (`awaitToolTaskResult`
+  has no deadline of its own), but that check runs on the READY path and only
+  warns — it has never gated this call, and it says nothing about a merely slow
+  inline handler. Do not read it as the bound and delete the deadline as
+  redundant; the wait is held where the guarantee is made. It also may never
+  arrive — the docs say so in those words, because
+  a bundle that leaks a third-party resource without it is relying on a call
+  nothing guarantees.
+
+The contract check (`verifyLifecycleTools`) mirrors `verifyRegisterTool` with a
+weaker predicate — the tool exists and takes no *required* argument — and
+deliberately does **not** require `reason` in the schema. The runtime sends an
+argument the schema need not mention, which rests on the server framework
+accepting and ignoring unknown arguments (FastMCP/pydantic does). Like the hooks
+check it is a warning on a **successful** install, and an empty tool list is
+"not ready yet", not a violation.
+
+`ConnectorPort` and the tool-surface watch both reconciles run on live in
+`src/tools/connector-surface.ts`. Two purposes subscribe independently
+(`"hooks"`, `"lifecycle"`); `stopWatchingToolSurface` drops both on uninstall and
+`stopAllToolSurfaceWatches` on shutdown, beside `resetReadyNotifications`.
 
 ## API Surfaces — Three Audiences
 

@@ -5,12 +5,14 @@ import type { McpTransportMode } from "../../src/tools/mcp-source.ts";
 import type { EventSink } from "../../src/engine/types.ts";
 
 describe("McpSource transport mode", () => {
-  it("isRemote() returns false for stdio mode", () => {
+  it("isRemote() returns false for in-process mode", () => {
     const mode: McpTransportMode = {
-      type: "stdio",
-      spawn: { command: "echo", args: [], env: {} },
+      type: "inProcess",
+      createServer: () => {
+        throw new Error("not started in this test");
+      },
     };
-    const source = new McpSource("test-stdio", mode, new NoopEventSink());
+    const source = new McpSource("test-in-process", mode, new NoopEventSink());
     expect(source.isRemote()).toBe(false);
   });
 

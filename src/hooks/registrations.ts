@@ -124,7 +124,7 @@ export function listRegistrations(ws: Pick<Workspace, "hooks">): HookRegistratio
  *
  * The whole read-through-write runs inside `serializePerWorkspace`, which every
  * writer of a workspace record shares — see its doc for why the lock is keyed by
- * workspace rather than by field. It also closes the `rotate_hook`-vs-reconcile
+ * workspace rather than by field. It also closes the `hooks__rotate_webhook`-vs-reconcile
  * window that `ensureHooks` leaves open by bypassing the flight for a rotation:
  * the two can still run concurrently, but they can no longer interleave inside
  * the write.
@@ -143,6 +143,15 @@ export async function updateRegistrations(
     return next;
   });
 }
+
+/**
+ * A registration that HAS an address. A stored record can lack one, which is why
+ * `deliveryId` is optional on {@link HookRegistration}; a freshly minted one
+ * cannot, and saying so in the type is what lets a caller build a URL without a
+ * guard. A path that forgets to carry the id fails the build rather than
+ * shipping `/v1/hooks/undefined`.
+ */
+export type Addressable = HookRegistration & { deliveryId: string };
 
 /**
  * Record a freshly-minted `kid` for one stream, rotating the previous one out.
@@ -164,8 +173,8 @@ export function withRotatedKid(
     headerRenames?: Record<string, string>;
   },
   nowIso: string = new Date().toISOString(),
-): HookRegistration {
-  const reg: HookRegistration = {
+): Addressable {
+  const reg: Addressable = {
     connector: next.connector,
     vendor: next.vendor,
     kid: next.kid,

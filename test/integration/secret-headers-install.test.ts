@@ -173,6 +173,13 @@ function toolFor(sessionWsId: string, injected?: ConnectorLifecycleManager) {
     getUserStore: () => ({ get: async () => null }),
     getConnectorInstancesForWorkspace: (_wsId: string) => lifecycle.getInstances(),
     getAllowInsecureRemotes: () => false,
+    // No connector in this catalog declares a lifecycle block, so both calls
+    // are no-ops — but `handleUninstall` reads the getter before any teardown,
+    // and a stub missing it fails the uninstall these tests are about.
+    getLifecycleNotifyDeps: () => ({
+      declarationFor: async () => undefined,
+      portFor: () => undefined,
+    }),
   } as unknown as Runtime;
   return createManageConnectorsTool({
     runtime,

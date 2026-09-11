@@ -1,4 +1,5 @@
 import type { HookDeclaration } from "../../hooks/types.ts";
+import type { LifecycleDeclaration } from "../../lifecycle/types.ts";
 import type { NotificationsDeclaration } from "../../notifications/types.ts";
 import type { CredentialRef, CredentialValue } from "../../tools/credential-ref.ts";
 import type { Connection, ConnectionState } from "./connection.ts";
@@ -253,7 +254,7 @@ export interface OAuthClientConfig {
 
 /** Host manifest metadata at _meta["ai.nimblebrain/host"]. */
 export interface HostManifestMeta {
-  host_version: "1.0" | "1.1" | "1.2" | "1.3";
+  host_version: "1.0" | "1.1" | "1.2" | "1.3" | "1.4";
   name?: string;
   icon?: string;
   /**
@@ -292,6 +293,21 @@ export interface HostManifestMeta {
    * See `src/notifications/types.ts`.
    */
   notifications?: NotificationsDeclaration;
+  /**
+   * The two moments the runtime can tell this server about its own
+   * installation — `on_ready` when it first becomes reachable in a workspace,
+   * `on_removing` immediately before its source is torn down. Each names a tool
+   * on this same server. Belongs to `host_version: "1.4"`.
+   *
+   * The same line {@link HostManifestMeta.hooks} holds applies here with more
+   * force: nothing in this block describes what either event MEANS. The kernel
+   * says *you were installed*; what a bundle does about it — mint a vendor
+   * tenancy, release one, nothing at all — is the bundle's business. A block
+   * describing what to provision would be a vendor taxonomy in the kernel.
+   *
+   * See `src/lifecycle/types.ts`.
+   */
+  lifecycle?: LifecycleDeclaration;
 }
 
 /** Briefing declaration — how this app contributes to the daily briefing. */
