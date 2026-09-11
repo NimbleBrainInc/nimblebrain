@@ -24,6 +24,7 @@ import { brokeredConnectorDir } from "../../src/connectors/runtime/brokered.ts";
 import { WORKSPACE_PRINCIPAL_ID } from "../../src/connectors/runtime/connection.ts";
 import type { ConnectionLiveness, ProbeTarget } from "../../src/connectors/runtime/connection-probe.ts";
 import { ConnectorLifecycleManager } from "../../src/connectors/runtime/lifecycle.ts";
+import { uninstallWorkspaceConnector } from "../../src/connectors/runtime/uninstall.ts";
 import type { ConnectorRef } from "../../src/connectors/runtime/types.ts";
 import type {
   BrokeredStateOptions,
@@ -160,6 +161,10 @@ function buildHarness(provider: ManagedConnectorProvider): Harness {
     getUserStore: () => ({ get: async () => null }),
     getConnectorInstancesForWorkspace: () => lifecycle.getInstances(),
     getManagedConnectorRegistry: () => registry,
+    getLifecycleNotifyDeps: () => ({
+      declarationFor: async () => undefined,
+      portFor: () => undefined,
+    }),
   } as unknown as Runtime;
 
   return { workDir, wsId, workspaceStore, lifecycle, runtime };
@@ -339,6 +344,27 @@ describe("example-broker — cleanup on uninstall", () => {
     expect(calls.cleanups[0]?.brokered.connectorId).toBe(CONNECTOR_ID);
     expect(calls.cleanups[0]?.owner).toEqual({ type: "workspace", wsId: h.wsId });
     expect(existsSync(dir)).toBe(false);
+  });
+
+  test("the teardown seam a workspace delete runs reaches the same cleanup", async () => {
+    const ref = installedRef();
+    await h.lifecycle.seedInstance("com-example-widgets", ref.url ?? "", ref, undefined, h.wsId);
+    await h.workspaceStore.update(h.wsId, { connectors: [ref] });
+
+    // `uninstallWorkspaceConnector` is what `Runtime.deleteWorkspace` calls for
+    // every connector the workspace holds. Deleting the container has to revoke
+    // the grant the broker is holding — otherwise the only path that ever did
+    // goes with the record that named it, and the connection lives at the
+    // vendor forever with nothing left in the product pointing at it.
+    const outcome = await uninstallWorkspaceConnector(h.runtime, h.wsId, "com-example-widgets");
+
+    expect(outcome.ok).toBe(true);
+    expect(calls.cleanups).toHaveLength(1);
+    expect(calls.cleanups[0]?.brokered.connectorId).toBe(CONNECTOR_ID);
+
+    // And the row went with it, so a reboot does not reseed a connector whose
+    // upstream connection has just been revoked.
+    expect((await h.workspaceStore.get(h.wsId))?.connectors ?? []).toHaveLength(0);
   });
 });
 

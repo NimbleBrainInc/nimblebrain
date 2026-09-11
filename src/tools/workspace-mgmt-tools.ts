@@ -4,6 +4,7 @@ import { INTERNAL_TOOL_ANNOTATION, type ToolResult } from "../engine/types.ts";
 import type { UserIdentity } from "../identity/provider.ts";
 import { ORG_ADMIN_ROLES } from "../identity/types.ts";
 import type { UserStore } from "../identity/user.ts";
+import type { Runtime } from "../runtime/runtime.ts";
 import { isHttpUrl } from "../util/url.ts";
 import { canWriteWorkspaceScoped } from "../workspace/authz.ts";
 import { PersonalWorkspaceInvariantError } from "../workspace/errors.ts";
@@ -57,6 +58,16 @@ export interface ManageWorkspacesContext {
   /** Returns the requesting user's identity, or null if unauthenticated. */
   getIdentity: () => UserIdentity | null;
   workspaceStore: WorkspaceStore;
+  /**
+   * The runtime seam a delete goes through.
+   *
+   * A workspace owns its connectors, and tearing them down needs the lifecycle,
+   * the per-workspace registry, and the credential store — none of which a
+   * `WorkspaceStore` has or should have. `Runtime.deleteWorkspace` is where
+   * that cascade lives, so the tool holds the runtime rather than reaching past
+   * it to the store.
+   */
+  runtime: Runtime;
   /** Required for member management (user validation, display name enrichment). */
   userStore?: UserStore;
 }
@@ -454,7 +465,12 @@ async function handleDelete(
   }
 
   try {
-    const deleted = await ctx.workspaceStore.delete(workspaceId);
+    // The runtime seam, not the store: deleting a workspace runs the same
+    // teardown as removing each connector it holds, and the store knows nothing
+    // about connectors. Per-connector failures come back in `connectors` rather
+    // than as a throw — one unreachable vendor must not strand the workspace
+    // half-deleted.
+    const { deleted, connectors } = await ctx.runtime.deleteWorkspace(workspaceId);
     if (!deleted) {
       return {
         content: textContent(`Workspace not found: ${workspaceId}`),
@@ -462,9 +478,12 @@ async function handleDelete(
       };
     }
 
-    const data = { deleted: true, workspaceId };
+    const failed = connectors.filter((c) => !c.ok || c.revokeError);
+    const data = { deleted: true, workspaceId, connectors };
     return {
-      content: textContent(`Deleted workspace ${workspaceId}.`),
+      content: textContent(
+        `Deleted workspace ${workspaceId}.` + describeConnectorTeardown(connectors.length, failed),
+      ),
       structuredContent: data,
       isError: false,
     };
@@ -476,6 +495,26 @@ async function handleDelete(
       isError: true,
     };
   }
+}
+
+/**
+ * One sentence about what the delete tore down, silent when the workspace held
+ * no connectors.
+ *
+ * A failure is named rather than counted: the workspace record is gone, so this
+ * notice is the last place the connector whose grant may still be live at a
+ * vendor can be identified.
+ */
+function describeConnectorTeardown(total: number, failed: Array<{ serverName: string }>): string {
+  if (total === 0) return "";
+  const torn = ` Tore down ${total} connector${total === 1 ? "" : "s"}.`;
+  if (failed.length === 0) return torn;
+  // A row that named no server has no name to print; say so rather than
+  // quoting an empty string at an operator who then has nothing to search for.
+  const names = failed
+    .map((f) => (f.serverName ? `"${f.serverName}"` : "an unnamed connector row"))
+    .join(", ");
+  return `${torn} ${names} did not tear down cleanly — check the workspace's grants at the vendor.`;
 }
 
 async function handleList(ctx: ManageWorkspacesContext): Promise<ToolResult> {
