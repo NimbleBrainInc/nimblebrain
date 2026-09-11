@@ -259,9 +259,9 @@ describe("estimateMessageTokens — tool-result parts", () => {
       ],
     };
     const tokens = estimateMessageTokens(msg);
-    // Image flat fallback (~1300) + tiny text ("screenshot taken" ~5 tokens).
+    // Image flat fallback (1300) + "screenshot taken" (16 chars / 4 = 4 tokens).
     // The base64 payload's 700K chars must NOT contribute.
-    expect(tokens).toBeLessThan(2_000);
+    expect(tokens).toBe(1_304);
   });
 
   test("json output is tokenized by serialized length", () => {
