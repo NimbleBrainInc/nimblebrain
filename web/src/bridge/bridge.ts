@@ -26,6 +26,7 @@ import {
   type CancelTaskRequest,
   CancelTaskResultSchema,
   CreateTaskResultSchema,
+  ErrorCode,
   type GetTaskPayloadRequest,
   GetTaskPayloadResultSchema,
   type GetTaskRequest,
@@ -180,7 +181,8 @@ export function createBridge(
     // Trust boundary: the iframe runs third-party app code. Validate
     // inbound envelopes against the declared schemas before acting on
     // them. Unrecognized methods (no schema in the registry) pass
-    // through and rely on the switch statement's default-drop.
+    // through to the switch's `default`, which answers a request with
+    // method-not-found and drops a notification.
     const validation = validateAppToHostMessage(msg);
     if (!validation.ok) {
       // Drop and log. A malformed envelope is either a buggy app or
@@ -194,8 +196,8 @@ export function createBridge(
     // Dispatch by method. Every spec method, the two ui/notifications/*
     // lifecycle signals, and the synapse/ extensions are distinct `method`
     // values, so one switch reproduces the original per-method routing. A
-    // message with no (or an unrecognized) method matches no case and is
-    // dropped — the same default-drop the switch always relied on.
+    // message with no method, or with one this host does not serve, lands in
+    // `default`.
     switch (msg.method) {
       // -----------------------------------------------------------------
       // ext-apps protocol: ui/initialize REQUEST (has id + method)
@@ -355,6 +357,13 @@ export function createBridge(
         );
         break;
       }
+
+      // -----------------------------------------------------------------
+      // Anything else: a method this host does not serve, or no method.
+      // -----------------------------------------------------------------
+      default:
+        answerUnserved(msg, postToIframe);
+        break;
     }
   }
 
@@ -486,6 +495,23 @@ export function createBridge(
 
 /** Delivers a host→iframe message; a no-op once the bridge is destroyed. */
 type PostToIframe = (data: unknown) => void;
+
+/**
+ * Answer a message whose method this host does not serve. A request
+ * (`resources/list`, `prompts/list`, …) gets JSON-RPC method-not-found, so the
+ * view's call fails at once instead of waiting on a reply that never comes. A
+ * notification needs no reply, and a message with no method is not a request,
+ * so both are dropped.
+ */
+function answerUnserved(msg: { method?: unknown; id?: unknown }, postToIframe: PostToIframe): void {
+  if (typeof msg.method !== "string") return;
+  if (typeof msg.id !== "string" && typeof msg.id !== "number") return;
+  postToIframe({
+    jsonrpc: "2.0",
+    id: msg.id,
+    error: { code: ErrorCode.MethodNotFound, message: `Method not found: ${msg.method}` },
+  });
+}
 
 /**
  * Answer an ext-apps `ui/initialize` request: post the handshake response,
