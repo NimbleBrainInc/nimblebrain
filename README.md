@@ -106,7 +106,7 @@ All endpoints require authentication (Bearer token or session cookie) unless not
 | GET | /v1/events | Yes | SSE workspace event stream |
 | GET | /v1/auth/authorize | No | OAuth authorization redirect |
 | GET | /v1/auth/callback | No | OAuth callback handler |
-| POST | /v1/auth/logout | Yes | Clear session cookie |
+| POST | /v1/auth/logout | No | Clear session and refresh cookies (requires `Content-Type: application/json`) |
 | POST | /v1/auth/refresh | No | Refresh access token |
 | GET | /.well-known/oauth-protected-resource | No | MCP OAuth discovery (RFC 9728) |
 | GET | /.well-known/oauth-authorization-server | No | AuthKit metadata proxy (RFC 8414) |

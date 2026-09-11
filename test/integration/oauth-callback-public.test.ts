@@ -10,8 +10,8 @@
  * session wasn't present on the callback's landing origin — wedging the
  * connector at "Connecting…" forever. These tests pin the contract: the
  * callbacks are reachable without auth (400 for missing params, never 401),
- * while the genuinely-authenticated route in the same sub-app (logout) still
- * rejects unauthenticated callers.
+ * while an authenticated route (bootstrap) still rejects unauthenticated
+ * callers.
  */
 
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
@@ -117,15 +117,24 @@ describe("public/special routes stay reachable without auth (mount-order invaria
 	}
 });
 
+describe("POST /v1/auth/logout is public", () => {
+	it("clears the session without auth", async () => {
+		const res = await fetch(`${baseUrl}/v1/auth/logout`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+		});
+		expect(res.status).toBe(200);
+	});
+});
+
 describe("genuinely-authenticated routes still reject unauthenticated callers", () => {
-	it("POST /v1/auth/logout without auth returns 401", async () => {
-		const res = await fetch(`${baseUrl}/v1/auth/logout`, { method: "POST" });
+	it("GET /v1/bootstrap without auth returns 401", async () => {
+		const res = await fetch(`${baseUrl}/v1/bootstrap`);
 		expect(res.status).toBe(401);
 	});
 
-	it("POST /v1/auth/logout with a valid bearer succeeds", async () => {
-		const res = await fetch(`${baseUrl}/v1/auth/logout`, {
-			method: "POST",
+	it("GET /v1/bootstrap with a valid bearer is not 401", async () => {
+		const res = await fetch(`${baseUrl}/v1/bootstrap`, {
 			headers: { Authorization: `Bearer ${API_KEY}` },
 		});
 		expect(res.status).not.toBe(401);

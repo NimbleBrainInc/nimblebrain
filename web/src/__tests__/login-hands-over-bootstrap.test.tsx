@@ -44,7 +44,7 @@ afterEach(() => {
 });
 
 describe("Login", () => {
-  test("passesTheBootstrapItFetchedToOnLogin_soTheParentDoesNotFetchAgain", async () => {
+  test("passesTheBootstrapItFetchedToOnLogin_afterASingleProbe", async () => {
     const bootstrapCalls: string[] = [];
     globalThis.fetch = (async (input: string | URL | Request) => {
       const url = String(input);
