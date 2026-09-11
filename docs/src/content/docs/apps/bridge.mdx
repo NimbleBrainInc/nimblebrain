@@ -33,7 +33,7 @@ All messages use `window.postMessage` with JSON-RPC 2.0 envelopes:
 | `ui/notifications/tool-input` | Notification | Tool arguments being sent to a tool on the app's server. |
 | `ui/notifications/host-context-changed` | Notification | Host context changed (theme toggle, locale, etc.). |
 | `notifications/tasks/status` | Notification | Status update for a long-running task. Forwarded verbatim from the MCP server. See [Tasks](#tasks). |
-| `notifications/resources/list_changed` | Notification | The app's MCP server announced that the resources it serves changed. See [below](#notificationsresourceslist_changed). |
+| `notifications/resources/list_changed` | Notification | The app's own MCP server sent this; the host relays it verbatim. See [below](#notificationsresourceslist_changed). |
 
 #### App to Host
 
@@ -45,6 +45,8 @@ All messages use `window.postMessage` with JSON-RPC 2.0 envelopes:
 | `ui/notifications/request-teardown` | Notification | App requests the host to tear down the iframe. Currently a no-op. |
 | `tools/call` | Request | Call a tool on the app's MCP server. Returns `CallToolResult`. |
 | `resources/read` | Request | Read a resource from the app's MCP server. Returns `ReadResourceResult`. See [below](#resourcesread). |
+| `resources/list` | Request | List the app's MCP server's resources, paginated. Returns `ListResourcesResult`. See [below](#resourceslist-and-resourcestemplateslist). |
+| `resources/templates/list` | Request | List the app's MCP server's resource templates, paginated. Returns `ListResourceTemplatesResult`. |
 | `tasks/get` | Request | Non-blocking fetch of a long-running task's current state. See [Tasks](#tasks). |
 | `tasks/result` | Request | Block until a task reaches a terminal state and return its payload. See [Tasks](#tasks). |
 | `tasks/cancel` | Request | Best-effort cancel of a running task. See [Tasks](#tasks). |
@@ -179,7 +181,7 @@ Sent when the agent is calling a tool on your app's server. The params contain t
 
 ### `notifications/resources/list_changed`
 
-Sent when the app's own MCP server sends `notifications/resources/list_changed`: the server announced that what it serves changed. The host forwards it to that server's views in the workspace where it happened, as the MCP Apps spec defines under `serverResources.listChanged`. Re-read what you show.
+The app's own MCP server sent `notifications/resources/list_changed`, and the host relays it to that server's views — as the MCP Apps spec defines under `serverResources.listChanged`, which `ui/initialize` advertises. Re-read what you show; [`resources/list`](#resourceslist-and-resourcestemplateslist) answers from the same server.
 
 ```json
 {
@@ -188,9 +190,13 @@ Sent when the app's own MCP server sends `notifications/resources/list_changed`:
 }
 ```
 
-This is the one change signal that comes from the server rather than being inferred by the host, so it covers every write the server makes — a call from your own iframe, the agent's, or one the server makes on its own. To use it, have your server send the notification when its data changes; a server that advertises `resources.listChanged` (FastMCP and the TypeScript SDK both do when they serve resources) can send it from inside the tool call that made the write. A server sends it only for a real change, so a view that re-reads on it cannot loop.
+The host is a relay, not an interpreter. A notification reaches the views as the server sent it (its `params`, when it sent any, are passed on), and it reaches only that server's views, in the workspace whose connection received it. It is the one change signal that comes from the server rather than being inferred by the host, so it covers every write the server makes: a call from your own iframe, the agent's, or one the server makes on its own. To use it, have your server send the notification when its data changes; a server that advertises `resources.listChanged` (FastMCP and the TypeScript SDK both do when they serve resources) can send it from inside the tool call that made the write. A server sends it only for a real change, so a view that re-reads on it cannot loop.
 
-Several announcements inside the host's 100 ms debounce window arrive as one: the notification carries no payload, so repeats add nothing.
+What the host relays, and how often, is the host's decision rather than the server's, because the server is untrusted:
+
+- **Only the methods the host relays pass.** Today that is `notifications/resources/list_changed`. A server cannot reach its views with arbitrary JSON-RPC by choosing a method name.
+- **`params` are relayed only as an object under 4 KB.** Anything else is dropped, and the notification is relayed without params.
+- **The rate is capped.** Per server and workspace, the first notification is delivered at once, and any more inside the next 250 ms collapse into one delivery at the end of it. A server announcing in a loop reaches its views a few times a second.
 
 ### `synapse/data-changed`
 
@@ -298,6 +304,36 @@ Read a resource from your app's MCP server. This is a JSON-RPC **request** — t
 ```
 
 Like `tools/call`, resource reads are scoped to your app's own server.
+
+### `resources/list` and `resources/templates/list`
+
+List your app's MCP server's resources, or its resource templates. Both are JSON-RPC **requests**, answered with the server's own `ListResourcesResult` (`{ resources, nextCursor? }`) or `ListResourceTemplatesResult` (`{ resourceTemplates, nextCursor? }`). Pagination passes through: send the `nextCursor` you got back as `cursor` to read the next page.
+
+**Request:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "resources/list",
+  "id": "list-1",
+  "params": { "cursor": "page-2" }
+}
+```
+
+**Success response (ListResourcesResult):**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "list-1",
+  "result": {
+    "resources": [{ "uri": "notes://42", "name": "Standup notes" }],
+    "nextCursor": "page-3"
+  }
+}
+```
+
+A listing always answers from your app's own server, never another app's. A server that serves no resources lists as empty rather than failing.
 
 ### Tasks
 
@@ -491,10 +527,11 @@ The bridge handles `navigate` directly. All other actions are dispatched to the 
 
 ## Security model
 
-The bridge enforces two security boundaries:
+The bridge enforces three security boundaries:
 
 1. **Origin isolation** — The host only processes messages from the iframe's `contentWindow`. Messages from other sources are silently dropped.
 2. **Tool scoping** — `tools/call` requests are always routed to the app's own MCP server. An iframe cannot call tools on another app's server.
+3. **Listing scoping** — `resources/list` and `resources/templates/list` answer from the app's own MCP server. Every iframe shares one `/mcp` session, so the bridge names that server on the request; the iframe cannot name another.
 
 ## Example: making a tool call from an iframe
 

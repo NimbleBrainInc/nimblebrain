@@ -252,8 +252,9 @@ describe("ui/initialize — tasks capability", () => {
   });
 
   test("hostCapabilities.serverResources.listChanged is advertised, in the spec's shape", async () => {
-    // The host forwards the app server's `notifications/resources/list_changed`
-    // to its views (hooks/useDataSync.ts); this is the promise that it does.
+    // The host relays the app server's `notifications/resources/list_changed`
+    // to its views (hooks/useServerNotificationRelay.ts); this is the promise
+    // that it does.
     const { McpUiHostCapabilitiesSchema } = await import("@modelcontextprotocol/ext-apps");
     const frame = mount("synapse-research");
 

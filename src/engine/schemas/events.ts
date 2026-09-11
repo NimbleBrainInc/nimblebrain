@@ -112,29 +112,27 @@ export const ContextAssembledPayload = Type.Object({
 export type ContextAssembledPayload = Static<typeof ContextAssembledPayload>;
 
 export const DataChangedPayload = Type.Object({
-  /**
-   * Who detected the change. `"agent"`: the host saw a tool call complete and
-   * names the tool. `"server"`: the app's own server announced it
-   * (`notifications/resources/list_changed`), so there is no tool to name.
-   * Absent when the runtime emits one for its own cross-cutting changes.
-   */
-  source: Type.Optional(Type.Union([Type.Literal("agent"), Type.Literal("server")])),
+  /** When emitted by the agent's tool dispatch; absent when emitted by
+   *  the runtime for cross-cutting changes. */
+  source: Type.Optional(Type.Literal("agent")),
   server: Type.String(),
-  /** The tool that ran. Absent on a server-announced change. */
-  tool: Type.Optional(Type.String()),
+  tool: Type.String(),
 });
 export type DataChangedPayload = Static<typeof DataChangedPayload>;
 
 /**
- * A workspace connector's server pushed `notifications/resources/list_changed`.
- * `server` is the source's name in that workspace's registry, `workspaceId`
- * the registry's workspace.
+ * An app server's notification, relayed to that server's views in one
+ * workspace. `server` is the bare server name (an iframe's `data-app`),
+ * `method` one of `RELAYED_SERVER_NOTIFICATIONS`, `params` what the SDK parsed,
+ * size-capped.
  */
-export const ResourcesListChangedPayload = Type.Object({
+export const ServerNotificationPayload = Type.Object({
   server: Type.String(),
   workspaceId: Type.String(),
+  method: Type.String(),
+  params: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
 });
-export type ResourcesListChangedPayload = Static<typeof ResourcesListChangedPayload>;
+export type ServerNotificationPayload = Static<typeof ServerNotificationPayload>;
 
 export const ToolPromotionChangedPayload = Type.Object({
   runId: Type.String(),
@@ -256,10 +254,7 @@ export const TypedEngineEvent = Type.Union([
   Type.Object({ type: Type.Literal("skills.loaded"), data: SkillsLoadedPayload }),
   Type.Object({ type: Type.Literal("context.assembled"), data: ContextAssembledPayload }),
   Type.Object({ type: Type.Literal("data.changed"), data: DataChangedPayload }),
-  Type.Object({
-    type: Type.Literal("resources.list_changed"),
-    data: ResourcesListChangedPayload,
-  }),
+  Type.Object({ type: Type.Literal("server.notification"), data: ServerNotificationPayload }),
   Type.Object({ type: Type.Literal("tool.promoted"), data: ToolPromotionChangedPayload }),
   Type.Object({ type: Type.Literal("tool.released"), data: ToolPromotionChangedPayload }),
   Type.Object({ type: Type.Literal("skill.created"), data: SkillCreatedPayload }),

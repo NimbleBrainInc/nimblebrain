@@ -68,6 +68,6 @@ describe("seam: the data.changed broadcast key", () => {
   test("a workspace source of that name still broadcasts normally", () => {
     expect(
       deriveDataChangedTarget({ type: "tool.done", data: { name: "gmail__send", ok: true } } as never),
-    ).toEqual({ source: "agent", server: "gmail", tool: "send" });
+    ).toEqual({ server: "gmail", tool: "send" });
   });
 });

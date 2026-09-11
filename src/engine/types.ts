@@ -316,12 +316,13 @@ export type EngineEventType =
   | "connection.state_changed"
   | "data.changed"
   /**
-   * A workspace connector's server pushed `notifications/resources/list_changed`:
-   * the resources it serves changed. Not forwarded to SSE as itself — the API
-   * layer turns it into a `data.changed` broadcast to that server's views.
-   * Payload: { server, workspaceId }.
+   * An app server sent a notification a host relays to the server's views
+   * (`RELAYED_SERVER_NOTIFICATIONS`), after coalescing. Forwarded to SSE as
+   * itself, scoped to the workspace; the web shell posts `{ method, params }`
+   * verbatim to that server's iframes. Payload: { server, workspaceId, method,
+   * params? }.
    */
-  | "resources.list_changed"
+  | "server.notification"
   | "conversation.title"
   | "config.changed"
   | "skill.created"
@@ -370,6 +371,20 @@ export type EngineEventType =
    * presenting one secret does not write a line per request.
    */
   | "audit.credential_read"
+  /**
+   * A stored secret claimed to be sealed and could not be opened — no sealing
+   * key configured, no ring entry matching its `kid`, or a failed
+   * authentication tag. Payload: { scope, key, reason, wantedKid? } plus
+   * `workspaceId` / `userId` when the scope has one. NEVER the value: the bytes
+   * that failed to open are still the ciphertext of a live credential.
+   *
+   * A tag failure is either tampering or a misconfigured key, and both belong
+   * on the same stream the reads go to. `wantedKid` is a MAC over a constant,
+   * so naming it discloses nothing about the key behind it while letting an
+   * operator tell "the outgoing key was dropped too early" from "this file came
+   * from somewhere else".
+   */
+  | "audit.credential_seal_failure"
   /**
    * An unattended dispatch — one tool call made with no session, as a named
    * principal, from stored configuration — reached the door. Emitted once per

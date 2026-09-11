@@ -136,15 +136,8 @@ export interface ConnectionStateChangedEvent {
 }
 
 export interface DataChangedEvent {
-  /**
-   * Who detected the change. `"agent"`: the host saw a tool call complete.
-   * `"server"`: the app's own server announced `resources/list_changed`.
-   * Absent reads as `"agent"`, the only producer before the field existed.
-   */
-  source?: "agent" | "server";
   server: string;
-  /** The tool that ran. Absent on a server-announced change. */
-  tool?: string;
+  tool: string;
   /**
    * The workspace the change happened in. Absent for an identity-door call
    * (`conversations`, `files`, `automations`), which belongs to no workspace —
@@ -153,6 +146,18 @@ export interface DataChangedEvent {
    */
   wsId?: string;
   timestamp: string;
+}
+
+/**
+ * An app server's own notification, relayed by the runtime to that server's
+ * views in one workspace. `server` is the bare server name (an iframe's
+ * `data-app`); `method` and `params` go to the iframe verbatim.
+ */
+export interface ServerNotificationEvent {
+  server: string;
+  workspaceId: string;
+  method: string;
+  params?: Record<string, unknown>;
 }
 
 export interface HeartbeatEvent {
@@ -216,6 +221,7 @@ export interface SseEventMap {
   "connector.uninstalled": ConnectorUninstalledEvent;
   "connection.state_changed": ConnectionStateChangedEvent;
   "data.changed": DataChangedEvent;
+  "server.notification": ServerNotificationEvent;
   "conversation.title": ConversationTitleEvent;
   "config.changed": ConfigChangedEvent;
   "notification.created": NotificationCreatedEvent;

@@ -80,6 +80,9 @@ import {
   ErrorCode,
   isInitializeRequest,
   ListResourcesRequestSchema,
+  type ListResourcesResult,
+  ListResourceTemplatesRequestSchema,
+  type ListResourceTemplatesResult,
   ListToolsRequestSchema,
   McpError,
   ReadResourceRequestSchema,
@@ -861,11 +864,20 @@ function createServer(
   // exists to close. Per-source errors are swallowed so one bad source doesn't
   // kill the listing.
   //
-  // Pagination: MVP returns everything in a single response (no `cursor`
-  // plumbing). The SDK type allows `nextCursor`, but iframe consumers today
-  // enumerate the full list. Document here so we remember to add cursor
-  // support if/when resource counts grow beyond a few hundred per workspace.
-  server.setRequestHandler(ListResourcesRequestSchema, async () => {
+  // One source, when `_meta` names it (`RESOURCE_SOURCE_META_KEY`): that is how
+  // the iframe bridge asks for an app's own server, and the listing is that
+  // server's, cursor and `nextCursor` passed straight through. Without it, the
+  // workspace-wide listing an MCP client gets returns everything in a single
+  // response (no `cursor` plumbing across sources).
+  server.setRequestHandler(ListResourcesRequestSchema, async (request) => {
+    const scoped = scopedSourceName(request.params?._meta);
+    if (scoped !== undefined) {
+      const empty: ListResourcesResult = { resources: [] };
+      return listFromOneSource(runtime, sessionCtx, scoped, empty, (client) =>
+        client.listResources(cursorParams(request.params?.cursor)),
+      );
+    }
+
     const resources: Resource[] = [];
     if (!runtime || !identityId) return { resources };
 
@@ -882,6 +894,40 @@ function createServer(
       await collectSourceResources(src, resources);
     }
     return { resources };
+  });
+
+  // ── resources/templates/list ──────────────────────────────────────
+  //
+  // The same wall, the same one-source scoping and the same single-response
+  // workspace-wide listing as `resources/list`.
+  server.setRequestHandler(ListResourceTemplatesRequestSchema, async (request) => {
+    const empty: ListResourceTemplatesResult = { resourceTemplates: [] };
+    const scoped = scopedSourceName(request.params?._meta);
+    if (scoped !== undefined) {
+      return listFromOneSource(runtime, sessionCtx, scoped, empty, (client) =>
+        client.listResourceTemplates(cursorParams(request.params?.cursor)),
+      );
+    }
+
+    const wsId = mcpRequestWorkspace.getStore();
+    if (!runtime || !identityId || !wsId) return empty;
+    let wsRegistry: ToolRegistry;
+    try {
+      wsRegistry = await runtime.ensureWorkspaceRegistry(wsId);
+    } catch {
+      return empty;
+    }
+    const resourceTemplates: ListResourceTemplatesResult["resourceTemplates"] = [];
+    for (const src of wsRegistry.getSources()) {
+      const client = mcpClientOf(src);
+      if (!client) continue;
+      try {
+        resourceTemplates.push(...(await client.listResourceTemplates()).resourceTemplates);
+      } catch {
+        // Serves no templates, or a transport hiccup — one source never kills the listing.
+      }
+    }
+    return { resourceTemplates };
   });
 
   // ── resources/read ────────────────────────────────────────────────
@@ -1255,6 +1301,85 @@ async function startWorkspaceTask(
     ownerContext,
   });
   return createResult;
+}
+
+/**
+ * The `_meta` key naming the one source a `resources/list` or
+ * `resources/templates/list` is for. The iframe bridge sets it to the app's own
+ * server (`web/src/bridge/bridge.ts`, pinned equal by
+ * `test/unit/tools/server-notifications.test.ts`); an MCP client that omits it
+ * gets the workspace-wide listing.
+ */
+export const RESOURCE_SOURCE_META_KEY = "ai.nimblebrain/source";
+
+/** The source a listing request is scoped to, or undefined for none. */
+function scopedSourceName(meta: Record<string, unknown> | undefined): string | undefined {
+  const name = meta?.[RESOURCE_SOURCE_META_KEY];
+  return typeof name === "string" && name.length > 0 ? name : undefined;
+}
+
+/** A listing's params: the cursor when the caller sent one, and nothing else. */
+function cursorParams(cursor: unknown): { cursor: string } | undefined {
+  return typeof cursor === "string" ? { cursor } : undefined;
+}
+
+/**
+ * Run one listing against one source — the source `resources/read` would reach
+ * for it: a kernel identity source by that name (under the caller's identity
+ * context), otherwise that name in the request's workspace. Returns the
+ * source's result as it answered, pagination included.
+ *
+ * `empty` when there is no such source, it is not MCP-backed, or the listing
+ * fails (a server that serves no resources answers `Method not found`). A
+ * missing source and an empty one read the same, as they do for
+ * `resources/read`: the caller learns nothing about what exists outside its
+ * reach.
+ */
+async function listFromOneSource<T>(
+  runtime: Runtime | null | undefined,
+  sessionCtx: McpSessionContext,
+  sourceName: string,
+  empty: T,
+  list: (client: NonNullable<ReturnType<McpSource["getClient"]>>) => Promise<T>,
+): Promise<T> {
+  if (!runtime || !sessionCtx.identity?.id) return empty;
+  const wsId = mcpRequestWorkspace.getStore();
+
+  if (IDENTITY_SOURCES.has(sourceName)) {
+    const client = mcpClientOf(runtime.getIdentitySource(sourceName));
+    if (!client) return empty;
+    const identityReqCtx: RequestContext = { identity: sessionCtx.identity, workspaceId: wsId };
+    try {
+      return await runWithRequestContext(identityReqCtx, () => list(client));
+    } catch {
+      return empty;
+    }
+  }
+
+  if (!wsId) return empty;
+  let wsRegistry: ToolRegistry;
+  try {
+    wsRegistry = await runtime.ensureWorkspaceRegistry(wsId);
+  } catch {
+    return empty;
+  }
+  const client = mcpClientOf(wsRegistry.getSources().find((src) => src.name === sourceName));
+  if (!client) return empty;
+  try {
+    return await list(client);
+  } catch {
+    return empty;
+  }
+}
+
+/**
+ * The live MCP client behind a source, or null. The same test
+ * `collectSourceResources` and `tryReadResource` apply, so a source is listable
+ * here exactly when its resources are readable.
+ */
+function mcpClientOf(src: unknown): ReturnType<McpSource["getClient"]> | null {
+  if (!(src instanceof McpSource)) return null;
+  return src.getClient() ?? null;
 }
 
 /**
