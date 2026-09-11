@@ -192,7 +192,11 @@ Sent when a tool call completes on a server, indicating the app's data may have 
 ```
 
 <Aside type="caution">
-Iframe-initiated tool calls (via `tools/call`) do **not** trigger `synapse/data-changed`. Only agent-side tool calls produce this event. This prevents infinite refresh loops.
+An iframe's own `tools/call` triggers `synapse/data-changed` **only** when the call succeeds and the tool declares `readOnlyHint: false` in its MCP tool annotations. A successful agent-side tool call triggers it whether or not the tool declares anything. So when a view saves through a tool, the other views of the same app refresh — mark each tool that writes with `readOnlyHint: false`, and each one that only reads with `readOnlyHint: true`.
+
+A tool that declares nothing does not trigger the event from an iframe. An app commonly refetches its data when this event arrives, and a read that fired it again would loop.
+
+The iframe that made the call receives the event too. A listener that refetches on every event does one extra read after its own write; filtering on `tool` avoids it.
 </Aside>
 
 ## App to Host messages

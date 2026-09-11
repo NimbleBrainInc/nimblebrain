@@ -325,6 +325,16 @@ export type EngineEventType =
   | "bridge.tool.call"
   | "bridge.tool.done"
   /**
+   * An inline `tools/call` through the `/mcp` door completed — the door an app
+   * iframe uses to call its own server, and the one external MCP clients use.
+   * Not routed to SSE and not persisted: its one reader is
+   * `deriveDataChangedTarget`, which broadcasts `data.changed` for it only when
+   * the call succeeded and the tool declares itself a write. Payload:
+   * { name, ok, readOnlyHint?, workspaceId? } — `name` is `<source>__<tool>`,
+   * `readOnlyHint` is the tool's own annotation, absent when it declares none.
+   */
+  | "mcp.tool.done"
+  /**
    * A notification a connector emitted reached a workspace's inbox. Emitted
    * once per item, after the durable write — the inbox is the guarantee and
    * everything downstream of it is best-effort. Payload:

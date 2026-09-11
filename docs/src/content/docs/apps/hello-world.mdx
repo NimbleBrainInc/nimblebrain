@@ -285,7 +285,7 @@ Synapse hooks used:
 | Hook | What it does |
 |------|-------------|
 | `useCallTool('get_greeting')` | `{ call, isPending, data, error }` — typed tool calls with loading state |
-| `useDataSync(callback)` | Fires when the agent calls a tool on your server |
+| `useDataSync(callback)` | Fires when the agent calls a tool on your server, or anyone calls one that declares `readOnlyHint: false` |
 | `useTheme()` | Reactive theme tokens — re-renders on dark mode toggle |
 
 <Aside type="note">

@@ -661,6 +661,7 @@ These cause production bugs if violated:
 
 - `tools/call` must return `CallToolResult` as-is (never unwrap fields)
 - `POST /v1/tools/call` must NOT emit `data.changed` SSE events (causes infinite loops)
+- A `/mcp` `tools/call` (the door app iframes call through) broadcasts `data.changed` ONLY when it succeeded and the tool declares `readOnlyHint: false` — see `deriveDataChangedTarget`. Never widen that to undeclared tools: no platform app declares its reads, and `files/ui` refetches on any `data.changed` for its own app, so an undeclared read that broadcasts loops
 - Picker uploads (`synapse/request-file`) MUST persist via `POST /v1/resources` (multipart); iframes receive a `FileEntry`, never bytes. Base64-in-`tools/call` arguments hits the 1 MB JSON cap and silently breaks for any binary above ~750 KB.
 - Tool errors (`isError: true`) must become JSON-RPC `error` responses
 - Bridge must guard listeners with `destroyed` flag (React StrictMode double-mounts)

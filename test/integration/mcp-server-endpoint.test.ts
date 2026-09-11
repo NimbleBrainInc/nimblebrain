@@ -73,6 +73,35 @@ class FakeToolSource implements ToolSource {
 	}
 }
 
+// A source whose tools say what they change, for the `data.changed` tests.
+// `fail` declares a write and then fails it.
+class NotesToolSource implements ToolSource {
+	readonly name = "notes";
+
+	async start(): Promise<void> {}
+	async stop(): Promise<void> {}
+
+	async tools(): Promise<Tool[]> {
+		const tool = (name: string, annotations?: Tool["annotations"]): Tool => ({
+			name: `notes__${name}`,
+			description: name,
+			inputSchema: { type: "object", properties: {} },
+			source: "inline",
+			...(annotations ? { annotations } : {}),
+		});
+		return [
+			tool("save", { readOnlyHint: false }),
+			tool("list", { readOnlyHint: true }),
+			tool("touch"),
+			tool("fail", { readOnlyHint: false }),
+		];
+	}
+
+	async execute(toolName: string): Promise<ToolResult> {
+		return { content: textContent(toolName), isError: toolName === "fail" };
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Setup
 // ---------------------------------------------------------------------------
@@ -94,6 +123,7 @@ beforeAll(async () => {
 	// Register a fake tool source so we have tools to list/call.
 	const wsRegistry = runtime.getRegistryForWorkspace(TEST_WORKSPACE_ID);
 	wsRegistry.addSource(new FakeToolSource());
+	wsRegistry.addSource(new NotesToolSource());
 
 	handle = startServer({ runtime, port: 0 });
 	baseUrl = `http://localhost:${handle.port}`;
@@ -193,6 +223,51 @@ describe("MCP Server Endpoint (/mcp)", () => {
 		} finally {
 			await Promise.all([client1.close(), client2.close()]);
 		}
+	});
+
+	// An app iframe calls its own server through this door. When it saves from an
+	// inline view, the same app's sidebar list has to hear about it — and when it
+	// reads, nothing may, or a listener that refetches on every event loops.
+	describe("data.changed from a tools/call", () => {
+		const broadcasts: Record<string, unknown>[] = [];
+		beforeAll(() => {
+			handle.sseManager.onEvent((event, data) => {
+				if (event === "data.changed") broadcasts.push(data);
+			});
+		});
+		beforeEach(() => {
+			broadcasts.length = 0;
+		});
+
+		it("a successful call to a declared write broadcasts to that app, in its workspace", async () => {
+			const client = await createMcpClient();
+			try {
+				const result = await client.callTool({ name: "notes__save", arguments: {} });
+				expect(result.isError).toBeFalsy();
+				expect(broadcasts).toEqual([
+					{
+						server: "notes",
+						tool: "save",
+						wsId: TEST_WORKSPACE_ID,
+						timestamp: expect.any(String),
+					},
+				]);
+			} finally {
+				await client.close();
+			}
+		});
+
+		it("a declared read, an undeclared tool and a failed write broadcast nothing", async () => {
+			const client = await createMcpClient();
+			try {
+				for (const name of ["notes__list", "notes__touch", "notes__fail", "fake__echo"]) {
+					await client.callTool({ name, arguments: { text: "x" } });
+				}
+				expect(broadcasts).toEqual([]);
+			} finally {
+				await client.close();
+			}
+		});
 	});
 
 	// Standalone GET /mcp is the spec's optional server→client SSE channel.

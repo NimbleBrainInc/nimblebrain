@@ -162,6 +162,51 @@ describe("deriveDataChangedTarget — the bridge door stays silent", () => {
 	});
 });
 
+describe("deriveDataChangedTarget — the /mcp door broadcasts declared writes only", () => {
+	// The door an app iframe calls its own server through. Its traffic is mostly
+	// that app reading its own data — often in response to this broadcast — so a
+	// read that broadcast would refetch, broadcast, refetch. A tool that declares
+	// `readOnlyHint: false` is the one case that cannot loop: the refetch it
+	// causes is a read. So the gate is the declaration, not its absence.
+	const call = (data: Record<string, unknown>): EngineEvent => ({
+		type: "mcp.tool.done",
+		data: { name: "notes__save", ok: true, workspaceId: WS, ...data },
+	});
+
+	test("a successful declared write broadcasts, scoped to its workspace", () => {
+		// The case this door exists for: an inline view saves, and the same app's
+		// sidebar list refreshes without a remount.
+		expect(deriveDataChangedTarget(call({ readOnlyHint: false }))).toEqual({
+			server: "notes",
+			tool: "save",
+			wsId: WS,
+		});
+	});
+
+	test("a declared read does not broadcast", () => {
+		expect(deriveDataChangedTarget(call({ readOnlyHint: true }))).toBeNull();
+	});
+
+	test("a tool that declares nothing does not broadcast", () => {
+		// The loop guard. No platform app declares its reads today, and `files/ui`
+		// refetches on any `data.changed` for its own app — so defaulting an
+		// undeclared tool to a write would spin it on its own listing.
+		expect(deriveDataChangedTarget(call({}))).toBeNull();
+	});
+
+	test("a failed write does not broadcast", () => {
+		// Nothing landed, so nothing downstream is stale — the agent door's rule.
+		expect(deriveDataChangedTarget(call({ ok: false, readOnlyHint: false }))).toBeNull();
+	});
+
+	test("the personal-connector and system-tool guards hold on this door too", () => {
+		expect(
+			deriveDataChangedTarget(call({ name: "my_notes__save", readOnlyHint: false })),
+		).toBeNull();
+		expect(deriveDataChangedTarget(call({ name: "nb__save", readOnlyHint: false }))).toBeNull();
+	});
+});
+
 describe("deriveDataChangedTarget — which workspace changed", () => {
 	test("the workspace rides along, so a listener can ignore another's change", () => {
 		const event: EngineEvent = {

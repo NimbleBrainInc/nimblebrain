@@ -183,7 +183,7 @@ export function startServer(options: ServerOptions): ServerHandle {
     sseManager.emit(event);
 
     // Broadcast `data.changed` so connector iframes (Synapse useDataSync) know to
-    // refresh. We broadcast in two situations:
+    // refresh. We broadcast in three situations:
     //
     //   (1) tool.done (ok)      — the call completed; any entity writes have
     //                             landed and downstream views should refresh.
@@ -194,11 +194,16 @@ export function startServer(options: ServerOptions): ServerHandle {
     //                             the work-in-progress, not only the final
     //                             result. Without this, a `useDataSync`-driven
     //                             view stays stale for the full task duration.
+    //   (3) mcp.tool.done (ok)  — a call through the `/mcp` door (an app
+    //                             iframe, or an external client) to a tool that
+    //                             declares `readOnlyHint: false`. Saving from an
+    //                             inline view refreshes the same app's sidebar.
     //
-    // `deriveDataChangedTarget` normalizes both event shapes to the bare
-    // source name (stripping the Stage-2 `ws_<id>-` namespace) and drops
-    // system tools (`nb__*`) — see its doc comment for why the bare form is
-    // required for the iframe data-app match.
+    // `deriveDataChangedTarget` normalizes every event shape to the bare
+    // source name (stripping the Stage-2 `ws_<id>-` namespace), drops system
+    // tools (`nb__*`), and holds the `/mcp` door to declared writes — see its
+    // doc comment for why the bare form is required for the iframe data-app
+    // match, and why that door is gated.
     const target = deriveDataChangedTarget(event);
     if (target) {
       // Confirms `data.changed` is actually being broadcast, and to how

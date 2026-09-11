@@ -106,6 +106,7 @@ import { IDENTITY_SOURCES } from "../tools/identity-sources.ts";
 import { McpSource } from "../tools/mcp-source.ts";
 import { bareToolName } from "../tools/namespace.ts";
 import type { ToolRegistry } from "../tools/registry.ts";
+import type { ToolSource } from "../tools/types.ts";
 import { splitInnerToolName } from "../util/tool-name.ts";
 import {
   createMcpTaskStore,
@@ -950,6 +951,47 @@ function toCallToolResult(result: ToolResult) {
 }
 
 /**
+ * Report a completed inline `tools/call` to the runtime sink as `mcp.tool.done`.
+ *
+ * This is how a write made through this door reaches the same `data.changed`
+ * broadcast as one the agent makes: `deriveDataChangedTarget` reads the event
+ * and broadcasts when the call succeeded and the tool declares
+ * `readOnlyHint: false`. The hint is read off the source's own tool listing —
+ * what the server declared — never from anything on the request.
+ *
+ * The listing is only consulted for a successful call, since a failed one
+ * broadcasts nothing. A listing that cannot be read leaves the hint absent,
+ * which is the no-broadcast answer; it never fails the call it reports on.
+ */
+async function emitMcpToolDone(
+  runtime: Runtime,
+  source: ToolSource,
+  qualifiedName: string,
+  result: ToolResult,
+  workspaceId: string | undefined,
+): Promise<void> {
+  const ok = !result.isError;
+  let readOnlyHint: boolean | undefined;
+  if (ok) {
+    try {
+      const tool = (await source.tools()).find((t) => t.name === qualifiedName);
+      readOnlyHint = tool?.annotations?.readOnlyHint;
+    } catch (err) {
+      log.debug("mcp", `mcp.tool.done: tool listing unavailable for ${qualifiedName}: ${err}`);
+    }
+  }
+  runtime.getEventSink().emit({
+    type: "mcp.tool.done",
+    data: {
+      name: qualifiedName,
+      ok,
+      ...(readOnlyHint !== undefined ? { readOnlyHint } : {}),
+      ...(workspaceId !== undefined ? { workspaceId } : {}),
+    },
+  });
+}
+
+/**
  * Map an orchestrator routing error to its MCP JSON-RPC error, re-throwing
  * anything unrecognized. Each error class maps to a distinct response shape;
  * `error.data.reason` carries the precise classification. (The wall's denial,
@@ -1072,6 +1114,9 @@ async function executeIdentityToolCall(
   const idResult = await runWithRequestContext(identityCtx, () =>
     routed.source.execute(bare, (args ?? {}) as Record<string, unknown>),
   );
+  // Stamped with the request's workspace when it has one, as the agent's door
+  // stamps its run's; absent, the broadcast fans out like any identity-door event.
+  await emitMcpToolDone(runtime, routed.source, fullName, idResult, identityCtx.workspaceId);
   return toCallToolResult(idResult);
 }
 
@@ -1176,6 +1221,7 @@ async function executeWorkspaceToolCall(
   const result = await runWithRequestContext(reqCtx, () =>
     source.execute(localName, (args ?? {}) as Record<string, unknown>),
   );
+  await emitMcpToolDone(runtime, source, innerToolName, result, wsId);
   return toCallToolResult(result);
 }
 

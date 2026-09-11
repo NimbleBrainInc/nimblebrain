@@ -107,15 +107,15 @@ const SSE_ROUTES: Partial<Record<EngineEventType, SseRoute>> = {
   "skill.created": { scope: "global" },
   "skill.updated": { scope: "global" },
   "skill.deleted": { scope: "global" },
-  // Bridge tool call/done — a tool call an iframe made, as opposed to one the
-  // agent's run loop made (`tool.done`). Deliberately NOT read by
-  // `deriveDataChangedTarget`: a UI door's traffic is mostly READS, and a read
-  // that triggers a refresh triggers a read. Broadcasting here is what the
-  // AGENTS.md rule "`/v1/tools/call` must NOT emit `data.changed` (causes
-  // infinite loops)" is about, and the loop is live — `files/ui` refetches on
-  // any `data.changed` for its own app, with no mutation filter. Making a
-  // UI-initiated write refresh a sibling UI needs mutation gating FIRST (#358);
-  // until then this event is audit only.
+  // Bridge tool call/done — a tool call the web shell made over
+  // `/v1/tools/call`, as opposed to one the agent's run loop made
+  // (`tool.done`). Audit only, and deliberately NOT read by
+  // `deriveDataChangedTarget`: the traffic is mostly READS, and a read that
+  // triggers a refresh triggers a read. That is the AGENTS.md rule
+  // "`/v1/tools/call` must NOT emit `data.changed` (causes infinite loops)", and
+  // the loop is live — `files/ui` refetches on any `data.changed` for its own
+  // app, with no mutation filter. An iframe's write reaches its siblings through
+  // the `/mcp` door instead (`mcp.tool.done`), gated on the tool declaring it.
   // Field name is `workspaceId` (not `wsId`) — see handlers.ts emit sites.
   "bridge.tool.call": { scope: "workspace", wsIdField: "workspaceId" },
   "bridge.tool.done": { scope: "workspace", wsIdField: "workspaceId" },
@@ -133,12 +133,24 @@ const SSE_ROUTES: Partial<Record<EngineEventType, SseRoute>> = {
  * Derive the `data.changed` broadcast target (`{ server, tool }`) from a tool
  * lifecycle event, or `null` when the event must not broadcast.
  *
- * Two event shapes feed this, and they carry the source name differently:
+ * Three events feed this, and they carry the source name differently:
  *   - `tool.done` (ok) → a single qualified `name`. This is the name the
  *     MODEL called: bare `<source>__<tool>`, or `my_<source>__<tool>` for a
  *     personal connector.
  *   - `tool.progress` → separate `source` + `tool`; `McpSource` emits the
  *     bare source name there.
+ *   - `mcp.tool.done` (ok) → a qualified `name`, from a call through the
+ *     `/mcp` door: an app iframe calling its own server, or an external MCP
+ *     client. Broadcasts ONLY when the tool declares `readOnlyHint: false`.
+ *
+ * The `/mcp` door is gated on a declared write, and a tool that declares
+ * nothing does not broadcast from it. That door's traffic is mostly an app
+ * reading its own data, often in response to this very broadcast, so a read
+ * that broadcasts starts a refetch loop — and a listener that refetches on
+ * every event for its app (`files/ui` does) turns it into one immediately.
+ * A write the tool declares cannot loop that way: the refetch it causes is a
+ * read. The agent's door is not gated: a turn's tool calls do not re-run on
+ * a refetch, so the worst an unannotated read costs there is one refresh.
  *
  * Both are normalized to the **bare** source name via `bareToolName` before
  * the `__` split. This is load-bearing: the Synapse `useDataSync` consumer
@@ -158,7 +170,9 @@ export function deriveDataChangedTarget(
   event: EngineEvent,
 ): { server: string; tool: string; wsId: string | undefined } | null {
   const isBroadcast =
-    (event.type === "tool.done" && event.data.ok === true) || event.type === "tool.progress";
+    (event.type === "tool.done" && event.data.ok === true) ||
+    event.type === "tool.progress" ||
+    (event.type === "mcp.tool.done" && event.data.ok === true && event.data.readOnlyHint === false);
   if (!isBroadcast) return null;
 
   const { name, source, tool: toolField } = event.data;

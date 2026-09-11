@@ -1506,11 +1506,11 @@ export async function handleToolCall(
     eventWorkspaceId,
   );
 
-  // NOTE: Do NOT emit data.changed here. This endpoint is the MCP App Bridge
-  // proxy — tool calls initiated by iframes. The iframe already knows about
-  // its own calls. Emitting data.changed here creates an infinite loop:
-  // tool call → data.changed SSE → iframe refreshes → tool call → ...
-  // Agent-initiated data.changed events are emitted by the engine event sink.
+  // NOTE: Do NOT emit data.changed here. A read that broadcasts creates an
+  // infinite loop: tool call → data.changed SSE → iframe refreshes → tool call
+  // → ... Agent-initiated data.changed events are emitted by the engine event
+  // sink; an app iframe's declared writes by the `/mcp` door (`mcp.tool.done`),
+  // which is the door iframes call through.
 
   return json({
     content: result.content,
