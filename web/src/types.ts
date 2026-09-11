@@ -95,15 +95,6 @@ export interface ChatResult {
   usage?: TurnUsage;
 }
 
-/** Health check response from GET /v1/health. */
-export interface HealthInfo {
-  status: string;
-  version: string;
-  buildSha: string | null;
-  uptime: number;
-  connectors: Array<{ name: string; state: ConnectionState }>;
-}
-
 // --- SSE Event Types ---
 
 // All connector.* events are workspace-scoped at the SSE layer (server filters

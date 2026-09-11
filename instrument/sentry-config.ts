@@ -43,7 +43,7 @@ export function sentryEnabled(env: Record<string, string | undefined>): boolean 
  * config once the operator has opted in.
  *
  * `release` is the runtime's existing build identity (`NB_VERSION`, then
- * `NB_BUILD_SHA` — the same values `/v1/health` reports), so events group by
+ * `NB_BUILD_SHA` — the same values `/v1/bootstrap` reports), so events group by
  * deploy with no extra var. `tracesSampleRate` defaults to 0 (errors only) and
  * ignores anything outside the documented 0–1 range — performance tracing stays
  * owned by the kernel's OTLP→Tempo pipeline.

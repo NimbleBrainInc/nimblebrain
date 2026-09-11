@@ -2,7 +2,6 @@ import type { ResolvedFeatures } from "../config/features.ts";
 import type { EventSink } from "../engine/types.ts";
 import type { IdentityProvider, UserIdentity } from "../identity/provider.ts";
 import type { Runtime } from "../runtime/runtime.ts";
-import type { HealthMonitor } from "../tools/health-monitor.ts";
 import type { WorkspaceStore } from "../workspace/workspace-store.ts";
 import type { AuthMiddlewareOptions } from "./auth-middleware.ts";
 import type { ConversationEventManager } from "./conversation-events.ts";
@@ -67,7 +66,6 @@ export interface AppContext {
   authOptions: AuthMiddlewareOptions;
   provider: IdentityProvider;
   workspaceStore: WorkspaceStore;
-  healthMonitor: HealthMonitor;
   sseManager: SseEventManager;
   conversationEventManager: ConversationEventManager;
   rateLimiter: LoginRateLimiter;
