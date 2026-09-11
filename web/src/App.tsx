@@ -648,8 +648,11 @@ export function App() {
     };
   }, []);
 
-  const handleLogout = useCallback(() => {
-    logout();
+  const handleLogout = useCallback(async () => {
+    // Wait for the server to clear the session cookies before showing the
+    // login screen. Its first act is a bootstrap probe, and one sent while the
+    // cookie is still set succeeds and signs the user straight back in.
+    await logout();
     setAuthToken(null);
     setBootstrap(null);
     setAuthenticated(false);
@@ -685,14 +688,6 @@ export function App() {
     });
   }, [initFromBootstrap]);
 
-  const handleLogin = useCallback(() => {
-    // After OIDC redirect callback, the page reloads and bootstrap succeeds.
-    // This is called when Login detects a successful bootstrap after redirect.
-    tryBootstrap().then((data) => {
-      if (data) initFromBootstrap(data);
-    });
-  }, [initFromBootstrap]);
-
   if (checking) {
     return (
       <div className="flex items-center justify-center h-screen bg-background text-muted-foreground text-sm">
@@ -702,7 +697,7 @@ export function App() {
   }
 
   if (!authenticated || !bootstrap) {
-    return <Login onLogin={handleLogin} />;
+    return <Login onLogin={initFromBootstrap} />;
   }
 
   return (
