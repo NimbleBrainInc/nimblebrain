@@ -402,7 +402,7 @@ Long-running entities can get orphaned if the connector subprocess dies mid-run.
 
 ## Inbound Webhooks — the hooks door
 
-`POST /v1/hooks/:connector/:vendor/:token` (`src/api/routes/hooks.ts`, backed by
+`POST /v1/hooks/:deliveryId` (`src/api/routes/hooks.ts`, backed by
 `src/hooks/`). One generic door for vendor deliveries that cannot carry a platform
 token. The runtime opens the capability in the path, mints its ordinary
 workspace-scoped platform token, and forwards the bytes to a route the connector
@@ -499,10 +499,15 @@ after the door stopped taking it.
 **Provisioning is a reconcile, not an install step.** `ensureHooks` runs when a
 connection reaches `running` (`setConnectionRunningObserver`), which covers a
 fresh install, a boot, and an interactive OAuth flow completing long after the
-install returned — one path instead of three that drift. A declared
-`register_tool` that is missing or does not accept `{vendor, url}` **fails the
-install**; a `register_tool` call that merely errors does not (the connector is
-useful without its webhook, and the `kid` is recorded so a rotation retries).
+install returned — one path instead of three that drift. It provisions only
+what is missing, and **missing means unaddressable**: a registration with no
+`deliveryId` is refused by the door, so it counts as missing and the next pass
+gives it an address rather than skipping it. A declared `register_tool` that is
+missing or does not accept `{vendor, url}` **provisions nothing** and is reported
+as a warning on the install, which has already committed, and re-logged on every
+transition to `running`. A `register_tool` call that merely errors leaves the
+registration recorded (the connector is useful without its webhook, and a
+rotation or reinstall retries).
 
 **The forward adds no header, and the `kid` does not travel.** The fleet edge
 strips the reserved `x-nb-*` namespace by RULE (it cannot tell a runtime-stamped
