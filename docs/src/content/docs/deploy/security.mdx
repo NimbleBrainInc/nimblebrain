@@ -69,7 +69,7 @@ The `Secure` flag is automatically omitted for localhost connections (where `htt
 
 ### Logout
 
-`POST /v1/auth/logout` clears the cookie by setting `Max-Age=0`. The client should discard any cached auth state.
+`POST /v1/auth/logout` clears `nb_session` and `nb_refresh` by setting `Max-Age=0`. It needs no valid session, so sign-out still works after the access token has expired. It does require `Content-Type: application/json`: that header forces a CORS preflight, which a foreign origin fails, so another site cannot sign a user out with a plain form post. The client should discard any cached auth state.
 
 ## CORS
 

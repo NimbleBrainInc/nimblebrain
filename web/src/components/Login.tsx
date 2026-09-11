@@ -3,12 +3,20 @@ import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { tryBootstrap } from "../api/client";
+import type { BootstrapResponse } from "../types";
 import { Logo } from "./Logo";
 
 const RETRY_INTERVAL_MS = 2000;
 
 export interface LoginProps {
-  onLogin: () => void;
+  /**
+   * Receives the bootstrap this screen already fetched. The parent must
+   * authenticate from it rather than fetch again: a second bootstrap can fail
+   * where this one succeeded (the session cookie cleared in between), and this
+   * screen has stopped polling by then, so it would sit on "Connecting..."
+   * forever.
+   */
+  onLogin: (data: BootstrapResponse) => void;
 }
 
 export function Login({ onLogin }: LoginProps) {
@@ -34,7 +42,7 @@ export function Login({ onLogin }: LoginProps) {
       if (cancelled) return true;
       if (data) {
         // Already authenticated (e.g. cookie from OIDC callback)
-        onLogin();
+        onLogin(data);
         return true;
       }
       // tryBootstrap returns null for both 401 and network errors.
