@@ -7,7 +7,12 @@ import {
 import type { Tool } from "../tools/types.ts";
 import type { WorkspaceStore } from "../workspace/workspace-store.ts";
 import { assertForwardablePath } from "./declaration.ts";
-import { registrationKey, updateRegistrations, withRotatedKid } from "./registrations.ts";
+import {
+  type Addressable,
+  registrationKey,
+  updateRegistrations,
+  withRotatedKid,
+} from "./registrations.ts";
 import { buildHookUrl, newDeliveryId, newKid } from "./token.ts";
 import type { HookDeclaration, HookRegistration } from "./types.ts";
 
@@ -145,14 +150,6 @@ interface MintedHook {
 }
 
 /**
- * A registration that HAS an address. Every path out of {@link nextRegistration}
- * either reuses a stored `deliveryId` or mints one, so the caller can build a
- * URL without a guard — and if a future branch forgets to mint, this is what
- * fails the build rather than shipping `/v1/hooks/undefined`.
- */
-type Addressable = HookRegistration & { deliveryId: string };
-
-/**
  * The registration this declaration should hold after the operation.
  *
  * An install REUSES a live `kid`: re-minting on every reinstall would silently
@@ -199,7 +196,7 @@ function nextRegistration(
       deliveryId: newDeliveryId(),
       route: decl.route,
       headerRenames: decl.header_renames,
-    }) as Addressable,
+    }),
   };
 }
 
@@ -274,7 +271,7 @@ export async function provisionHooks(opts: ProvisionHooksOptions): Promise<Provi
  * designed backstop for a stream that never arrives; and the registration is
  * already recorded, so a later `hooks__rotate_webhook` or reinstall retries. What the
  * operator needs is to know the stream is not live yet, which the warn line and
- * `list_hooks` both give them.
+ * `hooks__list_webhooks` both give them.
  */
 async function handOverUrl(
   opts: ProvisionHooksOptions,

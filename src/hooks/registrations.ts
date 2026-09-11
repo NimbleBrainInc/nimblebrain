@@ -145,6 +145,15 @@ export async function updateRegistrations(
 }
 
 /**
+ * A registration that HAS an address. A stored record can lack one, which is why
+ * `deliveryId` is optional on {@link HookRegistration}; a freshly minted one
+ * cannot, and saying so in the type is what lets a caller build a URL without a
+ * guard. A path that forgets to carry the id fails the build rather than
+ * shipping `/v1/hooks/undefined`.
+ */
+export type Addressable = HookRegistration & { deliveryId: string };
+
+/**
  * Record a freshly-minted `kid` for one stream, rotating the previous one out.
  *
  * The same function serves the first mint and every rotation: on a first mint
@@ -164,8 +173,8 @@ export function withRotatedKid(
     headerRenames?: Record<string, string>;
   },
   nowIso: string = new Date().toISOString(),
-): HookRegistration {
-  const reg: HookRegistration = {
+): Addressable {
+  const reg: Addressable = {
     connector: next.connector,
     vendor: next.vendor,
     kid: next.kid,
