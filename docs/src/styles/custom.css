@@ -68,3 +68,10 @@
   font-optical-sizing: auto;
   letter-spacing: -0.01em;
 }
+
+/* ── Logo ── */
+/* The brand minimum for the full logo is 180px wide; Starlight's default
+   header height renders it narrower. */
+.site-title img {
+  height: 2.25rem;
+}
