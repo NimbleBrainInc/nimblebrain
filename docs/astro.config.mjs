@@ -43,8 +43,8 @@ export default defineConfig({
       title: 'NimbleBrain',
       favicon: '/favicon.ico',
       logo: {
-        light: './src/assets/logo-light.png',
-        dark: './src/assets/logo-dark.png',
+        light: './src/assets/nb-logo-full-light.svg',
+        dark: './src/assets/nb-logo-full-dark.svg',
         alt: 'NimbleBrain',
         replacesTitle: true,
       },
