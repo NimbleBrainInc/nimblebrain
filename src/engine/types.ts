@@ -364,6 +364,20 @@ export type EngineEventType =
    */
   | "audit.credential_read"
   /**
+   * A stored secret claimed to be sealed and could not be opened — no sealing
+   * key configured, no ring entry matching its `kid`, or a failed
+   * authentication tag. Payload: { scope, key, reason, wantedKid? } plus
+   * `workspaceId` / `userId` when the scope has one. NEVER the value: the bytes
+   * that failed to open are still the ciphertext of a live credential.
+   *
+   * A tag failure is either tampering or a misconfigured key, and both belong
+   * on the same stream the reads go to. `wantedKid` is a MAC over a constant,
+   * so naming it discloses nothing about the key behind it while letting an
+   * operator tell "the outgoing key was dropped too early" from "this file came
+   * from somewhere else".
+   */
+  | "audit.credential_seal_failure"
+  /**
    * An unattended dispatch — one tool call made with no session, as a named
    * principal, from stored configuration — reached the door. Emitted once per
    * call, whatever the outcome, including the ones that never touch a registry:

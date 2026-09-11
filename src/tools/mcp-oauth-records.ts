@@ -148,8 +148,20 @@ export class McpOAuthRecords {
   async read<T>(record: McpOAuthRecord, read: CredentialRead): Promise<T | null> {
     const wrapped = await this.#resolve(record, read);
     if (!wrapped) return null;
+    // Narrow: only a parse failure means "treat it as absent". A record whose
+    // bytes are sealed and cannot be opened is NOT a missing record — swallowing
+    // that would answer "not connected" for a connection that is, silently
+    // discarding live tokens and re-running the OAuth dance over a secret the
+    // operator can still recover by restoring the key.
+    let raw: string;
     try {
-      return JSON.parse(wrapped.reveal()) as T;
+      raw = wrapped.reveal();
+    } catch (err) {
+      log.warn(`[oauth] ${this.#serverName} ${record} record could not be opened: ${String(err)}`);
+      throw err;
+    }
+    try {
+      return JSON.parse(raw) as T;
     } catch (err) {
       log.debug(
         "mcp",

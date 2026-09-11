@@ -6,6 +6,13 @@ import type { EngineEvent, EventSink } from "../engine/types.ts";
 import { IdentityContext } from "../identity/context.ts";
 import { WorkspaceContext } from "../workspace/context.ts";
 import { type CredentialValue, isCredentialRef } from "./credential-ref.ts";
+import {
+  CredentialSealError,
+  type CredentialSealer,
+  type CredentialSealFailure,
+  isSealedValue,
+  parseSealedValue,
+} from "./credential-seal.ts";
 import { Redacted } from "./redacted.ts";
 
 /**
@@ -67,9 +74,11 @@ export interface CredentialKeyInfo {
 /**
  * The one door every secret goes through.
  *
- * The interface is the boundary between call sites and the storage backend. v1
- * ships plaintext-on-disk (`FileCredentialStore`); a SaaS deployment swaps in
- * envelope encryption with a per-scope KEK in KMS without touching a caller.
+ * The interface is the boundary between call sites and the storage backend.
+ * Which backend answers is configuration (`secrets.backend`), and no caller
+ * learns which one did: the same `FileCredentialStore` holds plaintext or
+ * AES-256-GCM depending on `secrets.config.seal`, and a future vault backend
+ * would be a second registration rather than a change here.
  * That promise is only worth something while this is the ONLY path, which is
  * why the store is constructed once (at the composition root, where the event
  * sink lives) and reached through `runtime.getCredentialStore()` rather than
@@ -154,6 +163,39 @@ export class CredentialNotFoundError extends Error {
 }
 
 /**
+ * Read a file that is not sealed.
+ *
+ * The trailing-newline trim is an affordance for `echo "secret" > file`, which
+ * is how the docs and every hand-seeded instance key have always written one.
+ * It is also lossy: a secret that genuinely ends in a newline comes back
+ * without it, and there is no way for this path to tell the two apart. That is
+ * the cost of accepting bytes a text editor produced, and it is why it belongs
+ * to the legacy path alone — a sealed value carries its own length and
+ * round-trips exactly.
+ */
+function legacyPlaintext(raw: string): string {
+  return raw.replace(/\n$/, "");
+}
+
+/**
+ * What an operator does about each way an open can fail. Separate strings
+ * because they are separate repairs: put the key back, restore the byte-exact
+ * file, or find out who wrote a file this runtime never sealed.
+ */
+const REMEDIES: Record<CredentialSealFailure, (kids: readonly string[]) => string> = {
+  unknown_kid: (kids) =>
+    `no key in the ring produced that kid (ring: ${kids.join(", ")}). Load the key that did — ` +
+    "a key dropped from the ring stops opening everything sealed under it",
+  auth_failed: () =>
+    "it failed authentication — the file was modified after sealing, or the key behind its kid " +
+    "is not the one that sealed it",
+  malformed: () =>
+    "it starts with the sealed-value magic but is not a well-formed sealed value. Sealed bytes are " +
+    "exact: a copy made with `echo` appends a newline and a truncated write cuts a field. Restore " +
+    "the file byte-for-byte, or set the secret again",
+};
+
+/**
  * A secret that reports its own use.
  *
  * The audit event fires on `reveal()`, not on the read that produced it, so the
@@ -168,26 +210,53 @@ export class CredentialNotFoundError extends Error {
  * one secret would write a line per outbound HTTP request.
  */
 class AuditedSecret extends Redacted<string> {
+  /** Set only for a value still sealed on disk. Called at most once. */
+  #open: (() => string) | undefined;
+  #outcome: { ok: true; value: string } | { ok: false; error: unknown } | undefined;
   #onFirstReveal: (() => void) | undefined;
 
-  constructor(value: string, onFirstReveal: () => void) {
-    super(value);
+  constructor(source: string | (() => string), onFirstReveal: () => void) {
+    // A lazy source has nothing to hand the base class, and the sealed bytes
+    // deliberately do NOT go there — `reveal` is overridden and the base's field
+    // is private, so the placeholder is unreachable, but a later
+    // `super.reveal()` over ciphertext is the exact mistake this file exists to
+    // prevent.
+    super(typeof source === "string" ? source : "");
+    if (typeof source !== "string") this.#open = source;
     this.#onFirstReveal = onFirstReveal;
   }
 
   override reveal(): string {
+    // Opening comes first: a value that could not be opened was never revealed,
+    // so it must not write an `audit.credential_read` line saying it was.
+    const value = this.#resolve();
     const emit = this.#onFirstReveal;
     if (emit) {
       this.#onFirstReveal = undefined;
       emit();
     }
-    return super.reveal();
+    return value;
+  }
+
+  /** Open once, then answer from the outcome — success or failure alike, so a
+   *  caller that reveals twice does not audit one failure twice. */
+  #resolve(): string {
+    if (!this.#open) return super.reveal();
+    if (!this.#outcome) {
+      try {
+        this.#outcome = { ok: true, value: this.#open() };
+      } catch (error) {
+        this.#outcome = { ok: false, error };
+      }
+    }
+    if (!this.#outcome.ok) throw this.#outcome.error;
+    return this.#outcome.value;
   }
 }
 
 /**
- * Plaintext file-backed `CredentialStore`. Ships in v1 self-host. Each secret
- * lives in its own file under its scope's root:
+ * File-backed `CredentialStore`. Each secret lives in its own file under its
+ * scope's root:
  *
  *   instance   <workDir>/credentials/secrets/<key>
  *   workspace  <workDir>/workspaces/<wsId>/credentials/secrets/<key>
@@ -195,19 +264,28 @@ class AuditedSecret extends Redacted<string> {
  *
  * Files are written 0o600 via atomic temp+rename; the parent `secrets/`
  * directory is created 0o700. A `put` on an existing key replaces it in place,
- * which is the whole of rotation — the next read gets the new value and no
- * config was touched.
+ * which is the whole of rotating a *value* — the next read gets the new one and
+ * no config was touched.
  *
- * This is "secure enough for trusted local disk" — it is NOT a SaaS-grade
- * solution. `CredentialStore` above is the swap point.
+ * **What is IN those files depends on the `sealer`.** With none, the secret
+ * verbatim: secure enough for a trusted local disk and nothing more. With one,
+ * `NBS1.…` — AES-256-GCM, for any deployment whose disk, snapshots or backups
+ * outlive the process. Which it is comes from `secrets.config.seal` at the
+ * backend, never from a build flag or the presence of an environment variable.
+ *
+ * The two are not two stores. The file mechanics are identical, the audit is
+ * identical, and a deployment that turns sealing on keeps reading the plaintext
+ * files already there — each is re-wrapped when something next writes it.
  */
 export class FileCredentialStore implements CredentialStore {
   readonly #workDir: string;
   readonly #eventSink: EventSink | undefined;
+  readonly #sealer: CredentialSealer | undefined;
 
-  constructor(workDir: string, opts?: { eventSink?: EventSink }) {
+  constructor(workDir: string, opts?: { eventSink?: EventSink; sealer?: CredentialSealer }) {
     this.#workDir = workDir;
     this.#eventSink = opts?.eventSink;
+    this.#sealer = opts?.sealer;
   }
 
   /**
@@ -250,8 +328,16 @@ export class FileCredentialStore implements CredentialStore {
     const path = this.#filePath(scope, key);
     if (!existsSync(path)) return null;
     const raw = await readFile(path, "utf-8");
-    // Trim trailing newline for ergonomic CLI input (`echo "secret" > file`).
-    const value = raw.replace(/\n$/, "");
+    // A sealed value is opened on the first `reveal()`, never here. `get`
+    // WITHOUT a reveal is the presence probe: connection-state derivation runs
+    // it over every installed connector on a page load, and boot runs it over
+    // every URL connector before starting any of them. Opening here makes one
+    // unopenable value throw at all of those — a single bad secret fails the
+    // whole tenant's boot and hides the UI that would repair it. Deferring puts
+    // the failure on the one connection that uses the secret, which is already
+    // isolated per connector. It is the same reason the audit line fires on the
+    // reveal rather than on the read that produced it.
+    const value = isSealedValue(raw) ? () => this.#open(scope, key, raw) : legacyPlaintext(raw);
     return new AuditedSecret(value, () => this.#auditReveal(scope, key, read));
   }
 
@@ -271,7 +357,10 @@ export class FileCredentialStore implements CredentialStore {
     // this can never collide with a real one, and keeping the key in the name
     // keeps two concurrent puts on different keys from sharing a temp path.
     const tmp = join(dir, `.${key}.tmp.${randomBytes(4).toString("hex")}`);
-    await writeFile(tmp, value, { encoding: "utf-8", mode: 0o600 });
+    // Sealed bytes are exact and carry no trailing newline, which is what makes
+    // a sealed value round-trip byte-for-byte where a plaintext one cannot.
+    const bytes = this.#sealer ? this.#sealer.seal(credentialScopeLabel(scope), key, value) : value;
+    await writeFile(tmp, bytes, { encoding: "utf-8", mode: 0o600 });
     await chmod(tmp, 0o600);
     await rename(tmp, path);
   }
@@ -309,6 +398,76 @@ export class FileCredentialStore implements CredentialStore {
       }
     }
     return out.sort((a, b) => a.key.localeCompare(b.key));
+  }
+
+  /**
+   * Open a value that claims to be sealed. Throws if it cannot be.
+   *
+   * **It is never read as plaintext.** Not when no sealer is configured, not
+   * when the ring has no matching key, not when the tag fails. Falling through
+   * on any of those would hand `NBS1.…` to a vendor as an API key — silently,
+   * for every credential, and most likely during exactly the incident that
+   * caused it: removing the config block, or rolling the image back below the
+   * release that introduced sealing. A loud failure at that moment is recoverable
+   * and a quiet one is not.
+   *
+   * Reached from the first `reveal()`, never from `get`.
+   */
+  #open(scope: CredentialScope, key: string, raw: string): string {
+    const label = credentialScopeLabel(scope);
+    const wantedKid = parseSealedValue(raw)?.kid;
+    // The codec's own reason travels, onto the error and onto the audit line.
+    // These are different operator problems with different repairs, and
+    // collapsing them makes a stray trailing newline read as a wrong key.
+    const fail = (reason: CredentialSealFailure | "no_sealer", remedy: string): never => {
+      this.#auditSealFailure(scope, key, wantedKid, reason);
+      throw new CredentialSealError(
+        reason === "no_sealer" ? "unknown_kid" : reason,
+        `the value at key "${key}" in scope ${label} is sealed${
+          wantedKid ? ` under kid ${wantedKid}` : ""
+        } and cannot be opened: ${remedy}`,
+      );
+    };
+    if (!this.#sealer) {
+      return fail(
+        "no_sealer",
+        "this runtime has no sealing key configured. Restore `secrets.config.seal` and the key it names — " +
+          "removing them does not make sealed files readable again, it makes them unreadable",
+      );
+    }
+    try {
+      return this.#sealer.open(label, key, raw);
+    } catch (err) {
+      const reason = err instanceof CredentialSealError ? err.reason : "auth_failed";
+      return fail(reason, REMEDIES[reason](this.#sealer.kids));
+    }
+  }
+
+  /**
+   * A failed open, on the same stream the reads go to. A tag failure is either
+   * tampering or a misconfigured key and both belong in the audit log — scope,
+   * key and the wanted kid, which is a MAC over a constant and discloses
+   * nothing. **Never a value:** the bytes we could not open are still the
+   * ciphertext of a live credential.
+   */
+  #auditSealFailure(
+    scope: CredentialScope,
+    key: string,
+    wantedKid: string | undefined,
+    reason: string,
+  ): void {
+    const event: EngineEvent = {
+      type: "audit.credential_seal_failure",
+      data: {
+        scope: credentialScopeLabel(scope),
+        key,
+        reason,
+        ...(wantedKid ? { wantedKid } : {}),
+        ...(scope.kind === "workspace" ? { workspaceId: scope.wsId } : {}),
+        ...(scope.kind === "user" ? { userId: scope.userId } : {}),
+      },
+    };
+    this.#eventSink?.emit(event);
   }
 
   #auditReveal(scope: CredentialScope, key: string, read: CredentialRead): void {

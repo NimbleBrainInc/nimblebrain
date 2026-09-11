@@ -1,5 +1,10 @@
 import { DEFAULT_CREDENTIAL_STORE_BACKEND, type SecretsConfig } from "../config/secrets.ts";
 import type { EventSink } from "../engine/types.ts";
+import {
+  type CredentialSealer,
+  createCredentialSealer,
+  readCredentialKeyRing,
+} from "./credential-seal.ts";
 import { type CredentialStore, FileCredentialStore } from "./credential-store.ts";
 
 /**
@@ -68,14 +73,100 @@ export function _resetCredentialStoreBackendsForTest(): void {
 }
 
 /**
- * The file backend: one file per secret under its scope's root.
+ * The `seal` member of the file backend's config.
  *
- * Ignores `config` today. The sealing settings that will select ciphertext go
- * here, which is why the parameter exists before anything reads it.
+ * `keyEnv` is the NAME of an environment variable, never a key. The schema
+ * refuses an inline one (`nbNoInlineKeyMaterial`), because this block is
+ * rendered from a file that is commonly in version control.
+ */
+interface SealConfig {
+  keyEnv?: unknown;
+}
+
+/** Read and check `config.seal`, or `undefined` when the deployment wants none. */
+function sealConfigFrom(config: Record<string, unknown>): { keyEnv: string } | undefined {
+  const seal = config.seal;
+  if (seal === undefined || seal === null) return undefined;
+  if (typeof seal !== "object" || Array.isArray(seal)) {
+    throw new Error('[credential-store] secrets.config.seal must be an object with a "keyEnv"');
+  }
+  const { keyEnv } = seal as SealConfig;
+  if (typeof keyEnv !== "string" || keyEnv.length === 0) {
+    throw new Error(
+      '[credential-store] secrets.config.seal.keyEnv must name an environment variable, e.g. { "seal": { "keyEnv": "NB_CREDENTIAL_KEY" } }',
+    );
+  }
+  return { keyEnv };
+}
+
+/**
+ * A fixed value sealed and reopened before the store serves anything.
+ *
+ * **Its purpose is narrow, and worth stating precisely so nobody later mistakes
+ * it for more.** The ring parse has already rejected every malformed, short,
+ * placeholder and non-canonical ring by the time this runs, so what is left for
+ * the canary is a runtime that cannot do AES-256-GCM or HKDF-SHA256 — a stripped
+ * build, a FIPS-restricted OpenSSL, a platform change. Narrow, but the
+ * alternative is discovering it at the first `put`, which for an instance key is
+ * the first connector start and for a workspace key is a user in a settings page.
+ *
+ * **It cannot detect a key that is well-formed and simply the wrong 32 bytes.**
+ * Seal-then-open under one key round-trips whatever that key is. Detecting a
+ * wrong key needs something sealed under the *right* one to open, which nothing
+ * at boot does today.
+ *
+ * Exported so its failure path has a test. A control whose failure path is never
+ * exercised is a comment.
+ */
+export function runSealCanary(sealer: CredentialSealer, keyEnv: string): void {
+  const label = "instance";
+  const key = "nimblebrain.seal_canary";
+  const value = "canary";
+  let observed: string;
+  try {
+    observed = sealer.open(label, key, sealer.seal(label, key, value));
+  } catch (err) {
+    throw new Error(
+      `[credential-store] the sealing key in ${keyEnv} does not round-trip: ${
+        err instanceof Error ? err.message : String(err)
+      }. Refusing to start rather than write secrets this runtime cannot read back.`,
+    );
+  }
+  if (observed !== value) {
+    throw new Error(
+      `[credential-store] the sealing key in ${keyEnv} does not round-trip. ` +
+        "Refusing to start rather than write secrets this runtime cannot read back.",
+    );
+  }
+}
+
+/**
+ * The file backend: one file per secret under its scope's root, holding either
+ * the secret verbatim or `NBS1.…` ciphertext.
+ *
+ * `config.seal` decides which, and its absence is the default — today's
+ * behaviour, byte for byte. Present, it names the environment variable holding
+ * the key ring, and a missing or empty variable is **fatal**: a deployment that
+ * asked to be sealed and silently got plaintext files is the same silent
+ * downgrade `createCredentialStore` refuses for an unknown backend name.
  */
 export const fileCredentialStoreBackend: CredentialStoreBackend = {
-  create({ workDir, eventSink }) {
-    return new FileCredentialStore(workDir, eventSink ? { eventSink } : undefined);
+  create({ workDir, eventSink, config }) {
+    const seal = sealConfigFrom(config);
+    if (!seal) {
+      return new FileCredentialStore(workDir, eventSink ? { eventSink } : undefined);
+    }
+    const keys = readCredentialKeyRing(seal.keyEnv);
+    if (!keys) {
+      throw new Error(
+        `[credential-store] secrets.config.seal names ${seal.keyEnv}, but it is unset or empty. ` +
+          "Provision the key or remove the seal block — the runtime will not fall back to " +
+          "plaintext files for a deployment that asked to be sealed.",
+      );
+    }
+    const sealer = createCredentialSealer(keys);
+    runSealCanary(sealer, seal.keyEnv);
+    return new FileCredentialStore(workDir, { ...(eventSink ? { eventSink } : {}), sealer });
   },
 };
 
