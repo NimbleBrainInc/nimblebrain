@@ -12,7 +12,8 @@
 // `method` matches one we declared a schema for, validate strictly
 // against that specific schema. If it doesn't, return `ok: true` and
 // let the existing `switch (msg.method)` handler in bridge.ts handle it
-// (typically by ignoring it). This adds shape enforcement on every
+// (its `default` answers a request with method-not-found and drops a
+// notification). This adds shape enforcement on every
 // message the host actually acts on, without changing the semantics
 // for unknown methods.
 //
@@ -94,8 +95,9 @@ export function validateAppToHostMessage(value: unknown): AppToHostValidationRes
   }
   const schema = SCHEMA_BY_METHOD[method];
   if (!schema) {
-    // Unknown method — let the existing switch handler decide. Most fall
-    // through to the default (no-op) branch.
+    // Unknown method — let the existing switch handler decide. One it does
+    // not serve reaches `default`, which answers a request with
+    // method-not-found and drops a notification.
     return { ok: true, method, reason: null };
   }
   if (Value.Check(schema, value)) {

@@ -51,6 +51,8 @@ All messages use `window.postMessage` with JSON-RPC 2.0 envelopes:
 | `ui/open-link` | Request | Open a URL in a new browser tab. |
 | `ui/update-model-context` | Request | Push structured state visible to the LLM. See [below](#uiupdate-model-context). |
 
+A request for any other method gets a JSON-RPC `-32601` (method not found) error, so the call fails right away instead of waiting. The host ignores any other notification.
+
 ### NimbleBrain extensions (`synapse/`)
 
 These have no spec equivalent and degrade to no-ops in non-NimbleBrain hosts.
