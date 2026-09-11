@@ -90,7 +90,11 @@ describe("FileCredentialStore — on-disk mechanics", () => {
     }
   });
 
-  test("trailing newline on value is trimmed on read", async () => {
+  // The legacy plaintext path only. It is lossy — a value that genuinely ends
+  // in a newline comes back without it, and this path cannot tell that from an
+  // `echo "secret" > file` — and sealing is what repairs it. The other half of
+  // the split is in `credential-store-sealed.test.ts`.
+  test("trailing newline on an unsealed value is trimmed on read", async () => {
     const { store, cleanup } = freshStore();
     try {
       await store.put(WS, "k", "value\n");

@@ -6,6 +6,12 @@ import type { EngineEvent, EventSink } from "../engine/types.ts";
 import { IdentityContext } from "../identity/context.ts";
 import { WorkspaceContext } from "../workspace/context.ts";
 import { type CredentialValue, isCredentialRef } from "./credential-ref.ts";
+import {
+  CredentialSealError,
+  type CredentialSealer,
+  isSealedValue,
+  parseSealedValue,
+} from "./credential-seal.ts";
 import { Redacted } from "./redacted.ts";
 
 /**
@@ -67,9 +73,11 @@ export interface CredentialKeyInfo {
 /**
  * The one door every secret goes through.
  *
- * The interface is the boundary between call sites and the storage backend. v1
- * ships plaintext-on-disk (`FileCredentialStore`); a SaaS deployment swaps in
- * envelope encryption with a per-scope KEK in KMS without touching a caller.
+ * The interface is the boundary between call sites and the storage backend.
+ * Which backend answers is configuration (`secrets.backend`), and no caller
+ * learns which one did: the same `FileCredentialStore` holds plaintext or
+ * AES-256-GCM depending on `secrets.config.seal`, and a future vault backend
+ * would be a second registration rather than a change here.
  * That promise is only worth something while this is the ONLY path, which is
  * why the store is constructed once (at the composition root, where the event
  * sink lives) and reached through `runtime.getCredentialStore()` rather than
@@ -154,6 +162,21 @@ export class CredentialNotFoundError extends Error {
 }
 
 /**
+ * Read a file that is not sealed.
+ *
+ * The trailing-newline trim is an affordance for `echo "secret" > file`, which
+ * is how the docs and every hand-seeded instance key have always written one.
+ * It is also lossy: a secret that genuinely ends in a newline comes back
+ * without it, and there is no way for this path to tell the two apart. That is
+ * the cost of accepting bytes a text editor produced, and it is why it belongs
+ * to the legacy path alone — a sealed value carries its own length and
+ * round-trips exactly.
+ */
+function legacyPlaintext(raw: string): string {
+  return raw.replace(/\n$/, "");
+}
+
+/**
  * A secret that reports its own use.
  *
  * The audit event fires on `reveal()`, not on the read that produced it, so the
@@ -186,8 +209,8 @@ class AuditedSecret extends Redacted<string> {
 }
 
 /**
- * Plaintext file-backed `CredentialStore`. Ships in v1 self-host. Each secret
- * lives in its own file under its scope's root:
+ * File-backed `CredentialStore`. Each secret lives in its own file under its
+ * scope's root:
  *
  *   instance   <workDir>/credentials/secrets/<key>
  *   workspace  <workDir>/workspaces/<wsId>/credentials/secrets/<key>
@@ -195,19 +218,28 @@ class AuditedSecret extends Redacted<string> {
  *
  * Files are written 0o600 via atomic temp+rename; the parent `secrets/`
  * directory is created 0o700. A `put` on an existing key replaces it in place,
- * which is the whole of rotation — the next read gets the new value and no
- * config was touched.
+ * which is the whole of rotating a *value* — the next read gets the new one and
+ * no config was touched.
  *
- * This is "secure enough for trusted local disk" — it is NOT a SaaS-grade
- * solution. `CredentialStore` above is the swap point.
+ * **What is IN those files depends on the `sealer`.** With none, the secret
+ * verbatim: secure enough for a trusted local disk and nothing more. With one,
+ * `NBS1.…` — AES-256-GCM, for any deployment whose disk, snapshots or backups
+ * outlive the process. Which it is comes from `secrets.config.seal` at the
+ * backend, never from a build flag or the presence of an environment variable.
+ *
+ * The two are not two stores. The file mechanics are identical, the audit is
+ * identical, and a deployment that turns sealing on keeps reading the plaintext
+ * files already there until the boot sweep re-wraps them.
  */
 export class FileCredentialStore implements CredentialStore {
   readonly #workDir: string;
   readonly #eventSink: EventSink | undefined;
+  readonly #sealer: CredentialSealer | undefined;
 
-  constructor(workDir: string, opts?: { eventSink?: EventSink }) {
+  constructor(workDir: string, opts?: { eventSink?: EventSink; sealer?: CredentialSealer }) {
     this.#workDir = workDir;
     this.#eventSink = opts?.eventSink;
+    this.#sealer = opts?.sealer;
   }
 
   /**
@@ -250,8 +282,7 @@ export class FileCredentialStore implements CredentialStore {
     const path = this.#filePath(scope, key);
     if (!existsSync(path)) return null;
     const raw = await readFile(path, "utf-8");
-    // Trim trailing newline for ergonomic CLI input (`echo "secret" > file`).
-    const value = raw.replace(/\n$/, "");
+    const value = isSealedValue(raw) ? this.#open(scope, key, raw) : legacyPlaintext(raw);
     return new AuditedSecret(value, () => this.#auditReveal(scope, key, read));
   }
 
@@ -271,7 +302,10 @@ export class FileCredentialStore implements CredentialStore {
     // this can never collide with a real one, and keeping the key in the name
     // keeps two concurrent puts on different keys from sharing a temp path.
     const tmp = join(dir, `.${key}.tmp.${randomBytes(4).toString("hex")}`);
-    await writeFile(tmp, value, { encoding: "utf-8", mode: 0o600 });
+    // Sealed bytes are exact and carry no trailing newline, which is what makes
+    // a sealed value round-trip byte-for-byte where a plaintext one cannot.
+    const bytes = this.#sealer ? this.#sealer.seal(credentialScopeLabel(scope), key, value) : value;
+    await writeFile(tmp, bytes, { encoding: "utf-8", mode: 0o600 });
     await chmod(tmp, 0o600);
     await rename(tmp, path);
   }
@@ -309,6 +343,78 @@ export class FileCredentialStore implements CredentialStore {
       }
     }
     return out.sort((a, b) => a.key.localeCompare(b.key));
+  }
+
+  /**
+   * Open a value that claims to be sealed. Throws if it cannot be.
+   *
+   * **It is never read as plaintext.** Not when no sealer is configured, not
+   * when the ring has no matching key, not when the tag fails. Falling through
+   * on any of those would hand `NBS1.…` to a vendor as an API key — silently,
+   * for every credential, and most likely during exactly the incident that
+   * caused it: removing the config block, or rolling the image back below the
+   * release that introduced sealing. A loud failure at that moment is recoverable
+   * and a quiet one is not.
+   */
+  #open(scope: CredentialScope, key: string, raw: string): string {
+    const label = credentialScopeLabel(scope);
+    const wantedKid = parseSealedValue(raw)?.kid;
+    const fail = (reason: string, remedy: string): never => {
+      this.#auditSealFailure(scope, key, wantedKid, reason);
+      throw new CredentialSealError(
+        reason === "no_sealer" ? "unknown_kid" : "auth_failed",
+        `the value at key "${key}" in scope ${label} is sealed${
+          wantedKid ? ` under kid ${wantedKid}` : ""
+        } and cannot be opened: ${remedy}`,
+      );
+    };
+    if (!this.#sealer) {
+      return fail(
+        "no_sealer",
+        "this runtime has no sealing key configured. Restore `secrets.config.seal` and the key it names — " +
+          "removing them does not make sealed files readable again, it makes them unreadable",
+      );
+    }
+    try {
+      return this.#sealer.open(label, key, raw);
+    } catch (err) {
+      const reason = err instanceof CredentialSealError ? err.reason : "unknown";
+      return fail(
+        reason,
+        reason === "unknown_kid"
+          ? `no key in the ring produced that kid (ring: ${this.#sealer.kids.join(", ")}). ` +
+              "An outgoing key was probably dropped before the re-seal sweep reached this value"
+          : "it failed authentication — the file was modified after sealing, the key behind its kid " +
+              "is not the one that sealed it, or it was written back by something that does not preserve bytes exactly",
+      );
+    }
+  }
+
+  /**
+   * A failed open, on the same stream the reads go to. A tag failure is either
+   * tampering or a misconfigured key and both belong in the audit log — scope,
+   * key and the wanted kid, which is a MAC over a constant and discloses
+   * nothing. **Never a value:** the bytes we could not open are still the
+   * ciphertext of a live credential.
+   */
+  #auditSealFailure(
+    scope: CredentialScope,
+    key: string,
+    wantedKid: string | undefined,
+    reason: string,
+  ): void {
+    const event: EngineEvent = {
+      type: "audit.credential_seal_failure",
+      data: {
+        scope: credentialScopeLabel(scope),
+        key,
+        reason,
+        ...(wantedKid ? { wantedKid } : {}),
+        ...(scope.kind === "workspace" ? { workspaceId: scope.wsId } : {}),
+        ...(scope.kind === "user" ? { userId: scope.userId } : {}),
+      },
+    };
+    this.#eventSink?.emit(event);
   }
 
   #auditReveal(scope: CredentialScope, key: string, read: CredentialRead): void {

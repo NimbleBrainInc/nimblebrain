@@ -40,6 +40,33 @@ function freshDefaultStore(): {
 
 describeCredentialStoreConformance("createCredentialStore (no secrets block)", freshDefaultStore);
 
+// The interface suite, run a second time against a backend that holds
+// ciphertext. This is what #1171's split was for: "a second backend runs the
+// same suite" stops being aspirational the moment the same assertions pass over
+// `NBS1.…` bytes. Nothing in the block below is sealing-aware, and that is the
+// point — a caller of `CredentialStore` cannot tell which one answered.
+const SEAL_KEY_ENV = "NB_TEST_CONFORMANCE_CREDENTIAL_KEY";
+process.env[SEAL_KEY_ENV] = Buffer.alloc(32, 0x5a).toString("base64");
+
+function freshSealedStore(): {
+  store: CredentialStore;
+  dir: string;
+  events: EngineEvent[];
+  cleanup: () => void;
+} {
+  const dir = mkdtempSync(join(tmpdir(), "nb-credbackend-sealed-"));
+  const events: EngineEvent[] = [];
+  registerBuiltinCredentialStoreBackends();
+  const store = createCredentialStore({
+    workDir: dir,
+    eventSink: { emit: (e) => events.push(e) },
+    secrets: { backend: "file", config: { seal: { keyEnv: SEAL_KEY_ENV } } },
+  });
+  return { store, dir, events, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
+}
+
+describeCredentialStoreConformance("createCredentialStore (sealed)", freshSealedStore);
+
 describe("credential store backend registry", () => {
   afterEach(() => {
     _resetCredentialStoreBackendsForTest();
