@@ -107,6 +107,18 @@ describe("tampering", () => {
   // or four data bits, so several characters decode to the same bytes and the
   // "tampered" value opens cleanly — a test that passes on the throw of the
   // dice rather than on the property.
+  //
+  // Each flip pins its reason, not just a throw. A decoded flip re-encodes
+  // canonically, so every field past the magic reaches the ring lookup or the
+  // cipher; a mutation that only fails the grammar shows up as `malformed`.
+  const EXPECTED: Record<(typeof FIELDS)[number], string> = {
+    magic: "malformed",
+    kid: "unknown_kid",
+    salt: "auth_failed",
+    iv: "auth_failed",
+    ciphertext: "auth_failed",
+  };
+
   for (const [index, field] of FIELDS.entries()) {
     test(`flipping a bit of the ${field} makes open fail`, () => {
       const s = sealerFor(KEY_A);
@@ -118,22 +130,14 @@ describe("tampering", () => {
         bytes[0] = (bytes[0] as number) ^ 1;
         parts[index] = bytes.toString(field === "kid" ? "hex" : "base64url");
       }
-      expect(() => s.open(WS, "k", parts.join("."))).toThrow(CredentialSealError);
+      try {
+        s.open(WS, "k", parts.join("."));
+        throw new Error("expected a throw");
+      } catch (err) {
+        expect((err as CredentialSealError).reason).toBe(EXPECTED[field]);
+      }
     });
   }
-
-  test("every field's mutation is a real one", () => {
-    // The guard on the guard: a mutation that decoded back to the original
-    // would make each case above vacuous, which is exactly how the first
-    // version of this block passed.
-    const parts = sealerFor(KEY_A).seal(WS, "k", "supersecret").split(".");
-    for (const index of [1, 2, 3, 4]) {
-      const enc = index === 1 ? "hex" : "base64url";
-      const bytes = Buffer.from(parts[index] as string, enc);
-      bytes[0] = (bytes[0] as number) ^ 1;
-      expect(bytes.toString(enc)).not.toBe(parts[index]);
-    }
-  });
 
   test("a non-canonical encoding of the same bytes is refused", () => {
     // base64url is not injective: the trailing character of a 16-byte salt
@@ -296,7 +300,8 @@ describe("the kid is a MAC, never a digest of key material", () => {
   });
 
   test("it is not the truncated SHA-256 of the key", () => {
-    // A raw digest of key material rides in every sealed file and in every error naming a wanted kid; under the MAC the kid
+    // Were the kid a raw digest of key material, it would ride in every sealed
+    // file and in every error naming a wanted kid; under the MAC the kid
     // discloses nothing without the key that produced it.
     const rawDigest = createHash("sha256").update(KEY_A).digest("hex").slice(0, 16);
     expect(sealerFor(KEY_A).sealingKid).not.toBe(rawDigest);
