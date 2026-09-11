@@ -50,6 +50,9 @@ All messages use `window.postMessage` with JSON-RPC 2.0 envelopes:
 | `ui/message` | Request | Send a message to the conversation. |
 | `ui/open-link` | Request | Open a URL in a new browser tab. |
 | `ui/update-model-context` | Request | Push structured state visible to the LLM. See [below](#uiupdate-model-context). |
+| `ui/download-file` | Request | Hand the user a file, as MCP resource blocks. See [below](#uidownload-file). |
+| `ui/request-display-mode` | Request | Ask to be displayed differently. Answered with the mode actually in effect. See [below](#uirequest-display-mode). |
+| `notifications/message` | Notification | A log line for the host's console. |
 
 ### NimbleBrain extensions (`synapse/`)
 
@@ -96,8 +99,12 @@ The app initiates the handshake per the ext-apps spec:
     "hostInfo": { "name": "nimblebrain", "version": "1.0.0" },
     "hostCapabilities": {
       "openLinks": {},
+      "downloadFile": {},
       "serverTools": {},
       "logging": {},
+      "experimental": {
+        "ai.nimblebrain/tasks": { "cancel": {}, "requests": { "tools": { "call": {} } } }
+      },
       "tasks": { "cancel": {}, "requests": { "tools": { "call": {} } } }
     },
     "hostContext": {
@@ -246,7 +253,7 @@ Call a tool on your app's MCP server. This is a JSON-RPC **request** — the res
 ```
 
 <Aside type="note">
-Tool calls are scoped to your app's MCP server. The bridge automatically routes `tools/call` with your app's server name. An iframe cannot call tools on other servers.
+Tool calls are scoped to your app's MCP server. The bridge automatically routes `tools/call` with your app's server name. An iframe cannot call tools on other servers — naming one in `_meta["ai.nimblebrain/server"]` changes nothing for an app that is not built into the shell.
 </Aside>
 
 ### `resources/read`
@@ -418,6 +425,59 @@ The `summary` field is optional but recommended — it's used as a fallback when
 <Aside type="note">
 If you're using the `@nimblebrain/synapse` SDK, `app.updateModelContext()` constructs and posts this message for you.
 </Aside>
+
+### `ui/download-file`
+
+Hand the user a file, as standard MCP resource blocks. This is the spec method; `synapse/download-file` below predates it and takes an already-materialised string.
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "ui/download-file",
+  "id": "dl-1",
+  "params": {
+    "contents": [
+      {
+        "type": "resource",
+        "resource": {
+          "uri": "file:///weather-report.csv",
+          "mimeType": "text/csv",
+          "text": "city,temp\nHonolulu,82"
+        }
+      }
+    ]
+  }
+}
+```
+
+Embed the bytes — inline `text`, or base64 in `blob`. A `ResourceLink` (a URI with no payload) is **refused**, and the host answers `{ "isError": true }`: fetching a URL supplied by iframe code would make the host an SSRF proxy carrying the user's session. The filename comes from the block's `name`, else the last segment of the resource `uri`.
+
+### `ui/request-display-mode`
+
+Ask to be shown `inline`, `fullscreen` or `pip`. The host decides placement from its own layout and does not hand that decision to an app, so the result reports the mode **actually in effect** — which is usually not the one requested.
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "ui/request-display-mode",
+  "id": "dm-1",
+  "params": { "mode": "fullscreen" }
+}
+```
+
+Read the `mode` that comes back rather than assuming the request was granted.
+
+### `notifications/message`
+
+A log line, forwarded to the host's browser console with your app's name. A notification, so there is nothing to wait for.
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "notifications/message",
+  "params": { "level": "warning", "logger": "query", "data": "slow plan" }
+}
+```
 
 ### `synapse/download-file`
 
