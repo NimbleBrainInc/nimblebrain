@@ -530,6 +530,12 @@ export class Runtime {
       secrets: declaredConfig.secrets,
     });
     setCredentialStore(credentialStore);
+    // Desired state, reconciled once, before anything reads a secret. For the
+    // sealing file backend this re-wraps everything under the current key; for
+    // a backend with nothing to reconcile it is a no-op. It must finish before
+    // the instance credential references below resolve, or the first read of a
+    // legacy plaintext file would race the rewrite of that same file.
+    await credentialStore.reconcile?.();
     let config = await resolveInstanceCredentialRefs(declaredConfig);
 
     // Register built-in transport credential providers (e.g. `minted`) at the
