@@ -6,6 +6,7 @@ import { workspaceConversationsDir } from "../../src/conversation/paths.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { filterTools } from "../../src/tools/surfacing.ts";
 import { personalWorkspaceIdFor } from "../../src/workspace/workspace-store.ts";
+import { ensureUserWorkspace } from "../../src/workspace/provisioning.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { createMockModel } from "../helpers/mock-model.ts";
 import type { EngineEvent, EventSink, ToolSchema } from "../../src/engine/types.ts";
@@ -131,7 +132,13 @@ describe("Runtime", () => {
       workDir,
     });
 
-    const wsId = personalWorkspaceIdFor("user_alice");
+    // The store creates its own owner partition on first write, but only
+    // inside a live workspace root — so the user's personal workspace is
+    // provisioned first, as a login would.
+    const { id: wsId } = await ensureUserWorkspace(runtime.getWorkspaceStore(), {
+      id: "user_alice",
+    });
+    expect(wsId).toBe(personalWorkspaceIdFor("user_alice"));
     const store = runtime.workspaceConversationStore(wsId, "user_alice");
     const conv = await store.create({ ownerId: "user_alice" });
 

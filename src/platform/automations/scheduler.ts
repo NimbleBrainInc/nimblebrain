@@ -504,6 +504,39 @@ export class Scheduler {
   }
 
   /**
+   * Forget every automation belonging to `wsId`, and re-arm.
+   *
+   * The in-memory `definitions` map is the only thing that decides what the
+   * timer fires, and nothing reloads it on a workspace delete —
+   * `reload()` is called from the automations tool surface alone, so a deleted
+   * workspace's automations stayed armed here until the process restarted.
+   * When one fired it wrote back through the store, and the store's mkdir
+   * re-created the workspace directory that had just been archived.
+   *
+   * `ensureWorkspaceDir` is what makes that write fail rather than resurrect
+   * the tree; this is what stops the run from being attempted at all, so the
+   * correct behaviour does not rest on a write failing.
+   *
+   * A targeted drop, not `reload()`: a reload rescans every workspace and
+   * owner on disk to learn one thing this call already knows.
+   *
+   * Returns how many were dropped. In-flight runs keep their `activeRuns`
+   * entry so `stop()` can still abort them.
+   */
+  dropWorkspace(wsId: string): number {
+    let dropped = 0;
+    for (const [key, auto] of this.definitions) {
+      if (auto.workspaceId !== wsId) continue;
+      this.definitions.delete(key);
+      dropped++;
+    }
+    if (dropped === 0) return 0;
+    this.clearTimer();
+    if (this.running) this.armTimer();
+    return dropped;
+  }
+
+  /**
    * Trigger an immediate run of a specific automation, bypassing schedule
    * and backoff checks. Respects concurrency guards.
    */

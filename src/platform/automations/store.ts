@@ -18,7 +18,6 @@ import {
   appendFileSync,
   type Dirent,
   existsSync,
-  mkdirSync,
   readdirSync,
   readFileSync,
   renameSync,
@@ -27,6 +26,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
+import { ensureWorkspaceDir } from "../../workspace/context.ts";
 import {
   automationFilePath,
   automationRunIndexPath,
@@ -50,12 +50,6 @@ const RUNS_SEGMENT = "runs";
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-function ensureDir(dir: string): void {
-  if (!existsSync(dir)) {
-    mkdirSync(dir, { recursive: true });
-  }
-}
 
 function atomicWrite(filePath: string, contents: string): void {
   const tmpPath = `${filePath}.${randomBytes(6).toString("hex")}.tmp`;
@@ -138,7 +132,7 @@ export function saveAutomation(
   automation: Automation,
 ): void {
   const dir = workspaceAutomationsDir(workDir, wsId, ownerId);
-  ensureDir(dir);
+  ensureWorkspaceDir(dir);
   const filePath = automationFilePath(workDir, wsId, ownerId, automation.id);
   atomicWrite(filePath, `${JSON.stringify(automation, null, 2)}\n`);
 }
@@ -240,7 +234,7 @@ export function appendRun(
   run: AutomationRun,
 ): void {
   const dir = automationRunsDir(workDir, wsId, ownerId, automationId);
-  ensureDir(dir);
+  ensureWorkspaceDir(dir);
   const filePath = automationRunIndexPath(workDir, wsId, ownerId, automationId);
 
   appendFileSync(filePath, `${JSON.stringify(run)}\n`);
@@ -381,7 +375,7 @@ export function saveRunResult(
   result: AutomationRunResult,
 ): void {
   const dir = automationRunsDir(workDir, wsId, ownerId, automationId);
-  ensureDir(dir);
+  ensureWorkspaceDir(dir);
   const filePath = automationRunResultPath(workDir, wsId, ownerId, automationId, result.runId);
   atomicWrite(filePath, `${JSON.stringify(result, null, 2)}\n`);
 }

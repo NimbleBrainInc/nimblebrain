@@ -18,6 +18,7 @@ import {
 	loadOwnerAutomations,
 	saveAutomation,
 } from "../../../../src/platform/automations/store.ts";
+import { seedWorkspaceRoot } from "../../../helpers/test-workspace.ts";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -31,7 +32,9 @@ const WS = "ws_test";
 const OWNER = "usr_test";
 
 function makeTmpDir(): string {
-	return mkdtempSync(join(tmpdir(), "scheduler-test-"));
+	const dir = mkdtempSync(join(tmpdir(), "scheduler-test-"));
+	seedWorkspaceRoot(dir, WS);
+	return dir;
 }
 
 /** Persist a definitions map to the per-automation store (one file per automation). */
@@ -41,6 +44,7 @@ function seedDefs(
 	owner = OWNER,
 	ws = WS,
 ): void {
+	seedWorkspaceRoot(workDir, ws);
 	for (const auto of defs.values()) {
 		if (!auto.workspaceId) auto.workspaceId = ws;
 		if (!auto.ownerId) auto.ownerId = owner;

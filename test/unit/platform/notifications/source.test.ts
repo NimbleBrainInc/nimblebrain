@@ -33,6 +33,7 @@ import {
 } from "../../../../src/platform/schemas/notifications.ts";
 import { WorkspaceContext } from "../../../../src/workspace/context.ts";
 import { WorkspaceStore } from "../../../../src/workspace/workspace-store.ts";
+import { seedWorkspaceRoot } from "../../../helpers/test-workspace.ts";
 
 const OWNER_ID = "usr_test";
 const WS_A = "ws_aaaaaaaaaaaaaaaa";
@@ -103,6 +104,8 @@ function payload<T>(result: ToolResult): T {
 
 beforeEach(async () => {
   workDir = mkdtempSync(join(tmpdir(), "nb-notify-source-"));
+  seedWorkspaceRoot(workDir, WS_A);
+  seedWorkspaceRoot(workDir, WS_B);
   source = createNotificationsSource(makeRuntime(), new NoopEventSink());
   await source.start();
 });

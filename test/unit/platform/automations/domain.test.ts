@@ -27,6 +27,7 @@ import {
   loadOwnerAutomations,
   saveAutomation,
 } from "../../../../src/platform/automations/store.ts";
+import { seedWorkspaceRoot } from "../../../helpers/test-workspace.ts";
 
 // Automations are workspace-owned: the domain's collection context is backed by
 // the per-automation store, scoped to one workspace + owner (the focus the tool
@@ -61,6 +62,7 @@ function makeCtx(): AutomationDomainContext {
 beforeEach(() => {
   workDir = mkdtempSync(join(tmpdir(), "automations-domain-"));
   mkdirSync(workDir, { recursive: true });
+  seedWorkspaceRoot(workDir, WS);
 });
 
 afterEach(() => {

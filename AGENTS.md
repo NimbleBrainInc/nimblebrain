@@ -179,6 +179,12 @@ web/               Vite + React + TypeScript SPA (separate package.json)
 
 All tool handlers that access data must be workspace-scoped. Use `runtime.requireWorkspaceId()` (never `getCurrentWorkspaceId()`). In dev mode it returns `"_dev"` — no special-case logic needed.
 
+**A workspace root is created by `WorkspaceStore.create` (and the `scaffoldWorkspace` it calls), and by nothing else.** Every other workspace-scoped mkdir goes through `ensureWorkspaceDir` (`src/workspace/context.ts`), which derives the `workspaces/<wsId>` prefix from the path it is handed and refuses — `WorkspaceRootMissingError`, naming the workspace — when that root is absent. A path outside any workspace tree (org skills, `users/<id>/skills/`, a test's temp dir) has no root to require and is simply created, which is why a shared writer like `writeSkill` can adopt it without changing what it does for the others. Today's callers: the automations store, both conversation stores, the file store, the notification inbox, and `writeSkill`.
+
+This is structural rather than per-writer on purpose. `WorkspaceStore.delete` renames the subtree out from under every writer holding a path into it, those writers mkdir recursively, and the first one to fire afterwards used to re-create the deleted workspace's directory — invisibly, because `list()` skips a workspace dir whose `workspace.json` will not parse, so the resurrected tree appeared nowhere and was never deleted again. There is no way to grep for "everywhere that writes into a workspace", so guarding each writer is a discipline problem; the rule lives at the mkdir instead. **Do not add a recursive mkdir on a workspace-scoped path without it**, and do not "fix" a `WorkspaceRootMissingError` by creating the root — the workspace is gone, and the caller's job is to stop.
+
+A store still creates its own subdirectory on first write (`conversations/`, `notifications/`, an owner's `files/` or `automations/` partition are deliberately absent from `WORKSPACE_DIRS` — see `src/workspace/scaffold.ts`). That stays true; the guard is about the root, not the subtree.
+
 **Workspace-scoped writes have no org-admin bypass, and the web tier must agree.** `canWriteWorkspaceScoped` (`src/workspace/authz.ts`) allows a write only for a workspace **member** whose membership role is `admin`; `orgRole` is never consulted. The web tier's `useScopedRole` deliberately does the opposite — it escalates an org admin to `org_admin` *before* reading the workspace role — because that is the right answer for **reach** (nav, route guards, read gates), where an org admin legitimately gets to any workspace's settings. So the two must not share a helper. Gate a **write** with `canWriteWorkspace(membershipRole)` (`web/src/hooks/useScopedRole.ts`) — via `useCanWriteActiveWorkspace()` on a surface scoped to the active workspace (anything under `/w/:slug`), or by passing that workspace's role directly when the surface addresses a workspace **by id** (`/org/workspaces/:slug`, where `activeWorkspace` is the viewer's last-focused workspace — usually their personal one, where they are always admin by store invariant, so the active-workspace form would answer `true` for everyone). Reserve `roleAtLeast(role, "ws_admin")` for reach. Getting this backwards offers controls the server refuses and surfaces as a 403 on save. It shipped in nine places before being caught, in three different shapes — `roleAtLeast(…, "ws_admin")`, the bypass written longhand as `isOrgAdmin || <membership check>`, and an affordance with no gate at all — so grepping for one shape never establishes that a surface is covered.
 
 A workspace-scoped write **should** route through `canWriteWorkspaceScoped`, and a client gate that disagrees with it is a bug — but do not read that as an invariant you can lean on. **The helper is a convention, not a chokepoint.** Writes reach the store by other paths: some gate through wrappers that delegate to it (`isWorkspaceAdmin` in `src/tools/connector-tools.ts`), and `manage_workspaces update` patches `workspace.json`'s `connectors` behind an org-admin gate instead — not a hole, since an org admin can delete the workspace outright and no web caller sends `connectors`, but not the helper either.
@@ -602,6 +608,14 @@ then hands the id to `WorkspaceStore.delete` for the archive-rename. Teardown
 runs BEFORE the rename: `on_removing` needs the bundle reachable, and the
 credential cleanup needs the credential directory at its live path.
 
+- **The workspace's automations are disarmed first**, before the connector
+  teardown and long before the rename: `AutomationQuiescer.dropWorkspace` (the
+  scheduler, handed over by the automations source — the runtime may not import
+  it) drops them from the in-memory `definitions` map. Nothing else does:
+  `scheduler.reload()` is called only from the automations tool surface, so a
+  deleted workspace's automations stayed armed until the process restarted. A
+  targeted drop, never `reload()` — that rescans every workspace and owner on
+  disk to learn one thing the caller already knows.
 - `WorkspaceStore` imports nothing from `src/connectors/` and holds no lifecycle
   handle. The cascade is the runtime's; the store does the rename.
 - `manage_workspaces delete` calls `Runtime.deleteWorkspace`, never

@@ -35,6 +35,7 @@ import type {
 	AutomationRunResult,
 } from "../../src/platform/automations/types.ts";
 import type { AutomationsRunOutput } from "../../src/platform/schemas/automations.ts";
+import { seedWorkspaceRoot } from "../helpers/test-workspace.ts";
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -153,6 +154,9 @@ function createHarness(): ToolContext {
 
 beforeEach(() => {
 	mkdirSync(TMP_DIR, { recursive: true });
+	// The automations store creates `automations/<ownerId>/` on first write, but
+	// only inside a live workspace root — so the harness stands one up.
+	seedWorkspaceRoot(TMP_DIR, WS);
 });
 
 afterEach(() => {

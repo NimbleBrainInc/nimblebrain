@@ -20,6 +20,7 @@ import { runWithRequestContext } from "../../../../src/runtime/request-context.t
 import type { Runtime } from "../../../../src/runtime/runtime.ts";
 import type { McpSource } from "../../../../src/tools/mcp-source.ts";
 import type { FilesReadPdfPagesOutput } from "../../../../src/platform/schemas/files.ts";
+import { seedWorkspaceRoot } from "../../../helpers/test-workspace.ts";
 
 /** The owner and focused workspace every handler call in this file runs as. */
 const OWNER_ID = "usr_test";
@@ -131,6 +132,7 @@ let source: McpSource;
 
 beforeEach(async () => {
   workDir = mkdtempSync(join(tmpdir(), "nb-files-test-"));
+  seedWorkspaceRoot(workDir, WS_ID);
   source = createFilesSource(makeRuntime(workDir), new NoopEventSink());
   await source.start();
 });
