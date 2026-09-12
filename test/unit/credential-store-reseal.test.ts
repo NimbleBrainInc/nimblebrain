@@ -321,6 +321,25 @@ describe("a root the sweep could not read holds strict mode off", () => {
     }
   });
 
+  test("a STRAY FILE under an owner root is benign too — nothing hides under it", async () => {
+    // `users/` takes any non-traversal name as an id, so a `.DS_Store` becomes a
+    // scope and `readdir` on its secrets path answers ENOTDIR rather than
+    // ENOENT. That is still "nothing here": a regular file has nothing under it
+    // to open by path, so counting it unreadable would hold strict mode off on
+    // every boot, over a file that is not a secret.
+    const { store, dir, cleanup } = fresh(createCredentialSealer([KEY_A]));
+    try {
+      seed(dir, SCOPE_DIRS[2][1], "acme.key", "s3cret");
+      writeFileSync(join(dir, "users", ".DS_Store"), "junk");
+      await store.reconcile?.();
+      seed(dir, SCOPE_DIRS[2][1], "injected.key", "attacker-chosen");
+      const got = await store.get(USER, "injected.key", READ);
+      expect(() => got?.reveal()).toThrow(/plaintext/);
+    } finally {
+      cleanup();
+    }
+  });
+
   test("an ABSENT root is still benign — it arms strict mode as before", async () => {
     // The other half of the distinction: a deployment with no workspaces yet
     // must not be held in permanent non-strict mode by directories that simply

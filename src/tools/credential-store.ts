@@ -217,9 +217,17 @@ interface ResealTally {
  * treating an unlistable root as an empty one lets the sweep report a clean
  * finish over secrets it never saw — and strict mode then refuses the legitimate
  * plaintext underneath it.
+ *
+ * `ENOTDIR` is on the benign side for exactly the reason `EACCES` is not:
+ * nothing can be opened by path under a regular file, so there is no secret
+ * hiding under one to be conservative about. It is reachable — `users/` takes
+ * any non-traversal name as an id, because userIds have no canonical shape
+ * across providers — so a stray `.DS_Store` arrives here as a scope, and
+ * counting it unreadable would hold strict mode off for good.
  */
 function isMissingDirectory(err: unknown): boolean {
-  return (err as NodeJS.ErrnoException | undefined)?.code === "ENOENT";
+  const code = (err as NodeJS.ErrnoException | undefined)?.code;
+  return code === "ENOENT" || code === "ENOTDIR";
 }
 
 /**
@@ -347,8 +355,9 @@ export class FileCredentialStore implements CredentialStore {
    * is accepted indefinitely, anyone who can write the secrets directory —
    * without holding the key — can replace a sealed file with a plaintext one
    * holding a credential of their choosing and have it used. Once every secret
-   * is sealed, a plaintext file appearing there is either an operator who should
-   * have used the CLI or an injection, and both deserve the same answer.
+   * is sealed, a plaintext file appearing there is either an operator who edited
+   * the volume by hand instead of setting the secret through the store, or an
+   * injection, and both deserve the same answer.
    */
   #strictPlaintextRefusal = false;
 
