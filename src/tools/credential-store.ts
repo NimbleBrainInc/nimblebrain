@@ -1,9 +1,20 @@
 import { randomBytes } from "node:crypto";
 import { existsSync } from "node:fs";
-import { chmod, mkdir, readdir, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  readdir,
+  readFile,
+  rename,
+  stat,
+  unlink,
+  utimes,
+  writeFile,
+} from "node:fs/promises";
 import { join } from "node:path";
 import type { EngineEvent, EventSink } from "../engine/types.ts";
 import { IdentityContext } from "../identity/context.ts";
+import { log } from "../observability/log.ts";
 import { WorkspaceContext } from "../workspace/context.ts";
 import { type CredentialValue, isCredentialRef } from "./credential-ref.ts";
 import {
@@ -99,6 +110,18 @@ export interface CredentialStore {
   delete(scope: CredentialScope, key: string): Promise<void>;
   /** Every key set in a scope, with its last-write time. Never any value. */
   list(scope: CredentialScope): Promise<CredentialKeyInfo[]>;
+  /**
+   * Bring what is stored into line with what this backend is configured to
+   * hold, once, at boot. Optional: a backend with nothing to reconcile omits it
+   * and the kernel's `await store.reconcile?.()` costs nothing.
+   *
+   * It is a lifecycle hook and not a fifth operation — no caller of `get` or
+   * `put` ever reaches it, and nothing above the composition root learns which
+   * backend answered. A desired-state-to-actual-state invariant belongs here,
+   * where it runs on every boot, rather than in a path someone has to remember
+   * to call.
+   */
+  reconcile?(): Promise<void>;
 }
 
 /**
@@ -176,6 +199,48 @@ export class CredentialNotFoundError extends Error {
 function legacyPlaintext(raw: string): string {
   return raw.replace(/\n$/, "");
 }
+
+/** Running counts across one sweep. */
+interface ResealTally {
+  resealed: number;
+  current: number;
+  skipped: number;
+  /** Scope roots that exist and could not be listed. Holds strict mode off. */
+  unreadable: number;
+}
+
+/**
+ * "Nothing here" and "could not look" are different answers, and only the first
+ * is benign.
+ *
+ * A directory the sweep cannot LIST can still have its files opened by path, so
+ * treating an unlistable root as an empty one lets the sweep report a clean
+ * finish over secrets it never saw — and strict mode then refuses the legitimate
+ * plaintext underneath it.
+ *
+ * `ENOTDIR` is on the benign side for exactly the reason `EACCES` is not:
+ * nothing can be opened by path under a regular file, so there is no secret
+ * hiding under one to be conservative about. It is reachable — `users/` takes
+ * any non-traversal name as an id, because userIds have no canonical shape
+ * across providers — so a stray `.DS_Store` arrives here as a scope, and
+ * counting it unreadable would hold strict mode off for good.
+ */
+function isMissingDirectory(err: unknown): boolean {
+  const code = (err as NodeJS.ErrnoException | undefined)?.code;
+  return code === "ENOENT" || code === "ENOTDIR";
+}
+
+/**
+ * Every way a stored secret can fail to become a usable value, as one closed
+ * set — the codec's three, plus the two only the store can see. It is what the
+ * audit line carries, so a query over the log can group by cause without
+ * parsing prose.
+ */
+type SealFailureReason =
+  | CredentialSealFailure
+  | "no_sealer"
+  | "plaintext_refused"
+  | "reseal_skipped";
 
 /**
  * What an operator does about each way an open can fail. Separate strings
@@ -275,12 +340,26 @@ class AuditedSecret extends Redacted<string> {
  *
  * The two are not two stores. The file mechanics are identical, the audit is
  * identical, and a deployment that turns sealing on keeps reading the plaintext
- * files already there — each is re-wrapped when something next writes it.
+ * files already there, and {@link reconcile} re-wraps every one of them on the
+ * next boot.
  */
 export class FileCredentialStore implements CredentialStore {
   readonly #workDir: string;
   readonly #eventSink: EventSink | undefined;
   readonly #sealer: CredentialSealer | undefined;
+  /**
+   * Set by a clean {@link reconcile}: from then on, a plaintext file is refused
+   * rather than read.
+   *
+   * Sealing buys confidentiality. THIS is what buys integrity. While plaintext
+   * is accepted indefinitely, anyone who can write the secrets directory —
+   * without holding the key — can replace a sealed file with a plaintext one
+   * holding a credential of their choosing and have it used. Once every secret
+   * is sealed, a plaintext file appearing there is either an operator who edited
+   * the volume by hand instead of setting the secret through the store, or an
+   * injection, and both deserve the same answer.
+   */
+  #strictPlaintextRefusal = false;
 
   constructor(workDir: string, opts?: { eventSink?: EventSink; sealer?: CredentialSealer }) {
     this.#workDir = workDir;
@@ -337,7 +416,11 @@ export class FileCredentialStore implements CredentialStore {
     // the failure on the one connection that uses the secret, which is already
     // isolated per connector. It is the same reason the audit line fires on the
     // reveal rather than on the read that produced it.
-    const value = isSealedValue(raw) ? () => this.#open(scope, key, raw) : legacyPlaintext(raw);
+    const value = isSealedValue(raw)
+      ? () => this.#open(scope, key, raw)
+      : this.#strictPlaintextRefusal
+        ? () => this.#refusePlaintext(scope, key)
+        : legacyPlaintext(raw);
     return new AuditedSecret(value, () => this.#auditReveal(scope, key, read));
   }
 
@@ -419,6 +502,8 @@ export class FileCredentialStore implements CredentialStore {
     // The codec's own reason travels, onto the error and onto the audit line.
     // These are different operator problems with different repairs, and
     // collapsing them makes a stray trailing newline read as a wrong key.
+    // Narrower than what the audit line accepts: this path only ever reports a
+    // codec failure or a missing sealer, and both become a `CredentialSealError`.
     const fail = (reason: CredentialSealFailure | "no_sealer", remedy: string): never => {
       this.#auditSealFailure(scope, key, wantedKid, reason);
       throw new CredentialSealError(
@@ -454,7 +539,7 @@ export class FileCredentialStore implements CredentialStore {
     scope: CredentialScope,
     key: string,
     wantedKid: string | undefined,
-    reason: string,
+    reason: SealFailureReason,
   ): void {
     const event: EngineEvent = {
       type: "audit.credential_seal_failure",
@@ -468,6 +553,185 @@ export class FileCredentialStore implements CredentialStore {
       },
     };
     this.#eventSink?.emit(event);
+  }
+
+  /**
+   * Refuse a plaintext file after a clean sweep. Lazy, like every other refusal
+   * here: a plaintext file planted by someone who can write the directory must
+   * not be able to fail a presence probe, or writing one becomes a way to stop
+   * the tenant booting.
+   */
+  #refusePlaintext(scope: CredentialScope, key: string): never {
+    const label = credentialScopeLabel(scope);
+    this.#auditSealFailure(scope, key, undefined, "plaintext_refused");
+    throw new Error(
+      `[credential-store] the value at key "${key}" in scope ${label} is plaintext, and this ` +
+        "store sealed every secret it found at boot. A plaintext file appearing afterwards was " +
+        "not written through the store — set the secret again rather than editing the file.",
+    );
+  }
+
+  /**
+   * Re-seal everything on disk under the current sealing key, once, at boot.
+   *
+   * Walks the three scope roots and rewrites any secret that is legacy
+   * plaintext or sealed under a key that is no longer `keys[0]`, through the
+   * same atomic temp+rename `put` uses, with a fresh salt and IV each time.
+   * Rotation is then three steps with nothing to schedule: put the new key at
+   * the front of the ring, restart, and this re-wraps everything on the way up
+   * while the outgoing key still opens whatever it has not reached.
+   *
+   * Lazy-on-read was the alternative and is rejected: a secret nobody reads
+   * would stay plaintext forever, and the rarely-read key is exactly the one an
+   * operator forgets they have.
+   *
+   * `archived/<wsId>/` is deliberately NOT walked. A deleted workspace's
+   * secrets are a retention problem, not an encryption one — they should be
+   * gone, and sealing them would make them look handled instead.
+   */
+  async reconcile(): Promise<void> {
+    const sealer = this.#sealer;
+    // Nothing to reconcile without one, and strict mode stays off: an unsealed
+    // deployment is plaintext by design, not by omission.
+    if (!sealer) return;
+
+    const tally: ResealTally = { resealed: 0, current: 0, skipped: 0, unreadable: 0 };
+    for (const scope of await this.#everyScope(tally)) {
+      await this.#resealScope(scope, sealer, tally);
+    }
+
+    // Only a sweep that finished has proved every secret is sealed, so only a
+    // sweep that finished has earned the right to call a plaintext file an
+    // injection. A root it could not list counts against that as much as a file
+    // it could not open: both mean there are secrets it did not see.
+    if (tally.skipped === 0 && tally.unreadable === 0) {
+      this.#strictPlaintextRefusal = true;
+    }
+    log.info("[credential-store] sealed-secret reconcile complete", {
+      resealed: tally.resealed,
+      alreadyCurrent: tally.current,
+      skipped: tally.skipped,
+      unreadable: tally.unreadable,
+      strictPlaintextRefusal: this.#strictPlaintextRefusal,
+    });
+  }
+
+  /** Every secret in one scope, counted into the running tally. */
+  async #resealScope(
+    scope: CredentialScope,
+    sealer: CredentialSealer,
+    tally: ResealTally,
+  ): Promise<void> {
+    let names: string[];
+    try {
+      names = await readdir(this.#dir(scope));
+    } catch (err) {
+      if (isMissingDirectory(err)) return; // no directory means no secrets here
+      tally.unreadable++;
+      log.warn("[credential-store] could not list a secrets directory; not sweeping it", {
+        scope: credentialScopeLabel(scope),
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return;
+    }
+    for (const key of names) {
+      // The same filter `list` applies: a temp file left by a killed `put` is
+      // not a key and must not be rewritten as one.
+      if (!KEY_RE.test(key)) continue;
+      const outcome = await this.#resealOne(scope, key, sealer);
+      // `ignored` is not counted: a directory sitting where a key should be is
+      // not a secret that was already current, and a tally an operator reads
+      // should not say it was.
+      if (outcome !== "ignored") tally[outcome]++;
+    }
+  }
+
+  /**
+   * One file. Returns what happened rather than throwing, because **one
+   * unreadable secret must not stop a tenant booting** — it would take the whole
+   * deployment down over a key nothing uses, and the operator's only visible
+   * symptom would be a crash loop.
+   *
+   * A skip is not free, though: it holds strict mode off, so the deployment
+   * keeps accepting plaintext until someone resolves the file.
+   */
+  async #resealOne(
+    scope: CredentialScope,
+    key: string,
+    sealer: CredentialSealer,
+  ): Promise<"resealed" | "current" | "skipped" | "ignored"> {
+    const label = credentialScopeLabel(scope);
+    const path = join(this.#dir(scope), key);
+    try {
+      const before = await stat(path);
+      if (!before.isFile()) return "ignored";
+      const raw = await readFile(path, "utf-8");
+
+      let value: string;
+      if (isSealedValue(raw)) {
+        if (parseSealedValue(raw)?.kid === sealer.sealingKid) return "current";
+        value = sealer.open(label, key, raw);
+      } else {
+        value = legacyPlaintext(raw);
+      }
+
+      await this.put(scope, key, value);
+      // `list` derives `updatedAt` from mtime, so without this the first boot
+      // after enabling sealing — and every rotation after — reports every
+      // secret as just-changed. "Last set" would quietly become "last sealed",
+      // destroying the only provenance `list` offers.
+      await utimes(path, before.atime, before.mtime);
+      return "resealed";
+    } catch (err) {
+      this.#auditSealFailure(scope, key, undefined, "reseal_skipped");
+      log.warn("[credential-store] could not re-seal a secret; leaving it as it is", {
+        scope: label,
+        key,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return "skipped";
+    }
+  }
+
+  /**
+   * Every scope that has a secrets directory today.
+   *
+   * Ids come from the directory listing and go straight back through `#dir`,
+   * which validates them in the typed context that owns each tree — so a junk
+   * directory name is refused there rather than turned into a path here.
+   */
+  async #everyScope(tally: ResealTally): Promise<CredentialScope[]> {
+    const scopes: CredentialScope[] = [{ kind: "instance" }];
+    const owners: [string, (id: string) => CredentialScope][] = [
+      ["workspaces", (wsId) => ({ kind: "workspace", wsId })],
+      ["users", (userId) => ({ kind: "user", userId })],
+    ];
+    for (const [dirName, toScope] of owners) {
+      let ids: string[];
+      try {
+        ids = await readdir(join(this.#workDir, dirName));
+      } catch (err) {
+        if (!isMissingDirectory(err)) {
+          // Every scope under this root is unseen, not absent.
+          tally.unreadable++;
+          log.warn("[credential-store] could not list an owner directory; not sweeping under it", {
+            dir: dirName,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+        continue;
+      }
+      for (const id of ids) {
+        const scope = toScope(id);
+        try {
+          this.#dir(scope);
+        } catch {
+          continue; // not an id this runtime owns a tree for
+        }
+        scopes.push(scope);
+      }
+    }
+    return scopes;
   }
 
   #auditReveal(scope: CredentialScope, key: string, read: CredentialRead): void {

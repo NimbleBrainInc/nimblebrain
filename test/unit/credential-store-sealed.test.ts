@@ -398,7 +398,8 @@ describe("the trailing newline splits", () => {
 describe("legacy plaintext under a sealer", () => {
   test("a hand-seeded plaintext file is still read", async () => {
     // A deployment that turns sealing on keeps working on the files already
-    // there; each becomes sealed when something next writes it.
+    // there. The boot sweep is what converts them; this store has not run one,
+    // which is the state a reader has to survive either way.
     const { store, dir, cleanup } = fresh(createCredentialSealer([KEY_A]));
     try {
       seed(dir, "acme.key", "gw-from-store\n");
