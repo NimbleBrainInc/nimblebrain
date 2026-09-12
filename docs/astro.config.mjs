@@ -167,6 +167,7 @@ export default defineConfig({
             items: [
               { label: 'Overview', slug: 'cli/overview' },
               { label: 'Running the server', slug: 'cli/serve' },
+              { label: 'Managing secrets', slug: 'cli/secrets' },
               { label: 'Dev mode', slug: 'cli/dev' },
             ],
           },
