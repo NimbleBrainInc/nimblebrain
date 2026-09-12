@@ -614,8 +614,11 @@ credential cleanup needs the credential directory at its live path.
   `src/connectors/` keeps no edge to the composition root.
 - Which secrets an uninstall may delete is the CALLER's question, passed in. The
   tool subtracts keys a surviving sibling still names; a workspace delete passes
-  none, because every connector is going and the `credentials/` subtree is
-  archived whole.
+  none, because every connector is going and those keys are operator-set
+  workspace secrets, which survive the rename into the archive. The connector's
+  own credentials do NOT survive it — `lifecycle.uninstall` clears its
+  `mcp-oauth.<server>.*` keys and any brokered credential dir a step before the
+  rename. That asymmetry is the design: revoking upstream is the point.
 
 ## API Surfaces — Three Audiences
 

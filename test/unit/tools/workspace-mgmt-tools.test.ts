@@ -332,6 +332,38 @@ describe("nb__manage_workspaces", () => {
       }
     });
 
+    test("an archive failure names the teardown that already ran, not a no-op", async () => {
+      const created = parseResult(
+        await tool.handler({ action: "create", name: "Stuck" }),
+      ) as { workspace: { id: string } };
+
+      tool = createManageWorkspacesTool({
+        ...makeCtx(),
+        runtime: {
+          deleteWorkspace: async () => ({
+            deleted: false,
+            deleteError: "EEXIST: file already exists",
+            connectors: [
+              { serverName: "com-example-alpha", ok: true, secrets: { deleted: [], failed: [] } },
+            ],
+          }),
+        } as unknown as Runtime,
+      });
+
+      const result = await tool.handler({
+        action: "delete",
+        workspaceId: created.workspace.id,
+      });
+
+      expect(result.isError).toBe(true);
+      // `deleted: false` with a `deleteError` is NOT the store's idempotent
+      // not-found, and must not be reported as one: the connectors are gone.
+      expect(extractText(result)).not.toContain("Workspace not found");
+      expect(extractText(result)).toContain("EEXIST");
+      expect(extractText(result)).toContain("Tore down 1 connector.");
+      expect(extractText(result)).toContain("still on disk");
+    });
+
     test("requires workspaceId", async () => {
       const result = await tool.handler({
         action: "update",

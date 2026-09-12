@@ -84,7 +84,9 @@ The agent installs the connector and registers its tools in the workspace's tool
 
 Deleting a workspace runs the same teardown as removing each connector it holds, one connector at a time, **before** anything is archived. For every installed connector that means: the app is told it is being removed (`on_removing`), its OAuth tokens are revoked upstream, a brokered connection is revoked at the broker, its webhook registrations and notification cursors are retired, and its tool permissions are dropped.
 
-The workspace's own data — conversations, files, automations, credentials — is then **archived**, not destroyed: the subtree moves to `archived/<wsId>/` with a marker file. From every other surface the workspace is gone the moment the delete returns.
+The workspace's own data — conversations, files, automations, and the workspace secrets an operator set — is then **archived**, not destroyed: the subtree moves to `archived/<wsId>/` with a marker file. From every other surface the workspace is gone the moment the delete returns.
+
+Each connector's own credentials are the exception, and go for good: its stored OAuth records and any brokered credential directory are cleared during teardown, because the grant behind them has just been revoked upstream. Archiving a revoked token would keep a secret that no longer opens anything.
 
 Teardown is best-effort per connector. A vendor that cannot be reached does not block the delete; the connector is reported on the result so you know whose grant may still be live and can revoke it in that vendor's own portal.
 

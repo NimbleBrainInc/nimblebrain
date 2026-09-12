@@ -470,7 +470,26 @@ async function handleDelete(
     // about connectors. Per-connector failures come back in `connectors` rather
     // than as a throw — one unreachable vendor must not strand the workspace
     // half-deleted.
-    const { deleted, connectors } = await ctx.runtime.deleteWorkspace(workspaceId);
+    const { deleted, connectors, deleteError } = await ctx.runtime.deleteWorkspace(workspaceId);
+    // The archive-rename failed AFTER the teardown, which is not reversible.
+    // Saying only "failed" would describe a no-op; the workspace is on disk
+    // with its connectors gone, and the operator has to know that to act.
+    if (deleteError) {
+      return {
+        content: textContent(
+          `Failed to archive workspace ${workspaceId}: ${deleteError}.` +
+            describeConnectorTeardown(
+              connectors.length,
+              connectors.filter((c) => !c.ok || c.revokeError),
+            ) +
+            (connectors.length > 0
+              ? " The workspace record is still on disk and its connectors must be reinstalled."
+              : ""),
+        ),
+        structuredContent: { deleted: false, workspaceId, connectors, deleteError },
+        isError: true,
+      };
+    }
     if (!deleted) {
       return {
         content: textContent(`Workspace not found: ${workspaceId}`),

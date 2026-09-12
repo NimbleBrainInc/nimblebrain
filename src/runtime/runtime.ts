@@ -352,6 +352,18 @@ export interface ConversationChange extends ConversationMutation {
 export interface WorkspaceDeleteResult {
   deleted: boolean;
   connectors: ConnectorTeardownOutcome[];
+  /**
+   * Why the archive-rename failed, when it did. Present only for a throw —
+   * `deleted: false` with no `deleteError` is the store's idempotent "no such
+   * workspace", which tore nothing down.
+   *
+   * It is reported rather than thrown for the same reason the per-connector
+   * outcomes are, only more urgently: the teardown has already run and is not
+   * reversible, so a caller that sees only the exception would tell an operator
+   * the delete was a no-op while the workspace sits on disk with every
+   * connector uninstalled and every grant revoked.
+   */
+  deleteError?: string;
 }
 
 export class Runtime {
@@ -3691,7 +3703,10 @@ export class Runtime {
    *
    * No secret keys are passed to the teardown: every connector is going, so
    * "does a sibling still name this key" has no answer worth acting on, and the
-   * workspace's `credentials/` subtree is archived whole with the rest of it.
+   * keys in question are operator-set workspace secrets, which survive the
+   * rename into the archive. The connector's OWN credentials do not — the
+   * teardown clears its OAuth records and brokered credential dir a step
+   * earlier, deliberately, since revoking upstream is the point.
    */
   async deleteWorkspace(wsId: string): Promise<WorkspaceDeleteResult> {
     const ws = await this.getWorkspaceStore().get(wsId);
@@ -3703,6 +3718,12 @@ export class Runtime {
     // tear down nothing and report a failure that never happened.
     const seen = new Set<string>();
     for (const ref of ws?.connectors ?? []) {
+      // The same predicate boot skips on (`buildWorkspaceProcessInventory` in
+      // `workspace-runtime.ts`), so the set torn down here is exactly the set
+      // that could have been started. NOT `matchesServerName`, which
+      // `paths.ts` argues is deliberately more permissive — that one answers
+      // "is this row the connector I am removing", asked once a server name is
+      // already in hand; this one answers "does this row name one at all".
       const serverName = serverNameFromRef(ref);
       if (!serverName) {
         // A row naming neither a serverName nor a usable url addresses no live
@@ -3721,8 +3742,20 @@ export class Runtime {
       seen.add(serverName);
       connectors.push(await uninstallWorkspaceConnector(this, wsId, serverName));
     }
-    const deleted = await this.getWorkspaceStore().delete(wsId);
-    return { deleted, connectors };
+    // The rename is guarded because the teardown above it is not reversible.
+    // `WorkspaceStore.delete` throws on a filesystem it cannot rename into
+    // (ENOSPC, EROFS, a collided archive destination), and letting that escape
+    // would hand the caller an exception carrying none of what was just torn
+    // down — reported as a failed delete, which before this cascade existed was
+    // a true no-op and now is not.
+    let deleted = false;
+    let deleteError: string | undefined;
+    try {
+      deleted = await this.getWorkspaceStore().delete(wsId);
+    } catch (err) {
+      deleteError = err instanceof Error ? err.message : String(err);
+    }
+    return { deleted, connectors, ...(deleteError ? { deleteError } : {}) };
   }
 
   /**

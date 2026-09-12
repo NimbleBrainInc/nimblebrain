@@ -59,9 +59,15 @@ export interface UninstallConnectorOptions {
    *
    * `manage_connectors` subtracts the keys a surviving sibling still names. A
    * workspace delete passes none: every connector is going, so the subtraction
-   * has no meaning, and the workspace's `credentials/` subtree is archived
-   * whole with the rest of it — deleting keys out from under that archive would
-   * destroy exactly what the archive exists to keep.
+   * has no meaning, and these keys are operator-set workspace secrets, which
+   * survive the archive-rename — deleting them out from under it would destroy
+   * exactly what the archive exists to keep.
+   *
+   * Not everything under `credentials/` survives, and that is deliberate rather
+   * than an oversight this argument papers over: `lifecycle.uninstall` clears
+   * the connector's own OAuth record keys (`mcp-oauth.<server>.*`) and any
+   * brokered credential directory one step before the rename, because revoking
+   * upstream is the point and a revoked token is not worth archiving.
    */
   secretKeys?: string[];
 }
@@ -76,9 +82,23 @@ export interface SecretDeleteOutcome {
 /** What one connector's teardown did, reported rather than thrown. */
 export interface ConnectorTeardownOutcome {
   serverName: string;
-  /** False when a step threw; the connector may be partly torn down. */
+  /**
+   * False when a step threw; the connector may be partly torn down.
+   *
+   * It reports the LOCAL teardown. Read `revoked` for whether the vendor was
+   * told — the two can disagree.
+   */
   ok: boolean;
   error?: string;
+  /**
+   * What the upstream revoke reported. **Absent means no revoke was
+   * attempted** — the lifecycle held no live instance for this connector, so
+   * there was no ref to revoke against and `cleanupBrokeredState` had nothing
+   * to resolve either. Boot seeds an instance for every startable row, so this
+   * is the already-gone case rather than an expected one; it is distinguishable
+   * here rather than folded into `ok` precisely because `ok` would read as
+   * "the grant is released" when nothing asked for its release.
+   */
   revoked?: { access?: boolean; refresh?: boolean };
   revokeError?: string;
   secrets: SecretDeleteOutcome;
