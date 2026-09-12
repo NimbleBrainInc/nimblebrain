@@ -586,6 +586,40 @@ check it is a warning on a **successful** install, and an empty tool list is
 (`"hooks"`, `"lifecycle"`); `stopWatchingToolSurface` drops both on uninstall and
 `stopAllToolSurfaceWatches` on shutdown, beside `resetReadyNotifications`.
 
+### Connector teardown is a function, and it has two callers
+
+`uninstallWorkspaceConnector` (`src/connectors/runtime/uninstall.ts`) is the
+whole of removing one connector from a workspace: the `on_removing` call, the
+OAuth revoke, `lifecycle.uninstall` (the only path to `cleanupBrokeredState`,
+and so the only thing that revokes a brokered connection at the vendor), the
+workspace-record strip, the hook revoke, the cursor reset, the tool-surface
+watches, the ready-notification record, the tool permissions, the owned secrets.
+Order is the contract — see the file header.
+
+**Deleting a container runs the same teardown as removing each thing it holds.**
+`Runtime.deleteWorkspace` walks `ws.connectors`, calls it for each, and only
+then hands the id to `WorkspaceStore.delete` for the archive-rename. Teardown
+runs BEFORE the rename: `on_removing` needs the bundle reachable, and the
+credential cleanup needs the credential directory at its live path.
+
+- `WorkspaceStore` imports nothing from `src/connectors/` and holds no lifecycle
+  handle. The cascade is the runtime's; the store does the rename.
+- `manage_workspaces delete` calls `Runtime.deleteWorkspace`, never
+  `workspaceStore.delete` — which is why `ManageWorkspacesContext` carries a
+  runtime handle.
+- Best-effort per connector. Outcomes are collected and returned, not thrown: a
+  vendor nobody can reach must not strand a workspace half-deleted, and a failed
+  revoke has to stay nameable after the record that named it is archived.
+- `ConnectorTeardownDeps` is a structural interface `Runtime` satisfies, so
+  `src/connectors/` keeps no edge to the composition root.
+- Which secrets an uninstall may delete is the CALLER's question, passed in. The
+  tool subtracts keys a surviving sibling still names; a workspace delete passes
+  none, because every connector is going and those keys are operator-set
+  workspace secrets, which survive the rename into the archive. The connector's
+  own credentials do NOT survive it — `lifecycle.uninstall` clears its
+  `mcp-oauth.<server>.*` keys and any brokered credential dir a step before the
+  rename. That asymmetry is the design: revoking upstream is the point.
+
 ## API Surfaces — Three Audiences
 
 The platform serves three audiences with three protocol surfaces. They are not tiers; they are distinct contracts for distinct callers, intentionally split.

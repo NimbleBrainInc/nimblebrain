@@ -17,8 +17,8 @@ import { brokeredRef } from "../connectors/runtime/brokered.ts";
 import { WORKSPACE_PRINCIPAL_ID } from "../connectors/runtime/connection.ts";
 import { sanitizePlacements } from "../connectors/runtime/defaults.ts";
 import {
-  deriveServerName,
   isReservedServerName,
+  matchesServerName,
   serverNameFromRef,
   slugifyServerName,
 } from "../connectors/runtime/paths.ts";
@@ -29,16 +29,16 @@ import type {
   ConnectorRef,
   RemoteTransportConfig,
 } from "../connectors/runtime/types.ts";
+import { uninstallWorkspaceConnector } from "../connectors/runtime/uninstall.ts";
 import { textContent } from "../engine/content-helpers.ts";
 import { INTERNAL_TOOL_ANNOTATION, type ToolResult } from "../engine/types.ts";
-import { HookContractError, revokeHooksForConnector } from "../hooks/provisioning.ts";
+import { HookContractError } from "../hooks/provisioning.ts";
 import { ensureHooks } from "../hooks/reconcile.ts";
 import type { ConnectorOwner } from "../identity/connector-owner.ts";
 import { IdentityConnectorStore } from "../identity/connector-store.ts";
 import type { UserIdentity } from "../identity/provider.ts";
 import { LifecycleContractError } from "../lifecycle/declaration.ts";
-import { forgetReadyNotification, notifyReady, notifyRemoving } from "../lifecycle/notify.ts";
-import { clearCursor } from "../notifications/cursors.ts";
+import { notifyReady } from "../lifecycle/notify.ts";
 import { log } from "../observability/log.ts";
 import type { PermissionOwner } from "../permissions/permission-store.ts";
 import type { Runtime } from "../runtime/runtime.ts";
@@ -46,7 +46,6 @@ import { validateAdditionalAuthorizationParams } from "../util/oauth-params.ts";
 import { isHttpUrl } from "../util/url.ts";
 import { canWriteWorkspaceScoped } from "../workspace/authz.ts";
 import type { Workspace } from "../workspace/types.ts";
-import { stopWatchingToolSurface } from "./connector-surface.ts";
 import { type CredentialRef, isCredentialRef } from "./credential-ref.ts";
 import type { CredentialStore } from "./credential-store.ts";
 import { CREDENTIAL_PROVIDER } from "./credential-transport-credential.ts";
@@ -2393,21 +2392,6 @@ async function handleDisconnect(
 }
 
 /**
- * Whether a persisted `workspace.json` row IS the named connector.
- *
- * `deriveServerName` needs a string; a legacy or malformed row has no `url`, and
- * throwing here would fail the uninstall of a *different*, healthy connector.
- * Such a row matches nothing, so it is left alone — which also makes it a
- * referrer for the reference check below, the safe direction for a row nothing
- * can identify.
- */
-function matchesServerName(row: ConnectorRef, serverName: string): boolean {
-  if (row.serverName) return row.serverName === serverName;
-  if (typeof row.url !== "string" || row.url.length === 0) return false;
-  return deriveServerName(row.url) === serverName;
-}
-
-/**
  * The workspace credential keys a persisted connector names AND OWNS — the
  * ones an uninstall may take with it.
  *
@@ -2497,12 +2481,12 @@ function deletableSecretKeys(ws: Workspace, serverName: string, ownRef: Connecto
 }
 
 /**
- * Uninstall a connector — full removal. For OAuth-protected URL connectors
- * we revoke tokens upstream first (so the user's grant in the vendor
- * portal is cleaned up), then `lifecycle.uninstall` stops the source,
- * removes the entry from `workspace.json`, clears credentials, and
- * unregisters placements. For local connectors (stdio / non-OAuth URL),
- * just `lifecycle.uninstall`.
+ * Uninstall a connector — full removal.
+ *
+ * The teardown itself is {@link uninstallWorkspaceConnector}, because a
+ * workspace delete has to run exactly the same ten steps over every connector
+ * it holds. What stays here is what is the tool's: the admission checks, the
+ * decision about which secrets this uninstall may take with it, and the prose.
  *
  * The workspace secrets the connector declares go with it, unconditionally. A
  * connector owns its secrets, so removing the connector resolves them — leaving
@@ -2519,12 +2503,6 @@ function deletableSecretKeys(ws: Workspace, serverName: string, ownRef: Connecto
  * The keys come from the connector's own declaration, read here rather than
  * from the call: a caller-named key would be a delete primitive pointed at any
  * secret in the workspace.
- *
- * Order is uninstall-then-delete, and it matters. A delete that ran first and
- * was followed by a failed uninstall would leave a connector installed and
- * unable to connect. The reverse leaves the connector gone and a key behind,
- * which is the state before this change and one the caller can act on — so a
- * failed delete is reported, not rolled back.
  *
  * Workspace connectors only — a personal (identity-owned) connector is removed
  * via `handleDisconnectIdentity` (the dispatcher routes `scope:"identity"` there).
@@ -2573,117 +2551,33 @@ async function handleUninstall(
     instance.ref,
   );
 
-  // Tell the connector it is being removed, BEFORE anything is torn down —
-  // after the source is gone there is nothing left to call, and after the OAuth
-  // tokens are revoked the call would fail. Best-effort by construction:
-  // `notifyRemoving` never throws, and a bundle that cannot be reached is
-  // logged and left behind rather than blocking a user's uninstall on a
-  // vendor's availability.
-  await notifyRemoving(ctx.runtime.getLifecycleNotifyDeps(), wsId, serverName);
+  const outcome = await uninstallWorkspaceConnector(ctx.runtime, wsId, serverName, {
+    secretKeys,
+  });
+  if (!outcome.ok) return errResult(outcome.error ?? "Uninstall failed.");
 
-  // Revoke OAuth tokens upstream first when applicable.
-  const revokeResult = instance.ref
-    ? await revokeUrlConnectorTokens(lifecycle, ctx, serverName, wsId)
-    : {};
-
-  try {
-    const registry = ctx.runtime.getRegistryForWorkspace(wsId);
-    await lifecycle.uninstall(serverName, registry, wsId);
-    await stripUninstalledConnectorEntry(ctx, wsId, serverName);
-    // Retire every hook this connector held. The door independently refuses a
-    // delivery for an uninstalled connector — it needs the connector's base URL
-    // to have anywhere to forward to — so this is not the only thing that stops
-    // one. It is what keeps a later reinstall from resurrecting a key id whose
-    // URL has been in the wild the whole time.
-    await revokeHooksForConnector(ctx.runtime.getWorkspaceStore(), wsId, serverName);
-    // And reset the outbox position. The cursor is the emitting server's own
-    // opaque value, carrying an epoch it may reset while the connector is gone,
-    // so a reinstall resuming from a stale one would ask a question its outbox
-    // can no longer answer. Bootstrap costs only what was emitted while nobody
-    // was installed to receive it.
-    await clearCursor(ctx.runtime.getWorkspaceStore(), wsId, serverName);
-    // And drop the tool-set watches, whose closures would otherwise hold a
-    // source nothing routes to any more, along with the per-process record that
-    // this connector has already been told it is ready — a reinstall is a new
-    // installation and must be told so.
-    stopWatchingToolSurface(wsId, serverName);
-    forgetReadyNotification(wsId, serverName);
-    // Drop tool permissions for this connector — they have no meaning
-    // once the connector is gone.
-    await ctx.runtime
-      .getPermissionStore()
-      .deleteConnector({ scope: "workspace", wsId }, serverName);
-    const secrets = await deleteOwnedSecrets(ctx, wsId, secretKeys);
-    return {
-      content: textContent(
-        `Uninstalled "${serverName}" from workspace.` +
-          describeSecretOutcome(secrets, retainedKeys),
-      ),
-      structuredContent: {
-        ok: true,
-        scope: "workspace",
-        serverName,
-        deletedSecretKeys: secrets.deleted,
-        // Named, not just counted: the Configure page goes with the connector,
-        // so this notice is the last place a surviving key is nameable.
-        ...(secrets.failed.length > 0 ? { failedSecretKeys: secrets.failed } : {}),
-        ...(secrets.error ? { secretDeleteError: secrets.error } : {}),
-        // Keys another installed connector still resolves. Reported so the
-        // absence of a delete is visible rather than looking like a miss.
-        ...(retainedKeys.length > 0 ? { retainedSecretKeys: retainedKeys } : {}),
-        ...revokeResult,
-      },
-      isError: false,
-    };
-  } catch (err) {
-    // Nothing has been deleted yet — the secrets go after the uninstall, so a
-    // connector that is still installed still has its credentials.
-    return errResult(err instanceof Error ? err.message : String(err));
-  }
-}
-
-/**
- * Remove the keys an uninstalled connector owned, reporting what went.
- *
- * Every key is attempted even after one fails: a partial delete that stopped at
- * the first error would leave the rest orphaned with nothing to say so. The
- * result is not an error — the uninstall succeeded, and the connector is gone
- * whether or not its key went with it.
- */
-async function deleteOwnedSecrets(
-  ctx: ManageConnectorsContext,
-  wsId: string,
-  keys: string[],
-): Promise<{ deleted: string[]; failed: string[]; error?: string }> {
-  if (keys.length === 0) return { deleted: [], failed: [] };
-  const deleted: string[] = [];
-  const failed: string[] = [];
-  let firstError: string | undefined;
-  // Inside the try with the deletes: `getCredentialStore` falls through to
-  // `requireCredentialStore`, which THROWS when nothing installed a store. Left
-  // outside, that throw reaches the caller's outer try and turns an uninstall
-  // that already completed into a reported failure — the one thing the
-  // uninstall-then-delete order exists to avoid claiming.
-  try {
-    const store = ctx.runtime.getCredentialStore();
-    for (const key of keys) {
-      try {
-        await store.delete({ kind: "workspace", wsId }, key);
-        deleted.push(key);
-      } catch (err) {
-        failed.push(key);
-        firstError ??= err instanceof Error ? err.message : String(err);
-      }
-    }
-  } catch (err) {
-    // No store at all: every key is unresolved, and none of them went.
-    return {
-      deleted,
-      failed: keys.filter((k) => !deleted.includes(k)),
-      error: err instanceof Error ? err.message : String(err),
-    };
-  }
-  return { deleted, failed, ...(firstError ? { error: firstError } : {}) };
+  const { secrets } = outcome;
+  return {
+    content: textContent(
+      `Uninstalled "${serverName}" from workspace.` + describeSecretOutcome(secrets, retainedKeys),
+    ),
+    structuredContent: {
+      ok: true,
+      scope: "workspace",
+      serverName,
+      deletedSecretKeys: secrets.deleted,
+      // Named, not just counted: the Configure page goes with the connector,
+      // so this notice is the last place a surviving key is nameable.
+      ...(secrets.failed.length > 0 ? { failedSecretKeys: secrets.failed } : {}),
+      ...(secrets.error ? { secretDeleteError: secrets.error } : {}),
+      // Keys another installed connector still resolves. Reported so the
+      // absence of a delete is visible rather than looking like a miss.
+      ...(retainedKeys.length > 0 ? { retainedSecretKeys: retainedKeys } : {}),
+      ...(outcome.revoked ? { revoked: outcome.revoked } : {}),
+      ...(outcome.revokeError ? { revokeError: outcome.revokeError } : {}),
+    },
+    isError: false,
+  };
 }
 
 /**
@@ -2716,49 +2610,6 @@ function describeSecretOutcome(
 
 function quoteKeys(keys: string[]): string {
   return keys.map((k) => `"${k}"`).join(", ");
-}
-
-/**
- * Revoke a URL connector's OAuth tokens upstream before local cleanup. Best-effort:
- * a 4xx from the provider shouldn't block uninstall, since the user's intent is
- * "I want this gone."
- */
-async function revokeUrlConnectorTokens(
-  lifecycle: ReturnType<Runtime["getLifecycle"]>,
-  ctx: ManageConnectorsContext,
-  serverName: string,
-  wsId: string,
-): Promise<{ revoked?: { access?: boolean; refresh?: boolean }; revokeError?: string }> {
-  try {
-    const r = await lifecycle.disconnect(serverName, wsId, "_workspace", {
-      workDir: ctx.runtime.getWorkDir(),
-      allowInsecureRemotes: ctx.runtime.getAllowInsecureRemotes(),
-    });
-    return {
-      revoked: r.revoked,
-      ...(r.revokeError ? { revokeError: r.revokeError } : {}),
-    };
-  } catch (err) {
-    return { revokeError: err instanceof Error ? err.message : String(err) };
-  }
-}
-
-/**
- * Strip the just-uninstalled connector from `workspace.json#connectors[]`.
- * `lifecycle.uninstall` clears its own `instances` map and the legacy global
- * `nimblebrain.json`, but not the workspace record.
- */
-async function stripUninstalledConnectorEntry(
-  ctx: ManageConnectorsContext,
-  wsId: string,
-  serverName: string,
-): Promise<void> {
-  const wsAfter = await ctx.runtime.getWorkspaceStore().get(wsId);
-  if (!wsAfter) return;
-  const filtered = wsAfter.connectors.filter((b) => !matchesServerName(b, serverName));
-  if (filtered.length !== wsAfter.connectors.length) {
-    await ctx.runtime.getWorkspaceStore().update(wsId, { connectors: filtered });
-  }
 }
 
 /**

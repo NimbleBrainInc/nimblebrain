@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { UserIdentity } from "../../../src/identity/provider.ts";
+import type { Runtime } from "../../../src/runtime/runtime.ts";
 import type { User } from "../../../src/identity/user.ts";
 import { UserStore } from "../../../src/identity/user.ts";
 import type { InProcessTool } from "../../../src/tools/in-process-app.ts";
@@ -32,10 +33,26 @@ let userStore: UserStore;
 let tool: InProcessTool;
 let currentIdentity: UserIdentity | null;
 
+/**
+ * A runtime stub whose `deleteWorkspace` archives through the real store and
+ * reports no connectors.
+ *
+ * These are the TOOL's tests — the gate, the argument parsing, the prose, the
+ * not-found answer. The cascade itself is the runtime's, and is driven against
+ * a real `Runtime.start()` in
+ * `test/integration/workspace-delete-cascade.test.ts`; stubbing it here would
+ * assert a double.
+ */
 function makeCtx(): ManageWorkspacesContext {
   return {
     getIdentity: () => currentIdentity,
     workspaceStore: store,
+    runtime: {
+      deleteWorkspace: async (wsId: string) => ({
+        deleted: await store.delete(wsId),
+        connectors: [],
+      }),
+    } as unknown as Runtime,
     userStore,
   };
 }
@@ -315,6 +332,43 @@ describe("nb__manage_workspaces", () => {
       }
     });
 
+    test("an archive failure names the teardown that already ran, not a no-op", async () => {
+      const created = parseResult(
+        await tool.handler({ action: "create", name: "Stuck" }),
+      ) as { workspace: { id: string } };
+
+      tool = createManageWorkspacesTool({
+        ...makeCtx(),
+        runtime: {
+          deleteWorkspace: async () => ({
+            deleted: false,
+            deleteError: "EEXIST: file already exists",
+            connectors: [
+              { serverName: "com-example-alpha", ok: true, secrets: { deleted: [], failed: [] } },
+            ],
+          }),
+        } as unknown as Runtime,
+      });
+
+      const result = await tool.handler({
+        action: "delete",
+        workspaceId: created.workspace.id,
+      });
+
+      expect(result.isError).toBe(true);
+      // `deleted: false` with a `deleteError` is NOT the store's idempotent
+      // not-found, and must not be reported as one: the connectors are gone.
+      expect(extractText(result)).not.toContain("Workspace not found");
+      expect(extractText(result)).toContain("EEXIST");
+      expect(extractText(result)).toContain("Tore down 1 connector.");
+      expect(extractText(result)).toContain("cannot be undone");
+      // And it claims nothing about where the record ended up. The store
+      // throws on both sides of its rename, so either claim is wrong half the
+      // time — see `handleDelete`.
+      expect(extractText(result)).not.toContain("still on disk");
+      expect(extractText(result)).not.toContain("is archived");
+    });
+
     test("requires workspaceId", async () => {
       const result = await tool.handler({
         action: "update",
@@ -375,6 +429,48 @@ describe("nb__manage_workspaces", () => {
 
       // Verify directory is gone
       expect(existsSync(wsDir)).toBe(false);
+    });
+
+    test("reports what the delete tore down, and names what did not", async () => {
+      const created = parseResult(
+        await tool.handler({ action: "create", name: "Wired" }),
+      ) as { workspace: { id: string } };
+
+      tool = createManageWorkspacesTool({
+        ...makeCtx(),
+        runtime: {
+          deleteWorkspace: async (wsId: string) => ({
+            deleted: await store.delete(wsId),
+            connectors: [
+              { serverName: "com-example-alpha", ok: true, secrets: { deleted: [], failed: [] } },
+              {
+                serverName: "com-example-beta",
+                ok: false,
+                error: "vendor unreachable",
+                secrets: { deleted: [], failed: [] },
+              },
+            ],
+          }),
+        } as unknown as Runtime,
+      });
+
+      const result = await tool.handler({
+        action: "delete",
+        workspaceId: created.workspace.id,
+      });
+
+      expect(result.isError).toBe(false);
+      // The record is archived, so this sentence is the last place the connector
+      // whose grant may still be live at a vendor is nameable.
+      expect(extractText(result)).toContain("Tore down 2 connectors.");
+      expect(extractText(result)).toContain('"com-example-beta"');
+      expect(extractText(result)).not.toContain('"com-example-alpha"');
+
+      const parsed = parseResult(result) as { connectors: Array<{ serverName: string }> };
+      expect(parsed.connectors.map((c) => c.serverName)).toEqual([
+        "com-example-alpha",
+        "com-example-beta",
+      ]);
     });
 
     test("requires workspaceId", async () => {

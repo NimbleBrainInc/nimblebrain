@@ -155,6 +155,26 @@ export function serverNameFromRef(ref: ConnectorRef): string | null {
 }
 
 /**
+ * Whether a persisted `workspace.json` row IS the named connector.
+ *
+ * `deriveServerName` needs a string; a legacy or malformed row has no `url`, and
+ * throwing here would fail the uninstall of a *different*, healthy connector.
+ * Such a row matches nothing, so it is left alone — which also makes it a
+ * referrer for the reference check in `deletableSecretKeys`, the safe direction
+ * for a row nothing can identify.
+ *
+ * Deliberately NOT `serverNameFromRef(row) === serverName`. That one gates on
+ * `isHttpUrl`, so a row whose url this runtime could not reach names nothing;
+ * this one still derives from any non-empty string, because a row that cannot
+ * be STARTED must still be REMOVABLE.
+ */
+export function matchesServerName(row: ConnectorRef, serverName: string): boolean {
+  if (row.serverName) return row.serverName === serverName;
+  if (typeof row.url !== "string" || row.url.length === 0) return false;
+  return deriveServerName(row.url) === serverName;
+}
+
+/**
  * Derive a safe directory name for per-connector data isolation.
  * Uses the full scoped name to avoid collisions (e.g., @foo/tasks vs @bar/tasks).
  *
