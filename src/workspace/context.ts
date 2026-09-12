@@ -1,5 +1,6 @@
-import { join } from "node:path";
-import { WORKSPACE_ID_RE } from "./workspace-store.ts";
+import { existsSync, mkdirSync } from "node:fs";
+import { join, sep } from "node:path";
+import { WORKSPACE_ID_RE } from "./workspace-id-pattern.ts";
 
 /**
  * Single typed access path to workspace-bound resources.
@@ -27,6 +28,12 @@ import { WORKSPACE_ID_RE } from "./workspace-store.ts";
  * looking up the destination workspace's context and dispatching against
  * it. Everything below the orchestrator gets exactly one context and
  * cannot leak across the boundary by construction.
+ *
+ * The other half of that structural fix is at the bottom of this file:
+ * {@link ensureWorkspaceDir} is the one place a workspace-scoped directory is
+ * created, and it requires the workspace root to already exist. A path helper
+ * says where a write goes; that function says whether the workspace it goes to
+ * is still there.
  */
 
 /**
@@ -177,4 +184,114 @@ export class WorkspaceContext {
     for (const segment of subpath) assertSafeSubpathSegment(segment, scope);
     return join(this.#root, scope, ...subpath);
   }
+}
+
+// ---------------------------------------------------------------------------
+// Directory creation — the one place a workspace-scoped mkdir happens
+// ---------------------------------------------------------------------------
+
+/**
+ * Thrown when a write would have created a directory inside a workspace root
+ * that is not there.
+ *
+ * It names the workspace, which a bare `ENOENT` on a leaf path does not: the
+ * caller needs to know the *container* is gone, because that is the difference
+ * between "create the parent and retry" and "stop, this workspace was deleted".
+ */
+export class WorkspaceRootMissingError extends Error {
+  readonly code = "workspace_root_missing";
+  constructor(
+    readonly workspaceId: string,
+    readonly attemptedPath: string,
+  ) {
+    super(
+      `Workspace "${workspaceId}" does not exist — refusing to create ${attemptedPath}. ` +
+        "A workspace root is created by WorkspaceStore.create and by nothing else.",
+    );
+    this.name = "WorkspaceRootMissingError";
+  }
+}
+
+const WORKSPACES_SEGMENT = "workspaces";
+
+/**
+ * The `workspaces/<wsId>` prefix of `dir`, or `null` when `dir` is not inside a
+ * workspace tree at all.
+ *
+ * Derived from the path rather than from an argument, which is what lets every
+ * workspace-scoped writer adopt the guard without threading a `wsId` it does
+ * not already hold. The same trick `parseConversationPath` and
+ * `parseAutomationPath` use, for the same reason: the path is the binding.
+ *
+ * **A `workspaces` segment only counts with a well-formed workspace id after
+ * it**, and the scan looks for that PAIR rather than trusting one candidate
+ * index. Trusting one is how this leaked: testing the segment after the *last*
+ * `workspaces` read a path whose final segment is `workspaces` — the id of an
+ * automation named "Workspaces", and `automationRunsDir` ends in
+ * `runs/<automationId>` — as "not a workspace tree", and fell through to the
+ * unguarded mkdir this exists to prevent.
+ *
+ * Requiring the pair also settles first-match versus last: the outermost root
+ * is the one every deeper path hangs off, so it is the one whose absence means
+ * the workspace is gone.
+ */
+function workspaceRootOf(dir: string): { wsId: string; root: string } | null {
+  const segments = dir.split(sep);
+  for (let i = 0; i < segments.length - 1; i++) {
+    if (segments[i] !== WORKSPACES_SEGMENT) continue;
+    const wsId = segments[i + 1];
+    if (wsId && WORKSPACE_ID_RE.test(wsId)) {
+      return { wsId, root: segments.slice(0, i + 2).join(sep) };
+    }
+  }
+  return null;
+}
+
+/**
+ * Throw when `dir` sits inside a workspace whose root does not exist.
+ *
+ * **This is the invariant, and it is here rather than in each writer.**
+ * `WorkspaceStore.delete` renames a workspace's subtree out from under every
+ * writer holding a path into it. Those writers mkdir recursively, so the first
+ * one to fire after the rename used to *re-create the deleted workspace's
+ * directory* and write into it — and the result was invisible, because `list()`
+ * skips a workspace directory whose `workspace.json` will not parse. The
+ * resurrected tree appeared nowhere and was never deleted again.
+ *
+ * Guarding each writer by hand is a discipline problem with no way to grep for
+ * the writers, so the rule lives one layer down, immediately before the mkdir:
+ * **a workspace root is created by `WorkspaceStore.create` (and its
+ * `scaffoldWorkspace` call), and by nothing else.** Everything else may create
+ * paths *inside* a root that is there, and fails loudly when it is not.
+ *
+ * A path outside any workspace tree (the org skill dir, a user's own skills,
+ * the instance credential dir, a test's temp dir) has no root to require and
+ * passes — so a writer shared across scopes, like `writeSkill` or
+ * `CredentialStore.put`, picks the guard up for its workspace-scoped callers
+ * without changing what it does for the others.
+ *
+ * Call this directly when the writer must keep its own `mkdir` — the
+ * credential and instructions dirs pass `mode: 0o700`, and several are
+ * `await mkdir`, so swapping in {@link ensureWorkspaceDir} would widen them to
+ * the umask default or make them synchronous. Both entry points read one rule
+ * from one place; there is no second definition of it.
+ */
+export function assertWorkspaceRootExists(dir: string): void {
+  const located = workspaceRootOf(dir);
+  if (located && !existsSync(located.root)) {
+    throw new WorkspaceRootMissingError(located.wsId, dir);
+  }
+}
+
+/**
+ * {@link assertWorkspaceRootExists}, then create `dir`.
+ *
+ * The form for a writer whose mkdir is a plain recursive one at the default
+ * mode. Idempotent, and returns `dir` so it composes with a `join` at the call
+ * site.
+ */
+export function ensureWorkspaceDir(dir: string): string {
+  assertWorkspaceRootExists(dir);
+  mkdirSync(dir, { recursive: true });
+  return dir;
 }

@@ -27,6 +27,7 @@ import {
   runSealCanary,
 } from "../../src/tools/credential-store-backend.ts";
 import { type CredentialScope, FileCredentialStore } from "../../src/tools/credential-store.ts";
+import { seedWorkspaceRoot } from "../helpers/test-workspace.ts";
 
 const KEY_A = Buffer.alloc(32, 0x11);
 const KEY_B = Buffer.alloc(32, 0x22);
@@ -36,6 +37,7 @@ const READ = { caller: "test", purpose: "unit test" };
 
 function fresh(sealer?: CredentialSealer) {
   const dir = mkdtempSync(join(tmpdir(), "nb-sealed-"));
+  seedWorkspaceRoot(dir, "ws_test");
   const events: EngineEvent[] = [];
   const store = new FileCredentialStore(dir, {
     eventSink: { emit: (e) => events.push(e) },
@@ -457,6 +459,7 @@ describe("selecting the sealing backend from config", () => {
   function build(config: Record<string, unknown>, env?: string) {
     registerBuiltinCredentialStoreBackends();
     const dir = mkdtempSync(join(tmpdir(), "nb-sealed-cfg-"));
+    seedWorkspaceRoot(dir, "ws_test");
     const previous = process.env[ENV];
     if (env === undefined) delete process.env[ENV];
     else process.env[ENV] = env;
@@ -527,6 +530,7 @@ describe("the failure reaches a real sink, not just a test array", () => {
   test("a failed open is written to the workspace log", async () => {
     const logDir = mkdtempSync(join(tmpdir(), "nb-sealed-log-"));
     const dir = mkdtempSync(join(tmpdir(), "nb-sealed-"));
+    seedWorkspaceRoot(dir, "ws_test");
     try {
       const store = new FileCredentialStore(dir, {
         eventSink: new WorkspaceLogSink({ dir: logDir }),

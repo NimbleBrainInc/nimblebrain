@@ -79,6 +79,7 @@ import {
   composioCallbackUrl,
   composioUserId,
 } from "../../src/connectors/providers/composio/sdk.ts";
+import { seedWorkspaceRoot } from "../helpers/test-workspace.ts";
 
 function sha256Hex(input: string): string {
   return createHash("sha256").update(input).digest("hex");
@@ -217,6 +218,9 @@ function composioEntry(id: string) {
 
 function freshDir(): { dir: string; cleanup: () => void } {
   const dir = mkdtempSync(join(tmpdir(), "nb-composio-auth-"));
+  seedWorkspaceRoot(dir, "ws_01abc");
+  seedWorkspaceRoot(dir, "ws_real");
+  seedWorkspaceRoot(dir, "ws_test");
   return { dir, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
 }
 
@@ -685,6 +689,9 @@ describe("POST /v1/composio-auth/initiate", () => {
 
     // Spy on saveComposioConnection by inspecting the filesystem after.
     const dir = mkdtempSync(join(tmpdir(), "nb-adopt-"));
+    seedWorkspaceRoot(dir, "ws_01abc");
+    seedWorkspaceRoot(dir, "ws_real");
+    seedWorkspaceRoot(dir, "ws_test");
     try {
       const ctx = stubCtx(dir, composioEntry("com.google/gmail"));
       (ctx as unknown as { authOptions: unknown }).authOptions = {
@@ -739,6 +746,9 @@ describe("POST /v1/composio-auth/initiate", () => {
     };
 
     const dir = mkdtempSync(join(tmpdir(), "nb-adopt-fail-"));
+    seedWorkspaceRoot(dir, "ws_01abc");
+    seedWorkspaceRoot(dir, "ws_real");
+    seedWorkspaceRoot(dir, "ws_test");
     try {
       // Force ensureSourceRegistered to throw so we exercise the
       // failure path: contract is that connection.json must NOT be
@@ -1019,6 +1029,9 @@ describe("POST /v1/composio-auth/initiate-identity", () => {
     };
 
     const dir = mkdtempSync(join(tmpdir(), "nb-adopt-identity-"));
+    seedWorkspaceRoot(dir, "ws_01abc");
+    seedWorkspaceRoot(dir, "ws_real");
+    seedWorkspaceRoot(dir, "ws_test");
     try {
       const { app, ctx } = await makeIdentityApp(composioEntry("com.google/gmail"), dir);
       const res = await app.request("http://nb.test/v1/composio-auth/initiate-identity", {
@@ -1058,6 +1071,9 @@ describe("POST /v1/composio-auth/initiate-identity", () => {
     process.env.COMPOSIO_API_KEY = "k_test";
     setConnectorsConfig({ providers: { composio: { authConfigs: { gmail: "ac_gmail" } } } });
     const dir = mkdtempSync(join(tmpdir(), "nb-identity-not-installed-"));
+    seedWorkspaceRoot(dir, "ws_01abc");
+    seedWorkspaceRoot(dir, "ws_real");
+    seedWorkspaceRoot(dir, "ws_test");
     try {
       // Valid catalog entry, but NO install ref seeded → the precheck rejects,
       // mirroring the OAuth identity initiate. Prevents a connect-before-install

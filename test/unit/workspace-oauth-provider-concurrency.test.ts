@@ -9,6 +9,7 @@ import {
   installTestCredentialStore,
   resetTestCredentialStore,
 } from "../helpers/credential-store.ts";
+import { seedWorkspaceRoot } from "../helpers/test-workspace.ts";
 
 /**
  * Concurrency contract for `WorkspaceOAuthProvider`.
@@ -79,6 +80,7 @@ describe("WorkspaceOAuthProvider — concurrent auth() coalesce", () => {
 
   beforeEach(() => {
     workDir = mkdtempSync(join(tmpdir(), "nb-oauth-concurrency-test-"));
+    seedWorkspaceRoot(workDir, "ws_test");
     installTestCredentialStore(workDir);
   });
 

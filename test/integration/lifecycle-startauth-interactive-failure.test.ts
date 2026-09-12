@@ -7,6 +7,8 @@ import { ConnectorLifecycleManager } from "../../src/connectors/runtime/lifecycl
 import type { ConnectorInstance, ConnectorRef } from "../../src/connectors/runtime/types.ts";
 import type { EngineEvent, EventSink } from "../../src/engine/types.ts";
 import { _clearAll, resolveWithCode } from "../../src/tools/oauth-flow-registry.ts";
+import { seedWorkspaceRoot } from "../helpers/test-workspace.ts";
+import { installTestCredentialStore, resetTestCredentialStore } from "../helpers/credential-store.ts";
 
 /**
  * Regression for the silent interactive-OAuth hang fixed in
@@ -115,6 +117,12 @@ describe("lifecycle.startAuth — interactive-flow failure is surfaced, not swal
 
   beforeEach(() => {
     workDir = mkdtempSync(join(tmpdir(), "nb-startauth-interactive-"));
+    seedWorkspaceRoot(workDir, "ws_test");
+    // The OAuth provider's records are keys in the installed credential store,
+    // so this suite installs one rooted at its OWN workDir. Without it the
+    // writes land in whatever store an earlier file left installed — which is
+    // why this failed in isolation.
+    installTestCredentialStore(workDir);
     mock = startMockAuthServer();
     sink = new CapturingSink();
     lifecycle = new ConnectorLifecycleManager(sink);
@@ -137,6 +145,7 @@ describe("lifecycle.startAuth — interactive-flow failure is surfaced, not swal
 
   afterEach(() => {
     _clearAll();
+    resetTestCredentialStore();
     mock.stop();
   });
 

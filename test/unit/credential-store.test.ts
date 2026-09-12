@@ -14,6 +14,7 @@ import {
   USER,
   WS,
 } from "../helpers/credential-store-conformance.ts";
+import { seedWorkspaceRoot } from "../helpers/test-workspace.ts";
 
 function freshStore(): {
   store: FileCredentialStore;
@@ -22,6 +23,7 @@ function freshStore(): {
   cleanup: () => void;
 } {
   const dir = mkdtempSync(join(tmpdir(), "nb-credstore-"));
+  seedWorkspaceRoot(dir, "ws_test");
   const events: EngineEvent[] = [];
   const store = new FileCredentialStore(dir, { eventSink: { emit: (e) => events.push(e) } });
   return { store, dir, events, cleanup: () => rmSync(dir, { recursive: true, force: true }) };

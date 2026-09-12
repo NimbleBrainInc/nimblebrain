@@ -10,6 +10,7 @@
  */
 
 import { Cron } from "croner";
+import { log } from "../../observability/log.ts";
 import {
   appendRun,
   loadAllAutomations,
@@ -504,6 +505,39 @@ export class Scheduler {
   }
 
   /**
+   * Forget every automation belonging to `wsId`, and re-arm.
+   *
+   * The in-memory `definitions` map is the only thing that decides what the
+   * timer fires, and nothing reloads it on a workspace delete —
+   * `reload()` is called from the automations tool surface alone, so a deleted
+   * workspace's automations stayed armed here until the process restarted.
+   * When one fired it wrote back through the store, and the store's mkdir
+   * re-created the workspace directory that had just been archived.
+   *
+   * `ensureWorkspaceDir` is what makes that write fail rather than resurrect
+   * the tree; this is what stops the run from being attempted at all, so the
+   * correct behaviour does not rest on a write failing.
+   *
+   * A targeted drop, not `reload()`: a reload rescans every workspace and
+   * owner on disk to learn one thing this call already knows.
+   *
+   * Returns how many were dropped. In-flight runs keep their `activeRuns`
+   * entry so `stop()` can still abort them.
+   */
+  dropWorkspace(wsId: string): number {
+    let dropped = 0;
+    for (const [key, auto] of this.definitions) {
+      if (auto.workspaceId !== wsId) continue;
+      this.definitions.delete(key);
+      dropped++;
+    }
+    if (dropped === 0) return 0;
+    this.clearTimer();
+    if (this.running) this.armTimer();
+    return dropped;
+  }
+
+  /**
    * Trigger an immediate run of a specific automation, bypassing schedule
    * and backoff checks. Respects concurrency guards.
    */
@@ -640,27 +674,23 @@ export class Scheduler {
     const dispatched: Promise<AutomationRun>[] = [];
 
     for (const auto of this.definitions.values()) {
-      if (!auto.enabled) continue;
-      if (!isDue(auto, now)) continue;
-      if (isInBackoff(auto, now)) continue;
-
-      // Per-automation concurrency guard
-      if (this.activeRuns.has(Scheduler.keyOf(auto))) {
-        this.recordSkipped(auto, "Previous run still active");
-        continue;
+      // One automation cannot take the timer down with it. `armTimer()` below
+      // is the only thing that re-arms, and the promise this runs inside is
+      // discarded by the `setTimeout` that scheduled it — so a throw reaching
+      // here would stop the scheduler for EVERY workspace, silently and until
+      // the process restarts. `recordSkipped` writes to the store before it
+      // reads, so a store that refuses a write (a workspace archived under a
+      // run) is one way to throw.
+      try {
+        const run = this.considerForDispatch(auto, now);
+        if (run) dispatched.push(run);
+      } catch (err) {
+        log.warn("[automations] scheduler sweep skipped one automation", {
+          automationId: auto.id,
+          workspaceId: auto.workspaceId,
+          error: err instanceof Error ? err.message : String(err),
+        });
       }
-
-      // Global concurrency limit — shared across ALL owners (one in-process
-      // scheduler per platform process, and the platform runs one process per
-      // tenant). A busy owner can defer other owners' due runs to the next
-      // tick; acceptable under the per-tenant-process model. Revisit with a
-      // per-owner fair-share queue only if multi-tenant fairness becomes a need.
-      if (this.activeRuns.size >= this.maxConcurrentRuns) {
-        this.recordSkipped(auto, `Global concurrent run limit (${this.maxConcurrentRuns}) reached`);
-        continue;
-      }
-
-      dispatched.push(this.dispatchRun(auto, "scheduled"));
     }
 
     // Wait for all dispatched runs to complete so updateAfterRun sets
@@ -672,6 +702,37 @@ export class Scheduler {
 
     // Re-arm the timer
     this.armTimer();
+  }
+
+  /**
+   * Whether `auto` runs on this tick, and the dispatched run when it does.
+   *
+   * Lifted out of {@link onTimer} so that method stays a loop plus the
+   * per-automation try/catch that keeps one failure from stopping the sweep;
+   * the predicate chain itself is unchanged.
+   */
+  private considerForDispatch(auto: Automation, now: number): Promise<AutomationRun> | null {
+    if (!auto.enabled) return null;
+    if (!isDue(auto, now)) return null;
+    if (isInBackoff(auto, now)) return null;
+
+    // Per-automation concurrency guard
+    if (this.activeRuns.has(Scheduler.keyOf(auto))) {
+      this.recordSkipped(auto, "Previous run still active");
+      return null;
+    }
+
+    // Global concurrency limit — shared across ALL owners (one in-process
+    // scheduler per platform process, and the platform runs one process per
+    // tenant). A busy owner can defer other owners' due runs to the next
+    // tick; acceptable under the per-tenant-process model. Revisit with a
+    // per-owner fair-share queue only if multi-tenant fairness becomes a need.
+    if (this.activeRuns.size >= this.maxConcurrentRuns) {
+      this.recordSkipped(auto, `Global concurrent run limit (${this.maxConcurrentRuns}) reached`);
+      return null;
+    }
+
+    return this.dispatchRun(auto, "scheduled");
   }
 
   // -----------------------------------------------------------------------

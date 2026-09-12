@@ -13,12 +13,16 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { InstructionsStore, MAX_INSTRUCTIONS_BYTES } from "../../../src/instructions/index.ts";
+import { seedWorkspaceRoot } from "../../helpers/test-workspace.ts";
 
 let workDir: string;
 let store: InstructionsStore;
 
 beforeEach(async () => {
   workDir = await mkdtemp(join(tmpdir(), "instructions-test-"));
+  seedWorkspaceRoot(workDir, "ws_a");
+  seedWorkspaceRoot(workDir, "ws_demo");
+  seedWorkspaceRoot(workDir, "ws_never_written");
   store = new InstructionsStore(workDir);
 });
 

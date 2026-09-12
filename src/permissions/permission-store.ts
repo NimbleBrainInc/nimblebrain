@@ -2,7 +2,7 @@ import { existsSync, mkdirSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { writeJsonAtomic } from "../util/atomic-json.ts";
-import { WorkspaceContext } from "../workspace/context.ts";
+import { assertWorkspaceRootExists, WorkspaceContext } from "../workspace/context.ts";
 import { WORKSPACE_ID_RE } from "../workspace/workspace-store.ts";
 
 /**
@@ -257,6 +257,10 @@ export class PermissionStore {
     const path = this.permissionPath(owner);
     if (!path) throw new Error("Invalid permission owner");
     const dir = dirname(path);
+    // `permissions.json` sits at the workspace root for the workspace arm, so
+    // this mkdir would create the workspace itself. The user arm addresses
+    // `users/<id>/` and passes. See `assertWorkspaceRootExists`.
+    assertWorkspaceRootExists(dir);
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
     await writeJsonAtomic(path, record);
   }

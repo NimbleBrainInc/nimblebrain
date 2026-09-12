@@ -1,7 +1,8 @@
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { ConversationCorruptedError } from "../runtime/errors.ts";
+import { ensureWorkspaceDir } from "../workspace/context.ts";
 import { assertNoBinaryPayloads } from "./binary-guard.ts";
 import { ConversationIndex, canAccess } from "./index-cache.ts";
 import {
@@ -49,9 +50,9 @@ export class JsonlConversationStore implements ConversationStore {
   private pendingWrites = new Set<Promise<unknown>>();
 
   constructor(private dir: string) {
-    if (!existsSync(dir)) {
-      mkdirSync(dir, { recursive: true });
-    }
+    // See `EventSourcedConversationStore`: created on first touch, but only
+    // inside a workspace root that is still there.
+    ensureWorkspaceDir(dir);
   }
 
   /**

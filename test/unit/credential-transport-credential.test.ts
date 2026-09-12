@@ -26,6 +26,7 @@ import {
   registerCredentialTransportCredentialProvider,
 } from "../../src/tools/credential-transport-credential.ts";
 import { resolveTransportCredential } from "../../src/tools/remote-transport.ts";
+import { seedWorkspaceRoot } from "../helpers/test-workspace.ts";
 
 let workDir: string;
 let store: FileCredentialStore;
@@ -48,6 +49,9 @@ const originalFetch = globalThis.fetch;
 
 beforeEach(() => {
   workDir = mkdtempSync(join(tmpdir(), "nb-credprov-"));
+  seedWorkspaceRoot(workDir, "ws_acme01");
+  seedWorkspaceRoot(workDir, "ws_tenanta");
+  seedWorkspaceRoot(workDir, "ws_tenantb");
   events = [];
   store = new FileCredentialStore(workDir, { eventSink: { emit: (e) => events.push(e) } });
   setCredentialStore(store);

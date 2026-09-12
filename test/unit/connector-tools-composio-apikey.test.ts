@@ -92,6 +92,7 @@ import {
   _resetConnectorsConfigForTest,
   setConnectorsConfig,
 } from "../../src/connectors/providers/config.ts";
+import { seedWorkspaceRoot } from "../helpers/test-workspace.ts";
 
 const POSTHOG_ID = "com.posthog/analytics";
 const GMAIL_ID = "com.google/gmail";
@@ -160,6 +161,7 @@ interface Harness {
 
 function buildHarness(): Harness {
   const workDir = mkdtempSync(join(tmpdir(), "nb-composio-apikey-"));
+  seedWorkspaceRoot(workDir, "ws_test");
   const wsId = "ws_test";
   const workspaceStore = new WorkspaceStore(workDir);
   const catalogPath = join(workDir, "catalog.yaml");
@@ -426,6 +428,7 @@ describe("manage_connectors.connect_api_key — lifecycle tail", () => {
 
   beforeEach(() => {
     workDir = mkdtempSync(join(tmpdir(), "nb-ph-connect-"));
+    seedWorkspaceRoot(workDir, "ws_test");
   });
   afterEach(() => {
     rmSync(workDir, { recursive: true, force: true });

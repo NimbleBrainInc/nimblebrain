@@ -342,6 +342,20 @@ export interface ConversationChange extends ConversationMutation {
 }
 
 /**
+ * What a workspace delete needs from the automations scheduler.
+ *
+ * A structural interface `Scheduler` already satisfies, so the scheduler is
+ * handed over by the automations source at construction (like the event
+ * trigger) rather than imported here — `src/runtime/` may not reach into
+ * `src/platform/`, and a runtime without automations simply has nothing
+ * registered.
+ */
+export interface AutomationQuiescer {
+  /** Forget every automation belonging to `wsId`; returns how many. */
+  dropWorkspace(wsId: string): number;
+}
+
+/**
  * What {@link Runtime.deleteWorkspace} did.
  *
  * `deleted` is the store's own idempotent answer — `false` when no such
@@ -425,6 +439,7 @@ export class Runtime {
    */
   private _automationsContextGetter: (() => AutomationDomainContext) | null = null;
   private _automationEventTrigger: AutomationEventTrigger | null = null;
+  private _automationQuiescer: AutomationQuiescer | null = null;
   /**
    * Per-workspace host-resources deps factory. Set in `Runtime.start()`
    * after the resolver + rate-limit are constructed; consumed by every
@@ -3715,6 +3730,17 @@ export class Runtime {
    * earlier, deliberately, since revoking upstream is the point.
    */
   async deleteWorkspace(wsId: string): Promise<WorkspaceDeleteResult> {
+    // First, before the teardown and long before the rename: disarm this
+    // workspace's automations. The scheduler holds them in memory and nothing
+    // else drops them, so one firing mid-teardown would run against
+    // half-removed connectors, and one firing after the rename would have its
+    // store re-create the archived directory. Dropping them is what makes the
+    // correct behaviour independent of a write failing — the guard in
+    // `ensureWorkspaceDir` is the floor under it, not the mechanism.
+    const disarmed = this._automationQuiescer?.dropWorkspace(wsId) ?? 0;
+    if (disarmed > 0)
+      log.info("[runtime] disarmed automations for deleted workspace", { wsId, disarmed });
+
     const ws = await this.getWorkspaceStore().get(wsId);
     const connectors: ConnectorTeardownOutcome[] = [];
     // The rows are read once, ahead of the loop, and that matters: each
@@ -4071,6 +4097,16 @@ export class Runtime {
    */
   registerAutomationEventTrigger(trigger: AutomationEventTrigger): void {
     this._automationEventTrigger = trigger;
+  }
+
+  /**
+   * Register the automations scheduler as the thing {@link deleteWorkspace}
+   * quiesces. Called by the automations platform source during construction,
+   * for the same reason the two registrations above are: the runtime may not
+   * import the app that owns the scheduler.
+   */
+  registerAutomationQuiescer(quiescer: AutomationQuiescer): void {
+    this._automationQuiescer = quiescer;
   }
 
   /**

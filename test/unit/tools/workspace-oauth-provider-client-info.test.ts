@@ -12,6 +12,7 @@ import {
   installTestCredentialStore,
   resetTestCredentialStore,
 } from "../../helpers/credential-store.ts";
+import { seedWorkspaceRoot } from "../../helpers/test-workspace.ts";
 
 /**
  * Regression coverage for the OAuth redirect_uri-drift fix:
@@ -39,6 +40,7 @@ const CLIENT_KEY = mcpOAuthKey(SERVER, "client");
 
 beforeEach(async () => {
   workDir = await mkdtemp(join(tmpdir(), "nb-oauth-provider-"));
+  seedWorkspaceRoot(workDir, "ws_abc123");
   store = installTestCredentialStore(workDir);
 });
 

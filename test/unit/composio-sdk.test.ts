@@ -3,6 +3,7 @@ import {
   _resetConnectorsConfigForTest,
   setConnectorsConfig,
 } from "../../src/connectors/providers/config.ts";
+import { seedWorkspaceRoot } from "../helpers/test-workspace.ts";
 
 // ── @composio/core mock ─────────────────────────────────────────────
 //
@@ -555,6 +556,10 @@ describe("cleanupComposioConnector", () => {
 
   beforeEach(() => {
     workDir = mkdtempSync(joinPath(tmpdir(), "nb-composio-cleanup-"));
+    seedWorkspaceRoot(workDir, "ws_01abc");
+    seedWorkspaceRoot(workDir, "ws_42");
+    seedWorkspaceRoot(workDir, "ws_test");
+    seedWorkspaceRoot(workDir, "ws_x");
   });
 
   afterEach(() => {

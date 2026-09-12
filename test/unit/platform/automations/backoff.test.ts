@@ -26,6 +26,7 @@ import {
 	readRuns,
 	saveAutomation,
 } from "../../../../src/platform/automations/store.ts";
+import { seedWorkspaceRoot } from "../../../helpers/test-workspace.ts";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -41,7 +42,9 @@ const WS = "ws_test";
 const OWNER = "usr_test";
 
 function makeTmpDir(): string {
-	return mkdtempSync(join(tmpdir(), "backoff-test-"));
+	const dir = mkdtempSync(join(tmpdir(), "backoff-test-"));
+	seedWorkspaceRoot(dir, WS);
+	return dir;
 }
 
 function seedDefs(workDir: string, defs: Map<string, Automation>): void {
