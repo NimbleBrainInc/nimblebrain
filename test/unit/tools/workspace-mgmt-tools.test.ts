@@ -361,7 +361,12 @@ describe("nb__manage_workspaces", () => {
       expect(extractText(result)).not.toContain("Workspace not found");
       expect(extractText(result)).toContain("EEXIST");
       expect(extractText(result)).toContain("Tore down 1 connector.");
-      expect(extractText(result)).toContain("still on disk");
+      expect(extractText(result)).toContain("cannot be undone");
+      // And it claims nothing about where the record ended up. The store
+      // throws on both sides of its rename, so either claim is wrong half the
+      // time — see `handleDelete`.
+      expect(extractText(result)).not.toContain("still on disk");
+      expect(extractText(result)).not.toContain("is archived");
     });
 
     test("requires workspaceId", async () => {

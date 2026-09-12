@@ -91,13 +91,19 @@ export interface ConnectorTeardownOutcome {
   ok: boolean;
   error?: string;
   /**
-   * What the upstream revoke reported. **Absent means no revoke was
-   * attempted** — the lifecycle held no live instance for this connector, so
-   * there was no ref to revoke against and `cleanupBrokeredState` had nothing
-   * to resolve either. Boot seeds an instance for every startable row, so this
-   * is the already-gone case rather than an expected one; it is distinguishable
-   * here rather than folded into `ok` precisely because `ok` would read as
-   * "the grant is released" when nothing asked for its release.
+   * What the upstream revoke reported. **Absent with no `revokeError` means no
+   * revoke was attempted** — the lifecycle held no live instance for this
+   * connector, so there was no ref to revoke against and `cleanupBrokeredState`
+   * had nothing to resolve either. Boot seeds an instance for every startable
+   * row, so this is the already-gone case rather than an expected one; it is
+   * distinguishable here rather than folded into `ok` precisely because `ok`
+   * would read as "the grant is released" when nothing asked for its release.
+   *
+   * Absent WITH a `revokeError` is the other thing entirely: a revoke was
+   * attempted and did not complete. `revoked` is non-optional on the
+   * lifecycle's own return, so the only way it goes missing is that call
+   * throwing — and that is a grant to go chase at the vendor, not one nobody
+   * asked about.
    */
   revoked?: { access?: boolean; refresh?: boolean };
   revokeError?: string;

@@ -471,19 +471,26 @@ async function handleDelete(
     // than as a throw — one unreachable vendor must not strand the workspace
     // half-deleted.
     const { deleted, connectors, deleteError } = await ctx.runtime.deleteWorkspace(workspaceId);
-    // The archive-rename failed AFTER the teardown, which is not reversible.
-    // Saying only "failed" would describe a no-op; the workspace is on disk
-    // with its connectors gone, and the operator has to know that to act.
+    // The archive step failed AFTER the teardown, which is not reversible.
+    // Saying only "failed" would describe a no-op; the connectors are gone and
+    // the operator has to know that to act.
+    //
+    // Where the record itself ended up is deliberately NOT claimed. The store
+    // throws on both sides of its rename — `mkdir`/destination resolution
+    // before it, the archive marker write after it — so a message that named
+    // one of those states would be wrong half the time, and the half it got
+    // wrong would send an operator looking for a workspace that is already
+    // archived. What is true on both sides is the teardown, so say that.
     if (deleteError) {
       return {
         content: textContent(
-          `Failed to archive workspace ${workspaceId}: ${deleteError}.` +
+          `Failed to finish deleting workspace ${workspaceId}: ${deleteError}.` +
             describeConnectorTeardown(
               connectors.length,
               connectors.filter((c) => !c.ok || c.revokeError),
             ) +
             (connectors.length > 0
-              ? " The workspace record is still on disk and its connectors must be reinstalled."
+              ? " That teardown cannot be undone — check whether the workspace still exists before retrying, and reinstall its connectors if it does."
               : ""),
         ),
         structuredContent: { deleted: false, workspaceId, connectors, deleteError },
@@ -520,9 +527,9 @@ async function handleDelete(
  * One sentence about what the delete tore down, silent when the workspace held
  * no connectors.
  *
- * A failure is named rather than counted: the workspace record is gone, so this
- * notice is the last place the connector whose grant may still be live at a
- * vendor can be identified.
+ * A failure is named rather than counted: on the success path the workspace
+ * record is gone, so this notice is the last place the connector whose grant
+ * may still be live at a vendor can be identified.
  */
 function describeConnectorTeardown(total: number, failed: Array<{ serverName: string }>): string {
   if (total === 0) return "";

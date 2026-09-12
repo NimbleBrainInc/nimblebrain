@@ -25,6 +25,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { Runtime } from "../../src/runtime/runtime.ts";
+import { ARCHIVE_MARKER_FILENAME } from "../../src/workspace/workspace-store.ts";
 import { stopAllToolSurfaceWatches } from "../../src/tools/connector-surface.ts";
 import type { ManagedConnectorProvider } from "../../src/connectors/providers/managed-provider.ts";
 import { managedConnectorRegistryOf } from "../../src/connectors/providers/registry.ts";
@@ -308,6 +309,30 @@ test("an archive that cannot be written reports the teardown it already ran", as
   // And it really did run — the workspace survives, gutted.
   expect(existsSync(join(workDir, "workspaces", WS_ID))).toBe(true);
   expect((await runtime.getWorkspaceStore().get(WS_ID))?.connectors ?? []).toHaveLength(0);
+});
+
+test("a failure on the FAR side of the rename reports the teardown too", async () => {
+  await seedConnectors();
+  // The store throws on both sides of its rename, and the two leave the
+  // workspace in opposite places. The test above is the near side (the
+  // destination cannot be resolved, nothing moved); this is the far side — the
+  // subtree moves, then the archive marker cannot be written because a
+  // directory squats its path. The result must carry the teardown either way,
+  // which is why `handleDelete` names the teardown and not where the record
+  // landed.
+  mkdirSync(join(workDir, "workspaces", WS_ID, ARCHIVE_MARKER_FILENAME), { recursive: true });
+
+  const result = await runtime.deleteWorkspace(WS_ID);
+
+  expect(result.deleted).toBe(false);
+  expect(result.deleteError).toBeDefined();
+  expect(result.connectors.map((c) => c.serverName)).toEqual([ALPHA, BETA]);
+  expect(result.connectors.every((c) => c.ok)).toBe(true);
+  // Unlike the near side, the subtree really did move — an operator told the
+  // record survived would go looking for a workspace that is already archived.
+  expect(existsSync(join(workDir, "workspaces", WS_ID))).toBe(false);
+  expect(existsSync(join(workDir, "archived", WS_ID))).toBe(true);
+  expect(await runtime.getWorkspaceStore().get(WS_ID)).toBeNull();
 });
 
 test("a workspace that does not exist reports not-deleted and tears down nothing", async () => {
