@@ -15,7 +15,7 @@ import { join } from "node:path";
 import type { EngineEvent, EventSink } from "../engine/types.ts";
 import { IdentityContext } from "../identity/context.ts";
 import { log } from "../observability/log.ts";
-import { WorkspaceContext } from "../workspace/context.ts";
+import { assertWorkspaceRootExists, WorkspaceContext } from "../workspace/context.ts";
 import { type CredentialValue, isCredentialRef } from "./credential-ref.ts";
 import {
   CredentialSealError,
@@ -426,6 +426,11 @@ export class FileCredentialStore implements CredentialStore {
 
   async put(scope: CredentialScope, key: string, value: string): Promise<void> {
     const dir = this.#dir(scope);
+    // `workspace` scope resolves under the workspace tree, so a put racing a
+    // delete would resurrect it carrying secret material. The `instance` and
+    // `user` arms address no workspace and pass. Keeps its own `mkdir` for the
+    // 0o700 mode. See `assertWorkspaceRootExists`.
+    assertWorkspaceRootExists(dir);
     await mkdir(dir, { recursive: true, mode: 0o700 });
     try {
       await chmod(dir, 0o700);

@@ -40,6 +40,7 @@ import { chmod, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promi
 import { join } from "node:path";
 import { brokeredConnectorDir } from "../../../connectors/runtime/brokered.ts";
 import type { ConnectorOwner } from "../../../identity/connector-owner.ts";
+import { assertWorkspaceRootExists } from "../../../workspace/context.ts";
 import { COMPOSIO_PROVIDER_ID } from "./id.ts";
 
 /**
@@ -133,6 +134,14 @@ export async function saveComposioConnection(
   connection: ComposioConnection,
 ): Promise<void> {
   const dir = composioConnectorDir(workDir, owner, connectorId);
+  // A workspace-owned connection writes under the workspace tree, and a
+  // callback can land after the workspace is deleted — `validateCallbackParams`
+  // checks the nonce, the state cookie and the catalog entry, never whether the
+  // workspace still exists. Resurrecting the tree here would put back exactly
+  // the credential state the delete path destroys rather than archives. An
+  // identity-owned connection addresses `users/<id>/` and passes. Keeps its own
+  // `mkdir` for the 0o700 mode. See `assertWorkspaceRootExists`.
+  assertWorkspaceRootExists(dir);
   await mkdir(dir, { recursive: true, mode: 0o700 });
   try {
     await chmod(dir, 0o700);

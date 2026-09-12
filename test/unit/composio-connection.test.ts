@@ -11,9 +11,12 @@ import {
   readComposioConnection,
   saveComposioConnection,
 } from "../../src/connectors/providers/composio/connection.ts";
+import { seedWorkspaceRoot } from "../helpers/test-workspace.ts";
 
 function freshDir(): { dir: string; cleanup: () => void } {
   const dir = mkdtempSync(join(tmpdir(), "nb-composio-"));
+  seedWorkspaceRoot(dir, "ws_01abc");
+  seedWorkspaceRoot(dir, "ws_test");
   return { dir, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
 }
 

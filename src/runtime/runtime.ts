@@ -3737,7 +3737,9 @@ export class Runtime {
     // store re-create the archived directory. Dropping them is what makes the
     // correct behaviour independent of a write failing — the guard in
     // `ensureWorkspaceDir` is the floor under it, not the mechanism.
-    this._automationQuiescer?.dropWorkspace(wsId);
+    const disarmed = this._automationQuiescer?.dropWorkspace(wsId) ?? 0;
+    if (disarmed > 0)
+      log.info("[runtime] disarmed automations for deleted workspace", { wsId, disarmed });
 
     const ws = await this.getWorkspaceStore().get(wsId);
     const connectors: ConnectorTeardownOutcome[] = [];

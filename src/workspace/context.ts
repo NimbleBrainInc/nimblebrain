@@ -219,25 +219,36 @@ const WORKSPACES_SEGMENT = "workspaces";
  * workspace tree at all.
  *
  * Derived from the path rather than from an argument, which is what lets every
- * workspace-scoped writer adopt {@link ensureWorkspaceDir} without threading a
- * `wsId` it does not already hold. The same trick `parseConversationPath` and
+ * workspace-scoped writer adopt the guard without threading a `wsId` it does
+ * not already hold. The same trick `parseConversationPath` and
  * `parseAutomationPath` use, for the same reason: the path is the binding.
  *
- * A segment after `workspaces/` that is not a well-formed workspace id reads as
- * "not a workspace tree" and is left alone — a directory named `workspaces`
- * somewhere else has no root to require.
+ * **A `workspaces` segment only counts with a well-formed workspace id after
+ * it**, and the scan looks for that PAIR rather than trusting one candidate
+ * index. Trusting one is how this leaked: testing the segment after the *last*
+ * `workspaces` read a path whose final segment is `workspaces` — the id of an
+ * automation named "Workspaces", and `automationRunsDir` ends in
+ * `runs/<automationId>` — as "not a workspace tree", and fell through to the
+ * unguarded mkdir this exists to prevent.
+ *
+ * Requiring the pair also settles first-match versus last: the outermost root
+ * is the one every deeper path hangs off, so it is the one whose absence means
+ * the workspace is gone.
  */
 function workspaceRootOf(dir: string): { wsId: string; root: string } | null {
   const segments = dir.split(sep);
-  const idx = segments.lastIndexOf(WORKSPACES_SEGMENT);
-  if (idx === -1) return null;
-  const wsId = segments[idx + 1];
-  if (!wsId || !WORKSPACE_ID_RE.test(wsId)) return null;
-  return { wsId, root: segments.slice(0, idx + 2).join(sep) };
+  for (let i = 0; i < segments.length - 1; i++) {
+    if (segments[i] !== WORKSPACES_SEGMENT) continue;
+    const wsId = segments[i + 1];
+    if (wsId && WORKSPACE_ID_RE.test(wsId)) {
+      return { wsId, root: segments.slice(0, i + 2).join(sep) };
+    }
+  }
+  return null;
 }
 
 /**
- * Create `dir`, requiring the workspace it belongs to to already exist.
+ * Throw when `dir` sits inside a workspace whose root does not exist.
  *
  * **This is the invariant, and it is here rather than in each writer.**
  * `WorkspaceStore.delete` renames a workspace's subtree out from under every
@@ -247,24 +258,40 @@ function workspaceRootOf(dir: string): { wsId: string; root: string } | null {
  * skips a workspace directory whose `workspace.json` will not parse. The
  * resurrected tree appeared nowhere and was never deleted again.
  *
- * Guarding each writer instead is a discipline problem with no way to grep for
- * the writers, so the rule lives one layer down, at the mkdir: **a workspace
- * root is created by `WorkspaceStore.create` (and its `scaffoldWorkspace`
- * call), and by nothing else.** Everything else may create paths *inside* a
- * root that is there, and fails loudly when it is not.
+ * Guarding each writer by hand is a discipline problem with no way to grep for
+ * the writers, so the rule lives one layer down, immediately before the mkdir:
+ * **a workspace root is created by `WorkspaceStore.create` (and its
+ * `scaffoldWorkspace` call), and by nothing else.** Everything else may create
+ * paths *inside* a root that is there, and fails loudly when it is not.
  *
- * A path outside any workspace tree (the org skill dir, a user's own skills, a
- * test's temp dir) has no root to require and is simply created — so a shared
- * writer like `writeSkill` picks the guard up for its workspace-scoped callers
+ * A path outside any workspace tree (the org skill dir, a user's own skills,
+ * the instance credential dir, a test's temp dir) has no root to require and
+ * passes — so a writer shared across scopes, like `writeSkill` or
+ * `CredentialStore.put`, picks the guard up for its workspace-scoped callers
  * without changing what it does for the others.
  *
- * Idempotent, and returns `dir` so it composes with a `join` at the call site.
+ * Call this directly when the writer must keep its own `mkdir` — the
+ * credential and instructions dirs pass `mode: 0o700`, and several are
+ * `await mkdir`, so swapping in {@link ensureWorkspaceDir} would widen them to
+ * the umask default or make them synchronous. Both entry points read one rule
+ * from one place; there is no second definition of it.
  */
-export function ensureWorkspaceDir(dir: string): string {
+export function assertWorkspaceRootExists(dir: string): void {
   const located = workspaceRootOf(dir);
   if (located && !existsSync(located.root)) {
     throw new WorkspaceRootMissingError(located.wsId, dir);
   }
+}
+
+/**
+ * {@link assertWorkspaceRootExists}, then create `dir`.
+ *
+ * The form for a writer whose mkdir is a plain recursive one at the default
+ * mode. Idempotent, and returns `dir` so it composes with a `join` at the call
+ * site.
+ */
+export function ensureWorkspaceDir(dir: string): string {
+  assertWorkspaceRootExists(dir);
   mkdirSync(dir, { recursive: true });
   return dir;
 }

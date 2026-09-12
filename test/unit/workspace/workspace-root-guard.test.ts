@@ -36,6 +36,7 @@ import {
 import { appendRun, saveAutomation } from "../../../src/platform/automations/store.ts";
 import type { Automation, AutomationRun } from "../../../src/platform/automations/types.ts";
 import { materializeConnectorSkill } from "../../../src/skills/connector-skill-store.ts";
+import { writeSkill } from "../../../src/skills/writer.ts";
 import {
   ensureWorkspaceDir,
   WorkspaceContext,
@@ -139,6 +140,23 @@ const WRITERS: Array<{ name: string; write: () => void | Promise<void> }> = [
     },
   },
   {
+    name: "skills — an authored workspace skill",
+    write: () => {
+      writeSkill(
+        ctx().getDataPath("skills"),
+        "ws-only",
+        {
+          name: "ws-only",
+          description: "A workspace-authored skill",
+          loadingStrategy: "always",
+          priority: 50,
+          status: "active",
+        },
+        "body",
+      );
+    },
+  },
+  {
     name: "connector-skills — a materialized overlay",
     write: () => {
       materializeConnectorSkill({
@@ -213,6 +231,24 @@ describe("outside any workspace tree", () => {
     const userSkills = join(workDir, "users", "usr_writer", "skills");
     ensureWorkspaceDir(userSkills);
     expect(existsSync(userSkills)).toBe(true);
+  });
+
+  test("a trailing `workspaces` segment does not turn the guard off", () => {
+    // The leak this guard shipped with: the scan tested the segment after the
+    // LAST `workspaces`, so a path ENDING in `workspaces` had no successor to
+    // test, read as "not a workspace tree", and fell through to the unguarded
+    // mkdir. `automationRunsDir` ends in `runs/<automationId>` and an
+    // automation named "Workspaces" slugs to exactly that, so this was
+    // reachable by naming one.
+    expect(() => appendRun(workDir, WS, OWNER, "workspaces", run())).toThrow(
+      WorkspaceRootMissingError,
+    );
+    expect(existsSync(join(workDir, "workspaces", WS))).toBe(false);
+
+    // And it still creates the dir inside a live root.
+    seedWorkspaceRoot(workDir, WS);
+    appendRun(workDir, WS, OWNER, "workspaces", run());
+    expect(existsSync(automationRunsDir(workDir, WS, OWNER, "workspaces"))).toBe(true);
   });
 
   test("a `workspaces/` segment followed by a non-workspace id is not a root", () => {

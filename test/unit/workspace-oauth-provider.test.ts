@@ -15,6 +15,7 @@ import {
   installTestCredentialStore,
   resetTestCredentialStore,
 } from "../helpers/credential-store.ts";
+import { seedWorkspaceRoot } from "../helpers/test-workspace.ts";
 
 // Bun.serve-based cases (headless single-hop, headless multi-hop, interactive
 // 302, interactive 200, SSRF block) live in
@@ -47,6 +48,9 @@ describe("WorkspaceOAuthProvider — record roundtrips", () => {
 
   beforeEach(() => {
     workDir = mkdtempSync(join(tmpdir(), "nb-oauth-test-"));
+    seedWorkspaceRoot(workDir, "ws_other");
+    seedWorkspaceRoot(workDir, "ws_test");
+    seedWorkspaceRoot(workDir, "ws_user_user_01");
     installTestCredentialStore(workDir);
   });
 
@@ -192,6 +196,9 @@ describe("WorkspaceOAuthProvider — user-scoped persistence", () => {
 
   beforeEach(() => {
     workDir = mkdtempSync(join(tmpdir(), "nb-oauth-user-"));
+    seedWorkspaceRoot(workDir, "ws_other");
+    seedWorkspaceRoot(workDir, "ws_test");
+    seedWorkspaceRoot(workDir, "ws_user_user_01");
     installTestCredentialStore(workDir);
   });
 
@@ -311,6 +318,9 @@ describe("WorkspaceOAuthProvider — Track A: pre-registered client + scopes + e
 
   beforeEach(() => {
     workDir = mkdtempSync(join(tmpdir(), "nb-oauth-trackA-"));
+    seedWorkspaceRoot(workDir, "ws_other");
+    seedWorkspaceRoot(workDir, "ws_test");
+    seedWorkspaceRoot(workDir, "ws_user_user_01");
     installTestCredentialStore(workDir);
   });
 
@@ -525,6 +535,9 @@ describe("WorkspaceOAuthProvider — revokeAndDeleteTokens", () => {
 
   beforeEach(() => {
     workDir = mkdtempSync(join(tmpdir(), "nb-oauth-rev-"));
+    seedWorkspaceRoot(workDir, "ws_other");
+    seedWorkspaceRoot(workDir, "ws_test");
+    seedWorkspaceRoot(workDir, "ws_user_user_01");
     installTestCredentialStore(workDir);
   });
 
@@ -861,6 +874,9 @@ describe("WorkspaceOAuthProvider — WorkspaceContext construction (Stage 0)", (
 
   beforeEach(() => {
     workDir = mkdtempSync(join(tmpdir(), "nb-oauth-ctx-test-"));
+    seedWorkspaceRoot(workDir, "ws_other");
+    seedWorkspaceRoot(workDir, "ws_test");
+    seedWorkspaceRoot(workDir, "ws_user_user_01");
     installTestCredentialStore(workDir);
   });
 
@@ -938,6 +954,9 @@ describe("WorkspaceOAuthProvider — notifyAuthLost (mid-session auth loss)", ()
 
   beforeEach(() => {
     workDir = mkdtempSync(join(tmpdir(), "nb-oauth-authlost-"));
+    seedWorkspaceRoot(workDir, "ws_other");
+    seedWorkspaceRoot(workDir, "ws_test");
+    seedWorkspaceRoot(workDir, "ws_user_user_01");
     installTestCredentialStore(workDir);
   });
 
@@ -1012,6 +1031,9 @@ describe("WorkspaceOAuthProvider — redacted OAuth health logging", () => {
 
   beforeEach(() => {
     workDir = mkdtempSync(join(tmpdir(), "nb-oauth-health-"));
+    seedWorkspaceRoot(workDir, "ws_other");
+    seedWorkspaceRoot(workDir, "ws_test");
+    seedWorkspaceRoot(workDir, "ws_user_user_01");
     installTestCredentialStore(workDir);
   });
 

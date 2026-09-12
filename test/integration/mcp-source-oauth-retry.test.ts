@@ -8,6 +8,8 @@ import { ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import { McpSource } from "../../src/tools/mcp-source.ts";
 import { WorkspaceOAuthProvider } from "../../src/tools/workspace-oauth-provider.ts";
+import { seedWorkspaceRoot } from "../helpers/test-workspace.ts";
+import { installTestCredentialStore, resetTestCredentialStore } from "../helpers/credential-store.ts";
 
 /**
  * End-to-end coverage of the retry-once path in `McpSource.start()`:
@@ -183,10 +185,17 @@ describe("McpSource — OAuth retry path", () => {
 
   beforeEach(() => {
     workDir = mkdtempSync(join(tmpdir(), "nb-mcp-oauth-retry-"));
+    seedWorkspaceRoot(workDir, "ws_test");
+    // The provider's tokens, verifier and DCR registration are all keys in the
+    // installed credential store, so this suite has to install one rooted at
+    // its OWN workDir. Without it the writes land in whatever store an earlier
+    // file left installed — which is why this failed in isolation.
+    installTestCredentialStore(workDir);
     server = startMockOAuthMcpServer();
   });
 
   afterEach(() => {
+    resetTestCredentialStore();
     server.stop();
   });
 

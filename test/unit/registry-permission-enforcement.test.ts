@@ -7,6 +7,7 @@ import type { ToolResult } from "../../src/engine/types.ts";
 import { PermissionStore } from "../../src/permissions/permission-store.ts";
 import { ToolRegistry } from "../../src/tools/registry.ts";
 import type { Tool, ToolSource } from "../../src/tools/types.ts";
+import { seedWorkspaceRoot } from "../helpers/test-workspace.ts";
 
 /**
  * Tests the runtime permission gate inside `ToolRegistry.execute`. The
@@ -53,6 +54,7 @@ function freshRegistry(): {
   cleanup: () => void;
 } {
   const dir = mkdtempSync(join(tmpdir(), "nb-perm-gate-"));
+  seedWorkspaceRoot(dir, "ws_test");
   const registry = new ToolRegistry();
   const source = new MockSource("mock");
   registry.addSource(source);

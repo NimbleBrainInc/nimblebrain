@@ -4,13 +4,20 @@ import { join } from "node:path";
 /**
  * Subdirectories created inside every workspace.
  *
- * Not every `WorkspaceScope` appears here. A scope whose store creates its own
+ * Not every workspace subtree appears here. One whose store creates its own
  * directory on first write is deliberately absent, because pre-scaffolding it
  * would leave an empty dir in every workspace that never uses the feature:
  * `conversations/` (resolves under `<wsId>/conversations/<ownerId>/`, one log
- * per conversation) and `notifications/` (one JSONL per day, written when a
- * connector first emits) are both that shape. No live code writes a flat
- * top-level `{workDir}/conversations/` dir.
+ * per conversation), `notifications/` (one JSONL per day, written when a
+ * connector first emits) and `automations/` (under `<ownerId>/`, one file per
+ * automation) are all that shape, as is the per-owner partition beneath the
+ * `files/` dir this DOES create. No live code writes a flat top-level
+ * `{workDir}/conversations/` dir.
+ *
+ * A store creating its own subtree stays correct; what it may not do is create
+ * the workspace ROOT. `assertWorkspaceRootExists` (`./context.ts`) holds that
+ * line, and `create` calling this function is one of the two sites allowed
+ * past it.
  */
 export const WORKSPACE_DIRS = ["data", "credentials", "skills", "files"] as const;
 
