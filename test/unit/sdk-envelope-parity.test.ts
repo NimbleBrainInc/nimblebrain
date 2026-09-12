@@ -146,6 +146,7 @@ function completeHandshake(): void {
       hostCapabilities: {
         openLinks: {},
         serverTools: {},
+        serverResources: { listChanged: true },
         logging: {},
         tasks: { cancel: {}, requests: { tools: { call: {} } } },
       },

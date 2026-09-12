@@ -85,9 +85,9 @@ describe("useEvents", () => {
     });
 
     // The hook opened exactly one underlying connection and registered
-    // its subscriptions on the singleton: nine event types + onReconnect.
+    // its subscriptions on the singleton: ten event types + onReconnect.
     expect(__internal__.hasConnection()).toBe(true);
-    expect(__internal__.subscriberCount()).toBe(10);
+    expect(__internal__.subscriberCount()).toBe(11);
   });
 
   test("singleton reconnect fires the consumer's onReconnect, and unmount unregisters it", () => {

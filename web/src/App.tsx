@@ -38,6 +38,7 @@ import {
 import { chatStore } from "./hooks/chat-store";
 import { useDataSync } from "./hooks/useDataSync";
 import { useEvents } from "./hooks/useEvents";
+import { useServerNotificationRelay } from "./hooks/useServerNotificationRelay";
 import { useShell } from "./hooks/useShell";
 import { bootstrapWorkspacesToInfo } from "./lib/bootstrap";
 import { forwardConversationTitleToIframes } from "./lib/forward-conversation-title";
@@ -261,8 +262,10 @@ function AuthenticatedAppContent({
   const { applyPreference } = useTheme();
   const wsCtx = useWorkspaceContext();
   const onDataChanged = useDataSync();
+  const onServerNotification = useServerNotificationRelay();
   useEvents(token, wsCtx.activeWorkspace?.id, {
     onDataChanged,
+    onServerNotification,
     onConfigChanged: () => config.refreshConfig(),
     // Auto-title arrived — update the matching conversation's slice so the
     // chat panel header reflects it live (routed by conversationId), and

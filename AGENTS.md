@@ -299,7 +299,7 @@ Namespaces (`src/observability/log.ts`):
 | Namespace | Emits | Answers |
 |---|---|---|
 | `mcp` | McpSource construction; per-call dispatch showing `taskSupport` / `path=task-augmented\|inline` / cached tool count | "Why is my tool going inline vs task-augmented?" "Is my tool cache populated?" |
-| `sse` | Every `tool.progress` / `tool.done` entering the runtime sink wrap; every `data.changed` broadcast with client count | "Are progress events reaching the SSE layer?" "Are broadcasts happening, to how many clients?" |
+| `sse` | Every `tool.progress` / `tool.done` / `server.notification` entering the runtime sink wrap; every `data.changed` broadcast with client count | "Are progress events reaching the SSE layer?" "Are broadcasts happening, to how many clients?" |
 | `auth` | Identity-provider verify rejections at debug volume (the routine, self-healing reasons `no_token` / `token_expired`). Anomalous reasons — `org_mismatch`, `bad_signature`, `jwks_unavailable`, etc. — log at `warn` and need no flag. | "Why is a user being 401'd / involuntarily logged out?" |
 | `notify` | Notification envelopes, outbox declarations and poll results dropped at parse, with the field that failed; sweeps skipped because a workspace is already being read | "Why is this connector's event not in the inbox?" |
 
@@ -317,7 +317,7 @@ Reload after setting. Namespaces (`web/src/lib/debug.ts`):
 
 | Namespace | Emits | Answers |
 |---|---|---|
-| `sync` | Every SSE `data.changed` arrival; parent-side flush with buffer + iframe app names; each `postMessage` forward to a matching iframe | "Is the browser receiving broadcasts?" "Is the iframe I expect actually mounted with the right `data-app`?" |
+| `sync` | Every SSE `data.changed` and `server.notification` arrival; parent-side flush with buffer + iframe app names; each `postMessage` forward to a matching iframe | "Is the browser receiving broadcasts?" "Is the iframe I expect actually mounted with the right `data-app`?" |
 
 Namespaces are shared convention between server and browser: `NB_DEBUG=sync` plus `localStorage.nb_debug=sync` together trace the entire data.changed flow.
 
@@ -661,6 +661,7 @@ These cause production bugs if violated:
 
 - `tools/call` must return `CallToolResult` as-is (never unwrap fields)
 - `POST /v1/tools/call` must NOT emit `data.changed` SSE events (causes infinite loops)
+- A write made from an iframe reaches the app's other views only when the app's server announces it, with a notification the host relays (`RELAYED_SERVER_NOTIFICATIONS` in `src/tools/server-notifications.ts`, today `notifications/resources/list_changed`). The workspace registry relays its own sources' notifications as `server.notification` — coalesced, workspace-scoped — and the web shell posts each verbatim to the server's iframes. The relay forwards, it never interprets: do not translate a server notification into `data.changed`, and never infer a change from a tool call on a UI door (that door's traffic is mostly reads, and a read that broadcasts loops). A method added to the allowlist must also get its `ui/initialize` capability (`web/src/bridge/relayed-notifications.ts`); a test pins the two.
 - Picker uploads (`synapse/request-file`) MUST persist via `POST /v1/resources` (multipart); iframes receive a `FileEntry`, never bytes. Base64-in-`tools/call` arguments hits the 1 MB JSON cap and silently breaks for any binary above ~750 KB.
 - Tool errors (`isError: true`) must become JSON-RPC `error` responses
 - Bridge must guard listeners with `destroyed` flag (React StrictMode double-mounts)

@@ -100,6 +100,34 @@ export const ResourcesReadMessage = Type.Object({
 });
 export type ResourcesReadMessage = Static<typeof ResourcesReadMessage>;
 
+/**
+ * `resources/list` and `resources/templates/list`, answered from the app's own
+ * server — the listings `serverResources` promises. `server` is the same
+ * internal-app cross-call escape hatch `resources/read` carries.
+ */
+const ResourceListingParams = Type.Optional(
+  Type.Object({
+    cursor: Type.Optional(Type.String()),
+    server: Type.Optional(Type.String()),
+  }),
+);
+
+export const ResourcesListMessage = Type.Object({
+  jsonrpc: JsonRpcVersion,
+  method: Type.Literal("resources/list"),
+  id: RequestId,
+  params: ResourceListingParams,
+});
+export type ResourcesListMessage = Static<typeof ResourcesListMessage>;
+
+export const ResourceTemplatesListMessage = Type.Object({
+  jsonrpc: JsonRpcVersion,
+  method: Type.Literal("resources/templates/list"),
+  id: RequestId,
+  params: ResourceListingParams,
+});
+export type ResourceTemplatesListMessage = Static<typeof ResourceTemplatesListMessage>;
+
 export const UiMessageMessage = Type.Object({
   jsonrpc: JsonRpcVersion,
   method: Type.Literal("ui/message"),
@@ -252,6 +280,8 @@ export type UiKeydownMessage = Static<typeof UiKeydownMessage>;
 export const AppToHostMessage = Type.Union([
   ToolsCallMessage,
   ResourcesReadMessage,
+  ResourcesListMessage,
+  ResourceTemplatesListMessage,
   UiMessageMessage,
   UiOpenLinkMessage,
   UiSizeChangedMessage,
@@ -390,6 +420,19 @@ export type ExtAppsHostContextChangedNotification = Static<
   typeof ExtAppsHostContextChangedNotification
 >;
 
+/**
+ * An app server's own notification, relayed verbatim to its views — one of
+ * `RELAYED_TO_VIEWS` (relayed-notifications.ts). The ext-apps spec defines this
+ * forwarding per host capability (`serverResources.listChanged`, …), which
+ * `ui/initialize` advertises for exactly the relayed methods.
+ */
+export const RelayedServerNotification = Type.Object({
+  jsonrpc: JsonRpcVersion,
+  method: Type.String(),
+  params: Type.Optional(UnknownRecord),
+});
+export type RelayedServerNotification = Static<typeof RelayedServerNotification>;
+
 // ── Host → App messages (NimbleBrain extensions) ─────────────────────────
 
 export const UiDataChangedMessage = Type.Object({
@@ -427,5 +470,6 @@ export const HostToAppMessage = Type.Union([
   ExtAppsToolInputNotification,
   ExtAppsToolResultNotification,
   ExtAppsHostContextChangedNotification,
+  RelayedServerNotification,
 ]);
 export type HostToAppMessage = Static<typeof HostToAppMessage>;

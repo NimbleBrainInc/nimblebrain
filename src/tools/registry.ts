@@ -12,6 +12,7 @@ import type { PermissionStore } from "../permissions/permission-store.ts";
 import { splitInnerToolName } from "../util/tool-name.ts";
 import type { McpSource } from "./mcp-source.ts";
 import { rankToolSearchResults } from "./search-ranking.ts";
+import type { ServerNotification } from "./server-notifications.ts";
 import type { Tool, ToolSource } from "./types.ts";
 import { toToolSchema } from "./types.ts";
 
@@ -97,6 +98,17 @@ export class ToolRegistry implements ToolRouter {
   /** Per-source unsubscribe handles for readiness subscriptions, so
    *  `removeSource` can detach the listener it attached in `addSource`. */
   private toolsChangedUnsubs = new Map<string, () => void>();
+  /**
+   * Fired with a source's name and a notification its server sent, for the
+   * notifications a host relays to the server's views. A workspace registry
+   * wires this to its relay (see `createWorkspaceRegistry`); null for
+   * registries with no consumer.
+   */
+  private serverNotificationListener:
+    | ((sourceName: string, notification: ServerNotification) => void)
+    | null = null;
+  /** Per-source unsubscribe handles for server-notification subscriptions. */
+  private serverNotificationUnsubs = new Map<string, () => void>();
 
   /**
    * Configure permission enforcement context. Called once when the
@@ -124,7 +136,24 @@ export class ToolRegistry implements ToolRouter {
     this.invalidationListener?.();
   }
 
-  addSource(source: ToolSource): void {
+  /**
+   * Wire the server-notification listener. Read at the moment a notification
+   * arrives, not captured at `addSource`, so it covers sources added before it
+   * was set. Idempotent.
+   */
+  setServerNotificationListener(
+    listener: (sourceName: string, notification: ServerNotification) => void,
+  ): void {
+    this.serverNotificationListener = listener;
+  }
+
+  /**
+   * Add a source. `shared` marks one that belongs to every workspace registry
+   * at once (platform sources, the system source): its server's notifications
+   * name no workspace, so they are not relayed from here. A `SharedSourceRef`
+   * is shared by construction and carries no notification seam to subscribe to.
+   */
+  addSource(source: ToolSource, options?: { shared?: boolean }): void {
     if (this.sources.has(source.name)) {
       throw new Error(`Source "${source.name}" is already registered`);
     }
@@ -136,6 +165,12 @@ export class ToolRegistry implements ToolRouter {
     // pending-auth start completes long after the source was registered.
     const unsub = source.subscribeToolsChanged?.(() => this.fireInvalidation());
     if (unsub) this.toolsChangedUnsubs.set(source.name, unsub);
+    if (!options?.shared) {
+      const unsubNotifications = source.subscribeServerNotifications?.((notification) =>
+        this.serverNotificationListener?.(source.name, notification),
+      );
+      if (unsubNotifications) this.serverNotificationUnsubs.set(source.name, unsubNotifications);
+    }
     // The membership change itself is also an invalidation trigger.
     this.fireInvalidation();
   }
@@ -145,6 +180,8 @@ export class ToolRegistry implements ToolRouter {
     if (source) {
       this.toolsChangedUnsubs.get(name)?.();
       this.toolsChangedUnsubs.delete(name);
+      this.serverNotificationUnsubs.get(name)?.();
+      this.serverNotificationUnsubs.delete(name);
       await source.stop();
       this.sources.delete(name);
       this.fireInvalidation();

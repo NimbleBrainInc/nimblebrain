@@ -1,7 +1,7 @@
 import type { EngineEvent, EngineEventType, EventSink } from "../engine/types.ts";
 import { log } from "../observability/log.ts";
-import { isPersonalConnectorName } from "../tools/identity-sources.ts";
 import { bareToolName } from "../tools/namespace.ts";
+import { hasAppViews } from "../tools/server-notifications.ts";
 import type { WorkspaceStore } from "../workspace/workspace-store.ts";
 
 /**
@@ -92,6 +92,12 @@ const SSE_ROUTES: Partial<Record<EngineEventType, SseRoute>> = {
   // filtering without that cliff — an absent id fans out, a present one is
   // scoped.
   "data.changed": { scope: "global" },
+  // An app server's own notification, relayed to that server's views
+  // (`src/tools/server-notifications.ts`). Every one is stamped with the
+  // workspace whose registry received it, so it is workspace-scoped outright:
+  // a server's notification concerns the session it arrived on, and never
+  // reaches a member of another workspace.
+  "server.notification": { scope: "workspace", wsIdField: "workspaceId" },
   // Live conversation-title update (auto-title generation completes after the
   // turn). Scoped by the event's `wsId`, which the runtime sets to the OWNER'S
   // PERSONAL workspace (NOT the conversation's workspaceId) — conversations are
@@ -113,9 +119,10 @@ const SSE_ROUTES: Partial<Record<EngineEventType, SseRoute>> = {
   // that triggers a refresh triggers a read. Broadcasting here is what the
   // AGENTS.md rule "`/v1/tools/call` must NOT emit `data.changed` (causes
   // infinite loops)" is about, and the loop is live — `files/ui` refetches on
-  // any `data.changed` for its own app, with no mutation filter. Making a
-  // UI-initiated write refresh a sibling UI needs mutation gating FIRST (#358);
-  // until then this event is audit only.
+  // any `data.changed` for its own app, with no mutation filter. A write made
+  // from an iframe reaches the app's other views when its server announces it,
+  // through `server.notification` above — the server says so only for a real
+  // change, so a read cannot start one. This event is audit only.
   // Field name is `workspaceId` (not `wsId`) — see handlers.ts emit sites.
   "bridge.tool.call": { scope: "workspace", wsIdField: "workspaceId" },
   "bridge.tool.done": { scope: "workspace", wsIdField: "workspaceId" },
@@ -179,20 +186,9 @@ export function deriveDataChangedTarget(
   const server = sepIndex !== -1 ? bare.slice(0, sepIndex) : bare;
   const tool = sepIndex !== -1 ? bare.slice(sepIndex + 2) : bare;
 
-  // A personal connector has no listener, so it gets no broadcast — and the
-  // marker is NOT stripped to find one. `server` is matched against an iframe's
-  // `data-app`, and a personal connector cannot mount an iframe: a `ui://` read
-  // resolves through `readIdentityAppResource` (kernel identity sources only) or
-  // `readAppResource` (the workspace registry), and a connector is in neither.
-  // De-marking would therefore never reach the connector's own surface — it
-  // would reach a WORKSPACE app of the same name, refetching an unrelated app on
-  // the caller's private tool call. That same-name collision is the exact thing
-  // the marker exists to prevent, so it must survive to here.
-  if (isPersonalConnectorName(server)) return null;
-
-  // System tools (`nb__*`) don't modify app data; broadcasting for them makes
-  // iframes re-fetch on every streaming chunk (flicker + tool-call amplification).
-  if (server === "nb") return null;
+  // Personal connectors and system tools have no views to refresh — see
+  // `hasAppViews`, which the server-notification relay applies too.
+  if (!hasAppViews(server)) return null;
 
   // The workspace the call ran in, when the event carries one. Both doors stamp
   // it — the engine via `_wrapSinkWithWorkspaceAttribution`, the bridge from the

@@ -27,7 +27,9 @@ import {
   ExtAppsInitializedNotification,
   ExtAppsInitializeRequest,
   ExtAppsRequestTeardownNotification,
+  ResourcesListMessage,
   ResourcesReadMessage,
+  ResourceTemplatesListMessage,
   SynapseRequestFileMessage,
   ToolsCallMessage,
   UiActionMessage,
@@ -44,6 +46,8 @@ import {
 const SCHEMA_BY_METHOD: Record<string, TSchema> = {
   "tools/call": ToolsCallMessage,
   "resources/read": ResourcesReadMessage,
+  "resources/list": ResourcesListMessage,
+  "resources/templates/list": ResourceTemplatesListMessage,
   "ui/message": UiMessageMessage,
   "ui/open-link": UiOpenLinkMessage,
   "ui/notifications/size-changed": UiSizeChangedMessage,
