@@ -1,5 +1,4 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { getValidator } from "../config/index.ts";
 import { deriveOverridePath, mergeConfigs, OVERRIDE_WRITABLE_KEYS } from "../config/overrides.ts";
@@ -7,19 +6,6 @@ import { log } from "../observability/log.ts";
 import type { RuntimeConfig } from "../runtime/types.ts";
 
 const DEFAULT_CONFIG_FILE = "nimblebrain.json";
-
-/**
- * Where a command looks when nothing on the command line says otherwise.
- *
- * Exported because every entry point MUST pass the same value: it decides both
- * which config file is found (`resolveConfigPath`) and which work directory the
- * config resolves to (`absoluteWorkDir`). A command that omits it reads a
- * different config and writes to a different directory than the server does —
- * silently, since both are legitimate paths in isolation.
- */
-export function defaultWorkDir(): string {
-  return process.env.NB_WORK_DIR ?? join(homedir(), ".nimblebrain");
-}
 
 const DEFAULT_CONFIG_CONTENT = {
   $schema: "https://schemas.nimblebrain.ai/v1/nimblebrain-config.schema.json",

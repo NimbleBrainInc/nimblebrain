@@ -1,11 +1,12 @@
 import { parseArgs } from "node:util";
 import type { SecretsConfig } from "../config/secrets.ts";
+import { defaultWorkDir } from "../connectors/runtime/paths.ts";
 import type { CredentialScope, CredentialStore } from "../tools/credential-store.ts";
 import {
   createCredentialStore,
   registerBuiltinCredentialStoreBackends,
 } from "../tools/credential-store-backend.ts";
-import { defaultWorkDir, loadConfig } from "./config.ts";
+import { loadConfig } from "./config.ts";
 
 /**
  * `secrets` — the operator's door to the credential store.

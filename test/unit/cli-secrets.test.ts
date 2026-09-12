@@ -12,7 +12,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "no
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable } from "node:stream";
-import { defaultWorkDir } from "../../src/cli/config.ts";
+import { defaultWorkDir } from "../../src/connectors/runtime/paths.ts";
 import {
   classifyPromptKey,
   readValueFromStream,
@@ -310,8 +310,12 @@ describe("where the command decides to write — the real openStore", () => {
   // Every test above injects the store, which is exactly how the one seam that
   // matters went untested. These call `runSecrets` with two arguments, so the
   // command resolves its own config and work directory the way it does for an
-  // operator. Both failure modes below are silent: the write succeeds, into a
-  // place the server never looks.
+  // operator. Both failure modes are silent: the write succeeds, into a place
+  // the server never looks.
+  //
+  // Only the middle one is a regression guard — remove the work-directory
+  // default and it is the single test here that goes red. The other two are
+  // characterization, for the reasons their own comments give.
   const KEY_ENV = "NB_TEST_CLI_SEAL_KEY";
 
   function scenario(): { dir: string; io: SecretsCommandIo; out: string[]; cleanup: () => void } {
@@ -346,10 +350,12 @@ describe("where the command decides to write — the real openStore", () => {
     });
 
   test("an explicit --config writes to the work directory that config names", async () => {
-    // Not the current one. This pins the config read itself; the
-    // `~/.nimblebrain` half of the same defect is pinned by `defaultWorkDir`
-    // below, because exercising it for real would write to the developer's
-    // actual home directory.
+    // Characterization. `--config` is priority 1 in `resolveConfigPath` and
+    // this config names its own `workDir`, so neither half of the
+    // work-directory default is on the path — an explicit `workDir` is exactly
+    // the shape under which the original defect was invisible. What it pins is
+    // that an explicit config is honored end to end and nothing is written
+    // where the operator happened to be standing.
     const s = scenario();
     try {
       const workDir = join(s.dir, "data");
@@ -364,10 +370,11 @@ describe("where the command decides to write — the real openStore", () => {
   });
 
   test("with no --config it reads the work directory's own config, and seals", async () => {
-    // The command line the docs give. Without the work-directory default, config
-    // resolution falls through to the current directory, auto-creates an empty
-    // config there, and a deployment that asked to seal writes plaintext —
-    // because the config that asked was never opened.
+    // The regression guard, and the command line the docs give. Without the
+    // work-directory default, config resolution falls through to the current
+    // directory, auto-creates an empty config there, and a deployment that
+    // asked to seal writes plaintext — because the config that asked was never
+    // opened.
     const s = scenario();
     try {
       process.env.NB_WORK_DIR = s.dir;
@@ -382,8 +389,10 @@ describe("where the command decides to write — the real openStore", () => {
   });
 
   test("and list reads back from the same place it wrote", async () => {
-    // The pair that made the original defect look like it worked: `set` and
-    // `list` agreed with each other while both disagreed with the server.
+    // Characterization, for the reason the original defect survived: `set` and
+    // `list` resolve identically, so they agree with each other wherever they
+    // land — which is why this shape cannot catch a wrong destination. What it
+    // pins is that the round trip works at all.
     const s = scenario();
     try {
       process.env.NB_WORK_DIR = s.dir;

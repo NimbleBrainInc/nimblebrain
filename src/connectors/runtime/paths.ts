@@ -10,16 +10,17 @@ import { WorkspaceContext } from "../../workspace/context.ts";
 import type { ConnectorRef } from "./types.ts";
 
 /**
- * Resolved default workDir for callers that don't have the RuntimeConfig in
- * hand. Reads `NB_WORK_DIR` from env, falls back to `~/.nimblebrain`, then
- * `resolve()`s the result so every derived path is absolute and
- * cwd-independent.
+ * The default workDir: `NB_WORK_DIR` when set, `~/.nimblebrain` otherwise,
+ * `resolve()`d so every derived path is absolute and cwd-independent.
  *
- * The cli config-load path absolutizes its workDir at the same boundary;
- * this is the env-only fallback for the connector lifecycle methods that
- * don't receive the config-derived value. Keep them aligned: if a future
- * change shifts the contract (e.g. relative paths get a different anchor),
- * change both sites.
+ * Two kinds of caller share it, which is why it has exactly one home. The
+ * connector lifecycle methods read it directly, having no RuntimeConfig in
+ * hand. Every CLI entry point passes it to `loadConfig` as `defaultWorkDir`,
+ * where it decides both which config file is found (`resolveConfigPath`) and
+ * which work directory that config resolves to (`absoluteWorkDir`) — so a
+ * command that omits it reads a different config and writes to a different
+ * directory than the server does, silently, since both are legitimate paths
+ * in isolation.
  */
 export function defaultWorkDir(): string {
   return resolve(process.env.NB_WORK_DIR ?? join(homedir(), ".nimblebrain"));

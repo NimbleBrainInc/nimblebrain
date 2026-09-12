@@ -2,10 +2,11 @@ import { ConsoleEventSink } from "../adapters/console-events.ts";
 import { DebugEventSink } from "../adapters/debug-events.ts";
 import { startServerWithShutdown } from "../api/server.ts";
 import { createSessionRegistry, resolveSessionStoreConfig } from "../api/session-store/index.ts";
+import { defaultWorkDir } from "../connectors/runtime/paths.ts";
 import { log } from "../observability/log.ts";
 import { Runtime } from "../runtime/runtime.ts";
 import type { TelemetryManager } from "../telemetry/manager.ts";
-import { defaultWorkDir, loadConfig } from "./config.ts";
+import { loadConfig } from "./config.ts";
 
 export interface ServeOptions {
   config?: string;
