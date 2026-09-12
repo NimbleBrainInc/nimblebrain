@@ -10,6 +10,7 @@
 
 import { describe, expect, test } from "bun:test";
 import {
+  chmodSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -279,6 +280,84 @@ describe("one bad secret does not take the tenant down", () => {
       seed(dir, SCOPE_DIRS[0][1], "acme.key", "s3cret");
       await store.reconcile?.();
       expect(readRaw(dir, SCOPE_DIRS[0][1], "acme.key").startsWith("NBS1.")).toBe(true);
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+describe("a root the sweep could not read holds strict mode off", () => {
+  // "Nothing here" and "could not look" are different answers. A directory that
+  // cannot be LISTED can still have its files opened by path, so treating an
+  // unlistable root as an empty one lets the sweep report a clean finish over
+  // secrets it never saw — and strict mode then refuses the legitimate plaintext
+  // underneath it, on a deployment that did nothing wrong.
+  test("an unlistable secrets directory is counted, not mistaken for empty", async () => {
+    const { store, dir, cleanup } = fresh(createCredentialSealer([KEY_A]));
+    const secretsDir = join(dir, ...SCOPE_DIRS[1][1]);
+    try {
+      seed(dir, SCOPE_DIRS[1][1], "acme.key", "s3cret");
+      chmodSync(secretsDir, 0o300); // traversable, not listable
+      await store.reconcile?.();
+      // The secret was never seen, so plaintext must still be accepted.
+      expect((await store.get(WS, "acme.key", READ))?.reveal()).toBe("s3cret");
+    } finally {
+      chmodSync(secretsDir, 0o700);
+      cleanup();
+    }
+  });
+
+  test("an unlistable owner root is counted too", async () => {
+    const { store, dir, cleanup } = fresh(createCredentialSealer([KEY_A]));
+    const usersDir = join(dir, "users");
+    try {
+      seed(dir, SCOPE_DIRS[2][1], "acme.key", "s3cret");
+      chmodSync(usersDir, 0o300);
+      await store.reconcile?.();
+      expect((await store.get(USER, "acme.key", READ))?.reveal()).toBe("s3cret");
+    } finally {
+      chmodSync(usersDir, 0o700);
+      cleanup();
+    }
+  });
+
+  test("an ABSENT root is still benign — it arms strict mode as before", async () => {
+    // The other half of the distinction: a deployment with no workspaces yet
+    // must not be held in permanent non-strict mode by directories that simply
+    // do not exist.
+    const { store, dir, cleanup } = fresh(createCredentialSealer([KEY_A]));
+    try {
+      await store.reconcile?.();
+      seed(dir, SCOPE_DIRS[1][1], "injected.key", "attacker-chosen");
+      const got = await store.get(WS, "injected.key", READ);
+      expect(() => got?.reveal()).toThrow(/plaintext/);
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+describe("hand-seeding on a sealed deployment", () => {
+  // Strict mode refuses a plaintext file at read, and there is no CLI yet. The
+  // path that still works is the one the sweep already provides: write the file,
+  // restart, and the sweep converts it before anything reads it. This is what
+  // the docs promise, so it gets a test rather than a sentence.
+  test("a plaintext file written before a restart is sealed by the sweep and reads", async () => {
+    const { store, dir, cleanup } = fresh(createCredentialSealer([KEY_A]));
+    try {
+      await store.reconcile?.(); // first boot: clean, strict armed
+      seed(dir, SCOPE_DIRS[0][1], "anthropic.api_key", "sk-seeded-by-hand\n");
+      // The same process refuses it...
+      const refused = await store.get(INSTANCE, "anthropic.api_key", READ);
+      expect(() => refused?.reveal()).toThrow(/plaintext/);
+
+      // ...and the next boot converts it.
+      const next = new FileCredentialStore(dir, { sealer: createCredentialSealer([KEY_A]) });
+      await next.reconcile?.();
+      expect(readRaw(dir, SCOPE_DIRS[0][1], "anthropic.api_key").startsWith("NBS1.")).toBe(true);
+      expect((await next.get(INSTANCE, "anthropic.api_key", READ))?.reveal()).toBe(
+        "sk-seeded-by-hand",
+      );
     } finally {
       cleanup();
     }

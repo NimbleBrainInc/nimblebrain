@@ -205,13 +205,23 @@ interface ResealTally {
   resealed: number;
   current: number;
   skipped: number;
+  /** Scope roots that exist and could not be listed. Holds strict mode off. */
+  unreadable: number;
 }
 
 /**
- * What an operator does about each way an open can fail. Separate strings
- * because they are separate repairs: put the key back, restore the byte-exact
- * file, or find out who wrote a file this runtime never sealed.
+ * "Nothing here" and "could not look" are different answers, and only the first
+ * is benign.
+ *
+ * A directory the sweep cannot LIST can still have its files opened by path, so
+ * treating an unlistable root as an empty one lets the sweep report a clean
+ * finish over secrets it never saw — and strict mode then refuses the legitimate
+ * plaintext underneath it.
  */
+function isMissingDirectory(err: unknown): boolean {
+  return (err as NodeJS.ErrnoException | undefined)?.code === "ENOENT";
+}
+
 /**
  * Every way a stored secret can fail to become a usable value, as one closed
  * set — the codec's three, plus the two only the store can see. It is what the
@@ -224,6 +234,11 @@ type SealFailureReason =
   | "plaintext_refused"
   | "reseal_skipped";
 
+/**
+ * What an operator does about each way an open can fail. Separate strings
+ * because they are separate repairs: put the key back, restore the byte-exact
+ * file, or find out who wrote a file this runtime never sealed.
+ */
 const REMEDIES: Record<CredentialSealFailure, (kids: readonly string[]) => string> = {
   unknown_kid: (kids) =>
     `no key in the ring produced that kid (ring: ${kids.join(", ")}). Load the key that did — ` +
@@ -571,21 +586,23 @@ export class FileCredentialStore implements CredentialStore {
     // deployment is plaintext by design, not by omission.
     if (!sealer) return;
 
-    const tally: ResealTally = { resealed: 0, current: 0, skipped: 0 };
-    for (const scope of await this.#everyScope()) {
+    const tally: ResealTally = { resealed: 0, current: 0, skipped: 0, unreadable: 0 };
+    for (const scope of await this.#everyScope(tally)) {
       await this.#resealScope(scope, sealer, tally);
     }
 
     // Only a sweep that finished has proved every secret is sealed, so only a
     // sweep that finished has earned the right to call a plaintext file an
-    // injection.
-    if (tally.skipped === 0) {
+    // injection. A root it could not list counts against that as much as a file
+    // it could not open: both mean there are secrets it did not see.
+    if (tally.skipped === 0 && tally.unreadable === 0) {
       this.#strictPlaintextRefusal = true;
     }
     log.info("[credential-store] sealed-secret reconcile complete", {
       resealed: tally.resealed,
       alreadyCurrent: tally.current,
       skipped: tally.skipped,
+      unreadable: tally.unreadable,
       strictPlaintextRefusal: this.#strictPlaintextRefusal,
     });
   }
@@ -599,15 +616,24 @@ export class FileCredentialStore implements CredentialStore {
     let names: string[];
     try {
       names = await readdir(this.#dir(scope));
-    } catch {
-      return; // no directory means no secrets in this scope
+    } catch (err) {
+      if (isMissingDirectory(err)) return; // no directory means no secrets here
+      tally.unreadable++;
+      log.warn("[credential-store] could not list a secrets directory; not sweeping it", {
+        scope: credentialScopeLabel(scope),
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return;
     }
     for (const key of names) {
       // The same filter `list` applies: a temp file left by a killed `put` is
       // not a key and must not be rewritten as one.
       if (!KEY_RE.test(key)) continue;
       const outcome = await this.#resealOne(scope, key, sealer);
-      tally[outcome === "resealed" ? "resealed" : outcome === "current" ? "current" : "skipped"]++;
+      // `ignored` is not counted: a directory sitting where a key should be is
+      // not a secret that was already current, and a tally an operator reads
+      // should not say it was.
+      if (outcome !== "ignored") tally[outcome]++;
     }
   }
 
@@ -624,12 +650,12 @@ export class FileCredentialStore implements CredentialStore {
     scope: CredentialScope,
     key: string,
     sealer: CredentialSealer,
-  ): Promise<"resealed" | "current" | "skipped"> {
+  ): Promise<"resealed" | "current" | "skipped" | "ignored"> {
     const label = credentialScopeLabel(scope);
     const path = join(this.#dir(scope), key);
     try {
       const before = await stat(path);
-      if (!before.isFile()) return "current";
+      if (!before.isFile()) return "ignored";
       const raw = await readFile(path, "utf-8");
 
       let value: string;
@@ -665,7 +691,7 @@ export class FileCredentialStore implements CredentialStore {
    * which validates them in the typed context that owns each tree — so a junk
    * directory name is refused there rather than turned into a path here.
    */
-  async #everyScope(): Promise<CredentialScope[]> {
+  async #everyScope(tally: ResealTally): Promise<CredentialScope[]> {
     const scopes: CredentialScope[] = [{ kind: "instance" }];
     const owners: [string, (id: string) => CredentialScope][] = [
       ["workspaces", (wsId) => ({ kind: "workspace", wsId })],
@@ -675,7 +701,15 @@ export class FileCredentialStore implements CredentialStore {
       let ids: string[];
       try {
         ids = await readdir(join(this.#workDir, dirName));
-      } catch {
+      } catch (err) {
+        if (!isMissingDirectory(err)) {
+          // Every scope under this root is unseen, not absent.
+          tally.unreadable++;
+          log.warn("[credential-store] could not list an owner directory; not sweeping under it", {
+            dir: dirName,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
         continue;
       }
       for (const id of ids) {
