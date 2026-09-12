@@ -5,7 +5,7 @@ import {
   createCredentialStore,
   registerBuiltinCredentialStoreBackends,
 } from "../tools/credential-store-backend.ts";
-import { loadConfig } from "./config.ts";
+import { defaultWorkDir, loadConfig } from "./config.ts";
 
 /**
  * `secrets` — the operator's door to the credential store.
@@ -160,12 +160,27 @@ function promptForValue(label: string): Promise<string> {
   });
 }
 
-/** Build the store the way the composition root does, from the same config. */
+/**
+ * Build the store the way `runServe` does, from the same config.
+ *
+ * **`defaultWorkDir()` is not optional here.** Without it, `resolveConfigPath`
+ * skips the work directory's own `nimblebrain.json` and falls through to one in
+ * the current directory — auto-creating an empty one if none exists — and
+ * `absoluteWorkDir` returns nothing, so the store roots wherever the operator
+ * happened to be standing. Both are silent: the write succeeds, into a
+ * directory the server never reads, and a deployment configured to seal writes
+ * plaintext because the config that asked for sealing was never opened.
+ */
 function openStore(configPath: string | undefined): CredentialStore {
-  const config = loadConfig(configPath ? { config: configPath } : {});
+  const config = loadConfig({
+    ...(configPath ? { config: configPath } : {}),
+    defaultWorkDir: defaultWorkDir(),
+  });
   registerBuiltinCredentialStoreBackends();
   return createCredentialStore({
-    workDir: config.workDir ?? process.cwd(),
+    // `loadConfig` always resolves one now that a default is passed; the
+    // fallback keeps the type honest rather than guarding a reachable case.
+    workDir: config.workDir ?? defaultWorkDir(),
     secrets: config.secrets as SecretsConfig | undefined,
   });
 }

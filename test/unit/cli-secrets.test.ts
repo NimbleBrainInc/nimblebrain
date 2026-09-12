@@ -8,11 +8,17 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable } from "node:stream";
-import { classifyPromptKey, readValueFromStream, runSecrets } from "../../src/cli/secrets.ts";
+import { defaultWorkDir } from "../../src/cli/config.ts";
+import {
+  classifyPromptKey,
+  readValueFromStream,
+  runSecrets,
+  type SecretsCommandIo,
+} from "../../src/cli/secrets.ts";
 import { createCredentialSealer } from "../../src/tools/credential-seal.ts";
 import { type CredentialStore, FileCredentialStore } from "../../src/tools/credential-store.ts";
 
@@ -263,6 +269,25 @@ describe("reading the value from a stream", () => {
   });
 });
 
+describe("the work directory both entry points share", () => {
+  // The seam the defect sat on: `runServe` passed this and the command did not,
+  // so the two read different configs and wrote to different directories, each
+  // silently. It is one function now, and this pins the value.
+  test("it is NB_WORK_DIR when set, the runtime's default otherwise — never the current directory", () => {
+    const previous = process.env.NB_WORK_DIR;
+    try {
+      process.env.NB_WORK_DIR = "/tmp/nb-explicit";
+      expect(defaultWorkDir()).toBe("/tmp/nb-explicit");
+      delete process.env.NB_WORK_DIR;
+      expect(defaultWorkDir()).toBe(join(homedir(), ".nimblebrain"));
+      expect(defaultWorkDir()).not.toBe(process.cwd());
+    } finally {
+      if (previous === undefined) delete process.env.NB_WORK_DIR;
+      else process.env.NB_WORK_DIR = previous;
+    }
+  });
+});
+
 describe("the hidden prompt's keymap", () => {
   // The prompt echoes nothing, so an operator cannot see that a correction did
   // not land. Every one of these is a key a terminal actually sends.
@@ -278,5 +303,96 @@ describe("the hidden prompt's keymap", () => {
     ["\u00e9", "append"],
   ])("%j is %s", (ch, action) => {
     expect(classifyPromptKey(ch)).toBe(action);
+  });
+});
+
+describe("where the command decides to write — the real openStore", () => {
+  // Every test above injects the store, which is exactly how the one seam that
+  // matters went untested. These call `runSecrets` with two arguments, so the
+  // command resolves its own config and work directory the way it does for an
+  // operator. Both failure modes below are silent: the write succeeds, into a
+  // place the server never looks.
+  const KEY_ENV = "NB_TEST_CLI_SEAL_KEY";
+
+  function scenario(): { dir: string; io: SecretsCommandIo; out: string[]; cleanup: () => void } {
+    const dir = mkdtempSync(join(tmpdir(), "nb-cli-openstore-"));
+    const out: string[] = [];
+    const previousKey = process.env[KEY_ENV];
+    const previousWorkDir = process.env.NB_WORK_DIR;
+    process.env[KEY_ENV] = Buffer.alloc(32, 0x11).toString("base64");
+    return {
+      dir,
+      out,
+      io: {
+        stdout: (line) => out.push(line),
+        stderr: () => {},
+        readValue: async () => "sk-from-the-real-path",
+      },
+      cleanup: () => {
+        if (previousKey === undefined) delete process.env[KEY_ENV];
+        else process.env[KEY_ENV] = previousKey;
+        if (previousWorkDir === undefined) delete process.env.NB_WORK_DIR;
+        else process.env.NB_WORK_DIR = previousWorkDir;
+        rmSync(dir, { recursive: true, force: true });
+      },
+    };
+  }
+
+  const SEALED_CONFIG = (workDir: string) =>
+    JSON.stringify({
+      version: "1",
+      workDir,
+      secrets: { backend: "file", config: { seal: { keyEnv: KEY_ENV } } },
+    });
+
+  test("an explicit --config writes to the work directory that config names", async () => {
+    // Not the current one. This pins the config read itself; the
+    // `~/.nimblebrain` half of the same defect is pinned by `defaultWorkDir`
+    // below, because exercising it for real would write to the developer's
+    // actual home directory.
+    const s = scenario();
+    try {
+      const workDir = join(s.dir, "data");
+      writeFileSync(join(s.dir, "nimblebrain.json"), SEALED_CONFIG(workDir));
+      expect(await runSecrets(["set", "acme.key", "--config", join(s.dir, "nimblebrain.json")], s.io)).toBe(0);
+      const raw = readFileSync(join(workDir, "credentials", "secrets", "acme.key"), "utf-8");
+      expect(raw.startsWith("NBS1.")).toBe(true);
+      expect(existsSync(join(process.cwd(), "credentials"))).toBe(false);
+    } finally {
+      s.cleanup();
+    }
+  });
+
+  test("with no --config it reads the work directory's own config, and seals", async () => {
+    // The command line the docs give. Without the work-directory default, config
+    // resolution falls through to the current directory, auto-creates an empty
+    // config there, and a deployment that asked to seal writes plaintext —
+    // because the config that asked was never opened.
+    const s = scenario();
+    try {
+      process.env.NB_WORK_DIR = s.dir;
+      writeFileSync(join(s.dir, "nimblebrain.json"), SEALED_CONFIG(s.dir));
+      expect(await runSecrets(["set", "acme.key"], s.io)).toBe(0);
+      const raw = readFileSync(join(s.dir, "credentials", "secrets", "acme.key"), "utf-8");
+      expect(raw.startsWith("NBS1.")).toBe(true);
+      expect(raw).not.toContain("sk-from-the-real-path");
+    } finally {
+      s.cleanup();
+    }
+  });
+
+  test("and list reads back from the same place it wrote", async () => {
+    // The pair that made the original defect look like it worked: `set` and
+    // `list` agreed with each other while both disagreed with the server.
+    const s = scenario();
+    try {
+      process.env.NB_WORK_DIR = s.dir;
+      writeFileSync(join(s.dir, "nimblebrain.json"), SEALED_CONFIG(s.dir));
+      await runSecrets(["set", "acme.key"], s.io);
+      expect(await runSecrets(["list"], s.io)).toBe(0);
+      expect(s.out.map((l) => l.split("\t")[0])).toEqual(["acme.key"]);
+    } finally {
+      s.cleanup();
+    }
   });
 });

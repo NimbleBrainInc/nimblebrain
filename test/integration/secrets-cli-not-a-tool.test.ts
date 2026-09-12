@@ -84,7 +84,7 @@ test("nothing under src/tools or src/platform imports the operator command", asy
   const root = join(import.meta.dir, "..", "..", "src");
   const offenders: string[] = [];
   for (const dir of ["tools", "platform"]) {
-    for await (const file of new Glob("**/*.ts").scan({ cwd: join(root, dir), absolute: true })) {
+    for await (const file of new Glob("**/*.{ts,tsx}").scan({ cwd: join(root, dir), absolute: true })) {
       if (IMPORTS_THE_COMMAND.test(await Bun.file(file).text())) offenders.push(file);
     }
   }
