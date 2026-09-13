@@ -18,6 +18,7 @@ import { ToolRegistry } from "../../src/tools/registry.ts";
 import type { Tool, ToolSource } from "../../src/tools/types.ts";
 import { WorkspaceContext } from "../../src/workspace/context.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
+import { seedWorkspaceRoot } from "../helpers/test-workspace.ts";
 
 /**
  * The connector permission policy (`disallow`) must be enforced on EVERY
@@ -102,6 +103,7 @@ interface Harness {
 
 function buildHarness(): Harness {
   const workDir = mkdtempSync(join(tmpdir(), "nb-perm-doors-"));
+  seedWorkspaceRoot(workDir, "ws_acme");
   const store = new PermissionStore(workDir);
   const source = new MockSource();
   const router = new IdentityToolRouter({

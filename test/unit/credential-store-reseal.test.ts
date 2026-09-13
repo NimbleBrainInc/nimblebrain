@@ -28,6 +28,7 @@ import {
   parseSealedValue,
 } from "../../src/tools/credential-seal.ts";
 import { type CredentialScope, FileCredentialStore } from "../../src/tools/credential-store.ts";
+import { seedWorkspaceRoot } from "../helpers/test-workspace.ts";
 
 const KEY_A = Buffer.alloc(32, 0x11);
 const KEY_B = Buffer.alloc(32, 0x22);
@@ -39,6 +40,7 @@ const READ = { caller: "test", purpose: "unit test" };
 
 function fresh(sealer?: CredentialSealer) {
   const dir = mkdtempSync(join(tmpdir(), "nb-reseal-"));
+  seedWorkspaceRoot(dir, "ws_test");
   const events: EngineEvent[] = [];
   const store = new FileCredentialStore(dir, {
     eventSink: { emit: (e) => events.push(e) },

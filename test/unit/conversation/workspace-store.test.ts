@@ -14,6 +14,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { EventSourcedConversationStore } from "../../../src/conversation/event-sourced-store.ts";
 import { workspaceConversationsDir } from "../../../src/conversation/paths.ts";
+import { seedWorkspaceRoot } from "../../helpers/test-workspace.ts";
 
 let workDir: string;
 
@@ -26,6 +27,9 @@ afterEach(() => {
 });
 
 function workspaceStore(wsId: string, ownerId: string, onMutate?: () => void): EventSourcedConversationStore {
+  // The store creates its own `conversations/<ownerId>/` dir, but only inside a
+  // live workspace root — so the fixture stands one up, as `create` would.
+  seedWorkspaceRoot(workDir, wsId);
   return new EventSourcedConversationStore({
     dir: workspaceConversationsDir(workDir, wsId, ownerId),
     ...(onMutate ? { onMutate } : {}),

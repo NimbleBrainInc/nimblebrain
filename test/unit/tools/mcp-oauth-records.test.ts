@@ -14,6 +14,7 @@ import {
   installTestCredentialStore,
   resetTestCredentialStore,
 } from "../../helpers/credential-store.ts";
+import { seedWorkspaceRoot } from "../../helpers/test-workspace.ts";
 
 const WS = { type: "workspace", wsId: "ws_test" } as const;
 const USER = { type: "user", userId: "usr_alice" } as const;
@@ -24,6 +25,7 @@ let events: EngineEvent[];
 
 beforeEach(() => {
   workDir = mkdtempSync(join(tmpdir(), "nb-oauth-records-"));
+  seedWorkspaceRoot(workDir, "ws_test");
   events = [];
   store = installTestCredentialStore(workDir, events);
 });

@@ -1,3 +1,5 @@
+import { mkdirSync } from "node:fs";
+import { join } from "node:path";
 import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 import type { Runtime } from "../../src/runtime/runtime.ts";
 import { WorkspaceContext } from "../../src/workspace/context.ts";
@@ -51,4 +53,22 @@ export async function provisionTestWorkspace(
   }
   await runtime.ensureWorkspaceRegistry(wsId);
   return wsId;
+}
+
+/**
+ * Create `{workDir}/workspaces/<wsId>/` — the workspace root a store's first
+ * write requires.
+ *
+ * A workspace-scoped store creates its own subdirectory on first write, but
+ * only *inside* a live root: `ensureWorkspaceDir` refuses to create the root
+ * itself, because a writer doing so is how a deleted workspace came back. A
+ * unit test that points a store at a bare `mkdtempSync` dir therefore has to
+ * stand the root up, exactly as `WorkspaceStore.create` would.
+ *
+ * Returns the root path. Idempotent.
+ */
+export function seedWorkspaceRoot(workDir: string, wsId: string = TEST_WORKSPACE_ID): string {
+  const root = join(workDir, "workspaces", wsId);
+  mkdirSync(root, { recursive: true });
+  return root;
 }

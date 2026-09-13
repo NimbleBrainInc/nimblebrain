@@ -2,7 +2,6 @@ import { randomBytes } from "node:crypto";
 import {
   appendFileSync,
   existsSync,
-  mkdirSync,
   readdirSync,
   readFileSync,
   renameSync,
@@ -17,7 +16,7 @@ import {
   NOTIFICATION_LIST_DEFAULT_LIMIT,
   NOTIFICATION_LIST_MAX_LIMIT,
 } from "../platform/schemas/notifications.ts";
-import type { WorkspaceContext } from "../workspace/context.ts";
+import { ensureWorkspaceDir, type WorkspaceContext } from "../workspace/context.ts";
 import {
   NOTIFICATION_LEVEL_RANK,
   type Notification,
@@ -173,7 +172,9 @@ export class NotificationStore {
       deliveries: [],
     };
 
-    mkdirSync(this.#dir, { recursive: true });
+    // The inbox dir is created on the first item a connector emits — but only
+    // while the workspace is still there. See `ensureWorkspaceDir`.
+    ensureWorkspaceDir(this.#dir);
     appendFileSync(this.#dayFile(item.receivedAt.slice(0, 10)), `${JSON.stringify(item)}\n`);
     this.prune();
 

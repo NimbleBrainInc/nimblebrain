@@ -8,6 +8,7 @@ import { defaultWorkDir } from "../../../src/connectors/runtime/paths.ts";
 import type { ToolRegistry } from "../../../src/tools/registry.ts";
 import { CONNECTOR_SKILLS_SUBDIR } from "../../../src/skills/connector-skill-store.ts";
 import { WorkspaceContext } from "../../../src/workspace/context.ts";
+import { seedWorkspaceRoot } from "../../helpers/test-workspace.ts";
 
 /**
  * Lifecycle binding hooks (P4): `syncBoundSkills` resolves + materializes a
@@ -37,6 +38,9 @@ afterEach(() => {
 function workDir(): string {
   const d = mkdtempSync(join(tmpdir(), "cskbind-"));
   dirs.push(d);
+  // Materializing an overlay writes into `workspaces/<wsId>/connector-skills/`,
+  // which is created on first bind but only inside a live workspace root.
+  seedWorkspaceRoot(d, WS_ID);
   return d;
 }
 

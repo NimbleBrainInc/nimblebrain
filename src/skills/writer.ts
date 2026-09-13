@@ -1,6 +1,5 @@
 import {
   existsSync,
-  mkdirSync,
   readdirSync,
   readFileSync,
   renameSync,
@@ -9,6 +8,7 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import matter from "gray-matter";
+import { ensureWorkspaceDir } from "../workspace/context.ts";
 import { parseSkillContent } from "./loader.ts";
 import { validateFrontmatter } from "./schemas/skill-manifest.ts";
 import type { Skill, SkillManifest } from "./types.ts";
@@ -142,7 +142,11 @@ export function writeSkill(dir: string, name: string, manifest: SkillManifest, b
   if (!validation.ok) {
     throw new SkillFrontmatterValidationError(name, validation.errors);
   }
-  mkdirSync(dir, { recursive: true });
+  // Org and user skill dirs are outside any workspace and are simply created;
+  // the workspace `skills/` and `connector-skills/` trees pick up the
+  // root-must-exist guard, so materializing an overlay into a deleted
+  // workspace fails instead of re-creating it. See `ensureWorkspaceDir`.
+  ensureWorkspaceDir(dir);
   const filePath = join(dir, `${name}.md`);
   const content = serializeSkill(manifest, body);
   atomicWriteFile(filePath, content);

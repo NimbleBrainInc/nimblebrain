@@ -27,6 +27,7 @@ import { PermissionStore } from "../../../src/permissions/permission-store.ts";
 import { getRequestContext, type RequestContext } from "../../../src/runtime/request-context.ts";
 import type { Tool, ToolSource } from "../../../src/tools/types.ts";
 import { WorkspaceContext } from "../../../src/workspace/context.ts";
+import { seedWorkspaceRoot } from "../../helpers/test-workspace.ts";
 
 // ── Stubs ─────────────────────────────────────────────────────────
 
@@ -130,6 +131,8 @@ const REASON = "route:rt_outbound_slack";
 let workDir = "";
 beforeEach(() => {
   workDir = mkdtempSync(join(tmpdir(), "nb-unattended-dispatch-"));
+  seedWorkspaceRoot(workDir, "ws_0123456789abcdef");
+  seedWorkspaceRoot(workDir, "ws_helix");
 });
 afterEach(() => {
   try {

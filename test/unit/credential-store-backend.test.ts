@@ -18,6 +18,7 @@ import {
   describeCredentialStoreConformance,
   WS,
 } from "../helpers/credential-store-conformance.ts";
+import { seedWorkspaceRoot } from "../helpers/test-workspace.ts";
 
 // The default path is what a deployment with no `secrets` block gets, so the
 // proof that PR 2 changed no behaviour is that it satisfies the same interface
@@ -29,6 +30,7 @@ function freshDefaultStore(): {
   cleanup: () => void;
 } {
   const dir = mkdtempSync(join(tmpdir(), "nb-credbackend-"));
+  seedWorkspaceRoot(dir, "ws_test");
   const events: EngineEvent[] = [];
   registerBuiltinCredentialStoreBackends();
   const store = createCredentialStore({
@@ -55,6 +57,7 @@ function freshSealedStore(): {
   cleanup: () => void;
 } {
   const dir = mkdtempSync(join(tmpdir(), "nb-credbackend-sealed-"));
+  seedWorkspaceRoot(dir, "ws_test");
   const events: EngineEvent[] = [];
   registerBuiltinCredentialStoreBackends();
   const store = createCredentialStore({
@@ -101,6 +104,7 @@ describe("createCredentialStore", () => {
   test("no secrets block and an explicit `file` reach the same backend", async () => {
     registerBuiltinCredentialStoreBackends();
     const dir = mkdtempSync(join(tmpdir(), "nb-credbackend-"));
+    seedWorkspaceRoot(dir, "ws_test");
     try {
       const implicit = createCredentialStore({ workDir: dir });
       await implicit.put(WS, "k", "v");

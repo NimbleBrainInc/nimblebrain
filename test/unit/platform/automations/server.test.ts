@@ -30,6 +30,7 @@ import {
 	estimateRunsPerDay,
 	type ToolContext,
 } from "../../../../src/platform/automations/server.ts";
+import { seedWorkspaceRoot } from "../../../helpers/test-workspace.ts";
 
 const WS = "ws_test";
 const OWNER = "usr_test";
@@ -145,6 +146,7 @@ function makeRun(overrides: Partial<AutomationRun> = {}): AutomationRun {
 
 beforeEach(() => {
 	mkdirSync(TMP_DIR, { recursive: true });
+	seedWorkspaceRoot(TMP_DIR, WS);
 });
 
 afterEach(() => {

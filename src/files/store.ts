@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
-import { appendFile, mkdir, readdir, readFile, unlink, writeFile } from "node:fs/promises";
+import { appendFile, readdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { basename, join, relative, resolve } from "node:path";
+import { ensureWorkspaceDir } from "../workspace/context.ts";
 import { resolveMimeType } from "./mime.ts";
 import type { ExtractedTextSidecar, FileEntry } from "./types.ts";
 
@@ -94,7 +95,10 @@ export function createFileStore(filesDir: string): FileStore {
   const registryPath = join(filesDir, "registry.jsonl");
 
   async function ensureFilesDir(): Promise<void> {
-    await mkdir(filesDir, { recursive: true });
+    // The owner partition is created on first touch, but only inside a live
+    // workspace root — a write must never bring a deleted workspace back.
+    // See `ensureWorkspaceDir`.
+    ensureWorkspaceDir(filesDir);
   }
 
   async function saveFile(
