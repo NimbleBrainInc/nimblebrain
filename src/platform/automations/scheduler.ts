@@ -11,6 +11,7 @@
 
 import { Cron } from "croner";
 import { log } from "../../observability/log.ts";
+import { WorkspaceRootMissingError } from "../../workspace/context.ts";
 import {
   appendRun,
   loadAllAutomations,
@@ -680,11 +681,17 @@ export class Scheduler {
       // here would stop the scheduler for EVERY workspace, silently and until
       // the process restarts. `recordSkipped` writes to the store before it
       // reads, so a store that refuses a write (a workspace archived under a
-      // run) is one way to throw.
+      // run) is one way to throw. That refusal is permanent — the workspace is
+      // gone — and it lands before `nextRunAt` advances, so the automation is
+      // dropped as `dropWorkspace` would have; kept, it stays due and the timer
+      // re-arms at zero delay.
       try {
         const run = this.considerForDispatch(auto, now);
         if (run) dispatched.push(run);
       } catch (err) {
+        if (err instanceof WorkspaceRootMissingError) {
+          this.definitions.delete(Scheduler.keyOf(auto));
+        }
         log.warn("[automations] scheduler sweep skipped one automation", {
           automationId: auto.id,
           workspaceId: auto.workspaceId,

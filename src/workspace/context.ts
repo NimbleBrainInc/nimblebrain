@@ -30,8 +30,8 @@ import { WORKSPACE_ID_RE } from "./workspace-id-pattern.ts";
  * cannot leak across the boundary by construction.
  *
  * The other half of that structural fix is at the bottom of this file:
- * {@link ensureWorkspaceDir} is the one place a workspace-scoped directory is
- * created, and it requires the workspace root to already exist. A path helper
+ * {@link assertWorkspaceRootExists} is what every workspace-scoped mkdir passes
+ * first, and it requires the workspace root to already exist. A path helper
  * says where a write goes; that function says whether the workspace it goes to
  * is still there.
  */

@@ -22,13 +22,16 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { NoopEventSink } from "../../../src/adapters/noop-events.ts";
+import { saveComposioConnection } from "../../../src/connectors/providers/composio/connection.ts";
 import { EventSourcedConversationStore } from "../../../src/conversation/event-sourced-store.ts";
 import { workspaceConversationsDir } from "../../../src/conversation/paths.ts";
 import { workspaceFilesDir } from "../../../src/files/paths.ts";
 import { createFileStore } from "../../../src/files/store.ts";
+import { InstructionsStore } from "../../../src/instructions/storage.ts";
 import { parseNotificationEnvelope } from "../../../src/notifications/envelope.ts";
 import { NotificationStore } from "../../../src/notifications/store.ts";
 import type { NotificationEnvelope } from "../../../src/notifications/types.ts";
+import { PermissionStore } from "../../../src/permissions/permission-store.ts";
 import {
   automationRunsDir,
   workspaceAutomationsDir,
@@ -37,6 +40,7 @@ import { appendRun, saveAutomation } from "../../../src/platform/automations/sto
 import type { Automation, AutomationRun } from "../../../src/platform/automations/types.ts";
 import { materializeConnectorSkill } from "../../../src/skills/connector-skill-store.ts";
 import { writeSkill } from "../../../src/skills/writer.ts";
+import { FileCredentialStore } from "../../../src/tools/credential-store.ts";
 import {
   ensureWorkspaceDir,
   WorkspaceContext,
@@ -167,6 +171,37 @@ const WRITERS: Array<{ name: string; write: () => void | Promise<void> }> = [
         now: "2026-01-01T00:00:00.000Z",
       });
     },
+  },
+  // The four below keep their own `mkdir` (mode 0o700, or the async form) and
+  // call `assertWorkspaceRootExists` directly ahead of it. Two write secret
+  // material the delete path destroys rather than archives.
+  {
+    name: "instructions — the overlay at the workspace root",
+    write: async () => {
+      await new InstructionsStore(workDir).write({ wsId: WS, text: "be brief", updatedBy: "ui" });
+    },
+  },
+  {
+    name: "permissions — permissions.json at the workspace root",
+    write: () =>
+      new PermissionStore(workDir).setConnector({ scope: "workspace", wsId: WS }, "gmail", {
+        send: "disallow",
+      }),
+  },
+  {
+    name: "composio — a workspace-owned connection",
+    write: () =>
+      saveComposioConnection(workDir, { type: "workspace", wsId: WS }, "gmail", {
+        connectedAccountId: "ca_1",
+        toolkit: "gmail",
+        userId: "u_1",
+        connectedAt: "2026-01-01T00:00:00.000Z",
+        status: "ACTIVE",
+      }),
+  },
+  {
+    name: "credentials — a workspace-scoped secret",
+    write: () => new FileCredentialStore(workDir).put({ kind: "workspace", wsId: WS }, "api_key", "s3cret"),
   },
 ];
 
