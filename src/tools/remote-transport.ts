@@ -97,13 +97,19 @@ function buildRequestHeaders(
  * Outermost, over the redirect guard, so one request is one resolve however many
  * same-origin hops it follows. The inner fetch (minting, OAuth-refresh) sees
  * these headers in `init` and keeps them, as it keeps the SDK's own.
+ *
+ * Only on the connector's own origin. The SDK sends OAuth discovery and token
+ * requests through this same fetch, and an authorization server on another
+ * origin has no claim on the workspace's secret.
  */
 function createCredentialHeaderFetch(
   baseFetch: FetchLike,
   referenced: readonly HeaderSource[],
+  endpoint: URL,
   workspaceId?: string,
 ): FetchLike {
   return async (input, init) => {
+    if (new URL(input.toString()).origin !== endpoint.origin) return baseFetch(input, init);
     const resolved = await resolveHeaderSources(referenced, workspaceId);
     const headers = new Headers(init?.headers);
     for (const [name, value] of Object.entries(resolved)) headers.set(name, value);
@@ -237,8 +243,11 @@ export async function createRemoteTransport(
     allowInsecure?: boolean;
   },
 ): Promise<Transport> {
-  // The last source for a name wins, exactly as it does in the header map.
-  const sources = [...new Map(headerSources(config).map((s) => [s.name, s])).values()];
+  // The last source for a name wins, compared case-insensitively as header names
+  // are — the outcome `buildForwardHeaders` reaches on the hooks path.
+  const sources = [
+    ...new Map(headerSources(config).map((s) => [s.name.toLowerCase(), s])).values(),
+  ];
   const referenced = sources.filter((source) => isCredentialRef(source.value));
   // Only the literals are fixed into `requestInit`; a reference's value is the
   // per-request wrapper's to supply. The references are still resolved once
@@ -248,6 +257,11 @@ export async function createRemoteTransport(
   );
   await resolveHeaderSources(referenced, opts?.workspaceId);
   const mintingFetch = applyProviderAuth(config, headers, opts?.workspaceId);
+  // A provider's static header outranks a same-name reference, as it does in
+  // `resolveTransportCredential`. No literal shares a reference's name after the
+  // dedupe above, so a match here is the provider's.
+  const providerNames = new Set(Object.keys(headers).map((name) => name.toLowerCase()));
+  const perRequest = referenced.filter((source) => !providerNames.has(source.name.toLowerCase()));
   const effectiveAuthProvider = selectAuthProvider(config, authProvider);
   const transportFetch = selectTransportFetch(mintingFetch, effectiveAuthProvider);
 
@@ -269,8 +283,8 @@ export async function createRemoteTransport(
   // No reference, no wrapper: a connection carrying only literals reads nothing
   // from the store on any request.
   const requestFetch =
-    referenced.length > 0
-      ? createCredentialHeaderFetch(guardedFetch, referenced, opts?.workspaceId)
+    perRequest.length > 0
+      ? createCredentialHeaderFetch(guardedFetch, perRequest, url, opts?.workspaceId)
       : guardedFetch;
 
   const requestInit: RequestInit = Object.keys(headers).length > 0 ? { headers } : {};

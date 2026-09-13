@@ -283,10 +283,10 @@ describe("createRemoteTransport — a credential reference resolves on every req
 		expect((await send(t)).get("Authorization")).toBe("Bearer v2");
 	});
 
-	test("a later literal of the same name still wins over a reference", async () => {
+	test("a later literal of the same name, in any case, still wins over a reference", async () => {
 		await store.put(scope, KEY, "from-store");
 		const t = await build({
-			headers: { Authorization: { ref: "credential", key: KEY } },
+			headers: { authorization: { ref: "credential", key: KEY } },
 			auth: { type: "bearer", token: "literal" },
 		});
 		expect((await send(t)).get("Authorization")).toBe("Bearer literal");
@@ -367,5 +367,41 @@ describe("createRemoteTransport — a credential reference resolves on every req
 			});
 		}
 		expect(JSON.stringify(events)).not.toContain("old-secret");
+	});
+
+	test("the SSE transport resolves per request too", async () => {
+		await store.put(scope, KEY, "old-secret");
+		const t = await build({ type: "sse", headers: refHeaders });
+		expect(t).toBeInstanceOf(SSEClientTransport);
+		const transportFetch = (t as unknown as { _fetch: (u: URL, i?: RequestInit) => Promise<Response> })._fetch;
+		await store.put(scope, KEY, "new-secret");
+		await transportFetch(ENDPOINT, {});
+		expect(seen.at(-1)?.get(HEADER)).toBe("new-secret");
+	});
+
+	test("a provider's static header of the same name outranks a reference, as on the forward", async () => {
+		registerCredentialProvider("test-static", {
+			credentialFor: () => ({ headers: { "x-signing-secret": "from-provider" } }),
+		});
+		await store.put(scope, KEY, "from-store");
+		const t = await build({
+			auth: { type: "provider", provider: "test-static", config: {} },
+			headers: refHeaders,
+		});
+		events.length = 0;
+		expect((await send(t)).get(HEADER)).toBe("from-provider");
+		expect(events).toEqual([]);
+	});
+
+	test("a reference never leaves the connector's origin", async () => {
+		// OAuth discovery and token requests reach an authorization server through
+		// the same fetch; the workspace's secret is not theirs.
+		await store.put(scope, KEY, "old-secret");
+		const t = await build({ headers: refHeaders });
+		const transportFetch = (t as unknown as { _fetch: (u: string, i?: RequestInit) => Promise<Response> })._fetch;
+		events.length = 0;
+		await transportFetch("https://auth.other.test/token", { method: "POST" });
+		expect(seen.at(-1)?.get(HEADER)).toBeNull();
+		expect(events).toEqual([]);
 	});
 });

@@ -148,7 +148,7 @@ describe("rotation", () => {
     );
   });
 
-  test("deleting the key breaks the next request loudly rather than silently", async () => {
+  test("deleting the key breaks the next resolve loudly rather than silently", async () => {
     const scope = { kind: "workspace", wsId: WS_ID } as const;
     const config: RemoteTransportConfig = {
       auth: { type: "bearer", token: { ref: "credential", key: "acme.db_url" } },

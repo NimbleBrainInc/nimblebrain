@@ -263,7 +263,7 @@ export interface NimbleBrainConnectorMeta {
      * the customer's secret here, because the two answer different questions: who
      * is calling, and what that caller may open. The reference is read from the
      * trusted catalog entry into the ConnectorRef's `transport.headers`, where the
-     * transport resolves it per connection at the connection's workspace scope;
+     * transport resolves it on every request at the connection's workspace scope;
      * `label` / `help` stay behind, since they are for the person being asked.
      */
     secretHeaders?: Record<string, SecretHeaderRef>;

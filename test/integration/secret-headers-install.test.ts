@@ -303,7 +303,7 @@ describe("a catalog entry that binds a workspace secret to a header", () => {
     expect(b.get("Authorization")).toBe("Bearer minted-for-ws_tenantb");
   });
 
-  test("rotating the key takes effect on the next request, with no config edit", async () => {
+  test("rotating the key takes effect on the next resolve, with no config edit", async () => {
     await toolFor("ws_tenanta").handler({ action: "install", entry: entry() });
     await toolFor("ws_tenanta").handler({
       action: "set_secret",
