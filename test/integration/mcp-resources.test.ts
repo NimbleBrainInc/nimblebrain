@@ -404,11 +404,12 @@ describe("MCP /mcp — resources/read scoped to one source", () => {
   });
 
   it("a source that is absent or in another workspace answers as not found", async () => {
+    // The URI is one this workspace serves, so only the scope can refuse it.
     const client = await createMcpClient();
     try {
       for (const source of ["no-such-source", "other"]) {
         await expect(
-          client.readResource({ uri: "ui://other/dashboard", _meta: scopedTo(source) }),
+          client.readResource({ uri: "ui://neighbor/dashboard", _meta: scopedTo(source) }),
         ).rejects.toMatchObject({ code: -32002 });
       }
     } finally {
