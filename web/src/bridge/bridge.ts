@@ -86,7 +86,7 @@ const widgetStateStore = new Map<string, WidgetStateEntry>();
 
 /**
  * Internal app names allowed to address another source — on tools/call,
- * resources/read, or a resource listing — by naming it in
+ * resources/read, a resource listing, or a task request — by naming it in
  * `_meta[SERVER_META_KEY]` (or the legacy top-level field). External iframe
  * apps are strictly scoped to their own server. Defined once at module scope
  * so every call site shares the same trust list.
@@ -261,7 +261,9 @@ export function createBridge(
       // -----------------------------------------------------------------
       case "tasks/get": {
         const { id, params } = msg;
-        forwardTaskRequest(TASKS_GET_METHOD, params, GetTaskResultSchema, id).then(postToIframe);
+        forwardTaskRequest(TASKS_GET_METHOD, params, GetTaskResultSchema, id, appName).then(
+          postToIframe,
+        );
         break;
       }
 
@@ -271,9 +273,13 @@ export function createBridge(
       // -----------------------------------------------------------------
       case "tasks/result": {
         const { id, params } = msg;
-        forwardTaskRequest(TASKS_RESULT_METHOD, params, GetTaskPayloadResultSchema, id).then(
-          postToIframe,
-        );
+        forwardTaskRequest(
+          TASKS_RESULT_METHOD,
+          params,
+          GetTaskPayloadResultSchema,
+          id,
+          appName,
+        ).then(postToIframe);
         break;
       }
 
@@ -283,7 +289,7 @@ export function createBridge(
       // -----------------------------------------------------------------
       case "tasks/cancel": {
         const { id, params } = msg;
-        forwardTaskRequest(TASKS_CANCEL_METHOD, params, CancelTaskResultSchema, id).then(
+        forwardTaskRequest(TASKS_CANCEL_METHOD, params, CancelTaskResultSchema, id, appName).then(
           postToIframe,
         );
         break;
@@ -855,7 +861,8 @@ function handleResourcesRead(
 }
 
 /**
- * The `_meta` key that scopes a read or a listing on `/mcp` to one source. Must equal
+ * The `_meta` key that scopes a read, a listing or a task request on `/mcp` to
+ * one source. Must equal
  * `RESOURCE_SOURCE_META_KEY` in `src/api/mcp-server.ts` (the runtime image ships
  * `src/` alone, so the two cannot share a module); pinned equal by
  * `test/unit/tools/server-notifications.test.ts`.
@@ -1185,9 +1192,13 @@ const TASKS_CANCEL_METHOD: CancelTaskRequest["method"] = "tasks/cancel";
 /** Matches `TaskStatusNotificationSchema.method` — used for `removeNotificationHandler`. */
 const TASK_STATUS_METHOD = "notifications/tasks/status" as const;
 
-/** Narrow set of params accepted on the three tasks/* iframe messages. */
+/** Params accepted on the three tasks/* iframe messages. */
 interface TasksParams {
   taskId: string;
+  /** Internal apps only: the server that ran the task (legacy location). */
+  server?: string;
+  /** Internal apps only: the server that ran the task, under `SERVER_META_KEY`. */
+  _meta?: Record<string, unknown>;
   [key: string]: unknown;
 }
 
@@ -1218,11 +1229,16 @@ function translateTaskError(err: unknown): { code: number; message: string } {
 }
 
 /**
- * Forward a `tasks/*` request through the MCP bridge client. Returns the
- * full JSON-RPC response (success or error) ready to `postToIframe`.
+ * Forward a `tasks/*` request through the MCP bridge client, scoped to the
+ * server that ran the task. Returns the full JSON-RPC response (success or
+ * error) ready to `postToIframe`.
  *
- * The caller picks the method constant + result schema; params are passed
- * through verbatim (we never invent fields). Errors are mapped via
+ * The caller picks the method constant + result schema. What reaches `/mcp` is
+ * the `taskId` and the scope, and nothing else the iframe sent. The scope is
+ * the app's own server, unless an internal app names another — the same
+ * resolver as `tools/call` — under `RESOURCE_SOURCE_META_KEY`, as for a
+ * resource read. Every iframe shares one `/mcp` session, so without it `/mcp`
+ * would answer for any task the session holds. Errors are mapped via
  * `translateTaskError`.
  */
 async function forwardTaskRequest(
@@ -1233,7 +1249,10 @@ async function forwardTaskRequest(
     | typeof GetTaskPayloadResultSchema
     | typeof CancelTaskResultSchema,
   id: string,
+  appName: string,
 ): Promise<Record<string, unknown>> {
+  const server = resolveTargetServer(params, appName, INTERNAL_APPS.has(appName));
+  const scoped = { taskId: params.taskId, _meta: { [RESOURCE_SOURCE_META_KEY]: server } };
   try {
     // `withSessionRetry` only re-runs on the specific session-not-found
     // shape; any other error (incl. spec-mandated `-32602` for missing
@@ -1241,7 +1260,7 @@ async function forwardTaskRequest(
     // JSON-RPC error envelope the iframe expects.
     return await withSessionRetry(async () => {
       const client = await getMcpBridgeClient();
-      const result = await client.request({ method, params }, schema);
+      const result = await client.request({ method, params: scoped }, schema);
       // Forward the result verbatim (Non-Negotiable Rule 4: never unwrap).
       return { jsonrpc: "2.0", id, result };
     });
