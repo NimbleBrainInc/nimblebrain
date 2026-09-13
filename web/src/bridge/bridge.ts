@@ -42,6 +42,7 @@ import { isIdentityApp } from "../lib/identity-apps";
 import { appNameFromToolName } from "../lib/namespaced-tool";
 import { getMcpBridgeClient, withSessionRetry } from "../mcp-bridge-client";
 import { serverCapabilities } from "./relayed-notifications";
+import type { LoggingMessageNotification } from "./schemas";
 import { SERVER_META_KEY } from "./schemas";
 import { getHostThemeMode, getSpecThemeTokens, getThemeTokens } from "./theme";
 import type {
@@ -84,22 +85,13 @@ const appStateStore = new Map<string, AppStateEntry>();
 const widgetStateStore = new Map<string, WidgetStateEntry>();
 
 /**
- * Internal app names allowed to cross-call other sources by setting
- * `params.server` on tools/call or resources/read. External iframe apps
- * are strictly scoped to their own server. Defined once at module scope so
- * both message-type cases share the same trust list.
+ * Internal app names allowed to address another source — on tools/call,
+ * resources/read, or a resource listing — by naming it in
+ * `_meta[SERVER_META_KEY]` (or the legacy top-level field). External iframe
+ * apps are strictly scoped to their own server. Defined once at module scope
+ * so every call site shares the same trust list.
  */
 const INTERNAL_APPS = new Set(["nb", "settings", "home", "usage"]);
-
-/**
- * Identifier the tasks capability is advertised under in
- * `hostCapabilities.experimental`.
- *
- * Ours, not the spec's: the ext-apps capability type does not model the MCP
- * tasks utility, so this is the host saying "I support a thing the extension
- * has not named yet". When ext-apps names it, this moves to the real field.
- */
-const TASKS_CAPABILITY_ID = "ai.nimblebrain/tasks";
 
 /** Get the latest app state pushed via ui/update-model-context. */
 export function getAppState(appName: string): AppStateEntry | undefined {
@@ -343,7 +335,13 @@ export function createBridge(
         postToIframe({
           jsonrpc: "2.0",
           id: msg.id,
-          result: { mode: currentDisplayMode(callbacks) },
+          // The host decides placement from its own layout and never grants a
+          // request, so the answer is the mode in effect — `inline`, which is
+          // also the spec's own default. Derive it from the host context when
+          // something starts publishing a `displayMode`; nothing does today,
+          // and reading a key no producer sets is a branch that cannot be
+          // exercised.
+          result: { mode: "inline" },
         });
         break;
 
@@ -351,11 +349,9 @@ export function createBridge(
       // Spec: notifications/message — an app's log line. The `logging`
       // capability is advertised, so this has to land somewhere.
       // -----------------------------------------------------------------
-      case "notifications/message": {
-        const { level, logger, data } = msg.params;
-        console.info(`[app:${appName}${logger ? `/${logger}` : ""}] ${level}:`, data);
+      case "notifications/message":
+        logAppMessage(appName, msg.params);
         break;
-      }
 
       // -----------------------------------------------------------------
       // Extension: synapse/action — semantic host actions
@@ -546,22 +542,11 @@ export function createBridge(
 type PostToIframe = (data: unknown) => void;
 
 /**
- * Answer an ext-apps `ui/initialize` request: post the handshake response,
- * then replay any persisted widget state.
- *
- * JSON-RPC 2.0 (and the ext-apps spec by extension) allows request IDs to be
- * strings OR numbers. Clients built on `@modelcontextprotocol/ext-apps`
- * (including `@reboot-dev/reboot-react`) send numeric IDs starting at 0; an id
- * that is neither is dropped — a string-only check once left those iframes
- * stuck at "Connecting to MCP host...".
- */
-/**
  * The NimbleBrain extensions merged into `hostContext` at handshake time.
  *
  * Wrapped because a throwing callback must not take the handshake with it: a
  * dropped `ui/initialize` response hangs the iframe at "Connecting…" with no
- * indication of why. Shared with `currentDisplayMode`, so the guard exists
- * once rather than at each reader.
+ * indication of why.
  */
 function readHostExtensions(callbacks: BridgeCallbacks | undefined): Record<string, unknown> {
   try {
@@ -570,21 +555,6 @@ function readHostExtensions(callbacks: BridgeCallbacks | undefined): Record<stri
     console.error("getHostExtensions threw — proceeding with no extensions:", err);
     return {};
   }
-}
-
-/**
- * The display mode an app is actually in.
- *
- * Read from the same host context the app was handed, so there is one answer
- * rather than a second one kept here — a caller that starts publishing
- * `displayMode` is honoured without touching this. `inline` is the spec's own
- * default and what the spec's `AppBridge` falls back to.
- */
-function currentDisplayMode(
-  callbacks: BridgeCallbacks | undefined,
-): "inline" | "fullscreen" | "pip" {
-  const published = readHostExtensions(callbacks).displayMode;
-  return published === "fullscreen" || published === "pip" ? published : "inline";
 }
 
 /**
@@ -603,44 +573,71 @@ function handleDownloadFile(
   id: string | number,
   postToIframe: PostToIframe,
 ): void {
-  let downloaded = 0;
-  let refusedLink = false;
-
+  // Resolve every block before saving any. A request is answered all or
+  // nothing: a mixed batch that saved what it could and still reported
+  // `isError` would have an app retry the whole thing, and the user would get
+  // the resolvable files twice.
+  const files: Downloadable[] = [];
   for (const block of contents) {
-    const resource = block.resource as Record<string, unknown> | undefined;
-    if (!resource) {
-      // No inline payload — a ResourceLink, or a block we do not model.
-      refusedLink = true;
-      continue;
-    }
-    const mimeType =
-      typeof resource.mimeType === "string" ? resource.mimeType : "application/octet-stream";
-    const filename = filenameFor(resource.uri, block.name);
-
-    if (typeof resource.text === "string") {
-      triggerDownload(resource.text, filename, mimeType);
-      downloaded += 1;
-      continue;
-    }
-    if (typeof resource.blob === "string") {
-      const bytes = base64ToBytes(resource.blob);
-      if (bytes) {
-        triggerDownload(bytes, filename, mimeType);
-        downloaded += 1;
-        continue;
-      }
-    }
-    refusedLink = true;
+    const file = toDownloadable(block);
+    if (!file) break;
+    files.push(file);
   }
 
-  postToIframe({
-    jsonrpc: "2.0",
-    id,
-    result: downloaded > 0 && !refusedLink ? {} : { isError: true },
-  });
+  const complete = files.length === contents.length && files.length > 0;
+  if (complete) {
+    for (const file of files) triggerDownload(file.data, file.filename, file.mimeType);
+  }
+
+  postToIframe({ jsonrpc: "2.0", id, result: complete ? {} : { isError: true } });
 }
 
-/** A filename for a downloaded resource: its URI's last segment, else a generic one. */
+interface Downloadable {
+  data: string | Uint8Array;
+  filename: string;
+  mimeType: string;
+}
+
+/**
+ * One `ui/download-file` content block as something saveable, or `null` when it
+ * is not: a `ResourceLink` (the host does not fetch a URI the app supplied), a
+ * payload that is not valid base64, or a block shape we do not model.
+ */
+function toDownloadable(block: Record<string, unknown>): Downloadable | null {
+  const resource = block.resource as Record<string, unknown> | undefined;
+  if (!resource) return null;
+
+  const mimeType =
+    typeof resource.mimeType === "string" ? resource.mimeType : "application/octet-stream";
+  const filename = filenameFor(resource.uri, block.name);
+
+  if (typeof resource.text === "string") return { data: resource.text, filename, mimeType };
+  const bytes = typeof resource.blob === "string" ? base64ToBytes(resource.blob) : null;
+  return bytes ? { data: bytes, filename, mimeType } : null;
+}
+
+/**
+ * Write an app's `notifications/message` to the console at its own severity.
+ *
+ * The levels are syslog's, per the spec's `LoggingLevel`. An app's `error`
+ * arriving at info level is an error nobody filtering the console will see.
+ */
+function logAppMessage(appName: string, params: LoggingMessageNotification["params"]): void {
+  const { level, logger, data } = params;
+  const tag = `[app:${appName}${logger ? `/${logger}` : ""}] ${level}:`;
+  if (level === "error" || level === "critical" || level === "alert" || level === "emergency") {
+    console.error(tag, data);
+  } else if (level === "warning") {
+    console.warn(tag, data);
+  } else {
+    console.info(tag, data);
+  }
+}
+
+/**
+ * A filename for a downloaded resource: the block's own `name` when it has one,
+ * else the last segment of the resource URI, else a generic fallback.
+ */
 function filenameFor(uri: unknown, name: unknown): string {
   if (typeof name === "string" && name.length > 0) return name;
   if (typeof uri === "string") {
@@ -700,21 +697,15 @@ function handleInitialize(
     // server's views, and only those (relayed-notifications.ts).
     ...serverCapabilities(),
     logging: {},
-    // The MCP tasks utility, in the one place it reaches an app built on the
-    // spec's own client. `experimental` is `record(string, record(string,
-    // any))` — "experimental features keyed by identifier" — so a key here
-    // survives the client's parse of the handshake result and comes back out
-    // of `getHostCapabilities().experimental`. A sibling `tasks` field does
-    // not: `McpUiHostCapabilities` names no such field and strips it.
+    // The MCP tasks utility. `McpUiHostCapabilities` names no such field, so a
+    // client that parses the handshake result against the spec's schema drops
+    // it — but the SDK reads `hostCapabilities.tasks` off the raw result, so
+    // this is what every app in the field actually sees.
     //
-    // Measured, not assumed, and it moved between ext-apps versions: at 1.3.1
-    // `experimental` was an empty object schema, which strips its contents
-    // too. So an app resolving an older ext-apps sees nothing here.
-    experimental: { [TASKS_CAPABILITY_ID]: tasks },
-    // The pre-`experimental` home, kept because every app in the field today
-    // reads it: the SDK looks at `hostCapabilities.tasks` directly rather than
-    // through a spec schema, so it sees this and not the above. Drop it once
-    // every consumer is on an SDK that reads the identifier.
+    // `experimental` looks like the spec-sanctioned home and is not one yet:
+    // it only began preserving its contents after ext-apps 1.7.0, and `web/`
+    // declares `^1.3.1` and resolves 1.7.0 — both of which strip it. Advertise
+    // there when a client reads it and the floor has moved, not before.
     tasks,
   };
   const response: ExtAppsInitializeResponse = {
@@ -800,7 +791,7 @@ function handleToolsCall(
   const server = resolveTargetServer(params, appName, internal);
 
   // A qualified tool name names a source too, so it is a second way to ask
-  // for one — and it has to be held to the same rule as `params.server`.
+  // for one — and it has to be held to the same rule as the `_meta` target.
   // `callToolViaMcp` only prefixes a BARE name, so without this an external
   // iframe reaches any tool in the workspace by sending the qualified form
   // it wants (`files__create`) instead of the bare one it is entitled to.
@@ -1027,7 +1018,7 @@ function handleRequestFile(
 //   - Errors translate to JSON-RPC `{ code: -32000, message }` envelopes
 //     consistent with the REST path so iframes don't need to branch on
 //     which transport ran.
-//   - `params.server` authz is handled at the call site — this helper
+//   - the target-source authz is handled at the call site — this helper
 //     receives the already-resolved server name.
 // ---------------------------------------------------------------------------
 

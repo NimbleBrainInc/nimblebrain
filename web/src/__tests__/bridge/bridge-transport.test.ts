@@ -533,6 +533,47 @@ describe("resources/read — MCP transport", () => {
     expect(mcpReadResource).toHaveBeenCalledTimes(1);
   });
 
+  // The resolved target is authz-only for a read: `readResourceViaMcp` voids it,
+  // because a resource is namespaced by the connector that authored its URI and
+  // not by request params. So there is no wire difference between an internal
+  // and an external app naming another source here, and a test asserting one
+  // would pass whatever the resolver did. What is observable, and worth
+  // holding, is that neither the target nor its `_meta` reaches `/mcp`.
+  test("the target in _meta never reaches the MCP client", async () => {
+    const frame = mount("nb");
+
+    frame.send({
+      jsonrpc: "2.0",
+      id: "r-meta",
+      method: "resources/read",
+      params: { uri: "ui://demo", _meta: { "ai.nimblebrain/server": "files" } },
+    });
+    await frame.waitFor((m) => (m as { id?: string })?.id === "r-meta");
+
+    // One shared `/mcp` session serves every iframe, so a target that leaked
+    // onto the wire would be an app reaching a source the authz just scoped it
+    // out of.
+    expect(mcpReadResource).toHaveBeenCalledWith({ uri: "ui://demo" });
+  });
+
+  test("an external app naming another source still reads its own", async () => {
+    const frame = mount("db-query");
+
+    frame.send({
+      jsonrpc: "2.0",
+      id: "r-ext",
+      method: "resources/read",
+      params: { uri: "ui://demo", _meta: { "ai.nimblebrain/server": "files" } },
+    });
+    const reply = (await frame.waitFor((m) => (m as { id?: string })?.id === "r-ext")) as {
+      result?: unknown;
+      error?: unknown;
+    };
+
+    expect(reply.error).toBeUndefined();
+    expect(mcpReadResource).toHaveBeenCalledWith({ uri: "ui://demo" });
+  });
+
   test("MCP readResource error forwards as JSON-RPC -32000", async () => {
     mcpBehavior.readResource = async () => {
       throw new Error("resource not found");

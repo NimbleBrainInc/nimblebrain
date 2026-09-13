@@ -106,9 +106,6 @@ The app initiates the handshake per the ext-apps spec:
       "serverTools": {},
       "serverResources": { "listChanged": true },
       "logging": {},
-      "experimental": {
-        "ai.nimblebrain/tasks": { "cancel": {}, "requests": { "tools": { "call": {} } } }
-      },
       "tasks": { "cancel": {}, "requests": { "tools": { "call": {} } } }
     },
     "hostContext": {
@@ -507,7 +504,7 @@ Embed the bytes — inline `text`, or base64 in `blob`. A `ResourceLink` (a URI 
 
 ### `ui/request-display-mode`
 
-Ask to be shown `inline`, `fullscreen` or `pip`. The host decides placement from its own layout and does not hand that decision to an app, so the result reports the mode **actually in effect** — which is usually not the one requested.
+Ask to be shown `inline`, `fullscreen` or `pip`. The host decides placement from its own layout and does not hand that decision to an app, so the result reports the mode **actually in effect**. Today that is always `inline`, whatever you ask for.
 
 ```json
 {

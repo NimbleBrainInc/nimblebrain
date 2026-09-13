@@ -162,25 +162,17 @@ describe("ui/initialize — advertised capabilities", () => {
     expect(capabilities.downloadFile).toEqual({});
   });
 
-  test("advertises tasks under experimental, keyed by identifier", async () => {
+  test("advertises tasks where the SDK actually reads it", async () => {
     const capabilities = await handshake(mount());
-    const experimental = capabilities.experimental as Record<string, unknown>;
-    // `hostCapabilities.experimental` is the only place inside capabilities
-    // that survives a spec client's parse of the handshake result — a sibling
-    // `tasks` field is stripped, because the ext-apps capability type names no
-    // such field.
-    expect(experimental["ai.nimblebrain/tasks"]).toEqual({
-      cancel: {},
-      requests: { tools: { call: {} } },
-    });
-  });
-
-  test("keeps the sibling tasks field, which is what today's SDK reads", async () => {
-    const capabilities = await handshake(mount());
-    // The SDK reads `hostCapabilities.tasks` directly rather than through a
-    // spec schema, so it sees this and not `experimental`. Dropping it before
-    // every consumer moves would turn `callToolAsTask` off everywhere.
+    // The SDK reads `hostCapabilities.tasks` off the raw result rather than
+    // through a spec schema, so it sees this even though the ext-apps
+    // capability type names no such field. Dropping it would turn
+    // `callToolAsTask` off everywhere.
     expect(capabilities.tasks).toEqual({ cancel: {}, requests: { tools: { call: {} } } });
+    // Not under `experimental`: that only began preserving its contents after
+    // ext-apps 1.7.0, and this package's floor and resolved version both strip
+    // it — so a key there would be documented wire surface reaching nobody.
+    expect(capabilities.experimental).toBeUndefined();
   });
 });
 
@@ -247,6 +239,27 @@ describe("ui/download-file", () => {
     expect(downloads).toEqual([]);
   });
 
+  test("a batch mixing a file with a link saves nothing", async () => {
+    // All or nothing. Saving what resolved and still reporting `isError` has an
+    // app retry the whole request, and the user gets the resolvable file twice.
+    const frame = mount();
+    frame.send({
+      jsonrpc: "2.0",
+      id: "d5",
+      method: "ui/download-file",
+      params: {
+        contents: [
+          { type: "resource", resource: { uri: "file:///a.csv", text: "a,b" } },
+          { type: "resource_link", uri: "https://internal.example/secret", name: "x" },
+        ],
+      },
+    });
+
+    const reply = (await frame.waitFor(isReplyTo("d5"))) as { result: Record<string, unknown> };
+    expect(reply.result).toEqual({ isError: true });
+    expect(downloads).toEqual([]);
+  });
+
   test("an unparseable base64 payload reports isError", async () => {
     const frame = mount();
     frame.send({
@@ -280,28 +293,28 @@ describe("ui/request-display-mode", () => {
     expect(reply.result.mode).toBe("inline");
   });
 
-  test("answers with the mode the host published in its context", async () => {
-    // Read from the same host context the app was handed, so there is one
-    // answer rather than a second one kept in the bridge.
+  test("does not grant a request, whatever the host publishes", async () => {
+    // Placement is the host's layout decision, never the app's. Nothing
+    // publishes a `displayMode` today, so the answer is the spec's default.
     const frame = mount("db-query", { getHostExtensions: () => ({ displayMode: "fullscreen" }) });
     frame.send({
       jsonrpc: "2.0",
       id: "m2",
       method: "ui/request-display-mode",
-      params: { mode: "inline" },
+      params: { mode: "fullscreen" },
     });
 
     const reply = (await frame.waitFor(isReplyTo("m2"))) as { result: { mode: string } };
-    expect(reply.result.mode).toBe("fullscreen");
+    expect(reply.result.mode).toBe("inline");
   });
 });
 
 describe("notifications/message", () => {
-  test("an app's log line reaches the console", async () => {
+  test("an app's log line reaches the console at its own severity", async () => {
     const frame = mount("db-query");
     const lines: unknown[][] = [];
-    const origInfo = console.info;
-    console.info = (...args: unknown[]) => {
+    const origWarn = console.warn;
+    console.warn = (...args: unknown[]) => {
       lines.push(args);
     };
     try {
@@ -312,7 +325,7 @@ describe("notifications/message", () => {
       });
       await new Promise((r) => setTimeout(r, 10));
     } finally {
-      console.info = origInfo;
+      console.warn = origWarn;
     }
 
     const logged = lines.find((args) => String(args[0]).includes("db-query"));
