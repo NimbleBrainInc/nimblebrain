@@ -5,7 +5,8 @@
 // Routes iframe messages to platform APIs and forwards events back to iframes.
 //
 // Spec-compliant methods:
-//   tools/call, resources/read, tasks/get, tasks/result, tasks/cancel,
+//   tools/call, resources/read, resources/list, resources/templates/list,
+//   tasks/get, tasks/result, tasks/cancel,
 //   ui/initialize, ui/notifications/initialized,
 //   ui/notifications/tool-result, ui/notifications/tool-input,
 //   ui/notifications/host-context-changed, ui/notifications/size-changed,
@@ -13,6 +14,9 @@
 //
 // Spec-compliant notifications forwarded host→iframe:
 //   notifications/tasks/status (subscribed once per bridge instance)
+//   the app server's own notifications on RELAYED_TO_VIEWS
+//     (relayed-notifications.ts), verbatim, via the `server.notification` SSE
+//     relay in hooks/useServerNotificationRelay.ts
 //
 // NimbleBrain extensions (synapse/ namespace — no spec equivalent):
 //   synapse/action, synapse/download-file, synapse/data-changed,
@@ -36,12 +40,14 @@ import { getActiveWorkspaceId, uploadResource } from "../api/client";
 import { isIdentityApp } from "../lib/identity-apps";
 import { appNameFromToolName } from "../lib/namespaced-tool";
 import { getMcpBridgeClient, withSessionRetry } from "../mcp-bridge-client";
+import { serverCapabilities } from "./relayed-notifications";
 import { getHostThemeMode, getSpecThemeTokens, getThemeTokens } from "./theme";
 import type {
   BridgeCallbacks,
   ExtAppsHostContextChangedNotification,
   ExtAppsInitializeResponse,
   ExtAppsToolInputNotification,
+  ResourcesListMessage,
   ResourcesReadMessage,
   SynapseRequestFileMessage,
   UiActionMessage,
@@ -231,6 +237,16 @@ export function createBridge(
       // -----------------------------------------------------------------
       case "resources/read":
         handleResourcesRead(msg.params, msg.id, appName, postToIframe);
+        break;
+
+      // -----------------------------------------------------------------
+      // Spec: resources/list, resources/templates/list — the app's own
+      // server's listings (the promise `serverResources` makes). Pagination
+      // passes through: `cursor` in, `nextCursor` out.
+      // -----------------------------------------------------------------
+      case "resources/list":
+      case "resources/templates/list":
+        handleResourceListing(msg.method, msg.params, msg.id, appName, postToIframe);
         break;
 
       // -----------------------------------------------------------------
@@ -532,7 +548,10 @@ function handleInitialize(
   }
   const hostCapabilities = {
     openLinks: {},
-    serverTools: {},
+    // The server's tool calls and resource reads/listings are proxied (above);
+    // `listChanged` is set for each notification the host relays to the
+    // server's views, and only those (relayed-notifications.ts).
+    ...serverCapabilities(),
     logging: {},
     tasks: {
       cancel: {},
@@ -653,6 +672,52 @@ function handleResourcesRead(
         id,
         error: { code: -32000, message: errorMsg },
       });
+    });
+}
+
+/**
+ * The `_meta` key that scopes a listing on `/mcp` to one source. Must equal
+ * `RESOURCE_SOURCE_META_KEY` in `src/api/mcp-server.ts` (the runtime image ships
+ * `src/` alone, so the two cannot share a module); pinned equal by
+ * `test/unit/tools/server-notifications.test.ts`.
+ */
+export const RESOURCE_SOURCE_META_KEY = "ai.nimblebrain/source";
+
+/**
+ * Proxy a spec `resources/list` / `resources/templates/list` to the app's own
+ * server and forward the result — pagination included — or a JSON-RPC error.
+ *
+ * Scoped like `resources/read` and `tools/call`: the app's own server, unless an
+ * internal app names another. The bridge alone knows which iframe asked (every
+ * iframe shares one `/mcp` session), so it names the server in the request's
+ * `_meta` and `/mcp` lists that one source. The iframe's own `_meta` is not
+ * forwarded; only its `cursor` is.
+ */
+function handleResourceListing(
+  method: "resources/list" | "resources/templates/list",
+  params: ResourcesListMessage["params"],
+  id: string,
+  appName: string,
+  postToIframe: PostToIframe,
+): void {
+  const server = INTERNAL_APPS.has(appName) && params?.server ? params.server : appName;
+  const request = {
+    ...(typeof params?.cursor === "string" ? { cursor: params.cursor } : {}),
+    _meta: { [RESOURCE_SOURCE_META_KEY]: server },
+  };
+
+  withSessionRetry(async () => {
+    const client = await getMcpBridgeClient();
+    return method === "resources/list"
+      ? client.listResources(request)
+      : client.listResourceTemplates(request);
+  })
+    .then((result) => {
+      postToIframe({ jsonrpc: "2.0", id, result });
+    })
+    .catch((err: unknown) => {
+      const errorMsg = err instanceof Error ? err.message : "Resource listing failed";
+      postToIframe({ jsonrpc: "2.0", id, error: { code: -32000, message: errorMsg } });
     });
 }
 

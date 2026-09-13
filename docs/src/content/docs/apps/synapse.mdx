@@ -502,6 +502,8 @@ useDataSync((event) => {
 
 <Aside type="caution">
 Data sync only fires for **agent-initiated** tool calls. Tool calls made by the iframe itself (via `callTool`) do not trigger data sync — the iframe already knows its own results.
+
+When another view of the same app needs to hear about a write (a sidebar list after an inline view saves), have your server send `notifications/resources/list_changed`. The host relays it verbatim to that server's views — see [the bridge reference](/apps/bridge#notificationsresourceslist_changed).
 </Aside>
 
 ## LLM-aware UI state

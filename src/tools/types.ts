@@ -1,5 +1,6 @@
 import type { ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
 import type { ToolResult, ToolSchema } from "../engine/types.ts";
+import type { ServerNotification } from "./server-notifications.ts";
 
 /** A tool with source tracking. Extends ToolSchema with a source field. */
 export interface Tool {
@@ -109,6 +110,16 @@ export interface ToolSource {
    * bridges this per-source signal to its own invalidation listener.
    */
   subscribeToolsChanged?(listener: () => void): () => void;
+  /**
+   * Subscribe to the server's own notifications that a host relays to the
+   * server's views — the methods on `RELAYED_SERVER_NOTIFICATIONS`, with the
+   * params the SDK parsed. Returns an unsubscribe function.
+   *
+   * Optional: only MCP-backed sources receive server notifications.
+   * `ToolRegistry` is the single consumer, and a workspace registry relays
+   * each to that server's views in that workspace.
+   */
+  subscribeServerNotifications?(listener: (notification: ServerNotification) => void): () => void;
 }
 
 export type { ToolResult } from "../engine/types.ts";

@@ -139,6 +139,18 @@ export interface DataChangedEvent {
   timestamp: string;
 }
 
+/**
+ * An app server's own notification, relayed by the runtime to that server's
+ * views in one workspace. `server` is the bare server name (an iframe's
+ * `data-app`); `method` and `params` go to the iframe verbatim.
+ */
+export interface ServerNotificationEvent {
+  server: string;
+  workspaceId: string;
+  method: string;
+  params?: Record<string, unknown>;
+}
+
 export interface HeartbeatEvent {
   timestamp: string;
 }
@@ -200,6 +212,7 @@ export interface SseEventMap {
   "connector.uninstalled": ConnectorUninstalledEvent;
   "connection.state_changed": ConnectionStateChangedEvent;
   "data.changed": DataChangedEvent;
+  "server.notification": ServerNotificationEvent;
   "conversation.title": ConversationTitleEvent;
   "config.changed": ConfigChangedEvent;
   "notification.created": NotificationCreatedEvent;
