@@ -14,7 +14,7 @@
  * scoped to the one server the bridge names.
  */
 
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "bun:test";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -156,6 +156,42 @@ describe("the server-notification relay", () => {
       ]);
     } finally {
       await client.close();
+    }
+  });
+
+  it("both broadcasts name the workspace, so neither reaches a non-member", async () => {
+    // `onEvent` above fires inside `broadcast`, AFTER the membership decision,
+    // so it cannot see the scope. The third argument is the whole of it: drop
+    // it and `/v1/events` — which is IDENTITY-scoped, so every signed-in user's
+    // tab is on this manager — hands the payload to identities with no claim to
+    // it. Both the relay and the agent-path `data.changed` go out from
+    // `startServer`'s sink wrap, so one spy covers the pair.
+    const spy = spyOn(handle.sseManager, "broadcast");
+    try {
+      // Emitted into the sink rather than driven through a `save`: the wrap is
+      // what decides the scope, and a write here would move the note count the
+      // cursor test below depends on.
+      runtime.getEventSink().emit({
+        type: "server.notification",
+        data: {
+          server: "notes",
+          workspaceId: TEST_WORKSPACE_ID,
+          method: "notifications/resources/list_changed",
+        },
+      });
+      // The agent path: a completed tool call the engine attributes to a
+      // workspace, through the same wrap.
+      runtime.getEventSink().emit({
+        type: "tool.done",
+        data: { name: "notes__save", ok: true, workspaceId: TEST_WORKSPACE_ID },
+      });
+
+      const scopeOf = (type: string) =>
+        spy.mock.calls.filter(([event]) => event === type).map((call) => call[2]);
+      expect(scopeOf("server.notification")).toEqual([TEST_WORKSPACE_ID]);
+      expect(scopeOf("data.changed")).toEqual([TEST_WORKSPACE_ID]);
+    } finally {
+      spy.mockRestore();
     }
   });
 

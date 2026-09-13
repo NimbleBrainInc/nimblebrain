@@ -75,7 +75,10 @@ export function relayableParams(params: unknown): Record<string, unknown> | unde
   if (params === null || typeof params !== "object" || Array.isArray(params)) return undefined;
   let size: number;
   try {
-    size = JSON.stringify(params).length;
+    // Bytes, not `String.length`: that counts UTF-16 units, which admits ~3x
+    // the cap for multi-byte content — and the cap is what bounds an untrusted
+    // server's reach into every member's tabs.
+    size = Buffer.byteLength(JSON.stringify(params), "utf8");
   } catch {
     return undefined;
   }

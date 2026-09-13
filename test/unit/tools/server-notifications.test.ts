@@ -105,6 +105,17 @@ describe("relayableParams", () => {
   test("an object over the cap is dropped", () => {
     expect(relayableParams({ blob: "x".repeat(MAX_RELAYED_PARAMS_BYTES) })).toBeUndefined();
   });
+
+  test("the cap is bytes, not UTF-16 units, so multi-byte content cannot exceed it", () => {
+    // `String.length` counts UTF-16 units: 4000 of these is 4018 units of JSON
+    // but 12018 bytes, so measuring `.length` would admit ~3x the cap.
+    const multiByte = { blob: "漢".repeat(4000) };
+    expect(JSON.stringify(multiByte).length).toBeLessThan(MAX_RELAYED_PARAMS_BYTES);
+    expect(Buffer.byteLength(JSON.stringify(multiByte), "utf8")).toBeGreaterThan(
+      MAX_RELAYED_PARAMS_BYTES,
+    );
+    expect(relayableParams(multiByte)).toBeUndefined();
+  });
 });
 
 describe("McpSource — relayed server notifications", () => {
