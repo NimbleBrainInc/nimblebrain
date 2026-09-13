@@ -588,7 +588,7 @@ The bridge enforces three security boundaries:
 
 1. **Origin isolation** — The host only processes messages from the iframe's `contentWindow`. Messages from other sources are silently dropped.
 2. **Tool scoping** — `tools/call` requests are always routed to the app's own MCP server. An iframe cannot call tools on another app's server.
-3. **Listing scoping** — `resources/list` and `resources/templates/list` answer from the app's own MCP server. Every iframe shares one `/mcp` session, so the bridge names that server on the request; the iframe cannot name another.
+3. **Resource scoping** — `resources/read`, `resources/list` and `resources/templates/list` answer from the app's own MCP server. Every iframe shares one `/mcp` session, so the bridge names that server on the request; the iframe cannot name another. A URI another server serves reads as not found, the same as one that does not exist.
 
 ## Example: making a tool call from an iframe
 

@@ -873,7 +873,7 @@ function createServer(
     const scoped = scopedSourceName(request.params?._meta);
     if (scoped !== undefined) {
       const empty: ListResourcesResult = { resources: [] };
-      return listFromOneSource(runtime, sessionCtx, scoped, empty, (client) =>
+      return fromOneSource(runtime, sessionCtx, scoped, empty, (client) =>
         client.listResources(cursorParams(request.params?.cursor)),
       );
     }
@@ -904,7 +904,7 @@ function createServer(
     const empty: ListResourceTemplatesResult = { resourceTemplates: [] };
     const scoped = scopedSourceName(request.params?._meta);
     if (scoped !== undefined) {
-      return listFromOneSource(runtime, sessionCtx, scoped, empty, (client) =>
+      return fromOneSource(runtime, sessionCtx, scoped, empty, (client) =>
         client.listResourceTemplates(cursorParams(request.params?.cursor)),
       );
     }
@@ -932,16 +932,24 @@ function createServer(
 
   // ── resources/read ────────────────────────────────────────────────
   //
-  // Identity resources (files, conversations, automations) resolve first
-  // (below), then the request's one workspace (validated `X-Workspace-Id`) —
-  // never a sweep across every workspace the identity belongs to. We
-  // deliberately do not distinguish "doesn't exist" from "exists but out of
-  // reach": per MCP spec guidance, avoid leaking cross-workspace existence.
+  // One source, when `_meta` names it (`RESOURCE_SOURCE_META_KEY`): the source
+  // a listing scoped by the same key reaches, and nothing else. That is how the
+  // iframe bridge reads for an app — every iframe shares one `/mcp` session, so
+  // the key is the only thing that says which app is reading.
+  //
+  // Without it, identity resources (files, conversations, automations) resolve
+  // first (below), then the request's one workspace (validated
+  // `X-Workspace-Id`) — never a sweep across every workspace the identity
+  // belongs to. We deliberately do not distinguish "doesn't exist" from "exists
+  // but out of reach": per MCP spec guidance, avoid leaking existence.
   server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
     const uri = request.params.uri;
     if (!runtime || !identityId) {
       throw new McpError(RESOURCE_NOT_FOUND_CODE, `Resource not found: ${uri}`, { uri });
     }
+
+    const scoped = scopedSourceName(request.params._meta);
+    if (scoped !== undefined) return readFromOneSource(runtime, sessionCtx, scoped, uri);
 
     // Identity sources (files, conversations, automations) are owned by the
     // user and live OUTSIDE every workspace registry, so the workspace sweep
@@ -1304,15 +1312,15 @@ async function startWorkspaceTask(
 }
 
 /**
- * The `_meta` key naming the one source a `resources/list` or
- * `resources/templates/list` is for. The iframe bridge sets it to the app's own
- * server (`web/src/bridge/bridge.ts`, pinned equal by
+ * The `_meta` key naming the one source a `resources/read`, `resources/list`
+ * or `resources/templates/list` is for. The iframe bridge sets it to the app's
+ * own server (`web/src/bridge/bridge.ts`, pinned equal by
  * `test/unit/tools/server-notifications.test.ts`); an MCP client that omits it
- * gets the workspace-wide listing.
+ * gets the workspace-wide read or listing.
  */
 export const RESOURCE_SOURCE_META_KEY = "ai.nimblebrain/source";
 
-/** The source a listing request is scoped to, or undefined for none. */
+/** The source a resource request is scoped to, or undefined for none. */
 function scopedSourceName(meta: Record<string, unknown> | undefined): string | undefined {
   const name = meta?.[RESOURCE_SOURCE_META_KEY];
   return typeof name === "string" && name.length > 0 ? name : undefined;
@@ -1324,52 +1332,76 @@ function cursorParams(cursor: unknown): { cursor: string } | undefined {
 }
 
 /**
- * Run one listing against one source — the source `resources/read` would reach
- * for it: a kernel identity source by that name (under the caller's identity
- * context), otherwise that name in the request's workspace. Returns the
- * source's result as it answered, pagination included.
+ * Run one resource request — a read or a listing — against the one source a
+ * scoped request names: a kernel identity source by that name (under the
+ * caller's identity context), otherwise that name in the request's workspace.
+ * Reads and listings share this resolver so the source a listing shows is
+ * exactly the source a read reaches. Returns the source's result as it
+ * answered, pagination included.
  *
- * `empty` when there is no such source, it is not MCP-backed, or the listing
+ * `absent` when there is no such source, it is not MCP-backed, or the request
  * fails (a server that serves no resources answers `Method not found`). A
- * missing source and an empty one read the same, as they do for
- * `resources/read`: the caller learns nothing about what exists outside its
- * reach.
+ * missing source and a failing one answer the same: the caller learns nothing
+ * about what exists outside its reach.
  */
-async function listFromOneSource<T>(
+async function fromOneSource<T>(
   runtime: Runtime | null | undefined,
   sessionCtx: McpSessionContext,
   sourceName: string,
-  empty: T,
-  list: (client: NonNullable<ReturnType<McpSource["getClient"]>>) => Promise<T>,
+  absent: T,
+  run: (client: NonNullable<ReturnType<McpSource["getClient"]>>) => Promise<T>,
 ): Promise<T> {
-  if (!runtime || !sessionCtx.identity?.id) return empty;
+  if (!runtime || !sessionCtx.identity?.id) return absent;
   const wsId = mcpRequestWorkspace.getStore();
 
   if (IDENTITY_SOURCES.has(sourceName)) {
     const client = mcpClientOf(runtime.getIdentitySource(sourceName));
-    if (!client) return empty;
+    if (!client) return absent;
     const identityReqCtx: RequestContext = { identity: sessionCtx.identity, workspaceId: wsId };
     try {
-      return await runWithRequestContext(identityReqCtx, () => list(client));
+      return await runWithRequestContext(identityReqCtx, () => run(client));
     } catch {
-      return empty;
+      return absent;
     }
   }
 
-  if (!wsId) return empty;
+  if (!wsId) return absent;
   let wsRegistry: ToolRegistry;
   try {
     wsRegistry = await runtime.ensureWorkspaceRegistry(wsId);
   } catch {
-    return empty;
+    return absent;
   }
   const client = mcpClientOf(wsRegistry.getSources().find((src) => src.name === sourceName));
-  if (!client) return empty;
+  if (!client) return absent;
   try {
-    return await list(client);
+    return await run(client);
   } catch {
-    return empty;
+    return absent;
   }
+}
+
+/**
+ * A scoped `resources/read`: `uri` from the one source `fromOneSource` resolves
+ * for `sourceName`, and nowhere else. A missing source and a resource that
+ * source cannot resolve both answer `RESOURCE_NOT_FOUND_CODE`, so a probe
+ * learns nothing about what exists.
+ */
+async function readFromOneSource(
+  runtime: Runtime,
+  sessionCtx: McpSessionContext,
+  sourceName: string,
+  uri: string,
+): Promise<ReadResourceResult> {
+  const result = await fromOneSource<ReadResourceResult | null>(
+    runtime,
+    sessionCtx,
+    sourceName,
+    null,
+    (client) => client.readResource({ uri }),
+  );
+  if (result?.contents && result.contents.length > 0) return result;
+  throw new McpError(RESOURCE_NOT_FOUND_CODE, `Resource not found: ${uri}`, { uri });
 }
 
 /**
