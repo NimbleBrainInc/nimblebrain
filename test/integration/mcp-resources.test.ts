@@ -12,6 +12,7 @@ import {
   ReadResourceRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
+import { RESOURCE_SOURCE_META_KEY } from "../../src/api/mcp-server.ts";
 import type { ServerHandle } from "../../src/api/server.ts";
 import { startServer } from "../../src/api/server.ts";
 import { McpSource } from "../../src/tools/mcp-source.ts";
@@ -90,8 +91,10 @@ let handle: ServerHandle;
 let baseUrl: string;
 let fixtureSource: McpSource;
 let otherSource: McpSource;
+let neighborSource: McpSource;
 let fixtureServer: RemoteMcpFixture;
 let otherServer: RemoteMcpFixture;
+let neighborServer: RemoteMcpFixture;
 
 beforeAll(async () => {
   mkdirSync(testDir, { recursive: true });
@@ -115,6 +118,23 @@ beforeAll(async () => {
   await fixtureSource.start();
   const primaryReg = runtime.getRegistryForWorkspace(TEST_WORKSPACE_ID);
   primaryReg.addSource(fixtureSource);
+
+  // A second source in the SAME workspace: what a read scoped to `fixture`
+  // must not reach.
+  neighborServer = startRemoteMcpServer(() =>
+    createFixtureServer({
+      namespace: "neighbor",
+      htmlBody: "<h1>Neighbor</h1>",
+      textBody: "neighbor greetings",
+    }),
+  );
+  neighborSource = new McpSource(
+    "neighbor",
+    { type: "remote", url: new URL(neighborServer.url), allowInsecure: true },
+    new NoopEventSink(),
+  );
+  await neighborSource.start();
+  primaryReg.addSource(neighborSource);
 
   // Provision a second workspace with its own MCP source and a distinct
   // namespace — `ui://other/dashboard` is only reachable from this workspace.
@@ -159,8 +179,14 @@ afterAll(async () => {
   } catch {
     // already stopped
   }
+  try {
+    await neighborSource?.stop();
+  } catch {
+    // already stopped
+  }
   fixtureServer?.close();
   otherServer?.close();
+  neighborServer?.close();
   await runtime?.shutdown();
   if (existsSync(testDir)) rmSync(testDir, { recursive: true });
 }, 30_000);
@@ -340,6 +366,77 @@ describe("MCP /mcp — resources", () => {
       expect(other.contents[0]!.text).toBe("<h1>Other Workspace</h1>");
     } finally {
       await otherFocused.close();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A read that names its source under `RESOURCE_SOURCE_META_KEY` — how the
+// iframe bridge reads for an app — resolves in that one source only. Every
+// iframe shares one `/mcp` session, so this key is the only thing that says
+// which app is reading.
+// ---------------------------------------------------------------------------
+describe("MCP /mcp — resources/read scoped to one source", () => {
+  const scopedTo = (source: string) => ({ [RESOURCE_SOURCE_META_KEY]: source });
+
+  it("reads the named source's own resource", async () => {
+    const client = await createMcpClient();
+    try {
+      const own = await client.readResource({
+        uri: "ui://fixture/dashboard",
+        _meta: scopedTo("fixture"),
+      });
+      expect(own.contents[0]!.text).toBe(FIXTURE_HTML);
+    } finally {
+      await client.close();
+    }
+  });
+
+  it("does not reach another source in the same workspace", async () => {
+    const client = await createMcpClient();
+    try {
+      await expect(
+        client.readResource({ uri: "ui://neighbor/dashboard", _meta: scopedTo("fixture") }),
+      ).rejects.toMatchObject({ code: -32002 });
+    } finally {
+      await client.close();
+    }
+  });
+
+  it("a source that is absent or in another workspace answers as not found", async () => {
+    // The URI is one this workspace serves, so only the scope can refuse it.
+    const client = await createMcpClient();
+    try {
+      for (const source of ["no-such-source", "other"]) {
+        await expect(
+          client.readResource({ uri: "ui://neighbor/dashboard", _meta: scopedTo(source) }),
+        ).rejects.toMatchObject({ code: -32002 });
+      }
+    } finally {
+      await client.close();
+    }
+  });
+
+  it("naming another source reads that source (the internal-app cross-read)", async () => {
+    const client = await createMcpClient();
+    try {
+      const result = await client.readResource({
+        uri: "ui://neighbor/dashboard",
+        _meta: scopedTo("neighbor"),
+      });
+      expect(result.contents[0]!.text).toBe("<h1>Neighbor</h1>");
+    } finally {
+      await client.close();
+    }
+  });
+
+  it("an unscoped read still resolves across the workspace", async () => {
+    const client = await createMcpClient();
+    try {
+      const result = await client.readResource({ uri: "ui://neighbor/dashboard" });
+      expect(result.contents[0]!.text).toBe("<h1>Neighbor</h1>");
+    } finally {
+      await client.close();
     }
   });
 });

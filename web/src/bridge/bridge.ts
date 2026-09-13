@@ -832,10 +832,12 @@ function handleResourcesRead(
   appName: string,
   postToIframe: PostToIframe,
 ): void {
-  // Same trust list and the same two request locations as tools/call. The URI
-  // itself passes through verbatim to the server — SSRF safety lives in the
-  // connector, not the host, because only URIs the connector advertises via
-  // resources/list will resolve anyway.
+  // Same trust list and the same two request locations as tools/call: the
+  // app's own server, unless an internal app names another. `/mcp` would
+  // otherwise resolve the URI against every source in the workspace and the
+  // user's identity sources, so the read is scoped by naming this server on
+  // the wire (`readResourceViaMcp`). The URI itself passes through verbatim;
+  // SSRF safety lives in the connector.
   const server = resolveTargetServer(params, appName, INTERNAL_APPS.has(appName));
 
   readResourceViaMcp(server, params.uri)
@@ -853,7 +855,7 @@ function handleResourcesRead(
 }
 
 /**
- * The `_meta` key that scopes a listing on `/mcp` to one source. Must equal
+ * The `_meta` key that scopes a read or a listing on `/mcp` to one source. Must equal
  * `RESOURCE_SOURCE_META_KEY` in `src/api/mcp-server.ts` (the runtime image ships
  * `src/` alone, so the two cannot share a module); pinned equal by
  * `test/unit/tools/server-notifications.test.ts`.
@@ -1148,19 +1150,22 @@ async function callToolViaMcp(
 }
 
 /**
- * Forward a `resources/read` through the MCP SDK bridge client. Returns the
- * ReadResourceResult shape (`{ contents }`) so the caller can assemble the
- * JSON-RPC response envelope for the iframe.
+ * Forward a `resources/read` through the MCP SDK bridge client, scoped to
+ * `server` — the target the call site resolved under the INTERNAL_APPS rule.
+ * Returns the ReadResourceResult shape (`{ contents }`) so the caller can
+ * assemble the JSON-RPC response envelope for the iframe.
  */
 async function readResourceViaMcp(server: string, uri: string): Promise<{ contents: unknown[] }> {
-  // Per spec, `resources/read` carries only the URI — the resource is
-  // namespaced by the connector that authored it, not by request params.
-  // `server` is consumed by the INTERNAL_APPS authz at the call site
-  // (cross-call permission); it doesn't appear on the wire here.
-  void server;
+  // `server` goes on the wire under `RESOURCE_SOURCE_META_KEY`, as it does for
+  // listings, and `/mcp` reads from that one source. It is the only thing that
+  // can: every iframe shares one `/mcp` session, so without it a read resolves
+  // across the whole workspace and the user's files.
   return withSessionRetry(async () => {
     const client = await getMcpBridgeClient();
-    const result = await client.readResource({ uri });
+    const result = await client.readResource({
+      uri,
+      _meta: { [RESOURCE_SOURCE_META_KEY]: server },
+    });
     return { contents: result.contents as unknown[] };
   });
 }

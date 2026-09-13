@@ -40,7 +40,10 @@ interface McpBehavior {
     name: string;
     arguments?: Record<string, unknown>;
   }) => Promise<Record<string, unknown>>;
-  readResource: (params: { uri: string }) => Promise<Record<string, unknown>>;
+  readResource: (params: {
+    uri: string;
+    _meta?: Record<string, unknown>;
+  }) => Promise<Record<string, unknown>>;
   request: (
     req: { method: string; params: unknown },
     schema: unknown,
@@ -69,7 +72,9 @@ let mcpBehavior: McpBehavior = {
 const mcpCallTool = mock((p: { name: string; arguments?: Record<string, unknown> }) =>
   mcpBehavior.callTool(p),
 );
-const mcpReadResource = mock((p: { uri: string }) => mcpBehavior.readResource(p));
+const mcpReadResource = mock((p: { uri: string; _meta?: Record<string, unknown> }) =>
+  mcpBehavior.readResource(p),
+);
 const mcpRequest = mock((req: { method: string; params: unknown }, schema: unknown) =>
   mcpBehavior.request(req, schema),
 );
@@ -115,7 +120,7 @@ mock.module("../../mcp-bridge-client", () => ({
 }));
 
 // Import bridge AFTER mocks are registered so it picks up the stubs.
-const { createBridge } = await import("../../bridge/bridge");
+const { createBridge, RESOURCE_SOURCE_META_KEY } = await import("../../bridge/bridge");
 
 // ---------------------------------------------------------------------------
 // Test harness: a minimal iframe whose contentWindow can both receive
@@ -533,13 +538,11 @@ describe("resources/read — MCP transport", () => {
     expect(mcpReadResource).toHaveBeenCalledTimes(1);
   });
 
-  // The resolved target is authz-only for a read: `readResourceViaMcp` voids it,
-  // because a resource is namespaced by the connector that authored its URI and
-  // not by request params. So there is no wire difference between an internal
-  // and an external app naming another source here, and a test asserting one
-  // would pass whatever the resolver did. What is observable, and worth
-  // holding, is that neither the target nor its `_meta` reaches `/mcp`.
-  test("the target in _meta never reaches the MCP client", async () => {
+  // The resolved target goes on the wire as `RESOURCE_SOURCE_META_KEY`, and
+  // `/mcp` reads from that one source. What reaches `/mcp` is only ever the
+  // target the resolver chose — never the iframe's own `_meta` — so an internal
+  // and an external app naming the same source differ on the wire.
+  test("an internal app's _meta target reaches the MCP client resolved", async () => {
     const frame = mount("nb");
 
     frame.send({
@@ -550,10 +553,10 @@ describe("resources/read — MCP transport", () => {
     });
     await frame.waitFor((m) => (m as { id?: string })?.id === "r-meta");
 
-    // One shared `/mcp` session serves every iframe, so a target that leaked
-    // onto the wire would be an app reaching a source the authz just scoped it
-    // out of.
-    expect(mcpReadResource).toHaveBeenCalledWith({ uri: "ui://demo" });
+    expect(mcpReadResource).toHaveBeenCalledWith({
+      uri: "ui://demo",
+      _meta: { [RESOURCE_SOURCE_META_KEY]: "files" },
+    });
   });
 
   test("an external app naming another source still reads its own", async () => {
@@ -571,7 +574,10 @@ describe("resources/read — MCP transport", () => {
     };
 
     expect(reply.error).toBeUndefined();
-    expect(mcpReadResource).toHaveBeenCalledWith({ uri: "ui://demo" });
+    expect(mcpReadResource).toHaveBeenCalledWith({
+      uri: "ui://demo",
+      _meta: { [RESOURCE_SOURCE_META_KEY]: "db-query" },
+    });
   });
 
   test("MCP readResource error forwards as JSON-RPC -32000", async () => {
@@ -592,5 +598,62 @@ describe("resources/read — MCP transport", () => {
     };
     expect(reply.error?.code).toBe(-32000);
     expect(reply.error?.message).toContain("resource not found");
+  });
+});
+
+// Every iframe shares one `/mcp` session, so `/mcp` cannot tell which app a
+// read came from. The bridge can: it names the resolved server under
+// `RESOURCE_SOURCE_META_KEY`, as it does for listings, and `/mcp` reads from
+// that source alone.
+describe("resources/read — scoped to the app's own server", () => {
+  const scopedTo = (server: string) => ({ [RESOURCE_SOURCE_META_KEY]: server });
+
+  async function readAs(appName: string, id: string, params: Record<string, unknown>) {
+    const frame = mount(appName);
+    frame.send({ jsonrpc: "2.0", id, method: "resources/read", params });
+    await frame.waitFor((m) => (m as { id?: string })?.id === id);
+  }
+
+  test("an external app's read names its own server", async () => {
+    await readAs("db-query", "s1", { uri: "files://fl_0123" });
+    expect(mcpReadResource).toHaveBeenCalledWith({
+      uri: "files://fl_0123",
+      _meta: scopedTo("db-query"),
+    });
+  });
+
+  test("an external app cannot name another server", async () => {
+    await readAs("db-query", "s2", { uri: "ui://neighbor/dashboard", server: "neighbor" });
+    expect(mcpReadResource).toHaveBeenCalledWith({
+      uri: "ui://neighbor/dashboard",
+      _meta: scopedTo("db-query"),
+    });
+  });
+
+  test("the iframe's own _meta is not forwarded", async () => {
+    await readAs("db-query", "s3", {
+      uri: "files://fl_0123",
+      _meta: scopedTo("files"),
+    });
+    expect(mcpReadResource).toHaveBeenCalledWith({
+      uri: "files://fl_0123",
+      _meta: scopedTo("db-query"),
+    });
+  });
+
+  test("the files app reads under its own name", async () => {
+    await readAs("files", "s4", { uri: "files://fl_0123" });
+    expect(mcpReadResource).toHaveBeenCalledWith({
+      uri: "files://fl_0123",
+      _meta: scopedTo("files"),
+    });
+  });
+
+  test("an internal app may name another server", async () => {
+    await readAs("nb", "s5", { uri: "ui://home/briefing", server: "home" });
+    expect(mcpReadResource).toHaveBeenCalledWith({
+      uri: "ui://home/briefing",
+      _meta: scopedTo("home"),
+    });
   });
 });
