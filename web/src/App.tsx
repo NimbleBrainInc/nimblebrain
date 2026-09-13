@@ -54,6 +54,7 @@ import { ConnectorBrowsePage } from "./pages/settings/ConnectorBrowsePage";
 import { ConnectorDetailPage } from "./pages/settings/ConnectorDetailPage";
 import { ModelTab } from "./pages/settings/ModelTab";
 import { OrgAboutTab } from "./pages/settings/OrgAboutTab";
+import { OrgArchivesTab } from "./pages/settings/OrgArchivesTab";
 import { OrgSettingsPage } from "./pages/settings/OrgSettingsPage";
 import { OrgSkillsTab } from "./pages/settings/OrgSkillsTab";
 import { OrgUsageTab } from "./pages/settings/OrgUsageTab";
@@ -505,6 +506,14 @@ function AuthenticatedAppContent({
                 element={
                   <RouteGuard requireRole="org_admin">
                     <WorkspaceDetailPage />
+                  </RouteGuard>
+                }
+              />
+              <Route
+                path="archives"
+                element={
+                  <RouteGuard requireRole="org_admin">
+                    <OrgArchivesTab />
                   </RouteGuard>
                 }
               />

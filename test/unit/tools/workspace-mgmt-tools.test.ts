@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -621,6 +621,80 @@ describe("nb__manage_workspaces", () => {
       const result = await tool.handler({ action: "claim_admin", workspaceId: ws.id });
 
       expect(extractText(result)).toContain("don't have permission");
+    });
+  });
+
+  describe("archives", () => {
+    async function deleteViaTool(name: string): Promise<string> {
+      const created = parseResult(await tool.handler({ action: "create", name })) as {
+        workspace: { id: string };
+      };
+      await tool.handler({ action: "delete", workspaceId: created.workspace.id });
+      return created.workspace.id;
+    }
+
+    test("list_archives shows a deleted workspace, and an archive with no workspace.json as unknown", async () => {
+      const id = await deleteViaTool("Gone");
+      await mkdir(join(store.getArchivedDir(), "ws_orphan"), { recursive: true });
+
+      const result = await tool.handler({ action: "list_archives" });
+
+      expect(result.isError).toBe(false);
+      const { archives } = parseResult(result) as {
+        archives: Array<{ name: string; workspaceId: string | null; workspaceName: string | null }>;
+      };
+      expect(archives.find((a) => a.name === id)?.workspaceName).toBe("Gone");
+      const orphan = archives.find((a) => a.name === "ws_orphan");
+      expect(orphan?.workspaceId).toBeNull();
+      expect(orphan?.workspaceName).toBeNull();
+    });
+
+    test("a non-admin gets the permission-denied result, not an empty list", async () => {
+      await deleteViaTool("Gone");
+      currentIdentity = { ...currentIdentity!, orgRole: "member" };
+      tool = createManageWorkspacesTool(makeCtx());
+
+      for (const action of ["list_archives", "purge_archive"]) {
+        const result = await tool.handler({ action, archive: "ws_anything" });
+        expect(result.structuredContent).toBeUndefined();
+        expect(extractText(result)).toContain("You don't have permission to manage workspaces");
+      }
+    });
+
+    test("purge_archive removes one archive; purging it again is a clean no-op", async () => {
+      const gone = await deleteViaTool("Gone");
+      const kept = await deleteViaTool("Kept");
+
+      const first = await tool.handler({ action: "purge_archive", archive: gone });
+      expect(first.isError).toBe(false);
+      expect((parseResult(first) as { purged: boolean }).purged).toBe(true);
+      expect(existsSync(join(store.getArchivedDir(), gone))).toBe(false);
+      expect(existsSync(join(store.getArchivedDir(), kept))).toBe(true);
+
+      const second = await tool.handler({ action: "purge_archive", archive: gone });
+      expect(second.isError).toBe(false);
+      expect((parseResult(second) as { purged: boolean }).purged).toBe(false);
+    });
+
+    test("purge_archive refuses a traversal and touches nothing", async () => {
+      const live = await store.create("Live");
+      const liveDir = join(workDir, "workspaces", live.id);
+
+      const result = await tool.handler({
+        action: "purge_archive",
+        archive: `../workspaces/${live.id}`,
+      });
+
+      expect(result.isError).toBe(true);
+      expect(extractText(result)).toContain("is not an archive name");
+      expect(existsSync(liveDir)).toBe(true);
+    });
+
+    test("purge_archive requires an archive name", async () => {
+      const result = await tool.handler({ action: "purge_archive" });
+
+      expect(result.isError).toBe(true);
+      expect(extractText(result)).toContain("archive is required");
     });
   });
 

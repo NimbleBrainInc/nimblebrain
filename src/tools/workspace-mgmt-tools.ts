@@ -4,8 +4,10 @@ import { INTERNAL_TOOL_ANNOTATION, type ToolResult } from "../engine/types.ts";
 import type { UserIdentity } from "../identity/provider.ts";
 import { ORG_ADMIN_ROLES } from "../identity/types.ts";
 import type { UserStore } from "../identity/user.ts";
+import { log } from "../observability/log.ts";
 import type { Runtime } from "../runtime/runtime.ts";
 import { isHttpUrl } from "../util/url.ts";
+import { isArchiveName, listArchives, purgeArchive } from "../workspace/archives.ts";
 import { canWriteWorkspaceScoped } from "../workspace/authz.ts";
 import { PersonalWorkspaceInvariantError } from "../workspace/errors.ts";
 import type { WorkspaceMember } from "../workspace/types.ts";
@@ -94,7 +96,7 @@ export function createManageWorkspacesTool(ctx: ManageWorkspacesContext): InProc
   return {
     name: "manage_workspaces",
     description:
-      "Manage workspaces and their members. Workspace CRUD and claim_admin require org admin. Member management requires workspace admin membership. claim_admin lets an org admin seat themselves as admin of a shared workspace that has no admin member, to recover one that would otherwise be unmanageable. Conversation sharing was removed in Stage 1 of the cross-workspace refactor and returns in Stage 4 with policy-gated primitives.",
+      "Manage workspaces and their members. Workspace CRUD and claim_admin require org admin. Member management requires workspace admin membership. claim_admin lets an org admin seat themselves as admin of a shared workspace that has no admin member, to recover one that would otherwise be unmanageable. list_archives and purge_archive (org admin) list the archives deleted workspaces leave under archived/ and permanently remove one, named by its directory. Conversation sharing was removed in Stage 1 of the cross-workspace refactor and returns in Stage 4 with policy-gated primitives.",
     meta: { [INTERNAL_TOOL_ANNOTATION]: true },
     inputSchema: {
       type: "object",
@@ -107,6 +109,8 @@ export function createManageWorkspacesTool(ctx: ManageWorkspacesContext): InProc
             "delete",
             "list",
             "claim_admin",
+            "list_archives",
+            "purge_archive",
             "add_member",
             "remove_member",
             "update_member",
@@ -149,14 +153,29 @@ export function createManageWorkspacesTool(ctx: ManageWorkspacesContext): InProc
           enum: ["admin", "member"],
           description: "Workspace role (for add_member, update_member).",
         },
+        archive: {
+          type: "string",
+          description:
+            "Archive directory name under archived/, as list_archives returns it (required for purge_archive).",
+        },
       },
       required: ["action"],
     },
     handler: async (input): Promise<ToolResult> => {
       const action = String(input.action);
 
-      // Workspace CRUD + admin recovery — requires org admin
-      if (["create", "update", "delete", "list", "claim_admin"].includes(action)) {
+      // Workspace CRUD, admin recovery, archives — requires org admin
+      if (
+        [
+          "create",
+          "update",
+          "delete",
+          "list",
+          "claim_admin",
+          "list_archives",
+          "purge_archive",
+        ].includes(action)
+      ) {
         return dispatchWorkspaceAction(ctx, action, input);
       }
 
@@ -170,7 +189,7 @@ export function createManageWorkspacesTool(ctx: ManageWorkspacesContext): InProc
   };
 }
 
-/** Gate workspace CRUD + claim_admin on org admin, then route to its handler. */
+/** Gate workspace CRUD, claim_admin, and the archive actions on org admin, then route to its handler. */
 async function dispatchWorkspaceAction(
   ctx: ManageWorkspacesContext,
   action: string,
@@ -190,6 +209,10 @@ async function dispatchWorkspaceAction(
       return handleList(ctx);
     case "claim_admin":
       return handleClaimAdmin(ctx, identity, input);
+    case "list_archives":
+      return handleListArchives(ctx);
+    case "purge_archive":
+      return handlePurgeArchive(ctx, input);
     default:
       return { content: textContent(`Unknown action: ${action}`), isError: true };
   }
@@ -577,6 +600,69 @@ async function handleList(ctx: ManageWorkspacesContext): Promise<ToolResult> {
     return {
       content: textContent(
         `Failed to list workspaces: ${err instanceof Error ? err.message : String(err)}`,
+      ),
+      isError: true,
+    };
+  }
+}
+
+async function handleListArchives(ctx: ManageWorkspacesContext): Promise<ToolResult> {
+  try {
+    const archives = await listArchives(ctx.workspaceStore.getArchivedDir());
+    return {
+      content: textContent(`${archives.length} archive(s).`),
+      structuredContent: { archives },
+      isError: false,
+    };
+  } catch (err) {
+    return {
+      content: textContent(
+        `Failed to list archives: ${err instanceof Error ? err.message : String(err)}`,
+      ),
+      isError: true,
+    };
+  }
+}
+
+/**
+ * Permanently remove one archive. There is no undo, so the web tab confirms
+ * with the size first; this handler refuses anything that is not a direct
+ * child of `archived/` and treats an absent archive as already purged.
+ */
+async function handlePurgeArchive(
+  ctx: ManageWorkspacesContext,
+  input: Record<string, unknown>,
+): Promise<ToolResult> {
+  const archive = typeof input.archive === "string" ? input.archive : "";
+  if (!isArchiveName(archive)) {
+    return {
+      content: textContent(
+        archive === ""
+          ? "archive is required for purge_archive."
+          : `"${archive}" is not an archive name. Use a name list_archives returned.`,
+      ),
+      isError: true,
+    };
+  }
+
+  try {
+    const result = await purgeArchive(ctx.workspaceStore.getArchivedDir(), archive);
+    if (result.purged) {
+      log.info("[manage_workspaces] archive purged", { archive, sizeBytes: result.sizeBytes });
+    }
+    return {
+      content: textContent(
+        result.purged
+          ? `Purged archive ${archive} (${result.sizeBytes} bytes).`
+          : `Archive ${archive} does not exist; nothing to purge.`,
+      ),
+      structuredContent: { ...result },
+      isError: false,
+    };
+  } catch (err) {
+    return {
+      content: textContent(
+        `Failed to purge archive: ${err instanceof Error ? err.message : String(err)}`,
       ),
       isError: true,
     };

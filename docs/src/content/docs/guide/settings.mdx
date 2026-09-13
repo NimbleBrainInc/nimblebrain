@@ -9,7 +9,7 @@ NimbleBrain organizes settings by **scope** — what each setting affects:
 
 - **You** — your personal profile (theme, display name, timezone). Lives at `/profile`, reached from the **avatar menu** at the **top-left** of the sidebar.
 - **This Workspace** — settings for the workspace you're currently focused on (its name, members, instructions, app config, connectors, skills). Lives under `/w/<id>/settings/*`.
-- **Organization** — admin-only settings that affect every workspace (model defaults, the workspace roster, user management, org-wide usage). Lives under `/org/*`.
+- **Organization** — admin-only settings that affect every workspace (model defaults, the workspace roster, deleted-workspace archives, user management, org-wide usage). Lives under `/org/*`.
 
 Open profile or sign out from the **avatar menu** at the top-left. Open workspace and org settings from the workspace navigator and the workspace settings nav.
 
@@ -103,6 +103,12 @@ Reasoning is billed as output tokens, and the agent's reasoning shows up in chat
 The org-wide workspace roster: create and delete workspaces, and see each one's connectors and metadata. Managing a workspace's **members** is not an org-admin power — it requires admin membership of that specific workspace, so the member list here is only available for workspaces you belong to as an admin.
 
 To edit a workspace's instructions, switch into it via the navigator and use **This Workspace → General** — and note that editing requires admin membership of that workspace.
+
+### Archives (`/org/archives`)
+
+Deleting a workspace archives its data rather than destroying it. This tab lists every archive: the workspace's name and ID, the size on disk, and when it was archived. An archive whose workspace record is missing or unreadable is still listed, with its name and ID shown as unknown.
+
+**Purge** permanently removes one archive from disk. It asks first, stating the size, and cannot be undone. Nothing is purged automatically — archives stay until an admin purges them, so check this tab when disk space runs low.
 
 ### Users (`/org/users`)
 
