@@ -140,6 +140,35 @@ describe("resources/list", () => {
     expect(listResources).toHaveBeenCalledWith({ _meta: { [RESOURCE_SOURCE_META_KEY]: "notes" } });
   });
 
+  test("a built-in app lists another server by naming it in _meta", async () => {
+    // Same rule and same resolver as tools/call and resources/read: the target
+    // rides in `_meta`, because a sibling of the spec's own params is stripped
+    // by anything that parses them against the schema.
+    const frame = mount("nb");
+    frame.send({
+      jsonrpc: "2.0",
+      id: "l-2m",
+      method: "resources/list",
+      params: { _meta: { "ai.nimblebrain/server": "files" } },
+    });
+
+    await frame.waitFor(byId("l-2m"));
+    expect(listResources).toHaveBeenCalledWith({ _meta: { [RESOURCE_SOURCE_META_KEY]: "files" } });
+  });
+
+  test("an external app cannot list another server by naming it in _meta", async () => {
+    const frame = mount("notes");
+    frame.send({
+      jsonrpc: "2.0",
+      id: "l-2n",
+      method: "resources/list",
+      params: { _meta: { "ai.nimblebrain/server": "files" } },
+    });
+
+    await frame.waitFor(byId("l-2n"));
+    expect(listResources).toHaveBeenCalledWith({ _meta: { [RESOURCE_SOURCE_META_KEY]: "notes" } });
+  });
+
   test("with no params, only the app's own server is named", async () => {
     const frame = mount("notes");
     frame.send({ jsonrpc: "2.0", id: "l-3", method: "resources/list" });
