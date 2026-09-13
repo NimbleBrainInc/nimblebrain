@@ -1,9 +1,8 @@
-import { homedir } from "node:os";
-import { join } from "node:path";
 import { ConsoleEventSink } from "../adapters/console-events.ts";
 import { DebugEventSink } from "../adapters/debug-events.ts";
 import { startServerWithShutdown } from "../api/server.ts";
 import { createSessionRegistry, resolveSessionStoreConfig } from "../api/session-store/index.ts";
+import { defaultWorkDir } from "../connectors/runtime/paths.ts";
 import { log } from "../observability/log.ts";
 import { Runtime } from "../runtime/runtime.ts";
 import type { TelemetryManager } from "../telemetry/manager.ts";
@@ -21,7 +20,7 @@ export async function runServe(opts: ServeOptions, telemetry: TelemetryManager):
   const config = loadConfig({
     config: opts.config,
     model: opts.model,
-    defaultWorkDir: process.env.NB_WORK_DIR ?? join(homedir(), ".nimblebrain"),
+    defaultWorkDir: defaultWorkDir(),
   });
 
   config.events = [opts.debug ? new DebugEventSink() : new ConsoleEventSink()];
