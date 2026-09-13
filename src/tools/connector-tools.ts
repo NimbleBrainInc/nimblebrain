@@ -3372,8 +3372,8 @@ async function requireSecretAdmin(
  * `set_secret` — write a workspace secret, creating or replacing it.
  *
  * Replacing is the rotation path: a `put` on the same key is picked up by the
- * next connection that resolves a reference to it, with no config edit and no
- * restart. So there is no separate `rotate_secret` action; there is nothing for
+ * next request that carries a reference to it — a live connection included —
+ * with no config edit, no reconnect and no restart. So there is no separate `rotate_secret` action; there is nothing for
  * it to do that this does not.
  */
 async function handleSetSecret(

@@ -10,21 +10,40 @@ import { type CredentialScope, resolveCredentialValue } from "./credential-store
 import { createOAuthRefreshFetch } from "./oauth-refresh-fetch.ts";
 import { createSsrfGuardedFetch } from "./ssrf-guarded-fetch.ts";
 
+/** One outgoing header as config declares it: the secret itself, or a reference to one. */
+interface HeaderSource {
+  name: string;
+  value: CredentialValue;
+  /** Prepended to the resolved value — `Bearer ` for bearer auth. */
+  prefix?: string;
+}
+
+/** Every header config puts on a request (arbitrary + static auth), in the order a later one wins. */
+function headerSources(config?: RemoteTransportConfig): HeaderSource[] {
+  const sources: HeaderSource[] = Object.entries(config?.headers ?? {}).map(([name, value]) => ({
+    name,
+    value,
+  }));
+  if (config?.auth?.type === "bearer") {
+    sources.push({ name: "Authorization", value: config.auth.token, prefix: "Bearer " });
+  } else if (config?.auth?.type === "header") {
+    sources.push({ name: config.auth.name, value: config.auth.value });
+  }
+  return sources;
+}
+
 /**
- * Build the outgoing header map (arbitrary + static auth), dereferencing any
- * `{ ref: "credential", key }` against the connection's own workspace.
+ * Resolve header sources to values, dereferencing any `{ ref: "credential", key }`
+ * against the connection's own workspace.
  *
  * Workspace scope is not a parameter: a connection belongs to exactly one
  * workspace, and that is the only scope a tenant-editable `workspace.json` may
  * reach. A reference with no workspace in scope is refused rather than resolved
  * somewhere else — the alternative is a header silently filled from another
  * tenant's key.
- *
- * Resolution happens per transport build, so rotating a key is a `put` and the
- * next connection carries the new value with no config edit and no restart.
  */
-async function buildRequestHeaders(
-  config?: RemoteTransportConfig,
+async function resolveHeaderSources(
+  sources: readonly HeaderSource[],
   workspaceId?: string,
 ): Promise<Record<string, string>> {
   const scope: CredentialScope | undefined = workspaceId
@@ -48,17 +67,48 @@ async function buildRequestHeaders(
   };
 
   const headers: Record<string, string> = {};
-  for (const [name, value] of Object.entries(config?.headers ?? {})) {
-    headers[name] = await resolve(value, name);
+  for (const source of sources) {
+    headers[source.name] = `${source.prefix ?? ""}${await resolve(source.value, source.name)}`;
   }
-
-  if (config?.auth?.type === "bearer") {
-    headers.Authorization = `Bearer ${await resolve(config.auth.token, "Authorization")}`;
-  } else if (config?.auth?.type === "header") {
-    headers[config.auth.name] = await resolve(config.auth.value, config.auth.name);
-  }
-
   return headers;
+}
+
+/** Build the outgoing header map (arbitrary + static auth), every reference resolved now. */
+function buildRequestHeaders(
+  config?: RemoteTransportConfig,
+  workspaceId?: string,
+): Promise<Record<string, string>> {
+  return resolveHeaderSources(headerSources(config), workspaceId);
+}
+
+/**
+ * Wrap a transport's `fetch` so every credential-reference header is resolved
+ * as the request is sent, and set over whatever headers the SDK built.
+ *
+ * A reference names a value the workspace can replace at any time, so the value
+ * a connection resolved when it was built is only the value at that moment. The
+ * SDK sends `requestInit.headers` on every request for the life of the
+ * connection, and a live source can outlive a rotation by days — which, after
+ * rotating a leaked secret, means the tool plane keeps presenting the leaked
+ * value. Resolving here is the rule the hooks forward and the `credential`
+ * provider already follow: a `put` reaches the next request, and a deleted key
+ * fails the next request naming the key.
+ *
+ * Outermost, over the redirect guard, so one request is one resolve however many
+ * same-origin hops it follows. The inner fetch (minting, OAuth-refresh) sees
+ * these headers in `init` and keeps them, as it keeps the SDK's own.
+ */
+function createCredentialHeaderFetch(
+  baseFetch: FetchLike,
+  referenced: readonly HeaderSource[],
+  workspaceId?: string,
+): FetchLike {
+  return async (input, init) => {
+    const resolved = await resolveHeaderSources(referenced, workspaceId);
+    const headers = new Headers(init?.headers);
+    for (const [name, value] of Object.entries(resolved)) headers.set(name, value);
+    return baseFetch(input, { ...init, headers });
+  };
 }
 
 /** Resolve a `provider`-auth credential: merge its headers into `headers` and return its minting fetch. */
@@ -166,9 +216,11 @@ function buildReconnectionOptions(config?: RemoteTransportConfig) {
  * `config.auth`'s bearer token / header value AND arbitrary entries in
  * `config.headers`. A value may be the secret itself or
  * `{ ref: "credential", key }`, dereferenced from the connection's workspace
- * scope on each build. A reference whose key is unset throws with the key and
- * scope named, rather than sending a blank header and reading the vendor's 401
- * a hop later.
+ * scope on every request. A literal is fixed for the life of the transport; a
+ * reference never reaches `requestInit`, so no request path can send a value
+ * resolved earlier. A reference whose key is unset throws with the key and
+ * scope named — at build, and on any later request after the key is deleted —
+ * rather than sending a blank header and reading the vendor's 401 a hop later.
  */
 export async function createRemoteTransport(
   url: URL,
@@ -185,7 +237,16 @@ export async function createRemoteTransport(
     allowInsecure?: boolean;
   },
 ): Promise<Transport> {
-  const headers = await buildRequestHeaders(config, opts?.workspaceId);
+  // The last source for a name wins, exactly as it does in the header map.
+  const sources = [...new Map(headerSources(config).map((s) => [s.name, s])).values()];
+  const referenced = sources.filter((source) => isCredentialRef(source.value));
+  // Only the literals are fixed into `requestInit`; a reference's value is the
+  // per-request wrapper's to supply. The references are still resolved once
+  // here, so a connection whose key is unset fails at build naming the key.
+  const headers = await resolveHeaderSources(
+    sources.filter((source) => !isCredentialRef(source.value)),
+  );
+  await resolveHeaderSources(referenced, opts?.workspaceId);
   const mintingFetch = applyProviderAuth(config, headers, opts?.workspaceId);
   const effectiveAuthProvider = selectAuthProvider(config, authProvider);
   const transportFetch = selectTransportFetch(mintingFetch, effectiveAuthProvider);
@@ -205,6 +266,12 @@ export async function createRemoteTransport(
     allowInsecure: opts?.allowInsecure ?? false,
     fleetInternal: isMintedFleetSource(config),
   });
+  // No reference, no wrapper: a connection carrying only literals reads nothing
+  // from the store on any request.
+  const requestFetch =
+    referenced.length > 0
+      ? createCredentialHeaderFetch(guardedFetch, referenced, opts?.workspaceId)
+      : guardedFetch;
 
   const requestInit: RequestInit = Object.keys(headers).length > 0 ? { headers } : {};
 
@@ -212,14 +279,14 @@ export async function createRemoteTransport(
     return new SSEClientTransport(url, {
       requestInit,
       authProvider: effectiveAuthProvider,
-      fetch: guardedFetch,
+      fetch: requestFetch,
     });
   }
 
   return new StreamableHTTPClientTransport(url, {
     requestInit,
     authProvider: effectiveAuthProvider,
-    fetch: guardedFetch,
+    fetch: requestFetch,
     reconnectionOptions: buildReconnectionOptions(config),
     sessionId: config?.sessionId,
   });

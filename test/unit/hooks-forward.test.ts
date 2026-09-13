@@ -1,5 +1,15 @@
 import { describe, expect, test } from "bun:test";
-import { buildForwardHeaders } from "../../src/hooks/forward.ts";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import type { FetchLike } from "@modelcontextprotocol/sdk/shared/transport.js";
+import { buildForwardHeaders, forwardDelivery } from "../../src/hooks/forward.ts";
+import {
+  _resetCredentialStoreForTest,
+  FileCredentialStore,
+  setCredentialStore,
+} from "../../src/tools/credential-store.ts";
+import { seedWorkspaceRoot } from "../helpers/test-workspace.ts";
 
 function build(inbound: Record<string, string>, extra: { renames?: Record<string, string> } = {}) {
   return buildForwardHeaders({
@@ -97,5 +107,42 @@ describe("the connection's own credential", () => {
       credentialHeaders: { "x-connector-key": "operator-value" },
     });
     expect(headers.get("x-connector-key")).toBe("operator-value");
+  });
+
+  test("is resolved per delivery, so a put between two deliveries reaches the second", async () => {
+    // The same rule the connector's MCP transport follows: a rotated secret is
+    // on the next request, whichever plane sends it.
+    const wsId = "ws_forward01";
+    const key = "acme.signing_secret";
+    const workDir = mkdtempSync(join(tmpdir(), "nb-forward-ref-"));
+    seedWorkspaceRoot(workDir, wsId);
+    const store = new FileCredentialStore(workDir);
+    setCredentialStore(store);
+    try {
+      const seen: Headers[] = [];
+      const fetchImpl: FetchLike = async (_url, init) => {
+        seen.push(new Headers(init?.headers));
+        return new Response(null, { status: 202 });
+      };
+      const deliver = () =>
+        forwardDelivery({
+          baseUrl: "https://mcp.acme.test/mcp",
+          transport: { headers: { "X-Signing-Secret": { ref: "credential", key } } },
+          route: "/ingest/acme",
+          workspaceId: wsId,
+          inboundHeaders: new Headers({ "content-type": "application/json" }),
+          body: new TextEncoder().encode("{}"),
+          fetchImpl,
+        });
+
+      await store.put({ kind: "workspace", wsId }, key, "old-secret");
+      await deliver();
+      await store.put({ kind: "workspace", wsId }, key, "new-secret");
+      await deliver();
+      expect(seen.map((h) => h.get("x-signing-secret"))).toEqual(["old-secret", "new-secret"]);
+    } finally {
+      _resetCredentialStoreForTest();
+      rmSync(workDir, { recursive: true, force: true });
+    }
   });
 });
