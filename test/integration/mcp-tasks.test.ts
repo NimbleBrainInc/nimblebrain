@@ -336,6 +336,21 @@ beforeAll(async () => {
   const otherRegistry = runtime.getRegistryForWorkspace(OTHER_WORKSPACE_ID);
   otherRegistry.addSource(fakeSource);
 
+  // A source named `twin` in each workspace, each its own server, minting the
+  // same task id: one name, two servers.
+  const twin = (behaviour: () => ToolBehaviour) =>
+    new FakeTaskAwareSource(
+      [{ name: "minted", taskSupport: "optional", taskId: MINTED_TASK_ID, behaviour }],
+      "twin",
+    );
+  registry.addSource(twin(() => ({ kind: "blocking" })));
+  otherRegistry.addSource(
+    twin(() => ({
+      kind: "immediate",
+      result: { content: [{ type: "text", text: "twin-other-done" }] },
+    })),
+  );
+
   handle = startServer({ runtime, port: 0 });
   baseUrl = `http://localhost:${handle.port}`;
 });
@@ -721,10 +736,59 @@ describe("/mcp tasks/* scoped to one source", () => {
 
       await waitForStatus(client, taskId, "other", "completed");
       expect((await scopedGet(client, taskId, "fake")).status).toBe("working");
+      // A client that names no source reads the task recorded last.
+      expect((await client.experimental.tasks.getTask(taskId)).status).toBe("completed");
 
       expect((await scopedCancel(client, taskId, "fake")).status).toBe("cancelled");
       const other = await scopedResult(client, taskId, "other");
       expect(other.content).toEqual([{ type: "text", text: "other-minted-done" }]);
+    } finally {
+      await client.close();
+    }
+  });
+
+  /** One session whose requests carry whichever workspace `ws.current` names. */
+  async function createSwitchableClient(): Promise<{ client: Client; ws: { current: string } }> {
+    const ws = { current: TEST_WORKSPACE_ID };
+    const transport = new StreamableHTTPClientTransport(new URL(`${baseUrl}/mcp`), {
+      fetch: (url, init) => {
+        const headers = new Headers(init?.headers);
+        headers.set("x-workspace-id", ws.current);
+        return fetch(url, { ...init, headers });
+      },
+    });
+    const client = new Client(
+      { name: "tasks-test", version: "1.0.0" },
+      { capabilities: { tasks: { requests: { tools: { call: {} } }, cancel: {} } } },
+    );
+    await client.connect(transport);
+    return { client, ws };
+  }
+
+  it("a scope names a source in the request's workspace, not a same-named source in another", async () => {
+    const { client, ws } = await createSwitchableClient();
+    try {
+      // One session, one task id, two servers both named `twin`.
+      ws.current = TEST_WORKSPACE_ID;
+      const here = await startTask(client, "twin__minted");
+      ws.current = OTHER_WORKSPACE_ID;
+      const there = await startTask(client, "twin__minted");
+      expect(there.taskId).toBe(here.taskId);
+      const taskId = here.taskId;
+      await waitForStatus(client, taskId, "twin", "completed");
+      ws.current = TEST_WORKSPACE_ID;
+      expect((await scopedGet(client, taskId, "twin")).status).toBe("working");
+
+      // A task one workspace's source ran is out of reach from the other.
+      const slow = await startTask(client, "fake__slow");
+      ws.current = OTHER_WORKSPACE_ID;
+      await expectTaskNotFound(scopedGet(client, slow.taskId, "fake"));
+      await expectTaskNotFound(scopedCancel(client, slow.taskId, "fake"));
+      await expectTaskNotFound(scopedResult(client, slow.taskId, "fake"));
+
+      ws.current = TEST_WORKSPACE_ID;
+      expect((await scopedCancel(client, slow.taskId, "fake")).status).toBe("cancelled");
+      expect((await scopedCancel(client, taskId, "twin")).status).toBe("cancelled");
     } finally {
       await client.close();
     }

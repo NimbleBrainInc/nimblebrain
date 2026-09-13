@@ -13,25 +13,27 @@
  * ## Keying
  *
  * Entries are keyed by `storeKey = `${identityId}:${taskId}``, and under that
- * by the source that ran the task (`ownerContext.originApp`). A connector's
- * own server mints the task id, so two sources can mint the same one, and each
- * keeps its own entry. Stage 2 made `/mcp` sessions identity-bound and tools
- * cross-workspace-routable, so a single session can hold tasks created in
- * multiple workspaces. The `ownerContext` (with `workspaceId`) is still
- * stamped on each entry — the underlying `McpSource.getTaskStatus` /
- * `awaitToolTaskResult` / `cancelTask` paths still authorize per-task by exact
- * (workspaceId, identityId, taskId) match. Cross-user lookups hit a different
- * key and return `-32602 task not found` per MCP spec security guidance (never
- * leak cross-tenant existence).
+ * by the workspace and source that ran the task (`ownerContext.workspaceId`,
+ * `ownerContext.originApp`). A connector's own server mints the task id, so two
+ * sources can mint the same one, and each keeps its own entry. Stage 2 made
+ * `/mcp` sessions identity-bound and tools cross-workspace-routable, so a
+ * single session can hold tasks created in multiple workspaces. The
+ * `ownerContext` is still stamped on each entry — the underlying
+ * `McpSource.getTaskStatus` / `awaitToolTaskResult` / `cancelTask` paths still
+ * authorize per-task by exact (workspaceId, identityId, taskId) match.
+ * Cross-user lookups hit a different key and return `-32602 task not found`
+ * per MCP spec security guidance (never leak cross-tenant existence).
  *
  * ## Scope
  *
- * A lookup may carry a `scope`: the one source the request is for. The iframe
- * bridge names the app's server this way, because every iframe shares one
- * `/mcp` session. A scoped lookup finds only the task that source ran; a task
- * any other source ran answers `-32602 task not found`, the same as one that
- * does not exist. An unscoped lookup (an MCP client that names no source)
- * finds the task most recently recorded under that id.
+ * A lookup may carry a `TaskScope`: the one source the request is for, in the
+ * workspace the request is bound to. The iframe bridge names the app's server
+ * this way, because every iframe shares one `/mcp` session. A source name
+ * names a server only within a workspace, so a scoped lookup finds only the
+ * task that source ran in that workspace; any other task answers `-32602 task
+ * not found`, the same as one that does not exist. An unscoped lookup (an MCP
+ * client that names no source) finds the task most recently recorded under
+ * that id.
  *
  * ## What's stored
  *
@@ -100,6 +102,13 @@ export interface TaskAwareSource {
 /** Owner context stamped on every task at creation, enforced on lookup. */
 export type OwnerContext = TaskOwnerContext;
 
+/** The one source a task request is for, in the workspace the request is bound to. See "Scope" above. */
+export interface TaskScope {
+  source: string;
+  /** The request's validated workspace. None reaches no workspace's task. */
+  workspaceId: string | undefined;
+}
+
 /** Per-task routing state. The McpSource owns the TaskHandle; we remember where to look. */
 interface TaskEntry {
   source: TaskAwareSource;
@@ -126,6 +135,11 @@ function storeKey(identityId: string | undefined, taskId: string): string {
   return `${identityId ?? ANON_IDENTITY}:${taskId}`;
 }
 
+/** The key of one task id's entry for the workspace and source that ran it. */
+function ownerKey(workspaceId: string | undefined, source: string | undefined): string {
+  return JSON.stringify([workspaceId ?? null, source ?? null]);
+}
+
 /** Options needed to build a session-scoped task store. */
 export interface McpTaskStoreOptions {
   /** Identity associated with this session. `null` in dev / unauthenticated modes. */
@@ -141,7 +155,7 @@ export interface McpTaskStoreOptions {
  * but the `McpSource` already did that work upstream).
  *
  * `getTask`, `getTaskResult` and `updateTaskStatus` take an optional trailing
- * `scope`: the source the request names. See "Scope" above.
+ * `scope`. See "Scope" above.
  */
 export interface McpTaskStore extends TaskStore {
   /** Register a task with a known taskId (the `McpSource` already created it). */
@@ -151,14 +165,14 @@ export interface McpTaskStore extends TaskStore {
     task: Task;
     ownerContext: OwnerContext;
   }): void;
-  getTask(taskId: string, sessionId?: string, scope?: string): Promise<Task | null>;
-  getTaskResult(taskId: string, sessionId?: string, scope?: string): Promise<Result>;
+  getTask(taskId: string, sessionId?: string, scope?: TaskScope): Promise<Task | null>;
+  getTaskResult(taskId: string, sessionId?: string, scope?: TaskScope): Promise<Result>;
   updateTaskStatus(
     taskId: string,
     status: Task["status"],
     statusMessage?: string,
     sessionId?: string,
-    scope?: string,
+    scope?: TaskScope,
   ): Promise<void>;
   /** Test-only: how many tasks are currently live in this store. */
   _sizeForTesting(): number;
@@ -173,18 +187,21 @@ export interface McpTaskStore extends TaskStore {
  * the "tasks die on platform restart" MVP constraint.
  */
 export function createMcpTaskStore(options: McpTaskStoreOptions): McpTaskStore {
-  // `storeKey` → the source that ran the task → its entry. One task id's
-  // entries are in the order they were recorded; an unscoped lookup reads the last.
+  // `storeKey` → `ownerKey` (the workspace and source that ran the task) → its
+  // entry. One task id's entries are in the order they were recorded; an
+  // unscoped lookup reads the last.
   const entries = new Map<string, Map<string, TaskEntry>>();
   const boundIdentityId = options.identity?.id;
 
-  function lookup(taskId: string, scope?: string): TaskEntry {
-    const bySource = entries.get(storeKey(boundIdentityId, taskId));
+  function lookup(taskId: string, scope?: TaskScope): TaskEntry {
+    const byOwner = entries.get(storeKey(boundIdentityId, taskId));
     const entry =
-      scope === undefined ? [...(bySource?.values() ?? [])].at(-1) : bySource?.get(scope);
+      scope === undefined
+        ? [...(byOwner?.values() ?? [])].at(-1)
+        : byOwner?.get(ownerKey(scope.workspaceId, scope.source));
     if (!entry) {
-      // Unknown taskId, wrong owner, OR another source's task. Spec §8 — don't
-      // distinguish.
+      // Unknown taskId, wrong owner, OR another workspace's or source's task.
+      // Spec §8 — don't distinguish.
       throw new McpError(ErrorCode.InvalidParams, `task not found: ${taskId}`);
     }
     return entry;
@@ -192,14 +209,14 @@ export function createMcpTaskStore(options: McpTaskStoreOptions): McpTaskStore {
 
   function put(taskId: string, entry: TaskEntry): void {
     const key = storeKey(boundIdentityId, taskId);
-    const bySource = entries.get(key) ?? new Map<string, TaskEntry>();
+    const byOwner = entries.get(key) ?? new Map<string, TaskEntry>();
     // A task with no source (the synthetic `createTask` below) is out of every
-    // scope's reach: no scope names the empty string.
-    const source = entry.ownerContext.originApp ?? "";
+    // scope's reach: a scope always names a source.
+    const owner = ownerKey(entry.ownerContext.workspaceId, entry.ownerContext.originApp);
     // Delete first so a re-recorded task moves last, where an unscoped lookup reads.
-    bySource.delete(source);
-    bySource.set(source, entry);
-    entries.set(key, bySource);
+    byOwner.delete(owner);
+    byOwner.set(owner, entry);
+    entries.set(key, byOwner);
   }
 
   function mapEngineError(err: unknown, taskId: string): McpError {
@@ -220,10 +237,10 @@ export function createMcpTaskStore(options: McpTaskStoreOptions): McpTaskStore {
 
   const store: McpTaskStore = {
     recordTask({ source, toolFullName, task, ownerContext: owner }) {
-      // We key by (sessionIdentityId, taskId), then by the source that ran it —
-      // sessions are identity-bound post-Stage-2. The richer owner context
-      // (with workspaceId) is preserved on the entry so the McpSource's
-      // per-task authorization check still fires.
+      // We key by (sessionIdentityId, taskId), then by the workspace and source
+      // that ran it — sessions are identity-bound post-Stage-2. The owner
+      // context is preserved on the entry so the McpSource's per-task
+      // authorization check still fires.
       put(task.taskId, {
         source,
         ownerContext: owner,
@@ -239,9 +256,7 @@ export function createMcpTaskStore(options: McpTaskStoreOptions): McpTaskStore {
     // model the `tools/call` handler does the real task creation via
     // `McpSource.startToolAsTask`, so `createTask` is effectively a
     // fallback for direct sampling/elicitation flows (which we don't use
-    // today). Return a minimal synthetic Task to satisfy the interface —
-    // if something actually calls this, the handler that recorded it
-    // should override via `recordTask` immediately afterwards.
+    // today). Return a minimal synthetic Task to satisfy the interface.
     async createTask(
       taskParams: CreateTaskOptions,
       _requestId: RequestId,
@@ -260,14 +275,12 @@ export function createMcpTaskStore(options: McpTaskStoreOptions): McpTaskStore {
       if (taskParams.pollInterval !== undefined) {
         task.pollInterval = taskParams.pollInterval;
       }
-      // No source / owner known at this entry point — store with a
-      // placeholder entry so tasks/get returns something sensible until
-      // the real handler replaces it. This path is not exercised by the
-      // platform's task-aware `tools/call`, which always goes through
-      // recordTask. Workspace is unknown here (the entry point predates
-      // any per-call routing) so we leave it empty on the placeholder
-      // owner context; recordTask will overwrite the entry with the real
-      // owner before any cross-tenant assertion is made on it.
+      // No source / owner known at this entry point — store a placeholder
+      // entry so an unscoped tasks/get returns something sensible. This path
+      // is not exercised by the platform's task-aware `tools/call`, which
+      // always goes through recordTask. Workspace and source are unknown here
+      // (the entry point predates any per-call routing), so the placeholder
+      // owner context carries neither, and no scoped request can reach it.
       put(taskId, {
         source: {
           getTaskStatus: async () => task,
@@ -284,7 +297,7 @@ export function createMcpTaskStore(options: McpTaskStoreOptions): McpTaskStore {
       return task;
     },
 
-    async getTask(taskId: string, _sessionId?: string, scope?: string): Promise<Task | null> {
+    async getTask(taskId: string, _sessionId?: string, scope?: TaskScope): Promise<Task | null> {
       let entry: TaskEntry;
       try {
         entry = lookup(taskId, scope);
@@ -322,7 +335,7 @@ export function createMcpTaskStore(options: McpTaskStoreOptions): McpTaskStore {
       };
     },
 
-    async getTaskResult(taskId: string, _sessionId?: string, scope?: string): Promise<Result> {
+    async getTaskResult(taskId: string, _sessionId?: string, scope?: TaskScope): Promise<Result> {
       const entry = lookup(taskId, scope);
       // If the result is already cached (storeTaskResult was invoked),
       // serve that. Otherwise block on the engine's terminal deferred —
@@ -349,7 +362,7 @@ export function createMcpTaskStore(options: McpTaskStoreOptions): McpTaskStore {
       status: Task["status"],
       statusMessage?: string,
       _sessionId?: string,
-      scope?: string,
+      scope?: TaskScope,
     ): Promise<void> {
       const entry = lookup(taskId, scope);
       // The tasks/cancel handler transitions the task to 'cancelled' via this
@@ -388,7 +401,7 @@ export function createMcpTaskStore(options: McpTaskStoreOptions): McpTaskStore {
 
     _sizeForTesting(): number {
       let size = 0;
-      for (const bySource of entries.values()) size += bySource.size;
+      for (const byOwner of entries.values()) size += byOwner.size;
       return size;
     },
   };

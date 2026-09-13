@@ -120,6 +120,7 @@ import {
   type McpTaskStore,
   type OwnerContext,
   type TaskAwareSource,
+  type TaskScope,
 } from "./mcp-task-store.ts";
 import type { SessionRegistry } from "./session-store/index.ts";
 
@@ -1329,9 +1330,9 @@ async function startWorkspaceTask(
  * in place of the handlers the SDK's `Server` installs for a `taskStore`
  * (`setRequestHandler` replaces them). The SDK's handlers pass the store
  * `(taskId, sessionId)` alone; these also pass the source the request names
- * under `RESOURCE_SOURCE_META_KEY`, and the store answers a scoped request only
- * for a task that source ran. A request that names no source reaches any task
- * the session holds.
+ * under `RESOURCE_SOURCE_META_KEY`, with the request's workspace, and the store
+ * answers a scoped request only for a task that source ran in that workspace.
+ * A request that names no source reaches any task the session holds.
  *
  * Otherwise they answer as the SDK's do: `tasks/get` carries no related-task
  * `_meta`, `tasks/result` does, and a terminal task is not cancelled. Two SDK
@@ -1343,7 +1344,7 @@ async function startWorkspaceTask(
 function registerTaskHandlers(server: Server, taskStore: McpTaskStore): void {
   server.setRequestHandler(GetTaskRequestSchema, async (request, extra) => {
     const { taskId, _meta } = request.params;
-    const task = await taskStore.getTask(taskId, extra.sessionId, scopedSourceName(_meta));
+    const task = await taskStore.getTask(taskId, extra.sessionId, taskScope(_meta));
     if (!task) {
       throw new McpError(ErrorCode.InvalidParams, "Failed to retrieve task: Task not found");
     }
@@ -1352,13 +1353,13 @@ function registerTaskHandlers(server: Server, taskStore: McpTaskStore): void {
 
   server.setRequestHandler(GetTaskPayloadRequestSchema, async (request, extra) => {
     const { taskId, _meta } = request.params;
-    const result = await taskStore.getTaskResult(taskId, extra.sessionId, scopedSourceName(_meta));
+    const result = await taskStore.getTaskResult(taskId, extra.sessionId, taskScope(_meta));
     return { ...result, _meta: { ...result._meta, [RELATED_TASK_META_KEY]: { taskId } } };
   });
 
   server.setRequestHandler(CancelTaskRequestSchema, async (request, extra) => {
     const { taskId, _meta } = request.params;
-    const scope = scopedSourceName(_meta);
+    const scope = taskScope(_meta);
     try {
       const task = await taskStore.getTask(taskId, extra.sessionId, scope);
       if (!task) throw new McpError(ErrorCode.InvalidParams, `Task not found: ${taskId}`);
@@ -1405,6 +1406,16 @@ export const RESOURCE_SOURCE_META_KEY = "ai.nimblebrain/source";
 function scopedSourceName(meta: Record<string, unknown> | undefined): string | undefined {
   const name = meta?.[RESOURCE_SOURCE_META_KEY];
   return typeof name === "string" && name.length > 0 ? name : undefined;
+}
+
+/**
+ * The scope of a task request: the source it names, in the workspace the
+ * request is bound to (validated `X-Workspace-Id`). A source name names a
+ * server only within one workspace. Undefined when the request names no source.
+ */
+function taskScope(meta: Record<string, unknown> | undefined): TaskScope | undefined {
+  const source = scopedSourceName(meta);
+  return source === undefined ? undefined : { source, workspaceId: mcpRequestWorkspace.getStore() };
 }
 
 /** A listing's params: the cursor when the caller sent one, and nothing else. */
