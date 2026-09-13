@@ -19,6 +19,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { RESOURCE_SOURCE_META_KEY } from "../../src/api/mcp-server.ts";
 import { type ServerHandle, startServer } from "../../src/api/server.ts";
 import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
@@ -163,6 +164,36 @@ describe("workspace files exposed as MCP resources", () => {
       expect(first.mimeType).toBe("image/png");
       expect(typeof first.blob).toBe("string");
       expect(Buffer.from(first.blob as string, "base64").equals(PNG_BYTES)).toBe(true);
+    } finally {
+      await client.close();
+    }
+  });
+
+  it("a read scoped to `files` resolves its file; one scoped to another source does not", async () => {
+    // The iframe bridge names the calling app's server under
+    // `RESOURCE_SOURCE_META_KEY`. The files app is the `files` source, so its
+    // own read resolves; any other app's read of the same URI is not found,
+    // exactly as a URI that does not exist.
+    const id = await uploadChatFile("scoped\n", "scoped.txt", "text/plain");
+    const uri = `files://${id}`;
+
+    const transport = new StreamableHTTPClientTransport(new URL(`${baseUrl}/mcp`), {
+      requestInit: { headers: { "X-Workspace-Id": PERSONAL_WS_ID } },
+    });
+    const client = new Client({ name: "files-mcp-scoped-test", version: "1.0.0" });
+    await client.connect(transport);
+    try {
+      const own = await client.readResource({
+        uri,
+        _meta: { [RESOURCE_SOURCE_META_KEY]: "files" },
+      });
+      expect(own.contents[0]?.text).toBe("scoped\n");
+
+      for (const source of ["conversations", "db-query"]) {
+        await expect(
+          client.readResource({ uri, _meta: { [RESOURCE_SOURCE_META_KEY]: source } }),
+        ).rejects.toMatchObject({ code: -32002 });
+      }
     } finally {
       await client.close();
     }

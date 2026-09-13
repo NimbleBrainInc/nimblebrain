@@ -10,7 +10,8 @@
 //   ui/initialize, ui/notifications/initialized,
 //   ui/notifications/tool-result, ui/notifications/tool-input,
 //   ui/notifications/host-context-changed, ui/notifications/size-changed,
-//   ui/open-link, ui/message, ui/update-model-context
+//   ui/open-link, ui/message, ui/update-model-context,
+//   ui/download-file, ui/request-display-mode, notifications/message
 //
 // Spec-compliant notifications forwarded host→iframe:
 //   notifications/tasks/status (subscribed once per bridge instance)
@@ -41,6 +42,8 @@ import { isIdentityApp } from "../lib/identity-apps";
 import { appNameFromToolName } from "../lib/namespaced-tool";
 import { getMcpBridgeClient, withSessionRetry } from "../mcp-bridge-client";
 import { serverCapabilities } from "./relayed-notifications";
+import type { LoggingMessageNotification } from "./schemas";
+import { SERVER_META_KEY } from "./schemas";
 import { getHostThemeMode, getSpecThemeTokens, getThemeTokens } from "./theme";
 import type {
   BridgeCallbacks,
@@ -82,10 +85,11 @@ const appStateStore = new Map<string, AppStateEntry>();
 const widgetStateStore = new Map<string, WidgetStateEntry>();
 
 /**
- * Internal app names allowed to cross-call other sources by setting
- * `params.server` on tools/call or resources/read. External iframe apps
- * are strictly scoped to their own server. Defined once at module scope so
- * both message-type cases share the same trust list.
+ * Internal app names allowed to address another source — on tools/call,
+ * resources/read, or a resource listing — by naming it in
+ * `_meta[SERVER_META_KEY]` (or the legacy top-level field). External iframe
+ * apps are strictly scoped to their own server. Defined once at module scope
+ * so every call site shares the same trust list.
  */
 const INTERNAL_APPS = new Set(["nb", "settings", "home", "usage"]);
 
@@ -316,6 +320,40 @@ export function createBridge(
         break;
 
       // -----------------------------------------------------------------
+      // Spec: ui/download-file — hand the user a file, as MCP resource
+      // blocks rather than an already-materialised Blob.
+      // -----------------------------------------------------------------
+      case "ui/download-file":
+        handleDownloadFile(msg.params.contents, msg.id, postToIframe);
+        break;
+
+      // -----------------------------------------------------------------
+      // Spec: ui/request-display-mode — answered with the mode actually in
+      // effect, which is not necessarily the one requested.
+      // -----------------------------------------------------------------
+      case "ui/request-display-mode":
+        postToIframe({
+          jsonrpc: "2.0",
+          id: msg.id,
+          // The host decides placement from its own layout and never grants a
+          // request, so the answer is the mode in effect — `inline`, which is
+          // also the spec's own default. Derive it from the host context when
+          // something starts publishing a `displayMode`; nothing does today,
+          // and reading a key no producer sets is a branch that cannot be
+          // exercised.
+          result: { mode: "inline" },
+        });
+        break;
+
+      // -----------------------------------------------------------------
+      // Spec: notifications/message — an app's log line. The `logging`
+      // capability is advertised, so this has to land somewhere.
+      // -----------------------------------------------------------------
+      case "notifications/message":
+        logAppMessage(appName, msg.params);
+        break;
+
+      // -----------------------------------------------------------------
       // Extension: synapse/action — semantic host actions
       // -----------------------------------------------------------------
       case "synapse/action":
@@ -504,15 +542,123 @@ export function createBridge(
 type PostToIframe = (data: unknown) => void;
 
 /**
- * Answer an ext-apps `ui/initialize` request: post the handshake response,
- * then replay any persisted widget state.
+ * The NimbleBrain extensions merged into `hostContext` at handshake time.
  *
- * JSON-RPC 2.0 (and the ext-apps spec by extension) allows request IDs to be
- * strings OR numbers. Clients built on `@modelcontextprotocol/ext-apps`
- * (including `@reboot-dev/reboot-react`) send numeric IDs starting at 0; an id
- * that is neither is dropped — a string-only check once left those iframes
- * stuck at "Connecting to MCP host...".
+ * Wrapped because a throwing callback must not take the handshake with it: a
+ * dropped `ui/initialize` response hangs the iframe at "Connecting…" with no
+ * indication of why.
  */
+function readHostExtensions(callbacks: BridgeCallbacks | undefined): Record<string, unknown> {
+  try {
+    return callbacks?.getHostExtensions?.() ?? {};
+  } catch (err) {
+    console.error("getHostExtensions threw — proceeding with no extensions:", err);
+    return {};
+  }
+}
+
+/**
+ * Serve a spec `ui/download-file`: turn each MCP resource block into a browser
+ * download.
+ *
+ * An `EmbeddedResource` carries the bytes inline, as `text` or base64 `blob`.
+ * A `ResourceLink` carries only a URI and asks the host to fetch it — which
+ * this does not do, because the URI comes from third-party iframe code and
+ * fetching it would make the host an SSRF proxy with the user's cookies. The
+ * result says `isError` in that case rather than failing silently, so an app
+ * learns to embed instead.
+ */
+function handleDownloadFile(
+  contents: Array<Record<string, unknown>>,
+  id: string | number,
+  postToIframe: PostToIframe,
+): void {
+  // Resolve every block before saving any. A request is answered all or
+  // nothing: a mixed batch that saved what it could and still reported
+  // `isError` would have an app retry the whole thing, and the user would get
+  // the resolvable files twice.
+  const files: Downloadable[] = [];
+  for (const block of contents) {
+    const file = toDownloadable(block);
+    if (!file) break;
+    files.push(file);
+  }
+
+  const complete = files.length === contents.length && files.length > 0;
+  if (complete) {
+    for (const file of files) triggerDownload(file.data, file.filename, file.mimeType);
+  }
+
+  postToIframe({ jsonrpc: "2.0", id, result: complete ? {} : { isError: true } });
+}
+
+interface Downloadable {
+  data: string | Uint8Array;
+  filename: string;
+  mimeType: string;
+}
+
+/**
+ * One `ui/download-file` content block as something saveable, or `null` when it
+ * is not: a `ResourceLink` (the host does not fetch a URI the app supplied), a
+ * payload that is not valid base64, or a block shape we do not model.
+ */
+function toDownloadable(block: Record<string, unknown>): Downloadable | null {
+  const resource = block.resource as Record<string, unknown> | undefined;
+  if (!resource) return null;
+
+  const mimeType =
+    typeof resource.mimeType === "string" ? resource.mimeType : "application/octet-stream";
+  const filename = filenameFor(resource.uri, block.name);
+
+  if (typeof resource.text === "string") return { data: resource.text, filename, mimeType };
+  const bytes = typeof resource.blob === "string" ? base64ToBytes(resource.blob) : null;
+  return bytes ? { data: bytes, filename, mimeType } : null;
+}
+
+/**
+ * Write an app's `notifications/message` to the console at its own severity.
+ *
+ * The levels are syslog's, per the spec's `LoggingLevel`. An app's `error`
+ * arriving at info level is an error nobody filtering the console will see.
+ */
+function logAppMessage(appName: string, params: LoggingMessageNotification["params"]): void {
+  const { level, logger, data } = params;
+  const tag = `[app:${appName}${logger ? `/${logger}` : ""}] ${level}:`;
+  if (level === "error" || level === "critical" || level === "alert" || level === "emergency") {
+    console.error(tag, data);
+  } else if (level === "warning") {
+    console.warn(tag, data);
+  } else {
+    console.info(tag, data);
+  }
+}
+
+/**
+ * A filename for a downloaded resource: the block's own `name` when it has one,
+ * else the last segment of the resource URI, else a generic fallback.
+ */
+function filenameFor(uri: unknown, name: unknown): string {
+  if (typeof name === "string" && name.length > 0) return name;
+  if (typeof uri === "string") {
+    const last = uri.split(/[/\\]/).pop();
+    if (last) return last;
+  }
+  return "download";
+}
+
+/** Decode a base64 resource payload, or `null` if it is not valid base64. */
+function base64ToBytes(blob: string): Uint8Array | null {
+  try {
+    const binary = atob(blob);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+    return bytes;
+  } catch {
+    return null;
+  }
+}
+
 function handleInitialize(
   id: unknown,
   appName: string,
@@ -538,25 +684,29 @@ function handleInitialize(
   // `hostContext.styles.variables`, which is a typed enum of CSS
   // custom properties — extensions there would tear down the connection.
   //
-  // Wrapped in try/catch: a throwing callback would otherwise drop the
-  // entire `ui/initialize` response and hang the iframe at "Connecting…".
-  let extensions: Record<string, unknown> = {};
-  try {
-    extensions = callbacks?.getHostExtensions?.() ?? {};
-  } catch (err) {
-    console.error("getHostExtensions threw — proceeding with no extensions:", err);
-  }
+  const extensions = readHostExtensions(callbacks);
+  const tasks = {
+    cancel: {},
+    requests: { tools: { call: {} } },
+  };
   const hostCapabilities = {
     openLinks: {},
+    downloadFile: {},
     // The server's tool calls and resource reads/listings are proxied (above);
     // `listChanged` is set for each notification the host relays to the
     // server's views, and only those (relayed-notifications.ts).
     ...serverCapabilities(),
     logging: {},
-    tasks: {
-      cancel: {},
-      requests: { tools: { call: {} } },
-    },
+    // The MCP tasks utility. `McpUiHostCapabilities` names no such field, so a
+    // client that parses the handshake result against the spec's schema drops
+    // it — but the SDK reads `hostCapabilities.tasks` off the raw result, so
+    // this is what every app in the field actually sees.
+    //
+    // `experimental` looks like the spec-sanctioned home and is not one yet:
+    // it only began preserving its contents after ext-apps 1.7.0, and `web/`
+    // declares `^1.3.1` and resolves 1.7.0 — both of which strip it. Advertise
+    // there when a client reads it and the floor has moved, not before.
+    tasks,
   };
   const response: ExtAppsInitializeResponse = {
     jsonrpc: "2.0",
@@ -595,6 +745,34 @@ function handleInitialize(
 }
 
 /**
+ * The MCP source a request is addressed to, held to the INTERNAL_APPS trust
+ * list: an app that is not internal always talks to itself, whatever it asked
+ * for.
+ *
+ * Two places carry the request, because two generations of the SDK put it in
+ * different ones. `_meta[SERVER_META_KEY]` is where it belongs and the only
+ * place it survives a spec client or host on the path — `params` is parsed
+ * against the MCP request schema, which strips a field it does not name. The
+ * top-level `server` is the pre-`_meta` home, and it is still read because a
+ * published app inlines the SDK it was built against: apps sending it there
+ * outlive by an indefinite margin the SDK release that stopped, and they are
+ * not rebuilt by us.
+ *
+ * Both are read here rather than at each call site so the rule has one home,
+ * and `resources/read` cannot drift from `tools/call`.
+ */
+function resolveTargetServer(
+  params: { server?: string; _meta?: Record<string, unknown> },
+  appName: string,
+  internal: boolean,
+): string {
+  if (!internal) return appName;
+  const fromMeta = params._meta?.[SERVER_META_KEY];
+  if (typeof fromMeta === "string" && fromMeta.length > 0) return fromMeta;
+  return params.server || appName;
+}
+
+/**
  * Proxy a spec `tools/call` to the MCP bridge — scoping the target server per
  * the INTERNAL_APPS trust list — and forward the result (or a JSON-RPC error)
  * to the iframe.
@@ -606,15 +784,14 @@ function handleToolsCall(
   postToIframe: PostToIframe,
 ): void {
   // Security: tool calls are scoped to appName by default. Internal
-  // connectors (`INTERNAL_APPS`) can specify `params.server` to
-  // cross-call other sources. The `/mcp` endpoint is workspace-
-  // scoped but doesn't know about the "internal app" concept, so
-  // this authz check stays in the bridge.
+  // connectors (`INTERNAL_APPS`) can address another source instead.
+  // The `/mcp` endpoint is workspace-scoped but doesn't know about the
+  // "internal app" concept, so this authz check stays in the bridge.
   const internal = INTERNAL_APPS.has(appName);
-  const server = internal && params.server ? params.server : appName;
+  const server = resolveTargetServer(params, appName, internal);
 
   // A qualified tool name names a source too, so it is a second way to ask
-  // for one — and it has to be held to the same rule as `params.server`.
+  // for one — and it has to be held to the same rule as the `_meta` target.
   // `callToolViaMcp` only prefixes a BARE name, so without this an external
   // iframe reaches any tool in the workspace by sending the qualified form
   // it wants (`files__create`) instead of the bare one it is entitled to.
@@ -655,11 +832,13 @@ function handleResourcesRead(
   appName: string,
   postToIframe: PostToIframe,
 ): void {
-  // Same trust list as tools/call. The URI itself passes through
-  // verbatim to the server — SSRF safety lives in the connector, not
-  // the host, because only URIs the connector advertises via
-  // resources/list will resolve anyway.
-  const server = INTERNAL_APPS.has(appName) && params.server ? params.server : appName;
+  // Same trust list and the same two request locations as tools/call: the
+  // app's own server, unless an internal app names another. `/mcp` would
+  // otherwise resolve the URI against every source in the workspace and the
+  // user's identity sources, so the read is scoped by naming this server on
+  // the wire (`readResourceViaMcp`). The URI itself passes through verbatim;
+  // SSRF safety lives in the connector.
+  const server = resolveTargetServer(params, appName, INTERNAL_APPS.has(appName));
 
   readResourceViaMcp(server, params.uri)
     .then((result) => {
@@ -676,7 +855,7 @@ function handleResourcesRead(
 }
 
 /**
- * The `_meta` key that scopes a listing on `/mcp` to one source. Must equal
+ * The `_meta` key that scopes a read or a listing on `/mcp` to one source. Must equal
  * `RESOURCE_SOURCE_META_KEY` in `src/api/mcp-server.ts` (the runtime image ships
  * `src/` alone, so the two cannot share a module); pinned equal by
  * `test/unit/tools/server-notifications.test.ts`.
@@ -700,7 +879,10 @@ function handleResourceListing(
   appName: string,
   postToIframe: PostToIframe,
 ): void {
-  const server = INTERNAL_APPS.has(appName) && params?.server ? params.server : appName;
+  // Same rule, same resolver as tools/call and resources/read: a listing may be
+  // addressed to another source, in `_meta` or in the legacy top-level field,
+  // and only a built-in app may address one at all.
+  const server = resolveTargetServer(params ?? {}, appName, INTERNAL_APPS.has(appName));
   const request = {
     ...(typeof params?.cursor === "string" ? { cursor: params.cursor } : {}),
     _meta: { [RESOURCE_SOURCE_META_KEY]: server },
@@ -838,7 +1020,7 @@ function handleRequestFile(
 //   - Errors translate to JSON-RPC `{ code: -32000, message }` envelopes
 //     consistent with the REST path so iframes don't need to branch on
 //     which transport ran.
-//   - `params.server` authz is handled at the call site — this helper
+//   - the target-source authz is handled at the call site — this helper
 //     receives the already-resolved server name.
 // ---------------------------------------------------------------------------
 
@@ -968,19 +1150,22 @@ async function callToolViaMcp(
 }
 
 /**
- * Forward a `resources/read` through the MCP SDK bridge client. Returns the
- * ReadResourceResult shape (`{ contents }`) so the caller can assemble the
- * JSON-RPC response envelope for the iframe.
+ * Forward a `resources/read` through the MCP SDK bridge client, scoped to
+ * `server` — the target the call site resolved under the INTERNAL_APPS rule.
+ * Returns the ReadResourceResult shape (`{ contents }`) so the caller can
+ * assemble the JSON-RPC response envelope for the iframe.
  */
 async function readResourceViaMcp(server: string, uri: string): Promise<{ contents: unknown[] }> {
-  // Per spec, `resources/read` carries only the URI — the resource is
-  // namespaced by the connector that authored it, not by request params.
-  // `server` is consumed by the INTERNAL_APPS authz at the call site
-  // (cross-call permission); it doesn't appear on the wire here.
-  void server;
+  // `server` goes on the wire under `RESOURCE_SOURCE_META_KEY`, as it does for
+  // listings, and `/mcp` reads from that one source. It is the only thing that
+  // can: every iframe shares one `/mcp` session, so without it a read resolves
+  // across the whole workspace and the user's files.
   return withSessionRetry(async () => {
     const client = await getMcpBridgeClient();
-    const result = await client.readResource({ uri });
+    const result = await client.readResource({
+      uri,
+      _meta: { [RESOURCE_SOURCE_META_KEY]: server },
+    });
     return { contents: result.contents as unknown[] };
   });
 }

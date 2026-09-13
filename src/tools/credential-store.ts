@@ -31,8 +31,9 @@ import { Redacted } from "./redacted.ts";
  *
  *   - `instance` — the operator's own keys: LLM providers, broker and gateway
  *     credentials, the IdP key. One set per deployment, referenced from
- *     `nimblebrain.json` / `instance.json`, and writable only from the CLI or
- *     the config file. No tenant reaches this scope.
+ *     `nimblebrain.json` / `instance.json`, and written by the `secrets`
+ *     subcommand — the only scope with no UI, which is why that command
+ *     exists. No tenant reaches this scope.
  *   - `workspace` — a workspace's shared secrets: an OAuth `client_secret`, a
  *     connection string a customer owns. Two workspaces that install the same
  *     connector hold independent values, so an installed catalog entry can
