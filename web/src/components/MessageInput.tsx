@@ -1,5 +1,6 @@
 import { ArrowUp, Paperclip, Square } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useComposerDraft } from "../hooks/useChat";
 import { FileAttachmentChips } from "./FileAttachmentChips";
 import { ModelPicker, type PickerModel } from "./ModelPicker";
 
@@ -17,7 +18,7 @@ function ComposerActions({
   pendingModel,
   onPendingModelChange,
   onNewConversationWithModel,
-  disabled,
+  busy,
   canSend,
   onSend,
   onStop,
@@ -28,7 +29,7 @@ function ComposerActions({
   pendingModel?: string;
   onPendingModelChange?: (model: string) => void;
   onNewConversationWithModel?: (model: string) => void;
-  disabled: boolean;
+  busy: boolean;
   canSend: boolean;
   onSend: () => void;
   onStop?: () => void;
@@ -42,10 +43,10 @@ function ComposerActions({
           bound={boundModel}
           onSelect={(id) => onPendingModelChange?.(id)}
           onNewConversation={onNewConversationWithModel}
-          disabled={disabled}
+          disabled={busy}
         />
       )}
-      {disabled && onStop ? (
+      {busy && onStop ? (
         <button
           onClick={onStop}
           type="button"
@@ -75,6 +76,9 @@ function ComposerActions({
 
 interface MessageInputProps {
   onSend: (text: string, files?: File[], model?: string) => void;
+  /** The conversation key the draft belongs to. The chat store holds the draft
+   *  and clears it when it accepts a send, so a send it refuses loses nothing. */
+  draftKey: string;
   /** Models this deployment offers. Empty hides the control entirely. */
   models?: PickerModel[];
   /** The binding, once the conversation exists. Absent before the first send. */
@@ -86,7 +90,9 @@ interface MessageInputProps {
   onPendingModelChange?: (model: string) => void;
   /** Start a fresh conversation on a chosen model, from the bound-state menu. */
   onNewConversationWithModel?: (model: string) => void;
-  disabled: boolean;
+  /** A turn is running. It gates sending, never composing: the draft stays
+   *  editable so the next message can be written while the agent works. */
+  busy: boolean;
   onNewConversation?: () => void;
   /** Open the keyboard-shortcuts dialog — the footer "?" affordance. */
   onShowShortcuts?: () => void;
@@ -97,21 +103,25 @@ interface MessageInputProps {
 
 export function MessageInput({
   onSend,
+  draftKey,
   models,
   boundModel,
   defaultModel,
   pendingModel,
   onPendingModelChange,
   onNewConversationWithModel,
-  disabled,
+  busy,
   onNewConversation,
   onShowShortcuts,
   onStop,
 }: MessageInputProps) {
-  const [text, setText] = useState("");
+  const [draft, setDraft] = useComposerDraft(draftKey);
+  const { text, files: attachedFiles } = draft;
   const [isFocused, setIsFocused] = useState(false);
-  const [attachedFiles, setAttachedFiles] = useState<File[]>([]);
   const [isDragOver, setIsDragOver] = useState(false);
+  // Set when Enter is pressed while a turn runs, so the refusal is visible
+  // rather than a keypress that silently does nothing. Clears with the turn.
+  const [sendWaiting, setSendWaiting] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -123,18 +133,23 @@ export function MessageInput({
     el.style.height = `${Math.min(el.scrollHeight, MAX_TEXTAREA_HEIGHT)}px`;
   }, [text]);
 
+  // Put the cursor in the composer when a turn ends, unless focus is already
+  // somewhere — including the composer itself, or an app iframe or field the
+  // user moved to while waiting. A turn ending must not take focus away.
   useEffect(() => {
-    if (!disabled) {
-      textareaRef.current?.focus();
-    }
-  }, [disabled]);
+    if (busy) return;
+    setSendWaiting(false);
+    const active = document.activeElement;
+    if (active && active !== document.body) return;
+    textareaRef.current?.focus();
+  }, [busy]);
 
   // Listen for nb:prompt events to pre-fill the input
   useEffect(() => {
     function handlePrompt(e: Event) {
       const prompt = (e as CustomEvent<{ prompt: string }>).detail?.prompt;
       if (prompt) {
-        setText(prompt);
+        setDraft({ text: prompt });
         requestAnimationFrame(() => {
           textareaRef.current?.focus();
         });
@@ -142,34 +157,41 @@ export function MessageInput({
     }
     window.addEventListener("nb:prompt", handlePrompt);
     return () => window.removeEventListener("nb:prompt", handlePrompt);
-  }, []);
+  }, [setDraft]);
 
-  const addFiles = useCallback((newFiles: FileList | File[]) => {
-    const arr = Array.from(newFiles);
-    if (arr.length === 0) return;
-    setAttachedFiles((prev) => [...prev, ...arr]);
-  }, []);
+  const addFiles = useCallback(
+    (newFiles: FileList | File[]) => {
+      const arr = Array.from(newFiles);
+      if (arr.length === 0) return;
+      setDraft({ files: [...attachedFiles, ...arr] });
+    },
+    [attachedFiles, setDraft],
+  );
 
-  const removeFile = useCallback((index: number) => {
-    setAttachedFiles((prev) => prev.filter((_, i) => i !== index));
-  }, []);
+  const removeFile = useCallback(
+    (index: number) => {
+      setDraft({ files: attachedFiles.filter((_, i) => i !== index) });
+    },
+    [attachedFiles, setDraft],
+  );
 
   const handleSend = useCallback(() => {
     const trimmed = text.trim();
-    if ((!trimmed && attachedFiles.length === 0) || disabled) return;
+    if (!trimmed && attachedFiles.length === 0) return;
+    if (busy) {
+      setSendWaiting(true);
+      return;
+    }
 
     // Handle /clear command
     if (trimmed === "/clear" && onNewConversation) {
-      setText("");
-      setAttachedFiles([]);
+      setDraft({ text: "", files: [] });
       onNewConversation();
       return;
     }
 
     onSend(trimmed, attachedFiles.length > 0 ? attachedFiles : undefined, pendingModel);
-    setText("");
-    setAttachedFiles([]);
-  }, [text, attachedFiles, pendingModel, disabled, onSend, onNewConversation]);
+  }, [text, attachedFiles, pendingModel, busy, onSend, onNewConversation, setDraft]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -237,22 +259,20 @@ export function MessageInput({
     [addFiles],
   );
 
-  const canSend = (text.trim().length > 0 || attachedFiles.length > 0) && !disabled;
+  const canSend = (text.trim().length > 0 || attachedFiles.length > 0) && !busy;
 
   return (
     <div className="py-3 shrink-0">
       {/* biome-ignore lint/a11y/noStaticElementInteractions: drag-and-drop container for file uploads */}
       <div
-        // The raised card + blue ring shows only when the input is actually
-        // usable — focused AND not mid-turn. While a turn runs the input is
-        // disabled, so it recedes to the same quiet muted well as its resting
-        // state: a disabled control should read as inactive, not lit up. The
-        // "working" cue lives in the conversation ("Thinking…" + the streaming
-        // reply) and the Stop button, not the input box.
+        // The raised card + blue ring follows focus alone. A running turn does
+        // not dim the composer: writing the next message while the agent works
+        // is expected. The "working" cue lives in the conversation ("Thinking…"
+        // + the streaming reply) and the Stop button, not the input box.
         className={`rounded-lg border transition-all duration-200 ${
           isDragOver
             ? "bg-card border-primary shadow-lg shadow-primary/20"
-            : isFocused && !disabled
+            : isFocused
               ? "bg-card border-ring shadow-lg shadow-ring/10"
               : "bg-muted border-transparent"
         }`}
@@ -267,7 +287,7 @@ export function MessageInput({
             ref={textareaRef}
             className="w-full bg-transparent border-none outline-none resize-none text-sm font-sans leading-relaxed text-foreground placeholder:text-muted-foreground"
             value={text}
-            onChange={(e) => setText(e.target.value)}
+            onChange={(e) => setDraft({ text: e.target.value })}
             onKeyDown={handleKeyDown}
             onPaste={handlePaste}
             onFocus={() => setIsFocused(true)}
@@ -275,11 +295,10 @@ export function MessageInput({
             placeholder={
               isDragOver
                 ? "Drop files here..."
-                : disabled
-                  ? "Waiting for response..."
+                : busy
+                  ? "Write your next message..."
                   : "Ask anything..."
             }
-            disabled={disabled}
             rows={1}
             style={{ minHeight: "28px", maxHeight: "200px" }}
           />
@@ -298,10 +317,9 @@ export function MessageInput({
             />
             <button
               onClick={() => fileInputRef.current?.click()}
-              disabled={disabled}
               type="button"
               aria-label="Attach files"
-              className="shrink-0 flex items-center justify-center w-8 h-8 rounded-sm transition-all duration-200 text-muted-foreground cursor-pointer hover:text-foreground hover:bg-muted disabled:opacity-50 disabled:cursor-not-allowed"
+              className="shrink-0 flex items-center justify-center w-8 h-8 rounded-sm transition-all duration-200 text-muted-foreground cursor-pointer hover:text-foreground hover:bg-muted"
             >
               <Paperclip style={{ width: 16, height: 16 }} />
             </button>
@@ -313,7 +331,7 @@ export function MessageInput({
             pendingModel={pendingModel}
             onPendingModelChange={onPendingModelChange}
             onNewConversationWithModel={onNewConversationWithModel}
-            disabled={disabled}
+            busy={busy}
             canSend={canSend}
             onSend={handleSend}
             onStop={onStop}
@@ -323,35 +341,41 @@ export function MessageInput({
 
       {/* Shortcut hints — status copy lives on the BlockTimeline / LiveCursor, not here. */}
       <div className="flex items-center justify-center gap-3 mt-2 text-3xs text-muted-foreground">
-        {onNewConversation && (
-          <button
-            type="button"
-            onClick={onNewConversation}
-            className="cursor-pointer hover:text-foreground transition-colors"
-          >
-            <kbd className="px-1 py-0.5 font-mono bg-muted rounded border border-border text-3xs">
-              /clear
-            </kbd>{" "}
-            reset
-          </button>
-        )}
-        <span>
-          <kbd className="px-1 py-0.5 font-mono bg-muted rounded border border-border text-3xs">
-            ⌘K
-          </kbd>{" "}
-          close
-        </span>
-        {onShowShortcuts && (
-          <button
-            type="button"
-            onClick={onShowShortcuts}
-            className="cursor-pointer hover:text-foreground transition-colors"
-          >
-            <kbd className="px-1 py-0.5 font-mono bg-muted rounded border border-border text-3xs">
-              ?
-            </kbd>{" "}
-            shortcuts
-          </button>
+        {sendWaiting ? (
+          <span role="status">Still replying — send when it finishes, or press Stop.</span>
+        ) : (
+          <>
+            {onNewConversation && (
+              <button
+                type="button"
+                onClick={onNewConversation}
+                className="cursor-pointer hover:text-foreground transition-colors"
+              >
+                <kbd className="px-1 py-0.5 font-mono bg-muted rounded border border-border text-3xs">
+                  /clear
+                </kbd>{" "}
+                reset
+              </button>
+            )}
+            <span>
+              <kbd className="px-1 py-0.5 font-mono bg-muted rounded border border-border text-3xs">
+                ⌘K
+              </kbd>{" "}
+              close
+            </span>
+            {onShowShortcuts && (
+              <button
+                type="button"
+                onClick={onShowShortcuts}
+                className="cursor-pointer hover:text-foreground transition-colors"
+              >
+                <kbd className="px-1 py-0.5 font-mono bg-muted rounded border border-border text-3xs">
+                  ?
+                </kbd>{" "}
+                shortcuts
+              </button>
+            )}
+          </>
         )}
       </div>
     </div>

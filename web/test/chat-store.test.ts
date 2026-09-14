@@ -804,3 +804,82 @@ describe("chat-store viewer", () => {
     expect(msgs.filter((m) => m.role === "user")).toHaveLength(1);
   });
 });
+
+describe("composer drafts", () => {
+  beforeEach(() => {
+    streams = [];
+    convCounter = 0;
+    getCalls = {};
+    startCalls = [];
+    cancelCalls = [];
+    deferStart = false;
+    pendingStartResolvers = [];
+  });
+
+  it("keeps a draft with the conversation it was written in", () => {
+    const store = createChatStore();
+    store.setDraft("kA", { text: "for A" });
+    store.ensureSlice("kB");
+    expect(store.getDraft("kB").text).toBe("");
+    expect(store.getDraft("kA").text).toBe("for A");
+  });
+
+  it("clears the draft when a send is accepted, and keeps it across the id remap", async () => {
+    const store = createChatStore();
+    const draft = freshDraftKey();
+    store.setDraft(draft, { text: "hi" });
+    await store.sendTurn(draft, { text: "hi" });
+    expect(store.getDraft(draft).text).toBe("");
+    // Typed mid-turn once the composer is keyed by the real id: same slice.
+    store.setDraft("conv_1", { text: "follow-up" });
+    expect(store.getDraft(draft).text).toBe("follow-up");
+  });
+
+  it("leaves the draft intact when a send is refused mid-turn", async () => {
+    const store = createChatStore();
+    await store.sendTurn("kA", { text: "first" });
+    store.setDraft("kA", { text: "second" });
+    await store.sendTurn("kA", { text: "second" }); // refused — a turn is running
+    expect(streams).toHaveLength(1);
+    expect(store.getDraft("kA").text).toBe("second");
+  });
+
+  it("keeps a draft edited after the send was issued", async () => {
+    const store = createChatStore();
+    store.setDraft("kA", { text: "original, then more" });
+    await store.sendTurn("kA", { text: "original" });
+    expect(store.getDraft("kA").text).toBe("original, then more");
+  });
+
+  it("notifies draft subscribers without touching the transcript snapshot", () => {
+    const store = createChatStore();
+    store.ensureSlice("kA");
+    const before = store.getSnapshot("kA");
+    let sliceCalls = 0;
+    let draftCalls = 0;
+    store.subscribeSlice("kA", () => {
+      sliceCalls += 1;
+    });
+    store.subscribeDraft("kA", () => {
+      draftCalls += 1;
+    });
+    store.setDraft("kA", { text: "x" });
+    expect(draftCalls).toBe(1);
+    expect(sliceCalls).toBe(0);
+    expect(store.getSnapshot("kA")).toBe(before);
+  });
+
+  it("does not evict a slice holding an unsent draft", () => {
+    const store = createChatStore();
+    store.setDraft("kKeep", { text: "unsent" });
+    for (let i = 0; i < 40; i++) store.ensureSlice(`kFill${i}`);
+    expect(store.getDraft("kKeep").text).toBe("unsent");
+  });
+
+  it("drops every draft on reset", () => {
+    const store = createChatStore();
+    store.setDraft("kA", { text: "gone" });
+    store.reset();
+    expect(store.getDraft("kA").text).toBe("");
+  });
+});

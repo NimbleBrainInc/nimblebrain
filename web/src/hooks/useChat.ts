@@ -3,6 +3,7 @@ import { captureEvent } from "../telemetry";
 import type { AppContext } from "../types";
 import type {
   ChatMessage,
+  ComposerDraft,
   LoadedConversationMeta,
   PreparingTool,
   StreamingState,
@@ -13,6 +14,7 @@ import { chatStore, freshDraftKey } from "./chat-store";
 // keep working — the slice store now owns the definitions.
 export type {
   ChatMessage,
+  ComposerDraft,
   ContentBlock,
   IterationProgress,
   LedgerSkill,
@@ -32,6 +34,10 @@ export interface UseChatReturn {
   /** Set while streamingState === "preparing"; null otherwise. */
   preparingTool: PreparingTool | null;
   conversationId: string | null;
+  /** The store key of the conversation on screen — what the composer's draft
+   *  is filed under. A draft key until the first send, then the same slice
+   *  under its real id, so a draft typed during the first turn survives it. */
+  draftKey: string;
   /** Server-generated title; null until generated/loaded. */
   title: string | null;
   conversationMeta: LoadedConversationMeta | null;
@@ -154,6 +160,7 @@ export function useChat(initialConversationId?: string, currentUserId?: string):
       // Drafts carry a null conversationId on the slice, so this is null until
       // the server assigns a real id on chat.start.
       conversationId: snap.conversationId,
+      draftKey: activeKey,
       title: snap.title,
       conversationMeta: snap.meta,
       error: snap.error,
@@ -165,6 +172,33 @@ export function useChat(initialConversationId?: string, currentUserId?: string):
       retryLastMessage,
       simulateError,
     }),
-    [snap, sendMessage, newConversation, loadConversation, stop, retryLastMessage, simulateError],
+    [
+      snap,
+      activeKey,
+      sendMessage,
+      newConversation,
+      loadConversation,
+      stop,
+      retryLastMessage,
+      simulateError,
+    ],
   );
+}
+
+/**
+ * One conversation's composer draft, on its own subscription. It is kept out of
+ * {@link UseChatReturn} deliberately: that value re-renders the whole transcript,
+ * and a keystroke should re-render only the composer.
+ */
+export function useComposerDraft(
+  key: string,
+): [ComposerDraft, (patch: Partial<ComposerDraft>) => void] {
+  const subscribe = useCallback((cb: () => void) => chatStore.subscribeDraft(key, cb), [key]);
+  const getSnapshot = useCallback(() => chatStore.getDraft(key), [key]);
+  const draft = useSyncExternalStore(subscribe, getSnapshot);
+  const setDraft = useCallback(
+    (patch: Partial<ComposerDraft>) => chatStore.setDraft(key, patch),
+    [key],
+  );
+  return [draft, setDraft];
 }
