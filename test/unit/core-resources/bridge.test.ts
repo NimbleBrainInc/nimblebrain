@@ -75,11 +75,13 @@ describe("the core-resources bridge preamble", () => {
     expect(bridge.calls).toEqual([{ tool: "list_apps", args: { limit: 2 }, options: undefined }]);
   });
 
-  it("splits server__tool into a tool name and an explicit server", async () => {
+  it("sends a qualified name as given, with no server of its own", async () => {
+    // The host scopes the call to the app's own server; the helper never asks
+    // for another.
     const bridge = loadBridge();
     await bridge.callTool("people__list_contacts", { q: "x" });
     expect(bridge.calls).toEqual([
-      { tool: "list_contacts", args: { q: "x" }, options: { server: "people" } },
+      { tool: "people__list_contacts", args: { q: "x" }, options: undefined },
     ]);
   });
 

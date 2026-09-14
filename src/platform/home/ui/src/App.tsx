@@ -83,21 +83,10 @@ function renderMd(text: string): string {
     .replace(/`([^`]+)`/g, "<code>$1</code>");
 }
 
-/* ---------- cross-server tool call ----------------------------------------
- *
- * `app.callTool(name, args)` always routes to the calling app's own server.
- * `home` needs to invoke `briefing` on the platform's `nb` source, which is
- * a different server. The bridge routes on `params.server` for internal apps
- * (see `INTERNAL_APPS` in `web/src/bridge/bridge.ts`), and the SDK reaches
- * that with `app.callTool(name, args, { server: "nb" })`.
- *
- * This call stays hand-rolled for one reason: the SDK's transport has no
- * request timeout, so a `briefing` the server never answers would leave the
- * panel spinning with nothing to retry. The 60s deadline below is what the
- * escape hatch buys. Move to `callTool` once the SDK can carry a deadline.
- *
- * Phase 4's connector-transport lint allowlists exactly the call inside
- * `loadBriefing` via a `// lint-ok:` marker.
+/* ---------- server tool call ----------------------------------------------
+ * The host no longer routes cross-source calls: every app is scoped to its own
+ * server, so `params.server` below is ignored and `briefing` cannot reach `nb`.
+ * The panel is not mounted.
  * -------------------------------------------------------------------------- */
 
 let _rpcId = 0;
@@ -130,7 +119,7 @@ function callServerTool<T>(
       },
       reject,
     });
-    // lint-ok:platform-app-transport — typed cross-server call, see comment above.
+    // lint-ok:platform-app-transport — hand-rolled call on an unmounted panel, see comment above.
     window.parent.postMessage(
       {
         jsonrpc: "2.0",
@@ -234,8 +223,8 @@ function Dashboard() {
     setStale(false);
     setLoading(true);
     try {
-      // `briefing` lives on the platform's `nb` source, not on `home`.
-      // See `callServerTool` definition above.
+      // `briefing` lives on the platform's `nb` source, not on `home`, so this
+      // call cannot succeed. See the comment above `callServerTool`.
       const result = await callServerTool(
         "nb",
         "briefing",

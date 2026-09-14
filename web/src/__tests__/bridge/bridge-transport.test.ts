@@ -7,9 +7,9 @@
 //   - `tools/call` and `resources/read` route through the MCP client
 //     (`callTool` / `readResource`), with the wire name qualified by the
 //     calling app's server.
-//   - `INTERNAL_APPS` trust-list authz: external apps cannot cross-call
-//     another server, whether they name it in `_meta` or in the legacy
-//     top-level `server`; internal apps (e.g. `nb`) can, via either.
+//   - Own-server scope: no app reaches another server, whether it names one
+//     in `_meta`, in the top-level `server`, or in a qualified tool name —
+//     whatever the app's name.
 //   - Task-augmented `tools/call` (`params.task` present) routes through
 //     the SDK's generic `request()` path so `CreateTaskResult` flows back
 //     to the iframe verbatim within the fast-path budget.
@@ -343,8 +343,8 @@ describe("tools/call — MCP transport", () => {
   });
 });
 
-describe("tools/call — INTERNAL_APPS authz", () => {
-  test("external app with params.server is locked to its own server", async () => {
+describe("tools/call — scoped to the app's own server", () => {
+  test("an app naming another server in params.server is locked to its own", async () => {
     const frame = mount("synapse-research");
 
     frame.send({
@@ -355,53 +355,13 @@ describe("tools/call — INTERNAL_APPS authz", () => {
     });
     await frame.waitFor((m) => (m as { id?: string })?.id === "a2");
 
-    // MCP client received a name qualified with the app's server,
-    // NOT "nb" — the authz rule rejects the cross-call attempt.
+    // The MCP client received a name qualified with the app's own server.
     expect(mcpCallTool).toHaveBeenCalledTimes(1);
     const [callParams] = mcpCallTool.mock.calls[0] ?? [];
     expect((callParams as { name: string }).name).toBe("synapse-research__t");
   });
 
-  test("internal app with params.server is allowed to cross-call", async () => {
-    const frame = mount("nb");
-
-    frame.send({
-      jsonrpc: "2.0",
-      id: "a4",
-      method: "tools/call",
-      params: { name: "briefing", arguments: {}, server: "home" },
-    });
-    await frame.waitFor((m) => (m as { id?: string })?.id === "a4");
-
-    expect(mcpCallTool).toHaveBeenCalledTimes(1);
-    const [callParams] = mcpCallTool.mock.calls[0] ?? [];
-    expect((callParams as { name: string }).name).toBe("home__briefing");
-  });
-
-  // The target source's home is `_meta`, because that is the only place a
-  // params extension survives a spec client or host on the path. Both
-  // locations resolve to the same authz rule, and the same trust list.
-  test("internal app cross-calls via _meta", async () => {
-    const frame = mount("nb");
-
-    frame.send({
-      jsonrpc: "2.0",
-      id: "a4m",
-      method: "tools/call",
-      params: {
-        name: "briefing",
-        arguments: {},
-        _meta: { "ai.nimblebrain/server": "home" },
-      },
-    });
-    await frame.waitFor((m) => (m as { id?: string })?.id === "a4m");
-
-    expect(mcpCallTool).toHaveBeenCalledTimes(1);
-    const [callParams] = mcpCallTool.mock.calls[0] ?? [];
-    expect((callParams as { name: string }).name).toBe("home__briefing");
-  });
-
-  test("external app with a _meta target is locked to its own server", async () => {
+  test("an app naming another server in _meta is locked to its own", async () => {
     const frame = mount("db-query");
 
     frame.send({
@@ -421,54 +381,54 @@ describe("tools/call — INTERNAL_APPS authz", () => {
     expect((callParams as { name: string }).name).toBe("db-query__t");
   });
 
-  // An app mid-upgrade can carry both: the SDK it was built against sends the
-  // old field, a newer one sends `_meta`. `_meta` is the real home, so it
-  // wins — otherwise a stale sibling field would silently outrank the value
-  // the current SDK actually put there.
-  test("_meta outranks the legacy top-level server", async () => {
-    const frame = mount("nb");
+  // The regression guard: no app name carries cross-source reach, by any of
+  // the three ways an app can name a server.
+  for (const appName of ["nb", "settings", "home", "usage"]) {
+    test(`an app named "${appName}" naming another server is locked to its own`, async () => {
+      const frame = mount(appName);
 
-    frame.send({
-      jsonrpc: "2.0",
-      id: "a4b",
-      method: "tools/call",
-      params: {
-        name: "briefing",
-        arguments: {},
-        server: "usage",
-        _meta: { "ai.nimblebrain/server": "home" },
-      },
+      frame.send({
+        jsonrpc: "2.0",
+        id: `a-name-${appName}`,
+        method: "tools/call",
+        params: {
+          name: "t",
+          arguments: {},
+          server: "db-query",
+          _meta: { "ai.nimblebrain/server": "db-query" },
+        },
+      });
+      await frame.waitFor((m) => (m as { id?: string })?.id === `a-name-${appName}`);
+
+      expect(mcpCallTool).toHaveBeenCalledTimes(1);
+      const [callParams] = mcpCallTool.mock.calls[0] ?? [];
+      expect((callParams as { name: string }).name).toBe(`${appName}__t`);
     });
-    await frame.waitFor((m) => (m as { id?: string })?.id === "a4b");
 
-    const [callParams] = mcpCallTool.mock.calls[0] ?? [];
-    expect((callParams as { name: string }).name).toBe("home__briefing");
-  });
+    test(`an app named "${appName}" cannot reach another server via a qualified name`, async () => {
+      const frame = mount(appName);
 
-  test("a _meta with no target falls back to the app's own server", async () => {
-    const frame = mount("nb");
+      frame.send({
+        jsonrpc: "2.0",
+        id: `a-q-${appName}`,
+        method: "tools/call",
+        params: { name: "db-query__describe_tables", arguments: {} },
+      });
 
-    frame.send({
-      jsonrpc: "2.0",
-      id: "a4c",
-      method: "tools/call",
-      params: {
-        name: "briefing",
-        arguments: {},
-        _meta: { "io.modelcontextprotocol/related-task": { taskId: "t1" } },
-      },
+      const reply = (await frame.waitFor(
+        (m) => (m as { id?: string })?.id === `a-q-${appName}`,
+      )) as { error?: { code: number; message: string } };
+      expect(reply.error?.code).toBe(-32000);
+      expect(reply.error?.message).toContain("scoped");
+      expect(mcpCallTool).not.toHaveBeenCalled();
     });
-    await frame.waitFor((m) => (m as { id?: string })?.id === "a4c");
-
-    const [callParams] = mcpCallTool.mock.calls[0] ?? [];
-    expect((callParams as { name: string }).name).toBe("nb__briefing");
-  });
+  }
 
   // `params.server` is not the only way to name a source: a qualified tool
-  // name carries one too, and it used to reach `/mcp` untouched because the
-  // transport helper only prefixes a BARE name. A connector iframe could
-  // therefore call any tool in the workspace by sending the qualified form.
-  test("external app cannot reach another server via a QUALIFIED tool name", async () => {
+  // name carries one too, and the transport helper only prefixes a BARE name.
+  // Without the refusal an iframe could call any tool in the workspace by
+  // sending the qualified form.
+  test("an app cannot reach another server via a QUALIFIED tool name", async () => {
     const frame = mount("db-query");
 
     frame.send({
@@ -487,7 +447,7 @@ describe("tools/call — INTERNAL_APPS authz", () => {
     expect(mcpCallTool).not.toHaveBeenCalled();
   });
 
-  test("external app may qualify a name with its OWN server", async () => {
+  test("an app may qualify a name with its OWN server", async () => {
     const frame = mount("db-query");
 
     frame.send({
@@ -501,22 +461,6 @@ describe("tools/call — INTERNAL_APPS authz", () => {
     expect(mcpCallTool).toHaveBeenCalledTimes(1);
     const [callParams] = mcpCallTool.mock.calls[0] ?? [];
     expect((callParams as { name: string }).name).toBe("db-query__describe_tables");
-  });
-
-  test("internal app keeps its qualified-name cross-call", async () => {
-    const frame = mount("nb");
-
-    frame.send({
-      jsonrpc: "2.0",
-      id: "a8",
-      method: "tools/call",
-      params: { name: "home__briefing", arguments: {} },
-    });
-    await frame.waitFor((m) => (m as { id?: string })?.id === "a8");
-
-    expect(mcpCallTool).toHaveBeenCalledTimes(1);
-    const [callParams] = mcpCallTool.mock.calls[0] ?? [];
-    expect((callParams as { name: string }).name).toBe("home__briefing");
   });
 });
 
@@ -538,28 +482,10 @@ describe("resources/read — MCP transport", () => {
     expect(mcpReadResource).toHaveBeenCalledTimes(1);
   });
 
-  // The resolved target goes on the wire as `RESOURCE_SOURCE_META_KEY`, and
-  // `/mcp` reads from that one source. What reaches `/mcp` is only ever the
-  // target the resolver chose — never the iframe's own `_meta` — so an internal
-  // and an external app naming the same source differ on the wire.
-  test("an internal app's _meta target reaches the MCP client resolved", async () => {
-    const frame = mount("nb");
-
-    frame.send({
-      jsonrpc: "2.0",
-      id: "r-meta",
-      method: "resources/read",
-      params: { uri: "ui://demo", _meta: { "ai.nimblebrain/server": "files" } },
-    });
-    await frame.waitFor((m) => (m as { id?: string })?.id === "r-meta");
-
-    expect(mcpReadResource).toHaveBeenCalledWith({
-      uri: "ui://demo",
-      _meta: { [RESOURCE_SOURCE_META_KEY]: "files" },
-    });
-  });
-
-  test("an external app naming another source still reads its own", async () => {
+  // The app's own server goes on the wire as `RESOURCE_SOURCE_META_KEY`, and
+  // `/mcp` reads from that one source. What reaches `/mcp` is never the
+  // iframe's own `_meta`.
+  test("an app naming another source still reads its own", async () => {
     const frame = mount("db-query");
 
     frame.send({
@@ -614,7 +540,7 @@ describe("resources/read — scoped to the app's own server", () => {
     await frame.waitFor((m) => (m as { id?: string })?.id === id);
   }
 
-  test("an external app's read names its own server", async () => {
+  test("an app's read names its own server", async () => {
     await readAs("db-query", "s1", { uri: "files://fl_0123" });
     expect(mcpReadResource).toHaveBeenCalledWith({
       uri: "files://fl_0123",
@@ -622,7 +548,7 @@ describe("resources/read — scoped to the app's own server", () => {
     });
   });
 
-  test("an external app cannot name another server", async () => {
+  test("an app cannot name another server", async () => {
     await readAs("db-query", "s2", { uri: "ui://neighbor/dashboard", server: "neighbor" });
     expect(mcpReadResource).toHaveBeenCalledWith({
       uri: "ui://neighbor/dashboard",
@@ -649,11 +575,18 @@ describe("resources/read — scoped to the app's own server", () => {
     });
   });
 
-  test("an internal app may name another server", async () => {
-    await readAs("nb", "s5", { uri: "ui://home/briefing", server: "home" });
-    expect(mcpReadResource).toHaveBeenCalledWith({
-      uri: "ui://home/briefing",
-      _meta: scopedTo("home"),
+  // The regression guard: no app name carries cross-source reach.
+  for (const appName of ["nb", "settings", "home", "usage"]) {
+    test(`an app named "${appName}" naming another server reads its own`, async () => {
+      await readAs(appName, `s-name-${appName}`, {
+        uri: "ui://neighbor/dashboard",
+        server: "neighbor",
+        _meta: { "ai.nimblebrain/server": "neighbor" },
+      });
+      expect(mcpReadResource).toHaveBeenCalledWith({
+        uri: "ui://neighbor/dashboard",
+        _meta: scopedTo(appName),
+      });
     });
-  });
+  }
 });

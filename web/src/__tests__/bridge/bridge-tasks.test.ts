@@ -124,7 +124,6 @@ mock.module("../../mcp-bridge-client", () => ({
 
 // Import bridge AFTER mocks so it picks up the stubs.
 const { createBridge, RESOURCE_SOURCE_META_KEY } = await import("../../bridge/bridge");
-const { SERVER_META_KEY } = await import("../../bridge/schemas");
 
 // ---------------------------------------------------------------------------
 // Test harness — shared with bridge-transport.test.ts but re-defined here
@@ -567,11 +566,11 @@ describe("tasks/* — scoped to the app's own server", () => {
     );
   });
 
-  test("an external app cannot name another server", async () => {
+  test("an app naming another server is held to its own", async () => {
     const sent = await forwardedAs("synapse-research", {
       taskId: "task-1",
       server: "files",
-      _meta: { [SERVER_META_KEY]: "files" },
+      _meta: { "ai.nimblebrain/server": "files" },
     });
     expect(sent).toEqual(
       METHODS.map((method) => ({
@@ -581,16 +580,20 @@ describe("tasks/* — scoped to the app's own server", () => {
     );
   });
 
-  test("an internal app may name the server that ran the task", async () => {
-    const sent = await forwardedAs("nb", {
-      taskId: "task-1",
-      _meta: { [SERVER_META_KEY]: "synapse-research" },
+  // The regression guard: no app name carries cross-source reach.
+  for (const appName of ["nb", "settings", "home", "usage"]) {
+    test(`an app named "${appName}" naming another server is held to its own`, async () => {
+      const sent = await forwardedAs(appName, {
+        taskId: "task-1",
+        server: "synapse-research",
+        _meta: { "ai.nimblebrain/server": "synapse-research" },
+      });
+      expect(sent).toEqual(
+        METHODS.map((method) => ({
+          method,
+          params: { taskId: "task-1", _meta: scopedTo(appName) },
+        })),
+      );
     });
-    expect(sent).toEqual(
-      METHODS.map((method) => ({
-        method,
-        params: { taskId: "task-1", _meta: scopedTo("synapse-research") },
-      })),
-    );
-  });
+  }
 });

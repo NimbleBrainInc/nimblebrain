@@ -100,7 +100,7 @@ describe("validateAppToHostMessage", () => {
     expect(result.reason).toMatch(/ctrlKey/);
   });
 
-  test("accepts a tools/call carrying the target server in _meta", () => {
+  test("tolerates an unrecognised _meta key on tools/call", () => {
     const result = validateAppToHostMessage({
       jsonrpc: "2.0",
       method: "tools/call",
