@@ -180,9 +180,10 @@ export interface WorkspaceOAuthProviderOptions {
     tokenEndpointAuthMethod?: "none" | "client_secret_post" | "client_secret_basic";
   };
   /**
-   * OAuth scopes for `clientMetadata.scope`. Threaded into the SDK's
-   * authorize URL build so the AS sees the requested permissions.
-   * Omit for DCR servers that derive scopes from server metadata.
+   * OAuth scopes this connection requests. Set as the authorize URL's
+   * `scope` in `redirectToAuthorization`, replacing whatever the SDK
+   * resolved, and mirrored into `clientMetadata.scope`. Omit to request
+   * what the server's challenge or metadata names.
    */
   scopes?: string[];
   /**
@@ -247,6 +248,29 @@ function canonicalEndpoint(u: URL): string {
   const origin = u.origin.toLowerCase();
   const path = u.pathname.replace(/\/+$/, "") || "/";
   return `${origin}${path}`;
+}
+
+/**
+ * Make configured scopes the grant an authorize URL asks for. The SDK resolves
+ * `scope` from the 401 challenge first, then the server's advertised
+ * `scopes_supported`, and reaches `clientMetadata.scope` only when both are
+ * absent — so a server advertising every scope it has would otherwise be asked
+ * for all of them, whatever the catalog pinned.
+ *
+ * The SDK also pairs `offline_access` with `prompt=consent` (OIDC Core §11),
+ * keyed to its own resolved scope. The pairing is kept for the configured set,
+ * joining any `prompt` already present rather than replacing it — except
+ * `none`, which admits no other value (OIDC Core §3.1.2.1). No scopes
+ * configured leaves the URL as the SDK built it.
+ */
+function applyConfiguredScopes(url: URL, scopes: string[] | undefined): void {
+  if (!scopes || scopes.length === 0) return;
+  url.searchParams.set("scope", scopes.join(" "));
+  const prompt = url.searchParams.get("prompt")?.split(" ") ?? [];
+  const joinable = !prompt.includes("consent") && !prompt.includes("none");
+  if (scopes.includes("offline_access") && joinable) {
+    url.searchParams.set("prompt", [...prompt, "consent"].join(" "));
+  }
 }
 
 /** Lowercased origin of a URL string, or undefined if it doesn't parse. */
@@ -1280,6 +1304,7 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
         url.searchParams.set(k, v);
       }
     }
+    applyConfiguredScopes(url, this.scopes);
     // Claim the URL-capture slot synchronously, BEFORE any await. The
     // headless probe loop and interactive branch below both `await`, so
     // without this claim two concurrent calls could both reach the
