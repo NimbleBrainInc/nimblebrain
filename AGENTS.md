@@ -199,7 +199,7 @@ So read the write path. Do not assume a call site is covered because the helper 
 
 When adding a new code path that touches workspace-scoped credentials or identity, match the existing precedent: **hard-error on missing `wsId`, don't silently default**. `startConnectorSource`'s named-connector branch throws; the URL-connector branch does too (for OAuth-provider paths). A `?? "ws_default"` fallback would pool credentials across tenants.
 
-**Every secret goes through one door.** `CredentialStore` (`src/tools/credential-store.ts`) is scoped — `instance` (`{workDir}/credentials/secrets/`), `workspace` (`workspaces/<wsId>/credentials/secrets/`), `user` (`users/<userId>/credentials/secrets/`) — and there is exactly **one** construction site, `runtime.getCredentialStore()`, which is also where the audit sink is attached. `Runtime.start` installs that instance via `setCredentialStore` for the leaf readers (`remote-transport.ts`, `oauth-static-client.ts`) that hold no runtime; reach it with `requireCredentialStore()` there and with the runtime accessor everywhere else. **Never construct a `FileCredentialStore`** — with several of them the interface stops being a swap point for an encrypted backend, which is the whole reason it exists.
+**Every secret goes through one door.** `CredentialStore` (`src/tools/credential-store.ts`) is scoped — `instance` (`{workDir}/credentials/secrets/`), `workspace` (`workspaces/<wsId>/credentials/secrets/`), `user` (`users/<userId>/credentials/secrets/`) — and it is built only by `createCredentialStore` (`src/tools/credential-store-backend.ts`), which reads the `secrets` config block — at the composition root, where the audit sink is attached and `runtime.getCredentialStore()` hands it out, and in the operator `secrets` subcommand, which has no runtime. `Runtime.start` installs that instance via `setCredentialStore` for the leaf readers (`remote-transport.ts`, `oauth-static-client.ts`) that hold no runtime; reach it with `requireCredentialStore()` there and with the runtime accessor everywhere else. **Never construct a `FileCredentialStore`** — a direct construction bypasses the configured backend, so on a deployment that seals it reads and writes plaintext. A value that claims to be sealed opens on `reveal()` or throws, never on `get` (a `get` without a reveal is the presence probe) and never as plaintext; see ADR-0035.
 
 Config **references** a secret and never carries one: `{ ref: "credential", key }` (`src/tools/credential-ref.ts`) is accepted on `transport.auth.token` / `.value`, every `transport.headers` value, `oauthClient.clientSecret`, and — resolved at boot by `resolveInstanceCredentialRefs`, anywhere in `nimblebrain.json` / `instance.json` — the provider, broker, gateway and IdP keys. Workspace references resolve **per connection**, so rotation is a `put` on the same key. There is no `${VAR}` expansion in a transport config; the one remaining env-template expander is `redis.url` in `src/api/session-store/factory.ts`, a different mechanism.
 
@@ -462,8 +462,9 @@ The id is **stored as it is, not as a digest**, and that is deliberate: a
 delivery URL is an ADDRESS handed to external systems repeatedly, so an admin
 has to be able to read it. Under a digest the only way to see one is to rotate,
 and looking would break the integration being looked at. The record already sits
-beside that workspace's conversations, files and connector credentials, none of
-which this runtime encrypts at rest. What bounds it instead is that reading
+beside that workspace's conversations and files, which this runtime does not
+encrypt at rest, and its connector credentials, which it seals only when the
+deployment configures sealing. What bounds it instead is that reading
 needs workspace admin and rotating is one action. The door compares in constant
 time — not because a timing oracle is practical against 256 bits behind a
 per-source rate limit, but because that comparison is the only thing between a
