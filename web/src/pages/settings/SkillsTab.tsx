@@ -27,7 +27,7 @@ import {
   skillLoadingSentence,
   skillMechanismLabel,
 } from "../../lib/skill-display";
-import { linkSafety } from "../../lib/streamdown-config";
+import { linkSafety, rehypePlugins } from "../../lib/streamdown-config";
 import { parseToolResponse } from "../../lib/tool-response";
 import { cn } from "../../lib/utils";
 import { RequireActiveWorkspace, SettingsPageHeader } from "./components";
@@ -845,7 +845,11 @@ function SkillRow({
                * `presence-assistant-message` voice, so a skill body never
                * outweighs the section titles around it. */}
               <div className="max-w-prose text-sm text-foreground/80">
-                <Streamdown className="streamdown-container" linkSafety={linkSafety}>
+                <Streamdown
+                  className="streamdown-container"
+                  linkSafety={linkSafety}
+                  rehypePlugins={rehypePlugins}
+                >
                   {detail.content}
                 </Streamdown>
               </div>
