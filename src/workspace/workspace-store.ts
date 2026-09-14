@@ -175,9 +175,10 @@ export const ARCHIVE_MARKER_FILENAME = ".archived.json";
  *
  * Deletion is archive-then-cascade: the workspace's data subtree is moved
  * under `archived/` rather than
- * destroyed, so it stays recoverable/exportable for a retention window.
- * A separate operator/cleanup job enumerates these markers to apply a
- * retention/export policy — the store never auto-purges (default: keep).
+ * destroyed, so it stays recoverable/exportable until an org admin purges it
+ * from Organization → Archives (`manage_workspaces` `list_archives` /
+ * `purge_archive`, over `src/workspace/archives.ts`). Nothing purges one
+ * automatically (default: keep).
  *
  * The marker deliberately omits a self-reported timestamp: the archive
  * dir's mtime (set at move time) is the authoritative archival time, so
@@ -333,10 +334,10 @@ export class WorkspaceStore {
 
   /**
    * Absolute path to the `archived/` tombstone directory, where `delete`
-   * moves a workspace's data subtree. Exposed for an operator/cleanup job
-   * that enumerates `archived/<wsId>/.archived.json` markers to apply a
-   * retention/export policy — the store itself never sweeps (see `delete`).
-   * Created lazily on the first archive, so this path may not exist yet.
+   * moves a workspace's data subtree. `manage_workspaces` reads it to list
+   * and purge archives for the org-admin Archives tab; nothing sweeps it
+   * (see `delete`). Created lazily on the first archive, so this path may not
+   * exist yet.
    */
   getArchivedDir(): string {
     return this.archivedDir;
@@ -555,9 +556,8 @@ export class WorkspaceStore {
    * destroy it. Instead of removing the directory, we *tombstone* it: move
    * the whole subtree to `archived/<wsId>/` (a same-filesystem `rename(2)`)
    * and drop a `.archived.json` marker. The data stays recoverable /
-   * exportable for a retention window; a separate operator/cleanup job
-   * purges tombstones under its own policy — the store never auto-purges
-   * (default: keep).
+   * exportable until an org admin purges that one archive from
+   * Organization → Archives — nothing purges automatically (default: keep).
    *
    * From every other surface the workspace is gone the moment this
    * returns: `get`/`list` read `workspaces/`, which no longer holds the
