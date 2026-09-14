@@ -527,6 +527,45 @@ describe("resources/read — MCP transport", () => {
   });
 });
 
+describe("a method the host does not serve", () => {
+  /** Let the bridge handle an injected message before asserting on silence. */
+  const settle = () => new Promise((r) => setTimeout(r, 20));
+
+  test("a request gets method-not-found, so the view's call does not hang", async () => {
+    const frame = mount("synapse-research");
+
+    frame.send({ jsonrpc: "2.0", id: "l1", method: "sampling/createMessage", params: {} });
+
+    const reply = (await frame.waitFor((m) => (m as { id?: string })?.id === "l1")) as {
+      error?: { code: number; message: string };
+    };
+    expect(reply.error?.code).toBe(-32601);
+    expect(reply.error?.message).toContain("sampling/createMessage");
+    expect(mcpRequest).not.toHaveBeenCalled();
+  });
+
+  test("a numeric request id is answered with that id", async () => {
+    const frame = mount("synapse-research");
+
+    frame.send({ jsonrpc: "2.0", id: 7, method: "prompts/list" });
+
+    const reply = (await frame.waitFor((m) => (m as { id?: number })?.id === 7)) as {
+      error?: { code: number };
+    };
+    expect(reply.error?.code).toBe(-32601);
+  });
+
+  test("a notification and a methodless message get no reply", async () => {
+    const frame = mount("synapse-research");
+
+    frame.send({ jsonrpc: "2.0", method: "notifications/unknown" });
+    frame.send({ jsonrpc: "2.0", id: "resp-1", result: {} });
+    await settle();
+
+    expect(frame.inbox.filter((m) => (m as { error?: unknown }).error !== undefined)).toEqual([]);
+  });
+});
+
 // Every iframe shares one `/mcp` session, so `/mcp` cannot tell which app a
 // read came from. The bridge can: it names the resolved server under
 // `RESOURCE_SOURCE_META_KEY`, as it does for listings, and `/mcp` reads from

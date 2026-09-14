@@ -57,6 +57,8 @@ All messages use `window.postMessage` with JSON-RPC 2.0 envelopes:
 | `ui/request-display-mode` | Request | Ask to be displayed differently. Answered with the mode actually in effect. See [below](#uirequest-display-mode). |
 | `notifications/message` | Notification | A log line for the host's console. |
 
+A request for any other method gets a JSON-RPC `-32601` (method not found) error, so the call fails right away instead of waiting. The host ignores any other notification.
+
 ### NimbleBrain extensions (`synapse/`)
 
 These have no spec equivalent and degrade to no-ops in non-NimbleBrain hosts.
