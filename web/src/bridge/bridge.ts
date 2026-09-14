@@ -43,7 +43,6 @@ import { appNameFromToolName } from "../lib/namespaced-tool";
 import { getMcpBridgeClient, withSessionRetry } from "../mcp-bridge-client";
 import { serverCapabilities } from "./relayed-notifications";
 import type { LoggingMessageNotification } from "./schemas";
-import { SERVER_META_KEY } from "./schemas";
 import { getHostThemeMode, getSpecThemeTokens, getThemeTokens } from "./theme";
 import type {
   BridgeCallbacks,
@@ -83,15 +82,6 @@ interface WidgetStateEntry {
 
 const appStateStore = new Map<string, AppStateEntry>();
 const widgetStateStore = new Map<string, WidgetStateEntry>();
-
-/**
- * Internal app names allowed to address another source — on tools/call,
- * resources/read, a resource listing, or a task request — by naming it in
- * `_meta[SERVER_META_KEY]` (or the legacy top-level field). External iframe
- * apps are strictly scoped to their own server. Defined once at module scope
- * so every call site shares the same trust list.
- */
-const INTERNAL_APPS = new Set(["nb", "settings", "home", "usage"]);
 
 /** Get the latest app state pushed via ui/update-model-context. */
 export function getAppState(appName: string): AppStateEntry | undefined {
@@ -751,37 +741,14 @@ function handleInitialize(
 }
 
 /**
- * The MCP source a request is addressed to, held to the INTERNAL_APPS trust
- * list: an app that is not internal always talks to itself, whatever it asked
- * for.
+ * Proxy a spec `tools/call` to the app's own server through the MCP bridge and
+ * forward the result (or a JSON-RPC error) to the iframe.
  *
- * Two places carry the request, because two generations of the SDK put it in
- * different ones. `_meta[SERVER_META_KEY]` is where it belongs and the only
- * place it survives a spec client or host on the path — `params` is parsed
- * against the MCP request schema, which strips a field it does not name. The
- * top-level `server` is the pre-`_meta` home, and it is still read because a
- * published app inlines the SDK it was built against: apps sending it there
- * outlive by an indefinite margin the SDK release that stopped, and they are
- * not rebuilt by us.
- *
- * Both are read here rather than at each call site so the rule has one home,
- * and `resources/read` cannot drift from `tools/call`.
- */
-function resolveTargetServer(
-  params: { server?: string; _meta?: Record<string, unknown> },
-  appName: string,
-  internal: boolean,
-): string {
-  if (!internal) return appName;
-  const fromMeta = params._meta?.[SERVER_META_KEY];
-  if (typeof fromMeta === "string" && fromMeta.length > 0) return fromMeta;
-  return params.server || appName;
-}
-
-/**
- * Proxy a spec `tools/call` to the MCP bridge — scoping the target server per
- * the INTERNAL_APPS trust list — and forward the result (or a JSON-RPC error)
- * to the iframe.
+ * Every app is scoped to its own server, whatever its name. A server the app
+ * names in `_meta` or in a top-level `server` is ignored, and a qualified tool
+ * name naming another server is refused. This is the only place the scope can
+ * be enforced: the browser holds ONE `/mcp` session shared by every iframe and
+ * the agent, so the server sees no caller to attribute a call to.
  */
 function handleToolsCall(
   params: ToolsCallParams,
@@ -789,35 +756,24 @@ function handleToolsCall(
   appName: string,
   postToIframe: PostToIframe,
 ): void {
-  // Security: tool calls are scoped to appName by default. Internal
-  // connectors (`INTERNAL_APPS`) can address another source instead.
-  // The `/mcp` endpoint is workspace-scoped but doesn't know about the
-  // "internal app" concept, so this authz check stays in the bridge.
-  const internal = INTERNAL_APPS.has(appName);
-  const server = resolveTargetServer(params, appName, internal);
-
-  // A qualified tool name names a source too, so it is a second way to ask
-  // for one — and it has to be held to the same rule as the `_meta` target.
-  // `callToolViaMcp` only prefixes a BARE name, so without this an external
-  // iframe reaches any tool in the workspace by sending the qualified form
-  // it wants (`files__create`) instead of the bare one it is entitled to.
-  // This is the only place the scope can be enforced: the browser holds ONE
-  // `/mcp` session shared by every iframe and the agent, so the server sees
-  // no caller to attribute a call to.
+  // A qualified tool name names a server, so it is a way to ask for one.
+  // `callToolViaMcp` only prefixes a BARE name, so without this an iframe
+  // reaches any tool in the workspace by sending the qualified form it wants
+  // (`files__create`) instead of the bare one it is entitled to.
   const named = appNameFromToolName(params.name);
-  if (!internal && named !== undefined && named !== server) {
+  if (named !== undefined && named !== appName) {
     postToIframe({
       jsonrpc: "2.0",
       id,
       error: {
         code: -32000,
-        message: `Tool calls from "${server}" are scoped to that server; "${params.name}" names another.`,
+        message: `Tool calls from "${appName}" are scoped to that server; "${params.name}" names another.`,
       },
     } satisfies UiToolResultError);
     return;
   }
 
-  callToolViaMcp(server, params, id).then(postToIframe, (err: unknown) => {
+  callToolViaMcp(appName, params, id).then(postToIframe, (err: unknown) => {
     const errorMsg = err instanceof Error ? err.message : "Tool call failed";
     const errorResponse: UiToolResultError = {
       jsonrpc: "2.0",
@@ -829,8 +785,8 @@ function handleToolsCall(
 }
 
 /**
- * Proxy a spec `resources/read` to the MCP bridge (same INTERNAL_APPS scoping
- * as tools/call) and forward the result or a JSON-RPC error to the iframe.
+ * Proxy a spec `resources/read` to the app's own server through the MCP bridge
+ * and forward the result or a JSON-RPC error to the iframe.
  */
 function handleResourcesRead(
   params: ResourcesReadMessage["params"],
@@ -838,15 +794,12 @@ function handleResourcesRead(
   appName: string,
   postToIframe: PostToIframe,
 ): void {
-  // Same trust list and the same two request locations as tools/call: the
-  // app's own server, unless an internal app names another. `/mcp` would
-  // otherwise resolve the URI against every source in the workspace and the
-  // user's identity sources, so the read is scoped by naming this server on
+  // Scoped like tools/call: the app's own server, whatever it names. `/mcp`
+  // would otherwise resolve the URI against every source in the workspace and
+  // the user's identity sources, so the read is scoped by naming this server on
   // the wire (`readResourceViaMcp`). The URI itself passes through verbatim;
   // SSRF safety lives in the connector.
-  const server = resolveTargetServer(params, appName, INTERNAL_APPS.has(appName));
-
-  readResourceViaMcp(server, params.uri)
+  readResourceViaMcp(appName, params.uri)
     .then((result) => {
       postToIframe({ jsonrpc: "2.0", id, result });
     })
@@ -873,11 +826,11 @@ export const RESOURCE_SOURCE_META_KEY = "ai.nimblebrain/source";
  * Proxy a spec `resources/list` / `resources/templates/list` to the app's own
  * server and forward the result — pagination included — or a JSON-RPC error.
  *
- * Scoped like `resources/read` and `tools/call`: the app's own server, unless an
- * internal app names another. The bridge alone knows which iframe asked (every
- * iframe shares one `/mcp` session), so it names the server in the request's
- * `_meta` and `/mcp` lists that one source. The iframe's own `_meta` is not
- * forwarded; only its `cursor` is.
+ * Scoped like `resources/read` and `tools/call`: the app's own server, whatever
+ * it names. The bridge alone knows which iframe asked (every iframe shares one
+ * `/mcp` session), so it names the server in the request's `_meta` and `/mcp`
+ * lists that one source. The iframe's own `_meta` is not forwarded; only its
+ * `cursor` is.
  */
 function handleResourceListing(
   method: "resources/list" | "resources/templates/list",
@@ -886,13 +839,9 @@ function handleResourceListing(
   appName: string,
   postToIframe: PostToIframe,
 ): void {
-  // Same rule, same resolver as tools/call and resources/read: a listing may be
-  // addressed to another source, in `_meta` or in the legacy top-level field,
-  // and only a built-in app may address one at all.
-  const server = resolveTargetServer(params ?? {}, appName, INTERNAL_APPS.has(appName));
   const request = {
     ...(typeof params?.cursor === "string" ? { cursor: params.cursor } : {}),
-    _meta: { [RESOURCE_SOURCE_META_KEY]: server },
+    _meta: { [RESOURCE_SOURCE_META_KEY]: appName },
   };
 
   withSessionRetry(async () => {
@@ -1041,8 +990,6 @@ interface ToolsCallParams {
   arguments?: Record<string, unknown>;
   /** When present, the call is task-augmented per MCP draft 2025-11-25. */
   task?: { ttl?: number; pollInterval?: number };
-  /** Internal-only: cross-call target. Resolved to `server` before this runs. */
-  server?: string;
   [key: string]: unknown;
 }
 
@@ -1064,8 +1011,8 @@ async function callToolViaMcp(
   //
   //   1. Qualified: iframes pass either `<tool>` (bare) or
   //      `<source>__<tool>` (already qualified). A bare name is qualified
-  //      here with the post-INTERNAL_APPS-authz `server`; an already-qualified
-  //      one passes through, having been held to that same authz by the call
+  //      here with `server`, the calling app's own; an already-qualified one
+  //      passes through, having been held to that same server by the call
   //      site (`handleToolsCall`) — which is where it must happen, because by
   //      here the app the call came from is no longer in scope.
   //   2. Scoped: BOTH doors dispatch the same bare `<source>__<tool>` form.
@@ -1158,7 +1105,7 @@ async function callToolViaMcp(
 
 /**
  * Forward a `resources/read` through the MCP SDK bridge client, scoped to
- * `server` — the target the call site resolved under the INTERNAL_APPS rule.
+ * `server` — the calling app's own.
  * Returns the ReadResourceResult shape (`{ contents }`) so the caller can
  * assemble the JSON-RPC response envelope for the iframe.
  */
@@ -1195,10 +1142,6 @@ const TASK_STATUS_METHOD = "notifications/tasks/status" as const;
 /** Params accepted on the three tasks/* iframe messages. */
 interface TasksParams {
   taskId: string;
-  /** Internal apps only: the server that ran the task (legacy location). */
-  server?: string;
-  /** Internal apps only: the server that ran the task, under `SERVER_META_KEY`. */
-  _meta?: Record<string, unknown>;
   [key: string]: unknown;
 }
 
@@ -1235,10 +1178,9 @@ function translateTaskError(err: unknown): { code: number; message: string } {
  *
  * The caller picks the method constant + result schema. What reaches `/mcp` is
  * the `taskId` and the scope, and nothing else the iframe sent. The scope is
- * the app's own server, unless an internal app names another — the same
- * resolver as `tools/call` — under `RESOURCE_SOURCE_META_KEY`, as for a
- * resource read. Every iframe shares one `/mcp` session, so without it `/mcp`
- * would answer for any task the session holds. Errors are mapped via
+ * the app's own server, whatever it names, under `RESOURCE_SOURCE_META_KEY`, as
+ * for a resource read. Every iframe shares one `/mcp` session, so without it
+ * `/mcp` would answer for any task the session holds. Errors are mapped via
  * `translateTaskError`.
  */
 async function forwardTaskRequest(
@@ -1251,8 +1193,7 @@ async function forwardTaskRequest(
   id: string,
   appName: string,
 ): Promise<Record<string, unknown>> {
-  const server = resolveTargetServer(params, appName, INTERNAL_APPS.has(appName));
-  const scoped = { taskId: params.taskId, _meta: { [RESOURCE_SOURCE_META_KEY]: server } };
+  const scoped = { taskId: params.taskId, _meta: { [RESOURCE_SOURCE_META_KEY]: appName } };
   try {
     // `withSessionRetry` only re-runs on the specific session-not-found
     // shape; any other error (incl. spec-mandated `-32602` for missing

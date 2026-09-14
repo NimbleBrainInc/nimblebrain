@@ -273,7 +273,7 @@ Call a tool on your app's MCP server. This is a JSON-RPC **request** — the res
 ```
 
 <Aside type="note">
-Tool calls are scoped to your app's MCP server. The bridge automatically routes `tools/call` with your app's server name. An iframe cannot call tools on other servers — naming one in `_meta["ai.nimblebrain/server"]` changes nothing for an app that is not built into the shell.
+Tool calls are scoped to your app's MCP server. The bridge automatically routes `tools/call` with your app's server name. The host scopes every app to its own server. A server named in `_meta["ai.nimblebrain/server"]` or in a top-level `server` is ignored, and a tool name qualified with another server's name (`other__tool`) is refused.
 </Aside>
 
 ### `resources/read`

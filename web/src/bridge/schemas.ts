@@ -37,24 +37,6 @@ const JsonRpcVersion = Type.Literal("2.0");
 /** Loose record used in `arguments`, `_meta`, etc. — caller-defined shape. */
 const UnknownRecord = Type.Record(Type.String(), Type.Unknown());
 
-/**
- * `_meta` key naming the MCP source a call is addressed to, on the requests
- * that accept one (`tools/call`, `resources/read`).
- *
- * Cross-source dispatch is a NimbleBrain convention, not an MCP field, and
- * `_meta` is the only place a params extension survives: `params` is parsed
- * against the spec's own request schema, so a sibling of `name` and
- * `arguments` is stripped by any compliant client or host on the path and the
- * call arrives addressed to nobody.
- *
- * **This string is a wire contract with `@nimblebrain/synapse`, which spells
- * it in its own `SERVER_META_KEY`.** It cannot be imported: the bridge
- * protocol is in the backend unit suite's import graph, so it must build on
- * root dependencies alone, and `web/` does not depend on the SDK. A test pins
- * the literal on each side instead.
- */
-export const SERVER_META_KEY = "ai.nimblebrain/server";
-
 /** Empty params shape (`Record<string, never>` in the legacy interfaces). */
 const EmptyParams = Type.Object({}, { additionalProperties: false });
 
@@ -99,14 +81,7 @@ export const ToolsCallMessage = Type.Object({
   params: Type.Object({
     name: Type.String(),
     arguments: Type.Optional(UnknownRecord),
-    // NimbleBrain-only extension: internal apps (see `INTERNAL_APPS` in
-    // `bridge.ts`) may address another MCP source instead of their own,
-    // through `_meta[SERVER_META_KEY]`. Ignored for non-internal apps.
     _meta: Type.Optional(UnknownRecord),
-    // The pre-`_meta` home for the same value. Still accepted because a
-    // published app carries the SDK version it was built against, inlined —
-    // so apps that send it here outlive the SDK release that stopped.
-    server: Type.Optional(Type.String()),
   }),
 });
 export type ToolsCallMessage = Static<typeof ToolsCallMessage>;
@@ -118,24 +93,18 @@ export const ResourcesReadMessage = Type.Object({
   params: Type.Object({
     uri: Type.String(),
     _meta: Type.Optional(UnknownRecord),
-    server: Type.Optional(Type.String()),
   }),
 });
 export type ResourcesReadMessage = Static<typeof ResourcesReadMessage>;
 
 /**
  * `resources/list` and `resources/templates/list`, answered from the app's own
- * server — the listings `serverResources` promises. `server` is the same
- * internal-app cross-call escape hatch `resources/read` carries.
+ * server — the listings `serverResources` promises.
  */
 const ResourceListingParams = Type.Optional(
   Type.Object({
     cursor: Type.Optional(Type.String()),
-    // The target source, in `_meta[SERVER_META_KEY]` or the legacy sibling —
-    // read through the one resolver in `bridge.ts`, as tools/call and
-    // resources/read are.
     _meta: Type.Optional(UnknownRecord),
-    server: Type.Optional(Type.String()),
   }),
 );
 

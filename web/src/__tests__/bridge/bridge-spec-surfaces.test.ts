@@ -46,7 +46,6 @@ mock.module("../../mcp-bridge-client", () => ({
 }));
 
 const { createBridge } = await import("../../bridge/bridge");
-const { SERVER_META_KEY } = await import("../../bridge/schemas");
 
 // ---------------------------------------------------------------------------
 // Harness
@@ -333,16 +332,5 @@ describe("notifications/message", () => {
     expect(String(logged?.[0])).toContain("query");
     expect(String(logged?.[0])).toContain("warning");
     expect(logged?.[1]).toBe("slow plan");
-  });
-});
-
-describe("the server _meta key", () => {
-  test("is the exact string the SDK writes", () => {
-    // A wire contract across two packages that cannot import each other: the
-    // bridge protocol has to build on root dependencies alone (it is in the
-    // backend unit suite's import graph) and `web/` does not depend on the
-    // SDK. The SDK pins the same literal in its own suite; if these two ever
-    // disagree, every cross-source call silently addresses nobody.
-    expect(SERVER_META_KEY).toBe("ai.nimblebrain/server");
   });
 });
