@@ -327,6 +327,10 @@ body {
   font-family: 'SF Mono', 'Fira Code', 'Fira Mono', monospace;
   resize: vertical; outline: none;
 }
+.inline-edit-textarea:focus-visible {
+  border-color: var(--color-text-accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-text-accent) 8%, transparent);
+}
 .inline-edit-input {
   width: 100%; padding: 4px 8px;
   border: 2px solid var(--color-text-accent);
@@ -335,6 +339,10 @@ body {
   color: var(--color-text-primary);
   font-size: 13px; font-family: inherit;
   outline: none;
+}
+.inline-edit-input:focus-visible {
+  border-color: var(--color-text-accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-text-accent) 8%, transparent);
 }
 .inline-edit-actions {
   display: flex; gap: 6px; margin-top: 6px; justify-content: flex-end;
