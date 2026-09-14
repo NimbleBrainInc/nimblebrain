@@ -259,14 +259,16 @@ function canonicalEndpoint(u: URL): string {
  *
  * The SDK also pairs `offline_access` with `prompt=consent` (OIDC Core §11),
  * keyed to its own resolved scope. The pairing is kept for the configured set,
- * joining any `prompt` already present rather than replacing it. No scopes
+ * joining any `prompt` already present rather than replacing it — except
+ * `none`, which admits no other value (OIDC Core §3.1.2.1). No scopes
  * configured leaves the URL as the SDK built it.
  */
 function applyConfiguredScopes(url: URL, scopes: string[] | undefined): void {
   if (!scopes || scopes.length === 0) return;
   url.searchParams.set("scope", scopes.join(" "));
   const prompt = url.searchParams.get("prompt")?.split(" ") ?? [];
-  if (scopes.includes("offline_access") && !prompt.includes("consent")) {
+  const joinable = !prompt.includes("consent") && !prompt.includes("none");
+  if (scopes.includes("offline_access") && joinable) {
     url.searchParams.set("prompt", [...prompt, "consent"].join(" "));
   }
 }

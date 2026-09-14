@@ -592,6 +592,11 @@ describe("WorkspaceOAuthProvider — Track A: pre-registered client + scopes + e
     const joined = await authorizeParams(pinned, "mcp.read", { prompt: "select_account" });
     expect(joined.getAll("prompt")).toEqual(["select_account consent"]);
   });
+
+  it("redirectToAuthorization never joins consent to prompt=none", async () => {
+    const params = await authorizeParams(["mcp.read", "offline_access"], "mcp.read", { prompt: "none" });
+    expect(params.getAll("prompt")).toEqual(["none"]);
+  });
 });
 
 describe("WorkspaceOAuthProvider — revokeAndDeleteTokens", () => {
