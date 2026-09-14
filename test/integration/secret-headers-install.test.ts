@@ -6,7 +6,7 @@
  * different things. `providerAuth` is how the connection proves who is calling
  * — for a platform service, a short-lived minted token its front door verifies.
  * `secretHeaders` is what that caller may open — a value only this workspace
- * holds, named by a credential-store key and resolved per connection. Neither
+ * holds, named by a credential-store key and resolved on every request. Neither
  * replaces the other, so they compose on one connection rather than choosing.
  *
  * The three properties that make one catalog entry enough:
@@ -303,7 +303,7 @@ describe("a catalog entry that binds a workspace secret to a header", () => {
     expect(b.get("Authorization")).toBe("Bearer minted-for-ws_tenantb");
   });
 
-  test("rotating the key takes effect on the next connection, with no config edit", async () => {
+  test("rotating the key takes effect on the next resolve, with no config edit", async () => {
     await toolFor("ws_tenanta").handler({ action: "install", entry: entry() });
     await toolFor("ws_tenanta").handler({
       action: "set_secret",
