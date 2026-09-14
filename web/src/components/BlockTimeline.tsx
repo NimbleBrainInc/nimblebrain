@@ -43,7 +43,7 @@ import { useMinDisplayTime, type VisualStatus } from "../hooks/useMinDisplayTime
 import { isDocumentArtifact } from "../lib/artifact-kind";
 import { formatDuration, stripServerPrefix } from "../lib/format";
 import { isPersonalConnectorAppName } from "../lib/namespaced-tool";
-import { linkSafety } from "../lib/streamdown-config";
+import { linkSafety, rehypePlugins } from "../lib/streamdown-config";
 import {
   aggregateGroup,
   type DisplayDetail,
@@ -196,6 +196,7 @@ export function BlockTimeline({
                 className="streamdown-container presence-assistant-message"
                 isAnimating={isTailDelta}
                 linkSafety={linkSafety}
+                rehypePlugins={rehypePlugins}
               >
                 {item.text}
               </Streamdown>

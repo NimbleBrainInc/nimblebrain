@@ -21,7 +21,7 @@ import { ApiClientError, type ReadResourceContent, readResource } from "../api/c
 import { useArtifactPanel } from "../context/ArtifactPanelContext";
 import { isMarkdownMime, normalizeMime } from "../lib/artifact-kind";
 import { useIsMobile } from "../lib/hooks/use-is-mobile";
-import { linkSafety } from "../lib/streamdown-config";
+import { linkSafety, rehypePlugins } from "../lib/streamdown-config";
 
 const TRANSITION = "300ms cubic-bezier(0.33, 1, 0.68, 1)";
 const PANEL_WIDTH = 720; // px — comfortable reading measure on desktop.
@@ -377,6 +377,7 @@ function ArtifactBody({
         <Streamdown
           className="streamdown-container presence-assistant-message"
           linkSafety={linkSafety}
+          rehypePlugins={rehypePlugins}
         >
           {text}
         </Streamdown>

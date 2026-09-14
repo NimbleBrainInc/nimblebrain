@@ -27,7 +27,7 @@ import { Download, FileWarning } from "lucide-react";
 import { useMemo } from "react";
 import { Streamdown } from "streamdown";
 import { isMarkdownMime, normalizeMime } from "../lib/artifact-kind";
-import { linkSafety } from "../lib/streamdown-config";
+import { linkSafety, rehypePlugins } from "../lib/streamdown-config";
 
 export interface ArtifactRendererProps {
   /** Declared (or resolved) media type of the artifact body. */
@@ -90,6 +90,7 @@ export function ArtifactRenderer({
         <Streamdown
           className="streamdown-container presence-assistant-message"
           linkSafety={linkSafety}
+          rehypePlugins={rehypePlugins}
         >
           {text ?? ""}
         </Streamdown>
