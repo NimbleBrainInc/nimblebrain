@@ -180,9 +180,10 @@ export interface WorkspaceOAuthProviderOptions {
     tokenEndpointAuthMethod?: "none" | "client_secret_post" | "client_secret_basic";
   };
   /**
-   * OAuth scopes for `clientMetadata.scope`. Threaded into the SDK's
-   * authorize URL build so the AS sees the requested permissions.
-   * Omit for DCR servers that derive scopes from server metadata.
+   * OAuth scopes this connection requests. Set as the authorize URL's
+   * `scope` in `redirectToAuthorization`, replacing whatever the SDK
+   * resolved, and mirrored into `clientMetadata.scope`. Omit to request
+   * what the server's challenge or metadata names.
    */
   scopes?: string[];
   /**
@@ -1279,6 +1280,14 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
       for (const [k, v] of Object.entries(this.additionalAuthorizationParams)) {
         url.searchParams.set(k, v);
       }
+    }
+    // Configured scopes are the grant this connection asks for. The SDK
+    // resolves `scope` from the 401 challenge first, then the server's
+    // advertised `scopes_supported`, and reaches `clientMetadata.scope` only
+    // when both are absent — so a server advertising every scope it has would
+    // otherwise be asked for all of them, whatever the catalog pinned.
+    if (this.scopes && this.scopes.length > 0) {
+      url.searchParams.set("scope", this.scopes.join(" "));
     }
     // Claim the URL-capture slot synchronously, BEFORE any await. The
     // headless probe loop and interactive branch below both `await`, so

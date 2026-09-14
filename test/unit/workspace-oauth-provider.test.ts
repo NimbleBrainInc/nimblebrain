@@ -528,6 +528,49 @@ describe("WorkspaceOAuthProvider — Track A: pre-registered client + scopes + e
       globalThis.fetch = realFetch;
     }
   });
+
+  // The SDK builds the authorize URL's `scope` from the server's advertised
+  // `scopes_supported` ahead of `clientMetadata.scope`. These drive
+  // `redirectToAuthorization` with that SDK-built value and read back the URL
+  // the headless probe fetched.
+  async function authorizeScope(scopes: string[] | undefined): Promise<string | null> {
+    const calls: string[] = [];
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (async (url: string | URL | Request) => {
+      calls.push(typeof url === "string" ? url : url.toString());
+      return new Response("not a redirect", { status: 200 });
+    }) as typeof fetch;
+    try {
+      const p = new WorkspaceOAuthProvider({
+        owner: { type: "workspace", wsId: "ws_test" },
+        serverName: "crm",
+        workDir,
+        callbackUrl: CALLBACK,
+        allowInsecureRemotes: true,
+        headlessAuthProbe: true,
+        ...(scopes ? { scopes } : {}),
+      });
+      const authUrl = new URL("http://localhost:39991/oauth/authorize");
+      authUrl.searchParams.set("state", p.state());
+      authUrl.searchParams.set("scope", "mcp.read mcp.write mcp.delete offline_access");
+      try {
+        await p.redirectToAuthorization(authUrl);
+      } catch {
+        // expected — see the additionalAuthorizationParams test above.
+      }
+      return new URL(calls[0] ?? "http://missing.invalid/").searchParams.get("scope");
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  }
+
+  it("redirectToAuthorization replaces the SDK-resolved scope with the configured scopes", async () => {
+    expect(await authorizeScope(["mcp.read", "offline_access"])).toBe("mcp.read offline_access");
+  });
+
+  it("redirectToAuthorization leaves the SDK-resolved scope alone when no scopes are configured", async () => {
+    expect(await authorizeScope(undefined)).toBe("mcp.read mcp.write mcp.delete offline_access");
+  });
 });
 
 describe("WorkspaceOAuthProvider — revokeAndDeleteTokens", () => {
