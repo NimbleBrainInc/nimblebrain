@@ -85,7 +85,8 @@ operator-published catalog metadata, never tenant input.
   that knows about presentation.
 - The self-host backend is plaintext on disk. Anyone with the disk has the
   secrets. That is stated rather than obscured, and it is the swap point rather
-  than the design.
+  than the design. ADR-0035 decides the backend choice and the sealed files that
+  stand behind it.
 - `Redacted` costs a `.reveal()` at every genuine use. That friction is the
   feature: it marks exactly where a secret becomes plaintext.
 
