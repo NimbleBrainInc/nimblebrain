@@ -1,9 +1,10 @@
 import { existsSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { UserIdentity } from "../../../src/identity/provider.ts";
+import type { Runtime } from "../../../src/runtime/runtime.ts";
 import type { User } from "../../../src/identity/user.ts";
 import { UserStore } from "../../../src/identity/user.ts";
 import type { InProcessTool } from "../../../src/tools/in-process-app.ts";
@@ -32,10 +33,26 @@ let userStore: UserStore;
 let tool: InProcessTool;
 let currentIdentity: UserIdentity | null;
 
+/**
+ * A runtime stub whose `deleteWorkspace` archives through the real store and
+ * reports no connectors.
+ *
+ * These are the TOOL's tests — the gate, the argument parsing, the prose, the
+ * not-found answer. The cascade itself is the runtime's, and is driven against
+ * a real `Runtime.start()` in
+ * `test/integration/workspace-delete-cascade.test.ts`; stubbing it here would
+ * assert a double.
+ */
 function makeCtx(): ManageWorkspacesContext {
   return {
     getIdentity: () => currentIdentity,
     workspaceStore: store,
+    runtime: {
+      deleteWorkspace: async (wsId: string) => ({
+        deleted: await store.delete(wsId),
+        connectors: [],
+      }),
+    } as unknown as Runtime,
     userStore,
   };
 }
@@ -315,6 +332,43 @@ describe("nb__manage_workspaces", () => {
       }
     });
 
+    test("an archive failure names the teardown that already ran, not a no-op", async () => {
+      const created = parseResult(
+        await tool.handler({ action: "create", name: "Stuck" }),
+      ) as { workspace: { id: string } };
+
+      tool = createManageWorkspacesTool({
+        ...makeCtx(),
+        runtime: {
+          deleteWorkspace: async () => ({
+            deleted: false,
+            deleteError: "EEXIST: file already exists",
+            connectors: [
+              { serverName: "com-example-alpha", ok: true, secrets: { deleted: [], failed: [] } },
+            ],
+          }),
+        } as unknown as Runtime,
+      });
+
+      const result = await tool.handler({
+        action: "delete",
+        workspaceId: created.workspace.id,
+      });
+
+      expect(result.isError).toBe(true);
+      // `deleted: false` with a `deleteError` is NOT the store's idempotent
+      // not-found, and must not be reported as one: the connectors are gone.
+      expect(extractText(result)).not.toContain("Workspace not found");
+      expect(extractText(result)).toContain("EEXIST");
+      expect(extractText(result)).toContain("Tore down 1 connector.");
+      expect(extractText(result)).toContain("cannot be undone");
+      // And it claims nothing about where the record ended up. The store
+      // throws on both sides of its rename, so either claim is wrong half the
+      // time — see `handleDelete`.
+      expect(extractText(result)).not.toContain("still on disk");
+      expect(extractText(result)).not.toContain("is archived");
+    });
+
     test("requires workspaceId", async () => {
       const result = await tool.handler({
         action: "update",
@@ -375,6 +429,48 @@ describe("nb__manage_workspaces", () => {
 
       // Verify directory is gone
       expect(existsSync(wsDir)).toBe(false);
+    });
+
+    test("reports what the delete tore down, and names what did not", async () => {
+      const created = parseResult(
+        await tool.handler({ action: "create", name: "Wired" }),
+      ) as { workspace: { id: string } };
+
+      tool = createManageWorkspacesTool({
+        ...makeCtx(),
+        runtime: {
+          deleteWorkspace: async (wsId: string) => ({
+            deleted: await store.delete(wsId),
+            connectors: [
+              { serverName: "com-example-alpha", ok: true, secrets: { deleted: [], failed: [] } },
+              {
+                serverName: "com-example-beta",
+                ok: false,
+                error: "vendor unreachable",
+                secrets: { deleted: [], failed: [] },
+              },
+            ],
+          }),
+        } as unknown as Runtime,
+      });
+
+      const result = await tool.handler({
+        action: "delete",
+        workspaceId: created.workspace.id,
+      });
+
+      expect(result.isError).toBe(false);
+      // The record is archived, so this sentence is the last place the connector
+      // whose grant may still be live at a vendor is nameable.
+      expect(extractText(result)).toContain("Tore down 2 connectors.");
+      expect(extractText(result)).toContain('"com-example-beta"');
+      expect(extractText(result)).not.toContain('"com-example-alpha"');
+
+      const parsed = parseResult(result) as { connectors: Array<{ serverName: string }> };
+      expect(parsed.connectors.map((c) => c.serverName)).toEqual([
+        "com-example-alpha",
+        "com-example-beta",
+      ]);
     });
 
     test("requires workspaceId", async () => {
@@ -525,6 +621,80 @@ describe("nb__manage_workspaces", () => {
       const result = await tool.handler({ action: "claim_admin", workspaceId: ws.id });
 
       expect(extractText(result)).toContain("don't have permission");
+    });
+  });
+
+  describe("archives", () => {
+    async function deleteViaTool(name: string): Promise<string> {
+      const created = parseResult(await tool.handler({ action: "create", name })) as {
+        workspace: { id: string };
+      };
+      await tool.handler({ action: "delete", workspaceId: created.workspace.id });
+      return created.workspace.id;
+    }
+
+    test("list_archives shows a deleted workspace, and an archive with no workspace.json as unknown", async () => {
+      const id = await deleteViaTool("Gone");
+      await mkdir(join(store.getArchivedDir(), "ws_orphan"), { recursive: true });
+
+      const result = await tool.handler({ action: "list_archives" });
+
+      expect(result.isError).toBe(false);
+      const { archives } = parseResult(result) as {
+        archives: Array<{ name: string; workspaceId: string | null; workspaceName: string | null }>;
+      };
+      expect(archives.find((a) => a.name === id)?.workspaceName).toBe("Gone");
+      const orphan = archives.find((a) => a.name === "ws_orphan");
+      expect(orphan?.workspaceId).toBeNull();
+      expect(orphan?.workspaceName).toBeNull();
+    });
+
+    test("a non-admin gets the permission-denied result, not an empty list", async () => {
+      await deleteViaTool("Gone");
+      currentIdentity = { ...currentIdentity!, orgRole: "member" };
+      tool = createManageWorkspacesTool(makeCtx());
+
+      for (const action of ["list_archives", "purge_archive"]) {
+        const result = await tool.handler({ action, archive: "ws_anything" });
+        expect(result.structuredContent).toBeUndefined();
+        expect(extractText(result)).toContain("You don't have permission to manage workspaces");
+      }
+    });
+
+    test("purge_archive removes one archive; purging it again is a clean no-op", async () => {
+      const gone = await deleteViaTool("Gone");
+      const kept = await deleteViaTool("Kept");
+
+      const first = await tool.handler({ action: "purge_archive", archive: gone });
+      expect(first.isError).toBe(false);
+      expect((parseResult(first) as { purged: boolean }).purged).toBe(true);
+      expect(existsSync(join(store.getArchivedDir(), gone))).toBe(false);
+      expect(existsSync(join(store.getArchivedDir(), kept))).toBe(true);
+
+      const second = await tool.handler({ action: "purge_archive", archive: gone });
+      expect(second.isError).toBe(false);
+      expect((parseResult(second) as { purged: boolean }).purged).toBe(false);
+    });
+
+    test("purge_archive refuses a traversal and touches nothing", async () => {
+      const live = await store.create("Live");
+      const liveDir = join(workDir, "workspaces", live.id);
+
+      const result = await tool.handler({
+        action: "purge_archive",
+        archive: `../workspaces/${live.id}`,
+      });
+
+      expect(result.isError).toBe(true);
+      expect(extractText(result)).toContain("is not an archive name");
+      expect(existsSync(liveDir)).toBe(true);
+    });
+
+    test("purge_archive requires an archive name", async () => {
+      const result = await tool.handler({ action: "purge_archive" });
+
+      expect(result.isError).toBe(true);
+      expect(extractText(result)).toContain("archive is required");
     });
   });
 

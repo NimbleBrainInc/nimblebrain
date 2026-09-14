@@ -37,6 +37,24 @@ const JsonRpcVersion = Type.Literal("2.0");
 /** Loose record used in `arguments`, `_meta`, etc. — caller-defined shape. */
 const UnknownRecord = Type.Record(Type.String(), Type.Unknown());
 
+/**
+ * `_meta` key naming the MCP source a call is addressed to, on the requests
+ * that accept one (`tools/call`, `resources/read`).
+ *
+ * Cross-source dispatch is a NimbleBrain convention, not an MCP field, and
+ * `_meta` is the only place a params extension survives: `params` is parsed
+ * against the spec's own request schema, so a sibling of `name` and
+ * `arguments` is stripped by any compliant client or host on the path and the
+ * call arrives addressed to nobody.
+ *
+ * **This string is a wire contract with `@nimblebrain/synapse`, which spells
+ * it in its own `SERVER_META_KEY`.** It cannot be imported: the bridge
+ * protocol is in the backend unit suite's import graph, so it must build on
+ * root dependencies alone, and `web/` does not depend on the SDK. A test pins
+ * the literal on each side instead.
+ */
+export const SERVER_META_KEY = "ai.nimblebrain/server";
+
 /** Empty params shape (`Record<string, never>` in the legacy interfaces). */
 const EmptyParams = Type.Object({}, { additionalProperties: false });
 
@@ -82,8 +100,12 @@ export const ToolsCallMessage = Type.Object({
     name: Type.String(),
     arguments: Type.Optional(UnknownRecord),
     // NimbleBrain-only extension: internal apps (see `INTERNAL_APPS` in
-    // `bridge.ts`) may set `server` to cross-call another MCP source
-    // instead of their own. Non-spec; ignored for non-internal apps.
+    // `bridge.ts`) may address another MCP source instead of their own,
+    // through `_meta[SERVER_META_KEY]`. Ignored for non-internal apps.
+    _meta: Type.Optional(UnknownRecord),
+    // The pre-`_meta` home for the same value. Still accepted because a
+    // published app carries the SDK version it was built against, inlined —
+    // so apps that send it here outlive the SDK release that stopped.
     server: Type.Optional(Type.String()),
   }),
 });
@@ -95,10 +117,43 @@ export const ResourcesReadMessage = Type.Object({
   id: RequestId,
   params: Type.Object({
     uri: Type.String(),
+    _meta: Type.Optional(UnknownRecord),
     server: Type.Optional(Type.String()),
   }),
 });
 export type ResourcesReadMessage = Static<typeof ResourcesReadMessage>;
+
+/**
+ * `resources/list` and `resources/templates/list`, answered from the app's own
+ * server — the listings `serverResources` promises. `server` is the same
+ * internal-app cross-call escape hatch `resources/read` carries.
+ */
+const ResourceListingParams = Type.Optional(
+  Type.Object({
+    cursor: Type.Optional(Type.String()),
+    // The target source, in `_meta[SERVER_META_KEY]` or the legacy sibling —
+    // read through the one resolver in `bridge.ts`, as tools/call and
+    // resources/read are.
+    _meta: Type.Optional(UnknownRecord),
+    server: Type.Optional(Type.String()),
+  }),
+);
+
+export const ResourcesListMessage = Type.Object({
+  jsonrpc: JsonRpcVersion,
+  method: Type.Literal("resources/list"),
+  id: RequestId,
+  params: ResourceListingParams,
+});
+export type ResourcesListMessage = Static<typeof ResourcesListMessage>;
+
+export const ResourceTemplatesListMessage = Type.Object({
+  jsonrpc: JsonRpcVersion,
+  method: Type.Literal("resources/templates/list"),
+  id: RequestId,
+  params: ResourceListingParams,
+});
+export type ResourceTemplatesListMessage = Static<typeof ResourceTemplatesListMessage>;
 
 export const UiMessageMessage = Type.Object({
   jsonrpc: JsonRpcVersion,
@@ -212,6 +267,76 @@ export type UiDownloadFileMessage = Static<typeof UiDownloadFileMessage> & {
   params: { data: Blob; filename: string; mimeType: string };
 };
 
+/**
+ * Spec `ui/download-file` — the standard way an app hands the user a file.
+ *
+ * `contents` carries MCP resource blocks: an `EmbeddedResource` (inline
+ * `text` or base64 `blob`) or a `ResourceLink` the host is expected to fetch.
+ * The blocks are typed loosely here for the same reason the rest of this file
+ * is: the host reads only the documented fields, and a hostile iframe's extras
+ * are ignored rather than propagated.
+ *
+ * Distinct from the `synapse/download-file` extension above, which predates
+ * this and takes an already-materialised `Blob`.
+ */
+export const UiDownloadFileSpecMessage = Type.Object({
+  jsonrpc: JsonRpcVersion,
+  method: Type.Literal("ui/download-file"),
+  id: RequestId,
+  params: Type.Object({
+    contents: Type.Array(
+      Type.Object(
+        {
+          type: Type.String(),
+          uri: Type.Optional(Type.String()),
+          name: Type.Optional(Type.String()),
+          mimeType: Type.Optional(Type.String()),
+          resource: Type.Optional(UnknownRecord),
+        },
+        { additionalProperties: true },
+      ),
+    ),
+  }),
+});
+export type UiDownloadFileSpecMessage = Static<typeof UiDownloadFileSpecMessage>;
+
+/**
+ * Spec `ui/request-display-mode` — an app asking to be shown differently.
+ *
+ * The host decides placement from its own layout and does not hand that
+ * decision to an app, so this is always answered with the mode actually in
+ * effect. The result field is `mode`, not an acknowledgement, precisely so a
+ * host can decline: a correct app reads what came back rather than assuming
+ * its request was granted.
+ */
+export const UiRequestDisplayModeMessage = Type.Object({
+  jsonrpc: JsonRpcVersion,
+  method: Type.Literal("ui/request-display-mode"),
+  id: RequestId,
+  params: Type.Object({
+    mode: Type.Union([Type.Literal("inline"), Type.Literal("fullscreen"), Type.Literal("pip")]),
+  }),
+});
+export type UiRequestDisplayModeMessage = Static<typeof UiRequestDisplayModeMessage>;
+
+/**
+ * Spec `notifications/message` — an app's log line, for the host's console.
+ *
+ * A notification, so there is no id and nothing to answer. The host already
+ * advertises the `logging` capability; without a handler for this, everything
+ * an app logged went nowhere.
+ */
+export const LoggingMessageNotification = Type.Object({
+  jsonrpc: JsonRpcVersion,
+  method: Type.Literal("notifications/message"),
+  params: Type.Object({
+    level: Type.String(),
+    logger: Type.Optional(Type.String()),
+    data: Type.Optional(Type.Unknown()),
+  }),
+});
+export type LoggingMessageNotification = Static<typeof LoggingMessageNotification>;
+
 export const UiPersistStateMessage = Type.Object({
   jsonrpc: JsonRpcVersion,
   method: Type.Literal("synapse/persist-state"),
@@ -252,12 +377,17 @@ export type UiKeydownMessage = Static<typeof UiKeydownMessage>;
 export const AppToHostMessage = Type.Union([
   ToolsCallMessage,
   ResourcesReadMessage,
+  ResourcesListMessage,
+  ResourceTemplatesListMessage,
   UiMessageMessage,
   UiOpenLinkMessage,
   UiSizeChangedMessage,
   UiUpdateModelContextMessage,
   UiActionMessage,
   UiDownloadFileMessage,
+  UiDownloadFileSpecMessage,
+  UiRequestDisplayModeMessage,
+  LoggingMessageNotification,
   UiPersistStateMessage,
   SynapseRequestFileMessage,
   UiKeydownMessage,
@@ -390,6 +520,19 @@ export type ExtAppsHostContextChangedNotification = Static<
   typeof ExtAppsHostContextChangedNotification
 >;
 
+/**
+ * An app server's own notification, relayed verbatim to its views — one of
+ * `RELAYED_TO_VIEWS` (relayed-notifications.ts). The ext-apps spec defines this
+ * forwarding per host capability (`serverResources.listChanged`, …), which
+ * `ui/initialize` advertises for exactly the relayed methods.
+ */
+export const RelayedServerNotification = Type.Object({
+  jsonrpc: JsonRpcVersion,
+  method: Type.String(),
+  params: Type.Optional(UnknownRecord),
+});
+export type RelayedServerNotification = Static<typeof RelayedServerNotification>;
+
 // ── Host → App messages (NimbleBrain extensions) ─────────────────────────
 
 export const UiDataChangedMessage = Type.Object({
@@ -427,5 +570,6 @@ export const HostToAppMessage = Type.Union([
   ExtAppsToolInputNotification,
   ExtAppsToolResultNotification,
   ExtAppsHostContextChangedNotification,
+  RelayedServerNotification,
 ]);
 export type HostToAppMessage = Static<typeof HostToAppMessage>;

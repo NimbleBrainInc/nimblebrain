@@ -120,6 +120,20 @@ export const DataChangedPayload = Type.Object({
 });
 export type DataChangedPayload = Static<typeof DataChangedPayload>;
 
+/**
+ * An app server's notification, relayed to that server's views in one
+ * workspace. `server` is the bare server name (an iframe's `data-app`),
+ * `method` one of `RELAYED_SERVER_NOTIFICATIONS`, `params` what the SDK parsed,
+ * size-capped.
+ */
+export const ServerNotificationPayload = Type.Object({
+  server: Type.String(),
+  workspaceId: Type.String(),
+  method: Type.String(),
+  params: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
+});
+export type ServerNotificationPayload = Static<typeof ServerNotificationPayload>;
+
 export const ToolPromotionChangedPayload = Type.Object({
   runId: Type.String(),
   toolName: Type.String(),
@@ -240,6 +254,7 @@ export const TypedEngineEvent = Type.Union([
   Type.Object({ type: Type.Literal("skills.loaded"), data: SkillsLoadedPayload }),
   Type.Object({ type: Type.Literal("context.assembled"), data: ContextAssembledPayload }),
   Type.Object({ type: Type.Literal("data.changed"), data: DataChangedPayload }),
+  Type.Object({ type: Type.Literal("server.notification"), data: ServerNotificationPayload }),
   Type.Object({ type: Type.Literal("tool.promoted"), data: ToolPromotionChangedPayload }),
   Type.Object({ type: Type.Literal("tool.released"), data: ToolPromotionChangedPayload }),
   Type.Object({ type: Type.Literal("skill.created"), data: SkillCreatedPayload }),

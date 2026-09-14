@@ -26,6 +26,7 @@ import type {
 	AutomationRun,
 	AutomationRunResult,
 } from "../../../../src/platform/automations/types.ts";
+import { seedWorkspaceRoot } from "../../../helpers/test-workspace.ts";
 
 const TMP_DIR = join(import.meta.dir, ".tmp-automation-store");
 const WS = "ws_test";
@@ -83,6 +84,7 @@ function makeResult(overrides: Partial<AutomationRunResult> = {}): AutomationRun
 
 beforeEach(() => {
 	mkdirSync(TMP_DIR, { recursive: true });
+	seedWorkspaceRoot(TMP_DIR, WS);
 });
 
 afterEach(() => {
@@ -159,6 +161,8 @@ describe("definitions", () => {
 
 describe("loadAllAutomations", () => {
 	test("loads automations across workspaces and owners", () => {
+		seedWorkspaceRoot(TMP_DIR, "ws_a");
+		seedWorkspaceRoot(TMP_DIR, "ws_b");
 		saveAutomation(TMP_DIR, "ws_a", "usr_1", makeAutomation({ id: "x", workspaceId: "ws_a", ownerId: "usr_1" }));
 		saveAutomation(TMP_DIR, "ws_a", "usr_2", makeAutomation({ id: "y", workspaceId: "ws_a", ownerId: "usr_2" }));
 		saveAutomation(TMP_DIR, "ws_b", "usr_1", makeAutomation({ id: "z", workspaceId: "ws_b", ownerId: "usr_1" }));
@@ -170,6 +174,7 @@ describe("loadAllAutomations", () => {
 
 	test("backfills workspaceId/ownerId from the path when missing on the record", () => {
 		// Persist a record that lacks the binding fields; the dir is authoritative.
+		seedWorkspaceRoot(TMP_DIR, "ws_path");
 		const bare = makeAutomation({ id: "bare" });
 		bare.workspaceId = undefined;
 		bare.ownerId = undefined;

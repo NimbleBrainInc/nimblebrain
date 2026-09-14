@@ -26,6 +26,7 @@ import { runWithRequestContext } from "../../../src/runtime/request-context.ts";
 import { McpSource } from "../../../src/tools/mcp-source.ts";
 import { createInstructionsSource } from "../../../src/platform/instructions/source.ts";
 import type { Workspace } from "../../../src/workspace/types.ts";
+import { seedWorkspaceRoot } from "../../helpers/test-workspace.ts";
 
 // ── Fake Runtime ────────────────────────────────────────────────────────
 
@@ -89,6 +90,7 @@ let source: McpSource | undefined;
 
 beforeEach(async () => {
   workDir = await mkdtemp(join(tmpdir(), "instructions-source-test-"));
+  seedWorkspaceRoot(workDir, "ws_demo");
   runtime = new FakeRuntime(workDir);
 });
 

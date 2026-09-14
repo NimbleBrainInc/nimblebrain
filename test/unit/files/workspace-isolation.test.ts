@@ -12,6 +12,7 @@ import { join } from "node:path";
 import { workspaceFilesDir } from "../../../src/files/paths.ts";
 import { createFileStore, type FileStore } from "../../../src/files/store.ts";
 import type { FileEntry } from "../../../src/files/types.ts";
+import { seedWorkspaceRoot } from "../../helpers/test-workspace.ts";
 
 let workDir: string;
 
@@ -24,6 +25,9 @@ afterEach(() => {
 });
 
 function store(wsId: string, ownerId: string): FileStore {
+  // The owner partition is created on first write, but only inside a live
+  // workspace root — so the fixture stands one up, as `create` would.
+  seedWorkspaceRoot(workDir, wsId);
   return createFileStore(workspaceFilesDir(workDir, wsId, ownerId));
 }
 

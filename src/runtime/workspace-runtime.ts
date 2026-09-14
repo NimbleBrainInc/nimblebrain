@@ -25,6 +25,7 @@ import type { EventSink } from "../engine/types.ts";
 import { log } from "../observability/log.ts";
 import { hasMcpOAuthTokens } from "../tools/mcp-oauth-records.ts";
 import { ToolRegistry } from "../tools/registry.ts";
+import { createServerNotificationRelay } from "../tools/server-notifications.ts";
 import type { ToolSource } from "../tools/types.ts";
 import { mapWithConcurrency } from "../util/concurrency.ts";
 import { isHttpUrl } from "../util/url.ts";
@@ -144,19 +145,32 @@ export function buildProcessInventory(
  * (after the first call client/transport/server are nulled and subsequent
  * calls early-return), so the only place this matters is `Runtime.shutdown()`,
  * which already wants the source closed exactly once.
+ *
+ * Every workspace registry relays its own sources' server notifications to
+ * those servers' views (`createServerNotificationRelay`), stamped with this
+ * workspace. That is where the workspace is known: a server sends a
+ * notification on the session this workspace's registry holds, so the registry
+ * is the one place that can say whose it was. Platform and system sources are
+ * added `shared` — they sit in every workspace registry at once and belong to
+ * none, so their notifications name no workspace and are not relayed.
+ * Personal-connector and identity registries are not built here and relay
+ * nothing.
  */
 export function createWorkspaceRegistry(
+  wsId: string,
   platformSources: ToolSource[],
   systemSource: ToolSource | null,
+  eventSink: EventSink,
 ): ToolRegistry {
   const wsRegistry = new ToolRegistry();
+  wsRegistry.setServerNotificationListener(createServerNotificationRelay(wsId, eventSink));
 
   for (const src of platformSources) {
-    wsRegistry.addSource(src);
+    wsRegistry.addSource(src, { shared: true });
   }
 
   if (systemSource) {
-    wsRegistry.addSource(systemSource);
+    wsRegistry.addSource(systemSource, { shared: true });
   }
 
   return wsRegistry;
@@ -296,7 +310,7 @@ export async function startWorkspaceConnectors(
 
   const registries = new Map<string, ToolRegistry>();
   for (const wsId of byWorkspace.keys()) {
-    registries.set(wsId, createWorkspaceRegistry(platformSources, systemSource));
+    registries.set(wsId, createWorkspaceRegistry(wsId, platformSources, systemSource, eventSink));
   }
 
   // Flatten (wsId, entry) pairs and start them through a bounded worker pool.

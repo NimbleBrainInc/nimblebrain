@@ -44,7 +44,7 @@ export function createApp(
 
   // Route groups — well-known endpoints first (unauthenticated, no body limit needed)
   app.route("/", wellKnownRoutes(ctx));
-  app.route("/", healthRoutes(ctx));
+  app.route("/", healthRoutes());
   // Prometheus scrape endpoint. Bare /metrics (never /v1/metrics) so the web
   // Caddy proxy doesn't expose it publicly; scraped in-cluster only.
   app.route("/", metricsRoutes());

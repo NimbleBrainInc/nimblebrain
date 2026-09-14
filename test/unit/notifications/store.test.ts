@@ -19,6 +19,7 @@ import { parseNotificationEnvelope } from "../../../src/notifications/envelope.t
 import { NotificationStore } from "../../../src/notifications/store.ts";
 import type { NotificationEnvelope } from "../../../src/notifications/types.ts";
 import { WorkspaceContext } from "../../../src/workspace/context.ts";
+import { seedWorkspaceRoot } from "../../helpers/test-workspace.ts";
 
 const WS_A = "ws_aaaaaaaaaaaaaaaa";
 const WS_B = "ws_bbbbbbbbbbbbbbbb";
@@ -52,6 +53,8 @@ function envelope(overrides: Record<string, unknown> = {}): NotificationEnvelope
 
 beforeEach(() => {
   workDir = mkdtempSync(join(tmpdir(), "nb-notify-store-"));
+  seedWorkspaceRoot(workDir, WS_A);
+  seedWorkspaceRoot(workDir, WS_B);
 });
 
 afterEach(() => {

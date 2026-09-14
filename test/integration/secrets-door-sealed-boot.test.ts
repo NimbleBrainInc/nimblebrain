@@ -11,13 +11,22 @@
  */
 
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 
 const KEY_ENV = "NB_TEST_BOOT_CREDENTIAL_KEY";
+const SET_LONG_AGO = new Date("2024-03-01T12:00:00.000Z");
 const INSTANCE = { kind: "instance" } as const;
 const READ = { caller: "test", purpose: "boot assertion" };
 
@@ -29,11 +38,13 @@ beforeAll(async () => {
   testDir = mkdtempSync(join(tmpdir(), "secrets-sealed-boot-"));
 
   // A plaintext instance secret already on the volume, seeded the way an
-  // operator does. Turning sealing on must not strand it: the boot re-seal
-  // sweep is what re-wraps it, and until then it still reads.
+  // operator does. Turning sealing on must not strand it — the boot sweep
+  // re-wraps it — and it must not lose the one thing `list` reports about it.
   const secretsDir = join(testDir, "credentials", "secrets");
   mkdirSync(secretsDir, { recursive: true, mode: 0o700 });
-  writeFileSync(join(secretsDir, "legacy.key"), "seeded-before-sealing\n", { mode: 0o600 });
+  const legacyPath = join(secretsDir, "legacy.key");
+  writeFileSync(legacyPath, "seeded-before-sealing\n", { mode: 0o600 });
+  utimesSync(legacyPath, SET_LONG_AGO, SET_LONG_AGO);
 
   previousKey = process.env[KEY_ENV];
   process.env[KEY_ENV] = Buffer.alloc(32, 0x3c).toString("base64");
@@ -65,13 +76,38 @@ test("and reads back through the same door", async () => {
   expect(wrapped?.reveal()).toBe("sealed-at-boot");
 });
 
-test("a plaintext secret seeded before sealing still reads", async () => {
+test("the plaintext secret seeded before sealing was re-sealed at boot", () => {
+  // `Runtime.start` awaits the reconcile before anything reads a secret, so by
+  // the time a test can look there is no plaintext left.
+  const raw = readFileSync(join(testDir, "credentials", "secrets", "legacy.key"), "utf-8");
+  expect(raw.startsWith("NBS1.")).toBe(true);
+  expect(raw).not.toContain("seeded-before-sealing");
+});
+
+test("and still reads back as the value it was", async () => {
   const wrapped = await runtime.getCredentialStore().get(INSTANCE, "legacy.key", READ);
   expect(wrapped?.reveal()).toBe("seeded-before-sealing");
 });
 
-test("and reading it does not rewrite it — one write mechanism, the sweep's", () => {
-  expect(readFileSync(join(testDir, "credentials", "secrets", "legacy.key"), "utf-8")).toBe(
-    "seeded-before-sealing\n",
+test("the sweep did not restamp it as just-changed", async () => {
+  // `list` reports mtime as `updatedAt`. Without preservation, every secret on
+  // the volume would read as set at the moment sealing was switched on.
+  expect(statSync(join(testDir, "credentials", "secrets", "legacy.key")).mtime.toISOString()).toBe(
+    SET_LONG_AGO.toISOString(),
   );
+  const [entry] = (await runtime.getCredentialStore().list(INSTANCE)).filter(
+    (e) => e.key === "legacy.key",
+  );
+  expect(entry?.updatedAt).toBe(SET_LONG_AGO.toISOString());
+});
+
+test("plaintext dropped in after that clean sweep is refused", async () => {
+  // Strict mode, through the real boot path: a file nobody wrote through the
+  // store is either an operator editing by hand or an injection.
+  writeFileSync(join(testDir, "credentials", "secrets", "injected.key"), "attacker-chosen", {
+    mode: 0o600,
+  });
+  const wrapped = await runtime.getCredentialStore().get(INSTANCE, "injected.key", READ);
+  expect(wrapped).not.toBeNull(); // the probe still answers
+  expect(() => wrapped?.reveal()).toThrow(/plaintext/);
 });

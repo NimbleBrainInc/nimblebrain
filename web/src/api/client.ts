@@ -16,7 +16,6 @@ import type {
   BootstrapResponse,
   ChatRequest,
   ChatResult,
-  HealthInfo,
   PlacementEntry,
   ToolCallResult,
 } from "../types";
@@ -527,21 +526,6 @@ export async function cancelChatTurn(conversationId: string): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
-// Health
-// ---------------------------------------------------------------------------
-
-/** Platform health check (unauthenticated). */
-export async function getHealth(): Promise<HealthInfo> {
-  const res = await fetch(`${API_BASE}/v1/health`, {
-    credentials: "include",
-  });
-  if (!res.ok) {
-    throw new ApiClientError("health_error", res.statusText, res.status);
-  }
-  return res.json() as Promise<HealthInfo>;
-}
-
-// ---------------------------------------------------------------------------
 // Shell
 // ---------------------------------------------------------------------------
 
@@ -973,8 +957,8 @@ export interface WorkspaceSecretKey {
 
 /**
  * Write a workspace secret, creating or replacing it. Replacing IS the rotation
- * path — the next connection that resolves a reference to this key picks the new
- * value up, with no restart and no config edit.
+ * path — the next request that carries a reference to this key sends the new
+ * value, with no reconnect, no restart and no config edit.
  *
  * The shell calls the tool over `/v1/tools/call` like every other connector
  * action. That is not "setting it in the chat": the value goes from the input to

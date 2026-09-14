@@ -315,6 +315,14 @@ export type EngineEventType =
    */
   | "connection.state_changed"
   | "data.changed"
+  /**
+   * An app server sent a notification a host relays to the server's views
+   * (`RELAYED_SERVER_NOTIFICATIONS`), after coalescing. Forwarded to SSE as
+   * itself, scoped to the workspace; the web shell posts `{ method, params }`
+   * verbatim to that server's iframes. Payload: { server, workspaceId, method,
+   * params? }.
+   */
+  | "server.notification"
   | "conversation.title"
   | "config.changed"
   | "skill.created"

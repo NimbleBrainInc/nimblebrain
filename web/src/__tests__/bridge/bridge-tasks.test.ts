@@ -123,7 +123,8 @@ mock.module("../../mcp-bridge-client", () => ({
 }));
 
 // Import bridge AFTER mocks so it picks up the stubs.
-const { createBridge } = await import("../../bridge/bridge");
+const { createBridge, RESOURCE_SOURCE_META_KEY } = await import("../../bridge/bridge");
+const { SERVER_META_KEY } = await import("../../bridge/schemas");
 
 // ---------------------------------------------------------------------------
 // Test harness — shared with bridge-transport.test.ts but re-defined here
@@ -249,6 +250,31 @@ describe("ui/initialize — tasks capability", () => {
     });
     // Existing capabilities preserved.
     expect(reply.result.hostCapabilities.openLinks).toEqual({});
+  });
+
+  test("hostCapabilities.serverResources.listChanged is advertised, in the spec's shape", async () => {
+    // The host relays the app server's `notifications/resources/list_changed`
+    // to its views (hooks/useServerNotificationRelay.ts); this is the promise
+    // that it does.
+    const { McpUiHostCapabilitiesSchema } = await import("@modelcontextprotocol/ext-apps");
+    const frame = mount("synapse-research");
+
+    frame.send({
+      jsonrpc: "2.0",
+      id: "init-2",
+      method: "ui/initialize",
+      params: {
+        protocolVersion: "2026-01-26",
+        clientInfo: { name: "iframe", version: "1.0.0" },
+        capabilities: {},
+      },
+    });
+
+    const reply = (await frame.waitFor((m) => (m as { id?: string })?.id === "init-2")) as {
+      result: { hostCapabilities: Record<string, unknown> };
+    };
+    expect(reply.result.hostCapabilities.serverResources).toEqual({ listChanged: true });
+    expect(McpUiHostCapabilitiesSchema.safeParse(reply.result.hostCapabilities).success).toBe(true);
   });
 });
 
@@ -491,5 +517,80 @@ describe("notifications/tasks/status — forwarding + teardown", () => {
     bridge2.destroy();
     frame1.cleanup();
     frame2.cleanup();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// tasks/* — scoped to the app's own server
+//
+// Every iframe shares one `/mcp` session, so `/mcp` cannot tell which app a
+// task request came from. The bridge can: it names the resolved server under
+// `RESOURCE_SOURCE_META_KEY`, as it does for resource reads and listings, and
+// `/mcp` answers only for a task that server ran.
+// ---------------------------------------------------------------------------
+describe("tasks/* — scoped to the app's own server", () => {
+  const METHODS = ["tasks/get", "tasks/result", "tasks/cancel"] as const;
+  const scopedTo = (server: string) => ({ [RESOURCE_SOURCE_META_KEY]: server });
+
+  /** Send each task method as `appName` with `params`; return what reached `/mcp`, in order. */
+  async function forwardedAs(appName: string, params: Record<string, unknown>) {
+    const frame = mount(appName);
+    for (const method of METHODS) {
+      const id = `scope-${method}`;
+      frame.send({ jsonrpc: "2.0", id, method, params });
+      await frame.waitFor((m) => (m as { id?: string })?.id === id);
+    }
+    return mcpRequest.mock.calls.map(([req]) => req);
+  }
+
+  test("an external app's task requests name its own server", async () => {
+    const sent = await forwardedAs("synapse-research", { taskId: "task-1" });
+    expect(sent).toEqual(
+      METHODS.map((method) => ({
+        method,
+        params: { taskId: "task-1", _meta: scopedTo("synapse-research") },
+      })),
+    );
+  });
+
+  test("the iframe's own _meta and any other param are not forwarded", async () => {
+    const sent = await forwardedAs("synapse-research", {
+      taskId: "task-1",
+      _meta: scopedTo("files"),
+      extra: "dropped",
+    });
+    expect(sent).toEqual(
+      METHODS.map((method) => ({
+        method,
+        params: { taskId: "task-1", _meta: scopedTo("synapse-research") },
+      })),
+    );
+  });
+
+  test("an external app cannot name another server", async () => {
+    const sent = await forwardedAs("synapse-research", {
+      taskId: "task-1",
+      server: "files",
+      _meta: { [SERVER_META_KEY]: "files" },
+    });
+    expect(sent).toEqual(
+      METHODS.map((method) => ({
+        method,
+        params: { taskId: "task-1", _meta: scopedTo("synapse-research") },
+      })),
+    );
+  });
+
+  test("an internal app may name the server that ran the task", async () => {
+    const sent = await forwardedAs("nb", {
+      taskId: "task-1",
+      _meta: { [SERVER_META_KEY]: "synapse-research" },
+    });
+    expect(sent).toEqual(
+      METHODS.map((method) => ({
+        method,
+        params: { taskId: "task-1", _meta: scopedTo("synapse-research") },
+      })),
+    );
   });
 });

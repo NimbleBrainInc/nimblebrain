@@ -22,6 +22,7 @@ import {
 } from "../../src/tools/credential-store.ts";
 import { resolveInstanceCredentialRefs } from "../../src/tools/instance-credentials.ts";
 import { resolveTransportCredential } from "../../src/tools/remote-transport.ts";
+import { seedWorkspaceRoot } from "../helpers/test-workspace.ts";
 
 const WS_ID = "ws_acme01";
 let workDir: string;
@@ -30,6 +31,9 @@ let events: EngineEvent[];
 
 beforeEach(() => {
   workDir = mkdtempSync(join(tmpdir(), "nb-credref-"));
+  seedWorkspaceRoot(workDir, "ws_acme01");
+  seedWorkspaceRoot(workDir, "ws_tenanta");
+  seedWorkspaceRoot(workDir, "ws_tenantb");
   events = [];
   store = new FileCredentialStore(workDir, { eventSink: { emit: (e) => events.push(e) } });
   setCredentialStore(store);
@@ -144,7 +148,7 @@ describe("rotation", () => {
     );
   });
 
-  test("deleting the key breaks the next connection loudly rather than silently", async () => {
+  test("deleting the key breaks the next resolve loudly rather than silently", async () => {
     const scope = { kind: "workspace", wsId: WS_ID } as const;
     const config: RemoteTransportConfig = {
       auth: { type: "bearer", token: { ref: "credential", key: "acme.db_url" } },

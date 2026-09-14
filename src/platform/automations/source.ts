@@ -127,6 +127,11 @@ export async function createAutomationsSource(
   const scheduler = new Scheduler(executor, { workDir, defaultTimezone });
   scheduler.start();
 
+  // A workspace delete has to disarm what this scheduler holds for that
+  // workspace before the subtree moves. The runtime cannot import the
+  // scheduler, so it is handed over here.
+  runtime.registerAutomationQuiescer(scheduler);
+
   // The event trigger: the automations end of the path from a routed
   // notification to an agent run. It reads and writes through the same store
   // and scheduler the tools do — there is no second copy of an automation's

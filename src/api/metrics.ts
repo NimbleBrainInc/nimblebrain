@@ -299,6 +299,26 @@ export const artifactResolutionsTotal = new Counter({
 });
 
 /**
+ * App-server notifications relayed to the server's own views, by outcome.
+ * `outcome` is a closed set: `forwarded` counts deliveries sent to views;
+ * `coalesced` counts notifications that arrived inside an open coalescing
+ * window and so produced no delivery of their own. A flood of N notifications
+ * inside one window reads `forwarded` 2 (the leading and the trailing
+ * delivery), `coalesced` N-1.
+ *
+ * The ratio is the signal: a server whose `coalesced` climbs is announcing far
+ * faster than any view can use, which is either a bug in that server or a
+ * server spending the host's fan-out on nothing. No server or workspace label:
+ * both are tenant-unbounded, and one pod per tenant already attributes it.
+ */
+export const serverNotificationsRelayedTotal = new Counter({
+  name: "nb_server_notifications_relayed_total",
+  help: "App-server notifications relayed to the server's views, by outcome (forwarded or coalesced).",
+  labelNames: ["outcome"] as const,
+  registers: [metricsRegistry],
+});
+
+/**
  * Remote/local MCP connector (connector) crashes detected by the HealthMonitor
  * liveness loop, by connector and transport kind. A "crash" here is one
  * HealthMonitor sweep finding a source down (transport gone) that was NOT

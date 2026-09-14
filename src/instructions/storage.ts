@@ -1,6 +1,6 @@
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { WorkspaceContext } from "../workspace/context.ts";
+import { assertWorkspaceRootExists, WorkspaceContext } from "../workspace/context.ts";
 import {
   type InstructionsMeta,
   MAX_INSTRUCTIONS_BYTES,
@@ -70,6 +70,10 @@ export class InstructionsStore {
       );
     }
 
+    // The overlay lives AT the workspace root, so this mkdir would create the
+    // workspace itself — the one thing no writer may do. See
+    // `assertWorkspaceRootExists`.
+    assertWorkspaceRootExists(dirname(filePath));
     await mkdir(dirname(filePath), { recursive: true, mode: 0o700 });
 
     const updatedAt = new Date().toISOString();

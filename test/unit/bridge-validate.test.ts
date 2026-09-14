@@ -100,6 +100,86 @@ describe("validateAppToHostMessage", () => {
     expect(result.reason).toMatch(/ctrlKey/);
   });
 
+  test("accepts a tools/call carrying the target server in _meta", () => {
+    const result = validateAppToHostMessage({
+      jsonrpc: "2.0",
+      method: "tools/call",
+      id: 7,
+      params: {
+        name: "search",
+        arguments: {},
+        _meta: { "ai.nimblebrain/server": "people" },
+      },
+    });
+    expect(result).toEqual({ ok: true, method: "tools/call", reason: null });
+  });
+
+  test("accepts a spec ui/download-file with resource blocks", () => {
+    const result = validateAppToHostMessage({
+      jsonrpc: "2.0",
+      method: "ui/download-file",
+      id: "dl-1",
+      params: {
+        contents: [
+          { type: "resource", resource: { uri: "file:///a.csv", text: "a,b" } },
+          { type: "resource_link", uri: "https://example.com/b.pdf", name: "b.pdf" },
+        ],
+      },
+    });
+    expect(result).toEqual({ ok: true, method: "ui/download-file", reason: null });
+  });
+
+  test("rejects a ui/download-file whose contents is not an array", () => {
+    const result = validateAppToHostMessage({
+      jsonrpc: "2.0",
+      method: "ui/download-file",
+      id: "dl-2",
+      params: { contents: { type: "resource" } },
+    });
+    expect(result.ok).toBe(false);
+    expect(result.method).toBe("ui/download-file");
+  });
+
+  test("accepts ui/request-display-mode for each spec mode", () => {
+    for (const mode of ["inline", "fullscreen", "pip"]) {
+      const result = validateAppToHostMessage({
+        jsonrpc: "2.0",
+        method: "ui/request-display-mode",
+        id: 1,
+        params: { mode },
+      });
+      expect(result).toEqual({ ok: true, method: "ui/request-display-mode", reason: null });
+    }
+  });
+
+  test("rejects a display mode the spec does not define", () => {
+    const result = validateAppToHostMessage({
+      jsonrpc: "2.0",
+      method: "ui/request-display-mode",
+      id: 1,
+      params: { mode: "sidebar" },
+    });
+    expect(result.ok).toBe(false);
+  });
+
+  test("accepts notifications/message, which carries no id", () => {
+    const result = validateAppToHostMessage({
+      jsonrpc: "2.0",
+      method: "notifications/message",
+      params: { level: "info", logger: "app", data: { n: 1 } },
+    });
+    expect(result).toEqual({ ok: true, method: "notifications/message", reason: null });
+  });
+
+  test("rejects notifications/message with no level", () => {
+    const result = validateAppToHostMessage({
+      jsonrpc: "2.0",
+      method: "notifications/message",
+      params: { data: "orphan" },
+    });
+    expect(result.ok).toBe(false);
+  });
+
   test("passes through unknown methods (lets the bridge switch handle them)", () => {
     const result = validateAppToHostMessage({
       jsonrpc: "2.0",

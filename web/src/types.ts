@@ -95,15 +95,6 @@ export interface ChatResult {
   usage?: TurnUsage;
 }
 
-/** Health check response from GET /v1/health. */
-export interface HealthInfo {
-  status: string;
-  version: string;
-  buildSha: string | null;
-  uptime: number;
-  connectors: Array<{ name: string; state: ConnectionState }>;
-}
-
 // --- SSE Event Types ---
 
 // All connector.* events are workspace-scoped at the SSE layer (server filters
@@ -146,6 +137,18 @@ export interface DataChangedEvent {
    */
   wsId?: string;
   timestamp: string;
+}
+
+/**
+ * An app server's own notification, relayed by the runtime to that server's
+ * views in one workspace. `server` is the bare server name (an iframe's
+ * `data-app`); `method` and `params` go to the iframe verbatim.
+ */
+export interface ServerNotificationEvent {
+  server: string;
+  workspaceId: string;
+  method: string;
+  params?: Record<string, unknown>;
 }
 
 export interface HeartbeatEvent {
@@ -209,6 +212,7 @@ export interface SseEventMap {
   "connector.uninstalled": ConnectorUninstalledEvent;
   "connection.state_changed": ConnectionStateChangedEvent;
   "data.changed": DataChangedEvent;
+  "server.notification": ServerNotificationEvent;
   "conversation.title": ConversationTitleEvent;
   "config.changed": ConfigChangedEvent;
   "notification.created": NotificationCreatedEvent;

@@ -32,6 +32,7 @@ import { MAX_SKILL_BODY_CHARS } from "../../../../src/skills/truncate.ts";
 import { McpSource } from "../../../../src/tools/mcp-source.ts";
 import { createSkillsSource } from "../../../../src/platform/skills/source.ts";
 import { WorkspaceContext } from "../../../../src/workspace/context.ts";
+import { seedWorkspaceRoot } from "../../../helpers/test-workspace.ts";
 
 interface FakeIdentity {
   id: string;
@@ -294,6 +295,7 @@ describe("skills__create", () => {
 
   test("workspace scope writes under {workDir}/workspaces/{wsId}/skills/", async () => {
     runtime.wsId = "ws_demo";
+    seedWorkspaceRoot(workDir, "ws_demo");
     const src = await buildSource();
     const client = src.getClient()!;
     const result = await client.callTool({
@@ -323,6 +325,7 @@ describe("skills — workspace-scope write gate", () => {
   function setIdentity(id: string, orgRole: "owner" | "admin" | "member"): void {
     runtime.hasIdentityProvider = true;
     runtime.wsId = WS;
+    seedWorkspaceRoot(workDir, WS);
     runtime.identity = {
       id,
       email: `${id}@ex.com`,

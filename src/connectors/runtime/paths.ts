@@ -10,16 +10,17 @@ import { WorkspaceContext } from "../../workspace/context.ts";
 import type { ConnectorRef } from "./types.ts";
 
 /**
- * Resolved default workDir for callers that don't have the RuntimeConfig in
- * hand. Reads `NB_WORK_DIR` from env, falls back to `~/.nimblebrain`, then
- * `resolve()`s the result so every derived path is absolute and
- * cwd-independent.
+ * The default workDir: `NB_WORK_DIR` when set, `~/.nimblebrain` otherwise,
+ * `resolve()`d so every derived path is absolute and cwd-independent.
  *
- * The cli config-load path absolutizes its workDir at the same boundary;
- * this is the env-only fallback for the connector lifecycle methods that
- * don't receive the config-derived value. Keep them aligned: if a future
- * change shifts the contract (e.g. relative paths get a different anchor),
- * change both sites.
+ * Two kinds of caller share it, which is why it has exactly one home. The
+ * connector lifecycle methods read it directly, having no RuntimeConfig in
+ * hand. Every CLI entry point passes it to `loadConfig` as `defaultWorkDir`,
+ * where it decides both which config file is found (`resolveConfigPath`) and
+ * which work directory that config resolves to (`absoluteWorkDir`) — so a
+ * command that omits it reads a different config and writes to a different
+ * directory than the server does, silently, since both are legitimate paths
+ * in isolation.
  */
 export function defaultWorkDir(): string {
   return resolve(process.env.NB_WORK_DIR ?? join(homedir(), ".nimblebrain"));
@@ -152,6 +153,26 @@ export function slugifyServerName(canonicalName: string): string {
 export function serverNameFromRef(ref: ConnectorRef): string | null {
   if (ref.serverName) return ref.serverName;
   return isHttpUrl(ref.url) ? deriveServerName(ref.url) : null;
+}
+
+/**
+ * Whether a persisted `workspace.json` row IS the named connector.
+ *
+ * `deriveServerName` needs a string; a legacy or malformed row has no `url`, and
+ * throwing here would fail the uninstall of a *different*, healthy connector.
+ * Such a row matches nothing, so it is left alone — which also makes it a
+ * referrer for the reference check in `deletableSecretKeys`, the safe direction
+ * for a row nothing can identify.
+ *
+ * Deliberately NOT `serverNameFromRef(row) === serverName`. That one gates on
+ * `isHttpUrl`, so a row whose url this runtime could not reach names nothing;
+ * this one still derives from any non-empty string, because a row that cannot
+ * be STARTED must still be REMOVABLE.
+ */
+export function matchesServerName(row: ConnectorRef, serverName: string): boolean {
+  if (row.serverName) return row.serverName === serverName;
+  if (typeof row.url !== "string" || row.url.length === 0) return false;
+  return deriveServerName(row.url) === serverName;
 }
 
 /**

@@ -178,19 +178,12 @@ describe("POST /v1/chat/stream", () => {
 });
 
 describe("GET /v1/health", () => {
-	it("returns status ok with connector health summary", async () => {
+	it("returns status ok and nothing else", async () => {
 		const res = await fetch(`${baseUrl}/v1/health`);
 
 		expect(res.status).toBe(200);
-		const body = await res.json();
-		expect(body.status).toBe("ok");
-		expect(body.uptime).toBeUndefined();
-		expect(Array.isArray(body.connectors)).toBe(true);
-		// Each connector entry should have name and state (not just a string)
-		for (const b of body.connectors) {
-			expect(typeof b.name).toBe("string");
-			expect(typeof b.state).toBe("string");
-		}
+		// Public and unauthenticated: build identity and connector names stay off it.
+		expect(await res.json()).toEqual({ status: "ok" });
 	});
 });
 

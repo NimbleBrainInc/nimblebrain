@@ -179,6 +179,16 @@ web/               Vite + React + TypeScript SPA (separate package.json)
 
 All tool handlers that access data must be workspace-scoped. Use `runtime.requireWorkspaceId()` (never `getCurrentWorkspaceId()`). In dev mode it returns `"_dev"` — no special-case logic needed.
 
+**A workspace root is created by `WorkspaceStore.create` (and the `scaffoldWorkspace` it calls), and by nothing else.** The rule is `assertWorkspaceRootExists(dir)` (`src/workspace/context.ts`), which derives the `workspaces/<wsId>` prefix from the path it is handed and throws `WorkspaceRootMissingError`, naming the workspace, when that root is absent. **Every workspace-scoped mkdir passes it** — via `ensureWorkspaceDir` (assert-then-mkdir, for a plain recursive mkdir at the default mode: the automations store, both conversation stores, the file store, the notification inbox, `writeSkill`), or called directly ahead of a writer's own `mkdir` where the mode or the async form has to be kept (`instructions/storage.ts`, `permissions/permission-store.ts`, `connectors/providers/composio/connection.ts`, `tools/credential-store.ts` — the last three write at `0o700`).
+
+The prefix is derived by scanning for the first `workspaces/<wsId>` **pair**. Testing the segment after the last `workspaces` is not the same thing and is not safe: a path *ending* in `workspaces` has no successor to test, so it read as "not a workspace tree" and fell through to the unguarded mkdir — reachable by naming an automation "Workspaces", since `automationRunsDir` ends in `runs/<automationId>`.
+
+A path outside any workspace tree (org skills, `users/<id>/skills/`, the instance credential dir, a test's temp dir) has no root to require and passes — which is why a writer shared across scopes, like `writeSkill` or `CredentialStore.put`, takes the guard for its workspace callers without changing what it does for the others.
+
+This is structural rather than per-writer on purpose. `WorkspaceStore.delete` renames the subtree out from under every writer holding a path into it, those writers mkdir recursively, and the first one to fire afterwards used to re-create the deleted workspace's directory — invisibly, because `list()` skips a workspace dir whose `workspace.json` will not parse, so the resurrected tree appeared nowhere and was never deleted again. There is no way to grep for "everywhere that writes into a workspace", so guarding each writer is a discipline problem; the rule lives at the mkdir instead. **Do not add a recursive mkdir on a workspace-scoped path without it**, and do not "fix" a `WorkspaceRootMissingError` by creating the root — the workspace is gone, and the caller's job is to stop.
+
+A store still creates its own subdirectory on first write. `WORKSPACE_DIRS` (`src/workspace/scaffold.ts`) scaffolds `data/`, `credentials/`, `skills/` and `files/`; what is NOT pre-created is `conversations/`, `notifications/`, `automations/`, and the per-owner partition beneath `files/` and `automations/`. That stays true; the guard is about the root, not the subtree.
+
 **Workspace-scoped writes have no org-admin bypass, and the web tier must agree.** `canWriteWorkspaceScoped` (`src/workspace/authz.ts`) allows a write only for a workspace **member** whose membership role is `admin`; `orgRole` is never consulted. The web tier's `useScopedRole` deliberately does the opposite — it escalates an org admin to `org_admin` *before* reading the workspace role — because that is the right answer for **reach** (nav, route guards, read gates), where an org admin legitimately gets to any workspace's settings. So the two must not share a helper. Gate a **write** with `canWriteWorkspace(membershipRole)` (`web/src/hooks/useScopedRole.ts`) — via `useCanWriteActiveWorkspace()` on a surface scoped to the active workspace (anything under `/w/:slug`), or by passing that workspace's role directly when the surface addresses a workspace **by id** (`/org/workspaces/:slug`, where `activeWorkspace` is the viewer's last-focused workspace — usually their personal one, where they are always admin by store invariant, so the active-workspace form would answer `true` for everyone). Reserve `roleAtLeast(role, "ws_admin")` for reach. Getting this backwards offers controls the server refuses and surfaces as a 403 on save. It shipped in nine places before being caught, in three different shapes — `roleAtLeast(…, "ws_admin")`, the bypass written longhand as `isOrgAdmin || <membership check>`, and an affordance with no gate at all — so grepping for one shape never establishes that a surface is covered.
 
 A workspace-scoped write **should** route through `canWriteWorkspaceScoped`, and a client gate that disagrees with it is a bug — but do not read that as an invariant you can lean on. **The helper is a convention, not a chokepoint.** Writes reach the store by other paths: some gate through wrappers that delegate to it (`isWorkspaceAdmin` in `src/tools/connector-tools.ts`), and `manage_workspaces update` patches `workspace.json`'s `connectors` behind an org-admin gate instead — not a hole, since an org admin can delete the workspace outright and no web caller sends `connectors`, but not the helper either.
@@ -189,9 +199,9 @@ So read the write path. Do not assume a call site is covered because the helper 
 
 When adding a new code path that touches workspace-scoped credentials or identity, match the existing precedent: **hard-error on missing `wsId`, don't silently default**. `startConnectorSource`'s named-connector branch throws; the URL-connector branch does too (for OAuth-provider paths). A `?? "ws_default"` fallback would pool credentials across tenants.
 
-**Every secret goes through one door.** `CredentialStore` (`src/tools/credential-store.ts`) is scoped — `instance` (`{workDir}/credentials/secrets/`), `workspace` (`workspaces/<wsId>/credentials/secrets/`), `user` (`users/<userId>/credentials/secrets/`) — and there is exactly **one** construction site, `runtime.getCredentialStore()`, which is also where the audit sink is attached. `Runtime.start` installs that instance via `setCredentialStore` for the leaf readers (`remote-transport.ts`, `oauth-static-client.ts`) that hold no runtime; reach it with `requireCredentialStore()` there and with the runtime accessor everywhere else. **Never construct a `FileCredentialStore`** — with several of them the interface stops being a swap point for an encrypted backend, which is the whole reason it exists.
+**Every secret goes through one door.** `CredentialStore` (`src/tools/credential-store.ts`) is scoped — `instance` (`{workDir}/credentials/secrets/`), `workspace` (`workspaces/<wsId>/credentials/secrets/`), `user` (`users/<userId>/credentials/secrets/`) — and it is built only by `createCredentialStore` (`src/tools/credential-store-backend.ts`), which reads the `secrets` config block — at the composition root, where the audit sink is attached and `runtime.getCredentialStore()` hands it out, and in the operator `secrets` subcommand, which has no runtime. `Runtime.start` installs that instance via `setCredentialStore` for the leaf readers (`remote-transport.ts`, `oauth-static-client.ts`) that hold no runtime; reach it with `requireCredentialStore()` there and with the runtime accessor everywhere else. **Never construct a `FileCredentialStore`** — a direct construction bypasses the configured backend, so on a deployment that seals it reads and writes plaintext. A value that claims to be sealed opens on `reveal()` or throws, never on `get` (a `get` without a reveal is the presence probe) and never as plaintext; see ADR-0035.
 
-Config **references** a secret and never carries one: `{ ref: "credential", key }` (`src/tools/credential-ref.ts`) is accepted on `transport.auth.token` / `.value`, every `transport.headers` value, `oauthClient.clientSecret`, and — resolved at boot by `resolveInstanceCredentialRefs`, anywhere in `nimblebrain.json` / `instance.json` — the provider, broker, gateway and IdP keys. Workspace references resolve **per connection**, so rotation is a `put` on the same key. There is no `${VAR}` expansion in a transport config; the one remaining env-template expander is `redis.url` in `src/api/session-store/factory.ts`, a different mechanism.
+Config **references** a secret and never carries one: `{ ref: "credential", key }` (`src/tools/credential-ref.ts`) is accepted on `transport.auth.token` / `.value`, every `transport.headers` value, `oauthClient.clientSecret`, and — resolved at boot by `resolveInstanceCredentialRefs`, anywhere in `nimblebrain.json` / `instance.json` — the provider, broker, gateway and IdP keys. Workspace references on `transport.auth` and `transport.headers` resolve **on every request**, so rotating one is a `put` on the same key; `oauthClient.clientSecret` is read when the connection starts or an authorization begins. There is no `${VAR}` expansion in a transport config; the one remaining env-template expander is `redis.url` in `src/api/session-store/factory.ts`, a different mechanism.
 
 A read is attributable: `get(scope, key, { caller, purpose })` returns a `Redacted` that emits `audit.credential_read` **on `reveal()`** — so a presence probe costs no log line and a use always writes one, once per read. Never emit that event from anywhere but the store.
 
@@ -299,7 +309,7 @@ Namespaces (`src/observability/log.ts`):
 | Namespace | Emits | Answers |
 |---|---|---|
 | `mcp` | McpSource construction; per-call dispatch showing `taskSupport` / `path=task-augmented\|inline` / cached tool count | "Why is my tool going inline vs task-augmented?" "Is my tool cache populated?" |
-| `sse` | Every `tool.progress` / `tool.done` entering the runtime sink wrap; every `data.changed` broadcast with client count | "Are progress events reaching the SSE layer?" "Are broadcasts happening, to how many clients?" |
+| `sse` | Every `tool.progress` / `tool.done` / `server.notification` entering the runtime sink wrap; every `data.changed` broadcast with client count | "Are progress events reaching the SSE layer?" "Are broadcasts happening, to how many clients?" |
 | `auth` | Identity-provider verify rejections at debug volume (the routine, self-healing reasons `no_token` / `token_expired`). Anomalous reasons — `org_mismatch`, `bad_signature`, `jwks_unavailable`, etc. — log at `warn` and need no flag. | "Why is a user being 401'd / involuntarily logged out?" |
 | `notify` | Notification envelopes, outbox declarations and poll results dropped at parse, with the field that failed; sweeps skipped because a workspace is already being read | "Why is this connector's event not in the inbox?" |
 
@@ -317,7 +327,7 @@ Reload after setting. Namespaces (`web/src/lib/debug.ts`):
 
 | Namespace | Emits | Answers |
 |---|---|---|
-| `sync` | Every SSE `data.changed` arrival; parent-side flush with buffer + iframe app names; each `postMessage` forward to a matching iframe | "Is the browser receiving broadcasts?" "Is the iframe I expect actually mounted with the right `data-app`?" |
+| `sync` | Every SSE `data.changed` and `server.notification` arrival; parent-side flush with buffer + iframe app names; each `postMessage` forward to a matching iframe | "Is the browser receiving broadcasts?" "Is the iframe I expect actually mounted with the right `data-app`?" |
 
 Namespaces are shared convention between server and browser: `NB_DEBUG=sync` plus `localStorage.nb_debug=sync` together trace the entire data.changed flow.
 
@@ -452,8 +462,9 @@ The id is **stored as it is, not as a digest**, and that is deliberate: a
 delivery URL is an ADDRESS handed to external systems repeatedly, so an admin
 has to be able to read it. Under a digest the only way to see one is to rotate,
 and looking would break the integration being looked at. The record already sits
-beside that workspace's conversations, files and connector credentials, none of
-which this runtime encrypts at rest. What bounds it instead is that reading
+beside that workspace's conversations and files, which this runtime does not
+encrypt at rest, and its connector credentials, which it seals only when the
+deployment configures sealing. What bounds it instead is that reading
 needs workspace admin and rotating is one action. The door compares in constant
 time — not because a timing oracle is practical against 256 bits behind a
 per-source rate limit, but because that comparison is the only thing between a
@@ -586,6 +597,48 @@ check it is a warning on a **successful** install, and an empty tool list is
 (`"hooks"`, `"lifecycle"`); `stopWatchingToolSurface` drops both on uninstall and
 `stopAllToolSurfaceWatches` on shutdown, beside `resetReadyNotifications`.
 
+### Connector teardown is a function, and it has two callers
+
+`uninstallWorkspaceConnector` (`src/connectors/runtime/uninstall.ts`) is the
+whole of removing one connector from a workspace: the `on_removing` call, the
+OAuth revoke, `lifecycle.uninstall` (the only path to `cleanupBrokeredState`,
+and so the only thing that revokes a brokered connection at the vendor), the
+workspace-record strip, the hook revoke, the cursor reset, the tool-surface
+watches, the ready-notification record, the tool permissions, the owned secrets.
+Order is the contract — see the file header.
+
+**Deleting a container runs the same teardown as removing each thing it holds.**
+`Runtime.deleteWorkspace` walks `ws.connectors`, calls it for each, and only
+then hands the id to `WorkspaceStore.delete` for the archive-rename. Teardown
+runs BEFORE the rename: `on_removing` needs the bundle reachable, and the
+credential cleanup needs the credential directory at its live path.
+
+- **The workspace's automations are disarmed first**, before the connector
+  teardown and long before the rename: `AutomationQuiescer.dropWorkspace` (the
+  scheduler, handed over by the automations source — the runtime may not import
+  it) drops them from the in-memory `definitions` map. Nothing else does:
+  `scheduler.reload()` is called only from the automations tool surface, so a
+  deleted workspace's automations stayed armed until the process restarted. A
+  targeted drop, never `reload()` — that rescans every workspace and owner on
+  disk to learn one thing the caller already knows.
+- `WorkspaceStore` imports nothing from `src/connectors/` and holds no lifecycle
+  handle. The cascade is the runtime's; the store does the rename.
+- `manage_workspaces delete` calls `Runtime.deleteWorkspace`, never
+  `workspaceStore.delete` — which is why `ManageWorkspacesContext` carries a
+  runtime handle.
+- Best-effort per connector. Outcomes are collected and returned, not thrown: a
+  vendor nobody can reach must not strand a workspace half-deleted, and a failed
+  revoke has to stay nameable after the record that named it is archived.
+- `ConnectorTeardownDeps` is a structural interface `Runtime` satisfies, so
+  `src/connectors/` keeps no edge to the composition root.
+- Which secrets an uninstall may delete is the CALLER's question, passed in. The
+  tool subtracts keys a surviving sibling still names; a workspace delete passes
+  none, because every connector is going and those keys are operator-set
+  workspace secrets, which survive the rename into the archive. The connector's
+  own credentials do NOT survive it — `lifecycle.uninstall` clears its
+  `mcp-oauth.<server>.*` keys and any brokered credential dir a step before the
+  rename. That asymmetry is the design: revoking upstream is the point.
+
 ## API Surfaces — Three Audiences
 
 The platform serves three audiences with three protocol surfaces. They are not tiers; they are distinct contracts for distinct callers, intentionally split.
@@ -661,6 +714,7 @@ These cause production bugs if violated:
 
 - `tools/call` must return `CallToolResult` as-is (never unwrap fields)
 - `POST /v1/tools/call` must NOT emit `data.changed` SSE events (causes infinite loops)
+- A write made from an iframe reaches the app's other views only when the app's server announces it, with a notification the host relays (`RELAYED_SERVER_NOTIFICATIONS` in `src/tools/server-notifications.ts`, today `notifications/resources/list_changed`). The workspace registry relays its own sources' notifications as `server.notification` — coalesced, workspace-scoped — and the web shell posts each verbatim to the server's iframes. The relay forwards, it never interprets: do not translate a server notification into `data.changed`, and never infer a change from a tool call on a UI door (that door's traffic is mostly reads, and a read that broadcasts loops). A method added to the allowlist must also get its `ui/initialize` capability (`web/src/bridge/relayed-notifications.ts`); a test pins the two.
 - Picker uploads (`synapse/request-file`) MUST persist via `POST /v1/resources` (multipart); iframes receive a `FileEntry`, never bytes. Base64-in-`tools/call` arguments hits the 1 MB JSON cap and silently breaks for any binary above ~750 KB.
 - Tool errors (`isError: true`) must become JSON-RPC `error` responses
 - Bridge must guard listeners with `destroyed` flag (React StrictMode double-mounts)

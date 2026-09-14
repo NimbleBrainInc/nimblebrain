@@ -30,7 +30,6 @@ import { type RequestContext, runWithRequestContext } from "../runtime/request-c
 import type { Runtime } from "../runtime/runtime.ts";
 import type { ChatRequest } from "../runtime/types.ts";
 import { coerceInputForSchema } from "../tools/coerce-input.ts";
-import type { HealthMonitor } from "../tools/health-monitor.ts";
 import { parseNamespacedSourceName } from "../tools/namespace.ts";
 import type { ToolRegistry } from "../tools/registry.ts";
 import type { ResourceData, ToolSource } from "../tools/types.ts";
@@ -605,15 +604,16 @@ export function friendlyError(raw: string): { code: string; message: string } {
   return { code: "engine_error", message: raw };
 }
 
-/** Handle GET /v1/health */
-export function handleHealth(healthMonitor: HealthMonitor | null): Response {
-  const connectorHealth = healthMonitor?.getStatus() ?? [];
-  return json({
-    status: "ok",
-    version: VERSION,
-    buildSha: process.env.NB_BUILD_SHA || null,
-    connectors: connectorHealth.map((b) => ({ name: b.name, state: b.state })),
-  });
+/**
+ * Handle GET /v1/health — the probe target and the web client's pre-login
+ * reachability check.
+ *
+ * Unauthenticated and proxied publicly, so the body says only that the server is
+ * serving. Build identity is on the authenticated bootstrap; connector state is
+ * the in-cluster `nb_connector_unhealthy` gauge.
+ */
+export function handleHealth(): Response {
+  return json({ status: "ok" });
 }
 
 /**

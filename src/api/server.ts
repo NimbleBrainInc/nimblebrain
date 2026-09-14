@@ -176,7 +176,12 @@ export function startServer(options: ServerOptions): ServerHandle {
     // Answers "is the event source actually firing into the SSE wrap?" —
     // the first thing to check when a connector's UI isn't updating live.
     // Run with `NB_DEBUG=sse` to enable.
-    if ((event.type === "tool.progress" || event.type === "tool.done") && log.debugEnabled("sse")) {
+    if (
+      (event.type === "tool.progress" ||
+        event.type === "tool.done" ||
+        event.type === "server.notification") &&
+      log.debugEnabled("sse")
+    ) {
       log.debug("sse", `sink got ${event.type} data=${JSON.stringify(event.data).slice(0, 160)}`);
     }
     originalEmit(event);
@@ -277,7 +282,6 @@ export function startServer(options: ServerOptions): ServerHandle {
     authOptions: { mode: authMode, internalToken, eventSink: runtime.getEventSink() },
     provider: effectiveProvider,
     workspaceStore: runtime.getWorkspaceStore(),
-    healthMonitor,
     sseManager,
     conversationEventManager,
     rateLimiter,

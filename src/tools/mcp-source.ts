@@ -43,6 +43,12 @@ import { promoteHiddenErrors } from "./promote-hidden-errors.ts";
 import { createRemoteTransport } from "./remote-transport.ts";
 import { scrubArgsForDispatch } from "./scrub-args.ts";
 import {
+  RELAYED_SERVER_NOTIFICATIONS,
+  type RelayedServerNotificationMethod,
+  relayableParams,
+  type ServerNotification,
+} from "./server-notifications.ts";
+import {
   type ResourceData,
   TaskAlreadyTerminalError,
   TaskNotFoundError,
@@ -407,6 +413,16 @@ export class McpSource implements ToolSource {
   private readonly resourceUpdatedListeners = new Set<(uri: string) => void>();
 
   /**
+   * Listeners for the server's own notifications that a host relays to the
+   * server's views (`RELAYED_SERVER_NOTIFICATIONS`). `ToolRegistry` subscribes
+   * one per registry the source belongs to. See
+   * {@link ToolSource.subscribeServerNotifications}.
+   */
+  private readonly serverNotificationListeners = new Set<
+    (notification: ServerNotification) => void
+  >();
+
+  /**
    * Resource URIs this source has asked the server to push updates for.
    *
    * Kept because a subscription belongs to a *connection*: an idle-close or a
@@ -491,9 +507,11 @@ export class McpSource implements ToolSource {
     // connect so a notification arriving immediately after `initialize` isn't
     // dropped.
     this.registerToolsChangedHandler(this.client);
-    // Same reason, for `resources/updated`: a server that pushes one the
-    // instant it answers `initialize` must not find the handler missing.
+    // Same reason, for `resources/updated` and the relayed notifications: a
+    // server that pushes one the instant it answers `initialize` must not find
+    // the handler missing.
     this.registerResourceUpdatedHandler(this.client);
+    this.registerServerNotificationHandlers(this.client);
 
     // Timeout MCP handshake — remote gets shorter timeout (15s vs 30s)
     const CONNECT_TIMEOUT = this.mode.type === "remote" ? 15_000 : 30_000;
@@ -667,6 +685,7 @@ export class McpSource implements ToolSource {
       this.registerConnectorHandlers(this.client);
       this.registerToolsChangedHandler(this.client);
       this.registerResourceUpdatedHandler(this.client);
+      this.registerServerNotificationHandlers(this.client);
       // Re-arm crash detection for the retry: cleanupOnStartFailure set
       // `stopping = true` to suppress its own teardown noise; we need it false
       // again before the new transport's onclose can fire usefully. If this
@@ -1017,6 +1036,60 @@ export class McpSource implements ToolSource {
         log.debug(
           "mcp",
           `[${this.name}] resourceUpdated listener threw — ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
+    }
+  }
+
+  /**
+   * Register a client-side handler for every notification on the relay
+   * allowlist (`RELAYED_SERVER_NOTIFICATIONS`).
+   *
+   * Called once per Client lifecycle, beside {@link registerResourceUpdatedHandler}
+   * and for the same reason: handler tables do not carry across SDK Client
+   * instances.
+   *
+   * A handler receives what the SDK schema parsed and passes on the method and
+   * the params `relayableParams` admits — nothing else from the frame. This
+   * source holds nothing derived from any of these listings, so the handler only
+   * fans the notification out; what it means belongs to the views that get it.
+   */
+  private registerServerNotificationHandlers(client: Client): void {
+    for (const [method, schema] of Object.entries(RELAYED_SERVER_NOTIFICATIONS) as Array<
+      [
+        RelayedServerNotificationMethod,
+        (typeof RELAYED_SERVER_NOTIFICATIONS)[RelayedServerNotificationMethod],
+      ]
+    >) {
+      client.setNotificationHandler(schema, (notification) => {
+        const params = relayableParams(notification.params);
+        this.emitServerNotification({ method, ...(params ? { params } : {}) });
+      });
+    }
+  }
+
+  /**
+   * Listen for the server's relayed notifications. Returns an unsubscribe
+   * function. See {@link ToolSource.subscribeServerNotifications}.
+   */
+  subscribeServerNotifications(listener: (notification: ServerNotification) => void): () => void {
+    this.serverNotificationListeners.add(listener);
+    return () => {
+      this.serverNotificationListeners.delete(listener);
+    };
+  }
+
+  /** Fan a relayed notification out to subscribers, isolating failures. */
+  private emitServerNotification(notification: ServerNotification): void {
+    for (const listener of this.serverNotificationListeners) {
+      try {
+        listener(notification);
+      } catch (err) {
+        log.debug(
+          "mcp",
+          `[${this.name}] server notification listener threw — ${
             err instanceof Error ? err.message : String(err)
           }`,
         );

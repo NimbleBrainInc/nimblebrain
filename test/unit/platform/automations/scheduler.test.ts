@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeEach, afterEach, mock, spyOn } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { Automation, AutomationRun } from "../../../../src/platform/automations/types.ts";
@@ -18,6 +18,7 @@ import {
 	loadOwnerAutomations,
 	saveAutomation,
 } from "../../../../src/platform/automations/store.ts";
+import { seedWorkspaceRoot } from "../../../helpers/test-workspace.ts";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -31,7 +32,9 @@ const WS = "ws_test";
 const OWNER = "usr_test";
 
 function makeTmpDir(): string {
-	return mkdtempSync(join(tmpdir(), "scheduler-test-"));
+	const dir = mkdtempSync(join(tmpdir(), "scheduler-test-"));
+	seedWorkspaceRoot(dir, WS);
+	return dir;
 }
 
 /** Persist a definitions map to the per-automation store (one file per automation). */
@@ -41,6 +44,7 @@ function seedDefs(
 	owner = OWNER,
 	ws = WS,
 ): void {
+	seedWorkspaceRoot(workDir, ws);
 	for (const auto of defs.values()) {
 		if (!auto.workspaceId) auto.workspaceId = ws;
 		if (!auto.ownerId) auto.ownerId = owner;
@@ -1235,6 +1239,30 @@ describe("Scheduler — skipped runs advance nextRunAt", () => {
 		expect(nextMs).toBeGreaterThan(Date.now() + 1_700_000);
 
 		resolveBlock(makeSuccessRun("auto-blocker"));
+		scheduler.stop();
+	});
+
+	it("a skip refused because the workspace is gone drops the automation instead of re-arming at zero delay", async () => {
+		// `recordSkipped` writes before it advances `nextRunAt`, so a refused
+		// write leaves the automation due. Kept, the timer would re-arm at zero
+		// delay and sweep it again immediately, forever.
+		const defs = new Map<string, Automation>();
+		defs.set("auto-ghost", makeAutomation({
+			id: "auto-ghost",
+			nextRunAt: new Date(Date.now() - 1000).toISOString(),
+		}));
+		seedDefs(tmpDir, defs);
+
+		const executor: Executor = mock(async (a: Automation) => execOk(makeSuccessRun(a.id))) as Executor;
+		// Cap of 0: every due automation takes the `recordSkipped` path.
+		const scheduler = new Scheduler(executor, { workDir: tmpDir, maxConcurrentRuns: 0 });
+		scheduler.start();
+		rmSync(join(tmpDir, "workspaces", WS), { recursive: true, force: true });
+
+		await scheduler.onTimer();
+
+		expect(defOf(scheduler, "auto-ghost")).toBeUndefined();
+		expect(existsSync(join(tmpDir, "workspaces", WS))).toBe(false);
 		scheduler.stop();
 	});
 });

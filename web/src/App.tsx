@@ -38,6 +38,7 @@ import {
 import { chatStore } from "./hooks/chat-store";
 import { useDataSync } from "./hooks/useDataSync";
 import { useEvents } from "./hooks/useEvents";
+import { useServerNotificationRelay } from "./hooks/useServerNotificationRelay";
 import { useShell } from "./hooks/useShell";
 import { bootstrapWorkspacesToInfo } from "./lib/bootstrap";
 import { forwardConversationTitleToIframes } from "./lib/forward-conversation-title";
@@ -53,6 +54,7 @@ import { ConnectorBrowsePage } from "./pages/settings/ConnectorBrowsePage";
 import { ConnectorDetailPage } from "./pages/settings/ConnectorDetailPage";
 import { ModelTab } from "./pages/settings/ModelTab";
 import { OrgAboutTab } from "./pages/settings/OrgAboutTab";
+import { OrgArchivesTab } from "./pages/settings/OrgArchivesTab";
 import { OrgSettingsPage } from "./pages/settings/OrgSettingsPage";
 import { OrgSkillsTab } from "./pages/settings/OrgSkillsTab";
 import { OrgUsageTab } from "./pages/settings/OrgUsageTab";
@@ -261,8 +263,10 @@ function AuthenticatedAppContent({
   const { applyPreference } = useTheme();
   const wsCtx = useWorkspaceContext();
   const onDataChanged = useDataSync();
+  const onServerNotification = useServerNotificationRelay();
   useEvents(token, wsCtx.activeWorkspace?.id, {
     onDataChanged,
+    onServerNotification,
     onConfigChanged: () => config.refreshConfig(),
     // Auto-title arrived — update the matching conversation's slice so the
     // chat panel header reflects it live (routed by conversationId), and
@@ -502,6 +506,14 @@ function AuthenticatedAppContent({
                 element={
                   <RouteGuard requireRole="org_admin">
                     <WorkspaceDetailPage />
+                  </RouteGuard>
+                }
+              />
+              <Route
+                path="archives"
+                element={
+                  <RouteGuard requireRole="org_admin">
+                    <OrgArchivesTab />
                   </RouteGuard>
                 }
               />

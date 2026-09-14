@@ -6,12 +6,13 @@
  * Cost, totals, and breakdowns are derived at read time.
  */
 
-import { appendFileSync, existsSync, mkdirSync } from "node:fs";
+import { appendFileSync, existsSync } from "node:fs";
 import { readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { ResourceLinkInfo } from "../engine/content-helpers.ts";
 import type { EngineEvent, EventSink } from "../engine/types.ts";
 import { ConversationCorruptedError } from "../runtime/errors.ts";
+import { ensureWorkspaceDir } from "../workspace/context.ts";
 import { assertNoBinaryPayloads } from "./binary-guard.ts";
 import {
   deriveConversationMeta,
@@ -442,9 +443,11 @@ export class EventSourcedConversationStore implements ConversationStore, EventSi
     this.dir = config.dir;
     this.logLevel = config.logLevel ?? "normal";
     this.onMutate = config.onMutate;
-    if (!existsSync(this.dir)) {
-      mkdirSync(this.dir, { recursive: true });
-    }
+    // Requires the workspace to exist. This store's dir is
+    // `workspaces/<wsId>/conversations/<ownerId>/`, created on first touch by
+    // design — but only inside a live workspace root, never as a way to bring
+    // a deleted one back. See `ensureWorkspaceDir`.
+    ensureWorkspaceDir(this.dir);
   }
 
   // =========================================================================

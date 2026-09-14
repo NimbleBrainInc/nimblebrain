@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { UserIdentity } from "../../../src/identity/provider.ts";
+import type { Runtime } from "../../../src/runtime/runtime.ts";
 import type { User } from "../../../src/identity/user.ts";
 import { UserStore } from "../../../src/identity/user.ts";
 import type { InProcessTool } from "../../../src/tools/in-process-app.ts";
@@ -39,6 +40,10 @@ function makeCtx(): ManageMembersContext {
   return {
     getIdentity: () => currentIdentity,
     workspaceStore: wsStore,
+    // Member management never reaches the runtime — only `delete` does, and
+    // that is `manage_workspaces`' own test. A stub that would throw if a
+    // member handler ever grew a runtime read is the point.
+    runtime: {} as Runtime,
     userStore,
   };
 }

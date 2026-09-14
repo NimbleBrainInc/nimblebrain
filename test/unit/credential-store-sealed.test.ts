@@ -27,6 +27,7 @@ import {
   runSealCanary,
 } from "../../src/tools/credential-store-backend.ts";
 import { type CredentialScope, FileCredentialStore } from "../../src/tools/credential-store.ts";
+import { seedWorkspaceRoot } from "../helpers/test-workspace.ts";
 
 const KEY_A = Buffer.alloc(32, 0x11);
 const KEY_B = Buffer.alloc(32, 0x22);
@@ -36,6 +37,7 @@ const READ = { caller: "test", purpose: "unit test" };
 
 function fresh(sealer?: CredentialSealer) {
   const dir = mkdtempSync(join(tmpdir(), "nb-sealed-"));
+  seedWorkspaceRoot(dir, "ws_test");
   const events: EngineEvent[] = [];
   const store = new FileCredentialStore(dir, {
     eventSink: { emit: (e) => events.push(e) },
@@ -398,7 +400,8 @@ describe("the trailing newline splits", () => {
 describe("legacy plaintext under a sealer", () => {
   test("a hand-seeded plaintext file is still read", async () => {
     // A deployment that turns sealing on keeps working on the files already
-    // there; each becomes sealed when something next writes it.
+    // there. The boot sweep is what converts them; this store has not run one,
+    // which is the state a reader has to survive either way.
     const { store, dir, cleanup } = fresh(createCredentialSealer([KEY_A]));
     try {
       seed(dir, "acme.key", "gw-from-store\n");
@@ -456,6 +459,7 @@ describe("selecting the sealing backend from config", () => {
   function build(config: Record<string, unknown>, env?: string) {
     registerBuiltinCredentialStoreBackends();
     const dir = mkdtempSync(join(tmpdir(), "nb-sealed-cfg-"));
+    seedWorkspaceRoot(dir, "ws_test");
     const previous = process.env[ENV];
     if (env === undefined) delete process.env[ENV];
     else process.env[ENV] = env;
@@ -526,6 +530,7 @@ describe("the failure reaches a real sink, not just a test array", () => {
   test("a failed open is written to the workspace log", async () => {
     const logDir = mkdtempSync(join(tmpdir(), "nb-sealed-log-"));
     const dir = mkdtempSync(join(tmpdir(), "nb-sealed-"));
+    seedWorkspaceRoot(dir, "ws_test");
     try {
       const store = new FileCredentialStore(dir, {
         eventSink: new WorkspaceLogSink({ dir: logDir }),

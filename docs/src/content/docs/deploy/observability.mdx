@@ -90,7 +90,7 @@ environment:
 | `NB_SENTRY_ENV` | unset | Environment tag (e.g. `staging`, `production`) — one project, discriminated by this tag |
 | `NB_SENTRY_TRACES_SAMPLE_RATE` | `0` | Sentry performance tracing. `0` = errors only (recommended) |
 
-Release is the runtime's existing `NB_VERSION` → `NB_BUILD_SHA` build identity (the same values `/v1/health` reports), so events group by deploy with no extra var.
+Release is the runtime's existing `NB_VERSION` → `NB_BUILD_SHA` build identity (the same values `/v1/bootstrap` reports), so events group by deploy with no extra var.
 
 <Aside type="note">
 Sentry here is initialized as an out-of-kernel preload and does **not** take over OpenTelemetry — the runtime keeps owning the global tracer provider, so your OTLP → Tempo/Grafana traces are untouched. Sentry captures errors; OTel owns tracing. Performance tracing (`NB_SENTRY_TRACES_SAMPLE_RATE > 0`) drives Sentry's own transactions independently and is off by default.
@@ -111,7 +111,7 @@ curl http://platform:27247/metrics
 A few properties worth knowing:
 
 - It is served at the **bare** `/metrics` path, not under `/v1`. The bundled `nimblebrain-web` Caddy proxy only forwards `/v1/*`, so `/metrics` is **not** reachable through the public web container — it is scraped in-cluster.
-- Like `/v1/health`, it is unauthenticated. It carries no per-user data and is meant to be reachable only inside the cluster.
+- It is unauthenticated. It carries no per-user data and is meant to be reachable only inside the cluster.
 
 In Kubernetes, point a `ServiceMonitor` (or your scrape config) at the platform service's `/metrics` path. Do not expose it to the internet.
 
@@ -143,36 +143,26 @@ To confirm the poller found anything after a restart, look for `[notifications] 
 
 ## Health and readiness probes
 
-The platform serves a liveness/readiness endpoint at `GET /v1/health`. It is unauthenticated and returns the build identity plus the state of each installed connector:
+The platform serves a liveness/readiness endpoint at `GET /v1/health`. It answers `200` with a fixed body once the server is serving:
 
 ```bash
 curl http://platform:27247/v1/health
 ```
 
 ```json
-{
-  "status": "ok",
-  "version": "1.2.3",
-  "buildSha": "abc1234",
-  "connectors": [
-    { "name": "example", "state": "healthy" },
-    { "name": "example", "state": "restarting" }
-  ]
-}
+{ "status": "ok" }
 ```
-
-| Field | Meaning |
-|---|---|
-| `status` | `"ok"` once the server is serving |
-| `version` | The platform version |
-| `buildSha` | The build commit SHA (`null` if not stamped) |
-| `connectors` | One entry per running connector **instance** and its lifecycle state. Entries are **not unique by name**: a connector installed in several workspaces is monitored separately in each, so it appears once per workspace. Don't build a `name → state` map from this — later entries would silently overwrite earlier ones. |
 
 The Docker image already wires this into its `HEALTHCHECK` (`curl -f http://localhost:27247/v1/health`), and Compose gates the `web` service on it via `depends_on: condition: service_healthy`. In Kubernetes, use the same path for both `livenessProbe` and `readinessProbe`.
 
-<Aside type="note">
-There is no `uptime` field. Use `version` / `buildSha` to confirm which build is live and `connectors[].state` to confirm connectors started cleanly.
-</Aside>
+The endpoint is unauthenticated, and the web container proxies every `/v1/*` path, so anyone who can reach the web UI can reach it. That is why the body carries nothing else. The web client also calls it before sign-in, to tell a server that is down from a session that has expired.
+
+To see more than liveness:
+
+| To confirm | Read |
+|---|---|
+| Which build is live | `version` and `buildSha` on the authenticated `GET /v1/bootstrap`, also shown on the **About** page in organization settings |
+| Whether connectors are up | The `nb_connector_unhealthy` gauge on [`/metrics`](#prometheus-metrics): `1` for each connector that is currently down, and no series for a healthy one |
 
 ## Multi-replica session storage
 

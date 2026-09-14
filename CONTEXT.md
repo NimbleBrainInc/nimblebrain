@@ -35,6 +35,13 @@ workspace plus the caller's identity tools — never a union across workspaces. 
 non-personal workspace has an opaque id `ws_<16-hex>`, members, and roles
 (`admin` | `member`).
 
+A workspace exists because `create` made it and stops existing because `delete`
+archived it. **No write brings one into being**: a writer may create paths
+inside a workspace root, and fails naming the workspace when the root is gone.
+So a workspace directory on disk is always one a create produced, which is what
+lets `list()` treat an unparseable `workspace.json` as corruption rather than as
+a tree some writer conjured.
+
 ### Personal workspace
 A user's own workspace, `ws_user_<userId>`, sole-owned. It is a workspace like
 any other — "everything is workspace-bound" holds with no "no-workspace" void.
@@ -231,3 +238,4 @@ Orchestrate over remote MCP:
 - [0031](adr/0031-which-tool-annotations-the-consent-model-reads.md) — *(proposed)* which spec `ToolAnnotations` the consent model reads
 - [0032](adr/0032-provider-typed-ref-blocks-on-persisted-state.md) — *(proposed)* the provider-typed blocks on persisted connector state
 - [0033](adr/0033-an-events-family-names-its-subject.md) — an event's family names its subject; process liveness is a connector fact
+- [0035](adr/0035-the-secrets-backend-is-configuration-and-a-sealed-value-opens-or-refuses.md) — the secrets backend is configuration; a value that claims to be sealed opens or refuses
