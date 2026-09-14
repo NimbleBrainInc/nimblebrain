@@ -250,6 +250,27 @@ function canonicalEndpoint(u: URL): string {
   return `${origin}${path}`;
 }
 
+/**
+ * Make configured scopes the grant an authorize URL asks for. The SDK resolves
+ * `scope` from the 401 challenge first, then the server's advertised
+ * `scopes_supported`, and reaches `clientMetadata.scope` only when both are
+ * absent — so a server advertising every scope it has would otherwise be asked
+ * for all of them, whatever the catalog pinned.
+ *
+ * The SDK also pairs `offline_access` with `prompt=consent` (OIDC Core §11),
+ * keyed to its own resolved scope. The pairing is kept for the configured set,
+ * joining any `prompt` already present rather than replacing it. No scopes
+ * configured leaves the URL as the SDK built it.
+ */
+function applyConfiguredScopes(url: URL, scopes: string[] | undefined): void {
+  if (!scopes || scopes.length === 0) return;
+  url.searchParams.set("scope", scopes.join(" "));
+  const prompt = url.searchParams.get("prompt")?.split(" ") ?? [];
+  if (scopes.includes("offline_access") && !prompt.includes("consent")) {
+    url.searchParams.set("prompt", [...prompt, "consent"].join(" "));
+  }
+}
+
 /** Lowercased origin of a URL string, or undefined if it doesn't parse. */
 function originOf(value: string | URL): string | undefined {
   try {
@@ -1281,14 +1302,7 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
         url.searchParams.set(k, v);
       }
     }
-    // Configured scopes are the grant this connection asks for. The SDK
-    // resolves `scope` from the 401 challenge first, then the server's
-    // advertised `scopes_supported`, and reaches `clientMetadata.scope` only
-    // when both are absent — so a server advertising every scope it has would
-    // otherwise be asked for all of them, whatever the catalog pinned.
-    if (this.scopes && this.scopes.length > 0) {
-      url.searchParams.set("scope", this.scopes.join(" "));
-    }
+    applyConfiguredScopes(url, this.scopes);
     // Claim the URL-capture slot synchronously, BEFORE any await. The
     // headless probe loop and interactive branch below both `await`, so
     // without this claim two concurrent calls could both reach the
