@@ -21,6 +21,7 @@ import {
 } from "../../src/cli/secrets.ts";
 import { createCredentialSealer } from "../../src/tools/credential-seal.ts";
 import { type CredentialStore, FileCredentialStore } from "../../src/tools/credential-store.ts";
+import { seedWorkspaceRoot } from "../helpers/test-workspace.ts";
 
 const READ = { caller: "test", purpose: "unit test" };
 
@@ -49,6 +50,7 @@ function harness(store?: CredentialStore) {
 describe("set", () => {
   test("writes the value read from the injected reader, in every scope", async () => {
     const h = harness();
+    seedWorkspaceRoot(h.dir, "ws_test");
     try {
       expect(await h.run(["set", "acme.key"])).toBe(0);
       expect(await h.run(["set", "acme.key", "--scope", "workspace", "--workspace", "ws_test"])).toBe(
