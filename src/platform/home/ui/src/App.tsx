@@ -83,9 +83,10 @@ function renderMd(text: string): string {
     .replace(/`([^`]+)`/g, "<code>$1</code>");
 }
 
-/* ---------- cross-server tool call ----------------------------------------
+/* ---------- server tool call ----------------------------------------------
  * The host no longer routes cross-source calls: every app is scoped to its own
- * server, so `params.server` below is ignored.
+ * server, so `params.server` below is ignored and `briefing` cannot reach `nb`.
+ * The panel is not mounted.
  * -------------------------------------------------------------------------- */
 
 let _rpcId = 0;
@@ -118,7 +119,7 @@ function callServerTool<T>(
       },
       reject,
     });
-    // lint-ok:platform-app-transport — typed cross-server call, see comment above.
+    // lint-ok:platform-app-transport — hand-rolled call on an unmounted panel, see comment above.
     window.parent.postMessage(
       {
         jsonrpc: "2.0",
@@ -222,8 +223,8 @@ function Dashboard() {
     setStale(false);
     setLoading(true);
     try {
-      // `briefing` lives on the platform's `nb` source, not on `home`.
-      // See `callServerTool` definition above.
+      // `briefing` lives on the platform's `nb` source, not on `home`, so this
+      // call cannot succeed. See the comment above `callServerTool`.
       const result = await callServerTool(
         "nb",
         "briefing",
