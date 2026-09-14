@@ -71,13 +71,17 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { isTerminal } from "@modelcontextprotocol/sdk/experimental/tasks/interfaces.js";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import {
   type CallToolRequest,
   CallToolRequestSchema,
+  CancelTaskRequestSchema,
   type CreateTaskResult,
   ErrorCode,
+  GetTaskPayloadRequestSchema,
+  GetTaskRequestSchema,
   isInitializeRequest,
   ListResourcesRequestSchema,
   type ListResourcesResult,
@@ -85,6 +89,7 @@ import {
   type ListResourceTemplatesResult,
   ListToolsRequestSchema,
   McpError,
+  RELATED_TASK_META_KEY,
   ReadResourceRequestSchema,
   type ReadResourceResult,
   type Resource,
@@ -115,6 +120,7 @@ import {
   type McpTaskStore,
   type OwnerContext,
   type TaskAwareSource,
+  type TaskScope,
 } from "./mcp-task-store.ts";
 import type { SessionRegistry } from "./session-store/index.ts";
 
@@ -717,9 +723,10 @@ function createServer(
   features: ResolvedFeatures,
   sessionCtx: McpSessionContext,
 ): Server {
-  // Build a session-scoped in-memory task store. The SDK installs handlers
-  // for tasks/{get,result,cancel,list} automatically when this is passed via
-  // ProtocolOptions.taskStore — we never register them ourselves.
+  // Build a session-scoped in-memory task store. Passing it via
+  // ProtocolOptions.taskStore makes the SDK install tasks/{get,result,cancel,list};
+  // `registerTaskHandlers` below replaces the first three so a request's scope
+  // reaches the store.
   //
   // Stage 2: the task store is identity-bound (not workspace-bound) so the
   // same session can carry tasks across multiple workspaces. The
@@ -743,6 +750,7 @@ function createServer(
       ...(taskStore ? { taskStore } : {}),
     },
   );
+  if (taskStore) registerTaskHandlers(server, taskStore);
 
   const identityId = sessionCtx.identity?.id ?? null;
 
@@ -1203,9 +1211,10 @@ async function executeWorkspaceToolCall(
     workspaceId: wsId,
   };
 
-  if (isTaskRequest && taskAwareSource && taskStore) {
+  if (isTaskRequest && sourceName && taskAwareSource && taskStore) {
     return startWorkspaceTask(
       taskParam,
+      sourceName,
       taskAwareSource,
       taskStore,
       reqCtx,
@@ -1278,11 +1287,15 @@ function assertTaskNegotiation(
  * Task-augmented workspace dispatch (MCP spec 2025-11-25 §tasks). Returns a
  * CreateTaskResult immediately; the McpSource has already started the stream and
  * is draining it in the background. Stashes the (source, owner) pair in the
- * session's task store so the SDK-installed task handlers can find their way
- * back for later `tasks/result` and `tasks/cancel`.
+ * session's task store so the task handlers (`registerTaskHandlers`) can find
+ * their way back for later `tasks/result` and `tasks/cancel`.
+ *
+ * The task is stamped with the source it runs on (`originApp`), so a task
+ * request scoped to any other source cannot reach it (`registerTaskHandlers`).
  */
 async function startWorkspaceTask(
   taskParam: NonNullable<CallToolTaskParam>,
+  sourceName: string,
   taskAwareSource: TaskAwareSourceHandle,
   taskStore: McpTaskStore,
   reqCtx: RequestContext,
@@ -1295,6 +1308,7 @@ async function startWorkspaceTask(
   const ownerContext: OwnerContext = {
     workspaceId: wsId,
     ...(sessionCtx.identity?.id ? { identityId: sessionCtx.identity.id } : {}),
+    originApp: sourceName,
   };
   const createResult: CreateTaskResult = await runWithRequestContext(reqCtx, () =>
     taskAwareSource.startToolAsTask(localName, (args ?? {}) as Record<string, unknown>, {
@@ -1312,18 +1326,96 @@ async function startWorkspaceTask(
 }
 
 /**
- * The `_meta` key naming the one source a `resources/read`, `resources/list`
- * or `resources/templates/list` is for. The iframe bridge sets it to the app's
- * own server (`web/src/bridge/bridge.ts`, pinned equal by
+ * `tasks/get`, `tasks/result` and `tasks/cancel` over the session's task store,
+ * in place of the handlers the SDK's `Server` installs for a `taskStore`
+ * (`setRequestHandler` replaces them). The SDK's handlers pass the store
+ * `(taskId, sessionId)` alone; these also pass the source the request names
+ * under `RESOURCE_SOURCE_META_KEY`, with the request's workspace, and the store
+ * answers a scoped request only for a task that source ran in that workspace.
+ * A request that names no source reaches any task the session holds.
+ *
+ * Otherwise they answer as the SDK's do: `tasks/get` carries no related-task
+ * `_meta`, `tasks/result` does, and a terminal task is not cancelled. Two SDK
+ * mechanisms are not carried over because `/mcp` uses neither: the task
+ * message queue (`createServer` gives the `Server` no `taskMessageQueue`), and
+ * polling `tasks/result` until terminal (the store's `getTaskResult` awaits the
+ * task's own terminal result).
+ */
+function registerTaskHandlers(server: Server, taskStore: McpTaskStore): void {
+  server.setRequestHandler(GetTaskRequestSchema, async (request, extra) => {
+    const { taskId, _meta } = request.params;
+    const task = await taskStore.getTask(taskId, extra.sessionId, taskScope(_meta));
+    if (!task) {
+      throw new McpError(ErrorCode.InvalidParams, "Failed to retrieve task: Task not found");
+    }
+    return { ...task };
+  });
+
+  server.setRequestHandler(GetTaskPayloadRequestSchema, async (request, extra) => {
+    const { taskId, _meta } = request.params;
+    const result = await taskStore.getTaskResult(taskId, extra.sessionId, taskScope(_meta));
+    return { ...result, _meta: { ...result._meta, [RELATED_TASK_META_KEY]: { taskId } } };
+  });
+
+  server.setRequestHandler(CancelTaskRequestSchema, async (request, extra) => {
+    const { taskId, _meta } = request.params;
+    const scope = taskScope(_meta);
+    try {
+      const task = await taskStore.getTask(taskId, extra.sessionId, scope);
+      if (!task) throw new McpError(ErrorCode.InvalidParams, `Task not found: ${taskId}`);
+      if (isTerminal(task.status)) {
+        throw new McpError(
+          ErrorCode.InvalidParams,
+          `Cannot cancel task in terminal status: ${task.status}`,
+        );
+      }
+      await taskStore.updateTaskStatus(
+        taskId,
+        "cancelled",
+        "Client cancelled task execution.",
+        extra.sessionId,
+        scope,
+      );
+      const cancelled = await taskStore.getTask(taskId, extra.sessionId, scope);
+      if (!cancelled) {
+        throw new McpError(ErrorCode.InvalidParams, `Task not found after cancellation: ${taskId}`);
+      }
+      return { _meta: {}, ...cancelled };
+    } catch (err) {
+      if (err instanceof McpError) throw err;
+      throw new McpError(
+        ErrorCode.InvalidRequest,
+        `Failed to cancel task: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  });
+}
+
+/**
+ * The `_meta` key naming the one source a request is for. A `resources/read`,
+ * `resources/list` or `resources/templates/list` resolves in that source, and a
+ * `tasks/get`, `tasks/result` or `tasks/cancel` is answered only for a task it
+ * ran. The iframe bridge sets it to the app's own server
+ * (`web/src/bridge/bridge.ts`, pinned equal by
  * `test/unit/tools/server-notifications.test.ts`); an MCP client that omits it
- * gets the workspace-wide read or listing.
+ * gets the workspace-wide read or listing, and any task its session holds.
  */
 export const RESOURCE_SOURCE_META_KEY = "ai.nimblebrain/source";
 
-/** The source a resource request is scoped to, or undefined for none. */
+/** The source a resource or task request is scoped to, or undefined for none. */
 function scopedSourceName(meta: Record<string, unknown> | undefined): string | undefined {
   const name = meta?.[RESOURCE_SOURCE_META_KEY];
   return typeof name === "string" && name.length > 0 ? name : undefined;
+}
+
+/**
+ * The scope of a task request: the source it names, in the workspace the
+ * request is bound to (validated `X-Workspace-Id`). A source name names a
+ * server only within one workspace. Undefined when the request names no source.
+ */
+function taskScope(meta: Record<string, unknown> | undefined): TaskScope | undefined {
+  const source = scopedSourceName(meta);
+  return source === undefined ? undefined : { source, workspaceId: mcpRequestWorkspace.getStore() };
 }
 
 /** A listing's params: the cursor when the caller sent one, and nothing else. */

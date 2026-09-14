@@ -346,6 +346,8 @@ Long-running tools (work that exceeds the stock MCP request timeout) run as **ta
 - **Status notifications** — the host forwards each `notifications/tasks/status` from the server to your iframe verbatim. Filter on the `taskId` you own.
 - **Polling** — call `tasks/get`, `tasks/result`, or `tasks/cancel` with the `taskId`.
 
+A task id is answered only for the server that ran the task: your app's own server, where your `tools/call` started it. The host sends the `taskId` and names that server; any other field you put in `params` is not forwarded. A task another server ran answers `-32602`, the same as a task that does not exist.
+
 | Method | Blocking | Returns |
 |--------|----------|---------|
 | `tasks/get` | No | Current task state (`GetTaskResult`). |
@@ -588,7 +590,7 @@ The bridge enforces three security boundaries:
 
 1. **Origin isolation** — The host only processes messages from the iframe's `contentWindow`. Messages from other sources are silently dropped.
 2. **Tool scoping** — `tools/call` requests are always routed to the app's own MCP server. An iframe cannot call tools on another app's server.
-3. **Resource scoping** — `resources/read`, `resources/list` and `resources/templates/list` answer from the app's own MCP server. Every iframe shares one `/mcp` session, so the bridge names that server on the request; the iframe cannot name another. A URI another server serves reads as not found, the same as one that does not exist.
+3. **Resource and task scoping** — `resources/read`, `resources/list` and `resources/templates/list` answer from the app's own MCP server, and `tasks/get`, `tasks/result` and `tasks/cancel` answer only for a task that server ran. Every iframe shares one `/mcp` session, so the bridge names that server on the request; the iframe cannot name another. A URI another server serves reads as not found, the same as one that does not exist, and so does a task another server ran.
 
 ## Example: making a tool call from an iframe
 

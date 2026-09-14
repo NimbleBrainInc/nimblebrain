@@ -6,10 +6,11 @@
  * it mimics `McpSource`'s task API (the minimum the `/mcp` handler looks
  * for via `findTaskAwareSource`) without spawning a real MCP subprocess.
  * That keeps these tests fast while still exercising:
- *   - SDK-installed `tasks/{get,result,cancel}` handlers (via ProtocolOptions.taskStore)
+ *   - `/mcp`'s `tasks/{get,result,cancel}` handlers over the session's task store
  *   - Our `tools/call` task-augmented branch (startToolAsTask + recordTask)
- *   - The SDK's automatic `_meta[RELATED_TASK_META_KEY]` stamping on `tasks/result`
+ *   - `_meta[RELATED_TASK_META_KEY]` stamping on `tasks/result`
  *   - Cross-workspace isolation (distinct workspaces see distinct task stores)
+ *   - A request scoped to one source reaching only that source's tasks
  */
 
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
@@ -21,12 +22,17 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import {
   type CallToolResult,
+  CancelTaskResultSchema,
   type CreateTaskResult,
+  CreateTaskResultSchema,
   type GetTaskResult,
+  GetTaskPayloadResultSchema,
+  GetTaskResultSchema,
   RELATED_TASK_META_KEY,
   type Task,
 } from "@modelcontextprotocol/sdk/types.js";
 
+import { RESOURCE_SOURCE_META_KEY } from "../../src/api/mcp-server.ts";
 import { startServer, type ServerHandle } from "../../src/api/server.ts";
 import { textContent } from "../../src/engine/content-helpers.ts";
 import type { ToolResult } from "../../src/engine/types.ts";
@@ -62,6 +68,8 @@ interface FakeToolDef {
   behaviour: () => ToolBehaviour;
   /** Non-task fallback body. */
   inlineBody?: (args: Record<string, unknown>) => ToolResult;
+  /** The task id this tool mints, as a connector's own server would. Random when omitted. */
+  taskId?: string;
 }
 
 interface TaskEntry {
@@ -75,10 +83,12 @@ interface TaskEntry {
 }
 
 class FakeTaskAwareSource implements ToolSource {
-  readonly name = "fake";
   private tasks = new Map<string, TaskEntry>();
 
-  constructor(private readonly toolDefs: FakeToolDef[]) {}
+  constructor(
+    private readonly toolDefs: FakeToolDef[],
+    readonly name = "fake",
+  ) {}
 
   async start(): Promise<void> {}
   async stop(): Promise<void> {}
@@ -109,7 +119,7 @@ class FakeTaskAwareSource implements ToolSource {
   ): Promise<CreateTaskResult> {
     const def = this.toolDefs.find((t) => t.name === toolName);
     if (!def) throw new Error(`unknown tool ${toolName}`);
-    const taskId = `task_${crypto.randomUUID()}`;
+    const taskId = def.taskId ?? `task_${crypto.randomUUID()}`;
     const now = new Date().toISOString();
     const task: Task = {
       taskId,
@@ -229,6 +239,10 @@ let baseUrl: string;
 let fakeSource: FakeTaskAwareSource;
 const testDir = join(tmpdir(), `nimblebrain-mcp-tasks-${Date.now()}`);
 const OTHER_WORKSPACE_ID = "ws_other";
+/** The one task id `fake__minted` and `other__minted` both mint. */
+const MINTED_TASK_ID = "task_minted";
+/** Settles `fake__gated`. Replaced by the test that starts it. */
+let gate = makeDeferred<CallToolResult>();
 
 beforeAll(async () => {
   mkdirSync(testDir, { recursive: true });
@@ -281,16 +295,61 @@ beforeAll(async () => {
         isError: false,
       }),
     },
+    {
+      name: "gated",
+      taskSupport: "optional",
+      behaviour: () => ({ kind: "delayed", resultPromise: gate.promise }),
+    },
+    {
+      name: "minted",
+      taskSupport: "optional",
+      taskId: MINTED_TASK_ID,
+      behaviour: () => ({ kind: "blocking" }),
+    },
   ]);
 
   const registry = runtime.getRegistryForWorkspace(TEST_WORKSPACE_ID);
   registry.addSource(fakeSource);
+
+  // A second task-aware source in the SAME workspace: the one a request scoped
+  // to `fake` must not reach. Its `minted` tool mints the same task id as
+  // `fake`'s, as two connectors with sequential ids would.
+  const otherSource = new FakeTaskAwareSource(
+    [
+      {
+        name: "minted",
+        taskSupport: "optional",
+        taskId: MINTED_TASK_ID,
+        behaviour: () => ({
+          kind: "immediate",
+          result: { content: [{ type: "text", text: "other-minted-done" }] },
+        }),
+      },
+    ],
+    "other",
+  );
+  registry.addSource(otherSource);
 
   // Second workspace also gets the same (shared-by-reference) source so
   // cross-workspace isolation is forced through the ownerContext guard
   // rather than simply "source not in registry".
   const otherRegistry = runtime.getRegistryForWorkspace(OTHER_WORKSPACE_ID);
   otherRegistry.addSource(fakeSource);
+
+  // A source named `twin` in each workspace, each its own server, minting the
+  // same task id: one name, two servers.
+  const twin = (behaviour: () => ToolBehaviour) =>
+    new FakeTaskAwareSource(
+      [{ name: "minted", taskSupport: "optional", taskId: MINTED_TASK_ID, behaviour }],
+      "twin",
+    );
+  registry.addSource(twin(() => ({ kind: "blocking" })));
+  otherRegistry.addSource(
+    twin(() => ({
+      kind: "immediate",
+      result: { content: [{ type: "text", text: "twin-other-done" }] },
+    })),
+  );
 
   handle = startServer({ runtime, port: 0 });
   baseUrl = `http://localhost:${handle.port}`;
@@ -370,7 +429,7 @@ describe("/mcp task lifecycle", () => {
       expect(terminal?.content).toEqual([{ type: "text", text: "fast-done" }]);
       // structuredContent preserved end-to-end
       expect(terminal?.structuredContent).toEqual({ ok: true, tag: "fast" });
-      // tasks/result response stamped with related-task metadata (SDK-provided)
+      // tasks/result response stamped with related-task metadata
       const meta = terminal?._meta as Record<string, unknown> | undefined;
       const relatedTask = meta?.[RELATED_TASK_META_KEY] as { taskId?: string } | undefined;
       expect(relatedTask?.taskId).toBe(taskId!);
@@ -556,6 +615,180 @@ describe("/mcp task lifecycle", () => {
         }
       }
       expect(errorCode).toBe(-32601);
+    } finally {
+      await client.close();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A task request that names a source under `RESOURCE_SOURCE_META_KEY` — how the
+// iframe bridge asks for an app — is answered only for a task that source ran.
+// Every iframe shares one `/mcp` session, so the key is the only thing that
+// says which app is asking.
+// ---------------------------------------------------------------------------
+describe("/mcp tasks/* scoped to one source", () => {
+  const scopedTo = (source: string) => ({ [RESOURCE_SOURCE_META_KEY]: source });
+
+  /** Start a task without the SDK's stream, which would poll unscoped on its own. */
+  async function startTask(client: Client, name: string): Promise<Task> {
+    const { task } = await client.request(
+      { method: "tools/call", params: { name, arguments: {}, task: { ttl: 60_000 } } },
+      CreateTaskResultSchema,
+    );
+    return task;
+  }
+
+  function scopedGet(client: Client, taskId: string, source: string) {
+    return client.request(
+      { method: "tasks/get", params: { taskId, _meta: scopedTo(source) } },
+      GetTaskResultSchema,
+    );
+  }
+
+  async function scopedResult(client: Client, taskId: string, source: string) {
+    const result = await client.request(
+      { method: "tasks/result", params: { taskId, _meta: scopedTo(source) } },
+      GetTaskPayloadResultSchema,
+    );
+    return result as CallToolResult;
+  }
+
+  function scopedCancel(client: Client, taskId: string, source: string) {
+    return client.request(
+      { method: "tasks/cancel", params: { taskId, _meta: scopedTo(source) } },
+      CancelTaskResultSchema,
+    );
+  }
+
+  async function expectTaskNotFound(pending: Promise<unknown>): Promise<void> {
+    await expect(pending).rejects.toMatchObject({ code: -32602 });
+  }
+
+  async function waitForStatus(
+    client: Client,
+    taskId: string,
+    source: string,
+    status: Task["status"],
+  ): Promise<void> {
+    for (let i = 0; i < 100; i++) {
+      if ((await scopedGet(client, taskId, source)).status === status) return;
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    throw new Error(`task ${taskId} on ${source} never reached ${status}`);
+  }
+
+  it("the source that ran a task gets, reads and cancels it", async () => {
+    const client = await createClient();
+    try {
+      const fast = await startTask(client, "fake__fast");
+      await waitForStatus(client, fast.taskId, "fake", "completed");
+      const result = await scopedResult(client, fast.taskId, "fake");
+      expect(result.content).toEqual([{ type: "text", text: "fast-done" }]);
+      const related = result._meta?.[RELATED_TASK_META_KEY] as { taskId?: string } | undefined;
+      expect(related?.taskId).toBe(fast.taskId);
+
+      const slow = await startTask(client, "fake__slow");
+      const status = await scopedGet(client, slow.taskId, "fake");
+      expect(status.status).toBe("working");
+      // Per spec, `tasks/get` carries no related-task `_meta`.
+      expect(status._meta?.[RELATED_TASK_META_KEY]).toBeUndefined();
+      expect((await scopedCancel(client, slow.taskId, "fake")).status).toBe("cancelled");
+      // Cancelling it again is refused: the task is terminal.
+      await expectTaskNotFound(scopedCancel(client, slow.taskId, "fake"));
+    } finally {
+      await client.close();
+    }
+  });
+
+  it("scoped to any other source, all three answer -32602 and a refused cancel leaves the task running", async () => {
+    gate = makeDeferred<CallToolResult>();
+    const client = await createClient();
+    try {
+      const { taskId } = await startTask(client, "fake__gated");
+
+      for (const source of ["other", "no-such-source"]) {
+        await expectTaskNotFound(scopedGet(client, taskId, source));
+        await expectTaskNotFound(scopedCancel(client, taskId, source));
+      }
+
+      // Neither cancel reached the task: it runs to completion, and its own
+      // source reads the tool's output.
+      gate.resolve({ content: [{ type: "text", text: "gated-done" }] });
+      const own = await scopedResult(client, taskId, "fake");
+      expect(own.content).toEqual([{ type: "text", text: "gated-done" }]);
+
+      for (const source of ["other", "no-such-source"]) {
+        await expectTaskNotFound(scopedResult(client, taskId, source));
+      }
+    } finally {
+      await client.close();
+    }
+  });
+
+  it("two sources that mint the same task id each answer for their own task", async () => {
+    const client = await createClient();
+    try {
+      const fromFake = await startTask(client, "fake__minted");
+      const fromOther = await startTask(client, "other__minted");
+      expect(fromOther.taskId).toBe(fromFake.taskId);
+      const taskId = fromFake.taskId;
+
+      await waitForStatus(client, taskId, "other", "completed");
+      expect((await scopedGet(client, taskId, "fake")).status).toBe("working");
+      // A client that names no source reads the task recorded last.
+      expect((await client.experimental.tasks.getTask(taskId)).status).toBe("completed");
+
+      expect((await scopedCancel(client, taskId, "fake")).status).toBe("cancelled");
+      const other = await scopedResult(client, taskId, "other");
+      expect(other.content).toEqual([{ type: "text", text: "other-minted-done" }]);
+    } finally {
+      await client.close();
+    }
+  });
+
+  /** One session whose requests carry whichever workspace `ws.current` names. */
+  async function createSwitchableClient(): Promise<{ client: Client; ws: { current: string } }> {
+    const ws = { current: TEST_WORKSPACE_ID };
+    const transport = new StreamableHTTPClientTransport(new URL(`${baseUrl}/mcp`), {
+      fetch: (url, init) => {
+        const headers = new Headers(init?.headers);
+        headers.set("x-workspace-id", ws.current);
+        return fetch(url, { ...init, headers });
+      },
+    });
+    const client = new Client(
+      { name: "tasks-test", version: "1.0.0" },
+      { capabilities: { tasks: { requests: { tools: { call: {} } }, cancel: {} } } },
+    );
+    await client.connect(transport);
+    return { client, ws };
+  }
+
+  it("a scope names a source in the request's workspace, not a same-named source in another", async () => {
+    const { client, ws } = await createSwitchableClient();
+    try {
+      // One session, one task id, two servers both named `twin`.
+      ws.current = TEST_WORKSPACE_ID;
+      const here = await startTask(client, "twin__minted");
+      ws.current = OTHER_WORKSPACE_ID;
+      const there = await startTask(client, "twin__minted");
+      expect(there.taskId).toBe(here.taskId);
+      const taskId = here.taskId;
+      await waitForStatus(client, taskId, "twin", "completed");
+      ws.current = TEST_WORKSPACE_ID;
+      expect((await scopedGet(client, taskId, "twin")).status).toBe("working");
+
+      // A task one workspace's source ran is out of reach from the other.
+      const slow = await startTask(client, "fake__slow");
+      ws.current = OTHER_WORKSPACE_ID;
+      await expectTaskNotFound(scopedGet(client, slow.taskId, "fake"));
+      await expectTaskNotFound(scopedCancel(client, slow.taskId, "fake"));
+      await expectTaskNotFound(scopedResult(client, slow.taskId, "fake"));
+
+      ws.current = TEST_WORKSPACE_ID;
+      expect((await scopedCancel(client, slow.taskId, "fake")).status).toBe("cancelled");
+      expect((await scopedCancel(client, taskId, "twin")).status).toBe("cancelled");
     } finally {
       await client.close();
     }

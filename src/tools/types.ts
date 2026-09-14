@@ -152,7 +152,10 @@ export interface ResourceData {
  * "no such task" to avoid leaking task-existence to unauthorized callers.
  *
  * Required: `workspaceId`. Optional: `identityId` (user) and `originApp`
- * (the app / iframe that initiated the call). When set on the stamped context,
+ * (the app the task belongs to, which is the name of the source that runs it —
+ * an app is its server). `/mcp` stamps `originApp` on every task it starts, and
+ * a request an iframe scopes to one source reaches only a task stamped with
+ * that source (`mcp-task-store.ts`). When set on the stamped context,
  * subsequent lookups MUST supply matching values.
  */
 export interface TaskOwnerContext {

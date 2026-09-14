@@ -54,7 +54,7 @@ export interface RemoteTransportConfig {
    * `value` accept the secret inline, or a `{ ref: "credential", key }`
    * pointer resolved at the connection's WORKSPACE scope — the same shape
    * `oauthClient.clientSecret` uses, so `workspace.json` holds one kind of
-   * reference and not two. A reference is re-resolved per connection, which
+   * reference and not two. A reference is re-resolved on every request, which
    * is what makes rotating a key a `put` rather than a config edit.
    */
     | { type: "bearer"; token: CredentialValue }

@@ -32,7 +32,7 @@
  * untouched. The cost is honest and stated in the docs: rotating an
  * instance-scope secret takes a restart. Instance scope is CLI-or-config only
  * and changes at deploy cadence; workspace scope, which tenants rotate, resolves
- * per connection instead.
+ * at each use instead.
  */
 
 import { isCredentialRef } from "./credential-ref.ts";

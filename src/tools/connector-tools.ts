@@ -2125,7 +2125,7 @@ function buildRemoteConnectorRef(
             // The workspace's own secrets, as references. They ride alongside the
             // provider credential rather than replacing it: `auth` is how the
             // connection proves who is calling, these are what that caller may
-            // open. The transport resolves each one per connection at the
+            // open. The transport resolves each one on every request at the
             // connection's workspace scope, so two workspaces installing this
             // same entry send different values and a rotation is a `put`.
             ...(action.secretHeaders ? { headers: action.secretHeaders } : {}),
@@ -3372,9 +3372,9 @@ async function requireSecretAdmin(
  * `set_secret` — write a workspace secret, creating or replacing it.
  *
  * Replacing is the rotation path: a `put` on the same key is picked up by the
- * next connection that resolves a reference to it, with no config edit and no
- * restart. So there is no separate `rotate_secret` action; there is nothing for
- * it to do that this does not.
+ * next request that carries a reference to it — a live connection included —
+ * with no config edit, no reconnect and no restart. So there is no separate
+ * `rotate_secret` action; there is nothing for it to do that this does not.
  */
 async function handleSetSecret(
   ctx: ManageConnectorsContext,
