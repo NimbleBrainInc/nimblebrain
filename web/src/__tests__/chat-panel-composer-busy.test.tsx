@@ -22,6 +22,9 @@ import { realClient } from "../../test/setup";
   }
 }
 
+/** Makes `/v1/chat/start` fail, as a network error on the first send would. */
+let failStart = false;
+
 mock.module("../api/client", () => ({
   ...realClient,
   callTool: mock(async (server: string, tool: string, args?: { id?: string }) => {
@@ -37,7 +40,10 @@ mock.module("../api/client", () => ({
     }
     return { structuredContent: null, content: [] };
   }),
-  startChatTurn: mock(async () => ({ conversationId: "conv_busy" })),
+  startChatTurn: mock(async () => {
+    if (failStart) throw new Error("start failed");
+    return { conversationId: "conv_busy" };
+  }),
 }));
 
 mock.module("../api/conversation-stream", () => ({
@@ -147,6 +153,7 @@ async function pressEnter(): Promise<void> {
 beforeEach(() => {
   chatStore.reset();
   sent = [];
+  failStart = false;
 });
 
 afterEach(() => {
@@ -192,6 +199,19 @@ describe("an unsent chat's draft", () => {
 
     await act(async () => chat.newConversation());
     expect(textarea().value).toBe("typed, never sent");
+  });
+
+  test("stops being the chat New chat returns to once its first send fails", async () => {
+    await mountPanel(false);
+    failStart = true;
+    await act(async () => chat.sendMessage("hello"));
+    expect(chat.canRetry).toBe(true);
+    const failed = chat.conversationKey;
+
+    await act(async () => chat.newConversation());
+    expect(chat.conversationKey).not.toBe(failed);
+    expect(chat.error).toBeNull();
+    expect(chat.canRetry).toBe(false);
   });
 });
 

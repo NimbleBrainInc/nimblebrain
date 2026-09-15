@@ -130,13 +130,16 @@ export function ChatProvider({
   // Re-scope the panel to the focused workspace. The chat panel is
   // workspace-scoped: a conversation lives in exactly one workspace, so when the
   // panel holds a conversation from a DIFFERENT workspace than the one focused,
-  // it clears and resets to a fresh, empty draft in the focused workspace. The
-  // panel stays open — the assistant is still there; it just no longer shows a
-  // conversation from a workspace you aren't viewing.
+  // it returns to the panel's unsent chat, or a fresh one once a send has been
+  // attempted in it. An unsent chat belongs to no workspace until its first send
+  // creates the conversation in the focused one, so its text can follow the
+  // switch without carrying anything across. The panel stays open — the
+  // assistant is still there; it just no longer shows a conversation from a
+  // workspace you aren't viewing.
   //
-  // Narrow on purpose: this clears only the OPEN conversation
-  // (`newConversation()` → a fresh draft slice), unlike the identity reset above
-  // which nukes every cached slice. Other workspaces' cached slices stay intact.
+  // Narrow on purpose: this moves off only the OPEN conversation
+  // (`newConversation()`), unlike the identity reset above which nukes every
+  // cached slice. Other workspaces' cached slices stay intact.
   //
   // Two complementary triggers:
   //

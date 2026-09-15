@@ -132,10 +132,11 @@ export function useChat(initialConversationId?: string, currentUserId?: string):
   const newConversation = useCallback(() => {
     const unsent = unsentChatKeyRef.current;
     const snap = unsent ? chatStore.getSnapshot(unsent) : undefined;
-    // Reusable until something is sent in it: a send assigns the conversation
-    // id and puts the turn in the transcript.
+    // Reusable until a send is attempted in it. A send assigns the conversation
+    // id and puts the turn in the transcript; one that failed to start leaves
+    // neither, but it is retryable, so it counts as sent.
     const key =
-      unsent && snap && snap.conversationId === null && snap.messages.length === 0
+      unsent && snap && snap.conversationId === null && snap.messages.length === 0 && !snap.canRetry
         ? unsent
         : freshDraftKey();
     chatStore.ensureSlice(key);
