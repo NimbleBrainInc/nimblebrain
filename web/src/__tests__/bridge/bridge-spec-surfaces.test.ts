@@ -187,12 +187,43 @@ describe("ui/initialize — advertised capabilities", () => {
     const tasks = { cancel: {}, requests: { tools: { call: {} } } };
 
     const sent = reply.result as { hostCapabilities: Record<string, unknown> };
-    expect(sent.hostCapabilities.experimental).toEqual({ "ai.nimblebrain/tasks": tasks });
+    // The official extension identifier is what an app that knows MCP Tasks
+    // looks for; the `ai.nimblebrain/` copy is the name this host used first
+    // and keeps until consumers have moved.
+    expect(sent.hostCapabilities.experimental).toEqual({
+      "io.modelcontextprotocol/tasks": tasks,
+      "ai.nimblebrain/tasks": tasks,
+    });
 
     // What the official `App` keeps: it stores the parsed result, not the raw
     // frame, so a key this parse strips is a key no app built on it can read.
     const parsed = McpUiInitializeResultSchema.parse(reply.result);
+    expect(parsed.hostCapabilities.experimental?.["io.modelcontextprotocol/tasks"]).toEqual(tasks);
     expect(parsed.hostCapabilities.experimental?.["ai.nimblebrain/tasks"]).toEqual(tasks);
+  });
+
+  test("the spec identifier is the one the extension registry defines", async () => {
+    // Official MCP extensions use the `io.modelcontextprotocol` vendor prefix,
+    // and MCP Tasks is registered under this exact name. A typo here is a key
+    // no app looks for, and nothing else in the suite would notice.
+    const frame = mount();
+    frame.send({
+      jsonrpc: "2.0",
+      id: "init-id",
+      method: "ui/initialize",
+      params: {
+        protocolVersion: "2026-01-26",
+        clientInfo: { name: "iframe", version: "1.0.0" },
+        capabilities: {},
+      },
+    });
+    const reply = (await frame.waitFor(isReplyTo("init-id"))) as {
+      result: { hostCapabilities: { experimental: Record<string, unknown> } };
+    };
+    expect(Object.keys(reply.result.hostCapabilities.experimental).sort()).toEqual([
+      "ai.nimblebrain/tasks",
+      "io.modelcontextprotocol/tasks",
+    ]);
   });
 });
 
