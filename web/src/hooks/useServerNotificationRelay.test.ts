@@ -87,6 +87,15 @@ describe("useServerNotificationRelay", () => {
     expect(inbox).toEqual([]);
   });
 
+  test("a notification from a person's own app arrives while a workspace is on screen", () => {
+    // It belongs to no workspace, so it carries none. Comparing its absent
+    // workspace with the one on screen is how every such notification was lost.
+    const inbox = mountIframe("files");
+    relay()({ server: "files", userId: "usr_a", method: LIST_CHANGED });
+    expect(getActiveWorkspaceId()).toBe("ws_a");
+    expect(inbox).toEqual([{ jsonrpc: "2.0", method: LIST_CHANGED }]);
+  });
+
   test("before the active workspace is known, it is delivered rather than lost", () => {
     setActiveWorkspaceId(null);
     const inbox = mountIframe("notes");

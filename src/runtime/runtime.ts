@@ -201,6 +201,10 @@ import { resolveInstanceCredentialRefs } from "../tools/instance-credentials.ts"
 import { McpSource } from "../tools/mcp-source.ts";
 import { SharedSourceRef, type ToolRegistry } from "../tools/registry.ts";
 import { APP_INSTRUCTIONS_URI } from "../tools/resource-schemes.ts";
+import {
+  announceResourceListChangedFor,
+  relayIdentitySourceNotifications,
+} from "../tools/server-notifications.ts";
 import { surfaceTools } from "../tools/surfacing.ts";
 import { createSystemTools } from "../tools/system-tools.ts";
 import type { ResourceData, Tool, ToolSource } from "../tools/types.ts";
@@ -903,6 +907,9 @@ export class Runtime {
     rt._workspaceRegistries = workspaceRegistries;
     rt._platformSources = platformSources;
     rt._workspaceSources = workspaceSources;
+    // Identity sources are in no workspace registry, so no registry relays
+    // their servers' notifications. This does, each to the person it names.
+    relayIdentitySourceNotifications(platformSources, events);
 
     // Wire the workspace registries into lifecycle so workspace-scope
     // startAuth / disconnect / install can add+remove sources without
@@ -3205,6 +3212,20 @@ export class Runtime {
   }
 
   /**
+   * Announce that `userId`'s data in a kernel identity source changed: the
+   * source's server sends `notifications/resources/list_changed`, and the
+   * identity relay delivers it to that user's views of the source.
+   *
+   * Called at the write, whichever door made it — a tool call, a REST upload, a
+   * chat turn, a scheduled run — because the write is where the owner is known.
+   * A no-op before the platform sources exist.
+   */
+  announceIdentitySourceChange(name: string, userId: string): void {
+    const source = this.getIdentitySource(name);
+    if (source instanceof McpSource) announceResourceListChangedFor(userId, source);
+  }
+
+  /**
    * Resolve a user's personal connector to a started `ToolSource`, lazy-starting
    * it on first use (see `ConnectorLifecycleManager.getIdentityConnectorSource`).
    * The DYNAMIC, per-identity connector door — deliberately separate from the
@@ -3273,17 +3294,28 @@ export class Runtime {
     // where the workspace is known — so a freshly uploaded file serves O(1) and
     // a deleted one is forgotten. The locator stays correct without these (a
     // cold miss walks disk); they just keep the hot path hot.
+    //
+    // The same sites announce the write to the owner's file views. Every file
+    // write passes through here — the `files__*` tools, REST uploads, chat
+    // attachments — so no door can write without announcing.
     const locator = this.getFileLocator();
+    const announce = () => this.announceIdentitySourceChange("files", ownerId);
     return {
       ...store,
       saveFile: async (data, filename, mimeType) => {
         const result = await store.saveFile(data, filename, mimeType);
         locator.remember(ownerId, result.id, wsId);
+        announce();
         return result;
+      },
+      appendRegistry: async (entry) => {
+        await store.appendRegistry(entry);
+        announce();
       },
       deleteFile: async (id) => {
         await store.deleteFile(id);
         locator.forget(ownerId, id);
+        announce();
       },
     };
   }
@@ -3552,13 +3584,19 @@ export class Runtime {
    * (`workspaces/<wsId>/conversations/<ownerId>/`). The workspace owns the
    * directory — the path is the boundary. Per-call instances are intentional
    * (the store is stateless w.r.t. its dir); the `onMutate` hook keeps the
-   * conversation caches fresh on every write.
+   * conversation caches fresh on every write, and announces the write to the
+   * owner's conversation views. An append counts: it changes the conversation's
+   * summary, and the relay's coalescing bounds how often a streaming turn
+   * reaches those views.
    */
   workspaceConversationStore(wsId: string, ownerId: string): EventSourcedConversationStore {
     return new EventSourcedConversationStore({
       dir: workspaceConversationsDir(resolveWorkDir(this.config), wsId, ownerId),
       logLevel: this.config.logging?.level ?? "normal",
-      onMutate: (change) => this.notifyConversationsChanged({ ...change, wsId }),
+      onMutate: (change) => {
+        this.notifyConversationsChanged({ ...change, wsId });
+        this.announceIdentitySourceChange("conversations", ownerId);
+      },
     });
   }
 

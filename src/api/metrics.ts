@@ -304,16 +304,20 @@ export const artifactResolutionsTotal = new Counter({
  * `coalesced` counts notifications that arrived inside an open coalescing
  * window and so produced no delivery of their own. A flood of N notifications
  * inside one window reads `forwarded` 2 (the leading and the trailing
- * delivery), `coalesced` N-1.
+ * delivery), `coalesced` N-1. `unattributed` counts notifications from a
+ * person's own app that named no person, which are dropped: the host announces
+ * for a named owner, so a nonzero rate is a write path that forgot to.
  *
- * The ratio is the signal: a server whose `coalesced` climbs is announcing far
- * faster than any view can use, which is either a bug in that server or a
- * server spending the host's fan-out on nothing. No server or workspace label:
- * both are tenant-unbounded, and one pod per tenant already attributes it.
+ * `coalesced` rises in ordinary use: a chat turn appends to its conversation
+ * many times, and each append announces, so every streaming turn coalesces by
+ * design. Read a climb as a problem only against that baseline — a sustained
+ * rise with no matching chat traffic is a server announcing faster than any
+ * view can use. No server or workspace label: both are tenant-unbounded, and
+ * one pod per tenant already attributes it.
  */
 export const serverNotificationsRelayedTotal = new Counter({
   name: "nb_server_notifications_relayed_total",
-  help: "App-server notifications relayed to the server's views, by outcome (forwarded or coalesced).",
+  help: "App-server notifications relayed to the server's views, by outcome (forwarded, coalesced, or unattributed).",
   labelNames: ["outcome"] as const,
   registers: [metricsRegistry],
 });

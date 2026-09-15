@@ -120,18 +120,24 @@ export const DataChangedPayload = Type.Object({
 });
 export type DataChangedPayload = Static<typeof DataChangedPayload>;
 
-/**
- * An app server's notification, relayed to that server's views in one
- * workspace. `server` is the bare server name (an iframe's `data-app`),
- * `method` one of `RELAYED_SERVER_NOTIFICATIONS`, `params` what the SDK parsed,
- * size-capped.
- */
-export const ServerNotificationPayload = Type.Object({
+const ServerNotificationFields = {
   server: Type.String(),
-  workspaceId: Type.String(),
   method: Type.String(),
   params: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
-});
+};
+
+/**
+ * An app server's notification, relayed to that server's views. `server` is the
+ * bare server name (an iframe's `data-app`), `method` one of
+ * `RELAYED_SERVER_NOTIFICATIONS`, `params` what the SDK parsed, size-capped.
+ *
+ * It names exactly one owner: `workspaceId` for a workspace's source, or
+ * `userId` for a person's own app, which belongs to no workspace.
+ */
+export const ServerNotificationPayload = Type.Union([
+  Type.Object({ ...ServerNotificationFields, workspaceId: Type.String() }),
+  Type.Object({ ...ServerNotificationFields, userId: Type.String() }),
+]);
 export type ServerNotificationPayload = Static<typeof ServerNotificationPayload>;
 
 export const ToolPromotionChangedPayload = Type.Object({

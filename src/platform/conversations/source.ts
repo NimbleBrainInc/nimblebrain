@@ -257,13 +257,16 @@ export async function createConversationsSource(
       handler: withErrorHandling(async (input) => {
         const { index } = await getIndex();
         const update = input as unknown as ConversationsUpdateInput;
-        return capSummary(
-          await handleUpdate(
-            { ...update, id: resolveConversationId(update.id) },
-            index,
-            currentAccess(),
-          ),
+        const access = currentAccess();
+        const updated = await handleUpdate(
+          { ...update, id: resolveConversationId(update.id) },
+          index,
+          access,
         );
+        // Written beside the store rather than through it, so the store's
+        // announcement never fires for it.
+        runtime.announceIdentitySourceChange("conversations", access.userId);
+        return capSummary(updated);
       }),
     },
     {
@@ -274,9 +277,15 @@ export async function createConversationsSource(
       handler: withErrorHandling(async (input) => {
         const { index } = await getIndex();
         const fork = input as unknown as ConversationsForkInput;
-        return capSummary(
-          await handleFork({ ...fork, id: resolveConversationId(fork.id) }, index, currentAccess()),
+        const access = currentAccess();
+        const forked = await handleFork(
+          { ...fork, id: resolveConversationId(fork.id) },
+          index,
+          access,
         );
+        // As `update`: written beside the store, so announced here.
+        runtime.announceIdentitySourceChange("conversations", access.userId);
+        return capSummary(forked);
       }),
     },
     {
