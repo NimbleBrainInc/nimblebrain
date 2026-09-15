@@ -83,7 +83,12 @@ function buildRequestHeaders(
 
 /**
  * Wrap a transport's `fetch` so the connector's headers go to the connector's
- * own origin and nowhere else, set over whatever headers the SDK built.
+ * own origin and nowhere else, filling in only names the SDK left unset.
+ *
+ * A header the SDK built wins over a connector header of the same name. The SDK
+ * sets the protocol's own headers (`Accept`, `Content-Type`, `Last-Event-ID`,
+ * an OAuth request's client authentication, the OAuth bearer), and a connector
+ * value in their place breaks the request rather than configuring it.
  *
  * Only on the connector's origin. The SDK sends OAuth discovery, client
  * registration, and token exchange and refresh through this same fetch, and it
@@ -114,9 +119,13 @@ function createConnectorHeaderFetch(
   return async (input, init) => {
     if (new URL(input.toString()).origin !== endpoint.origin) return baseFetch(input, init);
     const headers = new Headers(init?.headers);
-    for (const [name, value] of Object.entries(fixed)) headers.set(name, value);
-    const resolved = await resolveHeaderSources(referenced, workspaceId);
-    for (const [name, value] of Object.entries(resolved)) headers.set(name, value);
+    const fill = (entries: Record<string, string>) => {
+      for (const [name, value] of Object.entries(entries)) {
+        if (!headers.has(name)) headers.set(name, value);
+      }
+    };
+    fill(fixed);
+    fill(await resolveHeaderSources(referenced, workspaceId));
     return baseFetch(input, { ...init, headers });
   };
 }

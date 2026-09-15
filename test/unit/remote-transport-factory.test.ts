@@ -265,15 +265,6 @@ describe("createRemoteTransport — a credential reference resolves on every req
 		expect(after.get("X-Plain")).toBe("kept");
 	});
 
-	test("no header, literal or reference, rides requestInit", async () => {
-		// The SDK merges requestInit's headers into its OAuth requests, on any origin.
-		await store.put(scope, KEY, "old-secret");
-		const t = await build({ headers: refHeaders });
-		const reqInit = (t as unknown as Record<string, unknown>)["_requestInit"] as RequestInit | undefined;
-		expect(reqInit?.headers).toBeUndefined();
-		expect((await send(t)).get("X-Plain")).toBe("kept");
-	});
-
 	test("a bearer token given as a reference rotates the same way", async () => {
 		await store.put(scope, KEY, "v1");
 		const t = await build({ auth: { type: "bearer", token: { ref: "credential", key: KEY } } });
@@ -588,15 +579,43 @@ describe("createRemoteTransport — a connector's headers stay on the connector'
 		]);
 	});
 
+	/** An SSE transport as it stands once the server has announced its POST endpoint. */
+	async function connectedSse(
+		transportConfig: Parameters<typeof createRemoteTransport>[1],
+		authProvider?: OAuthClientProvider,
+	): Promise<Transport> {
+		const t = await createRemoteTransport(ENDPOINT, { ...transportConfig, type: "sse" }, authProvider);
+		(t as unknown as { _endpoint: URL })._endpoint = ENDPOINT;
+		return t;
+	}
+
 	test("the SSE transport keeps them on the connector's origin too", async () => {
 		serve(OTHER_ORIGIN);
-		const t = await createRemoteTransport(ENDPOINT, { type: "sse", ...config }, memoryProvider());
-		const fetchFn = sdkOAuthFetch(t);
-		await fetchFn(`${OTHER_ORIGIN}/token`, { method: "POST", body: "grant_type=refresh_token" });
-		await fetchFn(ENDPOINT, {});
+		const t = await connectedSse(config, memoryProvider());
+		await sdkOAuthFetch(t)(`${OTHER_ORIGIN}/token`, { method: "POST", body: "grant_type=refresh_token" });
+		await t.send({ jsonrpc: "2.0", method: "notifications/roots/list_changed" });
 		expect(sent.map((s) => [s.kind, s.headers.get(HEADER)])).toEqual([
 			["refresh", null],
 			["connector", "literal-secret"],
 		]);
+	});
+
+	test("a connector header never replaces one the SDK sets", async () => {
+		// The SDK's Accept is what lets a Streamable HTTP server answer with a stream.
+		serve(OTHER_ORIGIN);
+		const clashing = {
+			headers: { Accept: "application/json", "Content-Type": "text/plain", [HEADER]: "literal-secret" },
+		};
+		await (await createRemoteTransport(ENDPOINT, clashing)).send({
+			jsonrpc: "2.0",
+			method: "notifications/roots/list_changed",
+		});
+		await (await connectedSse(clashing)).send({ jsonrpc: "2.0", method: "notifications/roots/list_changed" });
+
+		const [streamable, sse] = sent;
+		expect(streamable?.headers.get("Accept")).toBe("application/json, text/event-stream");
+		expect(streamable?.headers.get("Content-Type")).toBe("application/json");
+		expect(sse?.headers.get("Content-Type")).toBe("application/json");
+		for (const s of sent) expect(s.headers.get(HEADER)).toBe("literal-secret");
 	});
 });
