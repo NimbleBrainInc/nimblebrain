@@ -5,7 +5,7 @@ description: NimbleBrain's ext-apps host implementation — the JSON-RPC protoco
 
 import { Aside, Tabs, TabItem } from '@astrojs/starlight/components';
 
-The MCP App Bridge is NimbleBrain's implementation of the [ext-apps specification (2026-01-26)](https://apps.extensions.modelcontextprotocol.io/api/) — the standard protocol that enables [MCP Apps](/concepts/mcp-apps) to render inside host applications with bidirectional tool access. NimbleBrain extends the spec with `synapse/` namespace methods for data-change notifications, semantic actions, and state persistence.
+The MCP App Bridge is NimbleBrain's implementation of the [ext-apps specification (2026-01-26)](https://apps.extensions.modelcontextprotocol.io/api/) — the standard protocol that enables [MCP Apps](/concepts/mcp-apps) to render inside host applications with bidirectional tool access. NimbleBrain extends the spec with `synapse/` namespace methods for data-change notifications, semantic actions, file transfer, and keyboard forwarding.
 
 All messages use `window.postMessage` with JSON-RPC 2.0 envelopes:
 
@@ -68,8 +68,6 @@ These have no spec equivalent and degrade to no-ops in non-NimbleBrain hosts.
 | `synapse/data-changed` | Host → App | The agent called a tool on the app's server — the app should refresh. |
 | `synapse/action` | App → Host | Request a semantic action from the shell. |
 | `synapse/download-file` | App → Host | Trigger a file download in the browser. |
-| `synapse/persist-state` | App → Host | Persist widget state across sessions. |
-| `synapse/state-loaded` | Host → App | Load previously persisted widget state. |
 | `synapse/request-file` | App → Host | Open native file picker; the host persists each chosen file to the workspace store and returns `{ id, filename, mimeType, size }`. |
 | `synapse/keydown` | App → Host | Forward keyboard shortcuts to the host. |
 

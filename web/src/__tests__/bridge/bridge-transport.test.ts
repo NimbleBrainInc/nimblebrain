@@ -566,6 +566,57 @@ describe("a method the host does not serve", () => {
   });
 });
 
+describe("widget state is not a host extension", () => {
+  test("a synapse/persist-state request gets method-not-found", async () => {
+    const frame = mount("synapse-research");
+
+    frame.send({
+      jsonrpc: "2.0",
+      id: "p1",
+      method: "synapse/persist-state",
+      params: { state: { filter: "overdue" }, version: 1 },
+    });
+
+    const reply = (await frame.waitFor((m) => (m as { id?: string })?.id === "p1")) as {
+      result?: unknown;
+      error?: { code: number };
+    };
+    expect(reply.error?.code).toBe(-32601);
+    expect(reply.result).toBeUndefined();
+  });
+
+  test("a handshake after a persist-state request sends no synapse/state-loaded", async () => {
+    const frame = mount("synapse-research");
+
+    frame.send({
+      jsonrpc: "2.0",
+      id: "p2",
+      method: "synapse/persist-state",
+      params: { state: { filter: "overdue" } },
+    });
+    await frame.waitFor((m) => (m as { id?: string })?.id === "p2");
+
+    frame.send({
+      jsonrpc: "2.0",
+      id: "init-1",
+      method: "ui/initialize",
+      params: {
+        protocolVersion: "2026-01-26",
+        appInfo: { name: "synapse-research", version: "1.0.0" },
+        appCapabilities: {},
+      },
+    });
+    await frame.waitFor(
+      (m) => (m as { id?: string; result?: unknown })?.id === "init-1" && "result" in (m as object),
+    );
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(
+      frame.inbox.filter((m) => (m as { method?: string }).method === "synapse/state-loaded"),
+    ).toEqual([]);
+  });
+});
+
 // Every iframe shares one `/mcp` session, so `/mcp` cannot tell which app a
 // read came from. The bridge can: it names the resolved server under
 // `RESOURCE_SOURCE_META_KEY`, as it does for listings, and `/mcp` reads from

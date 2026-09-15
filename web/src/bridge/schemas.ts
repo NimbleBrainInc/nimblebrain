@@ -306,17 +306,6 @@ export const LoggingMessageNotification = Type.Object({
 });
 export type LoggingMessageNotification = Static<typeof LoggingMessageNotification>;
 
-export const UiPersistStateMessage = Type.Object({
-  jsonrpc: JsonRpcVersion,
-  method: Type.Literal("synapse/persist-state"),
-  id: RequestId,
-  params: Type.Object({
-    state: UnknownRecord,
-    version: Type.Optional(Type.Number()),
-  }),
-});
-export type UiPersistStateMessage = Static<typeof UiPersistStateMessage>;
-
 export const SynapseRequestFileMessage = Type.Object({
   jsonrpc: JsonRpcVersion,
   method: Type.Literal("synapse/request-file"),
@@ -357,7 +346,6 @@ export const AppToHostMessage = Type.Union([
   UiDownloadFileSpecMessage,
   UiRequestDisplayModeMessage,
   LoggingMessageNotification,
-  UiPersistStateMessage,
   SynapseRequestFileMessage,
   UiKeydownMessage,
   ExtAppsInitializeRequest,
@@ -515,16 +503,6 @@ export const UiDataChangedMessage = Type.Object({
 });
 export type UiDataChangedMessage = Static<typeof UiDataChangedMessage>;
 
-export const UiStateLoadedMessage = Type.Object({
-  jsonrpc: JsonRpcVersion,
-  method: Type.Literal("synapse/state-loaded"),
-  params: Type.Object({
-    state: Type.Union([UnknownRecord, Type.Null()]),
-    version: Type.Optional(Type.Number()),
-  }),
-});
-export type UiStateLoadedMessage = Static<typeof UiStateLoadedMessage>;
-
 /** Discriminated union of every Host → App envelope. */
 export const HostToAppMessage = Type.Union([
   UiInitializeMessage,
@@ -534,7 +512,6 @@ export const HostToAppMessage = Type.Union([
   UiResourceResultResponse,
   UiResourceResultError,
   UiDataChangedMessage,
-  UiStateLoadedMessage,
   ExtAppsInitializeResponse,
   ExtAppsToolInputNotification,
   ExtAppsToolResultNotification,
