@@ -4,6 +4,7 @@
   "timezone": "Pacific/Honolulu",
   "schedule": ["before 6am on monday"],
   "dependencyDashboard": true,
+  "labels": ["dependencies"],
   "prConcurrentLimit": 6,
   "prHourlyLimit": 2,
   "minimumReleaseAge": "14 days",
@@ -15,7 +16,7 @@
     "dependencyDashboardApproval": true
   },
   "vulnerabilityAlerts": {
-    "labels": ["security"],
+    "addLabels": ["security"],
     "schedule": ["at any time"],
     "minimumReleaseAge": null,
     "dependencyDashboardApproval": false

@@ -528,6 +528,75 @@ describe("WorkspaceOAuthProvider — Track A: pre-registered client + scopes + e
       globalThis.fetch = realFetch;
     }
   });
+
+  // The SDK builds the authorize URL's `scope` from the server's advertised
+  // `scopes_supported` ahead of `clientMetadata.scope`. These drive
+  // `redirectToAuthorization` with that SDK-built value and read back the URL
+  // the headless probe fetched.
+  async function authorizeParams(
+    scopes: string[] | undefined,
+    sdkScope = "mcp.read mcp.write mcp.delete offline_access",
+    additionalAuthorizationParams?: Record<string, string>,
+  ): Promise<URLSearchParams> {
+    const calls: string[] = [];
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (async (url: string | URL | Request) => {
+      calls.push(typeof url === "string" ? url : url.toString());
+      return new Response("not a redirect", { status: 200 });
+    }) as typeof fetch;
+    try {
+      const p = new WorkspaceOAuthProvider({
+        owner: { type: "workspace", wsId: "ws_test" },
+        serverName: "crm",
+        workDir,
+        callbackUrl: CALLBACK,
+        allowInsecureRemotes: true,
+        headlessAuthProbe: true,
+        ...(scopes ? { scopes } : {}),
+        ...(additionalAuthorizationParams ? { additionalAuthorizationParams } : {}),
+      });
+      const authUrl = new URL("http://localhost:39991/oauth/authorize");
+      authUrl.searchParams.set("state", p.state());
+      authUrl.searchParams.set("scope", sdkScope);
+      // The SDK's own offline_access → consent pairing (startAuthorization).
+      if (sdkScope.includes("offline_access")) authUrl.searchParams.append("prompt", "consent");
+      try {
+        await p.redirectToAuthorization(authUrl);
+      } catch {
+        // expected — see the additionalAuthorizationParams test above.
+      }
+      return new URL(calls[0] ?? "http://missing.invalid/").searchParams;
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  }
+
+  it("redirectToAuthorization replaces the SDK-resolved scope with the configured scopes", async () => {
+    const params = await authorizeParams(["mcp.read", "offline_access"]);
+    expect(params.get("scope")).toBe("mcp.read offline_access");
+  });
+
+  it("redirectToAuthorization leaves the SDK-resolved scope alone when no scopes are configured", async () => {
+    const params = await authorizeParams(undefined);
+    expect(params.get("scope")).toBe("mcp.read mcp.write mcp.delete offline_access");
+  });
+
+  it("redirectToAuthorization asks for consent when the configured scopes carry offline_access and the SDK's did not", async () => {
+    const params = await authorizeParams(["mcp.read", "offline_access"], "mcp.read mcp.write");
+    expect(params.getAll("prompt")).toEqual(["consent"]);
+  });
+
+  it("redirectToAuthorization keeps an existing prompt and never repeats consent", async () => {
+    const pinned = ["mcp.read", "offline_access"];
+    expect((await authorizeParams(pinned)).getAll("prompt")).toEqual(["consent"]);
+    const joined = await authorizeParams(pinned, "mcp.read", { prompt: "select_account" });
+    expect(joined.getAll("prompt")).toEqual(["select_account consent"]);
+  });
+
+  it("redirectToAuthorization never joins consent to prompt=none", async () => {
+    const params = await authorizeParams(["mcp.read", "offline_access"], "mcp.read", { prompt: "none" });
+    expect(params.getAll("prompt")).toEqual(["none"]);
+  });
 });
 
 describe("WorkspaceOAuthProvider — revokeAndDeleteTokens", () => {

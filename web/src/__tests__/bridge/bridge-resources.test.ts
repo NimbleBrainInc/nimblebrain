@@ -127,7 +127,7 @@ describe("resources/list", () => {
     });
   });
 
-  test("an external app cannot list another server by naming it", async () => {
+  test("an app naming another server lists its own", async () => {
     const frame = mount("notes");
     frame.send({
       jsonrpc: "2.0",
@@ -140,23 +140,25 @@ describe("resources/list", () => {
     expect(listResources).toHaveBeenCalledWith({ _meta: { [RESOURCE_SOURCE_META_KEY]: "notes" } });
   });
 
-  test("a built-in app lists another server by naming it in _meta", async () => {
-    // Same rule and same resolver as tools/call and resources/read: the target
-    // rides in `_meta`, because a sibling of the spec's own params is stripped
-    // by anything that parses them against the schema.
-    const frame = mount("nb");
-    frame.send({
-      jsonrpc: "2.0",
-      id: "l-2m",
-      method: "resources/list",
-      params: { _meta: { "ai.nimblebrain/server": "files" } },
+  // The regression guard: no app name carries cross-source reach.
+  for (const appName of ["nb", "settings", "home", "usage"]) {
+    test(`an app named "${appName}" naming another server lists its own`, async () => {
+      const frame = mount(appName);
+      frame.send({
+        jsonrpc: "2.0",
+        id: `l-name-${appName}`,
+        method: "resources/list",
+        params: { server: "files", _meta: { "ai.nimblebrain/server": "files" } },
+      });
+
+      await frame.waitFor(byId(`l-name-${appName}`));
+      expect(listResources).toHaveBeenCalledWith({
+        _meta: { [RESOURCE_SOURCE_META_KEY]: appName },
+      });
     });
+  }
 
-    await frame.waitFor(byId("l-2m"));
-    expect(listResources).toHaveBeenCalledWith({ _meta: { [RESOURCE_SOURCE_META_KEY]: "files" } });
-  });
-
-  test("an external app cannot list another server by naming it in _meta", async () => {
+  test("an app naming another server in _meta lists its own", async () => {
     const frame = mount("notes");
     frame.send({
       jsonrpc: "2.0",

@@ -76,6 +76,23 @@ describe("ArtifactRenderer — untrusted-render contract", () => {
     }
   });
 
+  test("markdown prefixes raw-HTML id/name so they cannot clobber DOM globals", () => {
+    const hostile = `<img src="https://example.com/a.png" name="cookie">\n\n<div id="__SENTRY__">x</div>`;
+    const { host, unmount } = mount(
+      React.createElement(ArtifactRenderer, { mimeType: "text/markdown", text: hostile }),
+    );
+    try {
+      const names = [...host.getElementsByTagName("img")].map((el) => el.getAttribute("name"));
+      const ids = [...host.getElementsByTagName("div")].map((el) => el.getAttribute("id"));
+      expect(names).toContain("user-content-cookie");
+      expect(names).not.toContain("cookie");
+      expect(ids).toContain("user-content-__SENTRY__");
+      expect(ids).not.toContain("__SENTRY__");
+    } finally {
+      unmount();
+    }
+  });
+
   test("html renders only inside a script-less sandboxed iframe", () => {
     const html = `<h1>Doc</h1><script>window.__pwned = true</script>`;
     const { host, unmount } = mount(

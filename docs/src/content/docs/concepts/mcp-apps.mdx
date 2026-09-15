@@ -72,7 +72,7 @@ Communication between the app iframe and NimbleBrain uses JSON-RPC 2.0 over `win
 - `ui/notifications/tool-input` — tool arguments being sent
 - `ui/notifications/host-context-changed` — theme toggle, locale change
 
-NimbleBrain extends the spec with `synapse/` namespace methods for data-change notifications, semantic actions, file downloads, and state persistence. These degrade gracefully to no-ops in non-NimbleBrain hosts.
+NimbleBrain extends the spec with `synapse/` namespace methods for data-change notifications, semantic actions, file transfer, and keyboard forwarding. These degrade gracefully to no-ops in non-NimbleBrain hosts.
 
 See [MCP App Bridge](/apps/bridge) for the complete protocol reference.
 

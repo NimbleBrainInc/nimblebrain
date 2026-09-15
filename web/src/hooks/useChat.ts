@@ -1,18 +1,20 @@
-import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { captureEvent } from "../telemetry";
 import type { AppContext } from "../types";
 import type {
   ChatMessage,
+  ComposerDraft,
   LoadedConversationMeta,
   PreparingTool,
   StreamingState,
 } from "./chat-store";
-import { chatStore, freshDraftKey } from "./chat-store";
+import { chatStore, freshDraftKey, isDraftKey } from "./chat-store";
 
 // Re-export the display types so existing `from "../hooks/useChat"` imports
 // keep working — the slice store now owns the definitions.
 export type {
   ChatMessage,
+  ComposerDraft,
   ContentBlock,
   IterationProgress,
   LedgerSkill,
@@ -32,6 +34,10 @@ export interface UseChatReturn {
   /** Set while streamingState === "preparing"; null otherwise. */
   preparingTool: PreparingTool | null;
   conversationId: string | null;
+  /** The store key of the conversation on screen, which the composer files its
+   *  draft under. An unsent chat's key until the first send, then the same slice
+   *  under its real id, so text typed during the first turn survives it. */
+  conversationKey: string;
   /** Server-generated title; null until generated/loaded. */
   title: string | null;
   conversationMeta: LoadedConversationMeta | null;
@@ -80,6 +86,12 @@ export function useChat(initialConversationId?: string, currentUserId?: string):
     return key;
   });
 
+  // The panel's unsent chat. New chat returns to it rather than minting another
+  // key, because nothing else reopens a draft key: text typed into a chat that
+  // was never sent would otherwise be stranded by New chat, by a workspace
+  // switch, or by opening a conversation from Recent.
+  const unsentChatKeyRef = useRef<string | null>(isDraftKey(activeKey) ? activeKey : null);
+
   const subscribe = useCallback(
     (cb: () => void) => chatStore.subscribeSlice(activeKey, cb),
     [activeKey],
@@ -118,8 +130,17 @@ export function useChat(initialConversationId?: string, currentUserId?: string):
   );
 
   const newConversation = useCallback(() => {
-    const key = freshDraftKey();
+    const unsent = unsentChatKeyRef.current;
+    const snap = unsent ? chatStore.getSnapshot(unsent) : undefined;
+    // Reusable until a send is attempted in it. A send assigns the conversation
+    // id and puts the turn in the transcript; one that failed to start leaves
+    // neither, but it is retryable, so it counts as sent.
+    const key =
+      unsent && snap && snap.conversationId === null && snap.messages.length === 0 && !snap.canRetry
+        ? unsent
+        : freshDraftKey();
     chatStore.ensureSlice(key);
+    unsentChatKeyRef.current = key;
     setActiveKey(key);
   }, []);
 
@@ -154,6 +175,7 @@ export function useChat(initialConversationId?: string, currentUserId?: string):
       // Drafts carry a null conversationId on the slice, so this is null until
       // the server assigns a real id on chat.start.
       conversationId: snap.conversationId,
+      conversationKey: activeKey,
       title: snap.title,
       conversationMeta: snap.meta,
       error: snap.error,
@@ -165,6 +187,33 @@ export function useChat(initialConversationId?: string, currentUserId?: string):
       retryLastMessage,
       simulateError,
     }),
-    [snap, sendMessage, newConversation, loadConversation, stop, retryLastMessage, simulateError],
+    [
+      snap,
+      activeKey,
+      sendMessage,
+      newConversation,
+      loadConversation,
+      stop,
+      retryLastMessage,
+      simulateError,
+    ],
   );
+}
+
+/**
+ * One conversation's composer draft, on its own subscription. It is kept out of
+ * {@link UseChatReturn} deliberately: that value re-renders the whole transcript,
+ * and a keystroke should re-render only the composer.
+ */
+export function useComposerDraft(
+  key: string,
+): [ComposerDraft, (patch: Partial<ComposerDraft>) => void] {
+  const subscribe = useCallback((cb: () => void) => chatStore.subscribeDraft(key, cb), [key]);
+  const getSnapshot = useCallback(() => chatStore.getDraft(key), [key]);
+  const draft = useSyncExternalStore(subscribe, getSnapshot);
+  const setDraft = useCallback(
+    (patch: Partial<ComposerDraft>) => chatStore.setDraft(key, patch),
+    [key],
+  );
+  return [draft, setDraft];
 }

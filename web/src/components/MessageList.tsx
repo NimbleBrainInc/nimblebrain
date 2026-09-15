@@ -4,7 +4,7 @@ import { Streamdown } from "streamdown";
 import type { SkillsLoadedContext } from "../hooks/chat-store";
 import type { ChatMessage, PreparingTool, StreamingState } from "../hooks/useChat";
 import { ledgerChanges } from "../lib/ledger-changes";
-import { linkSafety } from "../lib/streamdown-config";
+import { linkSafety, rehypePlugins } from "../lib/streamdown-config";
 import type { DisplayDetail } from "../lib/tool-display";
 import { BlockTimeline } from "./BlockTimeline";
 import { FileAttachment } from "./FileAttachment";
@@ -394,6 +394,7 @@ function AssistantMessage({
             className="streamdown-container presence-assistant-message"
             isAnimating={isCurrent}
             linkSafety={linkSafety}
+            rehypePlugins={rehypePlugins}
           >
             {displayContent}
           </Streamdown>

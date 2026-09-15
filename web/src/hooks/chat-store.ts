@@ -253,7 +253,20 @@ interface ConversationSlice {
   hydrated: boolean;
   lastActiveAt: number;
   snapshot: ChatSnapshot;
+  /** The unsent composer text and files. A draft belongs to the conversation
+   *  it was written in, not to the one composer the panel mounts, so switching
+   *  conversations mid-turn never carries it into another. Replaced, never
+   *  mutated, so `getDraft` hands React a stable reference between edits. */
+  draft: ComposerDraft;
 }
+
+/** What the composer holds before a send. */
+export interface ComposerDraft {
+  text: string;
+  files: File[];
+}
+
+const EMPTY_DRAFT: ComposerDraft = { text: "", files: [] };
 
 export interface StartTurnHooks {
   onConversationId?: (id: string) => void;
@@ -457,6 +470,13 @@ export interface ChatStore {
   ensureSlice(key: string, opts?: { conversationId?: string | null }): void;
   getSnapshot(key: string): ChatSnapshot;
   subscribeSlice(key: string, cb: () => void): () => void;
+  /** The composer draft for a conversation (empty when it has none). On its
+   *  own channel, apart from `subscribeSlice`, so a keystroke notifies the
+   *  composer and not every transcript subscriber. */
+  getDraft(key: string): ComposerDraft;
+  subscribeDraft(key: string, cb: () => void): () => void;
+  /** Merge a patch into a conversation's draft, creating its slice if needed. */
+  setDraft(key: string, patch: Partial<ComposerDraft>): void;
   getStreamingIds(): string[];
   subscribeStreamingIds(cb: () => void): () => void;
   markActive(key: string): void;
@@ -496,6 +516,7 @@ export function createChatStore(): ChatStore {
   const byKey = new Map<string, ConversationSlice>();
   const allSlices = new Set<ConversationSlice>();
   const listeners = new Map<string, Set<() => void>>();
+  const draftListeners = new Map<string, Set<() => void>>();
   const activeCounts = new Map<string, number>();
 
   let streamingIds: string[] = [];
@@ -521,6 +542,27 @@ export function createChatStore(): ChatStore {
     const set = listeners.get(key);
     if (!set) return;
     for (const cb of set) cb();
+  }
+
+  function notifyDraft(slice: ConversationSlice): void {
+    for (const key of slice.keys) {
+      const set = draftListeners.get(key);
+      if (!set) continue;
+      for (const cb of set) cb();
+    }
+  }
+
+  function hasDraft(slice: ConversationSlice): boolean {
+    return slice.draft.text.length > 0 || slice.draft.files.length > 0;
+  }
+
+  function setDraft(key: string, patch: Partial<ComposerDraft>): void {
+    ensureSlice(key);
+    const slice = byKey.get(key);
+    if (!slice) return;
+    const next = { ...slice.draft, ...patch };
+    slice.draft = next.text.length === 0 && next.files.length === 0 ? EMPTY_DRAFT : next;
+    notifyDraft(slice);
   }
 
   function recomputeStreamingIds(): void {
@@ -560,7 +602,11 @@ export function createChatStore(): ChatStore {
   function evict(): void {
     if (allSlices.size <= MAX_SLICES) return;
     const idle = [...allSlices]
-      .filter((s) => !s.isStreaming && !isActive(s))
+      // A draft is the user's words, not a cache entry, so a conversation holding
+      // one is kept. Only slices with a conversation id qualify, the ones Recent
+      // can reopen: an unsent chat is reached through the panel's New chat, which
+      // the store cannot see, and exempting it would pin text nothing may reach.
+      .filter((s) => !s.isStreaming && !isActive(s) && !(s.conversationId !== null && hasDraft(s)))
       .sort((a, b) => a.lastActiveAt - b.lastActiveAt);
     let over = allSlices.size - MAX_SLICES;
     for (const s of idle) {
@@ -594,6 +640,7 @@ export function createChatStore(): ChatStore {
       hydrated: isDraftKey(key),
       lastActiveAt: Date.now(),
       snapshot: EMPTY_SNAPSHOT,
+      draft: EMPTY_DRAFT,
     };
     slice.snapshot = buildSnapshot(slice);
     byKey.set(key, slice);
@@ -1149,6 +1196,15 @@ export function createChatStore(): ChatStore {
     const slice = byKey.get(key);
     if (!slice || slice.isStreaming) return;
 
+    // Accepting the send is what consumes the draft, so a send refused above
+    // (a turn is already running) leaves every word of it in place. Only the
+    // text that went out is cleared: the caller may await between Enter and
+    // here, and a draft edited in that gap is the next message, not this one.
+    if (slice.draft.text.trim() === params.text.trim()) {
+      slice.draft = EMPTY_DRAFT;
+      notifyDraft(slice);
+    }
+
     // Capture the send so retry can replay it verbatim (text + model + context).
     slice.lastSend = params;
     slice.error = null;
@@ -1350,6 +1406,9 @@ export function createChatStore(): ChatStore {
     for (const set of listeners.values()) {
       for (const cb of set) cb();
     }
+    for (const set of draftListeners.values()) {
+      for (const cb of set) cb();
+    }
     for (const cb of streamingListeners) cb();
   }
 
@@ -1387,6 +1446,24 @@ export function createChatStore(): ChatStore {
     getSnapshot(key) {
       return byKey.get(key)?.snapshot ?? EMPTY_SNAPSHOT;
     },
+    getDraft(key) {
+      return byKey.get(key)?.draft ?? EMPTY_DRAFT;
+    },
+    subscribeDraft(key, cb) {
+      let set = draftListeners.get(key);
+      if (!set) {
+        set = new Set();
+        draftListeners.set(key, set);
+      }
+      set.add(cb);
+      return () => {
+        const s = draftListeners.get(key);
+        if (!s) return;
+        s.delete(cb);
+        if (s.size === 0) draftListeners.delete(key);
+      };
+    },
+    setDraft,
     subscribeSlice(key, cb) {
       let set = listeners.get(key);
       if (!set) {

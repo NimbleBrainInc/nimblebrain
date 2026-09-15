@@ -5,7 +5,7 @@ description: The recommended SDK for building NimbleBrain apps with typed tool c
 
 import { Aside, Tabs, TabItem, FileTree } from '@astrojs/starlight/components';
 
-Synapse is the recommended way to build NimbleBrain app UIs. It wraps the standard [MCP Apps protocol](/apps/bridge) and adds typed tool calls, LLM-visible state, data sync, widget persistence, and keyboard forwarding.
+Synapse is the recommended way to build NimbleBrain app UIs. It wraps the standard [MCP Apps protocol](/apps/bridge) and adds typed tool calls, LLM-visible state, data sync, and keyboard forwarding.
 
 The primary API is `connect()` — a single async call that handles the entire MCP Apps handshake and returns a ready-to-use `App` object. For React apps, `<AppProvider>` wraps `connect()` and exposes everything through hooks.
 
@@ -535,73 +535,6 @@ const setVisible = useVisibleState();
 setVisible({ filter: 'overdue', count: 3 }, 'Viewing 3 overdue tasks');
 ```
 
-## Widget state store
-
-Persistent, typed state management with optional agent visibility:
-
-```typescript
-import { createStore } from '@nimblebrain/synapse';
-
-const store = createStore(synapse, {
-  initialState: { filter: 'all', sortBy: 'date' },
-  actions: {
-    setFilter: (state, filter: string) => ({ ...state, filter }),
-    toggleSort: (state) => ({
-      ...state,
-      sortBy: state.sortBy === 'date' ? 'priority' : 'date',
-    }),
-  },
-  persist: true,          // Survives iframe reloads
-  visibleToAgent: true,   // Auto-pushed to LLM context
-  summarize: (s) => `Viewing ${s.filter} tasks sorted by ${s.sortBy}`,
-});
-
-store.dispatch.setFilter('overdue');
-store.getState(); // { filter: 'overdue', sortBy: 'date' }
-```
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| `persist` | `false` | Persist state across iframe reloads via host storage |
-| `visibleToAgent` | `false` | Auto-push state to the LLM context after every dispatch |
-| `summarize` | — | Generate a human-readable summary for token budget fallback |
-| `version` | — | Schema version for state migration |
-| `migrations` | — | Ordered migration functions for versioned state |
-
-React hook:
-
-```tsx
-import { useStore } from '@nimblebrain/synapse/react';
-
-function TaskBoard() {
-  const { state, dispatch } = useStore(store);
-  return (
-    <button onClick={() => dispatch.setFilter('overdue')}>
-      {state.filter}
-    </button>
-  );
-}
-```
-
-### State migration
-
-When your store shape changes, add a version and migrations:
-
-```typescript
-const store = createStore(synapse, {
-  version: 3,
-  initialState: { filter: 'all', sortBy: 'date', view: 'list' },
-  migrations: [
-    (v1) => ({ ...v1, sortBy: 'date' }),              // v1 -> v2
-    (v2) => ({ ...v2, view: 'list' }),                  // v2 -> v3
-  ],
-  persist: true,
-  actions: { /* ... */ },
-});
-```
-
-On hydration, if the persisted version is lower than the current version, migrations run sequentially.
-
 ## Shell actions
 
 Dispatch semantic actions to the NimbleBrain shell:
@@ -796,7 +729,6 @@ Synapse detects its host during the ext-apps handshake. In NimbleBrain, `hostInf
 | Tool calls | Full | Works (if host supports `tools/call`) |
 | Data sync | Full (NB only) | No-op |
 | Visible state | Full (NB only) | No-op |
-| Widget store | Persist + agent (NB only) | In-memory only |
 | Actions / chat | Full | No-op |
 | Theme | Full | From ext-apps handshake |
 | Keyboard forwarding | Full | No-op |
@@ -808,8 +740,8 @@ Synapse detects its host during the ext-apps handshake. In NimbleBrain, `hostInf
 
 | Export | Contents |
 |--------|----------|
-| `@nimblebrain/synapse` | `connect`, `createSynapse`, `createStore`, all types |
-| `@nimblebrain/synapse/react` | `AppProvider`, `useApp`, `useToolResult`, `useToolInput`, `useResize`, `useConnectTheme`, `SynapseProvider`, `useSynapse`, `useCallTool`, `useDataSync`, `useTheme`, `useAction`, `useAgentAction`, `useChat`, `useVisibleState`, `useStore`, `useFileUpload` |
+| `@nimblebrain/synapse` | `connect`, `createSynapse`, all types |
+| `@nimblebrain/synapse/react` | `AppProvider`, `useApp`, `useToolResult`, `useToolInput`, `useResize`, `useConnectTheme`, `SynapseProvider`, `useSynapse`, `useCallTool`, `useDataSync`, `useTheme`, `useAction`, `useAgentAction`, `useChat`, `useVisibleState`, `useFileUpload` |
 | `@nimblebrain/synapse/iife` | `connect.iife.global.js` — `window.Synapse` global for `<script>` tags |
 | `@nimblebrain/synapse/vite` | `synapseVite` Vite plugin |
 | `@nimblebrain/synapse/codegen` | `readFromManifest`, `readFromServer`, `generateTypes` |
@@ -830,7 +762,6 @@ Synapse detects its host during the ext-apps handshake. In NimbleBrain, `hostInf
 | `useAction()` | Legacy API | `(action, params?) => void` | — |
 | `useAgentAction(cb)` | Legacy API | — | Agent action events |
 | `useVisibleState()` | Legacy API | `(state, summary?) => void` | — |
-| `useStore(store)` | Legacy API | `{ state, dispatch }` | Store changes |
 | `useFileUpload()` | Legacy API | `{ pickFile, pickFiles }` | — |
 | `useSynapse()` | Legacy API | `Synapse` object | — |
 
@@ -844,7 +775,6 @@ Synapse wraps the [MCP App Bridge](/apps/bridge) protocol. You don't need to use
 |---|---|---|
 | **Use when** | Building a new app with a build step (Vite, webpack) | Simple static HTML, no build step, or vanilla ext-apps |
 | **Tool calls** | Typed, parsed, error-handled | Raw JSON-RPC postMessage |
-| **State management** | `createStore` with persistence | Roll your own |
 | **Agent awareness** | `updateModelContext` / `setVisibleState` | Not available |
 | **Data sync** | `on("synapse/data-changed")` or `onDataChanged` | Listen for `synapse/data-changed` manually |
 | **Dev experience** | `npm run dev` with preview + HMR | Manual server restart |

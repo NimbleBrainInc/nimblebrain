@@ -20,16 +20,13 @@
  * one.
  */
 export const BRIDGE_HELPER = `
-  var _ready = Synapse.connect({ name: "nb-core", version: "1.0.0", internal: true });
+  var _ready = Synapse.connect({ name: "nb-core", version: "1.0.0" });
 
   function callTool(name, args) {
-    // "server__tool" addresses a sibling server. An internal app's calls default
-    // to its own name, so reaching another one is an explicit \`server\`.
-    var sep = name.indexOf("__");
-    var tool = sep > 0 ? name.substring(sep + 2) : name;
-    var options = sep > 0 ? { server: name.substring(0, sep) } : undefined;
+    // The host scopes every app's calls to its own server, so the name goes out
+    // as given: bare, or qualified with that same server.
     return _ready.then(function (app) {
-      return app.callTool(tool, args || {}, options).then(function (r) { return r.data; });
+      return app.callTool(name, args || {}).then(function (r) { return r.data; });
     });
   }
 
