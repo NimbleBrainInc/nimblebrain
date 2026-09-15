@@ -40,7 +40,6 @@ import {
   UiKeydownMessage,
   UiMessageMessage,
   UiOpenLinkMessage,
-  UiPersistStateMessage,
   UiRequestDisplayModeMessage,
   UiSizeChangedMessage,
   UiUpdateModelContextMessage,
@@ -64,7 +63,6 @@ const SCHEMA_BY_METHOD: Record<string, TSchema> = {
   "ui/notifications/request-teardown": ExtAppsRequestTeardownNotification,
   "synapse/action": UiActionMessage,
   "synapse/download-file": UiDownloadFileMessage,
-  "synapse/persist-state": UiPersistStateMessage,
   "synapse/request-file": SynapseRequestFileMessage,
   "synapse/keydown": UiKeydownMessage,
 };

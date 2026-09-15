@@ -21,8 +21,7 @@
 //
 // NimbleBrain extensions (synapse/ namespace — no spec equivalent):
 //   synapse/action, synapse/download-file, synapse/data-changed,
-//   synapse/persist-state, synapse/state-loaded, synapse/keydown,
-//   synapse/request-file
+//   synapse/keydown, synapse/request-file
 // ---------------------------------------------------------------------------
 
 import {
@@ -58,7 +57,6 @@ import type {
   UiDataChangedMessage,
   UiInitializeMessage,
   UiMessageMessage,
-  UiStateLoadedMessage,
   UiToolResultError,
   UiToolResultMessage,
   UiToolResultResponse,
@@ -67,7 +65,7 @@ import type {
 import { validateAppToHostMessage } from "./validate";
 
 // ---------------------------------------------------------------------------
-// App state stores (module-level, shared across bridges)
+// App state store (module-level, shared across bridges)
 // ---------------------------------------------------------------------------
 
 interface AppStateEntry {
@@ -76,13 +74,7 @@ interface AppStateEntry {
   updatedAt: string;
 }
 
-interface WidgetStateEntry {
-  state: Record<string, unknown>;
-  version?: number;
-}
-
 const appStateStore = new Map<string, AppStateEntry>();
-const widgetStateStore = new Map<string, WidgetStateEntry>();
 
 /** Get the latest app state pushed via ui/update-model-context. */
 export function getAppState(appName: string): AppStateEntry | undefined {
@@ -92,11 +84,6 @@ export function getAppState(appName: string): AppStateEntry | undefined {
 /** Clear app state (call when app is unmounted). */
 export function clearAppState(appName: string): void {
   appStateStore.delete(appName);
-}
-
-/** Get persisted widget state. */
-export function getWidgetState(appName: string): WidgetStateEntry | undefined {
-  return widgetStateStore.get(appName);
 }
 
 /** Handle returned by createBridge. Used to send messages and tear down. */
@@ -203,7 +190,7 @@ export function createBridge(
       // ext-apps protocol: ui/initialize REQUEST (has id + method)
       // -----------------------------------------------------------------
       case "ui/initialize":
-        handleInitialize(msg.id, appName, callbacks, postToIframe);
+        handleInitialize(msg.id, callbacks, postToIframe);
         break;
 
       // -----------------------------------------------------------------
@@ -363,23 +350,6 @@ export function createBridge(
       // -----------------------------------------------------------------
       case "synapse/download-file": {
         triggerDownload(msg.params.data, msg.params.filename, msg.params.mimeType);
-        break;
-      }
-
-      // -----------------------------------------------------------------
-      // Extension: synapse/persist-state — widget state persistence
-      // -----------------------------------------------------------------
-      case "synapse/persist-state": {
-        const persistId = msg.id;
-        widgetStateStore.set(appName, {
-          state: msg.params.state,
-          version: msg.params.version,
-        });
-        postToIframe({
-          jsonrpc: "2.0",
-          id: persistId,
-          result: { ok: true },
-        });
         break;
       }
 
@@ -683,7 +653,6 @@ function base64ToBytes(blob: string): Uint8Array | null {
 
 function handleInitialize(
   id: unknown,
-  appName: string,
   callbacks: BridgeCallbacks | undefined,
   postToIframe: PostToIframe,
 ): void {
@@ -753,17 +722,6 @@ function handleInitialize(
     },
   };
   postToIframe(response);
-
-  // After handshake: send any persisted widget state
-  const savedWidget = widgetStateStore.get(appName);
-  if (savedWidget) {
-    const loadMsg: UiStateLoadedMessage = {
-      jsonrpc: "2.0",
-      method: "synapse/state-loaded",
-      params: { state: savedWidget.state, version: savedWidget.version },
-    };
-    postToIframe(loadMsg);
-  }
 }
 
 /**
