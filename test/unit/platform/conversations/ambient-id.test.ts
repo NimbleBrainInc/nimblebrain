@@ -38,6 +38,8 @@ const RUN_ID = "run_a8f15601-0dd";
 
 let workDir: string;
 let source: McpSource;
+/** Every `announceIdentitySourceChange` call, as `<source>:<user>`. */
+let announced: string[] = [];
 
 function writeConversation(id: string, title: string, message: string): void {
   const dir = join(workDir, "workspaces", WS_ID, "conversations", OWNER_ID);
@@ -128,7 +130,9 @@ function makeRuntime(): Runtime {
     resolveRequestUserId: () => OWNER_ID,
     getWorkspaceStore: () => ({ getWorkspacesDir: () => join(workDir, "workspaces") }),
     onConversationsChanged: () => {},
-    announceIdentitySourceChange: () => {},
+    announceIdentitySourceChange: (name: string, userId: string) => {
+      announced.push(`${name}:${userId}`);
+    },
     isTurnActive: () => false,
   } as unknown as Runtime;
 }
@@ -195,6 +199,7 @@ function parseFirst(result: ToolResult): Record<string, unknown> {
 
 beforeEach(async () => {
   workDir = mkdtempSync(join(tmpdir(), "nb-ambient-conv-"));
+  announced = [];
   writeConversation(CURRENT_ID, "Untitled", CURRENT_MESSAGE);
   writeConversation(OTHER_ID, "Other", "something else entirely");
   source = await createConversationsSource(makeRuntime(), new NoopEventSink());
@@ -214,6 +219,8 @@ describe("conversations__update", () => {
     expect(parseFirst(result).id).toBe(CURRENT_ID);
     expect(storedTitle(CURRENT_ID)).toBe("Doctrine");
     expect(storedTitle(OTHER_ID)).toBe("Other");
+    // Written beside the store, so the tool announces it to the owner itself.
+    expect(announced).toEqual([`conversations:${OWNER_ID}`]);
   });
 
   test('id: "current" resolves the same way', async () => {
@@ -243,6 +250,7 @@ describe("conversations__update", () => {
     // Not the unresolvable-placeholder message the old contract produced.
     expect(error).not.toContain("Conversation not found");
     expect(storedTitle(CURRENT_ID)).toBe("Untitled");
+    expect(announced).toEqual([]);
   });
 });
 
@@ -272,6 +280,7 @@ describe("the other conversation-addressing tools resolve the same way", () => {
     const forked = parseFirst(result) as { id: string; preview: string };
     expect(forked.id).not.toBe(CURRENT_ID);
     expect(forked.preview).toContain(CURRENT_MESSAGE);
+    expect(announced).toEqual([`conversations:${OWNER_ID}`]);
   });
 
   test("outside a chat, get with no id errors rather than guessing", async () => {

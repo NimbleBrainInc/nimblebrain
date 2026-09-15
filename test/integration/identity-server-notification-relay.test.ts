@@ -159,6 +159,41 @@ describe("a person's own apps announce their writes to that person", () => {
     }
   });
 
+  it("files: a file deleted through /mcp reaches its owner's stream", async () => {
+    const client = await createMcpClient();
+    try {
+      const created = await client.callTool({
+        name: "files__create",
+        arguments: {
+          manifest: { filename: "scratch.txt", mimeType: "text/plain" },
+          body: "scratch",
+          encoding: "text",
+        },
+      });
+      const [block] = created.content as Array<{ type: string; text: string }>;
+      const { id } = JSON.parse(block?.text ?? "{}") as { id: string };
+      // Let the create's coalescing window close, so what arrives next is the delete's.
+      await new Promise((resolve) => setTimeout(resolve, 400));
+
+      const own = await openOwnStream();
+      try {
+        const deleted = await client.callTool({ name: "files__delete", arguments: { id } });
+        expect(deleted.isError).toBeFalsy();
+
+        await eventually(() => notificationsFor(own.frames, "files").length > 0);
+        expect(notificationsFor(own.frames, "files")[0]).toEqual({
+          server: "files",
+          userId: DEV_IDENTITY.id,
+          method: LIST_CHANGED,
+        });
+      } finally {
+        own.release();
+      }
+    } finally {
+      await client.close();
+    }
+  });
+
   it("automations: an automation created through /mcp reaches its owner's stream", async () => {
     const own = await openOwnStream();
     const client = await createMcpClient();
@@ -187,7 +222,7 @@ describe("a person's own apps announce their writes to that person", () => {
     }
   });
 
-  it("conversations: a conversation the chat path creates reaches its owner's stream", async () => {
+  it("conversations: a conversation created in the conversation store reaches its owner's stream", async () => {
     const own = await openOwnStream();
     try {
       await runtime

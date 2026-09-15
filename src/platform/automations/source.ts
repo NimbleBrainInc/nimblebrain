@@ -127,7 +127,7 @@ export async function createAutomationsSource(
   const scheduler = new Scheduler(executor, {
     workDir,
     defaultTimezone,
-    onRunRecorded: (_wsId, owner) => runtime.announceIdentitySourceChange("automations", owner),
+    onRunRecorded: (owner) => runtime.announceIdentitySourceChange("automations", owner),
   });
   scheduler.start();
 

@@ -833,6 +833,78 @@ describe("Scheduler — reload", () => {
 // Tests: Scheduler — runNow
 // ---------------------------------------------------------------------------
 
+describe("Scheduler — onRunRecorded", () => {
+	let tmpDir: string;
+
+	beforeEach(() => {
+		tmpDir = makeTmpDir();
+	});
+
+	afterEach(() => {
+		rmSync(tmpDir, { recursive: true, force: true });
+	});
+
+	function seedOne(): Automation {
+		const auto = makeAutomation({ nextRunAt: new Date(Date.now() - 1000).toISOString() });
+		seedDefs(tmpDir, new Map([[auto.id, auto]]));
+		return auto;
+	}
+
+	it("reports a completed run's owner", async () => {
+		const auto = seedOne();
+		const recorded: string[] = [];
+		const scheduler = new Scheduler(createMockExecutor(), {
+			workDir: tmpDir,
+			onRunRecorded: (owner) => recorded.push(owner),
+		});
+		scheduler.start();
+
+		await scheduler.runNow(WS, OWNER, auto.id);
+
+		expect(recorded).toEqual([OWNER]);
+		scheduler.stop();
+	});
+
+	it("reports a failed run's owner", async () => {
+		const auto = seedOne();
+		const recorded: string[] = [];
+		const scheduler = new Scheduler(createThrowingExecutor(new Error("boom")), {
+			workDir: tmpDir,
+			onRunRecorded: (owner) => recorded.push(owner),
+		});
+		scheduler.start();
+
+		const run = await scheduler.runNow(WS, OWNER, auto.id);
+
+		expect(run!.status).not.toBe("success");
+		expect(recorded).toEqual([OWNER]);
+		scheduler.stop();
+	});
+
+	it("reports a skipped run's owner", async () => {
+		const auto = seedOne();
+		const recorded: string[] = [];
+		const { executor, resolve } = createBlockingExecutor();
+		const scheduler = new Scheduler(executor, {
+			workDir: tmpDir,
+			onRunRecorded: (owner) => recorded.push(owner),
+		});
+		scheduler.start();
+		scheduler.onTimer();
+		await new Promise((r) => setTimeout(r, 50));
+
+		// The armed timer may also record its own skip while the first run
+		// blocks, so count only what this call records.
+		const before = recorded.length;
+		const run = await scheduler.runNow(WS, OWNER, auto.id);
+
+		expect(run!.status).toBe("skipped");
+		expect(recorded.slice(before)).toEqual([OWNER]);
+		resolve(makeSuccessRun(auto.id));
+		scheduler.stop();
+	});
+});
+
 describe("Scheduler — runNow", () => {
 	let tmpDir: string;
 

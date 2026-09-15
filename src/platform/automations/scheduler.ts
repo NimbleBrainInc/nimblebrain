@@ -103,11 +103,11 @@ export interface SchedulerConfig {
   defaultTimezone?: string;
   /**
    * Called once a run's record is written — completed, failed, cancelled or
-   * skipped — with the automation's workspace and owner. The owner is known
-   * here and nowhere upstream of a scheduled run, so this is where the
-   * automations source announces the change to that owner's views.
+   * skipped — with the automation's owner. The owner is known here and nowhere
+   * upstream of a scheduled run, so this is where the automations source
+   * announces the change to that owner's views.
    */
-  onRunRecorded?: (wsId: string, ownerId: string) => void;
+  onRunRecorded?: (ownerId: string) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -804,7 +804,7 @@ export class Scheduler {
   /** Report a written run record to `onRunRecorded`, after every file for it has landed. */
   private runRecorded(auto: Automation): void {
     if (!auto.workspaceId || !auto.ownerId) return;
-    this.config.onRunRecorded?.(auto.workspaceId, auto.ownerId);
+    this.config.onRunRecorded?.(auto.ownerId);
   }
 
   // -----------------------------------------------------------------------
