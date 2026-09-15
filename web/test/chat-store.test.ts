@@ -869,11 +869,20 @@ describe("composer drafts", () => {
     expect(store.getSnapshot("kA")).toBe(before);
   });
 
-  it("does not evict a slice holding an unsent draft", () => {
+  it("does not evict a conversation holding a draft", () => {
     const store = createChatStore();
-    store.setDraft("kKeep", { text: "unsent" });
+    store.setDraft("conv_keep", { text: "unsent" });
     for (let i = 0; i < 40; i++) store.ensureSlice(`kFill${i}`);
-    expect(store.getDraft("kKeep").text).toBe("unsent");
+    expect(store.getDraft("conv_keep").text).toBe("unsent");
+  });
+
+  it("does not pin an idle unsent chat, which no conversation id can reopen", () => {
+    const store = createChatStore();
+    const unsent = freshDraftKey();
+    store.setDraft(unsent, { text: "typed, never sent" });
+    for (let i = 0; i < 40; i++) store.ensureSlice(`kFill${i}`);
+    expect(store.sliceCount()).toBeLessThanOrEqual(30);
+    expect(store.getDraft(unsent).text).toBe("");
   });
 
   it("drops every draft on reset", () => {

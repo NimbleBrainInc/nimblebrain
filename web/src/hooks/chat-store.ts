@@ -602,8 +602,11 @@ export function createChatStore(): ChatStore {
   function evict(): void {
     if (allSlices.size <= MAX_SLICES) return;
     const idle = [...allSlices]
-      // An unsent draft is the user's words, not a cache entry — keep it.
-      .filter((s) => !s.isStreaming && !isActive(s) && !hasDraft(s))
+      // A draft is the user's words, not a cache entry, so a conversation holding
+      // one is kept. Only slices with a conversation id qualify, the ones Recent
+      // can reopen: an unsent chat is reached through the panel's New chat, which
+      // the store cannot see, and exempting it would pin text nothing may reach.
+      .filter((s) => !s.isStreaming && !isActive(s) && !(s.conversationId !== null && hasDraft(s)))
       .sort((a, b) => a.lastActiveAt - b.lastActiveAt);
     let over = allSlices.size - MAX_SLICES;
     for (const s of idle) {

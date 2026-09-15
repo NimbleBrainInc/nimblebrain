@@ -78,7 +78,7 @@ interface MessageInputProps {
   onSend: (text: string, files?: File[], model?: string) => void;
   /** The conversation key the draft belongs to. The chat store holds the draft
    *  and clears it when it accepts a send, so a send it refuses loses nothing. */
-  draftKey: string;
+  conversationKey: string;
   /** Models this deployment offers. Empty hides the control entirely. */
   models?: PickerModel[];
   /** The binding, once the conversation exists. Absent before the first send. */
@@ -103,7 +103,7 @@ interface MessageInputProps {
 
 export function MessageInput({
   onSend,
-  draftKey,
+  conversationKey,
   models,
   boundModel,
   defaultModel,
@@ -115,7 +115,7 @@ export function MessageInput({
   onShowShortcuts,
   onStop,
 }: MessageInputProps) {
-  const [draft, setDraft] = useComposerDraft(draftKey);
+  const [draft, setDraft] = useComposerDraft(conversationKey);
   const { text, files: attachedFiles } = draft;
   const [isFocused, setIsFocused] = useState(false);
   const [isDragOver, setIsDragOver] = useState(false);
@@ -124,6 +124,7 @@ export function MessageInput({
   const [sendWaiting, setSendWaiting] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const composerRef = useRef<HTMLDivElement>(null);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: auto-resize only depends on text content changes
   useEffect(() => {
@@ -133,15 +134,17 @@ export function MessageInput({
     el.style.height = `${Math.min(el.scrollHeight, MAX_TEXTAREA_HEIGHT)}px`;
   }, [text]);
 
-  // Put the cursor in the composer when a turn ends, unless focus is already
-  // somewhere — including the composer itself, or an app iframe or field the
-  // user moved to while waiting. A turn ending must not take focus away.
+  // Put the cursor back in the textarea when a turn ends, if focus is nowhere or
+  // still on the composer (a click on Send or Stop leaves it on that button).
+  // Focus the user moved elsewhere while waiting, such as an app iframe or
+  // another field, stays where they put it.
   useEffect(() => {
     if (busy) return;
     setSendWaiting(false);
     const active = document.activeElement;
-    if (active && active !== document.body) return;
-    textareaRef.current?.focus();
+    const elsewhere =
+      active !== null && active !== document.body && !composerRef.current?.contains(active);
+    if (!elsewhere) textareaRef.current?.focus();
   }, [busy]);
 
   // Listen for nb:prompt events to pre-fill the input
@@ -262,7 +265,7 @@ export function MessageInput({
   const canSend = (text.trim().length > 0 || attachedFiles.length > 0) && !busy;
 
   return (
-    <div className="py-3 shrink-0">
+    <div ref={composerRef} className="py-3 shrink-0">
       {/* biome-ignore lint/a11y/noStaticElementInteractions: drag-and-drop container for file uploads */}
       <div
         // The raised card + blue ring follows focus alone. A running turn does

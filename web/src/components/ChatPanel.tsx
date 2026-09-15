@@ -209,7 +209,7 @@ export const ChatPanel = forwardRef<ChatPanelRef, ChatPanelProps>(function ChatP
     stop,
     loadConversation,
     conversationMeta,
-    draftKey,
+    conversationKey,
   } = useChatContext();
   const { availableModels, newConversationModel } = useChatConfigContext();
   const models = useMemo(() => toPickerModels(availableModels), [availableModels]);
@@ -326,7 +326,7 @@ export const ChatPanel = forwardRef<ChatPanelRef, ChatPanelProps>(function ChatP
       <div ref={inputWrapperRef} className={compact ? "px-4" : "max-w-4xl w-full mx-auto px-8"}>
         <MessageInput
           onSend={sendMessage}
-          draftKey={draftKey}
+          conversationKey={conversationKey}
           busy={isStreaming}
           onNewConversation={handleNewChat}
           onShowShortcuts={() => setShowShortcuts(true)}

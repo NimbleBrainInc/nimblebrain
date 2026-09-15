@@ -1,10 +1,10 @@
 // ---------------------------------------------------------------------------
 // ChatPanel — a running turn gates sending, never composing.
 //
-// The composer used to be disabled for the whole turn, so the next message
-// could not be written until the reply's terminal frame arrived — which can
-// land well after the reply looks finished. This mounts the real panel over the
-// real provider and drives the textarea the way a person does.
+// The composer is editable for the whole of a turn, its draft belongs to the
+// conversation it was written in, and a turn ending returns the cursor to it
+// without taking focus the user put somewhere else. This mounts the real panel
+// over the real provider and drives the textarea the way a person does.
 // ---------------------------------------------------------------------------
 
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
@@ -24,7 +24,19 @@ import { realClient } from "../../test/setup";
 
 mock.module("../api/client", () => ({
   ...realClient,
-  callTool: mock(async () => ({ structuredContent: null, content: [] })),
+  callTool: mock(async (server: string, tool: string, args?: { id?: string }) => {
+    if (server === "conversations" && tool === "get") {
+      return {
+        isError: false,
+        structuredContent: {
+          metadata: { id: args?.id ?? "conv_other", ownerId: "u1", workspaceId: "ws_a" },
+          messages: [],
+        },
+        content: [],
+      };
+    }
+    return { structuredContent: null, content: [] };
+  }),
   startChatTurn: mock(async () => ({ conversationId: "conv_busy" })),
 }));
 
@@ -36,11 +48,12 @@ const React = await import("react");
 const ReactDOMClient = await import("react-dom/client");
 const { act } = await import("react");
 const { MemoryRouter } = await import("react-router-dom");
-const { ChatProvider } = await import("../context/ChatContext");
+const { ChatProvider, useChatContext } = await import("../context/ChatContext");
 const { WorkspaceProvider } = await import("../context/WorkspaceContext");
 const { ChatPanel } = await import("../components/ChatPanel");
 const { chatStore } = await import("../hooks/chat-store");
 
+import type { ChatContextValue } from "../context/ChatContext";
 import type { WorkspaceInfo } from "../context/WorkspaceContext";
 
 const WS_A: WorkspaceInfo = {
@@ -55,11 +68,15 @@ const WS_A: WorkspaceInfo = {
 let container: HTMLDivElement;
 let root: ReturnType<typeof ReactDOMClient.createRoot>;
 let sent: Array<{ text: string }>;
+/** The provider's live value, for driving New chat and Recent the way the shell does. */
+let chat: ChatContextValue;
 
-async function mountPanel(isStreaming: boolean): Promise<void> {
-  container = document.createElement("div");
-  document.body.appendChild(container);
-  root = ReactDOMClient.createRoot(container);
+function ChatProbe() {
+  chat = useChatContext();
+  return null;
+}
+
+async function render(isStreaming: boolean): Promise<void> {
   await act(async () => {
     root.render(
       React.createElement(
@@ -74,6 +91,7 @@ async function mountPanel(isStreaming: boolean): Promise<void> {
               currentUserId: "u1",
               initialConfig: { configuredProviders: ["anthropic"] },
             },
+            React.createElement(ChatProbe),
             React.createElement(ChatPanel, {
               messages: [],
               isStreaming,
@@ -88,6 +106,13 @@ async function mountPanel(isStreaming: boolean): Promise<void> {
       ),
     );
   });
+}
+
+async function mountPanel(isStreaming: boolean): Promise<void> {
+  container = document.createElement("div");
+  document.body.appendChild(container);
+  root = ReactDOMClient.createRoot(container);
+  await render(isStreaming);
 }
 
 function textarea(): HTMLTextAreaElement {
@@ -147,5 +172,48 @@ describe("the composer during a turn", () => {
     await type("go");
     await pressEnter();
     expect(sent).toEqual([{ text: "go" }]);
+  });
+});
+
+describe("an unsent chat's draft", () => {
+  test("survives New chat, which returns to the same unsent chat", async () => {
+    await mountPanel(false);
+    await type("typed, never sent");
+    await act(async () => chat.newConversation());
+    expect(textarea().value).toBe("typed, never sent");
+  });
+
+  test("waits in its own chat while a Recent conversation is open", async () => {
+    await mountPanel(false);
+    await type("typed, never sent");
+
+    await act(async () => chat.loadConversation("conv_other"));
+    expect(textarea().value).toBe("");
+
+    await act(async () => chat.newConversation());
+    expect(textarea().value).toBe("typed, never sent");
+  });
+});
+
+describe("focus when a turn ends", () => {
+  test("returns to the textarea from the composer's own Stop button", async () => {
+    await mountPanel(true);
+    const stop = container.querySelector<HTMLButtonElement>('button[aria-label="Stop generating"]');
+    act(() => stop?.focus());
+    expect(document.activeElement).toBe(stop);
+
+    await render(false);
+    expect(document.activeElement).toBe(textarea());
+  });
+
+  test("stays on a field the user moved to outside the composer", async () => {
+    await mountPanel(true);
+    const outside = document.createElement("input");
+    document.body.appendChild(outside);
+    act(() => outside.focus());
+
+    await render(false);
+    expect(document.activeElement).toBe(outside);
+    outside.remove();
   });
 });
