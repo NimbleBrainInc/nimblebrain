@@ -15,7 +15,9 @@ import type { EngineEvent } from "../../src/engine/types.ts";
 import { seedWorkspaceRoot } from "../helpers/test-workspace.ts";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
-import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
+import { auth, type OAuthClientProvider } from "@modelcontextprotocol/sdk/client/auth.js";
+import type { OAuthClientInformationFull, OAuthTokens } from "@modelcontextprotocol/sdk/shared/auth.js";
+import type { FetchLike, Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 
 describe("createRemoteTransport", () => {
 	test("default returns StreamableHTTPClientTransport", async () => {
@@ -37,34 +39,6 @@ describe("createRemoteTransport", () => {
 		expect(t).toBeInstanceOf(StreamableHTTPClientTransport);
 	});
 
-	test("bearer auth sets Authorization header", async () => {
-		const t = await createRemoteTransport(new URL("https://example.com/mcp"), {
-			auth: { type: "bearer", token: "sk-test-123" },
-		});
-		expect(t).toBeInstanceOf(StreamableHTTPClientTransport);
-		// Verify the transport was configured with the auth header by inspecting
-		// the internal requestInit (StreamableHTTPClientTransport stores it)
-		const internal = t as unknown as Record<string, unknown>;
-		const reqInit = internal["_requestInit"] as RequestInit | undefined;
-		if (reqInit?.headers) {
-			const headers = reqInit.headers as Record<string, string>;
-			expect(headers["Authorization"]).toBe("Bearer sk-test-123");
-		}
-	});
-
-	test("header auth sets custom header", async () => {
-		const t = await createRemoteTransport(new URL("https://example.com/mcp"), {
-			auth: { type: "header", name: "X-Api-Key", value: "key-123" },
-		});
-		expect(t).toBeInstanceOf(StreamableHTTPClientTransport);
-		const internal = t as unknown as Record<string, unknown>;
-		const reqInit = internal["_requestInit"] as RequestInit | undefined;
-		if (reqInit?.headers) {
-			const headers = reqInit.headers as Record<string, string>;
-			expect(headers["X-Api-Key"]).toBe("key-123");
-		}
-	});
-
 	test("no auth creates transport with empty headers", async () => {
 		const t = await createRemoteTransport(new URL("https://example.com/mcp"), {
 			auth: { type: "none" },
@@ -72,33 +46,56 @@ describe("createRemoteTransport", () => {
 		expect(t).toBeInstanceOf(StreamableHTTPClientTransport);
 	});
 
-	test("custom headers are merged into requestInit", async () => {
-		const t = await createRemoteTransport(new URL("https://example.com/mcp"), {
-			headers: { "X-Custom": "value", "X-Another": "other" },
-		});
-		expect(t).toBeInstanceOf(StreamableHTTPClientTransport);
-		const internal = t as unknown as Record<string, unknown>;
-		const reqInit = internal["_requestInit"] as RequestInit | undefined;
-		if (reqInit?.headers) {
-			const headers = reqInit.headers as Record<string, string>;
-			expect(headers["X-Custom"]).toBe("value");
-			expect(headers["X-Another"]).toBe("other");
-		}
-	});
+	describe("static headers reach the connector", () => {
+		let seen: Headers[];
+		let originalFetch: typeof fetch;
 
-	test("custom headers and bearer auth are combined", async () => {
-		const t = await createRemoteTransport(new URL("https://example.com/mcp"), {
-			headers: { "X-Custom": "value" },
-			auth: { type: "bearer", token: "tok-abc" },
+		beforeEach(() => {
+			seen = [];
+			originalFetch = globalThis.fetch;
+			globalThis.fetch = (async (_input: unknown, init?: RequestInit) => {
+				seen.push(new Headers(init?.headers));
+				return new Response(null, { status: 202 });
+			}) as unknown as typeof fetch;
 		});
-		expect(t).toBeInstanceOf(StreamableHTTPClientTransport);
-		const internal = t as unknown as Record<string, unknown>;
-		const reqInit = internal["_requestInit"] as RequestInit | undefined;
-		if (reqInit?.headers) {
-			const headers = reqInit.headers as Record<string, string>;
-			expect(headers["Authorization"]).toBe("Bearer tok-abc");
-			expect(headers["X-Custom"]).toBe("value");
+
+		afterEach(() => {
+			globalThis.fetch = originalFetch;
+		});
+
+		/** Build a transport, send one notification, and return what reached the wire. */
+		async function wire(config: Parameters<typeof createRemoteTransport>[1]): Promise<Headers> {
+			const t = await createRemoteTransport(new URL("https://example.com/mcp"), config);
+			await t.send({ jsonrpc: "2.0", method: "notifications/roots/list_changed" });
+			const last = seen.at(-1);
+			if (!last) throw new Error("no request reached fetch");
+			return last;
 		}
+
+		test("bearer auth sets Authorization header", async () => {
+			const headers = await wire({ auth: { type: "bearer", token: "sk-test-123" } });
+			expect(headers.get("Authorization")).toBe("Bearer sk-test-123");
+		});
+
+		test("header auth sets custom header", async () => {
+			const headers = await wire({ auth: { type: "header", name: "X-Api-Key", value: "key-123" } });
+			expect(headers.get("X-Api-Key")).toBe("key-123");
+		});
+
+		test("custom headers are sent", async () => {
+			const headers = await wire({ headers: { "X-Custom": "value", "X-Another": "other" } });
+			expect(headers.get("X-Custom")).toBe("value");
+			expect(headers.get("X-Another")).toBe("other");
+		});
+
+		test("custom headers and bearer auth are combined", async () => {
+			const headers = await wire({
+				headers: { "X-Custom": "value" },
+				auth: { type: "bearer", token: "tok-abc" },
+			});
+			expect(headers.get("Authorization")).toBe("Bearer tok-abc");
+			expect(headers.get("X-Custom")).toBe("value");
+		});
 	});
 
 	test("reconnection options are passed to StreamableHTTPClientTransport", async () => {
@@ -268,11 +265,13 @@ describe("createRemoteTransport — a credential reference resolves on every req
 		expect(after.get("X-Plain")).toBe("kept");
 	});
 
-	test("a literal is fixed into requestInit and a reference's value never is", async () => {
+	test("no header, literal or reference, rides requestInit", async () => {
+		// The SDK merges requestInit's headers into its OAuth requests, on any origin.
 		await store.put(scope, KEY, "old-secret");
 		const t = await build({ headers: refHeaders });
-		const reqInit = (t as unknown as Record<string, unknown>)["_requestInit"] as RequestInit;
-		expect(reqInit.headers).toEqual({ "X-Plain": "kept" });
+		const reqInit = (t as unknown as Record<string, unknown>)["_requestInit"] as RequestInit | undefined;
+		expect(reqInit?.headers).toBeUndefined();
+		expect((await send(t)).get("X-Plain")).toBe("kept");
 	});
 
 	test("a bearer token given as a reference rotates the same way", async () => {
@@ -403,5 +402,201 @@ describe("createRemoteTransport — a credential reference resolves on every req
 		await transportFetch("https://auth.other.test/token", { method: "POST" });
 		expect(seen.at(-1)?.get(HEADER)).toBeNull();
 		expect(events).toEqual([]);
+	});
+});
+
+describe("createRemoteTransport — a connector's headers stay on the connector's origin", () => {
+	// The SDK sends OAuth discovery, client registration, and token exchange and
+	// refresh through the transport's fetch. An authorization server on another
+	// origin is another party, and a header configured for the connector is not
+	// its to read.
+	const ENDPOINT = new URL("https://mcp.acme.test/mcp");
+	const OTHER_ORIGIN = "https://auth.other.test";
+	const REDIRECT = "https://app.test/callback";
+	const HEADER = "X-Api-Key";
+	const config = { headers: { [HEADER]: "literal-secret" } };
+
+	interface Sent {
+		url: URL;
+		kind: string;
+		headers: Headers;
+	}
+	let sent: Sent[];
+	let originalFetch: typeof fetch;
+
+	beforeEach(() => {
+		sent = [];
+		originalFetch = globalThis.fetch;
+	});
+
+	afterEach(() => {
+		globalThis.fetch = originalFetch;
+	});
+
+	/** Serve a connector at ENDPOINT whose protected-resource metadata names `issuer`. */
+	function serve(issuer: string): void {
+		globalThis.fetch = (async (input: unknown, init?: RequestInit) => {
+			const url = new URL(String(input));
+			const record = (kind: string) => sent.push({ url, kind, headers: new Headers(init?.headers) });
+			if (url.pathname.startsWith("/.well-known/oauth-protected-resource")) {
+				record("resource-metadata");
+				return Response.json({ resource: ENDPOINT.href, authorization_servers: [issuer] });
+			}
+			if (url.pathname === "/.well-known/oauth-authorization-server") {
+				record("server-metadata");
+				return Response.json({
+					issuer,
+					authorization_endpoint: `${issuer}/authorize`,
+					token_endpoint: `${issuer}/token`,
+					registration_endpoint: `${issuer}/register`,
+					response_types_supported: ["code"],
+					code_challenge_methods_supported: ["S256"],
+					token_endpoint_auth_methods_supported: ["client_secret_basic"],
+				});
+			}
+			if (url.pathname === "/register") {
+				record("registration");
+				return Response.json(
+					{ client_id: "client-1", client_secret: "client-secret", redirect_uris: [REDIRECT] },
+					{ status: 201 },
+				);
+			}
+			if (url.pathname === "/token") {
+				const grant = new URLSearchParams(await new Response(init?.body).text()).get("grant_type");
+				record(grant === "refresh_token" ? "refresh" : "exchange");
+				return Response.json({
+					access_token: "access-1",
+					token_type: "bearer",
+					refresh_token: "refresh-1",
+					expires_in: 3600,
+				});
+			}
+			record("connector");
+			return new Response(null, { status: 202 });
+		}) as unknown as typeof fetch;
+	}
+
+	function memoryProvider(): OAuthClientProvider {
+		let client: OAuthClientInformationFull | undefined;
+		let tokens: OAuthTokens | undefined;
+		let verifier = "";
+		return {
+			redirectUrl: REDIRECT,
+			clientMetadata: { redirect_uris: [REDIRECT], client_name: "test-client" },
+			clientInformation: () => client,
+			saveClientInformation: (info) => {
+				client = info;
+			},
+			tokens: () => tokens,
+			saveTokens: (saved) => {
+				tokens = saved;
+			},
+			redirectToAuthorization: () => {},
+			saveCodeVerifier: (v) => {
+				verifier = v;
+			},
+			codeVerifier: () => verifier,
+		};
+	}
+
+	/** The fetch the SDK hands its OAuth calls. */
+	function sdkOAuthFetch(t: Transport): FetchLike {
+		const fetchFn = (t as unknown as { _fetchWithInit?: FetchLike })._fetchWithInit;
+		// If the SDK moves it, fail here rather than let `auth` fall back to the
+		// global fetch and pass for the wrong reason.
+		if (typeof fetchFn !== "function") throw new Error("SDK transport has no _fetchWithInit");
+		return fetchFn;
+	}
+
+	/** Authorize, exchange the code, refresh, then call the connector. */
+	async function runOAuth(t: Transport, provider: OAuthClientProvider): Promise<void> {
+		const fetchFn = sdkOAuthFetch(t);
+		expect(await auth(provider, { serverUrl: ENDPOINT, fetchFn })).toBe("REDIRECT");
+		expect(await auth(provider, { serverUrl: ENDPOINT, authorizationCode: "code-1", fetchFn })).toBe(
+			"AUTHORIZED",
+		);
+		expect(await auth(provider, { serverUrl: ENDPOINT, fetchFn })).toBe("AUTHORIZED");
+		await t.send({ jsonrpc: "2.0", method: "notifications/roots/list_changed" });
+	}
+
+	const kinds = (requests: Sent[]) => [...new Set(requests.map((s) => s.kind))].sort();
+
+	test("an authorization server on another origin receives none of them, at any step", async () => {
+		serve(OTHER_ORIGIN);
+		const provider = memoryProvider();
+		const t = await createRemoteTransport(ENDPOINT, config, provider);
+		await runOAuth(t, provider);
+
+		const offOrigin = sent.filter((s) => s.url.origin !== ENDPOINT.origin);
+		expect(kinds(offOrigin)).toEqual(["exchange", "refresh", "registration", "server-metadata"]);
+		for (const s of offOrigin) expect(s.headers.get(HEADER)).toBeNull();
+
+		// Resource metadata lives on the connector's origin, so it went through the
+		// wrapper and carries the header. That is also what proves the SDK used
+		// the transport's fetch rather than the global one.
+		const onOrigin = sent.filter((s) => s.url.origin === ENDPOINT.origin);
+		expect(kinds(onOrigin)).toEqual(["connector", "resource-metadata"]);
+		for (const s of onOrigin) expect(s.headers.get(HEADER)).toBe("literal-secret");
+	});
+
+	test("nothing the SDK composes is removed from its OAuth requests", async () => {
+		serve(OTHER_ORIGIN);
+		const provider = memoryProvider();
+		const t = await createRemoteTransport(ENDPOINT, config, provider);
+		await runOAuth(t, provider);
+
+		for (const s of sent.filter((r) => r.kind === "exchange" || r.kind === "refresh")) {
+			expect(s.headers.get("Authorization")).toStartWith("Basic ");
+			expect(s.headers.get("Content-Type")).toBe("application/x-www-form-urlencoded");
+		}
+		expect(sent.find((s) => s.kind === "registration")?.headers.get("Content-Type")).toBe(
+			"application/json",
+		);
+		expect(sent.find((s) => s.kind === "connector")?.headers.get("Authorization")).toBe("Bearer access-1");
+	});
+
+	test("an authorization server on the connector's own origin receives them: the rule is the origin", async () => {
+		serve(ENDPOINT.origin);
+		const provider = memoryProvider();
+		const t = await createRemoteTransport(ENDPOINT, config, provider);
+		await runOAuth(t, provider);
+
+		expect(kinds(sent)).toEqual([
+			"connector",
+			"exchange",
+			"refresh",
+			"registration",
+			"resource-metadata",
+			"server-metadata",
+		]);
+		for (const s of sent) expect(s.headers.get(HEADER)).toBe("literal-secret");
+	});
+
+	test("static auth takes the same path, and attaches no OAuth", async () => {
+		serve(OTHER_ORIGIN);
+		const t = await createRemoteTransport(
+			ENDPOINT,
+			{ ...config, auth: { type: "bearer", token: "static-token" } },
+			memoryProvider(),
+		);
+		expect((t as unknown as Record<string, unknown>)["_authProvider"]).toBeUndefined();
+		await sdkOAuthFetch(t)(`${OTHER_ORIGIN}/.well-known/oauth-authorization-server`, {});
+		await t.send({ jsonrpc: "2.0", method: "notifications/roots/list_changed" });
+		expect(sent.map((s) => [s.kind, s.headers.get("Authorization"), s.headers.get(HEADER)])).toEqual([
+			["server-metadata", null, null],
+			["connector", "Bearer static-token", "literal-secret"],
+		]);
+	});
+
+	test("the SSE transport keeps them on the connector's origin too", async () => {
+		serve(OTHER_ORIGIN);
+		const t = await createRemoteTransport(ENDPOINT, { type: "sse", ...config }, memoryProvider());
+		const fetchFn = sdkOAuthFetch(t);
+		await fetchFn(`${OTHER_ORIGIN}/token`, { method: "POST", body: "grant_type=refresh_token" });
+		await fetchFn(ENDPOINT, {});
+		expect(sent.map((s) => [s.kind, s.headers.get(HEADER)])).toEqual([
+			["refresh", null],
+			["connector", "literal-secret"],
+		]);
 	});
 });
