@@ -692,8 +692,9 @@ function handleInitialize(
     // names no `tasks` field, so a client that parses the handshake result
     // against the spec's schema (the official ext-apps `App`) strips it.
     // `experimental` is the one place in `hostCapabilities` whose contents
-    // survive that parse — from ext-apps 1.7.5, the floor this package
-    // declares — keyed by reverse-DNS identifier.
+    // survive that parse, keyed by reverse-DNS identifier. The parse runs in
+    // the app's copy of ext-apps, so the key reaches only apps on 1.7.5 or
+    // later; earlier versions empty `experimental` too.
     //
     // The sibling `tasks` field is what the SDK reads today, off the raw
     // result; it goes once every consumer reads `experimental` instead.
