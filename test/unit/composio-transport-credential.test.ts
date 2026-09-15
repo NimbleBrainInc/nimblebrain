@@ -115,11 +115,18 @@ describe("registration happens at the composition root", () => {
       undefined,
       {},
     );
-    const requestInit = (transport as unknown as Record<string, unknown>)._requestInit as
-      | RequestInit
-      | undefined;
-    const headers = requestInit?.headers as Record<string, string> | undefined;
-    expect(headers?.["x-api-key"]).toBe("k_config");
+    const seen: Headers[] = [];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (_input: unknown, init?: RequestInit) => {
+      seen.push(new Headers(init?.headers));
+      return new Response(null, { status: 202 });
+    }) as unknown as typeof fetch;
+    try {
+      await transport.send({ jsonrpc: "2.0", method: "notifications/roots/list_changed" });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+    expect(seen.at(-1)?.get("x-api-key")).toBe("k_config");
   });
 
   it("builds a transport for a mapped legacy ref without a registry lookup", async () => {
