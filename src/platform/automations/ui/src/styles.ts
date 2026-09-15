@@ -336,6 +336,11 @@ body {
   font-size: 13px; font-family: inherit;
   outline: none;
 }
+.inline-edit-textarea:focus-visible,
+.inline-edit-input:focus-visible {
+  outline: 2px solid var(--color-text-accent);
+  outline-offset: 2px;
+}
 .inline-edit-actions {
   display: flex; gap: 6px; margin-top: 6px; justify-content: flex-end;
 }
