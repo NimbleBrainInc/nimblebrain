@@ -240,6 +240,71 @@ describe("SseEventManager — routing table", () => {
   });
 });
 
+// ── Owner-scoped events (server.notification) ─────────────────────
+
+describe("SseEventManager — server.notification follows its one owner", () => {
+  let mgr: SseEventManager;
+  const released: Array<() => void> = [];
+
+  beforeEach(() => {
+    mgr = new SseEventManager(1_000_000);
+    mgr.start();
+  });
+
+  afterEach(() => {
+    for (const r of released.splice(0)) r();
+    mgr.stop();
+  });
+
+  const LIST_CHANGED = "notifications/resources/list_changed";
+
+  test("a person's own notification reaches that person alone, not their workspace's other members", async () => {
+    const alice = collect(mgr.addIdentityClient("usr_alice", new Set(["ws_team"])));
+    const bob = collect(mgr.addIdentityClient("usr_bob", new Set(["ws_team"])));
+    const legacyWorkspace = collect(mgr.addClient("ws_team"));
+    released.push(alice.release, bob.release, legacyWorkspace.release);
+
+    mgr.emit({
+      type: "server.notification",
+      data: { server: "files", userId: "usr_alice", method: LIST_CHANGED },
+    });
+    await flush();
+
+    expect(alice.events).toEqual(["server.notification"]);
+    expect(bob.events).toEqual([]);
+    expect(legacyWorkspace.events).toEqual([]);
+  });
+
+  test("a workspace's notification still reaches only that workspace's members", async () => {
+    const member = collect(mgr.addIdentityClient("usr_alice", new Set(["ws_a"])));
+    const outsider = collect(mgr.addIdentityClient("usr_bob", new Set(["ws_b"])));
+    released.push(member.release, outsider.release);
+
+    mgr.emit({
+      type: "server.notification",
+      data: { server: "notes", workspaceId: "ws_a", method: LIST_CHANGED },
+    });
+    await flush();
+
+    expect(member.events).toEqual(["server.notification"]);
+    expect(outsider.events).toEqual([]);
+  });
+
+  test("a notification naming no owner, or both, reaches no one", async () => {
+    const alice = collect(mgr.addIdentityClient("usr_alice", new Set(["ws_a"])));
+    released.push(alice.release);
+
+    mgr.emit({ type: "server.notification", data: { server: "notes", method: LIST_CHANGED } });
+    mgr.emit({
+      type: "server.notification",
+      data: { server: "notes", workspaceId: "ws_a", userId: "usr_alice", method: LIST_CHANGED },
+    });
+    await flush();
+
+    expect(alice.events).toEqual([]);
+  });
+});
+
 // ── Identity-scoped clients (the /v1/events route) ────────────────
 
 /**

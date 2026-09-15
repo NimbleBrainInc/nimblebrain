@@ -196,13 +196,13 @@ The app's own MCP server sent `notifications/resources/list_changed`, and the ho
 }
 ```
 
-The host is a relay, not an interpreter. A notification reaches the views as the server sent it (its `params`, when it sent any, are passed on), and it reaches only that server's views, in the workspace whose connection received it. It is the one change signal that comes from the server rather than being inferred by the host, so it covers every write the server makes: a call from your own iframe, the agent's, or one the server makes on its own. To use it, have your server send the notification when its data changes; a server that advertises `resources.listChanged` (FastMCP and the TypeScript SDK both do when they serve resources) can send it from inside the tool call that made the write. A server sends it only for a real change, so a view that re-reads on it cannot loop.
+The host is a relay, not an interpreter. A notification reaches the views as the server sent it (its `params`, when it sent any, are passed on), and it reaches only that server's views, in the workspace whose connection received it. The host's own apps that hold one person's data (conversations, files, automations) belong to no workspace, so their notifications reach only that person's views, whichever workspace is open. It is the one change signal that comes from the server rather than being inferred by the host, so it covers every write the server makes: a call from your own iframe, the agent's, or one the server makes on its own. To use it, have your server send the notification when its data changes; a server that advertises `resources.listChanged` (FastMCP and the TypeScript SDK both do when they serve resources) can send it from inside the tool call that made the write. A server sends it only for a real change, so a view that re-reads on it cannot loop.
 
 What the host relays, and how often, is the host's decision rather than the server's, because the server is untrusted:
 
 - **Only the methods the host relays pass.** Today that is `notifications/resources/list_changed`. A server cannot reach its views with arbitrary JSON-RPC by choosing a method name.
 - **`params` are relayed only as an object under 4 KB.** Anything else is dropped, and the notification is relayed without params.
-- **The rate is capped.** Per server and workspace, the first notification is delivered at once, and any more inside the next 250 ms collapse into one delivery at the end of it. A server announcing in a loop reaches its views a few times a second.
+- **The rate is capped.** Per server and workspace (per server and person, for a person's own apps), the first notification is delivered at once, and any more inside the next 250 ms collapse into one delivery at the end of it. A server announcing in a loop reaches its views a few times a second.
 
 ### `synapse/data-changed`
 

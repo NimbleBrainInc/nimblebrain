@@ -60,6 +60,11 @@ const encoder = new TextEncoder();
  *                             missing we drop the event rather than fan it
  *                             out to every workspace (the alternative leaks
  *                             one workspace's signals to its neighbors).
+ *   - `scope: "owner"`    — the event names exactly one owner: a workspace in
+ *                            `data[wsIdField]`, delivered as `"workspace"`
+ *                            above, or a person in `data[userIdField]`,
+ *                            delivered only to that identity's connections.
+ *                            Neither or both drops the event.
  *
  * Events with no entry are NOT forwarded — operational events like
  * `tool.progress` / `tool.done` / `run.error` stay internal to the runtime.
@@ -69,7 +74,10 @@ const encoder = new TextEncoder();
  * compile-time check against `EngineEventType`, so a typo or a renamed
  * event surfaces as a build error rather than silently no-routing.
  */
-type SseRoute = { scope: "global" } | { scope: "workspace"; wsIdField: string };
+type SseRoute =
+  | { scope: "global" }
+  | { scope: "workspace"; wsIdField: string }
+  | { scope: "owner"; wsIdField: string; userIdField: string };
 
 const SSE_ROUTES: Partial<Record<EngineEventType, SseRoute>> = {
   // Connector lifecycle — workspace-scoped. `wsId` is on every payload (added
@@ -93,11 +101,13 @@ const SSE_ROUTES: Partial<Record<EngineEventType, SseRoute>> = {
   // scoped.
   "data.changed": { scope: "global" },
   // An app server's own notification, relayed to that server's views
-  // (`src/tools/server-notifications.ts`). Every one is stamped with the
-  // workspace whose registry received it, so it is workspace-scoped outright:
-  // a server's notification concerns the session it arrived on, and never
-  // reaches a member of another workspace.
-  "server.notification": { scope: "workspace", wsIdField: "workspaceId" },
+  // (`src/tools/server-notifications.ts`). Each is stamped with its one owner.
+  // A workspace's source is stamped with the workspace whose registry received
+  // it, and never reaches a member of another workspace. A person's own app
+  // (`conversations`, `files`, `automations`) belongs to no workspace, so it is
+  // stamped with the user whose data changed and reaches that user alone —
+  // never every member of a workspace they happen to share.
+  "server.notification": { scope: "owner", wsIdField: "workspaceId", userIdField: "userId" },
   // Live conversation-title update (auto-title generation completes after the
   // turn). Scoped by the event's `wsId`, which the runtime sets to the OWNER'S
   // PERSONAL workspace (NOT the conversation's workspaceId) — conversations are
@@ -203,13 +213,32 @@ export function deriveDataChangedTarget(
   return { server, tool, wsId };
 }
 
+/** The value when it is a non-empty string, else undefined. */
+function nonEmptyString(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
 /** Frame an SSE event into its `event:`/`data:` wire encoding. */
 function frameSseEvent(eventType: string, data: Record<string, unknown>): Uint8Array {
   return encoder.encode(`event: ${eventType}\ndata: ${JSON.stringify(data)}\n\n`);
 }
 
-/** Whether a client should receive an event scoped to `wsId` (undefined = unscoped broadcast). */
-function clientReceives(client: SseClient, wsId: string | undefined): boolean {
+/**
+ * Who a broadcast is for: the members of a workspace (`wsId` undefined = every
+ * client), or one identity's connections.
+ */
+type SseAudience = { wsId: string | undefined } | { identityId: string };
+
+/** Whether a client is in a broadcast's audience. */
+function clientReceives(client: SseClient, audience: SseAudience): boolean {
+  if ("identityId" in audience) {
+    // A client bound to no identity is either the legacy firehose (no
+    // memberships), which receives everything, or a legacy single-workspace
+    // client, which has no identity to match.
+    if (client.identityId === undefined) return client.workspaceMemberships === undefined;
+    return client.identityId === audience.identityId;
+  }
+  const { wsId } = audience;
   if (wsId === undefined) return true;
   // `undefined` memberships is the legacy firehose (all events); an explicit
   // set requires the wsId to be a member.
@@ -380,6 +409,18 @@ export class SseEventManager implements EventSink {
       this.broadcast(event.type, event.data);
       return;
     }
+    if (route.scope === "owner") {
+      const wsId = nonEmptyString(event.data[route.wsIdField]);
+      const userId = nonEmptyString(event.data[route.userIdField]);
+      // Exactly one owner. Neither is a payload bug; both is ambiguous, and
+      // either answer would hand one owner's signal to the other's audience.
+      if (wsId !== undefined && userId === undefined) {
+        this.broadcast(event.type, event.data, wsId);
+      } else if (userId !== undefined && wsId === undefined) {
+        this.broadcastToIdentity(event.type, event.data, userId);
+      }
+      return;
+    }
     // Workspace-scoped: extract the wsId from the declared field. A
     // missing wsId is a payload bug — drop rather than fan out to every
     // workspace, since that would leak one workspace's signals to others.
@@ -401,19 +442,32 @@ export class SseEventManager implements EventSink {
    *   - Otherwise → skip.
    */
   broadcast(eventType: string, data: Record<string, unknown>, wsId?: string): void {
-    this.fanOut(frameSseEvent(eventType, data), wsId);
+    this.fanOut(frameSseEvent(eventType, data), { wsId });
     this.bufferEvent(eventType, data);
     this.notifyLocal(eventType, data);
   }
 
-  /** Enqueue an encoded frame to every eligible client, pruning closed ones. */
-  private fanOut(encoded: Uint8Array, wsId: string | undefined): void {
+  /**
+   * Broadcast an SSE event to one identity's connections only — every tab that
+   * identity has open, whatever workspace each is showing. For a change that
+   * belongs to a person rather than a workspace. A legacy firehose client
+   * (`addClient()`) receives it too; a legacy single-workspace client, bound to
+   * no identity, does not.
+   */
+  broadcastToIdentity(eventType: string, data: Record<string, unknown>, identityId: string): void {
+    this.fanOut(frameSseEvent(eventType, data), { identityId });
+    this.bufferEvent(eventType, data);
+    this.notifyLocal(eventType, data);
+  }
+
+  /** Enqueue an encoded frame to every client in the audience, pruning closed ones. */
+  private fanOut(encoded: Uint8Array, audience: SseAudience): void {
     for (const [id, client] of this.clients) {
       if (client.closed) {
         this.clients.delete(id);
         continue;
       }
-      if (!clientReceives(client, wsId)) continue;
+      if (!clientReceives(client, audience)) continue;
       this.deliver(id, client, encoded);
     }
   }

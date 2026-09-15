@@ -141,12 +141,18 @@ export interface DataChangedEvent {
 
 /**
  * An app server's own notification, relayed by the runtime to that server's
- * views in one workspace. `server` is the bare server name (an iframe's
- * `data-app`); `method` and `params` go to the iframe verbatim.
+ * views. `server` is the bare server name (an iframe's `data-app`); `method`
+ * and `params` go to the iframe verbatim.
+ *
+ * It names exactly one owner. `workspaceId` is set for a workspace's app, and
+ * the runtime delivers it to that workspace's members. `userId` is set for one
+ * of a person's own apps (`conversations`, `files`, `automations`), which
+ * belongs to no workspace, and the runtime delivers it to that person alone.
  */
 export interface ServerNotificationEvent {
   server: string;
-  workspaceId: string;
+  workspaceId?: string;
+  userId?: string;
   method: string;
   params?: Record<string, unknown>;
 }

@@ -101,6 +101,13 @@ export interface SchedulerConfig {
   maxConcurrentRuns?: number;
   /** Default timezone for cron expressions. Default: system timezone. */
   defaultTimezone?: string;
+  /**
+   * Called once a run's record is written — completed, failed, cancelled or
+   * skipped — with the automation's workspace and owner. The owner is known
+   * here and nowhere upstream of a scheduled run, so this is where the
+   * automations source announces the change to that owner's views.
+   */
+  onRunRecorded?: (wsId: string, ownerId: string) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -769,6 +776,7 @@ export class Scheduler {
       // for both the scheduled and manual (runNow) paths; null only when the
       // executor had no clean data (it rejected instead — see the catch below).
       if (result) this.persistRunResult(auto, result);
+      this.runRecorded(auto);
       return run;
     } catch (err) {
       this.activeRuns.delete(key);
@@ -788,8 +796,15 @@ export class Scheduler {
         trigger,
       };
       this.updateAfterRun(auto, failedRun);
+      this.runRecorded(auto);
       return failedRun;
     }
+  }
+
+  /** Report a written run record to `onRunRecorded`, after every file for it has landed. */
+  private runRecorded(auto: Automation): void {
+    if (!auto.workspaceId || !auto.ownerId) return;
+    this.config.onRunRecorded?.(auto.workspaceId, auto.ownerId);
   }
 
   // -----------------------------------------------------------------------
@@ -892,6 +907,7 @@ export class Scheduler {
       this.definitions.set(Scheduler.keyOf(fresh), fresh);
     }
 
+    this.runRecorded(auto);
     return run;
   }
 

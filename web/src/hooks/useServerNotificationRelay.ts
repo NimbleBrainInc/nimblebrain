@@ -13,15 +13,20 @@ import type { ServerNotificationEvent } from "../types";
  * inline views and its placements alike — as `{ jsonrpc, method, params }`,
  * exactly the MCP message the server sent, so an app written against the MCP
  * Apps spec hears it with no knowledge of this host. No debounce here: the
- * runtime already coalesces per (workspace, server, method) before anything
+ * runtime already coalesces per (owner, server, method) before anything
  * reaches the browser.
  *
  * Two checks, both belt to the runtime's braces: only methods on
  * `RELAYED_TO_VIEWS` are posted, and an event stamped with a workspace other
- * than the one on screen is dropped. The runtime scopes delivery to the
- * workspace's MEMBERS; a member of two workspaces still has only one of them
- * on screen, and the same app installed in both mounts under the same bare
- * `data-app`.
+ * than the one on screen is dropped. The runtime scopes a workspace's event to
+ * the workspace's MEMBERS; a member of two workspaces still has only one of
+ * them on screen, and the same app installed in both mounts under the same
+ * bare `data-app`.
+ *
+ * An event from one of a person's own apps carries no workspace, because it
+ * belongs to none: the runtime delivers it to that person alone. There is
+ * nothing to compare it with, so it is delivered whichever workspace is on
+ * screen — the check applies only to an event that names a workspace.
  *
  * Returns a stable callback to be wired into the SSE event handler.
  */
@@ -36,7 +41,7 @@ export function useServerNotificationRelay(): (event: ServerNotificationEvent) =
     // route by a render at bootstrap, there is nothing to compare, and the
     // notification is delivered rather than lost.
     const activeWsId = getActiveWorkspaceId();
-    if (activeWsId && event.workspaceId !== activeWsId) {
+    if (event.workspaceId !== undefined && activeWsId && event.workspaceId !== activeWsId) {
       debug("sync", `drop: ws=${event.workspaceId} is not the active ${activeWsId}`);
       return;
     }

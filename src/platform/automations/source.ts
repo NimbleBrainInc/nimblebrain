@@ -124,7 +124,11 @@ export async function createAutomationsSource(
     (req) => runtime.executeTask(req as TaskRequest),
     getExecutorContext,
   );
-  const scheduler = new Scheduler(executor, { workDir, defaultTimezone });
+  const scheduler = new Scheduler(executor, {
+    workDir,
+    defaultTimezone,
+    onRunRecorded: (_wsId, owner) => runtime.announceIdentitySourceChange("automations", owner),
+  });
   scheduler.start();
 
   // A workspace delete has to disarm what this scheduler holds for that
@@ -153,6 +157,7 @@ export async function createAutomationsSource(
       auto.disabledReason = reason;
       auto.updatedAt = auto.disabledAt;
       saveAutomation(workDir, wsId, owner, auto);
+      runtime.announceIdentitySourceChange("automations", owner);
       scheduler.reload();
     },
   });
@@ -188,7 +193,10 @@ export async function createAutomationsSource(
       // per-automation store. `definitions` reads every `*.json` in the owner
       // dir; `save` reconciles the map against disk (write each, delete removed).
       definitions: () => loadOwnerAutomations(workDir, wsId, owner),
-      save: (map) => saveOwnerAutomations(workDir, wsId, owner, map),
+      save: (map) => {
+        saveOwnerAutomations(workDir, wsId, owner, map);
+        runtime.announceIdentitySourceChange("automations", owner);
+      },
       reloadScheduler: () => scheduler.reload(),
       runNow: (id) => scheduler.runNow(wsId, owner, id),
       cancelRun: (id) => scheduler.cancelRun(wsId, owner, id),
