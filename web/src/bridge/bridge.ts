@@ -688,16 +688,17 @@ function handleInitialize(
     // server's views, and only those (relayed-notifications.ts).
     ...serverCapabilities(),
     logging: {},
-    // The MCP tasks utility. `McpUiHostCapabilities` names no such field, so a
-    // client that parses the handshake result against the spec's schema drops
-    // it — but the SDK reads `hostCapabilities.tasks` off the raw result, so
-    // this is what every app in the field actually sees.
+    // The MCP tasks utility, advertised in two places. `McpUiHostCapabilities`
+    // names no `tasks` field, so a client that parses the handshake result
+    // against the spec's schema (the official ext-apps `App`) strips it.
+    // `experimental` is the one place in `hostCapabilities` whose contents
+    // survive that parse — from ext-apps 1.7.5, the floor this package
+    // declares — keyed by reverse-DNS identifier.
     //
-    // `experimental` looks like the spec-sanctioned home and is not one yet:
-    // it only began preserving its contents after ext-apps 1.7.0, and `web/`
-    // declares `^1.3.1` and resolves 1.7.0 — both of which strip it. Advertise
-    // there when a client reads it and the floor has moved, not before.
+    // The sibling `tasks` field is what the SDK reads today, off the raw
+    // result; it goes once every consumer reads `experimental` instead.
     tasks,
+    experimental: { "ai.nimblebrain/tasks": tasks },
   };
   const response: ExtAppsInitializeResponse = {
     jsonrpc: "2.0",

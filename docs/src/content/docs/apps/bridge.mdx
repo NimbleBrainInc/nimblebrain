@@ -106,7 +106,10 @@ The app initiates the handshake per the ext-apps spec:
       "serverTools": {},
       "serverResources": { "listChanged": true },
       "logging": {},
-      "tasks": { "cancel": {}, "requests": { "tools": { "call": {} } } }
+      "tasks": { "cancel": {}, "requests": { "tools": { "call": {} } } },
+      "experimental": {
+        "ai.nimblebrain/tasks": { "cancel": {}, "requests": { "tools": { "call": {} } } }
+      }
     },
     "hostContext": {
       "theme": "dark",
@@ -127,6 +130,8 @@ The app initiates the handshake per the ext-apps spec:
   "params": {}
 }
 ```
+
+The MCP tasks capability appears twice. `hostCapabilities.tasks` is read off the raw response. `hostCapabilities.experimental["ai.nimblebrain/tasks"]` is for a client that validates the response against the ext-apps schema, such as the official `App`: that schema drops the unrecognized `tasks` field and keeps the contents of `experimental`.
 
 <Aside type="tip">
 If you're using the `@nimblebrain/synapse` SDK, `connect()` handles the entire handshake for you.

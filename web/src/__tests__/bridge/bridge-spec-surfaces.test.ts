@@ -168,10 +168,31 @@ describe("ui/initialize — advertised capabilities", () => {
     // capability type names no such field. Dropping it would turn
     // `callToolAsTask` off everywhere.
     expect(capabilities.tasks).toEqual({ cancel: {}, requests: { tools: { call: {} } } });
-    // Not under `experimental`: that only began preserving its contents after
-    // ext-apps 1.7.0, and this package's floor and resolved version both strip
-    // it — so a key there would be documented wire surface reaching nobody.
-    expect(capabilities.experimental).toBeUndefined();
+  });
+
+  test("advertises tasks under experimental, and the key survives the spec's own parse", async () => {
+    const { McpUiInitializeResultSchema } = await import("@modelcontextprotocol/ext-apps");
+    const frame = mount();
+    frame.send({
+      jsonrpc: "2.0",
+      id: "init-exp",
+      method: "ui/initialize",
+      params: {
+        protocolVersion: "2026-01-26",
+        clientInfo: { name: "iframe", version: "1.0.0" },
+        capabilities: {},
+      },
+    });
+    const reply = (await frame.waitFor(isReplyTo("init-exp"))) as { result: unknown };
+    const tasks = { cancel: {}, requests: { tools: { call: {} } } };
+
+    const sent = reply.result as { hostCapabilities: Record<string, unknown> };
+    expect(sent.hostCapabilities.experimental).toEqual({ "ai.nimblebrain/tasks": tasks });
+
+    // What the official `App` keeps: it stores the parsed result, not the raw
+    // frame, so a key this parse strips is a key no app built on it can read.
+    const parsed = McpUiInitializeResultSchema.parse(reply.result);
+    expect(parsed.hostCapabilities.experimental?.["ai.nimblebrain/tasks"]).toEqual(tasks);
   });
 });
 
