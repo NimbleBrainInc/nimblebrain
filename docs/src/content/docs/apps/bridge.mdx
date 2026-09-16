@@ -440,7 +440,7 @@ The host answers the request with an empty result. Sent without an `id` it is a 
 
 Open a URL in a new browser tab with `noopener`.
 
-The host answers `{}` once the tab is open, and `{ "isError": true }` when the browser refused to open it — a popup blocker, usually — so an app can navigate itself instead of waiting. Sent without an `id` it is a notification, which takes no answer.
+The host answers `{}`. It cannot tell you whether the tab actually opened: the link is opened with `noopener`, and the browser withholds the handle either way, so an empty result means "delivered", not "displayed". Sent without an `id` it is a notification, which takes no answer.
 
 ```json
 {

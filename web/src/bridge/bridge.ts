@@ -293,11 +293,13 @@ export function createBridge(
       // Spec: ui/open-link
       // -----------------------------------------------------------------
       case "ui/open-link": {
-        // `isError` is the spec's way to say the host did not open it: a popup
-        // blocker is the ordinary reason, and an app that falls back to its own
-        // navigation needs to hear about it rather than wait.
-        const opened = window.open(msg.params.url, "_blank", "noopener");
-        answerIfRequest(msg, opened ? {} : { isError: true }, postToIframe);
+        // Answered `{}` whatever happens. `noopener` makes the browser withhold
+        // the handle, so `window.open` returns null on success as surely as on
+        // a blocked popup — there is no failure here to report, and reporting
+        // one would send every app down its fallback path. A real signal would
+        // mean dropping `noopener`, which is not worth a diagnostic.
+        window.open(msg.params.url, "_blank", "noopener");
+        answerIfRequest(msg, {}, postToIframe);
         break;
       }
 
@@ -529,13 +531,6 @@ export function createBridge(
 type PostToIframe = (data: unknown) => void;
 
 /**
- * Answer a message whose method this host does not serve. A request
- * (`prompts/list`, `sampling/createMessage`, …) gets JSON-RPC method-not-found,
- * so the view's call fails at once instead of waiting on a reply that never
- * comes. A notification needs no reply, and a message with no method is not a
- * request, so both are dropped.
- */
-/**
  * Answer a request the host has just served.
  *
  * A frame with no id is a notification, and a notification takes no response:
@@ -552,6 +547,13 @@ function answerIfRequest(
   postToIframe({ jsonrpc: "2.0", id: msg.id, result });
 }
 
+/**
+ * Answer a message whose method this host does not serve. A request
+ * (`prompts/list`, `sampling/createMessage`, …) gets JSON-RPC method-not-found,
+ * so the view's call fails at once instead of waiting on a reply that never
+ * comes. A notification needs no reply, and a message with no method is not a
+ * request, so both are dropped.
+ */
 function answerUnserved(msg: { method?: unknown; id?: unknown }, postToIframe: PostToIframe): void {
   if (typeof msg.method !== "string") return;
   if (typeof msg.id !== "string" && typeof msg.id !== "number") return;
@@ -955,9 +957,9 @@ function handleUpdateModelContext(
     summary,
     updatedAt: new Date().toISOString(),
   });
-  if (id) {
-    postToIframe({ jsonrpc: "2.0", id, result: {} });
-  }
+  // The same helper the served requests use: id `0` is an id, and a frame
+  // without one is a notification that takes no answer.
+  answerIfRequest({ id }, {}, postToIframe);
 }
 
 /**

@@ -381,12 +381,13 @@ describe("spec request ids", () => {
   const replyTo = (id: string | number) => (m: unknown) => (m as { id?: unknown })?.id === id;
 
   /** Replace `window.open` for one test, and report what it was asked to open. */
-  function captureOpen(result: Window | null): { opened: string[]; restore(): void } {
+  function captureOpen(): { opened: string[]; restore(): void } {
     const opened: string[] = [];
     const original = window.open;
     window.open = ((url?: string | URL) => {
       opened.push(String(url));
-      return result;
+      // What the browser returns with `noopener` set, opened or blocked.
+      return null;
     }) as typeof window.open;
     return {
       opened,
@@ -431,7 +432,7 @@ describe("spec request ids", () => {
   });
 
   test("a ui/open-link carrying a numeric id opens the URL and is answered", async () => {
-    const open = captureOpen({} as Window);
+    const open = captureOpen();
     try {
       const frame = mount();
       await handshake(frame);
@@ -451,28 +452,8 @@ describe("spec request ids", () => {
     }
   });
 
-  test("a link the browser blocked answers isError, so the app can fall back", async () => {
-    const open = captureOpen(null);
-    try {
-      const frame = mount();
-      await handshake(frame);
-
-      frame.send({
-        jsonrpc: "2.0",
-        id: 9,
-        method: "ui/open-link",
-        params: { url: "https://example.com/blocked" },
-      });
-
-      const reply = (await frame.waitFor(replyTo(9))) as { result: unknown };
-      expect(reply.result).toEqual({ isError: true });
-    } finally {
-      open.restore();
-    }
-  });
-
   test("the notification form is still served, and answered with nothing", async () => {
-    const open = captureOpen({} as Window);
+    const open = captureOpen();
     try {
       const frame = mount();
       await handshake(frame);
