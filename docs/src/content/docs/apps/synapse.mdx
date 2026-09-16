@@ -586,6 +586,8 @@ In non-NimbleBrain hosts, `action()`, `chat()`, and `saveFile()` are silent no-o
 
 <Aside type="caution">
 `pickFile` / `pickFiles` were broken in NimbleBrain hosts before `@nimblebrain/synapse@0.8.0` (the SDK sent the wrong method name; the call would hang). The result shape also changed in 0.8.0 from `{ base64Data, filename, mimeType, size }` to `{ id, filename, mimeType, size }`. If you need bytes inline for a small generated file, write a tool that takes a file ID and have it read the file server-side.
+
+The **host's reply** shape moved too, and an SDK reads only one of them: see [`synapse/request-file`](/apps/bridge#synapserequest-file) for which release reads which, and why an app on 0.18.0 or earlier has to move its pin in the same deploy as the host.
 </Aside>
 
 ## Theming

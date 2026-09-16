@@ -68,7 +68,7 @@ These have no spec equivalent and degrade to no-ops in non-NimbleBrain hosts.
 | `synapse/data-changed` | Host → App | The agent called a tool on the app's server — the app should refresh. |
 | `synapse/action` | App → Host | Request a semantic action from the shell. |
 | `synapse/download-file` | App → Host | Trigger a file download in the browser. |
-| `synapse/request-file` | App → Host | Open native file picker; the host persists each chosen file to the workspace store and returns `{ id, filename, mimeType, size }`. |
+| `synapse/request-file` | App → Host | Open native file picker; the host persists each chosen file to the workspace store and returns `{ files: [...] }`. See [below](#synapserequest-file). |
 | `synapse/keydown` | App → Host | Forward keyboard shortcuts to the host. |
 
 ## Initialization handshake
@@ -597,6 +597,43 @@ The bridge handles `navigate` directly. All other actions are dispatched to the 
 
 <Aside type="note">
 `synapse/action` is a NimbleBrain platform extension — it is not part of the ext-apps specification.
+</Aside>
+
+### `synapse/request-file`
+
+Open the OS file picker. The host uploads each chosen file to the workspace file store and answers with the persisted entries, so bytes never cross the iframe boundary.
+
+```json
+// App → Host
+{
+  "jsonrpc": "2.0",
+  "id": "syn-7",
+  "method": "synapse/request-file",
+  "params": { "accept": "image/*", "multiple": true, "maxSize": 10485760 }
+}
+
+// Host → App
+{
+  "jsonrpc": "2.0",
+  "id": "syn-7",
+  "result": {
+    "files": [
+      { "id": "fl_abc123", "filename": "chart.png", "mimeType": "image/png", "size": 48120 }
+    ]
+  }
+}
+```
+
+**The result is always `{ files: [...] }`**, for one file or many, and a cancel answers `{ files: [] }`. A JSON-RPC result is an object by definition and MCP types it as one, so a client that validates against the spec cannot parse a bare array or `null` — it never settles the call, and the picker hangs rather than failing.
+
+Every param is optional: `accept` takes the same value as an `<input type="file">` accept attribute and defaults to any file, `multiple` defaults to `false`, and `maxSize` defaults to 25 MB. `maxSize` is enforced in the browser as a fast fail; the server remains the source of truth, and an oversize file or a failed upload comes back as a JSON-RPC error rather than an empty list.
+
+<Aside type="note">
+`synapse/request-file` is a NimbleBrain platform extension — it is not part of the ext-apps specification.
+</Aside>
+
+<Aside type="caution">
+**SDK compatibility.** With the `@nimblebrain/synapse` SDK, call `pickFile()` for a single entry or `pickFiles()` for the list — both read this one shape, from the release that moves `connect()` onto the spec's own client onwards. **Releases through 0.18.0 read the bare shapes** (an array, a single object, or `null`) and throw on `{ files }`, reporting it as an out-of-date *host* — so an app on 0.18.0 or earlier has to move its pin in the same deploy as the host.
 </Aside>
 
 ## Security model

@@ -37,7 +37,7 @@ import {
   GetTaskResultSchema,
   TaskStatusNotificationSchema,
 } from "@modelcontextprotocol/sdk/types.js";
-import { getActiveWorkspaceId, uploadResource } from "../api/client";
+import { getActiveWorkspaceId, uploadResource, type WorkspaceFile } from "../api/client";
 import { isIdentityApp } from "../lib/identity-apps";
 import { appNameFromToolName } from "../lib/namespaced-tool";
 import { getMcpBridgeClient, withSessionRetry } from "../mcp-bridge-client";
@@ -1296,7 +1296,11 @@ function filterHostContextForSpec(ctx: Record<string, unknown>): Record<string, 
  * `maxSize` is enforced client-side as a fast-fail; the server is
  * still the source of truth (`getFilesConfig().maxFileSize`).
  */
-async function pickFiles(accept: string, maxSize: number, multiple: boolean): Promise<unknown> {
+async function pickFiles(
+  accept: string,
+  maxSize: number,
+  multiple: boolean,
+): Promise<RequestFileResult> {
   return new Promise((resolve, reject) => {
     const input = document.createElement("input");
     input.type = "file";
@@ -1311,7 +1315,7 @@ async function pickFiles(accept: string, maxSize: number, multiple: boolean): Pr
       if (!resolved) {
         resolved = true;
         document.body.removeChild(input);
-        resolve(multiple ? [] : null);
+        resolve({ files: [] });
       }
     };
 
@@ -1323,7 +1327,7 @@ async function pickFiles(accept: string, maxSize: number, multiple: boolean): Pr
       document.body.removeChild(input);
       // Validate + upload off-thread; settle the picker Promise with the
       // result (or the size/upload error) exactly as the change fires.
-      processPickedFiles(input.files, maxSize, multiple).then(resolve, reject);
+      processPickedFiles(input.files, maxSize).then(resolve, reject);
     });
 
     input.click();
@@ -1331,16 +1335,27 @@ async function pickFiles(accept: string, maxSize: number, multiple: boolean): Pr
 }
 
 /**
+ * The `synapse/request-file` result. A JSON-RPC result is an object, and MCP
+ * types it as one, so the entries are wrapped rather than sent as a bare array
+ * — a client that validates against the spec cannot parse a bare array or
+ * `null` and never settles the call. One shape covers both pickers: the SDK's
+ * `pickFile` takes the first entry, `pickFiles` takes them all, and a cancel is
+ * an empty list rather than a second shape.
+ */
+interface RequestFileResult {
+  files: WorkspaceFile[];
+}
+
+/**
  * Validate picked files against `maxSize`, upload them via `POST /v1/resources`,
- * and resolve to the persisted entries — or `[]`/`null` when nothing was chosen.
+ * and resolve to the persisted entries — an empty list when nothing was chosen.
  * Throws on the first oversize file or an upload failure.
  */
 async function processPickedFiles(
   files: FileList | null,
   maxSize: number,
-  multiple: boolean,
-): Promise<unknown> {
-  if (!files || files.length === 0) return multiple ? [] : null;
+): Promise<RequestFileResult> {
+  if (!files || files.length === 0) return { files: [] };
   const selected = Array.from(files);
   for (const file of selected) {
     if (file.size > maxSize) {
@@ -1350,7 +1365,7 @@ async function processPickedFiles(
     }
   }
   const result = await uploadResource(selected);
-  return multiple ? result.files : (result.files[0] ?? null);
+  return { files: result.files };
 }
 
 /**
