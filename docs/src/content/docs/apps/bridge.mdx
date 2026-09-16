@@ -133,7 +133,7 @@ The app initiates the handshake per the ext-apps spec:
 
 The MCP tasks capability appears twice, and neither copy is redundant yet.
 
-`hostCapabilities.tasks` is read off the raw response. The `experimental` key is for a client that validates the response against the ext-apps schema, such as the official `App`: that schema drops the unrecognized `tasks` field and, from ext-apps 1.7.5, keeps the contents of `experimental`. An app on an earlier ext-apps version sees neither.
+`hostCapabilities.tasks` is what a released `@nimblebrain/synapse` build reads, off the raw response. The `experimental` key is for a client that validates the response against the ext-apps schema, such as the official `App`: that schema drops the unrecognized `tasks` field and, from ext-apps 1.7.5, keeps the contents of `experimental`. An app on an earlier ext-apps version sees neither. The SDK reads the `experimental` entry alone from its next release, and the sibling goes once no build in the field reads it.
 
 Read **`io.modelcontextprotocol/tasks`** — the identifier MCP Tasks is registered under as an official MCP extension.
 
