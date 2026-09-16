@@ -159,13 +159,13 @@ describe("the server-notification relay", () => {
     }
   });
 
-  it("both broadcasts name the workspace, so neither reaches a non-member", async () => {
+  it("the relay's broadcast names the workspace, so it reaches no non-member", async () => {
     // `onEvent` above fires inside `broadcast`, AFTER the membership decision,
     // so it cannot see the scope. The third argument is the whole of it: drop
     // it and `/v1/events` — which is IDENTITY-scoped, so every signed-in user's
     // tab is on this manager — hands the payload to identities with no claim to
-    // it. Both the relay and the agent-path `data.changed` go out from
-    // `startServer`'s sink wrap, so one spy covers the pair.
+    // it. The relay goes out from `startServer`'s sink wrap, so the spy sits
+    // there.
     const spy = spyOn(handle.sseManager, "broadcast");
     try {
       // Emitted into the sink rather than driven through a `save`: the wrap is
@@ -179,17 +179,10 @@ describe("the server-notification relay", () => {
           method: "notifications/resources/list_changed",
         },
       });
-      // The agent path: a completed tool call the engine attributes to a
-      // workspace, through the same wrap.
-      runtime.getEventSink().emit({
-        type: "tool.done",
-        data: { name: "notes__save", ok: true, workspaceId: TEST_WORKSPACE_ID },
-      });
 
       const scopeOf = (type: string) =>
         spy.mock.calls.filter(([event]) => event === type).map((call) => call[2]);
       expect(scopeOf("server.notification")).toEqual([TEST_WORKSPACE_ID]);
-      expect(scopeOf("data.changed")).toEqual([TEST_WORKSPACE_ID]);
     } finally {
       spy.mockRestore();
     }

@@ -16,7 +16,7 @@
  *     (`createServerNotificationRelay`).
  *   - **A person.** A kernel identity source (`IDENTITY_SOURCES`) is one server
  *     shared by every user and sits in no workspace registry. Its notification
- *     is stamped with the user whose data changed and reaches only that user
+ *     is stamped with the user who owns the changed data and reaches only that user
  *     (`createIdentityServerNotificationRelay`). An MCP notification has nowhere
  *     to carry a user, so the host names one when it announces
  *     (`announceResourceListChangedFor`), and a notification that names no one
@@ -104,8 +104,8 @@ export function relayableParams(params: unknown): Record<string, unknown> | unde
 }
 
 /**
- * Whether a bare server name can have views to deliver to, and should. Both the
- * agent path (`deriveDataChangedTarget`) and the server-notification relay ask.
+ * Whether a bare server name can have views to deliver to, and should. The
+ * relay asks before it delivers.
  *
  * A personal connector has no listener, and the marker is NOT stripped to find
  * one. `server` is matched against an iframe's `data-app`, and a personal

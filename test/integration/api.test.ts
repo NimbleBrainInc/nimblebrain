@@ -436,7 +436,7 @@ describe("SSE Event Manager", () => {
 
 		expect(manager.clientCount).toBe(2);
 
-		manager.broadcast("data.changed", {
+		manager.broadcast("config.changed", {
 			server: "tasks",
 			tool: "create_task",
 			timestamp: new Date().toISOString(),
@@ -447,8 +447,8 @@ describe("SSE Event Manager", () => {
 		const text1 = new TextDecoder().decode(r1.value);
 		const text2 = new TextDecoder().decode(r2.value);
 
-		expect(text1).toContain("event: data.changed");
-		expect(text2).toContain("event: data.changed");
+		expect(text1).toContain("event: config.changed");
+		expect(text2).toContain("event: config.changed");
 		expect(text1).toContain('"server":"tasks"');
 		expect(text2).toContain('"tool":"create_task"');
 
@@ -478,7 +478,7 @@ describe("SSE Event Manager", () => {
 		manager.stop();
 	});
 
-	it("emits only connector and data.changed events via EventSink interface", async () => {
+	it("emits only routed events via EventSink interface", async () => {
 		const { SseEventManager } = await import("../../src/api/events.ts");
 		const manager = new SseEventManager(60_000);
 

@@ -175,14 +175,14 @@ describe("PostHogEventSink", () => {
 		expect(installs[1].properties.has_ui).toBe(true);
 	});
 
-	it("skips text.delta, tool.start, tool.done, tool.progress, data.changed", () => {
+	it("skips text.delta, tool.start, tool.done, tool.progress, config.changed", () => {
 		const { mock, sink } = createTestSetup();
 
 		const skipTypes: EngineEventType[] = [
 			"text.delta",
 			"tool.start",
 			"tool.progress",
-			"data.changed",
+			"config.changed",
 		];
 
 		for (const type of skipTypes) {

@@ -71,12 +71,12 @@ describe("SseEventManager event buffer", () => {
 			received.push({ event, data });
 		});
 
-		mgr.broadcast("data.changed", { source: "test" });
+		mgr.broadcast("config.changed", { source: "test" });
 		mgr.broadcast("connector.installed", { name: "bad" });
 
 		expect(received).toHaveLength(2);
 		expect(received[0]).toEqual({
-			event: "data.changed",
+			event: "config.changed",
 			data: { source: "test" },
 		});
 		expect(received[1]).toEqual({

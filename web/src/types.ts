@@ -126,19 +126,6 @@ export interface ConnectionStateChangedEvent {
   lastError?: string;
 }
 
-export interface DataChangedEvent {
-  server: string;
-  tool: string;
-  /**
-   * The workspace the change happened in. Absent for an identity-door call
-   * (`conversations`, `files`, `automations`), which belongs to no workspace —
-   * absent means "everyone", which is what every consumer did before the field
-   * existed.
-   */
-  wsId?: string;
-  timestamp: string;
-}
-
 /**
  * An app server's own notification, relayed by the runtime to that server's
  * views. `server` is the bare server name (an iframe's `data-app`); `method`
@@ -217,7 +204,6 @@ export interface SseEventMap {
   "connector.installed": ConnectorInstalledEvent;
   "connector.uninstalled": ConnectorUninstalledEvent;
   "connection.state_changed": ConnectionStateChangedEvent;
-  "data.changed": DataChangedEvent;
   "server.notification": ServerNotificationEvent;
   "conversation.title": ConversationTitleEvent;
   "config.changed": ConfigChangedEvent;

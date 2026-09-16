@@ -562,7 +562,7 @@ Connectors can be installed per-workspace (tracked via `ConnectorInstance.wsId`)
 
 ### SSE Event Streams
 
-**Workspace-level** (`GET /v1/events`): Events: `connector.installed`, `connector.uninstalled`, `connection.state_changed`, `data.changed`, `conversation.title`, `config.changed`, `skill.created`, `skill.updated`, `skill.deleted`, `bridge.tool.call`, `bridge.tool.done`, `notification.created`, `notification.delivered`, `notification.delivery_failed`, `heartbeat` (30s).
+**Workspace-level** (`GET /v1/events`): Events: `connector.installed`, `connector.uninstalled`, `connection.state_changed`, `server.notification`, `conversation.title`, `config.changed`, `skill.created`, `skill.updated`, `skill.deleted`, `bridge.tool.call`, `bridge.tool.done`, `notification.created`, `notification.delivered`, `notification.delivery_failed`, `heartbeat` (30s).
 
 **Per-conversation** (`GET /v1/conversations/:id/events`): For multi-participant chat. Security: `requireAuth` → `requireWorkspace` → `canAccess()`. Events: `user.message`, `text.delta`, `tool.start`, `tool.done`, `llm.done`, `done`, `heartbeat`. Sender excluded from own broadcast.
 
@@ -570,7 +570,7 @@ Connectors can be installed per-workspace (tracked via `ConnectorInstance.wsId`)
 
 - **Chat**: reading-face agent prose, bubbled user turns, streaming via SSE, inline tool call display
 - **MCP App Bridge**: sandboxed iframes, postMessage proxy for tool calls
-- **Agent-UI sync**: `data.changed` events forwarded to iframes with 100ms debounce
+- **Agent-UI sync**: an app server's `notifications/resources/list_changed`, relayed as `server.notification` and posted verbatim to that server's iframes
 - **Login**: `"__cookie__"` sentinel token indicates cookie-based auth (suppresses Authorization header)
 
 ### Sidebar Slot Convention
@@ -652,7 +652,7 @@ Connector processes receive a **filtered** host environment. Default allowlist: 
 These are non-negotiable patterns. Violating them causes production bugs:
 
 - **`tools/call` must return `CallToolResult` as-is** — never unwrap or cherry-pick fields
-- **No `data.changed` from tool proxy** — causes infinite loops (tool → SSE → iframe refresh → tool)
+- **A view refreshes only on its server's announcement** — the host never infers a change from a tool call, since a read that broadcasts loops (tool → SSE → iframe refresh → tool)
 - **Tool errors → JSON-RPC errors** — `isError: true` must send error response, not result
 - **Bridge `destroyed` flag** — React StrictMode double-mounts; guard listeners with `destroyed` boolean
 - **Iframe DOM isolation** — never put React-managed children in same container as raw DOM iframes

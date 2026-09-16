@@ -55,7 +55,7 @@ describe("WorkspaceLogSink", () => {
     const sink = new WorkspaceLogSink({ dir });
     sink.emit(makeEvent("connector.installed", { name: "@test/a" }));
     sink.emit(makeEvent("connector.uninstalled", { name: "@test/b" }));
-    sink.emit(makeEvent("data.changed", { source: "crm" }));
+    sink.emit(makeEvent("file.created", { path: "/a.txt" }));
     sink.emit(makeEvent("config.changed", { key: "model" }));
     sink.emit(makeEvent("skill.created", { name: "greet" }));
 
@@ -69,7 +69,7 @@ describe("WorkspaceLogSink", () => {
     expect(events).toEqual([
       "connector.installed",
       "connector.uninstalled",
-      "data.changed",
+      "file.created",
       "config.changed",
       "skill.created",
     ]);
@@ -89,7 +89,6 @@ describe("WorkspaceLogSink", () => {
     const workspaceTypes = [
       "connector.installed",
       "connector.uninstalled",
-      "data.changed",
       "config.changed",
       "skill.created",
       "skill.updated",
@@ -133,7 +132,7 @@ describe("WorkspaceLogSink", () => {
 
       // A successful write re-arms the warning for the next failure episode.
       rmSync(logFile, { recursive: true });
-      sink.emit(makeEvent("data.changed", { source: "x" })); // writes → reset
+      sink.emit(makeEvent("file.created", { path: "/x" })); // writes → reset
       rmSync(logFile);
       mkdirSync(logFile); // block again
       sink.emit(makeEvent("config.changed", { key: "m" }));

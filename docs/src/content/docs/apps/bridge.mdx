@@ -65,7 +65,6 @@ These have no spec equivalent and degrade to no-ops in non-NimbleBrain hosts.
 
 | Method | Direction | Description |
 |--------|-----------|-------------|
-| `synapse/data-changed` | Host → App | The agent called a tool on the app's server — the app should refresh. |
 | `synapse/action` | App → Host | Request a semantic action from the shell. |
 | `synapse/download-file` | App → Host | Trigger a file download in the browser. |
 | `synapse/request-file` | App → Host | Open native file picker; the host persists each chosen file to the workspace store and returns `{ files: [...] }`. See [below](#synapserequest-file). |
@@ -205,33 +204,13 @@ The app's own MCP server sent `notifications/resources/list_changed`, and the ho
 }
 ```
 
-The host is a relay, not an interpreter. A notification reaches the views as the server sent it (its `params`, when it sent any, are passed on), and it reaches only that server's views, in the workspace whose connection received it. The host's own apps that hold one person's data (conversations, files, automations) belong to no workspace, so their notifications reach only that person's views, whichever workspace is open. It is the one change signal that comes from the server rather than being inferred by the host, so it covers every write the server makes: a call from your own iframe, the agent's, or one the server makes on its own. To use it, have your server send the notification when its data changes; a server that advertises `resources.listChanged` (FastMCP and the TypeScript SDK both do when they serve resources) can send it from inside the tool call that made the write. A server sends it only for a real change, so a view that re-reads on it cannot loop.
+The host is a relay, not an interpreter. A notification reaches the views as the server sent it (its `params`, when it sent any, are passed on), and it reaches only that server's views, in the workspace whose connection received it. The host's own apps that hold one person's data (conversations, files, automations) belong to no workspace, so their notifications reach only that person's views, whichever workspace is open. It is the host's only change signal: an app refreshes when its server sends this notification and the host relays it. It comes from the server rather than being inferred by the host, so it covers every write the server makes (a call from your own iframe, the agent's, or one the server makes on its own), and a write the server does not announce reaches no view. To use it, have your server send the notification when its data changes; a server that advertises `resources.listChanged` (FastMCP and the TypeScript SDK both do when they serve resources) can send it from inside the tool call that made the write. A server sends it only for a real change, so a view that re-reads on it cannot loop.
 
 What the host relays, and how often, is the host's decision rather than the server's, because the server is untrusted:
 
 - **Only the methods the host relays pass.** Today that is `notifications/resources/list_changed`. A server cannot reach its views with arbitrary JSON-RPC by choosing a method name.
 - **`params` are relayed only as an object under 4 KB.** Anything else is dropped, and the notification is relayed without params.
 - **The rate is capped.** Per server and workspace (per server and person, for a person's own apps), the first notification is delivered at once, and any more inside the next 250 ms collapse into one delivery at the end of it. A server announcing in a loop reaches its views a few times a second.
-
-### `synapse/data-changed`
-
-Sent when the agent calls a tool on the app's server and the call completes, indicating the app's data may have changed. Use this to refresh your UI.
-
-```json
-{
-  "jsonrpc": "2.0",
-  "method": "synapse/data-changed",
-  "params": {
-    "source": "agent",
-    "server": "weather",
-    "tool": "set_location"
-  }
-}
-```
-
-<Aside type="caution">
-Iframe-initiated tool calls (via `tools/call`) do **not** trigger `synapse/data-changed`. Only agent-side tool calls produce this event, which prevents infinite refresh loops. For a write made from your iframe to refresh the app's other views, have the server announce it with [`notifications/resources/list_changed`](#notificationsresourceslist_changed).
-</Aside>
 
 ## App to Host messages
 

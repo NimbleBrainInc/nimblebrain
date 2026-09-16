@@ -1,7 +1,5 @@
 import type { EngineEvent, EngineEventType, EventSink } from "../engine/types.ts";
 import { log } from "../observability/log.ts";
-import { bareToolName } from "../tools/namespace.ts";
-import { hasAppViews } from "../tools/server-notifications.ts";
 import type { WorkspaceStore } from "../workspace/workspace-store.ts";
 
 /**
@@ -89,23 +87,12 @@ const SSE_ROUTES: Partial<Record<EngineEventType, SseRoute>> = {
   // pending-auth banner; without forwarding here, the banner never auto-clears
   // after a user completes interactive OAuth.
   "connection.state_changed": { scope: "workspace", wsIdField: "wsId" },
-  // Tool dispatch fan-out used by Synapse `useDataSync`. The payload carries
-  // `wsId`, and the emit site passes it to `broadcast()` — so delivery IS
-  // membership-filtered even though the ROUTE stays global.
-  //
-  // The route cannot be `scope: "workspace"`: that drops any event whose
-  // `wsIdField` is missing (see the note above), and an identity-door change
-  // (`conversations`, `files`, `automations`) belongs to no workspace, so those
-  // would stop being delivered entirely. Passing the id per-call gets the
-  // filtering without that cliff — an absent id fans out, a present one is
-  // scoped.
-  "data.changed": { scope: "global" },
   // An app server's own notification, relayed to that server's views
   // (`src/tools/server-notifications.ts`). Each is stamped with its one owner.
   // A workspace's source is stamped with the workspace whose registry received
   // it, and never reaches a member of another workspace. A person's own app
   // (`conversations`, `files`, `automations`) belongs to no workspace, so it is
-  // stamped with the user whose data changed and reaches that user alone —
+  // stamped with the user who owns the changed data and reaches that user alone —
   // never every member of a workspace they happen to share.
   "server.notification": { scope: "owner", wsIdField: "workspaceId", userIdField: "userId" },
   // Live conversation-title update (auto-title generation completes after the
@@ -124,15 +111,11 @@ const SSE_ROUTES: Partial<Record<EngineEventType, SseRoute>> = {
   "skill.updated": { scope: "global" },
   "skill.deleted": { scope: "global" },
   // Bridge tool call/done — a tool call an iframe made, as opposed to one the
-  // agent's run loop made (`tool.done`). Deliberately NOT read by
-  // `deriveDataChangedTarget`: a UI door's traffic is mostly READS, and a read
-  // that triggers a refresh triggers a read. Broadcasting here is what the
-  // AGENTS.md rule "`/v1/tools/call` must NOT emit `data.changed` (causes
-  // infinite loops)" is about, and the loop is live — `files/ui` refetches on
-  // any `data.changed` for its own app, with no mutation filter. A write made
-  // from an iframe reaches the app's other views when its server announces it,
-  // through `server.notification` above — the server says so only for a real
-  // change, so a read cannot start one. This event is audit only.
+  // agent's run loop made (`tool.done`). Audit only: no view refreshes on it.
+  // A UI door's traffic is mostly READS, and a read that triggers a refresh
+  // triggers a read. A write made from an iframe reaches the app's views when
+  // its server announces it, through `server.notification` above — the server
+  // says so only for a real change, so a read cannot start one.
   // Field name is `workspaceId` (not `wsId`) — see handlers.ts emit sites.
   "bridge.tool.call": { scope: "workspace", wsIdField: "workspaceId" },
   "bridge.tool.done": { scope: "workspace", wsIdField: "workspaceId" },
@@ -145,73 +128,6 @@ const SSE_ROUTES: Partial<Record<EngineEventType, SseRoute>> = {
   "notification.delivered": { scope: "workspace", wsIdField: "workspaceId" },
   "notification.delivery_failed": { scope: "workspace", wsIdField: "workspaceId" },
 };
-
-/**
- * Derive the `data.changed` broadcast target (`{ server, tool }`) from a tool
- * lifecycle event, or `null` when the event must not broadcast.
- *
- * Two event shapes feed this, and they carry the source name differently:
- *   - `tool.done` (ok) → a single qualified `name`. This is the name the
- *     MODEL called: bare `<source>__<tool>`, or `my_<source>__<tool>` for a
- *     personal connector.
- *   - `tool.progress` → separate `source` + `tool`; `McpSource` emits the
- *     bare source name there.
- *
- * Both are normalized to the **bare** source name via `bareToolName` before
- * the `__` split. This is load-bearing: the Synapse `useDataSync` consumer
- * matches the broadcast `server` against the iframe's `data-app`, which is the
- * bare placement `serverName` (see `PlacementRegistry` — serverName and wsId
- * are stored as separate fields). A namespaced `server` never matches, so the
- * iframe would only refresh on remount (the "click off and back" symptom).
- * Stripping the prefix also restores the `nb` system-tool guard:
- * a replayed `ws_<id>-nb__x` → `nb__x` → server `nb`, which we skip (system tools don't
- * mutate app data, and broadcasting for them re-fetches every streaming chunk).
- *
- * `data.changed` remains workspace-blind (`scope: "global"`, matched on bare
- * server) — the pre-Stage-2 contract. Growing `wsId` into the payload for
- * true per-workspace scoping is tracked separately (see `SSE_ROUTES`).
- */
-export function deriveDataChangedTarget(
-  event: EngineEvent,
-): { server: string; tool: string; wsId: string | undefined } | null {
-  const isBroadcast =
-    (event.type === "tool.done" && event.data.ok === true) || event.type === "tool.progress";
-  if (!isBroadcast) return null;
-
-  const { name, source, tool: toolField } = event.data;
-  const rawName =
-    typeof name === "string"
-      ? name
-      : typeof source === "string" && typeof toolField === "string"
-        ? `${source}__${toolField}`
-        : undefined;
-  if (!rawName) return null;
-
-  // Strip any `ws_<id>-` workspace prefix, then split source from tool on the
-  // first `__`. A bare source name with hyphens (`synapse-db-query`) is left
-  // intact — `bareToolName` only strips a leading segment matching the
-  // workspace-id pattern.
-  const bare = bareToolName(rawName);
-  const sepIndex = bare.indexOf("__");
-  const server = sepIndex !== -1 ? bare.slice(0, sepIndex) : bare;
-  const tool = sepIndex !== -1 ? bare.slice(sepIndex + 2) : bare;
-
-  // Personal connectors and system tools have no views to refresh — see
-  // `hasAppViews`, which the server-notification relay applies too.
-  if (!hasAppViews(server)) return null;
-
-  // The workspace the call ran in, when the event carries one. Both doors stamp
-  // it — the engine via `_wrapSinkWithWorkspaceAttribution`, the bridge from the
-  // request's validated header — so this is a read, not an inference.
-  //
-  // Absent is a real answer and not a failure: an identity-door call
-  // (`conversations`, `files`, `automations`) belongs to no workspace, and those
-  // apps are workspace-blind by design. Undefined therefore means "everyone",
-  // which is the behaviour every consumer had before this field existed.
-  const wsId = typeof event.data.workspaceId === "string" ? event.data.workspaceId : undefined;
-
-  return { server, tool, wsId };
-}
 
 /** The value when it is a non-empty string, else undefined. */
 function nonEmptyString(value: unknown): string | undefined {

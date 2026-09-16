@@ -190,12 +190,12 @@ describe("V5: SSE events scoped by workspace", () => {
     const readerB = streamB.getReader();
 
     // Broadcast to workspace alpha only
-    manager.broadcast("data.changed", { server: "test", tool: "op" }, "ws_alpha");
+    manager.broadcast("config.changed", { key: "model" }, "ws_alpha");
 
     // Client A should get the event
     const readA = readerA.read().then(({ value }) => {
       const text = new TextDecoder().decode(value);
-      expect(text).toContain("data.changed");
+      expect(text).toContain("config.changed");
       return "got_event";
     });
 
@@ -247,14 +247,14 @@ describe("V5: SSE events scoped by workspace", () => {
     const readerWs = streamWs.getReader();
 
     // Broadcast to workspace alpha
-    manager.broadcast("data.changed", { server: "test" }, "ws_alpha");
+    manager.broadcast("config.changed", { key: "model" }, "ws_alpha");
 
     // Both should get it — the no-workspace client gets everything
     return Promise.all([readerNoWs.read(), readerWs.read()]).then(([rNoWs, rWs]) => {
       const textNoWs = new TextDecoder().decode(rNoWs.value);
       const textWs = new TextDecoder().decode(rWs.value);
-      expect(textNoWs).toContain("data.changed");
-      expect(textWs).toContain("data.changed");
+      expect(textNoWs).toContain("config.changed");
+      expect(textWs).toContain("config.changed");
 
       readerNoWs.cancel();
       readerWs.cancel();

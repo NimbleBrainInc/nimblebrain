@@ -4,15 +4,12 @@ import type {
   ConfigChangedEvent,
   ConnectionStateChangedEvent,
   ConversationTitleEvent,
-  DataChangedEvent,
   NotificationCreatedEvent,
   NotificationDeliveryEvent,
   ServerNotificationEvent,
 } from "../types";
 
 export interface UseEventsOptions {
-  /** Called when a data.changed SSE event is received. */
-  onDataChanged?: (event: DataChangedEvent) => void;
   /** Called when the runtime relays an app server's own notification. */
   onServerNotification?: (event: ServerNotificationEvent) => void;
   /** Called when a config.changed SSE event is received. */
@@ -73,8 +70,6 @@ export function useEvents(
   _workspaceId: string | undefined,
   options?: UseEventsOptions,
 ): void {
-  const onDataChangedRef = useRef(options?.onDataChanged);
-  onDataChangedRef.current = options?.onDataChanged;
   const onServerNotificationRef = useRef(options?.onServerNotification);
   onServerNotificationRef.current = options?.onServerNotification;
   const onConfigChangedRef = useRef(options?.onConfigChanged);
@@ -98,11 +93,6 @@ export function useEvents(
     // subscriptions (the underlying connection persists for tab life).
     const unsubs: Array<() => void> = [];
 
-    unsubs.push(
-      subscribe("data.changed", (data) => {
-        onDataChangedRef.current?.(data);
-      }),
-    );
     unsubs.push(
       subscribe("server.notification", (data) => {
         onServerNotificationRef.current?.(data);

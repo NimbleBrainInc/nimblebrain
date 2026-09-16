@@ -3,19 +3,12 @@
  *
  * These are the same string for a workspace connector and different for a personal
  * connector, whose wire form carries the reserved marker. The distinction only
- * matters on emitted events: a consumer reading `source` off a `tool.progress`
- * decides from it whether to broadcast `data.changed`, and a connector emitting
- * its bare name is indistinguishable from a workspace source installed under the
- * same name — so the broadcast lands on an unrelated app's iframe.
- *
- * Pinned at the emitter because that is where the earlier gap was: the guard in
- * `deriveDataChangedTarget` was correct, and unreachable on this path, because
- * nothing upstream ever produced a marked `source`. A test asserting the guard
- * against a hand-written marked event passed while the real path stayed broken.
+ * matters on emitted events: a consumer reading `source` off a `tool.progress` or
+ * `run.error` cannot otherwise tell a personal connector from a workspace source
+ * installed under the same name.
  */
 
 import { describe, expect, test } from "bun:test";
-import { deriveDataChangedTarget } from "../../../src/api/events.ts";
 import { personalConnectorWireName } from "../../../src/tools/identity-sources.ts";
 import { McpSource } from "../../../src/tools/mcp-source.ts";
 
@@ -52,27 +45,5 @@ describe("McpSource event source name", () => {
       personalConnectorWireName("gmail"),
     );
     expect(s.name).toBe("gmail");
-  });
-
-  test("end to end: what the connector emits produces no data.changed broadcast", () => {
-    // The whole point. Feed the emitter's own output to the consumer.
-    const s = new McpSource(
-      "gmail",
-      remote as never,
-      sink as never,
-      undefined,
-      personalConnectorWireName("gmail"),
-    );
-    const event = {
-      type: "tool.progress",
-      data: { source: emittedName(s), tool: "send" },
-    };
-    expect(deriveDataChangedTarget(event as never)).toBeNull();
-  });
-
-  test("and a workspace source of that name still broadcasts", () => {
-    const s = new McpSource("gmail", remote as never, sink as never);
-    const event = { type: "tool.progress", data: { source: emittedName(s), tool: "send" } };
-    expect(deriveDataChangedTarget(event as never)).toEqual({ server: "gmail", tool: "send" });
   });
 });

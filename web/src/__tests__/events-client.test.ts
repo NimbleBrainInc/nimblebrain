@@ -73,22 +73,22 @@ afterEach(() => {
 
 describe("events-client — singleton transport", () => {
   test("first subscribe opens exactly one underlying connection", () => {
-    subscribe("data.changed", () => {});
+    subscribe("server.notification", () => {});
     expect(connectCalls).toBe(1);
     expect(__internal__.hasConnection()).toBe(true);
   });
 
   test("N subscribes across types share the same connection", () => {
-    subscribe("data.changed", () => {});
+    subscribe("server.notification", () => {});
     subscribe("config.changed", () => {});
     subscribe("connector.installed", () => {});
-    subscribe("data.changed", () => {}); // second handler for same type
+    subscribe("server.notification", () => {}); // second handler for same type
     expect(connectCalls).toBe(1);
     expect(__internal__.subscriberCount()).toBe(4);
   });
 
   test("unsubscribe removes the handler but keeps the connection alive", () => {
-    const unsub = subscribe("data.changed", () => {});
+    const unsub = subscribe("server.notification", () => {});
     expect(__internal__.hasConnection()).toBe(true);
     expect(__internal__.subscriberCount()).toBe(1);
 
@@ -106,12 +106,12 @@ describe("events-client — event routing", () => {
     const a = mock(() => {});
     const b = mock(() => {});
     const c = mock(() => {});
-    subscribe("data.changed", a);
-    subscribe("data.changed", b);
+    subscribe("server.notification", a);
+    subscribe("server.notification", b);
     subscribe("config.changed", c);
 
     // Drive an event through the fake's captured onEvent.
-    lastOptions!.onEvent("data.changed", { server: "x", tool: "y" });
+    lastOptions!.onEvent("server.notification", { server: "x", method: "y" });
 
     expect(a).toHaveBeenCalledTimes(1);
     expect(b).toHaveBeenCalledTimes(1);
@@ -123,17 +123,17 @@ describe("events-client — event routing", () => {
       throw new Error("boom");
     });
     const good = mock(() => {});
-    subscribe("data.changed", thrower);
-    subscribe("data.changed", good);
+    subscribe("server.notification", thrower);
+    subscribe("server.notification", good);
 
-    lastOptions!.onEvent("data.changed", { server: "x" });
+    lastOptions!.onEvent("server.notification", { server: "x" });
 
     expect(thrower).toHaveBeenCalledTimes(1);
     expect(good).toHaveBeenCalledTimes(1);
   });
 
   test("events for types with no subscribers are dropped without error", () => {
-    subscribe("data.changed", () => {});
+    subscribe("server.notification", () => {});
     expect(() => lastOptions!.onEvent("skill.created", { id: "x" })).not.toThrow();
   });
 });
@@ -142,7 +142,7 @@ describe("events-client — onReconnect", () => {
   test("fires every registered reconnect handler", () => {
     const a = mock(() => {});
     const b = mock(() => {});
-    subscribe("data.changed", () => {}); // ensure connection
+    subscribe("server.notification", () => {}); // ensure connection
     onReconnect(a);
     onReconnect(b);
 
@@ -154,7 +154,7 @@ describe("events-client — onReconnect", () => {
 
   test("unsubscribed reconnect handler does not fire", () => {
     const a = mock(() => {});
-    subscribe("data.changed", () => {});
+    subscribe("server.notification", () => {});
     const unsub = onReconnect(a);
 
     unsub();
@@ -166,7 +166,7 @@ describe("events-client — onReconnect", () => {
 
 describe("events-client — auth lifecycle", () => {
   test("auth-lifecycle fire closes the existing connection", () => {
-    subscribe("data.changed", () => {});
+    subscribe("server.notification", () => {});
     expect(__internal__.hasConnection()).toBe(true);
     const initialConn = liveConnections[0];
 
@@ -179,7 +179,7 @@ describe("events-client — auth lifecycle", () => {
   });
 
   test("auth-lifecycle re-opens when subscribers remain AND token is present", () => {
-    subscribe("data.changed", () => {});
+    subscribe("server.notification", () => {});
     expect(connectCalls).toBe(1);
 
     // Rotate to a different non-null token — close + re-open under the
@@ -192,7 +192,7 @@ describe("events-client — auth lifecycle", () => {
   });
 
   test("auth-lifecycle does NOT re-open after logout (token is null)", () => {
-    subscribe("data.changed", () => {});
+    subscribe("server.notification", () => {});
     expect(connectCalls).toBe(1);
 
     setAuthToken(null);
@@ -203,7 +203,7 @@ describe("events-client — auth lifecycle", () => {
 
 describe("events-client — explicit close", () => {
   test("closeEventsClient drops the connection without removing subscribers", () => {
-    subscribe("data.changed", () => {});
+    subscribe("server.notification", () => {});
     expect(__internal__.subscriberCount()).toBe(1);
     expect(__internal__.hasConnection()).toBe(true);
 

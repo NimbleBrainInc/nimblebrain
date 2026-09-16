@@ -44,7 +44,7 @@ export class PostHogEventSink implements EventSink {
   /**
    * Dispatch table keyed by engine event type. Accumulation events fold into
    * per-run metrics; capture events emit to PostHog. Event types absent here
-   * (deltas, tool.start/progress, config/data.changed, and anything unknown)
+   * (deltas, tool.start/progress, config.changed, and anything unknown)
    * are intentionally ignored.
    */
   private readonly handlers: Record<string, EventHandler> = {

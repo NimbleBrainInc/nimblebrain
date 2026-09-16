@@ -1103,7 +1103,6 @@ export class Runtime {
     // await let a cancel + a fresh same-id `begin` slip in, we don't evict that
     // newer live run. A fresh conversation has no id until create(), so that
     // path begins after.
-    const isNew = !request.conversationId;
     let conversationId: string;
     let signal: AbortSignal;
     if (request.conversationId) {
@@ -1150,11 +1149,6 @@ export class Runtime {
       timestamp: new Date().toISOString(),
     });
 
-    // Tell conversation-list UIs a new conversation exists (so the row + its
-    // streaming dot appear immediately). Resolved-existing turns already have
-    // a row.
-    if (isNew) this.emitConversationsChanged();
-
     const busSink = this.createRunBusSink(conversationId);
     // Detached: run to completion regardless of the caller's connection.
     void this.chat({ ...request, conversationId, signal }, busSink)
@@ -1181,10 +1175,6 @@ export class Runtime {
           });
           this.runBus.end(conversationId, "error");
         }
-      })
-      .finally(() => {
-        // Refresh list UIs so the row's dot clears and the final title shows.
-        this.emitConversationsChanged();
       });
 
     return { conversationId };
@@ -1216,14 +1206,6 @@ export class Runtime {
         this.publishTurnEvent(conversationId, event.type, event.data);
       },
     };
-  }
-
-  /** Broadcast a conversations-list change on the global sink (→ SSE → iframe). */
-  private emitConversationsChanged(): void {
-    this.defaultEvents.emit({
-      type: "data.changed",
-      data: { server: "conversations", tool: "list" },
-    });
   }
 
   private async _chatInner(request: ChatRequest, requestSink?: EventSink): Promise<ChatResult> {
@@ -1667,14 +1649,9 @@ export class Runtime {
     engineConfig.toolPromotion = this.buildToolPromotionFactory();
 
     // Tell the client its conversation id (and the model it is bound to)
-    // immediately, so conversation list UIs can refresh before the first token.
+    // immediately, before the first token.
     if (binding) {
-      this.emitChatStart(
-        spec.sink,
-        binding.conversation.id,
-        !binding.resumed,
-        binding.conversation.model,
-      );
+      this.emitChatStart(spec.sink, binding.conversation.id, binding.conversation.model);
     }
 
     const conversationId = binding?.conversation.id ?? null;
@@ -2342,10 +2319,8 @@ export class Runtime {
   }
 
   /**
-   * Emit the initial `chat.start` (so the client knows the conversation id
-   * and, when there is one, the model it is bound to) and, for a new
-   * conversation, a conversations-list `data.changed` — both on the
-   * per-request sink only.
+   * Emit the initial `chat.start` on the per-request sink, so the client knows
+   * the conversation id and, when there is one, the model it is bound to.
    *
    * The binding rides along because this is the only point at which a client
    * that just created a conversation can learn it: the pin is server state,
@@ -2361,7 +2336,6 @@ export class Runtime {
   private emitChatStart(
     requestSink: EventSink | undefined,
     conversationId: string,
-    isNewConversation: boolean,
     model: string | undefined,
   ): void {
     if (!requestSink) return;
@@ -2369,10 +2343,6 @@ export class Runtime {
       type: "chat.start",
       data: { conversationId, ...(model ? { model } : {}) },
     });
-    // Notify conversation browser UIs that a new conversation exists.
-    if (isNewConversation) {
-      requestSink.emit({ type: "data.changed", data: { server: "conversations", tool: "list" } });
-    }
   }
 
   /**

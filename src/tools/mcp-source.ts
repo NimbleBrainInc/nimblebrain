@@ -434,16 +434,12 @@ export class McpSource implements ToolSource {
 
   /**
    * `eventSink` is REQUIRED, not optional. Emitted events include
-   * `tool.progress` during task-augmented calls — when those events reach
-   * the runtime sink wrap in `src/api/server.ts`, they turn into SSE
-   * `data.changed` broadcasts which drive Synapse `useDataSync` in connector
-   * iframes.
+   * `tool.progress` during task-augmented calls and `run.error` when the
+   * source crashes.
    *
    * Pass `new NoopEventSink()` only when a caller deliberately wants to
    * discard events (e.g. short-lived sources that aren't part of an agent
-   * session). "I didn't think about it" is not one of those cases —
-   * that's what turned this parameter optional and silently broke live
-   * updates across the whole platform.
+   * session). "I didn't think about it" is not one of those cases.
    *
    * `connectorContext` is optional and threaded only on connector-spawning
    * paths. When set, the Client registers inbound handlers for
@@ -474,11 +470,10 @@ export class McpSource implements ToolSource {
   /**
    * The source name to put on an emitted event.
    *
-   * Consumers of `tool.progress` / `run.error` match this against a wire name —
-   * `deriveDataChangedTarget` decides from it whether a `data.changed` broadcast
-   * would hit a WORKSPACE app of the same name. A personal connector emitting its
-   * bare name there is indistinguishable from the workspace source it collides
-   * with, which is the exact ambiguity the marker exists to remove.
+   * Consumers of `tool.progress` / `run.error` read this as a wire name. A
+   * personal connector emitting its bare name there is indistinguishable from a
+   * workspace source installed under the same name, which is the exact
+   * ambiguity the marker exists to remove.
    */
   private get eventSourceName(): string {
     return this.wireName ?? this.name;

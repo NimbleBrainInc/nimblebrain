@@ -426,8 +426,7 @@ export async function handleChatStream(
           event.type === "tool.preparing.done" ||
           event.type === "tool.start" ||
           event.type === "tool.done" ||
-          event.type === "llm.done" ||
-          event.type === "data.changed"
+          event.type === "llm.done"
         ) {
           if (event.type === "chat.start") {
             broadcastUserMessageOnce();
@@ -1506,11 +1505,9 @@ export async function handleToolCall(
     eventWorkspaceId,
   );
 
-  // NOTE: Do NOT emit data.changed here. This endpoint is the MCP App Bridge
-  // proxy — tool calls initiated by iframes. The iframe already knows about
-  // its own calls. Emitting data.changed here creates an infinite loop:
-  // tool call → data.changed SSE → iframe refreshes → tool call → ...
-  // Agent-initiated data.changed events are emitted by the engine event sink.
+  // No refresh signal goes out from here. This is the MCP App Bridge proxy,
+  // whose traffic is mostly reads; a view learns of a write only when the app's
+  // server announces it (`src/tools/server-notifications.ts`).
 
   return json({
     content: result.content,

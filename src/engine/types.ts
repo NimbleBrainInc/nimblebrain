@@ -314,7 +314,6 @@ export type EngineEventType =
    * member-scoped connectors emit one stream per active member.
    */
   | "connection.state_changed"
-  | "data.changed"
   /**
    * An app server sent a notification a host relays to the server's views
    * (`RELAYED_SERVER_NOTIFICATIONS`), after coalescing. Forwarded to SSE as
@@ -399,7 +398,7 @@ export type EngineEventType =
  * Generic event envelope. Per-event-type payload schemas are declared in
  * `./schemas/events.ts` (TypeBox + `Static<typeof X>` types). Code that
  * needs the precise payload shape can import the typed payload directly
- * (`SkillsLoadedPayload`, `DataChangedPayload`, etc.) and narrow on
+ * (`SkillsLoadedPayload`, `ServerNotificationPayload`, etc.) and narrow on
  * `event.type` before access. Tightening `data` here to a discriminated
  * union over those payloads is a follow-up — it requires auditing every
  * consumer to add the corresponding `event.type === "..."` narrowing.
