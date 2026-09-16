@@ -142,7 +142,7 @@ Returns a JSON envelope in the shape of the MCP `ReadResourceResult`, so a clien
 }
 ```
 
-The HTML is `contents[0].text`. A binary resource carries base64 in `blob` instead of `text`.
+The HTML is `contents[0].text`. A binary resource carries base64 in `blob` instead of `text`. `mimeType` and `_meta` appear only when the source declared them, so guard those reads rather than assuming the shape above.
 
 ## The virtual `primary` path
 
