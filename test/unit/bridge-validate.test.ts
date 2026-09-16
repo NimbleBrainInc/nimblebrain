@@ -180,6 +180,24 @@ describe("validateAppToHostMessage", () => {
     expect(result.ok).toBe(false);
   });
 
+  test("accepts lifecycle notifications that omit params", () => {
+    // JSON-RPC 2.0 § 4.2 makes `params` optional, and the spec client omits
+    // the key when it has nothing to send.
+    for (const method of ["ui/notifications/initialized", "ui/notifications/request-teardown"]) {
+      const result = validateAppToHostMessage({ jsonrpc: "2.0", method });
+      expect(result).toEqual({ ok: true, method, reason: null });
+    }
+  });
+
+  test("rejects lifecycle notifications whose params are not empty", () => {
+    const result = validateAppToHostMessage({
+      jsonrpc: "2.0",
+      method: "ui/notifications/initialized",
+      params: { unexpected: true },
+    });
+    expect(result.ok).toBe(false);
+  });
+
   test("passes through unknown methods (lets the bridge switch handle them)", () => {
     const result = validateAppToHostMessage({
       jsonrpc: "2.0",

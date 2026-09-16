@@ -37,8 +37,15 @@ const JsonRpcVersion = Type.Literal("2.0");
 /** Loose record used in `arguments`, `_meta`, etc. — caller-defined shape. */
 const UnknownRecord = Type.Record(Type.String(), Type.Unknown());
 
-/** Empty params shape (`Record<string, never>` in the legacy interfaces). */
-const EmptyParams = Type.Object({}, { additionalProperties: false });
+/**
+ * Empty params, and **optional**, because JSON-RPC 2.0 § 4.2 makes `params`
+ * optional and the spec's own client omits the key entirely when it has
+ * nothing to send. Requiring it drops the notification: the bridge validates
+ * before it dispatches, so a spec-correct app's `initialized` never reaches
+ * `onInitialized` and an inline view is left waiting for a tool result that
+ * is never delivered.
+ */
+const EmptyParams = Type.Optional(Type.Object({}, { additionalProperties: false }));
 
 /**
  * JSON-RPC 2.0 request id. Per spec § 4: "An identifier established by
@@ -158,13 +165,11 @@ export type UiSizeChangedMessage = Static<typeof UiSizeChangedMessage>;
 
 export const UiUpdateModelContextMessage = Type.Object({
   jsonrpc: JsonRpcVersion,
-  // `id` is optional. The @nimblebrain/synapse SDK emits this message via
-  // the JSON-RPC notification path (`transport.send`, no `id`) from
-  // `updateModelContext`, so requiring `id` here drops every model-context
-  // push from every synapse-app. Some callers may still send it as a request
-  // (with `id`) and expect a response — both shapes are valid. The dispatcher
-  // in `bridge.ts` already echoes `id` only when present, so the request shape
-  // continues to work.
+  // `id` is optional. The spec defines this as a request, and the
+  // @nimblebrain/synapse SDK sends it with an `id` and waits for the answer;
+  // the dispatcher in `bridge.ts` answers only when an `id` is present. A
+  // client that sends it as a notification (no `id`) is still accepted, so
+  // requiring `id` would drop that client's model-context pushes.
   id: Type.Optional(RequestId),
   method: Type.Literal("ui/update-model-context"),
   params: Type.Object({
