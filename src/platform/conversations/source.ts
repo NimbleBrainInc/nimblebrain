@@ -4,7 +4,11 @@ import { textContent } from "../../engine/content-helpers.ts";
 import type { EventSink } from "../../engine/types.ts";
 import { getRequestContext } from "../../runtime/request-context.ts";
 import type { Runtime } from "../../runtime/runtime.ts";
-import { defineInProcessApp, type InProcessTool } from "../../tools/in-process-app.ts";
+import {
+  defineInProcessApp,
+  type InProcessTool,
+  MCP_APP_MIME_TYPE,
+} from "../../tools/in-process-app.ts";
 import type { McpSource } from "../../tools/mcp-source.ts";
 import {
   ConversationsExportInput,
@@ -313,7 +317,7 @@ export async function createConversationsSource(
   ];
 
   const resources = new Map([
-    ["ui://conversations/browser", { text: loadConversationsUi, mimeType: "text/html" }],
+    ["ui://conversations/browser", { text: loadConversationsUi, mimeType: MCP_APP_MIME_TYPE }],
   ]);
 
   return defineInProcessApp(
