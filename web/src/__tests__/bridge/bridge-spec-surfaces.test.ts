@@ -479,4 +479,19 @@ describe("spec request ids", () => {
       open.restore();
     }
   });
+
+  test("a ui/update-model-context carrying id 0 is answered, because zero is an id", async () => {
+    const frame = mount();
+    await handshake(frame);
+
+    frame.send({
+      jsonrpc: "2.0",
+      id: 0,
+      method: "ui/update-model-context",
+      params: { structuredContent: { visible: "rows 1-20" } },
+    });
+
+    const reply = (await frame.waitFor(replyTo(0))) as { result: unknown };
+    expect(reply.result).toEqual({});
+  });
 });
