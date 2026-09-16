@@ -73,7 +73,7 @@ export function Dashboard() {
   const lastWorkspaceRef = useRef(workspaceId);
 
   // `background: true` refreshes data in place without flipping to the skeleton
-  // state — used for live data-changed refreshes so the list doesn't flicker.
+  // state — used for live background refreshes so the list doesn't flicker.
   // Rows are keyed by id, so React reconciles the swapped data without a
   // visible reload. Skeletons are reserved for the initial load + view switches.
   const loadList = useCallback(
@@ -149,11 +149,10 @@ export function Dashboard() {
     loadList();
   }, [loadList, workspaceId]);
 
-  // Refresh on host data-changed broadcasts — but only for conversation
-  // changes (ignore unrelated apps' data.changed), and in the background so
-  // the list updates in place without a skeleton flicker.
-  useDataSync((event) => {
-    if (event.server !== "conversations") return;
+  // Refresh when this app's own server announces a write. `useDataSync` fires
+  // only for the conversations source, so there is nothing to filter — and in
+  // the background, so the list updates in place without a skeleton flicker.
+  useDataSync(() => {
     if (view === "list") {
       loadList({ background: true });
     } else if (view === "search" && searchQuery) {
@@ -166,9 +165,9 @@ export function Dashboard() {
   // The host (App.tsx) forwards each `conversation.title` SSE event to this
   // iframe via a `synapse/conversation-title` postMessage. We patch the
   // matching row's title in-place instead of refetching the whole list — the
-  // runtime used to fire an extra `data.changed` on title-resolve to force a
-  // refetch, but that triggered a full reload of every row. Listening
-  // directly is cheaper and updates a single row without flicker.
+  // alternative is announcing a resource change on title-resolve, which would
+  // refetch every row. Listening directly is cheaper and updates a single row
+  // without flicker.
   //
   // Raw `window.addEventListener` (not via the synapse SDK) because the SDK
   // doesn't know this method; the host owns both ends, so the side channel
