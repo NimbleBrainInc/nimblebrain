@@ -568,6 +568,29 @@ describe("defineInProcessApp — parametric resources", () => {
     expect(result.contents[0]?.mimeType).toBe("text/html");
   });
 
+  test("the ui:// scheme is matched case-insensitively", async () => {
+    // RFC 3986 defines schemes case-insensitively, and `isReservedResourceScheme`
+    // already reads them that way — a label that only recognized the lowercase
+    // spelling would be a check that reads as one. Asserted through
+    // `resources/list`, which maps over the keys: `resources/read` is an
+    // exact-match lookup, so it never reaches the label with another spelling.
+    source = defineInProcessApp(
+      {
+        name: "html-string-upper-ui",
+        version: "1.0.0",
+        tools: [],
+        resources: new Map<string, InProcessResource>([["UI://settings/panel", "<p>panel</p>"]]),
+      },
+      new NoopEventSink(),
+    );
+    await source.start();
+
+    const listed = await source.getClient()!.listResources();
+    expect(listed.resources.find((r) => r.uri === "UI://settings/panel")?.mimeType).toBe(
+      "text/html;profile=mcp-app",
+    );
+  });
+
   test("source with no resource fields does not advertise resources capability", async () => {
     source = defineInProcessApp(
       {

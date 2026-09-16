@@ -61,11 +61,13 @@ export const MCP_APP_MIME_TYPE = "text/html;profile=mcp-app";
 
 /**
  * The label for a bare-string resource: an app panel when it is served at a
- * `ui://` URI, plain HTML anywhere else. The structured form carries its own
+ * `ui://` URI, plain HTML anywhere else. The scheme is matched
+ * case-insensitively, as `isReservedResourceScheme` in `resource-schemes.ts`
+ * matches it and RFC 3986 defines it. The structured form carries its own
  * `mimeType` and is untouched by this.
  */
 function defaultMimeType(uri: string): string {
-  return uri.startsWith("ui://") ? MCP_APP_MIME_TYPE : "text/html";
+  return uri.toLowerCase().startsWith("ui://") ? MCP_APP_MIME_TYPE : "text/html";
 }
 
 /**
