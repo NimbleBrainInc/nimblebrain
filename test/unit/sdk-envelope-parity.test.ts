@@ -159,6 +159,18 @@ function completeHandshake(): void {
 }
 
 /**
+ * Let the SDK's outbound envelope reach the capture.
+ *
+ * `connect()` runs on the spec's own client, which posts through its transport
+ * over several async hops rather than the single microtask the SDK used to
+ * take. A macrotask turn covers both, so every site waits the same way instead
+ * of each one guessing how many `Promise.resolve()`s its call needs.
+ */
+async function flush(): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+/**
  * Open a connection and drive it through the handshake.
  *
  * `connect()` resolves only once the host answers, so the answer has to be
@@ -168,7 +180,7 @@ function completeHandshake(): void {
 async function connectAndHandshake(): Promise<import("@nimblebrain/synapse").App> {
   const { connect } = await import("@nimblebrain/synapse");
   const pending = connect({ name: "test-app", version: "1.0.0" });
-  await Promise.resolve();
+  await flush();
   completeHandshake();
   return pending;
 }
@@ -188,8 +200,7 @@ describe("Synapse SDK ⇄ host bridge schema parity", () => {
   it("ui/initialize handshake envelope passes the bridge validator", async () => {
     const { connect } = await import("@nimblebrain/synapse");
     void connect({ name: "test-app", version: "1.0.0" });
-    // microtask flush — the SDK posts init via a microtask
-    await Promise.resolve();
+    await flush();
     const init = lastEnvelopeWithMethod("ui/initialize");
     expect(init, "SDK must emit ui/initialize on instantiation").toBeDefined();
     const v = validateAppToHostMessage(init);
@@ -198,7 +209,7 @@ describe("Synapse SDK ⇄ host bridge schema parity", () => {
 
   it("ui/notifications/initialized notification passes the validator", async () => {
     await connectAndHandshake();
-    await Promise.resolve();
+    await flush();
     const notif = lastEnvelopeWithMethod("ui/notifications/initialized");
     expect(notif, "SDK must emit initialized after handshake").toBeDefined();
     const v = validateAppToHostMessage(notif);
@@ -210,7 +221,7 @@ describe("Synapse SDK ⇄ host bridge schema parity", () => {
 
     // Don't await — we only care about the envelope being posted.
     void app.callTool("report", { period: "week" });
-    await Promise.resolve();
+    await flush();
 
     const env = lastEnvelopeWithMethod("tools/call");
     expect(env).toBeDefined();
@@ -218,23 +229,23 @@ describe("Synapse SDK ⇄ host bridge schema parity", () => {
     expect(v.ok, `tools/call: ${v.reason}`).toBe(true);
   });
 
-  it("app.updateModelContext emits a schema-valid notification (no id)", async () => {
+  it("app.updateModelContext emits a schema-valid request (carries an id)", async () => {
     // Regression: the host previously required `id` on
     // `ui/update-model-context`, dropping every model-context push from every
-    // synapse-app. The SDK sends this as a JSON-RPC notification via
-    // `transport.send(...)` — no `id` field. Schema must admit that shape.
+    // synapse-app. The spec defines it as a **request**, so the SDK sends it
+    // with an `id` and the host answers it. Schema must admit that shape.
     const app = await connectAndHandshake();
 
     // Sends immediately; the 250ms debounce moved into `useModelContext`.
     app.updateModelContext({ foo: "bar" }, "summary text");
-    await Promise.resolve();
+    await flush();
 
     const env = lastEnvelopeWithMethod("ui/update-model-context");
     expect(env, "SDK must emit ui/update-model-context after updateModelContext").toBeDefined();
-    // Confirm the SDK is in fact sending the notification shape (no id).
-    expect("id" in (env as Record<string, unknown>)).toBe(false);
+    // A request, not a notification: an `id` is present and the host answers it.
+    expect("id" in (env as Record<string, unknown>)).toBe(true);
     const v = validateAppToHostMessage(env);
-    expect(v.ok, `ui/update-model-context (notification): ${v.reason}`).toBe(true);
+    expect(v.ok, `ui/update-model-context (request): ${v.reason}`).toBe(true);
   });
 
   it("ui/update-model-context validates in both notification and request shapes", () => {
@@ -283,7 +294,7 @@ describe("Synapse SDK ⇄ host bridge schema parity", () => {
 
     void app.callTool("report", {});
     action(app, "openConversation", { id: "x" });
-    await Promise.resolve();
+    await flush();
 
     expectAllCapturedValid();
   });
