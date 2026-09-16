@@ -629,7 +629,11 @@ Open the OS file picker. The host uploads each chosen file to the workspace file
 Every param is optional: `accept` takes the same value as an `<input type="file">` accept attribute and defaults to any file, `multiple` defaults to `false`, and `maxSize` defaults to 25 MB. `maxSize` is enforced in the browser as a fast fail; the server remains the source of truth, and an oversize file or a failed upload comes back as a JSON-RPC error rather than an empty list.
 
 <Aside type="note">
-`synapse/request-file` is a NimbleBrain platform extension — it is not part of the ext-apps specification. With the `@nimblebrain/synapse` SDK, call `pickFile()` for a single entry or `pickFiles()` for the list; both read this one shape.
+`synapse/request-file` is a NimbleBrain platform extension — it is not part of the ext-apps specification.
+</Aside>
+
+<Aside type="caution">
+**SDK compatibility.** With the `@nimblebrain/synapse` SDK, call `pickFile()` for a single entry or `pickFiles()` for the list — both read this one shape, from the release that moves `connect()` onto the spec's own client onwards. **Releases through 0.18.0 read the bare shapes** (an array, a single object, or `null`) and throw on `{ files }`, reporting it as an out-of-date *host* — so an app on 0.18.0 or earlier has to move its pin in the same deploy as the host.
 </Aside>
 
 ## Security model

@@ -576,4 +576,48 @@ describe("synapse/request-file", () => {
       uploadStub = origUpload;
     }
   });
+
+  test("multiple: true answers every entry under the same key", async () => {
+    const entries = [
+      { id: "fl_a", filename: "a.png", mimeType: "image/png", size: 1 },
+      { id: "fl_b", filename: "b.png", mimeType: "image/png", size: 2 },
+    ];
+    const origUpload = uploadStub;
+    uploadStub = async () => ({ files: entries });
+
+    const origCreate = document.createElement.bind(document);
+    const picked = [
+      new File(["a"], "a.png", { type: "image/png" }),
+      new File(["b"], "b.png", { type: "image/png" }),
+    ];
+    document.createElement = ((tag: string) => {
+      const el = origCreate(tag) as HTMLInputElement;
+      if (tag !== "input") return el;
+      Object.defineProperty(el, "files", { configurable: true, get: () => picked });
+      el.click = () => {
+        el.dispatchEvent(new (window as unknown as { Event: typeof Event }).Event("change"));
+      };
+      return el;
+    }) as typeof document.createElement;
+
+    try {
+      const frame = mount();
+      await handshake(frame);
+
+      frame.send({
+        jsonrpc: "2.0",
+        id: "pick-many",
+        method: "synapse/request-file",
+        params: { multiple: true, maxSize: 1024 },
+      });
+
+      const reply = (await frame.waitFor(isReplyTo("pick-many"), 2000)) as { result: unknown };
+      // `multiple` sizes the picker and nothing else: one file or many, the
+      // entries arrive under `files`, in order.
+      expect(reply.result).toEqual({ files: entries });
+    } finally {
+      document.createElement = origCreate as typeof document.createElement;
+      uploadStub = origUpload;
+    }
+  });
 });
