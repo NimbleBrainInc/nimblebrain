@@ -17,7 +17,7 @@ The flow:
 2. The web client requests `GET /v1/apps/my-app/resources/primary`.
 3. The platform resolves `"primary"` to your first placement's `resourceUri`.
 4. The platform calls `resources/read` on your MCP server for that URI.
-5. The HTML response is returned to the web client and loaded into an iframe.
+5. The platform returns a `ReadResourceResult` envelope; the web client loads the HTML from it into an iframe.
 6. The [MCP App Bridge](/apps/bridge) initializes via `postMessage`.
 
 ## The main view
@@ -128,7 +128,21 @@ def crm_ui() -> str:
 GET /v1/apps/synapse-crm/resources/crm/main
 ```
 
-Returns the HTML with `Content-Type: text/html`.
+Returns a JSON envelope in the shape of the MCP `ReadResourceResult`, so a client reads the protocol directly — including `_meta` (e.g. ext-apps `_meta.ui.csp`) — without a translation layer. `POST /v1/resources/read` returns the same shape.
+
+```json
+{
+  "contents": [
+    {
+      "uri": "ui://crm/main",
+      "mimeType": "text/html;profile=mcp-app",
+      "text": "<html>...</html>"
+    }
+  ]
+}
+```
+
+The HTML is `contents[0].text`. A binary resource carries base64 in `blob` instead of `text`. `mimeType` and `_meta` appear only when the source declared them, so guard those reads rather than assuming the shape above.
 
 ## The virtual `primary` path
 
