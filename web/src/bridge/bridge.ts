@@ -82,13 +82,6 @@ interface AppStateEntry {
  */
 const TASKS_EXTENSION_ID = "io.modelcontextprotocol/tasks";
 
-/**
- * The name this host advertised the tasks capability under before the extension
- * registry was checked. Sent alongside {@link TASKS_EXTENSION_ID} so an app
- * built against it keeps working; remove it once none is.
- */
-const LEGACY_TASKS_CAPABILITY_ID = "ai.nimblebrain/tasks";
-
 const appStateStore = new Map<string, AppStateEntry>();
 
 /** Get the latest app state pushed via ui/update-model-context. */
@@ -703,8 +696,7 @@ function handleInitialize(
     // server's views, and only those (relayed-notifications.ts).
     ...serverCapabilities(),
     logging: {},
-    // The MCP tasks utility, advertised in three places, none of them
-    // redundant yet.
+    // The MCP tasks utility, advertised in two places, neither redundant yet.
     //
     // `McpUiHostCapabilities` names no `tasks` field, so a client that parses
     // the handshake result against the spec's schema — the official ext-apps
@@ -713,24 +705,17 @@ function handleInitialize(
     // parse runs in the app's copy of ext-apps, so a key there reaches only
     // apps on 1.7.5 or later; earlier versions empty `experimental` too.
     //
-    // `io.modelcontextprotocol/tasks` is the identifier MCP Tasks is
-    // registered under as an official extension, so it is what an app that
-    // knows the extension looks for. The `ai.nimblebrain/` copy is the name
-    // this host used before the extension registry was checked; it stays until
-    // consumers have moved, because retiring it is what would break them.
-    //
     // The sibling `tasks` field is what the SDK reads today, off the raw
-    // result. It goes once every consumer reads an identifier instead.
+    // result. It goes once every consumer reads the identifier instead.
     //
     // The spec negotiates extensions under `capabilities.extensions`, not
     // `experimental`. The ext-apps bridge capability object has no such field
     // — parsing one with `extensions` set drops it — so this is as close to the
     // spec's mechanism as this channel currently reaches. When ext-apps adds
-    // `extensions` to the bridge, the identifiers move there.
+    // `extensions` to the bridge, the identifier moves there.
     tasks,
     experimental: {
       [TASKS_EXTENSION_ID]: tasks,
-      [LEGACY_TASKS_CAPABILITY_ID]: tasks,
     },
   };
   const response: ExtAppsInitializeResponse = {

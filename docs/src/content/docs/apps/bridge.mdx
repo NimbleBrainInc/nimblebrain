@@ -108,8 +108,7 @@ The app initiates the handshake per the ext-apps spec:
       "logging": {},
       "tasks": { "cancel": {}, "requests": { "tools": { "call": {} } } },
       "experimental": {
-        "io.modelcontextprotocol/tasks": { "cancel": {}, "requests": { "tools": { "call": {} } } },
-        "ai.nimblebrain/tasks": { "cancel": {}, "requests": { "tools": { "call": {} } } }
+        "io.modelcontextprotocol/tasks": { "cancel": {}, "requests": { "tools": { "call": {} } } }
       }
     },
     "hostContext": {
@@ -132,13 +131,13 @@ The app initiates the handshake per the ext-apps spec:
 }
 ```
 
-The MCP tasks capability appears three times, and none of the copies is redundant yet.
+The MCP tasks capability appears twice, and neither copy is redundant yet.
 
-`hostCapabilities.tasks` is read off the raw response. The two `experimental` keys are for a client that validates the response against the ext-apps schema, such as the official `App`: that schema drops the unrecognized `tasks` field and, from ext-apps 1.7.5, keeps the contents of `experimental`. An app on an earlier ext-apps version sees none of them.
+`hostCapabilities.tasks` is read off the raw response. The `experimental` key is for a client that validates the response against the ext-apps schema, such as the official `App`: that schema drops the unrecognized `tasks` field and, from ext-apps 1.7.5, keeps the contents of `experimental`. An app on an earlier ext-apps version sees neither.
 
-Read **`io.modelcontextprotocol/tasks`** — the identifier MCP Tasks is registered under as an official MCP extension. `ai.nimblebrain/tasks` is the name this host advertised first and keeps until consumers have moved; prefer the extension identifier and fall back to it.
+Read **`io.modelcontextprotocol/tasks`** — the identifier MCP Tasks is registered under as an official MCP extension.
 
-The spec negotiates extensions under `capabilities.extensions`, not `experimental`. The ext-apps bridge capability object has no `extensions` field, so `experimental` carrying the extension identifier is as close as this channel reaches. When ext-apps adds one, the identifiers move there.
+The spec negotiates extensions under `capabilities.extensions`, not `experimental`. The ext-apps bridge capability object has no `extensions` field, so `experimental` carrying the extension identifier is as close as this channel reaches. When ext-apps adds one, the identifier moves there.
 
 <Aside type="tip">
 If you're using the `@nimblebrain/synapse` SDK, `connect()` handles the entire handshake for you.
