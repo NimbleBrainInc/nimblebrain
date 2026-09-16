@@ -286,14 +286,20 @@ export function createBridge(
       // Spec: ui/message — { role, content: [{ type, text, _meta? }] }
       // -----------------------------------------------------------------
       case "ui/message":
-        handleUiMessage(msg.params, callbacks);
+        serveUiMessage(msg, callbacks, postToIframe);
         break;
 
       // -----------------------------------------------------------------
       // Spec: ui/open-link
       // -----------------------------------------------------------------
       case "ui/open-link": {
+        // Answered `{}` whatever happens. `noopener` makes the browser withhold
+        // the handle, so `window.open` returns null on success as surely as on
+        // a blocked popup — there is no failure here to report, and reporting
+        // one would send every app down its fallback path. A real signal would
+        // mean dropping `noopener`, which is not worth a diagnostic.
         window.open(msg.params.url, "_blank", "noopener");
+        answerIfRequest(msg, {}, postToIframe);
         break;
       }
 
@@ -523,6 +529,23 @@ export function createBridge(
 
 /** Delivers a host→iframe message; a no-op once the bridge is destroyed. */
 type PostToIframe = (data: unknown) => void;
+
+/**
+ * Answer a request the host has just served.
+ *
+ * A frame with no id is a notification, and a notification takes no response:
+ * an app on an older SDK sends `ui/message` and `ui/update-model-context` that
+ * way, and posting a response with `id: undefined` would be a malformed frame
+ * rather than a harmless one.
+ */
+function answerIfRequest(
+  msg: { id?: unknown },
+  result: Record<string, unknown>,
+  postToIframe: PostToIframe,
+): void {
+  if (typeof msg.id !== "string" && typeof msg.id !== "number") return;
+  postToIframe({ jsonrpc: "2.0", id: msg.id, result });
+}
 
 /**
  * Answer a message whose method this host does not serve. A request
@@ -893,6 +916,28 @@ function handleUiMessage(
 }
 
 /**
+ * Serve a spec `ui/message`, and answer it when it came as a request.
+ *
+ * Answered either way. A request the host serves and never answers is worse
+ * than one it refuses: the app waits on it, and a client with a deadline
+ * reports a timeout rather than what went wrong.
+ */
+function serveUiMessage(
+  msg: UiMessageMessage,
+  callbacks: BridgeCallbacks | undefined,
+  postToIframe: PostToIframe,
+): void {
+  let delivered = true;
+  try {
+    handleUiMessage(msg.params, callbacks);
+  } catch (err) {
+    delivered = false;
+    console.error("[bridge] ui/message handler threw:", err);
+  }
+  answerIfRequest(msg, delivered ? {} : { isError: true }, postToIframe);
+}
+
+/**
  * Handle a spec `ui/update-model-context`: store the app's latest visible
  * state (with a text summary when present) and ack when the message had an id.
  */
@@ -912,9 +957,9 @@ function handleUpdateModelContext(
     summary,
     updatedAt: new Date().toISOString(),
   });
-  if (id) {
-    postToIframe({ jsonrpc: "2.0", id, result: {} });
-  }
+  // The same helper the served requests use: id `0` is an id, and a frame
+  // without one is a notification that takes no answer.
+  answerIfRequest({ id }, {}, postToIframe);
 }
 
 /**

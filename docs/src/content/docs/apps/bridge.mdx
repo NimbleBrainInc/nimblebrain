@@ -421,6 +421,8 @@ Send a message to the conversation. Follows the ext-apps spec format with `role`
 
 The `_meta.context` object is optional. When present, it helps the agent understand the source and intent of the message.
 
+The host answers `{}`, and `{ "isError": true }` when the handler threw — the message did not reach the conversation, so an app that cares can say so. Sent without an `id` it is a notification, which takes no answer — an app on an older SDK sends it that way.
+
 **Prompt suggestion** (NimbleBrain extension — pre-fills the chat input without sending):
 
 ```json
@@ -437,6 +439,8 @@ The `_meta.context` object is optional. When present, it helps the agent underst
 ### `ui/open-link`
 
 Open a URL in a new browser tab with `noopener`.
+
+The host answers `{}`. It cannot tell you whether the tab actually opened: the link is opened with `noopener`, and the browser withholds the handle either way, so an empty result means "delivered", not "displayed". Sent without an `id` it is a notification, which takes no answer.
 
 ```json
 {
