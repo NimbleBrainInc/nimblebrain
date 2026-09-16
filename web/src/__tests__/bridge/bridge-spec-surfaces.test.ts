@@ -23,12 +23,19 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { realClient } from "../../../test/setup";
 
+/**
+ * A module namespace is readonly, so the upload is swapped here rather than on
+ * the imported binding. Defaults to throwing: a test that reaches the uploader
+ * without meaning to should say so, not silently upload nothing.
+ */
+let uploadStub: (files: File[]) => Promise<{ files: unknown[] }> = async () => {
+  throw new Error("uploadResource not stubbed in this test");
+};
+
 mock.module("../../api/client", () => ({
   ...realClient,
   getActiveWorkspaceId: () => "ws_test",
-  uploadResource: async () => {
-    throw new Error("uploadResource not stubbed in this test");
-  },
+  uploadResource: (files: File[]) => uploadStub(files),
 }));
 
 mock.module("../../mcp-bridge-client", () => ({
@@ -493,5 +500,80 @@ describe("spec request ids", () => {
 
     const reply = (await frame.waitFor(replyTo(0))) as { result: unknown };
     expect(reply.result).toEqual({});
+  });
+});
+
+describe("synapse/request-file", () => {
+  // A JSON-RPC result is an object, and MCP types it as one. The picker used to
+  // answer a bare array, a bare object, or `null` — shapes a client that
+  // validates against the spec cannot parse, so the call never settled and the
+  // picker hung with no error. Both paths are asserted on the wire, because the
+  // wrapper is the whole fix and the old shapes were also "truthy and plausible".
+  //
+  // The OS picker cannot be opened here, so each path is driven at its own seam:
+  // a cancel through the focus fallback the bridge installs, and a selection
+  // through a stub input whose `click()` fires `change` with files attached.
+
+  test("a cancel answers { files: [] }, not null", async () => {
+    const frame = mount();
+    await handshake(frame);
+
+    frame.send({
+      jsonrpc: "2.0",
+      id: "pick-cancel",
+      method: "synapse/request-file",
+      // `multiple: false` is the case that used to answer a bare `null`.
+      params: { multiple: false },
+    });
+
+    // No `change` event fires on a cancel; the bridge detects it when focus
+    // returns to the window, then settles 300ms later.
+    window.dispatchEvent(new (window as unknown as { Event: typeof Event }).Event("focus"));
+
+    const reply = (await frame.waitFor(isReplyTo("pick-cancel"), 2000)) as { result: unknown };
+    expect(reply.result).toEqual({ files: [] });
+  });
+
+  test("a selection answers { files: [...] } for a single file", async () => {
+    const entry = { id: "fl_abc", filename: "chart.png", mimeType: "image/png", size: 12 };
+    const uploaded: File[][] = [];
+    const origUpload = uploadStub;
+    uploadStub = async (files: File[]) => {
+      uploaded.push(files);
+      return { files: [entry] };
+    };
+
+    const origCreate = document.createElement.bind(document);
+    const file = new File(["x"], "chart.png", { type: "image/png" });
+    document.createElement = ((tag: string) => {
+      const el = origCreate(tag) as HTMLInputElement;
+      if (tag !== "input") return el;
+      Object.defineProperty(el, "files", { configurable: true, get: () => [file] });
+      // The bridge calls click() to open the picker; fire the selection instead.
+      el.click = () => {
+        el.dispatchEvent(new (window as unknown as { Event: typeof Event }).Event("change"));
+      };
+      return el;
+    }) as typeof document.createElement;
+
+    try {
+      const frame = mount();
+      await handshake(frame);
+
+      frame.send({
+        jsonrpc: "2.0",
+        id: "pick-one",
+        method: "synapse/request-file",
+        params: { multiple: false, maxSize: 1024 },
+      });
+
+      const reply = (await frame.waitFor(isReplyTo("pick-one"), 2000)) as { result: unknown };
+      // Wrapped, and still wrapped for one file — `pickFile` unwraps SDK-side.
+      expect(reply.result).toEqual({ files: [entry] });
+      expect(uploaded).toHaveLength(1);
+    } finally {
+      document.createElement = origCreate as typeof document.createElement;
+      uploadStub = origUpload;
+    }
   });
 });
