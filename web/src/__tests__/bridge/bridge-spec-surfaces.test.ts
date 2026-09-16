@@ -355,3 +355,141 @@ describe("notifications/message", () => {
     expect(logged?.[1]).toBe("slow plan");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Request ids, and answering the two requests that used to go unanswered
+//
+// A JSON-RPC id is a string or a number, and the MCP SDK numbers requests from
+// zero — so an app built on the spec's own client sends numeric ids. The
+// schemas took `Type.String()` for these methods, which made the validator drop
+// every such frame: the link never opened, the message never arrived, and the
+// app's promise never settled.
+//
+// `ui/message` and `ui/open-link` are requests in the spec. The host served
+// both and answered neither, which a client with a deadline reads as a failure.
+// Both forms still arrive — an app on an older SDK sends them as notifications,
+// which take no answer.
+// ---------------------------------------------------------------------------
+
+describe("spec request ids", () => {
+  const replyTo = (id: string | number) => (m: unknown) => (m as { id?: unknown })?.id === id;
+
+  /** Replace `window.open` for one test, and report what it was asked to open. */
+  function captureOpen(result: Window | null): { opened: string[]; restore(): void } {
+    const opened: string[] = [];
+    const original = window.open;
+    window.open = ((url?: string | URL) => {
+      opened.push(String(url));
+      return result;
+    }) as typeof window.open;
+    return {
+      opened,
+      restore: () => {
+        window.open = original;
+      },
+    };
+  }
+
+  test("a ui/message carrying a numeric id is answered", async () => {
+    const frame = mount("db-query", { onChat: () => {} });
+    await handshake(frame);
+
+    frame.send({
+      jsonrpc: "2.0",
+      id: 7,
+      method: "ui/message",
+      params: { role: "user", content: [{ type: "text", text: "hi" }] },
+    });
+
+    const reply = (await frame.waitFor(replyTo(7))) as { result: unknown };
+    expect(reply.result).toEqual({});
+  });
+
+  test("a ui/message whose handler throws is still answered, as an error", async () => {
+    const frame = mount("db-query", {
+      onChat: () => {
+        throw new Error("the host failed to deliver it");
+      },
+    });
+    await handshake(frame);
+
+    frame.send({
+      jsonrpc: "2.0",
+      id: 10,
+      method: "ui/message",
+      params: { role: "user", content: [{ type: "text", text: "hi" }] },
+    });
+
+    const reply = (await frame.waitFor(replyTo(10))) as { result: unknown };
+    expect(reply.result).toEqual({ isError: true });
+  });
+
+  test("a ui/open-link carrying a numeric id opens the URL and is answered", async () => {
+    const open = captureOpen({} as Window);
+    try {
+      const frame = mount();
+      await handshake(frame);
+
+      frame.send({
+        jsonrpc: "2.0",
+        id: 8,
+        method: "ui/open-link",
+        params: { url: "https://example.com/forecast" },
+      });
+
+      const reply = (await frame.waitFor(replyTo(8))) as { result: unknown };
+      expect(open.opened).toEqual(["https://example.com/forecast"]);
+      expect(reply.result).toEqual({});
+    } finally {
+      open.restore();
+    }
+  });
+
+  test("a link the browser blocked answers isError, so the app can fall back", async () => {
+    const open = captureOpen(null);
+    try {
+      const frame = mount();
+      await handshake(frame);
+
+      frame.send({
+        jsonrpc: "2.0",
+        id: 9,
+        method: "ui/open-link",
+        params: { url: "https://example.com/blocked" },
+      });
+
+      const reply = (await frame.waitFor(replyTo(9))) as { result: unknown };
+      expect(reply.result).toEqual({ isError: true });
+    } finally {
+      open.restore();
+    }
+  });
+
+  test("the notification form is still served, and answered with nothing", async () => {
+    const open = captureOpen({} as Window);
+    try {
+      const frame = mount();
+      await handshake(frame);
+      // Replies only: the bridge also posts a legacy `ui/initialize` notification
+      // when the iframe fires `load`, which is not an answer to anything.
+      const replies = () =>
+        frame.inbox.filter((m) => {
+          const id = (m as { id?: unknown })?.id;
+          return id !== undefined && id !== null;
+        });
+      const before = replies().length;
+
+      frame.send({
+        jsonrpc: "2.0",
+        method: "ui/open-link",
+        params: { url: "https://example.com/notification" },
+      });
+      await new Promise((r) => setTimeout(r, 25));
+
+      expect(open.opened).toEqual(["https://example.com/notification"]);
+      expect(replies().length).toBe(before);
+    } finally {
+      open.restore();
+    }
+  });
+});

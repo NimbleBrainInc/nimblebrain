@@ -127,7 +127,7 @@ export type ResourceTemplatesListMessage = Static<typeof ResourceTemplatesListMe
 export const UiMessageMessage = Type.Object({
   jsonrpc: JsonRpcVersion,
   method: Type.Literal("ui/message"),
-  id: Type.Optional(Type.String()),
+  id: Type.Optional(RequestId),
   params: Type.Object({
     role: Type.Optional(Type.Literal("user")),
     content: Type.Optional(Type.Array(ContentItem)),
@@ -140,7 +140,7 @@ export type UiMessageMessage = Static<typeof UiMessageMessage>;
 export const UiOpenLinkMessage = Type.Object({
   jsonrpc: JsonRpcVersion,
   method: Type.Literal("ui/open-link"),
-  id: Type.Optional(Type.String()),
+  id: Type.Optional(RequestId),
   params: Type.Object({ url: Type.String() }),
 });
 export type UiOpenLinkMessage = Static<typeof UiOpenLinkMessage>;
@@ -148,7 +148,7 @@ export type UiOpenLinkMessage = Static<typeof UiOpenLinkMessage>;
 export const UiSizeChangedMessage = Type.Object({
   jsonrpc: JsonRpcVersion,
   method: Type.Literal("ui/notifications/size-changed"),
-  id: Type.Optional(Type.String()),
+  id: Type.Optional(RequestId),
   params: Type.Object({
     width: Type.Optional(Type.Number()),
     height: Type.Number(),
@@ -211,7 +211,7 @@ export type ExtAppsRequestTeardownNotification = Static<typeof ExtAppsRequestTea
 export const UiActionMessage = Type.Object({
   jsonrpc: JsonRpcVersion,
   method: Type.Literal("synapse/action"),
-  id: Type.Optional(Type.String()),
+  id: Type.Optional(RequestId),
   params: Type.Intersect([
     Type.Object({ action: Type.String() }),
     Type.Record(Type.String(), Type.Unknown()),
@@ -222,7 +222,7 @@ export type UiActionMessage = Static<typeof UiActionMessage>;
 export const UiDownloadFileMessage = Type.Object({
   jsonrpc: JsonRpcVersion,
   method: Type.Literal("synapse/download-file"),
-  id: Type.Optional(Type.String()),
+  id: Type.Optional(RequestId),
   // `data: Blob` doesn't have a TypeBox literal; postMessage uses structured
   // clone so any Object passes wire-shape muster. Validate the surrounding
   // envelope; trust the value.
