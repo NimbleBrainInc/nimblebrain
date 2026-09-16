@@ -520,9 +520,13 @@ describe("defineInProcessApp — parametric resources", () => {
     expect(calls).toBe(2);
   });
 
-  test("string-literal resource form continues to type-check and serve as text/html", async () => {
-    // This test exists to lock in the zero-breaking guarantee — string
-    // resources are the most common existing shape across platform sources.
+  test("string-literal resource form serves the MCP Apps MIME type under ui://", async () => {
+    // String resources are the most common existing shape across platform
+    // sources, so this locks in both the zero-breaking guarantee and the
+    // label: the `profile=mcp-app` parameter is what a public MCP Apps host
+    // reads to tell an app panel from plain HTML. The literal is pinned
+    // rather than compared to the constant — a typo in the constant is a
+    // label no host recognizes, and asserting it against itself cannot fail.
     source = defineInProcessApp(
       {
         name: "html-string",
@@ -538,6 +542,29 @@ describe("defineInProcessApp — parametric resources", () => {
 
     const result = await source.getClient()!.readResource({ uri: "ui://settings/panel" });
     expect(result.contents[0]?.text).toBe("<p>panel</p>");
+    expect(result.contents[0]?.mimeType).toBe("text/html;profile=mcp-app");
+
+    const listed = await source.getClient()!.listResources();
+    expect(listed.resources.find((r) => r.uri === "ui://settings/panel")?.mimeType).toBe(
+      "text/html;profile=mcp-app",
+    );
+  });
+
+  test("string-literal resource outside ui:// stays plain text/html", async () => {
+    // The profile parameter asserts the body is an MCP App. A bare string at
+    // any other scheme is just HTML, and claiming otherwise would mislabel it.
+    source = defineInProcessApp(
+      {
+        name: "html-string-non-ui",
+        version: "1.0.0",
+        tools: [],
+        resources: new Map<string, InProcessResource>([["doc://guide/intro", "<p>intro</p>"]]),
+      },
+      new NoopEventSink(),
+    );
+    await source.start();
+
+    const result = await source.getClient()!.readResource({ uri: "doc://guide/intro" });
     expect(result.contents[0]?.mimeType).toBe("text/html");
   });
 

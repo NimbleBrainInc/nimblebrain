@@ -32,6 +32,7 @@ import {
   defineInProcessApp,
   type InProcessResource,
   type InProcessTool,
+  MCP_APP_MIME_TYPE,
 } from "../../tools/in-process-app.ts";
 import type { McpSource } from "../../tools/mcp-source.ts";
 import {
@@ -602,7 +603,7 @@ export function createFilesSource(runtime: Runtime, eventSink: EventSink): McpSo
   ];
 
   const resources = new Map<string, InProcessResource>([
-    ["ui://files/browser", { text: loadFilesUi, mimeType: "text/html" }],
+    ["ui://files/browser", { text: loadFilesUi, mimeType: MCP_APP_MIME_TYPE }],
   ]);
 
   // Workspace files are exposed as MCP resources at `files://<id>`. Any

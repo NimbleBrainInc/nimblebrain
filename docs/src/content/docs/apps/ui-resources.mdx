@@ -46,6 +46,8 @@ The main view is the primary HTML page for your app. Declare it as a `"main"` pl
 
 The virtual `primary` path derives from the **first declared placement's** `resourceUri`, so the shell can load this view without knowing its URI. Your MCP server must register a resource handler for `ui://dashboard` that returns an HTML string.
 
+Label it `text/html;profile=mcp-app` — the MIME type the MCP Apps spec gives a `ui://` resource, and what public MCP Apps hosts read to tell an app panel from plain HTML. FastMCP applies it to the `ui://` scheme for you.
+
 ### Python (FastMCP)
 
 ```python
@@ -85,7 +87,7 @@ const server = new McpServer({ name: "my-app", version: "1.0.0" });
 server.resource("dashboard", "ui://dashboard", async () => ({
   contents: [{
     uri: "ui://dashboard",
-    mimeType: "text/html",
+    mimeType: "text/html;profile=mcp-app",
     text: `
       <!DOCTYPE html>
       <html>

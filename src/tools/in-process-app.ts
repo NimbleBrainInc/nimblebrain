@@ -53,8 +53,24 @@ export interface InProcessTool {
 }
 
 /**
- * Resource entry for an in-process app. Strings are treated as HTML
- * (`mimeType: "text/html"`) — the common case for `ui://` panels.
+ * The MIME type the MCP Apps spec gives a `ui://` resource. The parameter is
+ * what tells a public MCP Apps host an app panel from plain HTML, so it is
+ * claimed only for `ui://` URIs — see {@link defaultMimeType}.
+ */
+export const MCP_APP_MIME_TYPE = "text/html;profile=mcp-app";
+
+/**
+ * The label for a bare-string resource: an app panel when it is served at a
+ * `ui://` URI, plain HTML anywhere else. The structured form carries its own
+ * `mimeType` and is untouched by this.
+ */
+function defaultMimeType(uri: string): string {
+  return uri.startsWith("ui://") ? MCP_APP_MIME_TYPE : "text/html";
+}
+
+/**
+ * Resource entry for an in-process app. Strings are treated as HTML — with the
+ * MCP Apps profile at a `ui://` URI, the common case for panels.
  * Pass the structured form for non-HTML text, binary blobs, or to attach
  * `_meta` (e.g. ext-apps `io.modelcontextprotocol/ui` CSP / permissions).
  *
@@ -266,7 +282,7 @@ export function defineInProcessApp(
           // can react to workspace state without restarting the server.
           server.setRequestHandler(ListResourcesRequestSchema, async () => {
             const staticEntries = Array.from(resources.entries()).map(([uri, value]) => {
-              const mimeType = typeof value === "string" ? "text/html" : value.mimeType;
+              const mimeType = typeof value === "string" ? defaultMimeType(uri) : value.mimeType;
               return {
                 uri,
                 name: uri,
@@ -375,7 +391,7 @@ async function buildResourceContents(
   value: InProcessResource,
 ): Promise<Record<string, unknown>> {
   if (typeof value === "string") {
-    return { uri, mimeType: "text/html", text: value };
+    return { uri, mimeType: defaultMimeType(uri), text: value };
   }
   const entry: Record<string, unknown> = { uri };
   if (value.mimeType) entry.mimeType = value.mimeType;
