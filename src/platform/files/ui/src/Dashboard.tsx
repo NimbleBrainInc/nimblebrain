@@ -71,7 +71,8 @@ export function Dashboard() {
     loadFiles();
   }, [loadFiles]);
 
-  // Refresh on data-changed broadcasts (uploads from elsewhere, deletes, etc.)
+  // Refresh when the files source announces a write (uploads from elsewhere,
+  // deletes, etc.)
   useDataSync(() => {
     if (searchQuery.trim()) {
       searchFiles(searchQuery.trim());
