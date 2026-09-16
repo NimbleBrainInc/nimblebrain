@@ -74,6 +74,14 @@ interface AppStateEntry {
   updatedAt: string;
 }
 
+/**
+ * The identifier MCP Tasks is registered under as an official MCP extension
+ * (`modelcontextprotocol/ext-tasks`). Official extensions use the
+ * `io.modelcontextprotocol` vendor prefix; a third party uses a reversed domain
+ * it owns.
+ */
+const TASKS_EXTENSION_ID = "io.modelcontextprotocol/tasks";
+
 const appStateStore = new Map<string, AppStateEntry>();
 
 /** Get the latest app state pushed via ui/update-model-context. */
@@ -688,18 +696,27 @@ function handleInitialize(
     // server's views, and only those (relayed-notifications.ts).
     ...serverCapabilities(),
     logging: {},
-    // The MCP tasks utility, advertised in two places. `McpUiHostCapabilities`
-    // names no `tasks` field, so a client that parses the handshake result
-    // against the spec's schema (the official ext-apps `App`) strips it.
-    // `experimental` is the one place in `hostCapabilities` whose contents
-    // survive that parse, keyed by reverse-DNS identifier. The parse runs in
-    // the app's copy of ext-apps, so the key reaches only apps on 1.7.5 or
-    // later; earlier versions empty `experimental` too.
+    // The MCP tasks utility, advertised in two places, neither redundant yet.
+    //
+    // `McpUiHostCapabilities` names no `tasks` field, so a client that parses
+    // the handshake result against the spec's schema — the official ext-apps
+    // `App` — strips it. `experimental` is the one place in `hostCapabilities`
+    // whose contents survive that parse, keyed by extension identifier. The
+    // parse runs in the app's copy of ext-apps, so a key there reaches only
+    // apps on 1.7.5 or later; earlier versions empty `experimental` too.
     //
     // The sibling `tasks` field is what the SDK reads today, off the raw
-    // result; it goes once every consumer reads `experimental` instead.
+    // result. It goes once every consumer reads the identifier instead.
+    //
+    // The spec negotiates extensions under `capabilities.extensions`, not
+    // `experimental`. The ext-apps bridge capability object has no such field
+    // — parsing one with `extensions` set drops it — so this is as close to the
+    // spec's mechanism as this channel currently reaches. When ext-apps adds
+    // `extensions` to the bridge, the identifier moves there.
     tasks,
-    experimental: { "ai.nimblebrain/tasks": tasks },
+    experimental: {
+      [TASKS_EXTENSION_ID]: tasks,
+    },
   };
   const response: ExtAppsInitializeResponse = {
     jsonrpc: "2.0",

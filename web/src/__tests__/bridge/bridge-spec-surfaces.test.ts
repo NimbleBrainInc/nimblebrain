@@ -187,12 +187,18 @@ describe("ui/initialize — advertised capabilities", () => {
     const tasks = { cancel: {}, requests: { tools: { call: {} } } };
 
     const sent = reply.result as { hostCapabilities: Record<string, unknown> };
-    expect(sent.hostCapabilities.experimental).toEqual({ "ai.nimblebrain/tasks": tasks });
+    // Keyed by the identifier MCP Tasks is registered under as an official MCP
+    // extension, which is what an app that knows the extension looks for. The
+    // literal is pinned here, not just its presence: a typo is a key no app
+    // reads.
+    expect(sent.hostCapabilities.experimental).toEqual({
+      "io.modelcontextprotocol/tasks": tasks,
+    });
 
     // What the official `App` keeps: it stores the parsed result, not the raw
     // frame, so a key this parse strips is a key no app built on it can read.
     const parsed = McpUiInitializeResultSchema.parse(reply.result);
-    expect(parsed.hostCapabilities.experimental?.["ai.nimblebrain/tasks"]).toEqual(tasks);
+    expect(parsed.hostCapabilities.experimental?.["io.modelcontextprotocol/tasks"]).toEqual(tasks);
   });
 });
 
