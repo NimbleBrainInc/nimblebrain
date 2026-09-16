@@ -165,13 +165,11 @@ export type UiSizeChangedMessage = Static<typeof UiSizeChangedMessage>;
 
 export const UiUpdateModelContextMessage = Type.Object({
   jsonrpc: JsonRpcVersion,
-  // `id` is optional. The @nimblebrain/synapse SDK emits this message via
-  // the JSON-RPC notification path (`transport.send`, no `id`) from
-  // `updateModelContext`, so requiring `id` here drops every model-context
-  // push from every synapse-app. Some callers may still send it as a request
-  // (with `id`) and expect a response — both shapes are valid. The dispatcher
-  // in `bridge.ts` already echoes `id` only when present, so the request shape
-  // continues to work.
+  // `id` is optional. The spec defines this as a request, and the
+  // @nimblebrain/synapse SDK sends it with an `id` and waits for the answer;
+  // the dispatcher in `bridge.ts` answers only when an `id` is present. A
+  // client that sends it as a notification (no `id`) is still accepted, so
+  // requiring `id` would drop that client's model-context pushes.
   id: Type.Optional(RequestId),
   method: Type.Literal("ui/update-model-context"),
   params: Type.Object({
