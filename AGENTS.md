@@ -664,7 +664,7 @@ The exceptions are real but narrow: add a route only when the endpoint genuinely
 - Sets a session-bound cookie that future requests need to present (`/v1/mcp-auth/initiate` sets `nb_oauth_state`).
 - Is itself the redirect target of an external flow (`/v1/mcp-auth/callback` is loaded by the vendor's browser, not by our client).
 - Streams non-JSON bytes (multipart upload, SSE for the chat stream).
-- Serves binary resources or HTML the browser navigates to directly (`/v1/apps/:name/resources/*`).
+- Serves raw bytes the browser loads directly, where it cannot send headers (`GET /v1/files/:fileId` behind an `<img>`).
 
 If none of those apply, write a tool action. A simple JSON read like "what's the OAuth redirect URI?" is a tool action, not a route.
 
