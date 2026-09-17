@@ -1,3 +1,5 @@
+import { postToApp } from "../bridge/app-channel";
+
 /**
  * Forward a live `conversation.title` SSE event to the conversations-list
  * iframe via postMessage.
@@ -15,7 +17,8 @@
  * same `data-app === serverName` contract the server-notification relay
  * (`useServerNotificationRelay`) relies on.
  *
- * Unrelated iframes never see the message. No-op when the conversations panel
+ * The message goes through the iframe's bridge, which holds it until the app
+ * has completed the handshake. Unrelated iframes never see the message. No-op when the conversations panel
  * isn't currently mounted — the next mount loads from disk where the title is
  * already persisted, so there's no race.
  *
@@ -34,9 +37,5 @@ export function forwardConversationTitleToIframes(conversationId: string, title:
     method: "synapse/conversation-title",
     params: { conversationId, title },
   };
-  for (const iframe of iframes) {
-    // Srcdoc iframes have the opaque "null" origin; targetOrigin must be "*"
-    // (the server-notification relay has the same constraint).
-    iframe.contentWindow?.postMessage(message, "*");
-  }
+  for (const iframe of iframes) postToApp(iframe, message);
 }

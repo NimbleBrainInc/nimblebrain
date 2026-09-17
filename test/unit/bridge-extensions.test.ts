@@ -11,7 +11,6 @@ type Listener = (event: unknown) => void;
 /** Fake iframe whose contentWindow can capture postMessage calls. */
 function makeFakeIframe() {
   const posted: unknown[] = [];
-  const loadListeners: Listener[] = [];
 
   const iframe = {
     contentWindow: {
@@ -19,18 +18,9 @@ function makeFakeIframe() {
         posted.push(data);
       },
     },
-    addEventListener(event: string, fn: Listener) {
-      if (event === "load") loadListeners.push(fn);
-    },
-    removeEventListener(event: string, fn: Listener) {
-      if (event === "load") {
-        const idx = loadListeners.indexOf(fn);
-        if (idx >= 0) loadListeners.splice(idx, 1);
-      }
-    },
   } as unknown as HTMLIFrameElement;
 
-  return { iframe, posted, loadListeners };
+  return { iframe, posted };
 }
 
 // Track window-level event listeners so we can dispatch MessageEvents manually.
@@ -118,6 +108,12 @@ function simulatePostMessage(
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports -- dynamic import after mocks
 const { createBridge } = await import("../../web/src/bridge/bridge.ts");
+const { postToApp } = await import("../../web/src/bridge/app-channel.ts");
+
+/** The app's side of the handshake's last step; the host posts nothing unsolicited before it. */
+function completeHandshake(iframe: HTMLIFrameElement) {
+  simulatePostMessage(iframe, { jsonrpc: "2.0", method: "ui/notifications/initialized", params: {} });
+}
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -378,6 +374,7 @@ describe("Bridge — ext-apps dual protocol", () => {
     // now lives INSIDE bridge.setHostContext so callers can't bypass.
     const { iframe, posted } = makeFakeIframe();
     const handle = createBridge(iframe, "test-app");
+    completeHandshake(iframe);
 
     // Pass unfiltered tokens that include an NB extension and an out-of-spec key.
     handle.setHostContext({
@@ -438,22 +435,95 @@ describe("Bridge — ext-apps dual protocol", () => {
     handle.destroy();
   });
 
-  it("still sends legacy ui/initialize notification on iframe load", () => {
-    const { iframe, posted, loadListeners } = makeFakeIframe();
-    createBridge(iframe, "test-app");
+  it("posts nothing before the app's ui/initialize request, and answers it first", () => {
+    const { iframe, posted } = makeFakeIframe();
+    const handle = createBridge(iframe, "test-app", {
+      getHostExtensions: () => ({ workspace: { id: "ws_1", name: "One" } }),
+    });
 
-    // Simulate iframe load
-    for (const fn of loadListeners) fn({});
+    // Everything the host can push on its own, before the app has spoken.
+    handle.setHostContext({ theme: "dark" });
+    handle.sendToolInput({ arguments: { q: 1 } });
+    handle.sendToolResult({ content: [{ type: "text", text: "done" }] });
+    postToApp(iframe, { jsonrpc: "2.0", method: "notifications/resources/list_changed" });
+    expect(posted).toEqual([]);
 
-    const initMsg = posted.find(
-      (m: unknown) => (m as Record<string, unknown>).method === "ui/initialize" && !("id" in (m as Record<string, unknown>)),
-    );
-    expect(initMsg).toBeDefined();
+    simulatePostMessage(iframe, {
+      jsonrpc: "2.0",
+      id: 1,
+      method: "ui/initialize",
+      params: {
+        protocolVersion: "2026-01-26",
+        appInfo: { name: "T", version: "1" },
+        appCapabilities: {},
+      },
+    });
+
+    // The first frame the app ever receives is the answer to its handshake,
+    // and nothing follows it until the app says it is initialized.
+    expect(posted).toHaveLength(1);
+    const first = posted[0] as Record<string, unknown>;
+    expect(first.id).toBe(1);
+    expect(first.result).toBeDefined();
+    expect("method" in first).toBe(false);
+
+    simulatePostMessage(iframe, {
+      jsonrpc: "2.0",
+      method: "ui/notifications/initialized",
+      params: {},
+    });
+
+    // Then the held notifications, in the order they were posted.
+    expect(posted.slice(1).map((m) => (m as Record<string, unknown>).method)).toEqual([
+      "ui/notifications/host-context-changed",
+      "ui/notifications/tool-input",
+      "ui/notifications/tool-result",
+      "notifications/resources/list_changed",
+    ]);
+
+    // After the handshake, a notification goes straight through.
+    handle.setHostContext({ theme: "light" });
+    expect(posted).toHaveLength(6);
+
+    handle.destroy();
+  });
+
+  it("answers a request the app sends before initialized", async () => {
+    const { iframe, posted } = makeFakeIframe();
+    const handle = createBridge(iframe, "test-app");
+
+    simulatePostMessage(iframe, {
+      jsonrpc: "2.0",
+      id: "early",
+      method: "ui/request-display-mode",
+      params: { mode: "fullscreen" },
+    });
+
+    expect(posted).toEqual([{ jsonrpc: "2.0", id: "early", result: { mode: "inline" } }]);
+
+    handle.destroy();
+  });
+
+  it("a destroyed bridge delivers nothing it held", () => {
+    const { iframe, posted } = makeFakeIframe();
+    const handle = createBridge(iframe, "test-app");
+
+    handle.setHostContext({ theme: "dark" });
+    handle.destroy();
+    postToApp(iframe, { jsonrpc: "2.0", method: "notifications/resources/list_changed" });
+    simulatePostMessage(iframe, {
+      jsonrpc: "2.0",
+      method: "ui/notifications/initialized",
+      params: {},
+    });
+
+    expect(posted).toEqual([]);
   });
 
   it("setHostContext sends ext-apps host-context-changed notification", () => {
     const { iframe, posted } = makeFakeIframe();
     const handle = createBridge(iframe, "test-app");
+    completeHandshake(iframe);
 
     handle.setHostContext({ theme: "dark" });
 
@@ -469,6 +539,7 @@ describe("Bridge — ext-apps dual protocol", () => {
   it("sendToolInput sends ext-apps tool-input notification", () => {
     const { iframe, posted } = makeFakeIframe();
     const handle = createBridge(iframe, "test-app");
+    completeHandshake(iframe);
 
     handle.sendToolInput({ arguments: { location: "NYC" } });
 

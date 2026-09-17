@@ -7,6 +7,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { renderHook } from "@testing-library/react";
 import { getActiveWorkspaceId, setActiveWorkspaceId } from "../api/client";
+import { openAppChannel } from "../bridge/app-channel";
 import { useServerNotificationRelay } from "./useServerNotificationRelay";
 
 const LIST_CHANGED = "notifications/resources/list_changed";
@@ -16,12 +17,12 @@ const LIST_CHANGED = "notifications/resources/list_changed";
 let originalQSA: typeof document.querySelectorAll | undefined;
 let fakeIframes: HTMLIFrameElement[] = [];
 
+/** An iframe of `appName` whose bridge delivers into the returned inbox. */
 function mountIframe(appName: string): unknown[] {
   const inbox: unknown[] = [];
-  fakeIframes.push({
-    dataset: { app: appName },
-    contentWindow: { postMessage: (data: unknown) => inbox.push(data) },
-  } as unknown as HTMLIFrameElement);
+  const iframe = { dataset: { app: appName } } as unknown as HTMLIFrameElement;
+  openAppChannel(iframe, (data) => inbox.push(data));
+  fakeIframes.push(iframe);
   if (!originalQSA) {
     originalQSA = document.querySelectorAll.bind(document);
     const fallback = originalQSA;
@@ -73,6 +74,17 @@ describe("useServerNotificationRelay", () => {
     const inbox = mountIframe("notes");
     relay()({ server: "notes", workspaceId: "ws_a", method: LIST_CHANGED });
     expect(inbox).toEqual([{ jsonrpc: "2.0", method: LIST_CHANGED }]);
+  });
+
+  test("an iframe with no bridge is sent nothing", () => {
+    const iframe = {
+      dataset: { app: "notes" },
+      contentWindow: { postMessage: () => expect.unreachable("posted around the bridge") },
+    } as unknown as HTMLIFrameElement;
+    const inbox = mountIframe("notes");
+    fakeIframes.push(iframe);
+    relay()({ server: "notes", workspaceId: "ws_a", method: LIST_CHANGED });
+    expect(inbox).toHaveLength(1);
   });
 
   test("a method the host does not relay to views is dropped", () => {

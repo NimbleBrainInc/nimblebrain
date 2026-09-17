@@ -11,11 +11,11 @@
 // ---------------------------------------------------------------------------
 
 import { afterEach, describe, expect, test } from "bun:test";
+import { openAppChannel } from "../bridge/app-channel";
 import { forwardConversationTitleToIframes } from "./forward-conversation-title";
 
 interface CapturedPost {
   data: unknown;
-  targetOrigin: string;
 }
 
 let originalQSA: typeof document.querySelectorAll;
@@ -24,18 +24,13 @@ afterEach(() => {
   if (originalQSA) document.querySelectorAll = originalQSA;
 });
 
-/** Stub querySelectorAll to return a single fake iframe ONLY for the exact
- *  selector the caller is expected to use. A mismatched selector (the bug)
+/** Stub querySelectorAll to return a single fake iframe, reached through its
+ *  bridge's channel, ONLY for the exact selector the caller is expected to use. A mismatched selector (the bug)
  *  falls through to the real (empty) DOM, so the post count stays 0. */
 function installIframeStub(expectedSelector: string): CapturedPost[] {
   const posts: CapturedPost[] = [];
-  const iframe = {
-    contentWindow: {
-      postMessage(data: unknown, targetOrigin: string) {
-        posts.push({ data, targetOrigin });
-      },
-    },
-  } as unknown as HTMLIFrameElement;
+  const iframe = {} as HTMLIFrameElement;
+  openAppChannel(iframe, (data) => posts.push({ data }));
 
   originalQSA = document.querySelectorAll.bind(document);
   document.querySelectorAll = ((selector: string) => {
@@ -55,7 +50,6 @@ describe("forwardConversationTitleToIframes", () => {
     forwardConversationTitleToIframes("conv_abc", "The Importance of Sleep");
 
     expect(posts.length).toBe(1);
-    expect(posts[0]?.targetOrigin).toBe("*");
     const data = posts[0]?.data as {
       jsonrpc?: string;
       method?: string;

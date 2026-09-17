@@ -214,6 +214,11 @@ afterEach(() => {
   activeFrame = null;
 });
 
+/** The app's side of the handshake's last step; the host posts nothing unsolicited before it. */
+function completeHandshake(frame: TestIframe): void {
+  frame.send({ jsonrpc: "2.0", method: "ui/notifications/initialized", params: {} });
+}
+
 function mount(appName: string): TestIframe {
   const frame = makeTestIframe();
   activeFrame = frame;
@@ -416,6 +421,7 @@ describe("notifications/tasks/status — forwarding + teardown", () => {
 
   test("emitted notification is forwarded to the iframe verbatim (preserves _meta)", async () => {
     const frame = mount("synapse-research");
+    completeHandshake(frame);
     await waitForSubscription();
 
     const handler = handlers.get("notifications/tasks/status");
@@ -444,8 +450,28 @@ describe("notifications/tasks/status — forwarding + teardown", () => {
     });
   });
 
+  test("a status emitted before the handshake completes is held until it does", async () => {
+    const frame = mount("synapse-research");
+    await waitForSubscription();
+
+    const params = {
+      taskId: "task-early",
+      status: "working",
+      ttl: 60_000,
+      createdAt: "2026-04-22T00:00:00Z",
+      lastUpdatedAt: "2026-04-22T00:00:01Z",
+    };
+    handlers.get("notifications/tasks/status")?.({ method: "notifications/tasks/status", params });
+    await new Promise((r) => setTimeout(r, 10));
+    expect(frame.inbox).toEqual([]);
+
+    completeHandshake(frame);
+    expect(frame.inbox).toEqual([{ jsonrpc: "2.0", method: "notifications/tasks/status", params }]);
+  });
+
   test("destroy() unsubscribes — post-destroy emissions do not reach iframe", async () => {
     const frame = mount("synapse-research");
+    completeHandshake(frame);
     await waitForSubscription();
 
     const handler = handlers.get("notifications/tasks/status");
@@ -482,6 +508,7 @@ describe("notifications/tasks/status — forwarding + teardown", () => {
   test("each bridge instance handles its own forwarding (multi-iframe isolation)", async () => {
     const frame1 = makeTestIframe();
     const bridge1 = createBridge(frame1.iframe, "app-one");
+    completeHandshake(frame1);
     await waitForSubscription();
 
     // Replace the first handler's slot by creating a second bridge. Each
@@ -491,6 +518,7 @@ describe("notifications/tasks/status — forwarding + teardown", () => {
     // destroyed iframe.
     const frame2 = makeTestIframe();
     const bridge2 = createBridge(frame2.iframe, "app-two");
+    completeHandshake(frame2);
     // Wait until the second setNotificationHandler landed.
     await new Promise((r) => setTimeout(r, 10));
 

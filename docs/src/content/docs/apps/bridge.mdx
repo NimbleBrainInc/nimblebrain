@@ -77,7 +77,9 @@ The app initiates the handshake per the ext-apps spec:
 1. **App → Host:** `ui/initialize` request with `appInfo`, `appCapabilities`, `protocolVersion`
 2. **Host → App:** Response with `hostInfo`, `hostCapabilities`, `hostContext`
 3. **App → Host:** `ui/notifications/initialized` notification
-4. Host sends tool data only after receiving `initialized`
+4. Host sends notifications only after receiving `initialized`
+
+Until `initialized` arrives, the host posts the app nothing but the answers to its own requests, so the first frame an app receives is the `ui/initialize` response. A notification raised earlier (a host-context change, tool input or result, a task status, a relayed server notification) is held and delivered, in order, once the handshake completes.
 
 ```json
 // 1. App sends
@@ -694,31 +696,28 @@ The bridge enforces three security boundaries:
 </html>
 ```
 
-## Bridge runtime helper
+## Applying theme tokens
 
-The platform's built-in apps ship a small bridge runtime script that handles theme synchronization automatically. It listens for `ui/initialize` (legacy notification path) and `ui/notifications/host-context-changed` (spec) and applies tokens as CSS custom properties.
-
-If you are building a third-party app, you can implement the same pattern:
+Synapse applies the host's theme tokens for you. Without it, apply them yourself: they arrive in the `ui/initialize` response as `hostContext.styles.variables`, and again in every `ui/notifications/host-context-changed`.
 
 ```javascript
 window.addEventListener('message', (event) => {
   const msg = event.data;
-  if (!msg || typeof msg !== 'object' || !msg.method) return;
+  if (!msg || typeof msg !== 'object') return;
 
-  // Apply theme tokens from host-context-changed (spec)
-  if (msg.method === 'ui/notifications/host-context-changed') {
-    const vars = msg.params?.styles?.variables;
-    if (vars) applyTokens(vars);
+  // The handshake response (the id your ui/initialize request used)
+  if (msg.id === 'init-1' && msg.result) {
+    applyTokens(msg.result.hostContext?.styles?.variables);
   }
 
-  // Apply theme tokens from legacy ui/initialize notification
-  if (msg.method === 'ui/initialize' && msg.params?.theme?.tokens) {
-    applyTokens(msg.params.theme.tokens);
+  // A later change (theme toggle and the like)
+  if (msg.method === 'ui/notifications/host-context-changed') {
+    applyTokens(msg.params?.styles?.variables);
   }
 });
 
 function applyTokens(tokens) {
-  for (const [key, value] of Object.entries(tokens)) {
+  for (const [key, value] of Object.entries(tokens ?? {})) {
     document.documentElement.style.setProperty(key, value);
   }
 }
