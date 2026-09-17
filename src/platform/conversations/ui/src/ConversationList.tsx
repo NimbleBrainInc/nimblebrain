@@ -60,7 +60,7 @@ export function ConversationList({
           {showSectionLabels && <div className="section-label">{group.label}</div>}
           {group.items.map((c) => {
             const title = c.title || c.preview || c.id;
-            const isStreaming = c.active === true;
+            const isStreaming = c.active;
             return (
               <button type="button" key={c.id} className="conv-item" onClick={() => onOpen(c.id)}>
                 <div className="conv-item-top">

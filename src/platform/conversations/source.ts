@@ -216,7 +216,7 @@ export async function createConversationsSource(
     {
       name: "list",
       description:
-        "List conversations in the current workspace, with pagination, sorting, and filtering. Returns conversation metadata (title, timestamps, token counts, preview, and `active` when a reply is still generating). Scoped to the workspace you are in — there is no cross-workspace listing, and no workspace argument to pass.",
+        "List conversations in the current workspace, with pagination, sorting, and filtering. Returns conversation metadata (title, timestamps, token counts, preview, and whether a reply is still generating as `active`). Scoped to the workspace you are in — there is no cross-workspace listing, and no workspace argument to pass.",
       inputSchema: ConversationsListInput,
       handler: withErrorHandling(async (input) => {
         const { index } = await getIndex();
