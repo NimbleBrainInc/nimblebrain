@@ -1272,7 +1272,18 @@ async function pickFiles(
     input.style.display = "none";
     document.body.appendChild(input);
 
-    // User cancelled — no change event fires, detect via focus return
+    // A cancel fires no `change`, so the picker settles on the input's own
+    // `cancel` event, which fires exactly when the user dismisses the dialog
+    // without choosing.
+    //
+    // Never a `window` focus heuristic. This dialog is opened from a click
+    // inside an app iframe, and dismissing it does not reliably give the
+    // shell's window a matching `focus`, so a focus-gated settle can simply
+    // never fire — leaving the caller's picker pending with no error and
+    // nothing in the console. Installing one before `click()` is worse: a
+    // `focus` delivered as the dialog opens consumes it and answers
+    // `{ files: [] }` while the dialog is still on screen, so the selection the
+    // user then makes is swallowed by the already-settled promise.
     let resolved = false;
     const cleanup = () => {
       if (!resolved) {
@@ -1282,8 +1293,7 @@ async function pickFiles(
       }
     };
 
-    // Fallback: if user cancels, focus returns to window
-    window.addEventListener("focus", () => setTimeout(cleanup, 300), { once: true });
+    input.addEventListener("cancel", cleanup, { once: true });
 
     input.addEventListener("change", () => {
       resolved = true;
