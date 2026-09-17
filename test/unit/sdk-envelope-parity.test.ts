@@ -19,7 +19,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { ACTION_METHOD } from "../../web/src/bridge/extensions.ts";
+import { ACTION_METHOD, CHAT_CONTEXT_META_KEY } from "../../web/src/bridge/extensions.ts";
 import { buildHostCapabilities } from "../../web/src/bridge/host-capabilities.ts";
 import { validateAppToHostMessage } from "../../web/src/bridge/validate.ts";
 
@@ -269,6 +269,28 @@ describe("Synapse SDK ⇄ host bridge schema parity", () => {
     };
     const reqResult = validateAppToHostMessage(request);
     expect(reqResult.ok, `request: ${reqResult.reason}`).toBe(true);
+  });
+
+  it("sendMessage puts the chat context under the key the host reads", async () => {
+    // The host and the SDK each spell this `_meta` key from their own
+    // constant, and the envelope validates either way — `_meta` is a loose
+    // record, and the text still arrives. So a typo on either side drops every
+    // app's context with nothing failing anywhere, which is what this compares
+    // the two spellings to catch. The send itself is gated on the `message`
+    // capability, so it also fails if the declaration loses it.
+    const app = await connectAndHandshake();
+
+    app.sendMessage("with context", { action: "test" });
+    await flush();
+
+    const env = lastEnvelopeWithMethod("ui/message");
+    expect(env, "SDK must emit ui/message after sendMessage").toBeDefined();
+    const content = (env?.params as { content: Array<Record<string, unknown>> }).content;
+    const textBlock = content.find((b) => b.type === "text");
+    const meta = textBlock?._meta as Record<string, unknown> | undefined;
+    expect(meta?.[CHAT_CONTEXT_META_KEY]).toEqual({ action: "test" });
+    const v = validateAppToHostMessage(env);
+    expect(v.ok, `ui/message: ${v.reason}`).toBe(true);
   });
 
   it("action() emits a schema-valid ai.nimblebrain/action envelope", async () => {
