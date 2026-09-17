@@ -14,9 +14,9 @@ import type { ServerNotificationEvent } from "../types";
  * inline views and its placements alike — as `{ jsonrpc, method, params }`,
  * exactly the MCP message the server sent, so an app written against the MCP
  * Apps spec hears it with no knowledge of this host. It goes through the
- * iframe's bridge, which holds it until the app has completed the handshake. No debounce here: the
- * runtime already coalesces per (owner, server, method) before anything
- * reaches the browser.
+ * iframe's bridge, which holds it until the app has completed the handshake.
+ * No debounce here: the runtime already coalesces per (owner, server, method)
+ * before anything reaches the browser.
  *
  * Two checks, both belt to the runtime's braces: only methods on
  * `RELAYED_TO_VIEWS` are posted, and an event stamped with a workspace other

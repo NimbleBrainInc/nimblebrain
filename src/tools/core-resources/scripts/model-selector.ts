@@ -14,10 +14,4 @@ function render(currentModel) {
 }
 
 render("");
-
-window.addEventListener("message", function(e) {
-  if (e.data && e.data.method === "ui/initialize" && e.data.params && e.data.params.model) {
-    render(e.data.params.model);
-  }
-});
 `;

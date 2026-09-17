@@ -18,9 +18,9 @@ import { postToApp } from "../bridge/app-channel";
  * (`useServerNotificationRelay`) relies on.
  *
  * The message goes through the iframe's bridge, which holds it until the app
- * has completed the handshake. Unrelated iframes never see the message. No-op when the conversations panel
- * isn't currently mounted — the next mount loads from disk where the title is
- * already persisted, so there's no race.
+ * has completed the handshake. Unrelated iframes never see the message. No-op
+ * when the conversations panel isn't currently mounted — the next mount loads
+ * from disk where the title is already persisted, so there's no race.
  *
  * @param conversationId Conversation whose title was just generated.
  * @param title          The generated title.

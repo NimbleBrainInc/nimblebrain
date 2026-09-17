@@ -25,8 +25,9 @@ afterEach(() => {
 });
 
 /** Stub querySelectorAll to return a single fake iframe, reached through its
- *  bridge's channel, ONLY for the exact selector the caller is expected to use. A mismatched selector (the bug)
- *  falls through to the real (empty) DOM, so the post count stays 0. */
+ *  bridge's channel, ONLY for the exact selector the caller is expected to
+ *  use. A mismatched selector (the bug) falls through to the real (empty) DOM,
+ *  so the post count stays 0. */
 function installIframeStub(expectedSelector: string): CapturedPost[] {
   const posts: CapturedPost[] = [];
   const iframe = {} as HTMLIFrameElement;

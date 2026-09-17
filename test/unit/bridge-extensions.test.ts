@@ -488,6 +488,39 @@ describe("Bridge — ext-apps dual protocol", () => {
     handle.destroy();
   });
 
+  it("holds one frame per thing to say, in the place it was first said", () => {
+    const { iframe, posted } = makeFakeIframe();
+    const handle = createBridge(iframe, "test-app");
+    const listChanged = { jsonrpc: "2.0", method: "notifications/resources/list_changed" };
+    const status = (taskId: string, status: string) => ({
+      jsonrpc: "2.0",
+      method: "notifications/tasks/status",
+      params: { taskId, status },
+    });
+
+    handle.setHostContext({ theme: "dark" });
+    postToApp(iframe, listChanged);
+    postToApp(iframe, status("t1", "working"));
+    postToApp(iframe, status("t2", "working"));
+    handle.setHostContext({ theme: "light" });
+    postToApp(iframe, listChanged);
+    postToApp(iframe, status("t1", "completed"));
+
+    completeHandshake(iframe);
+
+    const delivered = posted.filter((m) => (m as Record<string, unknown>).method);
+    expect(delivered.map((m) => (m as Record<string, unknown>).method)).toEqual([
+      "ui/notifications/host-context-changed",
+      "notifications/resources/list_changed",
+      "notifications/tasks/status",
+      "notifications/tasks/status",
+    ]);
+    expect((delivered[0] as { params: { theme: string } }).params.theme).toBe("light");
+    expect(delivered.slice(2)).toEqual([status("t1", "completed"), status("t2", "working")]);
+
+    handle.destroy();
+  });
+
   it("answers a request the app sends before initialized", async () => {
     const { iframe, posted } = makeFakeIframe();
     const handle = createBridge(iframe, "test-app");

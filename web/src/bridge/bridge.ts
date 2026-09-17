@@ -133,7 +133,7 @@ export function createBridge(
   function postToIframe(data: unknown): void {
     if (destroyed) return;
     if (!initialized && !isResponse(data)) {
-      held.push(data);
+      hold(data);
       return;
     }
     // App iframes are srcdoc (see iframe.ts:createAppIframe), so their
@@ -144,6 +144,15 @@ export function createBridge(
     // origin. The iframe→parent direction (where the real leak lives) is
     // hardened via `hostContext.origin` in the handshake response below.
     iframe.contentWindow?.postMessage(data, "*");
+  }
+
+  // A frame that makes a held one redundant takes its place rather than
+  // queueing behind it, so an app that never completes the handshake holds
+  // one frame per thing the host has to say, not one per time it said it.
+  function hold(data: unknown): void {
+    const i = held.findIndex((prev) => supersedes(data, prev));
+    if (i === -1) held.push(data);
+    else held[i] = data;
   }
 
   function completeHandshake(): void {
@@ -516,6 +525,20 @@ type PostToIframe = (data: unknown) => void;
 /** A JSON-RPC response carries the `id` of the request it answers. */
 function isResponse(data: unknown): boolean {
   return typeof data === "object" && data !== null && "id" in data;
+}
+
+/**
+ * Whether notification `next` says everything held notification `prev` does.
+ * The host sends a host context whole, a task status is that task's current
+ * state, and any other notification repeated verbatim adds nothing.
+ */
+function supersedes(next: unknown, prev: unknown): boolean {
+  const a = next as { method?: unknown; params?: { taskId?: unknown } };
+  const b = prev as { method?: unknown; params?: { taskId?: unknown } };
+  if (a.method !== b.method) return false;
+  if (a.method === "ui/notifications/host-context-changed") return true;
+  if (a.method === TASK_STATUS_METHOD) return a.params?.taskId === b.params?.taskId;
+  return JSON.stringify(next) === JSON.stringify(prev);
 }
 
 /**
