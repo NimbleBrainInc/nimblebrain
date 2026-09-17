@@ -19,6 +19,8 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { ACTION_METHOD } from "../../web/src/bridge/extensions.ts";
+import { buildHostCapabilities } from "../../web/src/bridge/host-capabilities.ts";
 import { validateAppToHostMessage } from "../../web/src/bridge/validate.ts";
 
 // Captured outbound envelopes (`parent.postMessage` calls).
@@ -140,16 +142,12 @@ function completeHandshake(): void {
     id: init.id,
     result: {
       protocolVersion: "2026-01-26",
-      // The SDK gates NB-only methods (`action`, etc.) on `hostInfo.name === "nimblebrain"`.
-      // Match the real bridge's value here so those methods aren't no-ops in the test.
       hostInfo: { name: "nimblebrain", version: "1.0.0" },
-      hostCapabilities: {
-        openLinks: {},
-        serverTools: {},
-        serverResources: { listChanged: true },
-        logging: {},
-        tasks: { cancel: {}, requests: { tools: { call: {} } } },
-      },
+      // The real declaration, not a copy of it. The SDK sends a method only
+      // where the host declared it, so a hand-written capability set here would
+      // let a test pass against a promise the bridge never makes — which is the
+      // shape of every failure this suite exists to catch.
+      hostCapabilities: buildHostCapabilities(),
       hostContext: {
         theme: "light",
         styles: { variables: {} },
@@ -273,16 +271,16 @@ describe("Synapse SDK ⇄ host bridge schema parity", () => {
     expect(reqResult.ok, `request: ${reqResult.reason}`).toBe(true);
   });
 
-  it("action() emits a schema-valid synapse/action envelope", async () => {
+  it("action() emits a schema-valid ai.nimblebrain/action envelope", async () => {
     const { action } = await import("@nimblebrain/synapse");
     const app = await connectAndHandshake();
 
     action(app, "openConversation", { id: "abc-123" });
 
-    const env = lastEnvelopeWithMethod("synapse/action");
+    const env = lastEnvelopeWithMethod(ACTION_METHOD);
     expect(env).toBeDefined();
     const v = validateAppToHostMessage(env);
-    expect(v.ok, `synapse/action: ${v.reason}`).toBe(true);
+    expect(v.ok, `${ACTION_METHOD}: ${v.reason}`).toBe(true);
   });
 
   it("every envelope captured during a typical session validates", async () => {

@@ -6,16 +6,19 @@
  * So injecting `--font-sans: 'Hanken Grotesk', …` names a typeface the app has
  * no way to render, and it silently falls through to `system-ui`.
  *
- * This module closes that half: the descriptors ride the host context as the
- * `synapse/fontFaces` extension, and `@nimblebrain/synapse` (>= 0.13.0) loads
- * them into the app document via the CSS Font Loading API. Apps import nothing;
- * typography arrives with the rest of the theme.
+ * This module closes that half: the `@font-face` rules ride the host context as
+ * the spec's `styles.css.fonts`, and the app's SDK injects them into its own
+ * document. Apps import nothing; typography arrives with the rest of the theme.
  *
- * The faces are *declared*, not force-loaded — the SDK calls `document.fonts
- * .add()` and never `.load()` — so a browser fetches the bytes only if the
- * app's own CSS actually matches the family. An app that never references
- * `var(--font-sans)` pays nothing, which is the opt-out: use of the token, not
- * an import.
+ * The faces are *declared*, not force-loaded, so a browser fetches the bytes
+ * only if the app's own CSS actually matches the family. An app that never
+ * references `var(--font-sans)` pays nothing, which is the opt-out: use of the
+ * token, not an import.
+ *
+ * The CSS is read once, at the handshake. A typeface swap mid-session does not
+ * reach an app already running — which is why this is built from constants and
+ * a hashed asset URL rather than from anything a person can change while the
+ * page is open.
  *
  * **Why the URLs are injected rather than imported here.** This module is
  * reachable from the shared bridge protocol, which the ROOT unit suite
@@ -49,20 +52,6 @@
  *    in `try/catch`, so the cost of being wrong here is a silently missing
  *    typeface. The current spelling has no such exposure.
  */
-
-/** One `@font-face` for an app iframe. Mirrors `FontFaceDescriptor` in
- *  `@nimblebrain/synapse`; kept structural so the bridge takes no SDK import. */
-export type HostFontFace = {
-  family: string;
-  src: string;
-  weight?: string;
-  style?: string;
-  display?: "auto" | "block" | "swap" | "fallback" | "optional";
-};
-
-/** Host-context key carrying the descriptors. A `synapse/` extension — the
- *  ext-apps spec has no equivalent, and hosts that omit it are unaffected. */
-export const FONT_FACES_CONTEXT_KEY = "synapse/fontFaces";
 
 /**
  * The families the iframe token set names, and the weight range each variable
@@ -127,7 +116,7 @@ function absolute(assetPath: string, origin: string): string {
 }
 
 /**
- * Descriptors for every family whose asset URL has been registered.
+ * The host's `@font-face` CSS, or `""` when there is none to send.
  *
  * `display: swap` paints text in the fallback immediately rather than blocking
  * on the download. A family with no registered URL is skipped, so a partial
@@ -135,31 +124,27 @@ function absolute(assetPath: string, origin: string): string {
  *
  * One rule covers every way this comes up short: **a face we cannot address is
  * not shipped.** No registered URL and no usable origin both land there — the
- * descriptor would carry a URL nothing can fetch, so the SDK would add a face,
- * the browser would attempt a doomed request, and the app would fall back
- * anyway. Yielding nothing is the supported "host sends no fonts" state; the
- * key is then omitted from the host context entirely rather than sent empty.
+ * rule would carry a URL nothing can fetch, so the browser would attempt a
+ * doomed request and the app would fall back anyway. Yielding nothing is the
+ * supported "host sends no fonts" state; `styles.css` is then omitted from the
+ * host context entirely rather than sent empty.
  *
- * Stated once, on purpose. An early `if (!fontOrigin()) return []` reads as a
+ * Stated once, on purpose. An early `if (!fontOrigin()) return ""` reads as a
  * useful guard but is the same rule spelled a second way — `absolute()` already
  * fails every URL when there is no origin — and two spellings of one rule are
  * what drift apart later.
  */
-export function getHostFontFaces(): HostFontFace[] {
+export function getHostFontFaceCss(): string {
   const origin = fontOrigin();
-  const faces: HostFontFace[] = [];
+  const rules: string[] = [];
   for (const spec of FONT_SPECS) {
     const url = fontUrls[spec.family];
     if (!url) continue;
     const href = absolute(url, origin);
     if (!href) continue;
-    faces.push({
-      family: spec.family,
-      src: `url('${href}') format('woff2')`,
-      weight: spec.weight,
-      style: "normal",
-      display: "swap",
-    });
+    rules.push(
+      `@font-face { font-family: '${spec.family}'; src: url('${href}') format('woff2'); font-weight: ${spec.weight}; font-style: normal; font-display: swap; }`,
+    );
   }
-  return faces;
+  return rules.join("\n");
 }

@@ -231,7 +231,7 @@ function mount(appName: string): TestIframe {
 // ---------------------------------------------------------------------------
 
 describe("ui/initialize — tasks capability", () => {
-  test("hostCapabilities.tasks is advertised", async () => {
+  test("the tasks capability is advertised under its extension identifier", async () => {
     const frame = mount("synapse-research");
 
     frame.send({
@@ -248,7 +248,14 @@ describe("ui/initialize — tasks capability", () => {
     const reply = (await frame.waitFor((m) => (m as { id?: string })?.id === "init-1")) as {
       result: { hostCapabilities: Record<string, unknown> };
     };
-    expect(reply.result.hostCapabilities.tasks).toEqual({
+    // `experimental`, not a top-level `tasks`: the official ext-apps `App`
+    // parses the handshake result against the spec schema, which names no
+    // `tasks` field and strips one.
+    expect(
+      (reply.result.hostCapabilities.experimental as Record<string, unknown>)[
+        "io.modelcontextprotocol/tasks"
+      ],
+    ).toEqual({
       cancel: {},
       requests: { tools: { call: {} } },
     });

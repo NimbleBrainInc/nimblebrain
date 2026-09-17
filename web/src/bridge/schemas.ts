@@ -29,6 +29,7 @@
 // ---------------------------------------------------------------------------
 
 import { type Static, Type } from "@sinclair/typebox";
+import { ACTION_METHOD, KEYDOWN_METHOD, REQUEST_FILE_METHOD } from "./extensions";
 
 // ── Shared building blocks ───────────────────────────────────────────────
 
@@ -213,7 +214,7 @@ export type ExtAppsRequestTeardownNotification = Static<typeof ExtAppsRequestTea
 
 export const UiActionMessage = Type.Object({
   jsonrpc: JsonRpcVersion,
-  method: Type.Literal("synapse/action"),
+  method: Type.Literal(ACTION_METHOD),
   id: Type.Optional(RequestId),
   params: Type.Intersect([
     Type.Object({ action: Type.String() }),
@@ -291,7 +292,7 @@ export type LoggingMessageNotification = Static<typeof LoggingMessageNotificatio
 
 export const SynapseRequestFileMessage = Type.Object({
   jsonrpc: JsonRpcVersion,
-  method: Type.Literal("synapse/request-file"),
+  method: Type.Literal(REQUEST_FILE_METHOD),
   id: RequestId,
   params: Type.Object({
     accept: Type.Optional(Type.String()),
@@ -303,7 +304,7 @@ export type SynapseRequestFileMessage = Static<typeof SynapseRequestFileMessage>
 
 export const UiKeydownMessage = Type.Object({
   jsonrpc: JsonRpcVersion,
-  method: Type.Literal("synapse/keydown"),
+  method: Type.Literal(KEYDOWN_METHOD),
   params: Type.Object({
     key: Type.String(),
     ctrlKey: Type.Boolean(),

@@ -22,6 +22,7 @@
 
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { realClient } from "../../../test/setup";
+import { REQUEST_FILE_METHOD } from "../../bridge/extensions";
 
 /**
  * A module namespace is readonly, so the upload is swapped here rather than on
@@ -168,16 +169,21 @@ describe("ui/initialize — advertised capabilities", () => {
     expect(capabilities.downloadFile).toEqual({});
   });
 
-  test("advertises tasks where the SDK actually reads it", async () => {
+  test("advertises what the SDK gates its spec calls on", async () => {
+    // Each of these is a `case` in the bridge, and the SDK checks the
+    // declaration before it sends: without it, `callTool` and
+    // `readServerResource` throw at the call site and `sendMessage` and
+    // `updateModelContext` drop the send on the floor.
     const capabilities = await handshake(mount());
-    // The SDK reads `hostCapabilities.tasks` off the raw result rather than
-    // through a spec schema, so it sees this even though the ext-apps
-    // capability type names no such field. Dropping it would turn
-    // `callToolAsTask` off everywhere.
-    expect(capabilities.tasks).toEqual({ cancel: {}, requests: { tools: { call: {} } } });
+    expect(capabilities.serverTools).toBeDefined();
+    expect(capabilities.serverResources).toBeDefined();
+    expect(capabilities.openLinks).toEqual({});
+    expect(capabilities.downloadFile).toEqual({});
+    expect(capabilities.message).toEqual({ text: {} });
+    expect(capabilities.updateModelContext).toEqual({ text: {}, structuredContent: {} });
   });
 
-  test("advertises tasks under experimental, and the key survives the spec's own parse", async () => {
+  test("advertises tasks and the NimbleBrain extensions under experimental, where the spec's own parse keeps them", async () => {
     const { McpUiInitializeResultSchema } = await import("@modelcontextprotocol/ext-apps");
     const frame = mount();
     frame.send({
@@ -194,18 +200,28 @@ describe("ui/initialize — advertised capabilities", () => {
     const tasks = { cancel: {}, requests: { tools: { call: {} } } };
 
     const sent = reply.result as { hostCapabilities: Record<string, unknown> };
-    // Keyed by the identifier MCP Tasks is registered under as an official MCP
-    // extension, which is what an app that knows the extension looks for. The
-    // literal is pinned here, not just its presence: a typo is a key no app
-    // reads.
+    // Every literal is pinned, not just its presence: each is the exact string
+    // an app looks for, and a typo is a key nothing reads. Tasks is keyed by
+    // the identifier MCP registers the extension under; ours are keyed by a
+    // reversed domain we own, which is how the spec names a third party's.
     expect(sent.hostCapabilities.experimental).toEqual({
       "io.modelcontextprotocol/tasks": tasks,
+      "ai.nimblebrain/action": {},
+      "ai.nimblebrain/request-file": {},
+      "ai.nimblebrain/keydown": {},
     });
 
     // What the official `App` keeps: it stores the parsed result, not the raw
     // frame, so a key this parse strips is a key no app built on it can read.
+    // `experimental` is the one slot in `hostCapabilities` that survives it,
+    // which is why all four travel there.
     const parsed = McpUiInitializeResultSchema.parse(reply.result);
-    expect(parsed.hostCapabilities.experimental?.["io.modelcontextprotocol/tasks"]).toEqual(tasks);
+    expect(parsed.hostCapabilities.experimental).toEqual({
+      "io.modelcontextprotocol/tasks": tasks,
+      "ai.nimblebrain/action": {},
+      "ai.nimblebrain/request-file": {},
+      "ai.nimblebrain/keydown": {},
+    });
   });
 });
 
@@ -503,7 +519,7 @@ describe("spec request ids", () => {
   });
 });
 
-describe("synapse/request-file", () => {
+describe("ai.nimblebrain/request-file", () => {
   // A JSON-RPC result is an object, and MCP types it as one. The picker used to
   // answer a bare array, a bare object, or `null` — shapes a client that
   // validates against the spec cannot parse, so the call never settled and the
@@ -521,7 +537,7 @@ describe("synapse/request-file", () => {
     frame.send({
       jsonrpc: "2.0",
       id: "pick-cancel",
-      method: "synapse/request-file",
+      method: REQUEST_FILE_METHOD,
       // `multiple: false` is the case that used to answer a bare `null`.
       params: { multiple: false },
     });
@@ -563,7 +579,7 @@ describe("synapse/request-file", () => {
       frame.send({
         jsonrpc: "2.0",
         id: "pick-one",
-        method: "synapse/request-file",
+        method: REQUEST_FILE_METHOD,
         params: { multiple: false, maxSize: 1024 },
       });
 
@@ -607,7 +623,7 @@ describe("synapse/request-file", () => {
       frame.send({
         jsonrpc: "2.0",
         id: "pick-many",
-        method: "synapse/request-file",
+        method: REQUEST_FILE_METHOD,
         params: { multiple: true, maxSize: 1024 },
       });
 
