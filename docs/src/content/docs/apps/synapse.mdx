@@ -15,7 +15,7 @@ Apps built with vanilla ext-apps still work without Synapse. Synapse apps degrad
 
 Raw ext-apps gives you an iframe and `postMessage`. That works for static UIs — but as soon as the agent and UI share mutable state, you hit real friction:
 
-**The UI goes stale when the agent acts.** A user says "change the headline." The agent calls `set_content`. Without Synapse, your UI has no idea — you poll, or the user refreshes. With Synapse, `useDataSync()` fires a callback the moment the agent's tool call completes.
+**The UI goes stale when the agent acts.** A user says "change the headline." The agent calls `set_content`. Without Synapse, your UI has no idea — you poll, or the user refreshes. With Synapse, your server announces the write and `useDataSync()` fires a callback in every open view.
 
 **The agent can't see what the user is doing.** The user filters to "West Coast, Q2." They ask "how does this compare to last quarter?" The agent doesn't know what "this" means. `updateModelContext()` pushes the current filter into the agent's context so it can answer without asking.
 
@@ -150,9 +150,9 @@ app.on('teardown', () => {
   // Clean up resources
 });
 
-// Custom/extension events pass through as-is
-app.on('synapse/data-changed', (params) => {
-  console.log('Agent modified data');
+// Full method names pass through as-is — here, your server announced a write
+app.on('notifications/resources/list_changed', (params) => {
+  console.log('Server announced a write');
 });
 
 // Unsubscribe when done
@@ -168,7 +168,7 @@ unsub2();
 | `tool-cancelled` | Tool call was cancelled | `unknown` |
 | `theme-changed` | Host theme changed | `Theme` |
 | `teardown` | Host is removing the iframe | (none) |
-| Any custom string | Extension events (e.g., `synapse/data-changed`) | `unknown` |
+| Any method name | Notifications by full method (e.g., `notifications/resources/list_changed`) | `unknown` |
 
 <Aside type="note">
 Short names like `"tool-result"` map to their full spec method names (e.g., `ui/notifications/tool-result`). Custom event names pass through as-is.
@@ -371,17 +371,19 @@ async def start_research(query: str, ctx: Context) -> dict:
 
 ### Dual-channel pattern
 
-Tasks that create durable entities (a research run, an import job) should deliver the entity ID through the **entity channel** (`synapse/data-changed` / `useDataSync`), not the task result. The two channels carry different things:
+Tasks that create durable entities (a research run, an import job) should deliver the entity ID through the **entity channel** (the server's `notifications/resources/list_changed`, heard by `useDataSync`), not the task result. The two channels carry different things:
 
 - **Task channel:** lifecycle (`working` → `completed`/`failed`/`cancelled`), progress messages, cancellation control.
 - **Entity channel:** the durable record — survives the LLM losing interest mid-run, the client disconnecting, or the agent process bouncing.
 
-UIs that need to navigate to the new entity should listen on `useDataSync` rather than awaiting `result()`:
+UIs that need to navigate to the new entity should re-read on `useDataSync` rather than awaiting `result()`. The server announces each write to the run, so the list refreshes as soon as the run exists:
 
 ```tsx
 function ResearchPanel() {
   const { fire, task, isWorking, cancel } = useCallToolAsTask('start_research');
-  const runs = useDataSync<ResearchRun>('research_run');
+  const listRuns = useCallTool('list_runs');
+  useDataSync(() => { listRuns.call({}); });
+  const runs: ResearchRun[] = listRuns.data?.runs ?? [];
 
   // Snapshot existing IDs at fire-time, navigate when a new one appears.
   const knownIds = useRef(new Set<string>());
@@ -482,29 +484,17 @@ Auto resize is the right default for simple widgets. Complex apps that animate o
 
 ## Data sync
 
-When the agent calls a tool on your server during a conversation, the host sends a `data.changed` event to your iframe. Synapse surfaces this as a callback:
-
-```typescript
-const unsub = app.on('synapse/data-changed', (event) => {
-  console.log('Agent modified data — refresh UI');
-});
-
-// Later: unsub() to stop listening
-```
-
-React hook (legacy API):
+When your server's data changes, have the server send `notifications/resources/list_changed` from the write. The host relays it to that server's views, and `useDataSync` runs your callback:
 
 ```tsx
-useDataSync((event) => {
+useDataSync(() => {
   queryClient.invalidateQueries(['tasks']);
 });
 ```
 
-<Aside type="caution">
-Data sync only fires for **agent-initiated** tool calls. Tool calls made by the iframe itself (via `callTool`) do not trigger data sync — the iframe already knows its own results.
+The callback receives the notification's params, which name no tool: the change may come from the agent, another view, a webhook or a schedule. A write the server does not announce refreshes no view. Outside React, subscribe with `app.on('notifications/resources/list_changed', cb)`.
 
-When another view of the same app needs to hear about a write (a sidebar list after an inline view saves), have your server send `notifications/resources/list_changed`. The host relays it verbatim to that server's views — see [the bridge reference](/apps/bridge#notificationsresourceslist_changed).
-</Aside>
+See the SDK guide, [Keep the UI in sync with the agent](https://synapse.nimblebrain.ai/docs/guides/keep-ui-in-sync/), for the server side in Python and TypeScript, and [the bridge reference](/apps/bridge#notificationsresourceslist_changed) for what the host relays.
 
 ## LLM-aware UI state
 
@@ -759,7 +749,7 @@ Synapse detects its host during the ext-apps handshake. In NimbleBrain, `hostInf
 | `useResize()` | Connect API | `(w?, h?) => void` | — |
 | `useCallTool(name)` | Legacy API | `{ call, data, isPending, error }` | — |
 | `useTheme()` | Legacy API | `SynapseTheme` | Theme changes |
-| `useDataSync(cb)` | Legacy API | — | data-changed events |
+| `useDataSync(cb)` | Connect API | — | `notifications/resources/list_changed` from the app's server |
 | `useChat()` | Legacy API | `(msg, ctx?) => void` | — |
 | `useAction()` | Legacy API | `(action, params?) => void` | — |
 | `useAgentAction(cb)` | Legacy API | — | Agent action events |
@@ -778,7 +768,7 @@ Synapse wraps the [MCP App Bridge](/apps/bridge) protocol. You don't need to use
 | **Use when** | Building a new app with a build step (Vite, webpack) | Simple static HTML, no build step, or vanilla ext-apps |
 | **Tool calls** | Typed, parsed, error-handled | Raw JSON-RPC postMessage |
 | **Agent awareness** | `updateModelContext` / `setVisibleState` | Not available |
-| **Data sync** | `on("synapse/data-changed")` or `onDataChanged` | Listen for `synapse/data-changed` manually |
+| **Data sync** | `useDataSync` or `app.on("notifications/resources/list_changed")` | Listen for `notifications/resources/list_changed` manually |
 | **Dev experience** | `npm run dev` with preview + HMR | Manual server restart |
 | **Framework support** | Vanilla JS + React hooks | Any (raw postMessage) |
 
@@ -796,7 +786,6 @@ await synapse.ready;
 
 synapse.callTool('create_task', { title: 'Review Q2' });
 synapse.setVisibleState({ filter: 'overdue' }, 'Viewing overdue tasks');
-synapse.onDataChanged((event) => { /* ... */ });
 synapse.saveFile('report.csv', csvContent, 'text/csv');
 synapse.chat('Show me the Q2 report');
 ```

@@ -209,7 +209,7 @@ curl -X POST http://localhost:8001/mcp \
 
    function MyApp() {
      const { call, isPending, data } = useCallTool("my_tool");
-     useDataSync(() => { /* refetch on agent changes */ });
+     useDataSync(() => { /* refetch when the server announces a write */ });
      return <button onClick={() => call({ arg: "value" })} disabled={isPending}>Go</button>;
    }
 

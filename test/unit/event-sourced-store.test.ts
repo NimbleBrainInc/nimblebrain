@@ -195,7 +195,7 @@ describe("EventSourcedConversationStore", () => {
 
     store.emit({ type: "text.delta", data: { runId: "r1", text: "hi" } });
     store.emit({ type: "connector.installed", data: { serverName: "test" } });
-    store.emit({ type: "data.changed", data: {} });
+    store.emit({ type: "config.changed", data: {} });
 
     const lines = readLines(join(dirs.dir, `${conv.id}.jsonl`));
     // Only line 0 (metadata), no event lines

@@ -497,17 +497,6 @@ export type RelayedServerNotification = Static<typeof RelayedServerNotification>
 
 // ── Host → App messages (NimbleBrain extensions) ─────────────────────────
 
-export const UiDataChangedMessage = Type.Object({
-  jsonrpc: JsonRpcVersion,
-  method: Type.Literal("synapse/data-changed"),
-  params: Type.Object({
-    source: Type.Literal("agent"),
-    server: Type.String(),
-    tool: Type.String(),
-  }),
-});
-export type UiDataChangedMessage = Static<typeof UiDataChangedMessage>;
-
 /** Discriminated union of every Host → App envelope. */
 export const HostToAppMessage = Type.Union([
   UiInitializeMessage,
@@ -516,7 +505,6 @@ export const HostToAppMessage = Type.Union([
   UiToolResultMessage,
   UiResourceResultResponse,
   UiResourceResultError,
-  UiDataChangedMessage,
   ExtAppsInitializeResponse,
   ExtAppsToolInputNotification,
   ExtAppsToolResultNotification,

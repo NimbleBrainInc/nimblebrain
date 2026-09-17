@@ -463,8 +463,7 @@ async function routeIdentityCall(
   // segment to `assertToolAllowed`, whose records are persisted under
   // `serverName`. A wire-form name would miss every stored policy, and the
   // store's documented default is "not present ⇒ allow" — so it would fail
-  // OPEN, silently re-enabling a tool the owner disabled. `data.changed`
-  // matching against the iframe's `data-app` has the same requirement.
+  // OPEN, silently re-enabling a tool the owner disabled.
   // A marker with no tool segment after it is malformed, in both of its shapes:
   // no separator at all (`my_granola`) and a separator with nothing behind it
   // (`my_granola__`). Left alone either would strip to `granola`, find the

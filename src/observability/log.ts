@@ -38,7 +38,7 @@
  *
  * Known namespaces:
  *   - `mcp` — McpSource construction, dispatch decisions (task-augmented vs inline)
- *   - `sse` — Runtime event sink → SSE broadcast (tool.progress, data.changed)
+ *   - `sse` — Runtime event sink → SSE (tool.progress, tool.done, server.notification)
  *   - `auth` — identity-provider verify rejections (routine reasons: no_token, token_expired)
  *   - `notify` — notification envelopes, outbox declarations and poll results
  *     dropped at parse, and sweeps the poller skipped

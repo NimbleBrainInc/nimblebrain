@@ -522,7 +522,7 @@ async function startUrlConnectorSource(
     // An identity-owned start is a personal connector, whose wire name carries
     // the marker. Its EVENTS must say so: a consumer that only sees the bare
     // name cannot tell this source apart from a workspace source installed under
-    // the same name, and `data.changed` would refetch that unrelated app.
+    // the same name.
     // Registry lookups keep using the bare `sourceName`.
     opts?.identityOwner ? personalConnectorWireName(sourceName) : undefined,
   );
@@ -616,11 +616,10 @@ export async function startConnectorSource(
   ref: ConnectorRef,
   registry: ToolRegistry,
   // Required. The runtime event sink is threaded into the McpSource so
-  // task-augmented tool calls can emit `tool.progress` events that reach the
-  // SSE broadcast path; the browser side of Synapse `useDataSync` depends on
-  // it. Callers without a real sink (rare) must pass `new NoopEventSink()`
-  // explicitly — the absence used to be silently valid, which broke live
-  // updates across the entire platform.
+  // task-augmented tool calls can emit `tool.progress` and a crashed source
+  // its `run.error`. Callers without a real sink (rare) must pass
+  // `new NoopEventSink()` explicitly, so dropping events is a decision rather
+  // than an omission.
   eventSink: EventSink,
   opts?: StartConnectorOpts,
 ): Promise<StartConnectorResult> {

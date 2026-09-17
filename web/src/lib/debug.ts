@@ -9,12 +9,13 @@
  * apply to hooks that cache the Set at module load):
  *
  *   localStorage.setItem("nb_debug", "*")        // everything
- *   localStorage.setItem("nb_debug", "sync")     // just data.changed fan-out
+ *   localStorage.setItem("nb_debug", "sync")     // just the server-notification relay
  *   localStorage.removeItem("nb_debug")          // disable
  *
  * Known namespaces:
- *   - `sync` — parent-side SSE `data.changed` arrival + iframe postMessage
- *              dispatch (see `web/src/hooks/useDataSync.ts`)
+ *   - `sync` — parent-side SSE `server.notification` arrival + iframe
+ *              postMessage dispatch (see
+ *              `web/src/hooks/useServerNotificationRelay.ts`)
  *
  * Expensive log sites can call `isDebugEnabled(ns)` first to skip argument
  * construction when the namespace is off.

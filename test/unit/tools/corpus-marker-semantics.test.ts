@@ -25,12 +25,12 @@
  * | `IdentityToolRouter.availableTools` (reachable set) | yes | n/a — not pattern-matched |
  * | `listToolsForWorkspace` (the wire surface) | yes | n/a — not pattern-matched |
  * | `toolNameMatchesPattern` (allowedTools, toolAffinity) | n/a | bare pattern yes, NORMALIZED pattern no |
- * | `deriveDataChangedTarget` (SSE broadcast key) | yes, and NOT stripped | n/a — a marked name gets no broadcast |
+ * | `hasAppViews` (server-notification relay key) | yes, and NOT stripped | n/a — a marked name gets no delivery |
  */
 
 import { describe, expect, test } from "bun:test";
-import { deriveDataChangedTarget } from "../../../src/api/events.ts";
 import { PERSONAL_CONNECTOR_PREFIX } from "../../../src/tools/identity-sources.ts";
+import { hasAppViews } from "../../../src/tools/server-notifications.ts";
 import { toolNameMatchesPattern } from "../../../src/tools/tool-pattern.ts";
 
 const WORKSPACE_TOOL = "crm__search";
@@ -51,23 +51,18 @@ describe("seam: pattern matching", () => {
   });
 });
 
-describe("seam: the data.changed broadcast key", () => {
-  test("a marked name produces NO broadcast, and the marker is not stripped to find one", () => {
+describe("seam: the server-notification relay key", () => {
+  test("a marked name gets NO delivery, and the marker is not stripped to find one", () => {
     // The tempting fix is to de-mark so the key matches `iframe.dataset.app`.
     // That is wrong: a personal connector cannot mount an iframe (a `ui://` read
     // resolves through the kernel identity sources or the workspace registry, and
     // a connector is in neither), so de-marking would not reach the connector's
     // own surface — it would reach a WORKSPACE app of the same name and refetch
-    // an unrelated app on the caller's private tool call. Exactly the collision
-    // the marker exists to prevent.
-    expect(
-      deriveDataChangedTarget({ type: "tool.done", data: { name: MARKED_TOOL, ok: true } } as never),
-    ).toBeNull();
+    // an unrelated app. Exactly the collision the marker exists to prevent.
+    expect(hasAppViews(`${PERSONAL_CONNECTOR_PREFIX}gmail`)).toBe(false);
   });
 
-  test("a workspace source of that name still broadcasts normally", () => {
-    expect(
-      deriveDataChangedTarget({ type: "tool.done", data: { name: "gmail__send", ok: true } } as never),
-    ).toEqual({ server: "gmail", tool: "send" });
+  test("a workspace source of that name is still delivered to", () => {
+    expect(hasAppViews("gmail")).toBe(true);
   });
 });

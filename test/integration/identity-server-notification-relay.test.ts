@@ -239,4 +239,22 @@ describe("a person's own apps announce their writes to that person", () => {
       own.release();
     }
   });
+
+  it("conversations: a conversation started by chat reaches its owner's stream", async () => {
+    // A chat turn is the door a person uses most, and the list view hears a
+    // new conversation only through this announcement.
+    const own = await openOwnStream();
+    try {
+      await runtime.chat({ message: "Hello", workspaceId: TEST_WORKSPACE_ID });
+
+      await eventually(() => notificationsFor(own.frames, "conversations").length > 0);
+      expect(notificationsFor(own.frames, "conversations")[0]).toEqual({
+        server: "conversations",
+        userId: DEV_IDENTITY.id,
+        method: LIST_CHANGED,
+      });
+    } finally {
+      own.release();
+    }
+  });
 });

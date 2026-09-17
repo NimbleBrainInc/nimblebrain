@@ -30,7 +30,6 @@ export type {
   SynapseRequestFileMessage,
   ToolsCallMessage,
   UiActionMessage,
-  UiDataChangedMessage,
   UiDownloadFileMessage,
   UiInitializeMessage,
   UiKeydownMessage,

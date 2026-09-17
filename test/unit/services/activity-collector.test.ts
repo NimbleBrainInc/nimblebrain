@@ -338,8 +338,8 @@ describe("ActivityCollector", () => {
 				timestamp: "2025-01-01T10:05:00Z",
 			},
 			{
-				event: "data.changed",
-				data: { source: "tool" },
+				event: "config.changed",
+				data: { key: "model" },
 				timestamp: "2025-01-01T10:06:00Z",
 			},
 		];

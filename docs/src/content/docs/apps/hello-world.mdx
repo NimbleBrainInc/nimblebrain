@@ -170,7 +170,7 @@ function HelloApp() {
   const countTool = useCallTool<string>("get_greet_count");
   const theme = useTheme();
 
-  // Auto-refresh when the agent calls our tools
+  // Refresh when our server announces a write
   useDataSync(() => refreshCount());
 
   async function refreshCount() {
@@ -285,7 +285,7 @@ Synapse hooks used:
 | Hook | What it does |
 |------|-------------|
 | `useCallTool('get_greeting')` | `{ call, isPending, data, error }` — typed tool calls with loading state |
-| `useDataSync(callback)` | Fires when the agent calls a tool on your server |
+| `useDataSync(callback)` | Fires when your server announces a write with `notifications/resources/list_changed` |
 | `useTheme()` | Reactive theme tokens — re-renders on dark mode toggle |
 
 <Aside type="note">

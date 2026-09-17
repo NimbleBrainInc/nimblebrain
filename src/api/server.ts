@@ -15,7 +15,7 @@ import { HealthMonitor } from "../tools/health-monitor.ts";
 import { createApp } from "./app.ts";
 import { resolveAuthMode } from "./auth-middleware.ts";
 import { ConversationEventManager } from "./conversation-events.ts";
-import { deriveDataChangedTarget, SseEventManager } from "./events.ts";
+import { SseEventManager } from "./events.ts";
 import { McpServerHost } from "./mcp-server.ts";
 import { registerConnectorHealthGauge } from "./metrics.ts";
 import { LoginRateLimiter, RequestRateLimiter } from "./rate-limiter.ts";
@@ -186,56 +186,6 @@ export function startServer(options: ServerOptions): ServerHandle {
     }
     originalEmit(event);
     sseManager.emit(event);
-
-    // Broadcast `data.changed` so connector iframes (Synapse useDataSync) know to
-    // refresh. We broadcast in two situations:
-    //
-    //   (1) tool.done (ok)      — the call completed; any entity writes have
-    //                             landed and downstream views should refresh.
-    //   (2) tool.progress       — the call is long-running (task-augmented)
-    //                             and the server has emitted a status update.
-    //                             Long-running tools typically write entity
-    //                             state on each phase, so the UI needs to see
-    //                             the work-in-progress, not only the final
-    //                             result. Without this, a `useDataSync`-driven
-    //                             view stays stale for the full task duration.
-    //
-    // `deriveDataChangedTarget` normalizes both event shapes to the bare
-    // source name (stripping the Stage-2 `ws_<id>-` namespace) and drops
-    // system tools (`nb__*`) — see its doc comment for why the bare form is
-    // required for the iframe data-app match.
-    const target = deriveDataChangedTarget(event);
-    if (target) {
-      // Confirms `data.changed` is actually being broadcast, and to how
-      // many clients. If this fires but the browser never sees the
-      // event, the break is in the SSE connection or the
-      // parent `useDataSync` forwarder — not here.
-      log.debug(
-        "sse",
-        `broadcast data.changed from=${event.type} server=${target.server} tool=${target.tool} ws=${target.wsId ?? "-"} clients=${sseManager.clientCount}`,
-      );
-      sseManager.broadcast(
-        "data.changed",
-        {
-          server: target.server,
-          tool: target.tool,
-          // Which workspace the change happened in, so a listener can ignore
-          // one that is not its own.
-          wsId: target.wsId,
-          timestamp: new Date().toISOString(),
-        },
-        // Fan out to members of that workspace only. `/v1/events` is
-        // IDENTITY-scoped, so every signed-in user's tab is on this manager —
-        // without the argument the whole payload, workspace id included,
-        // reaches identities with no claim to it.
-        //
-        // `undefined` degrades to a global fan-out, which is exactly right for
-        // an identity-door event (`conversations`, `files`, `automations`):
-        // it belongs to no workspace, and every client that could act on it
-        // should still get it.
-        target.wsId,
-      );
-    }
   };
 
   // Resolve identity provider. `isDevMode` is captured BEFORE the dev

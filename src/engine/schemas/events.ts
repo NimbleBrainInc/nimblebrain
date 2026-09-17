@@ -4,7 +4,7 @@
 // Strategy: progressive enrichment, not a sweep. Events whose payloads have
 // already been formalized as TypeScript interfaces (SkillsLoadedPayload,
 // ContextAssembledPayload) are mirrored here as TypeBox schemas. Events
-// with smaller, well-known shapes (`data.changed`, the `skill.*` and
+// with smaller, well-known shapes (`server.notification`, the `skill.*` and
 // `file.*` events) get explicit schemas. Other events keep the loose
 // `Record<string, unknown>` payload shape they had before; their schemas
 // can be added when the payload stabilizes or when an emitter / consumer
@@ -110,15 +110,6 @@ export const ContextAssembledPayload = Type.Object({
   runId: Type.Optional(Type.String()),
 });
 export type ContextAssembledPayload = Static<typeof ContextAssembledPayload>;
-
-export const DataChangedPayload = Type.Object({
-  /** When emitted by the agent's tool dispatch; absent when emitted by
-   *  the runtime for cross-cutting changes. */
-  source: Type.Optional(Type.Literal("agent")),
-  server: Type.String(),
-  tool: Type.String(),
-});
-export type DataChangedPayload = Static<typeof DataChangedPayload>;
 
 const ServerNotificationFields = {
   server: Type.String(),
@@ -259,7 +250,6 @@ export type UnattendedDispatchPayload = Static<typeof UnattendedDispatchPayload>
 export const TypedEngineEvent = Type.Union([
   Type.Object({ type: Type.Literal("skills.loaded"), data: SkillsLoadedPayload }),
   Type.Object({ type: Type.Literal("context.assembled"), data: ContextAssembledPayload }),
-  Type.Object({ type: Type.Literal("data.changed"), data: DataChangedPayload }),
   Type.Object({ type: Type.Literal("server.notification"), data: ServerNotificationPayload }),
   Type.Object({ type: Type.Literal("tool.promoted"), data: ToolPromotionChangedPayload }),
   Type.Object({ type: Type.Literal("tool.released"), data: ToolPromotionChangedPayload }),

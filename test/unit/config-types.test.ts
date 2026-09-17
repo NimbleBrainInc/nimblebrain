@@ -77,7 +77,7 @@ describe("EngineEventType", () => {
 		const newEvents: EngineEventType[] = [
 			"connector.installed",
 			"connector.uninstalled",
-			"data.changed",
+			"server.notification",
 			"tool.progress",
 		];
 		// These are compile-time checked — if any is not in the union, TypeScript errors.

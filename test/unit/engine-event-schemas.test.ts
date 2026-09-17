@@ -13,7 +13,6 @@ import { describe, expect, test } from "bun:test";
 import {
   ConnectorSkillInjectedPayload,
   ContextAssembledPayload,
-  DataChangedPayload,
   FileCreatedPayload,
   FileDeletedPayload,
   SkillCreatedPayload,
@@ -58,20 +57,6 @@ describe("event schemas — accept representative payloads", () => {
       headroomTokens: 199900,
     };
     expect(Value.Check(ContextAssembledPayload, payload)).toBe(true);
-  });
-
-  test("data.changed — agent-emitted variant", () => {
-    expect(
-      Value.Check(DataChangedPayload, {
-        source: "agent",
-        server: "skills",
-        tool: "create",
-      }),
-    ).toBe(true);
-  });
-
-  test("data.changed — runtime-emitted variant (no source)", () => {
-    expect(Value.Check(DataChangedPayload, { server: "conversations", tool: "list" })).toBe(true);
   });
 
   test("skill.created — required fields", () => {
@@ -194,10 +179,6 @@ describe("event schemas — reject malformed payloads", () => {
       totalTokens: 42,
     };
     expect(Value.Check(SkillsLoadedPayload, payload)).toBe(false);
-  });
-
-  test("data.changed — rejects without server/tool", () => {
-    expect(Value.Check(DataChangedPayload, { source: "agent" })).toBe(false);
   });
 
   test("skill.created — rejects scope=connector (writable scopes only)", () => {

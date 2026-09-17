@@ -20,8 +20,8 @@
 //     relay in hooks/useServerNotificationRelay.ts
 //
 // NimbleBrain extensions (synapse/ namespace — no spec equivalent):
-//   synapse/action, synapse/download-file, synapse/data-changed,
-//   synapse/keydown, synapse/request-file
+//   synapse/action, synapse/download-file, synapse/keydown,
+//   synapse/request-file
 // ---------------------------------------------------------------------------
 
 import {
@@ -54,7 +54,6 @@ import type {
   SynapseRequestFileMessage,
   UiActionMessage,
   UiChatContext,
-  UiDataChangedMessage,
   UiInitializeMessage,
   UiMessageMessage,
   UiToolResultError,
@@ -98,8 +97,6 @@ export function clearAppState(appName: string): void {
 export interface BridgeHandle {
   /** Send a ui/notifications/tool-result notification (agent-side tool result). */
   sendToolResult(result: { content: unknown[]; structuredContent?: Record<string, unknown> }): void;
-  /** Send a synapse/data-changed notification (from SSE data.changed event). */
-  sendDataChanged(server: string, tool: string): void;
   /** Send ui/notifications/host-context-changed (ext-apps spec). */
   setHostContext(context: Record<string, unknown>): void;
   /** Send ui/notifications/tool-input (ext-apps spec). */
@@ -468,15 +465,6 @@ export function createBridge(
           structuredContent: result.structuredContent,
         },
       } as UiToolResultMessage);
-    },
-
-    sendDataChanged(server: string, tool: string): void {
-      const msg: UiDataChangedMessage = {
-        jsonrpc: "2.0",
-        method: "synapse/data-changed",
-        params: { source: "agent", server, tool },
-      };
-      postToIframe(msg);
     },
 
     setHostContext(context: Record<string, unknown>): void {

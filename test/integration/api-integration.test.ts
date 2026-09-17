@@ -504,10 +504,10 @@ describe("E2E: install app -> tool call via API", () => {
 });
 
 // =============================================================================
-// E2E Scenario 4: SSE events flow — tool call triggers data.changed event
+// E2E Scenario 4: tool call via API
 // =============================================================================
 
-describe("E2E: tool call via API -> SSE data.changed event", () => {
+describe("E2E: tool call via API", () => {
 	let runtime: Runtime;
 	let handle: ServerHandle;
 	let baseUrl: string;
@@ -568,35 +568,6 @@ describe("E2E: tool call via API -> SSE data.changed event", () => {
 		const toolBody = await toolRes.json();
 		expect(toolBody.content).toEqual([{ type: "text", text: "Saved: Important note" }]);
 		expect(toolBody.isError).toBe(false);
-	}, 10_000);
-
-	it("SSE manager broadcasts data.changed when emitted by routes", async () => {
-		// Verify that the SSE manager on the server handle receives data.changed events
-		// by broadcasting directly (the server wires tool.done -> data.changed in server.ts)
-		const stream = handle.sseManager.addClient();
-		const reader = stream.getReader();
-
-		handle.sseManager.broadcast("data.changed", {
-			server: "notes",
-			tool: "save_note",
-			timestamp: new Date().toISOString(),
-		});
-
-		const { value } = await reader.read();
-		const text = new TextDecoder().decode(value);
-		expect(text).toContain("event: data.changed");
-		expect(text).toContain('"server":"notes"');
-		expect(text).toContain('"tool":"save_note"');
-
-		// Parse the event data to verify timestamp is present
-		const dataMatch = text.match(/data: (.+)/);
-		expect(dataMatch).not.toBeNull();
-		const eventData = JSON.parse(dataMatch![1]);
-		expect(typeof eventData.timestamp).toBe("string");
-		expect(eventData.server).toBe("notes");
-		expect(eventData.tool).toBe("save_note");
-
-		reader.cancel();
 	}, 10_000);
 });
 
@@ -692,7 +663,7 @@ describe("E2E: multi-step conversation -> history -> conversations list consiste
 // E2E Scenario 6: SSE event manager — connector lifecycle events
 // =============================================================================
 
-describe("E2E: SSE event filtering — only connector and data.changed events pass through", () => {
+describe("E2E: SSE event filtering — only routed events pass through", () => {
 	it("SseEventManager.emit forwards connector.installed but not run.start", async () => {
 		const { SseEventManager } = await import("../../src/api/events.ts");
 		const manager = new SseEventManager(60_000);
@@ -724,39 +695,6 @@ describe("E2E: SSE event filtering — only connector and data.changed events pa
 		expect(text).toContain("event: connector.installed");
 		expect(text).toContain('"serverName":"tasks"');
 		expect(text).not.toContain("run.start");
-
-		reader.cancel();
-		manager.stop();
-	});
-
-	it("SseEventManager.emit forwards data.changed with server and tool fields", async () => {
-		const { SseEventManager } = await import("../../src/api/events.ts");
-		const manager = new SseEventManager(60_000);
-
-		const stream = manager.addClient();
-		const reader = stream.getReader();
-
-		manager.emit({
-			type: "data.changed",
-			data: {
-				server: "crm",
-				tool: "create_contact",
-				timestamp: "2025-01-01T00:00:00Z",
-			},
-		});
-
-		const { value } = await reader.read();
-		const text = new TextDecoder().decode(value);
-
-		expect(text).toContain("event: data.changed");
-
-		// Parse the data to verify schema
-		const dataMatch = text.match(/data: (.+)/);
-		expect(dataMatch).not.toBeNull();
-		const parsed = JSON.parse(dataMatch![1]);
-		expect(parsed.server).toBe("crm");
-		expect(parsed.tool).toBe("create_contact");
-		expect(parsed.timestamp).toBe("2025-01-01T00:00:00Z");
 
 		reader.cancel();
 		manager.stop();

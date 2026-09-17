@@ -57,7 +57,7 @@ export function useServerNotificationRelay(): (event: ServerNotificationEvent) =
       if (iframe.dataset.app !== event.server) continue;
       debug("sync", `→ iframe[data-app="${event.server}"] ${event.method}`);
       // Srcdoc iframes have the opaque "null" origin, which `postMessage`'s
-      // targetOrigin cannot address — the same constraint `useDataSync` notes.
+      // targetOrigin cannot address.
       iframe.contentWindow?.postMessage(message, "*");
     }
   }, []);

@@ -36,7 +36,6 @@ import {
   WorkspaceProvider,
 } from "./context/WorkspaceContext";
 import { chatStore } from "./hooks/chat-store";
-import { useDataSync } from "./hooks/useDataSync";
 import { useEvents } from "./hooks/useEvents";
 import { useServerNotificationRelay } from "./hooks/useServerNotificationRelay";
 import { useShell } from "./hooks/useShell";
@@ -262,10 +261,8 @@ function AuthenticatedAppContent({
   const config = useChatConfigContext();
   const { applyPreference } = useTheme();
   const wsCtx = useWorkspaceContext();
-  const onDataChanged = useDataSync();
   const onServerNotification = useServerNotificationRelay();
   useEvents(token, wsCtx.activeWorkspace?.id, {
-    onDataChanged,
     onServerNotification,
     onConfigChanged: () => config.refreshConfig(),
     // Auto-title arrived — update the matching conversation's slice so the

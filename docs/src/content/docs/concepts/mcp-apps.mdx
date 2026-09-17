@@ -47,7 +47,7 @@ Apps are framework-agnostic — React, Vue, Svelte, Preact, Solid, or vanilla Ja
 |-|---|---|
 | **Context** | Separate tab, disconnected from AI | Inline with the conversation |
 | **Tool access** | Needs its own API client + auth | Calls MCP tools through the bridge — no separate API |
-| **Data flow** | Polls or WebSocket | Pushed via `tool-result` and `data-changed` notifications |
+| **Data flow** | Polls or WebSocket | Pushed via `tool-result` and the server's own `notifications/resources/list_changed`, relayed by the host |
 | **Theming** | Independent design system | Inherits host theme via CSS variables |
 | **Security** | Full page access | Sandboxed iframe — no access to parent, cookies, or other apps |
 

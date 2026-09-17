@@ -39,34 +39,7 @@ describe("chat.start event", () => {
     await runtime.shutdown();
   });
 
-  it("emits data.changed when a new conversation is created", async () => {
-    const workDir = join(testDir, "chat-start-new-conv");
-    mkdirSync(workDir, { recursive: true });
-
-    const runtime = await Runtime.start({
-      model: { provider: "custom", adapter: createEchoModel() },
-      workDir,
-    });
-    await provisionTestWorkspace(runtime);
-
-    const events: EngineEvent[] = [];
-    const sink: EventSink = { emit: (e) => events.push(e) };
-
-    // No conversationId provided — triggers new conversation creation
-    await runtime.chat({ message: "Hello", workspaceId: TEST_WORKSPACE_ID }, sink);
-
-    const dataChangedEvents = events.filter((e) => e.type === "data.changed");
-    expect(dataChangedEvents.length).toBeGreaterThanOrEqual(1);
-
-    const convListChange = dataChangedEvents.find(
-      (e) => e.data.server === "conversations" && e.data.tool === "list",
-    );
-    expect(convListChange).toBeDefined();
-
-    await runtime.shutdown();
-  });
-
-  it("does NOT emit data.changed when resuming an existing conversation", async () => {
+  it("emits chat.start with the existing id when resuming a conversation", async () => {
     const workDir = join(testDir, "chat-start-resume");
     mkdirSync(workDir, { recursive: true });
 
@@ -99,15 +72,6 @@ describe("chat.start event", () => {
     const chatStartEvents = events.filter((e) => e.type === "chat.start");
     expect(chatStartEvents).toHaveLength(1);
     expect(chatStartEvents[0]!.data.conversationId).toBe(first.conversationId);
-
-    // data.changed with server=conversations should NOT be emitted
-    const convListChange = events.filter(
-      (e) =>
-        e.type === "data.changed" &&
-        e.data.server === "conversations" &&
-        e.data.tool === "list",
-    );
-    expect(convListChange).toHaveLength(0);
 
     await runtime.shutdown();
   });

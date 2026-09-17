@@ -313,8 +313,8 @@ export class McpServerHost {
    * notifications outside any in-flight request (broadcast notifications,
    * sampling, elicitation). We don't push anything down it: tool responses
    * and task progress flow on the POST that started them, and our own
-   * server→client signaling for the iframe app (data.changed, conversation
-   * events, heartbeats) goes through `/v1/events`, not MCP.
+   * server→client signaling for the iframe app (relayed server notifications,
+   * conversation events, heartbeats) goes through `/v1/events`, not MCP.
    *
    * Holding the connection open with nothing to write meant Bun's
    * `idleTimeout` (max 255s) — and any L7 proxy in front of the API (Vite
