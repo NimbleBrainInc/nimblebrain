@@ -36,9 +36,7 @@ export type WorkspaceForHostContext = {
  * response. Bridge merges these alongside theme/styles; spec fields win
  * on key collisions.
  */
-export function buildHostExtensions(
-  workspace: WorkspaceForHostContext,
-): Record<string, unknown> {
+export function buildHostExtensions(workspace: WorkspaceForHostContext): Record<string, unknown> {
   const ext: Record<string, unknown> = workspace
     ? {
         workspace: {

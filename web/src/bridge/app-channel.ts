@@ -3,11 +3,10 @@
 //
 // A bridge opens a channel for its iframe and closes it on teardown. Anything
 // outside the bridge that addresses iframes from the DOM (the server
-// notification relay) posts through here, so
-// its frames pass the bridge's handshake gate like the bridge's own: an app
-// hears nothing but its `ui/initialize` response until it has sent
-// `ui/notifications/initialized`. An iframe with no bridge has no channel, and
-// a post to it goes nowhere.
+// notification relay) posts through here, so its frames pass the bridge's
+// handshake gate like the bridge's own: an app hears nothing but its
+// `ui/initialize` response until it has sent `ui/notifications/initialized`.
+// An iframe with no bridge has no channel, and a post to it goes nowhere.
 // ---------------------------------------------------------------------------
 
 type Post = (message: unknown) => void;

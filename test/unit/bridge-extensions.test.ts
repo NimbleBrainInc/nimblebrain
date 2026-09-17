@@ -201,6 +201,28 @@ describe("Bridge — methods the host does not serve", () => {
     });
     handle.destroy();
   });
+
+  // The form a Synapse release before 0.19.0 sends: a notification, which has
+  // no id to answer. The host ignores it — no reply and no download.
+  it("ignores the synapse/download-file notification older SDKs send", () => {
+    const { iframe, posted } = makeFakeIframe();
+    const handle = createBridge(iframe, "test-app");
+    const createObjectURL = mock(() => "blob:x");
+    const original = URL.createObjectURL;
+    URL.createObjectURL = createObjectURL;
+    try {
+      simulatePostMessage(iframe, {
+        jsonrpc: "2.0",
+        method: "synapse/download-file",
+        params: { data: "x", filename: "a.txt", mimeType: "text/plain" },
+      });
+      expect(posted).toEqual([]);
+      expect(createObjectURL).not.toHaveBeenCalled();
+    } finally {
+      URL.createObjectURL = original;
+      handle.destroy();
+    }
+  });
 });
 
 describe("Bridge — ui/open-link and size-changed", () => {
