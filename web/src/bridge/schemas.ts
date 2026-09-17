@@ -138,8 +138,6 @@ export const UiMessageMessage = Type.Object({
   params: Type.Object({
     role: Type.Optional(Type.Literal("user")),
     content: Type.Optional(Type.Array(ContentItem)),
-    action: Type.Optional(Type.Literal("prompt")),
-    value: Type.Optional(Type.String()),
   }),
 });
 export type UiMessageMessage = Static<typeof UiMessageMessage>;
@@ -224,23 +222,6 @@ export const UiActionMessage = Type.Object({
 });
 export type UiActionMessage = Static<typeof UiActionMessage>;
 
-export const UiDownloadFileMessage = Type.Object({
-  jsonrpc: JsonRpcVersion,
-  method: Type.Literal("synapse/download-file"),
-  id: Type.Optional(RequestId),
-  // `data: Blob` doesn't have a TypeBox literal; postMessage uses structured
-  // clone so any Object passes wire-shape muster. Validate the surrounding
-  // envelope; trust the value.
-  params: Type.Object({
-    data: Type.Unknown(),
-    filename: Type.String(),
-    mimeType: Type.String(),
-  }),
-});
-export type UiDownloadFileMessage = Static<typeof UiDownloadFileMessage> & {
-  params: { data: Blob; filename: string; mimeType: string };
-};
-
 /**
  * Spec `ui/download-file` — the standard way an app hands the user a file.
  *
@@ -249,9 +230,6 @@ export type UiDownloadFileMessage = Static<typeof UiDownloadFileMessage> & {
  * The blocks are typed loosely here for the same reason the rest of this file
  * is: the host reads only the documented fields, and a hostile iframe's extras
  * are ignored rather than propagated.
- *
- * Distinct from the `synapse/download-file` extension above, which predates
- * this and takes an already-materialised `Blob`.
  */
 export const UiDownloadFileSpecMessage = Type.Object({
   jsonrpc: JsonRpcVersion,
@@ -347,7 +325,6 @@ export const AppToHostMessage = Type.Union([
   UiSizeChangedMessage,
   UiUpdateModelContextMessage,
   UiActionMessage,
-  UiDownloadFileMessage,
   UiDownloadFileSpecMessage,
   UiRequestDisplayModeMessage,
   LoggingMessageNotification,

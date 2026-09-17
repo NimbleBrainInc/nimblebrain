@@ -182,24 +182,28 @@ describe("Bridge — ui/message (spec format)", () => {
   });
 });
 
-describe("Bridge — ui/message prompt action", () => {
-  it("handles prompt action extension", () => {
-    const { iframe } = makeFakeIframe();
-    const prompts: string[] = [];
-    const handle = createBridge(iframe, "test-app", {
-      onPromptAction: (p) => prompts.push(p),
-    });
+describe("Bridge — methods the host does not serve", () => {
+  it("answers a synapse/download-file request with method-not-found", () => {
+    const { iframe, posted } = makeFakeIframe();
+    const handle = createBridge(iframe, "test-app");
 
     simulatePostMessage(iframe, {
       jsonrpc: "2.0",
-      method: "ui/message",
-      params: { action: "prompt", value: "suggested prompt" },
+      id: 7,
+      method: "synapse/download-file",
+      params: { data: "x", filename: "a.txt", mimeType: "text/plain" },
     });
 
-    expect(prompts).toEqual(["suggested prompt"]);
+    expect(posted).toContainEqual({
+      jsonrpc: "2.0",
+      id: 7,
+      error: { code: -32601, message: "Method not found: synapse/download-file" },
+    });
     handle.destroy();
   });
+});
 
+describe("Bridge — ui/open-link and size-changed", () => {
   it("handles ui/open-link by calling window.open", () => {
     const { iframe } = makeFakeIframe();
     const handle = createBridge(iframe, "test-app");

@@ -240,6 +240,29 @@ describe("a person's own apps announce their writes to that person", () => {
     }
   });
 
+  it("conversations: a title written to a conversation reaches its owner's stream", async () => {
+    // Auto-title writes the title after the turn. The list view hears it only
+    // through this announcement, so a new chat's row picks up its title live.
+    const store = runtime.workspaceConversationStore(TEST_WORKSPACE_ID, DEV_IDENTITY.id);
+    const conversation = await store.create({
+      ownerId: DEV_IDENTITY.id,
+      workspaceId: TEST_WORKSPACE_ID,
+    });
+    const own = await openOwnStream();
+    try {
+      await store.update(conversation.id, { title: "A generated title" });
+
+      await eventually(() => notificationsFor(own.frames, "conversations").length > 0);
+      expect(notificationsFor(own.frames, "conversations")[0]).toEqual({
+        server: "conversations",
+        userId: DEV_IDENTITY.id,
+        method: LIST_CHANGED,
+      });
+    } finally {
+      own.release();
+    }
+  });
+
   it("conversations: a conversation started by chat reaches its owner's stream", async () => {
     // A chat turn is the door a person uses most, and the list view hears a
     // new conversation only through this announcement.

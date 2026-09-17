@@ -35,7 +35,6 @@ import {
   SynapseRequestFileMessage,
   ToolsCallMessage,
   UiActionMessage,
-  UiDownloadFileMessage,
   UiDownloadFileSpecMessage,
   UiKeydownMessage,
   UiMessageMessage,
@@ -62,7 +61,6 @@ const SCHEMA_BY_METHOD: Record<string, TSchema> = {
   "ui/notifications/initialized": ExtAppsInitializedNotification,
   "ui/notifications/request-teardown": ExtAppsRequestTeardownNotification,
   "synapse/action": UiActionMessage,
-  "synapse/download-file": UiDownloadFileMessage,
   "synapse/request-file": SynapseRequestFileMessage,
   "synapse/keydown": UiKeydownMessage,
 };

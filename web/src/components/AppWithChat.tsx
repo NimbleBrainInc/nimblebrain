@@ -10,9 +10,9 @@
 //
 // What stays here, because it needs the focused app:
 //   - `SlotRenderer` — renders the placement's iframe
-//   - `handleChat` / `handlePromptAction` — iframe→shell channels for
-//     "send this from inside the app". These are the one place a focused
-//     app is known, so they stamp its `AppContext` on outgoing messages.
+//   - `handleChat` — the iframe→shell channel for "send this from inside the
+//     app". It is the one place a focused app is known, so it stamps the
+//     app's `AppContext` on outgoing messages.
 //   - publishing the focused app to `FocusedAppContext`, so the globally
 //     mounted chat panel can stamp the same `AppContext` on messages
 //     typed into the main composer (not just the in-app channel).
@@ -69,14 +69,12 @@ function restoreSavedConversation(chat: ReturnType<typeof useChatContext>) {
 interface AppWithChatProps {
   placement: PlacementEntry;
   onNavigate: (route: string) => void;
-  /** One-shot `?force=1` cache-bust — only the home route passes this. */
-  forceRefresh?: boolean;
 }
 
 const TRANSITION_STANDARD = "300ms cubic-bezier(0.33, 1, 0.68, 1)";
 const TRANSITION_FULLSCREEN = "350ms cubic-bezier(0.4, 0, 0.2, 1)";
 
-export function AppWithChat({ placement, onNavigate, forceRefresh }: AppWithChatProps) {
+export function AppWithChat({ placement, onNavigate }: AppWithChatProps) {
   const { panelState, openPanel, toggleFullscreen } = useChatPanelContext();
 
   const chat = useChatContext();
@@ -166,16 +164,6 @@ export function AppWithChat({ placement, onNavigate, forceRefresh }: AppWithChat
     [panelState, openPanel, chat, appContext],
   );
 
-  const handlePromptAction = useCallback(
-    (prompt: string) => {
-      if (panelState === "closed") {
-        openPanel();
-      }
-      window.dispatchEvent(new CustomEvent("nb:prompt", { detail: { prompt } }));
-    },
-    [panelState, openPanel],
-  );
-
   const isSidebar = panelState === "sidebar";
   const isFullscreen = panelState === "fullscreen";
   const hideMobileApp = isMobile && isSidebar;
@@ -205,8 +193,6 @@ export function AppWithChat({ placement, onNavigate, forceRefresh }: AppWithChat
             className="w-full h-full"
             onChat={handleChat}
             onNavigate={onNavigate}
-            onPromptAction={handlePromptAction}
-            forceRefresh={forceRefresh}
           />
         </div>
       )}

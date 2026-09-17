@@ -40,7 +40,6 @@ import { useEvents } from "./hooks/useEvents";
 import { useServerNotificationRelay } from "./hooks/useServerNotificationRelay";
 import { useShell } from "./hooks/useShell";
 import { bootstrapWorkspacesToInfo } from "./lib/bootstrap";
-import { forwardConversationTitleToIframes } from "./lib/forward-conversation-title";
 import { identityAppSegment, isIdentityApp } from "./lib/identity-apps";
 import { recoverFromWorkspaceError } from "./lib/workspace-recovery";
 import { toSlug } from "./lib/workspace-slug";
@@ -266,12 +265,10 @@ function AuthenticatedAppContent({
     onServerNotification,
     onConfigChanged: () => config.refreshConfig(),
     // Auto-title arrived — update the matching conversation's slice so the
-    // chat panel header reflects it live (routed by conversationId), and
-    // forward to the conversations-list iframe so its sidebar row updates
-    // in place without a full list refetch.
+    // chat panel header reflects it live (routed by conversationId). The
+    // conversations list hears the same write from its own server.
     onConversationTitle: ({ conversationId, title }) => {
       chatStore.setTitle(conversationId, title);
-      forwardConversationTitleToIframes(conversationId, title);
     },
     // Connector install / uninstall changes the placement set; refetch
     // the shell so the sidebar's Apps group reflects the new state

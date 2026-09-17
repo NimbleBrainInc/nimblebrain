@@ -35,14 +35,9 @@ export type WorkspaceForHostContext = {
  * Non-spec extension keys to merge into the `ui/initialize` hostContext
  * response. Bridge merges these alongside theme/styles; spec fields win
  * on key collisions.
- *
- * `forceRefresh` is delivered only here (initialize), never in
- * `host-context-changed`, so an app reads it once at handshake and treats
- * later workspace switches as normal cache-backed loads.
  */
 export function buildHostExtensions(
   workspace: WorkspaceForHostContext,
-  forceRefresh = false,
   streamingConversationIds: string[] = [],
 ): Record<string, unknown> {
   const ext: Record<string, unknown> = workspace
@@ -63,7 +58,6 @@ export function buildHostExtensions(
   // host with no registered URLs must say nothing rather than send a reset.
   const fontFaces = getHostFontFaces();
   if (fontFaces.length > 0) ext[FONT_FACES_CONTEXT_KEY] = fontFaces;
-  if (forceRefresh) ext.forceRefresh = true;
   // Conversations with an in-flight assistant turn in this browser tab. Apps
   // (e.g. the conversations list) render a live "streaming" affordance per
   // row. Ephemeral, tab-local — not persisted, not from the server.
@@ -85,7 +79,7 @@ export function buildHostContext(
 ): Record<string, unknown> {
   const tokens = getThemeTokens(mode);
   return {
-    ...buildHostExtensions(workspace, false, streamingConversationIds),
+    ...buildHostExtensions(workspace, streamingConversationIds),
     theme: mode,
     styles: { variables: tokens },
   };

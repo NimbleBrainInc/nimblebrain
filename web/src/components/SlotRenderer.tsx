@@ -19,12 +19,6 @@ interface SlotRendererProps {
   routeFilter?: string;
   onChat?: (message: string, context?: UiChatContext) => void;
   onNavigate?: (route: string) => void;
-  onPromptAction?: (prompt: string) => void;
-  /**
-   * One-shot: force a cache-bypassing data load on first handshake.
-   * Only the home route sets this (from `?force=1`); inert elsewhere.
-   */
-  forceRefresh?: boolean;
 }
 
 /**
@@ -97,8 +91,6 @@ export function SlotRenderer({
   routeFilter,
   onChat,
   onNavigate,
-  onPromptAction,
-  forceRefresh = false,
 }: SlotRendererProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const bridgesRef = useRef<BridgeHandle[]>([]);
@@ -120,13 +112,6 @@ export function SlotRenderer({
   onChatRef.current = onChat;
   const onNavigateRef = useRef(onNavigate);
   onNavigateRef.current = onNavigate;
-  const onPromptActionRef = useRef(onPromptAction);
-  onPromptActionRef.current = onPromptAction;
-
-  // Mirror `forceRefresh` into a ref so `getHostExtensions` reads it at
-  // handshake time — the same reason `workspaceRef`/`modeRef` exist.
-  const forceRefreshRef = useRef(forceRefresh);
-  forceRefreshRef.current = forceRefresh;
 
   // Conversations currently streaming an assistant turn in this tab. Pushed
   // into hostContext so the conversations list can show a per-row indicator.
@@ -144,7 +129,7 @@ export function SlotRenderer({
   // Stable key: only re-mount iframes when the actual placements change
   const placementKey = filtered.map((p) => p.resourceUri).join(",");
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: re-mount iframes only when placementKey changes — `filtered` is read at run time but changes identity every render (depending on it would thrash iframes), and mode/streaming/forceRefresh are read through refs
+  // biome-ignore lint/correctness/useExhaustiveDependencies: re-mount iframes only when placementKey changes — `filtered` is read at run time but changes identity every render (depending on it would thrash iframes), and mode/streaming are read through refs
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
@@ -157,9 +142,7 @@ export function SlotRenderer({
     const bridgeCallbacks: BridgeCallbacks = {
       onChat: (...args) => onChatRef.current?.(...args),
       onNavigate: (...args) => onNavigateRef.current?.(...args),
-      onPromptAction: (...args) => onPromptActionRef.current?.(...args),
-      getHostExtensions: () =>
-        buildHostExtensions(workspaceRef.current, forceRefreshRef.current, streamingIdsRef.current),
+      getHostExtensions: () => buildHostExtensions(workspaceRef.current, streamingIdsRef.current),
     };
 
     // Fetch + mount one placement. A failure is contained here: it renders its
