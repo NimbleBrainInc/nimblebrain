@@ -7,10 +7,10 @@ const FALLBACK_HTML =
 const UI_PATH = resolve(import.meta.dirname ?? __dirname, "./ui/dist/index.html");
 
 /**
- * Read the conversations app's built UI HTML on each call. See
- * `platform/home/ui-resource.ts` for rationale (per-request read
- * enables hot reload after `bun run build:platform-apps` without a platform
- * restart).
+ * Read the conversations app's built UI HTML on each call. The in-process app
+ * dispatcher awaits this on every `resources/read`, so a developer can rebuild
+ * the UI (`bun run build:platform-apps`) and reload the iframe without
+ * restarting the platform.
  */
 export async function loadConversationsUi(): Promise<string> {
   if (existsSync(UI_PATH)) return readFileSync(UI_PATH, "utf-8");

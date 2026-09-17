@@ -2,7 +2,7 @@
   "manifest_version": "0.4",
   "name": "@nimblebraininc/home",
   "version": "0.1.0",
-  "description": "Workspace dashboard with activity briefings and raw activity data",
+  "description": "Raw workspace activity data",
   "author": {
     "name": "NimbleBrain Inc",
     "email": "hello@nimblebrain.ai"
@@ -11,17 +11,7 @@
     "ai.nimblebrain/host": {
       "host_version": "1.0",
       "name": "Home",
-      "icon": "house",
-      "placements": [
-        {
-          "slot": "sidebar",
-          "resourceUri": "ui://home/dashboard",
-          "route": "/",
-          "label": "Home",
-          "icon": "house",
-          "priority": 0
-        }
-      ]
+      "icon": "house"
     }
   }
 }

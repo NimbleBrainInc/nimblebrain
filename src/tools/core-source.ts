@@ -1243,7 +1243,7 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
           // No cached briefing yet (first generation), or an explicit
           // force_refresh: generate synchronously. generate() throws on LLM
           // failure → the outer catch turns it into an isError result, which
-          // the home UI renders as a retry state.
+          // the workspace overview renders as a retry state.
           const briefing = await generateBriefing(runtime, wsId, identity, homeConfig);
           briefingCache.set(briefing);
           return briefingOk(briefing, "Briefing generated.");

@@ -492,7 +492,7 @@ When total tools ≤30, all are surfaced directly. Above 30 with no skill matche
 | `nb__manage_identity` | Write or reset workspace agent identity override (admin only) |
 | `nb__version` | Platform version info |
 | `nb__workspace_info` | Workspace metadata, telemetry status |
-| `nb__briefing` | Generate personalized activity briefing (home dashboard) |
+| `nb__briefing` | Generate personalized activity briefing (workspace overview) |
 | `nb__manage_users` | Create, update, delete, or list users (admin only) |
 | `nb__manage_workspaces` | Workspace CRUD + member management (admin only) |
 | `nb__manage_connectors` | Browse, install, configure, and disconnect connectors |

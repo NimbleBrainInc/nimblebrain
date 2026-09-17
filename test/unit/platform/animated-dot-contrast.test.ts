@@ -106,7 +106,6 @@ const EXEMPT: Record<string, string> = Object.fromEntries(
     ["automations", ".skel", "loading skeleton — 'not yet loaded', which the layout already shows"],
     ["conversations", ".skel", "loading skeleton — as above"],
     ["files", ".skel", "loading skeleton — as above"],
-    ["home", ".skel", "loading skeleton — as above"],
     ["files", ".file-thumb-shimmer", "thumbnail placeholder — replaced by the image"],
     ["files", ".detail-shimmer", "detail-pane placeholder — replaced by content"],
   ].map(([connector, sel, why]) => [`${connector}::${sel}`, why]),

@@ -231,9 +231,6 @@ describe("MCP client e2e with nb tools", () => {
 // =============================================================================
 
 describe("POST /v1/tools/call — all core tools via Bridge proxy", () => {
-	// list_conversations already tested in core-registration.test.ts
-	// Test the remaining core tools here
-
 	it("list_apps returns array", async () => {
 		const res = await fetch(`${baseUrl}/v1/tools/call`, {
 			method: "POST",

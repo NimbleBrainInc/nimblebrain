@@ -8,23 +8,13 @@
 
 import { renderResource } from "./render.tsx";
 import { APP_NAV_SCRIPT } from "./scripts/app-nav.ts";
-import { CONVERSATIONS_SCRIPT } from "./scripts/conversations.ts";
 import { MODEL_SELECTOR_SCRIPT } from "./scripts/model-selector.ts";
-import { SETTINGS_SCRIPT } from "./scripts/settings.ts";
 import { SETTINGS_LINK_SCRIPT } from "./scripts/settings-link.ts";
-import {
-  APP_NAV_STYLES,
-  CONVERSATIONS_STYLES,
-  MODEL_SELECTOR_STYLES,
-  SETTINGS_LINK_STYLES,
-  SETTINGS_STYLES,
-} from "./styles.ts";
+import { APP_NAV_STYLES, MODEL_SELECTOR_STYLES, SETTINGS_LINK_STYLES } from "./styles.ts";
 
 const resources: Record<string, () => string> = {
-  conversations: () => renderResource(CONVERSATIONS_STYLES, CONVERSATIONS_SCRIPT),
   "app-nav": () => renderResource(APP_NAV_STYLES, APP_NAV_SCRIPT),
   "settings-link": () => renderResource(SETTINGS_LINK_STYLES, SETTINGS_LINK_SCRIPT),
-  settings: () => renderResource(SETTINGS_STYLES, SETTINGS_SCRIPT),
   "model-selector": () => renderResource(MODEL_SELECTOR_STYLES, MODEL_SELECTOR_SCRIPT),
 };
 

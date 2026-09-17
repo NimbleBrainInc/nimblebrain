@@ -4,10 +4,8 @@ import { buildCoreResourceMap } from "../../src/tools/core-resources/index.ts";
 const RESOURCES = buildCoreResourceMap();
 
 const ALL_NAMES = [
-	"conversations",
 	"app-nav",
 	"settings-link",
-	"settings",
 	"model-selector",
 ] as const;
 
@@ -31,22 +29,10 @@ describe("buildCoreResourceMap", () => {
 		});
 	}
 
-	it("conversations contains postMessage bridge code", () => {
-		const html = get("conversations")!;
-		expect(html).toContain("postMessage");
-		expect(html).toContain("tools/call");
-	});
-
 	it("app-nav contains postMessage bridge code", () => {
 		const html = get("app-nav")!;
 		expect(html).toContain("postMessage");
 		expect(html).toContain("tools/call");
-	});
-
-	it("conversations includes search input", () => {
-		const html = get("conversations")!;
-		expect(html).toContain('id="search"');
-		expect(html).toContain("Search conversations");
 	});
 
 	it("all resources are self-contained (no external script/link tags)", () => {
@@ -66,26 +52,5 @@ describe("buildCoreResourceMap", () => {
 		const html = get("model-selector")!;
 		expect(html).toContain("model-input");
 		expect(html).toContain("set_model_config");
-	});
-
-	it("settings resource contains the bridge preamble", () => {
-		const html = get("settings")!;
-		expect(html).toContain("Synapse");
-		expect(html).toContain("callTool");
-	});
-
-	it("settings resource calls settings_manifest on load", () => {
-		const html = get("settings")!;
-		expect(html).toContain('callTool("settings_manifest"');
-	});
-
-	it("settings resource contains a tab container element", () => {
-		const html = get("settings")!;
-		expect(html).toContain('id="tab-bar"');
-	});
-
-	it("settings resource contains a content container element", () => {
-		const html = get("settings")!;
-		expect(html).toContain('id="content"');
 	});
 });
