@@ -248,8 +248,7 @@ interface ConversationSlice {
    *  the reconcile can't re-enter itself indefinitely. */
   resumeRefetched: boolean;
   /** True once full history is loaded (loadConversation) or the conversation
-   *  was authored in this session (sendTurn / new draft). A dot-only probe
-   *  leaves it false so opening the conversation still fetches full history. */
+   *  was authored in this session (sendTurn / new draft). */
   hydrated: boolean;
   lastActiveAt: number;
   snapshot: ChatSnapshot;
@@ -477,17 +476,12 @@ export interface ChatStore {
   subscribeDraft(key: string, cb: () => void): () => void;
   /** Merge a patch into a conversation's draft, creating its slice if needed. */
   setDraft(key: string, patch: Partial<ComposerDraft>): void;
-  getStreamingIds(): string[];
-  subscribeStreamingIds(cb: () => void): () => void;
   markActive(key: string): void;
   markInactive(key: string): void;
   /** Send a message: start a server turn, then watch its stream. */
   sendTurn(key: string, params: StartTurnParams, hooks?: StartTurnHooks): Promise<void>;
   /** Load persisted history and attach to any in-flight turn. */
   loadConversation(id: string): Promise<void>;
-  /** Probe whether a conversation is generating (restores dots on reload),
-   *  without fetching message history. */
-  probeConversation(id: string): void;
   /** Set a conversation's title (from the live `conversation.title` SSE).
    *  No-op if the conversation has no slice in this tab. */
   setTitle(conversationId: string, title: string): void;
@@ -518,9 +512,6 @@ export function createChatStore(): ChatStore {
   const listeners = new Map<string, Set<() => void>>();
   const draftListeners = new Map<string, Set<() => void>>();
   const activeCounts = new Map<string, number>();
-
-  let streamingIds: string[] = [];
-  const streamingListeners = new Set<() => void>();
 
   // -- snapshot + notification --
 
@@ -565,22 +556,9 @@ export function createChatStore(): ChatStore {
     notifyDraft(slice);
   }
 
-  function recomputeStreamingIds(): void {
-    const ids = new Set<string>();
-    for (const slice of allSlices) {
-      if (slice.isStreaming && slice.conversationId) ids.add(slice.conversationId);
-    }
-    const next = [...ids].sort();
-    if (next.length !== streamingIds.length || next.some((id, i) => id !== streamingIds[i])) {
-      streamingIds = next;
-      for (const cb of streamingListeners) cb();
-    }
-  }
-
   function commit(slice: ConversationSlice): void {
     slice.snapshot = buildSnapshot(slice);
     for (const key of slice.keys) notifyKey(key);
-    recomputeStreamingIds();
   }
 
   // -- slice lifecycle --
@@ -738,7 +716,7 @@ export function createChatStore(): ChatStore {
   function recoverAbandonedTail(slice: ConversationSlice, conversationId: string): ResumeOutcome {
     closeConnection(slice);
     // The server just reported no run at all, so a slice still flagged
-    // streaming — pinned by an earlier probe that did catch a live turn — is
+    // streaming — pinned by an earlier connection that did catch a live turn — is
     // holding a stale belief. Clear it here rather than only in
     // `settleAbandonedTail`, because `loadConversation` early-returns for a
     // hydrated slice it thinks is live: the refetch below would silently no-op
@@ -888,7 +866,7 @@ export function createChatStore(): ChatStore {
         // start-failure does (the user's message really was sent).
         //
         // Null the connection like every other terminal path. Otherwise
-        // `loadConversation` / `probeConversation` see a truthy `connection`
+        // `loadConversation` sees a truthy `connection`
         // and skip refetching, so reopening the conversation in-app can't
         // recover the persisted result (only a full page reload would).
         closeConnection(slice);
@@ -1288,9 +1266,9 @@ export function createChatStore(): ChatStore {
 
   async function loadConversation(id: string): Promise<void> {
     const existing = byKey.get(id);
-    // Already fully loaded and live — keep the stream, don't refetch. A
-    // dot-only probe (connection but not hydrated) falls through so opening
-    // the conversation fetches its full history.
+    // Already fully loaded and live — keep the stream, don't refetch. An
+    // unhydrated slice falls through so opening the conversation fetches its
+    // full history.
     if (existing?.hydrated && (existing.isStreaming || existing.connection)) {
       existing.lastActiveAt = Date.now();
       return;
@@ -1337,22 +1315,6 @@ export function createChatStore(): ChatStore {
     void cancelChatTurn(slice.conversationId).catch((err) => {
       console.warn("[chat-store] cancel failed", err);
     });
-  }
-
-  /**
-   * Lightweight "is this conversation generating?" probe — used on reload to
-   * restore background streaming dots without fetching message history. Opens
-   * a resume subscription: if the server says the turn is active, the slice
-   * flips to streaming (→ `getStreamingIds` → dot) and tails live; if not, the
-   * connection closes and the slice stays idle. Leaves `hydrated` false so a
-   * later open still loads full history.
-   */
-  function probeConversation(id: string): void {
-    const existing = byKey.get(id);
-    if (existing?.isStreaming || existing?.connection) return; // already live/probed
-    ensureSlice(id, { conversationId: id });
-    const slice = byKey.get(id);
-    if (slice) openConnection(slice, id, true);
   }
 
   // -- retry / simulate --
@@ -1402,14 +1364,12 @@ export function createChatStore(): ChatStore {
     byKey.clear();
     allSlices.clear();
     activeCounts.clear();
-    streamingIds = [];
     for (const set of listeners.values()) {
       for (const cb of set) cb();
     }
     for (const set of draftListeners.values()) {
       for (const cb of set) cb();
     }
-    for (const cb of streamingListeners) cb();
   }
 
   function closeAllConnections(): void {
@@ -1478,13 +1438,6 @@ export function createChatStore(): ChatStore {
         if (s.size === 0) listeners.delete(key);
       };
     },
-    getStreamingIds() {
-      return streamingIds;
-    },
-    subscribeStreamingIds(cb) {
-      streamingListeners.add(cb);
-      return () => streamingListeners.delete(cb);
-    },
     markActive(key) {
       activeCounts.set(key, (activeCounts.get(key) ?? 0) + 1);
       const slice = byKey.get(key);
@@ -1497,7 +1450,6 @@ export function createChatStore(): ChatStore {
     },
     sendTurn,
     loadConversation,
-    probeConversation,
     setTitle(conversationId, title) {
       const slice = byKey.get(conversationId);
       if (!slice || slice.title === title) return;
