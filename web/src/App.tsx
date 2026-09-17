@@ -351,7 +351,7 @@ function AuthenticatedAppContent({
   );
 
   // Collect all routable placements from main + sidebar (deduplicated by route).
-  // Sidebar placements can have routes too (e.g., Home at "/", Conversations).
+  // Sidebar placements can have routes too (e.g., Conversations).
   const mainPlacementRoutes = mainRoutes();
   const sidebarRoutes = forSlot("sidebar").filter(
     (p) => p.route && !p.slot.startsWith("sidebar.bottom"),
@@ -365,11 +365,9 @@ function AuthenticatedAppContent({
     }
   }
 
-  // App placements: everything routable except the connector-home placement
-  // (route "/"), which the shell no longer renders directly. Home `/` is
-  // now `GlobalHomePage` (workspace-agnostic) and `/w/<slug>/` is
-  // `WorkspaceOverviewPage` (app grid). The connector-home concept stays in
-  // the placement registry for now in case a future surface needs it.
+  // App placements: everything routable except route "/", which is the shell's
+  // own: `/` is `GlobalHomePage` (workspace-agnostic) and `/w/<slug>/` is
+  // `WorkspaceOverviewPage` (app grid).
   // Identity apps (conversations, …) are also excluded from the app grid set —
   // they render at their own segment under `/w/<slug>` (see
   // `identityAppPlacements`), not as `app/<route>`.

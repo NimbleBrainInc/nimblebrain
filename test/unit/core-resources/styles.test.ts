@@ -2,10 +2,8 @@ import { describe, expect, it } from "bun:test";
 import {
 	APP_NAV_STYLES,
 	BASE_STYLES,
-	CONVERSATIONS_STYLES,
 	MODEL_SELECTOR_STYLES,
 	SETTINGS_LINK_STYLES,
-	SETTINGS_STYLES,
 } from "../../../src/tools/core-resources/styles.ts";
 
 describe("core-resources styles use CSS variables", () => {
@@ -27,11 +25,9 @@ describe("core-resources styles use CSS variables", () => {
 	it("all style constants have balanced parentheses", () => {
 		const styles = [
 			BASE_STYLES,
-			CONVERSATIONS_STYLES,
-			APP_NAV_STYLES,
+					APP_NAV_STYLES,
 			SETTINGS_LINK_STYLES,
-			SETTINGS_STYLES,
-			MODEL_SELECTOR_STYLES,
+					MODEL_SELECTOR_STYLES,
 		];
 		for (const css of styles) {
 			const opens = (css.match(/\(/g) || []).length;
@@ -45,8 +41,7 @@ describe("core-resources styles use CSS variables", () => {
 		// Strategy: strip all var(...) and rgba(...) blocks, then check for remaining hex colors
 		const styles = [
 			BASE_STYLES,
-			CONVERSATIONS_STYLES,
-			APP_NAV_STYLES,
+					APP_NAV_STYLES,
 			SETTINGS_LINK_STYLES,
 			MODEL_SELECTOR_STYLES,
 		];
@@ -61,9 +56,4 @@ describe("core-resources styles use CSS variables", () => {
 		}
 	});
 
-	it("SETTINGS_STYLES uses NB extension tokens for status colors", () => {
-		expect(SETTINGS_STYLES).toContain("--nb-color-success");
-		expect(SETTINGS_STYLES).toContain("--nb-color-danger");
-		expect(SETTINGS_STYLES).toContain("color-mix(");
-	});
 });

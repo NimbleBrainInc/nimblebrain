@@ -85,9 +85,9 @@ describe("GET /v1/apps/nb/resources/:path", () => {
 		return contents?.[0]?.text ?? "";
 	}
 
-	it("returns HTML for conversations", async () => {
+	it("returns HTML for app-nav", async () => {
 		const res = await fetch(
-			`${baseUrl}/v1/apps/nb/resources/conversations`,
+			`${baseUrl}/v1/apps/nb/resources/app-nav`,
 			{ headers: { "X-Workspace-Id": TEST_WORKSPACE_ID } },
 		);
 		expect(res.status).toBe(200);
@@ -98,14 +98,8 @@ describe("GET /v1/apps/nb/resources/:path", () => {
 		expect(html).toContain("postMessage");
 	});
 
-	it("returns HTML for all 5 core resources", async () => {
-		const resources = [
-			"conversations",
-			"app-nav",
-			"settings-link",
-			"settings",
-			"model-selector",
-		];
+	it("returns HTML for every core resource", async () => {
+		const resources = ["app-nav", "settings-link", "model-selector"];
 		for (const name of resources) {
 			const res = await fetch(
 				`${baseUrl}/v1/apps/nb/resources/${name}`,

@@ -3,21 +3,14 @@ import { textContent } from "../../engine/content-helpers.ts";
 import type { EventSink } from "../../engine/types.ts";
 import type { Runtime } from "../../runtime/runtime.ts";
 import { ActivityCollector } from "../../services/activity-collector.ts";
-import {
-  defineInProcessApp,
-  type InProcessTool,
-  MCP_APP_MIME_TYPE,
-} from "../../tools/in-process-app.ts";
+import { defineInProcessApp, type InProcessTool } from "../../tools/in-process-app.ts";
 import type { McpSource } from "../../tools/mcp-source.ts";
 import { HomeActivityInput } from "../schemas/home.ts";
-import { loadHomeUi } from "./ui-resource.ts";
 
 /**
  * Create the "home" platform source — an in-process MCP server.
  *
  * Tools: activity
- * Resources: ui://home/dashboard (React SPA)
- * Placements: sidebar home link at priority 0
  */
 export function createHomeSource(runtime: Runtime, eventSink: EventSink): McpSource {
   const tools: InProcessTool[] = [
@@ -92,26 +85,11 @@ export function createHomeSource(runtime: Runtime, eventSink: EventSink): McpSou
     },
   ];
 
-  const resources = new Map([
-    ["ui://home/dashboard", { text: loadHomeUi, mimeType: MCP_APP_MIME_TYPE }],
-  ]);
-
   return defineInProcessApp(
     {
       name: "home",
       version: "1.0.0",
       tools,
-      resources,
-      placements: [
-        {
-          slot: "sidebar",
-          resourceUri: "ui://home/dashboard",
-          route: "/",
-          label: "Home",
-          icon: "house",
-          priority: 0,
-        },
-      ],
     },
     eventSink,
   );

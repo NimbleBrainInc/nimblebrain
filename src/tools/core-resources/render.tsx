@@ -39,12 +39,3 @@ export function renderResource(styles: string, script: string, children?: React.
     )
   );
 }
-
-/**
- * Render an HTML fragment for injection into a parent page (e.g., settings shell).
- * Returns style + container div + script WITHOUT the full HTML/head/body wrapper
- * and WITHOUT the bridge runtime (parent page already has it).
- */
-export function renderFragment(styles: string, script: string): string {
-  return `<style>${styles}</style><div id="section-root"></div><script>(function(){${script}})()</script>`;
-}
