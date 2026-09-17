@@ -526,28 +526,70 @@ describe("ai.nimblebrain/request-file", () => {
   // picker hung with no error. Both paths are asserted on the wire, because the
   // wrapper is the whole fix and the old shapes were also "truthy and plausible".
   //
-  // The OS picker cannot be opened here, so each path is driven at its own seam:
-  // a cancel through the focus fallback the bridge installs, and a selection
-  // through a stub input whose `click()` fires `change` with files attached.
+  // The OS picker cannot be opened here, so each path is driven at its own
+  // seam: a cancel through the `cancel` event the browser fires on the input,
+  // and a selection through a stub input whose `click()` fires `change` with
+  // files attached.
+  //
+  // The cancel case drives the input's own event and nothing else. Dispatching
+  // a `window` focus instead would assert the shape of an answer while leaving
+  // the thing that actually broke — whether one is sent at all — untested: the
+  // dialog is opened from inside an app iframe, where that focus does not
+  // reliably arrive.
 
   test("a cancel answers { files: [] }, not null", async () => {
     const frame = mount();
     await handshake(frame);
 
+    // Capture the input the bridge creates, so the test fires `cancel` on the
+    // same element rather than on a window it does not settle from.
+    const origCreate = document.createElement.bind(document);
+    let picker: HTMLInputElement | undefined;
+    document.createElement = ((tag: string) => {
+      const el = origCreate(tag) as HTMLInputElement;
+      if (tag === "input") {
+        picker = el;
+        // The bridge calls click() to open the dialog; dismiss it instead.
+        el.click = () => {
+          el.dispatchEvent(new (window as unknown as { Event: typeof Event }).Event("cancel"));
+        };
+      }
+      return el;
+    }) as typeof document.createElement;
+
+    try {
+      frame.send({
+        jsonrpc: "2.0",
+        id: "pick-cancel",
+        method: REQUEST_FILE_METHOD,
+        params: { multiple: false },
+      });
+
+      const reply = (await frame.waitFor(isReplyTo("pick-cancel"), 2000)) as { result: unknown };
+      expect(reply.result).toEqual({ files: [] });
+      expect(picker, "the bridge must create an input to open the dialog").toBeDefined();
+    } finally {
+      document.createElement = origCreate;
+    }
+  });
+
+  test("a window focus while the dialog is open answers nothing", async () => {
+    // The regression guard. A focus-gated settle answered `{ files: [] }` with
+    // the dialog still on screen, and the user's later selection then landed on
+    // an already-settled promise and was dropped. Focus must decide nothing.
+    const frame = mount();
+    await handshake(frame);
+
     frame.send({
       jsonrpc: "2.0",
-      id: "pick-cancel",
+      id: "pick-focus",
       method: REQUEST_FILE_METHOD,
-      // `multiple: false` is the case that used to answer a bare `null`.
       params: { multiple: false },
     });
 
-    // No `change` event fires on a cancel; the bridge detects it when focus
-    // returns to the window, then settles 300ms later.
     window.dispatchEvent(new (window as unknown as { Event: typeof Event }).Event("focus"));
 
-    const reply = (await frame.waitFor(isReplyTo("pick-cancel"), 2000)) as { result: unknown };
-    expect(reply.result).toEqual({ files: [] });
+    await expect(frame.waitFor(isReplyTo("pick-focus"), 600)).rejects.toThrow();
   });
 
   test("a selection answers { files: [...] } for a single file", async () => {
