@@ -15,11 +15,11 @@ import { FONT_FACES_CONTEXT_KEY } from "../../../web/src/bridge/fonts.ts";
 const WORKSPACE = { id: "ws_example00000000", name: "Example", isPersonal: false };
 
 /** Keys the host context is allowed to carry. */
-const ALLOWED = new Set(["workspace", "theme", "styles", "forceRefresh", FONT_FACES_CONTEXT_KEY]);
+const ALLOWED = new Set(["workspace", "theme", "styles", FONT_FACES_CONTEXT_KEY]);
 
 describe("host context", () => {
   test("handshake extensions carry no app-specific key", () => {
-    const keys = Object.keys(buildHostExtensions(WORKSPACE, true));
+    const keys = Object.keys(buildHostExtensions(WORKSPACE));
     expect(keys.filter((k) => !ALLOWED.has(k))).toEqual([]);
   });
 

@@ -2359,8 +2359,7 @@ export class Runtime {
    * `conversation.workspaceId`: the SSE layer scopes `scope: "workspace"` events
    * to clients whose membership set contains this wsId. Conversations are
    * owner-scoped and the owner is always a member of their own personal
-   * workspace, so this reaches exactly the owner's tabs. (The iframe list patch
-   * routes by `conversationId`, unaffected either way.)
+   * workspace, so this reaches exactly the owner's tabs.
    */
   private maybeGenerateTitle(
     conversation: Conversation,

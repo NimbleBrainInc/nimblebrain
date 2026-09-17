@@ -147,21 +147,6 @@ export function MessageInput({
     if (!elsewhere) textareaRef.current?.focus();
   }, [busy]);
 
-  // Listen for nb:prompt events to pre-fill the input
-  useEffect(() => {
-    function handlePrompt(e: Event) {
-      const prompt = (e as CustomEvent<{ prompt: string }>).detail?.prompt;
-      if (prompt) {
-        setDraft({ text: prompt });
-        requestAnimationFrame(() => {
-          textareaRef.current?.focus();
-        });
-      }
-    }
-    window.addEventListener("nb:prompt", handlePrompt);
-    return () => window.removeEventListener("nb:prompt", handlePrompt);
-  }, [setDraft]);
-
   const addFiles = useCallback(
     (newFiles: FileList | File[]) => {
       const arr = Array.from(newFiles);

@@ -23,8 +23,7 @@
 //     relay in hooks/useServerNotificationRelay.ts
 //
 // NimbleBrain extensions (synapse/ namespace — no spec equivalent):
-//   synapse/action, synapse/download-file, synapse/keydown,
-//   synapse/request-file
+//   synapse/action, synapse/keydown, synapse/request-file
 // ---------------------------------------------------------------------------
 
 import {
@@ -358,14 +357,6 @@ export function createBridge(
       case "synapse/action":
         handleSynapseAction(msg.params, callbacks);
         break;
-
-      // -----------------------------------------------------------------
-      // Extension: synapse/download-file — trigger browser download
-      // -----------------------------------------------------------------
-      case "synapse/download-file": {
-        triggerDownload(msg.params.data, msg.params.filename, msg.params.mimeType);
-        break;
-      }
 
       // -----------------------------------------------------------------
       // Extension: synapse/request-file — native file picker
@@ -920,10 +911,6 @@ function handleUiMessage(
       }
     }
   }
-  // NimbleBrain extension: prompt suggestion action
-  if (params.action === "prompt" && params.value) {
-    callbacks?.onPromptAction?.(params.value);
-  }
 }
 
 /**
@@ -1379,32 +1366,9 @@ async function processPickedFiles(
   return { files: result.files };
 }
 
-/**
- * Trigger a browser file download via a temporary anchor tag.
- *
- * `data` is typed as `Blob` but the schema's `Type.Unknown()` (Blob isn't
- * a JSON shape; structured-clone postMessage carries it transparently)
- * means a malformed app could ship a plain object or null. Validate at
- * the consumer instead of at the schema — Blob/string/ArrayBuffer/
- * ArrayBufferView are all valid `BlobPart`s; everything else is rejected
- * with a console warning rather than throwing inside the Blob ctor.
- */
-function triggerDownload(data: unknown, filename: string, mimeType: string): void {
-  const isBlobPart =
-    data instanceof Blob ||
-    typeof data === "string" ||
-    data instanceof ArrayBuffer ||
-    ArrayBuffer.isView(data);
-  if (!isBlobPart) {
-    console.warn(
-      `[bridge] synapse/download-file: ignoring data of unsupported type (got ${typeof data})`,
-    );
-    return;
-  }
-  const blob =
-    data instanceof Blob && data.type === mimeType
-      ? data
-      : new Blob([data as BlobPart], { type: mimeType });
+/** Trigger a browser file download via a temporary anchor tag. */
+function triggerDownload(data: string | Uint8Array, filename: string, mimeType: string): void {
+  const blob = new Blob([data as BlobPart], { type: mimeType });
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
   anchor.href = url;

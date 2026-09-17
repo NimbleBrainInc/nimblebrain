@@ -35,15 +35,8 @@ export type WorkspaceForHostContext = {
  * Non-spec extension keys to merge into the `ui/initialize` hostContext
  * response. Bridge merges these alongside theme/styles; spec fields win
  * on key collisions.
- *
- * `forceRefresh` is delivered only here (initialize), never in
- * `host-context-changed`, so an app reads it once at handshake and treats
- * later workspace switches as normal cache-backed loads.
  */
-export function buildHostExtensions(
-  workspace: WorkspaceForHostContext,
-  forceRefresh = false,
-): Record<string, unknown> {
+export function buildHostExtensions(workspace: WorkspaceForHostContext): Record<string, unknown> {
   const ext: Record<string, unknown> = workspace
     ? {
         workspace: {
@@ -62,7 +55,6 @@ export function buildHostExtensions(
   // host with no registered URLs must say nothing rather than send a reset.
   const fontFaces = getHostFontFaces();
   if (fontFaces.length > 0) ext[FONT_FACES_CONTEXT_KEY] = fontFaces;
-  if (forceRefresh) ext.forceRefresh = true;
   return ext;
 }
 
@@ -77,7 +69,7 @@ export function buildHostContext(
 ): Record<string, unknown> {
   const tokens = getThemeTokens(mode);
   return {
-    ...buildHostExtensions(workspace, false),
+    ...buildHostExtensions(workspace),
     theme: mode,
     styles: { variables: tokens },
   };

@@ -66,7 +66,6 @@ These have no spec equivalent and degrade to no-ops in non-NimbleBrain hosts.
 | Method | Direction | Description |
 |--------|-----------|-------------|
 | `synapse/action` | App → Host | Request a semantic action from the shell. |
-| `synapse/download-file` | App → Host | Trigger a file download in the browser. |
 | `synapse/request-file` | App → Host | Open native file picker; the host persists each chosen file to the workspace store and returns `{ files: [...] }`. See [below](#synapserequest-file). |
 | `synapse/keydown` | App → Host | Forward keyboard shortcuts to the host. |
 
@@ -404,19 +403,6 @@ The `_meta.context` object is optional. When present, it helps the agent underst
 
 The host answers `{}`, and `{ "isError": true }` when the handler threw — the message did not reach the conversation, so an app that cares can say so. Sent without an `id` it is a notification, which takes no answer — an app on an older SDK sends it that way.
 
-**Prompt suggestion** (NimbleBrain extension — pre-fills the chat input without sending):
-
-```json
-{
-  "jsonrpc": "2.0",
-  "method": "ui/message",
-  "params": {
-    "action": "prompt",
-    "value": "What's the weather forecast for this week?"
-  }
-}
-```
-
 ### `ui/open-link`
 
 Open a URL in a new browser tab with `noopener`.
@@ -476,7 +462,7 @@ If you're using the `@nimblebrain/synapse` SDK, `app.updateModelContext()` const
 
 ### `ui/download-file`
 
-Hand the user a file, as standard MCP resource blocks. This is the spec method; `synapse/download-file` below predates it and takes an already-materialised string.
+Hand the user a file, as standard MCP resource blocks.
 
 ```json
 {
@@ -524,22 +510,6 @@ A log line, forwarded to the host's browser console with your app's name. A noti
   "jsonrpc": "2.0",
   "method": "notifications/message",
   "params": { "level": "warning", "logger": "query", "data": "slow plan" }
-}
-```
-
-### `synapse/download-file`
-
-Trigger a file download. The `data` field is the file content as a string.
-
-```json
-{
-  "jsonrpc": "2.0",
-  "method": "synapse/download-file",
-  "params": {
-    "data": "city,temp,condition\nHonolulu,82,sunny\nNew York,45,cloudy",
-    "filename": "weather-report.csv",
-    "mimeType": "text/csv"
-  }
 }
 ```
 

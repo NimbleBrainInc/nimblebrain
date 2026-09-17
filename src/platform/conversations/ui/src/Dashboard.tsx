@@ -13,34 +13,6 @@ function errorMessage(err: unknown, fallback: string): string {
   return err instanceof Error ? err.message : fallback;
 }
 
-/** Parse a raw postMessage payload into a conversation-title patch, or null when it isn't one. */
-function parseTitleEvent(data: unknown): { conversationId: string; title: string } | null {
-  if (!data || typeof data !== "object") return null;
-  const msg = data as { jsonrpc?: unknown; method?: unknown; params?: unknown };
-  if (msg.jsonrpc !== "2.0" || msg.method !== "synapse/conversation-title") return null;
-  const params = msg.params;
-  if (!params || typeof params !== "object") return null;
-  const conversationId = (params as { conversationId?: unknown }).conversationId;
-  const title = (params as { title?: unknown }).title;
-  if (typeof conversationId !== "string" || typeof title !== "string") return null;
-  return { conversationId, title };
-}
-
-/** Return `conversations` with the matching row's title replaced, or the same array when no row matches. */
-function patchConversationTitle(
-  conversations: ListResult["conversations"],
-  conversationId: string,
-  title: string,
-): ListResult["conversations"] {
-  let changed = false;
-  const next = conversations.map((c) => {
-    if (c.id !== conversationId) return c;
-    changed = true;
-    return { ...c, title };
-  });
-  return changed ? next : conversations;
-}
-
 export function Dashboard() {
   const app = useApp();
   const action = useAction();
@@ -145,6 +117,8 @@ export function Dashboard() {
   // Refresh when this app's own server announces a write. `useDataSync` fires
   // only for the conversations source, so there is nothing to filter — and in
   // the background, so the list updates in place without a skeleton flicker.
+  // A generated title is one of those writes, so a new chat's row picks up its
+  // title here.
   useDataSync(() => {
     if (view === "list") {
       loadList({ background: true });
@@ -152,29 +126,6 @@ export function Dashboard() {
       runSearch(searchQuery, { background: true });
     }
   });
-
-  // Live conversation-title updates from auto-title generation.
-  //
-  // The host (App.tsx) forwards each `conversation.title` SSE event to this
-  // iframe via a `synapse/conversation-title` postMessage. We patch the
-  // matching row's title in-place instead of refetching the whole list — the
-  // alternative is announcing a resource change on title-resolve, which would
-  // refetch every row. Listening directly is cheaper and updates a single row
-  // without flicker.
-  //
-  // Raw `window.addEventListener` (not via the synapse SDK) because the SDK
-  // doesn't know this method; the host owns both ends, so the side channel
-  // is safe. The SDK's own `message` listener ignores envelopes whose
-  // `method` it doesn't recognize, so there's no double-handling.
-  useEffect(() => {
-    const handler = (event: MessageEvent) => {
-      const patch = parseTitleEvent(event.data);
-      if (!patch) return;
-      setConversations((prev) => patchConversationTitle(prev, patch.conversationId, patch.title));
-    };
-    window.addEventListener("message", handler);
-    return () => window.removeEventListener("message", handler);
-  }, []);
 
   const handleSelectFilter = useCallback(
     (key: FilterKey) => {

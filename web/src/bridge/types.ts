@@ -30,7 +30,6 @@ export type {
   SynapseRequestFileMessage,
   ToolsCallMessage,
   UiActionMessage,
-  UiDownloadFileMessage,
   UiKeydownMessage,
   UiMessageMessage,
   UiOpenLinkMessage,
@@ -62,8 +61,6 @@ export interface BridgeCallbacks {
   onResize?: (height: number) => void;
   /** Called when the iframe requests navigation to a route. */
   onNavigate?: (route: string) => void;
-  /** Called when an app requests a prompt to be pre-filled in the chat input. */
-  onPromptAction?: (prompt: string) => void;
   /** Called when the iframe requests a semantic action. */
   onAction?: (action: string, params: Record<string, unknown>) => void;
   /** Called when the iframe confirms handshake complete. */
