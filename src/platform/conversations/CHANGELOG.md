@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- The streaming dot reads `active` from each `conversations__list` entry, which
+  the server takes from the live turn state. It marks a reply generating on any
+  tab or device, and the runtime announces a turn starting and ending so the
+  list refreshes.
+
 ## 0.7.0
 
 ### Changed

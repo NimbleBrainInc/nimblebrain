@@ -16,20 +16,13 @@ function errorMessage(err: unknown, fallback: string): string {
 export function Dashboard() {
   const app = useApp();
   const action = useAction();
-  // Both pushed by the host via hostContext. `workspace` is the workspace the
-  // shell is focused on — used here ONLY as a change signal (refetch when the
-  // user switches workspace), never as a filter value: the server derives the
-  // workspace from the request itself, so this app sends no workspace argument.
-  // `streamingConversationIds` are the chats with an in-flight assistant turn
-  // in this tab (drive the live per-row indicator).
-  const { streamingConversationIds, workspace } = useHostContext<{
-    streamingConversationIds?: string[];
+  // Pushed by the host via hostContext: the workspace the shell is focused on —
+  // used here ONLY as a change signal (refetch when the user switches
+  // workspace), never as a filter value: the server derives the workspace from
+  // the request itself, so this app sends no workspace argument.
+  const { workspace } = useHostContext<{
     workspace?: { id: string; name: string; isPersonal?: boolean };
   }>();
-  const streamingIds = useMemo(
-    () => new Set(streamingConversationIds ?? []),
-    [streamingConversationIds],
-  );
   // A primitive (not the workspace object, whose identity churns per push) so a
   // refetch fires when the workspace actually changes and not on every push.
   const workspaceId = workspace?.id;
@@ -216,7 +209,6 @@ export function Dashboard() {
             groups={groups}
             activeFilter={activeFilter}
             totalConversations={conversations.length}
-            streamingIds={streamingIds}
             onOpen={handleOpenConversation}
           />
         )}

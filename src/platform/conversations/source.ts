@@ -216,7 +216,7 @@ export async function createConversationsSource(
     {
       name: "list",
       description:
-        "List conversations in the current workspace, with pagination, sorting, and filtering. Returns conversation metadata (title, timestamps, token counts, preview). Scoped to the workspace you are in — there is no cross-workspace listing, and no workspace argument to pass.",
+        "List conversations in the current workspace, with pagination, sorting, and filtering. Returns conversation metadata (title, timestamps, token counts, preview, and whether a reply is still generating as `active`). Scoped to the workspace you are in — there is no cross-workspace listing, and no workspace argument to pass.",
       inputSchema: ConversationsListInput,
       handler: withErrorHandling(async (input) => {
         const { index } = await getIndex();
@@ -227,7 +227,17 @@ export async function createConversationsSource(
           currentScope(),
           access,
         );
-        return { ...result, conversations: result.conversations.map(capSummary) };
+        // `active` is read per request from the RunBus, never cached in the
+        // index: a turn starting or ending does not rewrite the file header the
+        // index holds. The runtime announces both moments, so a view refetches
+        // and reads the new answer here.
+        return {
+          ...result,
+          conversations: result.conversations.map((summary) => ({
+            ...capSummary(summary),
+            active: runtime.isTurnActive(summary.id),
+          })),
+        };
       }),
     },
     {

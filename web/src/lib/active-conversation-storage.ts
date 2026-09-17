@@ -14,7 +14,6 @@
  */
 
 const KEY = "nb:activeConversationId";
-const STREAMING_KEY = "nb:streamingConversationIds";
 
 export function getSavedConversationId(): string | null {
   try {
@@ -31,30 +30,5 @@ export function setSavedConversationId(id: string | null): void {
     else sessionStorage.removeItem(KEY);
   } catch {
     // Best-effort — persistence is an enhancement, not a correctness path.
-  }
-}
-
-/**
- * Conversation ids that had an in-flight turn when the page was last alive.
- * On reload these are re-probed against the server (`isActive`) to restore the
- * list's streaming dots; finished ones self-heal (probe → not active → no dot).
- */
-export function getSavedStreamingIds(): string[] {
-  try {
-    const raw = sessionStorage.getItem(STREAMING_KEY);
-    if (!raw) return [];
-    const parsed: unknown = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed.filter((x): x is string => typeof x === "string") : [];
-  } catch {
-    return [];
-  }
-}
-
-export function setSavedStreamingIds(ids: string[]): void {
-  try {
-    if (ids.length > 0) sessionStorage.setItem(STREAMING_KEY, JSON.stringify(ids));
-    else sessionStorage.removeItem(STREAMING_KEY);
-  } catch {
-    // Best-effort.
   }
 }

@@ -21,19 +21,13 @@
 //     to the last in-flight conversation so the SSE viewer reconnects.
 // ---------------------------------------------------------------------------
 
-import { useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import { useLocation } from "react-router-dom";
 import type { UiChatContext } from "../bridge/types";
 import { useChatContext } from "../context/ChatContext";
 import { useChatPanelContext } from "../context/ChatPanelContext";
 import { useFocusedApp } from "../context/FocusedAppContext";
-import { chatStore } from "../hooks/chat-store";
-import {
-  getSavedConversationId,
-  getSavedStreamingIds,
-  setSavedConversationId,
-  setSavedStreamingIds,
-} from "../lib/active-conversation-storage";
+import { getSavedConversationId, setSavedConversationId } from "../lib/active-conversation-storage";
 import { useIsMobile } from "../lib/hooks/use-is-mobile";
 import type { AppContext, PlacementEntry } from "../types";
 import { SlotRenderer } from "./SlotRenderer";
@@ -44,26 +38,14 @@ import { SlotRenderer } from "./SlotRenderer";
  * reload resets the module, re-arming the restore.
  */
 let restoredLastConversation = false;
-/**
- * Snapshot of the persisted streaming-id set captured at module-eval time
- * (page load), before any persist effect overwrites sessionStorage with the
- * post-reload (empty) set.
- */
-const initialSavedStreamingIds = getSavedStreamingIds();
 
-/** Reopen the last-viewed conversation (per-tab) and re-probe the ones that were streaming before reload, so in-flight turns resume their viewer and streaming dots. */
+/** Reopen the last-viewed conversation (per-tab), so an in-flight turn resumes its viewer. */
 function restoreSavedConversation(chat: ReturnType<typeof useChatContext>) {
   const saved = getSavedConversationId();
   // Hydrate without forcing the panel open — its visibility is restored
   // independently from ChatPanelContext's persisted state. When the panel
   // is (re)opened it shows this conversation.
   if (saved) void chat.loadConversation(saved);
-  // Restore background streaming dots: probe each conversation that was
-  // generating before reload. Still-active ones light up; finished ones
-  // self-heal (probe → not active → no dot).
-  for (const id of initialSavedStreamingIds) {
-    if (id !== saved) chatStore.probeConversation(id);
-  }
 }
 
 interface AppWithChatProps {
@@ -119,16 +101,6 @@ export function AppWithChat({ placement, onNavigate }: AppWithChatProps) {
   useEffect(() => {
     setSavedConversationId(chat.conversationId);
   }, [chat.conversationId]);
-
-  // Persist the set of conversations with an in-flight turn so a reload can
-  // restore their streaming dots (re-probed against the server above).
-  const streamingIds = useSyncExternalStore(
-    chatStore.subscribeStreamingIds,
-    chatStore.getStreamingIds,
-  );
-  useEffect(() => {
-    setSavedStreamingIds(streamingIds);
-  }, [streamingIds]);
 
   const appContext = useMemo<AppContext>(
     () => ({
