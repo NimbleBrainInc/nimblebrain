@@ -2355,7 +2355,7 @@ async function persistResourceUploads(
  * Handle POST /v1/resources — multipart file upload to the workspace
  * file store. Stores each uploaded file, registers it, returns the
  * resulting FileEntry list. This is the byte-transport entry point used
- * by the bridge's `synapse/request-file` flow so the iframe never has
+ * by the bridge's `ai.nimblebrain/request-file` flow so the iframe never has
  * to base64-encode bytes into a tool-call argument.
  *
  * Workspace isolation comes from `workspaceId` (the validated `X-Workspace-Id`,

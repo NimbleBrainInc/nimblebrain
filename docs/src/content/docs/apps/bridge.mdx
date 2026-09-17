@@ -59,15 +59,15 @@ All messages use `window.postMessage` with JSON-RPC 2.0 envelopes:
 
 A request for any other method gets a JSON-RPC `-32601` (method not found) error, so the call fails right away instead of waiting. The host ignores any other notification.
 
-### NimbleBrain extensions (`synapse/`)
+### NimbleBrain extensions (`ai.nimblebrain/`)
 
-These have no spec equivalent and degrade to no-ops in non-NimbleBrain hosts.
+These have no spec equivalent. Each name is both the method and the identifier the host declares in `hostCapabilities.experimental`, and an SDK sends one only where the host declared it — so on a host that does not, they are no-ops rather than requests that hang.
 
 | Method | Direction | Description |
 |--------|-----------|-------------|
-| `synapse/action` | App → Host | Request a semantic action from the shell. |
-| `synapse/request-file` | App → Host | Open native file picker; the host persists each chosen file to the workspace store and returns `{ files: [...] }`. See [below](#synapserequest-file). |
-| `synapse/keydown` | App → Host | Forward keyboard shortcuts to the host. |
+| `ai.nimblebrain/action` | App → Host | Request a semantic action from the shell. |
+| `ai.nimblebrain/request-file` | App → Host | Open native file picker; the host persists each chosen file to the workspace store and returns `{ files: [...] }`. See [below](#ainimblebrainrequest-file). |
+| `ai.nimblebrain/keydown` | App → Host | Forward keyboard shortcuts to the host. |
 
 ## Initialization handshake
 
@@ -106,9 +106,13 @@ Until `initialized` arrives, the host posts the app nothing but the answers to i
       "serverTools": {},
       "serverResources": { "listChanged": true },
       "logging": {},
-      "tasks": { "cancel": {}, "requests": { "tools": { "call": {} } } },
+      "message": { "text": {} },
+      "updateModelContext": { "text": {}, "structuredContent": {} },
       "experimental": {
-        "io.modelcontextprotocol/tasks": { "cancel": {}, "requests": { "tools": { "call": {} } } }
+        "io.modelcontextprotocol/tasks": { "cancel": {}, "requests": { "tools": { "call": {} } } },
+        "ai.nimblebrain/action": {},
+        "ai.nimblebrain/request-file": {},
+        "ai.nimblebrain/keydown": {}
       }
     },
     "hostContext": {
@@ -117,6 +121,9 @@ Until `initialized` arrives, the host posts the app nothing but the answers to i
         "variables": {
           "--color-background-primary": "#0f172a",
           "--color-text-primary": "#e2e8f0"
+        },
+        "css": {
+          "fonts": "@font-face { font-family: 'Hanken Grotesk'; src: url('https://app.example.com/assets/hanken-grotesk.woff2') format('woff2'); font-weight: 100 900; font-style: normal; font-display: swap; }"
         }
       }
     }
@@ -131,13 +138,13 @@ Until `initialized` arrives, the host posts the app nothing but the answers to i
 }
 ```
 
-The MCP tasks capability appears twice, and neither copy is redundant yet.
+**Everything the host serves, it declares.** An SDK checks the declaration before it sends: without `serverTools` or `serverResources` a tool call or resource read throws at the call site, and without `message` or `updateModelContext` the send is dropped. So read `hostCapabilities` to decide whether to show a control, not to decide whether the host is NimbleBrain.
 
-`hostCapabilities.tasks` is what a released `@nimblebrain/synapse` build reads, off the raw response. The `experimental` key is for a client that validates the response against the ext-apps schema, such as the official `App`: that schema drops the unrecognized `tasks` field and, from ext-apps 1.7.5, keeps the contents of `experimental`. An app on an earlier ext-apps version sees neither. The SDK reads the `experimental` entry alone from its next release, and the sibling goes once no build in the field reads it.
+**Non-spec capabilities live in `experimental`, keyed by identifier** — MCP Tasks at `io.modelcontextprotocol/tasks`, the NimbleBrain extensions under `ai.nimblebrain/`. A client that validates the response against the ext-apps schema, such as the official `App`, drops any field the schema does not name and keeps the contents of `experimental` (from ext-apps 1.7.5). That is the whole reason they travel there rather than as siblings.
 
-Read **`io.modelcontextprotocol/tasks`** — the identifier MCP Tasks is registered under as an official MCP extension.
+The spec negotiates extensions under `capabilities.extensions`, not `experimental`. The ext-apps bridge capability object has no `extensions` field, so `experimental` carrying the extension identifier is as close as this channel reaches. When ext-apps adds one, the identifiers move there.
 
-The spec negotiates extensions under `capabilities.extensions`, not `experimental`. The ext-apps bridge capability object has no `extensions` field, so `experimental` carrying the extension identifier is as close as this channel reaches. When ext-apps adds one, the identifier moves there.
+**Host fonts arrive as `hostContext.styles.css.fonts`**, a block of `@font-face` CSS the app injects into its own document — an iframe inherits none from the shell, so a `--font-*` variable alone names a typeface the app cannot render. It is read once, at the handshake.
 
 <Aside type="tip">
 If you're using the `@nimblebrain/synapse` SDK, `connect()` handles the entire handshake for you.
@@ -389,7 +396,7 @@ Send a message to the conversation. Follows the ext-apps spec format with `role`
       "type": "text",
       "text": "Show me the 5-day forecast for Honolulu",
       "_meta": {
-        "context": {
+        "ai.nimblebrain/context": {
           "action": "forecast",
           "entity": { "type": "city", "id": "honolulu" }
         }
@@ -399,7 +406,7 @@ Send a message to the conversation. Follows the ext-apps spec format with `role`
 }
 ```
 
-The `_meta.context` object is optional. When present, it helps the agent understand the source and intent of the message.
+The `_meta["ai.nimblebrain/context"]` object is optional. When present, it helps the agent understand the source and intent of the message.
 
 The host answers `{}`, and `{ "isError": true }` when the handler threw — the message did not reach the conversation, so an app that cares can say so. Sent without an `id` it is a notification, which takes no answer — an app on an older SDK sends it that way.
 
@@ -513,14 +520,14 @@ A log line, forwarded to the host's browser console with your app's name. A noti
 }
 ```
 
-### `synapse/action`
+### `ai.nimblebrain/action`
 
 Request a semantic action from the shell. Your app declares *intent* and the shell resolves it — no need to know routes or layout details.
 
 ```json
 {
   "jsonrpc": "2.0",
-  "method": "synapse/action",
+  "method": "ai.nimblebrain/action",
   "params": {
     "action": "openConversation",
     "id": "conv_abc123"
@@ -547,10 +554,10 @@ The `action` field is required. All other fields in `params` are action-specific
 The bridge handles `navigate` directly. All other actions are dispatched to the registered `onAction` callback, or as an `nb:action` custom event on `window` if no callback is registered.
 
 <Aside type="note">
-`synapse/action` is a NimbleBrain platform extension — it is not part of the ext-apps specification.
+`ai.nimblebrain/action` is a NimbleBrain platform extension — it is not part of the ext-apps specification. The host declares it as `experimental["ai.nimblebrain/action"]`.
 </Aside>
 
-### `synapse/request-file`
+### `ai.nimblebrain/request-file`
 
 Open the OS file picker. The host uploads each chosen file to the workspace file store and answers with the persisted entries, so bytes never cross the iframe boundary.
 
@@ -559,7 +566,7 @@ Open the OS file picker. The host uploads each chosen file to the workspace file
 {
   "jsonrpc": "2.0",
   "id": "syn-7",
-  "method": "synapse/request-file",
+  "method": "ai.nimblebrain/request-file",
   "params": { "accept": "image/*", "multiple": true, "maxSize": 10485760 }
 }
 
@@ -580,7 +587,7 @@ Open the OS file picker. The host uploads each chosen file to the workspace file
 Every param is optional: `accept` takes the same value as an `<input type="file">` accept attribute and defaults to any file, `multiple` defaults to `false`, and `maxSize` defaults to 25 MB. `maxSize` is enforced in the browser as a fast fail; the server remains the source of truth, and an oversize file or a failed upload comes back as a JSON-RPC error rather than an empty list.
 
 <Aside type="note">
-`synapse/request-file` is a NimbleBrain platform extension — it is not part of the ext-apps specification.
+`ai.nimblebrain/request-file` is a NimbleBrain platform extension — it is not part of the ext-apps specification. The host declares it as `experimental["ai.nimblebrain/request-file"]`.
 </Aside>
 
 <Aside type="caution">

@@ -24,6 +24,7 @@
 
 import type { TSchema } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
+import { ACTION_METHOD, KEYDOWN_METHOD, REQUEST_FILE_METHOD } from "./extensions";
 import {
   ExtAppsInitializedNotification,
   ExtAppsInitializeRequest,
@@ -44,8 +45,13 @@ import {
   UiUpdateModelContextMessage,
 } from "./schemas";
 
-/** Map from `method` literal → schema for that envelope. */
-const SCHEMA_BY_METHOD: Record<string, TSchema> = {
+/**
+ * Map from `method` literal → schema for that envelope.
+ *
+ * Exported so a test can read the set of methods the host accepts and check it
+ * against what the host declares, rather than grepping the bridge's `switch`.
+ */
+export const SCHEMA_BY_METHOD: Record<string, TSchema> = {
   "tools/call": ToolsCallMessage,
   "resources/read": ResourcesReadMessage,
   "resources/list": ResourcesListMessage,
@@ -60,9 +66,9 @@ const SCHEMA_BY_METHOD: Record<string, TSchema> = {
   "ui/initialize": ExtAppsInitializeRequest,
   "ui/notifications/initialized": ExtAppsInitializedNotification,
   "ui/notifications/request-teardown": ExtAppsRequestTeardownNotification,
-  "synapse/action": UiActionMessage,
-  "synapse/request-file": SynapseRequestFileMessage,
-  "synapse/keydown": UiKeydownMessage,
+  [ACTION_METHOD]: UiActionMessage,
+  [REQUEST_FILE_METHOD]: SynapseRequestFileMessage,
+  [KEYDOWN_METHOD]: UiKeydownMessage,
 };
 
 export interface AppToHostValidationResult {

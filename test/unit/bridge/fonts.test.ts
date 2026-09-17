@@ -18,13 +18,16 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { buildCSP } from "../../../web/src/bridge/iframe.ts";
 import {
-  FONT_FACES_CONTEXT_KEY,
   FONT_SPECS,
   fontOrigin,
-  getHostFontFaces,
+  getHostFontFaceCss,
   registerHostFontUrls,
 } from "../../../web/src/bridge/fonts.ts";
-import { buildHostContext, buildHostExtensions } from "../../../web/src/bridge/host-extensions.ts";
+import {
+  buildHostContext,
+  buildHostExtensions,
+  buildHostStyles,
+} from "../../../web/src/bridge/host-extensions.ts";
 import { paletteToExtAppsTokens } from "../../../web/src/theme/projections.ts";
 
 /** A real host serves the shell over http(s), so the default fixture supplies a
@@ -45,9 +48,9 @@ function registerFixtures(): void {
 
 /** Hand back both globals this suite borrows. `fontUrls` is module state, so a
  *  registration made here would otherwise persist into every later test file in
- *  the same bun process — nothing asserts the exact shape of the extensions
- *  object today, so it fails silently rather than loudly. And other suites in
- *  this run install a DOM, so hand `window` back rather than deleting it. */
+ *  the same bun process — nothing asserts the exact host-context styles today,
+ *  so it fails silently rather than loudly. And other suites in this run install
+ *  a DOM, so hand `window` back rather than deleting it. */
 function restoreGlobals(): void {
   registerHostFontUrls({});
   if (priorWindow === undefined) {
@@ -97,15 +100,18 @@ describe("host font faces cover what the tokens name", () => {
     }
   });
 
-  test("each descriptor is well-formed for the SDK's normaliser", () => {
-    // `@nimblebrain/synapse` drops entries missing `family`/`src`, and a batch
-    // with nothing usable reads as "unchanged" — so a malformed descriptor
+  test("each rule is a parseable @font-face the app can inject", () => {
+    // The app injects this string verbatim into a `<style>` element. A browser
+    // discards a rule it cannot parse and reports nothing — so a malformed rule
     // fails open and silently, exactly like the orphan case above.
-    for (const face of getHostFontFaces()) {
-      expect(typeof face.family).toBe("string");
-      expect(face.family.length).toBeGreaterThan(0);
-      expect(face.src).toMatch(/^url\('.+'\)/);
-      expect(face.display).toBe("swap");
+    const rules = getHostFontFaceCss().split("\n");
+    expect(rules.length).toBe(FONT_SPECS.length);
+    for (const rule of rules) {
+      expect(rule).toStartWith("@font-face {");
+      expect(rule).toEndWith("}");
+      expect(rule).toMatch(/font-family: '[^']+';/);
+      expect(rule).toMatch(/src: url\('[^']+'\) format\('woff2'\);/);
+      expect(rule).toContain("font-display: swap;");
     }
   });
 
@@ -122,27 +128,29 @@ describe("host font faces cover what the tokens name", () => {
 });
 
 describe("faces reach the app through the host context", () => {
-  test("published on the handshake extensions", () => {
-    const ext = buildHostExtensions(null);
-    expect(Array.isArray(ext[FONT_FACES_CONTEXT_KEY])).toBe(true);
-    expect((ext[FONT_FACES_CONTEXT_KEY] as unknown[]).length).toBeGreaterThan(0);
+  test("published as the spec's styles.css.fonts", () => {
+    const styles = buildHostStyles({}) as { css?: { fonts?: string } };
+    expect(styles.css?.fonts).toContain("@font-face");
   });
 
   test("published on host-context-changed too", () => {
-    // Absent means "unchanged" to the SDK, so omitting them here would be
-    // harmless — but sending them keeps the two payloads consistent.
+    // The app loads the CSS once, at the handshake, so this carries nothing new
+    // — but one `styles` builder serves both payloads, and a second shape here
+    // would be the copy that drifts.
     const ctx = buildHostContext("dark", null);
-    expect(Array.isArray(ctx[FONT_FACES_CONTEXT_KEY])).toBe(true);
+    const styles = ctx.styles as { css?: { fonts?: string } };
+    expect(styles.css?.fonts).toContain("@font-face");
   });
 
-  test("rides a synapse/ extension key, not a spec field", () => {
-    // The ext-apps spec has no font-face field; `styles.variables` is a flat
-    // enum of CSS var names. Anything non-spec must be `synapse/`-prefixed so
-    // strict clients ignore rather than reject it.
-    expect(FONT_FACES_CONTEXT_KEY.startsWith("synapse/")).toBe(true);
+  test("the rules ride styles.css, never styles.variables", () => {
+    // `styles.variables` is a strict enum of CSS var names: a spec client
+    // rejects the whole host context over one key outside it. `styles.css.fonts`
+    // is the spec's own slot for this, which is why there is no extension key
+    // here any more.
     const ctx = buildHostContext("light", null);
     const styles = ctx.styles as { variables: Record<string, string> };
-    expect(Object.keys(styles.variables).some((k) => k.includes("fontFace"))).toBe(false);
+    expect(Object.keys(styles.variables).some((k) => k.includes("font-face"))).toBe(false);
+    expect(Object.keys(buildHostExtensions(null))).not.toContain("styles");
   });
 });
 
@@ -163,10 +171,9 @@ describe("CSP permits the origin the faces are served from", () => {
   test("the served URLs are absolute, so an opaque origin can resolve them", () => {
     // A relative `/assets/…` URL resolves against the FRAME's origin, which is
     // opaque — so it 404s. Absolute is required, not stylistic.
-    const faces = getHostFontFaces();
-    expect(faces.length).toBeGreaterThan(0);
-    for (const face of faces) {
-      const url = face.src.match(/url\('([^']+)'\)/)?.[1] ?? "";
+    const urls = [...getHostFontFaceCss().matchAll(/url\('([^']+)'\)/g)].map((m) => m[1]);
+    expect(urls.length).toBeGreaterThan(0);
+    for (const url of urls) {
       expect(url).toStartWith(`${HOST_ORIGIN}/`);
     }
     expect(fontOrigin()).toBe(HOST_ORIGIN);
@@ -178,9 +185,9 @@ describe("CSP permits the origin the faces are served from", () => {
     // explicitly — the fixture installs one, and other suites in this run
     // install a DOM, so asserting on ambient absence would be order-dependent.
     delete (globalThis as { window?: unknown }).window;
-    expect(() => getHostFontFaces()).not.toThrow();
+    expect(() => getHostFontFaceCss()).not.toThrow();
     expect(fontOrigin()).toBe("");
-    expect(getHostFontFaces()).toEqual([]);
+    expect(getHostFontFaceCss()).toBe("");
   });
 
   test("declared resourceDomains still append", () => {
@@ -212,62 +219,62 @@ describe("CSP permits the origin the faces are served from", () => {
   });
 });
 
-describe("building descriptors can never break the host", () => {
-  // `buildHostExtensions` runs during a placement render (SlotRenderer), so a
-  // throw in here unmounts the app. An earlier draft called `new URL(path,
-  // origin)` unguarded and took down five SlotRenderer tests when the test DOM
-  // reported an origin that isn't a URL. Typography must fail soft: no fonts
-  // rather than no app.
+describe("building the font CSS can never break the host", () => {
+  // `buildHostStyles` runs during a placement render (SlotRenderer), so a throw
+  // in here unmounts the app. An earlier draft called `new URL(path, origin)`
+  // unguarded and took down five SlotRenderer tests when the test DOM reported
+  // an origin that isn't a URL. Typography must fail soft: no fonts rather than
+  // no app.
   const BAD_ORIGINS = ["null", "", "about:blank", "not a url"];
 
   for (const origin of BAD_ORIGINS) {
     test(`origin ${JSON.stringify(origin)} degrades instead of throwing`, () => {
       (globalThis as { window?: unknown }).window = { location: { origin } };
-      expect(() => getHostFontFaces()).not.toThrow();
-      expect(() => buildHostExtensions(null)).not.toThrow();
+      expect(() => getHostFontFaceCss()).not.toThrow();
+      expect(() => buildHostStyles({})).not.toThrow();
       expect(() => buildCSP()).not.toThrow();
       // An unusable origin must not be smuggled into the policy, and must not
       // leave a hole where it would have gone.
       expect(fontOrigin()).toBe("");
       expect(buildCSP().split("; ")).toContain("font-src 'self' data:");
       // URLs ARE registered here (see the fixture) — the origin is what's
-      // unusable. Every face would carry an address nothing can fetch, so ship
-      // none and omit the key, rather than descriptors that are doomed to fail.
-      expect(getHostFontFaces()).toEqual([]);
-      expect(FONT_FACES_CONTEXT_KEY in buildHostExtensions(null)).toBe(false);
+      // unusable. Every rule would carry an address nothing can fetch, so ship
+      // none and omit `css`, rather than rules that are doomed to fail.
+      expect(getHostFontFaceCss()).toBe("");
+      expect("css" in buildHostStyles({})).toBe(false);
     });
   }
 
   test("a window with no location at all is survivable", () => {
     (globalThis as { window?: unknown }).window = {};
-    expect(() => getHostFontFaces()).not.toThrow();
+    expect(() => getHostFontFaceCss()).not.toThrow();
     expect(fontOrigin()).toBe("");
-    expect(getHostFontFaces()).toEqual([]);
+    expect(getHostFontFaceCss()).toBe("");
   });
 });
 
 describe("unregistered URLs mean no fonts, not a broken host", () => {
-  test("backend and root-unit importers get no faces, and the key is omitted", () => {
+  test("backend and root-unit importers get no faces, and `css` is omitted", () => {
     // `bridge/fonts.ts` is reachable from the shared bridge protocol, which the
     // root unit suite exercises without `web/` deps. It must therefore never
     // import the font packages — the browser entry injects the URLs. Absent
-    // that call, no faces, which the SDK reads as "host sends no fonts".
+    // that call, no faces, which is the supported "host sends no fonts" state.
     //
-    // Omitted, NOT sent as `[]`: the SDK reads an absent key as "unchanged" and
-    // an explicit empty list as "clear every managed face", so sending `[]` here
-    // would be an active reset dressed up as absence.
+    // Omitted, NOT sent as `""`: an app injects whatever string it is handed,
+    // and an empty `<style>` element is a thing to look at later and wonder
+    // about.
     registerHostFontUrls({});
-    expect(getHostFontFaces()).toEqual([]);
-    const ext = buildHostExtensions(null);
-    expect(FONT_FACES_CONTEXT_KEY in ext).toBe(false);
-    expect(FONT_FACES_CONTEXT_KEY in buildHostContext("dark", null)).toBe(false);
+    expect(getHostFontFaceCss()).toBe("");
+    expect("css" in buildHostStyles({})).toBe(false);
+    const styles = buildHostContext("dark", null).styles as Record<string, unknown>;
+    expect("css" in styles).toBe(false);
   });
 
   test("a partial registration degrades to fewer faces, not a malformed one", () => {
     registerHostFontUrls({});
     registerHostFontUrls({ [FONT_SPECS[0].family]: "/assets/one.woff2" });
-    const faces = getHostFontFaces();
-    expect(faces).toHaveLength(1);
-    expect(faces[0].family).toBe(FONT_SPECS[0].family);
+    const rules = getHostFontFaceCss().split("\n");
+    expect(rules).toHaveLength(1);
+    expect(rules[0]).toContain(`font-family: '${FONT_SPECS[0].family}';`);
   });
 });

@@ -22,8 +22,9 @@
 //     (relayed-notifications.ts), verbatim, via the `server.notification` SSE
 //     relay in hooks/useServerNotificationRelay.ts
 //
-// NimbleBrain extensions (synapse/ namespace — no spec equivalent):
-//   synapse/action, synapse/keydown, synapse/request-file
+// NimbleBrain extensions (ai.nimblebrain/ namespace — no spec equivalent):
+//   ai.nimblebrain/action, ai.nimblebrain/keydown, ai.nimblebrain/request-file
+//   Each is served only because it is declared: see host-capabilities.ts.
 // ---------------------------------------------------------------------------
 
 import {
@@ -44,7 +45,14 @@ import { isIdentityApp } from "../lib/identity-apps";
 import { appNameFromToolName } from "../lib/namespaced-tool";
 import { getMcpBridgeClient, withSessionRetry } from "../mcp-bridge-client";
 import { openAppChannel } from "./app-channel";
-import { serverCapabilities } from "./relayed-notifications";
+import {
+  ACTION_METHOD,
+  CHAT_CONTEXT_META_KEY,
+  KEYDOWN_METHOD,
+  REQUEST_FILE_METHOD,
+} from "./extensions";
+import { buildHostCapabilities } from "./host-capabilities";
+import { buildHostStyles } from "./host-extensions";
 import type { LoggingMessageNotification } from "./schemas";
 import { getHostThemeMode, getSpecThemeTokens } from "./theme";
 import type {
@@ -74,14 +82,6 @@ interface AppStateEntry {
   summary?: string;
   updatedAt: string;
 }
-
-/**
- * The identifier MCP Tasks is registered under as an official MCP extension
- * (`modelcontextprotocol/ext-tasks`). Official extensions use the
- * `io.modelcontextprotocol` vendor prefix; a third party uses a reversed domain
- * it owns.
- */
-const TASKS_EXTENSION_ID = "io.modelcontextprotocol/tasks";
 
 const appStateStore = new Map<string, AppStateEntry>();
 
@@ -352,23 +352,23 @@ export function createBridge(
         break;
 
       // -----------------------------------------------------------------
-      // Extension: synapse/action — semantic host actions
+      // Extension: ai.nimblebrain/action — semantic host actions
       // -----------------------------------------------------------------
-      case "synapse/action":
+      case ACTION_METHOD:
         handleSynapseAction(msg.params, callbacks);
         break;
 
       // -----------------------------------------------------------------
-      // Extension: synapse/request-file — native file picker
+      // Extension: ai.nimblebrain/request-file — native file picker
       // -----------------------------------------------------------------
-      case "synapse/request-file":
+      case REQUEST_FILE_METHOD:
         handleRequestFile(msg.params, msg.id, postToIframe);
         break;
 
       // -----------------------------------------------------------------
-      // Extension: synapse/keydown — keyboard shortcut forwarding
+      // Extension: ai.nimblebrain/keydown — keyboard shortcut forwarding
       // -----------------------------------------------------------------
-      case "synapse/keydown": {
+      case KEYDOWN_METHOD: {
         const { key, ctrlKey, metaKey, shiftKey, altKey } = msg.params;
         document.dispatchEvent(
           new KeyboardEvent("keydown", {
@@ -709,40 +709,7 @@ function handleInitialize(
   // custom properties — extensions there would tear down the connection.
   //
   const extensions = readHostExtensions(callbacks);
-  const tasks = {
-    cancel: {},
-    requests: { tools: { call: {} } },
-  };
-  const hostCapabilities = {
-    openLinks: {},
-    downloadFile: {},
-    // The server's tool calls and resource reads/listings are proxied (above);
-    // `listChanged` is set for each notification the host relays to the
-    // server's views, and only those (relayed-notifications.ts).
-    ...serverCapabilities(),
-    logging: {},
-    // The MCP tasks utility, advertised in two places, neither redundant yet.
-    //
-    // `McpUiHostCapabilities` names no `tasks` field, so a client that parses
-    // the handshake result against the spec's schema — the official ext-apps
-    // `App` — strips it. `experimental` is the one place in `hostCapabilities`
-    // whose contents survive that parse, keyed by extension identifier. The
-    // parse runs in the app's copy of ext-apps, so a key there reaches only
-    // apps on 1.7.5 or later; earlier versions empty `experimental` too.
-    //
-    // The sibling `tasks` field is what the SDK reads today, off the raw
-    // result. It goes once every consumer reads the identifier instead.
-    //
-    // The spec negotiates extensions under `capabilities.extensions`, not
-    // `experimental`. The ext-apps bridge capability object has no such field
-    // — parsing one with `extensions` set drops it — so this is as close to the
-    // spec's mechanism as this channel currently reaches. When ext-apps adds
-    // `extensions` to the bridge, the identifier moves there.
-    tasks,
-    experimental: {
-      [TASKS_EXTENSION_ID]: tasks,
-    },
-  };
+  const hostCapabilities = buildHostCapabilities();
   const response: ExtAppsInitializeResponse = {
     jsonrpc: "2.0",
     id,
@@ -759,9 +726,7 @@ function handleInitialize(
         // srcdoc iframe (which itself runs in the "null" origin).
         origin: window.location.origin,
         theme: extMode,
-        styles: {
-          variables: extTokens,
-        },
+        styles: buildHostStyles(extTokens),
       },
     },
   };
@@ -899,7 +864,7 @@ function handleUiMessage(
   if (Array.isArray(params.content)) {
     const textBlock = params.content.find((b: Record<string, unknown>) => b.type === "text");
     if (textBlock?.text) {
-      const context = textBlock._meta?.context as UiChatContext | undefined;
+      const context = textBlock._meta?.[CHAT_CONTEXT_META_KEY] as UiChatContext | undefined;
       if (callbacks?.onChat) {
         callbacks.onChat(textBlock.text, context);
       } else {
@@ -961,7 +926,7 @@ function handleUpdateModelContext(
 }
 
 /**
- * Handle a synapse/action: route `navigate` to onNavigate, otherwise invoke
+ * Handle an ai.nimblebrain/action: route `navigate` to onNavigate, otherwise invoke
  * onAction (or dispatch an `nb:action` event when no callback is wired).
  */
 function handleSynapseAction(
@@ -981,7 +946,7 @@ function handleSynapseAction(
 }
 
 /**
- * Handle a synapse/request-file: open the native file picker and forward the
+ * Handle an ai.nimblebrain/request-file: open the native file picker and forward the
  * uploaded entries — or a JSON-RPC `-32602` error — back to the iframe.
  */
 function handleRequestFile(
@@ -1333,7 +1298,7 @@ async function pickFiles(
 }
 
 /**
- * The `synapse/request-file` result. A JSON-RPC result is an object, and MCP
+ * The `ai.nimblebrain/request-file` result. A JSON-RPC result is an object, and MCP
  * types it as one, so the entries are wrapped rather than sent as a bare array
  * — a client that validates against the spec cannot parse a bare array or
  * `null` and never settles the call. One shape covers both pickers: the SDK's

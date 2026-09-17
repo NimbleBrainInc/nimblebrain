@@ -9,6 +9,7 @@
  *   - Non-object → fail
  */
 import { describe, expect, test } from "bun:test";
+import { KEYDOWN_METHOD } from "../../web/src/bridge/extensions.ts";
 import { validateAppToHostMessage } from "../../web/src/bridge/validate.ts";
 
 describe("validateAppToHostMessage", () => {
@@ -68,10 +69,10 @@ describe("validateAppToHostMessage", () => {
     expect(result.ok).toBe(true);
   });
 
-  test("accepts a synapse/keydown envelope", () => {
+  test("accepts an ai.nimblebrain/keydown envelope", () => {
     const result = validateAppToHostMessage({
       jsonrpc: "2.0",
-      method: "synapse/keydown",
+      method: KEYDOWN_METHOD,
       params: {
         key: "Escape",
         ctrlKey: false,
@@ -81,13 +82,13 @@ describe("validateAppToHostMessage", () => {
       },
     });
     expect(result.ok).toBe(true);
-    expect(result.method).toBe("synapse/keydown");
+    expect(result.method).toBe(KEYDOWN_METHOD);
   });
 
-  test("rejects synapse/keydown with non-boolean modifier", () => {
+  test("rejects ai.nimblebrain/keydown with non-boolean modifier", () => {
     const result = validateAppToHostMessage({
       jsonrpc: "2.0",
-      method: "synapse/keydown",
+      method: KEYDOWN_METHOD,
       params: {
         key: "Escape",
         ctrlKey: "false",

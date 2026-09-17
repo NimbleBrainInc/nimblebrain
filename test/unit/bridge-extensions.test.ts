@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+import { CHAT_CONTEXT_META_KEY } from "../../web/src/bridge/extensions.ts";
 import type { BridgeCallbacks } from "../../web/src/bridge/types.ts";
 
 // ---------------------------------------------------------------------------
@@ -159,7 +160,7 @@ describe("Bridge — ui/message (spec format)", () => {
     handle.destroy();
   });
 
-  it("extracts _meta.context from content blocks", () => {
+  it("extracts the chat context from a text block's _meta", () => {
     const { iframe } = makeFakeIframe();
     const received: Array<{ msg: string; ctx: unknown }> = [];
     const handle = createBridge(iframe, "test-app", {
@@ -171,7 +172,7 @@ describe("Bridge — ui/message (spec format)", () => {
       method: "ui/message",
       params: {
         role: "user",
-        content: [{ type: "text", text: "with context", _meta: { context: { action: "test" } } }],
+        content: [{ type: "text", text: "with context", _meta: { [CHAT_CONTEXT_META_KEY]: { action: "test" } } }],
       },
     });
 

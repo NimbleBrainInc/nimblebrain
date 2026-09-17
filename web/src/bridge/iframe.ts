@@ -121,7 +121,7 @@ export function buildCSP(options?: CreateIframeOptions): string {
     `img-src 'self' data: blob: https:${resourceExtras}`,
     // `'self'` matches NOTHING here: the frame is `srcdoc` without
     // `allow-same-origin`, so it has an opaque origin. Naming the host origin
-    // explicitly is what lets the app load the `synapse/fontFaces` files the
+    // explicitly is what lets the app load the `styles.css.fonts` files the
     // host serves. Fonts are inert resources and the host already authors this
     // document, so this grants no reach the frame didn't already have.
     ["font-src 'self' data:", fontOrigin(), resourceExtras.trim()].filter(Boolean).join(" "),

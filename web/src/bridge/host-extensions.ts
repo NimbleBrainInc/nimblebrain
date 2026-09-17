@@ -15,8 +15,8 @@
 // non-spec keys.
 // ---------------------------------------------------------------------------
 
-import { FONT_FACES_CONTEXT_KEY, getHostFontFaces } from "./fonts";
-import { getThemeTokens } from "./theme";
+import { getHostFontFaceCss } from "./fonts";
+import { getThemeTokens, type ThemeTokens } from "./theme";
 
 export type WorkspaceForHostContext = {
   id: string;
@@ -46,16 +46,25 @@ export function buildHostExtensions(workspace: WorkspaceForHostContext): Record<
         },
       }
     : {};
-  // A token names a font family; it cannot load one, and the iframe inherits no
-  // `@font-face` from the shell. Ship the faces alongside so `--font-sans` and
-  // `--font-mono` resolve to the real thing instead of falling through.
-  //
-  // Omitted rather than sent empty when there are none: the SDK reads an absent
-  // key as "unchanged" and an explicit `[]` as "clear every managed face", so a
-  // host with no registered URLs must say nothing rather than send a reset.
-  const fontFaces = getHostFontFaces();
-  if (fontFaces.length > 0) ext[FONT_FACES_CONTEXT_KEY] = fontFaces;
   return ext;
+}
+
+/**
+ * The spec's `hostContext.styles`: the theme's CSS variables, and the host's
+ * `@font-face` CSS where there is any.
+ *
+ * A token names a font family; it cannot load one, and the iframe inherits no
+ * `@font-face` from the shell. Shipping the rules alongside the variables is
+ * what makes `--font-sans` and `--font-mono` resolve to the real thing instead
+ * of falling through to `system-ui`.
+ *
+ * `css` is omitted rather than sent empty when there are no faces — an app
+ * injects whatever string it is handed, and an empty `<style>` element is a
+ * thing to look at later and wonder about.
+ */
+export function buildHostStyles(variables: ThemeTokens): Record<string, unknown> {
+  const fonts = getHostFontFaceCss();
+  return { variables, ...(fonts ? { css: { fonts } } : {}) };
 }
 
 /**
@@ -71,6 +80,6 @@ export function buildHostContext(
   return {
     ...buildHostExtensions(workspace),
     theme: mode,
-    styles: { variables: tokens },
+    styles: buildHostStyles(tokens),
   };
 }
