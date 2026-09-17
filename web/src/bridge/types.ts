@@ -31,7 +31,6 @@ export type {
   ToolsCallMessage,
   UiActionMessage,
   UiDownloadFileMessage,
-  UiInitializeMessage,
   UiKeydownMessage,
   UiMessageMessage,
   UiOpenLinkMessage,

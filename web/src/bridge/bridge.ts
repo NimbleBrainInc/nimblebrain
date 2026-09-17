@@ -13,6 +13,9 @@
 //   ui/open-link, ui/message, ui/update-model-context,
 //   ui/download-file, ui/request-display-mode, notifications/message
 //
+// Nothing is posted to the app before ui/notifications/initialized except the
+// answers to its own requests; earlier notifications are held until then.
+//
 // Spec-compliant notifications forwarded host→iframe:
 //   notifications/tasks/status (subscribed once per bridge instance)
 //   the app server's own notifications on RELAYED_TO_VIEWS
@@ -41,9 +44,10 @@ import { getActiveWorkspaceId, uploadResource, type WorkspaceFile } from "../api
 import { isIdentityApp } from "../lib/identity-apps";
 import { appNameFromToolName } from "../lib/namespaced-tool";
 import { getMcpBridgeClient, withSessionRetry } from "../mcp-bridge-client";
+import { openAppChannel } from "./app-channel";
 import { serverCapabilities } from "./relayed-notifications";
 import type { LoggingMessageNotification } from "./schemas";
-import { getHostThemeMode, getSpecThemeTokens, getThemeTokens } from "./theme";
+import { getHostThemeMode, getSpecThemeTokens } from "./theme";
 import type {
   BridgeCallbacks,
   ExtAppsHostContextChangedNotification,
@@ -54,7 +58,6 @@ import type {
   SynapseRequestFileMessage,
   UiActionMessage,
   UiChatContext,
-  UiInitializeMessage,
   UiMessageMessage,
   UiToolResultError,
   UiToolResultMessage,
@@ -118,8 +121,21 @@ export function createBridge(
 ): BridgeHandle {
   let destroyed = false;
 
+  // Nothing reaches the app before it has sent `ui/notifications/initialized`
+  // except the answers to its own requests — the `ui/initialize` response
+  // first among them. Every notification posted earlier (host context, tool
+  // input and result, task status, relayed server notifications) is held in
+  // order and delivered once the handshake completes. A frame with an `id` is
+  // a response: the host sends apps no requests.
+  let initialized = false;
+  const held: unknown[] = [];
+
   function postToIframe(data: unknown): void {
     if (destroyed) return;
+    if (!initialized && !isResponse(data)) {
+      hold(data);
+      return;
+    }
     // App iframes are srcdoc (see iframe.ts:createAppIframe), so their
     // origin is the opaque "null" origin. `postMessage`'s targetOrigin
     // only accepts "*", "/", or a serialised URL — literal "null" throws
@@ -130,36 +146,22 @@ export function createBridge(
     iframe.contentWindow?.postMessage(data, "*");
   }
 
-  // Send ui/initialize notification when the iframe finishes loading.
-  // This is a NimbleBrain legacy path — the spec-compliant handshake is
-  // the request/response flow handled below in handleMessage.
-  function handleLoad(): void {
-    if (destroyed) return;
-    const mode = getHostThemeMode();
-    const tokens = getThemeTokens(mode);
-    const initMsg: UiInitializeMessage = {
-      jsonrpc: "2.0",
-      method: "ui/initialize",
-      params: {
-        capabilities: {
-          tools: true,
-          messages: true,
-          links: true,
-          downloads: true,
-        },
-        theme: {
-          mode,
-          primaryColor: tokens["--color-text-accent"],
-          tokens,
-        },
-        apiBase: window.location.origin,
-        appName,
-      },
-    };
-    postToIframe(initMsg);
+  // A frame that makes a held one redundant takes its place rather than
+  // queueing behind it, so an app that never completes the handshake holds
+  // one frame per thing the host has to say, not one per time it said it.
+  function hold(data: unknown): void {
+    const i = held.findIndex((prev) => supersedes(data, prev));
+    if (i === -1) held.push(data);
+    else held[i] = data;
   }
 
-  iframe.addEventListener("load", handleLoad);
+  function completeHandshake(): void {
+    if (initialized) return;
+    initialized = true;
+    for (const data of held.splice(0)) postToIframe(data);
+  }
+
+  const closeChannel = openAppChannel(iframe, postToIframe);
 
   // Handle incoming messages from the iframe
   function handleMessage(event: MessageEvent): void {
@@ -202,6 +204,7 @@ export function createBridge(
       // ext-apps protocol: ui/notifications/initialized
       // -----------------------------------------------------------------
       case "ui/notifications/initialized":
+        completeHandshake();
         callbacks?.onInitialized?.();
         break;
 
@@ -493,8 +496,9 @@ export function createBridge(
 
     destroy(): void {
       destroyed = true;
+      held.length = 0;
+      closeChannel();
       window.removeEventListener("message", handleMessage);
-      iframe.removeEventListener("load", handleLoad);
       // Unsubscribe from notifications/tasks/status so post-destroy
       // emissions from the MCP client don't reach the iframe.
       if (notificationTeardown) {
@@ -517,6 +521,25 @@ export function createBridge(
 
 /** Delivers a host→iframe message; a no-op once the bridge is destroyed. */
 type PostToIframe = (data: unknown) => void;
+
+/** A JSON-RPC response carries the `id` of the request it answers. */
+function isResponse(data: unknown): boolean {
+  return typeof data === "object" && data !== null && "id" in data;
+}
+
+/**
+ * Whether notification `next` says everything held notification `prev` does.
+ * The host sends a host context whole, a task status is that task's current
+ * state, and any other notification repeated verbatim adds nothing.
+ */
+function supersedes(next: unknown, prev: unknown): boolean {
+  const a = next as { method?: unknown; params?: { taskId?: unknown } };
+  const b = prev as { method?: unknown; params?: { taskId?: unknown } };
+  if (a.method !== b.method) return false;
+  if (a.method === "ui/notifications/host-context-changed") return true;
+  if (a.method === TASK_STATUS_METHOD) return a.params?.taskId === b.params?.taskId;
+  return JSON.stringify(next) === JSON.stringify(prev);
+}
 
 /**
  * Answer a request the host has just served.

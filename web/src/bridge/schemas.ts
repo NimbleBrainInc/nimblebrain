@@ -361,27 +361,6 @@ export type AppToHostMessage = Static<typeof AppToHostMessage>;
 
 // ── Host → App messages (ext-apps spec) ──────────────────────────────────
 
-export const UiInitializeMessage = Type.Object({
-  jsonrpc: JsonRpcVersion,
-  method: Type.Literal("ui/initialize"),
-  params: Type.Object({
-    capabilities: Type.Object({
-      tools: Type.Boolean(),
-      messages: Type.Boolean(),
-      links: Type.Boolean(),
-      downloads: Type.Boolean(),
-    }),
-    theme: Type.Object({
-      mode: Type.Union([Type.Literal("light"), Type.Literal("dark")]),
-      primaryColor: Type.String(),
-      tokens: Type.Optional(Type.Record(Type.String(), Type.String())),
-    }),
-    apiBase: Type.Optional(Type.String()),
-    appName: Type.Optional(Type.String()),
-  }),
-});
-export type UiInitializeMessage = Static<typeof UiInitializeMessage>;
-
 export const UiResourceResultResponse = Type.Object({
   jsonrpc: JsonRpcVersion,
   id: RequestId,
@@ -499,7 +478,6 @@ export type RelayedServerNotification = Static<typeof RelayedServerNotification>
 
 /** Discriminated union of every Host → App envelope. */
 export const HostToAppMessage = Type.Union([
-  UiInitializeMessage,
   UiToolResultResponse,
   UiToolResultError,
   UiToolResultMessage,

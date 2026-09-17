@@ -12,8 +12,8 @@ The NimbleBrain platform injects CSS custom properties into every app iframe so 
 When your app's HTML loads in an iframe, the platform:
 
 1. **Injects a `<style>` block** into your `<head>` with the full token set (ext-apps `--color-*` / `--font-*` / `--border-radius-*` / `--shadow-*` plus the `--nb-*` extensions) for the current theme. This happens before your HTML renders — no flash of wrong colors.
-2. **Sends `ui/initialize`** via postMessage with the same tokens in `params.theme.tokens` (the NimbleBrain legacy notification path).
-3. **Sends `ui/notifications/host-context-changed`** when the user toggles dark mode, with updated token values under `styles.variables`.
+2. **Answers your app's `ui/initialize` request** with the spec tokens under `hostContext.styles.variables`.
+3. **Sends `ui/notifications/host-context-changed`** when the user toggles dark mode, with updated token values under `styles.variables`, once your app has sent `ui/notifications/initialized`.
 
 Your CSS references these variables with `var(--token)`. Inside the platform the token always has a value — the `<style>` block lands before your HTML renders, and a `srcdoc` iframe inherits nothing else — so no fallback is needed. If your app also has to render where nothing injects tokens, see **Running outside the platform** below.
 
@@ -67,7 +67,7 @@ An app that only ever runs inside the platform should use the bare form shown un
 
 ## Handling dark mode
 
-The injected `<style>` block gives you the right tokens at load time. But when the user toggles dark mode mid-session, you need a JavaScript handler to apply the updated values:
+The injected `<style>` block gives you the right tokens at load time. When the user toggles dark mode mid-session, the host sends the updated values in `ui/notifications/host-context-changed`, but only to an app that has completed the [initialization handshake](/apps/bridge/#initialization-handshake): the host holds every notification until the app sends `ui/notifications/initialized`. Synapse performs the handshake and applies the tokens for you. Without it, do both yourself:
 
 ```javascript
 function applyTokens(tokens) {
@@ -81,17 +81,27 @@ window.addEventListener('message', (event) => {
   const msg = event.data;
   if (!msg || typeof msg !== 'object' || msg.jsonrpc !== '2.0') return;
 
-  // Apply tokens on initial load (legacy notification path)
-  if (msg.method === 'ui/initialize' && msg.params?.theme?.tokens) {
-    applyTokens(msg.params.theme.tokens);
+  // The handshake response: apply its tokens, then tell the host you are ready
+  if (msg.id === 'init-1' && msg.result) {
+    applyTokens(msg.result.hostContext?.styles?.variables);
+    window.parent.postMessage(
+      { jsonrpc: '2.0', method: 'ui/notifications/initialized', params: {} }, '*');
   }
 
-  // Apply tokens when host context changes (ext-apps spec)
+  // A later change (dark-mode toggle and the like)
   if (msg.method === 'ui/notifications/host-context-changed') {
-    const vars = msg.params?.styles?.variables;
-    if (vars) applyTokens(vars);
+    applyTokens(msg.params?.styles?.variables);
   }
 });
+
+window.parent.postMessage({
+  jsonrpc: '2.0', id: 'init-1', method: 'ui/initialize',
+  params: {
+    protocolVersion: '2026-01-26',
+    appInfo: { name: 'my-app', version: '1.0.0' },
+    appCapabilities: {}
+  }
+}, '*');
 ```
 
 `applyTokens` sets CSS variables on `document.documentElement`, which overrides the injected `<style>` values. Because your CSS uses `var()` references, the UI updates instantly.

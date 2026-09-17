@@ -1,5 +1,6 @@
 import { useCallback } from "react";
 import { getActiveWorkspaceId } from "../api/client";
+import { postToApp } from "../bridge/app-channel";
 import { relaysToViews } from "../bridge/relayed-notifications";
 import type { RelayedServerNotification } from "../bridge/types";
 import { debug } from "../lib/debug";
@@ -12,9 +13,10 @@ import type { ServerNotificationEvent } from "../types";
  * The notification reaches every iframe whose `data-app` is the server — its
  * inline views and its placements alike — as `{ jsonrpc, method, params }`,
  * exactly the MCP message the server sent, so an app written against the MCP
- * Apps spec hears it with no knowledge of this host. No debounce here: the
- * runtime already coalesces per (owner, server, method) before anything
- * reaches the browser.
+ * Apps spec hears it with no knowledge of this host. It goes through the
+ * iframe's bridge, which holds it until the app has completed the handshake.
+ * No debounce here: the runtime already coalesces per (owner, server, method)
+ * before anything reaches the browser.
  *
  * Two checks, both belt to the runtime's braces: only methods on
  * `RELAYED_TO_VIEWS` are posted, and an event stamped with a workspace other
@@ -56,9 +58,7 @@ export function useServerNotificationRelay(): (event: ServerNotificationEvent) =
     for (const iframe of document.querySelectorAll<HTMLIFrameElement>("iframe[data-app]")) {
       if (iframe.dataset.app !== event.server) continue;
       debug("sync", `→ iframe[data-app="${event.server}"] ${event.method}`);
-      // Srcdoc iframes have the opaque "null" origin, which `postMessage`'s
-      // targetOrigin cannot address.
-      iframe.contentWindow?.postMessage(message, "*");
+      postToApp(iframe, message);
     }
   }, []);
 }
