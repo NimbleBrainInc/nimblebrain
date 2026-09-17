@@ -25,9 +25,9 @@ describe("core-resources styles use CSS variables", () => {
 	it("all style constants have balanced parentheses", () => {
 		const styles = [
 			BASE_STYLES,
-					APP_NAV_STYLES,
+			APP_NAV_STYLES,
 			SETTINGS_LINK_STYLES,
-					MODEL_SELECTOR_STYLES,
+			MODEL_SELECTOR_STYLES,
 		];
 		for (const css of styles) {
 			const opens = (css.match(/\(/g) || []).length;
@@ -41,7 +41,7 @@ describe("core-resources styles use CSS variables", () => {
 		// Strategy: strip all var(...) and rgba(...) blocks, then check for remaining hex colors
 		const styles = [
 			BASE_STYLES,
-					APP_NAV_STYLES,
+			APP_NAV_STYLES,
 			SETTINGS_LINK_STYLES,
 			MODEL_SELECTOR_STYLES,
 		];
@@ -55,5 +55,4 @@ describe("core-resources styles use CSS variables", () => {
 			expect(remaining).toBeNull();
 		}
 	});
-
 });

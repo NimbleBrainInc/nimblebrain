@@ -119,7 +119,7 @@ describe("registration sanitizes before the registry (install AND boot paths)", 
     );
     const entries = reg.forWorkspace("ws_hq");
     expect(entries.map((e) => e.resourceUri)).toEqual(["ui://people/main"]);
-    // the spoof at ui://home/* is absent — could not shadow a host surface
+    // the spoof at ui://home/* is absent
     expect(entries.some((e) => e.resourceUri.startsWith("ui://home/"))).toBe(false);
   });
 

@@ -11,7 +11,7 @@ import type { Connection, ConnectionState } from "./connection.ts";
  * Declaration of a UI placement in the shell layout.
  *
  * Sidebar slot convention:
- *   "sidebar" (priority < 10)  → ungrouped core nav (Home, Conversations)
+ *   "sidebar" (priority < 10)  → ungrouped core nav (Conversations, Files, Automations)
  *   "sidebar" (priority >= 10) → grouped under "general"
  *   "sidebar.<group>"          → named group with label (e.g., "sidebar.apps" → "Apps")
  *   "sidebar.bottom"           → pinned to bottom zone

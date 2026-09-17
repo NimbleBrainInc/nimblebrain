@@ -12,7 +12,7 @@ export const MAX_INLINE_APPS = 4;
  * The app placements for the focused workspace, derived from the shell
  * placement registry. "Apps" are the grouped sidebar placements
  * (`sidebar.<group>`, e.g. `sidebar.apps`); bare `sidebar` items are
- * core nav (Home, Conversations, …) and `sidebar.bottom` is the utility
+ * core nav (Conversations, Files, …) and `sidebar.bottom` is the utility
  * tray — neither is an app. This is the filter the workspace overview
  * page already used, lifted into one shared, tested helper so the
  * sidebar quick-list and the overview grid show the same set and the
