@@ -1175,7 +1175,12 @@ export class Runtime {
           });
           this.runBus.end(conversationId, "error");
         }
-      });
+      })
+      // The owner's conversation views read `active` from the RunBus on each
+      // list. The turn's own writes announce while the run is active, so a view
+      // learns a turn started; its last write lands before the run ends, so the
+      // end has to be announced here, after the RunBus has moved.
+      .finally(() => this.announceIdentitySourceChange("conversations", ownerId));
 
     return { conversationId };
   }

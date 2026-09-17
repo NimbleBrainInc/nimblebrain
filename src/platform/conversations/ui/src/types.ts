@@ -9,6 +9,8 @@ export interface ConversationSummary {
    * stamped workspace — read as the owner's personal workspace.
    */
   workspaceId?: string | null;
+  /** A reply is still generating in this conversation, on any tab or device. */
+  active?: boolean;
 }
 
 export interface ListResult {

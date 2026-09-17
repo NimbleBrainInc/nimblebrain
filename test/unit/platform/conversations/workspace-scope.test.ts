@@ -82,6 +82,7 @@ function makeRuntime(): Runtime {
     resolveRequestUserId: (identity?: { id: string }) => identity?.id ?? OWNER_ID,
     getWorkspaceStore: () => ({ getWorkspacesDir: () => join(workDir, "workspaces") }),
     onConversationsChanged: () => {},
+    isTurnActive: () => false,
   } as unknown as Runtime;
 }
 

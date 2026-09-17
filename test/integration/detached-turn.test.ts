@@ -72,6 +72,40 @@ describe("detached turns (server-authoritative streaming)", () => {
     expect(events.map((e) => e.seq)).toEqual(events.map((_, i) => i + 1));
   });
 
+  it("announces the owner's conversations once the run has ended", async () => {
+    // A conversations list reads `active` from the RunBus on each fetch, so the
+    // view must hear about the run ending after the RunBus has moved — the
+    // turn's last store write happens while the run is still active.
+    const ownerId = "usr_default";
+    const created = await runtime
+      .workspaceConversationStore(TEST_WORKSPACE_ID, ownerId)
+      .create({ ownerId, workspaceId: TEST_WORKSPACE_ID });
+    const activeAtAnnounce: boolean[] = [];
+    const original = runtime.announceIdentitySourceChange.bind(runtime);
+    const spy = spyOn(runtime, "announceIdentitySourceChange").mockImplementation(
+      (name: string, userId: string) => {
+        if (name === "conversations" && userId === ownerId) {
+          activeAtAnnounce.push(runtime.isTurnActive(created.id));
+        }
+        original(name, userId);
+      },
+    );
+    try {
+      await runtime.startTurn({
+        message: "Announce my end",
+        conversationId: created.id,
+        workspaceId: TEST_WORKSPACE_ID,
+      });
+      await waitFor(() => !runtime.isTurnActive(created.id));
+      await waitFor(() => activeAtAnnounce.at(-1) === false);
+
+      expect(activeAtAnnounce).toContain(true);
+      expect(activeAtAnnounce.at(-1)).toBe(false);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   it("persists the turn server-side with no viewer attached", async () => {
     const { conversationId } = await runtime.startTurn({
       message: "Persist me",

@@ -1,5 +1,5 @@
 import type { McpUiResourceMeta } from "@modelcontextprotocol/ext-apps";
-import { useEffect, useRef, useSyncExternalStore } from "react";
+import { useEffect, useRef } from "react";
 import { getResources, uiPathFromUri } from "../api/client";
 import type { BridgeHandle } from "../bridge/bridge";
 import { createBridge } from "../bridge/bridge";
@@ -9,7 +9,6 @@ import { createAppIframe } from "../bridge/iframe";
 import type { BridgeCallbacks, UiChatContext } from "../bridge/types";
 import { useTheme } from "../context/ThemeContext";
 import { useWorkspaceContext } from "../context/WorkspaceContext";
-import { chatStore } from "../hooks/chat-store";
 import type { PlacementEntry } from "../types";
 
 interface SlotRendererProps {
@@ -128,23 +127,12 @@ export function SlotRenderer({
   const forceRefreshRef = useRef(forceRefresh);
   forceRefreshRef.current = forceRefresh;
 
-  // Conversations currently streaming an assistant turn in this tab. Pushed
-  // into hostContext so the conversations list can show a per-row indicator.
-  // The store identity is stable between membership changes, so this only
-  // re-pushes when a conversation starts/stops streaming — not per delta.
-  const streamingIds = useSyncExternalStore(
-    chatStore.subscribeStreamingIds,
-    chatStore.getStreamingIds,
-  );
-  const streamingIdsRef = useRef(streamingIds);
-  streamingIdsRef.current = streamingIds;
-
   const filtered = routeFilter ? placements.filter((p) => p.route === routeFilter) : placements;
 
   // Stable key: only re-mount iframes when the actual placements change
   const placementKey = filtered.map((p) => p.resourceUri).join(",");
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: re-mount iframes only when placementKey changes — `filtered` is read at run time but changes identity every render (depending on it would thrash iframes), and mode/streaming/forceRefresh are read through refs
+  // biome-ignore lint/correctness/useExhaustiveDependencies: re-mount iframes only when placementKey changes — `filtered` is read at run time but changes identity every render (depending on it would thrash iframes), and mode/forceRefresh are read through refs
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
@@ -158,8 +146,7 @@ export function SlotRenderer({
       onChat: (...args) => onChatRef.current?.(...args),
       onNavigate: (...args) => onNavigateRef.current?.(...args),
       onPromptAction: (...args) => onPromptActionRef.current?.(...args),
-      getHostExtensions: () =>
-        buildHostExtensions(workspaceRef.current, forceRefreshRef.current, streamingIdsRef.current),
+      getHostExtensions: () => buildHostExtensions(workspaceRef.current, forceRefreshRef.current),
     };
 
     // Fetch + mount one placement. A failure is contained here: it renders its
@@ -209,11 +196,11 @@ export function SlotRenderer({
   // mounted; apps that observe `useHostContext()` (or `useTheme()`) re-render
   // and refetch workspace-scoped data without losing local state.
   useEffect(() => {
-    const ctx = buildHostContext(mode, activeWorkspace, streamingIds);
+    const ctx = buildHostContext(mode, activeWorkspace);
     for (const bridge of bridgesRef.current) {
       bridge.setHostContext(ctx);
     }
-  }, [mode, activeWorkspace, streamingIds]);
+  }, [mode, activeWorkspace]);
 
   if (filtered.length === 0) return null;
 
