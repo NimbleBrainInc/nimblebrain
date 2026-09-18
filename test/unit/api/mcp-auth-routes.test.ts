@@ -2,13 +2,14 @@ import { createHash, randomBytes } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { Hono } from "hono";
 import { securityHeaders } from "../../../src/api/middleware/security-headers.ts";
 import { mcpAuthRoutes } from "../../../src/api/routes/mcp-auth.ts";
 import type { AppContext, AppEnv } from "../../../src/api/types.ts";
 import { ConnectorBusyError } from "../../../src/connectors/runtime/lifecycle.ts";
 import { IdentityConnectorStore } from "../../../src/identity/connector-store.ts";
+import { log } from "../../../src/observability/log.ts";
 import { _clearAll, register as registerFlow } from "../../../src/tools/oauth-flow-registry.ts";
 
 /**
@@ -427,6 +428,156 @@ describe("GET /v1/mcp-auth/callback", () => {
   });
 });
 
+describe("GET /v1/mcp-auth/callback — outcome logging (#1244)", () => {
+  // Without these lines, "the user never came back from the vendor" and "a
+  // callback arrived and a check refused it" are the same observation: silence.
+  // Each test pins one outcome, and the last pins what must never appear.
+  let app: Hono<AppEnv>;
+  let info: ReturnType<typeof spyOn>;
+  let warn: ReturnType<typeof spyOn>;
+
+  beforeEach(() => {
+    app = makeApp(makeStubLifecycle());
+    info = spyOn(log, "info").mockImplementation(() => {});
+    warn = spyOn(log, "warn").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    info.mockRestore();
+    warn.mockRestore();
+    _clearAll();
+  });
+
+  /** Structured fields of the single logged call, whichever level it used. */
+  function loggedFields(): Record<string, unknown> {
+    const calls = [...info.mock.calls, ...warn.mock.calls];
+    expect(calls.length).toBe(1);
+    return calls[0][1] as Record<string, unknown>;
+  }
+
+  test("a resolved flow logs outcome=resolved at info, with the owner and flow id", async () => {
+    const state = "resolved-state-abcdef";
+    const flowPromise = registerFlow(state, WS_OWNER, "granola");
+    flowPromise.catch(() => {});
+
+    await app.request(`http://localhost/v1/mcp-auth/callback?code=the-code&state=${state}`, {
+      headers: { cookie: `nb_oauth_state=${sha256Hex(state)}` },
+    });
+
+    expect(warn).not.toHaveBeenCalled();
+    expect(loggedFields()).toMatchObject({
+      event: "mcp_auth.callback",
+      outcome: "resolved",
+      owner: "workspace",
+      flow: state.slice(0, 8),
+    });
+    await expect(flowPromise).resolves.toBe("the-code");
+  });
+
+  test("a callback for an unknown/expired flow logs outcome=unknown_flow at warn", async () => {
+    const state = "ghost-state-123456";
+    await app.request(`http://localhost/v1/mcp-auth/callback?code=c&state=${state}`, {
+      headers: { cookie: `nb_oauth_state=${sha256Hex(state)}` },
+    });
+
+    expect(info).not.toHaveBeenCalled();
+    expect(loggedFields()).toMatchObject({ outcome: "unknown_flow", flow: state.slice(0, 8) });
+  });
+
+  test("a missing cookie logs binding=absent; a wrong one logs binding=mismatched", async () => {
+    // The distinction separates a browser that dropped the cookie on the return
+    // leg from a genuine session mismatch — different causes, same page.
+    const state = "cookie-state-987654";
+    registerFlow(state, WS_OWNER, "granola").catch(() => {});
+
+    await app.request(`http://localhost/v1/mcp-auth/callback?code=c&state=${state}`);
+    expect(loggedFields()).toMatchObject({ outcome: "cookie_mismatch", binding: "absent" });
+
+    warn.mockClear();
+    await app.request(`http://localhost/v1/mcp-auth/callback?code=c&state=${state}`, {
+      headers: { cookie: `nb_oauth_state=${sha256Hex("a-different-state")}` },
+    });
+    expect(loggedFields()).toMatchObject({ outcome: "cookie_mismatch", binding: "mismatched" });
+  });
+
+  test("a vendor error param logs outcome=provider_error with the vendor's code", async () => {
+    await app.request("http://localhost/v1/mcp-auth/callback?error=access_denied&state=x");
+    expect(loggedFields()).toMatchObject({
+      outcome: "provider_error",
+      providerError: "access_denied",
+    });
+  });
+
+  test("a hostile error param cannot write an unbounded log field", async () => {
+    const huge = "x".repeat(5000);
+    await app.request(`http://localhost/v1/mcp-auth/callback?error=${huge}&state=y`);
+    expect(String(loggedFields().providerError).length).toBe(64);
+  });
+
+  test("missing code/state logs outcome=missing_params", async () => {
+    await app.request("http://localhost/v1/mcp-auth/callback?code=only");
+    expect(loggedFields()).toMatchObject({ outcome: "missing_params" });
+  });
+
+  test("never logs the authorization code or the full state", async () => {
+    // The code is a live credential and the full state is the flow's key. Only
+    // a truncated state prefix may appear, as the flow id.
+    const state = "secret-state-value-do-not-log";
+    registerFlow(state, WS_OWNER, "granola").catch(() => {});
+    await app.request(`http://localhost/v1/mcp-auth/callback?code=secret-code&state=${state}`, {
+      headers: { cookie: `nb_oauth_state=${sha256Hex(state)}` },
+    });
+
+    const serialized = JSON.stringify([...info.mock.calls, ...warn.mock.calls]);
+    expect(serialized).not.toContain("secret-code");
+    expect(serialized).not.toContain(state);
+    expect(serialized).toContain(state.slice(0, 8));
+  });
+});
+
+describe("GET /v1/mcp-auth/callback — the line a deployed pod actually writes", () => {
+  // The outcome tests above spy on `log.warn`, which observes the call *before*
+  // the JSON sink's key-denylist redactor runs. That gap is real: a field named
+  // `cookie` reads correctly in pretty dev output and arrives as "[redacted]"
+  // on a deployed pod, where the distinction is the whole point. This asserts
+  // the serialized stderr line instead of the call.
+  test("the session-binding field survives redaction in JSON mode", async () => {
+    const app = makeApp(makeStubLifecycle());
+    const state = "json-sink-state-1";
+
+    const saved = process.env.NB_LOG_FORMAT;
+    process.env.NB_LOG_FORMAT = "json";
+    const lines: string[] = [];
+    const origWrite = process.stderr.write.bind(process.stderr);
+    // @ts-expect-error narrow override for capture
+    process.stderr.write = (chunk: string) => {
+      lines.push(String(chunk));
+      return true;
+    };
+    try {
+      // No cookie header → the session check refuses, which is the branch that
+      // carries the field.
+      await app.request(`http://localhost/v1/mcp-auth/callback?code=c&state=${state}`);
+    } finally {
+      process.stderr.write = origWrite;
+      if (saved === undefined) delete process.env.NB_LOG_FORMAT;
+      else process.env.NB_LOG_FORMAT = saved;
+    }
+
+    const line = lines
+      .join("")
+      .split("\n")
+      .find((l) => l.includes("mcp_auth.callback"));
+    expect(line).toBeDefined();
+    const rec = JSON.parse(line as string);
+
+    expect(rec.outcome).toBe("cookie_mismatch");
+    expect(rec.binding).toBe("absent");
+    // Any key the denylist matches would land here as "[redacted]".
+    expect(line).not.toContain("[redacted]");
+  });
+});
+
 describe("bouncer mode: state envelope wrap on initiate / unwrap on callback", () => {
   const BOUNCER_CALLBACK = "https://connect.example.com/v1/mcp-auth/callback";
   const TID = "tenant-a";
@@ -531,6 +682,32 @@ describe("bouncer mode: state envelope wrap on initiate / unwrap on callback", (
     expect(res.status).toBe(400);
     const html = await res.text();
     expect(html).toContain("state envelope missing");
+  });
+
+  test("an unwrapped state logs envelope_missing; a bad envelope logs envelope_invalid + reason", async () => {
+    // Both refuse with the same page on purpose (naming the failed check would
+    // be an oracle), so the log line is the only thing that tells an operator
+    // which of the two happened. (#1244)
+    const warn = spyOn(log, "warn").mockImplementation(() => {});
+    try {
+      await app.request("http://localhost/v1/mcp-auth/callback?code=c&state=raw-state");
+      expect(warn.mock.calls[0][1]).toMatchObject({ outcome: "envelope_missing" });
+
+      warn.mockClear();
+      const { signEnvelope } = await import("../../../src/oauth/envelope.ts");
+      const wireState = signEnvelope({
+        tid: TID,
+        inner: "inner",
+        tenantKey: randomBytes(32),
+      });
+      await app.request(
+        `http://localhost/v1/mcp-auth/callback?code=c&state=${encodeURIComponent(wireState)}`,
+      );
+      expect(warn.mock.calls[0][1]).toMatchObject({ outcome: "envelope_invalid" });
+      expect(warn.mock.calls[0][1]).toHaveProperty("reason");
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   test("callback rejects an envelope signed with a different tenant key", async () => {
