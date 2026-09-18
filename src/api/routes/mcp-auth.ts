@@ -173,6 +173,10 @@ export function mcpAuthRoutes(ctx: AppContext) {
   // Unauthenticated. Verifies the cookie matches before resolving the
   // flow. Returns minimal HTML in either branch so the user sees a clean
   // confirmation / error page.
+  //
+  // Every terminal outcome is logged exactly once, here — see
+  // {@link logCallbackOutcome} for why the handler owns that rather than
+  // the helpers it calls.
   app.get("/v1/mcp-auth/callback", (c) => {
     // Belt-and-suspenders: an intermediate proxy caching the success page
     // (with `?code=...` in the URL) in a shared cache space is a classic
@@ -183,14 +187,14 @@ export function mcpAuthRoutes(ctx: AppContext) {
     c.header("Pragma", "no-cache");
 
     const params = readCallbackParams(c);
-    if (params instanceof Response) return params;
+    if (isCallbackFailure(params)) return refuse(params);
     const { code, wireState } = params;
 
     const state = recoverInnerState(c, wireState);
-    if (state instanceof Response) return state;
+    if (isCallbackFailure(state)) return refuse(state);
 
     const mismatch = verifyStateCookie(c, state);
-    if (mismatch) return mismatch;
+    if (mismatch) return refuse(mismatch, { flow: flowId(state) });
 
     // Recover the flow's owner *before* resolving (which deletes the registry
     // entry), so we can land the user back on the right page — a workspace
@@ -198,6 +202,7 @@ export function mcpAuthRoutes(ctx: AppContext) {
     // single-process, so the peek can't race the resolve below.
     const flowOwner = peekFlowOwner(state);
     if (!resolveWithCode(state, code)) {
+      logCallbackOutcome("unknown_flow", { flow: flowId(state) });
       return c.html(
         "<html><body><h3>Unknown or expired OAuth flow.</h3>" +
           "<p>Re-initiate the connection from NimbleBrain.</p></body></html>",
@@ -205,6 +210,7 @@ export function mcpAuthRoutes(ctx: AppContext) {
       );
     }
 
+    logCallbackOutcome("resolved", { flow: flowId(state), owner: flowOwner?.kind });
     return renderSuccessPage(c, flowOwner, ctx.secureCookies);
   });
 
@@ -375,26 +381,100 @@ function buildOAuthStateCookie(value: string, maxAge: number, secure: boolean): 
   return parts.join("; ");
 }
 
-/** Read `code` / `state` from the callback query, surfacing the provider `error` param or missing params as an error Response. */
-function readCallbackParams(c: Context<AppEnv>): { code: string; wireState: string } | Response {
+/**
+ * Terminal outcomes of the callback leg.
+ *
+ * `envelope_invalid` used to be the only one that left any trace, which made
+ * "the user never came back from the vendor" (no line at all) and "a callback
+ * arrived and a check refused it" indistinguishable in the logs — the first
+ * question worth asking about a connector that won't connect. (#1244)
+ */
+type CallbackOutcome =
+  | "resolved"
+  | "unknown_flow"
+  | "cookie_mismatch"
+  | "envelope_missing"
+  | "envelope_invalid"
+  | "missing_params"
+  | "provider_error";
+
+/** A refused callback: the response to send, which check refused it, and any fields worth logging. */
+interface CallbackFailure {
+  response: Response;
+  outcome: CallbackOutcome;
+  fields?: Record<string, unknown>;
+}
+
+function isCallbackFailure(v: unknown): v is CallbackFailure {
+  return typeof v === "object" && v !== null && "outcome" in v && "response" in v;
+}
+
+/**
+ * Number of leading `state` characters used as the flow's log id. Matches the
+ * prefix `oauth-flow-registry`'s TTL message carries, so a callback line and
+ * the expiry of the same flow correlate.
+ */
+const FLOW_ID_CHARS = 8;
+
+function flowId(state: string): string {
+  return state.slice(0, FLOW_ID_CHARS);
+}
+
+/**
+ * Log one terminal outcome of the callback.
+ *
+ * **Never logs `code`, `state`, or the cookie.** An authorization code is a
+ * live credential and the full state is the flow's key. The `flow` field is a
+ * truncated state prefix: enough to identify a flow across log lines, not
+ * enough to be used as one — the cookie binding, not the state, is what admits
+ * a callback.
+ *
+ * The handler calls this rather than each helper logging its own refusal, so
+ * one read of the route shows every outcome and its level, and a new branch
+ * cannot quietly ship unlogged.
+ */
+function logCallbackOutcome(outcome: CallbackOutcome, fields: Record<string, unknown> = {}): void {
+  const message = `[mcp-auth] callback ${outcome}`;
+  const structured = { event: "mcp_auth.callback", outcome, ...fields };
+  if (outcome === "resolved") log.info(message, structured);
+  else log.warn(message, structured);
+}
+
+/** Log a refusal and return its response — the handler's one-line exit for every failure branch. */
+function refuse(failure: CallbackFailure, extra: Record<string, unknown> = {}): Response {
+  logCallbackOutcome(failure.outcome, { ...extra, ...failure.fields });
+  return failure.response;
+}
+
+/** Read `code` / `state` from the callback query, surfacing the provider `error` param or missing params as a refusal. */
+function readCallbackParams(
+  c: Context<AppEnv>,
+): { code: string; wireState: string } | CallbackFailure {
   const code = c.req.query("code");
   const wireState = c.req.query("state");
   const error = c.req.query("error");
 
   if (error) {
-    return c.html(
-      `<html><body><h3>Authorization failed</h3><pre>${escapeHtml(error)}</pre></body></html>`,
-      400,
-    );
+    return {
+      outcome: "provider_error",
+      // The vendor's own error code (`access_denied`, `invalid_scope`, …) is
+      // not a secret and is the whole diagnosis when a user declines consent.
+      // Truncated so a hostile query can't write an unbounded log line.
+      fields: { providerError: error.slice(0, 64) },
+      response: c.html(
+        `<html><body><h3>Authorization failed</h3><pre>${escapeHtml(error)}</pre></body></html>`,
+        400,
+      ),
+    };
   }
   if (!code || !wireState) {
-    return c.text("missing code or state", 400);
+    return { outcome: "missing_params", response: c.text("missing code or state", 400) };
   }
   return { code, wireState };
 }
 
-/** Recover the inner OAuth state: unwrap the signed envelope in bouncer mode (rejecting an unwrapped or invalid envelope), else the wire state verbatim. Returns the inner state or an error Response. */
-function recoverInnerState(c: Context<AppEnv>, wireState: string): string | Response {
+/** Recover the inner OAuth state: unwrap the signed envelope in bouncer mode (rejecting an unwrapped or invalid envelope), else the wire state verbatim. Returns the inner state or a refusal. */
+function recoverInnerState(c: Context<AppEnv>, wireState: string): string | CallbackFailure {
   // In bouncer mode the URL state arrives wrapped — unwrap it to
   // recover the inner state, which is what the cookie binding and
   // flow registry are keyed on. In direct mode (single-instance
@@ -408,11 +488,14 @@ function recoverInnerState(c: Context<AppEnv>, wireState: string): string | Resp
     return wireState;
   }
   if (!wireState.startsWith(`${ENVELOPE_VERSION}.`)) {
-    return c.html(
-      "<html><body><h3>Authorization state envelope missing.</h3>" +
-        "<p>Re-initiate the connection from NimbleBrain.</p></body></html>",
-      400,
-    );
+    return {
+      outcome: "envelope_missing",
+      response: c.html(
+        "<html><body><h3>Authorization state envelope missing.</h3>" +
+          "<p>Re-initiate the connection from NimbleBrain.</p></body></html>",
+        400,
+      ),
+    };
   }
   try {
     const payload = verifyEnvelopeAsTenant({
@@ -426,17 +509,23 @@ function recoverInnerState(c: Context<AppEnv>, wireState: string): string | Resp
     // generic message — leaking which check failed gives an attacker
     // an oracle for probing the envelope format.
     const code = err instanceof EnvelopeError ? err.code : "unknown";
-    log.warn(`[mcp-auth] bouncer envelope verification failed: ${code}`);
-    return c.html(
-      "<html><body><h3>Authorization session invalid.</h3>" +
-        "<p>Re-initiate the connection from NimbleBrain.</p></body></html>",
-      400,
-    );
+    return {
+      outcome: "envelope_invalid",
+      // The specific check that failed goes to the operator, never to the
+      // user: naming it in the page would hand an attacker an oracle for
+      // probing the envelope format.
+      fields: { reason: code },
+      response: c.html(
+        "<html><body><h3>Authorization session invalid.</h3>" +
+          "<p>Re-initiate the connection from NimbleBrain.</p></body></html>",
+        400,
+      ),
+    };
   }
 }
 
-/** Reject unless the `nb_oauth_state` cookie is a constant-time match for the state's sha256; returns an error Response on mismatch, else null. */
-function verifyStateCookie(c: Context<AppEnv>, state: string): Response | null {
+/** Reject unless the `nb_oauth_state` cookie is a constant-time match for the state's sha256; returns a refusal on mismatch, else null. */
+function verifyStateCookie(c: Context<AppEnv>, state: string): CallbackFailure | null {
   // Session-binding check: the cookie set by /initiate must match the
   // URL state. Without this, a leaked state value (referrer header,
   // browser history, network log) could let an attacker drop tokens
@@ -445,11 +534,18 @@ function verifyStateCookie(c: Context<AppEnv>, state: string): Response | null {
   const expected = sha256Hex(state);
   const cookieValue = readCookie(c.req.header("cookie"), "nb_oauth_state");
   if (!cookieValue || !timingSafeEqualHex(cookieValue, expected)) {
-    return c.html(
-      "<html><body><h3>Authorization session mismatch.</h3>" +
-        "<p>Re-initiate the connection from NimbleBrain.</p></body></html>",
-      400,
-    );
+    return {
+      outcome: "cookie_mismatch",
+      // Whether the cookie was absent or present-but-wrong separates a browser
+      // that dropped it (a third-party-cookie or cross-origin return) from a
+      // genuine session mismatch. Neither value is logged.
+      fields: { cookie: cookieValue ? "mismatched" : "absent" },
+      response: c.html(
+        "<html><body><h3>Authorization session mismatch.</h3>" +
+          "<p>Re-initiate the connection from NimbleBrain.</p></body></html>",
+        400,
+      ),
+    };
   }
   return null;
 }
