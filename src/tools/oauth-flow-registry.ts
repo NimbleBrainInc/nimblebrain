@@ -52,8 +52,6 @@ const FLOW_ID_CHARS = 8;
  * the operator's string. (#1245)
  */
 export class OAuthFlowExpiredError extends Error {
-  readonly flowId: string;
-  readonly ttlMs: number;
   /**
    * What the person who tried to connect reads. Says what happened and what to
    * do; never names a module, a timer, or a flow id. Deliberately omits the
@@ -66,8 +64,6 @@ export class OAuthFlowExpiredError extends Error {
   constructor(flowId: string, ttlMs: number) {
     super(`[oauth-flow-registry] flow ${flowId}… timed out after ${ttlMs}ms`);
     this.name = "OAuthFlowExpiredError";
-    this.flowId = flowId;
-    this.ttlMs = ttlMs;
   }
 }
 
