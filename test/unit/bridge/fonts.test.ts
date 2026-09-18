@@ -21,6 +21,7 @@ import {
   FONT_SPECS,
   fontOrigin,
   getHostFontFaceCss,
+  registerBrandFonts,
   registerHostFontUrls,
 } from "../../../web/src/bridge/fonts.ts";
 import {
@@ -276,5 +277,50 @@ describe("unregistered URLs mean no fonts, not a broken host", () => {
     const rules = getHostFontFaceCss().split("\n");
     expect(rules).toHaveLength(1);
     expect(rules[0]).toContain(`font-family: '${FONT_SPECS[0].family}';`);
+  });
+});
+
+describe("a brand's faces ride the same channel", () => {
+  const BRAND_FACE = {
+    family: "Instrument Sans",
+    url: "https://static.example.com/brands/acme/fonts/instrument-sans.woff2",
+    weight: "400 700",
+  };
+
+  afterEach(() => registerBrandFonts([]));
+
+  test("font-src carries each brand font's origin", () => {
+    registerBrandFonts([BRAND_FACE]);
+    const fontSrc = buildCSP()
+      .split("; ")
+      .find((d) => d.startsWith("font-src"));
+    expect(fontSrc).toBe(`font-src 'self' data: ${HOST_ORIGIN} https://static.example.com`);
+  });
+
+  test("the host font CSS declares the brand face after the host's own", () => {
+    registerBrandFonts([BRAND_FACE]);
+    const rules = getHostFontFaceCss().split("\n");
+    expect(rules).toHaveLength(FONT_SPECS.length + 1);
+    expect(rules.at(-1)).toBe(
+      `@font-face { font-family: 'Instrument Sans'; src: url('${BRAND_FACE.url}') format('woff2'); font-weight: 400 700; font-style: normal; font-display: swap; }`,
+    );
+  });
+
+  test("a face with no weight omits the descriptor", () => {
+    registerBrandFonts([{ family: "Plain", url: "https://fonts.example.com/plain.woff2" }]);
+    expect(getHostFontFaceCss().split("\n").at(-1)).not.toContain("font-weight");
+  });
+
+  test("a face whose URL is not absolute http(s) is dropped", () => {
+    registerBrandFonts([{ family: "Bad", url: "/relative.woff2" }]);
+    expect(getHostFontFaceCss()).not.toContain("Bad");
+    expect(buildCSP()).not.toContain("relative");
+  });
+
+  test("clearing the brand removes its faces and origins", () => {
+    registerBrandFonts([BRAND_FACE]);
+    registerBrandFonts([]);
+    expect(getHostFontFaceCss()).not.toContain("Instrument Sans");
+    expect(buildCSP()).not.toContain("static.example.com");
   });
 });

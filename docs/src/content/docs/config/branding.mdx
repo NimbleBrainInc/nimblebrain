@@ -76,6 +76,8 @@ Each role takes a CSS `stack` (required) and, optionally, the files to load:
 
 **A font URL is a `.woff2` file, never a stylesheet.** Google Fonts CSS URLs (`https://fonts.googleapis.com/css2?…`) are rejected. Embedded apps load faces from the file URL directly, so a stylesheet that points at files cannot reach them. Self-host the woff2 files, and make sure their license allows redistribution.
 
+**The server hosting the font files must send `Access-Control-Allow-Origin: *`.** Browsers fetch fonts in CORS mode, and an embedded app runs in an opaque origin, so its requests arrive with `Origin: null` and no narrower value matches them. Without the header the shell may still render the font while apps silently fall back to the next family in `stack`.
+
 **A role with no `url` or `faces` must name a font your users already have** — a system font such as `Georgia` or `ui-monospace`. Nothing is downloaded for it.
 
 ## Example
@@ -159,6 +161,8 @@ A complete block for a fictional ACME deployment:
 The runtime serves the validated block at `GET /v1/brand`, unauthenticated, with `Cache-Control: public, max-age=60`. It is public because the sign-in page shows the brand before anyone has signed in, and nothing in it is private. Without a `brand` block it returns `{}`.
 
 The served block is the configured one with fonts normalised: every role that loads files carries a `faces` list, whether the config used `url` + `weight` or `faces`.
+
+The web client applies the brand before its first render and keeps the last answer in the browser, so a returning visitor sees the brand at once and a change reaches them on the next page load after the cache expires. Removing the `brand` block restores the default look the same way.
 
 ## Changes and OAuth consent screens
 

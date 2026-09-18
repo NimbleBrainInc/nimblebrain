@@ -1,22 +1,37 @@
 /**
- * Theme token map — the ext-apps projection of the canonical palette, plus the
- * bridge theme protocol helpers.
+ * Theme token map — the ext-apps projection of the palette, plus the bridge
+ * theme protocol helpers.
  *
  * Values are NOT defined here. They derive from `web/src/theme/palette.ts` via
  * `paletteToExtAppsTokens` so the shell (`index.css`) and the iframe-injected
  * tokens share one source of truth. Tokens follow the MCP ext-apps spec
  * (2026-01-26) where a standard equivalent exists; NimbleBrain-specific
  * extension tokens use the `--nb-` prefix.
+ *
+ * The palette is the canonical one until the browser entry installs a tenant's
+ * brand with {@link setThemePalette}. An iframe reads the tokens when it
+ * mounts, so a brand applied after boot reaches the next app mounted, not one
+ * already running.
  */
 
-import { paletteToExtAppsTokens } from "../theme/projections.ts";
+import type { Palette } from "../theme/brand.ts";
+import { canonicalPalette, paletteToExtAppsTokens } from "../theme/projections.ts";
 
 export type ThemeMode = "light" | "dark";
 export type ThemeTokens = Record<string, string>;
 
-export const LIGHT_TOKENS: ThemeTokens = paletteToExtAppsTokens("light");
+export let LIGHT_TOKENS: ThemeTokens = paletteToExtAppsTokens("light");
 
-export const DARK_TOKENS: ThemeTokens = paletteToExtAppsTokens("dark");
+export let DARK_TOKENS: ThemeTokens = paletteToExtAppsTokens("dark");
+
+/**
+ * Project `palette` into the iframe token maps. Called by the brand boot with
+ * the merged palette; called with no argument, restores the canonical tokens.
+ */
+export function setThemePalette(palette: Palette = canonicalPalette): void {
+  LIGHT_TOKENS = paletteToExtAppsTokens("light", palette);
+  DARK_TOKENS = paletteToExtAppsTokens("dark", palette);
+}
 
 export function getThemeTokens(mode: ThemeMode): ThemeTokens {
   return mode === "dark" ? DARK_TOKENS : LIGHT_TOKENS;

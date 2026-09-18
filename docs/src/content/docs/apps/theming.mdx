@@ -15,6 +15,10 @@ When your app's HTML loads in an iframe, the platform:
 2. **Answers your app's `ui/initialize` request** with the spec tokens under `hostContext.styles.variables`.
 3. **Sends `ui/notifications/host-context-changed`** when the user toggles dark mode, with updated token values under `styles.variables`, once your app has sent `ui/notifications/initialized`.
 
+<Aside>
+The values are not fixed. A deployment can set its own brand, and the tokens your app reads are then that brand's colors, typefaces and corner radius — a different accent, a warm background, square corners. Read the accent from `--color-text-accent` and never assume NimbleBrain blue; a hardcoded hex that matches the default palette will clash with every branded deployment.
+</Aside>
+
 Your CSS references these variables with `var(--token)`. Inside the platform the token always has a value — the `<style>` block lands before your HTML renders, and a `srcdoc` iframe inherits nothing else — so no fallback is needed. If your app also has to render where nothing injects tokens, see **Running outside the platform** below.
 
 ## Using tokens in CSS
