@@ -35,6 +35,42 @@ interface PendingFlow {
   timeout: ReturnType<typeof setTimeout>;
 }
 
+/** Leading `state` characters used as a flow's id in errors and logs. */
+const FLOW_ID_CHARS = 8;
+
+/**
+ * A pending flow reached its TTL without a callback — the user was sent to the
+ * vendor and never came back (tab abandoned, consent blocked, the vendor's own
+ * app swallowing the sign-in page).
+ *
+ * Typed rather than a formatted string because the rejection has two readers
+ * with opposite needs. `message` is the operator's: it names this module, the
+ * flow id, and the timer, and is what the lifecycle logs. {@link userMessage}
+ * is the connecting person's: the lifecycle puts it in the connection's
+ * `lastError`, which the connector card renders verbatim and
+ * `manage_connectors` hands to the agent. Before the split, both readers got
+ * the operator's string. (#1245)
+ */
+export class OAuthFlowExpiredError extends Error {
+  readonly flowId: string;
+  readonly ttlMs: number;
+  /**
+   * What the person who tried to connect reads. Says what happened and what to
+   * do; never names a module, a timer, or a flow id. Deliberately omits the
+   * duration — a TTL rendered in minutes reads as "0 minutes" for any short
+   * TTL, and the number is not what the reader acts on.
+   */
+  readonly userMessage =
+    "Sign-in wasn't completed, so the connection attempt expired. Connect again to retry.";
+
+  constructor(flowId: string, ttlMs: number) {
+    super(`[oauth-flow-registry] flow ${flowId}… timed out after ${ttlMs}ms`);
+    this.name = "OAuthFlowExpiredError";
+    this.flowId = flowId;
+    this.ttlMs = ttlMs;
+  }
+}
+
 const flows = new Map<string, PendingFlow>();
 
 /**
@@ -57,9 +93,7 @@ export function register(
       const existing = flows.get(state);
       if (existing?.timeout === timeout) {
         flows.delete(state);
-        reject(
-          new Error(`[oauth-flow-registry] flow ${state.slice(0, 8)}… timed out after ${ttlMs}ms`),
-        );
+        reject(new OAuthFlowExpiredError(state.slice(0, FLOW_ID_CHARS), ttlMs));
       }
     }, ttlMs);
     // `unref` so a stuck flow's timer doesn't keep the event loop alive

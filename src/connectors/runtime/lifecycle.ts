@@ -22,6 +22,7 @@ import {
 import { personalConnectorWireName } from "../../tools/identity-sources.ts";
 import { hasMcpOAuthTokens, McpOAuthRecords } from "../../tools/mcp-oauth-records.ts";
 import { McpSource } from "../../tools/mcp-source.ts";
+import { OAuthFlowExpiredError } from "../../tools/oauth-flow-registry.ts";
 import { SharedSourceRef, ToolRegistry } from "../../tools/registry.ts";
 import type { ToolSource } from "../../tools/types.ts";
 import { WorkspaceOAuthProvider } from "../../tools/workspace-oauth-provider.ts";
@@ -55,6 +56,22 @@ import type {
   ConnectorSkillLockEntry,
   ConnectorUiMeta,
 } from "./types.ts";
+
+/**
+ * The message a person reads when a connect attempt fails.
+ *
+ * `lastError` is a user-visible surface, not a diagnostic field:
+ * `deriveConnectorStatus` passes it through as `statusReason`, the connector
+ * card renders it verbatim, and `manage_connectors` hands it to the agent. A
+ * typed error therefore carries the sentence written for that reader; every
+ * other error keeps its raw text, which is still the most useful thing we can
+ * say about it. The raw text is logged either way, so nothing is lost to the
+ * operator. (#1245)
+ */
+export function userFacingStartError(err: unknown, raw: string): string {
+  if (err instanceof OAuthFlowExpiredError) return err.userMessage;
+  return raw;
+}
 
 /** What an unbound lifecycle reads: no workspace has a registry. */
 const NO_WORKSPACE_REGISTRIES: ReadonlyMap<string, ToolRegistry> = new Map();
@@ -1154,7 +1171,7 @@ export class ConnectorLifecycleManager {
           `[lifecycle] startAuth: ${serverName} start failed for ${principalId} in ${wsId}: ${msg}`,
         );
         this.recordConnectionStateChange(serverName, wsId, principalId, "dead", {
-          lastError: msg,
+          lastError: userFacingStartError(err, msg),
         });
         // `authUrlPromise` already resolved on the interactive path, so a
         // reject there is a no-op; only the headless / pre-auth failure path
