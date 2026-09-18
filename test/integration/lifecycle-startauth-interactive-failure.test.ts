@@ -6,7 +6,12 @@ import { WORKSPACE_PRINCIPAL_ID } from "../../src/connectors/runtime/connection.
 import { ConnectorLifecycleManager } from "../../src/connectors/runtime/lifecycle.ts";
 import type { ConnectorInstance, ConnectorRef } from "../../src/connectors/runtime/types.ts";
 import type { EngineEvent, EventSink } from "../../src/engine/types.ts";
-import { _clearAll, resolveWithCode } from "../../src/tools/oauth-flow-registry.ts";
+import {
+  _clearAll,
+  OAuthFlowExpiredError,
+  rejectFlow,
+  resolveWithCode,
+} from "../../src/tools/oauth-flow-registry.ts";
 import { seedWorkspaceRoot } from "../helpers/test-workspace.ts";
 import { installTestCredentialStore, resetTestCredentialStore } from "../helpers/credential-store.ts";
 
@@ -179,5 +184,29 @@ describe("lifecycle.startAuth — interactive-flow failure is surfaced, not swal
     // fallback in startAuth's catch).
     expect(conn()?.state).toBe("dead");
     expect(conn()?.lastError).toBe("InvalidGrantError");
+  }, 20_000);
+
+  it("a flow that expires before the user signs in → lastError is the user sentence, not the registry's timer", async () => {
+    const { authorizationUrl } = await lifecycle.startAuth(SERVER, WS, WORKSPACE_PRINCIPAL_ID, {
+      workDir,
+      callbackUrl: `${mock.base}/callback`,
+      allowInsecureRemotes: true,
+    });
+    const conn = () => lifecycle.getInstance(SERVER, WS)?.connections?.get(WORKSPACE_PRINCIPAL_ID);
+    expect(conn()?.state).toBe("pending_auth");
+
+    // Stand in for the TTL firing: reject the pending flow with the error the
+    // registry's timer produces, without waiting out the real 15 minutes.
+    const state = new URL(authorizationUrl).searchParams.get("state") as string;
+    const expired = new OAuthFlowExpiredError(state.slice(0, 8), 900_000);
+    expect(rejectFlow(state, expired)).toBe(true);
+
+    const deadline = Date.now() + 8000;
+    while (conn()?.state !== "dead" && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 50));
+    }
+
+    expect(conn()?.state).toBe("dead");
+    expect(conn()?.lastError).toBe(expired.userMessage);
   }, 20_000);
 });
