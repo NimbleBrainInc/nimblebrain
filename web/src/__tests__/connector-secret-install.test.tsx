@@ -210,9 +210,9 @@ describe("a Browse entry that declares secretHeaders", () => {
 
     expect(calls).toEqual(["set_secret:acme.db_url", "install"]);
     expect(setWorkspaceSecret.mock.calls[0]).toEqual(["acme.db_url", "postgres://a.acme.test/db"]);
-    // provider-auth completes without a sign-in, so the install routes straight
-    // to Configure — the credential is already in place when it starts.
-    expect(lastPath).toBe("/w/acme/settings/connectors/com-acme-db-query");
+    // provider-auth completes without a sign-in, so the install finishes on
+    // Browse — the credential is already in place when it starts.
+    expect(lastPath).toBe("/w/acme/settings/connectors/browse");
   });
 
   test("cancelling installs nothing and stores nothing", async () => {

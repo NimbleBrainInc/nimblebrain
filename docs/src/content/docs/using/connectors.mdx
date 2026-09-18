@@ -15,7 +15,7 @@ This page is about connectors **shared by a workspace**. To connect a service to
 
 ## Where connectors live
 
-Connectors are managed per workspace, under **Settings → Connectors** for the workspace you're viewing. The page lists what's already connected; the **Browse** button opens the full directory of available services.
+Connectors are managed per workspace, under **Settings → Connectors** for the workspace you're viewing. The page lists what's already connected; the **Browse** button opens the full directory of available services. Browse lists what the workspace already has too, in an **Installed** section below the rest, each with a link to its **Configure** page.
 
 A connected service is **shared by everyone in the workspace** — its tools are available to all members. The credentials behind it are stored once, in the workspace.
 
@@ -24,7 +24,7 @@ A connected service is **shared by everyone in the workspace** — its tools are
 <Steps>
 1. Open **Settings → Connectors** for your workspace and click **Browse**.
 2. Find the service you want. Each card shows its name and a short description; search filters by name, description, or tag.
-3. Click **Install**. You're redirected to the vendor's sign-in page.
+3. Click **Install**. For a service with a sign-in, you're redirected to the vendor's sign-in page. A **provider** or **smithery** connector has none: the card reads **Installed** and you stay on Browse. If it installed but failed to start, you're taken to its **Configure** page instead, where the reason is shown.
 4. Sign in and approve the requested access. You're returned to NimbleBrain, and the connector's row updates to **Connected** once the handshake settles.
 </Steps>
 
