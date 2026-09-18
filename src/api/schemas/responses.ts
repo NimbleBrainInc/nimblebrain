@@ -175,6 +175,42 @@ export interface HealthResponse {
   status: "ok";
 }
 
+// ── GET /v1/brand ───────────────────────────────────────────────────────────
+
+/** One woff2 file and the weight (or variable range) it covers. Mirrors `BrandFontFace`. */
+export interface BrandFontFace {
+  url: string;
+  weight?: string;
+}
+
+/** One typeface role as served. Mirrors `ResolvedBrandFont` (`web/src/theme/brand.ts`). */
+export interface BrandFontResponse {
+  stack: string;
+  family?: string;
+  faces?: BrandFontFace[];
+}
+
+/**
+ * The deployment's validated brand block, `{}` when none is configured.
+ * Mirrors `ResolvedBrand` (`web/src/theme/brand.ts`); `colors` is keyed by
+ * palette token name, each a `[light, dark]` hex pair.
+ */
+export interface BrandResponse {
+  name?: string;
+  homepageUrl?: string;
+  logo?: {
+    light?: string;
+    dark?: string;
+    mark?: string;
+    raster?: string;
+  };
+  favicon?: string;
+  defaultTheme?: "light" | "dark" | "system";
+  colors?: { [token: string]: readonly [light: string, dark: string] };
+  fonts?: Partial<Record<"sans" | "heading" | "reading" | "mono", BrandFontResponse>>;
+  radius?: Partial<Record<"xs" | "sm" | "md" | "lg" | "xl", string>>;
+}
+
 // ── GET /v1/workspaces/:wsId/shell ──────────────────────────────────────────
 
 export interface ShellResponse {

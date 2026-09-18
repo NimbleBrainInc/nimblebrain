@@ -1,4 +1,5 @@
 import type { LanguageModelV4 } from "@ai-sdk/provider";
+import type { Brand } from "../brand/index.ts";
 import type { FeatureFlags } from "../config/features.ts";
 import type { ConfirmationGate } from "../config/privilege.ts";
 import type { SecretsConfig } from "../config/secrets.ts";
@@ -219,6 +220,12 @@ export interface RuntimeConfig {
    */
   secrets?: SecretsConfig;
 
+  /**
+   * White-label branding: name, logos, palette, fonts, radius. Absent is
+   * NimbleBrain. Validated and installed by `loadBrand` (`src/brand/`).
+   */
+  brand?: Brand;
+
   /** Anonymous telemetry configuration. */
   telemetry?: {
     /** Enable anonymous telemetry. Default: true. */
@@ -265,7 +272,7 @@ export interface RuntimeConfig {
     timezone?: string;
     /** BCP 47 locale. Default: "en-US". */
     locale?: string;
-    /** Color theme. Default: "system". */
+    /** Color theme. Default: `brand.defaultTheme`, else "system". */
     theme?: "system" | "light" | "dark";
   };
 }
