@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from "bun:test";
 import {
   _clearAll,
+  OAuthFlowExpiredError,
   peekFlowOwner,
   register,
   rejectFlow,
@@ -67,6 +68,28 @@ describe("oauth-flow-registry", () => {
     // a TTL. Use a tiny TTL to exercise the timer path quickly.
     const p = register("state-ttl", WS, "srv", 20);
     await expect(p).rejects.toThrow(/timed out/i);
+  });
+
+  it("the TTL rejection is typed, and its message still names the flow and ttl for the operator", async () => {
+    // Typed so the lifecycle can recognise this one failure and show the person
+    // a sentence instead of this message — which stays exactly as it was, since
+    // it is what the operator reads in the logs. (#1245)
+    const err = await register("state-typed-ttl", WS, "srv", 20).catch((e) => e);
+    expect(err).toBeInstanceOf(OAuthFlowExpiredError);
+    expect(err.message).toContain("[oauth-flow-registry] flow state-ty…");
+    expect(err.message).toContain("timed out after 20ms");
+  });
+
+  it("the typed error's user message says what to do and names no internals", async () => {
+    const err = await register("state-user-msg", WS, "srv", 20).catch((e) => e);
+    // Present and non-empty — the lifecycle tests compare against it, so an
+    // undefined sentence would pass them vacuously.
+    expect(err.userMessage).toBeString();
+    expect(err.userMessage).not.toBe("");
+    // The two things that made the old string unreadable to the person who hit
+    // it: a module name and a millisecond timer.
+    expect(err.userMessage).not.toContain("oauth-flow-registry");
+    expect(err.userMessage).not.toMatch(/\dms/);
   });
 
   it("clearTimeout on resolve prevents late timer from firing stale reject", async () => {
