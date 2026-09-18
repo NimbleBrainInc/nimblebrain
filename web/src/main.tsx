@@ -2,6 +2,7 @@ import * as Sentry from "@sentry/react";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./App";
+import { bootBrand } from "./brand";
 import { registerHostFontUrls } from "./bridge/fonts";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { FONT_URLS } from "./font-urls";
@@ -23,6 +24,11 @@ initSentry(Sentry);
 // Recover a tab that outlived a deploy: a 404 on a stale hashed lazy chunk
 // would otherwise white-screen the app. See stale-chunk-recovery.ts.
 registerStaleChunkRecovery();
+
+// Paint the tenant's brand before the first render, so the shell never shows
+// one brand and then another. Resolves at once from a cached brand, otherwise
+// after a short bounded wait for `/v1/brand`; never rejects. See brand.ts.
+await bootBrand();
 
 createRoot(document.getElementById("root")!, {
   // React 19 hooks: report render-time throws to Sentry (incl. ones the
