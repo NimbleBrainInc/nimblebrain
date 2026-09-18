@@ -27,6 +27,7 @@ import { CardAction } from "../pages/settings/ConnectorBrowsePage";
 const React = await import("react");
 const ReactDOMClient = await import("react-dom/client");
 const { act } = await import("react");
+const { MemoryRouter } = await import("react-router-dom");
 
 interface Mounted {
   container: HTMLDivElement;
@@ -105,5 +106,48 @@ describe("CardAction — static auth awaiting operator setup", () => {
     mounted = await render(false, { isStaticAuth: true, operatorReady: false });
     expect(findButton(mounted.container, "Set up")).toBeNull();
     expect(mounted.container.textContent).toContain("Operator setup required");
+  });
+});
+
+describe("CardAction — an installed entry", () => {
+  // The Configure link needs a router; the other states render none.
+  function renderInstalled(
+    canManage: boolean,
+    over: Partial<Parameters<typeof CardAction>[0]> = {},
+  ) {
+    return mount(
+      <MemoryRouter>
+        <CardAction
+          busy={false}
+          canManage={canManage}
+          configurePath="/w/acme/settings/connectors/acme"
+          isStaticAuth={false}
+          operatorReady={true}
+          onInstall={() => {}}
+          onSetUp={() => {}}
+          {...over}
+        />
+      </MemoryRouter>,
+    );
+  }
+
+  test("shows a disabled Installed and a link to Configure, not Install", async () => {
+    mounted = await renderInstalled(true);
+    expect(findButton(mounted.container, "Installed")?.disabled).toBe(true);
+    expect(findButton(mounted.container, "Install")?.textContent).toContain("Installed");
+    const link = mounted.container.querySelector("a");
+    expect(link?.getAttribute("href")).toBe("/w/acme/settings/connectors/acme");
+  });
+
+  test("a member sees Installed too — it is a fact, not an action", async () => {
+    mounted = await renderInstalled(false);
+    expect(findButton(mounted.container, "Installed")).not.toBeNull();
+    expect(mounted.container.textContent).not.toContain("Workspace admin required");
+  });
+
+  test("outranks a pending operator setup", async () => {
+    mounted = await renderInstalled(true, { isStaticAuth: true, operatorReady: false });
+    expect(findButton(mounted.container, "Set up")).toBeNull();
+    expect(findButton(mounted.container, "Installed")).not.toBeNull();
   });
 });

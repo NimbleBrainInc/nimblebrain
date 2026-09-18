@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Check, Loader2 } from "lucide-react";
+import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   type CatalogListing,
@@ -19,14 +20,28 @@ import { useCanWriteActiveWorkspace } from "../../hooks/useScopedRole";
 import { installCompletesWithoutSignIn } from "../../lib/connector-auth-flow.ts";
 import { type SecretHeaderField, secretHeaderFields } from "../../lib/secret-headers";
 
+type InstallResult = Awaited<ReturnType<typeof installConnector>>;
+
 /**
- * Connector directory — what's available to install. The Browse page
- * is intentionally focused on *discovery*: already-installed
- * connectors are filtered out (they live on the Connectors list →
- * Configure page now), and registry attribution is dropped from each
- * card to reduce visual noise. Cards render in a two-column grid
- * because the catalog is long enough that a single column wastes
- * horizontal space.
+ * Floor on the "Installing…" state for an install that finishes on this page.
+ * A provider install can return in tens of milliseconds, and a button that
+ * flips straight to "Installed" reads as a flicker rather than an action.
+ * Paths that leave the page (a vendor sign-in) never wait on it.
+ */
+export const INSTALL_MIN_SPINNER_MS = 400;
+
+/**
+ * Connector directory — what's available to install. Entries not yet in
+ * this workspace fill the grid; installed ones sit in their own section
+ * below, muted, with a link to their Configure page, so the directory
+ * answers "do we have this already?" without a trip to the Connectors
+ * list. Registry attribution is dropped from each card to reduce visual
+ * noise. Cards render in a two-column grid because the catalog is long
+ * enough that a single column wastes horizontal space.
+ *
+ * An install that needs no sign-in finishes here: the card turns to
+ * "Installed" in place. It moves to the Installed section on the next
+ * visit, not mid-visit, so nothing jumps out from under the cursor.
  */
 export function ConnectorBrowsePage() {
   const [entries, setEntries] = useState<CatalogListing[]>([]);
@@ -35,6 +50,10 @@ export function ConnectorBrowsePage() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  // Entries installed during this visit, catalog id → serverName. Kept apart
+  // from `installed` so a directory refetch (after operator setup) cannot move
+  // a card the user just installed into the Installed section.
+  const [justInstalled, setJustInstalled] = useState<ReadonlyMap<string, string>>(new Map());
   const [query, setQuery] = useState("");
   const [setupModalEntry, setSetupModalEntry] = useState<CatalogListing | null>(null);
   // API-key Composio connector: after install we collect the key fields in a
@@ -95,70 +114,87 @@ export function ConnectorBrowsePage() {
     };
   }, [fetchDirectory]);
 
-  // Build the install lookup so we can drop already-installed entries from
-  // the Browse list. A remote-oauth entry matches on URL.
-  const installedUrls = useMemo(() => {
-    const byUrl = new Set<string>();
+  // Which installed connector, if any, each directory entry already is. Catalog
+  // id first: a brokered install (Composio, Smithery) stores a per-install
+  // session URL that never equals the catalog URL, which is also why the server
+  // resolves its catalog entry by id. URL covers an install whose catalog match
+  // didn't resolve.
+  const installedServerName = useMemo(() => {
+    const byCatalogId = new Map<string, string>();
+    const byUrl = new Map<string, string>();
     for (const ins of installed) {
-      if (ins.url) byUrl.add(ins.url);
+      if (ins.catalogId) byCatalogId.set(ins.catalogId, ins.serverName);
+      if (ins.url) byUrl.set(ins.url, ins.serverName);
     }
-    return byUrl;
+    return (entry: CatalogListing): string | undefined =>
+      byCatalogId.get(entry.id) ??
+      (entry.install.kind === "remote-oauth" ? byUrl.get(entry.install.url) : undefined);
   }, [installed]);
 
-  // useCallback so the visibleEntries memo can depend on a stable isInstalled
-  // (its identity changes only when installedUrls does — the same trigger the
-  // memo needs to drop newly-installed connectors from the list).
-  const isInstalled = useCallback(
-    (entry: CatalogListing): boolean =>
-      entry.install.kind === "remote-oauth" && installedUrls.has(entry.install.url),
-    [installedUrls],
-  );
-
-  // One unified browse list: every connector is installable into any
-  // workspace, so the only filtering is dropping already-installed
-  // entries and applying the search query.
-  const visibleEntries = useMemo(() => {
-    const available = entries.filter((e) => !isInstalled(e));
-    if (!query.trim()) return available;
+  // Two sections, one search: the query filters both. An entry installed
+  // during this visit stays in `available` (rendered as Installed) so it
+  // doesn't jump sections under the cursor.
+  const { available, installedEntries } = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return available.filter(
-      (e) =>
-        e.name.toLowerCase().includes(q) ||
-        e.description.toLowerCase().includes(q) ||
-        (e.tags ?? []).some((t) => t.toLowerCase().includes(q)),
-    );
-  }, [entries, query, isInstalled]);
+    const matches = (e: CatalogListing) =>
+      !q ||
+      e.name.toLowerCase().includes(q) ||
+      e.description.toLowerCase().includes(q) ||
+      (e.tags ?? []).some((t) => t.toLowerCase().includes(q));
+    const available: CatalogListing[] = [];
+    const installedEntries: Array<{ entry: CatalogListing; serverName: string }> = [];
+    for (const entry of entries) {
+      if (!matches(entry)) continue;
+      const serverName = installedServerName(entry);
+      if (serverName && !justInstalled.has(entry.id)) installedEntries.push({ entry, serverName });
+      else available.push(entry);
+    }
+    return { available, installedEntries };
+  }, [entries, query, installedServerName, justInstalled]);
 
-  // Route a completed remote-OAuth install per its auth scheme: provider-auth to
-  // Configure, API-key Composio to the key modal, and everything else into the
-  // vendor's OAuth redirect.
+  const markInstalled = (entry: CatalogListing, serverName: string) => {
+    setJustInstalled((prev) => new Map(prev).set(entry.id, serverName));
+    setBusyId(null);
+  };
+
+  // An install with nothing left to do finishes on this page — unless it came
+  // back with a warning. Then the connector is installed but not working (an
+  // eager start that threw), and "Installed" on the card would hide that:
+  // Configure is where its failed state and reason render.
+  const finishesInPage = (install: InstallResult): boolean => {
+    if (!install.warning) return true;
+    navigate(`${configureBasePath}/${install.serverName}`);
+    return false;
+  };
+
+  // Route a completed remote-OAuth install per its auth scheme: provider-auth
+  // finishes here, API-key Composio opens the key modal, and everything else
+  // goes into the vendor's OAuth redirect. Returns true when the install
+  // finished here.
   const routeRemoteOAuthInstall = async (
     entry: CatalogListing,
     install: RemoteOAuthInstall,
-    serverName: string,
-  ) => {
+    result: InstallResult,
+  ): Promise<boolean> => {
+    const { serverName } = result;
     // A provider-auth (platform) source has no user/operator OAuth — its
     // credential is minted server-side and it eager-starts `running` at install.
-    // So there's no auth flow to launch: route to Configure, which renders it
-    // `ready`. Launching initiateMcpOAuth here would spin a bogus OAuth flow
-    // against a server that has none.
+    // So there's no auth flow to launch. Launching initiateMcpOAuth here would
+    // spin a bogus OAuth flow against a server that has none.
     //
     // A smithery-auth source is the same shape for the same reason: the broker
     // holds the credential, the transport carries a static header, and the
     // install eager-starts it `running`. Falling through would call
     // `initiateMcpOAuth`, which throws "already connected" on a running source
     // and surfaces as a 500 — a red error on an install that actually SUCCEEDED.
-    if (installCompletesWithoutSignIn(install.auth)) {
-      navigate(`${configureBasePath}/${serverName}`);
-      return;
-    }
+    if (installCompletesWithoutSignIn(install.auth)) return finishesInPage(result);
     // API-key Composio connectors have no OAuth redirect — collect the declared
     // fields in a modal and call connect_api_key. The install already created the
     // connector ref the connect step needs.
     if (install.auth === "composio" && install.composio?.authScheme === "API_KEY") {
       setApiKeyModal({ entry, serverName });
       setBusyId(null);
-      return;
+      return false;
     }
     // Composio-backed connectors route through their own initiate endpoint (keyed
     // on catalog id, not server name). Everything else (dcr + static) stays on
@@ -167,14 +203,12 @@ export function ConnectorBrowsePage() {
       install.auth === "composio"
         ? await initiateComposioOAuth(entry.id)
         : await initiateMcpOAuth(serverName);
-    if (!authorizationUrl) {
-      // Connected without an interactive flow (already authenticated) — route to
-      // Configure like the provider-auth case rather than redirecting to a
-      // nonexistent auth page (#679).
-      navigate(`${configureBasePath}/${serverName}`);
-      return;
-    }
+    // Connected without an interactive flow (already authenticated) — finish
+    // like the provider-auth case rather than redirecting to a nonexistent auth
+    // page (#679).
+    if (!authorizationUrl) return finishesInPage(result);
     window.location.assign(authorizationUrl);
+    return false;
   };
 
   // Install into the workspace the user is already in. The page is
@@ -189,12 +223,17 @@ export function ConnectorBrowsePage() {
   const runInstall = async (entry: CatalogListing) => {
     setLoadError(null);
     setBusyId(entry.id);
+    // Started beside the request, not after it, so the floor adds nothing to an
+    // install slower than it. Only an install that finishes here awaits it.
+    const minSpinner = new Promise((resolve) => setTimeout(resolve, INSTALL_MIN_SPINNER_MS));
     try {
       const result = await installConnector(entry);
-      // Remote OAuth: kick the user into the vendor's auth flow.
       // direct-url not yet supported.
       if (entry.install.kind === "remote-oauth") {
-        await routeRemoteOAuthInstall(entry, entry.install, result.serverName);
+        if (await routeRemoteOAuthInstall(entry, entry.install, result)) {
+          await minSpinner;
+          markInstalled(entry, result.serverName);
+        }
         return;
       }
     } catch (err) {
@@ -259,23 +298,28 @@ export function ConnectorBrowsePage() {
         <p className="text-sm text-muted-foreground">Loading…</p>
       ) : loadError ? (
         <p className="text-sm text-destructive">{loadError}</p>
-      ) : visibleEntries.length === 0 ? (
-        <p className="text-sm text-muted-foreground">
-          {query ? `No results for "${query}".` : "Everything available here is already installed."}
-        </p>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          {visibleEntries.map((entry) => (
+        <DirectoryResults
+          query={query}
+          available={available}
+          installedEntries={installedEntries}
+          renderCard={(entry, configurePath) => (
             <DirectoryCard
               key={entry.id}
               entry={entry}
               busy={busyId === entry.id}
               canManage={canManage}
+              configurePath={configurePath}
               onInstall={() => onInstall(entry)}
               onSetUp={() => setSetupModalEntry(entry)}
             />
-          ))}
-        </div>
+          )}
+          configurePathFor={(entry) => {
+            const serverName = justInstalled.get(entry.id);
+            return serverName && `${configureBasePath}/${serverName}`;
+          }}
+          installedPathFor={(serverName) => `${configureBasePath}/${serverName}`}
+        />
       )}
 
       {setupModalEntry && (
@@ -317,13 +361,66 @@ export function ConnectorBrowsePage() {
           open={true}
           onClose={() => setApiKeyModal(null)}
           onConnected={() => {
-            const serverName = apiKeyModal.serverName;
+            markInstalled(apiKeyModal.entry, apiKeyModal.serverName);
             setApiKeyModal(null);
-            navigate(`${configureBasePath}/${serverName}`);
           }}
         />
       )}
     </div>
+  );
+}
+
+/**
+ * The directory body: entries not yet installed in the grid, installed ones in
+ * a muted section beneath. `configurePathFor` marks an entry installed during
+ * this visit, which renders as Installed but keeps its place in the grid.
+ */
+function DirectoryResults({
+  query,
+  available,
+  installedEntries,
+  renderCard,
+  configurePathFor,
+  installedPathFor,
+}: {
+  query: string;
+  available: CatalogListing[];
+  installedEntries: Array<{ entry: CatalogListing; serverName: string }>;
+  renderCard: (entry: CatalogListing, configurePath: string | undefined) => ReactNode;
+  configurePathFor: (entry: CatalogListing) => string | undefined;
+  installedPathFor: (serverName: string) => string;
+}) {
+  if (available.length === 0 && installedEntries.length === 0) {
+    return (
+      <p className="text-sm text-muted-foreground">
+        {query ? `No results for "${query}".` : "No connectors are available to this workspace."}
+      </p>
+    );
+  }
+  return (
+    <>
+      {available.length > 0 ? (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          {available.map((entry) => renderCard(entry, configurePathFor(entry)))}
+        </div>
+      ) : (
+        !query && (
+          <p className="text-sm text-muted-foreground">
+            Everything available here is already installed.
+          </p>
+        )
+      )}
+      {installedEntries.length > 0 && (
+        <section className="space-y-3 pt-2">
+          <h2 className="text-sm font-medium text-muted-foreground">Installed</h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {installedEntries.map(({ entry, serverName }) =>
+              renderCard(entry, installedPathFor(serverName)),
+            )}
+          </div>
+        </section>
+      )}
+    </>
   );
 }
 
@@ -357,12 +454,15 @@ function DirectoryCard({
   entry,
   busy,
   canManage,
+  configurePath,
   onInstall,
   onSetUp,
 }: {
   entry: CatalogListing;
   busy: boolean;
   canManage: boolean;
+  /** Set when the entry is installed in this workspace: its Configure page. */
+  configurePath?: string;
   onInstall: () => void;
   onSetUp: () => void;
 }) {
@@ -371,11 +471,11 @@ function DirectoryCard({
   // Say it on the card, not once the dialog appears. `operatorConfigured` already
   // distinguishes a static-auth entry that is ready from one that is not; this is
   // the same disclosure for the other thing an install can ask for.
-  const secretCount = secretHeaderFields(entry.install).length;
+  const secretCount = configurePath ? 0 : secretHeaderFields(entry.install).length;
 
   return (
     <div className="flex flex-col gap-3 p-4 border border-border/60 rounded-sm bg-background h-full">
-      <div className="flex items-start gap-3">
+      <div className={`flex items-start gap-3 ${configurePath ? "opacity-60" : ""}`}>
         <ConnectorIcon name={entry.name} iconUrl={entry.iconUrl} />
         <div className="flex-1 min-w-0">
           <div className="text-sm font-medium truncate">{entry.name}</div>
@@ -395,6 +495,7 @@ function DirectoryCard({
         <CardAction
           busy={busy}
           canManage={canManage}
+          configurePath={configurePath}
           isStaticAuth={isStaticAuth}
           operatorReady={operatorReady}
           onInstall={onInstall}
@@ -413,6 +514,7 @@ function DirectoryCard({
 export function CardAction({
   busy,
   canManage,
+  configurePath,
   isStaticAuth,
   operatorReady,
   onInstall,
@@ -420,6 +522,8 @@ export function CardAction({
 }: {
   busy: boolean;
   canManage: boolean;
+  /** Set when the entry is installed in this workspace: its Configure page. */
+  configurePath?: string;
   isStaticAuth: boolean;
   operatorReady: boolean;
   onInstall: () => void;
@@ -433,6 +537,22 @@ export function CardAction({
   //   - not configured + admin     → Set up
   //   - not configured + non-admin → "Operator setup required"
   //   - configured                 → Install (rotation lives on Configure now)
+  //
+  // Installed comes first, for every role: it is a fact about the workspace,
+  // not an action, so a member sees it too and no setup state outranks it.
+  if (configurePath) {
+    return (
+      <div className="flex items-center gap-3">
+        <Link to={configurePath} className="text-xs text-muted-foreground hover:underline">
+          Configure
+        </Link>
+        <Button type="button" variant="outline" size="sm" disabled>
+          <Check />
+          Installed
+        </Button>
+      </div>
+    );
+  }
   if (isStaticAuth && !operatorReady) {
     return canManage ? (
       <Button type="button" variant="outline" size="sm" onClick={onSetUp}>
@@ -449,7 +569,14 @@ export function CardAction({
   // path, so a new one can't miss the gate by being added elsewhere.
   return canManage ? (
     <Button type="button" variant="outline" size="sm" onClick={onInstall} disabled={busy}>
-      {busy ? "Installing…" : "Install"}
+      {busy ? (
+        <>
+          <Loader2 className="animate-spin" />
+          Installing…
+        </>
+      ) : (
+        "Install"
+      )}
     </Button>
   ) : (
     <span className="text-xs text-muted-foreground">Workspace admin required</span>
