@@ -506,9 +506,286 @@
         }
       },
       "additionalProperties": false
+    },
+    "brand": {
+      "description": "White-label branding: the product name, logos, palette, typefaces and corner radius a tenant's users see in place of NimbleBrain's. Every key is optional, and an absent block is NimbleBrain. The runtime rejects at load a palette that fails any WCAG AA contrast pair the canonical palette is held to. Served unauthenticated at GET /v1/brand. See https://docs.nimblebrain.ai/config/branding/.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[^\\u0000-\\u001f<>{}]+$",
+          "description": "Product name shown in place of \"NimbleBrain\": the agent's identity line, OAuth consent screens, the OAuth success page, error pages. Default: \"NimbleBrain\"."
+        },
+        "homepageUrl": {
+          "$ref": "#/$defs/brandUrl",
+          "description": "Homepage sent as `client_uri` when registering OAuth clients with connector vendors."
+        },
+        "logo": {
+          "type": "object",
+          "description": "Logo artwork URLs. A URL that is set must resolve; a broken URL renders a broken image, not the default logo.",
+          "properties": {
+            "light": {
+              "$ref": "#/$defs/brandUrl",
+              "description": "Full logo for light mode."
+            },
+            "dark": {
+              "$ref": "#/$defs/brandUrl",
+              "description": "Full logo for dark mode."
+            },
+            "mark": {
+              "$ref": "#/$defs/brandUrl",
+              "description": "Square mark, used where the full logo does not fit."
+            },
+            "raster": {
+              "$ref": "#/$defs/brandUrl",
+              "description": "PNG mark sent as `logo_uri` in OAuth client registration. Raster because several identity providers refuse SVG there."
+            }
+          },
+          "additionalProperties": false
+        },
+        "favicon": {
+          "$ref": "#/$defs/brandUrl",
+          "description": "Favicon URL."
+        },
+        "colors": {
+          "type": "object",
+          "description": "Palette overrides by token name, each a [light, dark] pair of #rrggbb values. An omitted <x>-foreground whose <x> is set is derived as white or black, whichever reads better.",
+          "properties": {
+            "background": {
+              "$ref": "#/$defs/brandColorPair"
+            },
+            "foreground": {
+              "$ref": "#/$defs/brandColorPair"
+            },
+            "card": {
+              "$ref": "#/$defs/brandColorPair"
+            },
+            "card-foreground": {
+              "$ref": "#/$defs/brandColorPair"
+            },
+            "popover": {
+              "$ref": "#/$defs/brandColorPair"
+            },
+            "popover-foreground": {
+              "$ref": "#/$defs/brandColorPair"
+            },
+            "primary": {
+              "$ref": "#/$defs/brandColorPair"
+            },
+            "primary-foreground": {
+              "$ref": "#/$defs/brandColorPair"
+            },
+            "secondary": {
+              "$ref": "#/$defs/brandColorPair"
+            },
+            "secondary-foreground": {
+              "$ref": "#/$defs/brandColorPair"
+            },
+            "muted": {
+              "$ref": "#/$defs/brandColorPair"
+            },
+            "muted-foreground": {
+              "$ref": "#/$defs/brandColorPair"
+            },
+            "accent": {
+              "$ref": "#/$defs/brandColorPair"
+            },
+            "accent-foreground": {
+              "$ref": "#/$defs/brandColorPair"
+            },
+            "destructive": {
+              "$ref": "#/$defs/brandColorPair"
+            },
+            "destructive-foreground": {
+              "$ref": "#/$defs/brandColorPair"
+            },
+            "border": {
+              "$ref": "#/$defs/brandColorPair"
+            },
+            "input": {
+              "$ref": "#/$defs/brandColorPair"
+            },
+            "ring": {
+              "$ref": "#/$defs/brandColorPair"
+            },
+            "success": {
+              "$ref": "#/$defs/brandColorPair"
+            },
+            "warning": {
+              "$ref": "#/$defs/brandColorPair"
+            },
+            "processing": {
+              "$ref": "#/$defs/brandColorPair"
+            },
+            "processing-light": {
+              "$ref": "#/$defs/brandColorPair"
+            },
+            "info-light": {
+              "$ref": "#/$defs/brandColorPair"
+            },
+            "scope-org": {
+              "$ref": "#/$defs/brandColorPair"
+            },
+            "scope-workspace": {
+              "$ref": "#/$defs/brandColorPair"
+            },
+            "scope-user": {
+              "$ref": "#/$defs/brandColorPair"
+            },
+            "scope-connector": {
+              "$ref": "#/$defs/brandColorPair"
+            },
+            "sidebar": {
+              "$ref": "#/$defs/brandColorPair"
+            },
+            "sidebar-foreground": {
+              "$ref": "#/$defs/brandColorPair"
+            },
+            "sidebar-border": {
+              "$ref": "#/$defs/brandColorPair"
+            },
+            "sidebar-hover": {
+              "$ref": "#/$defs/brandColorPair"
+            },
+            "background-tertiary": {
+              "$ref": "#/$defs/brandColorPair"
+            },
+            "text-tertiary": {
+              "$ref": "#/$defs/brandColorPair"
+            }
+          },
+          "additionalProperties": false
+        },
+        "fonts": {
+          "type": "object",
+          "description": "Typeface overrides per role. A family with no url or faces must be a system font.",
+          "properties": {
+            "sans": {
+              "$ref": "#/$defs/brandFont"
+            },
+            "heading": {
+              "$ref": "#/$defs/brandFont"
+            },
+            "reading": {
+              "$ref": "#/$defs/brandFont"
+            },
+            "mono": {
+              "$ref": "#/$defs/brandFont"
+            }
+          },
+          "additionalProperties": false
+        },
+        "radius": {
+          "type": "object",
+          "description": "Corner radius scale overrides, as CSS lengths.",
+          "properties": {
+            "xs": {
+              "$ref": "#/$defs/brandLength"
+            },
+            "sm": {
+              "$ref": "#/$defs/brandLength"
+            },
+            "md": {
+              "$ref": "#/$defs/brandLength"
+            },
+            "lg": {
+              "$ref": "#/$defs/brandLength"
+            },
+            "xl": {
+              "$ref": "#/$defs/brandLength"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
     }
   },
   "$defs": {
+    "brandUrl": {
+      "type": "string",
+      "pattern": "^https?://[^\\s\"'()<>]+$"
+    },
+    "brandColorPair": {
+      "type": "array",
+      "description": "[light, dark]",
+      "items": {
+        "type": "string",
+        "pattern": "^#[0-9A-Fa-f]{6}$"
+      },
+      "minItems": 2,
+      "maxItems": 2
+    },
+    "brandLength": {
+      "type": "string",
+      "pattern": "^(0|[0-9]*\\.?[0-9]+(px|rem|em))$"
+    },
+    "brandFontUrl": {
+      "type": "string",
+      "description": "A woff2 font file. Not a stylesheet: Google Fonts CSS URLs are rejected.",
+      "pattern": "^https?://[^\\s\"'()<>]+\\.woff2(\\?[^\\s\"'()<>]*)?$"
+    },
+    "brandFontWeight": {
+      "type": "string",
+      "description": "CSS font-weight descriptor: \"400\", or a variable range \"400 700\".",
+      "pattern": "^[1-9][0-9]{0,2}( [1-9][0-9]{0,2})?$"
+    },
+    "brandFontFace": {
+      "type": "object",
+      "required": ["url"],
+      "properties": {
+        "url": {
+          "$ref": "#/$defs/brandFontUrl"
+        },
+        "weight": {
+          "$ref": "#/$defs/brandFontWeight"
+        }
+      },
+      "additionalProperties": false
+    },
+    "brandFont": {
+      "type": "object",
+      "description": "One typeface role. `url` (+ `weight`) declares one face, typical for a variable font; `faces` declares several static ones. Not both.",
+      "required": ["stack"],
+      "properties": {
+        "stack": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[^;{}<>\\\\]+$",
+          "description": "CSS font-family value, fallbacks included."
+        },
+        "family": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[^;{}<>\\\\'\"]+$",
+          "description": "Family name the faces are declared under. Required with url or faces."
+        },
+        "url": {
+          "$ref": "#/$defs/brandFontUrl"
+        },
+        "weight": {
+          "$ref": "#/$defs/brandFontWeight"
+        },
+        "faces": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/brandFontFace"
+          }
+        }
+      },
+      "dependencies": {
+        "url": ["family"],
+        "faces": ["family"],
+        "weight": ["url"]
+      },
+      "not": {
+        "required": ["url", "faces"]
+      },
+      "additionalProperties": false
+    },
     "connectorRef": {
       "description": "One entry in a workspace's `connectors[]` — a remote MCP server, addressed by URL. Workspace records live at `<workDir>/workspaces/<wsId>/workspace.json`, not in this file.",
       "type": "object",

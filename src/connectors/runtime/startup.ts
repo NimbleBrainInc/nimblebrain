@@ -1,3 +1,4 @@
+import { oauthClientIdentity } from "../../brand/index.ts";
 import { composioTransportConfig } from "../../connectors/providers/composio/transport-credential.ts";
 import type { EventSink } from "../../engine/types.ts";
 import type { HostResourcesRateLimit, HostResourcesResolver } from "../../host-resources/index.ts";
@@ -255,11 +256,12 @@ async function buildUserOAuthProvider(
   onInteractiveAuthRequired: (authorizationUrl: string) => void,
 ): Promise<WorkspaceOAuthProvider> {
   const workDir = opts?.workDir ?? defaultWorkDir();
-  // Human-readable owner for the vendor consent screen ("NimbleBrain (<name>)")
+  // Human-readable owner for the vendor consent screen ("<brand> (<name>)")
   // in place of the opaque `user:<id>`; mirrors the workspace arm's
   // `resolveWorkspaceDisplayName`. Best-effort — falls back to the id.
   const ownerDisplayName = await resolveUserDisplayName(workDir, identityOwner.userId);
   return new WorkspaceOAuthProvider({
+    clientIdentity: oauthClientIdentity(),
     owner: { type: "user", userId: identityOwner.userId },
     ...(ownerDisplayName ? { ownerDisplayName } : {}),
     serverName,
@@ -354,6 +356,7 @@ export async function buildUrlOAuthProvider(
   // place of the opaque wsId; best-effort, falls back to the id.
   const ownerDisplayName = await resolveWorkspaceDisplayName(workDir, wsId);
   return new WorkspaceOAuthProvider({
+    clientIdentity: oauthClientIdentity(),
     owner: { type: "workspace", wsId },
     ...(ownerDisplayName ? { ownerDisplayName } : {}),
     serverName,

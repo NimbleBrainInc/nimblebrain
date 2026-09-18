@@ -270,7 +270,7 @@ async function composeLive(runtime: Runtime, convId: string): Promise<ComposeRes
   // Gather workspace metadata + the workspace identity override (per-
   // workspace `workspace.identity` synthesized into a priority-1 context
   // skill, exactly like `runtime.chat()` does at line ~708). Without this
-  // append, the trace would silently report `DEFAULT_IDENTITY` for any
+  // append, the trace would silently report the default identity for any
   // workspace operating under a custom identity — defeating the headline
   // purpose of the tool.
   const ws = await runtime.getWorkspaceStore().get(wsId);

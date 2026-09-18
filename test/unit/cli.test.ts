@@ -2,7 +2,9 @@ import { describe, expect, it, afterAll, spyOn } from "bun:test";
 import { mkdirSync, writeFileSync, readFileSync, rmSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { loadBrand, resolvedBrand } from "../../src/brand/index.ts";
 import { loadConfig } from "../../src/cli/config.ts";
+import { ACME_BRAND } from "../helpers/acme-brand.ts";
 
 const testDir = join(tmpdir(), `nimblebrain-cli-unit-${Date.now()}`);
 
@@ -233,6 +235,26 @@ describe("config validation", () => {
     });
 
     expect(() => loadConfig({ config: configPath })).toThrow("Invalid config");
+  });
+
+  it("loads a brand block and installs it", () => {
+    const configPath = writeTestConfig("brand-ok.json", { brand: ACME_BRAND });
+    try {
+      const config = loadConfig({ config: configPath });
+      expect(config.brand?.name).toBe("ACME");
+      expect(resolvedBrand().name).toBe("ACME");
+    } finally {
+      loadBrand({});
+    }
+  });
+
+  it("rejects at load a brand that fails a contrast pair", () => {
+    const configPath = writeTestConfig("brand-low-contrast.json", {
+      brand: { colors: { primary: ["#CCCCCC", "#6a8fe4"] } },
+    });
+    expect(() => loadConfig({ config: configPath })).toThrow(
+      "light mode: primary on background (links, accent text)",
+    );
   });
 
   it("warns on unknown keys but does not throw", () => {
