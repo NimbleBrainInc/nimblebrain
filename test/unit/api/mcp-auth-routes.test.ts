@@ -484,20 +484,20 @@ describe("GET /v1/mcp-auth/callback — outcome logging (#1244)", () => {
     expect(loggedFields()).toMatchObject({ outcome: "unknown_flow", flow: state.slice(0, 8) });
   });
 
-  test("a missing cookie logs cookie=absent; a wrong one logs cookie=mismatched", async () => {
+  test("a missing cookie logs binding=absent; a wrong one logs binding=mismatched", async () => {
     // The distinction separates a browser that dropped the cookie on the return
     // leg from a genuine session mismatch — different causes, same page.
     const state = "cookie-state-987654";
     registerFlow(state, WS_OWNER, "granola").catch(() => {});
 
     await app.request(`http://localhost/v1/mcp-auth/callback?code=c&state=${state}`);
-    expect(loggedFields()).toMatchObject({ outcome: "cookie_mismatch", cookie: "absent" });
+    expect(loggedFields()).toMatchObject({ outcome: "cookie_mismatch", binding: "absent" });
 
     warn.mockClear();
     await app.request(`http://localhost/v1/mcp-auth/callback?code=c&state=${state}`, {
       headers: { cookie: `nb_oauth_state=${sha256Hex("a-different-state")}` },
     });
-    expect(loggedFields()).toMatchObject({ outcome: "cookie_mismatch", cookie: "mismatched" });
+    expect(loggedFields()).toMatchObject({ outcome: "cookie_mismatch", binding: "mismatched" });
   });
 
   test("a vendor error param logs outcome=provider_error with the vendor's code", async () => {
@@ -532,6 +532,49 @@ describe("GET /v1/mcp-auth/callback — outcome logging (#1244)", () => {
     expect(serialized).not.toContain("secret-code");
     expect(serialized).not.toContain(state);
     expect(serialized).toContain(state.slice(0, 8));
+  });
+});
+
+describe("GET /v1/mcp-auth/callback — the line a deployed pod actually writes", () => {
+  // The outcome tests above spy on `log.warn`, which observes the call *before*
+  // the JSON sink's key-denylist redactor runs. That gap is real: a field named
+  // `cookie` reads correctly in pretty dev output and arrives as "[redacted]"
+  // on a deployed pod, where the distinction is the whole point. This asserts
+  // the serialized stderr line instead of the call.
+  test("the session-binding field survives redaction in JSON mode", async () => {
+    const app = makeApp(makeStubLifecycle());
+    const state = "json-sink-state-1";
+
+    const saved = process.env.NB_LOG_FORMAT;
+    process.env.NB_LOG_FORMAT = "json";
+    const lines: string[] = [];
+    const origWrite = process.stderr.write.bind(process.stderr);
+    // @ts-expect-error narrow override for capture
+    process.stderr.write = (chunk: string) => {
+      lines.push(String(chunk));
+      return true;
+    };
+    try {
+      // No cookie header → the session check refuses, which is the branch that
+      // carries the field.
+      await app.request(`http://localhost/v1/mcp-auth/callback?code=c&state=${state}`);
+    } finally {
+      process.stderr.write = origWrite;
+      if (saved === undefined) delete process.env.NB_LOG_FORMAT;
+      else process.env.NB_LOG_FORMAT = saved;
+    }
+
+    const line = lines
+      .join("")
+      .split("\n")
+      .find((l) => l.includes("mcp_auth.callback"));
+    expect(line).toBeDefined();
+    const rec = JSON.parse(line as string);
+
+    expect(rec.outcome).toBe("cookie_mismatch");
+    expect(rec.binding).toBe("absent");
+    // Any key the denylist matches would land here as "[redacted]".
+    expect(line).not.toContain("[redacted]");
   });
 });
 

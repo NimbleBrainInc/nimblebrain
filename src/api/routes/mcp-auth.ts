@@ -382,12 +382,11 @@ function buildOAuthStateCookie(value: string, maxAge: number, secure: boolean): 
 }
 
 /**
- * Terminal outcomes of the callback leg.
- *
- * `envelope_invalid` used to be the only one that left any trace, which made
- * "the user never came back from the vendor" (no line at all) and "a callback
- * arrived and a check refused it" indistinguishable in the logs — the first
- * question worth asking about a connector that won't connect. (#1244)
+ * Terminal outcomes of the callback leg. Each is logged exactly once, because
+ * the absence of a line is itself the diagnosis: a connector that never
+ * connects is either a user who never came back from the vendor — nothing
+ * arrives at all — or a callback that one of these checks refused. Those have
+ * opposite causes and opposite owners, and the log line is what separates them.
  */
 type CallbackOutcome =
   | "resolved"
@@ -536,10 +535,16 @@ function verifyStateCookie(c: Context<AppEnv>, state: string): CallbackFailure |
   if (!cookieValue || !timingSafeEqualHex(cookieValue, expected)) {
     return {
       outcome: "cookie_mismatch",
-      // Whether the cookie was absent or present-but-wrong separates a browser
-      // that dropped it (a third-party-cookie or cross-origin return) from a
-      // genuine session mismatch. Neither value is logged.
-      fields: { cookie: cookieValue ? "mismatched" : "absent" },
+      // Whether the state cookie was absent or present-but-wrong separates a
+      // browser that dropped it (a third-party-cookie or cross-origin return)
+      // from a genuine session mismatch. Neither value is logged.
+      //
+      // The key is `binding`, not `cookie`: the JSON sink redacts by key name
+      // (`SECRET_KEY` in `observability/log.ts` matches "cookie" as a
+      // substring), so a field called `cookie` reads fine in pretty dev output
+      // and arrives as "[redacted]" on a deployed pod — the one place the
+      // distinction is needed.
+      fields: { binding: cookieValue ? "mismatched" : "absent" },
       response: c.html(
         "<html><body><h3>Authorization session mismatch.</h3>" +
           "<p>Re-initiate the connection from NimbleBrain.</p></body></html>",
