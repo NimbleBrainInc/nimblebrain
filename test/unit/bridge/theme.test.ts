@@ -1,10 +1,14 @@
-import { describe, test, expect } from "bun:test";
+import { afterEach, describe, test, expect } from "bun:test";
 import {
   LIGHT_TOKENS,
   DARK_TOKENS,
   getThemeTokens,
   buildThemeStyleBlock,
+  setThemePalette,
 } from "../../../web/src/bridge/theme.ts";
+import { mergePalette } from "../../../web/src/theme/brand.ts";
+import { colors } from "../../../web/src/theme/palette.ts";
+import { ACME_BRAND } from "../../helpers/acme-brand.ts";
 
 /**
  * What the injected map must CONTAIN is asserted where it can stay true on its
@@ -68,5 +72,23 @@ describe("buildThemeStyleBlock", () => {
   test("font token uses the Hanken Grotesk system fallback", () => {
     const tokens = getThemeTokens("light");
     expect(tokens["--font-sans"]).toBe("'Hanken Grotesk', system-ui, sans-serif");
+  });
+});
+
+describe("a brand's palette reaches the iframe", () => {
+  afterEach(() => setThemePalette());
+
+  test("the style block carries the brand accent once the palette is set", () => {
+    setThemePalette(mergePalette(ACME_BRAND));
+    expect(buildThemeStyleBlock("light")).toContain("--color-text-accent: #B53707;");
+    expect(buildThemeStyleBlock("dark")).toContain("--color-text-accent: #FF8A4C;");
+    expect(getThemeTokens("light")["--font-sans"]).toBe(ACME_BRAND.fonts?.sans?.stack);
+    expect(getThemeTokens("light")["--border-radius-md"]).toBe("0.25rem");
+  });
+
+  test("setting no palette restores the canonical tokens", () => {
+    setThemePalette(mergePalette(ACME_BRAND));
+    setThemePalette();
+    expect(getThemeTokens("light")["--color-text-accent"]).toBe(colors.primary[0]);
   });
 });

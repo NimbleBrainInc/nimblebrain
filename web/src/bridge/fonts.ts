@@ -51,6 +51,14 @@
  *    keyword makes the whole `src` unparseable, and the SDK wraps `new FontFace`
  *    in `try/catch`, so the cost of being wrong here is a silently missing
  *    typeface. The current spelling has no such exposure.
+ *
+ * **A tenant brand's faces ride the same channel.** The brand's font URLs are
+ * absolute woff2 URLs on a server the brand names, handed over by the browser
+ * entry through {@link registerBrandFonts} once the brand is applied. They join
+ * the host's own faces in {@link getHostFontFaceCss}, and their origins join
+ * the iframe's `font-src` through {@link brandFontOrigins}. The server hosting
+ * them must answer with `Access-Control-Allow-Origin: *`: the app frame's origin
+ * is opaque, so no narrower value matches it.
  */
 
 /**
@@ -75,6 +83,44 @@ export function registerHostFontUrls(urls: Readonly<Record<string, string>>): vo
   fontUrls = urls;
 }
 
+/** One `@font-face` a brand declares: family, absolute woff2 URL, optional weight. */
+export interface BrandFontSpec {
+  family: string;
+  url: string;
+  weight?: string;
+}
+
+let brandFaces: readonly BrandFontSpec[] = [];
+
+/**
+ * Register a tenant brand's faces. Called by the brand boot each time a brand
+ * is applied; an empty list removes them. Faces whose URL is not an absolute
+ * http(s) URL are dropped here, so everything downstream can trust the list.
+ */
+export function registerBrandFonts(faces: readonly BrandFontSpec[]): void {
+  brandFaces = faces.filter((face) => httpOrigin(face.url) !== "");
+}
+
+/**
+ * The origins the registered brand faces load from, deduplicated. The iframe
+ * CSP adds each one to `font-src`; a face whose origin is missing there fails
+ * silently to the next family in the stack.
+ */
+export function brandFontOrigins(): string[] {
+  return [...new Set(brandFaces.map((face) => httpOrigin(face.url)))];
+}
+
+/** The origin of an absolute http(s) URL, or `""`. */
+function httpOrigin(url: string): string {
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return "";
+    return parsed.origin;
+  } catch {
+    return "";
+  }
+}
+
 /**
  * The host's own origin, or `""` where there isn't a usable one.
  *
@@ -86,16 +132,8 @@ export function registerHostFontUrls(urls: Readonly<Record<string, string>>): vo
  */
 export function fontOrigin(): string {
   if (typeof window === "undefined") return "";
-  const origin = window.location?.origin ?? "";
-  if (!origin || origin === "null") return "";
-  try {
-    const parsed = new URL(origin);
-    // A non-http scheme is not something `font-src` can act on.
-    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return "";
-    return parsed.origin;
-  } catch {
-    return "";
-  }
+  // A non-http scheme is not something `font-src` can act on.
+  return httpOrigin(window.location?.origin ?? "");
 }
 
 /**
@@ -116,7 +154,8 @@ function absolute(assetPath: string, origin: string): string {
 }
 
 /**
- * The host's `@font-face` CSS, or `""` when there is none to send.
+ * The host's `@font-face` CSS, or `""` when there is none to send: the host's
+ * own faces, then any a brand registered.
  *
  * `display: swap` paints text in the fallback immediately rather than blocking
  * on the download. A family with no registered URL is skipped, so a partial
@@ -142,9 +181,20 @@ export function getHostFontFaceCss(): string {
     if (!url) continue;
     const href = absolute(url, origin);
     if (!href) continue;
-    rules.push(
-      `@font-face { font-family: '${spec.family}'; src: url('${href}') format('woff2'); font-weight: ${spec.weight}; font-style: normal; font-display: swap; }`,
-    );
+    rules.push(fontFaceRule(spec.family, href, spec.weight));
+  }
+  for (const face of brandFaces) {
+    rules.push(fontFaceRule(face.family, face.url, face.weight));
   }
   return rules.join("\n");
+}
+
+/**
+ * One `@font-face` rule. A face with no weight omits the descriptor and so
+ * covers the normal weight only. The shell's brand style block declares brand
+ * faces with this same function, so shell and apps load the same rule.
+ */
+export function fontFaceRule(family: string, url: string, weight?: string): string {
+  const weightDecl = weight ? ` font-weight: ${weight};` : "";
+  return `@font-face { font-family: '${family}'; src: url('${url}') format('woff2');${weightDecl} font-style: normal; font-display: swap; }`;
 }
