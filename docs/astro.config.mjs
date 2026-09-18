@@ -186,6 +186,7 @@ export default defineConfig({
               { label: 'Connectors Catalog', slug: 'config/connectors-catalog' },
               { label: 'Logging', slug: 'config/logging' },
               { label: 'Feature Flags', slug: 'config/features' },
+              { label: 'Branding', slug: 'config/branding' },
               { label: 'Environment Variables', slug: 'config/environment' },
             ],
           },

@@ -422,6 +422,37 @@ describe("WorkspaceOAuthProvider — Track A: pre-registered client + scopes + e
     );
   });
 
+  it("clientMetadata takes client_name, client_uri and logo_uri from the brand identity", () => {
+    const p = new WorkspaceOAuthProvider({
+      owner: { type: "workspace", wsId: "ws_test" },
+      ownerDisplayName: "Engineering Team",
+      clientIdentity: {
+        name: "ACME",
+        clientUri: "https://acme.example",
+        logoUri: "https://static.example.com/brands/acme/mark-128.png",
+      },
+      serverName: "granola",
+      workDir,
+      callbackUrl: CALLBACK,
+    });
+    expect(p.clientMetadata.client_name).toBe("ACME (Engineering Team)");
+    expect(p.clientMetadata.client_uri).toBe("https://acme.example");
+    expect(p.clientMetadata.logo_uri).toBe("https://static.example.com/brands/acme/mark-128.png");
+  });
+
+  it("clientMetadata omits client_uri and logo_uri a brand does not set, rather than sending NimbleBrain's", () => {
+    const p = new WorkspaceOAuthProvider({
+      owner: { type: "workspace", wsId: "ws_test" },
+      clientIdentity: { name: "ACME" },
+      serverName: "granola",
+      workDir,
+      callbackUrl: CALLBACK,
+    });
+    expect(p.clientMetadata.client_name).toBe("ACME (ws_test)");
+    expect("client_uri" in p.clientMetadata).toBe(false);
+    expect("logo_uri" in p.clientMetadata).toBe(false);
+  });
+
   it("clientMetadata default token_endpoint_auth_method = 'none' (DCR PKCE-only) when no staticClient", () => {
     const p = new WorkspaceOAuthProvider({
       owner: { type: "workspace", wsId: "ws_test" },

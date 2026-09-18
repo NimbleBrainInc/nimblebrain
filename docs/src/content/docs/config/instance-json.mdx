@@ -30,7 +30,6 @@ The `auth.adapter` field selects the identity provider. Two adapters are configu
         "allowedDomains": ["example.com", "acme.com"],
         "jwksUri": "https://auth.example.com/.well-known/jwks.json"
       },
-      "orgName": "Acme",
       "orgId": "org_acme"
     }
     ```
@@ -48,7 +47,6 @@ The `auth.adapter` field selects the identity provider. Two adapters are configu
         "authkitDomain": "myapp",
         "adminRoleSlugs": ["org-admin"]
       },
-      "orgName": "Acme",
       "orgId": "org_acme"
     }
     ```
@@ -62,7 +60,6 @@ The `auth.adapter` field selects the identity provider. Two adapters are configu
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `auth` | `object` | Yes | The auth adapter config. See per-adapter fields below. |
-| `orgName` | `string` | No | Human-readable organization name. |
 | `orgId` | `string` | No | Stable organization identifier. |
 | `integrations` | `object` | No | Free-form integration config bag. |
 

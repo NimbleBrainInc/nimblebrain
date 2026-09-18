@@ -1,0 +1,167 @@
+---
+title: Branding
+description: Replace the NimbleBrain name, logos, palette, typefaces and corner radius with your own.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+The `brand` block in `nimblebrain.json` white-labels a deployment: your users see your product name, your logos, your palette and your typefaces in place of NimbleBrain's. Every key is optional. Without a `brand` block the deployment is NimbleBrain, unchanged.
+
+`brand` is a top-level key of `nimblebrain.json`, not a preference, and it is not read from `nimblebrain.overrides.json`. Changing it needs a restart.
+
+## What it changes
+
+| Surface | Reads |
+|---|---|
+| The agent's identity line ("You are a helpful assistant powered by …") | `name` |
+| OAuth consent screens at connector vendors (dynamic client registration) | `name`, `homepageUrl`, `logo.raster` |
+| The OAuth "You're in." success page and the OAuth error pages | `name`, `colors` |
+| Connector-tool error messages | `name` |
+| `GET /v1/brand`, which the web client reads | the whole block |
+
+Wire identifiers do not change: MCP client and server names, the `nb__` tool namespace, `ai.nimblebrain/*` metadata keys, the `NB_` environment prefix, the `nimblebrain.json` filename. They identify the software to other software, not to a person.
+
+## Keys
+
+| Key | Type | Description |
+|---|---|---|
+| `name` | `string` | Product name shown wherever a person reads "NimbleBrain". 1–64 characters, no `<`, `>`, `{`, `}`. Default: `"NimbleBrain"`. |
+| `homepageUrl` | `string` | Your homepage. Sent as `client_uri` when registering OAuth clients. |
+| `logo.light` | `string` | Full logo for light mode. |
+| `logo.dark` | `string` | Full logo for dark mode. |
+| `logo.mark` | `string` | Square mark, for places the full logo does not fit. |
+| `logo.raster` | `string` | PNG mark, sent as `logo_uri` when registering OAuth clients. A raster because several identity providers refuse to render SVG there. |
+| `favicon` | `string` | Favicon URL. |
+| `colors` | `object` | Palette overrides by token name. See [Colours](#colours). |
+| `fonts` | `object` | Typeface overrides for the `sans`, `heading`, `reading` and `mono` roles. See [Fonts](#fonts). |
+| `radius` | `object` | Corner radius overrides for the `xs`, `sm`, `md`, `lg` and `xl` steps, as CSS lengths (`0`, `4px`, `0.25rem`). |
+
+Every URL is absolute (`http://` or `https://`) and must resolve. A set URL that returns 404 renders a broken image, not the default artwork, so publish assets before you reference them.
+
+When `name` is set, OAuth registration sends only your values: without a `homepageUrl` no `client_uri` is sent, and without a `logo.raster` no `logo_uri` is sent. NimbleBrain's are never sent on your behalf.
+
+## Colours
+
+`colors` overrides the canonical palette by token name. Each value is a `[light, dark]` pair of `#rrggbb` hex colours, the same shape the palette itself uses. Any token you omit keeps its canonical value.
+
+The tokens are `background`, `foreground`, `card`, `card-foreground`, `popover`, `popover-foreground`, `primary`, `primary-foreground`, `secondary`, `secondary-foreground`, `muted`, `muted-foreground`, `accent`, `accent-foreground`, `destructive`, `destructive-foreground`, `border`, `input`, `ring`, `success`, `warning`, `processing`, `processing-light`, `info-light`, `scope-org`, `scope-workspace`, `scope-user`, `scope-connector`, `sidebar`, `sidebar-foreground`, `sidebar-border`, `sidebar-hover`, `background-tertiary` and `text-tertiary`.
+
+If you set a base token such as `primary` and omit its `-foreground` partner, the foreground is derived per mode as white or black, whichever has the higher contrast against your base. The canonical foreground was chosen for the canonical base and says nothing about yours.
+
+### The contrast rule
+
+The runtime merges your colours over the canonical palette at startup and checks the result against every contrast pair the canonical palette is held to, in both modes: each `<x>-foreground` on its `<x>`, body and muted text on every surface, accent text on the page and on cards, status colours on cards and on their own tints, sidebar text on its hover and active fills, and the rest. Every pair must clear **4.5:1**, the WCAG 2.2 AA minimum for body text.
+
+A brand that fails any pair stops the runtime at startup with an error naming the pair, the mode, the two colours and the ratio:
+
+```text
+Invalid brand in config: light mode: primary on background (links, accent text) is 1.61:1 (#CCCCCC on #ffffff), below the 4.5:1 WCAG AA minimum
+```
+
+Composited fills count. A status colour is checked against a 10% tint of itself over your background (20% in dark mode), so a green that clears 4.5:1 on white can still fail on a tinted, off-white page. Darken it until it passes.
+
+## Fonts
+
+Each role takes a CSS `stack` (required) and, optionally, the files to load:
+
+| Key | Description |
+|---|---|
+| `stack` | The CSS `font-family` value, fallbacks included: `"'Instrument Sans', system-ui, sans-serif"`. |
+| `family` | The family name the files are declared under — the name `stack` refers to them by. Required with `url` or `faces`. |
+| `url` | One woff2 file, typically a variable font. |
+| `weight` | The `font-weight` that file covers: `"400"`, or a variable range `"400 700"`. Only with `url`. |
+| `faces` | Several static files: `[{ "url": "…woff2", "weight": "400" }, { "url": "…woff2", "weight": "600" }]`. |
+
+`url` and `faces` are mutually exclusive: use `url` for one file, `faces` for several.
+
+**A font URL is a `.woff2` file, never a stylesheet.** Google Fonts CSS URLs (`https://fonts.googleapis.com/css2?…`) are rejected. Embedded apps load faces from the file URL directly, so a stylesheet that points at files cannot reach them. Self-host the woff2 files, and make sure their license allows redistribution.
+
+**A role with no `url` or `faces` must name a font your users already have** — a system font such as `Georgia` or `ui-monospace`. Nothing is downloaded for it.
+
+## Example
+
+A complete block for a fictional ACME deployment:
+
+```json title="nimblebrain.json"
+{
+  "brand": {
+    "name": "ACME",
+    "homepageUrl": "https://acme.example",
+    "logo": {
+      "light": "https://static.example.com/brands/acme/logo-light.svg",
+      "dark": "https://static.example.com/brands/acme/logo-dark.svg",
+      "mark": "https://static.example.com/brands/acme/mark.svg",
+      "raster": "https://static.example.com/brands/acme/mark-128.png"
+    },
+    "favicon": "https://static.example.com/brands/acme/favicon.png",
+    "colors": {
+      "background": ["#FAF6EE", "#141210"],
+      "foreground": ["#1B1B1F", "#F3EDE2"],
+      "card": ["#FFFCF5", "#1C1916"],
+      "card-foreground": ["#1B1B1F", "#F3EDE2"],
+      "popover": ["#FFFCF5", "#1C1916"],
+      "popover-foreground": ["#1B1B1F", "#F3EDE2"],
+      "primary": ["#B53707", "#FF8A4C"],
+      "primary-foreground": ["#FFFFFF", "#1B1B1F"],
+      "secondary": ["#F0E9DB", "#26221D"],
+      "secondary-foreground": ["#1B1B1F", "#F3EDE2"],
+      "muted": ["#F0E9DB", "#26221D"],
+      "muted-foreground": ["#5F5A52", "#A8A196"],
+      "accent": ["#F0E9DB", "#26221D"],
+      "accent-foreground": ["#1B1B1F", "#F3EDE2"],
+      "border": ["#E3DACA", "#332E28"],
+      "input": ["#E3DACA", "#332E28"],
+      "ring": ["#B53707", "#FF8A4C"],
+      "sidebar": ["#F3EDE1", "#0F0D0B"],
+      "sidebar-foreground": ["#5F5A52", "#A8A196"],
+      "sidebar-border": ["#E3DACA", "#332E28"],
+      "sidebar-hover": ["#EAE2D2", "#1C1916"],
+      "info-light": ["#FDEBE0", "#33190C"],
+      "success": ["#0D6B45", "#3fbf85"]
+    },
+    "fonts": {
+      "heading": {
+        "stack": "'Syne', system-ui, sans-serif",
+        "family": "Syne",
+        "url": "https://static.example.com/brands/acme/fonts/syne-latin-wght-normal.woff2",
+        "weight": "400 800"
+      },
+      "sans": {
+        "stack": "'Instrument Sans', system-ui, sans-serif",
+        "family": "Instrument Sans",
+        "url": "https://static.example.com/brands/acme/fonts/instrument-sans-latin-wght-normal.woff2",
+        "weight": "400 700"
+      },
+      "reading": {
+        "stack": "'Fraunces', Georgia, serif",
+        "family": "Fraunces",
+        "url": "https://static.example.com/brands/acme/fonts/fraunces-latin-wght-normal.woff2",
+        "weight": "300 700"
+      },
+      "mono": {
+        "stack": "'IBM Plex Mono', ui-monospace, monospace",
+        "family": "IBM Plex Mono",
+        "faces": [
+          { "url": "https://static.example.com/brands/acme/fonts/ibm-plex-mono-latin-400-normal.woff2", "weight": "400" },
+          { "url": "https://static.example.com/brands/acme/fonts/ibm-plex-mono-latin-600-normal.woff2", "weight": "600" }
+        ]
+      }
+    },
+    "radius": { "xs": "0", "sm": "0.125rem", "md": "0.25rem", "lg": "0.375rem", "xl": "0.5rem" }
+  }
+}
+```
+
+`success` is set only because canonical green does not clear 4.5:1 over its own tint on this warm background. The other status colours stay canonical: they carry meaning, and changing them is rarely what a brand wants.
+
+## `GET /v1/brand`
+
+The runtime serves the validated block at `GET /v1/brand`, unauthenticated, with `Cache-Control: public, max-age=60`. It is public because the sign-in page shows the brand before anyone has signed in, and nothing in it is private. Without a `brand` block it returns `{}`.
+
+The served block is the configured one with fonts normalised: every role that loads files carries a `faces` list, whether the config used `url` + `weight` or `faces`.
+
+## Changes and OAuth consent screens
+
+<Aside type="caution">
+Connector vendors keep the name, homepage and logo they received when a connection first registered its OAuth client. After setting or changing `brand`, an existing connection keeps showing the old values on the vendor's consent screen until it is disconnected and connected again. New connections register with the new values.
+</Aside>
