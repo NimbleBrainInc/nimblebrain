@@ -92,7 +92,7 @@ Obot records each of these as its own audit entry, including the server-to-clien
 
 Obot hosts `npx` and `uvx` packages behind its own stdio wrapper, and that wrapper terminates the MCP session rather than relaying it. Its list handlers — `tools/list`, `prompts/list`, `resources/list`, `resources/templates/list` — reject a request whose `params` object is absent with `-32602 invalid <method> request`. The platform's MCP client omits `params` on a first page, which the MCP schema permits, so a connector pointed at a package-hosted server installs, starts, and lists **zero tools** — the install itself reports the `-32602` and offers **Connect** to retry, and the retry fails the same way. Calls that always carry `params`, such as `resources/read`, work on the same server.
 
-Until Obot's wrapper accepts the omitted `params`, publish only servers Obot registers as `remote`: run the package as an HTTP MCP server somewhere Obot can reach, and register that URL. The `containerized` runtime has not been checked either way.
+Until Obot's wrapper accepts the omitted `params` (tracked upstream as [obot-platform/obot#8000](https://github.com/obot-platform/obot/issues/8000)), publish only servers Obot registers as `remote`: run the package as an HTTP MCP server somewhere Obot can reach, and register that URL. The `containerized` runtime has not been checked either way.
 
 ## What this shape costs you
 
