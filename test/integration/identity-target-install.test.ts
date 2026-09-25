@@ -19,6 +19,11 @@ import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
 import { CONNECTOR_FIXTURE_DIR } from "../helpers/connector-fixtures.ts";
 import { buildManagedConnectorRegistry } from "../../src/connectors/providers/registry.ts";
 import { _resetComposioConfigForTest } from "../../src/connectors/providers/composio/config.ts";
+import {
+  _resetCredentialStoreForTest,
+  FileCredentialStore,
+  setCredentialStore,
+} from "../../src/tools/credential-store.ts";
 
 /**
  * Integration coverage for `manage_connectors.install` with `scope: "identity"`
@@ -89,8 +94,15 @@ interface Harness {
   tool: ReturnType<typeof createManageConnectorsTool>;
 }
 
+// Identity credentials resolve through the process-wide credential store, so
+// each harness installs its own rather than inheriting one another file left.
+afterEach(() => {
+  _resetCredentialStoreForTest();
+});
+
 async function buildHarness(): Promise<Harness> {
   const workDir = mkdtempSync(join(tmpdir(), "nb-identity-install-"));
+  setCredentialStore(new FileCredentialStore(workDir));
 
 
   const workspaceStore = new WorkspaceStore(workDir);
