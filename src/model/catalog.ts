@@ -7,6 +7,7 @@
 
 import { log } from "../observability/log.ts";
 import catalogData from "./catalog-data.json";
+import greenptData from "./catalog-greenpt.json";
 import nebiusData from "./catalog-nebius.json";
 
 // ============================================================================
@@ -72,7 +73,28 @@ type CatalogData = Record<
 // account- and tier-specific. Keeping this out of catalog-data.json means
 // `bun run sync-models` (which rewrites only the models.dev-backed providers)
 // can never clobber it.
-const data = { ...catalogData, ...nebiusData } as CatalogData;
+//
+// GreenPT's catalog is curated separately for the same reason: models.dev
+// cannot be the source until its GreenPT entry ships. The model ids and
+// capabilities come from GreenPT's `/v1/models` endpoint and model cards.
+// GreenPT bills in EUR, so catalog-greenpt.json converts the July 2026 prices
+// to the USD units this catalog requires at the ECB reference rate from
+// 2026-07-24 (1 EUR = 1.1377 USD).
+//
+// Curated by hand on 2026-08-05, with no generator and no probe behind it —
+// unlike `sync-nebius`, which pulls the account's `/v1/models` and verifies
+// what it writes. Re-check the ids, prices, and capabilities against GreenPT's
+// published models before trusting this file far past that date.
+//
+// Every GreenPT entry carries `limits.output` at the platform default
+// (`DEFAULT_MAX_OUTPUT_TOKENS`) because GreenPT publishes no per-model output
+// cap. `resolveMaxOutputTokens` sends `limits.output` as `max_tokens`, so a
+// figure invented here is a real ceiling on every request — and one set to the
+// full context window leaves the prompt no room at all. `sync-models` collapses
+// exactly that shape to the same default, and every `catalog-nebius.json` entry
+// carries it for the same reason. Replace a figure only with one GreenPT
+// publishes.
+const data = { ...catalogData, ...greenptData, ...nebiusData } as CatalogData;
 
 /**
  * Reverse lookup: bare model id → owning provider. Built once at module
