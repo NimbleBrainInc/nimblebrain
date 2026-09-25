@@ -3,6 +3,7 @@ import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
 import starlightSidebarTopics from 'starlight-sidebar-topics';
 import starlightLinksValidator from 'starlight-links-validator';
+import { starlightThemeCss } from './src/theme/starlight.ts';
 
 // https://astro.build/config
 export default defineConfig({
@@ -48,7 +49,7 @@ export default defineConfig({
         alt: 'NimbleBrain',
         replacesTitle: true,
       },
-      customCss: ['./src/styles/custom.css'],
+      customCss: ['@fontsource-variable/jetbrains-mono', './src/styles/custom.css'],
       social: [
         { icon: 'github', label: 'GitHub', href: 'https://github.com/NimbleBrainInc/nimblebrain' },
         { icon: 'discord', label: 'Discord', href: 'https://nimblebrain.ai/discord' },
@@ -59,9 +60,11 @@ export default defineConfig({
           tag: 'link',
           attrs: {
             rel: 'stylesheet',
-            href: 'https://fonts.googleapis.com/css2?family=Literata:ital,opsz,wght@0,7..72,400;0,7..72,500;0,7..72,600;0,7..72,700;1,7..72,400;1,7..72,500;1,7..72,600&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400;1,500&family=DM+Mono:wght@300;400;500&family=JetBrains+Mono:wght@400;500&display=swap',
+            href: 'https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700&display=swap',
           },
         },
+        // Colours and font stacks, projected from the runtime palette at build time.
+        { tag: 'style', content: starlightThemeCss() },
       ],
       plugins: [
         starlightLinksValidator({ errorOnLocalLinks: false }),
