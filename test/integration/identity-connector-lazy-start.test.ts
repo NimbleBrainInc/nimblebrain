@@ -3,6 +3,7 @@ import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
+import { installTestCredentialStore, resetTestCredentialStore } from "../helpers/credential-store.ts";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
@@ -77,6 +78,8 @@ describe("getIdentityConnectorSource — lazy-start", () => {
 
   beforeEach(() => {
     workDir = mkdtempSync(join(tmpdir(), "nb-idc-lazy-"));
+    // OAuth tokens are read through the credential store the runtime installs at its root.
+    installTestCredentialStore(workDir);
     server = startFakeServer();
     // allowInsecureRemotes: true so the localhost fake server passes SSRF checks.
     lifecycle = new ConnectorLifecycleManager(new NoopEventSink(), true);
@@ -87,6 +90,7 @@ describe("getIdentityConnectorSource — lazy-start", () => {
     for (const s of started) await s.stop().catch(() => {});
     started.length = 0;
     server.close();
+    resetTestCredentialStore();
     rmSync(workDir, { recursive: true, force: true });
   });
 
