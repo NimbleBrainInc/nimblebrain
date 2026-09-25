@@ -8,7 +8,7 @@
 //
 // Constraints honored:
 //   - Shell component: consumes ChatPanelContext (stable), NEVER ChatContext
-//     (streaming) — see AGENTS.md. The palette only ever toggles the panel.
+//     (streaming) — see web/AGENTS.md. The palette only ever toggles the panel.
 //   - REST/in-memory data only (WorkspaceContext, ShellContext) — no bridge.
 //   - Escape is handled capture-phase so it beats other Escape handlers (chat).
 //

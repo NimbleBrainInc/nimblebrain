@@ -10,6 +10,8 @@ Self-hosted platform for MCP Apps and agent automations, built on Bun. Agentic l
 > [`adr/`](./adr). Domain facts belong in `CONTEXT.md`; reference them from here rather
 > than restating them.
 
+This file holds what applies to every change. A rule tied to specific code lives in an `AGENTS.md` beside that code — see [Guides](#guides).
+
 ## Build & Verify
 
 ```bash
@@ -36,23 +38,15 @@ bun run install:platform-apps    # Platform app UI deps (each a separate package
 bun run build:platform-apps      # Rebuild every src/platform/*/ui (vite single-file)
 ```
 
-**A fresh checkout/worktree must install `web/` AND every `src/platform/*/ui/` before `bun run verify`.** `verify:test-unit` runs `test:web` + `test:platform-apps`, which execute those separate packages; root `bun install` doesn't cover them, so verify fails with a missing-module error (e.g. `Cannot find package 'dompurify'`) until they're installed. **But `test:unit` itself runs on root deps alone** — the backend unit suite imports the shared bridge protocol (`web/src/bridge/*`), so a web-only *value* import must never leak into that graph: keep such deps type-only and inject the value at the browser entry (`web/src/sentry.ts` is the pattern). The `Unit Tests (root deps only)` CI job enforces this; only `test:web`/`test:platform-apps` need the `web/` + app UI installs.
-
-**A fresh checkout prepares itself.** `node_modules` and `dist/` are both gitignored, so a
-new clone or worktree has neither. Every dev launcher — `dev`, `dev:empty`, `dev:minimal`,
-`dev:docs-demo`, `dev:worktree` — installs `web/` dependencies and builds any platform app UI
-missing its `dist/index.html` before starting, so the quickstart does not need those steps.
-`dev:worktree` additionally installs **root** dependencies, which it must: `scripts/dev.ts`
-imports from `src/`, so it cannot install the dependencies it needs in order to load. Only
-what is absent is done — see the rebuild note below.
-
-**`bun run dev` does NOT rebuild the platform app UIs.** The API serves each app from its pre-built `src/platform/<name>/ui/dist/index.html`. After editing any file under `src/platform/*/ui/src/`, run `bun run build:platform-apps` and restart the dev server (the API reads dist on iframe mount; it doesn't watch the file). Forgetting this means the iframe loads stale code while your changes look "live" in the source tree — a high-confusion failure mode.
-
-**Before opening a PR, run `bun run verify`.** It is the single command that mirrors CI, enforced by construction: `.github/workflows/ci.yml` invokes only `verify:*` subscripts (plus `test:integration`) — no inline check steps. To add or change a check, edit the matching subscript in `package.json`; CI picks it up automatically. If CI ever catches something `verify` didn't, the fix is to update the subscript, not the checklist. Tool-level parity is the gate; discipline-level rules are not.
+- **Before opening a PR, run `bun run verify`.** It mirrors CI by construction: `.github/workflows/ci.yml` invokes only `verify:*` subscripts (plus `test:integration`). To add or change a check, edit the matching subscript in `package.json`. If CI catches something `verify` didn't, fix the subscript, not a checklist.
+- **A fresh checkout/worktree must install `web/` AND every `src/platform/*/ui/` before `bun run verify`**, because `verify:test-unit` runs those separate packages and root `bun install` does not cover them (the symptom is a missing-module error such as `Cannot find package 'dompurify'`).
+- **`test:unit` runs on root deps alone**, and the backend unit suite imports the shared bridge protocol (`web/src/bridge/*`). So a web-only *value* import must never leak into that graph: keep such deps type-only and inject the value at the browser entry (`web/src/sentry.ts` is the pattern). The `Unit Tests (root deps only)` CI job enforces this.
+- **The dev launchers prepare a fresh checkout.** `dev`, `dev:empty`, `dev:minimal`, `dev:docs-demo`, and `dev:worktree` install `web/` dependencies and build any platform app UI missing its `dist/index.html`; `dev:worktree` also installs root dependencies, since `scripts/dev.ts` imports from `src/`. Only what is absent is done.
+- **`bun run dev` does NOT rebuild the platform app UIs.** The API serves each app from its pre-built `src/platform/<name>/ui/dist/index.html`, read on iframe mount, not watched. After editing anything under `src/platform/*/ui/src/`, run `bun run build:platform-apps` and restart the dev server, or the iframe runs stale code.
 
 ### Worktree dev
 
-`bun run dev:worktree` runs the platform from any git worktree against a worktree-local workdir, on alt ports, with no auth gate — for QA on a feature branch without disturbing your primary `~/.nimblebrain` dev or another worktree's state.
+`bun run dev:worktree` runs the platform from any git worktree against a worktree-local workdir, on alt ports, with no auth gate, so a feature branch can be QA'd without disturbing `~/.nimblebrain` or another worktree.
 
 | Setting | Value |
 |---|---|
@@ -62,7 +56,28 @@ what is absent is done — see the rebuild note below.
 | Auth | none (dev mode — no `instance.json`) |
 | LLM keys | `ANTHROPIC_API_KEY` (and friends) read from your shell environment |
 
-Each worktree gets its own isolated state, so two worktrees can run side-by-side without colliding. Reset with `rm -rf .nimblebrain-worktree && bun run dev:worktree`. Share state across worktrees with `NB_WORK_DIR=/abs/path bun run dev:worktree`. Suitable for Chrome DevTools-driven E2E tests against `/v1/*` (no login dance).
+Reset with `rm -rf .nimblebrain-worktree && bun run dev:worktree`. Share state across worktrees with `NB_WORK_DIR=/abs/path bun run dev:worktree`. Suitable for Chrome DevTools-driven E2E tests against `/v1/*` (no login).
+
+## Guides
+
+Nested `AGENTS.md` files (each with a `CLAUDE.md` symlink) hold the rules for one area. Read the one for the code you are changing.
+
+| Guide | Covers |
+|---|---|
+| [`src/platform/AGENTS.md`](./src/platform/AGENTS.md) | Authoring platform apps and their tools: MCP-native sources, strict input schemas, named output types, `ui://` MIME type |
+| [`src/platform/automations/AGENTS.md`](./src/platform/automations/AGENTS.md) | Automation storage, per-run membership gate, run results |
+| [`src/workspace/AGENTS.md`](./src/workspace/AGENTS.md) | Workspace roots and `assertWorkspaceRootExists`, write authorization, opaque ids, personal-workspace invariants |
+| [`src/orchestrator/AGENTS.md`](./src/orchestrator/AGENTS.md) | The workspace wall: tool-name shape as scope, `routeToolCall`, name parsing, skill walling |
+| [`src/tools/AGENTS.md`](./src/tools/AGENTS.md) | `CredentialStore`, credential refs, OAuth records, credential ownership; long-running (task-augmented) MCP tools |
+| [`src/conversation/AGENTS.md`](./src/conversation/AGENTS.md) | Conversation paths, workspace binding on resume, no cross-workspace listing |
+| [`src/files/AGENTS.md`](./src/files/AGENTS.md) | File store paths, bare `files://` URIs, the file locator |
+| [`src/api/AGENTS.md`](./src/api/AGENTS.md) | Three API audiences, tool actions over new routes, `/mcp/<wsId>` wall and which credentials reach it, MCP sessions, `replicas > 1` prerequisites, `clientAddressFor` |
+| [`src/hooks/AGENTS.md`](./src/hooks/AGENTS.md) | The inbound webhook door: never parse a body, uniform 404, delivery ids, rotation, provisioning |
+| [`src/lifecycle/AGENTS.md`](./src/lifecycle/AGENTS.md) | Connector `on_ready` / `on_removing` notifications |
+| [`src/connectors/runtime/AGENTS.md`](./src/connectors/runtime/AGENTS.md) | Connector teardown and workspace delete; connection credential re-validation |
+| [`src/observability/AGENTS.md`](./src/observability/AGENTS.md) | `NB_DEBUG` / `nb_debug` namespaces, structured logs, OTel spans, what may be stamped |
+| [`web/AGENTS.md`](./web/AGENTS.md) | Web shell: gating workspace writes, shell rules, chat panel workspace scope, main-area views |
+| [`web/src/bridge/AGENTS.md`](./web/src/bridge/AGENTS.md) | MCP App Bridge rules: iframe scoping, handshake gate, notification relay, host capabilities |
 
 ## Conventions
 
@@ -78,15 +93,14 @@ Each worktree gets its own isolated state, so two worktrees can run side-by-side
 - **No classes for data** — plain interfaces + factory functions preferred.
 - **Tool results:** Return typed data in `structuredContent`, use `content` only for human-readable summary.
 - **Errors:** Tool errors are caught per-call and returned as `isError: true` results. Engine errors surface via `run.error` event.
-- **Documentation:** User- and operator-facing docs live in [`docs/`](./docs) (Astro + Starlight) and deploy to [docs.nimblebrain.ai](https://docs.nimblebrain.ai) via GitHub Pages. **Update them in the same PR as any user-facing change** (CLI, config, API, behavior) — co-locating docs with code is how we keep them from drifting. `docs/` is a standalone package: `cd docs && bun install`, then `bun run dev` / `bun run build` (or `bun run docs:dev` / `docs:build` from the root). The docs build runs an internal-link check and is a required CI gate on any docs change (`.github/workflows/docs-ci.yml`). `docs/` is excluded from `bun run verify` (biome/tsc are scoped to `src/` and `web/`). `README.md`, `CHANGELOG.md`, `CONTRIBUTING.md`, `SECURITY.md`, `CODE_OF_CONDUCT.md`, and `AGENTS.md`/`CLAUDE.md` remain the standard top-level OSS files.
-- **Per-directory agent docs:** any `AGENTS.md` is the real file; `CLAUDE.md` is a symlink to it (`ln -s AGENTS.md CLAUDE.md`). Edit `AGENTS.md`. New per-directory docs follow the same pattern. Don't invert it (real `CLAUDE.md` + symlinked `AGENTS.md`) — it confuses tools that prefer one or the other.
+- **Logs:** use `log.*` from `src/observability/log.ts`, never raw `console.*` in operational code (it bypasses JSON/identity/correlation enrichment; `check:no-raw-console` enforces). Details in `src/observability/AGENTS.md`.
+- **Documentation:** User- and operator-facing docs live in [`docs/`](./docs) (Astro + Starlight) and deploy to [docs.nimblebrain.ai](https://docs.nimblebrain.ai) via GitHub Pages. **Update them in the same PR as any user-facing change** (CLI, config, API, behavior), so they do not drift. `docs/` is a standalone package: `cd docs && bun install`, then `bun run dev` / `bun run build` (or `bun run docs:dev` / `docs:build` from the root). The docs build runs an internal-link check and is a required CI gate on any docs change (`.github/workflows/docs-ci.yml`). `docs/` is excluded from `bun run verify` (biome/tsc are scoped to `src/` and `web/`). `README.md`, `CHANGELOG.md`, `CONTRIBUTING.md`, `SECURITY.md`, `CODE_OF_CONDUCT.md`, and `AGENTS.md`/`CLAUDE.md` remain the standard top-level OSS files.
+- **Per-directory agent docs:** any `AGENTS.md` is the real file; `CLAUDE.md` is a symlink to it (`ln -s AGENTS.md CLAUDE.md`). Edit `AGENTS.md`. New per-directory docs follow the same pattern. Don't invert it (real `CLAUDE.md` + symlinked `AGENTS.md`) — it confuses tools that prefer one or the other. A rule tied to one area's code goes in that folder's guide, not here, and gets a line in [Guides](#guides); this file loads in every session and Codex reads only the first 32 KiB of instructions.
 - **CHANGELOG entries must be terse and scannable.** Target ~250–350 words per release (not per entry). Structure: short `### Highlights` with 3–5 one-sentence bullets, then `### Breaking` / `### Added` / `### Changed` / `### Fixed` / `### Removed`. One line per bullet; link to docs or the PR for depth instead of explaining implementation inline. Include migration-required operator actions (e.g. "run `scripts/migrate-tenant-files.ts`") in Fixed/Breaking. Cut internal refactors, release-pipeline polish, CI tweaks, and per-PR credit noise — they belong in `git log`, not the CHANGELOG. If a bullet needs more than one sentence to explain *what* changed and *why a reader cares*, either (a) link out or (b) rethink whether the reader needs this entry at all.
 
 ## Testing
 
 Tests use `createEchoModel()` from `test/helpers/echo-model.ts` and `StaticToolRouter` to avoid LLM calls. No mocking of LLM providers needed.
-
-Tests are organized into three tiers:
 
 | Tier | Directory | Command | What belongs here |
 |------|-----------|---------|-------------------|
@@ -94,30 +108,15 @@ Tests are organized into three tiers:
 | Integration | `test/integration/` | `bun run test:integration` | `Runtime.start()`, HTTP servers, real crypto, subprocesses |
 | Eval | `test/eval/` | `bun run eval` | LLM evals, require `ANTHROPIC_API_KEY` |
 
-**Every bun process in the test path passes `--no-env-file`.** Bun auto-loads
-`.env`, so without it a developer's real `COMPOSIO_API_KEY` reaches the test
-process — failing the tests that assert the unconfigured path, and letting test
-code make live API calls. CI has no `.env`, so it stays green and the failure
-looks local-only.
-
-The flag binds to one process and does not propagate: a child re-runs the
-auto-load itself. So it goes on the `test:*` scripts, on every `bun` a test
-spawns (`cli.test.ts` boots the full runtime; the `scripts/check-*` suites spawn
-the checkers), and on any single file you run by hand —
-`bun test --no-env-file <file>`.
-
-It disables dotenv, not the environment: a value exported in your shell outranks
-`.env` and survives regardless. `test:web` and `test:platform-apps` run in their own
-directories without the flag — neither reads a credential today.
-
-A repo-wide `env = false` in `bunfig.toml` would make this deny-by-default and
-delete every flag site. It also cuts `.env` from `bun run dev`, `start`, and
-`eval` unless each carries `--env-file=.env`, which is a separate change with
-its own blast radius — tracked in #839.
+**Classification rule:** If a test calls `Runtime.start()`, `startServer()`, `Bun.serve()`, or `spawnSync()`, it belongs in `test/integration/`. Everything else goes in `test/unit/`.
 
 Shared test helpers live in `test/helpers/` (imported by both unit and integration).
 
-**Classification rule:** If a test calls `Runtime.start()`, `startServer()`, `Bun.serve()`, or `spawnSync()`, it belongs in `test/integration/`. Everything else goes in `test/unit/`.
+**Every bun process in the test path passes `--no-env-file`.** Bun auto-loads `.env`, so without it a developer's real keys (e.g. `COMPOSIO_API_KEY`) reach the test process, fail the tests that assert the unconfigured path, and let test code make live API calls. CI has no `.env`, so the failure looks local-only.
+
+- The flag binds to one process and does not propagate: a child re-runs the auto-load itself. So it goes on the `test:*` scripts, on every `bun` a test spawns (`cli.test.ts` boots the full runtime; the `scripts/check-*` suites spawn the checkers), and on any single file you run by hand — `bun test --no-env-file <file>`.
+- It disables dotenv, not the environment: a value exported in your shell outranks `.env` and survives regardless. `test:web` and `test:platform-apps` run in their own directories without the flag — neither reads a credential.
+- A repo-wide `env = false` in `bunfig.toml` would make this deny-by-default and delete every flag site, but it also cuts `.env` from `bun run dev`, `start`, and `eval` unless each carries `--env-file=.env` — a separate change, tracked in #839.
 
 ## Project Structure
 
@@ -177,587 +176,24 @@ web/               Vite + React + TypeScript SPA (separate package.json)
 
 ## Workspace Isolation
 
-All tool handlers that access data must be workspace-scoped. Use `runtime.requireWorkspaceId()` (never `getCurrentWorkspaceId()`). In dev mode it returns `"_dev"` — no special-case logic needed.
+The workspace is the tenancy boundary. These rules apply anywhere code touches workspace data; the detail is in the guides.
 
-**A workspace root is created by `WorkspaceStore.create` (and the `scaffoldWorkspace` it calls), and by nothing else.** The rule is `assertWorkspaceRootExists(dir)` (`src/workspace/context.ts`), which derives the `workspaces/<wsId>` prefix from the path it is handed and throws `WorkspaceRootMissingError`, naming the workspace, when that root is absent. **Every workspace-scoped mkdir passes it** — via `ensureWorkspaceDir` (assert-then-mkdir, for a plain recursive mkdir at the default mode: the automations store, both conversation stores, the file store, the notification inbox, `writeSkill`), or called directly ahead of a writer's own `mkdir` where the mode or the async form has to be kept (`instructions/storage.ts`, `permissions/permission-store.ts`, `connectors/providers/composio/connection.ts`, `tools/credential-store.ts` — the last three write at `0o700`).
+- **All tool handlers that access data must be workspace-scoped.** Use `runtime.requireWorkspaceId()` (never `getCurrentWorkspaceId()`). In dev mode it returns `"_dev"` — no special-case logic needed.
+- **Hard-error on a missing `wsId`, don't silently default**, in any code path that touches workspace-scoped credentials or identity. A `?? "ws_default"` fallback would pool credentials across tenants. `startConnectorSource`'s named-connector and URL-connector (OAuth-provider) branches both throw; match them.
+- **Every recursive mkdir on a workspace-scoped path passes `assertWorkspaceRootExists`** (via `ensureWorkspaceDir` or directly), and a `WorkspaceRootMissingError` is never fixed by creating the root, because only `WorkspaceStore.create` makes one. See `src/workspace/AGENTS.md`.
+- **Every secret goes through `CredentialStore`**; never construct a `FileCredentialStore`, which bypasses the configured backend. See `src/tools/AGENTS.md`.
+- **A session reaches exactly one workspace plus the caller's identity tools**, never a cross-workspace union, and a tool name's shape is its scope. See `src/orchestrator/AGENTS.md`.
+- **Workspace-scoped writes have no org-admin bypass**, on the server or in the web tier. See `src/workspace/AGENTS.md` and `web/AGENTS.md`.
 
-The prefix is derived by scanning for the first `workspaces/<wsId>` **pair**. Testing the segment after the last `workspaces` is not the same thing and is not safe: a path *ending* in `workspaces` has no successor to test, so it read as "not a workspace tree" and fell through to the unguarded mkdir — reachable by naming an automation "Workspaces", since `automationRunsDir` ends in `runs/<automationId>`.
+## API Surfaces
 
-A path outside any workspace tree (org skills, `users/<id>/skills/`, the instance credential dir, a test's temp dir) has no root to require and passes — which is why a writer shared across scopes, like `writeSkill` or `CredentialStore.put`, takes the guard for its workspace callers without changing what it does for the others.
-
-This is structural rather than per-writer on purpose. `WorkspaceStore.delete` renames the subtree out from under every writer holding a path into it, those writers mkdir recursively, and the first one to fire afterwards used to re-create the deleted workspace's directory — invisibly, because `list()` skips a workspace dir whose `workspace.json` will not parse, so the resurrected tree appeared nowhere and was never deleted again. There is no way to grep for "everywhere that writes into a workspace", so guarding each writer is a discipline problem; the rule lives at the mkdir instead. **Do not add a recursive mkdir on a workspace-scoped path without it**, and do not "fix" a `WorkspaceRootMissingError` by creating the root — the workspace is gone, and the caller's job is to stop.
-
-A store still creates its own subdirectory on first write. `WORKSPACE_DIRS` (`src/workspace/scaffold.ts`) scaffolds `data/`, `credentials/`, `skills/` and `files/`; what is NOT pre-created is `conversations/`, `notifications/`, `automations/`, and the per-owner partition beneath `files/` and `automations/`. That stays true; the guard is about the root, not the subtree.
-
-**Workspace-scoped writes have no org-admin bypass, and the web tier must agree.** `canWriteWorkspaceScoped` (`src/workspace/authz.ts`) allows a write only for a workspace **member** whose membership role is `admin`; `orgRole` is never consulted. The web tier's `useScopedRole` deliberately does the opposite — it escalates an org admin to `org_admin` *before* reading the workspace role — because that is the right answer for **reach** (nav, route guards, read gates), where an org admin legitimately gets to any workspace's settings. So the two must not share a helper. Gate a **write** with `canWriteWorkspace(membershipRole)` (`web/src/hooks/useScopedRole.ts`) — via `useCanWriteActiveWorkspace()` on a surface scoped to the active workspace (anything under `/w/:slug`), or by passing that workspace's role directly when the surface addresses a workspace **by id** (`/org/workspaces/:slug`, where `activeWorkspace` is the viewer's last-focused workspace — usually their personal one, where they are always admin by store invariant, so the active-workspace form would answer `true` for everyone). Reserve `roleAtLeast(role, "ws_admin")` for reach. Getting this backwards offers controls the server refuses and surfaces as a 403 on save. It shipped in nine places before being caught, in three different shapes — `roleAtLeast(…, "ws_admin")`, the bypass written longhand as `isOrgAdmin || <membership check>`, and an affordance with no gate at all — so grepping for one shape never establishes that a surface is covered.
-
-A workspace-scoped write **should** route through `canWriteWorkspaceScoped`, and a client gate that disagrees with it is a bug — but do not read that as an invariant you can lean on. **The helper is a convention, not a chokepoint.** Writes reach the store by other paths: some gate through wrappers that delegate to it (`isWorkspaceAdmin` in `src/tools/connector-tools.ts`), and `manage_workspaces update` patches `workspace.json`'s `connectors` behind an org-admin gate instead — not a hole, since an org admin can delete the workspace outright and no web caller sends `connectors`, but not the helper either.
-
-So read the write path. Do not assume a call site is covered because the helper exists, and do not assume it is uncovered because the helper is absent.
-
-**Workspace ids are opaque and name-independent.** A non-personal workspace's id is an opaque token (`ws_<16-hex>`, generated by `generateWorkspaceId()` in `src/workspace/workspace-store.ts`), assigned once at create time and never derived from the name. The name is a freely-editable field — renaming a workspace via `WorkspaceStore.update({ name })` does NOT change the id, the on-disk dir (`workspaces/<wsId>/`), or the URL (`/w/<wsId-without-ws_>`). The id is opaque *by contract*: never parse it for meaning, never reconstruct it from a name, and don't assert a specific value in tests — assert the shape (`/^ws_[0-9a-f]{16}$/`) or use the id returned from `create`. The opaque alphabet is a strict subset of `[a-z0-9_]` so it never collides with the `-` workspace/tool separator in `ws_<id>-<tool>`. **Personal workspaces are the one exception**: they stay deterministic at `ws_user_<userId>` (via `personalWorkspaceIdFor`) for O(1) lookup by bootstrap, credential paths, and the personal-workspace invariants. `WorkspaceStore.create(name)` produces an opaque id; `create(name, slug)` honors an explicit slug (`ws_<slug>`) — used only by personal-workspace provisioning and deliberate operator/test overrides.
-
-When adding a new code path that touches workspace-scoped credentials or identity, match the existing precedent: **hard-error on missing `wsId`, don't silently default**. `startConnectorSource`'s named-connector branch throws; the URL-connector branch does too (for OAuth-provider paths). A `?? "ws_default"` fallback would pool credentials across tenants.
-
-**Every secret goes through one door.** `CredentialStore` (`src/tools/credential-store.ts`) is scoped — `instance` (`{workDir}/credentials/secrets/`), `workspace` (`workspaces/<wsId>/credentials/secrets/`), `user` (`users/<userId>/credentials/secrets/`) — and it is built only by `createCredentialStore` (`src/tools/credential-store-backend.ts`), which reads the `secrets` config block — at the composition root, where the audit sink is attached and `runtime.getCredentialStore()` hands it out, and in the operator `secrets` subcommand, which has no runtime. `Runtime.start` installs that instance via `setCredentialStore` for the leaf readers (`remote-transport.ts`, `oauth-static-client.ts`) that hold no runtime; reach it with `requireCredentialStore()` there and with the runtime accessor everywhere else. **Never construct a `FileCredentialStore`** — a direct construction bypasses the configured backend, so on a deployment that seals it reads and writes plaintext. A value that claims to be sealed opens on `reveal()` or throws, never on `get` (a `get` without a reveal is the presence probe) and never as plaintext; see ADR-0035.
-
-Config **references** a secret and never carries one: `{ ref: "credential", key }` (`src/tools/credential-ref.ts`) is accepted on `transport.auth.token` / `.value`, every `transport.headers` value, `oauthClient.clientSecret`, and — resolved at boot by `resolveInstanceCredentialRefs`, anywhere in `nimblebrain.json` / `instance.json` — the provider, broker, gateway and IdP keys. Workspace references on `transport.auth` and `transport.headers` resolve **on every request**, so rotating one is a `put` on the same key; `oauthClient.clientSecret` is read when the connection starts or an authorization begins. There is no `${VAR}` expansion in a transport config; the one remaining env-template expander is `redis.url` in `src/api/session-store/factory.ts`, a different mechanism.
-
-A read is attributable: `get(scope, key, { caller, purpose })` returns a `Redacted` that emits `audit.credential_read` **on `reveal()`** — so a presence probe costs no log line and a use always writes one, once per read. Never emit that event from anywhere but the store.
-
-**An OAuth connection's records are secrets, and go through the same door.** `WorkspaceOAuthProvider` owns the OAuth state machine; it owns no file format. Its four records per `(owner, server)` — `tokens`, `verifier`, `client` (the DCR registration, carrying a `client_secret` for a confidential client), `identity` (OIDC claims) — are keys in the credential store at the connection's scope: `mcp-oauth.<serverName>.<record>`, JSON strings the store holds opaquely (`src/tools/mcp-oauth-records.ts`). Connection-state derivation and the boot probe read presence through the same keys (`hasMcpOAuthTokens`), never the filesystem; revocation, disconnect and uninstall delete keys (`McpOAuthRecords.deleteAll`), never a directory. A pre-store `credentials/mcp-oauth/<server>/*.json` file goes on that record's first touch — imported by a read, superseded by a write — so there is no script and no maintenance window; `legacyMcpOAuthDir` is the only site that still names that directory, and it goes when no deployment can still be carrying one.
-
-**Credentials live with their owner — the workspace for shared connectors, the identity for personal ones.** Workspace-shared connector credentials are reachable at `{workDir}/workspaces/<wsId>/credentials/...`, constructed only through `WorkspaceContext` (via `runtime.getWorkspaceContext(wsId)`) or `FileCredentialStore`. A **personal connector** (a user's own remote MCP connection, reachable across their workspaces) is instead **identity-owned**: its OAuth records live at `user` credential scope via the `WorkspaceOAuthProvider` `{type:"user"}` arm — outside any workspace, so leaving a workspace never orphans them. Ownership is **structural** (the credential's scope), not a field: identity connectors do NOT set `oauthScope`. The legacy `oauthScope: "user"` on a **ConnectorRef** (the pre-Stage-2 member-scoped-in-a-workspace-registry model) stays deleted from the read path — the loader `src/connectors/runtime/lifecycle.ts::assertConnectorRefIsPostStage2` throws `LegacyOAuthScopeError` on any disk record carrying it. The guard stays as a permanent floor; the one-shot migration that produced clean data is retired. Otherwise `users/<userId>/...` holds non-credential per-user data (`users/<userId>/skills/`, the personal-connector install record `users/<userId>/connectors.json`). Hand-building `join(workDir, "users", userId, "credentials", ...)` is a regression caught by `check:credential-paths` — **except** `users/<userId>/credentials/mcp-oauth/`, the legacy import root above, which the lint allows and which only `legacyMcpOAuthDir` builds.
-
-**Conversations are workspace-owned.** Every conversation lives at `workspaces/<wsId>/conversations/<ownerId>/<convId>.jsonl` and is authorized by ownership (`Conversation.ownerId === access.userId`).
-
-- **The path is the binding.** `Conversation.workspaceId` is set at create (the workspace the chat is born in, at the first message) and never mutated — there is no mid-chat workspace switching — so the directory is authoritative and the field is a denormalised convenience. **Both** conversation walls key on the directory: `ConversationLocator` parses it from the path, and the `conversations__*` index takes it from the directory the scan descended through. Neither reads the line-1 field, so a record is in exactly the workspace it is stored under and there is no "unstamped" case to fold in.
-- **The binding is the session's workspace for the whole turn.** On resume, `_chatInner` resolves its tools, skills, apps, file partition, and the `## Workspace` prompt block against the conversation's own workspace (`convWsId`, read from the path by `resolveChatStore`) — never the client's currently-focused `X-Workspace-Id`. A conversation answered while you're focused elsewhere stays sealed to its workspace (no cross-workspace tool/context leak); the focused workspace only decides where a **new** chat is born.
-- **READ stays owner-gated; RESUME also requires current membership.** Reading an owned conversation (`findConversation`, the SSE event stream) consults ownership only — a removed member can still read their own authored conversation. But **resuming** binds the session's tools/skills/apps to `convWsId`, so it would hand the workspace's tools to someone offboarded from it: `chat()` and `startTurn()` both re-check membership of the conversation's workspace on resume and throw `ConversationWorkspaceAccessDeniedError` (→ `403`) for a non-member. This is a per-**resume** check (once per conversation load, at session establishment — exactly where the wall says the workspace must be membership-validated), NOT the per-call scan the wall forbids. Personal workspaces are sole-member by construction, so they never gate. Automations carry the same shape and gate per run; files do not gate on membership today.
-- **There is no cross-workspace listing.** Not an internal primitive, not behind a flag. `listConversations` covers exactly one workspace, and the workspace is a required argument. The tenant-wide raw-file read that usage aggregation needs is `listAllConversationFiles` — a separate function returning paths with no owner filter and no summaries, so it can never be mistaken for a conversation view. Reading a conversation **by id** stays cross-workspace and owner-gated (deep links and the chat panel's workspace reconcile need it).
-
-| Operation | Use | Never |
-|---|---|---|
-| Build a dir | `workspaceConversationsDir` (`src/conversation/paths.ts`) | flat `join(workDir, "conversations")` — `check:conversation-paths` catches it |
-| Read one | `runtime.findConversation(convId, { userId })` | |
-| List | `runtime.listConversations(workspaceId, options, access)` | any cross-workspace variant |
-| Write | `runtime.workspaceConversationStore(wsId, ownerId)` | |
-| Personal workspace id | `personalWorkspaceIdFor(userId)` (`src/workspace/workspace-store.ts`) | hand-built `"ws_user_" + userId` or the template-literal form — `check:personal-workspace-id` enforces |
-
-Both read paths route through the process-wide `ConversationLocator`, which resolves `convId → { wsId, ownerId }` across workspaces. Deleting a workspace **archives** its subtree to `archived/<wsId>/` (archive-then-cascade), never a hard `rm`.
-
-**Files are workspace-owned.** A file lives at `workspaces/<wsId>/files/<ownerId>/<fileId>_<name>` (per-owner registry + bytes + sidecars in that partition), so the directory is the boundary: cross-workspace reads fail by construction and `workspace delete` archives files with the rest of the workspace. `FileEntry.ownerId`/`workspaceId` are denormalised — the path is authoritative.
-
-- **Build a store ONLY via `runtime.getWorkspaceFileStore(wsId, ownerId)`**, which constructs through `workspaceFilesDir` from `src/files/paths.ts`, the single sanctioned site. `check:file-paths` rejects the identity-scoped `getIdentityContext(...).getDataPath("files")`.
-- **A `files://<id>` URI stays bare.** The workspace is NOT in the URI; it comes from the ambient request. `files__*` is an identity-door tool, so the workspace comes from `RequestContext.workspaceId` — the single workspace a request is bound to, set on every door:
-
-  | Door | Workspace |
-  |---|---|
-  | chat | the conversation's own `convWsId`, so a resumed chat's files follow the conversation, not the client's focus |
-  | automation run | provenance |
-  | `/mcp/<wsId>` | the membership-validated workspace in the URL |
-  | REST | the validated header, else the caller's personal workspace |
-
-  No workspace in scope ⇒ file storage denies (e.g. a background job with none bound).
-- **The browser serve endpoint is bare too** — `GET /v1/files/:id`, no workspace, no query. A browser `<img>` GET can't send `X-Workspace-Id`, so the workspace is resolved from the globally-unique id via the process-wide `FileLocator` (`src/files/locator.ts`, `runtime.getFileLocator()`), which searches ONLY the caller's own owner partitions. The owner partition is both the gate and the search scope — no client-supplied coordinate, and a request reaches only the caller's own bytes.
-- **The locator's `fileId → wsId` memo is never the source of truth.** `getWorkspaceFileStore` keeps it current (remember on write, forget on delete), and a stale hit self-heals via a disk re-walk.
-- **Reading a file SHARED by another owner** (future `visibility: shared`) is a separate, visibility-checked path — never a widening of this locator to other owners.
-
-Files an automation run writes land in the run owner's partition here, referenced from the run result.
-
-**Automations are workspace-owned.** An automation lives at `workspaces/<wsId>/automations/<ownerId>/<automationId>.json`, one file per automation. Construct paths ONLY via `src/platform/automations/paths.ts` (`workspaceAutomationsDir` and friends); `check:automation-paths` rejects the identity-scoped `getIdentityContext(...).getDataPath("automations")` and hand-built `users/<id>/automations/` paths.
-
-- **The workspace comes from `RequestContext.workspaceId`.** Like files, `automations__*` is an identity-door tool, so it reads the same single bound workspace every other kernel source does.
-- **A scheduled run fires as its owner.** The scheduler scans `workspaces/*/automations/*/` and keys by `${wsId}/${ownerId}/${id}`. The run is an identity-bound session **walled to** the automation's provenance `workspaceId` — its tools plus the owner's identity tools, with NO cross-workspace reach.
-- **Membership is re-checked per run.** It is stamped from the creator's trusted context at create, and the run-start door (`Runtime.startRun`) then denies any run whose owner is no longer a member of the provenance workspace (`WorkspaceMembershipRevokedError`, thrown before the opening message is written and before any tool binding). It is the same gate, at the same call site, that refuses a conversation resume — only the refusal differs, because the callers' contracts do. The scheduler classifies that denial as **skipped**, not failed: no `consecutiveErrors` bump, no auto-disable. So a removed owner's automation stops acting immediately and **self-heals** if they are re-added. Personal workspaces are sole-member, so they never gate.
-- **A run produces a run result, not a conversation.** Each run leaves a deliverable (final output), an activity log, and refs to any files it wrote (in the workspace file store) under `…/automations/<ownerId>/runs/<automationId>/` — an append-only `index.jsonl` of `AutomationRun` summaries plus a per-run `<runId>.result.json`. `runtime.executeTask` returns a `runId` and the deliverable, and creates no conversation.
-
-### Workspace tool namespacing — the wall
-
-A chat or task session reaches **exactly one workspace** plus the caller's identity tools — never a cross-workspace union. That one workspace is the conversation's own (a chat, sealed at create and resolved from its path on resume) or the run's provenance workspace (a task) — **not** whatever the client is currently focused on. Reaching another workspace does not exist; it is **denied, not gated**. **A tool name's shape is its scope (two doors):**
-
-- **Workspace tools** are bare `<source>__<tool>` — the per-workspace registries, including the platform `nb` source. The workspace is NOT in the name: it comes from the session's membership-validated `workspaceId`, so a caller cannot name another workspace at all. (`ws_<id>-<source>__<tool>` is the RETIRED form — neither emitted nor routed; a caller presenting one is rejected and told to re-list.)
-- **Personal connectors** carry a reserved `my_` marker (`my_gmail__send`). With workspace names bare, a workspace `gmail` and the caller's own `gmail` would otherwise be one string and two sets of credentials — a collision install-time checks cannot close, since the guard sees only the *caller's* connectors, never another member's. The marker is stripped at the door, so policy, events, and placements all still key on `serverName`.
-- **Identity tools** (kernel identity sources — `conversations`, `files`, `automations`; see `src/tools/identity-sources.ts`) are **bare** `<source>__<tool>`. They're owned by the user and live OUTSIDE any workspace, so they're NOT composed into workspace registries.
-
-`crm__search` (resolved in whichever workspace the session is bound to), `conversations__search`, and `my_gmail__send` can all be invoked in the same conversation — the source segment alone decides which door each takes.
-
-**The wall is enforced in `routeToolCall`.** A session carries one `workspaceId` (a chat's is its conversation's own workspace; a task's is its provenance workspace; a `/mcp` session's is the membership-validated workspace in its URL). A bare `<source>__<tool>` routes by its source segment: a kernel identity source or the `my_` marker goes through the identity door (authorized by ownership via the source's `canAccess`); anything else dispatches into the session's workspace. A bare name that resolves in that workspace IS the workspace source — the marker already separates it from a same-named personal connector at emission, so dispatch does not second-guess it. A bare name that resolves there is the workspace source; one that does not is `UnknownToolSource`, with no special case for a caller who happens to hold a same-named personal connector — `UnknownToolSource` also means "installed but transiently absent", and guessing between the two would steer a model onto the caller's own credentials during a workspace-source outage. A session with **no** workspace denies workspace sources with `WorkspaceToolUnavailable`. The `ws_<id>-` form is rejected outright, which is what makes a second workspace **unnameable** rather than merely unreachable. **There is no per-call membership scan** — the workspace was membership-validated when the session was established (`X-Workspace-Id` middleware for chat; the `/mcp/<wsId>` route for MCP; `personalWorkspaceIdFor` is member-by-construction; automation provenance is stamped at create time).
-
-The session's reachable set comes from `runtime.listToolsForWorkspace(wsId)` (that workspace's tools + identity tools, all bare; the caller's granted personal connectors carry the `my_` marker); the engine's router and `nb__search` both read it. `nb__search` discovers **only** that workspace — there is no cross-workspace search corpus.
-
-**Skills are walled the same way.** Layer-3 skill selection (`selectRequestLayer3`) loads org-tier (`workDir/skills/`, org-wide), workspace-tier (the conversation's own `wsId` only), and user-tier (`users/<userId>/skills/`) skills — plus **connector skills** (a connector/app's own `skill://<name>/usage` guidance, synthesized and tool-affinity-matched) from the **conversation's own workspace only**. A connector installed in another workspace never injects its skill here. No skill crosses a workspace boundary. The **app-aware briefing** is walled the same way: `focusedApp` / `<app-guide>` / `<app-state>` resolve `appContext.serverName` only in the session's bound workspace (`convWsId`), never by scanning the identity's other workspaces — so the prompt never describes an app whose tools the wall would refuse to call.
-
-- **Parse** only via `parseNamespacedToolName(s)` from `src/tools/namespace.ts` (a name with no `ws_<id>-` prefix is `scope: { kind: "identity" }`). `namespacedToolName(wsId, name)` still exists for the legacy form but nothing in `src/` or `web/` emits it — only test fixtures that must construct a cross-workspace call. `check:tool-namespace` enforces the parse site.
-- **Decompose** a `<source>__<tool>` name only via `splitInnerToolName(s)` from `src/util/tool-name.ts` — the one grammar every dispatch door shares. It lives in `src/util/` because both `src/tools/` and `src/runtime/` need it and `check:cycles` forbids the latter importing the former — a home under `src/tools/` forces a copy. The returned `hasSeparator` reports the separator and nothing more — never infer it by comparing the two segments (`x__x` has equal segments *and* a separator), and never substitute it for a usability check: both segments can be empty with a separator present (`__leading`, `trailing__`). A usable **source** segment is `hasSeparator && sourcePrefix.length > 0`; a usable **tool** segment is `hasSeparator && bareToolName.length > 0`. Write the one the site needs. Two doors that split a name differently is a misroute, not a wrong label. `test/unit/tools/tool-name-grammar.test.ts` pins the doors against one table.
-- **Web tier** mirrors the parser at `web/src/lib/namespaced-tool.ts` (regex from `web/src/_generated/workspace-id-pattern.ts`, emitted by `bun run codegen`; `check:codegen` catches drift).
-- **Per-call routing** lives in `src/orchestrator/route.ts`. Errors: `UnknownNamespacedToolName` (which the retired `ws_<id>-` form now raises) / `WorkspaceToolUnavailable` / `UnknownToolSource` / `UnknownIdentitySource` (`WorkspaceAccessDenied` is the base class of the wall's denial). Both `POST /v1/chat` and `/mcp` map them to identical structured `data.reason` discriminators.
-- `ConnectorRef.oauthScope: "user"` is **deleted from the type union**. Every install binds workspace explicitly via `wsId`; legacy disk records throw `LegacyOAuthScopeError` on load.
-- **Dev-mode parity.** The wall works in dev mode (no auth gate); the dev identity flows through the orchestrator the same as a real one. `runtime.requireWorkspaceId()` returns `"_dev"` only when no workspace is in scope.
-
-**`/mcp/<wsId>` is walled to the workspace in its URL** (ADR-0036). Bare `/mcp` is refused (`404`, naming the URL shape) — never a default workspace, never an identity-only surface. `routes/mcp.ts` authenticates against the canonical resource URL (`mcpResourceUrl`, `src/api/mcp-resource.ts`, built from `publicOrigin()` — never from `Host`/`X-Forwarded-*`), then checks membership of `<wsId>` on every request; a non-member, an unknown workspace and a malformed id all get the same `404 Workspace not found`. The session is bound to (identity, workspace) — `McpServerHost.ownsTransport` refuses a session id presented at another workspace's URL exactly like an unknown one, and the registry's `unavailable` is shown only to the bound caller. `tools/list` returns that workspace's tools (bare) + identity tools; `resources/list`/`read` reach identity resources and that one workspace, never a sweep. Do NOT reintroduce a per-request workspace header on this path, and do NOT build the resource URL from the request.
-
-**Which credentials reach `/mcp/<wsId>`** — the provider verifies the signature and reports a `TokenGrant` on `VerifiedIdentity` (`src/identity/provider.ts`); `grantAdmits` (`src/api/auth-middleware.ts`) applies the rule above every provider. Never branch on a provider name in `/mcp` code.
-
-| Credential | Recognised by | At `/mcp/<wsId>` |
-|---|---|---|
-| MCP authorization-server token | `grant.kind === "resource"` (WorkOS: issuer is AuthKit) | `aud` contains `mcpResourceUrl(wsId)` exactly, then membership. Refused on `/v1/*`. |
-| Web app login (WorkOS User Management, OIDC, dev) | `grant.kind === "first_party"` | membership |
-| Internal connector-to-host token | `validateInternalToken` | `403` — allowed only on `/v1/chat*` |
-
-### Personal workspace invariants
-
-Personal workspaces (`isPersonal === true`) are sole-owner-by-design. The store enforces four rules and throws `PersonalWorkspaceInvariantError` (`src/workspace/errors.ts`) on violation:
-
-1. **Members locked** to `[{ userId: ownerUserId, role: "admin" }]`. `addMember` / `removeMember` / `updateMemberRole` and `update({ members })` all reject mutations on personal workspaces.
-2. **`isPersonal` frozen** post-create (both directions).
-3. **`ownerUserId` frozen** on personal workspaces.
-4. **`ownerUserId` forbidden** on non-personal workspaces (the two fields travel together).
-
-What stays freely mutable on a personal workspace: `connectors`, `name`, `about`, `customInstructions`. Those are workspace-content edits, not identity edits.
-
-The HTTP layer maps `PersonalWorkspaceInvariantError` to `422 personal_workspace_invariant` with `{ workspaceId, reason }` details (same shape as `ConversationCorruptedError → 422`). The workspace-mgmt tool handlers encode the error into `structuredContent` so it survives the in-process MCP serialization boundary; `handleToolCall` decodes and emits the 422.
-
-## Debug Logging
-
-Hot-path diagnostics are gated behind namespace flags so they're available when you need them without editing source. Use for tracing across the runtime ↔ SSE ↔ browser ↔ iframe chain.
-
-### Server (`NB_DEBUG` environment variable)
-
-```bash
-NB_DEBUG=*         bun run dev    # everything
-NB_DEBUG=mcp       bun run dev    # MCP source lifecycle + dispatch
-NB_DEBUG=sse,mcp   bun run dev    # SSE event flow + MCP
-```
-
-`NB_DEBUG` is read once at process start. Changing it mid-session (e.g. `export NB_DEBUG=...` in the running shell) has no effect — restart the process for the new namespaces to take hold.
-
-Namespaces (`src/observability/log.ts`):
-
-| Namespace | Emits | Answers |
-|---|---|---|
-| `mcp` | McpSource construction; per-call dispatch showing `taskSupport` / `path=task-augmented\|inline` / cached tool count | "Why is my tool going inline vs task-augmented?" "Is my tool cache populated?" |
-| `sse` | Every `tool.progress` / `tool.done` / `server.notification` entering the runtime sink wrap | "Are progress events and relayed notifications reaching the SSE layer?" |
-| `auth` | Identity-provider verify rejections at debug volume (the routine, self-healing reasons `no_token` / `token_expired`). Anomalous reasons — `org_mismatch`, `bad_signature`, `jwks_unavailable`, etc. — log at `warn` and need no flag. | "Why is a user being 401'd / involuntarily logged out?" |
-| `notify` | Notification envelopes, outbox declarations and poll results dropped at parse, with the field that failed; sweeps skipped because a workspace is already being read | "Why is this connector's event not in the inbox?" |
-
-Add a namespace by calling `log.debug("ns", "message")` (from `src/observability/log.ts`). Keep this table and the `log.ts` doc comment in sync.
-
-### Browser (`localStorage.nb_debug`)
-
-```js
-localStorage.setItem("nb_debug", "*")        // everything
-localStorage.setItem("nb_debug", "sync")     // just the server-notification relay
-localStorage.removeItem("nb_debug")          // off
-```
-
-Reload after setting. Namespaces (`web/src/lib/debug.ts`):
-
-| Namespace | Emits | Answers |
-|---|---|---|
-| `sync` | Every SSE `server.notification` arrival; each drop (method not relayed, another workspace); each `postMessage` forward to a matching iframe | "Is the browser receiving broadcasts?" "Is the iframe I expect actually mounted with the right `data-app`?" |
-
-Namespaces are shared convention between server and browser: `NB_DEBUG=sync` plus `localStorage.nb_debug=sync` together trace the entire relay, from the server's announcement to the iframe.
-
-## Observability (OTel tracing + structured logs)
-
-Vendor-neutral OpenTelemetry lives in `src/observability/`. The runtime depends only on `@opentelemetry/*` and the W3C tracecontext + OTLP wire formats — **never** a branded observability library. The wire is the interface.
-
-- **Spans:** wrap work with `withSpan(name, attrs, fn)` (active-context, nests automatically) — never call the OTel API directly from feature code. Today's spans: `agent.turn` (engine run), `llm.call` (model stream), `tool.dispatch` (MCP dispatch), and the outer HTTP span (Hono middleware, continues an inbound `traceparent`). Add `requestIdentityAttrs()` to span attrs to stamp the verified identity.
-- **Propagation:** `injectTraceparent(headers)` on outbound calls that should extend the trace (service-token mint, authenticated remote-MCP fetch). No-op outside a span.
-- **Logs:** use `log.*(msg, fields?)` from `src/observability/log.ts` — never raw `console.*` in operational code (it bypasses the JSON/identity/correlation enrichment). With `NB_LOG_FORMAT=json` (set by the chart) lines are structured JSON auto-enriched with `service`, `tenant_id`, `trace_id` (the active OTel trace id — the field the Grafana Loki→Tempo pivot keys on), and identity; pretty dev output is unchanged. `NB_LOG_LEVEL` (default `info`) is the severity floor for info/warn/error; secret-keyed `fields` (a bare `token`, the `*_token` compounds, `secret`/`password`/`api_key`/`authorization`/`cookie`/`credential`) are auto-redacted before write, while LLM usage fields (`inputTokens`/`tokenCount`/…) are preserved. `check:no-raw-console` enforces the logger usage (the console/debug EventSinks are exempt; a rare exception takes a `// lint-ok:console` marker).
-- **Trust rule — what may be stamped:** `tenant_id` is a boot-time Resource attribute from `NB_TENANT_ID`, never a request header. `user_id` / `workspace_id` / `conversation_id` come from the verified request context. **Never** stamp the display name, email, secrets, prompts, tool args/results, or file contents.
-- **Config:** `OTEL_EXPORTER_OTLP_ENDPOINT` enables export (unset = nothing exported, ids still exist for log correlation — so local dev and OSS checkouts need no infra). `NB_SERVICE_NAME` overrides the service name.
-- **OTel deps are exact-pinned to one release train** (stable `sdk-trace-*`/`resources` + the matching experimental exporter). Bump them together or export serialization breaks; the version-coherence test in `test/unit/observability.test.ts` guards it.
-
-## Long-Running Tools (MCP Tasks)
-
-Any MCP tool whose work exceeds the stock MCP request timeout (~60 s) must be written as a **task-augmented tool**. The engine implements the client side of the MCP draft 2025-11-25 `tasks` utility end-to-end; connector authors only have to opt in.
-
-### Authoring a long-running tool
-
-Declare the tool with `execution.taskSupport` on its `tools/list` entry. FastMCP (Python) makes this one line:
-
-```python
-from fastmcp.server.tasks import TaskConfig
-
-@mcp.tool(task=TaskConfig(mode="optional"))
-async def start_research(query: str, ctx: Context) -> dict:
-    run = app.create_entity("research_run", {...})
-    try:
-        # phased work; ctx.report_progress(...) on each phase
-        # app.update_entity(...) on each phase for live UI
-        return {"run_id": run["id"], "report": report}
-    except asyncio.CancelledError:
-        app.update_entity("research_run", run["id"], {"run_status": "cancelled", ...})
-        raise
-```
-
-- `mode="optional"` lets the tool run inline or as a task (client decides). Use this.
-- `mode="required"` rejects non-augmented calls with JSON-RPC `-32601` — only use if you're certain every client supports tasks.
-- `mode="forbidden"` (the implicit default) never runs as a task. Use for fast tools.
-
-### What the engine does automatically
-
-1. On `initialize`, advertises `capabilities.tasks.{requests.tools.call, cancel, list}` so servers know the client supports the task flow. (`src/tools/mcp-source.ts`)
-2. When calling a tool whose `execution.taskSupport` is `"optional"` or `"required"`, dispatches through the SDK's streaming API: `client.experimental.tasks.callToolStream(...)`. (`src/tools/mcp-source.ts::callToolAsTask`)
-3. Consumes the response stream — `taskCreated` → `taskStatus`* → terminal `result | error` — and emits `tool.progress` events on every `taskStatus` so the chat UI renders live.
-4. Run-scoped `AbortSignal` is threaded through `ToolRouter.execute(call, signal)` → `ToolSource.execute(..., signal)` → RequestOptions on the stream. An abort becomes `tasks/cancel` automatically via the SDK.
-5. Inline tool calls (taskSupport omitted / forbidden) use the regular `client.callTool(...)` path and the same signal.
-6. Crash-retry semantics: **inline calls** restart the subprocess and retry on transport error. **Task-augmented calls do not retry** — task state lives server-side; retrying would create a confusing duplicate. Surfacing the error lets the agent decide whether to initiate a new run.
-
-The spec-compliant task flow does NOT use the 60 s MCP request timeout — `tools/call` returns in milliseconds with a `CreateTaskResult`, and the SDK handles polling internally.
-
-Default TTL attached to outbound task-augmented requests is one hour (`DEFAULT_TASK_TTL_MS` in `src/tools/mcp-source.ts`). Servers may clamp it lower.
-
-### Dual-channel contract (engine + entity)
-
-The task channel is how the **agent** awaits the result. Apps that have UIs should also update a **persistent entity** on each phase transition (via the connector's state store, typically Upjack). This gives the UI a live view that survives:
-- The LLM losing interest mid-run
-- The client disconnecting
-- The agent process being bounced
-
-Both channels are sources of truth for different consumers. They must be kept in lockstep by the worker:
-
-```
-ctx.report_progress(...)  ─► notifications/tasks/status  ─► engine ─► chat UI
-app.update_entity(...)    ─► resources/list_changed       ─► relay  ─► Synapse UI (useDataSync)
-```
-
-### Startup reaper pattern
-
-Long-running entities can get orphaned if the connector subprocess dies mid-run. The canonical fix is a startup sweep that marks any entity stuck in `working` as `failed` with a clear reason. See `synapse-apps/synapse-research/src/mcp_research/server.py::_reap_orphaned_runs()` for the reference implementation.
-
-### Reference server
-
-`synapse-apps/synapse-research` is the first consumer of this pattern. Its `tests/test_spec_compliance.py` exercises every MUST from the spec against an in-process FastMCP client and is a good template for new task-aware connectors.
+External MCP clients and iframe apps use `POST /mcp/<wsId>`; the first-party web shell uses REST (`web/src/api/client.ts`) and never imports the MCP bridge client outside `web/src/bridge/`. **A new server capability the shell needs is an action on an existing platform tool, not a new `/v1/...` route**, because a tool action gets routing, auth, structured errors, and MCP-client access for free. The narrow exceptions and the reasons for the split are in `src/api/AGENTS.md`.
 
 ## Prompt Security
 
 `sanitizeLineField()` and XML containment tags in `compose.ts` are prompt injection mitigations. Do not remove without reviewing `test/unit/prompt-injection.test.ts`.
 
 **Connector trust is an install decision, not a per-prompt one.** Do not add a numeric trust gate on any path that injects server-authored content into the prompt (skills, app guides, app state, custom instructions). Once a connector is active in the workspace its tools are already callable, so suppressing the workflow guidance that teaches the model how to use them safely makes the model less safe, not more — and tool descriptions, tool outputs, and `app://instructions` flow through ungated already. The defense is XML containment with `</tag>` escape in the body, the pattern used by `<app-state>`, `<app-guide>`, `<app-instructions>`, `<app-custom-instructions>`, and `<layer3-skill>`. Any new server-authored containment tag must escape its own closing form in the body the same way.
-
-## Inbound Webhooks — the hooks door
-
-`POST /v1/hooks/:deliveryId` (`src/api/routes/hooks.ts`, backed by
-`src/hooks/`). One generic door for vendor deliveries that cannot carry a platform
-token. The runtime opens the capability in the path, mints its ordinary
-workspace-scoped platform token, and forwards the bytes to a route the connector
-declared. Servers opt in with `_meta["ai.nimblebrain/host"].hooks` (`host_version: "1.2"`).
-
-**The invariant: the runtime never parses a hook body.** It holds no vendor list
-and no envelope knowledge. If you find yourself reading a field out of a
-delivery, stop — that logic belongs in the receiving server's adapter, and the
-split this door exists to maintain has failed.
-
-Three more rules that are load-bearing, not stylistic:
-
-- **The handler stays thin.** Open, check, mint, forward. No queue, no
-  persistence, no retry. A tenant runtime is one pod, so a delivery arriving
-  while it is busy costs the vendor a retry — the door must never be the reason
-  it is busy. Durability belongs to the vendor's retry and the receiving
-  connector's raw capture, both of which can provide it.
-- **Every rejection is the same bare 404.** An id matching no registration, one
-  whose grace window has closed, one whose workspace is gone, a registration too
-  old to carry an id, an uninstalled connector — one path, one answer, no body.
-  Anything that distinguishes them is an oracle a prober walks. `admitDelivery`
-  returns `undefined` for all of them precisely so the caller has nothing to
-  branch on — including the too-old case, which must never throw: the door scans
-  every workspace, so one stale record raising would answer **500** for
-  deliveries belonging to workspaces that are entirely current.
-- **No agent-facing surface, and one operator-authored path out.** Nothing mints
-  or rotates a hook from a tool the model can reach.
-  `hooks__list_webhooks` / `hooks__rotate_webhook` carry
-  `INTERNAL_TOOL_ANNOTATION` — stripped from the chat tool list and from
-  `tools/list`, reached by the web shell's Webhooks settings tab.
-  A path from a delivery to an agent run now exists, and its bounds are what
-  make it safe rather than its absence: it runs only through a delivery route a
-  workspace **admin** wrote, two durable hops from the door (the door writes to
-  a connector's own store; the runtime polls that store into a workspace inbox;
-  a route matches an inbox item), only into an automation whose own schedule
-  asked for those notifications, batched, and capped by a fires-per-hour ceiling
-  that disables the automation rather than throttling it. A delivery still
-  reaches nothing on its own, which is the property this rule was protecting.
-
-**The URL's secret is an opaque delivery id** — 256 bits of randomness, and the
-whole capability. It names one registration; the connector, vendor and route are
-read back from that record rather than restated in the path. Nothing is sealed
-and nothing is MAC'd, which is why the URL is ~96 characters and fits a vendor's
-255-character column, the constraint that killed the sealed-payload design.
-
-The id is **stored as it is, not as a digest**, and that is deliberate: a
-delivery URL is an ADDRESS handed to external systems repeatedly, so an admin
-has to be able to read it. Under a digest the only way to see one is to rotate,
-and looking would break the integration being looked at. The record already sits
-beside that workspace's conversations and files, which this runtime does not
-encrypt at rest, and its connector credentials, which it seals only when the
-deployment configures sealing. What bounds it instead is that reading
-needs workspace admin and rotating is one action. The door compares in constant
-time — not because a timing oracle is practical against 256 bits behind a
-per-source rate limit, but because that comparison is the only thing between a
-guess and a forward.
-
-There is **no expiry**. A vendor holds a URL for months, so retirement is the
-lookup, which runs on every delivery and is effective immediately, rather than a
-clock that can only fire late.
-
-**The key** is `NB_HOOK_TOKEN_KEY`, a per-tenant secret. It no longer seals or
-opens anything — it is the **switch deciding whether the door mounts at all**.
-**Absent key ⇒ nothing is mounted** and the whole prefix 404s at the router, so
-a local checkout gains no surface. The comma-separated ring it accepts is still
-parsed and validated at boot (base64 round-trip, minimum length, placeholder
-patterns, at most three entries) so an existing multi-key deployment keeps
-booting, but the entries beyond the first now decide nothing. A leaked key used
-to compromise every URL for the tenant; there is now no key to leak, and each
-URL stands alone — revoked by rotating its own record, not by rotating a secret
-that governs all of them.
-
-**Registrations** live on the workspace record (`Workspace.hooks`), beside
-`oauthOperatorApps`. They hold the current and previous delivery id, the `kid`,
-and the route. The `kid` is **correlation only** — it is what the runtime's log
-line names so an operator can line a delivery up against the URL it arrived on;
-the door never admits on it. The delivery id is never logged, because unlike a
-`kid` it IS a working URL.
-
-**Rotation** (`hooks__rotate_webhook { connector, vendor }`, workspace admin):
-mints a fresh id, keeps the outgoing one admissible for 24 h so in-flight
-redeliveries land, and calls the server's `register_tool` with the new URL. It
-**refuses when nothing was provisioned** — a connector that is not running
-cannot be handed a URL, and reporting a rotation that did not happen is worst
-exactly when this control is reached, which is after a URL has leaked. Cheap
-and routine otherwise: a control nobody reaches for because it loses data is
-not a control.
-
-**`hooks__list_webhooks` returns the address**, with which connector and route it
-feeds and whether the previous URL is still admissible — derived from
-`isPreviousStillValid`, the same window the door enforces, because two copies of
-that rule is how a settings page comes to promise an admin a URL still works
-after the door stopped taking it.
-
-**Provisioning is a reconcile, not an install step.** `ensureHooks` runs when a
-connection reaches `running` (`setConnectionRunningObserver`), which covers a
-fresh install, a boot, and an interactive OAuth flow completing long after the
-install returned — one path instead of three that drift. It provisions only
-what is missing, and **missing means unaddressable**: a registration with no
-`deliveryId` is refused by the door, so it counts as missing and the next pass
-gives it an address rather than skipping it. A declared `register_tool` that is
-missing or does not accept `{vendor, url}` **provisions nothing** and is reported
-as a warning on the install, which has already committed, and re-logged on every
-transition to `running`. A `register_tool` call that merely errors leaves the
-registration recorded (the connector is useful without its webhook, and a
-rotation or reinstall retries).
-
-**The forward adds no header, and the `kid` does not travel.** The fleet edge
-strips the reserved `x-nb-*` namespace by RULE (it cannot tell a runtime-stamped
-member from a caller-forged one — this forward arrives under an ordinary
-`aud=mcp-fleet` token like any other call), so a stamped `X-NB-Hook-Kid` would
-be dropped one hop later, reach nothing, and read as a broken pipeline whose
-obvious repair is a hole in that rule. Kid correlation lives in the runtime's
-delivery log line, which is the only place it appears — do not "restore" the
-header. `isStrippedRequestHeader` mirrors the edge's rule (`x-user-id` plus the
-`x-nb-*` prefix) rather than listing names, because the runtime sits AHEAD of
-the edge and the namespace invariant only holds if every hop ahead of it also
-refuses to pass one through. The general path stays a denylist: vendor signature
-headers the runtime cannot enumerate have to reach the receiving verifier.
-
-**`clientAddressFor`** (`src/api/client-address.ts`) is the runtime's only
-load-bearing `X-Forwarded-For` reader — right-most back `NB_TRUSTED_PROXY_HOPS`
-(default 1), never left-most. The two other readers (`auth-middleware.ts`,
-`mcp-server.ts`) feed log lines and decide nothing; do not add a third that does.
-
-## Connector lifecycle — the two callable moments
-
-`src/lifecycle/` (`declaration.ts` parses, `notify.ts` calls) tells a connector
-it became reachable in a workspace (`on_ready`, with
-`{ reason: "install" | "resume" }`) and that it is about to be removed
-(`on_removing`, no arguments). Declared as `_meta["ai.nimblebrain/host"].lifecycle`,
-`host_version: "1.4"`; each value names a tool on that same server. Developer
-contract: [`docs/apps/lifecycle.mdx`](./docs/src/content/docs/apps/lifecycle.mdx).
-
-**Two moments, because the notification is a tool call on the bundle.** Before a
-connector is reachable there is no server to call; after teardown there is
-nothing left. So extension is DECLARATIVE outside that window (install-time
-secret collection, the uninstall-time hook revoke — both runtime acts off the
-connector's record) and CALLABLE inside it. A `pre_install` proposal is a
-proposal to run bundle code outside a bundle. Do not add events without that
-argument.
-
-**No vendor vocabulary.** Same line `HostManifestMeta.hooks` holds: the kernel
-says *you were installed*, and what that means is the bundle's business. A
-`provisioning:` block describing what to provision is the taxonomy trap.
-
-Three rules that are load-bearing rather than stylistic:
-
-- **`on_ready` does NOT reuse `singleFlight`, and this is the thing most likely
-  to be "tidied up" back into a bug.** That flight exists to stop two concurrent
-  MINTS diverging; `on_ready` mints nothing, so joining it tells a
-  freshly-installed connector `resume` — or, once the dedupe set has the
-  observer's success, skips the install call and takes the install notice with
-  it. The install-path call is ungated; only the connection-running observer is
-  deduped, by a per-`(workspace, connector)` **set**, never a timer.
-  `test/integration/connector-lifecycle-notify.test.ts` pins both halves.
-- **A fresh install therefore delivers TWO `on_ready` calls, racily.** At least
-  once is the contract, handlers must be idempotent, and suppressing one needs
-  "an install is in progress" state the runtime does not hold.
-- **`on_removing` fires before `lifecycle.uninstall` and before the OAuth
-  revoke**, is best-effort, and never *fails* the uninstall — which does wait
-  for it, bounded by a **5s deadline in `notifyRemoving` and by nothing else**.
-  `verifyLifecycleTools` refuses a task-augmented handler (`awaitToolTaskResult`
-  has no deadline of its own), but that check runs on the READY path and only
-  warns — it has never gated this call, and it says nothing about a merely slow
-  inline handler. Do not read it as the bound and delete the deadline as
-  redundant; the wait is held where the guarantee is made. It also may never
-  arrive — the docs say so in those words, because
-  a bundle that leaks a third-party resource without it is relying on a call
-  nothing guarantees.
-
-The contract check (`verifyLifecycleTools`) mirrors `verifyRegisterTool` with a
-weaker predicate — the tool exists and takes no *required* argument — and
-deliberately does **not** require `reason` in the schema. The runtime sends an
-argument the schema need not mention, which rests on the server framework
-accepting and ignoring unknown arguments (FastMCP/pydantic does). Like the hooks
-check it is a warning on a **successful** install, and an empty tool list is
-"not ready yet", not a violation.
-
-`ConnectorPort` and the tool-surface watch both reconciles run on live in
-`src/tools/connector-surface.ts`. Two purposes subscribe independently
-(`"hooks"`, `"lifecycle"`); `stopWatchingToolSurface` drops both on uninstall and
-`stopAllToolSurfaceWatches` on shutdown, beside `resetReadyNotifications`.
-
-### Connector teardown is a function, and it has two callers
-
-`uninstallWorkspaceConnector` (`src/connectors/runtime/uninstall.ts`) is the
-whole of removing one connector from a workspace: the `on_removing` call, the
-OAuth revoke, `lifecycle.uninstall` (the only path to `cleanupBrokeredState`,
-and so the only thing that revokes a brokered connection at the vendor), the
-workspace-record strip, the hook revoke, the cursor reset, the tool-surface
-watches, the ready-notification record, the tool permissions, the owned secrets.
-Order is the contract — see the file header.
-
-**Deleting a container runs the same teardown as removing each thing it holds.**
-`Runtime.deleteWorkspace` walks `ws.connectors`, calls it for each, and only
-then hands the id to `WorkspaceStore.delete` for the archive-rename. Teardown
-runs BEFORE the rename: `on_removing` needs the bundle reachable, and the
-credential cleanup needs the credential directory at its live path.
-
-- **The workspace's automations are disarmed first**, before the connector
-  teardown and long before the rename: `AutomationQuiescer.dropWorkspace` (the
-  scheduler, handed over by the automations source — the runtime may not import
-  it) drops them from the in-memory `definitions` map. Nothing else does:
-  `scheduler.reload()` is called only from the automations tool surface, so a
-  deleted workspace's automations stayed armed until the process restarted. A
-  targeted drop, never `reload()` — that rescans every workspace and owner on
-  disk to learn one thing the caller already knows.
-- `WorkspaceStore` imports nothing from `src/connectors/` and holds no lifecycle
-  handle. The cascade is the runtime's; the store does the rename.
-- `manage_workspaces delete` calls `Runtime.deleteWorkspace`, never
-  `workspaceStore.delete` — which is why `ManageWorkspacesContext` carries a
-  runtime handle.
-- Best-effort per connector. Outcomes are collected and returned, not thrown: a
-  vendor nobody can reach must not strand a workspace half-deleted, and a failed
-  revoke has to stay nameable after the record that named it is archived.
-- `ConnectorTeardownDeps` is a structural interface `Runtime` satisfies, so
-  `src/connectors/` keeps no edge to the composition root.
-- Which secrets an uninstall may delete is the CALLER's question, passed in. The
-  tool subtracts keys a surviving sibling still names; a workspace delete passes
-  none, because every connector is going and those keys are operator-set
-  workspace secrets, which survive the rename into the archive. The connector's
-  own credentials do NOT survive it — `lifecycle.uninstall` clears its
-  `mcp-oauth.<server>.*` keys and any brokered credential dir a step before the
-  rename. That asymmetry is the design: revoking upstream is the point.
-
-## API Surfaces — Three Audiences
-
-The platform serves three audiences with three protocol surfaces. They are not tiers; they are distinct contracts for distinct callers, intentionally split.
-
-| Audience | Surface | When |
-|---|---|---|
-| External MCP clients (Claude, Claude Code, Cursor, any RFC-conformant client) | `POST /mcp/<wsId>` (Streamable HTTP MCP) | Any caller speaking the MCP protocol from outside the platform. Stateful: server allocates `Mcp-Session-Id` bound to workspace + identity. |
-| Iframe widgets (synapse apps in sandboxed `<iframe>`s) | postMessage → `bridge.ts` → MCP SDK Client → `/mcp/<active wsId>` | Sandboxed UI talking via the MCP App ext-apps protocol. The bridge is the only iframe path; it shares one `Mcp-Session-Id` per browser tab for the active workspace, and a switch closes it and opens one on the new path. |
-| Platform's own web shell (first-party React UI: header, settings, chat) | `POST /v1/tools/call`, `POST /v1/resources/read`, `GET /v1/...` (REST) | Trusted same-origin code. Stateless per request: `X-Workspace-Id` header on each fetch; no session, no transport lifecycle. |
-
-> **`/mcp/<wsId>` is walled to the workspace in its URL.** Bare `/mcp` is refused. See "Workspace tool namespacing — the wall" above and ADR-0036.
-
-**Quick decision rules for contributors:**
-
-- Adding a new feature to a settings tab, the chat composer, or anywhere in `web/src/` outside `web/src/bridge/` → use the REST helpers in `web/src/api/client.ts`. Do not import the MCP bridge client.
-- Adding a feature to a synapse app (lives in `synapse-apps/<name>/ui/`) → use `@nimblebrain/synapse`'s `callTool` / `callToolAsTask` / `readResource`. The SDK speaks postMessage; the bridge handles the rest.
-- Adding a new `nb__*` built-in tool → register it in the engine; both REST and `/mcp` audiences pick it up automatically. Don't add a special endpoint.
-
-**Prefer tool actions over new REST routes.** When the web shell needs a new server-side capability (read installed connectors, save an operator OAuth client, fetch the OAuth redirect URI, etc.), the default answer is a new **action on an existing platform tool** (e.g., `manage_connectors`, `manage_workspaces`) — not a new `/v1/...` Hono route. A tool action gets routing, auth gating, structured-error handling, and external MCP-client access for free. A new route reinvents all of that and adds surface area to maintain.
-
-The exceptions are real but narrow: add a route only when the endpoint genuinely **can't be a tool call**. Concretely:
-
-- Sets a session-bound cookie that future requests need to present (`/v1/mcp-auth/initiate` sets `nb_oauth_state`).
-- Is itself the redirect target of an external flow (`/v1/mcp-auth/callback` is loaded by the vendor's browser, not by our client).
-- Streams non-JSON bytes (multipart upload, SSE for the chat stream).
-- Serves raw bytes the browser loads directly, where it cannot send headers (`GET /v1/files/:fileId` behind an `<img>`).
-
-If none of those apply, write a tool action. A simple JSON read like "what's the OAuth redirect URI?" is a tool action, not a route.
-
-**Why split**, not consolidate: the web shell and external MCP clients have different correctness requirements. The shell is trusted same-origin React with its own React lifecycle; making it speak MCP would force it into stateful session lifecycle (workspace-bound `Mcp-Session-Id`, reset on switch, etc.) for zero gain. Keeping it on stateless REST means workspace switching is a no-op on transport state — next fetch reads the new `X-Workspace-Id` and goes. The bridge needs MCP because external MCP clients also use `/mcp`, so iframes inherit a spec-aligned protocol surface for free.
-
-`/v1/tools/call` and `/v1/resources/read` are NOT being deprecated. They are the platform's first-party API and stay alive indefinitely.
-
-## MCP Session Architecture
-
-Two-layer state model for `/mcp`. Don't merge them.
-
-- **Transport map** (`McpServerHost.transports`): per-process LRU `Map<sessionId, TransportEntry>`. Owns the live `WebStandardStreamableHTTPServerTransport`, the SDK `Server` instance, in-flight JSON-RPC state, and `lastAccessedAt`. Process-bound — never serialize, never share across processes.
-- **`SessionRegistry`** (`src/api/session-store/`): pluggable cluster-shared metadata. Stores `{sessionId, identityId, workspaceId, createdAt, lastAccessedAt}` only; `workspaceId` is half the binding a session-miss answer compares before saying `unavailable`. **No pod / instance / owner fields** — adding any would leak deployment vocabulary into a metadata interface. Implementations: `InMemorySessionRegistry` (default) and `RedisSessionRegistry`.
-
-Routing requests to the process owning a session's transport is the **load balancer's** job (ALB `lb_cookie` stickiness or header-hash on `Mcp-Session-Id`). The registry doesn't route; it can't move transports.
-
-**Reclamation invariants** — see `mcp-server.ts` file header for the why:
-
-- Idle TTL and LRU-on-capacity both go through `evict(sid, reason)`. **Delete from the map before calling `close()`**, never the reverse — concurrent-request race.
-- Same TTL drives both layers (`Runtime.getSessionStoreTtlMs()` → host sweep + registry). One knob.
-- Capacity overflow is never a 4xx. A well-formed initialize at `MAX_MCP_SESSIONS` evicts the LRU and is admitted. Do not reintroduce `Too many active sessions`.
-
-**Session-miss `error.data.reason`** has exactly two values:
-
-- `not_found` — registry has no entry (idle-TTL eviction or never created).
-- `unavailable` — registry has an entry; this process doesn't have the transport. Don't try to distinguish process-restart from sticky-miss in the response — operators do that via deploy timing + `transport-count vs registry-size` divergence.
-
-**Prerequisites for `platform.replicas > 1`** (all five required):
-
-1. RWX storage or workspace data moved off the PVC. RWO PVC + `RollingUpdate` deadlocks on attach.
-2. Routing keyed on `Mcp-Session-Id`. ALB `lb_cookie` stickiness on the platform target group, or NGINX/Envoy header-hash routing.
-3. `sessionStore.type: "redis"`. Each tenant gets its own Redis instance in its own namespace (see `infra/CLAUDE.md` per-tenant Redis pattern). Default `nb:mcp:session:` keyPrefix is correct under that model.
-4. `platform.strategy.type: RollingUpdate`. Only after (1).
-5. `ConnectionRevalidator` gated to a single owner. The connection credential re-validation loop (`src/connectors/runtime/connection-revalidator.ts`) polls per-pod in-memory connection state; at `replicas > 1` every pod would poll the same provider account (N× the SaaS API calls against one shared key) and split-brain its flips (pod A flips to `reauth_required` and emits SSE on its own RunBus; pod B still shows `running`). It needs leader election (per-tenant Redis lease) so exactly one owner polls, and the same clustered RunBus as the limitation below to fan the flip out cross-pod. Until then it is single-owner-only — correct at `replicas: 1`, must be coordinated above it.
-
-**Known limitation under `replicas > 1`: RunBus is single-process.** Chat turn replay/resume (the SSE-stream-backed viewer attaches to a per-conversation event log) lives in-memory on the pod that started the turn. A viewer landing on a different pod sees `isActive:false` for an in-flight turn elsewhere and the live frames don't fan out cross-pod. Sticky routing on `Mcp-Session-Id` (prereq #2) mitigates for the active tab; a pod restart or any cross-pod viewer (other tab/device) still drops resume mid-turn. The clustered Redis-backed RunBus is deferred work, tracked in `src/runtime/run-bus.ts` — `serve` warns at boot when `sessionStore.type === "redis"` so the gap is visible. `ConnectionRevalidator` (prereq #5) shares this constraint and the same deferred clustered-RunBus dependency: its `connection.state_changed` flips fan out only on the originating pod's RunBus today.
-
-**Correctly per-pod (NOT a single-owner case): source self-heal.** `ConnectorLifecycleManager.tryRecoverSource` (hot-path re-registration of a workspace source that is installed but missing from the registry — torn down without a re-add, or never started because its endpoint was unreachable at boot; reached from the orchestrator's tool door and the three REST doors in `src/api/handlers.ts`) and its `recoveryAttempts` negative-cache cooldown are intentionally per-pod in-memory, and that is correct under `replicas > 1`. It guards a per-pod resource — `registriesByWs` is process-local and its sources are process-bound transports — so each pod must heal its own registry on its own miss. Unlike `ConnectionRevalidator`, it is reactive and idempotent (`hasSource` short-circuit, re-uses persisted OAuth state), touches no shared upstream account, and fans out to nobody, so it needs no leader election. Do NOT move the cooldown to Redis: a cluster-shared stamp would let one pod's failed heal suppress another pod's legitimate independent miss.
-
-**Connection credential re-validation (`ConnectionRevalidator`).** A runtime-owned timer (sibling of `HealthMonitor`, started in `serve`) that detects connectors whose upstream authorization lapsed *without* a transport 401 — a brokered provider's downstream vendor account expiring while the platform→provider key stays valid. It polls each **registered provider's** probe through the generic `ConnectionHealthProbe` seam (`src/connectors/runtime/connection-probe.ts`; impls live per vendor under `src/connectors/providers/<vendor>/connection-probe.ts` — Composio and Smithery today) and flips `running → reauth_required` after N consecutive `credential_lost` verdicts (anti-flap; any API error/timeout is `indeterminate` = no-op; a flap-storm trips a circuit breaker that keeps all state). Dormant unless at least one provider contributes a probe, so a deployment with no brokered provider runs no sweep. Each provider owns its own kill switch — `connectors.providers.composio.monitorEnabled` and `connectors.providers.smithery.monitorEnabled` in `nimblebrain.json` (default on when that provider is configured) — while the sweep *cadence* is provider-agnostic: `NB_CONNECTION_REVALIDATE_INTERVAL_SECONDS` (default 300; the legacy `COMPOSIO_MONITOR_INTERVAL_SECONDS` is still honored but deprecated, warns once at startup, slated for removal #727). A probe reports only what the product can act on: Smithery's returns `indeterminate` for `auth_required`/`input_required` and logs the broker's setup URL, because a `ConnectionLiveness` verdict cannot carry a remedy link and flipping without one strands the user. Does NOT touch transports/restart/`dead` — that stays `HealthMonitor`'s job (liveness-of-process vs. liveness-of-credential, two disjoint loops).
-
-**TTL units: seconds at the surface, ms internally.** Operator-facing: `MCP_SESSION_TTL_SECONDS` env (highest priority) > `sessionStore.ttlSeconds` config > 8h default. Conversion to ms happens in `Runtime.getSessionStoreTtlMs()` only — registry constructors and the host's idle sweep both take ms from there. Don't add mixed-unit code elsewhere.
-
-## MCP App Bridge Rules
-
-These cause production bugs if violated:
-
-- `tools/call` must return `CallToolResult` as-is (never unwrap fields)
-- **An iframe reaches its own server and no other.** `tools/call`, `resources/read`, `resources/list`, `resources/templates/list` and `tasks/get`, `tasks/result`, `tasks/cancel` go to the server that rendered the view, whatever the app names: a qualified tool name for another server is refused, and a read names the app's server on the wire so `/mcp` never resolves the URI across the workspace. Never add a parameter, `_meta` key or name form that picks a different server.
-- **Nothing reaches an app before `ui/notifications/initialized` except answers to its own requests.** The first frame an app receives is the `ui/initialize` response. `createBridge`'s `postToIframe` is the one gate: it holds every notification (host context, tool input and result, `notifications/tasks/status`, relayed server notifications) until the handshake completes, then delivers in order. Post to an app only through its bridge: `BridgeHandle` methods, or `postToApp(iframe, message)` (`web/src/bridge/app-channel.ts`) for code that finds iframes in the DOM. Never call `iframe.contentWindow.postMessage` directly, and never send a load-time notification.
-- **A write reaches an app's views only when the app's server announces it**, with a notification the host relays (`RELAYED_SERVER_NOTIFICATIONS` in `src/tools/server-notifications.ts`, today `notifications/resources/list_changed`). This holds wherever the write happened (the agent, an iframe, a webhook, a schedule). The relay forwards, it never interprets: never infer a change from a tool call, on the agent's door or a UI door (a UI door's traffic is mostly reads, and a read that broadcasts loops). A method added to the allowlist must also get its `ui/initialize` capability (`web/src/bridge/relayed-notifications.ts`); a test pins the two. Every notification has one owner, and delivery follows it:
-  - **Workspace relay.** A workspace source's notification is stamped with that workspace by its registry and reaches the workspace's members as `server.notification` (`createServerNotificationRelay`). The web shell drops one stamped with a workspace other than the one on screen.
-  - **Per-person relay.** A kernel identity source (`IDENTITY_SOURCES`) is shared by every user and sits in no registry, so the host names the owner when it announces (`announceResourceListChangedFor(userId, source)`) and the event reaches only that person, whichever workspace is on screen (`createIdentityServerNotificationRelay`). A notification that names no one is dropped, never broadcast.
-  - Both are coalesced per (owner, server, method), and the web shell posts each verbatim to the server's iframes (`useServerNotificationRelay`).
-- **Serving a method and declaring it are one edit.** `@nimblebrain/synapse` checks the host's `ui/initialize` declaration before it sends, so a method the bridge serves but does not declare is one no app can reach — and it fails silently, in the app, at the call site. `buildHostCapabilities()` (`web/src/bridge/host-capabilities.ts`) is the whole declaration; `test/unit/bridge/host-capabilities.test.ts` pins it against the methods the validator accepts. Add a `case` to the bridge, add its capability there.
-- **The NimbleBrain extensions are `ai.nimblebrain/action`, `ai.nimblebrain/request-file` and `ai.nimblebrain/keydown`**, named once in `web/src/bridge/extensions.ts` and declared in `hostCapabilities.experimental` under those same identifiers. The name is both the wire method and the capability id. Never spell one as a literal; import the constant.
-- **`experimental` is where a non-spec capability goes, keyed by its identifier** — the MCP tasks capability at `io.modelcontextprotocol/tasks`, ours under `ai.nimblebrain/`. The official ext-apps `App` parses the handshake result against the spec schema, which names no such field and strips anything outside it; `experimental` is the one slot whose contents survive (ext-apps 1.7.5+). A top-level sibling reaches nothing, so don't add one back.
-- **Host fonts travel as the spec's `hostContext.styles.css.fonts`**, built by `buildHostStyles` (`web/src/bridge/host-extensions.ts`) and read once at the handshake. Never as a `styles.variables` key — that field is a strict enum of CSS var names, and one key outside it makes a spec client reject the whole host context.
-- **A built-in app serves its `ui://` resource as `text/html;profile=mcp-app`**, the MCP Apps MIME type. Use `MCP_APP_MIME_TYPE` (`src/tools/in-process-app.ts`), never a literal or plain `text/html`.
-- Picker uploads (`ai.nimblebrain/request-file`) MUST persist via `POST /v1/resources` (multipart) and answer `{ files: FileEntry[] }`, with `{ files: [] }` when the user cancels. Never a bare array, never bytes: base64-in-`tools/call` arguments hits the 1 MB JSON cap and silently breaks for any binary above ~750 KB.
-- Tool errors (`isError: true`) must become JSON-RPC `error` responses
-- Bridge must guard listeners with `destroyed` flag (React StrictMode double-mounts)
-- `SlotRenderer` effect depends only on `placementKey` (callbacks via refs, not deps)
-- Shell components must not consume `ChatContext` (use `ChatConfigContext` instead)
-- The chat panel is **workspace-scoped** — see below.
-- `setAuthToken` in `web/src/api/client.ts` fires a registered lifecycle handler on real changes only (equality-guarded). The bridge MCP client registers `resetMcpBridgeClient` here at module load to drop its identity-bound session on logout. `setActiveWorkspaceId` is also equality-guarded and fires the separate workspace lifecycle handlers (`addWorkspaceLifecycleHandler`), never the auth ones; the bridge registers `resetMcpBridgeClient` there too, because its session is bound to the workspace whose `/mcp/<wsId>` it opened. `getMcpBridgeClient` also keys its cache by the active workspace, so a request for workspace B never rides A's session even mid-switch. Stateless callers (REST helpers) read the current values per-request and need no hook.
-
-### The chat panel's workspace scope
-
-`ChatProvider` (`web/src/context/ChatContext.tsx`) watches the **focus** workspace, derived from the `/w/:slug` route and membership-gated. Never from `WorkspaceContext`'s `activeWorkspace`, which starts on bootstrap's default and reconciles to the route a render later — keying focus off that intermediate value looks like a workspace switch and clears the conversation the per-tab restore just reopened. Reading `activeWorkspace` is fine for display-only consumers; it is the *focus* decision that must come from the route.
-
-Re-scoping uses the narrow `newConversation()` (back to the panel's unsent chat, or a fresh one once a send was attempted in it; an unsent chat has no workspace until its first send), **not** `chatStore.reset()` (that is the identity-change broad reset). A conversation belongs to one workspace, so the panel doesn't carry it into another. Two triggers:
-
-1. **In-session switch.** `A→B` re-scopes and clears the open conversation. A `null` focus on home/identity routes is *held*, not reset, so `A→home→A` keeps context.
-2. **Mount / async-focus reconcile.** After a refresh the panel restores the last conversation from per-tab storage with no transition to catch a workspace mismatch. Once the conversation's own workspace is known (`conversationMeta.workspaceId`, from `conversations__get`) it re-scopes if that differs from the focus. This fires only when the workspace is **known** — a not-yet-loaded conversation is left alone, which is the open-in-progress race guard.
-
-Opening a conversation from within its own workspace doesn't change focus and matches, so it isn't cleared.
-
-**The reconcile is the single guard.** `useChat` knows nothing about workspaces, so do not add a send-time backstop: by the time a send can run, the passive reconcile effect has already re-scoped the panel. The runtime still binds a resumed turn to the conversation's OWN workspace regardless of focus (the seal), so a mis-target is a wrong-conversation-selected bug, never a cross-workspace leak.
-
-## Web Shell — Main-Area Views Beside the Docked Chat
-
-`ShellLayout` renders left-nav | routed main area | docked chat (`ChatChrome`). Routed views under `/w/:slug/...` (e.g. `context/:convId`) render in the main-area slot **left of the chat** — their width is that chat-adjacent column, which shrinks as the chat docks or the window narrows. It is **not** the viewport width. How to lay that out (container queries, never viewport breakpoints) is in **`web/DESIGN.md`**, along with type, the opacity ramp, and the ambient-chrome default.
-
-- **A routed element is reused across a param-only change.** The `/w/` prefix keeps `ChatChrome` mounted, so React Router keeps the same component instance alive when only the param changes (`context/:convId` A→B) — refs and state persist across the switch. On the param change you MUST (1) reset per-entity view state (selection/expansion and any `useRef` latch) and (2) cancel the previous entity's in-flight reads via an effect-cleanup flag. An unconditional `setState` in a stale `.then` lands entity A's data (its budget, its body) under entity B. See the load effect in `ContextInspectorPage.tsx`.
 
 ## Auto-Generated Files
 
@@ -769,25 +205,10 @@ Do not edit these manually:
 
 ## Published Schemas
 
-`.github/workflows/schema-deploy.yml` publishes two hand-authored JSON Schemas
-to `schemas.nimblebrain.ai` on push to `main`. Editing either one ships it.
+`.github/workflows/schema-deploy.yml` publishes two hand-authored JSON Schemas to `schemas.nimblebrain.ai` on push to `main`. Editing either one ships it.
 
-`src/connectors/catalog/schemas/host-manifest.schema.json` →
-`/v1/nimblebrain-host.schema.json` is the `ai.nimblebrain/host` `_meta`
-extension: how an MCP server declares its UI placement in the host shell. It is
-**published-only** — nothing here validates against it, because the runtime
-reads that block from a catalog entry it already trusts. It has no local guard
-holding it in step with `HostManifestMeta` (`src/connectors/runtime/types.ts`), so change
-both together.
-
-`src/config/nimblebrain-config.schema.json` is the **canonical source** for the
-`nimblebrain.json` config schema — edit it here. The runtime validates against it at
-startup, and `.github/workflows/schema-deploy.yml` publishes it to
-`schemas.nimblebrain.ai` (S3 + CloudFront invalidation) on push to `main` when it
-changes. It must stay in lockstep with the runtime feature surface in
-`src/config/features.ts`; `test/unit/config-schema-drift.test.ts` fails the build on
-drift. (Previously this file was fetched from S3 at `postinstall`; that indirection
-is removed — the repo is now upstream of the published artifact, not downstream.)
+- `src/connectors/catalog/schemas/host-manifest.schema.json` → `/v1/nimblebrain-host.schema.json`: the `ai.nimblebrain/host` `_meta` extension, how an MCP server declares its UI placement in the host shell. It is **published-only** — nothing here validates against it, because the runtime reads that block from a catalog entry it already trusts. No local guard holds it in step with `HostManifestMeta` (`src/connectors/runtime/types.ts`), so change both together.
+- `src/config/nimblebrain-config.schema.json` is the **canonical source** for the `nimblebrain.json` config schema — edit it here; the repo is upstream of the published artifact. The runtime validates against it at startup. It must stay in lockstep with the runtime feature surface in `src/config/features.ts`; `test/unit/config-schema-drift.test.ts` fails the build on drift.
 
 ## Releasing
 

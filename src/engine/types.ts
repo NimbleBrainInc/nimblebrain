@@ -550,7 +550,7 @@ export interface EngineConfig {
    * underlying tool source. For task-augmented MCP tools this becomes
    * `tasks/cancel` on the server; for inline tools the SDK aborts the
    * in-flight RPC. Long-running tools MUST honor this signal — see the
-   * "Long-Running Tools (MCP Tasks)" section in CLAUDE.md for the contract.
+   * "Long-Running Tools (MCP Tasks)" section in src/tools/AGENTS.md for the contract.
    */
   signal?: AbortSignal;
   /**
