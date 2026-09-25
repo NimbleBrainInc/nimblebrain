@@ -1,10 +1,11 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { ConnectorLifecycleManager } from "../../src/connectors/runtime/lifecycle.ts";
 import type { ConnectorInstance, ConnectorRef } from "../../src/connectors/runtime/types.ts";
 import type { EngineEvent, EventSink } from "../../src/engine/types.ts";
+import { log } from "../../src/observability/log.ts";
 import { McpSource } from "../../src/tools/mcp-source.ts";
 import { ToolRegistry } from "../../src/tools/registry.ts";
 import {
@@ -190,6 +191,29 @@ describe("ConnectorLifecycleManager.disconnect — symmetric teardown", () => {
     expect(stateEvents.length).toBeGreaterThanOrEqual(1);
     const lastEvent = stateEvents[stateEvents.length - 1]!.data as Record<string, unknown>;
     expect(lastEvent.state).toBe("not_authenticated");
+  });
+
+  test("test_disconnect_urlConnector_logsOutcomeAndTransition", async () => {
+    seedInstance(lifecycle, "granola", "ws_test", "workspace", { url: "https://example.test/mcp" });
+    lifecycle.bindWorkspaceRegistries(() => new Map([["ws_test", new ToolRegistry()]]));
+    lifecycle.recordConnectionStateChange("granola", "ws_test", "_workspace", "running");
+
+    const info = spyOn(log, "info").mockImplementation(() => {});
+    const warn = spyOn(log, "warn").mockImplementation(() => {});
+    try {
+      await lifecycle.disconnect("granola", "ws_test", "_workspace", {
+        workDir: "/tmp/nb-test-disconnect",
+      });
+      const lines = [...info.mock.calls, ...warn.mock.calls].map((c) => [String(c[0]), c[1]]);
+      const outcome = lines.find(([m]) => m === "[lifecycle] disconnect granola");
+      expect(outcome?.[1]).toMatchObject({ wsId: "ws_test", serverName: "granola", brokered: false });
+      expect(lines.some(([m]) => m === "[lifecycle] connection granola running → not_authenticated")).toBe(
+        true,
+      );
+    } finally {
+      info.mockRestore();
+      warn.mockRestore();
+    }
   });
 });
 

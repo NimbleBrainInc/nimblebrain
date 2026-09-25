@@ -1,7 +1,8 @@
-import { beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { ConnectorLifecycleManager } from "../../src/connectors/runtime/lifecycle.ts";
 import type { ConnectorInstance } from "../../src/connectors/runtime/types.ts";
 import type { EngineEvent, EventSink } from "../../src/engine/types.ts";
+import { log } from "../../src/observability/log.ts";
 
 class CapturingSink implements EventSink {
   events: EngineEvent[] = [];
@@ -110,5 +111,70 @@ describe("ConnectorLifecycleManager — Connection state transitions", () => {
 
     lifecycle.recordConnectionStateChange("granola", "ws_test", "_workspace", "running");
     expect(instance.connections!.get("_workspace")!.lastError).toBeUndefined();
+  });
+});
+
+describe("ConnectorLifecycleManager — connection transition log lines", () => {
+  let lifecycle: ConnectorLifecycleManager;
+  let info: ReturnType<typeof spyOn>;
+  let warn: ReturnType<typeof spyOn>;
+
+  beforeEach(() => {
+    lifecycle = new ConnectorLifecycleManager(new CapturingSink());
+    info = spyOn(log, "info").mockImplementation(() => {});
+    warn = spyOn(log, "warn").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    info.mockRestore();
+    warn.mockRestore();
+  });
+
+  const transitionLines = (spy: ReturnType<typeof spyOn>) =>
+    spy.mock.calls.filter((c) => String(c[0]).startsWith("[lifecycle] connection "));
+
+  test("test_recordConnectionStateChange_firstRecord_logsNothing", () => {
+    seedInstance(lifecycle, "granola", "ws_test");
+    lifecycle.recordConnectionStateChange("granola", "ws_test", "_workspace", "running");
+    expect(transitionLines(info)).toHaveLength(0);
+    expect(transitionLines(warn)).toHaveLength(0);
+  });
+
+  test("test_recordConnectionStateChange_sameState_logsNothing", () => {
+    seedInstance(lifecycle, "granola", "ws_test");
+    lifecycle.recordConnectionStateChange("granola", "ws_test", "_workspace", "running");
+    lifecycle.recordConnectionStateChange("granola", "ws_test", "_workspace", "running");
+    expect(transitionLines(info)).toHaveLength(0);
+  });
+
+  test("test_recordConnectionStateChange_realTransition_logsFromAndTo", () => {
+    seedInstance(lifecycle, "granola", "ws_test");
+    lifecycle.recordConnectionStateChange("granola", "ws_test", "_workspace", "pending_auth", {
+      authorizationUrl: "https://x.test/?state=s",
+    });
+    lifecycle.recordConnectionStateChange("granola", "ws_test", "_workspace", "running");
+
+    const lines = transitionLines(info);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]![0]).toBe("[lifecycle] connection granola pending_auth → running");
+    expect(lines[0]![1]).toEqual({
+      wsId: "ws_test",
+      serverName: "granola",
+      principalId: "_workspace",
+      from: "pending_auth",
+      to: "running",
+    });
+  });
+
+  test("test_recordConnectionStateChange_authLost_logsWarnWithLastError", () => {
+    seedInstance(lifecycle, "granola", "ws_test");
+    lifecycle.recordConnectionStateChange("granola", "ws_test", "_workspace", "running");
+    lifecycle.recordConnectionStateChange("granola", "ws_test", "_workspace", "dead", {
+      lastError: "auth flow timed out",
+    });
+
+    const lines = transitionLines(warn);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]![1]).toMatchObject({ from: "running", to: "dead", lastError: "auth flow timed out" });
   });
 });
