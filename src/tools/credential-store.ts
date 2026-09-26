@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { existsSync } from "node:fs";
+import { existsSync, type Stats } from "node:fs";
 import {
   chmod,
   mkdir,
@@ -205,7 +205,13 @@ function legacyPlaintext(raw: string): string {
 interface ResealTally {
   resealed: number;
   current: number;
+  /** Files left exactly as they were. */
   skipped: number;
+  /**
+   * The skips that were plaintext: read, and not re-sealed. Holds strict mode
+   * off. The rest of `skipped` does not — see {@link FileCredentialStore.reconcile}.
+   */
+  plaintextSkipped: number;
   /** Scope roots that exist and could not be listed. Holds strict mode off. */
   unreadable: number;
 }
@@ -601,22 +607,37 @@ export class FileCredentialStore implements CredentialStore {
     // deployment is plaintext by design, not by omission.
     if (!sealer) return;
 
-    const tally: ResealTally = { resealed: 0, current: 0, skipped: 0, unreadable: 0 };
+    const tally: ResealTally = {
+      resealed: 0,
+      current: 0,
+      skipped: 0,
+      plaintextSkipped: 0,
+      unreadable: 0,
+    };
     for (const scope of await this.#everyScope(tally)) {
       await this.#resealScope(scope, sealer, tally);
     }
 
-    // Only a sweep that finished has proved every secret is sealed, so only a
-    // sweep that finished has earned the right to call a plaintext file an
-    // injection. A root it could not list counts against that as much as a file
-    // it could not open: both mean there are secrets it did not see.
-    if (tally.skipped === 0 && tally.unreadable === 0) {
+    // Only a sweep that has proved no legitimate plaintext is left has earned
+    // the right to call a plaintext file an injection. Two things disprove it: a
+    // root it could not list, which may hold plaintext it never saw, and
+    // plaintext it read and could not re-seal.
+    //
+    // Every other skip is deliberately absent. A sealed file this ring cannot
+    // open is not plaintext, and neither is a file the runtime cannot read at
+    // all; each is refused on use whatever this decides. Counting either against
+    // strict mode would hand anyone who can write the directory, without the
+    // key, a switch for the control that exists to stop them: one planted file
+    // starting with the sealed-value magic, and plaintext is accepted on every
+    // boot after.
+    if (tally.plaintextSkipped === 0 && tally.unreadable === 0) {
       this.#strictPlaintextRefusal = true;
     }
     log.info("[credential-store] sealed-secret reconcile complete", {
       resealed: tally.resealed,
       alreadyCurrent: tally.current,
       skipped: tally.skipped,
+      plaintextSkipped: tally.plaintextSkipped,
       unreadable: tally.unreadable,
       strictPlaintextRefusal: this.#strictPlaintextRefusal,
     });
@@ -648,7 +669,13 @@ export class FileCredentialStore implements CredentialStore {
       // `ignored` is not counted: a directory sitting where a key should be is
       // not a secret that was already current, and a tally an operator reads
       // should not say it was.
-      if (outcome !== "ignored") tally[outcome]++;
+      if (outcome === "ignored") continue;
+      if (outcome === "plaintextSkipped") {
+        tally.skipped++;
+        tally.plaintextSkipped++;
+      } else {
+        tally[outcome]++;
+      }
     }
   }
 
@@ -658,18 +685,21 @@ export class FileCredentialStore implements CredentialStore {
    * deployment down over a key nothing uses, and the operator's only visible
    * symptom would be a crash loop.
    *
-   * A skip is not free, though: it holds strict mode off, so the deployment
-   * keeps accepting plaintext until someone resolves the file.
+   * A skip of plaintext is not free, though: it holds strict mode off, so the
+   * deployment keeps accepting plaintext until someone resolves the file. Any
+   * other skip leaves strict mode to the rest of the sweep.
    */
   async #resealOne(
     scope: CredentialScope,
     key: string,
     sealer: CredentialSealer,
-  ): Promise<"resealed" | "current" | "skipped" | "ignored"> {
+  ): Promise<"resealed" | "current" | "skipped" | "plaintextSkipped" | "ignored"> {
     const label = credentialScopeLabel(scope);
     const path = join(this.#dir(scope), key);
+    let plaintext = false;
+    let before: Stats;
     try {
-      const before = await stat(path);
+      before = await stat(path);
       if (!before.isFile()) return "ignored";
       const raw = await readFile(path, "utf-8");
 
@@ -678,16 +708,11 @@ export class FileCredentialStore implements CredentialStore {
         if (parseSealedValue(raw)?.kid === sealer.sealingKid) return "current";
         value = sealer.open(label, key, raw);
       } else {
+        plaintext = true;
         value = legacyPlaintext(raw);
       }
 
       await this.put(scope, key, value);
-      // `list` derives `updatedAt` from mtime, so without this the first boot
-      // after enabling sealing — and every rotation after — reports every
-      // secret as just-changed. "Last set" would quietly become "last sealed",
-      // destroying the only provenance `list` offers.
-      await utimes(path, before.atime, before.mtime);
-      return "resealed";
     } catch (err) {
       this.#auditSealFailure(scope, key, undefined, "reseal_skipped");
       log.warn("[credential-store] could not re-seal a secret; leaving it as it is", {
@@ -695,8 +720,24 @@ export class FileCredentialStore implements CredentialStore {
         key,
         error: err instanceof Error ? err.message : String(err),
       });
-      return "skipped";
+      return plaintext ? "plaintextSkipped" : "skipped";
     }
+
+    // `list` derives `updatedAt` from mtime, so without this the first boot
+    // after enabling sealing — and every rotation after — reports every
+    // secret as just-changed. "Last set" would quietly become "last sealed",
+    // destroying the only provenance `list` offers. The file is sealed by now,
+    // so a failure here costs the timestamp, not the re-seal: it is no skip.
+    try {
+      await utimes(path, before.atime, before.mtime);
+    } catch (err) {
+      log.warn("[credential-store] re-sealed a secret but could not restore its mtime", {
+        scope: label,
+        key,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+    return "resealed";
   }
 
   /**

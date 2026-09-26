@@ -78,10 +78,17 @@ left as it is rather than failing boot.
 **After a reconcile that saw everything, plaintext is refused.** Sealing buys
 confidentiality; refusing plaintext once everything is sealed is what buys
 integrity, since otherwise anyone who can write the directory without holding
-the key can plant a credential of their choosing. A skipped file or an
-unreadable directory holds the refusal off, because a sweep that did not see
-everything has not earned it. The refusal is lazy, like every other one here, so
-a planted file cannot fail a probe.
+the key can plant a credential of their choosing. Only what could be hiding
+legitimate plaintext holds the refusal off: a directory the sweep could not
+list, and a plaintext file it read and could not re-seal. A sealed file it
+cannot open, or a file it cannot read at all, does not. Neither can be served
+as plaintext, both are audited and refused on use, and counting them would
+give the attacker this control exists for a switch to turn it off: one planted
+file carrying the sealed-value magic, and plaintext is accepted on every boot
+after. A legitimate plaintext file that was unreadable at boot and is made
+readable later is refused like any planted one until a sweep re-seals it: restart,
+or set it again. The refusal is lazy, like every other one here, so a planted file cannot
+fail a probe.
 
 **Operators write through a `secrets` subcommand, never the agent.** It resolves
 configuration and the work directory exactly as the server does, builds the same

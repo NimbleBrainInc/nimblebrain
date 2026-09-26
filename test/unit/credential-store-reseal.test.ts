@@ -288,6 +288,99 @@ describe("one bad secret does not take the tenant down", () => {
   });
 });
 
+describe("only what may be plaintext holds strict mode off", () => {
+  // The attacker strict mode exists for can write the secrets directory and
+  // does not hold the key. If a file they can write were enough to hold the
+  // refusal off, the control would switch off at their say-so — so only a skip
+  // that could be hiding legitimate plaintext counts against it.
+  test("one planted sealed-looking file does not switch strict mode off", async () => {
+    const { store, dir, cleanup } = fresh(createCredentialSealer([KEY_A]));
+    try {
+      seed(dir, SCOPE_DIRS[1][1], "good.one", "v1");
+      seed(dir, SCOPE_DIRS[1][1], "planted.key", "NBS1.x");
+      await store.reconcile?.();
+      seed(dir, SCOPE_DIRS[1][1], "injected.key", "attacker-chosen");
+      const got = await store.get(WS, "injected.key", READ);
+      expect(() => got?.reveal()).toThrow(/plaintext/);
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("nor does a file sealed under a key this ring does not hold", async () => {
+    const { store, dir, cleanup } = fresh(createCredentialSealer([KEY_A]));
+    try {
+      seed(dir, SCOPE_DIRS[1][1], "good.one", "v1");
+      seed(
+        dir,
+        SCOPE_DIRS[1][1],
+        "stray.key",
+        createCredentialSealer([KEY_B]).seal("workspace:ws_test", "stray.key", "x"),
+      );
+      await store.reconcile?.();
+      seed(dir, SCOPE_DIRS[1][1], "injected.key", "attacker-chosen");
+      const got = await store.get(WS, "injected.key", READ);
+      expect(() => got?.reveal()).toThrow(/plaintext/);
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("nor does a file the runtime cannot read", async () => {
+    // It cannot be served as plaintext either way, so it is no reason to keep
+    // accepting plaintext everywhere else.
+    const { store, dir, cleanup } = fresh(createCredentialSealer([KEY_A]));
+    const planted = seed(dir, SCOPE_DIRS[1][1], "planted.key", "whatever");
+    try {
+      chmodSync(planted, 0o000);
+      await store.reconcile?.();
+      seed(dir, SCOPE_DIRS[1][1], "injected.key", "attacker-chosen");
+      const got = await store.get(WS, "injected.key", READ);
+      expect(() => got?.reveal()).toThrow(/plaintext/);
+    } finally {
+      chmodSync(planted, 0o600);
+      cleanup();
+    }
+  });
+
+  test("the sealed file is still skipped, audited, and refused on use", async () => {
+    const { store, dir, events, cleanup } = fresh(createCredentialSealer([KEY_A]));
+    try {
+      const path = seed(dir, SCOPE_DIRS[1][1], "planted.key", "NBS1.x");
+      await store.reconcile?.();
+      expect(readFileSync(path, "utf-8")).toBe("NBS1.x");
+      expect(events.map((e) => e.data.reason)).toEqual(["reseal_skipped"]);
+      expect(events[0]?.data).toMatchObject({ scope: "workspace:ws_test", key: "planted.key" });
+      const got = await store.get(WS, "planted.key", READ);
+      expect(() => got?.reveal()).toThrow();
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("plaintext that could not be re-sealed still holds it off", async () => {
+    // A legitimate plaintext secret is still on disk, so refusing plaintext now
+    // would refuse it.
+    const working = createCredentialSealer([KEY_A]);
+    const failing: CredentialSealer = {
+      ...working,
+      seal: () => {
+        throw new Error("seal failed");
+      },
+    };
+    const { store, dir, events, cleanup } = fresh(failing);
+    try {
+      seed(dir, SCOPE_DIRS[1][1], "legacy.key", "still-readable");
+      await store.reconcile?.();
+      expect(readRaw(dir, SCOPE_DIRS[1][1], "legacy.key")).toBe("still-readable");
+      expect(events.map((e) => e.data.reason)).toEqual(["reseal_skipped"]);
+      expect((await store.get(WS, "legacy.key", READ))?.reveal()).toBe("still-readable");
+    } finally {
+      cleanup();
+    }
+  });
+});
+
 describe("a root the sweep could not read holds strict mode off", () => {
   // "Nothing here" and "could not look" are different answers. A directory that
   // cannot be LISTED can still have its files opened by path, so treating an
@@ -424,26 +517,6 @@ describe("strict mode — plaintext is refused once everything is sealed", () =>
       expect(() => got?.reveal()).toThrow();
       expect(events.map((e) => e.data.reason)).toEqual(["plaintext_refused"]);
       expect(JSON.stringify(events)).not.toContain("attacker-chosen");
-    } finally {
-      cleanup();
-    }
-  });
-
-  test("a sweep that skipped a file leaves plaintext still accepted", async () => {
-    // Conservative on purpose: a sweep that could not finish has not proved
-    // every secret is sealed, so it has not earned the right to call plaintext
-    // an injection.
-    const { store, dir, cleanup } = fresh(createCredentialSealer([KEY_A]));
-    try {
-      seed(
-        dir,
-        SCOPE_DIRS[1][1],
-        "bad.one",
-        createCredentialSealer([KEY_B]).seal("workspace:ws_test", "bad.one", "x"),
-      );
-      await store.reconcile?.();
-      seed(dir, SCOPE_DIRS[1][1], "legacy.key", "still-readable");
-      expect((await store.get(WS, "legacy.key", READ))?.reveal()).toBe("still-readable");
     } finally {
       cleanup();
     }
