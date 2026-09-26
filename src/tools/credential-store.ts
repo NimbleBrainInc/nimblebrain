@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { existsSync } from "node:fs";
+import { existsSync, type Stats } from "node:fs";
 import {
   chmod,
   mkdir,
@@ -697,8 +697,9 @@ export class FileCredentialStore implements CredentialStore {
     const label = credentialScopeLabel(scope);
     const path = join(this.#dir(scope), key);
     let plaintext = false;
+    let before: Stats;
     try {
-      const before = await stat(path);
+      before = await stat(path);
       if (!before.isFile()) return "ignored";
       const raw = await readFile(path, "utf-8");
 
@@ -712,12 +713,6 @@ export class FileCredentialStore implements CredentialStore {
       }
 
       await this.put(scope, key, value);
-      // `list` derives `updatedAt` from mtime, so without this the first boot
-      // after enabling sealing — and every rotation after — reports every
-      // secret as just-changed. "Last set" would quietly become "last sealed",
-      // destroying the only provenance `list` offers.
-      await utimes(path, before.atime, before.mtime);
-      return "resealed";
     } catch (err) {
       this.#auditSealFailure(scope, key, undefined, "reseal_skipped");
       log.warn("[credential-store] could not re-seal a secret; leaving it as it is", {
@@ -727,6 +722,22 @@ export class FileCredentialStore implements CredentialStore {
       });
       return plaintext ? "plaintextSkipped" : "skipped";
     }
+
+    // `list` derives `updatedAt` from mtime, so without this the first boot
+    // after enabling sealing — and every rotation after — reports every
+    // secret as just-changed. "Last set" would quietly become "last sealed",
+    // destroying the only provenance `list` offers. The file is sealed by now,
+    // so a failure here costs the timestamp, not the re-seal: it is no skip.
+    try {
+      await utimes(path, before.atime, before.mtime);
+    } catch (err) {
+      log.warn("[credential-store] re-sealed a secret but could not restore its mtime", {
+        scope: label,
+        key,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+    return "resealed";
   }
 
   /**

@@ -85,7 +85,9 @@ cannot open, or a file it cannot read at all, does not. Neither can be served
 as plaintext, both are audited and refused on use, and counting them would
 give the attacker this control exists for a switch to turn it off: one planted
 file carrying the sealed-value magic, and plaintext is accepted on every boot
-after. The refusal is lazy, like every other one here, so a planted file cannot
+after. A legitimate plaintext file that was unreadable at boot and is made
+readable later is refused like any planted one until a sweep re-seals it: restart,
+or set it again. The refusal is lazy, like every other one here, so a planted file cannot
 fail a probe.
 
 **Operators write through a `secrets` subcommand, never the agent.** It resolves
