@@ -2,10 +2,7 @@
  * Bridge helper for core resource client scripts.
  *
  * Connects through the Synapse IIFE that `render.tsx` injects, and exposes the
- * three functions those scripts call — `callTool`, `openApp`, `parseResult` —
- * over a fourth, `action`, which is the host channel `openApp` rides on.
- * `openApp` names an app and the shell resolves its route, so no script knows
- * the shell's URL structure.
+ * two functions those scripts call: `callTool` and `parseResult`.
  *
  * `callTool` resolves to the tool's own payload: the SDK normalizes a
  * `CallToolResult` down to `data` (structured content, or the first text block
@@ -30,14 +27,6 @@ export const BRIDGE_HELPER = `
     return _ready.then(function (app) {
       return app.callTool(name, args || {}).then(function (r) { return r.data; });
     });
-  }
-
-  function action(name, params) {
-    return _ready.then(function (app) { Synapse.action(app, name, params); });
-  }
-
-  function openApp(name) {
-    return action("openApp", { name: name });
   }
 
   function parseResult(result) {

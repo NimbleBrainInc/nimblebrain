@@ -13,8 +13,6 @@
 // panel reads it to stamp `AppContext` on messages typed into the main
 // composer. Without it, the backend resolves no focused app and the
 // agent can't see the app's visible state (e.g. the open document).
-// The inline "[App Context: …]" text prefix is a separate concern and
-// still lives in AppWithChat's in-app channel.
 // ---------------------------------------------------------------------------
 
 import { MessageSquare } from "lucide-react";

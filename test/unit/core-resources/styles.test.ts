@@ -1,6 +1,5 @@
 import { describe, expect, it } from "bun:test";
 import {
-	APP_NAV_STYLES,
 	BASE_STYLES,
 	MODEL_SELECTOR_STYLES,
 } from "../../../src/tools/core-resources/styles.ts";
@@ -24,7 +23,6 @@ describe("core-resources styles use CSS variables", () => {
 	it("all style constants have balanced parentheses", () => {
 		const styles = [
 			BASE_STYLES,
-			APP_NAV_STYLES,
 			MODEL_SELECTOR_STYLES,
 		];
 		for (const css of styles) {
@@ -39,7 +37,6 @@ describe("core-resources styles use CSS variables", () => {
 		// Strategy: strip all var(...) and rgba(...) blocks, then check for remaining hex colors
 		const styles = [
 			BASE_STYLES,
-			APP_NAV_STYLES,
 			MODEL_SELECTOR_STYLES,
 		];
 		for (const css of styles) {

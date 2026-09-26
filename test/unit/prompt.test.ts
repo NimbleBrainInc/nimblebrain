@@ -214,7 +214,7 @@ describe("composeSystemPrompt — focusedApp", () => {
     );
     expect(result).toContain("### Interaction Rules");
     expect(result).toContain("call `nb__search` with `scope: \"tools\"` and a keyword");
-    expect(result).toContain("[App Context: ...]");
+    expect(result).not.toContain("[App Context");
   });
 
   it("with focusedApp (with skill resource): contains App Guide with resource content", () => {
@@ -272,13 +272,12 @@ describe("composeSystemPrompt — focusedApp", () => {
       undefined,
       sampleFocusedApp,
     );
-    // Verify all 7 rules are present
+    // Verify all 6 rules are present
     expect(result).toContain("Do not ask for confirmation unless the action is destructive or ambiguous.");
     expect(result).toContain("The app view refreshes automatically — do not describe the UI.");
     expect(result).toContain("call `nb__search` with `scope: \"tools\"` and a keyword.");
     expect(result).toContain('the user says "undo" or "go back,"');
     expect(result).toContain("ask ONE clarifying question about what specifically to change.");
-    expect(result).toContain("`[App Context: ...]` header with metadata from the app.");
     expect(result).toContain("Other apps are still available via `nb__search`");
   });
 });

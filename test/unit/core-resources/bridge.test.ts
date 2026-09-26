@@ -29,7 +29,6 @@ interface CallRecord {
  */
 function loadBridge(opts: { connectDelay?: number; result?: unknown } = {}) {
   const calls: CallRecord[] = [];
-  const actions: Array<{ name: string; params: unknown }> = [];
 
   const app = {
     callTool(tool: string, args: unknown, options: unknown) {
@@ -43,17 +42,13 @@ function loadBridge(opts: { connectDelay?: number; result?: unknown } = {}) {
       opts.connectDelay
         ? new Promise((resolve) => setTimeout(() => resolve(app), opts.connectDelay))
         : Promise.resolve(app),
-    action: (target: unknown, name: string, params: unknown) => {
-      if (target !== app) throw new Error("action received something other than the app");
-      actions.push({ name, params });
-    },
   };
 
   const factory = new Function(
     "Synapse",
-    `${BRIDGE_HELPER}\nreturn { callTool: callTool, openApp: openApp, parseResult: parseResult };`,
+    `${BRIDGE_HELPER}\nreturn { callTool: callTool, parseResult: parseResult };`,
   );
-  return { ...factory(Synapse), calls, actions };
+  return { ...factory(Synapse), calls };
 }
 
 describe("the core-resources bridge preamble", () => {
@@ -89,12 +84,6 @@ describe("the core-resources bridge preamble", () => {
     const bridge = loadBridge();
     await bridge.callTool("list_apps");
     expect(bridge.calls[0].args).toEqual({});
-  });
-
-  it("opens an app by name through the host action, once connected", async () => {
-    const bridge = loadBridge({ connectDelay: 5 });
-    await bridge.openApp("crm");
-    expect(bridge.actions).toEqual([{ name: "openApp", params: { name: "crm" } }]);
   });
 
   it("parseResult prefers structuredContent and otherwise passes the value through", () => {
