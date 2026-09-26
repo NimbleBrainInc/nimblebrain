@@ -1,6 +1,5 @@
 import { describe, expect, it } from "bun:test";
 import { textContent } from "../../../src/engine/content-helpers.ts";
-import { INTERNAL_TOOL_ANNOTATION } from "../../../src/engine/types.ts";
 import { ToolRegistry } from "../../../src/tools/registry.ts";
 import { rankToolSearchResults } from "../../../src/tools/search-ranking.ts";
 import { makeInProcessSource } from "../../helpers/in-process-source.ts";
@@ -79,12 +78,12 @@ describe("ToolRegistry invalid-tool-name suggestions", () => {
 
 	it("never suggests an internal tool", async () => {
 		// The hint writes matched names AND descriptions into the model's
-		// context, so it is a tool-listing surface like any other. An
-		// `ai.nimblebrain/internal` tool is a UI-driven affordance the model
+		// context, so it is a tool-listing surface like any other. A
+		// tool with `ui.visibility: ["app"]` is a UI-driven affordance the model
 		// must never be handed — it is stripped from chat surfacing,
 		// `nb__search`, promotion, and `/mcp` tools/list, and this is the
 		// remaining path that could name one back. The bare query below is an
-		// exact token match for the internal tool, so a missing filter surfaces
+		// exact token match for the app-only tool, so a missing filter surfaces
 		// it at rank 1.
 		const registry = new ToolRegistry();
 		registry.addSource(
@@ -92,7 +91,7 @@ describe("ToolRegistry invalid-tool-name suggestions", () => {
 				{
 					name: "write_instructions",
 					description: "Save workspace-wide custom instructions",
-					meta: { [INTERNAL_TOOL_ANNOTATION]: true },
+					meta: { ui: { visibility: ["app"] } },
 					inputSchema: { type: "object", properties: {} },
 					handler: async () => ({ content: textContent("ok"), isError: false }),
 				},

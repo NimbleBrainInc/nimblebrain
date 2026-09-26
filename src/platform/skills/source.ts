@@ -31,7 +31,6 @@ import type { ConversationEvent } from "../../conversation/types.ts";
 import { textContent } from "../../engine/content-helpers.ts";
 import {
   type EventSink,
-  INTERNAL_TOOL_ANNOTATION,
   SKILL_ACTIVATED_META_KEY,
   SKILL_SUPPRESSION_META_KEY,
   type ToolResult,
@@ -406,7 +405,7 @@ export function createSkillsSource(
     {
       name: "set_status",
       description: SKILLS_SET_STATUS_DESCRIPTION,
-      meta: { [INTERNAL_TOOL_ANNOTATION]: true },
+      meta: { ui: { visibility: ["app"] } },
       inputSchema: SkillsSetStatusInput,
       handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
         try {
@@ -2159,7 +2158,7 @@ async function updateSkillHandler(
   authoringGuidePath: string,
   /**
    * Let this call write `manifest.status`. ONLY `set_status` passes it — that
-   * tool is internal, so the door stays shut to the model. Without the flag a
+   * tool is app-only, so the door stays shut to the model. Without the flag a
    * `status` in the patch is refused rather than dropped: the schema no longer
    * declares the field, but the validator lets unknown keys through, so
    * ignoring it would report a successful disable that never happened.

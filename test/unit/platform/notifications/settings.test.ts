@@ -17,7 +17,7 @@
  */
 
 import { beforeEach, describe, expect, test } from "bun:test";
-import { isInternalTool } from "../../../../src/engine/types.ts";
+import { isModelVisible } from "../../../../src/engine/types.ts";
 import {
   NOTIFICATION_SOURCES_MAX,
   type NotificationRouteInput,
@@ -142,7 +142,7 @@ const route = (over: Partial<NotificationRouteInput> = {}): NotificationRouteInp
 });
 
 describe("the settings tools are operator surface, not agent capability", () => {
-  test("all three are internal, so no LLM listing carries them", async () => {
+  test("all three are app-only, so no LLM listing carries them", async () => {
     const tools = await source.tools();
     const byName = new Map(tools.map((t) => [t.name, t]));
     for (const name of [
@@ -152,11 +152,11 @@ describe("the settings tools are operator surface, not agent capability", () => 
     ]) {
       const tool = byName.get(name);
       expect(tool).toBeDefined();
-      expect(isInternalTool(tool!)).toBe(true);
+      expect(isModelVisible(tool!)).toBe(false);
     }
     // The inbox itself stays reachable: reading notifications is what the
     // agent is for. Only authoring the operator plane is walled off.
-    expect(isInternalTool(byName.get("notifications__list")!)).toBe(false);
+    expect(isModelVisible(byName.get("notifications__list")!)).toBe(true);
   });
 });
 

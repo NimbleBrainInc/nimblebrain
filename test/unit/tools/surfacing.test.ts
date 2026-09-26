@@ -493,16 +493,16 @@ describe("surfaceTools — kernel identity tools always direct", () => {
 //
 // The workspace overlay is human-authored: the settings UI invokes
 // `instructions__write_instructions` by name over REST, and the tool carries
-// the internal annotation so the model never sees it — not direct, not
+// `ui.visibility: ["app"]` so the model never sees it — not direct, not
 // proxied. The agent's job on "remember this" is to draft the text and point
 // the user at settings (see bootstrap.md), never to write the overlay itself.
 
-describe("surfaceTools — instructions write is internal", () => {
+describe("surfaceTools — instructions write is app-only", () => {
 	const internalWrite: ToolSchema = {
 		name: "instructions__write_instructions",
 		description: "Save workspace-wide custom instructions",
 		inputSchema: { type: "object", properties: {} },
-		meta: { "ai.nimblebrain/internal": true },
+		meta: { ui: { visibility: ["app"] } },
 	};
 
 	it("never surfaces direct or proxied, even in a bare workspace", () => {
@@ -609,13 +609,13 @@ describe("surfaceTools — catalog activation is reachable without a promote", (
 	});
 });
 
-describe("surfaceTools — internal annotation filtering", () => {
-	it("excludes tools with ai.nimblebrain/internal annotation from direct tools", () => {
+describe("surfaceTools — ui.visibility filtering", () => {
+	it("excludes tools whose ui.visibility lacks \"model\" from direct tools", () => {
 		const internalTool: ToolSchema = {
 			name: "nb__manage_identity",
 			description: "Internal identity tool",
 			inputSchema: { type: "object", properties: {} },
-			meta: { "ai.nimblebrain/internal": true },
+			meta: { ui: { visibility: ["app"] } },
 		};
 		const visibleTool = makeTool("nb__search");
 		const all = [internalTool, visibleTool];
@@ -627,18 +627,18 @@ describe("surfaceTools — internal annotation filtering", () => {
 		expect(directNames).toContain("nb__search");
 	});
 
-	it("excludes internal tools even when total is under maxDirectTools", () => {
+	it("excludes app-only tools even when total is under maxDirectTools", () => {
 		const internalTool: ToolSchema = {
 			name: "nb__get_config",
 			description: "Internal config",
 			inputSchema: { type: "object", properties: {} },
-			meta: { "ai.nimblebrain/internal": true },
+			meta: { ui: { visibility: ["app"] } },
 		};
 		const tools = [...makeSystemTools(4), internalTool];
 
 		const result = surfaceTools(tools, null);
 
-		expect(result.direct).toHaveLength(4); // internal excluded
-		expect(result.proxied).toHaveLength(0); // internal not proxied either
+		expect(result.direct).toHaveLength(4); // app-only excluded
+		expect(result.proxied).toHaveLength(0); // app-only not proxied either
 	});
 });
