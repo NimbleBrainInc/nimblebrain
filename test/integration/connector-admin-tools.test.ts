@@ -8,7 +8,7 @@
  *
  * Doors covered: the chat engine (`IdentityToolRouter`, through `runtime.chat`
  * and an automation-style `executeTask`), `/mcp/<wsId>` `tools/list` and
- * `tools/call`, REST `/v1/tools/call` (`ToolRegistry.execute`), and the
+ * `tools/call`, REST `tools/call` (`ToolRegistry.execute`), and the
  * unattended dispatch. Plus the two things the gate must NOT touch: the
  * kernel's own lifecycle and hook-registration calls, and a server's own claim
  * about which of its tools are admin-only.
@@ -191,9 +191,9 @@ async function mcpClient(wsId: string): Promise<Client> {
 }
 
 async function restCall(wsId: string, tool: string) {
-  const res = await fetch(`${baseUrl}/v1/tools/call`, {
+  const res = await fetch(`${baseUrl}/v1/workspaces/${wsId}/tools/call`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", "X-Workspace-Id": wsId },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ server: SERVER, tool, arguments: {} }),
   });
   return (await res.json()) as {
@@ -396,7 +396,7 @@ describe("the /mcp/<wsId> door", () => {
   });
 });
 
-describe("the REST /v1/tools/call door (ToolRegistry.execute)", () => {
+describe("the REST tools/call door (ToolRegistry.execute)", () => {
   it("refuses a member and runs an admin", async () => {
     resetCalls();
     const refused = await restCall(MEMBER_WS, "configure");
