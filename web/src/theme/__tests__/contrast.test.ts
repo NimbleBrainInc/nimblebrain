@@ -1,8 +1,17 @@
 import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { AA_TEXT, contrastRatio, deltaEOk, JND_OK, over } from "../contrast.ts";
-import { colors, extOnlyColors, type Mode, type Pair, pick } from "../palette.ts";
+import { contrastRatio, deltaEOk, JND_OK } from "../contrast.ts";
+import {
+  ALPHA_TEXT,
+  type ColorPalette,
+  contrastChecks,
+  derivedPairs,
+  type TokenName,
+  TRANSLUCENT_TINTS,
+  tokenValue,
+} from "../contrast-pairs.ts";
+import { colors, extOnlyColors, type Mode, pick } from "../palette.ts";
 
 /**
  * WCAG 2.2 contrast, computed from the palette rather than compared against a
@@ -17,95 +26,20 @@ import { colors, extOnlyColors, type Mode, type Pair, pick } from "../palette.ts
  * and `sidebar`. No total is quoted here on purpose — it moves whenever the
  * pair set widens, and a count in a docblock has no way to notice.
  *
- * Threshold is 4.5:1 throughout, including for type that would qualify for the
- * 3:1 large-text allowance (18.66px bold / 24px regular — the shell has page
- * titles at 24–36px and sets assistant prose at 18px). That allowance is a
- * relaxation, and declining it costs nothing here: every value in the palette
- * clears the stricter bar, so there is no reason to carve out a looser one and
- * then have to track which surfaces may use it.
- *
- * Coverage comes from two places, and the split matters. The `<x>-foreground`
- * on `<x>` pairs are **derived** — every foreground token in the palette is
- * paired with its base automatically, and a foreground with no base is a
- * failure rather than a silent skip. That half needs no maintenance: adding a
- * token to the palette adds its assertion. The pairs in `TEXT_PAIRS` are the
- * ones no convention can reach — a foreground rendered over a ground that is
- * not its own base — and those are hand-listed by necessity. Prefer widening
- * the derived rule over appending to the list; a hand-maintained list of what
- * to check is a denylist by omission, and this file has been bitten by that
- * twice.
+ * The pairs themselves live in `contrast-pairs.ts`, because the runtime runs
+ * the same list against a tenant brand merged over this palette and rejects a
+ * brand that fails any of them. This file asserts that list against the
+ * canonical palette, plus the guards that are about the palette's own values
+ * rather than about readability.
  */
 
-type TokenName = keyof typeof colors | keyof typeof extOnlyColors;
+const palette = { colors, extOnlyColors } as ColorPalette;
 
 function token(name: TokenName, mode: Mode): string {
-  const pair =
-    (colors as Record<string, Pair>)[name] ?? (extOnlyColors as Record<string, Pair>)[name];
-  if (!pair) throw new Error(`unknown token: ${name}`);
-  return pick(pair, mode);
+  return tokenValue(palette, name, mode);
 }
 
-/**
- * `<x>-foreground` on `<x>`, derived from the palette rather than listed.
- *
- * The naming convention *is* the pairing: `text-card-foreground` is only ever
- * painted on `bg-card`, `text-sidebar-foreground` on `bg-sidebar`, and so on
- * through every shadcn surface. Deriving it means a token added to the palette
- * arrives already asserted, and it closes the hole that made this necessary —
- * five of these were rendered in the shell (`ui/card.tsx`, `ui/badge.tsx`,
- * `InContextPopover.tsx`, `CommandRow.tsx`, and 39 sidebar sites) while sitting
- * outside a hand-written list, passing only because they happened to be
- * byte-identical to a token that was listed.
- */
-const DERIVED_PAIRS = Object.keys(colors)
-  .filter((name) => name.endsWith("-foreground"))
-  .map((fg) => [fg as TokenName, fg.replace(/-foreground$/, "") as TokenName] as const);
-
-/**
- * Text pairs no naming convention can reach: a foreground rendered over a
- * ground that is not its own base. Hand-listed by necessity — add here only
- * when the derived rule genuinely cannot express the pairing.
- */
-const TEXT_PAIRS: [fg: TokenName, bg: TokenName, where: string][] = [
-  ["foreground", "background", "body copy"],
-  ["foreground", "card", "card content"],
-  ["foreground", "muted", "segmented controls, active nav"],
-  ["muted-foreground", "background", "lead paragraphs"],
-  ["muted-foreground", "card", "row sub-lines"],
-  ["muted-foreground", "sidebar", "sidebar nav rows"],
-  ["foreground", "sidebar", "the active sidebar nav row"],
-  // `text-tertiary` and `background-tertiary` are ext-apps-only: the shell's
-  // `:root` never emits them, so the only surface they meet is an embedded
-  // iframe, where both are injected together.
-  ["text-tertiary", "background-tertiary", "iframe metadata on a tertiary surface"],
-  ["text-tertiary", "background", "iframe metadata on the base surface"],
-  ["text-tertiary", "card", "iframe metadata on a raised surface"],
-  ["primary", "background", "links, accent text"],
-  ["primary", "card", "links inside cards"],
-  // `.turn-pill__copy:hover` (index.css): `--primary` at 10px on `--info-light`.
-  // The tightest pair in the shell — 4.917:1 light, and this palette moved it
-  // *toward* the floor from 5.081:1, so it is listed rather than left to the
-  // ambient assumption that accent-on-tint is comfortable.
-  ["primary", "info-light", "turn-pill copy button, hover"],
-  ["processing", "background", "in-progress accent"],
-  // No shell component paints this pair; both tokens project into the iframe
-  // token map, so it is asserted as an ext-apps contract pairing.
-  ["processing", "processing-light", "ext-apps tint pairing"],
-  ["success", "card", "status labels"],
-  ["warning", "card", "warning text"],
-  ["destructive", "card", "error text"],
-  // The scope tiers are TEXT: `<span className="ledger-line__scope">{scope}</span>`
-  // at 11px, so 4.5:1 is the bar. They are also painted as a non-text tick
-  // (`SkillsTab.tsx`), but that one is `aria-hidden` and sits beside a tier
-  // divider that names the scope in words — decorative, so 1.4.11 does not
-  // apply to it. Asserting the text bar covers both regardless: 4.5:1 is
-  // strictly stricter than the 3:1 a non-text element would need. Should that
-  // tick ever become load-bearing, it is already covered.
-  ["scope-org", "card", "org scope label"],
-  ["scope-workspace", "card", "workspace scope label"],
-  ["scope-user", "card", "user scope label"],
-  ["scope-connector", "card", "connector scope label"],
-];
+const DERIVED_PAIRS = derivedPairs(Object.keys(colors));
 
 describe("palette contrast — derived <x>-foreground on <x>", () => {
   test("every -foreground token has a base, so the rule is total", () => {
@@ -113,107 +47,15 @@ describe("palette contrast — derived <x>-foreground on <x>", () => {
     expect(orphans).toEqual([]);
     expect(DERIVED_PAIRS.length).toBeGreaterThan(0);
   });
-
-  for (const mode of ["light", "dark"] as const) {
-    for (const [fg, base] of DERIVED_PAIRS) {
-      test(`${mode}: ${fg} on ${base} clears ${AA_TEXT}:1`, () => {
-        expect(contrastRatio(token(fg, mode), token(base, mode))).toBeGreaterThanOrEqual(AA_TEXT);
-      });
-    }
-  }
 });
 
 describe("palette contrast — WCAG 2.2", () => {
   for (const mode of ["light", "dark"] as const) {
-    for (const [fg, bg, where] of TEXT_PAIRS) {
-      test(`${mode}: ${fg} on ${bg} (${where}) clears ${AA_TEXT}:1`, () => {
-        const ratio = contrastRatio(token(fg, mode), token(bg, mode));
-        expect(ratio).toBeGreaterThanOrEqual(AA_TEXT);
+    for (const check of contrastChecks(palette, mode)) {
+      test(`${mode}: ${check.name} clears ${check.min}:1`, () => {
+        expect(contrastRatio(check.fg, check.bg)).toBeGreaterThanOrEqual(check.min);
       });
     }
-  }
-
-  /**
-   * The tinted family: `<hue>` text on a 10% (light) or 20% (dark) tint of
-   * itself.
-   *
-   * Two of the five hues render today, so do not delete these assertions as
-   * hypothetical. `.turn-pill__pre--error` (`index.css`) paints `--destructive`
-   * on a 10% mix of itself on every failed tool call in `BlockTimeline.tsx`,
-   * and `primary` does the same at `RecentConversationsPopover.tsx:129` and
-   * `LinkSafetyModal.tsx:116`.
-   *
-   * The `cva` variants that declare the same pattern — `Badge` and `Button`'s
-   * `destructive`/`success`/`warning`/`processing` — have no call sites yet, so
-   * for those hues the assertion is the thing standing between a first
-   * `<Badge variant="success">` and shipping below AA against a green suite.
-   *
-   * That last claim holds for the *supported* path only. Tailwind compiles
-   * `bg-<hue>/N` to `color-mix()`, and browsers failing its `@supports` test
-   * get the unguarded fallback — the first operand, opaque — so the fill
-   * becomes the same value as the text: 1.000:1, whatever is asserted here.
-   * Pre-existing and repo-wide; tracked in #781. What this guard buys is the
-   * modern path, which is the one the value can actually be chosen for.
-   */
-  const TINTED: TokenName[] = ["destructive", "success", "warning", "processing", "primary"];
-  // Resting states only, and the dark figure is deliberately stricter than what
-  // renders: only `destructive` declares a `dark:bg-destructive/20`, so the
-  // other four stay at /10 in dark. Asserting /20 for all five is safe because
-  // deepening a tint toward its own text colour always lowers contrast — /20 in
-  // dark is below /10 for every hue here (e.g. `primary` on the dark card:
-  // 4.739 vs 5.545), so the guard demands more than any of them renders.
-  //
-  // The hover states (/20 light, /30 dark) are NOT asserted, and that is a
-  // scoping decision rather than an oversight. Deepening a tint that shares the
-  // text's own hue always moves the fill toward the text, so hover reduces
-  // contrast by construction: the safe ceiling is /12 for `success` in light,
-  // which is indistinguishable from the /10 resting state. The mechanism is
-  // wrong, not the value — and neither live consumer has a hover state, so
-  // fixing it belongs with the decision about whether those variants (#759)
-  // should exist at all.
-  for (const mode of ["light", "dark"] as const) {
-    const pct = mode === "light" ? 10 : 20;
-    for (const hue of TINTED) {
-      for (const ground of ["background", "card"] as TokenName[]) {
-        test(`${mode}: text-${hue} on ${hue}/${pct} over ${ground} clears ${AA_TEXT}:1`, () => {
-          const fill = over(token(hue, mode), token(ground, mode), pct);
-          expect(contrastRatio(token(hue, mode), fill)).toBeGreaterThanOrEqual(AA_TEXT);
-        });
-      }
-    }
-  }
-
-  describe("sidebar tints — text on a tint of itself", () => {
-    // The sidebar's own tint family. `bg-sidebar-foreground/N` over `bg-sidebar`
-    // is what carries hover and the active row throughout the shell, and it is a
-    // tint of the text colour itself — the same mechanism as TINTED above, so it
-    // moves the same way when the palette does. The `kbd` in SidebarSearch is the
-    // floor: a /10 chip inside the trigger's own /5 fill, two tints deep.
-    for (const mode of ["light", "dark"] as const) {
-      const ground = token("sidebar", mode);
-      const text = token("sidebar-foreground", mode);
-      const hover = over(text, ground, 5);
-
-      for (const [label, fill] of [
-        ["hover, sidebar-foreground/5", hover],
-        ["active, sidebar-foreground/10", over(text, ground, 10)],
-        ["the search kbd, /10 over the trigger's /5", over(text, hover, 10)],
-      ] as const) {
-        test(`${mode}: sidebar text on ${label} clears ${AA_TEXT}:1`, () => {
-          expect(contrastRatio(text, fill)).toBeGreaterThanOrEqual(AA_TEXT);
-        });
-      }
-    }
-  });
-
-  for (const mode of ["light", "dark"] as const) {
-    test(`${mode}: the primary hover fill keeps its label above ${AA_TEXT}:1`, () => {
-      // `hover:bg-primary/90` composited over the page ground.
-      const fill = over(token("primary", mode), token("background", mode), 90);
-      expect(contrastRatio(token("primary-foreground", mode), fill)).toBeGreaterThanOrEqual(
-        AA_TEXT,
-      );
-    });
   }
 
   // `palette.ts` states the scope tiers are "deliberately distinct from
@@ -257,35 +99,18 @@ describe("palette contrast — WCAG 2.2", () => {
  * The two translucent tints in the palette are 10% alpha over their source
  * token. Because `rgba()` spells the channels out, they can drift from the hex
  * they were derived from — silently, since a wrong-but-plausible grey still
- * looks like a tint. These assert the derivation instead of trusting it, and
- * then assert the composited result the same way the tinted-badge family is
- * asserted.
- *
- * The pairing is real on both: `.presence-user-message` paints `--foreground`
- * on `--foreground-tint`, and `.turn-pill__pre--error` paints `--destructive`
- * on `--destructive-tint` for every failed tool call.
+ * looks like a tint. This asserts the derivation instead of trusting it; the
+ * composited result is asserted with every other pair in `contrastChecks`.
  */
 describe("translucent tints track their source token", () => {
-  const TINTS: [tint: string, source: TokenName][] = [
-    ["foreground-tint", "foreground"],
-    ["destructive-tint", "destructive"],
-  ];
-
   for (const mode of ["light", "dark"] as const) {
-    for (const [tint, source] of TINTS) {
+    for (const [tint, source] of TRANSLUCENT_TINTS) {
       test(`${mode}: ${tint} is 10% of ${source}`, () => {
-        const value = pick((colors as Record<string, Pair>)[tint] as Pair, mode);
+        const value = pick(colors[tint], mode);
         const hex = token(source, mode).replace("#", "");
         const [r, g, b] = [0, 2, 4].map((i) => Number.parseInt(hex.slice(i, i + 2), 16));
         expect(value.replace(/\s+/g, "")).toBe(`rgba(${r},${g},${b},0.1)`);
       });
-
-      for (const ground of ["background", "card"] as TokenName[]) {
-        test(`${mode}: ${source} on ${tint} over ${ground} clears ${AA_TEXT}:1`, () => {
-          const fill = over(token(source, mode), token(ground, mode), 10);
-          expect(contrastRatio(token(source, mode), fill)).toBeGreaterThanOrEqual(AA_TEXT);
-        });
-      }
     }
   }
 });
@@ -328,17 +153,10 @@ describe("translucent tints track their source token", () => {
  * hand-listed set of things to check is a denylist by omission — the failure
  * this file has been bitten by more than once. The scanner makes the set total:
  * a new `text-<token>/N` anywhere in `web/src` fails until someone records the
- * ground it renders on, and recording it computes the ratio.
+ * ground it renders on in `ALPHA_TEXT` (`contrast-pairs.ts`), and recording it
+ * puts the ratio into `contrastChecks`.
  */
 describe("foreground alpha — text-<token>/N", () => {
-  /** Every combination in the shell, with the ground(s) it is painted on. */
-  const ALPHA_TEXT: [token: TokenName, pct: number, grounds: TokenName[]][] = [
-    // `BriefingView` list items and the `SkillsTab` description, both on the
-    // page ground. The one surviving combination, and it clears AA by a wide
-    // margin — kept because it passes, not grandfathered.
-    ["foreground", 80, ["background", "card"]],
-  ];
-
   const declared = new Set(ALPHA_TEXT.map(([t, p]) => `text-${t}/${p}`));
 
   /**
@@ -363,7 +181,7 @@ describe("foreground alpha — text-<token>/N", () => {
     "g",
   );
 
-  test("every text-<token>/N the compiler can see is declared above", () => {
+  test("every text-<token>/N the compiler can see is declared in ALPHA_TEXT", () => {
     // The root is `web/`, not `web/src`. `index.css` has no `@source` pin, so
     // Tailwind v4 auto-detects across the whole app directory — a class in
     // `index.html` compiles to a live rule. A guard whose entire claim is
@@ -395,17 +213,4 @@ describe("foreground alpha — text-<token>/N", () => {
     }
     expect([...undeclared].sort().join("\n")).toBe("");
   });
-
-  for (const mode of ["light", "dark"] as const) {
-    for (const [tokenName, pct, grounds] of ALPHA_TEXT) {
-      for (const ground of grounds) {
-        test(`${mode}: text-${tokenName}/${pct} on ${ground} clears ${AA_TEXT}:1`, () => {
-          const g = token(ground, mode);
-          expect(contrastRatio(over(token(tokenName, mode), g, pct), g)).toBeGreaterThanOrEqual(
-            AA_TEXT,
-          );
-        });
-      }
-    }
-  }
 });

@@ -1,5 +1,6 @@
 // `ParticipantInfo` was the participants-section input; gone post Stage 1.
 // Stage 4 reintroduces a participants concept with policy gating.
+import { renderBrandName } from "../brand/index.ts";
 import type { SkillCatalogEntry } from "../skills/catalog.ts";
 import type { LoadedBy } from "../skills/select.ts";
 import { approxTokens } from "../skills/tokens.ts";
@@ -185,13 +186,22 @@ function sanitizeLineField(value: string): string {
 /** Skills with priority ≤ this threshold are core context (identity layer). */
 export const CORE_PRIORITY_THRESHOLD = 10;
 
-export const DEFAULT_IDENTITY = `You are a helpful assistant powered by NimbleBrain.
+const DEFAULT_IDENTITY_TEMPLATE = `You are a helpful assistant powered by {{brand.name}}.
 
 You have access to tools provided via the API. When a user asks you to do something, use your tools to accomplish it. Do not guess or make up answers when you have tools that can find the real answer. If you're unsure, try using a tool first.
 
 Be concise and direct. Lead with actions, not explanations.
 
 IMPORTANT: Only use tools that are provided to you via the tools parameter. Never fabricate tool calls as XML, JSON, or any other text format.`;
+
+/**
+ * The fallback identity when no core-context skill produced content. Rendered
+ * with the same `{{brand.name}}` substitution as the vendored `soul.md`, so the
+ * two cannot disagree about whose assistant this is.
+ */
+export function defaultIdentity(): string {
+  return renderBrandName(DEFAULT_IDENTITY_TEMPLATE);
+}
 
 /**
  * Identity framing for task-mode invocations (e.g. scheduled automations,
@@ -297,7 +307,7 @@ export interface WorkspaceContext {
  * Compose the system prompt from context skills and an optional matched skill.
  *
  * Context skills are sorted by priority (caller's responsibility).
- * If no context skills are provided, DEFAULT_IDENTITY is used as fallback.
+ * If no context skills are provided, `defaultIdentity()` is used as fallback.
  * The matched skill body is appended last.
  * If apps are provided and non-empty, an "## Installed Apps" section is injected.
  */
@@ -473,12 +483,17 @@ function coreContextLayers(coreContext: Skill[]): PendingLayer[] {
   const layers: PendingLayer[] = [];
   for (const ctx of coreContext) {
     if (!ctx.body) continue;
+    // `{{brand.name}}` is first-party templating: only the platform's own
+    // vendored skills are rendered. A tenant's core skill reaches the model
+    // exactly as its author wrote it.
+    const text =
+      ctx.manifest.provenance?.origin === "vendored" ? renderBrandName(ctx.body) : ctx.body;
     layers.push({
       kind: "core_skill",
       id: ctx.sourcePath || `core:${ctx.manifest.name}`,
       source: ctx.sourcePath || `core skill "${ctx.manifest.name}"`,
-      text: ctx.body,
-      tokens: approxTokens(ctx.body),
+      text,
+      tokens: approxTokens(text),
     });
   }
   return layers;
@@ -486,12 +501,13 @@ function coreContextLayers(coreContext: Skill[]): PendingLayer[] {
 
 /** Platform default identity — the fallback when no core-context skill produced content. */
 function defaultIdentityLayer(): PendingLayer {
+  const identity = defaultIdentity();
   return {
     kind: "default_identity",
     id: "nb:default-identity",
     source: "platform default (no core context skills loaded)",
-    text: DEFAULT_IDENTITY,
-    tokens: approxTokens(DEFAULT_IDENTITY),
+    text: identity,
+    tokens: approxTokens(identity),
   };
 }
 

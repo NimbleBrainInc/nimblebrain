@@ -1,5 +1,6 @@
 import { rmSync } from "node:fs";
 import { join } from "node:path";
+import { oauthClientIdentity } from "../../brand/index.ts";
 import { resolveConnectorSkillsConfig } from "../../config/connector-skills.ts";
 import type { ManagedConnectorProvider } from "../../connectors/providers/managed-provider.ts";
 import {
@@ -1131,6 +1132,7 @@ export class ConnectorLifecycleManager {
       onInteractiveAuthRequired,
     } = args;
     return new WorkspaceOAuthProvider({
+      clientIdentity: oauthClientIdentity(),
       owner: { type: "workspace", wsId },
       ...(ownerDisplayName ? { ownerDisplayName } : {}),
       serverName,
@@ -1316,6 +1318,7 @@ export class ConnectorLifecycleManager {
     }
 
     const provider = new WorkspaceOAuthProvider({
+      clientIdentity: oauthClientIdentity(),
       owner: { type: "workspace", wsId },
       serverName,
       workDir: opts.workDir,

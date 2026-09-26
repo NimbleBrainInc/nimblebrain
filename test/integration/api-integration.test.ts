@@ -379,6 +379,11 @@ describe("integration: auth boundary", () => {
 		const healthRes = await fetch(`${baseUrl}/v1/health`);
 		expect(healthRes.status).toBe(200);
 
+		// So does the brand: the sign-in page paints it before anyone signs in.
+		const brandRes = await fetch(`${baseUrl}/v1/brand`);
+		expect(brandRes.status).toBe(200);
+		expect(await brandRes.json()).toEqual({});
+
 		// Chat requires auth
 		const chatNoAuth = await fetch(`${baseUrl}/v1/chat`, {
 			method: "POST",

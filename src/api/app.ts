@@ -8,6 +8,7 @@ import { securityHeaders } from "./middleware/security-headers.ts";
 import { tracingMiddleware } from "./middleware/tracing.ts";
 import { authRoutes } from "./routes/auth.ts";
 import { bootstrapRoutes } from "./routes/bootstrap.ts";
+import { brandRoutes } from "./routes/brand.ts";
 import { chatRoutes } from "./routes/chat.ts";
 import { conversationEventRoutes } from "./routes/conversation-events.ts";
 import { eventRoutes } from "./routes/events.ts";
@@ -45,6 +46,8 @@ export function createApp(
   // Route groups — well-known endpoints first (unauthenticated, no body limit needed)
   app.route("/", wellKnownRoutes(ctx));
   app.route("/", healthRoutes());
+  // The brand the login page paints before anyone signs in; public, like health.
+  app.route("/", brandRoutes());
   // Prometheus scrape endpoint. Bare /metrics (never /v1/metrics) so the web
   // Caddy proxy doesn't expose it publicly; scraped in-cluster only.
   app.route("/", metricsRoutes());

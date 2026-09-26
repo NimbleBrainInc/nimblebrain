@@ -10,6 +10,10 @@
 .DS_Store
 **/node_modules
 web/
+# The theme modules are the exception: leaf TypeScript the runtime imports to
+# validate and serve a tenant brand (`src/brand/`). Nothing else under web/ ships.
+!web/src/theme/
+web/src/theme/__tests__/
 test/
 docs/
 *.md

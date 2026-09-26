@@ -3,7 +3,7 @@ import {
   composeSystemPrompt,
   composeSystemPromptTraced,
   CORE_PRIORITY_THRESHOLD,
-  DEFAULT_IDENTITY,
+  defaultIdentity,
   type FocusedAppInfo,
   type Layer3SkillEntry,
   type OverlayLayers,
@@ -38,7 +38,7 @@ const testSkill: Skill = {
 describe("composeSystemPrompt", () => {
   it("returns default identity with no context skills and no matched skill", () => {
     const result = composeSystemPrompt([]);
-    expect(result).toContain(DEFAULT_IDENTITY);
+    expect(result).toContain(defaultIdentity());
     expect(result).toContain("NimbleBrain");
     expect(result).toContain("tools");
   });
@@ -47,7 +47,7 @@ describe("composeSystemPrompt", () => {
     const ctx = makeContextSkill("soul", 0, "I am Nira.");
     const result = composeSystemPrompt([ctx]);
     expect(result).toContain("I am Nira.");
-    expect(result).not.toContain(DEFAULT_IDENTITY);
+    expect(result).not.toContain(defaultIdentity());
   });
 
   it("joins multiple context skills with separator", () => {
@@ -81,7 +81,7 @@ describe("composeSystemPrompt", () => {
 
   it("handles only matched skill (no context)", () => {
     const result = composeSystemPrompt([], testSkill);
-    expect(result).toContain(DEFAULT_IDENTITY);
+    expect(result).toContain(defaultIdentity());
     expect(result).toContain("You are a test expert.");
   });
 
@@ -120,7 +120,7 @@ describe("composeSystemPrompt — workspace identity", () => {
     const identitySkill = makeContextSkill("identity-override", 1, "You are LegalBot for Acme Law.");
     const result = composeSystemPrompt([identitySkill]);
     expect(result).toContain("You are LegalBot for Acme Law.");
-    expect(result).not.toContain(DEFAULT_IDENTITY);
+    expect(result).not.toContain(defaultIdentity());
   });
 
   it("workspace identity coexists with soul.md core skill", () => {
@@ -131,9 +131,9 @@ describe("composeSystemPrompt — workspace identity", () => {
     expect(result).toContain("You are LegalBot.");
   });
 
-  it("no workspace identity falls back to DEFAULT_IDENTITY", () => {
+  it("no workspace identity falls back to the default identity", () => {
     const result = composeSystemPrompt([]);
-    expect(result).toContain(DEFAULT_IDENTITY);
+    expect(result).toContain(defaultIdentity());
   });
 
   it("workspace identity appears in Layer 0 (core context)", () => {
@@ -408,14 +408,14 @@ describe("composeSystemPrompt — core vs user context layering", () => {
 
   it("default identity fallback when no context skills provided", () => {
     const result = composeSystemPrompt([]);
-    expect(result).toContain(DEFAULT_IDENTITY);
+    expect(result).toContain(defaultIdentity());
     expect(result).toContain("- Today's date:");
   });
 
   it("default identity fallback when only user context skills (no core)", () => {
     const user = makeContextSkill("custom", 20, "User instructions.");
     const result = composeSystemPrompt([user]);
-    const defaultIdx = result.indexOf(DEFAULT_IDENTITY);
+    const defaultIdx = result.indexOf(defaultIdentity());
     const userIdx = result.indexOf("User instructions.");
     expect(defaultIdx).toBeGreaterThan(-1);
     expect(userIdx).toBeGreaterThan(-1);
@@ -1102,7 +1102,7 @@ describe("composeSystemPromptTraced", () => {
     const traced = composeSystemPromptTraced([]);
     const defaultRow = traced.layers.find((l) => l.kind === "default_identity");
     expect(defaultRow).toBeDefined();
-    expect(defaultRow!.text).toBe(DEFAULT_IDENTITY);
+    expect(defaultRow!.text).toBe(defaultIdentity());
     expect(defaultRow!.id).toBe("nb:default-identity");
   });
 
@@ -1295,8 +1295,8 @@ describe("composeSystemPrompt — task mode", () => {
     expect(result).toContain("deliverable");
   });
 
-  it("does NOT use DEFAULT_IDENTITY fallback in task mode", () => {
-    // No core context skills → chat mode would emit DEFAULT_IDENTITY.
+  it("does NOT use the default identity fallback in task mode", () => {
+    // No core context skills → chat mode would emit the default identity.
     // Task mode emits TASK_IDENTITY instead — emitting both would give
     // the model contradictory role definitions.
     const result = composeSystemPrompt(
@@ -1312,12 +1312,12 @@ describe("composeSystemPrompt — task mode", () => {
       undefined,
       "task",
     );
-    expect(result).not.toContain(DEFAULT_IDENTITY);
+    expect(result).not.toContain(defaultIdentity());
   });
 
   it("defaults to chat mode when mode is omitted (existing call sites unchanged)", () => {
     const result = composeSystemPrompt([]);
-    expect(result).toContain(DEFAULT_IDENTITY);
+    expect(result).toContain(defaultIdentity());
     expect(result).not.toContain(TASK_IDENTITY);
   });
 

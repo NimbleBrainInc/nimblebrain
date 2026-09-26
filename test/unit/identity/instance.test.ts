@@ -24,7 +24,6 @@ describe("loadInstanceConfig", () => {
         clientId: "my-client",
         allowedDomains: ["example.com", "test.com"],
       },
-      orgName: "Acme Corp",
     };
     await writeFile(join(workDir, "instance.json"), JSON.stringify(config));
 
@@ -36,7 +35,6 @@ describe("loadInstanceConfig", () => {
         clientId: "my-client",
         allowedDomains: ["example.com", "test.com"],
       },
-      orgName: "Acme Corp",
     });
   });
 
@@ -164,7 +162,6 @@ describe("saveInstanceConfig", () => {
         clientId: "client-1",
         allowedDomains: ["example.com"],
       },
-      orgName: "Test Org",
       orgId: "org-1",
       integrations: { github: { token: "ghp_xxx" } },
     };

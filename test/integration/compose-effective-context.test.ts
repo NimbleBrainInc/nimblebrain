@@ -221,7 +221,7 @@ describe("compose_effective_context — live mode", () => {
     // directly, which is the global static set. `runtime.chat()` augments
     // it per-request with `makeIdentitySkill(workspace.identity)` at
     // priority 1 (core context). Without the override, the trace would
-    // report DEFAULT_IDENTITY for any workspace operating under a custom
+    // report the default identity for any workspace operating under a custom
     // identity — the exact case the tool exists to expose.
     const workDir = join(testDir, "live-workspace-identity");
     const runtime = await Runtime.start({
@@ -249,7 +249,7 @@ describe("compose_effective_context — live mode", () => {
     const overrideRow = coreSkills.find((l) => l.text === overrideText);
     expect(overrideRow).toBeDefined();
 
-    // And DEFAULT_IDENTITY must NOT appear when an override is present —
+    // And the default identity must NOT appear when an override is present —
     // the fallback only fires if there's nothing else in the core band.
     expect(res.structured!.layers.find((l) => l.kind === "default_identity")).toBeUndefined();
 

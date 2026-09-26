@@ -407,7 +407,7 @@ describe("loadCoreSkills", () => {
     const soul = skills.find((s) => s.manifest.name === "soul")!;
     expect(soul.manifest.loadingStrategy).toBe("always");
     expect(soul.manifest.priority).toBe(0);
-    expect(soul.body).toContain("NimbleBrain");
+    expect(soul.body).toContain("powered by {{brand.name}}.");
   });
 
   it("stamps provenance.origin = vendored on core skills (the ledger excludes them by it)", () => {
