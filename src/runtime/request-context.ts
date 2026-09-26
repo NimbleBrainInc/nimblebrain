@@ -19,8 +19,8 @@ export interface RequestContext {
    * workspace created at first login, and it reaches this field the same way
    * any other does.
    *
-   * Set on every door: chat (the conversation's own workspace — a chat resumed
-   * in A while the client is focused on B reads A), automation runs
+   * Set on every door: chat (the workspace its request addresses, which a
+   * resume shares with its conversation), automation runs
    * (provenance), `/mcp` (the membership-validated workspace in its URL),
    * REST (the membership-validated workspace in its URL), and each
    * per-call restamp (the routed workspace, which the wall guarantees is the

@@ -46,7 +46,7 @@ REST addresses a workspace the same way: `/v1/workspaces/<wsId>/…` (ADR-0037),
 admitted by the same membership check. A route either acts on a workspace and
 names it in its path, or acts on the caller or on a primitive its own id
 locates (bootstrap, the event stream, a conversation, a file) and names none.
-No header, argument or default selects a workspace for a request. Bootstrap
+No header, argument, qualified name or default selects a workspace for a request, and a conversation is resumed only at its own workspace's path. Bootstrap
 alone suggests one — the web shell's default focus, the caller's personal
 workspace — and the URL the user is on overrides it.
 

@@ -4,11 +4,11 @@ import type { ResolvedFeatures } from "../../../src/config/features.ts";
 import type { Runtime } from "../../../src/runtime/runtime.ts";
 import type { UserIdentity } from "../../../src/identity/provider.ts";
 
-// Cross-workspace coverage for the OTHER two endpoints the qualified-name
-// resolver was wired into (handleReadResource is covered separately). A
-// qualified `ws_<id>-<source>` names its own workspace: it must resolve there
-// by membership (not the workspace in the URL) and address the registry by
-// the BARE source name. handleToolCall additionally normalizes the tool name.
+// On REST the workspace is the one in the URL path (ADR-0037). A qualified
+// `ws_<id>-<name>` server, app or tool is refused with a 400 — never routed to
+// the workspace it names, never stripped to its bare remainder — and a bare
+// name resolves in the URL's workspace. handleReadResource is covered in
+// read-resource-handler.test.ts.
 
 const features = {} as unknown as ResolvedFeatures; // our tool isn't feature-mapped → always enabled
 const identityU1 = { id: "u1", orgRole: "member" } as unknown as UserIdentity;
@@ -68,95 +68,89 @@ function makeToolCallRuntime(opts: ToolCallStub = {}): {
 }
 
 function toolReq(body: unknown): Request {
-  return new Request("http://x/v1/workspaces/ws_user_u1/tools/call", {
+  return new Request("http://nb.example.com/v1/workspaces/ws_user_u1/tools/call", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
 }
 
-describe("handleToolCall — qualified cross-workspace server", () => {
-  it("resolves to the owning workspace (not the workspace in the URL) and normalizes the tool name", async () => {
-    const { runtime, executed } = makeToolCallRuntime({ memberOf: ["ws_nimblebrain_shared"] });
+describe("handleToolCall — the workspace is the one in the URL", () => {
+  it("refuses a qualified server with a 400 naming the bare server, and runs nothing", async () => {
+    const { runtime, executed, registryWs } = makeToolCallRuntime({ memberOf: ["ws_tenant_a"] });
     const res = await handleToolCall(
-      toolReq({ server: "ws_nimblebrain_shared-synapse-collateral", tool: "preview" }),
+      toolReq({ server: "ws_tenant_a-synapse-collateral", tool: "preview" }),
       runtime,
       features,
-      // The workspace in the URL is the user's own — not where the tool lives.
+      // The caller is a member of the named workspace; the name is still refused.
       { workspaceId: "ws_user_u1", identity: identityU1 },
     );
-    expect(res.status).toBe(200);
-    // Bare tool ("preview") normalized to the registry's `<bareSource>__<tool>`.
-    expect(executed).toEqual(["synapse-collateral__preview"]);
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toBe("bad_request");
+    expect(body.message).toContain("uses the retired ws_<id>- server-name form");
+    expect(body.message).toContain('"synapse-collateral"');
+    expect(body.details).toEqual({
+      server: "ws_tenant_a-synapse-collateral",
+      reason: "legacy_namespaced_form",
+    });
+    expect(registryWs).toEqual([]);
+    expect(executed).toEqual([]);
   });
 
-  it("revives an installed-but-unregistered source instead of 404ing the tool", async () => {
-    // Same boot-race shape as the resource doors: installed, absent from the
-    // registry, recoverable. Membership alone would report the tool missing.
-    const { runtime, executed } = makeToolCallRuntime({
-      memberOf: ["ws_nimblebrain_shared"],
+  it("refuses a qualified tool name with a 400, even beside a bare server", async () => {
+    const { runtime, executed } = makeToolCallRuntime();
+    const res = await handleToolCall(
+      toolReq({ server: "synapse-collateral", tool: "ws_tenant_a-synapse-collateral__preview" }),
+      runtime,
+      features,
+      { workspaceId: "ws_user_u1", identity: identityU1 },
+    );
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.message).toContain("uses the retired ws_<id>- tool-name form");
+    expect(body.details.reason).toBe("legacy_namespaced_form");
+    expect(executed).toEqual([]);
+  });
+
+  it("refuses a malformed ws_ server as a bad request", async () => {
+    const { runtime, executed } = makeToolCallRuntime();
+    const res = await handleToolCall(
+      toolReq({ server: "ws_BAD ID-synapse-collateral", tool: "preview" }),
+      runtime,
+      features,
+      { workspaceId: "ws_user_u1", identity: identityU1 },
+    );
+    expect(res.status).toBe(400);
+    expect(executed).toEqual([]);
+  });
+
+  it("revives an installed-but-unregistered source in the URL's workspace instead of 404ing the tool", async () => {
+    // A connector whose endpoint was unreachable at boot is installed but
+    // absent from the registry. Membership alone would report the tool missing.
+    const { runtime, executed, registryWs } = makeToolCallRuntime({
       recoverable: "synapse-collateral",
     });
     const res = await handleToolCall(
-      toolReq({ server: "ws_nimblebrain_shared-synapse-collateral", tool: "preview" }),
+      toolReq({ server: "synapse-collateral", tool: "preview" }),
       runtime,
       features,
       { workspaceId: "ws_user_u1", identity: identityU1 },
     );
     expect(res.status).toBe(200);
+    expect(registryWs).toEqual(["ws_user_u1"]);
     expect(executed).toEqual(["synapse-collateral__preview"]);
   });
 
   it("normalizes a source-prefixed tool name", async () => {
-    const { runtime, executed } = makeToolCallRuntime({ memberOf: ["ws_nimblebrain_shared"] });
+    const { runtime, executed } = makeToolCallRuntime();
     await handleToolCall(
-      toolReq({
-        server: "ws_nimblebrain_shared-synapse-collateral",
-        tool: "synapse-collateral__preview",
-      }),
+      toolReq({ server: "synapse-collateral", tool: "synapse-collateral__preview" }),
       runtime,
       features,
       { workspaceId: "ws_user_u1", identity: identityU1 },
     );
     expect(executed).toEqual(["synapse-collateral__preview"]);
-  });
-
-  it("normalizes a fully-qualified tool name (strips the ws_<id>- server prefix)", async () => {
-    const { runtime, executed } = makeToolCallRuntime({ memberOf: ["ws_nimblebrain_shared"] });
-    await handleToolCall(
-      toolReq({
-        server: "ws_nimblebrain_shared-synapse-collateral",
-        tool: "ws_nimblebrain_shared-synapse-collateral__preview",
-      }),
-      runtime,
-      features,
-      { workspaceId: "ws_user_u1", identity: identityU1 },
-    );
-    expect(executed).toEqual(["synapse-collateral__preview"]);
-  });
-
-  it("403s a non-member of the named workspace", async () => {
-    const { runtime, executed } = makeToolCallRuntime({ memberOf: ["ws_some_other"] });
-    const res = await handleToolCall(
-      toolReq({ server: "ws_nimblebrain_shared-synapse-collateral", tool: "preview" }),
-      runtime,
-      features,
-      { workspaceId: "ws_user_u1", identity: identityU1 },
-    );
-    expect(res.status).toBe(403);
-    expect((await res.json()).error).toBe("workspace_access_denied");
-    expect(executed).toEqual([]);
-  });
-
-  it("401s a qualified call with no identity", async () => {
-    const { runtime } = makeToolCallRuntime({ memberOf: ["ws_nimblebrain_shared"] });
-    const res = await handleToolCall(
-      toolReq({ server: "ws_nimblebrain_shared-synapse-collateral", tool: "preview" }),
-      runtime,
-      features,
-      { workspaceId: "ws_nimblebrain_shared" },
-    );
-    expect(res.status).toBe(401);
   });
 
   it("resolves a bare source in the workspace from the URL", async () => {
@@ -213,56 +207,40 @@ function makeProxyRuntime(opts: {
   return { runtime, calls, recoverCalls };
 }
 
-describe("handleResourceProxy — qualified cross-workspace app", () => {
-  it("resolves to the owning workspace and reads via the bare source name", async () => {
-    const { runtime, calls } = makeProxyRuntime({ memberOf: ["ws_nimblebrain_shared"] });
+describe("handleResourceProxy — the workspace is the one in the URL", () => {
+  it("refuses a qualified app name with a 400, and reads nothing", async () => {
+    const { runtime, calls, recoverCalls } = makeProxyRuntime({ memberOf: ["ws_tenant_a"] });
     const res = await handleResourceProxy(
-      "ws_nimblebrain_shared-synapse-collateral",
+      "ws_tenant_a-synapse-collateral",
       "main", // not "primary" — avoids the lifecycle/placement lookup
       runtime,
-      "ws_user_u1", // the workspace in the URL, overridden by the name
-      identityU1,
-    );
-    expect(res.status).toBe(200);
-    expect(calls).toEqual([{ server: "synapse-collateral", uri: "main", wsId: "ws_nimblebrain_shared" }]);
-  });
-
-  it("403s a non-member of the named workspace", async () => {
-    const { runtime, calls } = makeProxyRuntime({ memberOf: ["ws_some_other"] });
-    const res = await handleResourceProxy(
-      "ws_nimblebrain_shared-synapse-collateral",
-      "main",
-      runtime,
       "ws_user_u1",
-      identityU1,
     );
-    expect(res.status).toBe(403);
-    expect((await res.json()).error).toBe("workspace_access_denied");
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.message).toContain("uses the retired ws_<id>- app-name form");
+    expect(body.details).toEqual({
+      app: "ws_tenant_a-synapse-collateral",
+      reason: "legacy_namespaced_form",
+    });
     expect(calls).toEqual([]);
+    expect(recoverCalls).toEqual([]);
   });
 
-  it("revives an installed-but-unregistered app, addressed by the resolved workspace", async () => {
-    // A connector whose endpoint was unreachable at boot is installed but absent
-    // from the registry. Membership alone reads that as permanently gone.
+  it("reads a bare app in the URL's workspace", async () => {
+    const { runtime, calls } = makeProxyRuntime({});
+    const res = await handleResourceProxy("synapse-collateral", "main", runtime, "ws_tenant_a");
+    expect(res.status).toBe(200);
+    expect(calls).toEqual([{ server: "synapse-collateral", uri: "main", wsId: "ws_tenant_a" }]);
+  });
+
+  it("revives an installed-but-unregistered app, addressed by the URL's workspace", async () => {
     const { runtime, calls, recoverCalls } = makeProxyRuntime({
-      memberOf: ["ws_nimblebrain_shared"],
       recoverable: "synapse-collateral",
     });
-    const res = await handleResourceProxy(
-      "ws_nimblebrain_shared-synapse-collateral",
-      "main",
-      runtime,
-      "ws_user_u1",
-      identityU1,
-    );
+    const res = await handleResourceProxy("synapse-collateral", "main", runtime, "ws_tenant_a");
     expect(res.status).toBe(200);
-    // The heal must target the RESOLVED workspace and the BARE source name —
-    // the workspace in the URL or the qualified name here would heal nothing.
-    expect(recoverCalls).toEqual([
-      { wsId: "ws_nimblebrain_shared", name: "synapse-collateral" },
-    ]);
-    expect(calls).toEqual([
-      { server: "synapse-collateral", uri: "main", wsId: "ws_nimblebrain_shared" },
-    ]);
+    expect(recoverCalls).toEqual([{ wsId: "ws_tenant_a", name: "synapse-collateral" }]);
+    expect(calls).toEqual([{ server: "synapse-collateral", uri: "main", wsId: "ws_tenant_a" }]);
   });
 });

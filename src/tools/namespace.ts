@@ -213,17 +213,13 @@ export function bareToolName(s: string): string {
  *
  * A source name has the same `ws_<id>-<rest>` shape as a tool name, but its
  * `<rest>` is a bare source name (`synapse-collateral`) with no `__<tool>`
- * suffix — a wire tool name is `<source>__<tool>` while registry *sources*
- * keep their bare name. So a namespaced tool
- * `ws_<id>-synapse-collateral__preview` surfaces an `appName`/`server` of
- * `ws_<id>-synapse-collateral`, which the REST resource/tool endpoints must
- * split into its owning workspace (`ws_<id>`) and the bare source the
- * registry is keyed on (`synapse-collateral`).
+ * suffix. The REST endpoints use it to recognise the retired form and refuse
+ * it, naming `<rest>` as the bare name to send: on REST the workspace is the
+ * one in the URL path and nothing else.
  *
- * Returns `null` for a bare (unqualified) source name — the caller falls back
- * to the ambient request workspace. Throws (via `parseNamespacedToolName`)
- * only for a malformed `ws_`-prefixed id, which is a probe/typo the caller
- * should reject rather than treat as bare.
+ * Returns `null` for a bare (unqualified) name. Throws (via
+ * `parseNamespacedToolName`) only for a malformed `ws_`-prefixed id, which is
+ * a probe/typo the caller should reject rather than treat as bare.
  *
  * Built on `parseNamespacedToolName` so the separator and `WORKSPACE_ID_RE`
  * boundary stay defined once (and `check:tool-namespace` keeps the parse in

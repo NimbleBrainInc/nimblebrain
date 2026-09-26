@@ -93,7 +93,7 @@ docker compose config    # Validate compose file
 
 All endpoints require authentication (Bearer token or session cookie) unless noted. Auth is configured via `instance.json` — see the identity system docs.
 
-A route that acts on a workspace names it in its path, `/v1/workspaces/:wsId/…`, and admits only a member of it: a malformed, unknown or non-member id gets `404 workspace_error`. Every other route acts on the caller, or on a conversation or file its own id locates, and names no workspace ([ADR-0037](./adr/0037-a-workspace-is-addressed-by-url-on-every-surface.md)).
+A route that acts on a workspace names it in its path, `/v1/workspaces/:wsId/…`, and admits only a member of it: a malformed, unknown or non-member id gets `404 workspace_error`. Every other route acts on the caller, or on a conversation or file its own id locates, and names no workspace ([ADR-0037](./adr/0037-a-workspace-is-addressed-by-url-on-every-surface.md)). The path is the only way to name a workspace: a `ws_<id>-` qualified server, app or tool name is refused with `400`, and a `conversationId` on a chat or upload must be one of the caller's conversations in the path's workspace, or the request gets `404 conversation_not_found`, the same answer as for an id that does not exist.
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|

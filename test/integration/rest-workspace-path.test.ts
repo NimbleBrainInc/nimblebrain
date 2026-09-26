@@ -267,3 +267,54 @@ describe("identity-scoped routes need no workspace", () => {
     expect(await res.text()).toBe("hello");
   });
 });
+
+describe("a name that carries a workspace", () => {
+  // The workspace is the one in the path. A `ws_<id>-` qualified server, app or
+  // tool is refused with a 400 — even naming a workspace the caller belongs to —
+  // rather than routed there or stripped to its bare remainder.
+  const QUALIFIED: Array<{ label: string; method: string; suffix: () => string; body?: () => unknown }> = [
+    {
+      label: "tools/call server",
+      method: "POST",
+      suffix: () => "/tools/call",
+      body: () => ({ server: `${wsB}-nb`, tool: "manage_workspaces", arguments: { action: "list" } }),
+    },
+    {
+      label: "tools/call tool",
+      method: "POST",
+      suffix: () => "/tools/call",
+      body: () => ({ server: "nb", tool: `${wsB}-nb__manage_workspaces`, arguments: { action: "list" } }),
+    },
+    {
+      label: "resources/read server",
+      method: "POST",
+      suffix: () => "/resources/read",
+      body: () => ({ server: `${wsB}-nb`, uri: "ui://nb/main" }),
+    },
+    {
+      label: "app resource proxy",
+      method: "GET",
+      suffix: () => `/apps/${encodeURIComponent(`${wsB}-nb`)}/resources/primary`,
+    },
+  ];
+
+  for (const q of QUALIFIED) {
+    it(`${q.label}: refused with a 400 naming the bare name`, async () => {
+      const res = await send(q.method, `/v1/workspaces/${wsA}${q.suffix()}`, {
+        ...(q.body ? { body: q.body() } : {}),
+      });
+      expect(res.status).toBe(400);
+      const body = await res.json();
+      expect(body.error).toBe("bad_request");
+      expect(body.message).toContain("uses the retired ws_<id>-");
+      expect(body.details.reason).toBe("legacy_namespaced_form");
+    });
+  }
+
+  it("the bare name resolves in the path's workspace", async () => {
+    const res = await send("POST", `/v1/workspaces/${wsA}/tools/call`, {
+      body: { server: "nb", tool: "manage_workspaces", arguments: { action: "list" } },
+    });
+    expect(res.status).toBe(200);
+  });
+});
