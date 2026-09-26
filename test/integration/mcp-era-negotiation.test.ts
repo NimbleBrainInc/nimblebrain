@@ -191,7 +191,52 @@ describe("McpSource era fallback", () => {
       served.close();
     }
   });
+
+  it("does not retry on the 2025 era when the probe is refused for authorization", async () => {
+    const legacy = legacyServer();
+    const seen: string[] = [];
+    const served = serve(async (request) => {
+      const body = await bodyOf(request);
+      if (body?.method) seen.push(body.method);
+      if (body?.method === "server/discover") return new Response("forbidden", { status: 403 });
+      return legacy(request);
+    });
+    const source = new McpSource(
+      "era",
+      { type: "remote", url: new URL(served.url), allowInsecure: true },
+      new NoopEventSink(),
+    );
+    try {
+      await expect(source.start()).rejects.toBeDefined();
+      expect(seen).not.toContain("initialize");
+    } finally {
+      await source.stop();
+      served.close();
+    }
+  });
 });
+
+/**
+ * A SEP-2663 server that tasks every opted-in `tools/call` and answers each
+ * `tasks/get` with `status`, recording the methods it was sent.
+ */
+function sep2663Server(status: "working" | "input_required"): { served: Served; seen: string[] } {
+  const modern = modernServer({ extensions: { [TASKS_EXTENSION_ID]: {} } });
+  const now = new Date().toISOString();
+  const seen: string[] = [];
+  const task = { taskId: "t-held", createdAt: now, lastUpdatedAt: now, ttlMs: 60_000, pollIntervalMs: 10 };
+  const served = serve(async (request) => {
+    const body = await bodyOf(request);
+    if (body?.method === "tools/call" || body?.method?.startsWith("tasks/")) {
+      seen.push(String(body.method));
+      if (body.method === "tools/call") return answer(body.id, { resultType: "task", status: "working", ...task });
+      if (body.method === "tasks/get") return answer(body.id, { resultType: "complete", status, ...task });
+      return answer(body.id, { resultType: "complete" });
+    }
+    return modern(request);
+  });
+  return { served, seen };
+}
 
 describe("the task wire", () => {
   it("drives a 2025-era task: task-augmented tools/call, tasks/get, tasks/result", async () => {
@@ -297,6 +342,36 @@ describe("the task wire", () => {
         { method: "tasks/get", version: "2026-07-28", name: "t-modern" },
         { method: "tasks/get", version: "2026-07-28", name: "t-modern" },
       ]);
+    } finally {
+      await source.stop();
+      served.close();
+    }
+  });
+
+  it("sends tasks/cancel when the caller abandons a SEP-2663 task", async () => {
+    const { served, seen } = sep2663Server("working");
+    const source = await connect(served.url);
+    try {
+      const abort = new AbortController();
+      const pending = source.execute("echo", { text: "deep" }, abort.signal);
+      await Bun.sleep(300);
+      abort.abort();
+      await pending;
+      expect(seen).toContain("tasks/cancel");
+    } finally {
+      await source.stop();
+      served.close();
+    }
+  });
+
+  it("cancels and reports a SEP-2663 task that asks for input", async () => {
+    const { served, seen } = sep2663Server("input_required");
+    const source = await connect(served.url);
+    try {
+      const result = await source.execute("echo", { text: "deep" });
+      expect(result.isError).toBe(true);
+      expect(JSON.stringify(result.content)).toContain("asked for input");
+      expect(seen).toEqual(["tools/call", "tasks/get", "tasks/cancel"]);
     } finally {
       await source.stop();
       served.close();

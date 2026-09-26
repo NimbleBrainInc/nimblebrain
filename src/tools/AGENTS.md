@@ -50,7 +50,7 @@ async def start_research(query: str, ctx: Context) -> dict:
 3. Polls the task — `taskCreated` → `taskStatus`* → terminal `result | error` — and emits `tool.progress` events on every `taskStatus` so the chat UI renders live.
 4. Run-scoped `AbortSignal` is threaded through `ToolRouter.execute(call, signal)` → `ToolSource.execute(..., signal)` → the task stream. An abort sends `tasks/cancel`.
 5. Inline tool calls (taskSupport omitted / forbidden) use the regular `client.callTool(...)` path and the same signal.
-6. Crash-retry semantics: **inline calls** restart the subprocess and retry on transport error. **Task-augmented calls do not retry** — task state lives server-side; retrying would create a confusing duplicate. Surfacing the error lets the agent decide whether to initiate a new run.
+6. Crash-retry semantics: **inline calls** restart the subprocess and retry on transport error. **Task-augmented calls do not retry** — task state lives server-side; retrying would create a confusing duplicate. Surfacing the error lets the agent decide whether to initiate a new run. On a `2026-07-28` connection to a server advertising the tasks extension every call takes the task path, so none of that server's calls is retried, and each keeps a task handle (a synthetic `nb-inline-*` one when the server answered outright) until the sweeper's grace window ends.
 
 The spec-compliant task flow does NOT use the 60 s MCP request timeout — `tools/call` returns in milliseconds with a task, and the task wire polls it.
 

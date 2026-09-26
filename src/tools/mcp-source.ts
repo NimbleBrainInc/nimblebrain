@@ -92,6 +92,11 @@ const TASK_SWEEPER_INTERVAL_MS = 60_000;
  */
 const TASK_CREATED_TIMEOUT_MS = 60_000;
 
+/** First retry delay after a failed `subscriptions/listen`; doubles per failure. */
+const LISTEN_RETRY_BASE_MS = 1_000;
+/** Ceiling on the listen retry delay. */
+const LISTEN_RETRY_MAX_MS = 60_000;
+
 /**
  * Per-connector context threaded into McpSource so its Client can answer
  * inbound `ai.nimblebrain/resources/*` requests. Owned by the caller
@@ -461,6 +466,10 @@ export class McpSource implements ToolSource {
    * would go quiet. `null` on a legacy connection, which is pushed them.
    */
   private subscription: McpSubscription | null = null;
+  /** The tail of the serialized `listen()` calls (see `listen`). */
+  private listenQueue: Promise<void> = Promise.resolve();
+  /** Consecutive failed listens on the current client, for the retry backoff. */
+  private listenFailures = 0;
 
   /**
    * `eventSink` is REQUIRED, not optional. Emitted events include
@@ -528,7 +537,7 @@ export class McpSource implements ToolSource {
     const CONNECT_TIMEOUT = this.mode.type === "remote" ? 15_000 : 30_000;
 
     try {
-      await this.connectWithTimeout(CONNECT_TIMEOUT);
+      await this.connectOrFallBackToLegacy(CONNECT_TIMEOUT);
     } catch (err) {
       // One-shot OAuth retry: if we have an authProvider and the SDK threw
       // UnauthorizedError, drive the provider's pending flow, finish auth on the
@@ -538,15 +547,8 @@ export class McpSource implements ToolSource {
         await this.retryConnectWithOAuth(CONNECT_TIMEOUT);
         return;
       }
-      if (!isEraProbeServerFailure(err)) {
-        await this.cleanupOnStartFailure();
-        throw err;
-      }
-      // One-shot legacy retry: the `server/discover` probe met an HTTP 5xx.
-      // The SDK reads that as a server failure rather than era evidence, but a
-      // 2025-era server that answers any method it does not know with a 500
-      // connected before this runtime probed, and must still connect.
-      await this.retryConnectOnLegacyEra(CONNECT_TIMEOUT, err);
+      await this.cleanupOnStartFailure();
+      throw err;
     }
 
     this.dead = false;
@@ -556,9 +558,6 @@ export class McpSource implements ToolSource {
     // and a fresh idle-close right after an out-of-band heal is never wrongly gated.
     this.lastReconnectFailedAt = null;
     this.startedAt = Date.now();
-    // Re-arm resource subscriptions on the new connection. Fire-and-forget:
-    // a hint that fails to re-establish costs latency, never correctness.
-    this.resubscribeResources();
 
     // Now that start has succeeded, wire transport close-detection.
     // Closes from this point on indicate a real mid-session disconnect
@@ -568,6 +567,10 @@ export class McpSource implements ToolSource {
       this.transport.onclose = () => this.emitSourceCrashed("Remote transport closed");
     }
     this.onConnected();
+    // Re-arm resource subscriptions on the new connection, once its era is
+    // known. Fire-and-forget: a hint that fails to re-establish costs latency,
+    // never correctness.
+    this.resubscribeResources();
 
     // Capture the server's initialize `instructions` field (may be undefined).
     // The MCP SDK stores it internally; we expose it via getInstructions() so
@@ -705,7 +708,7 @@ export class McpSource implements ToolSource {
       // retry connect also fails, the catch below re-suppresses.
       this.stopping = false;
 
-      await this.connectWithTimeout(timeoutMs);
+      await this.connectOrFallBackToLegacy(timeoutMs);
       this.onConnected();
       this.startedAt = Date.now();
       // This is a SECOND success seam (the headless OAuth auto-resolve retry).
@@ -728,28 +731,37 @@ export class McpSource implements ToolSource {
   }
 
   /**
-   * The legacy half of `start()`'s one-shot retry: rebuild the transport and
-   * client, and connect with a `legacy` prior so the SDK skips the probe and
-   * runs the 2025 `initialize` handshake directly. Throws, after cleaning up,
-   * if that fails too.
+   * Connect, and if the `server/discover` probe met an HTTP 5xx, connect once
+   * more on the 2025 era. The SDK reads a 5xx as a server failure rather than
+   * era evidence, but a 2025-era server that answers any method it does not
+   * know with a 500 connected before this runtime probed, and must still
+   * connect. Both connect seams (`start()` and the OAuth retry) go through
+   * here, so the fallback holds on either.
+   *
+   * The retry rebuilds the transport and client and passes a `legacy` prior,
+   * so the SDK skips the probe and runs the 2025 `initialize` handshake. A
+   * failure is thrown with the rebuilt transport still live, so the caller's
+   * own handling applies to it: `start()` can still take an `UnauthorizedError`
+   * from the handshake into the OAuth retry.
    */
-  private async retryConnectOnLegacyEra(timeoutMs: number, probeErr: unknown): Promise<void> {
-    log.warn(
-      `[mcp] ${this.name}: server/discover probe failed (${
-        probeErr instanceof Error ? probeErr.message : String(probeErr)
-      }); connecting on the 2025 era`,
-    );
+  private async connectOrFallBackToLegacy(timeoutMs: number): Promise<void> {
+    try {
+      await this.connectWithTimeout(timeoutMs);
+      return;
+    } catch (err) {
+      if (!isEraProbeServerFailure(err)) throw err;
+      log.warn(
+        `[mcp] ${this.name}: server/discover probe failed (${
+          err instanceof Error ? err.message : String(err)
+        }); connecting on the 2025 era`,
+      );
+    }
     if (this.transport) this.transport.onclose = undefined;
     await this.cleanupOnStartFailure();
     this.stopping = false;
-    try {
-      await this.initTransport();
-      this.client = this.prepareClient();
-      await this.connectWithTimeout(timeoutMs, { kind: "legacy" });
-    } catch (err) {
-      await this.cleanupOnStartFailure();
-      throw err;
-    }
+    await this.initTransport();
+    this.client = this.prepareClient();
+    await this.connectWithTimeout(timeoutMs, { kind: "legacy" });
   }
 
   /**
@@ -829,13 +841,24 @@ export class McpSource implements ToolSource {
   /**
    * (Re)open the `subscriptions/listen` stream with the filter this source
    * needs now: the list-changed kinds the server advertises and every resource
-   * URI it has been asked to watch. A narrower stream replaced by a wider one
-   * is closed after the new one is acknowledged, so no window goes unwatched.
-   * An unexpected close re-listens while the source is live; a failure to
-   * listen costs change notifications and nothing else, so it is logged, not
-   * thrown.
+   * URI it has been asked to watch.
+   *
+   * One owner for the stream. Calls run one at a time, each reading the filter
+   * when its turn comes, so the stream acknowledged last is the widest asked
+   * for. A replaced stream is closed after its successor is acknowledged, so no
+   * window goes unwatched. Any close this source did not ask for (the server
+   * ending it, or the connection dropping it) re-listens, and a failed listen
+   * retries with backoff, both for as long as this client is the source's
+   * current one. A failure costs change notifications and nothing else, so it
+   * is logged, not thrown.
    */
-  private async listen(): Promise<void> {
+  private listen(): Promise<void> {
+    const turn = this.listenQueue.then(() => this.openListenStream());
+    this.listenQueue = turn.catch(() => {});
+    return turn;
+  }
+
+  private async openListenStream(): Promise<void> {
     const client = this.client;
     if (!client || this.protocolEra !== "modern") return;
     const caps = client.getServerCapabilities();
@@ -847,23 +870,40 @@ export class McpSource implements ToolSource {
         : {}),
     };
     if (Object.keys(filter).length === 0) return;
+    let next: McpSubscription;
     try {
-      const next = await client.listen(filter);
-      const previous = this.subscription;
-      this.subscription = next;
-      if (previous) void previous.close();
-      void next.closed.then((why) => {
-        if (why === "remote" && this.subscription === next && this.client === client) {
-          this.subscription = null;
-          void this.listen();
-        }
-      });
+      next = await client.listen(filter);
     } catch (err) {
+      this.listenFailures++;
+      const delayMs = Math.min(
+        LISTEN_RETRY_BASE_MS * 2 ** (this.listenFailures - 1),
+        LISTEN_RETRY_MAX_MS,
+      );
       log.debug(
         "mcp",
-        `[${this.name}] subscriptions/listen failed — ${err instanceof Error ? err.message : String(err)}`,
+        `[${this.name}] subscriptions/listen failed, retrying in ${delayMs}ms — ${
+          err instanceof Error ? err.message : String(err)
+        }`,
       );
+      const timer = setTimeout(() => {
+        if (this.client === client) void this.listen();
+      }, delayMs);
+      timer.unref?.();
+      return;
     }
+    if (this.client !== client) {
+      void next.close().catch(() => {});
+      return;
+    }
+    this.listenFailures = 0;
+    const previous = this.subscription;
+    this.subscription = next;
+    if (previous) void previous.close().catch(() => {});
+    void next.closed.then((why) => {
+      if (why === "local" || this.subscription !== next || this.client !== client) return;
+      this.subscription = null;
+      void this.listen();
+    });
   }
 
   /** The protocol version this connection negotiated, or `undefined` before connect and after `stop()`. */
@@ -903,6 +943,7 @@ export class McpSource implements ToolSource {
     this.inProcessServer = null;
     this.taskClient = null;
     this.subscription = null;
+    this.listenFailures = 0;
     this.protocolEra = "legacy";
   }
 
@@ -1384,7 +1425,10 @@ export class McpSource implements ToolSource {
     this.taskHandles.clear();
 
     try {
-      if (this.subscription) await this.subscription.close();
+      // Not awaited: the cancel is a request to a server this source is leaving,
+      // which may never answer, and closing the transport below ends the stream
+      // either way.
+      if (this.subscription) void this.subscription.close().catch(() => {});
       if (this.client) await this.client.close();
       if (this.transport) await this.transport.close();
       // In-process: also close the linked Server so its handler tables and
@@ -1402,6 +1446,7 @@ export class McpSource implements ToolSource {
     this.inProcessServer = null;
     this.taskClient = null;
     this.subscription = null;
+    this.listenFailures = 0;
     this.protocolEra = "legacy";
     this.cachedTools = null;
     this.toolsFetchedAt = null;
