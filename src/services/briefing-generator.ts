@@ -38,7 +38,7 @@ You receive app facets: structured data from the business apps installed in the 
 
 Produce a JSON object with two fields:
 
-1. "lede" — A single sentence (max 120 chars) summarizing the most important business insight. Lead with what matters to the user, not platform stats.
+1. "lede" — A single sentence (max 120 chars) summarizing the most important business insight. Lead with what matters to the workspace, not platform stats.
 2. "sections" — An array of 0–6 briefing sections, each with:
    - "id": short kebab-case identifier (e.g., "pipeline", "blocked-tasks", "overdue-followups")
    - "text": 1–2 sentences in business language. Use names, numbers, and specifics from the facet data.
