@@ -12,6 +12,7 @@ import { ToolRegistry } from "../../src/tools/registry.ts";
 import { deriveServerName } from "../../src/connectors/runtime/paths.ts";
 import { startConnectorSource } from "../../src/connectors/runtime/startup.ts";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
+import { installTestCredentialStore, resetTestCredentialStore } from "../helpers/credential-store.ts";
 import type { ConnectorRef } from "../../src/connectors/runtime/types.ts";
 
 const testDir = join(tmpdir(), `nimblebrain-remote-lifecycle-${Date.now()}`);
@@ -113,11 +114,14 @@ describe("startConnectorSource — remote url entries", () => {
 
 	beforeEach(() => {
 		setupTestDir();
+		// A remote source reads OAuth tokens through the credential store the runtime installs.
+		installTestCredentialStore(testDir);
 		mockServer = startMockRemoteServer(2);
 	});
 
 	afterEach(() => {
 		mockServer?.close();
+		resetTestCredentialStore();
 	});
 
 	it("starts a remote connector from a url ConnectorRef", async () => {
