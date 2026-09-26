@@ -93,7 +93,7 @@ import {
   type ServerCapabilities,
 } from "@modelcontextprotocol/sdk/types.js";
 import { isToolEnabled, isToolVisibleToRole, type ResolvedFeatures } from "../config/features.ts";
-import { isInternalTool, type ToolResult } from "../engine/types.ts";
+import { isAppCallable, isModelVisible, type ToolResult } from "../engine/types.ts";
 import type { UserIdentity } from "../identity/provider.ts";
 import { log } from "../observability/log.ts";
 import {
@@ -705,11 +705,11 @@ function createServer(
     const orgRole = sessionCtx.identity?.orgRole;
     return {
       tools: all
-        // `ai.nimblebrain/internal` tools are UI-driven affordances, not agent
-        // capabilities — hidden from every LLM tool listing, this surface
-        // included (mirrors `surfaceTools` on the chat path). Still callable by
-        // name via `tools/call`, so the web shell's REST calls are unaffected.
-        .filter((t) => !isInternalTool(t))
+        // A tool without "model" in its `ui.visibility` is left out of an
+        // agent's tool list (MCP Apps), this surface included (mirrors
+        // `surfaceTools` on the chat path). Still callable by name via
+        // `tools/call`, which is how an app's view reaches it.
+        .filter(isModelVisible)
         // Feature gating + role visibility apply to the BARE tool name.
         .filter((t) => isToolEnabled(bareToolName(t.name), features))
         .filter((t) => isToolVisibleToRole(bareToolName(t.name), orgRole))
@@ -749,6 +749,12 @@ function createServer(
         ErrorCode.MethodNotFound,
         "tools/call not available on this session (runtime not wired)",
       );
+    }
+
+    // ── Stage 1: a call that names a source is an app's (MCP Apps visibility)
+    const appSource = scopedSourceName(request.params._meta);
+    if (appSource !== undefined) {
+      await assertAppMayCall(name, appSource, runtime, wsId, identityId);
     }
 
     // ── Stage 2: parse the namespaced tool name + route via orchestrator
@@ -1311,14 +1317,52 @@ function registerTaskHandlers(server: Server, taskStore: McpTaskStore, wsId: str
 
 /**
  * The `_meta` key naming the one source a request is for. A `resources/read`,
- * `resources/list` or `resources/templates/list` resolves in that source, and a
+ * `resources/list` or `resources/templates/list` resolves in that source, a
  * `tasks/get`, `tasks/result` or `tasks/cancel` is answered only for a task it
- * ran. The iframe bridge sets it to the app's own server
+ * ran, and a `tools/call` is an app's call, held to the MCP Apps app scope
+ * (`assertAppMayCall`). The iframe bridge sets it to the app's own server
  * (`web/src/bridge/bridge.ts`, pinned equal by
  * `test/unit/tools/server-notifications.test.ts`); an MCP client that omits it
  * gets the workspace-wide read or listing, and any task its session holds.
  */
 export const RESOURCE_SOURCE_META_KEY = "ai.nimblebrain/source";
+
+/**
+ * Hold an app's `tools/call` to the scope the MCP Apps spec gives a view: a tool
+ * of its own server, and only one whose `ui.visibility` includes `"app"`.
+ *
+ * The bridge names the calling view's server under
+ * {@link RESOURCE_SOURCE_META_KEY}; that name is the only way this door can
+ * tell a view's call from an agent's, because every iframe and the agent share
+ * one `/mcp` session. A client that names a source only narrows what it can
+ * reach, so accepting the key from any client widens nothing. A name that
+ * matches no listed tool is left to routing, which answers it as it would any
+ * other call.
+ */
+async function assertAppMayCall(
+  name: string,
+  appSource: string,
+  runtime: Runtime,
+  wsId: string,
+  identityId: string,
+): Promise<void> {
+  if (!name.startsWith(`${appSource}__`)) {
+    throw new McpError(
+      ErrorCode.InvalidParams,
+      `Tool calls from the "${appSource}" app are scoped to that server; "${name}" names another.`,
+      { reason: "outside_app_scope", source: appSource, toolName: name },
+    );
+  }
+  const tools = await runtime.listToolsForWorkspace(wsId, identityId);
+  const tool = tools.find((t) => t.name === name);
+  if (tool && !isAppCallable(tool)) {
+    throw new McpError(
+      ErrorCode.InvalidParams,
+      `Tool "${name}" is not callable from an app: its visibility does not include "app".`,
+      { reason: "not_app_callable", toolName: name },
+    );
+  }
+}
 
 /** The source a resource or task request is scoped to, or undefined for none. */
 function scopedSourceName(meta: Record<string, unknown> | undefined): string | undefined {
