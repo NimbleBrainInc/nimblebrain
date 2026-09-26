@@ -107,12 +107,13 @@ function someFacets(): BriefingContext {
 
 describe("briefing-generator", () => {
 	describe("no facets", () => {
-		it("returns quiet state without calling the model", async () => {
+		it("returns the empty state without calling the model", async () => {
 			const { model, calls } = createTrackingModelV4("should not be called");
 			const gen = makeGen(model);
 			const result = await gen.generate(noFacets());
 
-			expect(result.state).toBe("quiet");
+			expect(result.state).toBe("empty");
+			expect(result.lede).toBe("");
 			expect(result.sections).toEqual([]);
 			expect(result.cached).toBe(false);
 			expect(calls).toHaveLength(0);

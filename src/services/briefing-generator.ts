@@ -244,11 +244,13 @@ export class BriefingGenerator {
   async generate(facetContext: BriefingContext): Promise<BriefingOutput> {
     const now = new Date().toISOString();
 
+    // No facets means there is nothing to brief on: the host shows no
+    // briefing at all, and the model is not called.
     if (facetContext.facets.length === 0) {
       return {
-        lede: "No app in this workspace contributes to the briefing yet.",
+        lede: "",
         sections: [],
-        state: "quiet",
+        state: "empty",
         generated_at: now,
         cached: false,
       };

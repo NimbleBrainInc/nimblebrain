@@ -74,6 +74,11 @@ describe("renderBriefingText", () => {
 		expect(out).not.toContain("## Coming up");
 	});
 
+	test("says there are no facets for an empty briefing", () => {
+		const out = renderBriefingText(makeBriefing({ state: "empty", lede: "", sections: [] }));
+		expect(out).toBe("No app in this workspace provides briefing facets.");
+	});
+
 	test("renders a quiet briefing as the lede with no headings", () => {
 		const out = renderBriefingText(makeBriefing({ sections: [], lede: "All clear." }));
 		expect(out).toBe("All clear.");
