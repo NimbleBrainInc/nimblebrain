@@ -3966,7 +3966,7 @@ export class Runtime {
    *
    * A workspace admin is admitted to everything without reading the catalog, so
    * the common admin path costs one workspace read. Anyone else pays one catalog
-   * read, the same per-request read `hooks` and `lifecycle` make. No principal
+   * read per listing and per connector tool call. No principal
    * means no admin, so declared tools are refused, as `canWriteWorkspaceScoped`
    * refuses.
    *
@@ -4031,9 +4031,14 @@ export class Runtime {
    *  by the same slug rule {@link trustedCatalogEntryFor} uses. */
   private async adminToolsByServer(): Promise<Map<string, readonly string[]>> {
     const entries = await this.getConnectorCatalog().catalogEntries();
+    const seen = new Set<string>();
     const out = new Map<string, readonly string[]>();
     for (const e of entries) {
-      if (e.adminTools) out.set(slugifyServerName(e.id), e.adminTools);
+      // First entry per slug wins, declaring or not, as in `trustedCatalogEntryFor`.
+      const slug = slugifyServerName(e.id);
+      if (seen.has(slug)) continue;
+      seen.add(slug);
+      if (e.adminTools) out.set(slug, e.adminTools);
     }
     return out;
   }

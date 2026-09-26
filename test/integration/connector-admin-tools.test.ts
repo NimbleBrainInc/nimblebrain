@@ -264,6 +264,24 @@ describe("the chat engine door (IdentityToolRouter)", () => {
     expect(await searchIn(ADMIN_WS)).toContain(CONFIGURE);
   });
 
+  it("does not offer a member's focused-app chat the declared tool, and offers an admin's", async () => {
+    // A focused app's tools are offered to the model directly, so the run's
+    // own tool set (not only the searchable one) is what this observes.
+    const offeredIn = async (wsId: string): Promise<string[]> => {
+      offered.length = 0;
+      await runtime.chat({
+        message: "hello",
+        workspaceId: wsId,
+        appContext: { appName: "Acme CRM", serverName: SERVER },
+      });
+      return offered[0] ?? [];
+    };
+    const memberTools = await offeredIn(MEMBER_WS);
+    expect(memberTools).toContain(SEARCH);
+    expect(memberTools).not.toContain(CONFIGURE);
+    expect(await offeredIn(ADMIN_WS)).toContain(CONFIGURE);
+  });
+
   it("lets an admin's chat promote and call the declared tool, and never a member's", async () => {
     const promoteAndCall = async (wsId: string) => {
       responses.push(
