@@ -141,14 +141,7 @@ export default defineConfig({
             items: [
               { label: 'NimbleBrain and MCP', slug: 'mcp/overview' },
               { label: 'Protocol Support', slug: 'mcp/protocol-support' },
-              {
-                label: 'Extensions',
-                items: [
-                  { label: 'Host Resources', slug: 'mcp/host-resources' },
-                  { label: 'Non-advancing Results', slug: 'mcp/non-advancing' },
-                  { label: 'Unattended Calls', slug: 'mcp/unattended' },
-                ],
-              },
+              { label: 'Host Resources', slug: 'mcp/host-resources' },
               { label: 'Reserved Keys', slug: 'mcp/reserved-keys' },
             ],
           },

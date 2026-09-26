@@ -26,7 +26,7 @@ The specification describes a conversation between one client and one server. Ni
 For those needs, the host defines an extension. It does this only when all three of these hold:
 
 1. **The specification has no mechanism for it.** When the specification (or the MCP Apps extension) covers a need, the host implements the specification's version and does not add its own.
-2. **Something on the other side of the wire uses it.** An extension is a contract between two parties. A signal the host sends only to itself is not an extension, and is not listed as one. Such keys are [reserved](/mcp/reserved-keys/) instead.
+2. **Something on the other side of the wire reads it.** An extension is a contract between two parties, so it ships with a named consumer. A signal the host sends only to itself is not an extension, and is not listed as one. Such keys are [reserved](/mcp/reserved-keys/) instead.
 3. **Ignoring it is safe.** Every extension has a defined fallback, which is simply the behavior without it.
 
 ## Design rules
@@ -39,7 +39,9 @@ The rules below apply to every extension, so a developer who learns one can pred
 
 **Specification shapes, renamed.** Where an extension does something the specification already has a shape for, it reuses that shape exactly. For example, [`ai.nimblebrain/resources/read`](/mcp/host-resources/) takes a standard `ReadResourceRequest` and returns a standard `ReadResourceResult`, and the error codes are the specification's. If the specification adopts the capability, moving to it means dropping the prefix from the method name, with no schema migration.
 
-**Who may send a key decides whether the host trusts it.** A `_meta` key a server sets is a claim made by that server. The host accepts it when believing the claim cannot widen what the server is allowed to do. A marker that makes the host *more* cautious passes that test, because a server that sets it only restricts itself. A key that would make the host *less* cautious, or that asserts something only the host can know, is host-owned. The host removes it from anything a server sends. Those keys are listed under [reserved keys](/mcp/reserved-keys/), so a server author knows that setting one has no effect.
+**A key the host acts on is host-owned.** A `_meta` key a server sets is a claim made by that server. When the host's own behavior depends on a key, such as its loop guard or its skill delivery, the host sets that key itself and removes any copy a server sends. Those keys are listed under [reserved keys](/mcp/reserved-keys/), so a server author knows that setting one has no effect. Every other `_meta` key a server sets passes through untouched.
+
+**The host tells a server nothing it would not need.** A request carries what the specification defines and what a negotiated extension adds. It never says how a call was triggered or whether anyone is watching. A server that behaves differently when no one is looking is exactly the server that information would help.
 
 ## Extensions
 
@@ -50,8 +52,6 @@ Each entry names the parties the extension connects, its identifier, and why it 
 | Extension | Direction | Why it exists |
 |---|---|---|
 | [`ai.nimblebrain/host-resources`](/mcp/host-resources/) | Host → server (capability), then server → host (requests) | MCP resources flow from server to client only. A server that needs a file the user gave the workspace would otherwise have it pasted into a tool argument by the model: slow, expensive in tokens, and capped by the context window. With this extension, the server reads the file from the host by URI. |
-| [`ai.nimblebrain/non-advancing`](/mcp/non-advancing/) | Server → host, on a tool result | A tool can succeed and still get the agent nowhere: a search that matched nothing, or a lookup against unchanged state. The host cannot tell that from the result's content. This marker says so, and the host uses it to stop the agent from calling that tool over and over in a loop. |
-| [`ai.nimblebrain/unattended`](/mcp/unattended/) | Host → server, on a `tools/call` request | Some calls happen with no conversation and no person behind them, fired by configuration the workspace set up earlier. A server may want to act differently in that case, for example by skipping a confirmation step or tagging what it writes. This key tells it which kind of call it received. |
 
 ### Between an operator's catalog and the host
 
