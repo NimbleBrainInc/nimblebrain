@@ -186,7 +186,7 @@ No connectors are installed by default. Platform apps (home, conversations, file
 NimbleBrain splits configuration across two files:
 
 - **`nimblebrain.json`** — instance-level settings (models, HTTP, logging, limits, feature flags). One file per deployment.
-- **`workspace.json`** — per-workspace settings (connectors, skill directories, optional model + identity overrides). One file per workspace under `<workDir>/workspaces/<ws-id>/`.
+- **`workspace.json`** — per-workspace settings (connectors, skill directories, optional model overrides). One file per workspace under `<workDir>/workspaces/<ws-id>/`.
 
 This split is the workspace isolation boundary: two workspaces in the same deployment can install different connectors without touching the instance config. See [Workspace Isolation](#workspace-isolation) below.
 
@@ -247,12 +247,11 @@ Each workspace has its own config at `<workDir>/workspaces/<ws-id>/workspace.jso
     { "url": "https://mcp.example.com/mcp", "serverName": "example" }
   ],
   "skillDirs": ["./skills"],
-  "models": { "default": "anthropic:claude-opus-4-6" },
-  "identity": { "name": "Acme Copilot" }
+  "models": { "default": "anthropic:claude-opus-4-6" }
 }
 ```
 
-`connectors`, `skillDirs`, and optional `models` / `identity` overrides live here, not in `nimblebrain.json`. `skillDirs`, `home` and `preferences` placed at the top level of `nimblebrain.json` are stripped on load — the runtime treats them as configuration errors rather than falling back to a global scope. A workspace-shaped `connectors` array there is rejected outright, because in that file the name is the provider and gateway block.
+`connectors`, `skillDirs`, and optional `models` overrides live here, not in `nimblebrain.json`. `skillDirs`, `home` and `preferences` placed at the top level of `nimblebrain.json` are stripped on load — the runtime treats them as configuration errors rather than falling back to a global scope. A workspace-shaped `connectors` array there is rejected outright, because in that file the name is the provider and gateway block.
 
 ### Workspace Isolation
 
@@ -495,7 +494,6 @@ When total tools ≤30, all are surfaced directly. Above 30 with no skill matche
 | `nb__list_apps` | List installed apps with status and tools |
 | `nb__get_config` | Get runtime configuration (providers, model, limits) |
 | `nb__set_model_config` | Update model selection and runtime limits (admin only) |
-| `nb__manage_identity` | Write or reset workspace agent identity override (admin only) |
 | `nb__version` | Platform version info |
 | `nb__workspace_info` | Workspace metadata, telemetry status |
 | `nb__briefing` | Generate personalized activity briefing (workspace overview) |
@@ -597,7 +595,7 @@ Placements with a `route` field get React Router routes in `App.tsx`. Routes fro
 
 **Files:**
 - `nimblebrain.json` — instance config. Validated at startup against `src/config/nimblebrain-config.schema.json` (JSON Schema draft-07, AJV). Unknown keys warn; structural errors throw. Workspace-owned fields (`skillDirs`, `preferences`, `home`) are stripped on load. `identity` and `contextFile` are deprecated with a warning.
-- `<workDir>/workspaces/<wsId>/workspace.json` — per-workspace config. Owns `connectors`, `skillDirs`, and optional `models` / `identity` overrides.
+- `<workDir>/workspaces/<wsId>/workspace.json` — per-workspace config. Owns `connectors`, `skillDirs`, and optional `models` overrides.
 - `<workDir>/instance.json` — auth configuration (OIDC or WorkOS adapter). Absence signals dev mode.
 
 **Config resolution** for `nimblebrain.json` (when no `--config` flag):

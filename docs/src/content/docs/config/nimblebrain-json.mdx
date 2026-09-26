@@ -8,7 +8,7 @@ import { Tabs, TabItem, Aside } from '@astrojs/starlight/components';
 NimbleBrain splits configuration into two files:
 
 - **`nimblebrain.json`** — instance-level settings (models, HTTP, logging, limits, feature flags). One file per deployment. **This page.**
-- **`workspace.json`** — per-workspace settings (connectors, skill directories, optional model + identity overrides). See [`workspace.json`](/config/workspace-json).
+- **`workspace.json`** — per-workspace settings (connectors, skill directories, optional model overrides). See [`workspace.json`](/config/workspace-json).
 
 Top-level `skillDirs`, `home`, and `preferences` entries in `nimblebrain.json` are stripped at load — they belong in `workspace.json` now. See [workspace configuration](/config/workspace-json) for where they live. A workspace's `connectors` array belongs there too; in this file the name `connectors` is the [provider and gateway block](#connectors).
 

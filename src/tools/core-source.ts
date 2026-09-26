@@ -26,7 +26,6 @@ import {
 import type { Runtime } from "../runtime/runtime.ts";
 import { recordLlmCall } from "../usage/record.ts";
 import type { TokenUsage } from "../usage/types.ts";
-import { canWriteWorkspaceScoped } from "../workspace/authz.ts";
 import type { InProcessTool } from "./in-process-app.ts";
 
 const pkgPath = resolve(import.meta.dirname ?? __dirname, "../../package.json");
@@ -1004,86 +1003,6 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
           return {
             content: textContent(
               `Failed to set preferences: ${err instanceof Error ? err.message : String(err)}`,
-            ),
-            isError: true,
-          };
-        }
-      },
-    },
-    {
-      name: "manage_identity",
-      description:
-        "Write or reset the workspace agent personality override. Only workspace admins or org admins can modify.",
-      meta: { ui: { visibility: ["app"] } },
-      inputSchema: {
-        type: "object",
-        properties: {
-          body: {
-            type: "string",
-            description: "Markdown content to write as the workspace identity override.",
-          },
-          action: {
-            type: "string",
-            enum: ["reset"],
-            description: 'Set to "reset" to clear the workspace identity override.',
-          },
-        },
-      },
-      handler: async (input): Promise<ToolResult> => {
-        try {
-          const wsId = runtime.requireWorkspaceId();
-          const identity = runtime.getCurrentIdentity();
-
-          // Workspace-scoped write gate (STRICT): only a workspace admin member
-          // may modify identity; orgRole grants no bypass.
-          // Null identity (dev/unauthenticated mode) is intentionally allowed
-          // through here, matching the prior behavior where the gate was wrapped
-          // in `if (identity)`.
-          if (identity) {
-            const ws = await runtime.getWorkspaceStore().get(wsId);
-            const decision = canWriteWorkspaceScoped(identity, ws);
-            if (!decision.allowed) {
-              return {
-                content: textContent(decision.reason),
-                isError: true,
-              };
-            }
-          }
-
-          if (input.action === "reset") {
-            await runtime.getWorkspaceStore().update(wsId, { identity: undefined });
-            runtime.getEventSink().emit({
-              type: "config.changed",
-              data: { fields: ["identity"] },
-            });
-            return {
-              content: textContent("Workspace identity override cleared."),
-              structuredContent: { action: "reset", success: true },
-              isError: false,
-            };
-          }
-
-          if (typeof input.body === "string") {
-            await runtime.getWorkspaceStore().update(wsId, { identity: input.body });
-            runtime.getEventSink().emit({
-              type: "config.changed",
-              data: { fields: ["identity"] },
-            });
-            return {
-              content: textContent("Workspace identity override saved."),
-              structuredContent: { action: "write", success: true },
-              isError: false,
-            };
-          }
-
-          return {
-            content: textContent("Either 'body' (string) or 'action: \"reset\"' is required."),
-            isError: true,
-          };
-        } catch (err) {
-          return {
-            content: textContent(
-              `Failed to manage identity: ${err instanceof Error ? err.message : String(err)}`,
             ),
             isError: true,
           };
