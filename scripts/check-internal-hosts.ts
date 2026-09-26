@@ -9,18 +9,20 @@
  *
  * What this flags, in every git-tracked text file:
  *
- *   1. `internal-platform-host` — the hosted platform's domain, including
- *      any environment label between `platform.` and the company domain.
+ *   1. `company-subdomain` — a subdomain of the company domain that is
+ *      not in `PUBLIC_COMPANY_SUBDOMAINS`. Anything else on that domain is
+ *      internal: hosted tenants, companion services, environments.
  *   2. `authkit-subdomain` — a `<subdomain>.authkit.app` host whose
  *      subdomain is not in `FICTIONAL_AUTHKIT_SUBDOMAINS`.
  *   3. `workos-client-id` — the WorkOS client-id shape: `client_01` plus
  *      24 Crockford base-32 characters. Tests use a non-conforming id such
  *      as `client_test`, which the shape never matches.
  *
- * Allow-list: `FICTIONAL_AUTHKIT_SUBDOMAINS` is the only one, and it holds
- * exact subdomain labels (no patterns) that are provably placeholders: the
- * documented example (`myapp`) and the test issuer (`testapp`). Nothing else
- * is exempt: no per-line marker, no file exemption. A value that must be
+ * Allow-lists: `PUBLIC_COMPANY_SUBDOMAINS` holds the public sites, and
+ * `FICTIONAL_AUTHKIT_SUBDOMAINS` holds the AuthKit labels that are provably
+ * placeholders: the documented example (`myapp`) and the test issuer
+ * (`testapp`). Both hold exact labels, not patterns. Nothing else is exempt:
+ * no per-line marker, no file exemption. A value that must be
  * real at runtime comes from an argument or the environment, never from
  * source.
  *
@@ -37,18 +39,44 @@ const ROOT = join(import.meta.dirname ?? __dirname, "..");
 /** Exact `<label>.authkit.app` subdomains that are placeholders, not tenants. */
 export const FICTIONAL_AUTHKIT_SUBDOMAINS: ReadonlySet<string> = new Set(["myapp", "testapp"]);
 
-const PLATFORM_HOST = /platform\.(?:[a-z0-9-]+\.)?nimblebrain\.ai/gi;
+/** Exact subdomains of the company domain that are public sites. */
+export const PUBLIC_COMPANY_SUBDOMAINS: ReadonlySet<string> = new Set([
+  "docs",
+  "schemas",
+  "static",
+  "synapse",
+  "www",
+]);
+
+// The lookbehind anchors the capture at the host's first literal label, so a
+// template (`${tenant}.<sub>.<domain>`) still captures `<sub>`. A bare-domain
+// mail address has no subdomain and does not match.
+const COMPANY_HOST = /(?<![a-z0-9-])([a-z0-9-]+(?:\.[a-z0-9-]+)*)\.nimblebrain\.ai\b/gi;
 // The lookbehind keeps a template (`${domain}.authkit.app`) from matching
 // on a trailing fragment of the expression.
 const AUTHKIT_HOST = /(?<![a-z0-9-])([a-z0-9-]+)\.authkit\.app/gi;
 const WORKOS_CLIENT_ID = /client_01[0-9A-HJKMNP-TV-Z]{24}/gi;
 
 export interface Finding {
-  rule: "internal-platform-host" | "authkit-subdomain" | "workos-client-id";
+  rule: "company-subdomain" | "authkit-subdomain" | "workos-client-id";
   line: number;
   column: number;
   match: string;
 }
+
+/**
+ * Each rule's pattern, and the allow-list its first capture group is checked
+ * against (lower-cased). A rule with no allow-list flags every match.
+ */
+const RULES: ReadonlyArray<{
+  rule: Finding["rule"];
+  pattern: RegExp;
+  allowed?: ReadonlySet<string>;
+}> = [
+  { rule: "company-subdomain", pattern: COMPANY_HOST, allowed: PUBLIC_COMPANY_SUBDOMAINS },
+  { rule: "authkit-subdomain", pattern: AUTHKIT_HOST, allowed: FICTIONAL_AUTHKIT_SUBDOMAINS },
+  { rule: "workos-client-id", pattern: WORKOS_CLIENT_ID },
+];
 
 /** Every finding in `text`, in line order. Pure, for the self-test. */
 export function findInternalHosts(text: string): Finding[] {
@@ -56,21 +84,11 @@ export function findInternalHosts(text: string): Finding[] {
   const lines = text.split("\n");
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i] ?? "";
-    for (const m of line.matchAll(PLATFORM_HOST)) {
-      findings.push({
-        rule: "internal-platform-host",
-        line: i + 1,
-        column: m.index + 1,
-        match: m[0],
-      });
-    }
-    for (const m of line.matchAll(AUTHKIT_HOST)) {
-      const label = (m[1] ?? "").toLowerCase();
-      if (FICTIONAL_AUTHKIT_SUBDOMAINS.has(label)) continue;
-      findings.push({ rule: "authkit-subdomain", line: i + 1, column: m.index + 1, match: m[0] });
-    }
-    for (const m of line.matchAll(WORKOS_CLIENT_ID)) {
-      findings.push({ rule: "workos-client-id", line: i + 1, column: m.index + 1, match: m[0] });
+    for (const { rule, pattern, allowed } of RULES) {
+      for (const m of line.matchAll(pattern)) {
+        if (allowed?.has((m[1] ?? "").toLowerCase())) continue;
+        findings.push({ rule, line: i + 1, column: m.index + 1, match: m[0] });
+      }
     }
   }
   return findings;

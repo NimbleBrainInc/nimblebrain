@@ -17,25 +17,28 @@ function rules(text: string): string[] {
   return findInternalHosts(text).map((f) => f.rule);
 }
 
-describe("check-internal-hosts — internal-platform-host", () => {
-  test("flags a tenant platform host", () => {
-    expect(rules(`host = "acme.platform.${COMPANY_DOMAIN}"`)).toEqual(["internal-platform-host"]);
+describe("check-internal-hosts — company-subdomain", () => {
+  test("flags a non-public subdomain", () => {
+    expect(rules(`host = "acme.${COMPANY_DOMAIN}"`)).toEqual(["company-subdomain"]);
   });
 
-  test("flags a platform host with an environment label", () => {
-    expect(rules(`https://acme.platform.preview.${COMPANY_DOMAIN}/v1`)).toEqual([
-      "internal-platform-host",
-    ]);
+  test("flags a multi-label subdomain whose first label is public", () => {
+    expect(rules(`https://docs.acme.env.${COMPANY_DOMAIN}/v1`)).toEqual(["company-subdomain"]);
+  });
+
+  test("flags a template whose literal part is a non-public subdomain", () => {
+    expect(rules(`\`\${tenant}.acme.${COMPANY_DOMAIN}\``)).toEqual(["company-subdomain"]);
   });
 
   test("reports line and column", () => {
-    const [f] = findInternalHosts(`ok\n  x.platform.${COMPANY_DOMAIN}`);
-    expect(f).toMatchObject({ line: 2, column: 5 });
+    const [f] = findInternalHosts(`ok\n  x.${COMPANY_DOMAIN}`);
+    expect(f).toMatchObject({ line: 2, column: 3 });
   });
 
-  test("does not flag fictional or public hosts", () => {
+  test("does not flag public sites, the bare domain, or fictional hosts", () => {
+    expect(rules(`https://static.${COMPANY_DOMAIN}/icons/x.png DOCS.${COMPANY_DOMAIN}`)).toEqual([]);
+    expect(rules(`mail someone@${COMPANY_DOMAIN} or visit ${COMPANY_DOMAIN}`)).toEqual([]);
     expect(rules("acme.nb.example.com nb.example.com")).toEqual([]);
-    expect(rules(`https://static.${COMPANY_DOMAIN}/icons/x.png`)).toEqual([]);
   });
 });
 

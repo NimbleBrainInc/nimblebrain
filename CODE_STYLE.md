@@ -98,8 +98,8 @@ doc, or script. Use a fictional value, or take a real one at runtime.
 ```ts
 // BAD — a hosted tenant's real host (drawn here with a placeholder for the
 // company domain, so this file stays clean under the check).
-process.env.NB_PLATFORM_HOST = "acme.platform.<company-domain>";
-const PROBE_REDIRECT_URI = "https://<real-tenant>.platform.<company-domain>/v1/mcp-auth/callback";
+process.env.NB_PLATFORM_HOST = "acme.<company-domain>";
+const PROBE_REDIRECT_URI = "https://<real-tenant>.<company-domain>/v1/mcp-auth/callback";
 ```
 
 ```ts
@@ -116,16 +116,18 @@ deployment, so a reader knows at a glance the value is illustrative.
 **Detection.** `bun run check:internal-hosts` (wired into `verify:static`)
 scans every git-tracked text file for:
 
-- the hosted platform's domain (`platform.` plus the company domain, with an
-  optional environment label between them);
+- a subdomain of the company domain other than a public site (`docs`,
+  `schemas`, `static`, `synapse`, `www`);
 - `<subdomain>.authkit.app` where the subdomain is not allow-listed;
 - the WorkOS client-id shape: `client_01` followed by 24 Crockford base-32
   characters.
 
-**Override.** One allow-list, `FICTIONAL_AUTHKIT_SUBDOMAINS` in
-`scripts/check-internal-hosts.ts`: exact subdomain labels that are
-placeholders (`myapp` in the docs, `testapp` in the tests). Add a label only
-when it is a placeholder in every use. There is no per-line marker and no file
+**Override.** Two allow-lists of exact labels in
+`scripts/check-internal-hosts.ts`. `PUBLIC_COMPANY_SUBDOMAINS` holds the
+company's public sites; add one only when it serves the public.
+`FICTIONAL_AUTHKIT_SUBDOMAINS` holds AuthKit placeholders (`myapp` in the
+docs, `testapp` in the tests); add a label only when it is a placeholder in
+every use. There is no per-line marker and no file
 exemption. For a client id, use a value that breaks the shape (`client_test`).
 
 ---
