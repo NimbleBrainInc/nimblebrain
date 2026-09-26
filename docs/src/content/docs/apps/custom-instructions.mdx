@@ -74,9 +74,9 @@ That's it. Once installed in a workspace, anything saved via `set_custom_instruc
   The reference implementation in `synapse-apps/synapse-todo-board` shows the full pattern, including a minimal settings-panel HTML editor wired to the tool via the iframe postMessage bridge.
 </Aside>
 
-## Settings panel (optional but recommended)
+## Settings section (optional but recommended)
 
-If you want a UI surface where the user edits their instructions (versus only the agent setting them via tool call), declare a `"settings"` placement in your manifest — a settings section is a placement slot, not a separate object:
+If you want a UI surface where a workspace admin edits the instructions (versus only the agent setting them via tool call), declare a `"settings"` placement in your manifest — a settings section is a placement slot, not a separate object:
 
 ```json title="manifest.json"
 {
@@ -88,9 +88,7 @@ If you want a UI surface where the user edits their instructions (versus only th
       "placements": [
         {
           "slot": "settings",
-          "resourceUri": "ui://my-app/settings",
-          "label": "My App",
-          "icon": "list-checks"
+          "resourceUri": "ui://my-app/settings"
         }
       ]
     }
@@ -98,9 +96,11 @@ If you want a UI surface where the user edits their instructions (versus only th
 }
 ```
 
-Then publish the panel HTML at `ui://my-app/settings` and call your tools via the iframe bridge. NimbleBrain shows the panel under **Settings → This Workspace → Apps → My App**.
+Then publish the section's HTML at `ui://my-app/settings` and call your tools via the iframe bridge. NimbleBrain renders it on your connector's settings page, **Settings → Connectors → My App**, after the host's own sections.
 
-See the [Manifest reference](/apps/manifest/#settings-sections) for the `"settings"` placement shape and the [MCP App Bridge](/apps/bridge/) page for iframe → tool call wiring.
+The section is shown to every member who can open that page. The host passes `hostContext.connector.canManage`, which is `true` only for a workspace admin; use it to disable the editor for everyone else. The flag reflects controls; it is not the permission. The tool that writes the instructions stays callable by any member and by the agent, so the flag alone does not keep a member from changing them.
+
+See the [Manifest reference](/apps/manifest/#settings-sections) for the `"settings"` placement shape and the manage flag, and the [MCP App Bridge](/apps/bridge/) page for iframe → tool call wiring.
 
 ## Why this convention
 
@@ -113,4 +113,4 @@ See the [Manifest reference](/apps/manifest/#settings-sections) for the `"settin
 
 - [The workspace overlay](/guide/settings/) — managed by the host, not by your app. Written by workspace admins in the workspace settings UI; the agent drafts suggested text but does not write the overlay itself. Guidance that should reach every workspace in the organization is an org-tier skill instead.
 - [Manifest reference](/apps/manifest/) — full `_meta["ai.nimblebrain/host"]` schema, including the `"settings"` placement slot.
-- [Placements & Navigation](/apps/placements/) — sidebar and main slots for your app's views.
+- [Placements & Navigation](/apps/placements/) — the slots your app's views render in.

@@ -16,9 +16,12 @@ import type { Connection, ConnectionState } from "./connection.ts";
  *   "sidebar.<group>"          → named group with label (e.g., "sidebar.apps" → "Apps")
  *   "sidebar.bottom"           → pinned to bottom zone
  *   "main"                     → app route (page content, not a nav item)
+ *   "settings"                 → the component rendered on the connector's settings page.
+ *                                Claims no navigation. The host renders the first by
+ *                                priority; `route` and `label` are ignored.
  */
 export interface PlacementDeclaration {
-    /** Which slot this UI fills (e.g., "sidebar", "sidebar.apps", "sidebar.bottom", "main"). */
+    /** Which slot this UI fills (e.g., "sidebar", "sidebar.apps", "sidebar.bottom", "main", "settings"). */
     slot: string;
     /** ui:// resource URI served by this MCP server. */
     resourceUri: string;

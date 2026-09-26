@@ -97,6 +97,7 @@
 
 ### Changed
 
+- **A connector's `settings` placement renders on its settings page** (Settings → Connectors → the connector), after the host's sections, and receives `hostContext.connector.canManage`. Settings → Apps is removed ([docs](https://docs.nimblebrain.ai/apps/manifest/#settings-sections)).
 - **`GET /v1/health` returns only `{"status":"ok"}`.** It is unauthenticated and reachable through the web proxy, so it no longer lists connector names or the build identity. Probes are unaffected. Read the build from `GET /v1/bootstrap` or the **About** page in organization settings, and connector state from the `nb_connector_unhealthy` metric ([docs](https://docs.nimblebrain.ai/deploy/observability/#health-and-readiness-probes)).
 - **A connector's OAuth records go through the credential store.** Its tokens, PKCE verifier, DCR registration (which for a confidential client holds a `client_secret`) and captured OIDC identity were four plaintext JSON files outside the store, with their own atomic-write discipline; they are now four keys — `mcp-oauth.<serverName>.{tokens,verifier,client,identity}` — at the connection's scope, so mode, rotation, audit and a future encrypted backend are the store's. Connection state is derived by probing those keys, and disconnect / uninstall delete them. An existing file goes the first time a connector touches that record — imported by a read, superseded by a write — with no script, no downtime and no reconnect ([docs](https://docs.nimblebrain.ai/config/credentials/)).
 

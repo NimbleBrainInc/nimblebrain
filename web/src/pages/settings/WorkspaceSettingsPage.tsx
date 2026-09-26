@@ -1,8 +1,6 @@
 import { useParams } from "react-router-dom";
-import { useShellContext } from "../../context/ShellContext";
 import { useWorkspaceContext } from "../../context/WorkspaceContext";
 import { toSlug } from "../../lib/workspace-slug";
-import type { PlacementEntry } from "../../types";
 import { type SettingsNavItem, SettingsShell } from "./SettingsShell";
 
 // ── Workspace settings shell — `/w/:slug/settings/*` ─────────────────
@@ -17,32 +15,13 @@ import { type SettingsNavItem, SettingsShell } from "./SettingsShell";
 export function WorkspaceSettingsPage() {
   const { slug } = useParams<{ slug: string }>();
   const wsCtx = useWorkspaceContext();
-  const shell = useShellContext();
 
   const workspace = slug ? wsCtx.workspaces.find((w) => toSlug(w.id) === slug) : undefined;
   const base = `/w/${slug}/settings`;
 
-  // Per-connector settings panels (connectors' own settings UIs in the `settings`
-  // placement slot). The placement registry is already scoped to the focused
-  // workspace server-side, so this lists the right workspace's apps.
-  const appPanels: PlacementEntry[] = shell ? shell.forSlot("settings") : [];
-
   const items: SettingsNavItem[] = [
     { id: "ws-general", label: "General", to: `${base}/general`, minRole: "ws_member" },
     { id: "ws-members", label: "Members", to: `${base}/members`, minRole: "ws_member" },
-    {
-      id: "ws-apps",
-      label: "Apps",
-      to: `${base}/apps`,
-      end: true,
-      minRole: "ws_member",
-      children: appPanels.map((panel) => ({
-        id: panel.serverName,
-        label: panel.label ?? panel.serverName,
-        to: `${base}/apps/${panel.serverName}`,
-        icon: panel.icon,
-      })),
-    },
     { id: "ws-connectors", label: "Connectors", to: `${base}/connectors`, minRole: "ws_member" },
     { id: "ws-skills", label: "Skills", to: `${base}/skills`, minRole: "ws_member" },
     { id: "ws-mcp", label: "MCP", to: `${base}/mcp`, minRole: "ws_member" },

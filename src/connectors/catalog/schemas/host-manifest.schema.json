@@ -138,7 +138,7 @@
       "properties": {
         "slot": {
           "type": "string",
-          "description": "Shell slot to fill: \"sidebar\" (core nav), \"sidebar.<group>\" (named group, e.g. \"sidebar.apps\"), \"sidebar.bottom\" (pinned), \"settings\" (a settings section — declare settings as a placement, not a separate object), or \"main\" (page content). Unknown slots are dropped by the host, never fatal."
+          "description": "Shell slot to fill: \"sidebar\" (core nav), \"sidebar.<group>\" (the workspace's apps, e.g. \"sidebar.apps\"), \"sidebar.bottom\" (pinned), \"main\" (page content), or \"settings\": the component rendered on the connector's settings page. Claims no navigation. The host renders the first by priority; `route` and `label` are ignored. Unknown slots are dropped by the host, never fatal."
         },
         "resourceUri": {
           "type": "string",

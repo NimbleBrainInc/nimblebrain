@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { getInstalledConnector, type InstalledConnector } from "../../api/client";
+import { ConnectorSettingsSection } from "../../components/connectors/ConnectorSettingsSection";
 import { ConnectorStatusHero } from "../../components/connectors/ConnectorStatusHero";
 import { OAuthConnectionSection } from "../../components/connectors/OAuthConnectionSection";
 import { OperatorOAuthSection } from "../../components/connectors/OperatorOAuthSection";
@@ -26,6 +27,9 @@ import { useCanWriteActiveWorkspace } from "../../hooks/useScopedRole";
  *   - Tool permissions render inline as the page's primary content
  *     for any ready connector — that's what users come here for once
  *     setup is past.
+ *
+ *   - The connector's own settings component, when it declares one,
+ *     renders last: host sections first, then the connector's.
  *
  * Reachable from `/w/:slug/settings/connectors/:serverName`.
  */
@@ -154,6 +158,11 @@ export function ConnectorDetailPage() {
         <OperatorOAuthSection installed={installed} canManage={canManage} onChanged={refresh} />
         <WorkspaceSecretsSection installed={installed} canManage={canManage} />
         <ToolPermissionsTable serverName={installed.serverName} canManage={canManage} />
+        <ConnectorSettingsSection
+          serverName={installed.serverName}
+          name={cat?.name ?? installed.serverName}
+          canManage={canManage}
+        />
       </div>
 
       {canManage && (
