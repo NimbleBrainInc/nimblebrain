@@ -8,7 +8,7 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable } from "node:stream";
@@ -305,6 +305,39 @@ describe("the hidden prompt's keymap", () => {
     ["\u00e9", "append"],
   ])("%j is %s", (ch, action) => {
     expect(classifyPromptKey(ch)).toBe(action);
+  });
+});
+
+describe("a shell holding a different key than the deployment", () => {
+  // This store never reconciles, so the boot-time key check never ran on it. An
+  // operator whose shell carries the wrong key would seal the value where the
+  // server cannot open it.
+  test("set against ring [B] over files sealed under A exits non-zero and writes nothing", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "nb-cli-wrong-key-"));
+    const underA = createCredentialSealer([Buffer.alloc(32, 0x11)]).seal(
+      "instance",
+      "existing.key",
+      "v",
+    );
+    mkdirSync(join(dir, "credentials", "secrets"), { recursive: true });
+    writeFileSync(join(dir, "credentials", "secrets", "existing.key"), underA);
+    const h = harness(
+      new FileCredentialStore(dir, { sealer: createCredentialSealer([Buffer.alloc(32, 0x22)]) }),
+    );
+    let prompted = false;
+    try {
+      const code = await h.run(["set", "acme.key"], async () => {
+        prompted = true;
+        return "sk-secret";
+      });
+      expect(code).toBe(1);
+      expect(prompted).toBe(false);
+      expect(existsSync(join(dir, "credentials", "secrets", "acme.key"))).toBe(false);
+      expect(h.err.join("\n")).toContain("does not hold");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+      h.cleanup();
+    }
   });
 });
 

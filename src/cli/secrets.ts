@@ -272,6 +272,11 @@ async function setSecret(
   io: SecretsCommandIo,
 ): Promise<number> {
   if (!key) throw new UsageError("set requires a key");
+  // This store never reconciles, so it has not checked its key against what is
+  // on disk. A shell holding a different key than the server would seal the
+  // value where nothing else can open it. Before the prompt, so the operator
+  // is not asked for a secret that is about to be refused.
+  await store.assertKeyRecognized?.();
   const value = await io.readValue(key);
   if (value.length === 0) {
     // An empty value is almost always a pipeline that produced nothing, and it

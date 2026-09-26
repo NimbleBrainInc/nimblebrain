@@ -123,6 +123,14 @@ export interface CredentialStore {
    * to call.
    */
   reconcile?(): Promise<void>;
+  /**
+   * Throw if what is stored was written under a key this store does not hold,
+   * so a write now would be one the rest of the deployment cannot read back.
+   * Optional, like `reconcile`, which calls it: a backend with no key omits it.
+   * A writer that builds its own store and never reconciles calls it before
+   * `put`.
+   */
+  assertKeyRecognized?(): Promise<void>;
 }
 
 /**
@@ -214,6 +222,10 @@ interface ResealTally {
   plaintextSkipped: number;
   /** Scope roots that exist and could not be listed. Holds strict mode off. */
   unreadable: number;
+}
+
+function emptyTally(): ResealTally {
+  return { resealed: 0, current: 0, skipped: 0, plaintextSkipped: 0, unreadable: 0 };
 }
 
 /**
@@ -607,14 +619,12 @@ export class FileCredentialStore implements CredentialStore {
     // deployment is plaintext by design, not by omission.
     if (!sealer) return;
 
-    const tally: ResealTally = {
-      resealed: 0,
-      current: 0,
-      skipped: 0,
-      plaintextSkipped: 0,
-      unreadable: 0,
-    };
-    for (const scope of await this.#everyScope(tally)) {
+    const tally = emptyTally();
+    const scopes = await this.#everyScope(tally);
+    // Before any write: a sweep under the wrong key would re-seal every
+    // plaintext file under it too, and strand those alongside the rest.
+    await this.#assertRingRecognizes(sealer, scopes);
+    for (const scope of scopes) {
       await this.#resealScope(scope, sealer, tally);
     }
 
@@ -641,6 +651,75 @@ export class FileCredentialStore implements CredentialStore {
       unreadable: tally.unreadable,
       strictPlaintextRefusal: this.#strictPlaintextRefusal,
     });
+  }
+
+  /**
+   * Refuse to serve over sealed secrets this ring recognizes none of.
+   *
+   * Every such state is data loss in progress: the outgoing key dropped from
+   * the ring before the sweep re-wrapped what it sealed, a volume restored from
+   * another deployment, or simply the wrong key loaded. The canary cannot tell
+   * — it seals and opens under the same key — so without this the runtime boots
+   * clean, refuses every secret on use, and seals anything written meanwhile (an
+   * OAuth refresh, an admin setting a secret) under a key that is about to be
+   * replaced, stranding it once the right one is restored.
+   *
+   * A MIX does not throw. Some files under a ring key and some not is a stray,
+   * and one stray file must not crash-loop a tenant; the sweep skips and audits
+   * it. A store holding no sealed file, which is every deployment the first time
+   * sealing is switched on, has nothing to disagree with.
+   */
+  async assertKeyRecognized(): Promise<void> {
+    const sealer = this.#sealer;
+    if (!sealer) return;
+    // A throwaway tally: this path reports nothing, and the sweep counts for itself.
+    await this.#assertRingRecognizes(sealer, await this.#everyScope(emptyTally()));
+  }
+
+  async #assertRingRecognizes(
+    sealer: CredentialSealer,
+    scopes: readonly CredentialScope[],
+  ): Promise<void> {
+    const foreign = new Set<string>();
+    for (const scope of scopes) {
+      let names: string[];
+      try {
+        names = await readdir(this.#dir(scope));
+      } catch {
+        continue; // the sweep counts and reports a root it cannot list
+      }
+      for (const key of names) {
+        const kid = await this.#sealedKid(scope, key);
+        if (kid === undefined) continue;
+        if (sealer.kids.includes(kid)) return;
+        foreign.add(kid);
+      }
+    }
+    if (foreign.size === 0) return;
+    // Key ids are MACs over a constant and disclose nothing. Both lists are what
+    // tell "the outgoing key was dropped" from "this volume came from elsewhere".
+    throw new Error(
+      `[credential-store] every sealed secret on disk is under a key this ring does not hold ` +
+        `(on disk: ${[...foreign].sort().join(", ")}; ring: ${sealer.kids.join(", ")}). ` +
+        "Refusing to start rather than write secrets under a key the rest of them cannot join. " +
+        "Load the key that sealed them — at the back of the ring, if you are rotating.",
+    );
+  }
+
+  /**
+   * The key id a stored secret is sealed under, or undefined for anything that
+   * is not a key, not readable, plaintext, or malformed. A malformed value
+   * carries no key id, so it is evidence of nothing about the ring.
+   */
+  async #sealedKid(scope: CredentialScope, key: string): Promise<string | undefined> {
+    if (!KEY_RE.test(key)) return undefined;
+    let raw: string;
+    try {
+      raw = await readFile(join(this.#dir(scope), key), "utf-8");
+    } catch {
+      return undefined; // a directory, or unreadable: the sweep reports it
+    }
+    return isSealedValue(raw) ? parseSealedValue(raw)?.kid : undefined;
   }
 
   /** Every secret in one scope, counted into the running tally. */

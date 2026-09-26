@@ -75,6 +75,19 @@ through the same atomic write a `put` uses, keeping each file's modification
 time. One secret it cannot open, or one directory it cannot list, is logged and
 left as it is rather than failing boot.
 
+**A ring that recognizes none of the sealed secrets refuses to start.** Before
+the reconcile writes anything, if at least one sealed file carries a key id and
+not one carries an id the ring holds, the runtime throws, naming the ids on disk
+and the ring's. Every such state is data loss in progress: the outgoing key
+dropped before the reconcile re-wrapped what it sealed, a volume from another
+deployment, or the wrong key. The seal canary cannot tell, because it seals and
+opens under one key. Serving anyway would refuse every secret on use and seal
+anything written meanwhile under a key the rest cannot join. A mix, where some
+files are under a ring key and some are not, is a stray, and does not fail boot.
+A malformed file carries no key id and decides nothing. The `secrets`
+subcommand builds its own store and never reconciles, so it runs the same check
+before it writes.
+
 **After a reconcile that saw everything, plaintext is refused.** Sealing buys
 confidentiality; refusing plaintext once everything is sealed is what buys
 integrity, since otherwise anyone who can write the directory without holding
