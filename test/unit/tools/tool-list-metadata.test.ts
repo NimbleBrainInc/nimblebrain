@@ -10,7 +10,7 @@
  *
  * `_meta` and `annotations` are separate namespaces in the spec, and they stay
  * separate here: `_meta` is the free-form reverse-DNS bag where host
- * conventions like `ai.nimblebrain/internal` live, `annotations` is the spec's
+ * conventions and the MCP Apps `ui` block live, `annotations` is the spec's
  * own closed set of behavioural hints. Collapsing them is how a connector would
  * get to claim `readOnlyHint` by writing a `_meta` key, or hide itself from the
  * agent by setting a spec hint.
@@ -21,7 +21,7 @@
 
 import { afterEach, describe, expect, test } from "bun:test";
 import { textContent } from "../../../src/engine/content-helpers.ts";
-import { INTERNAL_TOOL_ANNOTATION, isInternalTool } from "../../../src/engine/types.ts";
+import { isModelVisible } from "../../../src/engine/types.ts";
 import type { InProcessTool } from "../../../src/tools/in-process-app.ts";
 import type { McpSource } from "../../../src/tools/mcp-source.ts";
 import { ToolRegistry } from "../../../src/tools/registry.ts";
@@ -112,15 +112,15 @@ describe("tools/list metadata round-trip", () => {
     expect(readOnly!.annotations?.destructiveHint).toBeUndefined();
   });
 
-  test("the internal marker is read from _meta, never from spec annotations", async () => {
+  test("visibility is read from _meta.ui, never from spec annotations", async () => {
     source = await makeInProcessSource("mixed", [
-      // Declares the host marker in `_meta` AND a spec hint. Both must be read
-      // from their own namespace: the tool is internal, and it is read-only.
+      // Declares `ui.visibility` in `_meta` AND a spec hint. Both must be read
+      // from their own namespace: the tool is app-only, and it is read-only.
       {
         name: "settings",
         description: "UI-driven settings write.",
         inputSchema: { type: "object", properties: {} },
-        meta: { [INTERNAL_TOOL_ANNOTATION]: true },
+        meta: { ui: { visibility: ["app"] } },
         annotations: { readOnlyHint: true },
         handler: async () => ({ content: textContent("{}"), isError: false }),
       },
@@ -132,8 +132,8 @@ describe("tools/list metadata round-trip", () => {
     const settings = tools.find((t) => t.name === "mixed__settings");
     const visible = tools.find((t) => t.name === "mixed__peek");
 
-    expect(isInternalTool(settings!)).toBe(true);
+    expect(isModelVisible(settings!)).toBe(false);
     expect(settings!.annotations?.readOnlyHint).toBe(true);
-    expect(isInternalTool(visible!)).toBe(false);
+    expect(isModelVisible(visible!)).toBe(true);
   });
 });

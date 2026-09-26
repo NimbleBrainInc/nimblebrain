@@ -738,9 +738,11 @@ function handleInitialize(
  *
  * Every app is scoped to its own server, whatever its name. A server the app
  * names in `_meta` or in a top-level `server` is ignored, and a qualified tool
- * name naming another server is refused. This is the only place the scope can
- * be enforced: the browser holds ONE `/mcp` session shared by every iframe and
- * the agent, so the server sees no caller to attribute a call to.
+ * name naming another server is refused. The browser holds ONE `/mcp` session
+ * shared by every iframe and the agent, so the server sees no caller to
+ * attribute a call to; the bridge names the app's server on the call
+ * (`callToolViaMcp`), and `/mcp` holds it to that server and to tools whose
+ * `ui.visibility` includes "app".
  */
 function handleToolsCall(
   params: ToolsCallParams,
@@ -806,8 +808,8 @@ function handleResourcesRead(
 }
 
 /**
- * The `_meta` key that scopes a read, a listing or a task request on `/mcp` to
- * one source. Must equal
+ * The `_meta` key that scopes a read, a listing, a task request or a tool call
+ * on `/mcp` to one source. Must equal
  * `RESOURCE_SOURCE_META_KEY` in `src/api/mcp-server.ts` (the runtime image ships
  * `src/` alone, so the two cannot share a module); pinned equal by
  * `test/unit/tools/server-notifications.test.ts`.
@@ -1017,7 +1019,7 @@ async function callToolViaMcp(
   id: string,
 ): Promise<UiToolResultResponse | UiToolResultError | Record<string, unknown>> {
   // The `/mcp` endpoint expects a tool name whose shape encodes its scope.
-  // Two transformations:
+  // Three transformations:
   //
   //   1. Qualified: iframes pass either `<tool>` (bare) or
   //      `<source>__<tool>` (already qualified). A bare name is qualified
@@ -1034,6 +1036,10 @@ async function callToolViaMcp(
   //
   //      The active-workspace check stays: with no workspace there is no MCP
   //      endpoint to call, and failing here is a clearer error.
+  //   3. Named: `server` goes on the wire under `RESOURCE_SOURCE_META_KEY`, as
+  //      it does for reads, so `/mcp` knows the call is this app's and holds it
+  //      to the MCP Apps app scope: a tool whose `ui.visibility` lacks "app" is
+  //      refused there, since only the runtime knows each tool's visibility.
   //      A personal connector's marker needs no special handling here, and that
   //      is a property of the code rather than an assumption. `server` is the
   //      name the iframe was mounted under, which comes from
@@ -1072,6 +1078,7 @@ async function callToolViaMcp(
             name: qualifiedName,
             arguments: params.arguments ?? {},
             task: params.task,
+            _meta: { [RESOURCE_SOURCE_META_KEY]: server },
           },
         },
         CreateTaskResultSchema,
@@ -1083,6 +1090,7 @@ async function callToolViaMcp(
       {
         name: qualifiedName,
         arguments: params.arguments ?? {},
+        _meta: { [RESOURCE_SOURCE_META_KEY]: server },
       },
       CallToolResultSchema,
     );

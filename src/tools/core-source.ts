@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 import { artifactResolutionsTotal } from "../api/metrics.ts";
 import { OVERRIDE_WRITABLE_KEYS } from "../config/overrides.ts";
 import { textContent } from "../engine/content-helpers.ts";
-import { INTERNAL_TOOL_ANNOTATION, type ThinkingEffort, type ToolResult } from "../engine/types.ts";
+import type { ThinkingEffort, ToolResult } from "../engine/types.ts";
 import {
   type ArtifactListItem,
   type ArtifactListOptions,
@@ -637,7 +637,7 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
     {
       name: "list_apps",
       description: "List installed apps/connectors with status, tool count, and trust scores.",
-      meta: { [INTERNAL_TOOL_ANNOTATION]: true },
+      meta: { ui: { visibility: ["app"] } },
       inputSchema: {
         type: "object",
         properties: {},
@@ -664,7 +664,7 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
       name: "get_config",
       description:
         "Get current runtime configuration: default model, configured providers, and limits.",
-      meta: { [INTERNAL_TOOL_ANNOTATION]: true },
+      meta: { ui: { visibility: ["app"] } },
       inputSchema: {
         type: "object",
         properties: {},
@@ -731,7 +731,7 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
       name: "version",
       description:
         "Get platform version info: agent version and all dependency versions from package.json.",
-      meta: { [INTERNAL_TOOL_ANNOTATION]: true },
+      meta: { ui: { visibility: ["app"] } },
       inputSchema: {
         type: "object",
         properties: {},
@@ -760,7 +760,7 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
       name: "set_model_config",
       description:
         "Update model selection and runtime limits. Writes atomically to nimblebrain.overrides.json (preserved across deploys). Does not allow changing API keys or secrets.",
-      meta: { [INTERNAL_TOOL_ANNOTATION]: true },
+      meta: { ui: { visibility: ["app"] } },
       inputSchema: {
         type: "object",
         properties: {
@@ -1014,7 +1014,7 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
       name: "manage_identity",
       description:
         "Write or reset the workspace agent personality override. Only workspace admins or org admins can modify.",
-      meta: { [INTERNAL_TOOL_ANNOTATION]: true },
+      meta: { ui: { visibility: ["app"] } },
       inputSchema: {
         type: "object",
         properties: {
@@ -1094,7 +1094,7 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
       name: "workspace_info",
       description:
         "Get workspace metadata: platform version, telemetry status, and install ID. Used by the web client on startup.",
-      meta: { [INTERNAL_TOOL_ANNOTATION]: true },
+      meta: { ui: { visibility: ["app"] } },
       inputSchema: {
         type: "object",
         properties: {},
@@ -1189,7 +1189,7 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
       name: "briefing",
       description:
         "Generate the workspace briefing from the facets its installed apps declare, using the fast model slot. Returns a summary of recent activity, upcoming items, and anything needing attention across the workspace, the same for every member. May take a few seconds.",
-      meta: { [INTERNAL_TOOL_ANNOTATION]: true },
+      meta: { ui: { visibility: ["app"] } },
       inputSchema: {
         type: "object",
         properties: {
