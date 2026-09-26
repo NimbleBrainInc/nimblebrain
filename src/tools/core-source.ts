@@ -657,7 +657,9 @@ function scheduleBriefingRefresh(
  * passes them to `defineInProcessApp` to build the in-process MCP server.
  */
 export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
-  // Briefing caches keyed by workspace ID, then by the caller's user ID.
+  // Briefing caches keyed by workspace ID, then by the caller's user ID. Each
+  // entry regenerates on its own TTL, so fast-model briefing calls scale with
+  // the members who open the overview, not with the number of workspaces.
   const briefingCaches = new Map<string, Map<string, BriefingCache>>();
 
   const toolDefs: InProcessTool[] = [
