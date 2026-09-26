@@ -68,30 +68,11 @@
 
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { CancelTaskRequestSchema, GetTaskPayloadRequestSchema, GetTaskRequestSchema } from "@modelcontextprotocol/core";
+import { Server, WebStandardStreamableHTTPServerTransport, isInitializeRequest, ProtocolError, RELATED_TASK_META_KEY, ProtocolErrorCode } from "@modelcontextprotocol/server";
+import type { CallToolRequest, CreateTaskResult, ListResourcesResult, ListResourceTemplatesResult, ReadResourceResult, Resource, ServerCapabilities } from "@modelcontextprotocol/server";
+/* @mcp-codemod-error Unknown SDK import path: @modelcontextprotocol/sdk/experimental/tasks/interfaces.js. Manual migration required. */
 import { isTerminal } from "@modelcontextprotocol/sdk/experimental/tasks/interfaces.js";
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
-import {
-  type CallToolRequest,
-  CallToolRequestSchema,
-  CancelTaskRequestSchema,
-  type CreateTaskResult,
-  ErrorCode,
-  GetTaskPayloadRequestSchema,
-  GetTaskRequestSchema,
-  isInitializeRequest,
-  ListResourcesRequestSchema,
-  type ListResourcesResult,
-  ListResourceTemplatesRequestSchema,
-  type ListResourceTemplatesResult,
-  ListToolsRequestSchema,
-  McpError,
-  RELATED_TASK_META_KEY,
-  ReadResourceRequestSchema,
-  type ReadResourceResult,
-  type Resource,
-  type ServerCapabilities,
-} from "@modelcontextprotocol/sdk/types.js";
 import { isToolEnabled, isToolVisibleToRole, type ResolvedFeatures } from "../config/features.ts";
 import { isInternalTool, type ToolResult } from "../engine/types.ts";
 import type { UserIdentity } from "../identity/provider.ts";
@@ -692,7 +673,7 @@ function createServer(
   const wsId = sessionCtx.workspaceId;
   if (taskStore) registerTaskHandlers(server, taskStore, wsId);
 
-  server.setRequestHandler(ListToolsRequestSchema, async () => {
+  server.setRequestHandler('tools/list', async () => {
     if (!runtime || !identityId) {
       // Unauthenticated / no-runtime path: empty list, not an error — the SDK
       // requires a response.
@@ -740,13 +721,13 @@ function createServer(
     };
   });
 
-  server.setRequestHandler(CallToolRequestSchema, async (request) => {
+  server.setRequestHandler('tools/call', async (request) => {
     const { name, arguments: args } = request.params;
     const taskParam = request.params.task; // { ttl?, pollInterval? } | undefined
 
     if (!runtime || !identityId) {
-      throw new McpError(
-        ErrorCode.MethodNotFound,
+      throw new ProtocolError(
+        ProtocolErrorCode.MethodNotFound,
         "tools/call not available on this session (runtime not wired)",
       );
     }
@@ -807,7 +788,7 @@ function createServer(
   // server's, cursor and `nextCursor` passed straight through. Without it, the
   // workspace-wide listing an MCP client gets returns everything in a single
   // response (no `cursor` plumbing across sources).
-  server.setRequestHandler(ListResourcesRequestSchema, async (request) => {
+  server.setRequestHandler('resources/list', async (request) => {
     const scoped = scopedSourceName(request.params?._meta);
     if (scoped !== undefined) {
       const empty: ListResourcesResult = { resources: [] };
@@ -835,7 +816,7 @@ function createServer(
   //
   // The same wall, the same one-source scoping and the same single-response
   // workspace-wide listing as `resources/list`.
-  server.setRequestHandler(ListResourceTemplatesRequestSchema, async (request) => {
+  server.setRequestHandler('resources/templates/list', async (request) => {
     const empty: ListResourceTemplatesResult = { resourceTemplates: [] };
     const scoped = scopedSourceName(request.params?._meta);
     if (scoped !== undefined) {
@@ -875,10 +856,10 @@ function createServer(
   // first (below), then the session's one workspace — never a sweep across
   // every workspace the identity belongs to. We deliberately do not distinguish "doesn't exist" from "exists
   // but out of reach": per MCP spec guidance, avoid leaking existence.
-  server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
+  server.setRequestHandler('resources/read', async (request) => {
     const uri = request.params.uri;
     if (!runtime || !identityId) {
-      throw new McpError(RESOURCE_NOT_FOUND_CODE, `Resource not found: ${uri}`, { uri });
+      throw new ProtocolError(RESOURCE_NOT_FOUND_CODE, `Resource not found: ${uri}`, { uri });
     }
 
     const scoped = scopedSourceName(request.params._meta);
@@ -907,7 +888,7 @@ function createServer(
     // The URI resolved in neither the caller's identity sources nor the
     // focused workspace. Per MCP spec, raise a JSON-RPC error — the SDK
     // transport converts McpError into a proper `error` envelope.
-    throw new McpError(RESOURCE_NOT_FOUND_CODE, `Resource not found: ${uri}`, { uri });
+    throw new ProtocolError(RESOURCE_NOT_FOUND_CODE, `Resource not found: ${uri}`, { uri });
   });
 
   return server;
@@ -947,7 +928,7 @@ export function mapRouteToolError(err: unknown): never {
     // Pass the error's own text through: for the retired `ws_<id>-` form it names
     // the bare tool to call instead, and a fixed string would leave an external
     // client with no way to recover.
-    throw new McpError(ErrorCode.InvalidParams, err.message, {
+    throw new ProtocolError(ProtocolErrorCode.InvalidParams, err.message, {
       reason: "invalid_tool_name",
       input: err.input,
       parse: err.reason,
@@ -959,14 +940,14 @@ export function mapRouteToolError(err: unknown): never {
     // isn't allowed for this identity. The MCP draft's tasks spec sets the
     // precedent of using `-32602` for owner-mismatch task lookups; we mirror
     // that here so a misrouted call doesn't get classified as a server bug.
-    throw new McpError(ErrorCode.InvalidParams, `Access denied to workspace "${err.wsId}"`, {
+    throw new ProtocolError(ProtocolErrorCode.InvalidParams, `Access denied to workspace "${err.wsId}"`, {
       reason: "workspace_access_denied",
       wsId: err.wsId,
     });
   }
   if (err instanceof UnknownToolSource) {
-    throw new McpError(
-      ErrorCode.MethodNotFound,
+    throw new ProtocolError(
+      ProtocolErrorCode.MethodNotFound,
       `No tool source "${err.sourceName}" in workspace "${err.wsId}"`,
       {
         reason: "unknown_tool_source",
@@ -977,15 +958,15 @@ export function mapRouteToolError(err: unknown): never {
     );
   }
   if (err instanceof UnknownIdentitySource) {
-    throw new McpError(
-      ErrorCode.InvalidParams,
+    throw new ProtocolError(
+      ProtocolErrorCode.InvalidParams,
       `No identity source "${err.sourceName}" for "${err.toolName}"`,
       { reason: "unknown_identity_source", toolName: err.toolName },
     );
   }
   if (err instanceof ConnectorGrantDenied) {
-    throw new McpError(
-      ErrorCode.InvalidParams,
+    throw new ProtocolError(
+      ProtocolErrorCode.InvalidParams,
       `Personal connector "${err.connector}" is not granted to this workspace`,
       { reason: "connector_grant_denied", connector: err.connector, wsId: err.workspaceId },
     );
@@ -1188,14 +1169,14 @@ function assertTaskNegotiation(
   isTaskRequest: boolean,
 ): void {
   if (taskSupport === "required" && !isTaskRequest) {
-    throw new McpError(
-      ErrorCode.MethodNotFound,
+    throw new ProtocolError(
+      ProtocolErrorCode.MethodNotFound,
       `Tool ${name} requires task augmentation (taskSupport: 'required')`,
     );
   }
   if (isTaskRequest && (!taskSupport || taskSupport === "forbidden")) {
-    throw new McpError(
-      ErrorCode.MethodNotFound,
+    throw new ProtocolError(
+      ProtocolErrorCode.MethodNotFound,
       `Tool ${name} does not support task augmentation (taskSupport: ${taskSupport ?? "none"})`,
     );
   }
@@ -1260,30 +1241,33 @@ async function startWorkspaceTask(
  * task's own terminal result).
  */
 function registerTaskHandlers(server: Server, taskStore: McpTaskStore, wsId: string): void {
-  server.setRequestHandler(GetTaskRequestSchema, async (request, extra) => {
+  /* @mcp-codemod-error Task handler registration: setRequestHandler(GetTaskRequestSchema, ...). The experimental tasks feature was removed in v2 (SEP-2663); the tasks/* method strings are not part of the typed RequestMethod surface. Remove this registration. See docs/migration/upgrade-to-v2.md#experimental-tasks-interception-removed. */
+  server.setRequestHandler(GetTaskRequestSchema, async (request, ctx) => {
     const { taskId, _meta } = request.params;
-    const task = await taskStore.getTask(taskId, extra.sessionId, taskScope(_meta, wsId));
+    const task = await taskStore.getTask(taskId, ctx.sessionId, taskScope(_meta, wsId));
     if (!task) {
-      throw new McpError(ErrorCode.InvalidParams, "Failed to retrieve task: Task not found");
+      throw new ProtocolError(ProtocolErrorCode.InvalidParams, "Failed to retrieve task: Task not found");
     }
     return { ...task };
   });
 
-  server.setRequestHandler(GetTaskPayloadRequestSchema, async (request, extra) => {
+  /* @mcp-codemod-error Task handler registration: setRequestHandler(GetTaskPayloadRequestSchema, ...). The experimental tasks feature was removed in v2 (SEP-2663); the tasks/* method strings are not part of the typed RequestMethod surface. Remove this registration. See docs/migration/upgrade-to-v2.md#experimental-tasks-interception-removed. */
+  server.setRequestHandler(GetTaskPayloadRequestSchema, async (request, ctx) => {
     const { taskId, _meta } = request.params;
-    const result = await taskStore.getTaskResult(taskId, extra.sessionId, taskScope(_meta, wsId));
+    const result = await taskStore.getTaskResult(taskId, ctx.sessionId, taskScope(_meta, wsId));
     return { ...result, _meta: { ...result._meta, [RELATED_TASK_META_KEY]: { taskId } } };
   });
 
-  server.setRequestHandler(CancelTaskRequestSchema, async (request, extra) => {
+  /* @mcp-codemod-error Task handler registration: setRequestHandler(CancelTaskRequestSchema, ...). The experimental tasks feature was removed in v2 (SEP-2663); the tasks/* method strings are not part of the typed RequestMethod surface. Remove this registration. See docs/migration/upgrade-to-v2.md#experimental-tasks-interception-removed. */
+  server.setRequestHandler(CancelTaskRequestSchema, async (request, ctx) => {
     const { taskId, _meta } = request.params;
     const scope = taskScope(_meta, wsId);
     try {
-      const task = await taskStore.getTask(taskId, extra.sessionId, scope);
-      if (!task) throw new McpError(ErrorCode.InvalidParams, `Task not found: ${taskId}`);
+      const task = await taskStore.getTask(taskId, ctx.sessionId, scope);
+      if (!task) throw new ProtocolError(ProtocolErrorCode.InvalidParams, `Task not found: ${taskId}`);
       if (isTerminal(task.status)) {
-        throw new McpError(
-          ErrorCode.InvalidParams,
+        throw new ProtocolError(
+          ProtocolErrorCode.InvalidParams,
           `Cannot cancel task in terminal status: ${task.status}`,
         );
       }
@@ -1291,18 +1275,18 @@ function registerTaskHandlers(server: Server, taskStore: McpTaskStore, wsId: str
         taskId,
         "cancelled",
         "Client cancelled task execution.",
-        extra.sessionId,
+        ctx.sessionId,
         scope,
       );
-      const cancelled = await taskStore.getTask(taskId, extra.sessionId, scope);
+      const cancelled = await taskStore.getTask(taskId, ctx.sessionId, scope);
       if (!cancelled) {
-        throw new McpError(ErrorCode.InvalidParams, `Task not found after cancellation: ${taskId}`);
+        throw new ProtocolError(ProtocolErrorCode.InvalidParams, `Task not found after cancellation: ${taskId}`);
       }
       return { _meta: {}, ...cancelled };
     } catch (err) {
-      if (err instanceof McpError) throw err;
-      throw new McpError(
-        ErrorCode.InvalidRequest,
+      if (err instanceof ProtocolError) throw err;
+      throw new ProtocolError(
+        ProtocolErrorCode.InvalidRequest,
         `Failed to cancel task: ${err instanceof Error ? err.message : String(err)}`,
       );
     }
@@ -1410,7 +1394,7 @@ async function readFromOneSource(
     (client) => client.readResource({ uri }),
   );
   if (result?.contents && result.contents.length > 0) return result;
-  throw new McpError(RESOURCE_NOT_FOUND_CODE, `Resource not found: ${uri}`, { uri });
+  throw new ProtocolError(RESOURCE_NOT_FOUND_CODE, `Resource not found: ${uri}`, { uri });
 }
 
 /**

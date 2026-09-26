@@ -1,3 +1,5 @@
+import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
+
 // ---------------------------------------------------------------------------
 // MCP Bridge Client — one MCP SDK client, for the active workspace's
 // `/mcp/<wsId>`
@@ -17,9 +19,6 @@
 // bypassed. Headers must NOT be cached at construction — the browser tab
 // outlives individual tokens.
 // ---------------------------------------------------------------------------
-
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import {
   addAuthLifecycleHandler,
   addWorkspaceLifecycleHandler,

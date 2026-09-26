@@ -1,5 +1,4 @@
-import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js";
-import { McpError } from "@modelcontextprotocol/sdk/types.js";
+import { UnauthorizedError, ProtocolError } from "@modelcontextprotocol/client";
 import { describe, expect, it, mock, spyOn } from "bun:test";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import type { EngineEvent, EventSink } from "../../src/engine/types.ts";
@@ -119,7 +118,7 @@ describe("policyFor — recovery policy", () => {
 describe("execute (tools/call) — unified recovery", () => {
   it("surfaces an app/protocol error WITHOUT restarting (no futile crash-restart)", async () => {
     const source = remoteSource({
-      callTool: () => Promise.reject(new McpError(-32601, "Method not found")),
+      callTool: () => Promise.reject(new ProtocolError(-32601, "Method not found")),
     });
     const restart = spyRestart(source, true);
     try {
@@ -277,7 +276,7 @@ describe("execute (tools/call) — unified recovery", () => {
 
   for (const [label, code, message] of CONNECTOR_AUTHORED) {
     it(`does NOT mark a connector-authored error: ${label}`, async () => {
-      const source = remoteSource({ callTool: () => Promise.reject(new McpError(code, message)) });
+      const source = remoteSource({ callTool: () => Promise.reject(new ProtocolError(code, message)) });
       const restart = spyRestart(source, false);
       try {
         const result = await source.execute("write", {});
@@ -432,7 +431,7 @@ describe("execute (tools/call) — unified recovery", () => {
     // what the loop guard exists to catch. Marking it infrastructure would blunt
     // the guard rather than correct it.
     const source = remoteSource({
-      callTool: () => Promise.reject(new McpError(-32601, "Method not found")),
+      callTool: () => Promise.reject(new ProtocolError(-32601, "Method not found")),
     });
     const restart = spyRestart(source, true);
     try {
@@ -450,7 +449,7 @@ describe("execute (tools/call) — unified recovery", () => {
     const events: EngineEvent[] = [];
     const sink: EventSink = { emit: (e) => events.push(e) };
     const source = remoteSource({
-      callTool: () => Promise.reject(new McpError(-32001, "Request timed out")),
+      callTool: () => Promise.reject(new ProtocolError(-32001, "Request timed out")),
       sink,
     });
     const restart = spyRestart(source, true);
@@ -558,7 +557,7 @@ describe("readResource — unified recovery (new behaviors)", () => {
       readResource: () => {
         calls++;
         if (calls === 1) return Promise.reject(sessionLost);
-        return Promise.reject(new McpError(-32002, "Resource not found"));
+        return Promise.reject(new ProtocolError(-32002, "Resource not found"));
       },
     });
     const restart = spyRestart(source, true);

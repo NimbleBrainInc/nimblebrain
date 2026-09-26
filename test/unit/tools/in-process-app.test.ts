@@ -16,11 +16,6 @@
  */
 
 import { afterEach, describe, expect, test } from "bun:test";
-import {
-  EmptyResultSchema,
-  ResourceListChangedNotificationSchema,
-  ResourceUpdatedNotificationSchema,
-} from "@modelcontextprotocol/sdk/types.js";
 import { NoopEventSink } from "../../../src/adapters/noop-events.ts";
 import { textContent } from "../../../src/engine/content-helpers.ts";
 import type { ToolResult } from "../../../src/engine/types.ts";
@@ -223,7 +218,7 @@ describe("McpSource — resource notifications", () => {
     expect(client).not.toBeNull();
 
     const received: Array<unknown> = [];
-    client!.setNotificationHandler(ResourceListChangedNotificationSchema, async (n) => {
+    client!.setNotificationHandler('notifications/resources/list_changed', async (n) => {
       received.push(n);
     });
 
@@ -244,7 +239,7 @@ describe("McpSource — resource notifications", () => {
     expect(client).not.toBeNull();
 
     const received: Array<{ method: string; params?: { uri?: string } }> = [];
-    client!.setNotificationHandler(ResourceUpdatedNotificationSchema, async (n) => {
+    client!.setNotificationHandler('notifications/resources/updated', async (n) => {
       received.push(n as { method: string; params?: { uri?: string } });
     });
 
@@ -278,8 +273,7 @@ describe("McpSource — resource notifications", () => {
     // the server end really has no handler.
     await expect(
       client!.request(
-        { method: "resources/subscribe", params: { uri: "instructions://workspace" } },
-        EmptyResultSchema,
+        { method: "resources/subscribe", params: { uri: "instructions://workspace" } }
       ),
     ).rejects.toThrow(/Method not found/i);
   });

@@ -1,9 +1,5 @@
-import {
-  ErrorCode,
-  type ListResourcesResult,
-  McpError,
-  type ReadResourceResult,
-} from "@modelcontextprotocol/sdk/types.js";
+import { ProtocolError, ProtocolErrorCode } from "@modelcontextprotocol/server";
+import type { ListResourcesResult, ReadResourceResult } from "@modelcontextprotocol/server";
 import { isTextMime } from "../files/mime.ts";
 import type { FileStore } from "../files/store.ts";
 import { FILE_URI_SCHEME, fileIdToUri, uriToFileId } from "../files/uri.ts";
@@ -103,11 +99,11 @@ export class FileBackedHostResourcesResolver implements HostResourcesResolver {
       log.warn(
         `[host-resources] [${ctx.connectorId}:${ctx.workspaceId}] read ${uri} failed (collapsing to -32002): ${err instanceof Error ? err.message : String(err)}`,
       );
-      throw new McpError(RESOURCE_NOT_FOUND, "Resource not found", { uri });
+      throw new ProtocolError(RESOURCE_NOT_FOUND, "Resource not found", { uri });
     }
 
     if (result.size > this.maxReadSize) {
-      throw new McpError(RESPONSE_TOO_LARGE, "Response too large", {
+      throw new ProtocolError(RESPONSE_TOO_LARGE, "Response too large", {
         uri,
         size: result.size,
         maxSize: this.maxReadSize,
@@ -144,7 +140,7 @@ export class FileBackedHostResourcesResolver implements HostResourcesResolver {
     // workspaces. The store is rooted at that one owner partition, so the
     // boundary is the directory, not a filter here.
     if (params.filter?.scheme && params.filter.scheme !== FILE_URI_SCHEME) {
-      throw new McpError(ErrorCode.InvalidParams, "Unsupported URI scheme", {
+      throw new ProtocolError(ProtocolErrorCode.InvalidParams, "Unsupported URI scheme", {
         scheme: params.filter.scheme,
         supported: [FILE_URI_SCHEME],
       });
@@ -155,7 +151,7 @@ export class FileBackedHostResourcesResolver implements HostResourcesResolver {
     // breaking polite pagination loops. Reject loudly so the connector
     // SDK can detect the missing feature.
     if (params.cursor && params.cursor.length > 0) {
-      throw new McpError(ErrorCode.InvalidParams, "Pagination is not supported in this version", {
+      throw new ProtocolError(ProtocolErrorCode.InvalidParams, "Pagination is not supported in this version", {
         cursor: params.cursor,
       });
     }
@@ -177,7 +173,7 @@ export class FileBackedHostResourcesResolver implements HostResourcesResolver {
     // rejected — silently returning all files lies about whether the
     // filter ran.
     if (params.filter?.tags !== undefined && !Array.isArray(params.filter.tags)) {
-      throw new McpError(ErrorCode.InvalidParams, "filter.tags must be an array of strings", {
+      throw new ProtocolError(ProtocolErrorCode.InvalidParams, "filter.tags must be an array of strings", {
         receivedType: typeof params.filter.tags,
       });
     }
@@ -211,7 +207,7 @@ export class FileBackedHostResourcesResolver implements HostResourcesResolver {
   private requireFileScheme(uri: string): string {
     const id = uriToFileId(uri);
     if (id) return id;
-    throw new McpError(ErrorCode.InvalidParams, "Unsupported URI scheme", {
+    throw new ProtocolError(ProtocolErrorCode.InvalidParams, "Unsupported URI scheme", {
       uri,
       supported: [FILE_URI_SCHEME],
     });

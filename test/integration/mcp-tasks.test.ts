@@ -17,21 +17,9 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { mkdirSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import {
-  type CallToolResult,
-  CancelTaskResultSchema,
-  type CreateTaskResult,
-  CreateTaskResultSchema,
-  type GetTaskResult,
-  GetTaskPayloadResultSchema,
-  GetTaskResultSchema,
-  RELATED_TASK_META_KEY,
-  type Task,
-} from "@modelcontextprotocol/sdk/types.js";
-
+import { CancelTaskResultSchema, GetTaskPayloadResultSchema, GetTaskResultSchema } from "@modelcontextprotocol/core";
+import { Client, StreamableHTTPClientTransport, RELATED_TASK_META_KEY } from "@modelcontextprotocol/client";
+import type { CallToolResult, CreateTaskResult, GetTaskResult, Task } from "@modelcontextprotocol/client";
 import { RESOURCE_SOURCE_META_KEY } from "../../src/api/mcp-server.ts";
 import { startServer, type ServerHandle } from "../../src/api/server.ts";
 import { textContent } from "../../src/engine/content-helpers.ts";
@@ -631,8 +619,7 @@ describe("/mcp tasks/* scoped to one source", () => {
   /** Start a task without the SDK's stream, which would poll unscoped on its own. */
   async function startTask(client: Client, name: string): Promise<Task> {
     const { task } = await client.request(
-      { method: "tools/call", params: { name, arguments: {}, task: { ttl: 60_000 } } },
-      CreateTaskResultSchema,
+      { method: "tools/call", params: { name, arguments: {}, task: { ttl: 60_000 } } }
     );
     return task;
   }

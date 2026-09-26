@@ -1,3 +1,5 @@
+import { ProtocolError, ProtocolErrorCode } from "@modelcontextprotocol/server";
+import type { Request, RequestId, Result, Task } from "@modelcontextprotocol/server";
 /**
  * In-memory `TaskStore` backing the platform's `/mcp` endpoint.
  *
@@ -60,18 +62,11 @@
  * Pinned in `package.json` at `^1.29.0`; bump deliberately, not on auto-update.
  */
 
+/* @mcp-codemod-error Unknown SDK import path: @modelcontextprotocol/sdk/experimental/tasks/interfaces.js. Manual migration required. */
 import type {
   CreateTaskOptions,
   TaskStore,
 } from "@modelcontextprotocol/sdk/experimental/tasks/interfaces.js";
-import {
-  ErrorCode,
-  McpError,
-  type Request,
-  type RequestId,
-  type Result,
-  type Task,
-} from "@modelcontextprotocol/sdk/types.js";
 import type { UserIdentity } from "../identity/provider.ts";
 import {
   TaskAlreadyTerminalError,
@@ -201,7 +196,7 @@ export function createMcpTaskStore(options: McpTaskStoreOptions): McpTaskStore {
     if (!entry) {
       // Unknown taskId, wrong owner, OR another workspace's or source's task.
       // Spec §8 — don't distinguish.
-      throw new McpError(ErrorCode.InvalidParams, `task not found: ${taskId}`);
+      throw new ProtocolError(ProtocolErrorCode.InvalidParams, `task not found: ${taskId}`);
     }
     return entry;
   }
@@ -218,20 +213,20 @@ export function createMcpTaskStore(options: McpTaskStoreOptions): McpTaskStore {
     entries.set(key, byOwner);
   }
 
-  function mapEngineError(err: unknown, taskId: string): McpError {
+  function mapEngineError(err: unknown, taskId: string): ProtocolError {
     if (err instanceof TaskNotFoundError) {
       // The McpSource forgot the task (TTL sweep, different owner, never
       // existed). Externally indistinguishable from "wrong owner".
-      return new McpError(ErrorCode.InvalidParams, `task not found: ${taskId}`);
+      return new ProtocolError(ProtocolErrorCode.InvalidParams, `task not found: ${taskId}`);
     }
     if (err instanceof TaskAlreadyTerminalError) {
-      return new McpError(
-        ErrorCode.InvalidParams,
+      return new ProtocolError(
+        ProtocolErrorCode.InvalidParams,
         `task ${taskId} already terminal (${err.status})`,
       );
     }
-    if (err instanceof McpError) return err;
-    return new McpError(ErrorCode.InternalError, err instanceof Error ? err.message : String(err));
+    if (err instanceof ProtocolError) return err;
+    return new ProtocolError(ProtocolErrorCode.InternalError, err instanceof Error ? err.message : String(err));
   }
 
   const store: McpTaskStore = {

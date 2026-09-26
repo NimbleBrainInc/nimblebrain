@@ -10,12 +10,7 @@ import {
 import { mkdirSync, writeFileSync, readFileSync, rmSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
-import {
-	ListToolsRequestSchema,
-	CallToolRequestSchema,
-} from "@modelcontextprotocol/sdk/types.js";
+import { Server, WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/server";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { startServer } from "../../src/api/server.ts";
@@ -68,8 +63,8 @@ function createMcpServer(toolCount: number): Server {
 		},
 	}));
 
-	mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({ tools }));
-	mcpServer.setRequestHandler(CallToolRequestSchema, async (req) => ({
+	mcpServer.setRequestHandler('tools/list', async () => ({ tools }));
+	mcpServer.setRequestHandler('tools/call', async (req) => ({
 		content: [{ type: "text", text: `Executed: ${req.params.name}` }],
 	}));
 

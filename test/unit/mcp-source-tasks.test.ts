@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
-import { ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
-import type { CallToolResult, Task } from "@modelcontextprotocol/sdk/types.js";
+import { ProtocolError, ProtocolErrorCode } from "@modelcontextprotocol/server";
+import type { CallToolResult, Task } from "@modelcontextprotocol/server";
 import type { EngineEvent, EventSink } from "../../src/engine/types.ts";
 import { McpSource } from "../../src/tools/mcp-source.ts";
 import {
@@ -56,7 +56,7 @@ type TaskStreamMessage =
   | { type: "taskCreated"; task: Task }
   | { type: "taskStatus"; task: Task }
   | { type: "result"; result: CallToolResult }
-  | { type: "error"; error: McpError };
+  | { type: "error"; error: ProtocolError };
 
 /**
  * Test-only stream driver. Resolves `next()` with the messages pushed via
@@ -282,7 +282,7 @@ describe("McpSource agent-loop (callToolAsTask wrapper)", () => {
         };
         yield {
           type: "error",
-          error: new McpError(ErrorCode.InternalError, "Task t-recover failed"),
+          error: new ProtocolError(ProtocolErrorCode.InternalError, "Task t-recover failed"),
         };
       },
       getTaskResultImpl: async (taskId) => {
@@ -314,7 +314,7 @@ describe("McpSource agent-loop (callToolAsTask wrapper)", () => {
         };
         yield {
           type: "error",
-          error: new McpError(ErrorCode.InternalError, "Task t-norecover failed"),
+          error: new ProtocolError(ProtocolErrorCode.InternalError, "Task t-norecover failed"),
         };
       },
       getTaskResultImpl: async () => {
@@ -346,7 +346,7 @@ describe("McpSource agent-loop (callToolAsTask wrapper)", () => {
         };
         yield {
           type: "error",
-          error: new McpError(ErrorCode.InternalError, "upstream API returned 503"),
+          error: new ProtocolError(ProtocolErrorCode.InternalError, "upstream API returned 503"),
         };
       },
       getTaskResultImpl: async () => {
@@ -380,7 +380,7 @@ describe("McpSource agent-loop (callToolAsTask wrapper)", () => {
         };
         yield {
           type: "error",
-          error: new McpError(ErrorCode.InternalError, "Task t-someone-else failed"),
+          error: new ProtocolError(ProtocolErrorCode.InternalError, "Task t-someone-else failed"),
         };
       },
       getTaskResultImpl: async () => {

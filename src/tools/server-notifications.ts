@@ -39,10 +39,8 @@
  */
 
 import { AsyncLocalStorage } from "node:async_hooks";
-import {
-  type ResourceListChangedNotification,
-  ResourceListChangedNotificationSchema,
-} from "@modelcontextprotocol/sdk/types.js";
+import { ResourceListChangedNotificationSchema } from "@modelcontextprotocol/core";
+import type { ResourceListChangedNotification } from "@modelcontextprotocol/server";
 import { serverNotificationsRelayedTotal } from "../api/metrics.ts";
 import type { EventSink } from "../engine/types.ts";
 import { isIdentitySource, isPersonalConnectorName } from "./identity-sources.ts";

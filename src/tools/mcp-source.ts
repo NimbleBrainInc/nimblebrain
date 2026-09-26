@@ -1,21 +1,7 @@
-import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import type { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
-import type {
-  CallToolResult,
-  CreateTaskResult,
-  ServerCapabilities,
-  Task,
-} from "@modelcontextprotocol/sdk/types.js";
-import {
-  CallToolResultSchema,
-  ListResourcesRequestSchema,
-  McpError,
-  ReadResourceRequestSchema,
-  ResourceUpdatedNotificationSchema,
-  ToolListChangedNotificationSchema,
-} from "@modelcontextprotocol/sdk/types.js";
+import { CallToolResultSchema, ListResourcesRequestSchema, ReadResourceRequestSchema } from "@modelcontextprotocol/core";
+import { ProtocolError } from "@modelcontextprotocol/server";
+import type { Server, Transport, CallToolResult, CreateTaskResult, ServerCapabilities, Task } from "@modelcontextprotocol/server";
+import { UnauthorizedError, Client } from "@modelcontextprotocol/client";
 import { z } from "zod";
 import type { PlacementDeclaration, RemoteTransportConfig } from "../connectors/runtime/types.ts";
 import { textContent } from "../engine/content-helpers.ts";
@@ -864,6 +850,7 @@ export class McpSource implements ToolSource {
     const ctx = this.connectorContext;
     if (!ctx) return;
 
+    /* @mcp-codemod-error Custom method handler: setRequestHandler(NbReadResourceRequestSchema, ...). In v2, use the 3-arg form: setRequestHandler('method/name', { params, result? }, handler). See docs/migration/upgrade-to-v2.md for details. */
     client.setRequestHandler(NbReadResourceRequestSchema, async (request) => {
       ctx.rateLimit.check(ctx.workspaceId, ctx.connectorId);
       return ctx.hostResources.read(request.params.uri, {
@@ -872,6 +859,7 @@ export class McpSource implements ToolSource {
       });
     });
 
+    /* @mcp-codemod-error Custom method handler: setRequestHandler(NbListResourcesRequestSchema, ...). In v2, use the 3-arg form: setRequestHandler('method/name', { params, result? }, handler). See docs/migration/upgrade-to-v2.md for details. */
     client.setRequestHandler(NbListResourcesRequestSchema, async (request) => {
       ctx.rateLimit.check(ctx.workspaceId, ctx.connectorId);
       const params = request.params ?? {};
@@ -907,7 +895,7 @@ export class McpSource implements ToolSource {
    * MCP server may push the notification.
    */
   private registerToolsChangedHandler(client: Client): void {
-    client.setNotificationHandler(ToolListChangedNotificationSchema, () => {
+    client.setNotificationHandler('notifications/tools/list_changed', () => {
       this.cachedTools = null;
       this.toolsFetchedAt = null;
       this.emitToolsChanged();
@@ -956,7 +944,7 @@ export class McpSource implements ToolSource {
    * transport-level seam to one consumer.
    */
   private registerResourceUpdatedHandler(client: Client): void {
-    client.setNotificationHandler(ResourceUpdatedNotificationSchema, (notification) => {
+    client.setNotificationHandler('notifications/resources/updated', (notification) => {
       const uri = notification.params?.uri;
       if (typeof uri === "string") this.emitResourceUpdated(uri);
     });
@@ -1058,6 +1046,7 @@ export class McpSource implements ToolSource {
         (typeof RELAYED_SERVER_NOTIFICATIONS)[RelayedServerNotificationMethod],
       ]
     >) {
+      /* @mcp-codemod-error Custom method handler: setNotificationHandler(schema, ...). In v2, use the 3-arg form: setNotificationHandler('method/name', { params, result? }, handler). See docs/migration/upgrade-to-v2.md for details. */
       client.setNotificationHandler(schema, (notification) => {
         const params = relayableParams(notification.params);
         this.emitServerNotification({ method, ...(params ? { params } : {}) });
@@ -1655,7 +1644,7 @@ export class McpSource implements ToolSource {
           // would drop exactly the cases this exists to mark.
           const kind = classifyConnectionFailure(e);
           const infra =
-            INFRA_FAILURE_CLASSES.has(kind) && !(e instanceof McpError) ? infraErrorMeta() : {};
+            INFRA_FAILURE_CLASSES.has(kind) && !(e instanceof ProtocolError) ? infraErrorMeta() : {};
           if (kind === "rate-limited") {
             return {
               content: textContent(
@@ -2018,7 +2007,6 @@ export class McpSource implements ToolSource {
   ): Promise<ToolResult> {
     const result = await this.client?.callTool(
       { name: toolName, arguments: args, ...unattendedCallMeta() },
-      undefined,
       signal ? { signal } : undefined,
     );
     if (!result) return { content: [], isError: true };
