@@ -1103,6 +1103,9 @@ export class Runtime {
     if (request.conversationId) {
       const existing = await store.load(request.conversationId);
       if (!existing) throw new ConversationNotFoundError(request.conversationId, wsId);
+      // Defense in depth: `resolveChatStore` opened the caller's own partition,
+      // so a record owned by someone else there means a corrupt file, not a
+      // path a request can reach.
       if (existing.ownerId !== ownerId) {
         throw new ConversationAccessDeniedError(request.conversationId, ownerId);
       }
@@ -2186,6 +2189,8 @@ export class Runtime {
     let resumed = false;
     if (request.conversationId) {
       const existing = await store.load(request.conversationId);
+      // Defense in depth, as in `startTurn`: the store is the caller's own
+      // partition, so no request reaches this with another owner's record.
       if (existing && existing.ownerId !== ownerId) {
         throw new ConversationAccessDeniedError(request.conversationId, ownerId);
       }
