@@ -278,6 +278,8 @@ describe("ConnectorDetailPage — the connector's settings section", () => {
     const { container } = await mountPage(workspace("admin"), [
       placement({ slot: "sidebar.apps", resourceUri: `ui://${SERVER}/main`, route: "crm" }),
       placement({ serverName: "other", resourceUri: "ui://other/settings" }),
+      // A slot the contract does not define is not a settings section.
+      placement({ slot: "settings.extra", resourceUri: `ui://${SERVER}/extra` }),
     ]);
 
     expect(getResources).not.toHaveBeenCalled();

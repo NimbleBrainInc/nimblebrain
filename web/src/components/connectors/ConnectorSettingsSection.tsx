@@ -33,7 +33,11 @@ export function ConnectorSettingsSection({
   const { activeWorkspace } = useWorkspaceContext();
 
   if (!shell || shell.shellWorkspaceId !== activeWorkspace?.id) return null;
-  const placement = shell.forSlot("settings").find((p) => p.serverName === serverName);
+  // `forSlot` also returns `settings.<x>` slots, which the contract does not
+  // define; only the exact slot is a settings section.
+  const placement = shell
+    .forSlot("settings")
+    .find((p) => p.slot === "settings" && p.serverName === serverName);
   if (!placement) return null;
 
   return (

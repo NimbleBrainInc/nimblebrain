@@ -11,7 +11,7 @@ export const DEFAULT_CONTENT_HEIGHT = 200;
 // its content reports, the same as it would in any other MCP host.
 //
 // Any bound shorter than the content hides it *silently*: CONTENT_SIZING_CSS sets
-// `overflow:hidden` inside the frame and the wrapper clips too, so there is no
+// `overflow:hidden` inside the frame, so there is no
 // scrollbar and no affordance — a truncated card is indistinguishable from a tool
 // that returned less. That is why the ceiling sits far above real content instead
 // of at a layout budget; it exists only so an app reporting an absurd height
