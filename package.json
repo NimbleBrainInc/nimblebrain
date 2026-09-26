@@ -94,6 +94,7 @@
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.10",
+    "@nimblebrain/synapse": "0.21.1",
     "@types/bun": "latest",
     "happy-dom": "^20.0.0",
     "typescript": "^5.9.3"
