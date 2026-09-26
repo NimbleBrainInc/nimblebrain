@@ -46,7 +46,7 @@ describe("workspaceConnectorsUrl", () => {
   });
 
   it("returns the custom domain when it is the canonical origin", () => {
-    process.env.NB_PLATFORM_HOST = "acme.platform.nimblebrain.ai";
+    process.env.NB_PLATFORM_HOST = "acme.nb.example.com";
     process.env.NB_CUSTOM_DOMAIN = "brain.acme.com";
     expect(workspaceConnectorsUrl("ws_x")).toBe("https://brain.acme.com/w/x/settings/connectors");
   });
