@@ -139,9 +139,8 @@ describe("vision survives the multi-turn agent loop", () => {
     const file = new File([new Uint8Array(PNG_BYTES)], "linkedin.png", { type: "image/png" });
     form.append("files", file);
 
-    const res = await fetch(`${baseUrl}/v1/chat/stream`, {
+    const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat/stream`, {
       method: "POST",
-      headers: { "X-Workspace-Id": TEST_WORKSPACE_ID },
       body: form,
     });
     expect(res.status).toBe(200);

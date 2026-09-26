@@ -90,7 +90,7 @@ export function WorkspaceProvider({
   });
   const [loading, setLoading] = useState(!hasBootstrap);
 
-  // Update the focused workspace + sync the request header. Driven by the URL
+  // Update the focused workspace + the REST workspace paths. Driven by the URL
   // (route guard) and explicit user picks — not persisted across sessions.
   const setActiveWorkspace = useCallback((ws: WorkspaceInfo) => {
     setActiveState(ws);

@@ -1,5 +1,5 @@
 /**
- * Decode the result envelope from `POST /v1/tools/call`.
+ * Decode the result envelope from `POST /v1/workspaces/:wsId/tools/call`.
  *
  * Tools return both a human-readable `content` array and an optional
  * `structuredContent` object. We prefer `structuredContent` when present

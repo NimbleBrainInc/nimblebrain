@@ -81,6 +81,9 @@ describe("rate-limit middleware", () => {
 	});
 });
 
+/** A workspace chat route, the kind of route requestRateLimit guards. */
+const CHAT_PATH = "/v1/workspaces/ws_a/chat";
+
 /**
  * Build a Hono app that simulates authenticated routes with requestRateLimit.
  * Sets identity in middleware to simulate requireAuth having run first.
@@ -93,7 +96,7 @@ function buildAuthenticatedApp(limiter: RequestRateLimiter, userId = "user-1") {
 		await next();
 	});
 	app.use("*", requestRateLimit(limiter));
-	app.post("/v1/chat", (c) => c.json({ ok: true }));
+	app.post(CHAT_PATH, (c) => c.json({ ok: true }));
 	return app;
 }
 
@@ -103,7 +106,7 @@ describe("requestRateLimit middleware", () => {
 		const app = buildAuthenticatedApp(limiter);
 
 		for (let i = 0; i < 3; i++) {
-			const res = await app.request("/v1/chat", { method: "POST" });
+			const res = await app.request(CHAT_PATH, { method: "POST" });
 			expect(res.status).toBe(200);
 		}
 	});
@@ -112,10 +115,10 @@ describe("requestRateLimit middleware", () => {
 		const limiter = new RequestRateLimiter(2, 60_000);
 		const app = buildAuthenticatedApp(limiter);
 
-		await app.request("/v1/chat", { method: "POST" });
-		await app.request("/v1/chat", { method: "POST" });
+		await app.request(CHAT_PATH, { method: "POST" });
+		await app.request(CHAT_PATH, { method: "POST" });
 
-		const res = await app.request("/v1/chat", { method: "POST" });
+		const res = await app.request(CHAT_PATH, { method: "POST" });
 		expect(res.status).toBe(429);
 
 		const body = await res.json();
@@ -135,24 +138,24 @@ describe("requestRateLimit middleware", () => {
 			await next();
 		});
 		app.use("*", requestRateLimit(limiter));
-		app.post("/v1/chat", (c) => c.json({ ok: true }));
+		app.post(CHAT_PATH, (c) => c.json({ ok: true }));
 
 		// User A exhausts their limit
 		for (let i = 0; i < 2; i++) {
-			const res = await app.request("/v1/chat", {
+			const res = await app.request(CHAT_PATH, {
 				method: "POST",
 				headers: { "X-Test-User": "user-a" },
 			});
 			expect(res.status).toBe(200);
 		}
-		const resA = await app.request("/v1/chat", {
+		const resA = await app.request(CHAT_PATH, {
 			method: "POST",
 			headers: { "X-Test-User": "user-a" },
 		});
 		expect(resA.status).toBe(429);
 
 		// User B still has their full budget
-		const resB = await app.request("/v1/chat", {
+		const resB = await app.request(CHAT_PATH, {
 			method: "POST",
 			headers: { "X-Test-User": "user-b" },
 		});
@@ -164,12 +167,12 @@ describe("requestRateLimit middleware", () => {
 		const app = new Hono();
 		// No identity middleware — simulates unauthenticated fallback
 		app.use("*", requestRateLimit(limiter));
-		app.post("/v1/chat", (c) => c.json({ ok: true }));
+		app.post(CHAT_PATH, (c) => c.json({ ok: true }));
 
-		const res1 = await app.request("/v1/chat", { method: "POST" });
+		const res1 = await app.request(CHAT_PATH, { method: "POST" });
 		expect(res1.status).toBe(200);
 
-		const res2 = await app.request("/v1/chat", { method: "POST" });
+		const res2 = await app.request(CHAT_PATH, { method: "POST" });
 		expect(res2.status).toBe(429);
 	});
 
@@ -180,10 +183,10 @@ describe("requestRateLimit middleware", () => {
 		const limiter = new RequestRateLimiter(1, 60_000);
 		const app = new Hono();
 		app.use("*", requestRateLimit(limiter, { bypass: true }));
-		app.post("/v1/chat", (c) => c.json({ ok: true }));
+		app.post(CHAT_PATH, (c) => c.json({ ok: true }));
 
 		for (let i = 0; i < 5; i++) {
-			const res = await app.request("/v1/chat", { method: "POST" });
+			const res = await app.request(CHAT_PATH, { method: "POST" });
 			expect(res.status).toBe(200);
 		}
 	});
@@ -192,9 +195,9 @@ describe("requestRateLimit middleware", () => {
 		const limiter = new RequestRateLimiter(1, 60_000);
 		const app = new Hono();
 		app.use("*", requestRateLimit(limiter, { bypass: false }));
-		app.post("/v1/chat", (c) => c.json({ ok: true }));
+		app.post(CHAT_PATH, (c) => c.json({ ok: true }));
 
-		expect((await app.request("/v1/chat", { method: "POST" })).status).toBe(200);
-		expect((await app.request("/v1/chat", { method: "POST" })).status).toBe(429);
+		expect((await app.request(CHAT_PATH, { method: "POST" })).status).toBe(200);
+		expect((await app.request(CHAT_PATH, { method: "POST" })).status).toBe(429);
 	});
 });

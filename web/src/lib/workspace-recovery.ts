@@ -1,15 +1,15 @@
 import type { WorkspaceInfo } from "../context/WorkspaceContext";
 
 /**
- * Recover from a `workspace_error` — the active `X-Workspace-Id` was rejected
- * by the server (deleted workspace, lost membership, or an inaccessible
+ * Recover from a `workspace_error` — the active workspace in a request's path
+ * was rejected by the server (deleted workspace, lost membership, or an inaccessible
  * `/w/:slug` deep-link). Pick a valid fallback workspace and route home so the
  * shell drops the bad selection instead of surfacing raw error JSON.
  *
  * The rejected (currently-active) workspace is EXCLUDED from candidates. The
- * failing id is exactly what's in the header, and the client's cached list can
+ * failing id is exactly what's in the path, and the client's cached list can
  * be stale — still listing a workspace the server now rejects — so re-selecting
- * it would just refetch with the same bad header and strand the user on a home
+ * it would just refetch the same bad path and strand the user on a home
  * view that can't load data. Prefer the personal workspace, then any other
  * membership. When nothing valid remains, bail and let bootstrap / login own
  * the empty-membership case rather than loop.
@@ -28,7 +28,7 @@ export function recoverFromWorkspaceError(
     workspaces.find((w) => w.id !== rejectedId) ??
     null;
   if (!fallback) return;
-  // setActiveWorkspace updates the focused workspace + the api/client header.
+  // setActiveWorkspace updates the focused workspace + the api/client paths.
   setActiveWorkspace(fallback);
   navigateHome();
 }

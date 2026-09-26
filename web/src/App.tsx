@@ -299,8 +299,8 @@ function AuthenticatedAppContent({
   const location = useLocation();
   const activeSlug = wsCtx.activeWorkspace ? toSlug(wsCtx.activeWorkspace.id) : null;
 
-  // Recover from a stale/invalid workspace context. A data call that fires
-  // with an X-Workspace-Id the server rejects (deleted workspace, lost
+  // Recover from a stale/invalid workspace context. A data call to a workspace
+  // path the server rejects (deleted workspace, lost
   // membership, or a dynamic /w/:slug deep-link the user can't see) returns
   // `workspace_error`. Bootstrap validates the active workspace on load, so
   // this is the mid-session net: drop the bad selection (excluding the

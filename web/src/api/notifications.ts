@@ -3,10 +3,9 @@
 //
 // There is no REST route for notifications and there is not meant to be: a
 // paginated JSON read meets none of the four conditions the runtime requires of
-// a new `/v1/...` endpoint, and the shell already sends `X-Workspace-Id` on
-// every request, so a path-segment workspace would name nothing the header had
-// not. Everything here is a `tools/call` through the same door the agent and
-// any external MCP client use.
+// a new `/v1/...` endpoint, and the workspace-scoped `tools/call` route already
+// names the workspace in its path. Everything here is a `tools/call` through
+// the same door the agent and any external MCP client use.
 //
 // The wrappers exist so the response types are imported once, from the
 // generated schema tree, rather than re-declared at each call site.

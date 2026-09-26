@@ -207,10 +207,10 @@ describe("detached turns (server-authoritative streaming)", () => {
   });
 
   it("starts an identity-level turn with no workspaceId (personal-workspace fallback)", async () => {
-    // Parity with the sync `chat()` path and `/v1/chat`: a chat-start with no
-    // focused workspace (home / identity route) is identity-level, not an
-    // error. startTurn must fall back to the caller's personal workspace
-    // instead of throwing (which surfaced as a raw 500 via handleChatStart).
+    // Parity with the sync `chat()` path: a runtime-level turn with no
+    // workspace is identity-level, not an error. startTurn falls back to the
+    // caller's personal workspace instead of throwing. (REST always names the
+    // workspace in its path, so this is reachable only from in-process callers.)
     const { conversationId } = await runtime.startTurn({ message: "no workspace here" });
     expect(conversationId).toMatch(/^conv_/);
 

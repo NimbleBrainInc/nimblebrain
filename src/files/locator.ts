@@ -12,7 +12,7 @@
  *   browser `<img>` GET, a download, any caller that has only the globally-unique
  *   file id) can construct the right workspace store. Tool calls and `/mcp` never
  *   need this — they carry the workspace in the request — so this exists for the
- *   one path that can't: a browser GET, which can't send `X-Workspace-Id`.
+ *   one path that doesn't: a browser GET of the bare `/v1/files/:fileId`.
  *
  * **Owner-scoped by construction.** `locate` only ever searches the caller's OWN
  * `<ownerId>` partitions, and its consumer reads through a store rooted at the

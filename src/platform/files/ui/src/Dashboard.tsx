@@ -108,7 +108,7 @@ export function Dashboard() {
     try {
       const result = await pickFiles({ multiple: true, maxSize: 26214400 });
       // pickFiles returns [] if the user cancelled, or the persisted FileEntry
-      // records if upload succeeded. The host's POST /v1/resources path
+      // records if upload succeeded. The host's POST /v1/workspaces/:wsId/resources path
       // already wrote them; we just need to refresh.
       if (result.length > 0) await loadFiles();
     } catch (err) {

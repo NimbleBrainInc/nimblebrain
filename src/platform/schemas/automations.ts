@@ -10,7 +10,7 @@
  *   update: { name, manifest?: Partial<config>, body?: <new prompt> }
  *
  * `manifest` is the persistent automation definition; `body` is the prompt
- * sent to POST /v1/chat on each run — the analog of a skill's markdown
+ * that opens each run — the analog of a skill's markdown
  * body. The operator-only field `source` is intentionally absent from the
  * LLM-facing schema; it lives on the stored type and is set by the runtime,
  * never by an authoring caller.

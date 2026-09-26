@@ -250,7 +250,7 @@ describe("Workspace security: DevIdentityProvider populates workspace connectors
     // (Phase 1 of workspace-lifecycle-refactor). The runtime code path is
     // simulated here — we construct the provider then call verifyRequest.
     const adapter = new DevIdentityProvider(workDir, userStore, wsStore);
-    await adapter.verifyRequest(new Request("http://localhost/v1/chat"));
+    await adapter.verifyRequest(new Request("http://localhost/v1/bootstrap"));
 
     // Explicitly create the named test workspace (distinct from the auto-
     // provisioned ws_default that the adapter creates for usr_default).

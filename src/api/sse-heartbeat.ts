@@ -10,7 +10,7 @@
  * `heartbeat` broadcast: those emit a named `heartbeat` SSE *event* at
  * 30s to every subscriber on a shared workspace/conversation channel.
  * This helper emits comment frames at 20s on a single request-scoped
- * stream (currently only `/v1/chat/stream`). Same word, different
+ * stream (currently only `/v1/workspaces/:wsId/chat/stream`). Same word, different
  * paradigm.
  */
 

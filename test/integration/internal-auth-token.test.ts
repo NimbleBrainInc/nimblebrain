@@ -10,7 +10,7 @@ import type { ServerHandle } from "../../src/api/server.ts";
 import {
 	constantTimeEqual,
 	validateInternalToken,
-	INTERNAL_TOKEN_ALLOWED_PATHS,
+	isInternalTokenPath,
 } from "../../src/api/auth-utils.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
 
@@ -46,61 +46,68 @@ afterAll(async () => {
 });
 
 describe("internal auth token - auth-utils", () => {
-	it("validateInternalToken returns null for POST /v1/chat with correct token", () => {
+	it("validateInternalToken returns null for POST /v1/workspaces/:wsId/chat with correct token", () => {
 		const token = "test-internal-token";
-		const result = validateInternalToken(token, token, "/v1/chat", "POST");
+		const result = validateInternalToken(token, token, "/v1/workspaces/ws_test/chat", "POST");
 		expect(result).toBeNull();
 	});
 
-	it("validateInternalToken returns null for POST /v1/chat/stream with correct token", () => {
+	it("validateInternalToken returns null for POST /v1/workspaces/:wsId/chat/stream with correct token", () => {
 		const token = "test-internal-token";
-		const result = validateInternalToken(token, token, "/v1/chat/stream", "POST");
+		const result = validateInternalToken(token, token, "/v1/workspaces/ws_test/chat/stream", "POST");
 		expect(result).toBeNull();
 	});
 
-	it("validateInternalToken returns 403 for POST /v1/tools/call with correct token", () => {
+	it("validateInternalToken returns 403 for POST /v1/workspaces/:wsId/tools/call with correct token", () => {
 		const token = "test-internal-token";
-		const result = validateInternalToken(token, token, "/v1/tools/call", "POST");
+		const result = validateInternalToken(token, token, "/v1/workspaces/ws_test/tools/call", "POST");
 		expect(result).not.toBeNull();
 		expect(result!.status).toBe(403);
 	});
 
-	it("validateInternalToken returns 403 for GET /v1/apps/x/resources/y with correct token", () => {
+	it("validateInternalToken returns 403 for GET /v1/workspaces/:wsId/apps/x/resources/y with correct token", () => {
 		const token = "test-internal-token";
-		const result = validateInternalToken(token, token, "/v1/apps/myapp/resources/primary", "GET");
+		const result = validateInternalToken(token, token, "/v1/workspaces/ws_test/apps/myapp/resources/primary", "GET");
 		expect(result).not.toBeNull();
 		expect(result!.status).toBe(403);
 	});
 
 	it("validateInternalToken returns 401 for wrong token", () => {
-		const result = validateInternalToken("wrong-token", "correct-token", "/v1/chat", "POST");
+		const result = validateInternalToken("wrong-token", "correct-token", "/v1/workspaces/ws_test/chat", "POST");
 		expect(result).not.toBeNull();
 		expect(result!.status).toBe(401);
 	});
 
-	it("validateInternalToken returns 403 for GET /v1/chat (wrong method)", () => {
+	it("validateInternalToken returns 403 for GET /v1/workspaces/:wsId/chat (wrong method)", () => {
 		const token = "test-internal-token";
-		const result = validateInternalToken(token, token, "/v1/chat", "GET");
+		const result = validateInternalToken(token, token, "/v1/workspaces/ws_test/chat", "GET");
 		expect(result).not.toBeNull();
 		expect(result!.status).toBe(403);
 	});
 
-	it("INTERNAL_TOKEN_ALLOWED_PATHS contains only chat endpoints", () => {
-		expect(INTERNAL_TOKEN_ALLOWED_PATHS.has("/v1/chat")).toBe(true);
-		expect(INTERNAL_TOKEN_ALLOWED_PATHS.has("/v1/chat/stream")).toBe(true);
-		expect(INTERNAL_TOKEN_ALLOWED_PATHS.has("/v1/tools/call")).toBe(false);
-		expect(INTERNAL_TOKEN_ALLOWED_PATHS.has("/v1/events")).toBe(false);
+	it("isInternalTokenPath allows only a workspace's chat endpoints", () => {
+		expect(isInternalTokenPath("/v1/workspaces/ws_test/chat")).toBe(true);
+		expect(isInternalTokenPath("/v1/workspaces/ws_test/chat/stream")).toBe(true);
+		expect(isInternalTokenPath("/v1/workspaces/ws_test/chat/start")).toBe(false);
+		expect(isInternalTokenPath("/v1/workspaces/ws_test/tools/call")).toBe(false);
+		expect(isInternalTokenPath("/v1/workspaces/ws_test/chat/stream/extra")).toBe(false);
+		expect(isInternalTokenPath("/v1/workspaces//chat")).toBe(false);
+		expect(isInternalTokenPath("/v1/chat")).toBe(false);
+		expect(isInternalTokenPath("/v1/events")).toBe(false);
 	});
 });
 
 describe("internal auth token - server integration", () => {
-	it("request with internal token to /v1/chat succeeds (200)", async () => {
-		const res = await fetch(`${baseUrl}/v1/chat`, {
+	// The token carries no identity. The workspace gate admits an identity-less
+	// request as the dev user only when the runtime has no identity provider —
+	// true here, since the provider is handed to startServer alone — and the dev
+	// user is a member of TEST_WORKSPACE_ID.
+	it("request with internal token to /v1/workspaces/:wsId/chat succeeds (200)", async () => {
+		const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat`, {
 			method: "POST",
 			headers: {
 				"Content-Type": "application/json",
 				Authorization: `Bearer ${handle.internalToken}`,
-				"X-Workspace-Id": TEST_WORKSPACE_ID,
 			},
 			body: JSON.stringify({ message: "Hello from connector", workspaceId: TEST_WORKSPACE_ID }),
 		});
@@ -110,13 +117,12 @@ describe("internal auth token - server integration", () => {
 		expect(body.response).toBe("Hello from connector");
 	});
 
-	it("request with internal token to /v1/chat/stream succeeds (200)", async () => {
-		const res = await fetch(`${baseUrl}/v1/chat/stream`, {
+	it("request with internal token to /v1/workspaces/:wsId/chat/stream succeeds (200)", async () => {
+		const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat/stream`, {
 			method: "POST",
 			headers: {
 				"Content-Type": "application/json",
 				Authorization: `Bearer ${handle.internalToken}`,
-				"X-Workspace-Id": TEST_WORKSPACE_ID,
 			},
 			body: JSON.stringify({ message: "Stream from connector", workspaceId: TEST_WORKSPACE_ID }),
 		});
@@ -125,13 +131,12 @@ describe("internal auth token - server integration", () => {
 		expect(res.headers.get("Content-Type")).toBe("text/event-stream");
 	});
 
-	it("request with internal token to /v1/tools/call returns 403", async () => {
-		const res = await fetch(`${baseUrl}/v1/tools/call`, {
+	it("request with internal token to /v1/workspaces/:wsId/tools/call returns 403", async () => {
+		const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/tools/call`, {
 			method: "POST",
 			headers: {
 				"Content-Type": "application/json",
 				Authorization: `Bearer ${handle.internalToken}`,
-				"X-Workspace-Id": TEST_WORKSPACE_ID,
 			},
 			body: JSON.stringify({ name: "nb__get_config", input: {} }),
 		});
@@ -144,7 +149,6 @@ describe("internal auth token - server integration", () => {
 			method: "GET",
 			headers: {
 				Authorization: `Bearer ${handle.internalToken}`,
-				"X-Workspace-Id": TEST_WORKSPACE_ID,
 			},
 		});
 
@@ -152,12 +156,11 @@ describe("internal auth token - server integration", () => {
 	});
 
 	it("request with wrong internal token returns 401", async () => {
-		const res = await fetch(`${baseUrl}/v1/chat`, {
+		const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat`, {
 			method: "POST",
 			headers: {
 				"Content-Type": "application/json",
 				Authorization: "Bearer wrong-token-value",
-				"X-Workspace-Id": TEST_WORKSPACE_ID,
 			},
 			body: JSON.stringify({ message: "Should fail", workspaceId: TEST_WORKSPACE_ID }),
 		});

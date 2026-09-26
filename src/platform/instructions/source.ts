@@ -8,7 +8,7 @@
  * workspace admin member may write — an org role grants no bypass.
  *
  * The write tool is INTERNAL (`ai.nimblebrain/internal`): the settings UI
- * invokes it by name over `/v1/tools/call`; the model never sees it. The
+ * invokes it by name over `/v1/workspaces/:wsId/tools/call`; the model never sees it. The
  * overlay is injected into every conversation's prompt, so its author is the
  * human, on a surface where they see the whole text they are replacing —
  * never the agent overwriting an 8 KiB prose blob to add one line. An agent

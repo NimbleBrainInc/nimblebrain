@@ -11,21 +11,12 @@
  */
 
 import { publicOrigin } from "../oauth/public-origin.ts";
-import { WORKSPACE_ID_RE } from "../workspace/workspace-id-pattern.ts";
 
 /** Path prefix of the per-workspace MCP endpoint. */
 export const MCP_PATH_PREFIX = "/mcp";
 
 /** Well-known path of Protected Resource Metadata (RFC 9728 §3). */
 export const PROTECTED_RESOURCE_METADATA_PATH = "/.well-known/oauth-protected-resource";
-
-/**
- * Whether `wsId` is shaped like a workspace id. Only the shape is checked, so
- * the answer reveals nothing about which workspaces exist.
- */
-export function isWorkspaceIdShape(wsId: string): boolean {
-  return WORKSPACE_ID_RE.test(wsId);
-}
 
 /** The canonical resource URL of a workspace's MCP endpoint: `<origin>/mcp/<wsId>`. */
 export function mcpResourceUrl(wsId: string): string {

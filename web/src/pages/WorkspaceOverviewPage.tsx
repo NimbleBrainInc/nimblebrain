@@ -43,9 +43,9 @@ export function WorkspaceOverviewPage() {
 
   const workspace = slug ? wsCtx.workspaces.find((w) => toSlug(w.id) === slug) : undefined;
 
-  // The briefing is workspace-scoped server-side via X-Workspace-Id, which the
-  // route guard projects from the slug. Key the fetch on THIS page's route
-  // workspace so the header, the fetch, and the briefing all follow the URL in
+  // The briefing is workspace-scoped server-side via the workspace in the
+  // request path, which the route guard projects from the slug. Key the fetch on
+  // THIS page's route workspace so the path, the fetch, and the briefing all follow the URL in
   // lockstep — no one-frame mismatch on a switch (see useWorkspaceBriefing).
   const {
     briefing,

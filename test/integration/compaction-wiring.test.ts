@@ -4,7 +4,7 @@
  * The unit tests cover the pure helpers (planCompaction, summarizeMessages,
  * compactConversationMessages, reconstructMessages, fork). This test covers
  * the ROUTE the units don't: enabling `features.compaction` and driving real
- * `/v1/chat` turns through a live Runtime + EventSourcedConversationStore until
+ * `/v1/workspaces/<wsId>/chat` turns through a live Runtime + EventSourcedConversationStore until
  * the accumulated history crosses the budget, then proving that
  * `Runtime.maybeCompactHistory` actually fired — it persisted a
  * `history.compacted` event, the model-facing projection is compacted, and the
@@ -96,12 +96,11 @@ function authHeaders(): Record<string, string> {
   return {
     "Content-Type": "application/json",
     Authorization: `Bearer ${API_KEY}`,
-    "X-Workspace-Id": TEST_WORKSPACE_ID,
   };
 }
 
 async function sendTurn(message: string, conversationId?: string): Promise<string> {
-  const res = await fetch(`${baseUrl}/v1/chat`, {
+  const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat`, {
     method: "POST",
     headers: authHeaders(),
     body: JSON.stringify(conversationId ? { message, conversationId } : { message }),
@@ -112,8 +111,8 @@ async function sendTurn(message: string, conversationId?: string): Promise<strin
 }
 
 function readEvents(conversationId: string): ConversationEvent[] {
-  // The authenticated caller (usr_test via the test auth adapter) chats focused
-  // on TEST_WORKSPACE_ID, so the conversation lives in that workspace's owner partition.
+  // The authenticated caller (usr_test via the test auth adapter) chats in
+  // TEST_WORKSPACE_ID, so the conversation lives in that workspace's owner partition.
   const path = join(
     workspaceConversationsDir(workDir, TEST_WORKSPACE_ID, TEST_IDENTITY.id),
     `${conversationId}.jsonl`,

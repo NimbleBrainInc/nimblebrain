@@ -36,11 +36,11 @@ afterAll(async () => {
 	rmSync(testDir, { recursive: true, force: true });
 });
 
-describe("GET /v1/shell", () => {
-	const wsHeaders = { "X-Workspace-Id": TEST_WORKSPACE_ID };
+describe("GET /v1/workspaces/:wsId/shell", () => {
+	const shellUrl = () => `${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/shell`;
 
 	it("returns 200 with placements array", async () => {
-		const res = await fetch(`${baseUrl}/v1/shell`, { headers: wsHeaders });
+		const res = await fetch(shellUrl());
 
 		expect(res.status).toBe(200);
 		expect(res.headers.get("Content-Type")).toContain("application/json");
@@ -50,7 +50,7 @@ describe("GET /v1/shell", () => {
 	});
 
 	it("placements include core entries", async () => {
-		const res = await fetch(`${baseUrl}/v1/shell`, { headers: wsHeaders });
+		const res = await fetch(shellUrl());
 		const body = await res.json();
 
 		// With no installed connectors, the placement registry
@@ -60,15 +60,15 @@ describe("GET /v1/shell", () => {
 	});
 
 	it("response includes chatEndpoint and eventsEndpoint", async () => {
-		const res = await fetch(`${baseUrl}/v1/shell`, { headers: wsHeaders });
+		const res = await fetch(shellUrl());
 		const body = await res.json();
 
-		expect(body.chatEndpoint).toBe("/v1/chat/stream");
+		expect(body.chatEndpoint).toBe(`/v1/workspaces/${TEST_WORKSPACE_ID}/chat/stream`);
 		expect(body.eventsEndpoint).toBe("/v1/events");
 	});
 });
 
-describe("GET /v1/shell auth", () => {
+describe("GET /v1/workspaces/:wsId/shell auth", () => {
 	let authHandle: ServerHandle;
 	let authRuntime: Runtime;
 	let authUrl: string;
@@ -100,15 +100,14 @@ describe("GET /v1/shell auth", () => {
 	});
 
 	it("returns 401 without auth", async () => {
-		const res = await fetch(`${authUrl}/v1/shell`);
+		const res = await fetch(`${authUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/shell`);
 		expect(res.status).toBe(401);
 	});
 
 	it("returns 200 with valid Bearer token", async () => {
-		const res = await fetch(`${authUrl}/v1/shell`, {
+		const res = await fetch(`${authUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/shell`, {
 			headers: {
 				Authorization: `Bearer ${TEST_API_KEY}`,
-				"X-Workspace-Id": TEST_WORKSPACE_ID,
 			},
 		});
 		expect(res.status).toBe(200);

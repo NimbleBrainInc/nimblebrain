@@ -93,16 +93,22 @@ docker compose config    # Validate compose file
 
 All endpoints require authentication (Bearer token or session cookie) unless noted. Auth is configured via `instance.json` — see the identity system docs.
 
+A route that acts on a workspace names it in its path, `/v1/workspaces/:wsId/…`, and admits only a member of it: a malformed, unknown or non-member id gets `404 workspace_error`. Every other route acts on the caller, or on a conversation or file its own id locates, and names no workspace ([ADR-0037](./adr/0037-a-workspace-is-addressed-by-url-on-every-surface.md)).
+
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
 | GET | /v1/health | No | Health check |
 | GET | /v1/bootstrap | Yes | Bootstrap workspace context (user, workspaces, shell config) |
-| POST | /v1/chat | Yes | Synchronous chat |
-| POST | /v1/chat/stream | Yes | SSE streaming chat |
-| GET | /v1/apps/:name/resources/:path | Yes | Fetch app UI resource |
-| POST | /v1/tools/call | Yes | Direct tool invocation |
-| GET | /v1/shell | Yes | Shell configuration (placements, endpoints) |
-| GET | /v1/files/:fileId | Yes | Serve uploaded file |
+| POST | /v1/workspaces/:wsId/chat | Yes | Synchronous chat |
+| POST | /v1/workspaces/:wsId/chat/stream | Yes | SSE streaming chat |
+| POST | /v1/workspaces/:wsId/chat/start | Yes | Start a turn that runs to completion on the server |
+| POST | /v1/conversations/:id/cancel | Yes | Stop a conversation's in-flight turn |
+| GET | /v1/workspaces/:wsId/apps/:name/resources/:path | Yes | Fetch app UI resource |
+| POST | /v1/workspaces/:wsId/tools/call | Yes | Direct tool invocation |
+| POST | /v1/workspaces/:wsId/resources/read | Yes | Read an MCP resource |
+| POST | /v1/workspaces/:wsId/resources | Yes | Upload files (multipart) |
+| GET | /v1/workspaces/:wsId/shell | Yes | Shell configuration (placements, endpoints) |
+| GET | /v1/files/:fileId | Yes | Serve uploaded file (the id locates its workspace) |
 | GET | /v1/events | Yes | SSE workspace event stream |
 | GET | /v1/auth/authorize | No | OAuth authorization redirect |
 | GET | /v1/auth/callback | No | OAuth callback handler |
@@ -224,7 +230,7 @@ A fully specified example:
 
 **Model slots.** `models` takes two named slots — `default` (every chat turn) and `fast` (titles, the home briefing, and both history folds). Each is a `provider:model-id` string. `providers` supplies per-provider API keys when you want to mix providers across slots. The older single-`model` / `defaultModel` shape is still accepted for backward compatibility but is deprecated.
 
-**Feature flags.** All default to `true`. Disable a flag to remove the capability entirely — the tool is unregistered, not visible to the LLM, and `POST /v1/tools/call` returns 403. See [Feature Flags](#feature-flags) for the full set.
+**Feature flags.** All default to `true`. Disable a flag to remove the capability entirely — the tool is unregistered, not visible to the LLM, and `POST /v1/workspaces/:wsId/tools/call` returns 403. See [Feature Flags](#feature-flags) for the full set.
 
 **Deprecated fields.** `identity` and `contextFile` are ignored with a warning — use a skill with `type: "context"` instead.
 
@@ -564,7 +570,7 @@ Connectors can be installed per-workspace (tracked via `ConnectorInstance.wsId`)
 
 **Workspace-level** (`GET /v1/events`): Events: `connector.installed`, `connector.uninstalled`, `connection.state_changed`, `server.notification`, `conversation.title`, `config.changed`, `skill.created`, `skill.updated`, `skill.deleted`, `bridge.tool.call`, `bridge.tool.done`, `notification.created`, `notification.delivered`, `notification.delivery_failed`, `heartbeat` (30s).
 
-**Per-conversation** (`GET /v1/conversations/:id/events`): For multi-participant chat. Security: `requireAuth` → `requireWorkspace` → `canAccess()`. Events: `user.message`, `text.delta`, `tool.start`, `tool.done`, `llm.done`, `done`, `heartbeat`. Sender excluded from own broadcast.
+**Per-conversation** (`GET /v1/conversations/:id/events`): For multi-participant chat. Security: `requireAuth` → ownership of the conversation (no workspace). Events: `user.message`, `text.delta`, `tool.start`, `tool.done`, `llm.done`, `done`, `heartbeat`. Sender excluded from own broadcast.
 
 ### Web Client Internals
 
@@ -626,7 +632,7 @@ All default to `true`. What `false` does depends on the flag: most withhold a to
 | `workspaceManagement` | Workspaces, members, sharing | `nb__manage_workspaces` is not registered |
 | `compaction` | Folding the oldest turns of a long conversation into a summary at run start | Full history replays every turn (event-sourced stores only) |
 
-**Enforcement.** For the flags that withhold a tool, three layers: (1) the tool is not built into its source at startup, so it reaches no tool list and no dispatcher; (2) `POST /v1/tools/call` returns `403 feature_disabled`; (3) MCP `tools/list` filters it and `tools/call` returns an error. `toolDiscovery`, `catalogSearch`, and `fileContext` are enforced inside the handler instead — the tool or endpoint is present and refuses. `compaction` gates no call path at all. Tools outside the table (`nb__status`, the read-only platform surfaces, `nb__search` itself) are never gated.
+**Enforcement.** For the flags that withhold a tool, three layers: (1) the tool is not built into its source at startup, so it reaches no tool list and no dispatcher; (2) `POST /v1/workspaces/:wsId/tools/call` returns `403 feature_disabled`; (3) MCP `tools/list` filters it and `tools/call` returns an error. `toolDiscovery`, `catalogSearch`, and `fileContext` are enforced inside the handler instead — the tool or endpoint is present and refuses. `compaction` gates no call path at all. Tools outside the table (`nb__status`, the read-only platform surfaces, `nb__search` itself) are never gated.
 
 Full reference: [Feature flags](https://docs.nimblebrain.ai/config/features/) on docs.nimblebrain.ai.
 
@@ -658,7 +664,7 @@ These are non-negotiable patterns. Violating them causes production bugs:
 - **Iframe DOM isolation** — never put React-managed children in same container as raw DOM iframes
 - **SlotRenderer effect depends only on `placementKey`** — callbacks via refs, not dep array (prevents flickering)
 - **Shell components must not consume `ChatContext`** — use `ChatConfigContext` (stable) to avoid re-renders during streaming
-- **`"primary"` virtual path** — `GET /v1/apps/:name/resources/primary` resolves to `primaryView.resourceUri` from manifest
+- **`"primary"` virtual path** — `GET /v1/workspaces/:wsId/apps/:name/resources/primary` resolves to `primaryView.resourceUri` from manifest
 - **Spec methods only** — use ext-apps spec method names in bridge; NimbleBrain extensions use `synapse/` prefix
 - **`ui/initialize` field names** — `hostInfo` (not `serverInfo`), `hostCapabilities` (not `capabilities`), `hostContext.theme` is string
 
@@ -714,7 +720,7 @@ These are non-negotiable patterns. Violating them causes production bugs:
 - **`WorkspaceLogSink`** — Workspace-level daily rolling JSONL logs. Only persists workspace events (connector lifecycle, data/config changes, skill/file operations).
 - **`ConsoleEventSink`** — Human-readable stderr for development.
 - **`DebugEventSink`** — Verbose JSON dumps (`--debug`).
-- **`CallbackEventSink`** — Bridges run events to the in-process chat handler (`POST /v1/chat`).
+- **`CallbackEventSink`** — Bridges run events to the in-process chat handler (`POST /v1/workspaces/:wsId/chat`).
 - **`PostHogEventSink`** — Anonymous telemetry. No PII. Opt-out: `telemetry.enabled: false`, `NB_TELEMETRY_DISABLED=1`, or `DO_NOT_TRACK=1`.
 
 ## License

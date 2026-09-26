@@ -73,7 +73,7 @@ function makeStubRuntime(opts: StubOptions = {}): Runtime {
 }
 
 function req(body: unknown): Request {
-  return new Request("http://x/v1/resources/read", {
+  return new Request("http://x/v1/workspaces/w1/resources/read", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -81,18 +81,6 @@ function req(body: unknown): Request {
 }
 
 describe("handleReadResource", () => {
-  it("rejects missing workspaceId with 400", async () => {
-    const runtime = makeStubRuntime();
-    const res = await handleReadResource(
-      req({ server: "calendar", uri: "ui://calendar/main" }),
-      runtime,
-      {},
-    );
-    expect(res.status).toBe(400);
-    const body = await res.json();
-    expect(body.error).toBe("bad_request");
-  });
-
   it("rejects missing server with 400", async () => {
     const runtime = makeStubRuntime();
     const res = await handleReadResource(req({ uri: "ui://x/y" }), runtime, { workspaceId: "w" });
@@ -233,7 +221,7 @@ describe("handleReadResource", () => {
   it("returns 400 for invalid JSON body", async () => {
     const runtime = makeStubRuntime();
     const res = await handleReadResource(
-      new Request("http://x/v1/resources/read", {
+      new Request("http://x/v1/workspaces/w1/resources/read", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: "not json",
@@ -245,10 +233,10 @@ describe("handleReadResource", () => {
   });
 
   // Cross-workspace: a qualified `ws_<id>-<source>` server names its OWN
-  // workspace. The owning workspace — not the ambient X-Workspace-Id — is
+  // workspace. The owning workspace — not the workspace in the URL — is
   // authoritative, and the registry/readAppResource are keyed on the BARE
   // source name. Regression for the preview-from-another-workspace 403.
-  it("resolves a qualified server to its owning workspace, ignoring X-Workspace-Id", async () => {
+  it("resolves a qualified server to its owning workspace, not the workspace in the URL", async () => {
     const calls: Array<{ server: string; uri: string; workspaceId: string }> = [];
     const runtime = makeStubRuntime({
       sources: ["synapse-collateral"], // registry keyed on the bare source name
@@ -259,7 +247,7 @@ describe("handleReadResource", () => {
     const res = await handleReadResource(
       req({ server: "ws_nimblebrain_shared-synapse-collateral", uri: "collateral://exports/e.pdf" }),
       runtime,
-      // Ambient workspace is the user's PERSONAL workspace, not where the doc lives.
+      // The workspace in the URL is the user's own, not where the doc lives.
       { workspaceId: "ws_user_u1", identity: { id: "u1" } as never },
     );
     expect(res.status).toBe(200);
@@ -300,21 +288,6 @@ describe("handleReadResource — artifact:// branch", () => {
   // The artifact resolver is a process-wide singleton (test seam). Reset it
   // after each case so an injected fake never leaks into another test.
   afterEach(() => setArtifactResolver(undefined));
-
-  it("returns 400 when no workspace is in scope", async () => {
-    const runtime = makeStubRuntime();
-    let called = false;
-    stubArtifactResolver(() => {
-      called = true;
-      return { contents: [] };
-    });
-    const res = await handleReadResource(req({ uri: "artifact://abc123" }), runtime, {});
-    expect(res.status).toBe(400);
-    const body = await res.json();
-    expect(body.error).toBe("bad_request");
-    // The workspace gate fires before the resolver is ever consulted.
-    expect(called).toBe(false);
-  });
 
   it("maps ArtifactNotFoundError to 404", async () => {
     const runtime = makeStubRuntime();

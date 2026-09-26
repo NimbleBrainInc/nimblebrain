@@ -28,8 +28,8 @@ export function __resetBriefingCache(): void {
  * Fetch the workspace activity briefing (`nb__briefing`) for the active
  * workspace.
  *
- * The briefing is workspace-scoped server-side via the `X-Workspace-Id`
- * header, which the REST client derives from the active workspace. We key the
+ * The briefing is workspace-scoped server-side via the workspace in the
+ * request path, which the REST client derives from the active workspace. We key the
  * fetch on `workspaceId` — and the caller must pass the *active* workspace id
  * (not the route slug's), because `WorkspaceContext.setActiveWorkspace` sets
  * the React state and the request header together. Keying on the active id

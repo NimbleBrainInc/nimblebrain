@@ -61,12 +61,11 @@ describe("metrics with no Prometheus configured", () => {
   });
 
   test("a chat turn drives the metrics sink without error and populates a counter", async () => {
-    const chat = await fetch(`${baseUrl}/v1/chat`, {
+    const chat = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${API_KEY}`,
-        "X-Workspace-Id": TEST_WORKSPACE_ID,
       },
       body: JSON.stringify({ message: "hello" }),
     });

@@ -37,7 +37,7 @@ export function enableDefaultMetrics(): void {
 /**
  * RED: request count by method, matched route pattern, and status code.
  *
- * `route` is the *matched route pattern* (e.g. `/v1/chat`), never the raw path,
+ * `route` is the *matched route pattern* (e.g. `/v1/workspaces/:wsId/chat`), never the raw path,
  * so path params like conversation ids don't explode label cardinality.
  * `method` is clamped to the standard verb set (else "OTHER") and `route`
  * collapses unmatched paths to "/*", so neither label is client-unbounded.

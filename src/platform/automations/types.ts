@@ -22,7 +22,7 @@ export interface Automation {
   /** What this automation does. */
   description?: string;
 
-  /** The message sent to POST /v1/chat on each run. */
+  /** The message that opens each run. */
   prompt: string;
 
   /** When to run. */

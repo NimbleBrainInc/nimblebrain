@@ -14,12 +14,12 @@
 import { Hono } from "hono";
 import type { AuthorizationServer } from "../../identity/provider.ts";
 import {
-  isWorkspaceIdShape,
   MCP_PATH_PREFIX,
   mcpResourceUrl,
   PROTECTED_RESOURCE_METADATA_PATH,
 } from "../mcp-resource.ts";
 import type { AppContext } from "../types.ts";
+import { isWorkspaceIdShape } from "../workspace-address.ts";
 
 export function wellKnownRoutes(ctx: AppContext) {
   const app = new Hono();
