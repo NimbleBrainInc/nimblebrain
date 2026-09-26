@@ -4,13 +4,13 @@ import { Label } from "../../../components/ui/label";
 import { useFlashState } from "../../../hooks/useFlashState";
 
 /**
- * Workspace ID + copy button + MCP-client helper text. Used by both
+ * Workspace ID + copy button + helper text. Used by both
  * `WorkspaceGeneralTab` (active workspace) and `WorkspaceDetailPage`
  * (org-admin "manage another workspace") — same widget, same copy.
  *
- * The two call sites both render this inside a `<Section title="MCP
- * Connection">`, so this component does NOT render its own heading; the
- * Section above it owns that.
+ * The two call sites both render this inside a `<Section title="Workspace
+ * ID">`, so this component does NOT render its own heading; the Section above
+ * it owns that.
  *
  * Design notes:
  *
@@ -57,8 +57,8 @@ export function CopyableWorkspaceId({ workspaceId }: { workspaceId: string }) {
         </Button>
       </div>
       <p className="text-xs text-muted-foreground">
-        Use this ID as the <code className="text-2xs">X-Workspace-Id</code> header when connecting
-        external MCP clients to this workspace.
+        Identifies this workspace. MCP clients connect with the workspace's MCP URL, under the
+        workspace's settings → MCP.
       </p>
     </div>
   );

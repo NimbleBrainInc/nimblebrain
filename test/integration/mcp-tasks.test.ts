@@ -363,9 +363,7 @@ afterAll(async () => {
 
 async function createClient(opts: { workspaceId?: string } = {}): Promise<Client> {
   const wsId = opts.workspaceId ?? TEST_WORKSPACE_ID;
-  const transport = new StreamableHTTPClientTransport(new URL(`${baseUrl}/mcp`), {
-    requestInit: { headers: { "x-workspace-id": wsId } },
-  });
+  const transport = new StreamableHTTPClientTransport(new URL(`${baseUrl}/mcp/${wsId}`));
   const client = new Client(
     { name: "tasks-test", version: "1.0.0" },
     { capabilities: { tasks: { requests: { tools: { call: {} } }, cancel: {} } } },
@@ -747,50 +745,29 @@ describe("/mcp tasks/* scoped to one source", () => {
     }
   });
 
-  /** One session whose requests carry whichever workspace `ws.current` names. */
-  async function createSwitchableClient(): Promise<{ client: Client; ws: { current: string } }> {
-    const ws = { current: TEST_WORKSPACE_ID };
-    const transport = new StreamableHTTPClientTransport(new URL(`${baseUrl}/mcp`), {
-      fetch: (url, init) => {
-        const headers = new Headers(init?.headers);
-        headers.set("x-workspace-id", ws.current);
-        return fetch(url, { ...init, headers });
-      },
-    });
-    const client = new Client(
-      { name: "tasks-test", version: "1.0.0" },
-      { capabilities: { tasks: { requests: { tools: { call: {} } }, cancel: {} } } },
-    );
-    await client.connect(transport);
-    return { client, ws };
-  }
-
-  it("a scope names a source in the request's workspace, not a same-named source in another", async () => {
-    const { client, ws } = await createSwitchableClient();
+  it("a scope names a source in the session's workspace, not a same-named source in another", async () => {
+    // A session is bound to the workspace in its URL, so the other workspace
+    // is a different session. Two servers both named `twin`, one task id.
+    const here = await createClient({ workspaceId: TEST_WORKSPACE_ID });
+    const there = await createClient({ workspaceId: OTHER_WORKSPACE_ID });
     try {
-      // One session, one task id, two servers both named `twin`.
-      ws.current = TEST_WORKSPACE_ID;
-      const here = await startTask(client, "twin__minted");
-      ws.current = OTHER_WORKSPACE_ID;
-      const there = await startTask(client, "twin__minted");
-      expect(there.taskId).toBe(here.taskId);
-      const taskId = here.taskId;
-      await waitForStatus(client, taskId, "twin", "completed");
-      ws.current = TEST_WORKSPACE_ID;
-      expect((await scopedGet(client, taskId, "twin")).status).toBe("working");
+      const mine = await startTask(here, "twin__minted");
+      const theirs = await startTask(there, "twin__minted");
+      expect(theirs.taskId).toBe(mine.taskId);
+      const taskId = mine.taskId;
+      await waitForStatus(there, taskId, "twin", "completed");
+      expect((await scopedGet(here, taskId, "twin")).status).toBe("working");
 
       // A task one workspace's source ran is out of reach from the other.
-      const slow = await startTask(client, "fake__slow");
-      ws.current = OTHER_WORKSPACE_ID;
-      await expectTaskNotFound(scopedGet(client, slow.taskId, "fake"));
-      await expectTaskNotFound(scopedCancel(client, slow.taskId, "fake"));
-      await expectTaskNotFound(scopedResult(client, slow.taskId, "fake"));
+      const slow = await startTask(here, "fake__slow");
+      await expectTaskNotFound(scopedGet(there, slow.taskId, "fake"));
+      await expectTaskNotFound(scopedCancel(there, slow.taskId, "fake"));
+      await expectTaskNotFound(scopedResult(there, slow.taskId, "fake"));
 
-      ws.current = TEST_WORKSPACE_ID;
-      expect((await scopedCancel(client, slow.taskId, "fake")).status).toBe("cancelled");
-      expect((await scopedCancel(client, taskId, "twin")).status).toBe("cancelled");
+      expect((await scopedCancel(here, slow.taskId, "fake")).status).toBe("cancelled");
+      expect((await scopedCancel(here, taskId, "twin")).status).toBe("cancelled");
     } finally {
-      await client.close();
+      await Promise.all([here.close(), there.close()]);
     }
   });
 });

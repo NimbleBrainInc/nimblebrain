@@ -48,9 +48,7 @@ async function installConnector(serverName: string, toolNames: string[]): Promis
 }
 
 async function mcpClient(workspace: string): Promise<Client> {
-  const transport = new StreamableHTTPClientTransport(new URL(`${baseUrl}/mcp`), {
-    requestInit: { headers: { "x-workspace-id": workspace } },
-  });
+  const transport = new StreamableHTTPClientTransport(new URL(`${baseUrl}/mcp/${workspace}`));
   const client = new Client({ name: "pc-policy-test", version: "1.0.0" });
   await client.connect(transport);
   return client;

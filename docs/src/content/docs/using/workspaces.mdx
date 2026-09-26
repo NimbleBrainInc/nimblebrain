@@ -112,7 +112,7 @@ NimbleBrain guarantees every authenticated user has at least one workspace. The 
 
 ## Connecting external MCP clients
 
-The `/mcp` endpoint authenticates you by **identity**, but each request scopes to one workspace via the `X-Workspace-Id` header — validated against your membership. `tools/list` returns that workspace's tools plus your identity tools, and a `tools/call` to any other workspace is refused. A request with no `X-Workspace-Id` exposes identity tools only. See [Connecting External Clients](/connect/external-clients) for setup.
+Each workspace has its own MCP endpoint, `/mcp/<workspaceId>`, shown under **Workspace settings → MCP**. A client connected to it reaches that workspace's tools plus your identity tools, only while you are a member, and no other workspace. Bare `/mcp` is refused. See [Connecting External Clients](/connect/external-clients) for setup.
 
 ## What's next
 

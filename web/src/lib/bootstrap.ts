@@ -41,6 +41,7 @@ export function bootstrapWorkspacesToInfo(
     // workspace invariants in workspace settings. Pre-Stage-1 deployments
     // return `false` for every workspace.
     isPersonal: ws.isPersonal,
+    mcpUrl: ws.mcpUrl,
   }));
 }
 

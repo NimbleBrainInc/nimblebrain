@@ -93,9 +93,7 @@ function notesSource(name: string, sink: ReturnType<Runtime["getEventSink"]>): M
 }
 
 async function createMcpClient(): Promise<Client> {
-  const transport = new StreamableHTTPClientTransport(new URL(`${baseUrl}/mcp`), {
-    requestInit: { headers: { "x-workspace-id": TEST_WORKSPACE_ID } },
-  });
+  const transport = new StreamableHTTPClientTransport(new URL(`${baseUrl}/mcp/${TEST_WORKSPACE_ID}`));
   const client = new Client({ name: "app-iframe", version: "1.0.0" });
   await client.connect(transport);
   return client;

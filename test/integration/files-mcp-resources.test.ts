@@ -145,15 +145,13 @@ describe("workspace files exposed as MCP resources", () => {
     // `resources/read` (bare URI, no `server` param) — NOT the REST endpoint
     // the other cases above exercise. `files` is a kernel identity source that
     // lives outside every workspace registry, so the `/mcp` handler resolves it
-    // through the identity door. Files are workspace-owned, so the read must name the
-    // workspace: the per-request `X-Workspace-Id` header is threaded as the focused
-    // workspace (here the dev user's personal workspace, where the upload landed).
+    // through the identity door. Files are workspace-owned, so the read resolves in
+    // the workspace the session's URL names (here the dev user's personal
+    // workspace, where the upload landed).
     // This drives the real MCP SDK client end-to-end to lock in the fix.
     const id = await uploadChatFile(PNG_BYTES, "bridge.png", "image/png");
 
-    const transport = new StreamableHTTPClientTransport(new URL(`${baseUrl}/mcp`), {
-      requestInit: { headers: { "X-Workspace-Id": PERSONAL_WS_ID } },
-    });
+    const transport = new StreamableHTTPClientTransport(new URL(`${baseUrl}/mcp/${PERSONAL_WS_ID}`));
     const client = new Client({ name: "files-mcp-bridge-test", version: "1.0.0" });
     await client.connect(transport);
     try {
@@ -177,9 +175,7 @@ describe("workspace files exposed as MCP resources", () => {
     const id = await uploadChatFile("scoped\n", "scoped.txt", "text/plain");
     const uri = `files://${id}`;
 
-    const transport = new StreamableHTTPClientTransport(new URL(`${baseUrl}/mcp`), {
-      requestInit: { headers: { "X-Workspace-Id": PERSONAL_WS_ID } },
-    });
+    const transport = new StreamableHTTPClientTransport(new URL(`${baseUrl}/mcp/${PERSONAL_WS_ID}`));
     const client = new Client({ name: "files-mcp-scoped-test", version: "1.0.0" });
     await client.connect(transport);
     try {

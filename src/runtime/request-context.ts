@@ -21,19 +21,19 @@ export interface RequestContext {
    *
    * Set on every door: chat (the conversation's own workspace — a chat resumed
    * in A while the client is focused on B reads A), automation runs
-   * (provenance), `/mcp` and REST (the validated `X-Workspace-Id`), and each
+   * (provenance), `/mcp` (the membership-validated workspace in its URL),
+   * REST (the validated `X-Workspace-Id`), and each
    * per-call restamp (the routed workspace, which the wall guarantees is the
    * same one).
    *
-   * Absent ⇒ no workspace in scope (an external `/mcp` request with no
-   * `X-Workspace-Id`, a background job), and every consumer denies rather than
-   * guessing.
+   * Absent ⇒ no workspace in scope (a background job), and every consumer
+   * denies rather than guessing.
    *
    * Note this is a property of the CONSUMERS, not a guarantee that absence
    * survives to them: the REST door substitutes the caller's personal
    * workspace when `X-Workspace-Id` is absent (`buildRestToolCallContext`), so
    * a headerless REST call reads the caller's own personal workspace rather
-   * than being refused. `/mcp` has no such fallback and does refuse. Do not
+   * than being refused. `/mcp` has no such fallback: bare `/mcp` is refused. Do not
    * read this field's optionality as licence to add an unguarded consumer.
    */
   workspaceId?: string;

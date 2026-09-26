@@ -67,9 +67,11 @@ export default defineConfig({
         changeOrigin: true,
       },
       // Bridge's MCP transport (StreamableHTTPClientTransport) POSTs to
-      // `/mcp` against the page origin. Without this proxy the dev server
-      // 404s and the SDK surfaces a generic "Error POSTing to endpoint".
-      "/mcp": {
+      // `/mcp/<wsId>` against the page origin. Without this proxy the dev
+      // server 404s and the SDK surfaces a generic "Error POSTing to endpoint".
+      // A `^` key is a RegExp: `/mcp` and everything under `/mcp/`, not every
+      // path that merely starts with the letters.
+      "^/mcp(/.*)?$": {
         target: `http://localhost:${process.env.NB_API_PORT ?? 27247}`,
         changeOrigin: true,
       },

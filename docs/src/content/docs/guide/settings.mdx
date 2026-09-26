@@ -39,7 +39,7 @@ This section reflects the workspace you're currently focused on. Switch workspac
 
 ### General (`/w/<id>/settings/general`)
 
-- **MCP Connection** — your workspace ID, copyable. Use it when wiring up external MCP clients (Claude Desktop, VS Code, Cursor). Note that the `/mcp` endpoint is identity-bound and does not require a workspace header. See [Connecting External Clients](/connect/external-clients).
+- **Workspace ID** — the workspace's id, copyable.
 - **Workspace Instructions** — custom instructions injected into every conversation focused on this workspace. Only an **admin member of this workspace** can edit; everyone else reads — an organization admin who is not an admin member here gets no bypass. Guidance meant for every workspace in the organization belongs in an org-tier skill (Organization → Skills), not here.
 
 <Aside type="tip">
@@ -70,6 +70,10 @@ Everything shaping your agent in this workspace, in one list, grouped into tiers
 - **Won't auto-load yet** — authored but no loading path reaches it, so it stays inert until you give it one.
 
 Toggle any skill you own on or off, or expand a row to read and edit its body. Tiers you don't edit here are read-only (shown with a lock) and link to where they're managed — personal skills to your profile, organization skills to org settings, system skills are fixed. **+ Add a skill** writes to the tier you own on this page.
+
+### MCP (`/w/<id>/settings/mcp`)
+
+The workspace's MCP URL, `<origin>/mcp/<workspaceId>`, with a copy button. Add it as a custom connector in an MCP client (Claude, Claude Code, Cursor) to reach this workspace's tools from there. Every member sees it; the client signs in as you and reaches the workspace only while you are a member. See [Connecting External Clients](/connect/external-clients).
 
 ## Organization (admin only)
 

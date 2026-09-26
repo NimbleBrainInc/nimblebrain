@@ -4,16 +4,20 @@ import { log } from "../../observability/log.ts";
 import { ensureUserWorkspace } from "../../workspace/provisioning.ts";
 import type { WorkspaceStore } from "../../workspace/workspace-store.ts";
 import type { WorkosAuth } from "../instance.ts";
-import type {
-  AuthorizationServer,
-  CreateUserInput,
-  CreateUserResult,
-  IdentityProvider,
-  ProviderCapabilities,
-  TokenResult,
-  UserIdentity,
+import {
+  type AuthorizationServer,
+  type CreateUserInput,
+  type CreateUserResult,
+  FIRST_PARTY_GRANT,
+  type IdentityProvider,
+  type ProviderCapabilities,
+  RefreshTokenError,
+  type TokenGrant,
+  type TokenResult,
+  TransientAuthError,
+  type UserIdentity,
+  type VerifiedIdentity,
 } from "../provider.ts";
-import { RefreshTokenError, TransientAuthError } from "../provider.ts";
 import type { OrgRole } from "../types.ts";
 import type { User, UserPreferences, UserStore } from "../user.ts";
 
@@ -28,6 +32,7 @@ interface WorkosJwtPayload {
   sub?: string;
   sid?: string;
   org_id?: string;
+  aud?: string | string[];
   exp?: number;
   iat?: number;
   [key: string]: unknown;
@@ -266,7 +271,7 @@ export class WorkosIdentityProvider implements IdentityProvider {
     return this.buildAuthorizationUrl();
   }
 
-  async verifyRequest(req: Request): Promise<UserIdentity | null> {
+  async verifyRequest(req: Request): Promise<VerifiedIdentity | null> {
     const token = extractToken(req);
     if (!token) return this.reject("no_token");
 
@@ -288,24 +293,31 @@ export class WorkosIdentityProvider implements IdentityProvider {
     // Route verification based on issuer: AuthKit MCP OAuth vs WorkOS User Management.
     // Both branches route their rejections through reject() so failures carry the
     // same reason field and severity — one reason-keyed view covers both issuers.
+    //
+    // The issuer also decides the grant. An AuthKit token was minted for the
+    // resource the client named, so it carries its (signature-covered)
+    // audience; a User Management token was issued to this instance's own
+    // login client, so it is first-party.
     const authkitIssuer = this.authkitOrigin();
-    const identity =
-      authkitIssuer && payload.iss === authkitIssuer
-        ? await this.verifyAuthkitToken(parsed, payload.sub)
-        : await this.verifyUserManagementToken(parsed, payload.sub);
+    const fromAuthkit = authkitIssuer !== null && payload.iss === authkitIssuer;
+    const identity = fromAuthkit
+      ? await this.verifyAuthkitToken(parsed, payload.sub)
+      : await this.verifyUserManagementToken(parsed, payload.sub);
 
     // Enforce the invariant "authenticated user has ≥1 workspace" on every
     // successful auth — covers the AuthKit/MCP-OAuth path (which never hits
     // exchangeCode) and self-heals any user whose workspace was lost to
     // admin deletion, partial failure, or migration. Idempotent; the happy
     // path is one filesystem read.
-    if (identity) {
-      await ensureUserWorkspace(this.workspaceStore, {
-        id: identity.id,
-        displayName: identity.displayName,
-      });
-    }
-    return identity;
+    if (!identity) return null;
+    await ensureUserWorkspace(this.workspaceStore, {
+      id: identity.id,
+      displayName: identity.displayName,
+    });
+    const grant: TokenGrant = fromAuthkit
+      ? { kind: "resource", audience: audienceList(payload.aud) }
+      : FIRST_PARTY_GRANT;
+    return { ...identity, grant };
   }
 
   /**
@@ -910,6 +922,13 @@ export class WorkosIdentityProvider implements IdentityProvider {
 }
 
 // ── Helpers ───────────────────────────────────────────────────────
+
+/** A JWT `aud` claim as a list: a string is one audience, anything malformed none. */
+function audienceList(aud: unknown): string[] {
+  if (typeof aud === "string") return [aud];
+  if (Array.isArray(aud)) return aud.filter((a): a is string => typeof a === "string");
+  return [];
+}
 
 /** Map a WorkOS User object to the NimbleBrain User type. */
 function toUser(

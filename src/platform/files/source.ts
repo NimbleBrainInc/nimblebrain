@@ -458,8 +458,8 @@ export function createFilesSource(runtime: Runtime, eventSink: EventSink): McpSo
    * `workspaces/<wsId>/files/<ownerId>/`, so this needs both the owner (the
    * authenticated identity) and the workspace, which rides
    * `RequestContext.workspaceId` (set on both doors). No workspace in scope
-   * (e.g. an external `/mcp` call with no header) ⇒ deny rather than guess a
-   * workspace.
+   * (e.g. a background job with no bound workspace) ⇒ deny rather than guess
+   * a workspace.
    */
   function getStore(): FileStore {
     // Resolve the owner through the one shared rule (`resolveRequestUserId`) —
@@ -469,8 +469,7 @@ export function createFilesSource(runtime: Runtime, eventSink: EventSink): McpSo
     // request carries no identity); DEV_IDENTITY only in dev.
     const ownerId = runtime.resolveRequestUserId(runtime.getCurrentIdentity() ?? undefined);
     // Files are workspace-owned: the workspace comes from the request context
-    // (set on both doors). Deny when none is in scope — e.g. an external
-    // `/mcp` call with no `X-Workspace-Id`.
+    // (set on both doors). Deny when none is in scope.
     const wsId = getRequestContext()?.workspaceId;
     if (!wsId) {
       throw new Error("files: no workspace in scope (files are workspace-owned)");

@@ -362,3 +362,68 @@ describe("verifyRequest with AuthKit JWT", () => {
     expect(identity).toBeNull();
   });
 });
+
+// ── The grant each issuer reports ────────────────────────────────
+//
+// The provider reports what a verified token was issued for; the rule that
+// decides where it is valid sits above it (`grantAdmits`). An AuthKit token is
+// minted for a resource, so it carries its signature-covered audience; a User
+// Management token is the web app's own login, so it is first-party.
+
+describe("verifyRequest reports the token's grant", () => {
+  async function authkitToken(extra: Record<string, unknown>): Promise<string> {
+    const nowSec = Math.floor(Date.now() / 1000);
+    return createJwt(
+      { sub: "user_grant", iss: "https://testapp.authkit.app", exp: nowSec + 3600, iat: nowSec, ...extra },
+      authkitKey.privateKey,
+      authkitKey.kid,
+    );
+  }
+
+  it("reports an AuthKit token's string aud as a one-element resource audience", async () => {
+    const { provider } = createProvider();
+    const token = await authkitToken({ aud: "https://nb.example.com/mcp/ws_a" });
+    const verified = await provider.verifyRequest(makeRequest(token));
+    expect(verified?.grant).toEqual({
+      kind: "resource",
+      audience: ["https://nb.example.com/mcp/ws_a"],
+    });
+  });
+
+  it("reports every string in an AuthKit token's aud array, verbatim", async () => {
+    const { provider } = createProvider();
+    const token = await authkitToken({
+      aud: ["client_test_0001", "https://NB.example.com/mcp/ws_a/", 7],
+    });
+    const verified = await provider.verifyRequest(makeRequest(token));
+    expect(verified?.grant).toEqual({
+      kind: "resource",
+      audience: ["client_test_0001", "https://NB.example.com/mcp/ws_a/"],
+    });
+  });
+
+  it("reports an AuthKit token with no aud as a resource token valid nowhere", async () => {
+    const { provider } = createProvider();
+    const verified = await provider.verifyRequest(makeRequest(await authkitToken({})));
+    expect(verified?.grant).toEqual({ kind: "resource", audience: [] });
+  });
+
+  it("reports a User Management token as first-party", async () => {
+    const { provider } = createProvider({ authkitDomain: undefined });
+    const nowSec = Math.floor(Date.now() / 1000);
+    const token = await createJwt(
+      {
+        sub: "user_first_party",
+        iss: "https://api.workos.com",
+        exp: nowSec + 3600,
+        iat: nowSec,
+        org_id: "org_test_authkit",
+        aud: "https://nb.example.com/mcp/ws_a",
+      },
+      workosKey.privateKey,
+      workosKey.kid,
+    );
+    const verified = await provider.verifyRequest(makeRequest(token));
+    expect(verified?.grant).toEqual({ kind: "first_party" });
+  });
+});

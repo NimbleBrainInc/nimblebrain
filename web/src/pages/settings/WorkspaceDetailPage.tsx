@@ -276,7 +276,7 @@ export function WorkspaceDetailPage() {
 
       {error ? <InlineError message={error} /> : null}
 
-      <Section title="MCP Connection" flush>
+      <Section title="Workspace ID" flush>
         {id ? <CopyableWorkspaceId workspaceId={id} /> : null}
       </Section>
 

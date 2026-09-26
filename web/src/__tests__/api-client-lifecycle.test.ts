@@ -8,12 +8,10 @@
 //    this to drop its identity-bound MCP session on logout — without it,
 //    the next iframe call would dispatch against the previous identity.
 //
-// 2. `setActiveWorkspaceId(...)` does NOT fire the handler. Stage 2 / Q3
-//    (locked 2026-05-22): the `/mcp` session is identity-bound, not
-//    workspace-bound. Workspace switches reuse the same session and
-//    dispatch context via the per-request `X-Workspace-Id` header. A
-//    regression to the old "reset on switch" wiring would force a fresh
-//    handshake on every browse — which is the failure Q3 codified.
+// 2. `setActiveWorkspaceId(...)` does NOT fire the auth handler. A workspace
+//    switch is not an identity boundary; the bridge's workspace-bound session
+//    listens on the separate workspace lifecycle hook, and REST helpers read
+//    the active workspace per request.
 //
 // Both setters keep their equality guard: noop sets must not fire the
 // handler (avoids tearing down the MCP transport on every benign re-set).
@@ -29,6 +27,7 @@ import { afterEach, describe, expect, mock, test } from "bun:test";
 
 import {
   addAuthLifecycleHandler,
+  addWorkspaceLifecycleHandler,
   setActiveWorkspaceId,
   setAuthLifecycleHandler,
   setAuthToken,
@@ -57,11 +56,9 @@ describe("auth lifecycle handler", () => {
     expect(handler).toHaveBeenCalledTimes(3);
   });
 
-  test("setActiveWorkspaceId does NOT fire the registered handler (Q3 — bridge survives switches)", () => {
-    // Q3 (locked 2026-05-22): the `/mcp` session is identity-bound; a
-    // workspace switch must NOT drop the bridge transport. A regression
-    // here would force a fresh handshake every time the user changes
-    // workspaces.
+  test("setActiveWorkspaceId does NOT fire the registered auth handler", () => {
+    // A workspace switch is not an identity boundary. Clients bound to a
+    // workspace listen on `addWorkspaceLifecycleHandler` instead.
     const handler = mock(() => {});
     setAuthLifecycleHandler(handler);
 
@@ -119,7 +116,7 @@ describe("auth lifecycle handler", () => {
   });
 
   test("setActiveWorkspaceId equality guard: noop sets are still cheap (no internal work)", () => {
-    // Q3: the handler doesn't fire for workspace switches at all (see test
+    // The auth handler doesn't fire for workspace switches at all (see test
     // above). But the equality guard is still load-bearing: production
     // callers (`WorkspaceContext` provider, route guards, App.tsx bootstrap)
     // repeatedly set the same value during render, and we want each call
@@ -200,5 +197,21 @@ describe("addAuthLifecycleHandler — multi-listener", () => {
     setAuthToken("tok-1");
     expect(added).toHaveBeenCalledTimes(0); // cleared
     expect(set).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("workspace lifecycle handlers", () => {
+  test("fire on a real workspace change only, never on a noop set", () => {
+    const handler = mock(() => {});
+    const off = addWorkspaceLifecycleHandler(handler);
+    try {
+      setActiveWorkspaceId("ws-wl-1");
+      setActiveWorkspaceId("ws-wl-1");
+      setActiveWorkspaceId("ws-wl-2");
+      expect(handler).toHaveBeenCalledTimes(2);
+    } finally {
+      off();
+      setActiveWorkspaceId(null);
+    }
   });
 });

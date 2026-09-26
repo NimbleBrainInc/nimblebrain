@@ -426,6 +426,8 @@ export interface BootstrapResponse {
      * `migrate-personal-workspaces` script runs.
      */
     isPersonal: boolean;
+    /** The workspace's MCP endpoint, canonical form: `<publicOrigin>/mcp/<wsId>`. */
+    mcpUrl: string;
   }>;
   activeWorkspace: string | null;
   shell: {

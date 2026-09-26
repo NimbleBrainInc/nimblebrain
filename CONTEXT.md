@@ -35,6 +35,13 @@ workspace plus the caller's identity tools — never a union across workspaces. 
 non-personal workspace has an opaque id `ws_<16-hex>`, members, and roles
 (`admin` | `member`).
 
+An MCP connection is addressed to one workspace by URL: `<publicOrigin>/mcp/<wsId>`
+(ADR-0036). Bare `/mcp` names none and is refused. A token from the MCP
+authorization server is valid only at the URL its `aud` names exactly; a
+first-party login session is bound to no resource. Either way, **membership of
+`<wsId>`, checked per request, authorizes** — the audience only prevents replay.
+An MCP session is bound to (identity, workspace).
+
 A workspace exists because `create` made it and stops existing because `delete`
 archived it. **No write brings one into being**: a writer may create paths
 inside a workspace root, and fails naming the workspace when the root is gone.
@@ -206,6 +213,7 @@ The decision log is `adr/`. Foundational (secure RBAC):
 - [0006](adr/0006-personal-connector-use-requires-a-grant.md) — personal-connector use in a shared workspace requires a grant
 - [0007](adr/0007-offboarding-revokes-active-use.md) — offboarding revokes active use; ownership is necessary, not sufficient
 - [0008](adr/0008-notifications-are-pulled-and-routed-by-the-operator.md) — notifications are pulled into a workspace inbox and routed by the operator
+- [0036](adr/0036-an-mcp-connection-is-addressed-to-one-workspace-by-url.md) — an MCP connection is addressed to one workspace by URL; a token is valid only for its resource; membership authorizes
 
 Manage skills:
 

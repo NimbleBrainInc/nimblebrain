@@ -73,8 +73,7 @@ async function installConnector(
 
 async function createMcpClient(): Promise<Client> {
 	const transport = new StreamableHTTPClientTransport(
-		new URL(`${baseUrl}/mcp`),
-		{ requestInit: { headers: { "x-workspace-id": TEST_WORKSPACE_ID } } },
+		new URL(`${baseUrl}/mcp/${TEST_WORKSPACE_ID}`),
 	);
 	const client = new Client({ name: "integ-test", version: "1.0.0" });
 	await client.connect(transport);

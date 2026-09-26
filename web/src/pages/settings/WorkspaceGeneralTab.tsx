@@ -9,8 +9,8 @@ import {
 } from "./components";
 
 /**
- * Workspace "General" tab — the MCP connection details and the workspace's
- * custom instructions.
+ * Workspace "General" tab — the workspace ID and the workspace's custom
+ * instructions.
  *
  * Route: /w/:slug/settings/general (the workspace is the URL slug).
  * Permission: any workspace member can read; only a workspace **admin member**
@@ -41,7 +41,7 @@ function Inner() {
       title={ws.name}
       description="Settings for the active workspace. Changes affect everyone in this workspace."
     >
-      <Section title="MCP Connection" flush>
+      <Section title="Workspace ID" flush>
         <CopyableWorkspaceId workspaceId={ws.id} />
       </Section>
 

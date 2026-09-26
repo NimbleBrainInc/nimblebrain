@@ -113,8 +113,8 @@ export async function createConversationsSource(
    * one workspace: `RequestContext.workspaceId`, set on every door that can
    * reach this source — chat (the conversation's OWN workspace, so a resumed
    * thread lists its own workspace's chats no matter where the user is
-   * focused), automation runs (provenance), `/mcp` (validated
-   * `X-Workspace-Id`), and REST (validated header, else personal). Same seam
+   * focused), automation runs (provenance), `/mcp` (the
+   * workspace in its URL), and REST (validated header, else personal). Same seam
    * `files__*` and `automations__*` use.
    *
    * Deliberately NOT a tool argument. A caller-supplied workspace can be

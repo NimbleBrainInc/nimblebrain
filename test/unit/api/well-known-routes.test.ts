@@ -2,11 +2,11 @@
  * Tests for OAuth 2.0 well-known discovery endpoints.
  *
  * Validates:
- * - Protected Resource Metadata (RFC 9728)
+ * - Protected Resource Metadata (RFC 9728), one document per workspace
  * - Authorization Server Metadata proxy (RFC 8414)
  */
 
-import { describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { Hono } from "hono";
 import type { AppContext } from "../../../src/api/types.ts";
 import { wellKnownRoutes } from "../../../src/api/routes/well-known.ts";
@@ -59,38 +59,78 @@ function createApp(issuerHost?: string, opts: { metadataUrl?: boolean } = {}) {
 
 // ── Protected Resource Metadata ──────────────────────────────────
 
-describe("GET /.well-known/oauth-protected-resource", () => {
-  it("returns correct JSON when the provider declares an authorization server", async () => {
-    const app = createApp("myapp.authkit.app");
-    const res = await app.request("http://api.example.com/.well-known/oauth-protected-resource");
+const ORIGIN = "https://nb.example.com";
+
+let savedOrigin: string | undefined;
+beforeEach(() => {
+  savedOrigin = process.env.NB_PUBLIC_ORIGIN;
+  process.env.NB_PUBLIC_ORIGIN = ORIGIN;
+});
+afterEach(() => {
+  if (savedOrigin === undefined) delete process.env.NB_PUBLIC_ORIGIN;
+  else process.env.NB_PUBLIC_ORIGIN = savedOrigin;
+});
+
+describe("GET /.well-known/oauth-protected-resource/mcp/:wsId", () => {
+  it("returns the workspace's canonical resource URL and the authorization server", async () => {
+    const app = createApp("auth.example.com");
+    const res = await app.request(
+      "http://api.example.com/.well-known/oauth-protected-resource/mcp/ws_a",
+    );
 
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body.resource).toBe("http://api.example.com");
-    expect(body.authorization_servers).toEqual(["https://myapp.authkit.app"]);
+    expect(body.resource).toBe(`${ORIGIN}/mcp/ws_a`);
+    expect(body.authorization_servers).toEqual(["https://auth.example.com"]);
     expect(body.bearer_methods_supported).toEqual(["header"]);
+  });
+
+  it("builds the resource from the public origin, never the request's host or forwarded headers", async () => {
+    const app = createApp("auth.example.com");
+    const res = await app.request(
+      "http://ATTACKER.example.net/.well-known/oauth-protected-resource/mcp/ws_a",
+      { headers: { "X-Forwarded-Proto": "http", "X-Forwarded-Host": "attacker.example.net" } },
+    );
+
+    expect(res.status).toBe(200);
+    expect((await res.json()).resource).toBe(`${ORIGIN}/mcp/ws_a`);
+  });
+
+  it("answers for any well-formed id without looking the workspace up", async () => {
+    // The context has no workspace store at all: the document cannot disclose
+    // whether a workspace exists, because it never asks.
+    const app = createApp("auth.example.com");
+    const res = await app.request("/.well-known/oauth-protected-resource/mcp/ws_nosuchworkspace");
+
+    expect(res.status).toBe(200);
+    expect((await res.json()).resource).toBe(`${ORIGIN}/mcp/ws_nosuchworkspace`);
+  });
+
+  it("returns 404 for an id that is not shaped like a workspace id", async () => {
+    const app = createApp("auth.example.com");
+    const res = await app.request("/.well-known/oauth-protected-resource/mcp/not-a-workspace");
+    expect(res.status).toBe(404);
   });
 
   it("returns 404 when the provider declares no authorization server", async () => {
     const app = createApp(undefined);
-    const res = await app.request("/.well-known/oauth-protected-resource");
+    const res = await app.request("/.well-known/oauth-protected-resource/mcp/ws_a");
 
     expect(res.status).toBe(404);
     const body = await res.json();
     expect(body.error).toBe("MCP OAuth not configured");
   });
+});
 
-  it("honors X-Forwarded-Proto when behind a TLS-terminating proxy", async () => {
-    const app = createApp("myapp.authkit.app");
-    // Simulates ALB → pod: pod sees HTTP, but ALB sets X-Forwarded-Proto: https.
-    const res = await app.request(
-      "http://hq.example.com/.well-known/oauth-protected-resource",
-      { headers: { "X-Forwarded-Proto": "https" } },
-    );
+describe("GET /.well-known/oauth-protected-resource", () => {
+  it("is absent: the origin is no resource that accepts an authorization-server token", async () => {
+    const app = createApp("auth.example.com");
+    const res = await app.request("http://api.example.com/.well-known/oauth-protected-resource");
 
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(404);
     const body = await res.json();
-    expect(body.resource).toBe("https://hq.example.com");
+    expect(body.resource).toBeUndefined();
+    expect(body.message).toContain("/.well-known/oauth-protected-resource/mcp/<workspaceId>");
   });
 });
 
@@ -99,16 +139,16 @@ describe("GET /.well-known/oauth-protected-resource", () => {
 describe("GET /.well-known/oauth-authorization-server", () => {
   it("proxies the declared metadata URL", async () => {
     const upstreamMetadata = {
-      issuer: "https://myapp.authkit.app",
-      authorization_endpoint: "https://myapp.authkit.app/authorize",
-      token_endpoint: "https://myapp.authkit.app/oauth/token",
+      issuer: "https://auth.example.com",
+      authorization_endpoint: "https://auth.example.com/authorize",
+      token_endpoint: "https://auth.example.com/oauth/token",
     };
 
     // Mock global fetch to intercept the upstream request
     const originalFetch = globalThis.fetch;
     globalThis.fetch = async (input: RequestInfo | URL) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
-      if (url === "https://myapp.authkit.app/.well-known/oauth-authorization-server") {
+      if (url === "https://auth.example.com/.well-known/oauth-authorization-server") {
         return new Response(JSON.stringify(upstreamMetadata), {
           status: 200,
           headers: { "Content-Type": "application/json" },
@@ -118,14 +158,14 @@ describe("GET /.well-known/oauth-authorization-server", () => {
     };
 
     try {
-      const app = createApp("myapp.authkit.app");
+      const app = createApp("auth.example.com");
       const res = await app.request("/.well-known/oauth-authorization-server");
 
       expect(res.status).toBe(200);
       const body = await res.json();
-      expect(body.issuer).toBe("https://myapp.authkit.app");
-      expect(body.authorization_endpoint).toBe("https://myapp.authkit.app/authorize");
-      expect(body.token_endpoint).toBe("https://myapp.authkit.app/oauth/token");
+      expect(body.issuer).toBe("https://auth.example.com");
+      expect(body.authorization_endpoint).toBe("https://auth.example.com/authorize");
+      expect(body.token_endpoint).toBe("https://auth.example.com/oauth/token");
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -138,7 +178,7 @@ describe("GET /.well-known/oauth-authorization-server", () => {
     };
 
     try {
-      const app = createApp("myapp.authkit.app");
+      const app = createApp("auth.example.com");
       const res = await app.request("/.well-known/oauth-authorization-server");
 
       expect(res.status).toBe(502);
@@ -156,7 +196,7 @@ describe("GET /.well-known/oauth-authorization-server", () => {
     };
 
     try {
-      const app = createApp("myapp.authkit.app");
+      const app = createApp("auth.example.com");
       const res = await app.request("/.well-known/oauth-authorization-server");
 
       expect(res.status).toBe(502);
@@ -191,7 +231,7 @@ describe("GET /.well-known/oauth-authorization-server", () => {
       const app = createApp("myapp.example.com", { metadataUrl: false });
 
       const discovery = await app.request(
-        "http://api.example.com/.well-known/oauth-protected-resource",
+        "http://api.example.com/.well-known/oauth-protected-resource/mcp/ws_a",
       );
       expect(discovery.status).toBe(200);
       expect((await discovery.json()).authorization_servers).toEqual([

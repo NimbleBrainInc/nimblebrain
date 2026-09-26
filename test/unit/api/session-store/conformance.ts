@@ -29,6 +29,7 @@ export function registrySpec(factory: ConformanceFactory): void {
     return {
       sessionId: "11111111-2222-3333-4444-555555555555",
       identityId: "usr_42",
+      workspaceId: "ws_a",
       // Use real wall-clock time so providers that compare against `Date.now()`
       // (the in-memory sweep, the Redis TTL) treat the entry as freshly-created.
       createdAt: now,
@@ -57,11 +58,9 @@ export function registrySpec(factory: ConformanceFactory): void {
       expect(got?.identityId).toBe(meta.identityId);
       expect(got?.createdAt).toBe(meta.createdAt);
       expect(got?.lastAccessedAt).toBe(meta.lastAccessedAt);
-      // Stage 2 hard-cut: workspaceId is no longer part of SessionMeta.
-      // Guard against a future regression that re-introduces the field
-      // under the same name on the round-trip — readers must surface
-      // only the documented contract.
-      expect((got as unknown as { workspaceId?: unknown }).workspaceId).toBeUndefined();
+      // The workspace is half of the session's binding; a session-miss answer
+      // compares it, so it must survive the round-trip.
+      expect(got?.workspaceId).toBe(meta.workspaceId);
     } finally {
       await reg.shutdown();
     }

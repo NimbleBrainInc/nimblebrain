@@ -235,10 +235,10 @@ Both read paths route through the process-wide `ConversationLocator`, which reso
   |---|---|
   | chat | the conversation's own `convWsId`, so a resumed chat's files follow the conversation, not the client's focus |
   | automation run | provenance |
-  | `/mcp` | the validated `X-Workspace-Id` |
+  | `/mcp/<wsId>` | the membership-validated workspace in the URL |
   | REST | the validated header, else the caller's personal workspace |
 
-  No workspace in scope ⇒ file storage denies (e.g. an external `/mcp` call with no header).
+  No workspace in scope ⇒ file storage denies (e.g. a background job with none bound).
 - **The browser serve endpoint is bare too** — `GET /v1/files/:id`, no workspace, no query. A browser `<img>` GET can't send `X-Workspace-Id`, so the workspace is resolved from the globally-unique id via the process-wide `FileLocator` (`src/files/locator.ts`, `runtime.getFileLocator()`), which searches ONLY the caller's own owner partitions. The owner partition is both the gate and the search scope — no client-supplied coordinate, and a request reaches only the caller's own bytes.
 - **The locator's `fileId → wsId` memo is never the source of truth.** `getWorkspaceFileStore` keeps it current (remember on write, forget on delete), and a stale hit self-heals via a disk re-walk.
 - **Reading a file SHARED by another owner** (future `visibility: shared`) is a separate, visibility-checked path — never a widening of this locator to other owners.
@@ -262,7 +262,7 @@ A chat or task session reaches **exactly one workspace** plus the caller's ident
 
 `crm__search` (resolved in whichever workspace the session is bound to), `conversations__search`, and `my_gmail__send` can all be invoked in the same conversation — the source segment alone decides which door each takes.
 
-**The wall is enforced in `routeToolCall`.** A session carries one `workspaceId` (a chat's is its conversation's own workspace; a task's is its provenance workspace; a `/mcp` request's is its validated per-request header). A bare `<source>__<tool>` routes by its source segment: a kernel identity source or the `my_` marker goes through the identity door (authorized by ownership via the source's `canAccess`); anything else dispatches into the session's workspace. A bare name that resolves in that workspace IS the workspace source — the marker already separates it from a same-named personal connector at emission, so dispatch does not second-guess it. A bare name that resolves there is the workspace source; one that does not is `UnknownToolSource`, with no special case for a caller who happens to hold a same-named personal connector — `UnknownToolSource` also means "installed but transiently absent", and guessing between the two would steer a model onto the caller's own credentials during a workspace-source outage. A session with **no** workspace (e.g. `/mcp`, below) denies workspace sources with `WorkspaceToolUnavailable`. The `ws_<id>-` form is rejected outright, which is what makes a second workspace **unnameable** rather than merely unreachable. **There is no per-call membership scan** — the workspace was membership-validated when the session was established (`X-Workspace-Id` middleware for chat; `personalWorkspaceIdFor` is member-by-construction; automation provenance is stamped at create time).
+**The wall is enforced in `routeToolCall`.** A session carries one `workspaceId` (a chat's is its conversation's own workspace; a task's is its provenance workspace; a `/mcp` session's is the membership-validated workspace in its URL). A bare `<source>__<tool>` routes by its source segment: a kernel identity source or the `my_` marker goes through the identity door (authorized by ownership via the source's `canAccess`); anything else dispatches into the session's workspace. A bare name that resolves in that workspace IS the workspace source — the marker already separates it from a same-named personal connector at emission, so dispatch does not second-guess it. A bare name that resolves there is the workspace source; one that does not is `UnknownToolSource`, with no special case for a caller who happens to hold a same-named personal connector — `UnknownToolSource` also means "installed but transiently absent", and guessing between the two would steer a model onto the caller's own credentials during a workspace-source outage. A session with **no** workspace denies workspace sources with `WorkspaceToolUnavailable`. The `ws_<id>-` form is rejected outright, which is what makes a second workspace **unnameable** rather than merely unreachable. **There is no per-call membership scan** — the workspace was membership-validated when the session was established (`X-Workspace-Id` middleware for chat; the `/mcp/<wsId>` route for MCP; `personalWorkspaceIdFor` is member-by-construction; automation provenance is stamped at create time).
 
 The session's reachable set comes from `runtime.listToolsForWorkspace(wsId)` (that workspace's tools + identity tools, all bare; the caller's granted personal connectors carry the `my_` marker); the engine's router and `nb__search` both read it. `nb__search` discovers **only** that workspace — there is no cross-workspace search corpus.
 
@@ -275,7 +275,15 @@ The session's reachable set comes from `runtime.listToolsForWorkspace(wsId)` (th
 - `ConnectorRef.oauthScope: "user"` is **deleted from the type union**. Every install binds workspace explicitly via `wsId`; legacy disk records throw `LegacyOAuthScopeError` on load.
 - **Dev-mode parity.** The wall works in dev mode (no auth gate); the dev identity flows through the orchestrator the same as a real one. `runtime.requireWorkspaceId()` returns `"_dev"` only when no workspace is in scope.
 
-**`/mcp` is walled to a per-request workspace.** A `/mcp` session has no fixed workspace; each request names its focused workspace via the `X-Workspace-Id` header (the iframe bridge `web/src/bridge/bridge.ts` and the web shell both send it). `McpServerHost.handlePost` validates the caller's membership and threads the workspace through an `AsyncLocalStorage` (`mcpRequestWorkspace`) so the SDK handlers see it: `tools/list` returns that workspace's tools (bare) + identity tools, and `tools/call` cannot address any OTHER workspace at all: the only form that could name one is retired and rejected. **Resources are walled the same way** — `resources/list` enumerates only that one workspace's sources, and `resources/read` resolves the caller's identity resources (`files://` etc.) first, then that one workspace, never a sweep across every workspace the identity belongs to. A request with no (or a non-member) `X-Workspace-Id` is identity-only — any workspace-source call is refused (`WorkspaceToolUnavailable`), and no workspace resources are listed or readable. This keeps the synapse iframe bridge working (it sends its active workspace) while closing the cross-workspace hole: membership-validated, one workspace per request, never a union. Do NOT restore the old cross-workspace `/mcp` union — derive the workspace from the validated header, never from the tool name alone.
+**`/mcp/<wsId>` is walled to the workspace in its URL** (ADR-0036). Bare `/mcp` is refused (`404`, naming the URL shape) — never a default workspace, never an identity-only surface. `routes/mcp.ts` authenticates against the canonical resource URL (`mcpResourceUrl`, `src/api/mcp-resource.ts`, built from `publicOrigin()` — never from `Host`/`X-Forwarded-*`), then checks membership of `<wsId>` on every request; a non-member, an unknown workspace and a malformed id all get the same `404 Workspace not found`. The session is bound to (identity, workspace) — `McpServerHost.ownsTransport` refuses a session id presented at another workspace's URL exactly like an unknown one, and the registry's `unavailable` is shown only to the bound caller. `tools/list` returns that workspace's tools (bare) + identity tools; `resources/list`/`read` reach identity resources and that one workspace, never a sweep. Do NOT reintroduce a per-request workspace header on this path, and do NOT build the resource URL from the request.
+
+**Which credentials reach `/mcp/<wsId>`** — the provider verifies the signature and reports a `TokenGrant` on `VerifiedIdentity` (`src/identity/provider.ts`); `grantAdmits` (`src/api/auth-middleware.ts`) applies the rule above every provider. Never branch on a provider name in `/mcp` code.
+
+| Credential | Recognised by | At `/mcp/<wsId>` |
+|---|---|---|
+| MCP authorization-server token | `grant.kind === "resource"` (WorkOS: issuer is AuthKit) | `aud` contains `mcpResourceUrl(wsId)` exactly, then membership. Refused on `/v1/*`. |
+| Web app login (WorkOS User Management, OIDC, dev) | `grant.kind === "first_party"` | membership |
+| Internal connector-to-host token | `validateInternalToken` | `403` — allowed only on `/v1/chat*` |
 
 ### Personal workspace invariants
 
@@ -645,11 +653,11 @@ The platform serves three audiences with three protocol surfaces. They are not t
 
 | Audience | Surface | When |
 |---|---|---|
-| External MCP clients (Claude Code, Claude Desktop, Cursor, any RFC-conformant client) | `POST /mcp` (Streamable HTTP MCP) | Any caller speaking the MCP protocol from outside the platform. Stateful: server allocates `Mcp-Session-Id` bound to workspace + identity. |
-| Iframe widgets (synapse apps in sandboxed `<iframe>`s) | postMessage → `bridge.ts` → MCP SDK Client → `/mcp` | Sandboxed UI talking via the MCP App ext-apps protocol. The bridge is the only iframe path; it shares one `Mcp-Session-Id` per browser tab via a singleton client. |
+| External MCP clients (Claude, Claude Code, Cursor, any RFC-conformant client) | `POST /mcp/<wsId>` (Streamable HTTP MCP) | Any caller speaking the MCP protocol from outside the platform. Stateful: server allocates `Mcp-Session-Id` bound to workspace + identity. |
+| Iframe widgets (synapse apps in sandboxed `<iframe>`s) | postMessage → `bridge.ts` → MCP SDK Client → `/mcp/<active wsId>` | Sandboxed UI talking via the MCP App ext-apps protocol. The bridge is the only iframe path; it shares one `Mcp-Session-Id` per browser tab for the active workspace, and a switch closes it and opens one on the new path. |
 | Platform's own web shell (first-party React UI: header, settings, chat) | `POST /v1/tools/call`, `POST /v1/resources/read`, `GET /v1/...` (REST) | Trusted same-origin code. Stateless per request: `X-Workspace-Id` header on each fetch; no session, no transport lifecycle. |
 
-> **`/mcp` is walled to a per-request workspace.** A `/mcp` session has no fixed workspace; each request's validated `X-Workspace-Id` bounds it to one workspace (its tools + identity tools), and a call to any other workspace is denied. A request with no/non-member header is identity-only. The iframe bridge (row 2) sends its active workspace on every call, so synapse apps work. See "Workspace tool namespacing — the wall" above.
+> **`/mcp/<wsId>` is walled to the workspace in its URL.** Bare `/mcp` is refused. See "Workspace tool namespacing — the wall" above and ADR-0036.
 
 **Quick decision rules for contributors:**
 
@@ -677,7 +685,7 @@ If none of those apply, write a tool action. A simple JSON read like "what's the
 Two-layer state model for `/mcp`. Don't merge them.
 
 - **Transport map** (`McpServerHost.transports`): per-process LRU `Map<sessionId, TransportEntry>`. Owns the live `WebStandardStreamableHTTPServerTransport`, the SDK `Server` instance, in-flight JSON-RPC state, and `lastAccessedAt`. Process-bound — never serialize, never share across processes.
-- **`SessionRegistry`** (`src/api/session-store/`): pluggable cluster-shared metadata. Stores `{sessionId, identityId, workspaceId, createdAt, lastAccessedAt}` only. **No pod / instance / owner fields** — adding any would leak deployment vocabulary into a metadata interface. Implementations: `InMemorySessionRegistry` (default) and `RedisSessionRegistry`.
+- **`SessionRegistry`** (`src/api/session-store/`): pluggable cluster-shared metadata. Stores `{sessionId, identityId, workspaceId, createdAt, lastAccessedAt}` only; `workspaceId` is half the binding a session-miss answer compares before saying `unavailable`. **No pod / instance / owner fields** — adding any would leak deployment vocabulary into a metadata interface. Implementations: `InMemorySessionRegistry` (default) and `RedisSessionRegistry`.
 
 Routing requests to the process owning a session's transport is the **load balancer's** job (ALB `lb_cookie` stickiness or header-hash on `Mcp-Session-Id`). The registry doesn't route; it can't move transports.
 
@@ -730,7 +738,7 @@ These cause production bugs if violated:
 - `SlotRenderer` effect depends only on `placementKey` (callbacks via refs, not deps)
 - Shell components must not consume `ChatContext` (use `ChatConfigContext` instead)
 - The chat panel is **workspace-scoped** — see below.
-- `setAuthToken` in `web/src/api/client.ts` fires a registered lifecycle handler on real changes only (equality-guarded). The bridge MCP client registers `resetMcpBridgeClient` here at module load to drop its identity-bound session on logout. `setActiveWorkspaceId` is also equality-guarded but does NOT fire the handler — per Stage 2 / Q3 the `/mcp` session is identity-bound, so workspace switches reuse the same session and dispatch context via the per-request `X-Workspace-Id` header. Stateless callers (REST helpers) read the current values per-request and need no hook.
+- `setAuthToken` in `web/src/api/client.ts` fires a registered lifecycle handler on real changes only (equality-guarded). The bridge MCP client registers `resetMcpBridgeClient` here at module load to drop its identity-bound session on logout. `setActiveWorkspaceId` is also equality-guarded and fires the separate workspace lifecycle handlers (`addWorkspaceLifecycleHandler`), never the auth ones; the bridge registers `resetMcpBridgeClient` there too, because its session is bound to the workspace whose `/mcp/<wsId>` it opened. `getMcpBridgeClient` also keys its cache by the active workspace, so a request for workspace B never rides A's session even mid-switch. Stateless callers (REST helpers) read the current values per-request and need no hook.
 
 ### The chat panel's workspace scope
 

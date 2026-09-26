@@ -1,26 +1,19 @@
 /**
- * Stage 2 (cross-workspace refactor) Task 007 — session-store legacy
- * compatibility tests.
+ * Session-store compatibility: the workspace a session is bound to.
  *
- * Pins the Q4 (hard-cut) contract on both `SessionRegistry`
- * implementations:
+ * A `/mcp` session is bound to (identity, workspace), and both
+ * `SessionRegistry` implementations record the workspace:
  *
- *   - `create` → `get` round-trip never surfaces `workspaceId` (the
- *     field is gone from `SessionMeta`). Pre-Stage-2 test fixtures
- *     that still set the field on the wire would have caught this; we
- *     assert it here for forward safety.
+ *   - `create` → `get` round-trips `workspaceId`, because a session-miss
+ *     answer compares it before confirming a live session to a caller.
  *
- *   - A legacy entry whose underlying storage still carries a stray
- *     `workspaceId` (pre-Stage-2 Redis hashes survive on-disk; the
- *     in-memory map is irrelevant since the type drop applies at
- *     module load) MUST load without error and MUST NOT surface the
- *     field on the parsed `SessionMeta`. The cut is permanent; readers
- *     ignore the legacy field rather than failing on it.
+ *   - An entry written without one (a hash that predates the field) loads
+ *     without error and reads `workspaceId: null`, which matches no caller's
+ *     workspace — so it is never confirmed to anyone.
  *
  * Lives in `test/integration/` because it exercises the cluster-shared
  * registry contract end-to-end (including the Redis fake), not just the
- * type surface. The unit-tier `conformance.ts` covers behavior; this
- * file covers the Stage-2 schema cut specifically.
+ * type surface. The unit-tier `conformance.ts` covers behavior.
  */
 
 import { describe, expect, it } from "bun:test";
@@ -96,21 +89,21 @@ class FakeRedis implements RedisLike {
 
 const SAMPLE_SID = "abcdef01-2222-3333-4444-555555555555";
 
-describe("session-store — Stage 2 hard cut (T007)", () => {
+describe("session-store — the workspace binding", () => {
   describe("InMemorySessionRegistry", () => {
-    it("round-trip surfaces no workspaceId on the parsed SessionMeta", async () => {
+    it("round-trips the session's workspaceId", async () => {
       const reg = new InMemorySessionRegistry({ ttlMs: 60_000 });
       try {
         const now = Date.now();
         await reg.create({
           sessionId: SAMPLE_SID,
           identityId: "usr_42",
+          workspaceId: "ws_a",
           createdAt: now,
           lastAccessedAt: now,
         });
         const got = await reg.get(SAMPLE_SID);
-        expect(got).not.toBeNull();
-        expect((got as unknown as { workspaceId?: unknown }).workspaceId).toBeUndefined();
+        expect(got?.workspaceId).toBe("ws_a");
         expect(got?.identityId).toBe("usr_42");
       } finally {
         await reg.shutdown();
@@ -119,7 +112,7 @@ describe("session-store — Stage 2 hard cut (T007)", () => {
   });
 
   describe("RedisSessionRegistry", () => {
-    it("round-trip surfaces no workspaceId on the parsed SessionMeta", async () => {
+    it("round-trips the session's workspaceId", async () => {
       const client = new FakeRedis();
       const reg = new RedisSessionRegistry({
         url: "redis://fake",
@@ -131,28 +124,24 @@ describe("session-store — Stage 2 hard cut (T007)", () => {
         await reg.create({
           sessionId: SAMPLE_SID,
           identityId: "usr_42",
+          workspaceId: "ws_a",
           createdAt: now,
           lastAccessedAt: now,
         });
         const got = await reg.get(SAMPLE_SID);
-        expect(got).not.toBeNull();
-        expect((got as unknown as { workspaceId?: unknown }).workspaceId).toBeUndefined();
+        expect(got?.workspaceId).toBe("ws_a");
         expect(got?.identityId).toBe("usr_42");
       } finally {
         await reg.shutdown();
       }
     });
 
-    it("legacy entry with a stray workspaceId loads without error (ignore-unknown)", async () => {
+    it("an entry with no workspaceId loads, and reads null", async () => {
       const client = new FakeRedis();
-      // Seed a pre-Stage-2 hash directly — includes `workspaceId` field
-      // that a current-version registry would NEVER write but that any
-      // long-running Redis instance still carries until it TTLs out.
       const now = Date.now();
-      client.seedHash("nb:mcp:session:legacy-sid", {
-        sessionId: "legacy-sid",
-        identityId: "usr_legacy",
-        workspaceId: "ws_legacy_value", // legacy field
+      client.seedHash("nb:mcp:session:older-sid", {
+        sessionId: "older-sid",
+        identityId: "usr_older",
         createdAt: String(now),
         lastAccessedAt: String(now),
       });
@@ -163,16 +152,12 @@ describe("session-store — Stage 2 hard cut (T007)", () => {
         client,
       });
       try {
-        const got = await reg.get("legacy-sid");
+        const got = await reg.get("older-sid");
         expect(got).not.toBeNull();
-        // Required fields parse correctly.
-        expect(got?.sessionId).toBe("legacy-sid");
-        expect(got?.identityId).toBe("usr_legacy");
+        expect(got?.sessionId).toBe("older-sid");
+        expect(got?.identityId).toBe("usr_older");
         expect(got?.createdAt).toBe(now);
-        expect(got?.lastAccessedAt).toBe(now);
-        // The stray legacy field is IGNORED — the parsed shape carries
-        // only the documented fields.
-        expect((got as unknown as { workspaceId?: unknown }).workspaceId).toBeUndefined();
+        expect(got?.workspaceId).toBeNull();
       } finally {
         await reg.shutdown();
       }
