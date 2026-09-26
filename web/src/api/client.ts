@@ -744,7 +744,7 @@ export interface InstalledConnector {
  * No dedicated REST routes — the platform's tool-call surface is the
  * canonical first-party API.
  *
- * The OAuth flow itself stays on routes (`/v1/mcp-auth/initiate` +
+ * The OAuth flow itself stays on routes (`/v1/workspaces/:wsId/mcp-auth/initiate` +
  * `/callback`) because it sets a session-bound state cookie and the
  * callback is a browser redirect target — neither composes cleanly
  * over `/v1/workspaces/<wsId>/tools/call`.

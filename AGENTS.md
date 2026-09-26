@@ -671,7 +671,7 @@ The platform serves three audiences with three protocol surfaces. They are not t
 
 The exceptions are real but narrow: add a route only when the endpoint genuinely **can't be a tool call**. Concretely:
 
-- Sets a session-bound cookie that future requests need to present (`/v1/mcp-auth/initiate` sets `nb_oauth_state`).
+- Sets a session-bound cookie that future requests need to present (`/v1/workspaces/:wsId/mcp-auth/initiate` sets `nb_oauth_state`).
 - Is itself the redirect target of an external flow (`/v1/mcp-auth/callback` is loaded by the vendor's browser, not by our client).
 - Streams non-JSON bytes (multipart upload, SSE for the chat stream).
 - Serves raw bytes the browser loads directly, where it cannot send headers (`GET /v1/files/:fileId` behind an `<img>`).

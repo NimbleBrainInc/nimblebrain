@@ -139,7 +139,7 @@ export interface WorkspaceOAuthProviderOptions {
    * should be sent to. The receiver typically:
    *
    *   1. Transitions its Connection to `pending_auth`
-   *   2. Stores the URL so `/v1/mcp-auth/initiate` can find it
+   *   2. Stores the URL so `/v1/workspaces/:wsId/mcp-auth/initiate` can find it
    *   3. Emits a `connection.state_changed` SSE event for the UI banner
    *
    * The flow is also already registered with `oauth-flow-registry` by the

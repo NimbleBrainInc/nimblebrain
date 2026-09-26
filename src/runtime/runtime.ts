@@ -5100,7 +5100,7 @@ export class Runtime {
   /**
    * Whether the runtime allows OAuth flows / connector URLs to target loopback
    * / RFC1918 / cloud-metadata hosts. Mirrors `config.allowInsecureRemotes`;
-   * read by `/v1/mcp-auth/initiate` when constructing the workspace OAuth
+   * read by `/v1/workspaces/:wsId/mcp-auth/initiate` when constructing the workspace OAuth
    * provider so the SSRF allowlist matches the boot-time provider's behavior.
    */
   getAllowInsecureRemotes(): boolean {

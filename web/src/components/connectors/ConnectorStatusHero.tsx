@@ -104,7 +104,7 @@ export function ConnectorStatusHero({
    * Kick off the OAuth redirect. Composio-backed connectors route
    * through their own initiate endpoint (Composio holds the tokens; we
    * just persist a connectedAccountId pointer). Native OAuth (dcr +
-   * static) still goes through /v1/mcp-auth/initiate. On failure the
+   * static) still goes through /v1/workspaces/:wsId/mcp-auth/initiate. On failure the
    * button resets so the user can retry.
    */
   const runOAuth = async () => {

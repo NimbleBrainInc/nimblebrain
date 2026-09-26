@@ -205,6 +205,27 @@ describe("X-Workspace-Id has no effect on a workspace-scoped route", () => {
   });
 });
 
+describe("cross-site writes to a workspace route", () => {
+  const listCall = { server: "nb", tool: "manage_workspaces", arguments: { action: "list" } };
+
+  it("refuses a browser write marked same-site from an origin CORS does not allow", async () => {
+    const res = await send("POST", `/v1/workspaces/${wsA}/tools/call`, {
+      body: listCall,
+      headers: { "Sec-Fetch-Site": "same-site", Origin: "https://tenant-a.example.com" },
+    });
+    expect(res.status).toBe(403);
+    expect((await res.json()).error).toBe("cross_site_request");
+  });
+
+  it("admits the same write from the same origin", async () => {
+    const res = await send("POST", `/v1/workspaces/${wsA}/tools/call`, {
+      body: listCall,
+      headers: { "Sec-Fetch-Site": "same-origin" },
+    });
+    expect(res.status).toBe(200);
+  });
+});
+
 describe("identity-scoped routes need no workspace", () => {
   it("bootstrap", async () => {
     const res = await send("GET", "/v1/bootstrap");

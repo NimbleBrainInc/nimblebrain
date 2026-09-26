@@ -1687,7 +1687,7 @@ async function handleInstallRemoteOAuth(
   // Static-credential URL connectors authenticate without an MCP-side OAuth flow,
   // so eager-start the source here rather than waiting for the next platform
   // boot. For static / dcr connectors, source.start() is bound to
-  // `lifecycle.startAuth` (called from `/v1/mcp-auth/initiate`) and doesn't run
+  // `lifecycle.startAuth` (called from `/v1/workspaces/:wsId/mcp-auth/initiate`) and doesn't run
   // here. Eager-start is a UX optimization; a failure returns a warning, not an
   // error, because the install itself has still succeeded.
   let startWarning: string | undefined;
