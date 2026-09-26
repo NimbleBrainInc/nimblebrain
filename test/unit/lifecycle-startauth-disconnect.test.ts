@@ -1,10 +1,13 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
+import type { ManagedConnectorProvider } from "../../src/connectors/providers/managed-provider.ts";
+import { managedConnectorRegistryOf } from "../../src/connectors/providers/registry.ts";
 import { ConnectorLifecycleManager } from "../../src/connectors/runtime/lifecycle.ts";
 import type { ConnectorInstance, ConnectorRef } from "../../src/connectors/runtime/types.ts";
 import type { EngineEvent, EventSink } from "../../src/engine/types.ts";
+import { log } from "../../src/observability/log.ts";
 import { McpSource } from "../../src/tools/mcp-source.ts";
 import { ToolRegistry } from "../../src/tools/registry.ts";
 import {
@@ -190,6 +193,64 @@ describe("ConnectorLifecycleManager.disconnect — symmetric teardown", () => {
     expect(stateEvents.length).toBeGreaterThanOrEqual(1);
     const lastEvent = stateEvents[stateEvents.length - 1]!.data as Record<string, unknown>;
     expect(lastEvent.state).toBe("not_authenticated");
+  });
+
+  test("test_disconnect_urlConnector_logsOutcomeAndTransition", async () => {
+    seedInstance(lifecycle, "granola", "ws_test", "workspace", { url: "https://example.test/mcp" });
+    lifecycle.bindWorkspaceRegistries(() => new Map([["ws_test", new ToolRegistry()]]));
+    lifecycle.recordConnectionStateChange("granola", "ws_test", "_workspace", "running");
+
+    const info = spyOn(log, "info").mockImplementation(() => {});
+    const warn = spyOn(log, "warn").mockImplementation(() => {});
+    try {
+      await lifecycle.disconnect("granola", "ws_test", "_workspace", {
+        workDir: "/tmp/nb-test-disconnect",
+      });
+      const lines = [...info.mock.calls, ...warn.mock.calls].map((c) => [String(c[0]), c[1]]);
+      const outcome = lines.find(([m]) => m === "[lifecycle] disconnect granola");
+      expect(outcome?.[1]).toMatchObject({ wsId: "ws_test", serverName: "granola", brokered: false });
+      expect(lines.some(([m]) => m === "[lifecycle] connection granola running → not_authenticated")).toBe(
+        true,
+      );
+    } finally {
+      info.mockRestore();
+      warn.mockRestore();
+    }
+  });
+
+  test("test_disconnect_brokeredRevokeFails_logsOutcomeAtWarn", async () => {
+    const broker: ManagedConnectorProvider = {
+      id: "example-broker",
+      userId: (owner) => (owner.type === "workspace" ? owner.wsId : owner.userId),
+      createSession: async () => ({ type: "http", url: "https://broker.test/session/abc/mcp" }),
+      initiate: async () => ({ redirectUrl: "https://broker.test/connect", connectedAccountId: "ca_1" }),
+      cleanup: async () => ({ upstreamDeleted: false, localDeleted: true, lastError: "vendor 503" }),
+    };
+    lifecycle.setManagedConnectorRegistry(managedConnectorRegistryOf([broker]));
+    seedInstance(lifecycle, "granola", "ws_test", "workspace", {
+      url: "https://broker.test/session/abc/mcp",
+      brokered: { provider: "example-broker", connectorId: "granola" },
+    });
+    lifecycle.bindWorkspaceRegistries(() => new Map([["ws_test", new ToolRegistry()]]));
+    lifecycle.recordConnectionStateChange("granola", "ws_test", "_workspace", "running");
+
+    const info = spyOn(log, "info").mockImplementation(() => {});
+    const warn = spyOn(log, "warn").mockImplementation(() => {});
+    try {
+      await lifecycle.disconnect("granola", "ws_test", "_workspace", { workDir });
+      const outcome = warn.mock.calls.find((c) => c[0] === "[lifecycle] disconnect granola");
+      expect(outcome?.[1]).toMatchObject({
+        wsId: "ws_test",
+        serverName: "granola",
+        brokered: true,
+        revoked: { access: false },
+        deletedLocal: true,
+        revokeError: "vendor 503",
+      });
+    } finally {
+      info.mockRestore();
+      warn.mockRestore();
+    }
   });
 });
 

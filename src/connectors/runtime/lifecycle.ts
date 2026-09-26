@@ -179,6 +179,54 @@ function authFlowKey(serverName: string, wsId: string, principalId: string): str
   return `${serverName}|${wsId}|${principalId}`;
 }
 
+/**
+ * One line per real connection transition, so "when did this workspace connect,
+ * disconnect or lose auth on X" is answerable from logs alone. A first record
+ * (`from` absent) is boot seeding, which the start path already logs per
+ * connector, and a same-state repeat is a reconfirm — neither is logged.
+ */
+function logTransition(
+  serverName: string,
+  wsId: string,
+  from: ConnectionState | undefined,
+  next: Connection,
+): void {
+  if (from === undefined || from === next.state) return;
+  const fields = {
+    wsId,
+    serverName,
+    principalId: next.principalId,
+    from,
+    to: next.state,
+    ...(next.lastError ? { lastError: next.lastError } : {}),
+  };
+  const message = `[lifecycle] connection ${serverName} ${from} → ${next.state}`;
+  if (next.state === "dead" || next.state === "reauth_required") log.warn(message, fields);
+  else log.info(message, fields);
+}
+
+/**
+ * The disconnect outcome as one line. The state transition it causes is logged
+ * by `recordConnectionStateChange`; this line carries what that one can't —
+ * whether the vendor was told. A failed upstream revoke is a grant still live at
+ * the vendor, so it logs at warn.
+ */
+function logDisconnect(
+  serverName: string,
+  wsId: string,
+  brokered: boolean,
+  outcome: {
+    revoked: { access?: boolean; refresh?: boolean };
+    deletedLocal: boolean;
+    revokeError?: string;
+  },
+): void {
+  const fields = { wsId, serverName, brokered, ...outcome };
+  const message = `[lifecycle] disconnect ${serverName}`;
+  if (outcome.revokeError) log.warn(message, fields);
+  else log.info(message, fields);
+}
+
 // ---------------------------------------------------------------------------
 // ConnectorLifecycleManager — owns the state of all installed connectors and
 // provides the formal install / uninstall / start / stop / restart flows
@@ -763,6 +811,8 @@ export class ConnectorLifecycleManager {
     };
     instance.connections.set(principalId, next);
 
+    logTransition(serverName, wsId, existing?.state, next);
+
     // Recompute summary state so legacy consumers (HealthMonitor,
     // briefing-collector, runtime status API) see the right surface.
     instance.state = summarizeConnectionState(instance.connections);
@@ -1256,11 +1306,13 @@ export class ConnectorLifecycleManager {
       this.recordConnectionStateChange(serverName, wsId, principalId, "not_authenticated", {
         authorizationUrl: undefined,
       });
-      return {
+      const outcome = {
         revoked: { access: upstreamDeleted },
         deletedLocal: localDeleted,
         ...(lastError ? { revokeError: lastError } : {}),
       };
+      logDisconnect(serverName, wsId, true, outcome);
+      return outcome;
     }
 
     const provider = new WorkspaceOAuthProvider({
@@ -1287,11 +1339,13 @@ export class ConnectorLifecycleManager {
       authorizationUrl: undefined,
     });
 
-    return {
+    const outcome = {
       revoked: result.revoked,
       deletedLocal: result.deletedLocal,
       ...(result.error ? { revokeError: result.error } : {}),
     };
+    logDisconnect(serverName, wsId, false, outcome);
+    return outcome;
   }
 
   /**
