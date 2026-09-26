@@ -20,7 +20,7 @@ A key fails the test when believing it would weaken a safeguard, or when it asse
 | `ai.nimblebrain/skill-activated` | Results of the host's own skill-loading tool | A skill's guidance was delivered to the agent in this run, so the host does not deliver it twice | A server that set it could suppress guidance the agent is meant to receive, including safety rules. |
 | `ai.nimblebrain/skill-suppression` | Results of the host's own skill-muting tool | A skill was muted for the rest of the conversation | The same reason, and it lasts for the rest of the conversation. |
 
-A JSON-RPC error your server returns never earns `infra-error`, however its message is worded.
+A JSON-RPC error your server returns to an ordinary `tools/call` never earns `infra-error`, however its message is worded. One gap remains: when a task-augmented call fails at task creation, the host classifies the server's error message by its text, so a message worded like a throttling error can earn the marker ([#838](https://github.com/NimbleBrainInc/nimblebrain/issues/838)).
 
 ## Routing key
 

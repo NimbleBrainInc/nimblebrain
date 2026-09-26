@@ -44,8 +44,8 @@ Read the key, and do not require it. A server that ignores it behaves correctly.
 ```python
 @mcp.tool
 async def post_message(channel: str, text: str, ctx: Context) -> dict:
-    meta = ctx.request_context.meta
-    automated = bool(meta and (meta.model_extra or {}).get("ai.nimblebrain/unattended"))
+    meta = ctx.request_context.meta or {}
+    automated = bool(meta.get("ai.nimblebrain/unattended"))
     return await send(channel, text, label="automated" if automated else None)
 ```
 
