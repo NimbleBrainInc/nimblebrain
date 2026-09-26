@@ -28,7 +28,7 @@ One more key is set by the host's own components and scoped to a single hop:
 
 | Key | Where | Meaning |
 |---|---|---|
-| `ai.nimblebrain/source` | `resources/read` and task requests at the [MCP endpoint](/connect/mcp-endpoint/) and from the app bridge | Names the server a request is for. A workspace endpoint serves many servers' resources behind one URL, and two servers can use the same URI. The app bridge always sets it to the app's own server, whatever the app asks for. |
+| `ai.nimblebrain/source` | `tools/call`, `resources/read`, and task requests at the [MCP endpoint](/connect/mcp-endpoint/) | Names the server a request is for. A workspace endpoint serves many servers behind one URL, and two servers can use the same resource URI. The app bridge always sets it to the app's own server, whatever the app asks for. A `tools/call` that names a source is treated as that app's call: it may reach only that server's tools, and only those whose `ui.visibility` includes `"app"`. A client that sets the key can only narrow what it reaches. |
 
 ## If you see one
 
