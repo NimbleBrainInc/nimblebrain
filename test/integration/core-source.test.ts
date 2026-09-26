@@ -20,6 +20,8 @@ import {
 	thinkingPatchFor,
 } from "../../web/src/pages/settings/thinking-patch.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
+import { createMockModel } from "../helpers/mock-model.ts";
+import type { ToolSource } from "../../src/tools/types.ts";
 
 /** Model adapter that throws on doGenerate, counting invocations. Used
  * to exercise the briefing tool's cache-on-failure rule: when the LLM
@@ -44,6 +46,47 @@ function createThrowingModel(err: Error): {
 		},
 	};
 	return { model, getCalls: () => calls };
+}
+
+/**
+ * Install a running app in the test workspace that declares one briefing
+ * facet. The facet names no tool or resource, so it resolves to its
+ * description without a server round-trip; what matters is that a facet
+ * exists, which is what sends the briefing to the model.
+ */
+async function seedFacetApp(runtime: Runtime): Promise<void> {
+	const serverName = "facet_app";
+	const url = `https://${serverName}.example.com/mcp`;
+	await runtime.getLifecycle().seedInstance(
+		serverName,
+		url,
+		// A static credential seeds the connection `running`; a bare URL would
+		// seed `not_authenticated`, and the collector skips it.
+		{ url, serverName, transport: { type: "streamable-http", auth: { type: "bearer", token: "t" } } },
+		{
+			version: "1.0.0",
+			ui: null,
+			briefing: {
+				facets: [
+					{
+						name: "overdue",
+						label: "Overdue follow-ups",
+						type: "attention",
+						description: "3 follow-ups are overdue",
+					},
+				],
+			},
+		},
+		TEST_WORKSPACE_ID,
+	);
+	const source: ToolSource = {
+		name: serverName,
+		start: async () => {},
+		stop: async () => {},
+		tools: async () => [],
+		execute: async () => ({ content: [] }),
+	};
+	runtime.getRegistryForWorkspace(TEST_WORKSPACE_ID).addSource(source);
 }
 
 const testDir = join(tmpdir(), `nimblebrain-core-source-${Date.now()}`);
@@ -1285,24 +1328,17 @@ describe("Core Source", () => {
 			await provisionTestWorkspace(runtime);
 			const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
 
-			// Stage 1 single-owner: the briefing now requires an
-			// authenticated identity and filters the activity collector
-			// to the caller's conversations. Identity in the request
-			// context must match the seed's ownerId.
+			// The briefing requires an authenticated identity: facet tools
+			// run through the registry as the caller.
 			const ctx = {
 				identity: { id: "user_test", email: "test@example.com" } as never,
 				workspaceId: TEST_WORKSPACE_ID,
 			};
 
-			// Seed a conversation so activity isn't empty — without this the
-			// generator short-circuits to a "quiet day" briefing and the
-			// model never gets invoked (the cache test would pass vacuously).
-			await runWithRequestContext(ctx, async () => {
-				// Seed in the focused workspace's owner partition so the briefing's
-				// cross-workspace `listConversations({userId: "user_test"})` walk sees it.
-				const store = runtime.workspaceConversationStore(TEST_WORKSPACE_ID, "user_test");
-				await store.create({ ownerId: "user_test" });
-			});
+			// Seed a facet — without one the generator short-circuits to a
+			// quiet briefing and the model never gets invoked (the cache test
+			// would pass vacuously).
+			await seedFacetApp(runtime);
 
 			// First call: model throws, tool returns isError.
 			const first = await runWithRequestContext(ctx, () =>
@@ -1325,20 +1361,48 @@ describe("Core Source", () => {
 		}
 	});
 
-	// The briefing is built from the caller (greeting name, timezone, their own
-	// activity), so a cached one must never be served to another member of the
-	// same workspace. Both calls take the quiet-day path, so no model is needed.
-	it("nb__briefing serves each workspace member their own cached briefing", async () => {
-		const runtime = await makeRuntime();
+	// The briefing is built only from the workspace's facets, so one generation
+	// serves every member: the second member is served the first member's
+	// cached briefing, and the model runs once.
+	it("nb__briefing serves one cached briefing to every workspace member", async () => {
+		const workDir = join(testDir, `work-briefing-shared-${Date.now()}`);
+		mkdirSync(workDir, { recursive: true });
+		let calls = 0;
+		const model = createMockModel(() => {
+			calls++;
+			return {
+				content: [
+					{
+						type: "text",
+						text: JSON.stringify({
+							lede: "3 follow-ups are overdue.",
+							sections: [
+								{
+									id: "overdue",
+									text: "3 follow-ups are overdue.",
+									type: "warning",
+									category: "attention",
+									action: null,
+								},
+							],
+						}),
+					},
+				],
+			};
+		});
+		const runtime = await Runtime.start({
+			model: { provider: "custom", adapter: model },
+			workDir,
+			logging: { disabled: true },
+		});
 		try {
 			await provisionTestWorkspace(runtime);
+			await seedFacetApp(runtime);
 			const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
 			const ctxFor = (id: string, displayName: string) => ({
 				identity: { id, email: `${id}@example.com`, displayName } as never,
 				workspaceId: TEST_WORKSPACE_ID,
 			});
-			const greetingOf = (r: { structuredContent?: Record<string, unknown> }) =>
-				r.structuredContent?.greeting as string;
 
 			const a = await runWithRequestContext(ctxFor("user_a", "Alice"), () =>
 				source.execute("briefing", {}),
@@ -1346,15 +1410,15 @@ describe("Core Source", () => {
 			const b = await runWithRequestContext(ctxFor("user_b", "Bob"), () =>
 				source.execute("briefing", {}),
 			);
-			expect(greetingOf(a)).toEndWith(", Alice");
-			expect(greetingOf(b)).toEndWith(", Bob");
 
-			// The cache still serves a member their own entry on a repeat call.
-			const aAgain = await runWithRequestContext(ctxFor("user_a", "Alice"), () =>
-				source.execute("briefing", {}),
-			);
-			expect(aAgain.structuredContent?.cached).toBe(true);
-			expect(greetingOf(aAgain)).toEndWith(", Alice");
+			expect(a.isError).toBe(false);
+			expect(b.isError).toBe(false);
+			expect(calls).toBe(1);
+			expect(b.structuredContent?.cached).toBe(true);
+			expect(b.structuredContent?.generated_at).toBe(a.structuredContent?.generated_at);
+			expect(b.structuredContent?.lede).toBe("3 follow-ups are overdue.");
+			// Nothing about the member who triggered the generation is in it.
+			expect(JSON.stringify(b)).not.toContain("Alice");
 		} finally {
 			await runtime.shutdown();
 		}

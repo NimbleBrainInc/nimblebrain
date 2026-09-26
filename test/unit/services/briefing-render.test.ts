@@ -13,8 +13,6 @@ function section(overrides: Partial<BriefingSection> & Pick<BriefingSection, "ca
 
 function makeBriefing(overrides?: Partial<BriefingOutput>): BriefingOutput {
 	return {
-		greeting: "Good morning, Mat",
-		date: "Tuesday, June 2, 2026",
 		lede: "Two things need your attention.",
 		sections: [],
 		state: "normal",
@@ -40,10 +38,9 @@ describe("renderBriefingText", () => {
 		expect(out).toContain("Deploy succeeded");
 	});
 
-	test("includes greeting and lede", () => {
+	test("leads with the lede", () => {
 		const out = renderBriefingText(makeBriefing());
-		expect(out).toContain("Good morning, Mat");
-		expect(out).toContain("Two things need your attention.");
+		expect(out.startsWith("Two things need your attention.")).toBe(true);
 	});
 
 	// Guards the schema category names (home.ts: attention/recent/upcoming).
@@ -77,10 +74,9 @@ describe("renderBriefingText", () => {
 		expect(out).not.toContain("## Coming up");
 	});
 
-	test("renders a quiet briefing as greeting + lede with no headings", () => {
+	test("renders a quiet briefing as the lede with no headings", () => {
 		const out = renderBriefingText(makeBriefing({ sections: [], lede: "All clear." }));
-		expect(out).toContain("Good morning, Mat");
-		expect(out).toContain("All clear.");
+		expect(out).toBe("All clear.");
 		expect(out).not.toContain("##");
 	});
 });

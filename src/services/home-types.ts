@@ -106,7 +106,5 @@ export interface ErrorEntry {
  * BriefingGenerator separately, and feature-flag gating happens at
  * tool registration. */
 export interface HomeConfig {
-  userName: string;
-  timezone: string;
   cacheTtlMinutes: number;
 }
