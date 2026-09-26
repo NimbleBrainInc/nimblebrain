@@ -485,24 +485,24 @@ describe("createDirectExecutor — degraded runs", () => {
 
 	test("a failed write among successful writes is degraded, whatever the final answer says", async () => {
 		const run = await runWith([
-			call("graymark__create_record", { id: "a" }, true),
-			call("graymark__create_record", { id: "b" }, false),
-			call("graymark__create_record", { id: "c" }, true),
-			call("graymark__create_record", { id: "d" }, false),
-			call("graymark__create_record", { id: "e" }, true),
+			call("records__create", { id: "a" }, true),
+			call("records__create", { id: "b" }, false),
+			call("records__create", { id: "c" }, true),
+			call("records__create", { id: "d" }, false),
+			call("records__create", { id: "e" }, true),
 		]);
 		expect(run.status).toBe("degraded");
 		expect(run.error).toMatch(/2 tool call\(s\)/);
-		expect(run.error).toMatch(/graymark__create_record ×2/);
+		expect(run.error).toMatch(/records__create ×2/);
 	});
 
 	test("a failed write retried to success on the same input stays success", async () => {
 		const run = await runWith([
-			call("graymark__create_record", { id: "a" }, true),
-			call("graymark__create_record", { id: "b", n: 1 }, false),
-			call("graymark__create_record", { id: "c" }, true),
+			call("records__create", { id: "a" }, true),
+			call("records__create", { id: "b", n: 1 }, false),
+			call("records__create", { id: "c" }, true),
 			// Same input, keys in another order: the same job.
-			call("graymark__create_record", { n: 1, id: "b" }, true),
+			call("records__create", { n: 1, id: "b" }, true),
 		]);
 		expect(run.status).toBe("success");
 		expect(run.error).toBeUndefined();
