@@ -1,4 +1,5 @@
 import type { LanguageModelV4Message } from "@ai-sdk/provider";
+import type { McpUiToolVisibility } from "@modelcontextprotocol/ext-apps";
 import type { ContentBlock, TextContent, ToolAnnotations } from "@modelcontextprotocol/server";
 import type { TokenUsage } from "../usage/types.ts";
 
@@ -78,8 +79,8 @@ export interface ToolSchema {
   inputSchema: Record<string, unknown>;
   /**
    * The tool's `_meta` — MCP's free-form, reverse-DNS-keyed namespace. Carries
-   * host conventions like `ai.nimblebrain/internal` and the UI metadata
-   * (`resourceUri`) the engine reads to mount an inline panel.
+   * host conventions and the MCP Apps UI metadata (`ui.resourceUri`, which the
+   * engine reads to mount an inline panel, and `ui.visibility`).
    *
    * Distinct from {@link ToolSchema.annotations}, which is the spec's own
    * closed set of behavioural hints. Both travel; neither is the other.
@@ -189,14 +190,6 @@ export const NON_ADVANCING_META_KEY = "ai.nimblebrain/non-advancing";
 export const INFRA_ERROR_META_KEY = "ai.nimblebrain/infra-error";
 
 /**
- * Annotation marking a tool as a UI-driven affordance, not an agent capability.
- * An internal tool is stripped from every LLM tool listing — chat
- * (`surfaceTools`) and `/mcp` (`tools/list`) alike — and refused for promotion,
- * yet stays callable by name (so the web shell's REST calls still work). Single
- * source of the key: use {@link isInternalTool} to read it and this const as the
- * annotation key to set it, so a rename can never split the read/write sites.
- */
-/**
  * Reverse-DNS `_meta` key stamped on the OUTBOUND `tools/call` of an unattended
  * dispatch — a single tool call made with no session, from stored
  * configuration, on behalf of a named principal. Its value is the caller's own
@@ -215,11 +208,45 @@ export const INFRA_ERROR_META_KEY = "ai.nimblebrain/infra-error";
  */
 export const UNATTENDED_META_KEY = "ai.nimblebrain/unattended";
 
-export const INTERNAL_TOOL_ANNOTATION = "ai.nimblebrain/internal";
+/**
+ * Who may reach a tool, per the MCP Apps spec's `_meta.ui.visibility`. Absent,
+ * a tool is `["model", "app"]`. `"model"` makes it visible to and callable by
+ * the agent; `"app"` makes it callable by a view of the same server.
+ *
+ * The spec binds a host on two paths, and each is enforced where the caller is
+ * known:
+ *
+ *   - A tool without `"model"` is left out of every tool list that reaches a
+ *     model: the chat list (`surfaceTools`), `nb__search`, the `/mcp`
+ *     `tools/list`, the invalid-name recovery hint, and promotion. It stays
+ *     callable by name, which is how the web shell's settings reach the
+ *     platform's own UI-driven tools over REST.
+ *   - A `tools/call` from an app is refused for a tool without `"app"`
+ *     (`/mcp`, keyed on the source the iframe bridge names).
+ *
+ * It applies to every tool alike, a connector's over the wire or the
+ * platform's own in-process ones, which declare `{ ui: { visibility: ["app"] } }`.
+ * An entry that is not an array is read as absent, the spec's default.
+ */
+export function toolVisibility(tool: {
+  meta?: Record<string, unknown>;
+}): readonly McpUiToolVisibility[] {
+  const ui = tool.meta?.ui as { visibility?: unknown } | undefined;
+  const visibility = ui?.visibility;
+  if (!Array.isArray(visibility)) return DEFAULT_TOOL_VISIBILITY;
+  return visibility.filter((v): v is McpUiToolVisibility => v === "model" || v === "app");
+}
 
-/** True when a tool carries {@link INTERNAL_TOOL_ANNOTATION} in its `_meta`. */
-export function isInternalTool(tool: { meta?: Record<string, unknown> }): boolean {
-  return Boolean(tool.meta?.[INTERNAL_TOOL_ANNOTATION]);
+const DEFAULT_TOOL_VISIBILITY: readonly McpUiToolVisibility[] = ["model", "app"];
+
+/** True when the agent may see and call a tool (`"model"` in its visibility). */
+export function isModelVisible(tool: { meta?: Record<string, unknown> }): boolean {
+  return toolVisibility(tool).includes("model");
+}
+
+/** True when a view of the tool's own server may call it (`"app"` in its visibility). */
+export function isAppCallable(tool: { meta?: Record<string, unknown> }): boolean {
+  return toolVisibility(tool).includes("app");
 }
 
 export interface ToolPromotionResult {

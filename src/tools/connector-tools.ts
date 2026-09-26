@@ -31,7 +31,7 @@ import type {
 } from "../connectors/runtime/types.ts";
 import { uninstallWorkspaceConnector } from "../connectors/runtime/uninstall.ts";
 import { textContent } from "../engine/content-helpers.ts";
-import { INTERNAL_TOOL_ANNOTATION, type ToolResult } from "../engine/types.ts";
+import type { ToolResult } from "../engine/types.ts";
 import { HookContractError } from "../hooks/provisioning.ts";
 import { ensureHooks } from "../hooks/reconcile.ts";
 import type { ConnectorOwner } from "../identity/connector-owner.ts";
@@ -210,7 +210,7 @@ export function createManageConnectorsTool(ctx: ManageConnectorsContext): InProc
     name: "manage_connectors",
     description:
       "List, install, and disconnect remote MCP connectors. Workspace connectors are shared by all members; user connectors are personal and follow you across workspaces.",
-    meta: { [INTERNAL_TOOL_ANNOTATION]: true },
+    meta: { ui: { visibility: ["app"] } },
     inputSchema: {
       type: "object",
       properties: {

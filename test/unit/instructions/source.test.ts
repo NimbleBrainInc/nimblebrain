@@ -442,7 +442,7 @@ describe("instructions source — tool list", () => {
     const client = src.getClient()!;
     const tools = await client.listTools();
     const writeTool = tools.tools.find((t) => t.name === "write_instructions");
-    expect((writeTool?._meta as Record<string, unknown>)?.["ai.nimblebrain/internal"]).toBe(true);
+    expect((writeTool?._meta as { ui?: { visibility?: unknown } })?.ui?.visibility).toEqual(["app"]);
     expect(writeTool?.description).toContain("Empty text clears");
   });
 

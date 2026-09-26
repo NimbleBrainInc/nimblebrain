@@ -303,7 +303,7 @@ export function SkillsBrowser(props: SkillsBrowserProps) {
   // single conversation, which is what an agent means by them. This toggle is
   // the durable one — the skill's file, read by every conversation and every
   // workspace — so it is deliberately the surface a human is looking at while
-  // they flip it, and the tool behind it is internal (the model cannot call it).
+  // they flip it, and the tool behind it is app-only (the model cannot call it).
   const handleToggle = useCallback(
     async (skill: ListedSkill) => {
       const status = skill.status === "active" ? "disabled" : "active";

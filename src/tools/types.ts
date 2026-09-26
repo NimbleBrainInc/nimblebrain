@@ -10,8 +10,8 @@ export interface Tool {
   source: string; // which source produced it, e.g. "mcp:slack"
   /**
    * The tool's `_meta` — MCP's free-form, reverse-DNS-keyed namespace. Carries
-   * host conventions like `ai.nimblebrain/internal` and the UI metadata
-   * (`resourceUri`) the engine reads to mount an inline panel.
+   * host conventions and the MCP Apps UI metadata (`ui.resourceUri`, which the
+   * engine reads to mount an inline panel, and `ui.visibility`).
    *
    * Distinct from {@link Tool.annotations}, which is the spec's own closed set
    * of behavioural hints. Both travel; neither is the other.

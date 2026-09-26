@@ -112,7 +112,7 @@ describe("WorkspaceOAuthProvider — record roundtrips", () => {
     // headless interactive flow that timed out (the connector.crashed loop). Only a
     // user-initiated interactive reauth re-registers against the current host.
     const stalePath = "http://localhost:27247/v1/mcp-auth/callback";
-    const livePath = "https://hq.platform.nimblebrain.ai/v1/mcp-auth/callback";
+    const livePath = "https://nb.example.com/v1/mcp-auth/callback";
 
     // Provider 1 registers a client against the (soon-to-be-stale) redirect_uri.
     const p1 = new WorkspaceOAuthProvider({
@@ -152,7 +152,7 @@ describe("WorkspaceOAuthProvider — record roundtrips", () => {
     // Defensive — some authorization servers seed multiple URIs on a
     // single client (test + prod). Don't false-positive drift when the
     // current callback is on the list, just not first.
-    const cb = "https://hq.platform.nimblebrain.ai/v1/mcp-auth/callback";
+    const cb = "https://nb.example.com/v1/mcp-auth/callback";
     const p = new WorkspaceOAuthProvider({
       owner: { type: "workspace", wsId: "ws_test" },
       serverName: "multi-uri",

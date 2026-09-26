@@ -19,7 +19,6 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
 import type { EngineEvent, EventSink, ToolResult } from "../../../src/engine/types.ts";
-import { INTERNAL_TOOL_ANNOTATION } from "../../../src/engine/types.ts";
 import { IdentityContext } from "../../../src/identity/context.ts";
 import type { UnattendedDispatchRuntime } from "../../../src/orchestrator/unattended-dispatch.ts";
 import { dispatchUnattended } from "../../../src/orchestrator/unattended-dispatch.ts";
@@ -501,7 +500,7 @@ describe("dispatchUnattended — a call that goes through", () => {
   // The annotation hides a tool from every listing; it has never made one
   // uncallable, and this door does not change that. Only the unattended policy
   // decides what may be named.
-  test("an internal-annotated tool is still callable by name", async () => {
+  test("an app-only tool is still callable by name", async () => {
     const hooks = makeSpySource("hooks", {
       tools: [
         {
@@ -509,7 +508,7 @@ describe("dispatchUnattended — a call that goes through", () => {
           description: "",
           inputSchema: { type: "object", properties: {} },
           source: "test",
-          meta: { [INTERNAL_TOOL_ANNOTATION]: true },
+          meta: { ui: { visibility: ["app"] } },
         },
       ],
     });

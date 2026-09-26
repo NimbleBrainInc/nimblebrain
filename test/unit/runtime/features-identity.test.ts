@@ -102,7 +102,7 @@ describe("identity & workspace feature flags", () => {
 			).toBe(false);
 		});
 
-		it("rejects internal tools even when role and feature allow them", () => {
+		it("rejects app-only tools even when role and feature allow them", () => {
 			const features = resolveFeatures();
 			expect(
 				isToolEligibleForPromotion(
@@ -110,7 +110,7 @@ describe("identity & workspace feature flags", () => {
 						name: "test__secret",
 						description: "Secret tool",
 						inputSchema: {},
-						meta: { "ai.nimblebrain/internal": true },
+						meta: { ui: { visibility: ["app"] } },
 					},
 					"admin",
 					features,
