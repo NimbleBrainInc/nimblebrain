@@ -1,4 +1,5 @@
 import { mcpAuthCallbackUrl } from "../api/routes/mcp-auth.ts";
+import { brandName } from "../brand/index.ts";
 import { brokeredCatalogConfig, isBrokeredAuthKind } from "../connectors/auth-kind.ts";
 import {
   connectorSkillIdentityFrom,
@@ -1203,7 +1204,7 @@ async function handleInstallIdentity(
   // connectors.json.
   if (isReservedServerName(serverName)) {
     return errResult(
-      `"${entry.id}" resolves to "${serverName}", a name reserved for NimbleBrain system ` +
+      `"${entry.id}" resolves to "${serverName}", a name reserved for ${brandName()} system ` +
         `tools. Pick a connector with a different id.`,
     );
   }

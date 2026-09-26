@@ -10,6 +10,7 @@ import type {
 import { MetricsEventSink } from "../adapters/metrics-events.ts";
 import { NoopEventSink } from "../adapters/noop-events.ts";
 import { WorkspaceLogSink } from "../adapters/workspace-log-sink.ts";
+import { loadBrand } from "../brand/index.ts";
 import { isToolVisibleToRole, type ResolvedFeatures, resolveFeatures } from "../config/features.ts";
 import { deriveOverridePath } from "../config/overrides.ts";
 import { createPrivilegeHook, NoopConfirmationGate } from "../config/privilege.ts";
@@ -585,6 +586,10 @@ export class Runtime {
     // legacy plaintext file would race the rewrite of that same file.
     await credentialStore.reconcile?.();
     let config = await resolveInstanceCredentialRefs(declaredConfig);
+    // `loadConfig` already did this for a file-backed boot; a config built in
+    // code reaches here without it, and the brand is process state every
+    // reader below shares, so the composition root installs it too.
+    loadBrand(config);
 
     // Register built-in transport credential providers (e.g. `minted`) at the
     // ONE composition root every entry point shares — serve, the no-subcommand
