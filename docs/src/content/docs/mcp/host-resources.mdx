@@ -1,0 +1,179 @@
+---
+title: Host Resources
+description: The ai.nimblebrain/host-resources extension lets an MCP server read and list files in the workspace it is serving, by URI, instead of receiving their contents as tool arguments.
+---
+
+import { Aside, Tabs, TabItem } from '@astrojs/starlight/components';
+
+| | |
+|---|---|
+| **Capability** | `ai.nimblebrain/host-resources`, in the client's `capabilities.extensions` |
+| **Methods** | `ai.nimblebrain/resources/read`, `ai.nimblebrain/resources/list`, sent by the server to the host |
+| **Schemas** | The specification's `ReadResourceRequest`/`Result` and `ListResourcesRequest`/`Result`, unchanged |
+| **Fallback** | The tool takes the content inline as an argument |
+
+## Why it exists
+
+MCP resources flow one way: a server exposes them and a client reads them. Nothing in the specification lets a server read something that belongs to the *client*.
+
+On NimbleBrain, that gap shows up constantly. A user drops a contract, a spreadsheet, or a set of images into the workspace and asks the agent to hand it to a server's tool. Without this extension, the model's only option is to read the file and paste its contents into a tool argument. That path spends tokens on every byte twice, is capped by the context window, corrupts binary data unless the model base64-encodes it correctly, and puts the model in the middle of a copy it has no reason to see.
+
+With this extension, the tool takes a URI such as `files://fl_abc123`, and the server reads the file from the host itself. The model passes a short reference and never sees the bytes.
+
+## Capability
+
+The host advertises the capability on every `initialize`:
+
+```json
+{
+  "capabilities": {
+    "extensions": {
+      "ai.nimblebrain/host-resources": {
+        "read":  { "enabled": true, "range": false, "maxSize": 10485760 },
+        "list":  { "enabled": true },
+        "write": { "enabled": false },
+        "schemes": ["files"]
+      }
+    }
+  }
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `read.enabled` | `ai.nimblebrain/resources/read` is served. |
+| `read.range` | Reads of a byte range are supported. `false` today: every read returns the whole resource. |
+| `read.maxSize` | The largest resource, in bytes, a read will return (10 MiB). A larger one fails with `-32005`. |
+| `list.enabled` | `ai.nimblebrain/resources/list` is served. |
+| `write.enabled` | Writing back to the host. `false` today. |
+| `schemes` | The URI schemes the host resolves. A URI outside this list fails with `-32602`. |
+
+Each operation is an object rather than a boolean so that new options (range reads, filters) can be added without breaking a server that reads the current shape. Check `enabled` on the specific operation you call. Do not infer one operation from another.
+
+## `ai.nimblebrain/resources/read`
+
+Read one resource. The params and result are exactly those of the specification's `resources/read`.
+
+```json
+// Server → Host
+{
+  "jsonrpc": "2.0",
+  "id": 7,
+  "method": "ai.nimblebrain/resources/read",
+  "params": { "uri": "files://fl_abc123" }
+}
+
+// Host → Server
+{
+  "jsonrpc": "2.0",
+  "id": 7,
+  "result": {
+    "contents": [
+      { "uri": "files://fl_abc123", "mimeType": "text/csv", "text": "region,revenue\n..." }
+    ]
+  }
+}
+```
+
+A text MIME type comes back as `text`. Anything else comes back base64-encoded in `blob`.
+
+## `ai.nimblebrain/resources/list`
+
+List the resources the server can read. The params and result are those of the specification's `resources/list`. An optional filter rides in `params._meta.filter`, because the specification's list request has no filter field:
+
+```json
+// Server → Host
+{
+  "jsonrpc": "2.0",
+  "id": 8,
+  "method": "ai.nimblebrain/resources/list",
+  "params": {
+    "_meta": { "filter": { "mimeType": "application/pdf", "tags": ["contracts"] } }
+  }
+}
+
+// Host → Server
+{
+  "jsonrpc": "2.0",
+  "id": 8,
+  "result": {
+    "resources": [
+      { "uri": "files://fl_def456", "name": "msa-2026.pdf", "mimeType": "application/pdf" }
+    ]
+  }
+}
+```
+
+| Filter field | Matches |
+|---|---|
+| `scheme` | Only `files` is accepted. Any other value fails with `-32602`. |
+| `mimeType` | An exact MIME type. |
+| `tags` | Files carrying **every** listed tag. Must be an array. |
+
+The whole list comes back in one response. Pagination is not supported, and a request that sends a `cursor` fails with `-32602`. It fails instead of silently returning the full set, so a server's pagination loop knows the feature is missing.
+
+## Scope: which files a server can see
+
+A request resolves in **the workspace the calling connection belongs to**, for the user on whose behalf the tool is running. The URI names a file, never a workspace. The host takes the workspace from the connection, so a server cannot reach another workspace's files by constructing a URI.
+
+A file that does not exist, and a file that exists somewhere the caller cannot see, return the same `-32002`. A server cannot use reads to discover what exists outside its scope.
+
+## Errors
+
+The error codes are the specification's where one exists, so a future upstream version of this extension keeps them.
+
+| Code | Meaning | `error.data` |
+|---|---|---|
+| `-32002` | Resource not found, or not visible to this caller | `{ uri }` |
+| `-32602` | Invalid params: unsupported scheme, a `cursor`, or a malformed filter | `{ uri \| scheme, supported }` |
+| `-32004` | Rate limited. Each server in each workspace has its own request budget. | `{ retryAfterMs }` |
+| `-32005` | Response too large: the resource exceeds `read.maxSize` | `{ uri, size, maxSize }` |
+
+## Writing a tool that uses it
+
+Design the tool so it works on any host. Accept a URI, accept inline content as the fallback, and let the capability decide which one is used.
+
+<Tabs>
+<TabItem label="Python (bundle SDK)">
+
+The [`nimblebrain-bundle-sdk`](https://pypi.org/project/nimblebrain-bundle-sdk/) package wraps the capability check, the method names, and the result types for FastMCP servers.
+
+```python
+from fastmcp import Context
+from nimblebrain_bundle_sdk import host
+
+@mcp.tool
+async def summarize(file_uri: str | None = None, text: str | None = None, ctx: Context = None) -> dict:
+    """Summarize a document. Pass file_uri for a workspace file, or text inline."""
+    h = host(ctx)
+    if file_uri and h.available:
+        result = await h.read(file_uri)
+        text = result.contents[0].text
+    elif file_uri:
+        return {"error": "This host cannot read files by URI. Pass the content as `text`."}
+    ...
+```
+
+`h.available` is true when `read` is enabled, and `h.list_available` is true when `list` is enabled. `h.supports_scheme("files")` checks the scheme allowlist.
+
+</TabItem>
+<TabItem label="Wire (any SDK)">
+
+1. After `initialize`, read `clientCapabilities.extensions["ai.nimblebrain/host-resources"]`.
+2. If `read.enabled` is true and the URI's scheme is in `schemes`, send an `ai.nimblebrain/resources/read` request to the client over the same session.
+3. Parse the result as a standard `ReadResourceResult`.
+4. Otherwise, fall back to inline content.
+
+</TabItem>
+</Tabs>
+
+<Aside type="tip">
+Say in the tool's description which argument to use when. The model picks the
+argument, and it will pass the URI it was given if the description tells it to.
+</Aside>
+
+## Related
+
+- [NimbleBrain and MCP](/mcp/overview/): design rules shared by every extension
+- [File context](/using/file-context/): how files get into a workspace
+- [Protocol support](/mcp/protocol-support/): the full capability block

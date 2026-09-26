@@ -1,0 +1,40 @@
+---
+title: Reserved Keys
+description: The ai.nimblebrain/* _meta keys only the host may set. A server that sends one has it removed before the result reaches the agent.
+---
+
+Every key under `ai.nimblebrain/` belongs to NimbleBrain. Most are [extensions](/mcp/overview/#extensions) a server may use. The keys on this page are different: the host sets them itself, and it removes them from anything a server sends.
+
+## Why a key is reserved
+
+A `_meta` key on a result is a claim by the server that returned it. The host accepts a claim when believing it cannot widen what the server may do. A marker that makes the host more careful passes that test. [`non-advancing`](/mcp/non-advancing/) is one: a server that sets it only makes the loop guard stricter on itself.
+
+A key fails the test when believing it would weaken a safeguard, or when it asserts something only the host can know. If a server could set such a key, it could switch off protections that apply to it. So the host sets these keys itself and removes any copy a server sends.
+
+## The keys
+
+| Key | Set by the host on | What it means | Why a server cannot set it |
+|---|---|---|---|
+| `ai.nimblebrain/unattended` | Outgoing `tools/call` requests | The call was fired by stored configuration, not a conversation. See [Unattended calls](/mcp/unattended/). | It is a statement about the caller, and the server is not the caller. |
+| `ai.nimblebrain/infra-error` | Results of calls that failed in transport: a dropped connection, a throttling gateway, a session that expired | The call never reached the tool's logic, so its failure says nothing about the tool, and the loop guard does not count it | A server that set it on its own errors would exempt itself from the loop guard permanently. |
+| `ai.nimblebrain/skill-activated` | Results of the host's own skill-loading tool | A skill's guidance was delivered to the agent in this run, so the host does not deliver it twice | A server that set it could suppress guidance the agent is meant to receive, including safety rules. |
+| `ai.nimblebrain/skill-suppression` | Results of the host's own skill-muting tool | A skill was muted for the rest of the conversation | The same reason, and it lasts for the rest of the conversation. |
+
+A JSON-RPC error your server returns never earns `infra-error`, however its message is worded.
+
+## Routing key
+
+One more key is set by the host's own components and scoped to a single hop:
+
+| Key | Where | Meaning |
+|---|---|---|
+| `ai.nimblebrain/source` | `resources/read` and task requests at the [MCP endpoint](/connect/mcp-endpoint/) and from the app bridge | Names the server a request is for. A workspace endpoint serves many servers' resources behind one URL, and two servers can use the same URI. The app bridge always sets it to the app's own server, whatever the app asks for. |
+
+## If you see one
+
+Seeing one of these keys in a trace between the host and your server is normal. Seeing your own server set one is a bug in your server. The host removes the key, so it does nothing, but the attempt tells you something in your code is copying `_meta` it should not.
+
+## Related
+
+- [NimbleBrain and MCP](/mcp/overview/): the full extension list and design rules
+- [Non-advancing results](/mcp/non-advancing/): a marker a server *may* set

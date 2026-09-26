@@ -1,0 +1,106 @@
+---
+title: Protocol Support
+description: The MCP specification revisions, transports, and capabilities NimbleBrain supports as a client, an MCP Apps host, and a server, and the capabilities it deliberately does not advertise.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+This page is the contract a server developer builds against: what the host speaks, what it claims in the handshake, and what it leaves out on purpose. Where the host does not advertise a capability, that is a decision, and the reason is given next to it.
+
+## Specification revisions
+
+NimbleBrain uses the official TypeScript SDK (`@modelcontextprotocol/sdk` 1.x) for both its client and server roles. Version negotiation follows the specification's [lifecycle rules](https://modelcontextprotocol.io/specification/latest/basic/lifecycle#version-negotiation): the host offers the newest revision it supports, and it agrees to any older supported revision the other side asks for.
+
+| Revision | Supported |
+|---|---|
+| `2025-11-25` | Yes. This is the revision the host offers first. |
+| `2025-06-18` | Yes |
+| `2025-03-26` | Yes |
+| `2024-11-05` | Yes |
+
+MCP Apps (the `ui://` extension) is implemented from `@modelcontextprotocol/ext-apps`. See the [MCP App Bridge](/apps/bridge/) for the exact messages the host serves.
+
+## As a client to your server
+
+### Transports
+
+| Transport | Supported | Notes |
+|---|---|---|
+| Streamable HTTP | Yes | The default. Declare `streamable-http` in the server's catalog entry. |
+| HTTP+SSE | Yes | Only for servers that support nothing newer. Declare `sse`. |
+| stdio | No | The runtime connects to servers over the network. It never downloads or runs a server's code. |
+
+Authorization follows the specification's [authorization flow](https://modelcontextprotocol.io/specification/latest/basic/authorization): dynamic client registration, a pre-registered OAuth client, or a credential the platform supplies. The operator chooses one per server in the [connectors catalog](/config/connectors-catalog/).
+
+### Client capabilities the host advertises
+
+On every `initialize`, the host sends exactly these capabilities:
+
+```json
+{
+  "capabilities": {
+    "tasks": {
+      "requests": { "tools": { "call": {} } },
+      "cancel": {}
+    },
+    "extensions": {
+      "ai.nimblebrain/host-resources": {
+        "read": { "enabled": true, "range": false, "maxSize": 10485760 },
+        "list": { "enabled": true },
+        "write": { "enabled": false },
+        "schemes": ["files"]
+      }
+    }
+  }
+}
+```
+
+**`tasks`**: the host runs long-running tools as tasks and can cancel them. If a tool declares `execution.taskSupport` as `optional` or `required`, the host calls it task-augmented, receives a `CreateTaskResult` right away, and waits for the result on the task stream. When the run that made the call is cancelled, the host sends `tasks/cancel`. A task-augmented call is never retried after a transport failure, because the task's state lives on the server and a retry would start the work twice. The host does not claim `tasks.list`, because it never lists tasks.
+
+**`extensions`**: the vendor capabilities described on [NimbleBrain and MCP](/mcp/overview/#extensions). Read this block before calling an extension method.
+
+### Client capabilities the host does not advertise
+
+| Capability | Why not |
+|---|---|
+| `sampling` | The specification is deprecating it. A server that needs a model should call one itself. |
+| `roots` | The specification is deprecating it. A server reaches workspace files through [host-resources](/mcp/host-resources/) instead. |
+| `elicitation` | Elicitation asks the client to put a question to a person and wait for the answer. An agent here often runs with nobody present, such as a scheduled automation or a webhook-triggered run. Even when someone is present, they are at the far end of an event stream, not waiting behind the tool call. The host cannot honor "block until someone answers", so it does not claim to. A tool that needs input should return that as its result, and the agent will ask. |
+
+### What the host reads from your server
+
+| Server feature | How the host uses it |
+|---|---|
+| `tools` | Offered to the agent, filtered by workspace, feature flags, and the caller's role. `annotations` (`readOnlyHint`, `destructiveHint`, and the rest) and `outputSchema` are forwarded as declared. The host treats annotations as the server's own claims, so it uses them to be more careful and never to skip a check. |
+| `_meta.ui.resourceUri` on a tool | Mounts the tool's MCP Apps view inline with its result. |
+| `_meta.ui.visibility` on a tool | A tool whose visibility leaves out `"model"` is hidden from every model-facing tool listing and stays callable by its app. |
+| `resources` | Read when the host needs them: `ui://` views when they mount, [resources at reserved URIs](/mcp/overview/#resource-conventions), and the server's notification outbox. The host reads on its own schedule. If the server advertises `resources.subscribe`, the host subscribes to the outbox and treats `notifications/resources/updated` as a hint to read it sooner, not as a replacement for reading. |
+| `instructions` in the `initialize` result | Composed into the agent's prompt for the workspace. See [custom instructions](/apps/custom-instructions/). |
+
+## As an MCP Apps host
+
+The host implements the MCP Apps specification: `ui/initialize`, tool input and result delivery, `ui/message`, `ui/open-link`, `ui/update-model-context`, `ui/download-file`, `ui/request-display-mode`, size changes, and `tools/call` and `resources/read` proxied to the app's own server. The [MCP App Bridge](/apps/bridge/) reference lists every message and its exact behavior, including the three `ai.nimblebrain/*` bridge extensions.
+
+## As a server to external clients
+
+Each workspace is its own MCP server at `/mcp/<workspaceId>`, over Streamable HTTP with OAuth 2.0 protected-resource discovery. It advertises:
+
+| Capability | Notes |
+|---|---|
+| `tools` | The workspace's tools and the caller's identity tools, with the same filtering the agent gets |
+| `resources` | Resources from the workspace's servers |
+| `tasks` | `tasks/cancel` and task-augmented `tools/call`, so long-running tools stay long-running through the endpoint |
+
+It does not serve the optional `GET` server-to-client stream, so progress and task updates arrive on the `POST` that started them. The [MCP endpoint reference](/connect/mcp-endpoint/) covers authentication, sessions, and the audience rule.
+
+<Aside type="tip">
+To check what a host actually advertises, read the `initialize` result, not this
+page. A server that checks capabilities at runtime keeps working as the host
+changes.
+</Aside>
+
+## Related
+
+- [NimbleBrain and MCP](/mcp/overview/): the three roles and every extension
+- [Host resources](/mcp/host-resources/): the `extensions` capability in detail
+- [Connector configuration](/config/connectors/): transport and auth fields

@@ -1,0 +1,53 @@
+---
+title: Non-advancing Results
+description: The ai.nimblebrain/non-advancing marker lets a tool say its result made no progress, so the host can stop an agent that keeps calling a tool that has nothing to give.
+---
+
+| | |
+|---|---|
+| **Key** | `_meta["ai.nimblebrain/non-advancing"]` on a `CallToolResult` |
+| **Value** | `true` |
+| **Sent by** | Any server |
+| **Fallback** | The host judges progress from the result's content alone |
+
+## Why it exists
+
+Agents loop. The most common kind of loop is not an error: it is a tool that keeps succeeding without helping. A search that matches nothing, a lookup against state that has not changed, a poll that has nothing new. Each result is a success, and each is worded a little differently because it repeats the query back, so from the outside every call looks like a fresh answer. The model rephrases the question and tries again, and the run burns its budget on a tool that has nothing to give.
+
+The host guards every run against this. It watches each tool's results, and when a tool keeps returning nothing useful, it tells the model to stop calling that tool and answer with what it has. The guard can recognize a repeated error or a repeated identical answer by itself. What it cannot recognize is "no progress" dressed in different words each time. Only the tool knows that its result was empty. This marker is how it says so.
+
+## Semantics
+
+Set the marker on a result that did not move the task forward:
+
+```json
+{
+  "content": [{ "type": "text", "text": "No invoices matched \"acme q3 overdue\"." }],
+  "isError": false,
+  "_meta": { "ai.nimblebrain/non-advancing": true }
+}
+```
+
+What the host does with it:
+
+- **Rephrasing the same question counts as asking it again.** Two marked results from the same tool, with inputs that differ only in case or whitespace, are treated as the same attempt.
+- **Genuinely different questions are allowed, up to a limit.** Asking materially different questions is what discovery is, so these do not trip the guard right away. They draw on a separate, larger allowance for marked results from that tool in one run.
+- **Any real progress resets the count.** A result from the tool that is a success and is not marked clears its tally.
+- **A stopped tool can recover.** If a tool the guard stopped later returns a real, different success, the stop is lifted.
+
+The marker affects only the tool that set it, and only within one run.
+
+## When to set it
+
+| Set it | Don't set it |
+|---|---|
+| A search or filter that matched nothing | A result that is empty because the answer really is "none", and the agent needs that answer to finish, such as "no overdue invoices" in a status check |
+| A read of state that has not changed since the last call | An error. Return `isError: true` instead. The host already watches for repeated errors. |
+| A poll with nothing new | A partial result that the agent can act on |
+
+If you are unsure, leave it off. A marker the tool did not need to set can only make the guard stop the tool sooner. That is why the host accepts this key from any server: setting it can only restrict the tool that sets it.
+
+## Related
+
+- [NimbleBrain and MCP](/mcp/overview/): how the host decides which `_meta` keys to trust
+- [Reserved keys](/mcp/reserved-keys/): the host-owned marker for infrastructure failures, which a server cannot set
