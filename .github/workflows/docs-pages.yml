@@ -9,6 +9,7 @@ on:
     branches: [main]
     paths:
       - 'docs/**'
+      - 'web/src/theme/palette.ts'
       - '.github/workflows/docs-pages.yml'
   workflow_dispatch:
 
