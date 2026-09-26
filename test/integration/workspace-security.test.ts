@@ -11,6 +11,7 @@
  */
 
 import { mkdtempSync, rmSync } from "node:fs";
+import { installTestCredentialStore, resetTestCredentialStore } from "../helpers/credential-store.ts";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "bun:test";
@@ -308,6 +309,10 @@ describe("Workspace security: same connector installed in two workspaces", () =>
   });
 
   test("ConnectorLifecycleManager: seeding the same connector in two workspaces keeps them distinct", async () => {
+    // Seeding a url connector checks for stored OAuth tokens through the credential store.
+    const workDir = makeTmpDir();
+    installTestCredentialStore(workDir);
+    try {
     const events: EngineEvent[] = [];
     const sink: EventSink = { emit: (e) => events.push(e) };
     const lifecycle = new ConnectorLifecycleManager(sink);
@@ -333,5 +338,9 @@ describe("Workspace security: same connector installed in two workspaces", () =>
     // The unscoped snapshot exposes both — the bug was that a serverName-only
     // filter would return both when asked for one workspace's instances.
     expect(lifecycle.getInstances()).toHaveLength(2);
+    } finally {
+      resetTestCredentialStore();
+      rmSync(workDir, { recursive: true, force: true });
+    }
   });
 });

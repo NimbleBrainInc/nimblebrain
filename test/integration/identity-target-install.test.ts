@@ -17,6 +17,7 @@ import { ToolRegistry } from "../../src/tools/registry.ts";
 import { WorkspaceContext } from "../../src/workspace/context.ts";
 import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
 import { CONNECTOR_FIXTURE_DIR } from "../helpers/connector-fixtures.ts";
+import { installTestCredentialStore, resetTestCredentialStore } from "../helpers/credential-store.ts";
 import { buildManagedConnectorRegistry } from "../../src/connectors/providers/registry.ts";
 import { _resetComposioConfigForTest } from "../../src/connectors/providers/composio/config.ts";
 
@@ -91,7 +92,9 @@ interface Harness {
 
 async function buildHarness(): Promise<Harness> {
   const workDir = mkdtempSync(join(tmpdir(), "nb-identity-install-"));
-
+  // Identity OAuth tokens and DCR registrations are keys in the credential store, which
+  // the runtime installs at its composition root; this harness has no runtime.
+  installTestCredentialStore(workDir);
 
   const workspaceStore = new WorkspaceStore(workDir);
   const lifecycle = new ConnectorLifecycleManager(new NoopEventSink());
@@ -155,6 +158,7 @@ describe("manage_connectors.install scope:identity — DCR personal-connector in
     h = await buildHarness();
   });
   afterEach(() => {
+    resetTestCredentialStore();
     rmSync(h.workDir, { recursive: true, force: true });
   });
 
@@ -348,6 +352,7 @@ describe("manage_connectors.list_personal_catalog — the curated personal-conne
     if (savedComposioKey === undefined) delete process.env.COMPOSIO_API_KEY;
     else process.env.COMPOSIO_API_KEY = savedComposioKey;
     _resetComposioConfigForTest();
+    resetTestCredentialStore();
     rmSync(h.workDir, { recursive: true, force: true });
   });
 
@@ -422,6 +427,7 @@ describe("manage_connectors.disconnect scope:identity — full remove", () => {
     h = await buildHarness();
   });
   afterEach(() => {
+    resetTestCredentialStore();
     rmSync(h.workDir, { recursive: true, force: true });
   });
 
