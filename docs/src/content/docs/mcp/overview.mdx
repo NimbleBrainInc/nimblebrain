@@ -70,14 +70,13 @@ These keys are metadata on a server's entry in the [connectors catalog](/config/
 
 ### Between an app view and the host
 
-These are methods on the [MCP App Bridge](/apps/bridge/#nimblebrain-extensions-ainimblebrain), used by an app's `ui://` view running inside the shell.
+These are methods on the [MCP App Bridge](/apps/bridge/#nimblebrain-extensions-ainimblebrain), used by an app's `ui://` view running inside the shell. An app hands the agent its state with the specification's `ui/update-model-context`; there is no NimbleBrain equivalent.
 
 | Extension | Direction | Why it exists |
 |---|---|---|
 | [`ai.nimblebrain/request-file`](/apps/bridge/#ainimblebrainrequest-file) | App → host | The MCP Apps specification can hand a user a file (`ui/download-file`) but cannot ask for one. A sandboxed iframe cannot reach the workspace's file store, so the host opens the picker and stores the chosen files for the app. |
 | [`ai.nimblebrain/action`](/apps/bridge/#ainimblebrainaction) | App → host | Asks the shell to do something only the shell can do, such as open a conversation or switch to another app. The specification lets an app open a link or post a message, but not move the shell. |
 | `ai.nimblebrain/keydown` | App → host | A sandboxed iframe that has focus captures every keystroke, so the shell's keyboard shortcuts stop working while the user is inside an app. This forwards the shortcut keys to the shell. |
-| [`ai.nimblebrain/context`](/apps/bridge/#uimessage) | App → host, on a `ui/message` block | Tells the agent which entity and action a message sent from the app is about. |
 
 ### Resource conventions
 
