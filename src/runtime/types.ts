@@ -339,7 +339,7 @@ export interface ChatRequest {
    *
    * Cooperative: the engine checks the signal between iterations and the
    * current tool call may run to completion before the loop exits. Long-
-   * running tools honor the signal via the contract in CLAUDE.md
+   * running tools honor the signal via the contract in src/tools/AGENTS.md
    * §"Long-Running Tools (MCP Tasks)".
    */
   signal?: AbortSignal;

@@ -17,7 +17,7 @@
  *
  * In-process only, which is the same assumption `singleFlight` in
  * `hooks/reconcile.ts` already makes and is sufficient while a tenant runs one
- * runtime pod — the `replicas > 1` prerequisites in `AGENTS.md` are unmet, and
+ * runtime pod — the `replicas > 1` prerequisites in `src/api/AGENTS.md` are unmet, and
  * clustering this state belongs to that project rather than to a lock.
  */
 
