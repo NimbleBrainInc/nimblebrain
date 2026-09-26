@@ -5,7 +5,7 @@ description: NimbleBrain's ext-apps host implementation — the JSON-RPC protoco
 
 import { Aside, Tabs, TabItem } from '@astrojs/starlight/components';
 
-The MCP App Bridge is NimbleBrain's implementation of the [ext-apps specification (2026-01-26)](https://apps.extensions.modelcontextprotocol.io/api/) — the standard protocol that enables [MCP Apps](/concepts/mcp-apps) to render inside host applications with bidirectional tool access. NimbleBrain extends the spec with `synapse/` namespace methods for data-change notifications, semantic actions, file transfer, and keyboard forwarding.
+The MCP App Bridge is NimbleBrain's implementation of the [ext-apps specification (2026-01-26)](https://apps.extensions.modelcontextprotocol.io/api/) — the standard protocol that enables [MCP Apps](/concepts/mcp-apps) to render inside host applications with bidirectional tool access. Where the spec has no method for something the shell needs, NimbleBrain adds an [`ai.nimblebrain/` extension](/mcp/overview/#between-an-app-view-and-the-host): semantic actions, a file picker, and keyboard forwarding.
 
 All messages use `window.postMessage` with JSON-RPC 2.0 envelopes:
 
@@ -578,6 +578,20 @@ Every param is optional: `accept` takes the same value as an `<input type="file"
 <Aside type="caution">
 **SDK compatibility.** With the `@nimblebrain/synapse` SDK, call `pickFile()` for a single entry or `pickFiles()` for the list — both read this one shape, from the release that moves `connect()` onto the spec's own client onwards. **Releases through 0.18.0 read the bare shapes** (an array, a single object, or `null`) and throw on `{ files }`, reporting it as an out-of-date *host* — so an app on 0.18.0 or earlier has to move its pin in the same deploy as the host.
 </Aside>
+
+### `ai.nimblebrain/keydown`
+
+Forward a keyboard shortcut to the shell. An iframe that has focus receives every keystroke, so without this the shell's shortcuts stop working while the user is inside an app. The host re-dispatches the key as a `keydown` on its own document.
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "ai.nimblebrain/keydown",
+  "params": { "key": "k", "metaKey": true, "ctrlKey": false, "shiftKey": false, "altKey": false }
+}
+```
+
+It is a notification and takes no answer. With `@nimblebrain/synapse`, pass `forwardKeys` to `connect()` to forward shortcuts, and the SDK sends only when the host declared `experimental["ai.nimblebrain/keydown"]`.
 
 ## Security model
 
