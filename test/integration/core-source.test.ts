@@ -1325,6 +1325,41 @@ describe("Core Source", () => {
 		}
 	});
 
+	// The briefing is built from the caller (greeting name, timezone, their own
+	// activity), so a cached one must never be served to another member of the
+	// same workspace. Both calls take the quiet-day path, so no model is needed.
+	it("nb__briefing serves each workspace member their own cached briefing", async () => {
+		const runtime = await makeRuntime();
+		try {
+			await provisionTestWorkspace(runtime);
+			const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
+			const ctxFor = (id: string, displayName: string) => ({
+				identity: { id, email: `${id}@example.com`, displayName } as never,
+				workspaceId: TEST_WORKSPACE_ID,
+			});
+			const greetingOf = (r: { structuredContent?: Record<string, unknown> }) =>
+				r.structuredContent?.greeting as string;
+
+			const a = await runWithRequestContext(ctxFor("user_a", "Alice"), () =>
+				source.execute("briefing", {}),
+			);
+			const b = await runWithRequestContext(ctxFor("user_b", "Bob"), () =>
+				source.execute("briefing", {}),
+			);
+			expect(greetingOf(a)).toEndWith(", Alice");
+			expect(greetingOf(b)).toEndWith(", Bob");
+
+			// The cache still serves a member their own entry on a repeat call.
+			const aAgain = await runWithRequestContext(ctxFor("user_a", "Alice"), () =>
+				source.execute("briefing", {}),
+			);
+			expect(aAgain.structuredContent?.cached).toBe(true);
+			expect(greetingOf(aAgain)).toEndWith(", Alice");
+		} finally {
+			await runtime.shutdown();
+		}
+	});
+
 	// ----------------------------------------------------------------------
 	// manage_identity authorization (STRICT workspace-scoped write gate)
 	// ----------------------------------------------------------------------
