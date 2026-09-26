@@ -105,6 +105,13 @@ server that declared the facet, over MCP. There is no host-side disk query: the
 runtime holds no copy of your data, so a count it could compute would be a
 guess.
 
+**A facet answers for the workspace, never for the caller.** The briefing is
+built only from facets, and one briefing is generated per workspace and shown to
+every member. The call that resolves your facet runs as whichever member's visit
+triggered the generation, so an answer that depends on who is asking (for
+example "my open tasks") would be shown to every other member. Return
+workspace-wide data from a facet.
+
 **Example:**
 
 ```yaml

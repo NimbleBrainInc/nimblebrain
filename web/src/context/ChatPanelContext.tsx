@@ -7,7 +7,7 @@ type PanelState = "closed" | "sidebar" | "fullscreen";
 export interface ChatPanelContextValue {
   panelState: PanelState;
   panelWidth: number;
-  /** Open the panel. If conversationId provided, load that conversation. */
+  /** Open the panel. If conversationId provided, open that conversation (see `openConversation`). */
   openPanel: (conversationId?: string) => void;
   /** Close the panel. */
   closePanel: () => void;
@@ -52,10 +52,10 @@ export function ChatPanelProvider({ children }: ChatPanelProviderProps) {
   const [panelState, setPanelStateRaw] = useState<PanelState>(readState);
   const [panelWidth, setPanelWidthRaw] = useState<number>(readWidth);
 
-  // Use a ref for loadConversation so openPanel's identity doesn't change
+  // Use a ref for openConversation so openPanel's identity doesn't change
   // when the chat context value changes during streaming.
-  const loadConversationRef = useRef(chat.loadConversation);
-  loadConversationRef.current = chat.loadConversation;
+  const openConversationRef = useRef(chat.openConversation);
+  openConversationRef.current = chat.openConversation;
 
   const setPanelState = useCallback((state: PanelState) => {
     setPanelStateRaw(state);
@@ -71,7 +71,7 @@ export function ChatPanelProvider({ children }: ChatPanelProviderProps) {
     (conversationId?: string) => {
       setPanelState("sidebar");
       if (conversationId) {
-        loadConversationRef.current(conversationId);
+        void openConversationRef.current(conversationId);
       }
     },
     [setPanelState],

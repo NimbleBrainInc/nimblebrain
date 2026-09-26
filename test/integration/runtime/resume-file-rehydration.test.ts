@@ -1,19 +1,13 @@
 /**
- * Cross-workspace resume → file rehydration partition.
+ * Resume → file rehydration partition.
  *
  * A conversation is WORKSPACE-owned: it lives under `workspaces/<wsId>/...` and
  * its attached files live in the SAME workspace's partition
- * (`workspaces/<wsId>/files/<ownerId>/`). On a cross-workspace resume — a
- * request whose focused workspace differs from the conversation's — `chat()`
- * relocates to the conversation's actual workspace via the locator and captures
- * the authoritative `convWsId`. The file store used to rehydrate `files://`
- * attachments MUST be built from THAT `convWsId`, not the request header —
- * otherwise the resumed chat reads the wrong partition and the attachment
- * silently vanishes.
- *
- * This pins that wiring: after a cross-workspace resume, the rehydration file
- * store resolves to the conversation's workspace (A), where the file lives, and
- * finds it — even though the resume request is NOT focused on A.
+ * (`workspaces/<wsId>/files/<ownerId>/`). A turn runs in the workspace its
+ * request names, and a resume names the conversation's own workspace or is
+ * refused as an unknown conversation (ADR-0037). So the file store that
+ * rehydrates `files://` attachments is that one workspace's, and a resume from
+ * anywhere else reads nothing at all.
  */
 
 import { afterAll, describe, expect, it } from "bun:test";
@@ -22,12 +16,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { FileStore } from "../../../src/files/store.ts";
 import { DEV_IDENTITY } from "../../../src/identity/providers/dev.ts";
+import { ConversationNotFoundError } from "../../../src/runtime/errors.ts";
 import { Runtime } from "../../../src/runtime/runtime.ts";
 import { personalWorkspaceIdFor } from "../../../src/workspace/workspace-store.ts";
 import { createEchoModel } from "../../helpers/echo-model.ts";
 import { provisionTestWorkspace } from "../../helpers/test-workspace.ts";
 
-const testDir = join(tmpdir(), `nb-cross-workspace-file-resume-${Date.now()}`);
+const testDir = join(tmpdir(), `nb-resume-file-rehydration-${Date.now()}`);
 
 afterAll(() => {
   if (existsSync(testDir)) rmSync(testDir, { recursive: true, force: true });
@@ -37,12 +32,12 @@ afterAll(() => {
 const WORKSPACE_A = "ws_workspace_a";
 // Dev mode: no identity on the request → the dev owner.
 const OWNER = DEV_IDENTITY.id;
-// The resume is UNFOCUSED → it falls back to the owner's personal workspace,
-// which is a DIFFERENT workspace than WORKSPACE_A. That is the cross-workspace hop.
+// An UNFOCUSED request falls back to the owner's personal workspace — a
+// different workspace than WORKSPACE_A.
 const PERSONAL = personalWorkspaceIdFor(OWNER);
 
-describe("cross-workspace resume rehydrates files from the conversation's workspace (not the request)", () => {
-  it("a file attached in workspace A is found on a resume that is NOT focused on A", async () => {
+describe("a resume rehydrates files from the workspace it runs in", () => {
+  it("a file attached in workspace A is found on a resume in A, and a resume from elsewhere reads nothing", async () => {
     const workDir = join(testDir, "rehydrate-from-workspace");
     mkdirSync(workDir, { recursive: true });
 
@@ -77,8 +72,8 @@ describe("cross-workspace resume rehydrates files from the conversation's worksp
       visibility: "private",
     });
 
-    // Sanity: the personal workspace — where an un-fixed resume would look —
-    // does NOT hold the file. So "found" can only mean "resolved to workspace A".
+    // Sanity: the personal workspace does NOT hold the file. So "found" can only
+    // mean "resolved to workspace A".
     expect(await runtime.getWorkspaceFileStore(PERSONAL, OWNER).findEntry(saved.id)).toBeNull();
 
     // 3) Spy on getWorkspaceFileStore to capture the partition rehydration
@@ -93,16 +88,19 @@ describe("cross-workspace resume rehydrates files from the conversation's worksp
       return store;
     };
 
-    // 4) Cross-workspace resume: UNFOCUSED (no workspaceId) → the request
-    //    workspace is the owner's personal workspace, NOT workspace A. chat()
-    //    must relocate to A via the locator, and rehydration must follow it.
-    await runtime.chat({ message: "resume from elsewhere", conversationId: convId });
+    // 4) A resume UNFOCUSED (no workspaceId → the personal workspace) is refused
+    //    before any partition is opened: the conversation is not there.
+    await expect(
+      runtime.chat({ message: "resume from elsewhere", conversationId: convId }),
+    ).rejects.toBeInstanceOf(ConversationNotFoundError);
+    expect(calls).toEqual([]);
+
+    // 5) The resume in A rehydrates from A.
+    await runtime.chat({ message: "resume in A", conversationId: convId, workspaceId: WORKSPACE_A });
 
     runtime.getWorkspaceFileStore = origGetFileStore;
 
-    // Every partition the resume touched is the conversation's workspace (A) —
-    // never the request's personal workspace. (Reverting the fix makes this the
-    // personal workspace, and the assertions below fail.)
+    // Every partition the resume touched is the conversation's workspace (A).
     expect(calls.length).toBeGreaterThan(0);
     for (const c of calls) {
       expect(c.wsId).toBe(WORKSPACE_A);

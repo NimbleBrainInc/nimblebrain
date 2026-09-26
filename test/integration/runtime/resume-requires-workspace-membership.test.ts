@@ -49,7 +49,11 @@ describe("resume requires current membership of the conversation's workspace", (
 
     let thrown: unknown;
     try {
-      await runtime.chat({ message: "still here?", conversationId: born.conversationId });
+      await runtime.chat({
+        message: "still here?",
+        conversationId: born.conversationId,
+        workspaceId: WORKSPACE_A,
+      });
     } catch (e) {
       thrown = e;
     }
@@ -70,7 +74,11 @@ describe("resume requires current membership of the conversation's workspace", (
 
     let thrown: unknown;
     try {
-      await runtime.startTurn({ message: "still here?", conversationId: born.conversationId });
+      await runtime.startTurn({
+        message: "still here?",
+        conversationId: born.conversationId,
+        workspaceId: WORKSPACE_A,
+      });
     } catch (e) {
       thrown = e;
     }

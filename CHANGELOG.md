@@ -99,6 +99,7 @@
 
 ### Changed
 
+- **The workspace briefing is one briefing per workspace, written only from app facets.** Every member sees the same briefing, and the fast model runs once per workspace rather than once per member. It no longer reads conversations or platform logs, and `nb__briefing` output drops `greeting` and `date`. A facet must answer for the workspace, never for the caller ([docs](https://docs.nimblebrain.ai/apps/manifest/#briefingfacet)).
 - **`GET /v1/health` returns only `{"status":"ok"}`.** It is unauthenticated and reachable through the web proxy, so it no longer lists connector names or the build identity. Probes are unaffected. Read the build from `GET /v1/bootstrap` or the **About** page in organization settings, and connector state from the `nb_connector_unhealthy` metric ([docs](https://docs.nimblebrain.ai/deploy/observability/#health-and-readiness-probes)).
 - **A connector's OAuth records go through the credential store.** Its tokens, PKCE verifier, DCR registration (which for a confidential client holds a `client_secret`) and captured OIDC identity were four plaintext JSON files outside the store, with their own atomic-write discipline; they are now four keys — `mcp-oauth.<serverName>.{tokens,verifier,client,identity}` — at the connection's scope, so mode, rotation, audit and a future encrypted backend are the store's. Connection state is derived by probing those keys, and disconnect / uninstall delete them. An existing file goes the first time a connector touches that record — imported by a read, superseded by a write — with no script, no downtime and no reconnect ([docs](https://docs.nimblebrain.ai/config/credentials/)).
 
@@ -317,6 +318,10 @@
 - All pre-IA settings URLs redirect to their new locations (`/settings/profile` → `/profile`, `/settings/users` → `/settings/org/users`, etc.). No action required for end users.
 - Bundle authors who want to support custom instructions: publish `app://instructions` from your MCP server. See [the bundle-author guide](https://docs.nimblebrain.ai/apps/custom-instructions/) and the `synapse-todo-board` reference implementation.
 - The connection-revalidator sweep interval is now `NB_CONNECTION_REVALIDATE_INTERVAL_SECONDS` (the cadence is provider-agnostic). The legacy `COMPOSIO_MONITOR_INTERVAL_SECONDS` is still honored (slated for removal, #727), so no action is required.
+
+### Changed
+
+- **Host-owned `_meta` keys.** `ai.nimblebrain/non-advancing` is stripped from connector results, like the skill markers; the platform's own tools still set it. Outbound `tools/call` no longer carries `ai.nimblebrain/unattended`: a server is not told that a call was fired by configuration with no one watching. The reason stays in the audit line.
 
 ## [0.4.0] - 2026-04-24
 

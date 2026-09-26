@@ -11,7 +11,7 @@ A file lives at `workspaces/<wsId>/files/<ownerId>/<fileId>_<name>` (per-owner r
 
   | Door | Workspace |
   |---|---|
-  | chat | the conversation's own `convWsId`, so a resumed chat's files follow the conversation, not the client's focus |
+  | chat | the workspace in the URL, which a resume shares with its conversation (a conversation stored elsewhere is refused) |
   | automation run | provenance |
   | `/mcp/<wsId>` | the membership-validated workspace in the URL |
   | REST `/v1/workspaces/<wsId>/…` | the membership-validated workspace in the URL |

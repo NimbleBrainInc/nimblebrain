@@ -45,7 +45,7 @@ async def start_research(query: str, ctx: Context) -> dict:
 
 ### What the engine does automatically
 
-1. On a 2025-era connection, advertises `capabilities.tasks.{requests.tools.call, cancel}` so servers know the client supports the task flow. On `2026-07-28`, each task-path `tools/call` names the tasks extension in its own `_meta` client capabilities. (`src/tools/mcp-source.ts`, `src/tools/mcp-task-client.ts`)
+1. On a 2025-era connection, advertises `capabilities.tasks.{requests.tools.call, cancel}` so servers know the client supports the task flow. `tasks.list` is not claimed: nothing calls `listTasks`, and SEP-2663 removes `tasks/list` from the spec (ADR-0023). On `2026-07-28`, each task-path `tools/call` names the tasks extension in its own `_meta` client capabilities. (`src/tools/mcp-source.ts`, `src/tools/mcp-task-client.ts`)
 2. Takes the task path for a tool whose `execution.taskSupport` is `"optional"` or `"required"` (2025 era), or for every call to a server advertising the tasks extension (`2026-07-28`, where the server decides per call and a complete answer is accepted too). (`src/tools/mcp-source.ts::execute`)
 3. Polls the task — `taskCreated` → `taskStatus`* → terminal `result | error` — and emits `tool.progress` events on every `taskStatus` so the chat UI renders live.
 4. Run-scoped `AbortSignal` is threaded through `ToolRouter.execute(call, signal)` → `ToolSource.execute(..., signal)` → the task stream. An abort sends `tasks/cancel`.

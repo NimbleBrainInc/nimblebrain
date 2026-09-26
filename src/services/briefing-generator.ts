@@ -11,13 +11,7 @@ import { log } from "../observability/log.ts";
 import { type TokenUsage, tokenUsageFromV4 } from "../usage/types.ts";
 import type { BriefingContext } from "./briefing-collector.ts";
 import { debugBriefing } from "./briefing-debug.ts";
-import type {
-  ActivityOutput,
-  BriefingOutput,
-  BriefingSection,
-  BriefingState,
-  HomeConfig,
-} from "./home-types.ts";
+import type { BriefingOutput, BriefingSection, BriefingState } from "./home-types.ts";
 
 /**
  * Wall-clock cap for the LLM call. Covers realistic p99 across providers
@@ -40,14 +34,12 @@ const BRIEFING_MAX_FACET_DATA_CHARS = 800;
 
 const BRIEFING_SYSTEM_PROMPT = `You are a daily briefing generator for a business workspace.
 
-You receive two data sources:
-1. **App facets** — structured data from installed business apps (CRM, tasks, signals, etc.). Each facet has a label, type, and resolved data.
-2. **System activity** — platform telemetry (conversations, tool calls, errors). This is secondary — only mention if there are significant errors or outages.
+You receive app facets: structured data from the business apps installed in the workspace (CRM, tasks, signals, etc.). Each facet has a label, type, and resolved data. The briefing is shared by every member of the workspace, so write about the workspace, never to one person.
 
 Produce a JSON object with two fields:
 
-1. "lede" — A single sentence (max 120 chars) summarizing the most important business insight. Lead with what matters to the user, not platform stats.
-2. "sections" — An array of 1–6 briefing sections, each with:
+1. "lede" — A single sentence (max 120 chars) summarizing the most important business insight. Lead with what matters to the workspace, not platform stats.
+2. "sections" — An array of 0–6 briefing sections, each with:
    - "id": short kebab-case identifier (e.g., "pipeline", "blocked-tasks", "overdue-followups")
    - "text": 1–2 sentences in business language. Use names, numbers, and specifics from the facet data.
    - "type": "positive" | "neutral" | "warning"
@@ -64,7 +56,6 @@ Rules:
 - Write like a human assistant, not a monitoring dashboard. "2 follow-ups overdue" not "2 interaction entities with follow_up_date < now".
 - Use concrete numbers and names from the facet data.
 - If facet data is empty or zero, skip it — don't report "0 new contacts".
-- System activity (errors, tool calls) only gets a section if error rate > 5% or a connector crashed. Otherwise omit it entirely.
 - Keep total output under 800 tokens.
 - Return ONLY valid JSON. No markdown, no explanation.
 - Actions are semantic — never include route paths or URLs.`;
@@ -233,11 +224,15 @@ type BriefingResult = { lede: string; sections: BriefingSection[] };
 /** Mutable state threaded through the truncation-repair character scan. */
 type ScanState = { opens: string[]; inString: boolean; escaped: boolean };
 
+/**
+ * Writes a workspace's briefing from the facets its installed apps declare.
+ * Facets are the only input: the briefing is the same for every member, so
+ * nothing about the viewer (name, timezone, their conversations) goes in.
+ */
 export class BriefingGenerator {
   constructor(
     private model: LanguageModelV4,
     private modelString: string | null,
-    private config: HomeConfig,
     /**
      * Observe the `fast`-slot generation's usage — the call runs outside the
      * agentic loop and emits no llm.response, so without this its cost is
@@ -246,22 +241,16 @@ export class BriefingGenerator {
     private onUsage?: (usage: TokenUsage, llmMs: number) => void,
   ) {}
 
-  async generate(
-    activity: ActivityOutput,
-    facetContext?: BriefingContext,
-  ): Promise<BriefingOutput> {
-    const greeting = this.buildGreeting();
-    const date = this.formatDate();
+  async generate(facetContext: BriefingContext): Promise<BriefingOutput> {
     const now = new Date().toISOString();
 
-    const hasFacets = facetContext && facetContext.facets.length > 0;
-    if (!hasFacets && this.isEmpty(activity)) {
+    // No facets means there is nothing to brief on: the host shows no
+    // briefing at all, and the model is not called.
+    if (facetContext.facets.length === 0) {
       return {
-        greeting,
-        date,
-        lede: "It's been a quiet day. No activity in the last 24 hours.",
+        lede: "",
         sections: [],
-        state: "quiet",
+        state: "empty",
         generated_at: now,
         cached: false,
       };
@@ -269,69 +258,14 @@ export class BriefingGenerator {
 
     // Throws on failure — caller (tools/core-source.ts) catches and
     // renders a minimal "couldn't load" briefing without caching.
-    return this.generateWithLlm(activity, greeting, date, now, facetContext);
-  }
-
-  private buildGreeting(): string {
-    const hour = this.getHourInTimezone();
-    const name = this.config.userName;
-    if (hour < 12) return `Good morning, ${name}`;
-    if (hour < 17) return `Good afternoon, ${name}`;
-    return `Good evening, ${name}`;
-  }
-
-  private getHourInTimezone(): number {
-    const tz = this.config.timezone;
-    if (!tz) return new Date().getHours();
-    try {
-      const formatted = new Intl.DateTimeFormat("en-US", {
-        timeZone: tz,
-        hour: "numeric",
-        hour12: false,
-      }).format(new Date());
-      return Number.parseInt(formatted, 10);
-    } catch {
-      return new Date().getHours();
-    }
-  }
-
-  private formatDate(): string {
-    const tz = this.config.timezone || undefined;
-    try {
-      return new Intl.DateTimeFormat("en-US", {
-        timeZone: tz,
-        weekday: "long",
-        year: "numeric",
-        month: "long",
-        day: "numeric",
-      }).format(new Date());
-    } catch {
-      return new Intl.DateTimeFormat("en-US", {
-        weekday: "long",
-        year: "numeric",
-        month: "long",
-        day: "numeric",
-      }).format(new Date());
-    }
-  }
-
-  private isEmpty(activity: ActivityOutput): boolean {
-    return (
-      activity.conversations.length === 0 &&
-      activity.connector_events.length === 0 &&
-      activity.tool_usage.length === 0 &&
-      activity.errors.length === 0
-    );
+    return this.generateWithLlm(now, facetContext);
   }
 
   private async generateWithLlm(
-    activity: ActivityOutput,
-    greeting: string,
-    date: string,
     now: string,
-    facetContext?: BriefingContext,
+    facetContext: BriefingContext,
   ): Promise<BriefingOutput> {
-    const userPayload = this.buildUserPayload(activity, facetContext);
+    const userPayload = this.buildUserPayload(facetContext);
     const userText = JSON.stringify(userPayload);
 
     // Per-facet diagnostic log gated on NB_DEBUG_BRIEFING — emits one
@@ -339,19 +273,11 @@ export class BriefingGenerator {
     // surface for this tool is "LLM said no data, but I have data";
     // this log answers "what did the collector actually send?" in one
     // pageload. Quiet by default.
-    const facets = (userPayload.app_facets as Array<Record<string, unknown>> | undefined) ?? [];
-    if (facets.length === 0) {
-      debugBriefing(() => "no facets resolved");
-    } else {
-      for (const f of facets) {
-        debugBriefing(() => {
-          const data =
-            typeof f.data === "string"
-              ? f.data.slice(0, 160)
-              : JSON.stringify(f.data).slice(0, 160);
-          return `facet app=${f.app} label="${f.label}" ok=${f.ok} data="${data.replace(/\n/g, " ")}"`;
-        });
-      }
+    for (const f of userPayload.app_facets) {
+      debugBriefing(
+        () =>
+          `facet app=${f.app} label="${f.label}" ok=${f.ok} data="${f.data.slice(0, 160).replace(/\n/g, " ")}"`,
+      );
     }
 
     const providerOptions = shortCallProviderOptions(this.modelString);
@@ -396,8 +322,6 @@ export class BriefingGenerator {
     }
 
     return {
-      greeting,
-      date,
       lede: parsed.lede,
       sections: parsed.sections,
       state: this.deriveState(parsed.sections),
@@ -406,41 +330,23 @@ export class BriefingGenerator {
     };
   }
 
-  private buildUserPayload(
-    activity: ActivityOutput,
-    facetContext?: BriefingContext,
-  ): Record<string, unknown> {
-    const userPayload: Record<string, unknown> = {};
-    if (facetContext && facetContext.facets.length > 0) {
-      // Cap facet count and per-facet data size — tenants with very large
-      // entity stores (5k+ CRM contacts, etc.) can produce facet data
-      // strings that dominate input tokens and push first-token latency
-      // past the wall-clock cap.
-      const truncated = facetContext.facets.slice(0, BRIEFING_MAX_FACETS).map((f) => ({
-        app: f.appName,
-        route: f.appRoute,
-        label: f.facet.label,
-        type: f.facet.type,
-        data:
-          f.data.length > BRIEFING_MAX_FACET_DATA_CHARS
-            ? `${f.data.slice(0, BRIEFING_MAX_FACET_DATA_CHARS)}… (truncated)`
-            : f.data,
-        ok: f.ok,
-      }));
-      userPayload.app_facets = truncated;
-      userPayload.period = facetContext.period;
-    }
-    userPayload.system_activity = {
-      conversations: activity.totals.conversations,
-      tool_calls: activity.totals.tool_calls,
-      errors: activity.totals.errors,
-      error_rate:
-        activity.totals.tool_calls > 0
-          ? `${((activity.totals.errors / activity.totals.tool_calls) * 100).toFixed(1)}%`
-          : "0%",
-      connector_events: activity.connector_events,
-    };
-    return userPayload;
+  private buildUserPayload(facetContext: BriefingContext) {
+    // Cap facet count and per-facet data size — tenants with very large
+    // entity stores (5k+ CRM contacts, etc.) can produce facet data
+    // strings that dominate input tokens and push first-token latency
+    // past the wall-clock cap.
+    const truncated = facetContext.facets.slice(0, BRIEFING_MAX_FACETS).map((f) => ({
+      app: f.appName,
+      route: f.appRoute,
+      label: f.facet.label,
+      type: f.facet.type,
+      data:
+        f.data.length > BRIEFING_MAX_FACET_DATA_CHARS
+          ? `${f.data.slice(0, BRIEFING_MAX_FACET_DATA_CHARS)}… (truncated)`
+          : f.data,
+      ok: f.ok,
+    }));
+    return { app_facets: truncated, period: facetContext.period };
   }
 
   private parseJson(text: string, truncated = false): BriefingResult | null {

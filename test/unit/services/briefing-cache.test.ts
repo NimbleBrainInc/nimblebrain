@@ -4,8 +4,6 @@ import type { BriefingOutput } from "../../../src/services/home-types.ts";
 
 function makeBriefing(overrides?: Partial<BriefingOutput>): BriefingOutput {
 	return {
-		greeting: "Good afternoon, Test",
-		date: "Wednesday, March 25, 2026",
 		lede: "All clear.",
 		sections: [],
 		state: "all-clear",
@@ -33,7 +31,7 @@ describe("BriefingCache", () => {
 		const result = cache.get();
 		expect(result).not.toBeNull();
 		expect(result!.cached).toBe(true);
-		expect(result!.greeting).toBe("Good afternoon, Test");
+		expect(result!.lede).toBe("All clear.");
 	});
 
 	test("invalidate() causes get() to return null", () => {

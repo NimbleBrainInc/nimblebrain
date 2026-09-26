@@ -1,20 +1,14 @@
 /**
- * Cross-workspace resume → the SESSION'S workspace (tools + briefing + the
- * "## Workspace" block the model reasons with) follows the conversation's own
- * workspace, NOT the request's focused workspace.
+ * Resume → the SESSION'S workspace (tools + briefing + the "## Workspace" block
+ * the model reasons with) is the workspace the request names, and a resume may
+ * name only the conversation's own.
  *
- * Sibling to the `cross-workspace-file-*-resume` tests, which pin the FILE half
- * (rehydration read + `files__*` tool partition) to `convWsId`. This one pins the
- * other half: everything the model reasons with — `toolsWsId`, the workspace
- * briefing, and the "## Workspace" prompt block (the literal answer to "which
- * workspace am I in?"). All of these resolve `convWsId` (the conversation's
- * authoritative workspace), never `request.workspaceId`.
- *
- * Without the seal a conversation born in workspace A, resumed while focused
- * elsewhere (or unfocused), answers in the OTHER workspace's context — a
- * cross-workspace information leak: the thread shows A's history but the agent's
- * tools, house rules, and self-reported workspace are the focused one's. Each
- * assertion below fails if resolution reverts to `request.workspaceId`.
+ * Sibling to the `resume-file-*` tests, which pin the FILE half (rehydration
+ * read + `files__*` tool partition). This one pins everything the model reasons
+ * with. A conversation born in workspace A and resumed from B (or unfocused, the
+ * personal workspace) is refused as an unknown conversation before the model
+ * runs (ADR-0037): the thread's history and the agent's tools, house rules and
+ * self-reported workspace can never come from two workspaces.
  */
 
 import { afterAll, describe, expect, it } from "bun:test";
@@ -23,12 +17,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { LanguageModelV4, LanguageModelV4CallOptions } from "@ai-sdk/provider";
 import { DEV_IDENTITY } from "../../../src/identity/providers/dev.ts";
+import { ConversationNotFoundError } from "../../../src/runtime/errors.ts";
 import { Runtime } from "../../../src/runtime/runtime.ts";
 import { personalWorkspaceIdFor } from "../../../src/workspace/workspace-store.ts";
 import { createEchoModel } from "../../helpers/echo-model.ts";
 import { provisionTestWorkspace } from "../../helpers/test-workspace.ts";
 
-const testDir = join(tmpdir(), `nb-cross-workspace-context-resume-${Date.now()}`);
+const testDir = join(tmpdir(), `nb-resume-workspace-context-${Date.now()}`);
 
 afterAll(() => {
   if (existsSync(testDir)) rmSync(testDir, { recursive: true, force: true });
@@ -116,8 +111,8 @@ function createCapturingModel(captured: Captured[]): LanguageModelV4 {
   };
 }
 
-describe("cross-workspace resume scopes the session's workspace to the conversation (not the request)", () => {
-  it("an UNFOCUSED resume of a workspace-A conversation tells the model it is in A, not at home", async () => {
+describe("a resume runs only in the conversation's own workspace", () => {
+  it("an UNFOCUSED resume of a workspace-A conversation is refused before the model runs", async () => {
     const workDir = join(testDir, "unfocused");
     mkdirSync(workDir, { recursive: true });
     const captured: Captured[] = [];
@@ -129,42 +124,20 @@ describe("cross-workspace resume scopes the session's workspace to the conversat
     });
     await provisionTestWorkspace(runtime, WORKSPACE_A, WORKSPACE_A_NAME);
 
-    // Born focused on workspace A → the conversation's authoritative workspace is A.
+    // Born focused on workspace A → the conversation lives in A.
     const born = await runtime.chat({ message: "hello from A", workspaceId: WORKSPACE_A });
 
-    // Cross-workspace resume: UNFOCUSED (no workspaceId). The request workspace
-    // falls back to the owner's PERSONAL workspace — a different workspace than A.
-    await runtime.chat({ message: RESUME_MSG, conversationId: born.conversationId });
-
-    expect(captured.length).toBeGreaterThan(0);
-    const turn = captured.at(-1);
-    const prompt = turn?.prompt ?? "";
-
-    // The model is told it is in workspace A — the conversation's own workspace.
-    expect(prompt).toContain("## Workspace");
-    expect(prompt).toContain(WORKSPACE_A);
-    expect(prompt).toContain(WORKSPACE_A_NAME);
-    // Pre-fix, an unfocused resume rendered the identity-level "home" block.
-    // Reverting the seal brings that phrasing back and fails here.
-    expect(prompt).not.toContain("not in any single workspace");
-    expect(prompt).not.toContain(PERSONAL);
-
-    // The tool-surface assertion that used to sit here is gone, deliberately.
-    // It filtered the captured list for names starting with `ws_` and checked the
-    // prefix. Wire names are bare now, so no name carries a workspace, and the
-    // model's list is in any case a SURFACED SUBSET (progressive disclosure), not
-    // the workspace's registry — a marker source added to A does not appear in it,
-    // so neither presence nor absence proves anything about the wall.
-    //
-    // The binding is still asserted, by the prompt block above: workspace A is
-    // named and the other workspace is not. Reverting the seal fails there.
-    // Registry-level scoping is covered in the /mcp wall tests, where tools/list
-    // returns the full per-workspace surface.
+    // UNFOCUSED (no workspaceId): the turn would run in the owner's PERSONAL
+    // workspace, where the conversation is not.
+    await expect(
+      runtime.chat({ message: RESUME_MSG, conversationId: born.conversationId }),
+    ).rejects.toBeInstanceOf(ConversationNotFoundError);
+    expect(captured).toEqual([]);
 
     await runtime.shutdown();
   });
 
-  it("resuming a workspace-A conversation while FOCUSED on workspace B tells the model it is in A, not B", async () => {
+  it("resuming a workspace-A conversation from workspace B is refused; resuming in A tells the model it is in A", async () => {
     const workDir = join(testDir, "cross-focus");
     mkdirSync(workDir, { recursive: true });
     const captured: Captured[] = [];
@@ -177,39 +150,31 @@ describe("cross-workspace resume scopes the session's workspace to the conversat
     await provisionTestWorkspace(runtime, WORKSPACE_A, WORKSPACE_A_NAME);
     await provisionTestWorkspace(runtime, WORKSPACE_B, WORKSPACE_B_NAME);
 
-    // Born in A.
     const born = await runtime.chat({ message: "hello from A", workspaceId: WORKSPACE_A });
 
-    // The exact reported scenario: switch the focused workspace to B, then keep
-    // talking in the A-conversation. The seal must answer "A", not "B".
+    await expect(
+      runtime.chat({
+        message: RESUME_MSG,
+        conversationId: born.conversationId,
+        workspaceId: WORKSPACE_B,
+      }),
+    ).rejects.toBeInstanceOf(ConversationNotFoundError);
+    expect(captured).toEqual([]);
+
     await runtime.chat({
       message: RESUME_MSG,
       conversationId: born.conversationId,
-      workspaceId: WORKSPACE_B,
+      workspaceId: WORKSPACE_A,
     });
 
     expect(captured.length).toBeGreaterThan(0);
-    const turn = captured.at(-1);
-    const prompt = turn?.prompt ?? "";
-
+    const prompt = captured.at(-1)?.prompt ?? "";
     expect(prompt).toContain("## Workspace");
     expect(prompt).toContain(WORKSPACE_A);
     expect(prompt).toContain(WORKSPACE_A_NAME);
-    // The focused workspace (B) must NOT leak into the resumed A-conversation.
     expect(prompt).not.toContain(WORKSPACE_B);
     expect(prompt).not.toContain(WORKSPACE_B_NAME);
-
-    // The tool-surface assertion that used to sit here is gone, deliberately.
-    // It filtered the captured list for names starting with `ws_` and checked the
-    // prefix. Wire names are bare now, so no name carries a workspace, and the
-    // model's list is in any case a SURFACED SUBSET (progressive disclosure), not
-    // the workspace's registry — a marker source added to A does not appear in it,
-    // so neither presence nor absence proves anything about the wall.
-    //
-    // The binding is still asserted, by the prompt block above: workspace A is
-    // named and the other workspace is not. Reverting the seal fails there.
-    // Registry-level scoping is covered in the /mcp wall tests, where tools/list
-    // returns the full per-workspace surface.
+    expect(prompt).not.toContain(PERSONAL);
 
     await runtime.shutdown();
   });

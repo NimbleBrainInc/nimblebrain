@@ -228,7 +228,7 @@ export interface RuntimeConfig {
   home?: {
     /** Enable the Home dashboard. Default: true. */
     enabled?: boolean;
-    /** User's first name for the greeting. Default: "there". */
+    /** Legacy fallback for `preferences.displayName`. */
     userName?: string;
     /** IANA timezone (e.g., "Pacific/Honolulu"). Empty uses system timezone. */
     timezone?: string;

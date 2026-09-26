@@ -48,6 +48,15 @@ describe("formatSendError", () => {
     expect(formatSendError(err)).toBe("Payload too large");
   });
 
+  test("a conversation the URL's workspace does not hold says where to go", () => {
+    const err = new ApiClientError("conversation_not_found", "Conversation not found", 404, {
+      conversationId: "conv_0123456789abcdef",
+    });
+    expect(formatSendError(err)).toBe(
+      "This conversation isn't in the workspace you're viewing. Open it from its own workspace, or start a new chat.",
+    );
+  });
+
   test("non-413 ApiClientError surfaces its message unchanged", () => {
     const err = new ApiClientError("unauthorized", "Please sign in", 401);
     expect(formatSendError(err)).toBe("Please sign in");

@@ -127,6 +127,8 @@ function SectionGroup({
 }
 
 export function BriefingView({ briefing, error, onRetry, onAction }: BriefingViewProps) {
+  // No app in the workspace provides facets: there is no briefing to show.
+  if (briefing?.state === "empty" && !error) return null;
   const hasSections = (briefing?.sections.length ?? 0) > 0;
 
   // While the briefing loads there's no skeleton — the section just shows its
