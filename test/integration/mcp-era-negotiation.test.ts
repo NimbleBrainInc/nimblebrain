@@ -15,7 +15,7 @@
  * SDK's `createMcpHandler` for the modern one, its `legacyStatelessFallback`
  * for a server that predates `server/discover`.
  */
-import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { afterAll, beforeAll, describe, expect, it, spyOn } from "bun:test";
 import { rmSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -35,6 +35,7 @@ import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import { type ServerHandle, startServer } from "../../src/api/server.ts";
 import { textContent } from "../../src/engine/content-helpers.ts";
 import type { ToolResult } from "../../src/engine/types.ts";
+import { log } from "../../src/observability/log.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { McpSource } from "../../src/tools/mcp-source.ts";
 import { TASKS_EXTENSION_ID } from "../../src/tools/mcp-task-client.ts";
@@ -416,8 +417,11 @@ describe("/mcp/<wsId> on both eras", () => {
   let runtime: Runtime;
   let handle: ServerHandle;
   let workDir: string;
+  // Watches the whole block, so the era log test sees every client that arrived.
+  let info: ReturnType<typeof spyOn<typeof log, "info">>;
 
   beforeAll(async () => {
+    info = spyOn(log, "info");
     workDir = await mkdtemp(join(tmpdir(), "nb-mcp-era-"));
     runtime = await Runtime.start({
       model: { provider: "custom", adapter: createEchoModel() },
@@ -430,6 +434,7 @@ describe("/mcp/<wsId> on both eras", () => {
   });
 
   afterAll(async () => {
+    info.mockRestore();
     handle.stop(true);
     await runtime.shutdown();
     rmSync(workDir, { recursive: true, force: true });
@@ -469,5 +474,21 @@ describe("/mcp/<wsId> on both eras", () => {
     } finally {
       await c.close();
     }
+  });
+
+  // The door logs which era each kind of client arrives on, once per (era,
+  // User-Agent), so production traffic shows who still needs the 2025 leg.
+  // Every client here shares one User-Agent, so each era logs exactly once.
+  it("logs each client's era once", async () => {
+    for (const negotiate of [true, false, true, false]) {
+      const c = await client(negotiate);
+      await c.listTools();
+      await c.close();
+    }
+    const eraLines = info.mock.calls
+      .map((args) => String(args[0]))
+      .filter((line) => line.startsWith("[mcp] client era="));
+    expect(eraLines.filter((l) => l.includes("era=modern"))).toHaveLength(1);
+    expect(eraLines.filter((l) => l.includes("era=legacy"))).toHaveLength(1);
   });
 });

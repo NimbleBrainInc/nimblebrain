@@ -174,6 +174,8 @@ const MAX_MCP_SESSIONS = parsePositiveIntEnv("MCP_MAX_SESSIONS", 100);
 
 /** Sweep cadence for the idle reclamation loop. Matches the in-memory registry. */
 const DEFAULT_SWEEP_INTERVAL_MS = 60_000;
+/** Cap on distinct (era, User-Agent) pairs `logClientEra` remembers. */
+const MAX_SEEN_CLIENT_ERAS = 256;
 
 /**
  * Validate a positive-integer env var. Rejects NaN / non-positive values
@@ -268,6 +270,8 @@ const TASKS_CAPABILITY: NonNullable<ServerCapabilities["tasks"]> = {
  */
 export class McpServerHost {
   private readonly transports = new Map<string, TransportEntry>();
+  /** (era, User-Agent) pairs already logged by `logClientEra`. */
+  private readonly seenClientEras = new Set<string>();
   private readonly registry: SessionRegistry;
   private readonly runtime: Runtime | null;
   private readonly idleTtlMs: number;
@@ -367,6 +371,19 @@ export class McpServerHost {
 
   // ─── private ──────────────────────────────────────────────────────
 
+  /**
+   * Log which protocol era each kind of client arrives on, once per (era,
+   * User-Agent) per process, so the door's traffic shows which clients still
+   * need the 2025 leg. Bounded: past the cap, new pairs go unlogged.
+   */
+  private logClientEra(era: "legacy" | "modern", request: Request): void {
+    const userAgent = (request.headers.get("user-agent") ?? "none").slice(0, 200);
+    const key = `${era}|${userAgent}`;
+    if (this.seenClientEras.has(key) || this.seenClientEras.size >= MAX_SEEN_CLIENT_ERAS) return;
+    this.seenClientEras.add(key);
+    log.info(`[mcp] client era=${era} userAgent="${userAgent}"`);
+  }
+
   private async handlePost(
     request: Request,
     features: ResolvedFeatures,
@@ -376,7 +393,9 @@ export class McpServerHost {
     // request, with no session: the SDK's own classifier decides, so this
     // routing and the SDK's can never disagree. Everything else is 2025-era
     // traffic for the sessionful leg below.
-    if (!(await isLegacyRequest(request))) return this.handleModern(request, features, sessionCtx);
+    const legacy = await isLegacyRequest(request);
+    this.logClientEra(legacy ? "legacy" : "modern", request);
+    if (!legacy) return this.handleModern(request, features, sessionCtx);
 
     const sessionId = request.headers.get("mcp-session-id");
 
