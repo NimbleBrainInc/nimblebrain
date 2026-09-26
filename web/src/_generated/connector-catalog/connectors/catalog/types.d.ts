@@ -165,6 +165,17 @@ export interface ConnectorCatalogEntry {
      * Absent for connectors that declare no lifecycle block.
      */
     lifecycle?: LifecycleDeclaration;
+    /**
+     * The tools the server declares in
+     * `ServerDetail._meta["ai.nimblebrain/host"].admin_tools` — the ones only a
+     * workspace admin may call.
+     *
+     * Carried from the operator-trusted catalog beside `hooks`, and for a reason
+     * of its own: the kernel enforces this list on every call, so it must be
+     * known before the connector connects and must not move when a later build
+     * of the server stops saying it. Absent for connectors that declare none.
+     */
+    adminTools?: string[];
 }
 /** How to install an entry — varies by source type. */
 export type InstallAction = RemoteOAuthInstall | DirectUrlInstall;

@@ -1112,6 +1112,15 @@ async function executeWorkspaceToolCall(
       localName,
     );
     if (denied) return toCallToolResult(denied);
+    // The connector role gate (`admin_tools`), against the workspace this URL
+    // is bound to and the session's identity.
+    const adminDenied = await runtime.connectorAdminDenial(
+      wsId,
+      sessionCtx.identity,
+      sourceName,
+      localName,
+    );
+    if (adminDenied) return toCallToolResult(adminDenied);
   }
 
   const wsRegistry = runtime.getRegistryForWorkspace(wsId);

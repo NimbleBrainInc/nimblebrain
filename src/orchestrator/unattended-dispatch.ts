@@ -117,6 +117,7 @@ export type UnattendedDispatchClassification =
   | "workspace_access_denied"
   | "connector_grant_denied"
   | "tool_permission_denied"
+  | "workspace_admin_required"
   // error
   | "unknown_tool_source"
   | "unknown_identity_source"
@@ -152,7 +153,8 @@ export interface UnattendedDispatchRuntime extends OrchestratorRuntime {
 /**
  * Map the door's structured refusals onto this door's outcomes. Keyed on the
  * `reason` discriminator `mapOrchestratorErrorToToolResult` emits and on
- * `assertToolAllowed`'s own `tool_permission_denied` — never on message text.
+ * `assertToolAllowed`'s own `tool_permission_denied` and the connector role
+ * gate's `workspace_admin_required` — never on message text.
  */
 const CLASSIFICATION_BY_REASON: Readonly<
   Record<string, { outcome: UnattendedDispatchOutcome; as: UnattendedDispatchClassification }>
@@ -311,12 +313,9 @@ function classify(result: ToolResult): UnattendedDispatchResult {
   if (mapped) {
     return { outcome: mapped.outcome, classification: mapped.as, error: resultText(result) };
   }
-  if (result.structuredContent?.error === "tool_permission_denied") {
-    return {
-      outcome: "denied",
-      classification: "tool_permission_denied",
-      error: resultText(result),
-    };
+  const refusal = result.structuredContent?.error;
+  if (refusal === "tool_permission_denied" || refusal === "workspace_admin_required") {
+    return { outcome: "denied", classification: refusal, error: resultText(result) };
   }
   // The tool ran and reported failure. The result rides along: a caller
   // deciding whether to retry needs what the tool actually said.

@@ -1723,11 +1723,17 @@ async function handleInstallRemoteOAuth(
   // call entirely and take its notice with it.
   const ready = await notifyConnectorReady(ctx, wsId, serverName);
 
+  // The `admin_tools` declaration's own contract: names the kernel calls
+  // itself, and names the server does not advertise. Warnings only — every
+  // declared name is enforced regardless.
+  const adminWarning = await adminToolsWarning(ctx, wsId, serverName);
+
   // Two kinds of warning, kept apart for the message and recombined for the
   // structured result: an eager start that threw leaves the connector
   // unconnected, while a contract violation leaves it connected with one
   // declaration the runtime cannot honour.
-  const contractWarning = [hookWarning, ready.warning].filter(Boolean).join(" ") || undefined;
+  const contractWarning =
+    [hookWarning, ready.warning, adminWarning].filter(Boolean).join(" ") || undefined;
   const warning = [startWarning, contractWarning].filter(Boolean).join(" ") || undefined;
   return {
     content: textContent(
@@ -1829,6 +1835,36 @@ async function notifyConnectorReady(
       reason: err instanceof Error ? err.message : String(err),
     });
     return {};
+  }
+}
+
+/**
+ * The `admin_tools` contract warnings for a freshly-installed connector, joined,
+ * or `undefined`. Never an error, for the reason the hooks and lifecycle checks
+ * are not: the install has committed by this line.
+ */
+async function adminToolsWarning(
+  ctx: ManageConnectorsContext,
+  wsId: string,
+  serverName: string,
+): Promise<string | undefined> {
+  try {
+    const warnings = await ctx.runtime.adminToolsContractWarnings(wsId, serverName);
+    for (const warning of warnings) {
+      log.warn("[admin-tools] declaration contract", {
+        connector: serverName,
+        workspace_id: wsId,
+        reason: warning,
+      });
+    }
+    return warnings.length > 0 ? warnings.join(" ") : undefined;
+  } catch (err) {
+    log.warn("[admin-tools] install-time contract check failed", {
+      connector: serverName,
+      workspace_id: wsId,
+      reason: err instanceof Error ? err.message : String(err),
+    });
+    return undefined;
   }
 }
 

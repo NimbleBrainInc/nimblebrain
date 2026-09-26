@@ -254,7 +254,7 @@ export interface OAuthClientConfig {
 
 /** Host manifest metadata at _meta["ai.nimblebrain/host"]. */
 export interface HostManifestMeta {
-  host_version: "1.0" | "1.1" | "1.2" | "1.3" | "1.4";
+  host_version: "1.0" | "1.1" | "1.2" | "1.3" | "1.4" | "1.5";
   name?: string;
   icon?: string;
   /**
@@ -308,6 +308,18 @@ export interface HostManifestMeta {
    * See `src/lifecycle/types.ts`.
    */
   lifecycle?: LifecycleDeclaration;
+  /**
+   * Bare names of tools on this same server that only a workspace admin may
+   * call. Belongs to `host_version: "1.5"`.
+   *
+   * It only narrows: the kernel removes these tools from a non-admin's listings
+   * and refuses them at dispatch on every door, and grants nothing. Read from
+   * the operator-trusted catalog only, like {@link hooks}, never from anything
+   * the running server sends. Workspace admin is the membership role `admin`
+   * in the bound workspace, with no org-admin bypass. See
+   * `src/permissions/admin-tools.ts`.
+   */
+  admin_tools?: string[];
 }
 
 /** Briefing declaration — how this app contributes to the daily briefing. */

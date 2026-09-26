@@ -40,6 +40,7 @@ import {
 } from "../../conversation/types.ts";
 import { textContent } from "../../engine/content-helpers.ts";
 import type { EventSink, ToolResult } from "../../engine/types.ts";
+import { filterAdmittedTools } from "../../permissions/admin-tools.ts";
 import {
   type ComposedPrompt,
   composeSystemPromptTraced,
@@ -311,8 +312,11 @@ async function composeLive(runtime: Runtime, convId: string): Promise<ComposeRes
   //      `proxied.length > 0`, so the trace MUST compute this correctly
   //      — the previous hard-coded `false` understated the prompt for
   //      Tier 2/3 workspaces (more than DEFAULT_MAX_DIRECT_TOOLS tools).
+  //   Connector `admin_tools` the caller is not admitted to leave the set
+  //   the same way they leave `runtime.chat()`'s.
   const registry = runtime.getRegistryForWorkspace(wsId);
-  const allTools = (await registry.availableTools()).filter((t) =>
+  const admission = await runtime.connectorAdmission(wsId, identity);
+  const allTools = filterAdmittedTools(await registry.availableTools(), admission).filter((t) =>
     isToolVisibleToRole(t.name, identity?.orgRole),
   );
   const { direct: directTools, proxied } = surfaceTools(allTools, null, {});

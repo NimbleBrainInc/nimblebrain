@@ -200,7 +200,9 @@ export class IdentityToolRouter implements ToolRouter {
     // grammar every door shares (`src/util/tool-name.ts`).
     const { sourcePrefix, bareToolName } = splitInnerToolName(routed.toolName);
 
-    const denied = await this.connectorPermissionDenial(routed, sourcePrefix, bareToolName);
+    const denied =
+      (await this.connectorPermissionDenial(routed, sourcePrefix, bareToolName)) ??
+      (await this.connectorAdminDenial(routed, sourcePrefix, bareToolName));
     if (denied) return denied;
 
     // Restamp the per-call workspace from the ROUTED namespace, not ambient
@@ -239,5 +241,28 @@ export class IdentityToolRouter implements ToolRouter {
         : routed.policyOwner;
     if (!owner) return null;
     return assertToolAllowed(permissionStore, owner, sourcePrefix, bareToolName);
+  }
+
+  /**
+   * Connector role gate (`admin_tools`), beside the `disallow` gate. Only a
+   * workspace route is checked: a personal connector acts on its owner's own
+   * account, and a kernel identity source keeps its own gates.
+   *
+   * The principal is the router's own `identityId` — the chat user, an
+   * automation's owner, or an unattended dispatch's principal — the identity
+   * the wall already commits this router to, not whatever is ambient.
+   */
+  private async connectorAdminDenial(
+    routed: RoutedToolCall,
+    sourcePrefix: string,
+    bareToolName: string,
+  ): Promise<ToolResult | null> {
+    if (routed.kind !== "workspace" || !this.runtime.connectorAdminDenial) return null;
+    return this.runtime.connectorAdminDenial(
+      routed.context.workspaceId,
+      { id: this.identityId },
+      sourcePrefix,
+      bareToolName,
+    );
   }
 }

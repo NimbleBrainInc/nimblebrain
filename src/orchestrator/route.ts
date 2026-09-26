@@ -33,7 +33,7 @@
  * unit tests can stub without a full `Runtime`.
  */
 
-import type { ToolSchema } from "../engine/types.ts";
+import type { ToolResult, ToolSchema } from "../engine/types.ts";
 import type { IdentityContext } from "../identity/context.ts";
 import type { PermissionOwner, PermissionStore } from "../permissions/permission-store.ts";
 import {
@@ -240,6 +240,20 @@ export interface OrchestratorRuntime {
    * provides it via `getPermissionStore`.
    */
   getPermissionStore?(): PermissionStore;
+
+  /**
+   * The connector role gate: the `workspace_admin_required` refusal when
+   * `principal` is not a workspace admin of `wsId` and the connector declares
+   * `toolName` in its catalog `admin_tools`, else `null`. Callers run it beside
+   * `assertToolAllowed` for a workspace-routed tool. Optional on the same terms
+   * as {@link getPermissionStore}: the production `Runtime` always provides it.
+   */
+  connectorAdminDenial?(
+    wsId: string,
+    principal: { id: string } | null | undefined,
+    serverName: string,
+    toolName: string,
+  ): Promise<ToolResult | null>;
 
   /**
    * The walled tool surface for a session bounded to `wsId`: that workspace's

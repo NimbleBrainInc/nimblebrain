@@ -27,7 +27,7 @@ export type WorkspaceWriteDecision = { allowed: true } | { allowed: false; reaso
  * for workspace-scoped writes.
  */
 export function canWriteWorkspaceScoped(
-  identity: UserIdentity | null | undefined,
+  identity: Pick<UserIdentity, "id"> | null | undefined,
   ws: Workspace | null | undefined,
 ): WorkspaceWriteDecision {
   if (!identity) {

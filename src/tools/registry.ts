@@ -80,6 +80,15 @@ export class SharedSourceRef implements ToolSource {
  * Aggregates multiple ToolSources into a single ToolRouter.
  * Routes execute() calls by prefix: "sourceName__toolName".
  */
+/**
+ * The connector role gate for one call, bound by the Runtime to a workspace and
+ * the ambient caller: the `workspace_admin_required` refusal, or `null`.
+ */
+export type ConnectorAdminDenial = (
+  serverName: string,
+  toolName: string,
+) => Promise<ToolResult | null>;
+
 export class ToolRegistry implements ToolRouter {
   private sources = new Map<string, ToolSource>();
   /** Workspace this registry serves (set by Runtime when constructing per-workspace). */
@@ -95,6 +104,12 @@ export class ToolRegistry implements ToolRouter {
    * registries with no consumer (tests, CLI flows).
    */
   private invalidationListener: (() => void) | null = null;
+  /**
+   * The connector role gate (`admin_tools`), run beside `assertToolAllowed`.
+   * The Runtime binds it to this workspace and the ambient caller; null for
+   * registries built outside it.
+   */
+  private adminDenial: ConnectorAdminDenial | null = null;
   /** Per-source unsubscribe handles for readiness subscriptions, so
    *  `removeSource` can detach the listener it attached in `addSource`. */
   private toolsChangedUnsubs = new Map<string, () => void>();
@@ -116,9 +131,14 @@ export class ToolRegistry implements ToolRouter {
    * checks short-circuit to "allow" — for tests / CLI flows that don't
    * route through the platform's per-workspace registries.
    */
-  setPermissionContext(wsId: string, permissionStore: PermissionStore): void {
+  setPermissionContext(
+    wsId: string,
+    permissionStore: PermissionStore,
+    adminDenial?: ConnectorAdminDenial,
+  ): void {
     this.wsId = wsId;
     this.permissionStore = permissionStore;
+    this.adminDenial = adminDenial ?? null;
   }
 
   /**
@@ -261,6 +281,10 @@ export class ToolRegistry implements ToolRouter {
         prefix,
         localName,
       );
+      if (denied) return denied;
+    }
+    if (this.adminDenial) {
+      const denied = await this.adminDenial(prefix, localName);
       if (denied) return denied;
     }
 

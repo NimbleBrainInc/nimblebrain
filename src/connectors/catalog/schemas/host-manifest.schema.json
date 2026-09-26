@@ -9,7 +9,7 @@
   "properties": {
     "host_version": {
       "type": "string",
-      "description": "Host extension contract version. Known values: \"1.0\", \"1.1\" (introduced a host_capabilities block the host no longer reads), \"1.2\" (adds hooks), \"1.3\" (adds notifications), \"1.4\" (adds lifecycle). FORWARD-COMPATIBLE, and this tolerance is part of the contract: an unknown version is NOT rejected — the host parses the fields it understands and ignores the rest; unknown top-level keys validate and are ignored; an unknown or malformed placement slot drops only that placement, never the whole declaration. The version-to-block pairing is advisory and is not schema-enforced."
+      "description": "Host extension contract version. Known values: \"1.0\", \"1.1\" (introduced a host_capabilities block the host no longer reads), \"1.2\" (adds hooks), \"1.3\" (adds notifications), \"1.4\" (adds lifecycle), \"1.5\" (adds admin_tools). FORWARD-COMPATIBLE, and this tolerance is part of the contract: an unknown version is NOT rejected — the host parses the fields it understands and ignores the rest; unknown top-level keys validate and are ignored; an unknown or malformed placement slot drops only that placement, never the whole declaration. The version-to-block pairing is advisory and is not schema-enforced."
     },
     "name": {
       "type": "string",
@@ -57,6 +57,13 @@
     },
     "lifecycle": {
       "$ref": "#/$defs/LifecycleDeclaration"
+    },
+    "admin_tools": {
+      "type": "array",
+      "maxItems": 64,
+      "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^\\S+$" },
+      "description": "Bare names of tools on THIS server that only a workspace admin may call. READ FROM A CATALOG CONNECTOR ONLY, like hooks: never from an MCPB bundle manifest and never from a tool's own _meta or anything else the running server sends, so a later build cannot widen access by dropping it. It only narrows: on every door (chat, the MCP endpoint, the app bridge, REST, automations and other unattended runs) the host removes these tools from the listings of anyone who is not a workspace admin and refuses them at dispatch with the structured error workspace_admin_required. Workspace admin means a member of the bound workspace whose membership role is admin; an org admin or owner who is not that gets no bypass, and a caller with no identity is refused. Enforced by name whether or not the server advertises the tool; an unadvertised name is an install warning. The host's own calls to this server's lifecycle handlers and hooks register_tool are not checked; naming one of those here is an install warning. Personal (identity-plane) connectors are not gated: they act on their owner's own account. This gates WHO calls, not whether a human is present: an admin's own agent passes, so an admin-only tool must still be safe for that agent to call. Declare host_version \"1.5\" alongside this key."
     }
   },
   "$defs": {
