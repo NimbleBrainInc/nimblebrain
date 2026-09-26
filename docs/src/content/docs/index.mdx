@@ -39,7 +39,7 @@ You ──→ Web UI / CLI / MCP Client ──→ API Server ──→ Runtime
 3. The **ToolRegistry** aggregates tools from all installed MCP servers into one namespace
 4. The **Agent Engine** loops — calling Claude, executing tools across any app, feeding results back
 5. MCP Apps with UI render inside the web client as sandboxed iframes with live tool access
-6. The `/mcp` endpoint exposes everything to external MCP hosts (Claude Code, Open WebUI, etc.)
+6. Each workspace's `/mcp/<workspaceId>` endpoint exposes it to external MCP hosts (Claude Code, Open WebUI, etc.)
 
 ## What makes it an orchestrator
 
@@ -48,7 +48,7 @@ NimbleBrain doesn't just run MCP servers — it **composes** them:
 - **Unified tool namespace** — Tools from all installed MCP servers are aggregated into a single registry. The agent discovers and calls tools across apps without knowing which server owns them.
 - **Skill-scoped filtering** — Each skill can restrict which tools are available via `allowed-tools` glob patterns. A "research" skill might only expose `websearch__*` tools, while a "database" skill exposes `postgres__*`.
 - **4-layer prompt composition** — System prompts are assembled from identity, core context, installed app metadata, and the matched skill — giving the agent awareness of all available capabilities.
-- **Platform as MCP server** — The `/mcp` endpoint exposes NimbleBrain itself as a Streamable HTTP MCP server, so other hosts can compose it into their own tool chains.
+- **Platform as MCP server** — Each workspace's `/mcp/<workspaceId>` endpoint exposes NimbleBrain itself as a Streamable HTTP MCP server, so other hosts can compose it into their own tool chains.
 
 ## Key components
 
@@ -59,7 +59,7 @@ NimbleBrain doesn't just run MCP servers — it **composes** them:
 | **MCP App Bridge** | [ext-apps spec](https://modelcontextprotocol.io/extensions/apps/overview) host — renders app UIs in sandboxed iframes with bidirectional tool access |
 | **Connectors (Apps)** | Remote MCP servers a workspace connects to by URL, discovered through the connectors catalog |
 | **Skills** | Markdown files that compose the system prompt and scope tool access per task |
-| **`/mcp` Endpoint** | Exposes the platform as a Streamable HTTP MCP server for external clients |
+| **`/mcp/<workspaceId>` Endpoint** | Exposes a workspace as a Streamable HTTP MCP server for external clients |
 | **System Tools** | Built-in tools for discovery (`nb__search`/`nb__status`) and platform management (`manage_connectors`, `manage_workspaces`, `manage_users`) |
 
 ## Who is it for?

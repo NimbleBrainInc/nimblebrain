@@ -23,9 +23,10 @@ import type { ResolvedFeatures } from "../../../src/config/features.ts";
 
 const FAKE_FEATURES = {} as ResolvedFeatures;
 const SAMPLE_SID = "11111111-2222-3333-4444-555555555555";
+const SESSION_CTX = { identity: null, workspaceId: "ws_a" };
 
 function postRequest(sessionId: string): Request {
-	return new Request("http://test/mcp", {
+	return new Request("http://test/mcp/ws_a", {
 		method: "POST",
 		headers: {
 			"Content-Type": "application/json",
@@ -42,11 +43,9 @@ describe("McpServerHost — session-miss classification", () => {
 
 	beforeEach(() => {
 		registry = new InMemorySessionRegistry({ ttlMs: 60_000 });
-		// Stage 2: handle() no longer takes a per-call ToolRegistry +
-		// workspace context. Sessions are identity-bound; this suite only
-		// exercises the reclamation / session-miss surface, so we can omit
-		// runtime entirely (it defaults to null and tool handlers become
-		// safe no-ops).
+		// This suite only exercises the reclamation / session-miss surface,
+		// so we can omit runtime entirely (it defaults to null and tool
+		// handlers become safe no-ops).
 		host = new McpServerHost({ registry, idleTtlMs: 60_000 });
 	});
 
@@ -55,7 +54,7 @@ describe("McpServerHost — session-miss classification", () => {
 	});
 
 	it("returns reason=not_found when the registry has no entry", async () => {
-		const res = await host.handle(postRequest(SAMPLE_SID), FAKE_FEATURES, { identity: null });
+		const res = await host.handle(postRequest(SAMPLE_SID), FAKE_FEATURES, SESSION_CTX);
 		expect(res.status).toBe(404);
 		const body = (await res.json()) as {
 			error: { data: { reason: string } };
@@ -71,12 +70,13 @@ describe("McpServerHost — session-miss classification", () => {
 	it("returns reason=unavailable when registry has the session but transport is missing", async () => {
 		await registry.create({
 			sessionId: SAMPLE_SID,
-			identityId: "usr_x",
+			identityId: null,
+			workspaceId: "ws_a",
 			createdAt: Date.now(),
 			lastAccessedAt: Date.now(),
 		});
 
-		const res = await host.handle(postRequest(SAMPLE_SID), FAKE_FEATURES, { identity: null });
+		const res = await host.handle(postRequest(SAMPLE_SID), FAKE_FEATURES, SESSION_CTX);
 		expect(res.status).toBe(404);
 		const body = (await res.json()) as {
 			error: { data: { reason: string } };
@@ -100,9 +100,7 @@ describe("McpServerHost — session-miss classification", () => {
 		};
 		const flakyHost = new McpServerHost({ registry: flakyRegistry, idleTtlMs: 60_000 });
 
-		const res = await flakyHost.handle(postRequest(SAMPLE_SID), FAKE_FEATURES, {
-			identity: null,
-		});
+		const res = await flakyHost.handle(postRequest(SAMPLE_SID), FAKE_FEATURES, SESSION_CTX);
 		expect(res.status).toBe(404);
 		const body = (await res.json()) as {
 			error: { data: { reason: string } };

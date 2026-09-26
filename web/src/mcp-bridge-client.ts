@@ -1,10 +1,16 @@
 // ---------------------------------------------------------------------------
-// MCP Bridge Client — singleton MCP SDK client pointing at `/mcp`
+// MCP Bridge Client — one MCP SDK client, for the active workspace's
+// `/mcp/<wsId>`
 //
 // Lazily constructs an MCP SDK `Client` wired to a
-// `StreamableHTTPClientTransport` targeting the platform's streamable HTTP
-// endpoint. Used by the iframe bridge (Task 008) to route `tools/call`,
+// `StreamableHTTPClientTransport` targeting the active workspace's MCP
+// endpoint. Used by the iframe bridge to route `tools/call`,
 // `resources/read`, and the tasks lifecycle through MCP instead of REST.
+//
+// The workspace is in the URL, so a session belongs to one workspace. The
+// client is keyed by it: a request for another workspace closes the current
+// session and opens one on that workspace's path, and never rides the
+// previous one.
 //
 // Auth headers are generated per-request via a custom `fetch` in the
 // transport options so token refresh via `api/fetch-with-refresh` is not
@@ -16,6 +22,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import {
   addAuthLifecycleHandler,
+  addWorkspaceLifecycleHandler,
   fetchWithRefresh,
   getActiveWorkspaceId,
   getAuthToken,
@@ -33,64 +40,71 @@ interface Entry {
 // We cache the in-flight Promise, not the resolved Client, so concurrent
 // callers race a single `initialize` handshake rather than creating duplicate
 // transports. A rejected init clears the cache so the next caller retries.
-let pending: Promise<Entry> | null = null;
+// `workspaceId` is the workspace whose path the transport targets.
+let current: { workspaceId: string; pending: Promise<Entry> } | null = null;
 
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 
 /**
- * Return the singleton MCP bridge `Client`, initializing it on first call.
+ * Return the MCP bridge `Client` for the active workspace, initializing it on
+ * first call.
  *
  * - Lazy: the transport and `initialize` handshake happen on first invocation.
- * - Singleton: subsequent calls return the same `Client` instance.
+ * - One per workspace: subsequent calls for the same workspace return the same
+ *   `Client`. A call for another workspace closes the current one first, so a
+ *   request always goes out on a session opened at its own workspace's path.
  * - Fresh after reset: `resetMcpBridgeClient()` closes the transport; the
  *   next `getMcpBridgeClient()` builds a new one.
- * - Failure mode: construction or `initialize` errors surface as a rejected
- *   Promise (never a synchronous throw), and the singleton is cleared so the
- *   caller can retry.
+ * - Failure mode: no active workspace, construction, or `initialize` errors
+ *   surface as a rejected Promise (never a synchronous throw), and the cache
+ *   is cleared so the caller can retry.
  */
 export function getMcpBridgeClient(): Promise<Client> {
-  if (pending) return pending.then((e) => e.client);
+  const workspaceId = getActiveWorkspaceId();
+  if (!workspaceId) {
+    return Promise.reject(new Error("No active workspace; there is no MCP endpoint to call."));
+  }
+  if (current && current.workspaceId !== workspaceId) resetMcpBridgeClient();
+  if (current) return current.pending.then((e) => e.client);
 
-  const promise = createClient();
-  pending = promise;
+  const slot = { workspaceId, pending: createClient(workspaceId) };
+  current = slot;
 
-  // Clear the singleton on failure so the next caller can retry. We deliberately
-  // keep the singleton on success — concurrent callers share it.
-  promise.catch(() => {
-    if (pending === promise) pending = null;
+  // Clear the cache on failure so the next caller can retry. We deliberately
+  // keep it on success — concurrent callers share it.
+  slot.pending.catch(() => {
+    if (current === slot) current = null;
   });
 
-  return promise.then((e) => e.client);
+  return slot.pending.then((e) => e.client);
 }
 
 /**
- * Close the MCP bridge transport and clear the singleton.
+ * Close the MCP bridge transport and clear the cache.
  *
- * Wired into `api/client.ts`'s auth-token setter via the lifecycle handler
- * below — `setAuthToken(...)` (the logout / identity boundary) drops the
- * cached transport because the platform's `Mcp-Session-Id` is bound to
- * the identity at init. Without this, logout would silently keep
- * dispatching iframe tool calls against the previous identity's session.
+ * The platform binds an `Mcp-Session-Id` to the identity and the workspace it
+ * was initialized for, so both boundaries drop it:
  *
- * Stage 2 / Q3 (locked 2026-05-22): `setActiveWorkspaceId(...)` does NOT
- * fire this handler — the `/mcp` session is identity-bound, not
- * workspace-bound, so workspace switches reuse the same session. The
- * per-request `X-Workspace-Id` header (read fresh by `mcpFetch` below)
- * carries workspace context for tool dispatch.
+ *   - `setAuthToken(...)` (the logout / identity boundary), via the auth
+ *     lifecycle handler below. Without it, logout would keep dispatching
+ *     iframe tool calls against the previous identity's session.
+ *   - `setActiveWorkspaceId(...)` (a workspace switch), via the workspace
+ *     lifecycle handler below, so the old workspace's session closes as soon
+ *     as the user leaves it rather than idling until its TTL.
  *
  * Safe to call when no client exists.
  */
 export function resetMcpBridgeClient(): void {
-  const current = pending;
-  pending = null;
-  if (!current) return;
+  const previous = current;
+  current = null;
+  if (!previous) return;
 
   // Fire-and-forget: we don't await the close. Any awaiter of the previous
   // client that arrived after the reset can use the closed transport (it'll
   // error, they'll retry). Reset is synchronous by contract.
-  current
+  previous.pending
     .then((entry) => entry.client.close())
     .catch(() => {
       // Swallow close errors — the client is going away regardless.
@@ -100,9 +114,10 @@ export function resetMcpBridgeClient(): void {
 // Register at module load — the side effect runs the first time anything
 // in the bridge dependency graph imports this file (which is exactly when
 // we'd want lifecycle resets to start firing). Multi-listener registration
-// (`addAuthLifecycleHandler`) so the SSE event clients can register their
-// own teardown alongside ours without one wiping the other.
+// so the SSE event clients can register their own teardown alongside ours
+// without one wiping the other.
 addAuthLifecycleHandler(resetMcpBridgeClient);
+addWorkspaceLifecycleHandler(resetMcpBridgeClient);
 
 // ---------------------------------------------------------------------------
 // Session-not-found recovery
@@ -181,18 +196,24 @@ function isSessionNotFoundError(err: unknown): boolean {
 // Internals
 // ---------------------------------------------------------------------------
 
-const MCP_ENDPOINT = "/mcp";
+/** The workspace's MCP endpoint path. */
+export function mcpEndpointPath(workspaceId: string): string {
+  return `/mcp/${encodeURIComponent(workspaceId)}`;
+}
 
-async function createClient(): Promise<Entry> {
-  // Resolve `/mcp` against the page origin. In dev, Vite proxies `/mcp`
-  // to the API; in prod the web shell is served from the same origin.
-  const url = new URL(MCP_ENDPOINT, globalThis.location?.origin ?? "http://localhost");
+async function createClient(workspaceId: string): Promise<Entry> {
+  // Resolve `/mcp/<wsId>` against the page origin. In dev, Vite proxies
+  // `/mcp/*` to the API; in prod the web shell is served from the same origin.
+  const url = new URL(
+    mcpEndpointPath(workspaceId),
+    globalThis.location?.origin ?? "http://localhost",
+  );
 
   const transport = new StreamableHTTPClientTransport(url, {
-    // Custom fetch: read the auth token and workspace ID per-request. This
-    // is the hook that keeps the MCP client aligned with `api/client.ts`'s
-    // token refresh cycle — do NOT capture headers at transport construction
-    // time, because tokens rotate.
+    // Custom fetch: read the auth token per-request. This is the hook that
+    // keeps the MCP client aligned with `api/client.ts`'s token refresh cycle
+    // — do NOT capture headers at transport construction time, because tokens
+    // rotate.
     fetch: mcpFetch,
   });
 
@@ -229,8 +250,8 @@ async function createClient(): Promise<Entry> {
 }
 
 /**
- * Per-request fetch wrapper. Injects `Authorization` and `X-Workspace-Id`
- * headers on every call so token refresh is not bypassed.
+ * Per-request fetch wrapper. Injects the `Authorization` header on every call
+ * so token refresh is not bypassed. The workspace is in the URL, not a header.
  *
  * Cookie-mode (`authToken === "__cookie__"`) falls through to
  * `credentials: "include"` — the browser sends the session cookie.
@@ -254,11 +275,6 @@ async function mcpFetch(input: string | URL, init?: RequestInit): Promise<Respon
   const useCookie = token === "__cookie__";
   if (token && !useCookie) {
     headers.set("Authorization", `Bearer ${token}`);
-  }
-
-  const workspaceId = getActiveWorkspaceId();
-  if (workspaceId) {
-    headers.set("X-Workspace-Id", workspaceId);
   }
 
   return fetchWithRefresh(typeof input === "string" ? input : input.toString(), {

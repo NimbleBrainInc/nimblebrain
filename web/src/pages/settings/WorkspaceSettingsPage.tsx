@@ -45,6 +45,7 @@ export function WorkspaceSettingsPage() {
     },
     { id: "ws-connectors", label: "Connectors", to: `${base}/connectors`, minRole: "ws_member" },
     { id: "ws-skills", label: "Skills", to: `${base}/skills`, minRole: "ws_member" },
+    { id: "ws-mcp", label: "MCP", to: `${base}/mcp`, minRole: "ws_member" },
     // Admin-only in the NAV, and separately admin-only in the tool — a route
     // decides what a connector does unasked, under its author's identity.
     {

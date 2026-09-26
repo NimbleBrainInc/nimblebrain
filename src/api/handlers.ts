@@ -42,6 +42,7 @@ import type { WorkspaceStore } from "../workspace/workspace-store.ts";
 import { personalWorkspaceIdFor } from "../workspace/workspace-store.ts";
 import type { ConversationEventManager } from "./conversation-events.ts";
 import type { SseEventManager } from "./events.ts";
+import { mcpResourceUrl } from "./mcp-resource.ts";
 import { artifactResolutionsTotal } from "./metrics.ts";
 import { ChatRequestBody, ToolCallRequestEnvelope } from "./schemas/rest.ts";
 import { validateAgainst } from "./schemas/validate.ts";
@@ -1635,6 +1636,9 @@ export async function handleBootstrap(
       // `isPersonal` defaults to `false` on disk for pre-Stage-1 workspaces;
       // backfilled eagerly by the personal-workspace migration.
       isPersonal: ws.isPersonal === true,
+      // The workspace's MCP endpoint in canonical form (the configured public
+      // origin, never the request's host), for the settings page to show.
+      mcpUrl: mcpResourceUrl(ws.id),
     })),
     activeWorkspace,
     shell: {
@@ -1684,8 +1688,7 @@ export async function handleShell(runtime: Runtime, workspaceId: string): Promis
  * connection only when the wsId is in the identity's current membership
  * set (cached in the manager, refreshed by membership-change events from
  * the workspace store). Workspace switches in the UI are a no-op on this
- * transport — the same shape as `/mcp` (identity-bound session, workspace
- * context per request).
+ * transport.
  */
 export async function handleEvents(
   sseManager: SseEventManager,

@@ -23,6 +23,12 @@ export interface WorkspaceInfo {
    * it so the shell mounted via either path agrees.
    */
   isPersonal?: boolean;
+  /**
+   * The workspace's MCP endpoint in canonical form (`<origin>/mcp/<wsId>`),
+   * reported by the server. Absent when the entry came from a path that does
+   * not carry it.
+   */
+  mcpUrl?: string;
 }
 
 interface WorkspaceContextValue {

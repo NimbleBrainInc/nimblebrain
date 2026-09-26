@@ -121,15 +121,8 @@ async function createMcpClient(
   headers?: Record<string, string>,
 ): Promise<Client> {
   const transport = new StreamableHTTPClientTransport(
-    new URL(`${baseUrl}/mcp`),
-    {
-      requestInit: {
-        headers: {
-          "x-workspace-id": TEST_WORKSPACE_ID,
-          ...headers,
-        },
-      },
-    },
+    new URL(`${baseUrl}/mcp/${TEST_WORKSPACE_ID}`),
+    { requestInit: { headers: { ...headers } } },
   );
   const client = new Client({ name: "ws-scope-test", version: "1.0.0" });
   await client.connect(transport);
@@ -140,8 +133,8 @@ async function createMcpClient(
 
 describe("MCP workspace scoping", () => {
   // Every tool name is bare `<source>__<tool>`. Per-workspace registry filtering
-  // is what scopes the surface; the workspace itself comes from the request's
-  // validated `X-Workspace-Id`, never from the name — so a name cannot address
+  // is what scopes the surface; the workspace itself comes from the session's
+  // URL, never from the name — so a name cannot address
   // any workspace other than the session's own.
   it("ListTools returns only workspace + protected tools (not denied)", async () => {
     const client = await createMcpClient();

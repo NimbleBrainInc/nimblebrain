@@ -6,10 +6,12 @@ import {
   isAuthError,
   resolveAuthMode,
 } from "../../../src/api/auth-middleware.ts";
-import type {
-  IdentityProvider,
-  UserIdentity,
-  CreateUserResult,
+import {
+  FIRST_PARTY_GRANT,
+  type IdentityProvider,
+  type UserIdentity,
+  type CreateUserResult,
+  type VerifiedIdentity,
 } from "../../../src/identity/provider.ts";
 import type { OrgRole } from "../../../src/identity/types.ts";
 import type { User } from "../../../src/identity/user.ts";
@@ -39,17 +41,17 @@ function createMockProvider(validToken: string, identity: UserIdentity): Identit
       managedUsers: false,
       authorizationServer: false,
     },
-    async verifyRequest(req: Request): Promise<UserIdentity | null> {
+    async verifyRequest(req: Request): Promise<VerifiedIdentity | null> {
       const auth = req.headers.get("authorization");
       if (auth === `Bearer ${validToken}`) {
-        return identity;
+        return { ...identity, grant: FIRST_PARTY_GRANT };
       }
       // Also check session cookie
       const cookie = req.headers.get("cookie") ?? "";
       for (const pair of cookie.split(";")) {
         const [name, ...rest] = pair.trim().split("=");
         if (name === "nb_session" && rest.join("=") === "valid-session") {
-          return identity;
+          return { ...identity, grant: FIRST_PARTY_GRANT };
         }
       }
       return null;

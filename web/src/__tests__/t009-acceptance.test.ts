@@ -17,11 +17,9 @@
 // `globalThis.fetch` stubbing (which is fragile across the suite's
 // mock.module + dynamic-import patterns):
 //
-//   - `setActiveWorkspaceId` → bridge session reuse (Q3 regression):
-//     `mcp-bridge-client.test.ts` ("bridge session lifecycle vs
-//     auth/workspace setters").
-//   - Per-request `X-Workspace-Id` flows through the bridge:
-//     `mcp-bridge-client.test.ts` ("per-request header generation").
+//   - `setActiveWorkspaceId` → the bridge closes the old workspace's session
+//     and opens one at the new `/mcp/<wsId>`: `mcp-bridge-client.test.ts`
+//     ("bridge session lifecycle vs auth/workspace setters").
 //   - `setAuthToken` fires lifecycle handler, `setActiveWorkspaceId`
 //     does not: `api-client-lifecycle.test.ts`.
 //

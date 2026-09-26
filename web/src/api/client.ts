@@ -48,13 +48,30 @@ export function getAuthToken(): string | null {
  * `fetchWithRefresh`) read the current token per-request and need no
  * hook.
  *
- * Stage 2 / Q3 (locked 2026-05-22): the `/mcp` session is identity-bound,
- * not workspace-bound. Workspace switches do NOT drop these hooks —
- * `setActiveWorkspaceId` therefore does not fire them. Cross-call
- * workspace context is supplied per-request via the `X-Workspace-Id`
- * header read fresh by callers (the MCP bridge, REST helpers).
+ * A workspace switch does not fire these; clients holding workspace-bound
+ * state register with `addWorkspaceLifecycleHandler` instead.
  */
 const authLifecycleHandlers = new Set<() => void>();
+
+/**
+ * Hooks fired when the active workspace changes. The MCP bridge registers
+ * here: its session is bound to the workspace whose `/mcp/<wsId>` it opened,
+ * so a switch closes it. REST helpers read the active workspace per request
+ * and need no hook.
+ */
+const workspaceLifecycleHandlers = new Set<() => void>();
+
+/**
+ * Register a hook to fire whenever the active workspace changes. Returns an
+ * unsubscribe function. Errors in a handler are caught so a buggy registration
+ * can't break others or block the switch.
+ */
+export function addWorkspaceLifecycleHandler(handler: () => void): () => void {
+  workspaceLifecycleHandlers.add(handler);
+  return () => {
+    workspaceLifecycleHandlers.delete(handler);
+  };
+}
 
 /**
  * Register a hook to fire whenever the auth token changes (login,
@@ -99,9 +116,9 @@ export function setAuthToken(token: string | null): void {
 }
 
 /**
- * Set the active workspace ID included as `X-Workspace-Id` header on REST
- * + bridge fetches. Does NOT fire the auth lifecycle hook — per Q3 the
- * `/mcp` bridge session survives workspace switches.
+ * Set the active workspace: the `X-Workspace-Id` header on REST fetches, and
+ * the workspace whose `/mcp/<wsId>` the bridge talks to. Fires the workspace
+ * lifecycle hooks on a real change, never the auth ones.
  */
 export function setActiveWorkspaceId(id: string | null): void {
   if (activeWorkspaceId === id) return;
@@ -110,6 +127,13 @@ export function setActiveWorkspaceId(id: string | null): void {
   // so crash reports are attributable to the right workspace (no-op if Sentry
   // is disabled).
   setSentryWorkspace(id);
+  for (const handler of workspaceLifecycleHandlers) {
+    try {
+      handler();
+    } catch (err) {
+      console.warn("[client] workspace lifecycle handler threw:", err);
+    }
+  }
 }
 
 /** Get the active workspace ID (for modules that build their own headers). */

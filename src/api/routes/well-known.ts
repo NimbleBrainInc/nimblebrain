@@ -13,30 +13,61 @@
 
 import { Hono } from "hono";
 import type { AuthorizationServer } from "../../identity/provider.ts";
+import {
+  isWorkspaceIdShape,
+  MCP_PATH_PREFIX,
+  mcpResourceUrl,
+  PROTECTED_RESOURCE_METADATA_PATH,
+} from "../mcp-resource.ts";
 import type { AppContext } from "../types.ts";
 
 export function wellKnownRoutes(ctx: AppContext) {
   const app = new Hono();
 
   /**
-   * Protected Resource Metadata (RFC 9728).
+   * Protected Resource Metadata (RFC 9728), one document per workspace.
    *
-   * MCP clients fetch this after receiving a 401 whose WWW-Authenticate header
-   * carries a resource_metadata URL. It names the authorization server to use.
+   * Each workspace's MCP endpoint `/mcp/<wsId>` is its own protected resource,
+   * so its document lives at the RFC 9728 §3.1 path for that URL. A 401 from
+   * `/mcp/<wsId>` points here, and the client asks the authorization server
+   * for a token bound to the `resource` it reads. That `resource` is the
+   * canonical URL, built from the configured public origin, never the
+   * request's host.
+   *
+   * Served before authentication, so it answers for any well-formed id
+   * without looking the workspace up: its existence is not disclosed here.
    */
-  app.get("/.well-known/oauth-protected-resource", (c) => {
+  app.get(`${PROTECTED_RESOURCE_METADATA_PATH}${MCP_PATH_PREFIX}/:wsId`, (c) => {
     const authServer = authorizationServer(ctx);
     if (!authServer) {
       return c.json({ error: "MCP OAuth not configured" }, 404);
     }
-
-    const origin = deriveResourceOrigin(c.req.raw);
+    const wsId = c.req.param("wsId");
+    if (!isWorkspaceIdShape(wsId)) {
+      return c.json({ error: "not_found" }, 404);
+    }
     return c.json({
-      resource: origin,
+      resource: mcpResourceUrl(wsId),
       authorization_servers: [authServer.issuer],
       bearer_methods_supported: ["header"],
     });
   });
+
+  /**
+   * The root document would describe the origin as a protected resource, and
+   * nothing at the origin accepts a token minted for it: bare `/mcp` is refused
+   * and `/v1/*` takes no resource token. Advertising it would send a client to
+   * mint a token every route refuses, so it is absent, and says where to look.
+   */
+  app.get(PROTECTED_RESOURCE_METADATA_PATH, (c) =>
+    c.json(
+      {
+        error: "not_found",
+        message: `Each workspace's MCP endpoint is its own resource; its metadata is at ${PROTECTED_RESOURCE_METADATA_PATH}${MCP_PATH_PREFIX}/<workspaceId>.`,
+      },
+      404,
+    ),
+  );
 
   /**
    * Authorization Server Metadata proxy (RFC 8414).
@@ -71,26 +102,4 @@ function authorizationServer(ctx: AppContext): AuthorizationServer | null {
   const provider = ctx.provider;
   if (!provider?.capabilities.authorizationServer) return null;
   return provider.authorizationServer?.() ?? null;
-}
-
-/**
- * Derive the resource origin from the incoming request.
- *
- * Honors `X-Forwarded-Proto` so the advertised resource matches the
- * public scheme used by the client, not the internal HTTP connection
- * seen by the pod behind a TLS-terminating proxy (ALB, Caddy, etc.).
- * Without this, `resource` is `http://` and OAuth resource validation
- * fails in clients that connect via `https://`.
- *
- * Host comes from `req.url.host` (the Host header), which ALB/Caddy
- * forward verbatim from the client. We deliberately do NOT honor
- * `X-Forwarded-Host`: AWS ALB rewrites `X-Forwarded-Proto` based on
- * the actual client connection, but nothing similarly sanitizes
- * `X-Forwarded-Host` in our proxy chain, and we don't need it.
- */
-function deriveResourceOrigin(req: Request): string {
-  const url = new URL(req.url);
-  const proto =
-    req.headers.get("x-forwarded-proto")?.split(",")[0]?.trim() ?? url.protocol.replace(/:$/, "");
-  return `${proto}://${url.host}`;
 }

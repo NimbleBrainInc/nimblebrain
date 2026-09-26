@@ -108,13 +108,13 @@ All endpoints require authentication (Bearer token or session cookie) unless not
 | GET | /v1/auth/callback | No | OAuth callback handler |
 | POST | /v1/auth/logout | No | Clear session and refresh cookies (requires `Content-Type: application/json`) |
 | POST | /v1/auth/refresh | No | Refresh access token |
-| GET | /.well-known/oauth-protected-resource | No | MCP OAuth discovery (RFC 9728) |
+| GET | /.well-known/oauth-protected-resource/mcp/:wsId | No | MCP OAuth discovery for one workspace (RFC 9728) |
 | GET | /.well-known/oauth-authorization-server | No | AuthKit metadata proxy (RFC 8414) |
-| POST/DELETE | /mcp | Yes | Streamable HTTP MCP server endpoint (GET returns 405; no standalone server→client SSE channel) |
+| POST/DELETE | /mcp/:wsId | Yes | A workspace's Streamable HTTP MCP server endpoint (GET returns 405; no standalone server→client SSE channel; bare `/mcp` is refused) |
 
 ## Architecture
 
-NimbleBrain is both an MCP **client** (connecting to remote connectors over HTTP/SSE, and to the platform's own capabilities in-process) and an MCP **server** (exposing composed tools to external hosts via the `/mcp` Streamable HTTP endpoint). The `ToolRegistry` aggregates tools from all connected MCP servers into a single namespace, while skills scope tool access per task.
+NimbleBrain is both an MCP **client** (connecting to remote connectors over HTTP/SSE, and to the platform's own capabilities in-process) and an MCP **server** (exposing composed tools to external hosts via each workspace's `/mcp/<wsId>` Streamable HTTP endpoint). The `ToolRegistry` aggregates tools from all connected MCP servers into a single namespace, while skills scope tool access per task.
 
 Three port interfaces isolate concerns:
 
@@ -552,12 +552,12 @@ Connectors can be installed per-workspace (tracked via `ConnectorInstance.wsId`)
 
 **CORS:** Dynamic. Dev mode: `Access-Control-Allow-Origin: *`. With auth: only `ALLOWED_ORIGINS` env var origins, with credentials support.
 
-**MCP endpoint (`/mcp`):** Streamable HTTP. The bundled web UI uses this endpoint to drive the platform, and external MCP clients (Claude Code, Claude Desktop, Cursor) can connect to the same endpoint. 100 concurrent sessions (env: `MCP_MAX_SESSIONS`, LRU-evicted at the cap rather than 429'd), 8-hour idle TTL (env: `MCP_SESSION_TTL_SECONDS`). When `authkitDomain` is configured, returns `WWW-Authenticate` header on 401 for automatic OAuth discovery by MCP clients. Full setup guide: [MCP Endpoint](https://docs.nimblebrain.ai/api/mcp-endpoint/) and [Connecting External Clients](https://docs.nimblebrain.ai/guide/mcp-connect/) on docs.nimblebrain.ai.
+**MCP endpoint (`/mcp/<wsId>`):** Streamable HTTP, one per workspace; bare `/mcp` is refused. The bundled web UI's app bridge uses it, and external MCP clients (Claude, Claude Code, Cursor) connect to a workspace's URL (Workspace settings → MCP). A token from the authorization server is accepted only when its `aud` is exactly that URL, and membership of the workspace is checked on every request. 100 concurrent sessions (env: `MCP_MAX_SESSIONS`, LRU-evicted at the cap rather than 429'd), 8-hour idle TTL (env: `MCP_SESSION_TTL_SECONDS`). When `authkitDomain` is configured, returns `WWW-Authenticate` header on 401 for automatic OAuth discovery by MCP clients. Full setup guide: [MCP Endpoint](https://docs.nimblebrain.ai/api/mcp-endpoint/) and [Connecting External Clients](https://docs.nimblebrain.ai/guide/mcp-connect/) on docs.nimblebrain.ai.
 
-**Deploying behind a TLS-terminating proxy:** OAuth discovery advertises its `resource` URL from `X-Forwarded-Proto`, falling back to the request scheme. Upstream proxies (AWS ALB, nginx, Cloudflare, etc.) must set that header to the client-facing scheme (`https`) for MCP OAuth to work. The bundled `nimblebrain-web` Caddy container already honors it via `trusted_proxies static private_ranges`; if you front it with an additional proxy, ensure that proxy also propagates `X-Forwarded-Proto`. Without this, `/.well-known/oauth-protected-resource` returns `resource: http://...` and modern MCP clients reject the response. See [MCP OAuth behind a reverse proxy](https://docs.nimblebrain.ai/deploy/security/#mcp-oauth-behind-a-reverse-proxy) for ALB / nginx / Caddy snippets.
+**MCP resource URL:** built from the configured public origin (`NB_PUBLIC_ORIGIN`, or the forwarded custom domain / platform host), never from request headers. The authorization server needs a resource indicator covering `<origin>/mcp/*` for each public host, or it ignores the client's `resource` and every token is refused. See [MCP OAuth: the resource URL](https://docs.nimblebrain.ai/deploy/security/#mcp-oauth-the-resource-url).
 
 **MCP OAuth discovery endpoints:**
-- `GET /.well-known/oauth-protected-resource` — RFC 9728 Protected Resource Metadata
+- `GET /.well-known/oauth-protected-resource/mcp/<wsId>` — RFC 9728 Protected Resource Metadata for one workspace (the root document is absent: the origin is no resource)
 - `GET /.well-known/oauth-authorization-server` — RFC 8414 Authorization Server Metadata (proxied from AuthKit)
 
 ### SSE Event Streams

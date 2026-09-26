@@ -1,10 +1,13 @@
 import { Hono } from "hono";
 import { createMiddleware } from "hono/factory";
+import { publicOrigin } from "../../oauth/public-origin.ts";
+import { authenticateRequest, isAuthError } from "../auth-middleware.ts";
 import {
-  type AuthMiddlewareOptions,
-  authenticateRequest,
-  isAuthError,
-} from "../auth-middleware.ts";
+  isWorkspaceIdShape,
+  MCP_PATH_PREFIX,
+  mcpResourceMetadataUrl,
+  mcpResourceUrl,
+} from "../mcp-resource.ts";
 import type { McpSessionContext } from "../mcp-server.ts";
 import { bodyLimit } from "../middleware/body-limit.ts";
 import { requestRateLimit } from "../middleware/rate-limit.ts";
@@ -14,21 +17,16 @@ import { type AppContext, type AuthEnv, apiError } from "../types.ts";
  * Build the WWW-Authenticate header value for MCP OAuth discovery.
  *
  * When an MCP client receives this header on a 401, it fetches the
- * resource_metadata URL to discover the authorization server and
- * initiates the OAuth flow automatically.
+ * resource_metadata URL to discover the authorization server and initiates
+ * the OAuth flow for the resource that document names. It must be the
+ * workspace's own document: the root one names no resource this server
+ * accepts tokens for.
  */
-function mcpWwwAuthenticate(req: Request): string {
-  const url = new URL(req.url);
-  // Honor X-Forwarded-Proto from the ALB (which rewrites it based on the
-  // actual client→ALB connection). Host comes from the Host header via
-  // url.host; we deliberately do NOT honor X-Forwarded-Host.
-  const proto =
-    req.headers.get("x-forwarded-proto")?.split(",")[0]?.trim() ?? url.protocol.replace(/:$/, "");
-  const origin = `${proto}://${url.host}`;
+function mcpWwwAuthenticate(wsId: string): string {
   return [
     'Bearer error="unauthorized"',
     'error_description="Authorization required"',
-    `resource_metadata="${origin}/.well-known/oauth-protected-resource"`,
+    `resource_metadata="${mcpResourceMetadataUrl(wsId)}"`,
   ].join(", ");
 }
 
@@ -39,22 +37,44 @@ function hasMcpOAuth(ctx: AppContext): boolean {
   return provider.authorizationServer?.() != null;
 }
 
+/** A JSON-RPC error envelope, the shape an MCP client reports to its user. */
+function mcpError(status: number, message: string): Response {
+  return new Response(
+    JSON.stringify({ jsonrpc: "2.0", error: { code: -32000, message }, id: null }),
+    { status, headers: { "Content-Type": "application/json" } },
+  );
+}
+
 /**
- * MCP-specific auth middleware.
- *
- * Like requireAuth, but returns WWW-Authenticate header with resource_metadata
- * on 401 so MCP clients can discover the authorization server and initiate
- * the OAuth flow automatically.
+ * The one answer for a workspace this caller cannot reach: malformed, unknown,
+ * or not theirs. Identical in every case, so it says nothing about which
+ * workspaces exist.
  */
-function requireMcpAuth(options: AuthMiddlewareOptions, ctx: AppContext) {
+function workspaceNotFound(): Response {
+  return mcpError(404, "Workspace not found");
+}
+
+/**
+ * MCP-specific auth middleware for `/mcp/:wsId`.
+ *
+ * Authenticates against the workspace's canonical resource URL, so a token
+ * from the MCP authorization server is admitted only when minted for exactly
+ * this URL (`grantAdmits`). A 401 carries the workspace's resource metadata
+ * URL so the client can discover the authorization server and obtain one.
+ */
+function requireMcpAuth(ctx: AppContext) {
   return createMiddleware<AuthEnv>(async (c, next) => {
-    const result = await authenticateRequest(c.req.raw, options);
+    const wsId = c.req.param("wsId") ?? "";
+    // Shape only — answered before authentication, and says nothing about
+    // whether the workspace exists.
+    if (!isWorkspaceIdShape(wsId)) return workspaceNotFound();
+
+    const result = await authenticateRequest(c.req.raw, ctx.authOptions, mcpResourceUrl(wsId));
 
     if (isAuthError(result)) {
-      // Attach WWW-Authenticate header for MCP OAuth discovery
       if (result.status === 401 && hasMcpOAuth(ctx)) {
         return apiError(401, "unauthorized", "Authentication required for MCP", undefined, {
-          "WWW-Authenticate": mcpWwwAuthenticate(c.req.raw),
+          "WWW-Authenticate": mcpWwwAuthenticate(wsId),
         });
       }
       return result;
@@ -67,27 +87,37 @@ function requireMcpAuth(options: AuthMiddlewareOptions, ctx: AppContext) {
   });
 }
 
+/**
+ * Bare `/mcp` names no workspace, and no workspace is chosen for it. 404, not
+ * 401: a 401 would send a client into an OAuth flow for a resource that does
+ * not exist, and there is no metadata document to point it at.
+ */
+function bareMcpRefused(): Response {
+  return mcpError(
+    404,
+    `This MCP endpoint is per workspace. Connect to ${publicOrigin()}${MCP_PATH_PREFIX}/<workspaceId> ` +
+      "(Workspace settings → MCP shows the URL).",
+  );
+}
+
 export function mcpRoutes(ctx: AppContext) {
   const app = new Hono<AuthEnv>();
-  app.use("*", requireMcpAuth(ctx.authOptions, ctx));
+
+  app.all(MCP_PATH_PREFIX, bareMcpRefused);
+  app.all(`${MCP_PATH_PREFIX}/`, bareMcpRefused);
 
   // Rate limit the remote surface: external MCP clients + sandboxed connector
-  // iframes (the bridge speaks `/mcp`). Chained on the route, NOT `.use("*")`,
-  // so it can't leak onto sibling routes — and it runs after `requireMcpAuth`
-  // above, so the per-identity key is populated. Bypassed in dev.
+  // iframes (the bridge speaks `/mcp`). It runs after `requireMcpAuth`, so the
+  // per-identity key is populated. Bypassed in dev.
   app.all(
-    "/mcp",
+    `${MCP_PATH_PREFIX}/:wsId`,
+    requireMcpAuth(ctx),
     requestRateLimit(ctx.mcpLimiter, { bypass: ctx.isDevMode }),
     bodyLimit(1_048_576),
     async (c) => {
       const features = ctx.runtime.getFeatures();
+      const wsId = c.req.param("wsId");
 
-      // `/mcp` sessions are identity-bound, walled to a per-request workspace:
-      // each request names its focused workspace via the `X-Workspace-Id` header.
-      // The host honors that header and validates the caller's membership before
-      // scoping the request to that workspace; with no header the session sees
-      // identity-level tools only. Tool calls also carry their target workspace
-      // in the namespaced tool name (parsed and routed by the orchestrator).
       const identity = c.var.identity;
       if (!identity || !ctx.workspaceStore) {
         return apiError(
@@ -95,11 +125,21 @@ export function mcpRoutes(ctx: AppContext) {
           "unauthorized",
           "Authentication required for MCP",
           undefined,
-          hasMcpOAuth(ctx) ? { "WWW-Authenticate": mcpWwwAuthenticate(c.req.raw) } : undefined,
+          hasMcpOAuth(ctx) ? { "WWW-Authenticate": mcpWwwAuthenticate(wsId) } : undefined,
         );
       }
 
-      const sessionCtx: McpSessionContext = { identity };
+      // Membership authorizes; the token's audience only proved it was minted
+      // for this URL. Checked on every request, fail-closed, and a non-member
+      // gets exactly the unknown-workspace answer.
+      const workspace = await ctx.workspaceStore.get(wsId);
+      const isMember =
+        workspace !== null &&
+        workspace.id === wsId &&
+        workspace.members.some((m) => m.userId === identity.id);
+      if (!isMember) return workspaceNotFound();
+
+      const sessionCtx: McpSessionContext = { identity, workspaceId: wsId };
       return ctx.mcpHost.handle(c.req.raw, features, sessionCtx);
     },
   );

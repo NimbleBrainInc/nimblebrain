@@ -53,7 +53,7 @@ The `auth.adapter` field selects the identity provider. Two adapters are configu
     }
     ```
 
-    WorkOS-managed auth with AuthKit. Supports the redirect login flow for the web shell and, when `authkitDomain` is set, Bearer-JWT auth on `/mcp` for external MCP clients.
+    WorkOS-managed auth with AuthKit. Supports the redirect login flow for the web shell and, when `authkitDomain` is set, Bearer-JWT auth on each workspace's `/mcp/<workspaceId>` for external MCP clients.
   </TabItem>
 </Tabs>
 
@@ -85,7 +85,7 @@ The `auth.adapter` field selects the identity provider. Two adapters are configu
 | `redirectUri` | `string` | No | OAuth callback URL. When omitted, derived as `${publicOrigin()}/v1/auth/callback` from the canonical [public origin](/config/environment/#public-origin-and-callbacks). An explicit value (legacy `WORKOS_REDIRECT_URI`) overrides. |
 | `organizationId` | `string` | No | WorkOS Organization ID — scopes auth to a specific customer org. |
 | `apiKey` | `string` | No | WorkOS API key. Can also come from the `WORKOS_API_KEY` env var. |
-| `authkitDomain` | `string` | No | AuthKit subdomain for MCP OAuth (e.g. `"myapp"` → `myapp.authkit.app`). When set, `/mcp` accepts AuthKit-issued Bearer JWTs and exposes `/.well-known/oauth-protected-resource` for MCP client discovery. |
+| `authkitDomain` | `string` | No | AuthKit subdomain for MCP OAuth (e.g. `"myapp"` → `myapp.authkit.app`). When set, `/mcp/<workspaceId>` accepts AuthKit-issued Bearer JWTs whose audience is exactly that URL, and exposes `/.well-known/oauth-protected-resource/mcp/<workspaceId>` for MCP client discovery. AuthKit needs a resource indicator covering `<origin>/mcp/*` for each public host, or it ignores the client's `resource` and every token is refused. |
 | `adminRoleSlugs` | `string[]` | No | WorkOS membership role slugs that map to the app `admin` role (case-insensitive). Omit to use the defaults `["admin", "owner"]`. An explicit list **replaces** the defaults and must contain at least one non-empty slug — an empty list is rejected at startup. Set this when your WorkOS org's admin role carries a custom slug. |
 
 <Aside type="caution">

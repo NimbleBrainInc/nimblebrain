@@ -20,6 +20,8 @@ let transportCloseCalls = 0;
 let clientCtorCalls = 0;
 let lastClientCapabilities: unknown = null;
 let connectShouldReject: Error | null = null;
+/** When set, the next `connect()` waits on it — lets a test hold a handshake open. */
+let connectGate: Promise<void> | null = null;
 let connectCalls = 0;
 let clientCloseCalls = 0;
 
@@ -47,6 +49,11 @@ class FakeClient {
   async connect(transport: FakeTransport): Promise<void> {
     connectCalls += 1;
     this.transport = transport;
+    if (connectGate) {
+      const gate = connectGate;
+      connectGate = null;
+      await gate;
+    }
     if (connectShouldReject) {
       throw connectShouldReject;
     }
@@ -93,6 +100,7 @@ function resetCounters(): void {
   clientCloseCalls = 0;
   connectCalls = 0;
   connectShouldReject = null;
+  connectGate = null;
   lastTransportUrl = null;
   lastTransportOptions = null;
   lastClientCapabilities = null;
@@ -124,8 +132,8 @@ describe("getMcpBridgeClient", () => {
     expect(clientCtorCalls).toBe(1);
     expect(connectCalls).toBe(1);
 
-    // Transport is pointed at /mcp
-    expect(lastTransportUrl?.pathname).toBe("/mcp");
+    // Transport is pointed at the active workspace's endpoint
+    expect(lastTransportUrl?.pathname).toBe("/mcp/ws-initial");
 
     // Client advertises the task cancel capability during init handshake
     expect(lastClientCapabilities).toEqual({ tasks: { cancel: {} } });
@@ -171,6 +179,12 @@ describe("getMcpBridgeClient", () => {
     expect(transportCloseCalls).toBe(1);
   });
 
+  test("rejects with no active workspace, and builds no transport", async () => {
+    setActiveWorkspaceId(null);
+    await expect(getMcpBridgeClient()).rejects.toThrow(/No active workspace/);
+    expect(transportCtorCalls).toBe(0);
+  });
+
   test("retries after a failed init (singleton cleared)", async () => {
     connectShouldReject = new Error("first failure");
     await expect(getMcpBridgeClient()).rejects.toThrow("first failure");
@@ -209,37 +223,67 @@ describe("resetMcpBridgeClient", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Bridge lifecycle vs auth/workspace setters — Stage 2 / Q3 (locked
-// 2026-05-22): the `/mcp` session is identity-bound, NOT workspace-bound.
-// Workspace switches must reuse the same bridge session; only logout (auth
-// token change) drops it.
+// Bridge lifecycle vs auth/workspace setters. The platform binds an
+// `Mcp-Session-Id` to the identity AND the workspace in its URL, so both a
+// logout and a workspace switch drop the session, and a request for one
+// workspace never goes out on another workspace's session.
 // ---------------------------------------------------------------------------
 
+/** The workspace path a client's transport targets. */
+function pathOf(client: unknown): string | undefined {
+  return (client as FakeClient).transport?.url.pathname;
+}
+
 describe("bridge session lifecycle vs auth/workspace setters", () => {
-  test("workspace switch reuses the same bridge client (Q3 regression)", async () => {
-    // Engage the production wiring: setAuthToken fires resetMcpBridgeClient;
-    // setActiveWorkspaceId does NOT (Q3). The lifecycle handler the
-    // production module registers at load is `resetMcpBridgeClient` itself.
-    setAuthLifecycleHandler(resetMcpBridgeClient);
-
+  test("workspace switch closes the old session and opens one on the new path", async () => {
     const first = await getMcpBridgeClient();
-    expect(clientCtorCalls).toBe(1);
+    expect(pathOf(first)).toBe("/mcp/ws-initial");
 
-    // Switch workspace — must NOT close the cached client.
     setActiveWorkspaceId("ws-after-switch");
-    // Allow any (incorrectly-fired) async close to flush before we observe.
     await Promise.resolve();
     await Promise.resolve();
-    expect(clientCloseCalls).toBe(0);
+    expect(clientCloseCalls).toBe(1);
 
-    // Next bridge call returns the same instance.
     const second = await getMcpBridgeClient();
-    expect(second).toBe(first);
-    expect(clientCtorCalls).toBe(1);
-    expect(connectCalls).toBe(1);
+    expect(second).not.toBe(first);
+    expect(pathOf(second)).toBe("/mcp/ws-after-switch");
+    expect(clientCtorCalls).toBe(2);
   });
 
-  test("logout (setAuthToken null) drops the bridge client (Q3 boundary)", async () => {
+  test("no request for workspace B goes out on workspace A's session, even mid-handshake", async () => {
+    // Hold A's handshake open, switch to B while it is in flight, and ask
+    // again: the B caller must get a client whose transport targets B's path,
+    // never A's still-pending one.
+    let releaseA: () => void = () => {};
+    connectGate = new Promise<void>((resolve) => {
+      releaseA = resolve;
+    });
+    const forA = getMcpBridgeClient();
+
+    setActiveWorkspaceId("ws-b");
+    const forB = getMcpBridgeClient();
+    releaseA();
+
+    const [clientA, clientB] = await Promise.all([forA, forB]);
+    expect(clientB).not.toBe(clientA);
+    expect(pathOf(clientA)).toBe("/mcp/ws-initial");
+    expect(pathOf(clientB)).toBe("/mcp/ws-b");
+
+    // And every later B call stays on B's session.
+    expect(await getMcpBridgeClient()).toBe(clientB);
+  });
+
+  test("returning to a workspace opens a fresh session for it", async () => {
+    const first = await getMcpBridgeClient();
+    setActiveWorkspaceId("ws-b");
+    await getMcpBridgeClient();
+    setActiveWorkspaceId("ws-initial");
+    const again = await getMcpBridgeClient();
+    expect(again).not.toBe(first);
+    expect(pathOf(again)).toBe("/mcp/ws-initial");
+  });
+
+  test("logout (setAuthToken null) drops the bridge client", async () => {
     setAuthLifecycleHandler(resetMcpBridgeClient);
 
     const first = await getMcpBridgeClient();
@@ -256,46 +300,6 @@ describe("bridge session lifecycle vs auth/workspace setters", () => {
     expect(second).not.toBe(first);
     expect(clientCtorCalls).toBe(2);
     expect(connectCalls).toBe(2);
-  });
-
-  test("next bridge fetch after switch carries the new X-Workspace-Id", async () => {
-    // Topology guard for Stage 1 lesson 1: T013 wires sidebar app
-    // selection to `setActiveWorkspaceId`, and the bridge MUST carry the
-    // new workspace id on the next tool-call fetch (without dropping the
-    // session). Without this, switching apps would dispatch every iframe
-    // call against the previous workspace's tools.
-    setAuthLifecycleHandler(resetMcpBridgeClient);
-
-    await getMcpBridgeClient();
-    const customFetch = lastTransportOptions?.fetch;
-    if (!customFetch) throw new Error("custom fetch not configured");
-
-    const captured: Array<Record<string, string>> = [];
-    const originalFetch = globalThis.fetch;
-    globalThis.fetch = (async (_input: string | URL | Request, init?: RequestInit) => {
-      captured.push(Object.fromEntries(new Headers(init?.headers).entries()));
-      return new Response("{}", { status: 200 });
-    }) as typeof fetch;
-
-    try {
-      // Initial fetch carries ws-initial (from beforeEach).
-      await customFetch("https://example.test/mcp", { method: "POST" });
-
-      // Switch workspace — bridge session survives.
-      setActiveWorkspaceId("ws-after-switch");
-
-      // Next fetch carries the new workspace id.
-      await customFetch("https://example.test/mcp", { method: "POST" });
-    } finally {
-      globalThis.fetch = originalFetch;
-    }
-
-    expect(captured).toHaveLength(2);
-    expect(captured[0]?.["x-workspace-id"]).toBe("ws-initial");
-    expect(captured[1]?.["x-workspace-id"]).toBe("ws-after-switch");
-    // Session was NOT torn down; same client serviced both fetches.
-    expect(clientCtorCalls).toBe(1);
-    expect(clientCloseCalls).toBe(0);
   });
 });
 
@@ -411,7 +415,7 @@ describe("withSessionRetry", () => {
 });
 
 describe("per-request header generation", () => {
-  test("reads getAuthToken and getActiveWorkspaceId on each fetch (not cached at construction)", async () => {
+  test("reads getAuthToken on each fetch (not cached at construction), and sends no workspace header", async () => {
     await getMcpBridgeClient();
     const customFetch = lastTransportOptions?.fetch;
     expect(customFetch).toBeDefined();
@@ -431,11 +435,10 @@ describe("per-request header generation", () => {
       // First request — uses the initial token/workspace.
       await customFetch("https://example.test/mcp", { method: "POST" });
 
-      // Rotate both before the second request. The module MUST read fresh
-      // values; if it had cached headers at construction, the old values
+      // Rotate the token before the second request. The module MUST read a
+      // fresh value; if it had cached headers at construction, the old value
       // would leak through.
       setAuthToken("rotated-token");
-      setActiveWorkspaceId("ws-rotated");
 
       await customFetch("https://example.test/mcp", { method: "POST" });
     } finally {
@@ -444,10 +447,9 @@ describe("per-request header generation", () => {
 
     expect(calls).toHaveLength(2);
     expect(calls[0]?.headers.authorization).toBe("Bearer initial-token");
-    expect(calls[0]?.headers["x-workspace-id"]).toBe("ws-initial");
-
     expect(calls[1]?.headers.authorization).toBe("Bearer rotated-token");
-    expect(calls[1]?.headers["x-workspace-id"]).toBe("ws-rotated");
+    // The workspace is in the URL; no request names it in a header.
+    expect(calls.every((c) => c.headers["x-workspace-id"] === undefined)).toBe(true);
   });
 
   test("a 401 on /mcp silently refreshes the session and retries (idle-expiry bug)", async () => {
@@ -493,7 +495,7 @@ describe("per-request header generation", () => {
     expect(calls[2]).toContain("/mcp");
   });
 
-  test("cookie-mode token ('__cookie__') omits Authorization header but still sends X-Workspace-Id", async () => {
+  test("cookie-mode token ('__cookie__') omits the Authorization header", async () => {
     setAuthToken("__cookie__");
     setActiveWorkspaceId("ws-cookie");
 
@@ -515,12 +517,11 @@ describe("per-request header generation", () => {
     }
 
     expect(capturedHeaders.authorization).toBeUndefined();
-    expect(capturedHeaders["x-workspace-id"]).toBe("ws-cookie");
+    expect(capturedHeaders["x-workspace-id"]).toBeUndefined();
   });
 
-  test("omits both headers when unauthenticated", async () => {
+  test("omits the Authorization header when unauthenticated", async () => {
     setAuthToken(null);
-    setActiveWorkspaceId(null);
 
     await getMcpBridgeClient();
     const customFetch = lastTransportOptions?.fetch;

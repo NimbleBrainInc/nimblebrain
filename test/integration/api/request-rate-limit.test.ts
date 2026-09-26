@@ -9,7 +9,9 @@ import type {
   IdentityProvider,
   ProviderCapabilities,
   UserIdentity,
+  VerifiedIdentity,
 } from "../../../src/identity/provider.ts";
+import { FIRST_PARTY_GRANT } from "../../../src/identity/provider.ts";
 import type { User } from "../../../src/identity/user.ts";
 import { Runtime } from "../../../src/runtime/runtime.ts";
 import { startServer } from "../../../src/api/server.ts";
@@ -47,10 +49,10 @@ class TokenAuthAdapter implements IdentityProvider {
     managedUsers: false,
     authorizationServer: false,
   };
-  async verifyRequest(req: Request): Promise<UserIdentity | null> {
+  async verifyRequest(req: Request): Promise<VerifiedIdentity | null> {
     const auth = req.headers.get("authorization");
     if (!auth?.startsWith("Bearer ")) return null;
-    return auth.slice(7) === TOKEN ? IDENTITY : null;
+    return auth.slice(7) === TOKEN ? { ...IDENTITY, grant: FIRST_PARTY_GRANT } : null;
   }
   async listUsers(): Promise<User[]> {
     return [];
@@ -181,18 +183,18 @@ describe("tool-call rate limiting", () => {
 
 describe("mcp rate limiting", () => {
   it("returns 429 after exceeding the /mcp limit", async () => {
-    // Authenticated POSTs to /mcp. The body isn't a valid initialize, so the
+    // Authenticated POSTs to /mcp/<wsId>. The body isn't a valid initialize, so the
     // handler errors — but the limiter runs before the handler, so each call
     // still counts (same as the tool-call test counts 400s).
     for (let i = 0; i < 3; i++) {
-      await fetch(`${baseUrl}/mcp`, {
+      await fetch(`${baseUrl}/mcp/${TEST_WORKSPACE_ID}`, {
         method: "POST",
         headers: authHeaders({ Accept: "application/json, text/event-stream" }),
         body: JSON.stringify({ jsonrpc: "2.0", id: i, method: "tools/list" }),
       });
     }
 
-    const res = await fetch(`${baseUrl}/mcp`, {
+    const res = await fetch(`${baseUrl}/mcp/${TEST_WORKSPACE_ID}`, {
       method: "POST",
       headers: authHeaders({ Accept: "application/json, text/event-stream" }),
       body: JSON.stringify({ jsonrpc: "2.0", id: 99, method: "tools/list" }),

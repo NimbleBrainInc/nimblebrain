@@ -200,75 +200,21 @@ Caddy handles TLS automatically via Let's Encrypt.
 The `Secure` flag on the `nb_session` cookie is only set when the server detects a non-localhost hostname. Behind a reverse proxy that terminates TLS, this works correctly because the platform binds to `0.0.0.0`. If you test over plain HTTP on a non-localhost address, the cookie will be set with `Secure` but your browser will reject it.
 </Aside>
 
-## MCP OAuth behind a reverse proxy
+## MCP OAuth: the resource URL
 
-The `/mcp` endpoint and `/.well-known/oauth-*` endpoints advertise a `resource` URL in their OAuth metadata. Clients validate this value against the URL they connected to and **reject** responses whose scheme doesn't match (e.g. client connected via `https://…/mcp` but the server returned `resource: http://…`).
+Each workspace's MCP endpoint, `/mcp/<workspaceId>`, is its own OAuth protected resource. The `resource` its discovery document advertises, and the audience a token must carry to be accepted there, is built from the instance's configured **public origin** (`NB_PUBLIC_ORIGIN`, or the custom domain / platform host the deployment forwards) — never from the request's `Host` or `X-Forwarded-*` headers. A proxy in front of the instance therefore cannot change it, and a caller cannot choose the audience a token is checked against. See [The MCP Endpoint](/connect/mcp-endpoint#the-audience-rule) for the rule.
 
-NimbleBrain derives the scheme from the `X-Forwarded-Proto` header, falling back to the raw request scheme. When you terminate TLS at an upstream proxy, that proxy must set and preserve `X-Forwarded-Proto: https` end-to-end — otherwise OAuth discovery silently advertises `http://` and modern MCP clients fail with:
+Two things must be true for external MCP clients to connect:
 
-```
-Protected resource http://your-host does not match expected https://your-host/mcp
-```
-
-<Tabs>
-<TabItem label="AWS ALB → web container">
-
-Works out of the box. The ALB sets `X-Forwarded-Proto` based on the actual client→ALB connection scheme, and the bundled `nimblebrain-web` Caddy container trusts forwarded headers from RFC 1918 sources:
-
-```txt title="web/Caddyfile (shipped)"
-{
-    servers {
-        trusted_proxies static private_ranges
-    }
-}
-```
-
-No additional config needed. Ensure the ALB targets `nimblebrain-web`, not the platform service directly.
-
-</TabItem>
-<TabItem label="nginx → platform (direct)">
-
-If you skip the bundled `web` container and front the platform yourself, propagate the header explicitly:
-
-```nginx
-location / {
-    proxy_pass http://nimblebrain-platform:27247;
-    proxy_set_header Host $host;
-    proxy_set_header X-Forwarded-Proto $scheme;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-}
-```
-
-</TabItem>
-<TabItem label="Caddy → platform (direct)">
-
-```txt title="Caddyfile"
-{
-    servers {
-        trusted_proxies static private_ranges
-    }
-}
-
-your-host.example.com {
-    reverse_proxy nimblebrain-platform:27247
-}
-```
-
-`trusted_proxies` is only required if *another* proxy sits upstream of Caddy — otherwise Caddy sets `X-Forwarded-Proto` itself based on its listener scheme.
-
-</TabItem>
-</Tabs>
+- **The public origin is the host clients use.** A client asks for a token for the URL it was given; if that URL's host differs from the configured public origin, the token's audience will not match and every request is refused. Give users the URL from **Workspace settings → MCP**, which is always canonical.
+- **The authorization server has a resource indicator for each public host.** Register one covering `<origin>/mcp/*` for the platform host and for every custom domain. Without it, the authorization server ignores the client's `resource`, mints a token whose audience is the client id, and every MCP request is refused with `401`.
 
 ### Verify
 
-After deploying, confirm the advertised scheme matches the client-facing URL:
-
 ```bash
-curl -s https://your-host.example.com/.well-known/oauth-protected-resource | jq .resource
-# must be "https://your-host.example.com"
+curl -s https://nb.example.com/.well-known/oauth-protected-resource/mcp/<workspaceId> | jq .resource
+# must be "https://nb.example.com/mcp/<workspaceId>"
 ```
-
-If it still returns `http://`, walk the proxy chain to find where `X-Forwarded-Proto` is being stripped or overwritten.
 
 ## Connector trust
 
@@ -294,7 +240,7 @@ same gates. What differs is only where the caller's identity comes from.
 | Door | Who is calling | Where the workspace comes from |
 |---|---|---|
 | Chat and automation runs | The authenticated user, captured when the session opened | The conversation's own workspace, or the run's provenance workspace |
-| `/mcp` | The authenticated client's user | The `X-Workspace-Id` header, validated against that user's membership |
+| `/mcp/<workspaceId>` | The authenticated client's user | The URL, validated against that user's membership on every request |
 | Unattended dispatch | A user id stored in workspace configuration by an admin | The workspace that configuration belongs to |
 
 The third is the one worth understanding, because it is the only one where

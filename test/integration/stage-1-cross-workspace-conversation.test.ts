@@ -38,7 +38,9 @@ import type {
   IdentityProvider,
   ProviderCapabilities,
   UserIdentity,
+  VerifiedIdentity,
 } from "../../src/identity/provider.ts";
+import { FIRST_PARTY_GRANT } from "../../src/identity/provider.ts";
 import type { User } from "../../src/identity/user.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
@@ -65,10 +67,11 @@ class TokenAuthAdapter implements IdentityProvider {
 
   constructor(private readonly tokens: Record<string, UserIdentity>) {}
 
-  async verifyRequest(req: Request): Promise<UserIdentity | null> {
+  async verifyRequest(req: Request): Promise<VerifiedIdentity | null> {
     const authHeader = req.headers.get("authorization");
     if (!authHeader?.startsWith("Bearer ")) return null;
-    return this.tokens[authHeader.slice(7)] ?? null;
+    const who = this.tokens[authHeader.slice(7)];
+    return who ? { ...who, grant: FIRST_PARTY_GRANT } : null;
   }
 
   async listUsers(): Promise<User[]> {

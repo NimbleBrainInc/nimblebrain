@@ -15,9 +15,8 @@
  * Entries are keyed by `storeKey = `${identityId}:${taskId}``, and under that
  * by the workspace and source that ran the task (`ownerContext.workspaceId`,
  * `ownerContext.originApp`). A connector's own server mints the task id, so two
- * sources can mint the same one, and each keeps its own entry. Stage 2 made
- * `/mcp` sessions identity-bound and tools cross-workspace-routable, so a
- * single session can hold tasks created in multiple workspaces. The
+ * sources can mint the same one, and each keeps its own entry. A `/mcp`
+ * session is bound to one workspace, so its tasks all ran there; the
  * `ownerContext` is still stamped on each entry — the underlying
  * `McpSource.getTaskStatus` / `awaitToolTaskResult` / `cancelTask` paths still
  * authorize per-task by exact (workspaceId, identityId, taskId) match.
@@ -128,8 +127,8 @@ const ANON_IDENTITY = "__anon__";
  * Compose the internal storage key. Cross-user lookups land on a different
  * key and are treated as "not found". The (workspaceId, identityId, taskId)
  * trio is still enforced downstream by `McpSource`'s `ownerContext` check;
- * the session-level key omits `workspaceId` so a single identity-bound
- * session can hold tasks across multiple workspaces.
+ * the session-level key omits `workspaceId`: the entry beneath it records the
+ * workspace that ran the task.
  */
 function storeKey(identityId: string | undefined, taskId: string): string {
   return `${identityId ?? ANON_IDENTITY}:${taskId}`;
@@ -238,7 +237,7 @@ export function createMcpTaskStore(options: McpTaskStoreOptions): McpTaskStore {
   const store: McpTaskStore = {
     recordTask({ source, toolFullName, task, ownerContext: owner }) {
       // We key by (sessionIdentityId, taskId), then by the workspace and source
-      // that ran it — sessions are identity-bound post-Stage-2. The owner
+      // that ran it. The owner
       // context is preserved on the entry so the McpSource's per-task
       // authorization check still fires.
       put(task.taskId, {

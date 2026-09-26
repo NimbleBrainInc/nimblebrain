@@ -4,7 +4,7 @@
  * The other two both establish a principal from something the caller PROVED:
  * a chat or task session carries an authenticated identity and a
  * membership-validated workspace (`IdentityToolRouter`), and a `/mcp` request
- * carries a validated `X-Workspace-Id` (`McpServerHost.handlePost`). This one
+ * carries the membership-validated workspace in its URL (`routes/mcp.ts`). This one
  * takes its principal from **stored configuration** — a user id an admin's
  * write stamped, read back later with nobody present. That is the whole of
  * what is new, and it is why the door is a primitive rather than a call site:

@@ -66,6 +66,7 @@ import { WorkspaceAppsTab } from "./pages/settings/WorkspaceAppsTab";
 import { WorkspaceConnectorsTab } from "./pages/settings/WorkspaceConnectorsTab";
 import { WorkspaceDetailPage } from "./pages/settings/WorkspaceDetailPage";
 import { WorkspaceGeneralTab } from "./pages/settings/WorkspaceGeneralTab";
+import { WorkspaceMcpTab } from "./pages/settings/WorkspaceMcpTab";
 import { WorkspaceMembersTab } from "./pages/settings/WorkspaceMembersTab";
 import { WorkspaceNotificationsTab } from "./pages/settings/WorkspaceNotificationsTab";
 import { WorkspaceSettingsPage } from "./pages/settings/WorkspaceSettingsPage";
@@ -430,7 +431,7 @@ function AuthenticatedAppContent({
                   workspace rather than to any connector, and no connector may
                   claim, reorder, or replace it. */}
               <Route path="notifications" element={<NotificationsPage />} />
-              {/* Workspace settings — General/Members/Usage/Apps/Connectors/Skills/Webhooks. */}
+              {/* Workspace settings — General/Members/Usage/Apps/Connectors/Skills/MCP/Webhooks. */}
               <Route path="settings" element={<WorkspaceSettingsPage />}>
                 <Route index element={<Navigate to="general" replace />} />
                 <Route path="general" element={<WorkspaceGeneralTab />} />
@@ -441,6 +442,7 @@ function AuthenticatedAppContent({
                 <Route path="connectors/browse" element={<ConnectorBrowsePage />} />
                 <Route path="connectors/:serverName" element={<ConnectorDetailPage />} />
                 <Route path="skills" element={<SkillsTab />} />
+                <Route path="mcp" element={<WorkspaceMcpTab />} />
                 <Route path="notifications" element={<WorkspaceNotificationsTab />} />
                 <Route path="webhooks" element={<WorkspaceWebhooksTab />} />
               </Route>

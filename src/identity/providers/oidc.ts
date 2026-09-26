@@ -2,14 +2,16 @@ import { log } from "../../observability/log.ts";
 import { ensureUserWorkspace } from "../../workspace/provisioning.ts";
 import type { WorkspaceStore } from "../../workspace/workspace-store.ts";
 import type { OidcAuth } from "../instance.ts";
-import type {
-  CreateUserInput,
-  CreateUserResult,
-  IdentityProvider,
-  ProviderCapabilities,
-  UserIdentity,
+import {
+  type CreateUserInput,
+  type CreateUserResult,
+  FIRST_PARTY_GRANT,
+  type IdentityProvider,
+  type ProviderCapabilities,
+  TransientAuthError,
+  type UserIdentity,
+  type VerifiedIdentity,
 } from "../provider.ts";
-import { TransientAuthError } from "../provider.ts";
 import type { User, UserStore } from "../user.ts";
 
 // ── Types ─────────────────────────────────────────────────────────
@@ -166,7 +168,12 @@ export class OidcIdentityProvider implements IdentityProvider {
     this.workspaceStore = workspaceStore;
   }
 
-  async verifyRequest(req: Request): Promise<UserIdentity | null> {
+  /**
+   * Every token accepted here names this instance's client in `aud`
+   * (`validateClaims`), so it is first-party: this provider is not an
+   * authorization server and verifies no resource-bound tokens.
+   */
+  async verifyRequest(req: Request): Promise<VerifiedIdentity | null> {
     const token = extractBearerToken(req);
     if (!token) return null;
 
@@ -226,7 +233,7 @@ export class OidcIdentityProvider implements IdentityProvider {
       displayName: user.displayName,
     });
 
-    return toIdentity(user);
+    return { ...toIdentity(user), grant: FIRST_PARTY_GRANT };
   }
 
   async listUsers(): Promise<User[]> {

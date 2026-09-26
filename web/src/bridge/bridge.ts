@@ -41,7 +41,6 @@ import {
   TaskStatusNotificationSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { getActiveWorkspaceId, uploadResource, type WorkspaceFile } from "../api/client";
-import { isIdentityApp } from "../lib/identity-apps";
 import { appNameFromToolName } from "../lib/namespaced-tool";
 import { getMcpBridgeClient, withSessionRetry } from "../mcp-bridge-client";
 import { openAppChannel } from "./app-channel";
@@ -1029,13 +1028,12 @@ async function callToolViaMcp(
   //   2. Scoped: BOTH doors dispatch the same bare `<source>__<tool>` form.
   //      Identity apps (conversations, …) always did. Workspace apps used to
   //      prefix `ws_<active>-`; they no longer do, because the workspace a call
-  //      lands in comes from the request's validated `X-Workspace-Id`, not from
-  //      the name. Restating it in the name only gave the model 39 opaque
+  //      lands in is the one in the session's URL (`/mcp/<wsId>`), not the
+  //      name. Restating it in the name only gave the model 39 opaque
   //      characters to echo — and drop.
   //
-  //      The active-workspace check stays. The server refuses a workspace call
-  //      on a session with no workspace anyway (`WorkspaceToolUnavailable`), but
-  //      failing here is a clearer error and saves a round trip.
+  //      The active-workspace check stays: with no workspace there is no MCP
+  //      endpoint to call, and failing here is a clearer error.
   //      A personal connector's marker needs no special handling here, and that
   //      is a property of the code rather than an assumption. `server` is the
   //      name the iframe was mounted under, which comes from
@@ -1047,7 +1045,7 @@ async function callToolViaMcp(
   //      `BlockTimeline` refuses to mount one. Both halves fail safe; neither
   //      relies on the other.
   const qualifiedName = params.name.includes("__") ? params.name : `${server}__${params.name}`;
-  if (!isIdentityApp(server) && !getActiveWorkspaceId()) {
+  if (!getActiveWorkspaceId()) {
     return {
       jsonrpc: "2.0",
       id,

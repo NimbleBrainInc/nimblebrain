@@ -1,20 +1,18 @@
 /**
  * MCP Server endpoint — exposes the platform as an MCP server via Streamable HTTP.
  *
- * External MCP clients (Claude Code, Open WebUI, etc.) connect to /mcp and
- * access all installed tools through the standard MCP protocol.
+ * External MCP clients (Claude Code, Open WebUI, etc.) connect to
+ * `/mcp/<wsId>` and reach that workspace's tools through the standard MCP
+ * protocol.
  *
- * **Identity-bound sessions, walled to a per-request workspace.** A `/mcp`
- * session has no fixed workspace; each request names its focused workspace via
- * the `X-Workspace-Id` header (the web iframe bridge sends it on every call).
- * The host validates the caller's membership and threads the workspace through
- * `mcpRequestWorkspace` (an AsyncLocalStorage) so the tool handlers see it.
- * `tools/list` returns that workspace's tools + the caller's identity tools,
- * all bare; `tools/call` is walled to it — a `ws_<other>-…` name cannot address
- * another workspace at all, because that form is retired and refused as
- * `invalid_tool_name`. A request with no (or a non-member) `X-Workspace-Id` is
- * identity-only: a workspace source is then refused
- * (`WorkspaceToolUnavailable`).
+ * **A session is bound to (identity, workspace).** The workspace is the one in
+ * the URL, membership-validated by the route (`routes/mcp.ts`) before any
+ * request reaches this host. `tools/list` returns that workspace's tools + the
+ * caller's identity tools, all bare; `tools/call` is walled to it — a
+ * `ws_<other>-…` name cannot address another workspace at all, because that
+ * form is retired and refused as `invalid_tool_name`. A session id presented
+ * under another workspace's URL, or by another identity, is refused exactly
+ * like an unknown one (`ownsTransport`).
  *
  * Two-layer state architecture:
  *
@@ -68,7 +66,6 @@
  * instead of `"not_found"`. Not a bug; operators should be aware.
  */
 
-import { AsyncLocalStorage } from "node:async_hooks";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { isTerminal } from "@modelcontextprotocol/sdk/experimental/tasks/interfaces.js";
@@ -133,15 +130,6 @@ import type { SessionRegistry } from "./session-store/index.ts";
  */
 const RESOURCE_NOT_FOUND_CODE = -32002;
 
-/**
- * Per-request workspace for an identity-bound `/mcp` session, threaded from the
- * validated `X-Workspace-Id` header through `transport.handleRequest` so the
- * tool handlers can read it. A `/mcp` session has no fixed workspace; each
- * request names its focused workspace (the iframe bridge sends it on every
- * call). `undefined` = no workspace in scope → identity tools only.
- */
-const mcpRequestWorkspace = new AsyncLocalStorage<string | undefined>();
-
 const mcpPkgPath = resolve(import.meta.dirname ?? __dirname, "../../package.json");
 const mcpPkg = JSON.parse(readFileSync(mcpPkgPath, "utf-8")) as {
   version: string;
@@ -190,6 +178,8 @@ interface TransportEntry {
   transport: WebStandardStreamableHTTPServerTransport;
   /** Identity bound to this session at initialize time. */
   identityId: string | null;
+  /** Workspace bound to this session at initialize time: the one in its URL. */
+  workspaceId: string;
   /**
    * Wall-clock ms of the last request that touched this transport. Drives
    * both idle eviction (sweep closes entries older than `idleTtlMs`) and
@@ -227,13 +217,13 @@ export interface McpServerHostOptions {
 }
 
 /**
- * Session context captured at session creation time. Stage 2 (Q4 hard
- * cut): identity-bound, not workspace-bound. Every `tools/call` parses
- * its target workspace from the validated header; the session has no
- * workspace pointer to fall back to.
+ * The (identity, workspace) a request addresses. At initialize it becomes the
+ * session's binding; on every later request it must match that binding.
+ * `workspaceId` is the membership-validated workspace from the URL.
  */
 export interface McpSessionContext {
   identity: UserIdentity | null;
+  workspaceId: string;
 }
 
 /**
@@ -264,15 +254,6 @@ export class McpServerHost {
   private readonly idleTtlMs: number;
   private readonly maxSessions: number;
   private readonly sweepInterval: ReturnType<typeof setInterval>;
-  /**
-   * Tracks per-session whether we've already logged-once that the client
-   * sent an `X-Workspace-Id` header. Stage 2 hard-cut sessions to identity-
-   * bound, but external MCP clients (and our own bridge) will still send
-   * the header for a release-cycle's worth of mixed deploys. We log once
-   * at debug (under `NB_DEBUG=mcp`) per session so operators can see the
-   * stragglers without spamming the log.
-   */
-  private readonly loggedWorkspaceHeaderSessions = new Set<string>();
 
   constructor(opts: McpServerHostOptions) {
     this.registry = opts.registry;
@@ -357,7 +338,6 @@ export class McpServerHost {
       }
       this.transports.delete(sid);
     }
-    this.loggedWorkspaceHeaderSessions.clear();
     await this.registry.shutdown();
   }
 
@@ -368,25 +348,6 @@ export class McpServerHost {
 
   // ─── private ──────────────────────────────────────────────────────
 
-  /**
-   * Resolve the workspace a `/mcp` request is scoped to, from the
-   * `X-Workspace-Id` header. Returns the workspace id ONLY if the session's
-   * identity is a member of it — fail-closed: an absent header, an unknown
-   * workspace, or a non-member yields `undefined` (identity tools only). The
-   * web iframe bridge sends its active workspace here on every request; the
-   * wall then bounds the session to that one workspace.
-   */
-  private async resolveRequestWorkspace(
-    request: Request,
-    sessionCtx: McpSessionContext,
-  ): Promise<string | undefined> {
-    const header = request.headers.get("x-workspace-id");
-    const identityId = sessionCtx.identity?.id;
-    if (!header || !identityId || !this.runtime) return undefined;
-    const accessible = await this.runtime.getWorkspaceStore().getWorkspacesForUser(identityId);
-    return accessible.some((w) => w.id === header) ? header : undefined;
-  }
-
   private async handlePost(
     request: Request,
     features: ResolvedFeatures,
@@ -395,24 +356,20 @@ export class McpServerHost {
     const sessionId = request.headers.get("mcp-session-id");
 
     if (sessionId) {
-      // Debug-log once per session (under `NB_DEBUG=mcp`) that the client sent
-      // an `X-Workspace-Id`. It IS honored per request — `resolveRequestWorkspace`
-      // validates membership and the wall bounds the session to it below.
-      this.maybeLogWorkspaceHeader(request, sessionId);
-
       const local = this.transports.get(sessionId);
       if (local) {
-        // A `/mcp` session is bound to the identity that initialized it
-        // (Stage 2). `requireMcpAuth` proves the caller holds *some* valid
-        // identity, not that they own this session id — so reject reuse by
-        // any other identity. Without this check, a leaked `Mcp-Session-Id`
-        // lets a same-tenant user drive the owner's identity-scoped tools
-        // (conversations/files/automations) as the owner. Respond exactly
-        // like an unknown session id (`not_found`) so a non-owner can't even
-        // tell the session exists (`unavailable` would confirm it's live).
+        // A `/mcp` session is bound to the identity and workspace that
+        // initialized it. The route proves the caller holds *some* valid
+        // identity and is a member of the URL's workspace, not that this
+        // session id is theirs there — so reject reuse by any other identity
+        // or under any other workspace's URL. Without this check, a leaked
+        // `Mcp-Session-Id` lets a same-tenant user drive the owner's tools as
+        // the owner, and one workspace's session answers for another. Respond
+        // exactly like an unknown session id (`not_found`) so the caller can't
+        // even tell the session exists (`unavailable` would confirm it's live).
         if (!this.ownsTransport(local, sessionCtx)) {
           log.warn(
-            `[mcp] session identity mismatch ${fmtSessionContext(request, sessionId, sessionCtx)}`,
+            `[mcp] session binding mismatch ${fmtSessionContext(request, sessionId, sessionCtx)}`,
           );
           return this.sessionNotFoundResponse();
         }
@@ -427,11 +384,7 @@ export class McpServerHost {
         this.registry.touch(sessionId, now).catch((err) => {
           log.warn(`[mcp] registry touch failed: ${(err as Error).message}`);
         });
-        // Bound this request to the validated `X-Workspace-Id` (the wall): the
-        // tool handlers read it via `mcpRequestWorkspace`. No / invalid header →
-        // identity tools only.
-        const wsId = await this.resolveRequestWorkspace(request, sessionCtx);
-        return mcpRequestWorkspace.run(wsId, () => local.transport.handleRequest(request));
+        return local.transport.handleRequest(request);
       }
       return this.localMissResponse(request, sessionId, sessionCtx);
     }
@@ -477,7 +430,7 @@ export class McpServerHost {
       this.bestEffortDelete(sessionId);
       return new Response("Session not found", { status: 404 });
     }
-    // Only the owning identity may tear down its session (same binding as the
+    // Only the owning (identity, workspace) may tear down its session (same binding as the
     // POST fast path). A non-owner gets an unmodified 404 — no teardown, no
     // registry delete, no existence signal — so a leaked session id can't be
     // used to evict another user's live session.
@@ -488,29 +441,6 @@ export class McpServerHost {
       return new Response("Session not found", { status: 404 });
     }
     return local.transport.handleRequest(request);
-  }
-
-  /**
-   * Debug-log once per session that the client sent `X-Workspace-Id`. The
-   * header IS honored: `resolveRequestWorkspace` validates membership and the
-   * wall bounds each request to that workspace. The once-per-session line just
-   * records which workspace a session first scoped to, for operator triage.
-   *
-   * Read once per session id to keep the cost off the hot path. The
-   * `loggedWorkspaceHeaderSessions` set bloats by one entry per session
-   * that ever included the header — bounded by the transport map's
-   * lifetime since session id reuse is impossible (UUIDs) and the set
-   * is cleared in `shutdown()`.
-   */
-  private maybeLogWorkspaceHeader(request: Request, sessionId: string): void {
-    if (this.loggedWorkspaceHeaderSessions.has(sessionId)) return;
-    const header = request.headers.get("x-workspace-id");
-    if (!header) return;
-    this.loggedWorkspaceHeaderSessions.add(sessionId);
-    log.debug(
-      "mcp",
-      `X-Workspace-Id on /mcp (sessionId=${sessionId.slice(0, 8)} value=${header}) — honored per request; the session is walled to it after membership validation`,
-    );
   }
 
   /**
@@ -534,7 +464,10 @@ export class McpServerHost {
     const meta = await this.safeRegistryGet(sessionId);
     const ctx = fmtSessionContext(request, sessionId, sessionCtx);
 
-    const reason: "not_found" | "unavailable" = meta ? "unavailable" : "not_found";
+    // `unavailable` confirms the session is live somewhere, so it is only for
+    // the caller the session is bound to; anyone else gets `not_found`.
+    const reason: "not_found" | "unavailable" =
+      meta && this.bindingMatches(meta, sessionCtx) ? "unavailable" : "not_found";
     log.warn(`[mcp] session miss reason=${reason} ${ctx}`);
 
     return this.sessionMissResponse(reason);
@@ -562,9 +495,10 @@ export class McpServerHost {
   }
 
   /**
-   * Whether `entry` is owned by the identity making this request. A `/mcp`
-   * session is bound to the identity that initialized it (`identityId`,
-   * normalized to `null` for the dev/no-auth case, matching how it's stored).
+   * Whether `entry` is bound to the (identity, workspace) making this request.
+   * A `/mcp` session is bound to the identity that initialized it
+   * (`identityId`, normalized to `null` for the dev/no-auth case, matching how
+   * it's stored) and to the workspace whose URL it was initialized at.
    *
    * INVARIANT for any path that reaches a live transport: gate on this before
    * dispatch, and turn a non-owner away WITHOUT letting them distinguish "not
@@ -576,7 +510,18 @@ export class McpServerHost {
    * GET/SSE handler (see the class header) must add the same gate.
    */
   private ownsTransport(entry: TransportEntry, sessionCtx: McpSessionContext): boolean {
-    return entry.identityId === (sessionCtx.identity?.id ?? null);
+    return this.bindingMatches(entry, sessionCtx);
+  }
+
+  /** The (identity, workspace) comparison, shared by the transport map and the registry. */
+  private bindingMatches(
+    bound: { identityId: string | null; workspaceId: string | null },
+    sessionCtx: McpSessionContext,
+  ): boolean {
+    return (
+      bound.identityId === (sessionCtx.identity?.id ?? null) &&
+      bound.workspaceId === sessionCtx.workspaceId
+    );
   }
 
   /**
@@ -603,22 +548,22 @@ export class McpServerHost {
     sessionCtx: McpSessionContext,
   ): Promise<Response> {
     const identityId = sessionCtx.identity?.id ?? null;
+    const { workspaceId } = sessionCtx;
     const transport = new WebStandardStreamableHTTPServerTransport({
       sessionIdGenerator: () => crypto.randomUUID(),
       onsessioninitialized: (sid: string) => {
         const now = Date.now();
 
-        // Stage 2: sessions are identity-bound. No workspace pointer
-        // exists at session level — every `tools/call` parses the target
-        // workspace from the validated header on each call. Unlike
-        // pre-Stage-2 we do NOT fail-close on missing workspace context.
-        this.transports.set(sid, { transport, identityId, lastAccessedAt: now });
+        // The session is bound to the identity and workspace that initialized
+        // it; `ownsTransport` holds every later request to both.
+        this.transports.set(sid, { transport, identityId, workspaceId, lastAccessedAt: now });
         // Fire-and-forget the registry write. The session is already live
         // on this process; if the registry is down we still serve the client.
         this.registry
           .create({
             sessionId: sid,
             identityId,
+            workspaceId,
             createdAt: now,
             lastAccessedAt: now,
           })
@@ -628,7 +573,6 @@ export class McpServerHost {
       },
       onsessionclosed: (sid: string) => {
         this.transports.delete(sid);
-        this.loggedWorkspaceHeaderSessions.delete(sid);
         this.bestEffortDelete(sid);
       },
     });
@@ -636,7 +580,6 @@ export class McpServerHost {
     transport.onclose = () => {
       if (transport.sessionId) {
         this.transports.delete(transport.sessionId);
-        this.loggedWorkspaceHeaderSessions.delete(transport.sessionId);
         this.bestEffortDelete(transport.sessionId);
       }
     };
@@ -705,14 +648,11 @@ export class McpServerHost {
  * Create a new MCP Server instance for one session. Each session gets its
  * own Server + Transport pair.
  *
- * A `/mcp` session has no fixed workspace — it is walled per request to the
- * workspace named by a membership-validated `X-Workspace-Id` (threaded in via
- * `mcpRequestWorkspace`). `tools/list` serves that workspace's tools
- * (bare) plus the caller's identity tools (conversations / files /
- * automations); a request with no / non-member header is identity-only. Every
- * `tools/call` routes through `routeToolCall`, and no name can address another
- * workspace: the `ws_<id>-` form is retired and refused as `invalid_tool_name`.
- * A workspace source on a no-workspace request is `WorkspaceToolUnavailable`.
+ * The session is walled to its one workspace (`sessionCtx.workspaceId`, from
+ * the URL). `tools/list` serves that workspace's tools (bare) plus the caller's
+ * identity tools (conversations / files / automations). Every `tools/call`
+ * routes through `routeToolCall`, and no name can address another workspace:
+ * the `ws_<id>-` form is retired and refused as `invalid_tool_name`.
  *
  * When `runtime` is null (legacy unit-test path), tool handlers degrade
  * to safe no-ops: `tools/list` returns empty and `tools/call` rejects
@@ -728,11 +668,9 @@ function createServer(
   // `registerTaskHandlers` below replaces the first three so a request's scope
   // reaches the store.
   //
-  // Stage 2: the task store is identity-bound (not workspace-bound) so the
-  // same session can carry tasks across multiple workspaces. The
-  // `recordTask` call still stamps the per-task `ownerContext` with the
-  // routed workspace so cross-tenant lookups surface as -32602
-  // "task not found" per spec §8 security guidance.
+  // The task store is identity-bound. The `recordTask` call stamps the
+  // per-task `ownerContext` with the routed workspace so cross-tenant lookups
+  // surface as -32602 "task not found" per spec §8 security guidance.
   const taskStore: McpTaskStore | undefined = runtime
     ? createMcpTaskStore({
         identity: sessionCtx.identity,
@@ -750,9 +688,9 @@ function createServer(
       ...(taskStore ? { taskStore } : {}),
     },
   );
-  if (taskStore) registerTaskHandlers(server, taskStore);
-
   const identityId = sessionCtx.identity?.id ?? null;
+  const wsId = sessionCtx.workspaceId;
+  if (taskStore) registerTaskHandlers(server, taskStore, wsId);
 
   server.setRequestHandler(ListToolsRequestSchema, async () => {
     if (!runtime || !identityId) {
@@ -760,16 +698,10 @@ function createServer(
       // requires a response.
       return { tools: [] };
     }
-    // Walled to the request's workspace (validated `X-Workspace-Id`): that
-    // workspace's tools + the caller's identity tools, all bare. No workspace
-    // in scope (e.g. an external client that sent no header) → identity tools
-    // only; a `tools/call` naming a workspace source is then refused
-    // (`WorkspaceToolUnavailable`), and a retired `ws_<id>-` name is refused
-    // earlier as `invalid_tool_name`.
-    const wsId = mcpRequestWorkspace.getStore();
-    const all = wsId
-      ? await runtime.listToolsForWorkspace(wsId, identityId)
-      : await runtime.listIdentitySourceTools();
+    // Walled to the session's workspace: that workspace's tools + the caller's
+    // identity tools, all bare. A retired `ws_<id>-` name is refused at
+    // `tools/call` as `invalid_tool_name`.
+    const all = await runtime.listToolsForWorkspace(wsId, identityId);
     const orgRole = sessionCtx.identity?.orgRole;
     return {
       tools: all
@@ -825,7 +757,7 @@ function createServer(
     // and the SOURCE SEGMENT picks the door: a kernel identity source or the
     // `my_` marker goes through the identity door (below); anything else
     // dispatches into the session's own workspace, whose id comes from the
-    // validated header and never from the name. An identity-door name whose
+    // URL and never from the name. An identity-door name whose
     // source is not a kernel identity source surfaces as `-32602 Invalid
     // params` with `error.data.reason: "unknown_identity_source"`. Truly malformed names
     // (empty, empty tool, bad `ws_` id) surface as `invalid_tool_name`. Either
@@ -838,7 +770,7 @@ function createServer(
       routed = await routeToolCall({
         identityId,
         namespacedName: name,
-        workspaceId: mcpRequestWorkspace.getStore(),
+        workspaceId: wsId,
         runtime,
       });
     } catch (err) {
@@ -864,13 +796,11 @@ function createServer(
 
   // ── resources/list ────────────────────────────────────────────────
   //
-  // Walled to the request's workspace (validated `X-Workspace-Id`), exactly
-  // like `tools/list`: only that one workspace's sources are enumerated. No
-  // workspace in scope (no / non-member header) → no workspace resources; the
-  // session is identity-only. NEVER a sweep across every workspace the
-  // identity belongs to — that was the cross-workspace read hole the wall
-  // exists to close. Per-source errors are swallowed so one bad source doesn't
-  // kill the listing.
+  // Walled to the session's workspace, exactly like `tools/list`: only that
+  // one workspace's sources are enumerated. NEVER a sweep across every
+  // workspace the identity belongs to — that was the cross-workspace read hole
+  // the wall exists to close. Per-source errors are swallowed so one bad source
+  // doesn't kill the listing.
   //
   // One source, when `_meta` names it (`RESOURCE_SOURCE_META_KEY`): that is how
   // the iframe bridge asks for an app's own server, and the listing is that
@@ -888,9 +818,6 @@ function createServer(
 
     const resources: Resource[] = [];
     if (!runtime || !identityId) return { resources };
-
-    const wsId = mcpRequestWorkspace.getStore();
-    if (!wsId) return { resources };
 
     let wsRegistry: ToolRegistry;
     try {
@@ -917,8 +844,7 @@ function createServer(
       );
     }
 
-    const wsId = mcpRequestWorkspace.getStore();
-    if (!runtime || !identityId || !wsId) return empty;
+    if (!runtime || !identityId) return empty;
     let wsRegistry: ToolRegistry;
     try {
       wsRegistry = await runtime.ensureWorkspaceRegistry(wsId);
@@ -946,9 +872,8 @@ function createServer(
   // the key is the only thing that says which app is reading.
   //
   // Without it, identity resources (files, conversations, automations) resolve
-  // first (below), then the request's one workspace (validated
-  // `X-Workspace-Id`) — never a sweep across every workspace the identity
-  // belongs to. We deliberately do not distinguish "doesn't exist" from "exists
+  // first (below), then the session's one workspace — never a sweep across
+  // every workspace the identity belongs to. We deliberately do not distinguish "doesn't exist" from "exists
   // but out of reach": per MCP spec guidance, avoid leaking existence.
   server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
     const uri = request.params.uri;
@@ -968,21 +893,16 @@ function createServer(
     const identityReqCtx: RequestContext = {
       identity: sessionCtx.identity ?? null,
       // Workspace-owned identity data (`files://` etc.) resolves in the
-      // request's validated workspace; undefined ⇒ not found (the wall denies).
-      workspaceId: mcpRequestWorkspace.getStore(),
+      // session's workspace.
+      workspaceId: wsId,
     };
     const identityResult = await readResourceFromIdentitySources(runtime, uri, identityReqCtx);
     if (identityResult) return identityResult;
 
-    // Walled to the request's workspace (validated `X-Workspace-Id`). With no
-    // workspace in scope the read falls through to not-found below — an
-    // identity-only session reads its identity resources (above) and nothing
-    // else. NEVER a sweep across every workspace the identity belongs to.
-    const wsId = mcpRequestWorkspace.getStore();
-    if (wsId) {
-      const wsResult = await readResourceFromWorkspace(runtime, uri, wsId);
-      if (wsResult) return wsResult;
-    }
+    // Walled to the session's workspace. NEVER a sweep across every
+    // workspace the identity belongs to.
+    const wsResult = await readResourceFromWorkspace(runtime, uri, wsId);
+    if (wsResult) return wsResult;
 
     // The URI resolved in neither the caller's identity sources nor the
     // focused workspace. Per MCP spec, raise a JSON-RPC error — the SDK
@@ -1126,10 +1046,9 @@ async function executeIdentityToolCall(
 
   const identityCtx: RequestContext = {
     identity: sessionCtx.identity ?? null,
-    // Workspace-owned identity data resolves in the request's validated
-    // workspace; undefined (no / non-member header) ⇒ the tool denies,
+    // Workspace-owned identity data resolves in the session's workspace,
     // consistent with the resources wall.
-    workspaceId: mcpRequestWorkspace.getStore(),
+    workspaceId: sessionCtx.workspaceId,
   };
   const idResult = await runWithRequestContext(identityCtx, () =>
     routed.source.execute(bare, (args ?? {}) as Record<string, unknown>),
@@ -1141,8 +1060,7 @@ async function executeIdentityToolCall(
  * Dispatch a workspace-scoped `/mcp` tools/call (bare `<source>__<tool>`):
  * feature + role gating, connector permission gate, tool-level task
  * negotiation, then the task-augmented or inline execution path. The workspace
- * comes from the request's validated `X-Workspace-Id` (carried on
- * `routed.context`), never from the tool name.
+ * is the session's own (carried on `routed.context`), never from the tool name.
  */
 async function executeWorkspaceToolCall(
   routed: WorkspaceRoute,
@@ -1341,10 +1259,10 @@ async function startWorkspaceTask(
  * polling `tasks/result` until terminal (the store's `getTaskResult` awaits the
  * task's own terminal result).
  */
-function registerTaskHandlers(server: Server, taskStore: McpTaskStore): void {
+function registerTaskHandlers(server: Server, taskStore: McpTaskStore, wsId: string): void {
   server.setRequestHandler(GetTaskRequestSchema, async (request, extra) => {
     const { taskId, _meta } = request.params;
-    const task = await taskStore.getTask(taskId, extra.sessionId, taskScope(_meta));
+    const task = await taskStore.getTask(taskId, extra.sessionId, taskScope(_meta, wsId));
     if (!task) {
       throw new McpError(ErrorCode.InvalidParams, "Failed to retrieve task: Task not found");
     }
@@ -1353,13 +1271,13 @@ function registerTaskHandlers(server: Server, taskStore: McpTaskStore): void {
 
   server.setRequestHandler(GetTaskPayloadRequestSchema, async (request, extra) => {
     const { taskId, _meta } = request.params;
-    const result = await taskStore.getTaskResult(taskId, extra.sessionId, taskScope(_meta));
+    const result = await taskStore.getTaskResult(taskId, extra.sessionId, taskScope(_meta, wsId));
     return { ...result, _meta: { ...result._meta, [RELATED_TASK_META_KEY]: { taskId } } };
   });
 
   server.setRequestHandler(CancelTaskRequestSchema, async (request, extra) => {
     const { taskId, _meta } = request.params;
-    const scope = taskScope(_meta);
+    const scope = taskScope(_meta, wsId);
     try {
       const task = await taskStore.getTask(taskId, extra.sessionId, scope);
       if (!task) throw new McpError(ErrorCode.InvalidParams, `Task not found: ${taskId}`);
@@ -1409,13 +1327,13 @@ function scopedSourceName(meta: Record<string, unknown> | undefined): string | u
 }
 
 /**
- * The scope of a task request: the source it names, in the workspace the
- * request is bound to (validated `X-Workspace-Id`). A source name names a
- * server only within one workspace. Undefined when the request names no source.
+ * The scope of a task request: the source it names, in the session's
+ * workspace. A source name names a server only within one workspace.
+ * Undefined when the request names no source.
  */
-function taskScope(meta: Record<string, unknown> | undefined): TaskScope | undefined {
+function taskScope(meta: Record<string, unknown> | undefined, wsId: string): TaskScope | undefined {
   const source = scopedSourceName(meta);
-  return source === undefined ? undefined : { source, workspaceId: mcpRequestWorkspace.getStore() };
+  return source === undefined ? undefined : { source, workspaceId: wsId };
 }
 
 /** A listing's params: the cursor when the caller sent one, and nothing else. */
@@ -1444,7 +1362,7 @@ async function fromOneSource<T>(
   run: (client: NonNullable<ReturnType<McpSource["getClient"]>>) => Promise<T>,
 ): Promise<T> {
   if (!runtime || !sessionCtx.identity?.id) return absent;
-  const wsId = mcpRequestWorkspace.getStore();
+  const wsId = sessionCtx.workspaceId;
 
   if (IDENTITY_SOURCES.has(sourceName)) {
     const client = mcpClientOf(runtime.getIdentitySource(sourceName));
@@ -1457,7 +1375,6 @@ async function fromOneSource<T>(
     }
   }
 
-  if (!wsId) return absent;
   let wsRegistry: ToolRegistry;
   try {
     wsRegistry = await runtime.ensureWorkspaceRegistry(wsId);
@@ -1571,9 +1488,8 @@ async function readResourceFromIdentitySources(
 }
 
 /**
- * Sweep the focused workspace's MCP sources for `uri` (the validated
- * `X-Workspace-Id`) — never a sweep across every workspace the identity belongs
- * to. Returns the first result that carries contents, or null.
+ * Sweep the session's workspace's MCP sources for `uri` — never a sweep across
+ * every workspace the identity belongs to. Returns the first result that carries contents, or null.
  */
 async function readResourceFromWorkspace(
   runtime: Runtime,
@@ -1611,9 +1527,7 @@ function jsonRpcError(status: number, code: number, message: string): Response {
  * prefix keeps lines greppable), identity (for cross-tenant correlation), and
  * the client IP from `x-forwarded-for` (the ALB sets it).
  *
- * Stage 2: the workspace key is gone — sessions are identity-bound and
- * carry no workspace pointer. Routing context (the parsed workspace) is
- * stamped on per-tool-call log lines, not session-level diagnostics.
+ * The workspace is the one the request's URL names.
  */
 function fmtSessionContext(
   request: Request,
@@ -1622,6 +1536,7 @@ function fmtSessionContext(
 ): string {
   const sidPrefix = sessionId ? sessionId.slice(0, 8) : "none";
   const identityId = sessionCtx?.identity?.id ?? "none";
+  const workspaceId = sessionCtx?.workspaceId ?? "none";
   const ip = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "direct";
-  return `sessionId=${sidPrefix} identity=${identityId} ip=${ip}`;
+  return `sessionId=${sidPrefix} identity=${identityId} workspace=${workspaceId} ip=${ip}`;
 }

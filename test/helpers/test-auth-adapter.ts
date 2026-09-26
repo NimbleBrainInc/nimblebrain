@@ -15,7 +15,9 @@ import type {
   ProviderCapabilities,
   CreateUserInput,
   CreateUserResult,
+  VerifiedIdentity,
 } from "../../src/identity/provider.ts";
+import { FIRST_PARTY_GRANT } from "../../src/identity/provider.ts";
 import type { User, UserStore } from "../../src/identity/user.ts";
 import type { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
 
@@ -43,13 +45,13 @@ export class TestAuthAdapter implements IdentityProvider {
     private workDir?: string,
   ) {}
 
-  async verifyRequest(req: Request): Promise<UserIdentity | null> {
+  async verifyRequest(req: Request): Promise<VerifiedIdentity | null> {
     const authHeader = req.headers.get("authorization");
     if (!authHeader?.startsWith("Bearer ")) return null;
     const token = authHeader.slice(7);
     if (token !== this.apiKey) return null;
     await this.ensureDefaults();
-    return TEST_IDENTITY;
+    return { ...TEST_IDENTITY, grant: FIRST_PARTY_GRANT };
   }
 
   async listUsers(): Promise<User[]> {

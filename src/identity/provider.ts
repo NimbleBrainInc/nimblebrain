@@ -17,6 +17,29 @@ export interface UserIdentity {
   preferences: UserPreferences;
 }
 
+// ── Token grant ────────────────────────────────────────────────────
+
+/**
+ * What a verified credential was issued for — a fact the provider establishes
+ * while verifying the signature, reported so a provider-independent layer can
+ * decide where the credential is valid (`authenticateRequest`).
+ *
+ * - `first_party` — issued to this instance's own client: the web app's login
+ *   session. Not minted for any one resource; membership gates what it reaches.
+ * - `resource` — minted by the authorization server external MCP clients use,
+ *   for the resources in `audience` (the token's `aud`, normalized to a list).
+ *   Valid only at a resource whose canonical URL is exactly one of them.
+ */
+export type TokenGrant =
+  | { kind: "first_party" }
+  | { kind: "resource"; audience: readonly string[] };
+
+/** The grant every first-party credential carries. */
+export const FIRST_PARTY_GRANT: TokenGrant = { kind: "first_party" };
+
+/** A verified caller: who they are, and what their credential was issued for. */
+export type VerifiedIdentity = UserIdentity & { grant: TokenGrant };
+
 // ── Provider capabilities ──────────────────────────────────────────
 
 /** Declares what this provider supports — checked by handlers, not instanceof. */
@@ -158,8 +181,12 @@ export interface IdentityProvider {
    */
   authorizationServer?(): AuthorizationServer | null;
 
-  /** Verify an incoming request and return the authenticated identity, or null. */
-  verifyRequest(req: Request): Promise<UserIdentity | null>;
+  /**
+   * Verify an incoming request and return the authenticated identity with the
+   * grant its credential carries, or null. The provider reports the grant; it
+   * never decides where the credential is valid.
+   */
+  verifyRequest(req: Request): Promise<VerifiedIdentity | null>;
 
   // ── Auth code flow (optional — guarded by capabilities.authCodeFlow) ──
 

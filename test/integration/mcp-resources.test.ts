@@ -192,11 +192,7 @@ afterAll(async () => {
 }, 30_000);
 
 async function createMcpClient(workspaceId: string = TEST_WORKSPACE_ID): Promise<Client> {
-  const transport = new StreamableHTTPClientTransport(new URL(`${baseUrl}/mcp`), {
-    requestInit: {
-      headers: { "x-workspace-id": workspaceId },
-    },
-  });
+  const transport = new StreamableHTTPClientTransport(new URL(`${baseUrl}/mcp/${workspaceId}`));
   const client = new Client({ name: "mcp-resources-test", version: "1.0.0" });
   await client.connect(transport);
   return client;
@@ -274,12 +270,11 @@ describe("MCP /mcp — resources", () => {
 
     // Drive the request at the raw HTTP layer too to confirm the transport
     // surfaces a JSON-RPC `error` envelope with code -32002 instead of a 500.
-    const initRes = await fetch(`${baseUrl}/mcp`, {
+    const initRes = await fetch(`${baseUrl}/mcp/${TEST_WORKSPACE_ID}`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         Accept: "application/json, text/event-stream",
-        "x-workspace-id": TEST_WORKSPACE_ID,
       },
       body: JSON.stringify({
         jsonrpc: "2.0",
@@ -297,12 +292,11 @@ describe("MCP /mcp — resources", () => {
     expect(sessionId).toBeTruthy();
 
     // The SDK requires an `initialized` notification before further requests.
-    await fetch(`${baseUrl}/mcp`, {
+    await fetch(`${baseUrl}/mcp/${TEST_WORKSPACE_ID}`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         Accept: "application/json, text/event-stream",
-        "x-workspace-id": TEST_WORKSPACE_ID,
         "mcp-session-id": sessionId!,
       },
       body: JSON.stringify({
@@ -311,12 +305,11 @@ describe("MCP /mcp — resources", () => {
       }),
     });
 
-    const readRes = await fetch(`${baseUrl}/mcp`, {
+    const readRes = await fetch(`${baseUrl}/mcp/${TEST_WORKSPACE_ID}`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         Accept: "application/json, text/event-stream",
-        "x-workspace-id": TEST_WORKSPACE_ID,
         "mcp-session-id": sessionId!,
       },
       body: JSON.stringify({
@@ -337,7 +330,7 @@ describe("MCP /mcp — resources", () => {
   it("SECURITY: a walled session cannot list or read another workspace's resources", async () => {
     // The dev identity is a member of both `TEST_WORKSPACE_ID` and
     // `OTHER_WORKSPACE_ID`, but the wall bounds a `/mcp` session to the one
-    // named by `X-Workspace-Id`. Focused on TEST_WORKSPACE_ID,
+    // its URL names. At TEST_WORKSPACE_ID's URL,
     // `ui://other/dashboard` is neither listed nor readable.
     const focused = await createMcpClient(TEST_WORKSPACE_ID);
     try {

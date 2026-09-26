@@ -12,8 +12,7 @@
  *   3. A `ws_<id>-<tool>` is the RETIRED form. It is rejected, not routed — so a
  *      workspace other than the session's cannot be NAMED, and cross-workspace
  *      reach is unexpressible rather than denied after the fact. A session with
- *      no workspace (e.g. an external `/mcp` client with no `X-Workspace-Id`)
- *      refuses workspace sources with `WorkspaceToolUnavailable`. **There is no
+ *      no workspace refuses workspace sources with `WorkspaceToolUnavailable`. **There is no
  *      per-call membership scan** — the session's `workspaceId` was
  *      membership-validated when the session was established, so reaching only it
  *      is reaching only a member workspace.
@@ -370,8 +369,8 @@ export async function routeToolCall(opts: {
   }
 
   if (workspaceId === undefined) {
-    // Identity-only session (e.g. an external `/mcp` request with no
-    // `X-Workspace-Id`, or a non-member one). Workspace sources are unreachable.
+    // Identity-only session: no workspace is bound. Workspace sources are
+    // unreachable.
     // A bare workspace-source name has no workspace id to report, so this
     // carries the SOURCE name — see `WorkspaceToolUnavailable`, which keeps it
     // in a field of its own rather than overloading `wsId`.

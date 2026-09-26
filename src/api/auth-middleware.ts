@@ -1,5 +1,10 @@
 import type { EventSink } from "../engine/types.ts";
-import type { IdentityProvider, UserIdentity } from "../identity/provider.ts";
+import type {
+  IdentityProvider,
+  TokenGrant,
+  UserIdentity,
+  VerifiedIdentity,
+} from "../identity/provider.ts";
 import { TransientAuthError } from "../identity/provider.ts";
 import { log } from "../observability/log.ts";
 import type { WorkspaceStore } from "../workspace/workspace-store.ts";
@@ -45,14 +50,19 @@ export function isAuthError(result: AuthResult): result is Response {
  *
  * Checks in order:
  * 1. Internal token (scoped to chat endpoints — always checked first for connector-to-host calls)
- * 2. IdentityProvider.verifyRequest() when mode is "adapter"
+ * 2. IdentityProvider.verifyRequest() when mode is "adapter", then the
+ *    credential's grant against `resource` (see {@link grantAdmits})
  * 3. Pass-through when mode is "dev"
+ *
+ * `resource` is the canonical URL of the protected resource the request
+ * addresses (`/mcp/<wsId>`), or undefined for every other route.
  *
  * Returns { identity } on success, or a Response (401/403) on failure.
  */
 export async function authenticateRequest(
   req: Request,
   options: AuthMiddlewareOptions,
+  resource?: string,
 ): Promise<AuthResult> {
   const { mode, internalToken } = options;
 
@@ -75,27 +85,16 @@ export async function authenticateRequest(
 
   // 3. IdentityProvider mode
   if (mode.type === "adapter") {
-    let identity: UserIdentity | null;
-    try {
-      identity = await mode.provider.verifyRequest(req);
-    } catch (err) {
-      if (err instanceof TransientAuthError) {
-        // Verification never reached a verdict — our dependency failed, not the
-        // caller's token. A 401 here is indistinguishable from a revoked
-        // session to the web client, whose post-refresh retry leg treats any
-        // 401 as terminal and logs the user out. 503 keeps the session: REST
-        // surfaces a transient error, streams reconnect with backoff.
-        //
-        // NOT audited. `audit.auth_failure` is a security signal about
-        // callers; our own JWKS outage is an availability event and would
-        // dilute it.
-        log.warn("[auth] verification unavailable", { reason: err.reason });
-        return new Response(null, { status: 503, headers: { "Retry-After": "1" } });
-      }
-      throw err;
-    }
-    if (identity) {
-      return { identity };
+    const verified = await verifyWithProvider(req, mode.provider);
+    if (verified instanceof Response) return verified;
+    if (verified) {
+      const { grant, ...identity } = verified;
+      if (grantAdmits(grant, resource)) return { identity };
+      // A valid token presented where it is not valid: 401 so a client
+      // re-runs discovery and obtains one for this resource.
+      log.warn("[auth] token audience does not name this resource", {
+        path: new URL(req.url).pathname,
+      });
     }
     // Unauthenticated
     logAuthFailure(req, options.eventSink);
@@ -104,6 +103,53 @@ export async function authenticateRequest(
 
   // Unreachable, but satisfy TypeScript
   return new Response(null, { status: 401 });
+}
+
+/**
+ * Run the provider's verification. A {@link TransientAuthError} becomes 503:
+ * verification never reached a verdict — our dependency failed, not the
+ * caller's token. A 401 here is indistinguishable from a revoked session to the
+ * web client, whose post-refresh retry leg treats any 401 as terminal and logs
+ * the user out. 503 keeps the session: REST surfaces a transient error, streams
+ * reconnect with backoff.
+ *
+ * NOT audited. `audit.auth_failure` is a security signal about callers; our own
+ * JWKS outage is an availability event and would dilute it.
+ */
+async function verifyWithProvider(
+  req: Request,
+  provider: IdentityProvider,
+): Promise<VerifiedIdentity | null | Response> {
+  try {
+    return await provider.verifyRequest(req);
+  } catch (err) {
+    if (err instanceof TransientAuthError) {
+      log.warn("[auth] verification unavailable", { reason: err.reason });
+      return new Response(null, { status: 503, headers: { "Retry-After": "1" } });
+    }
+    throw err;
+  }
+}
+
+/**
+ * Whether a verified credential is valid for the request's resource. The rule
+ * is here, above every provider, so it holds whatever the provider is:
+ *
+ * - A first-party credential (the web app's login) is not bound to a resource;
+ *   it is valid on every route, and membership gates what it reaches.
+ * - A resource token is valid only at the resource it was minted for: its
+ *   audience must contain the canonical URL exactly. No prefix match and no
+ *   normalization — the authorization server echoes the client's `resource`
+ *   verbatim and mints for sub-paths, so anything looser admits a token minted
+ *   for another resource. A route that is no protected resource (`resource`
+ *   undefined: all of `/v1/*`) admits no resource token.
+ *
+ * The audience prevents replay; it does not authorize. Membership of the
+ * workspace a resource names stays the gate.
+ */
+export function grantAdmits(grant: TokenGrant, resource: string | undefined): boolean {
+  if (grant.kind === "first_party") return true;
+  return resource !== undefined && grant.audience.includes(resource);
 }
 
 // ── Workspace context ────────────────────────────────────────────
@@ -147,7 +193,7 @@ export async function resolveWorkspace(
   if (!workspaceId) {
     throw new WorkspaceResolutionError(
       "Workspace required. Set the X-Workspace-Id header. " +
-        "The workspace ID is available from GET /v1/bootstrap or Settings → Profile → MCP Connection.",
+        "The workspace ID is available from GET /v1/bootstrap or Workspace settings → General → Workspace ID.",
       400,
     );
   }

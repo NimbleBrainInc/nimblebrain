@@ -10,7 +10,7 @@
  *
  *   2. **SessionRegistry** (this module) — pluggable metadata store. Knows
  *      that a session exists, when it was last touched, and the identity
- *      it's bound to. Used to:
+ *      and workspace it's bound to. Used to:
  *        - tell `not_found` ("session never existed / TTL'd") apart from
  *          `unavailable` ("exists, but the live transport isn't on this
  *          process") in 404 responses, so operators can correlate
@@ -25,15 +25,11 @@
  * the metadata schema or pull cross-process proxying into the application
  * layer — both of which leak into a clean interface.
  *
- * **Stage 2 (cross-workspace refactor) hard-cut `workspaceId` from this
- * type.** Sessions are identity-bound, and a `tools/call` takes its workspace
- * from the request's validated `X-Workspace-Id` — not from the session and not
- * from the tool name, which is bare. Putting `workspaceId` on the session
- * pinned a single-workspace assumption into the metadata schema; the cut is
- * permanent. Readers MUST tolerate legacy entries that still carry a
- * `workspaceId` field (pre-Stage-2 Redis hashes survive on-disk) by
- * ignoring the field — the parsing path here drops unknown fields rather
- * than erroring.
+ * A session is bound to one (identity, workspace): the workspace is the one
+ * in the URL it was initialized at (`/mcp/<wsId>`). The registry records both
+ * so a session-miss answer can confirm a live session only to the caller it is
+ * bound to. An entry with no `workspaceId` reads as `null` and matches no
+ * caller.
  *
  * Implementations: `InMemorySessionRegistry` (default; single-replica) and
  * `RedisSessionRegistry` (multi-replica). The interface intentionally
@@ -45,6 +41,8 @@ export interface SessionMeta {
   sessionId: string;
   /** Identity that initialized the session (for cross-tenant correlation). */
   identityId: string | null;
+  /** Workspace whose URL the session was initialized at; `null` when unrecorded. */
+  workspaceId: string | null;
   createdAt: number;
   lastAccessedAt: number;
 }
