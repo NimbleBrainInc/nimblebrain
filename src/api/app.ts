@@ -1,8 +1,8 @@
 import { Hono } from "hono";
 import { log } from "../observability/log.ts";
-import { WorkspaceResolutionError } from "./auth-middleware.ts";
 import { enableDefaultMetrics } from "./metrics.ts";
 import { corsMiddleware } from "./middleware/cors.ts";
+import { rejectCrossSiteWrites } from "./middleware/fetch-site.ts";
 import { metricsMiddleware } from "./middleware/metrics.ts";
 import { securityHeaders } from "./middleware/security-headers.ts";
 import { tracingMiddleware } from "./middleware/tracing.ts";
@@ -41,6 +41,9 @@ export function createApp(
   // Global CORS middleware
   app.use("*", corsMiddleware(authConfigured, allowedOrigins));
   app.use("*", securityHeaders());
+  // Workspace-scoped writes take the session cookie; refuse a browser's
+  // cross-origin write that no CORS preflight would have stopped.
+  app.use("/v1/workspaces/*", rejectCrossSiteWrites(allowedOrigins));
 
   // Route groups — well-known endpoints first (unauthenticated, no body limit needed)
   app.route("/", wellKnownRoutes(ctx));
@@ -80,11 +83,9 @@ export function createApp(
   // matching route, so MCP must be registered before chat/tools/events.
   app.route("/", mcpRoutes(ctx));
 
-  // Conversation events SSE — Stage 1 Task 005 dropped the workspace
-  // requirement on this route (conversations live at the user level
-  // post-collapse). Must register BEFORE chat/tools/etc. so their
-  // `requireWorkspace` `use("*")` middleware doesn't 400 us on a
-  // path that intentionally has no X-Workspace-Id header.
+  // Conversation events SSE — identity-scoped (located by conversation id,
+  // owner-gated). Registered before chat/tools/etc. so their `use("*")`
+  // middleware does not run on it.
   app.route("/", conversationEventRoutes(ctx));
 
   app.route("/", bootstrapRoutes(ctx));
@@ -98,9 +99,6 @@ export function createApp(
 
   // Centralized error handler
   app.onError((err) => {
-    if (err instanceof WorkspaceResolutionError) {
-      return apiError(err.statusCode, "workspace_error", err.message);
-    }
     log.error("[nimblebrain] Unhandled error", {
       error: err instanceof Error ? err.message : String(err),
     });

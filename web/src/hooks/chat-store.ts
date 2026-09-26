@@ -235,7 +235,7 @@ interface ConversationSlice {
    *  verbatim rather than re-deriving them from current UI state, so a retry
    *  reproduces the original send even if the UI has moved on since. */
   lastSend?: StartTurnParams;
-  /** Stop pressed before `/v1/chat/start` resolved (no conversationId yet).
+  /** Stop pressed before `/v1/workspaces/:wsId/chat/start` resolved (no conversationId yet).
    *  `sendTurn` fires the cancel as soon as it has the id. */
   cancelRequested: boolean;
   /** First `subscribed` frame of a resume should trim a stale in-flight turn
@@ -394,7 +394,7 @@ function buildOptimisticUserMessage(
   };
 }
 
-/** Build the `/v1/chat/start` request body from the slice + send params. */
+/** Build the `/v1/workspaces/:wsId/chat/start` request body from the slice + send params. */
 function buildChatRequest(slice: ConversationSlice, params: StartTurnParams): ChatRequest {
   return {
     message: params.text,
@@ -1304,7 +1304,7 @@ export function createChatStore(): ChatStore {
     const slice = byKey.get(key);
     if (!slice) return;
     if (!slice.conversationId) {
-      // Stop pressed before `/v1/chat/start` resolved — latch it; `sendTurn`
+      // Stop pressed before `/v1/workspaces/:wsId/chat/start` resolved — latch it; `sendTurn`
       // fires the cancel as soon as it has the id.
       slice.cancelRequested = true;
       return;

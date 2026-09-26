@@ -68,9 +68,9 @@ interface ToolCallResult {
 }
 
 async function callTool(tool: string, args: Record<string, unknown>): Promise<ToolCallResult> {
-  const res = await fetch(`${baseUrl}/v1/tools/call`, {
+  const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/tools/call`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", "X-Workspace-Id": TEST_WORKSPACE_ID },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ server: "skills", tool, arguments: args }),
   });
   const body = (await res.json()) as Omit<ToolCallResult, "status">;

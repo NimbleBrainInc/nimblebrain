@@ -441,7 +441,7 @@ describe("instructions source — tool list", () => {
     // The overlay is injected into every conversation, so its author is the
     // human in the settings UI. The annotation is what keeps the tool out of
     // the model's surface (surfacing filter, search, promotion) while the UI
-    // still calls it by name over /v1/tools/call.
+    // still calls it by name over /v1/workspaces/:wsId/tools/call.
     const src = await buildSource();
     const client = src.getClient()!;
     const tools = await client.listTools();

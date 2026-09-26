@@ -31,7 +31,7 @@ import { toolNameMatchesPattern } from "./tool-pattern.ts";
  *      model: the chat tool list (`visibleTools` at the top of `surfaceTools`
  *      below), `nb__search`, the `/mcp` `tools/list`, and the invalid-name
  *      recovery hint (`ToolRegistry.searchTools`); the engine also refuses to
- *      promote it. Only the CALL paths stay open — `/v1/tools/call` and `/mcp`
+ *      promote it. Only the CALL paths stay open — `/v1/workspaces/:wsId/tools/call` and `/mcp`
  *      `tools/call` still dispatch by name, which is how the web shell reaches
  *      it. Feature gating (`isToolEnabled`) and role visibility
  *      (`isToolVisibleToRole`) are independent filters layered on top, not

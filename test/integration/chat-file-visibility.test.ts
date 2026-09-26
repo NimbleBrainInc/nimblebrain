@@ -16,12 +16,12 @@ import { Runtime } from "../../src/runtime/runtime.ts";
 import { ensureUserWorkspace } from "../../src/workspace/provisioning.ts";
 import { personalWorkspaceIdFor } from "../../src/workspace/workspace-store.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
-import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
+import { provisionTestWorkspace } from "../helpers/test-workspace.ts";
 
-// Stage 2 (T006): chat is identity-bound. Files uploaded via /v1/chat/*
-// land in the identity's personal workspace, not the `X-Workspace-Id`
-// header. The test exercises the same identity (DEV_IDENTITY in dev
-// mode) for both upload + read so the file store paths line up.
+// Files uploaded with a chat land in the workspace the chat is addressed to
+// (`/v1/workspaces/<wsId>/chat/*`). The test uploads and reads in the dev
+// user's personal workspace, as the same identity (DEV_IDENTITY in dev mode),
+// so the file store paths line up.
 const PERSONAL_WS_ID = personalWorkspaceIdFor(DEV_IDENTITY.id);
 
 let runtime: Runtime;
@@ -39,7 +39,7 @@ beforeAll(async () => {
   await provisionTestWorkspace(runtime);
   // Provision the dev user's personal workspace + registry so the
   // file-store paths used by chat-multipart ingest exist before the
-  // first request hits `/v1/chat/stream`.
+  // first request hits `/v1/workspaces/<wsId>/chat/stream`.
   await ensureUserWorkspace(runtime.getWorkspaceStore(), {
     id: DEV_IDENTITY.id,
     displayName: DEV_IDENTITY.displayName,
@@ -58,14 +58,12 @@ afterAll(async () => {
 async function uploadChatFile(content: string, filename: string, mimeType: string): Promise<void> {
   const form = new FormData();
   form.append("message", "please look at this");
-  form.append("workspaceId", TEST_WORKSPACE_ID);
   const bytes = new Uint8Array(Buffer.from(content));
   const file = new File([bytes], filename, { type: mimeType });
   form.append("files", file);
 
-  const res = await fetch(`${baseUrl}/v1/chat/stream`, {
+  const res = await fetch(`${baseUrl}/v1/workspaces/${PERSONAL_WS_ID}/chat/stream`, {
     method: "POST",
-    headers: { "X-Workspace-Id": PERSONAL_WS_ID },
     body: form,
   });
   if (res.status !== 200) {
@@ -80,9 +78,9 @@ async function callFilesTool(
   tool: string,
   args: Record<string, unknown>,
 ): Promise<{ status: number; body: unknown }> {
-  const res = await fetch(`${baseUrl}/v1/tools/call`, {
+  const res = await fetch(`${baseUrl}/v1/workspaces/${PERSONAL_WS_ID}/tools/call`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", "X-Workspace-Id": PERSONAL_WS_ID },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ server: "files", tool, arguments: args }),
   });
   const body = await res.json();
@@ -117,7 +115,7 @@ async function listFiles(): Promise<
 }
 
 describe("chat multipart upload ↔ files__* visibility (bug 4)", () => {
-  it("file uploaded via /v1/chat/stream is listed by files__list with source=chat", async () => {
+  it("file uploaded via /v1/workspaces/:wsId/chat/stream is listed by files__list with source=chat", async () => {
     await uploadChatFile("hello world", "notes-1.bin", "application/octet-stream");
 
     const files = await listFiles();
@@ -133,7 +131,7 @@ describe("chat multipart upload ↔ files__* visibility (bug 4)", () => {
     // bug 4's scope (store unification, not conversation threading).
   });
 
-  it("file uploaded via /v1/chat/stream is readable by files__read", async () => {
+  it("file uploaded via /v1/workspaces/:wsId/chat/stream is readable by files__read", async () => {
     const payload = "round trip";
     await uploadChatFile(payload, "roundtrip.bin", "application/octet-stream");
     const files = await listFiles();
@@ -166,7 +164,7 @@ describe("chat multipart upload ↔ files__* visibility (bug 4)", () => {
     expect(serialized).not.toContain(Buffer.from(payload).toString("base64"));
   });
 
-  it("file uploaded via /v1/chat/stream is served by GET /v1/files/:id", async () => {
+  it("file uploaded via /v1/workspaces/:wsId/chat/stream is served by GET /v1/files/:id", async () => {
     await uploadChatFile("served bytes", "served.bin", "application/octet-stream");
     const files = await listFiles();
     const id = files.find((f) => f.filename === "served.bin")?.id;

@@ -256,7 +256,7 @@ export function createManageConnectorsTool(ctx: ManageConnectorsContext): InProc
         wsId: {
           type: "string",
           description:
-            "Target workspace. For `install`: defaults to the request's workspace (X-Workspace-Id), so the web shell installs into the workspace it's viewing without passing this; supply it only to install elsewhere. For `grant_connector` / `revoke_connector`: the workspace to grant/revoke the caller's personal connector to (any workspace the caller belongs to, including their own personal one) — REQUIRED and explicit (no header fallback).",
+            "Target workspace. For `install`: defaults to the workspace this call is made in (the one its URL names), so omit it to install there; supply it only to install elsewhere. For `grant_connector` / `revoke_connector`: the workspace to grant/revoke the caller's personal connector to (any workspace the caller belongs to, including their own personal one) — REQUIRED and explicit (never defaulted).",
         },
         clientId: {
           type: "string",
@@ -431,17 +431,17 @@ function resolveDispatchArgs(
     tools: (input.tools as Record<string, unknown>) ?? {},
     entry: input.entry as unknown,
     // Default the install target to the request's workspace — the same
-    // `ctx.getWorkspaceId()` (X-Workspace-Id, set from the `/w/<slug>` route)
-    // every other action on this tool uses. The web shell installs into the
+    // `ctx.getWorkspaceId()` (the workspace in the request URL) every other
+    // action on this tool uses. The web shell installs into the
     // workspace the user is viewing; it no longer carries a separately-picked
     // target. An explicit `wsId` arg still wins for direct API callers. Keeping
     // install on the same workspace selector as connect / list / status is what
     // closes the "Connector not installed" scope mismatch (an install seeded under
     // one workspace, then read under another).
     installWsId: input.wsId === undefined ? (wsId ?? undefined) : String(input.wsId),
-    // Grant/revoke target is explicit only — never the ambient X-Workspace-Id
-    // (the profile page has no workspace focus, and a stale header must not
-    // silently become the grant target). Trimmed like `installWsId` so a
+    // Grant/revoke target is explicit only — never the request's workspace
+    // (the profile page has no workspace focus of its own, and the workspace
+    // its calls go through must not silently become the grant target). Trimmed like `installWsId` so a
     // whitespace-only value fails the clean "wsId is required" check.
     grantTargetWsId:
       input.wsId !== undefined && String(input.wsId).trim() !== ""
@@ -1021,21 +1021,19 @@ async function handleInstall(
   }
 
   // `wsId` is REQUIRED for every install, but it resolves to the request's
-  // workspace by default (X-Workspace-Id, set from the `/w/<slug>` route the
-  // web shell is on) — the dispatcher passes `ctx.getWorkspaceId()` when no
-  // explicit arg is given. There is still no default-to-personal fallback
+  // workspace by default (the workspace in the request URL) — the dispatcher
+  // passes `ctx.getWorkspaceId()` when no explicit arg is given. There is still no default-to-personal fallback
   // (Stage 1 precedent: `startConnectorSource` hard-errors on missing wsId;
   // pooling credentials across tenants via a silent default is the failure
-  // mode this guard forecloses). A client that calls this action with
-  // neither a workspace header nor a `wsId` arg hits the guard below.
+  // mode this guard forecloses). A call bound to no workspace and carrying
+  // no `wsId` arg hits the guard below.
   const wsId = wsIdArg?.trim() ? wsIdArg.trim() : null;
   if (!wsId) {
     return errResult(
-      "wsId is required for install. The web shell installs into the " +
-        "workspace named by the request (X-Workspace-Id / the /w/<slug> " +
-        "route); clients calling this action directly must supply a " +
-        "workspace via that header or an explicit wsId argument. There is " +
-        "no default-to-personal fallback inside this tool.",
+      "wsId is required for install. A call made through a workspace's " +
+        "URL (/v1/workspaces/<wsId>/… or /mcp/<wsId>) installs into that " +
+        "workspace; otherwise pass an explicit wsId argument. There is no " +
+        "default-to-personal fallback inside this tool.",
     );
   }
   const ws = await ctx.runtime.getWorkspaceStore().get(wsId);

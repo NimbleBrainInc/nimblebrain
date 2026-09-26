@@ -14,7 +14,7 @@ import { mcpAuthCallbackUrl } from "../../oauth/mcp-callback-url.ts";
 import { log } from "../../observability/log.ts";
 import { type FlowOwner, peekFlowOwner, resolveWithCode } from "../../tools/oauth-flow-registry.ts";
 import { requireAuth } from "../middleware/auth.ts";
-import { requireWorkspace } from "../middleware/workspace.ts";
+import { requireWorkspace, WORKSPACE_ROUTE_PREFIX } from "../middleware/workspace.ts";
 import { type AppContext, type AppEnv, apiError } from "../types.ts";
 import { profileConnectorsUrl, workspaceConnectorsUrl } from "./connectors-redirect.ts";
 import { SUCCESS_PAGE_CSP, successPageHtml } from "./oauth-success-page.ts";
@@ -25,15 +25,13 @@ import { SUCCESS_PAGE_CSP, successPageHtml } from "./oauth-success-page.ts";
  *
  * Two endpoints:
  *
- * - `POST /v1/mcp-auth/initiate` (workspace-authed): launches an
- *   interactive flow. Looks up the captured authorization URL on the
- *   connector's pending Connection, sets a session-bound `nb_oauth_state`
+ * - `POST /v1/workspaces/:wsId/mcp-auth/initiate` (workspace-authed):
+ *   launches an interactive flow. Looks up the captured authorization URL on
+ *   the connector's pending Connection, sets a session-bound `nb_oauth_state`
  *   cookie scoped to the callback path, and returns the URL the client
  *   should navigate the user's browser to. **POST-only** so a malicious
- *   `<img>` or prefetch can't trigger a flow without same-origin
- *   privileges. The `X-Workspace-Id` header that
- *   `requireWorkspace` enforces forces a CORS preflight, which kills
- *   simple-form CSRF.
+ *   `<img>` or prefetch can't trigger a flow, and a cross-site write under
+ *   `/v1/workspaces/` is refused (`rejectCrossSiteWrites`).
  *
  * - `GET /v1/mcp-auth/callback?code&state` (unauthenticated): the return
  *   leg of the OAuth dance. Verifies the `nb_oauth_state` cookie hashes
@@ -61,7 +59,7 @@ export function mcpAuthRoutes(ctx: AppContext) {
 
   const app = new Hono<AppEnv>();
 
-  // ── POST /v1/mcp-auth/initiate ────────────────────────────────────
+  // ── POST /v1/workspaces/:wsId/mcp-auth/initiate ───────────────────
   //
   // Workspace-authed. Body: { serverName }. Stage 2: every URL connector
   // is workspace-scoped, so the principal is always `WORKSPACE_PRINCIPAL_ID`.
@@ -74,12 +72,12 @@ export function mcpAuthRoutes(ctx: AppContext) {
   // Auth + workspace middleware applied per-handler (not via .use("*"))
   // so the unauthenticated /callback below is unaffected. Hono's
   // sub-app `.use("*")` middleware applies to ALL routes under the
-  // mount, which would otherwise gate /callback on workspace headers
-  // the user's browser can't set on a return-from-AS navigation.
+  // mount, which would otherwise gate /callback on authentication the
+  // user's browser may not carry on a return-from-AS navigation.
   app.post(
-    "/v1/mcp-auth/initiate",
+    `${WORKSPACE_ROUTE_PREFIX}/mcp-auth/initiate`,
     requireAuth(ctx.authOptions),
-    requireWorkspace(ctx.workspaceStore),
+    requireWorkspace(ctx),
     async (c) => {
       const serverName = await parseServerName(c);
       if (serverName instanceof Response) return serverName;

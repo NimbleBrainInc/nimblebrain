@@ -143,10 +143,10 @@ export function startServer(options: ServerOptions): ServerHandle {
   //   - `/mcp` (mcpLimiter) is the remote/untrusted surface — external MCP
   //     clients and sandboxed connector iframes. This is the real abuse vector,
   //     so it carries a present-but-generous cap.
-  //   - `/v1/tools/call` (toolCallLimiter) is the trusted first-party shell.
+  //   - `/v1/workspaces/:wsId/tools/call` (toolCallLimiter) is the trusted first-party shell.
   //     Its only failure mode is a runaway client loop, so the ceiling is
   //     high — far above human navigation, low enough to stop a hot loop.
-  //   - `/v1/chat` (chatLimiter) is first-party + LLM-expensive, so it stays
+  //   - `/v1/workspaces/:wsId/chat` (chatLimiter) is first-party + LLM-expensive, so it stays
   //     modest.
   // All are bypassed in dev mode (see `isDevMode` below).
   const chatRateLimit = Number(process.env.NB_CHAT_RATE_LIMIT) || 20;

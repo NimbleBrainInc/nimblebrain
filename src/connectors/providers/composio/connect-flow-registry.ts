@@ -1,7 +1,7 @@
 /**
  * Process-local registry for pending Composio connect flows.
  *
- * A record is created at `/v1/composio-auth/initiate*` — behind `requireAuth`,
+ * A record is created at a Composio initiate route — behind `requireAuth`,
  * with the owner derived from the authenticated session — and consumed once at
  * the unauthenticated `/v1/composio-auth/callback` (the return leg from the
  * vendor). This server-side record, not the `nb_composio_state` cookie, is the

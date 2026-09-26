@@ -720,7 +720,7 @@ describe("ConnectorStatusHero", () => {
 
   test("a composio OAUTH2 connector stays open to a member — the server grants it", async () => {
     // `authScheme` is optional and defaults to OAUTH2, so the ordinary composio
-    // connector has none and takes /v1/composio-auth/initiate — requireAuth +
+    // connector has none and takes /v1/workspaces/:wsId/composio-auth/initiate — requireAuth +
     // requireWorkspace, no admin check (#755). Gating it here would hide
     // Reconnect while the server still grants it, which is the client/server
     // divergence #741 exists to remove. This pins the API_KEY discriminator:

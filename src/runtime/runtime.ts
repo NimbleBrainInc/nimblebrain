@@ -1056,10 +1056,9 @@ export class Runtime {
     // handlers — one shared resolver, no forked copy to drift out of sync.
     const ownerId = resolveRequestOwnerId(request.identity, this._identityProvider !== null);
     // `workspaceId` names the workspace this turn acts from. The HTTP chat door
-    // REQUIRES it (`requireWorkspace` on `/v1/chat*`), so it's always present for
-    // HTTP callers; the `?? personal` default below serves only embedded / dev /
-    // CLI callers (and dev-mode requests, where the middleware passes through
-    // without an identity) that drive the runtime directly without a header.
+    // takes it from the URL (`/v1/workspaces/<wsId>/chat*`), so it's always
+    // present for HTTP callers; the `?? personal` default below serves only
+    // embedded / dev / CLI callers that drive the runtime directly.
     // It's the conversation metadata breadcrumb here and is delegated to `chat()`
     // below, which re-resolves the same default for tool scope. (Pre-Stage-2 the
     // missing-workspace case hard-threw a raw 500 on chat-start; the default
@@ -1473,7 +1472,7 @@ export class Runtime {
     //
     // A run that establishes its own resource skips it. The workspace a new
     // conversation is born in is the one the caller's own door just validated
-    // (`requireWorkspace` on `/v1/chat*`), and the conversation is sealed to
+    // (`requireWorkspace` on `/v1/workspaces/<wsId>/chat*`), and the conversation is sealed to
     // that workspace from here on — re-checking would be the same check twice.
     //
     // ADR-0007 puts this at session establishment on every door. This IS the
@@ -3499,9 +3498,8 @@ export class Runtime {
   /**
    * Process-wide file locator: resolves a globally-unique `fileId` to the
    * workspace it lives under, within the caller's own owner partitions. Backs
-   * the bare `GET /v1/files/:fileId` serve path (a browser `<img>` GET can't send
-   * `X-Workspace-Id`, so the workspace can't ride the request — the id alone
-   * resolves it). Lazily built; its memo is kept current by `getWorkspaceFileStore`.
+   * the bare `GET /v1/files/:fileId` serve path (no workspace in the URL, so a
+   * browser `<img src>` can load it — the id alone resolves it). Lazily built; its memo is kept current by `getWorkspaceFileStore`.
    */
   getFileLocator(): FileLocator {
     if (!this._fileLocator) {

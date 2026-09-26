@@ -196,7 +196,7 @@ describe("an empty model id is not a choice", () => {
   // Driven through chat, not through the predicate. Asserting
   // `isModelPermitted("")` passes whether or not the request path reaches the
   // floor before qualification — which is how the previous version of this
-  // test stayed green while `POST /v1/chat {"model":""}` still went through.
+  // test stayed green while `POST /v1/workspaces/:wsId/chat {"model":""}` still went through.
   it("is refused on the request path, where it is malformed rather than a clear", async () => {
     const runtime = await start("empty-request");
     try {

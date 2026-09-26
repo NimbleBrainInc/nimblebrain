@@ -546,7 +546,7 @@ export async function cleanupComposioConnector(opts: {
  * to the agent — this is the correct preset. It also disables
  * Composio's in-MCP `manageConnections` auth prompt by default,
  * which was driving the chat-side "click this link" modal that
- * bypassed our `/v1/composio-auth/initiate` flow.
+ * bypassed our `/v1/workspaces/:wsId/composio-auth/initiate` flow.
  */
 export async function createComposioSession(opts: {
   apiKey: string;

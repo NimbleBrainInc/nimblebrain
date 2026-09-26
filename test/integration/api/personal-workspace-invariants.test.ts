@@ -1,7 +1,7 @@
 /**
  * End-to-end coverage: a mutation that violates the personal-workspace
  * invariants returns HTTP 422 with the structured body the spec
- * defines, through the real `/v1/tools/call` surface and the real
+ * defines, through the real `/v1/workspaces/:wsId/tools/call` surface and the real
  * `manage_workspaces` tool.
  *
  * The unit suite (`test/unit/workspace/personal-workspace-invariants.test.ts`)
@@ -22,7 +22,7 @@ import { createTestAuthAdapter, TEST_IDENTITY } from "../../helpers/test-auth-ad
 
 const API_KEY = "personal-invariant-test-key";
 
-describe("POST /v1/tools/call manage_workspaces — personal workspace invariants → 422", () => {
+describe("POST /v1/workspaces/:wsId/tools/call manage_workspaces — personal workspace invariants → 422", () => {
   let runtime: Runtime;
   let handle: ServerHandle;
   let baseUrl: string;
@@ -83,12 +83,11 @@ describe("POST /v1/tools/call manage_workspaces — personal workspace invariant
     return {
       "Content-Type": "application/json",
       Authorization: `Bearer ${API_KEY}`,
-      "X-Workspace-Id": personalWsId,
     };
   }
 
   it("add_member on a personal workspace returns 422 personal_workspace_invariant", async () => {
-    const res = await fetch(`${baseUrl}/v1/tools/call`, {
+    const res = await fetch(`${baseUrl}/v1/workspaces/${personalWsId}/tools/call`, {
       method: "POST",
       headers: callToolHeaders(),
       body: JSON.stringify({
@@ -123,7 +122,7 @@ describe("POST /v1/tools/call manage_workspaces — personal workspace invariant
     // that enforces the invariant. The point of the test is that the
     // store-layer rejection survives the in-process MCP boundary as
     // structuredContent + becomes a 422 at the HTTP boundary.
-    const res = await fetch(`${baseUrl}/v1/tools/call`, {
+    const res = await fetch(`${baseUrl}/v1/workspaces/${personalWsId}/tools/call`, {
       method: "POST",
       headers: callToolHeaders(),
       body: JSON.stringify({
@@ -150,7 +149,7 @@ describe("POST /v1/tools/call manage_workspaces — personal workspace invariant
   it("normal update (name) on a personal workspace still succeeds — invariant scoped to identity fields", async () => {
     // Topology adversarial: confirm we didn't over-lock. A name update
     // on a personal workspace must continue to work.
-    const res = await fetch(`${baseUrl}/v1/tools/call`, {
+    const res = await fetch(`${baseUrl}/v1/workspaces/${personalWsId}/tools/call`, {
       method: "POST",
       headers: callToolHeaders(),
       body: JSON.stringify({

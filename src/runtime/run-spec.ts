@@ -40,7 +40,7 @@ export type UserResourceLinkPart = {
 /**
  * What woke the agent. Exactly today's callers, no more:
  *
- *  - `chat`     — a person in a conversation (`/v1/chat*`, `startTurn`).
+ *  - `chat`     — a person in a conversation (`/v1/workspaces/:wsId/chat*`, `startTurn`).
  *  - `schedule` — an automations cron tick (`Scheduler.dispatchRun`).
  *  - `manual`   — an operator pressing Run now (`automations__run`).
  *  - `event`    — a notification a workspace admin routed to an automation.

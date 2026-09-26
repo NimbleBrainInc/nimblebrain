@@ -368,7 +368,7 @@ describe("conversations that predate the binding", () => {
 
 describe("the detached-turn path", () => {
   test("a conversation created by startTurn is bound like any other", async () => {
-    // `/v1/chat/start` → `startTurn` is the web client's chat path, and it
+    // `/v1/workspaces/:wsId/chat/start` → `startTurn` is the web client's chat path, and it
     // creates the conversation before delegating to `chat()` — so its own
     // `createOpts` is the only thing that binds a web-created conversation.
     runtime.updateConfig({ models: { default: MODEL_A } });

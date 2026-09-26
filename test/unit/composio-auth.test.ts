@@ -88,10 +88,10 @@ function sha256Hex(input: string): string {
 /**
  * Minimal AppContext stub. The composio-auth routes touch only the
  * runtime accessor for the connector directory + work dir, plus
- * `secureCookies` for cookie scoping. requireAuth + requireWorkspace
- * are not exercised by tests below (the callback and proxy routes
- * are unauthenticated by design; the initiate route is covered
- * separately by the helper-function tests).
+ * `secureCookies` for cookie scoping. The workspace-scoped initiate
+ * route also runs `requireWorkspace`: with no identity provider the
+ * caller is the dev user, and the stub store lists that user as a
+ * member of `STUB_MEMBER_WS` and of no other workspace.
  */
 /**
  * Capturing record of the last `recordConnectionStateChange` call the
@@ -124,6 +124,12 @@ interface StubLifecycleCalls {
     callCount: number;
   };
 }
+
+/** The one workspace the stub store admits the dev user to. */
+const STUB_MEMBER_WS = "ws_test";
+const STUB_FOREIGN_WS = "ws_foreign";
+/** The dev user `requireWorkspace` admits when no identity provider is configured. */
+const DEV_USER_ID = "usr_default";
 
 function stubCtx(
   workDir: string,
@@ -191,11 +197,22 @@ function stubCtx(
     resolveRequestUserId() {
       return options.userId ?? "usr_test";
     },
+    // No identity provider: requireWorkspace() treats the caller as the dev user.
+    getIdentityProvider() {
+      return null;
+    },
   } as unknown as AppContext["runtime"];
 
   return {
     runtime,
-    workspaceStore: { get: async () => null } as unknown as AppContext["workspaceStore"],
+    workspaceStore: {
+      get: async (id: string) =>
+        id === STUB_MEMBER_WS
+          ? { id, members: [{ userId: DEV_USER_ID, role: "admin" }] }
+          : id === STUB_FOREIGN_WS
+            ? { id, members: [{ userId: "usr_someone_else", role: "admin" }] }
+            : null,
+    } as unknown as AppContext["workspaceStore"],
     authOptions: {} as AppContext["authOptions"],
     secureCookies: false,
     __lifecycleCalls: calls,
@@ -570,18 +587,19 @@ describe("GET /v1/composio-auth/callback", () => {
   });
 });
 
-// ── POST /v1/composio-auth/initiate ──────────────────────────────────
+// ── POST /v1/workspaces/:wsId/composio-auth/initiate ─────────────────
 //
-// Route-level tests for the initiate endpoint. Mirrors the
-// dev-mode-auth + workspace-injection pattern from
-// test/unit/api/mcp-auth-routes.test.ts so the route's CORS / cookie /
-// adopt-existing logic is covered without standing up the real auth
-// middleware. The Composio SDK is mocked at the module boundary
+// Route-level tests for the initiate endpoint. Mirrors the dev-mode
+// pattern from test/unit/api/mcp-auth-routes.test.ts: requireAuth passes
+// with no identity and requireWorkspace admits the dev user to the
+// workspace in the path, so the route's CORS / cookie / adopt-existing
+// logic is covered without a real identity provider. The Composio SDK is mocked at the module boundary
 // (top of this file) — tests rewire `sdkCalls.*Impl` to drive
 // list-returns-active vs list-empty behaviour.
 
-describe("POST /v1/composio-auth/initiate", () => {
-  const WS_ID = "ws_test";
+describe("POST /v1/workspaces/:wsId/composio-auth/initiate", () => {
+  const WS_ID = STUB_MEMBER_WS;
+  const INITIATE_URL = `http://nb.test/v1/workspaces/${WS_ID}/composio-auth/initiate`;
   const savedEnv: Record<string, string | undefined> = {};
   const TRACKED = [
     "COMPOSIO_API_KEY",
@@ -611,11 +629,10 @@ describe("POST /v1/composio-auth/initiate", () => {
   });
 
   /**
-   * Build a Hono app with workspace pre-set via a wrapping middleware
-   * (matches mcp-auth-routes.test.ts pattern). The route's own
-   * `requireAuth(authOptions)` + `requireWorkspace(workspaceStore)`
-   * middleware land after this and are no-ops in dev mode with our
-   * canned context.
+   * Build a Hono app over the real routes (matches the
+   * mcp-auth-routes.test.ts pattern). The route's own
+   * `requireAuth(authOptions)` passes in dev mode, and
+   * `requireWorkspace(ctx)` admits the dev user to `WS_ID`.
    */
   function makeApp(catalogEntry: ReturnType<typeof composioEntry> | null): {
     app: Hono<AppEnv>;
@@ -631,10 +648,6 @@ describe("POST /v1/composio-auth/initiate", () => {
       eventSink: { emit: () => {} },
     };
     const app = new Hono<AppEnv>();
-    app.use("*", async (c, next) => {
-      c.set("workspaceId", WS_ID);
-      await next();
-    });
     app.route("/", composioAuthRoutes(ctx));
     return { app, ctx };
   }
@@ -649,7 +662,7 @@ describe("POST /v1/composio-auth/initiate", () => {
     });
 
     const { app } = makeApp(composioEntry("com.google/gmail"));
-    const res = await app.request("http://nb.test/v1/composio-auth/initiate", {
+    const res = await app.request(INITIATE_URL, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ connectorId: "com.google/gmail" }),
@@ -699,13 +712,9 @@ describe("POST /v1/composio-auth/initiate", () => {
         eventSink: { emit: () => {} },
       };
       const app = new Hono<AppEnv>();
-      app.use("*", async (c, next) => {
-        c.set("workspaceId", WS_ID);
-        await next();
-      });
       app.route("/", composioAuthRoutes(ctx));
 
-      const res = await app.request("http://nb.test/v1/composio-auth/initiate", {
+      const res = await app.request(INITIATE_URL, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ connectorId: "com.google/gmail" }),
@@ -762,13 +771,9 @@ describe("POST /v1/composio-auth/initiate", () => {
         eventSink: { emit: () => {} },
       };
       const app = new Hono<AppEnv>();
-      app.use("*", async (c, next) => {
-        c.set("workspaceId", WS_ID);
-        await next();
-      });
       app.route("/", composioAuthRoutes(ctx));
 
-      const res = await app.request("http://nb.test/v1/composio-auth/initiate", {
+      const res = await app.request(INITIATE_URL, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ connectorId: "com.google/gmail" }),
@@ -799,7 +804,7 @@ describe("POST /v1/composio-auth/initiate", () => {
     // thing that separates them.
 
     const { app } = makeApp(composioEntry("com.google/gmail"));
-    const res = await app.request("http://nb.test/v1/composio-auth/initiate", {
+    const res = await app.request(INITIATE_URL, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ connectorId: "com.google/gmail" }),
@@ -816,7 +821,7 @@ describe("POST /v1/composio-auth/initiate", () => {
     setConnectorsConfig({ providers: { composio: { authConfigs: {} } } });
 
     const { app } = makeApp(composioEntry("com.google/gmail"));
-    const res = await app.request("http://nb.test/v1/composio-auth/initiate", {
+    const res = await app.request(INITIATE_URL, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ connectorId: "com.google/gmail" }),
@@ -834,7 +839,7 @@ describe("POST /v1/composio-auth/initiate", () => {
     setConnectorsConfig({ providers: { composio: { authConfigs: { gmail: "ac_gmail" } } } });
     // Catalog entry exists but its auth kind is `dcr` — the request
     // is well-formed but the connector is the wrong type for this
-    // endpoint. /v1/mcp-auth/initiate is the right destination.
+    // endpoint. /v1/workspaces/:wsId/mcp-auth/initiate is the right destination.
     const entry = {
       id: "com.example/native",
       name: "Native",
@@ -844,7 +849,7 @@ describe("POST /v1/composio-auth/initiate", () => {
       auth: "dcr" as const,
     };
     const { app } = makeApp(entry as unknown as ReturnType<typeof composioEntry>);
-    const res = await app.request("http://nb.test/v1/composio-auth/initiate", {
+    const res = await app.request(INITIATE_URL, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ connectorId: "com.example/native" }),
@@ -863,7 +868,7 @@ describe("POST /v1/composio-auth/initiate", () => {
     // `..` substring rejected by isValidConnectorId — defense-in-depth
     // against catalog ids carrying path-traversal markers even though
     // connectorSlug would also disarm them downstream.
-    const res = await app.request("http://nb.test/v1/composio-auth/initiate", {
+    const res = await app.request(INITIATE_URL, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ connectorId: "../escape" }),
@@ -879,7 +884,7 @@ describe("POST /v1/composio-auth/initiate", () => {
     setConnectorsConfig({ providers: { composio: { authConfigs: { gmail: "ac_gmail" } } } });
 
     const { app } = makeApp(null); // empty catalog
-    const res = await app.request("http://nb.test/v1/composio-auth/initiate", {
+    const res = await app.request(INITIATE_URL, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ connectorId: "com.google/gmail" }),
@@ -895,7 +900,7 @@ describe("POST /v1/composio-auth/initiate", () => {
     setConnectorsConfig({ providers: { composio: { authConfigs: { gmail: "ac_gmail" } } } });
 
     const { app } = makeApp(composioEntry("com.google/gmail"));
-    const res = await app.request("http://nb.test/v1/composio-auth/initiate", {
+    const res = await app.request(INITIATE_URL, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: "not json",
@@ -905,16 +910,54 @@ describe("POST /v1/composio-auth/initiate", () => {
     const body = (await res.json()) as { error: string };
     expect(body.error).toBe("bad_request");
   });
+
+  test("answers a malformed, unknown or non-member workspace identically, and starts no flow", async () => {
+    process.env.COMPOSIO_API_KEY = "k_test";
+    setConnectorsConfig({ providers: { composio: { authConfigs: { gmail: "ac_gmail" } } } });
+    sdkCalls.linkImpl = async () => {
+      throw new Error("a refused workspace must not reach connectedAccounts.link");
+    };
+
+    const { app } = makeApp(composioEntry("com.google/gmail"));
+    const answers: Array<{ status: number; body: string }> = [];
+    for (const wsId of ["ws_bad-id", "ws_nosuch", STUB_FOREIGN_WS]) {
+      const res = await app.request(`http://nb.test/v1/workspaces/${wsId}/composio-auth/initiate`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ connectorId: "com.google/gmail" }),
+      });
+      expect(res.headers.get("set-cookie")).toBeNull();
+      answers.push({ status: res.status, body: await res.text() });
+    }
+    expect(answers[0]!.status).toBe(404);
+    expect(JSON.parse(answers[0]!.body).error).toBe("workspace_error");
+    for (const answer of answers) expect(answer).toEqual(answers[0]!);
+  });
+
+  test("the unscoped /v1/composio-auth/initiate path is not a route", async () => {
+    process.env.COMPOSIO_API_KEY = "k_test";
+    setConnectorsConfig({ providers: { composio: { authConfigs: { gmail: "ac_gmail" } } } });
+
+    const { app } = makeApp(composioEntry("com.google/gmail"));
+    const res = await app.request("http://nb.test/v1/composio-auth/initiate", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ connectorId: "com.google/gmail" }),
+    });
+
+    expect(res.status).toBe(404);
+    expect(res.headers.get("set-cookie")).toBeNull();
+  });
 });
 
 // ── POST /v1/composio-auth/initiate-identity ─────────────────────────
 //
 // The identity-plane sibling of /initiate: connect a PERSONAL Composio
 // connector on the caller's own identity, with NO workspace in context.
-// Same dev-mode-auth pattern as the /initiate describe, minus the
-// workspace-injection middleware — the route has `requireAuth` but not
+// Same dev-mode-auth pattern as the workspace initiate describe, but the
+// route has no workspace in its path — it has `requireAuth` but not
 // `requireWorkspace`, so it resolves its owner from the verified identity,
-// never from a focused workspace. These tests are the identity analog of
+// never from a workspace. These tests are the identity analog of
 // the /initiate happy-path + adopt-existing cases; the workspace path
 // above is left byte-identical (the shared `connectComposio` helper only
 // varies on `owner`).

@@ -162,7 +162,7 @@ export function ConnectorBrowsePage() {
     }
     // Composio-backed connectors route through their own initiate endpoint (keyed
     // on catalog id, not server name). Everything else (dcr + static) stays on
-    // /v1/mcp-auth.
+    // mcp-auth.
     const { authorizationUrl } =
       install.auth === "composio"
         ? await initiateComposioOAuth(entry.id)
@@ -180,8 +180,8 @@ export function ConnectorBrowsePage() {
   // Install into the workspace the user is already in. The page is
   // mounted under `/w/<slug>/...`, so the route names an unambiguous
   // workspace; `installConnector` sends no explicit target and the server
-  // installs into the request's workspace (X-Workspace-Id, derived from
-  // that same route). That's the identical workspace the follow-up
+  // installs into the request's workspace (the one in its path, derived
+  // from that same route). That's the identical workspace the follow-up
   // `initiateMcpOAuth` / list_tools / status calls read — so an install
   // and its connect step can't land in different workspaces. (The prior
   // target-picker let them diverge, which surfaced as "Connector not

@@ -1,5 +1,5 @@
 /**
- * HTTP-level tests for /v1/chat/stream concurrency protection.
+ * HTTP-level tests for /v1/workspaces/:wsId/chat/stream concurrency protection.
  *
  * Covers both ways a concurrent stream request can be rejected:
  * 1. Pre-check path — runtime.isConversationActive() returns true, handler
@@ -37,7 +37,7 @@ function parseSSE(text: string): SSEEvent[] {
   return events;
 }
 
-describe("POST /v1/chat/stream — concurrency protection", () => {
+describe("POST /v1/workspaces/:wsId/chat/stream — concurrency protection", () => {
   let handle: ServerHandle | null = null;
   let runtime: Runtime | null = null;
   let cleanupDir: (() => void) | null = null;
@@ -104,9 +104,9 @@ describe("POST /v1/chat/stream — concurrency protection", () => {
 
     // Streaming request on the same conversation must be pre-checked and
     // rejected with a JSON 409 — no SSE stream should be opened.
-    const res = await fetch(`${baseUrl}/v1/chat/stream`, {
+    const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat/stream`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", "X-Workspace-Id": TEST_WORKSPACE_ID },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ message: "collides", conversationId: convId }),
     });
     expect(res.status).toBe(409);
@@ -137,8 +137,8 @@ describe("POST /v1/chat/stream — concurrency protection", () => {
     });
     const convId = seed.conversationId;
 
-    // Fire 5 concurrent /v1/chat/stream requests on the same convId. Each will
-    // either:
+    // Fire 5 concurrent /v1/workspaces/:wsId/chat/stream requests on the same
+    // convId. Each will either:
     //   a) get HTTP 409 from the pre-check, or
     //   b) open the stream and get an SSE error `run_in_progress` from the
     //      runtime.chat() reject path, or
@@ -149,9 +149,9 @@ describe("POST /v1/chat/stream — concurrency protection", () => {
     // produced and every other response is rejected.
     const results = await Promise.all(
       Array.from({ length: 5 }, (_, i) =>
-        fetch(`${baseUrl}/v1/chat/stream`, {
+        fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat/stream`, {
           method: "POST",
-          headers: { "Content-Type": "application/json", "X-Workspace-Id": TEST_WORKSPACE_ID },
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ message: `concurrent ${i}`, conversationId: convId }),
         }).then(async (r) => {
           if (r.status === 409) {
