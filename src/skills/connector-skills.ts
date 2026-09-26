@@ -1,11 +1,13 @@
 /**
  * Server-skill adapter (SEP-2640 `io.modelcontextprotocol/skills`).
  *
- * Synthesizes Layer 3 `Skill` objects from the `skill://<name>/SKILL.md`
- * resources an MCP server exposes, discovered via `resources/list`. This makes a
- * server-side workflow guide discoverable through the same tool-affined loading
- * machinery that picks up filesystem skills — no need for the chat to be scoped
- * to a specific app via `appContext`.
+ * Synthesizes Layer 3 `Skill` objects from the skills an MCP server publishes:
+ * the entries of its `skills/list` when it declares the extension
+ * (`skills-extension.ts`), otherwise the `skill://<name>/SKILL.md` resources
+ * `resources/list` returns. This makes a server-side workflow guide
+ * discoverable through the same tool-affined loading machinery that picks up
+ * filesystem skills — no need for the chat to be scoped to a specific app via
+ * `appContext`.
  *
  * Why this exists:
  *
@@ -135,6 +137,35 @@ export interface DiscoveredSkill {
    * `SkillMatcher` fires on. Absent when the server declared none.
    */
   triggers?: string[];
+  /**
+   * Every file URI of the skill, from its `skills/list` manifest (SEP-2640).
+   * Absent when the server listed none: a `"dynamic"` skill, or a server
+   * enumerated with `resources/list`.
+   */
+  files?: string[];
+}
+
+/**
+ * Give every skill in one server's set a distinct `name`.
+ *
+ * A name is a label, not an identity: two skills at different paths on one
+ * server may share a final segment (`acme/billing/refunds`,
+ * `acme/support/refunds`). The manifest name built from it is the runtime's
+ * de-duplication key, so a shared name would silently drop one. Each skill in
+ * a colliding group is named by its full skill path instead; a name no other
+ * skill shares is left alone.
+ */
+export function disambiguateSkillNames(skills: DiscoveredSkill[]): DiscoveredSkill[] {
+  const counts = new Map<string, number>();
+  for (const skill of skills) counts.set(skill.name, (counts.get(skill.name) ?? 0) + 1);
+  return skills.map((skill) =>
+    (counts.get(skill.name) ?? 0) > 1 ? { ...skill, name: skillPath(skill.uri) } : skill,
+  );
+}
+
+/** The skill path of a `<scheme>://<skill-path>/SKILL.md` URI: `skill://acme/billing/refunds/SKILL.md` → `acme/billing/refunds`. */
+function skillPath(uri: string): string {
+  return uri.replace(/^[a-z][a-z0-9+.-]*:\/\//i, "").replace(/\/SKILL\.md$/, "");
 }
 
 /**

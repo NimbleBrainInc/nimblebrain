@@ -33,6 +33,7 @@
 
 ### Added
 
+- **MCP Skills Extension (SEP-2640).** The platform declares `io.modelcontextprotocol/skills`, enumerates a declaring server's skills with `skills/list`, and loads a `SKILL.md` only when it matches the listed digest, size, and frontmatter; other servers are still discovered through `resources/list` ([docs](https://docs.nimblebrain.ai/using/skills/#skills-published-by-an-mcp-server)).
 - **Tool visibility follows the MCP Apps spec.** A tool's `_meta.ui.visibility` is honored for every tool, a connector's included: without `"model"` it is left out of every agent tool list (chat, `nb__search`, `/mcp` `tools/list`) yet stays callable by name, and an app's `tools/call` to a tool without `"app"` is refused ([docs](https://docs.nimblebrain.ai/apps/bridge/#toolscall)).
 - **Organization → Archives.** Org admins see every deleted workspace's archive (name, ID, size, archived-at) and can purge one permanently, behind a confirm. Nothing is purged automatically ([docs](https://docs.nimblebrain.ai/guide/settings/#archives-orgarchives)).
 - **Three spec requests an app could send but the host never answered.** `ui/download-file` hands the user a file as MCP resource blocks (embed the bytes; a `ResourceLink` is refused rather than fetched, which would make the host an SSRF proxy), `ui/request-display-mode` reports the mode actually in effect, and `notifications/message` reaches the browser console. `downloadFile` is now advertised alongside the `logging` capability that was already claimed ([docs](https://docs.nimblebrain.ai/apps/bridge/)).

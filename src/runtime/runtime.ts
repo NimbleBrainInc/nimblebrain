@@ -158,6 +158,7 @@ import {
 } from "../skills/connector-skill-store.ts";
 import {
   type DiscoveredSkill,
+  disambiguateSkillNames,
   isSkillEntrypointUri,
   PUBLISHED_SKILL_SCOPE,
   parseSkillMarkdown,
@@ -173,6 +174,12 @@ import {
 } from "../skills/loader.ts";
 import { type SkillMatch, SkillMatcher } from "../skills/matcher.ts";
 import { partitionSkillsByRole, type SelectedSkill, selectLayer3Skills } from "../skills/select.ts";
+import {
+  listedSkillFiles,
+  parseSkillEntry,
+  type SkillEntry,
+  verifySkillEntrypoint,
+} from "../skills/skills-extension.ts";
 import { approxTokens } from "../skills/tokens.ts";
 import { MAX_SKILL_BODY_CHARS, truncateMarkdownToBudget } from "../skills/truncate.ts";
 import type { Skill } from "../skills/types.ts";
@@ -2244,7 +2251,7 @@ export class Runtime {
     let focusedSkillUri: string | undefined;
     try {
       const sourceTools = await source.tools();
-      // Primary = the first skill this source lists (resources/list order), and
+      // Primary = the first skill this source lists (listing order), and
       // the only one this briefing carries. Its URI is returned as
       // `focusedSkillUri` so the caller excludes just this skill from the connector
       // pool; every OTHER skill the same server publishes still routes by its
@@ -2257,10 +2264,15 @@ export class Runtime {
       // the skill's path), derived from the DISCOVERED URI — never from the source
       // name, whose reverse-DNS slug won't match the skill's short path.
       const referenceUri = primarySkill?.uri.replace(/\/SKILL\.md$/, "/reference");
-      const hasReference =
-        referenceUri && source instanceof McpSource
-          ? await this.hasResource(source, referenceUri)
-          : false;
+      // A skill listed with a file manifest answers from the manifest: the
+      // extension forbids reading a file of the skill that it does not list.
+      const hasReference = !referenceUri
+        ? false
+        : primarySkill?.files
+          ? primarySkill.files.includes(referenceUri)
+          : source instanceof McpSource
+            ? await this.hasResource(source, referenceUri)
+            : false;
       focusedApp = {
         name: appContext.appName,
         tools: sourceTools.map((t) => ({
@@ -2683,13 +2695,13 @@ export class Runtime {
 
   /**
    * Discover the skills an MCP server exposes, parsed and truncated, with
-   * caching, for ONE workspace's instance of that server. Per SEP-2640
-   * (`io.modelcontextprotocol/skills`) a skill is a
-   * `skill://<name>/SKILL.md` markdown resource; the runtime lists the source's
-   * resources (`resources/list`) and reads the ones whose URI is a skill
-   * entrypoint — it never guesses the URI from the source name (that guess,
-   * `skill://<serverName>/usage`, missed every fleet connector whose name is a
-   * reverse-DNS slug).
+   * caching, for ONE workspace's instance of that server. A server declaring
+   * the Skills extension (SEP-2640, `io.modelcontextprotocol/skills`) is
+   * enumerated with `skills/list`; any other server with `resources/list`,
+   * reading the URIs that are `skill://…/SKILL.md` entrypoints (see
+   * `enumerateServerSkills`). The URI is never guessed from the source name,
+   * which differs from the skill's path on every connector named by a
+   * reverse-DNS slug.
    *
    * Only a COMPLETE enumeration is cached — including the common "this server
    * has no skills" empty, which would otherwise re-list on every chat and
@@ -2756,41 +2768,94 @@ export class Runtime {
   }
 
   /**
-   * List a source's resources and read every skill entrypoint among them.
+   * Enumerate a source's skills and read each one's `SKILL.md`.
+   *
+   * A server that declares the Skills extension (SEP-2640) is enumerated with
+   * `skills/list`, whose entries are the authoritative record of what is a
+   * skill there: a `skill://` resource the listing omits is an ordinary
+   * resource. Each `SKILL.md` read is verified against its entry (digest,
+   * size, frontmatter) and dropped when it fails. A server that does not
+   * declare the extension is enumerated with `resources/list`, taking every
+   * `skill://…/SKILL.md` URI (ADR-0011).
    *
    * `shortfall` names the first way the result is knowingly incomplete, in
-   * check order: a transport error cut `resources/list` short
+   * check order: a transport error cut the enumeration short
    * (`enumeration_failed`), the page ceiling stopped it with a cursor
-   * outstanding (`enumeration_truncated`), or a LISTED entrypoint failed to
-   * read (`skill_unreadable`). The entrypoint count exists because
-   * `readSkillResource` swallows a failed/empty read (one bad skill must not
-   * sink the discovery) — without it, a list-then-fail-to-read server returns
-   * a reduced set that looks complete.
+   * outstanding (`enumeration_truncated`), a listed skill failed verification
+   * (`skill_unverified`, which the next enumeration refreshes), or a listed
+   * entrypoint failed to read (`skill_unreadable`). The entrypoint count exists
+   * because `readSkillResource` swallows a failed/empty read (one bad skill
+   * must not sink the discovery) — without it, a list-then-fail-to-read server
+   * returns a reduced set that looks complete. An entry the extension calls
+   * invalid is dropped without a shortfall: re-listing will not fix it.
    */
   private async enumerateServerSkills(source: McpSource): Promise<{
     skills: DiscoveredSkill[];
-    shortfall?: "enumeration_failed" | "enumeration_truncated" | "skill_unreadable";
+    shortfall?:
+      | "enumeration_failed"
+      | "enumeration_truncated"
+      | "skill_unverified"
+      | "skill_unreadable";
   }> {
+    if (source.declaresSkillsExtension()) return this.enumerateListedSkills(source);
     const skills: DiscoveredSkill[] = [];
     const { resources, ok, truncated } = await source.listResources();
     let entrypoints = 0;
     for (const resource of resources) {
-      if (isSkillEntrypointUri(resource.uri)) entrypoints++;
+      if (!isSkillEntrypointUri(resource.uri)) continue;
+      entrypoints++;
       const skill = await this.readSkillResource(source, resource.uri);
-      if (skill) skills.push(skill);
+      if (skill && skill !== "unverified") skills.push(skill);
     }
-    if (!ok) return { skills, shortfall: "enumeration_failed" };
-    if (truncated) return { skills, shortfall: "enumeration_truncated" };
-    if (skills.length < entrypoints) return { skills, shortfall: "skill_unreadable" };
-    return { skills };
+    const named = disambiguateSkillNames(skills);
+    if (!ok) return { skills: named, shortfall: "enumeration_failed" };
+    if (truncated) return { skills: named, shortfall: "enumeration_truncated" };
+    if (skills.length < entrypoints) return { skills: named, shortfall: "skill_unreadable" };
+    return { skills: named };
   }
 
-  /** Read one skill entrypoint resource into a parsed, budget-capped `DiscoveredSkill`, or `undefined` when the URI isn't a skill entrypoint or the resource is unreadable/empty. */
+  /** {@link enumerateServerSkills} for a server that declares the Skills extension. */
+  private async enumerateListedSkills(
+    source: McpSource,
+  ): ReturnType<Runtime["enumerateServerSkills"]> {
+    const skills: DiscoveredSkill[] = [];
+    const { entries, ok, truncated } = await source.listSkills();
+    let unreadable = 0;
+    let unverified = 0;
+    for (const raw of entries) {
+      const entry = parseSkillEntry(raw);
+      if (!entry) {
+        log.warn("[skill] invalid skills/list entry dropped", { source: source.name });
+        continue;
+      }
+      const skill = await this.readSkillResource(source, entry.uri, entry);
+      if (skill === "unverified") unverified++;
+      else if (skill) skills.push(skill);
+      else unreadable++;
+    }
+    const named = disambiguateSkillNames(skills);
+    if (!ok) return { skills: named, shortfall: "enumeration_failed" };
+    if (truncated) return { skills: named, shortfall: "enumeration_truncated" };
+    if (unverified > 0) return { skills: named, shortfall: "skill_unverified" };
+    if (unreadable > 0) return { skills: named, shortfall: "skill_unreadable" };
+    return { skills: named };
+  }
+
+  /**
+   * Read one skill entrypoint resource into a parsed, budget-capped
+   * `DiscoveredSkill`, or `undefined` when the resource is unreadable/empty.
+   *
+   * With an `entry` from `skills/list`, the URI is a skill because the listing
+   * says so, the read is verified against the entry (`"unverified"` on
+   * failure), and the entry's file manifest rides along. Without one, only a
+   * `skill://…/SKILL.md` URI is read.
+   */
   private async readSkillResource(
     source: McpSource,
     uri: string,
-  ): Promise<DiscoveredSkill | undefined> {
-    if (!isSkillEntrypointUri(uri)) return undefined;
+    entry?: SkillEntry,
+  ): Promise<DiscoveredSkill | "unverified" | undefined> {
+    if (!entry && !isSkillEntrypointUri(uri)) return undefined;
     let text: string | undefined;
     try {
       text = (await source.readResource(uri))?.text;
@@ -2799,6 +2864,17 @@ export class Runtime {
       return undefined;
     }
     if (!text) return undefined;
+    if (entry) {
+      const verified = verifySkillEntrypoint(entry, text);
+      if (!verified.ok) {
+        log.warn("[skill] server skill failed verification against its skills/list entry", {
+          source: source.name,
+          uri,
+          reason: verified.reason,
+        });
+        return "unverified";
+      }
+    }
     const parsed = parseSkillMarkdown(uri, text);
     // Token budget: cap the body (heading-aware, so a trailing "rules"
     // section isn't sliced mid-rule — a production tool-selection failure).
@@ -2808,6 +2884,7 @@ export class Runtime {
         `[skill] server skill truncated to ${MAX_SKILL_BODY_CHARS} chars (${capped.sectionsOmitted} section(s) omitted) — ${uri}`,
       );
     }
+    const files = entry ? listedSkillFiles(entry) : null;
     return {
       uri,
       name: parsed.name,
@@ -2820,6 +2897,7 @@ export class Runtime {
       ...(parsed.loadingStrategy ? { loadingStrategy: parsed.loadingStrategy } : {}),
       ...(parsed.priority !== undefined ? { priority: parsed.priority } : {}),
       ...(parsed.triggers?.length ? { triggers: parsed.triggers } : {}),
+      ...(files ? { files } : {}),
     };
   }
 
@@ -5703,6 +5781,7 @@ function reportSkillDiscoveryDegraded(input: {
   reason:
     | "enumeration_failed"
     | "enumeration_truncated"
+    | "skill_unverified"
     | "skill_unreadable"
     | "source_unavailable";
   recovered: number;

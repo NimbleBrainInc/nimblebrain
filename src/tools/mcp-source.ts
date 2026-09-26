@@ -37,6 +37,12 @@ import {
 } from "../host-resources/index.ts";
 import { requestIdentityAttrs, withSpan } from "../observability/index.ts";
 import { log } from "../observability/log.ts";
+import {
+  SKILLS_EXTENSION_ID,
+  SKILLS_LIST_METHOD,
+  SkillsListResultSchema,
+  skillsClientExtension,
+} from "../skills/skills-extension.ts";
 import { coerceInputForSchema } from "./coerce-input.ts";
 import { promoteHiddenErrors } from "./promote-hidden-errors.ts";
 import { createRemoteTransport } from "./remote-transport.ts";
@@ -830,6 +836,11 @@ export class McpSource implements ToolSource {
    * https://modelcontextprotocol.io/extensions/overview. Connectors read these
    * from their ClientCapabilities to opt into connector→host resource reads.
    * Phase 1 advertises the capability; handlers land in Phase 2.
+   *
+   * It also carries `io.modelcontextprotocol/skills` (SEP-2640), because skill
+   * discovery consumes it: against a server that declares the extension,
+   * {@link listSkills} enumerates with `skills/list` and the runtime verifies
+   * each `SKILL.md` it reads against the listed digest and frontmatter.
    */
   private buildClient(): Client {
     return new Client(
@@ -840,7 +851,7 @@ export class McpSource implements ToolSource {
             requests: { tools: { call: {} } },
             cancel: {},
           },
-          extensions: hostExtensions(),
+          extensions: { ...hostExtensions(), ...skillsClientExtension() },
         },
       },
     );
@@ -1918,9 +1929,10 @@ export class McpSource implements ToolSource {
   /**
    * Enumerate the server's resources via `resources/list` (best-effort).
    *
-   * Used for skill discovery (SEP-2640, `io.modelcontextprotocol/skills`): the
-   * runtime lists a source's resources and reads the `skill://<name>/SKILL.md`
-   * entrypoints. Returns `{ resources, ok, truncated }`: `ok: false` means the
+   * Used for skill discovery on a server that does not declare the Skills
+   * extension (SEP-2640; a server that does is enumerated by
+   * {@link listSkills}): the runtime lists its resources and reads the
+   * `skill://<name>/SKILL.md` entrypoints. Returns `{ resources, ok, truncated }`: `ok: false` means the
    * enumeration couldn't complete cleanly — a transport error mid-list (partial
    * `resources`) or a torn-down client — so the caller declines to cache it as a
    * stable "no skills" and retries next turn. Only a genuine successful response —
@@ -1995,6 +2007,50 @@ export class McpSource implements ToolSource {
       return { resources, ok: false, truncated: false };
     }
     return { resources, ok: true, truncated: false };
+  }
+
+  /** True when the server declared the Skills extension (SEP-2640) in its `initialize` result. */
+  declaresSkillsExtension(): boolean {
+    const extensions = this.client?.getServerCapabilities()?.extensions;
+    return !!extensions && SKILLS_EXTENSION_ID in extensions;
+  }
+
+  /**
+   * Enumerate the server's skills via `skills/list` (SEP-2640), best-effort.
+   *
+   * Call only against a server for which {@link declaresSkillsExtension} is
+   * true: declaring the extension is what commits a server to the method.
+   * Entries come back unvalidated, for the caller to check one at a time.
+   * `ok` and `truncated` mean what they mean on {@link listResources}: a
+   * failed call leaves a partial result (`ok: false`), and the page cap can
+   * stop the walk with a cursor outstanding (`truncated: true`). Either way
+   * the result is not the server's whole listing. Failures do not route
+   * through session recovery, for the same reason as `listResources`.
+   */
+  async listSkills(): Promise<{ entries: unknown[]; ok: boolean; truncated: boolean }> {
+    if (!this.client) return { entries: [], ok: false, truncated: false };
+    const entries: unknown[] = [];
+    let cursor: string | undefined;
+    try {
+      for (let page = 0; page < 10; page++) {
+        const result = await this.client.request(
+          { method: SKILLS_LIST_METHOD, params: cursor ? { cursor } : {} },
+          SkillsListResultSchema,
+        );
+        entries.push(...result.skills);
+        cursor = result.nextCursor;
+        if (!cursor) break;
+      }
+      if (cursor) {
+        log.warn("[mcp] listSkills hit the 10-page cap; later skills not enumerated", {
+          source: this.name,
+        });
+        return { entries, ok: true, truncated: true };
+      }
+    } catch {
+      return { entries, ok: false, truncated: false };
+    }
+    return { entries, ok: true, truncated: false };
   }
 
   /** Expose the underlying MCP client (kept for tests and rare introspection). */

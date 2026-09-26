@@ -162,7 +162,12 @@ Uninstalling the connector removes its materialized overlays.
 
 ## Skills published by an MCP server
 
-A server can publish its own guidance as skill resources — `skill://<name>/SKILL.md`, discovered by listing the server's resources. The platform reads the **same** `metadata.nimblebrain.*` block documented above off that published frontmatter, so a published skill loads by the rules its author writes rather than a fixed convention:
+A server can publish its own guidance as skills, per the MCP [Skills Extension](https://github.com/modelcontextprotocol/modelcontextprotocol/blob/main/seps/2640-skills-extension.md) (`io.modelcontextprotocol/skills`). The platform declares the extension when it connects, and finds a server's skills one of two ways:
+
+- **The server declares the extension.** The platform enumerates it with `skills/list`, which is the record of what is a skill there. Each `SKILL.md` it reads must match the listed SHA-256 digest, size, and frontmatter, or that skill is not loaded and discovery retries on the next turn. A `skill://` resource the listing leaves out is an ordinary resource.
+- **The server does not declare it.** The platform lists the server's resources and loads every `skill://<skill-path>/SKILL.md`.
+
+The skill's name is its frontmatter `name`. When two skills on one server share a name, each is named by its full skill path instead (`acme/billing/refunds`). The platform reads the **same** `metadata.nimblebrain.*` block documented above off that published frontmatter, so a published skill loads by the rules its author writes rather than a fixed convention:
 
 | Field | Effect on a published skill |
 |-------|-----------------------------|

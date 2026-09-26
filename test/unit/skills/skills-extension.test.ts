@@ -1,0 +1,195 @@
+/**
+ * The host-side checks of the Skills extension (SEP-2640): which `skills/list`
+ * entries are loadable, and whether a fetched `SKILL.md` is the one the listing
+ * described. Plus `McpSource.listSkills`, the enumeration those checks run on.
+ */
+
+import { describe, expect, it } from "bun:test";
+import { createHash } from "node:crypto";
+import { NoopEventSink } from "../../../src/adapters/noop-events.ts";
+import { disambiguateSkillNames } from "../../../src/skills/connector-skills.ts";
+import {
+  listedSkillFiles,
+  parseSkillEntry,
+  SKILLS_EXTENSION_ID,
+  type SkillEntry,
+  verifySkillEntrypoint,
+} from "../../../src/skills/skills-extension.ts";
+import { McpSource } from "../../../src/tools/mcp-source.ts";
+
+const SKILL_MD = `---
+name: refunds
+description: Process refunds
+metadata:
+  nimblebrain:
+    loading-strategy: always
+---
+
+# Refunds
+`;
+
+function digestOf(text: string): string {
+  return `sha256:${createHash("sha256").update(new TextEncoder().encode(text)).digest("hex")}`;
+}
+
+function entryFor(text: string, overrides: Partial<SkillEntry> = {}): SkillEntry {
+  const uri = "skill://acme/billing/refunds/SKILL.md";
+  return {
+    uri,
+    frontmatter: {
+      name: "refunds",
+      description: "Process refunds",
+      metadata: { nimblebrain: { "loading-strategy": "always" } },
+    },
+    resources: [{ uri, digest: digestOf(text), size: new TextEncoder().encode(text).byteLength }],
+    ...overrides,
+  };
+}
+
+describe("parseSkillEntry", () => {
+  it("accepts a conforming entry, with a manifest or dynamic", () => {
+    expect(parseSkillEntry(entryFor(SKILL_MD))).not.toBeNull();
+    expect(parseSkillEntry({ ...entryFor(SKILL_MD), resources: "dynamic" })).not.toBeNull();
+  });
+
+  it("rejects an entry with no resources, or resources of another shape", () => {
+    const { resources: _omit, ...noResources } = entryFor(SKILL_MD);
+    expect(parseSkillEntry(noResources)).toBeNull();
+    expect(parseSkillEntry({ ...entryFor(SKILL_MD), resources: "static" })).toBeNull();
+    expect(
+      parseSkillEntry({
+        ...entryFor(SKILL_MD),
+        resources: [{ uri: "skill://acme/billing/refunds/SKILL.md", digest: "md5:x", size: 1 }],
+      }),
+    ).toBeNull();
+  });
+
+  it("rejects a uri whose final segment is not frontmatter.name", () => {
+    expect(
+      parseSkillEntry({ ...entryFor(SKILL_MD), uri: "skill://acme/billing/other/SKILL.md" }),
+    ).toBeNull();
+  });
+
+  it("rejects a uri that is not a SKILL.md, and frontmatter without description", () => {
+    expect(parseSkillEntry({ ...entryFor(SKILL_MD), uri: "skill://refunds/README.md" })).toBeNull();
+    expect(parseSkillEntry({ ...entryFor(SKILL_MD), frontmatter: { name: "refunds" } })).toBeNull();
+  });
+
+  it("accepts a skill served under a scheme other than skill://", () => {
+    const uri = "github://acme/repo/skills/refunds/SKILL.md";
+    const entry = entryFor(SKILL_MD, { uri });
+    expect(parseSkillEntry({ ...entry, resources: "dynamic" })).not.toBeNull();
+  });
+});
+
+describe("verifySkillEntrypoint", () => {
+  it("passes the bytes and frontmatter the listing described", () => {
+    expect(verifySkillEntrypoint(entryFor(SKILL_MD), SKILL_MD)).toEqual({ ok: true });
+  });
+
+  it("fails a changed body as a size or digest mismatch", () => {
+    const entry = entryFor(SKILL_MD);
+    expect(verifySkillEntrypoint(entry, `${SKILL_MD}more`)).toEqual({
+      ok: false,
+      reason: "size_mismatch",
+    });
+    // Same length, different bytes.
+    const swapped = SKILL_MD.replace("Refunds\n", "Refundz\n");
+    expect(verifySkillEntrypoint(entry, swapped)).toEqual({ ok: false, reason: "digest_mismatch" });
+  });
+
+  it("fails an entry whose manifest omits its own SKILL.md", () => {
+    const entry = entryFor(SKILL_MD, {
+      resources: [{ uri: "skill://acme/billing/refunds/other.md", digest: digestOf("x"), size: 1 }],
+    });
+    expect(verifySkillEntrypoint(entry, SKILL_MD)).toEqual({ ok: false, reason: "unlisted" });
+  });
+
+  it("fails frontmatter that differs from the listing, even when the digest matches", () => {
+    const entry = entryFor(SKILL_MD, {
+      frontmatter: { name: "refunds", description: "Process refunds" },
+    });
+    expect(verifySkillEntrypoint(entry, SKILL_MD)).toEqual({
+      ok: false,
+      reason: "frontmatter_mismatch",
+    });
+  });
+
+  it("checks only frontmatter for a dynamic skill", () => {
+    const entry = entryFor(SKILL_MD, { resources: "dynamic" });
+    expect(verifySkillEntrypoint(entry, `${SKILL_MD}\nextra body`)).toEqual({ ok: true });
+    const other = SKILL_MD.replace("Process refunds", "Something else");
+    expect(verifySkillEntrypoint(entry, other).ok).toBe(false);
+  });
+
+  it("lists the manifest's files, or none for a dynamic skill", () => {
+    expect(listedSkillFiles(entryFor(SKILL_MD))).toEqual(["skill://acme/billing/refunds/SKILL.md"]);
+    expect(listedSkillFiles(entryFor(SKILL_MD, { resources: "dynamic" }))).toBeNull();
+  });
+});
+
+describe("disambiguateSkillNames", () => {
+  const skill = (uri: string, name: string) => ({ uri, name, description: "", body: "" });
+
+  it("names colliding skills by their skill path and leaves unique names alone", () => {
+    const out = disambiguateSkillNames([
+      skill("skill://acme/billing/refunds/SKILL.md", "refunds"),
+      skill("skill://acme/support/refunds/SKILL.md", "refunds"),
+      skill("skill://git-workflow/SKILL.md", "git-workflow"),
+    ]);
+    expect(out.map((s) => s.name)).toEqual([
+      "acme/billing/refunds",
+      "acme/support/refunds",
+      "git-workflow",
+    ]);
+  });
+});
+
+/** An `McpSource` whose SDK client is a stub. */
+function makeSource(client: unknown): McpSource {
+  const source = new McpSource(
+    "stub",
+    { type: "remote", url: new URL("http://localhost:0/mcp") },
+    new NoopEventSink(),
+  );
+  (source as unknown as { client: unknown }).client = client;
+  return source;
+}
+
+describe("McpSource skills extension", () => {
+  it("reads the extension from the server's declared capabilities", () => {
+    const declares = makeSource({
+      getServerCapabilities: () => ({ resources: {}, extensions: { [SKILLS_EXTENSION_ID]: {} } }),
+    });
+    const silent = makeSource({ getServerCapabilities: () => ({ resources: {} }) });
+    expect(declares.declaresSkillsExtension()).toBe(true);
+    expect(silent.declaresSkillsExtension()).toBe(false);
+    expect(makeSource(null).declaresSkillsExtension()).toBe(false);
+  });
+
+  it("follows skills/list pagination", async () => {
+    const methods: string[] = [];
+    const source = makeSource({
+      request: async (req: { method: string; params: { cursor?: string } }) => {
+        methods.push(req.method);
+        return req.params.cursor ? { skills: ["b"] } : { skills: ["a"], nextCursor: "p2" };
+      },
+    });
+    expect(await source.listSkills()).toEqual({ entries: ["a", "b"], ok: true, truncated: false });
+    expect(methods).toEqual(["skills/list", "skills/list"]);
+  });
+
+  it("reports a failed or capped enumeration as incomplete", async () => {
+    const failing = makeSource({
+      request: async () => {
+        throw new Error("transport blip");
+      },
+    });
+    expect(await failing.listSkills()).toEqual({ entries: [], ok: false, truncated: false });
+
+    const endless = makeSource({ request: async () => ({ skills: ["x"], nextCursor: "more" }) });
+    const out = await endless.listSkills();
+    expect(out.ok).toBe(true);
+    expect(out.truncated).toBe(true);
+  });
+});

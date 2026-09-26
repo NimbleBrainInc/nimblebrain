@@ -16,6 +16,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import type { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { textContent } from "../../src/engine/content-helpers.ts";
+import { SKILLS_EXTENSION_ID } from "../../src/skills/skills-extension.ts";
 import type { McpSource } from "../../src/tools/mcp-source.ts";
 import { makeInProcessSource } from "../helpers/in-process-source.ts";
 
@@ -51,5 +52,11 @@ describe("McpSource client capabilities", () => {
     expect(tasks?.requests?.tools?.call).toBeDefined();
     expect(tasks?.cancel).toBeDefined();
     expect(tasks?.list).toBeUndefined();
+  });
+
+  test("declares the Skills extension, which skill discovery consumes", async () => {
+    source = await makeInProcessSource("caps-skills", []);
+    // Exercised by `listSkills` + verification in the runtime's discovery.
+    expect(declaredCapabilities(source)?.extensions?.[SKILLS_EXTENSION_ID]).toEqual({});
   });
 });
