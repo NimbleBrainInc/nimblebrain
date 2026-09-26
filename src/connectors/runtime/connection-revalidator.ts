@@ -32,7 +32,7 @@
  * Multi-replica note: at `replicas: 1` (the only supported topology today)
  * per-pod re-validation is correct — each pod owns its connections' in-memory
  * state. At `replicas > 1` this needs leader election (per-tenant Redis lease)
- * + the clustered RunBus; see the prerequisites in this package's `CLAUDE.md`.
+ * + the clustered RunBus; see the prerequisites in `src/api/AGENTS.md`.
  */
 
 import { log } from "../../observability/log.ts";

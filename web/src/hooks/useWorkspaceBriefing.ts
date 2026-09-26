@@ -38,7 +38,7 @@ export function __resetBriefingCache(): void {
  * effect, so the slug-derived id could briefly lead the header).
  *
  * Transport is REST (`callTool`), not the MCP iframe bridge — this is
- * first-party shell code per the API-audiences split in `CLAUDE.md`.
+ * first-party shell code per the API-audiences split in `src/api/AGENTS.md`.
  */
 export function useWorkspaceBriefing(workspaceId: string | undefined): UseWorkspaceBriefing {
   // `bump` forces a re-render when the async fetch fills the module cache; both

@@ -43,6 +43,8 @@ and that is the only copy the runtime reads. Two apps also carry a
 `manifest.json` restating them in `ai.nimblebrain/host` form; nothing loads it.
 Do not add one to a new app, and do not treat the pair as a contract.
 
+**A built-in app serves its `ui://` resource as `text/html;profile=mcp-app`**, the MCP Apps MIME type. Use `MCP_APP_MIME_TYPE` (`src/tools/in-process-app.ts`), never a literal or plain `text/html`.
+
 ---
 
 ## 1. Four contract invariants
