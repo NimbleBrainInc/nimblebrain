@@ -19,7 +19,7 @@ For end-user client setup walkthroughs, see [Connecting External Clients](/conne
 |---|---|
 | **URL** | `<origin>/mcp/<workspaceId>` — for example `https://nb.example.com/mcp/ws_0123456789abcdef` |
 | **Methods** | `POST`, `DELETE` (`GET` returns `405`) |
-| **Protocol** | [Streamable HTTP](https://modelcontextprotocol.io/specification/2025-03-26/basic/transports#streamable-http) (MCP transport) |
+| **Protocol** | [Streamable HTTP](https://modelcontextprotocol.io/specification/2026-07-28/basic/transports) (MCP transport), revision `2026-07-28` and the 2025 revisions — see [Protocol versions](#protocol-versions) |
 | **Auth** | OAuth 2.0 bearer token bound to this URL (RFC 8707), discovered via RFC 9728 |
 | **Scope** | One workspace — the one in the URL — plus your identity tools |
 
@@ -118,9 +118,20 @@ NimbleBrain verifies each access token's signature against the authorization ser
 
 The authorization server honours a client's `resource` only for URLs it has been configured to accept. For every public host the instance is reached on — its platform host and any custom domain — register a resource indicator covering `<origin>/mcp/*`. Without one, the authorization server ignores `resource`, mints a token whose audience is the client id, and every MCP request is refused with `401`.
 
+## Protocol versions
+
+The endpoint serves both protocol eras on the same URL, and a request's own shape decides which:
+
+| A client that… | Is served |
+|---|---|
+| Negotiates `2026-07-28` (its requests carry the per-request `_meta` envelope; it probes with `server/discover`) | Per request, with no session: each request is authenticated, membership-checked and answered on its own. `server/discover` answers the server's capabilities. |
+| Opens with the 2025 `initialize` handshake (every 2025-era client, including today's Claude connector) | In a session, as below. |
+
+The tools, resources, workspace wall and error shapes are the same on both. Task-augmented `tools/call` (`params.task`, then `tasks/get`, `tasks/result`, `tasks/cancel`) is served to 2025-era clients only; the 2026-07-28 revision moved tasks out of the core protocol, and this endpoint does not serve the tasks extension.
+
 ## Sessions
 
-Each `initialize` creates a new MCP session tracked server-side and addressed by the `Mcp-Session-Id` response header. Include that header on every subsequent request in the session.
+Sessions are a 2025-era mechanism; a `2026-07-28` client has none. Each `initialize` creates a new MCP session tracked server-side and addressed by the `Mcp-Session-Id` response header. Include that header on every subsequent request in the session.
 
 A session is bound to the identity that opened it **and** the workspace whose URL it was opened at. Presenting its id under another workspace's URL, or as another identity, is answered exactly like an unknown session id — the response does not reveal that the session exists.
 

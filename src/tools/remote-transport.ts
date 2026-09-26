@@ -1,5 +1,5 @@
+import type { FetchLike, OAuthClientProvider, Transport } from "@modelcontextprotocol/client";
 import { SSEClientTransport, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
-import type { OAuthClientProvider, FetchLike, Transport } from "@modelcontextprotocol/client";
 import type { RemoteTransportConfig } from "../connectors/runtime/types.ts";
 import { isMintedFleetSource } from "../oauth/minted-credential-provider.ts";
 import { getCredentialProvider } from "./credential-provider.ts";

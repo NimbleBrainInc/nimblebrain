@@ -1,6 +1,3 @@
-import { CancelTaskResultSchema, CreateTaskResultSchema, GetTaskPayloadResultSchema, GetTaskResultSchema, TaskStatusNotificationSchema } from "@modelcontextprotocol/core";
-import type { CallToolRequest, CancelTaskRequest, GetTaskPayloadRequest, GetTaskRequest } from "@modelcontextprotocol/server";
-
 // ---------------------------------------------------------------------------
 // MCP App Bridge — postMessage Handler
 //
@@ -29,6 +26,20 @@ import type { CallToolRequest, CancelTaskRequest, GetTaskPayloadRequest, GetTask
 //   ai.nimblebrain/action, ai.nimblebrain/keydown, ai.nimblebrain/request-file
 //   Each is served only because it is declared: see host-capabilities.ts.
 // ---------------------------------------------------------------------------
+
+import {
+  type CallToolRequest,
+  CallToolResultSchema,
+  type CancelTaskRequest,
+  CancelTaskResultSchema,
+  CreateTaskResultSchema,
+  ErrorCode,
+  type GetTaskPayloadRequest,
+  GetTaskPayloadResultSchema,
+  type GetTaskRequest,
+  GetTaskResultSchema,
+  TaskStatusNotificationSchema,
+} from "@modelcontextprotocol/sdk/types.js";
 import { getActiveWorkspaceId, uploadResource, type WorkspaceFile } from "../api/client";
 import { appNameFromToolName } from "../lib/namespaced-tool";
 import { getMcpBridgeClient, withSessionRetry } from "../mcp-bridge-client";
@@ -60,7 +71,6 @@ import type {
   UiUpdateModelContextMessage,
 } from "./types";
 import { validateAppToHostMessage } from "./validate";
-import { ProtocolErrorCode } from "@modelcontextprotocol/server";
 
 // ---------------------------------------------------------------------------
 // App state store (module-level, shared across bridges)
@@ -426,10 +436,8 @@ export function createBridge(
           params: notification.params,
         });
       };
-      /* @mcp-codemod-error Task handler registration: setNotificationHandler(TaskStatusNotificationSchema, ...). The experimental tasks feature was removed in v2 (SEP-2663); the tasks/* method strings are not part of the typed RequestMethod surface. Remove this registration. See docs/migration/upgrade-to-v2.md#experimental-tasks-interception-removed. */
       client.setNotificationHandler(TaskStatusNotificationSchema, handler);
       notificationTeardown = () => {
-        /* @mcp-codemod-error removeNotificationHandler takes the method string in v2 — replace the schema-derived argument with the literal method name (no change needed if this already passes a string). */
         client.removeNotificationHandler(TASK_STATUS_METHOD);
       };
     } catch {
@@ -553,7 +561,7 @@ function answerUnserved(msg: { method?: unknown; id?: unknown }, postToIframe: P
   postToIframe({
     jsonrpc: "2.0",
     id: msg.id,
-    error: { code: ProtocolErrorCode.MethodNotFound, message: `Method not found: ${msg.method}` },
+    error: { code: ErrorCode.MethodNotFound, message: `Method not found: ${msg.method}` },
   });
 }
 
@@ -1075,7 +1083,8 @@ async function callToolViaMcp(
       {
         name: qualifiedName,
         arguments: params.arguments ?? {},
-      }
+      },
+      CallToolResultSchema,
     );
 
     if (result.isError) {

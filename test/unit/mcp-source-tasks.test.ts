@@ -3,6 +3,7 @@ import { ProtocolError, ProtocolErrorCode } from "@modelcontextprotocol/server";
 import type { CallToolResult, Task } from "@modelcontextprotocol/server";
 import type { EngineEvent, EventSink } from "../../src/engine/types.ts";
 import { McpSource } from "../../src/tools/mcp-source.ts";
+import type { TaskStreamMessage as ProductionTaskStreamMessage } from "../../src/tools/mcp-task-client.ts";
 import {
   TaskAlreadyTerminalError,
   TaskNotFoundError,
@@ -12,9 +13,9 @@ import {
 // Unit coverage for McpSource's task-augmented surface.
 //
 // We can't stand up a real MCP server inside a unit test, so we construct a
-// McpSource and poke its private fields to install a scripted `client` whose
-// `experimental.tasks.callToolStream` yields a controlled message sequence.
-// The scenarios mirror the MCP draft 2025-11-25 task stream:
+// McpSource and poke its private fields to install a scripted task client whose
+// `callToolStream` yields a controlled message sequence. The scenarios mirror
+// the task stream `mcp-task-client.ts` produces:
 // `taskCreated → taskStatus* → (result | error)`, plus abort, ownership
 // enforcement, TTL sweeping, and protocol-violation edge cases.
 
@@ -37,26 +38,11 @@ function runErrorEvents(events: EngineEvent[]) {
 }
 
 /**
- * The four message shapes the SDK's task stream yields, per
- * `node_modules/@modelcontextprotocol/sdk/.../experimental/tasks/client.js`
- * and `shared/protocol.js`. The error variant is specifically an `McpError`
- * INSTANCE — the SDK constructs `new McpError(InternalError, "Task <id>
- * failed")`, whose `.message` is the wrapped form `"MCP error -32603:
- * Task <id> failed"`.
- *
- * Forbidding plain-object error mocks (`{ message: "Task X failed" }`)
- * at this seam is load-bearing: a previous test wrote that shape and
- * masked the fact that the engine's recovery regex couldn't match the
- * real wrapped production message. The fix shipped, the test passed
- * anyway, and recovery was a no-op in production. Match the production
- * type strictly here and that whole class of test-fixture-vs-production
- * drift becomes a compile error.
+ * The stream's message shape is the production one (`mcp-task-client.ts`), so a
+ * fixture that drifts from what the runtime yields fails to compile rather than
+ * passing against a shape production never produces.
  */
-type TaskStreamMessage =
-  | { type: "taskCreated"; task: Task }
-  | { type: "taskStatus"; task: Task }
-  | { type: "result"; result: CallToolResult }
-  | { type: "error"; error: ProtocolError };
+type TaskStreamMessage = ProductionTaskStreamMessage;
 
 /**
  * Test-only stream driver. Resolves `next()` with the messages pushed via
@@ -141,31 +127,30 @@ function buildTaskAugmentedSource(sink: EventSink, opts: BuildOptions): McpSourc
     sink,
   );
 
-  const fakeClient = {
-    experimental: {
-      tasks: {
-        callToolStream: (_req: unknown, _o: unknown, _r: unknown) =>
-          opts.driver ? opts.driver.stream : (opts.stream?.() ?? emptyStream()),
-        getTask: opts.getTaskImpl ?? (() => Promise.reject(new Error("getTask not mocked"))),
-        getTaskResult:
-          opts.getTaskResultImpl ??
-          (() => Promise.reject(new Error("getTaskResult not mocked"))),
-      },
-    },
-    // McpSource.stop() awaits client.close(); without a no-op the stop()
-    // path that's exercised by the cleanup test (and any flush in
-    // afterEach under suite load) throws TypeError mid-teardown.
-    close: async () => {},
+  const fakeTaskClient = {
+    era: "legacy" as const,
+    callToolStream: (_params: unknown, _opts: unknown) =>
+      opts.driver ? opts.driver.stream : (opts.stream?.() ?? emptyStream()),
+    getTask: opts.getTaskImpl ?? (() => Promise.reject(new Error("getTask not mocked"))),
+    getTaskResult:
+      opts.getTaskResultImpl ?? (() => Promise.reject(new Error("getTaskResult not mocked"))),
   };
+  // McpSource.stop() awaits client.close(); without a no-op the stop()
+  // path that's exercised by the cleanup test (and any flush in
+  // afterEach under suite load) throws TypeError mid-teardown.
+  const fakeClient = { close: async () => {} };
 
-  // Test-only: inject fake client + pre-seed the tool cache so findTool()
-  // returns a task-augmented tool without having to hit start()/tools().
+  // Test-only: inject a fake client and task client, and pre-seed the tool
+  // cache so findTool() returns a task-augmented tool without having to hit
+  // start()/tools().
   const internals = source as unknown as {
     client: unknown;
+    taskClient: unknown;
     cachedTools: unknown;
     tryRestart: () => Promise<boolean>;
   };
   internals.client = fakeClient;
+  internals.taskClient = fakeTaskClient;
   internals.cachedTools = [
     {
       name: "test__do_work",
@@ -325,9 +310,9 @@ describe("McpSource agent-loop (callToolAsTask wrapper)", () => {
     const result = await source.execute("do_work", {});
 
     expect(result.isError).toBe(true);
-    // McpError wraps the message; the engine surfaces the wrapped form.
+    // A ProtocolError carries the peer's message verbatim; the engine surfaces it.
     expect((result.content[0] as { text: string }).text).toBe(
-      "MCP error -32603: Task t-norecover failed",
+      "Task t-norecover failed",
     );
   });
 
@@ -360,7 +345,7 @@ describe("McpSource agent-loop (callToolAsTask wrapper)", () => {
     expect(getResultCalled).toBe(false);
     expect(result.isError).toBe(true);
     expect((result.content[0] as { text: string }).text).toBe(
-      "MCP error -32603: upstream API returned 503",
+      "upstream API returned 503",
     );
   });
 

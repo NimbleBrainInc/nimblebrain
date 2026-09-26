@@ -9,7 +9,11 @@
  * module (the runtime image ships `src/` alone), so
  * `test/unit/tools/server-notifications.test.ts` pins them equal.
  */
-import type { ResourceListChangedNotification, ToolListChangedNotification } from "@modelcontextprotocol/server";
+
+import type {
+  ResourceListChangedNotification,
+  ToolListChangedNotification,
+} from "@modelcontextprotocol/sdk/types.js";
 
 /** Typed from the SDK so a spec rename fails the build. */
 export const RESOURCES_LIST_CHANGED: ResourceListChangedNotification["method"] =

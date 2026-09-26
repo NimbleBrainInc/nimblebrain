@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Server } from "@modelcontextprotocol/server";
-import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
+import { Client, ResourceNotFoundError, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import { RESOURCE_SOURCE_META_KEY } from "../../src/api/mcp-server.ts";
 import type { ServerHandle } from "../../src/api/server.ts";
@@ -383,7 +383,7 @@ describe("MCP /mcp — resources/read scoped to one source", () => {
     try {
       await expect(
         client.readResource({ uri: "ui://neighbor/dashboard", _meta: scopedTo("fixture") }),
-      ).rejects.toMatchObject({ code: -32002 });
+      ).rejects.toBeInstanceOf(ResourceNotFoundError);
     } finally {
       await client.close();
     }
@@ -396,7 +396,7 @@ describe("MCP /mcp — resources/read scoped to one source", () => {
       for (const source of ["no-such-source", "other"]) {
         await expect(
           client.readResource({ uri: "ui://neighbor/dashboard", _meta: scopedTo(source) }),
-        ).rejects.toMatchObject({ code: -32002 });
+        ).rejects.toBeInstanceOf(ResourceNotFoundError);
       }
     } finally {
       await client.close();

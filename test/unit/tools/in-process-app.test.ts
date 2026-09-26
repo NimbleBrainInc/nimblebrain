@@ -596,17 +596,10 @@ describe("defineInProcessApp — parametric resources", () => {
     );
     await source.start();
 
-    // The server didn't register resources/* handlers — listResources should
-    // be rejected with MethodNotFound. (Capabilities are also unset on the
-    // initialize response, but the absence of the handler is the observable
-    // contract clients react to.)
-    let captured: unknown;
-    try {
-      await source.getClient()!.listResources();
-    } catch (err) {
-      captured = err;
-    }
-    const e = captured as { code?: number } | undefined;
-    expect(e?.code).toBe(-32601);
+    // No resources capability on the handshake, so a conforming client does
+    // not ask: the SDK answers `listResources()` with an empty list without
+    // sending the request.
+    expect(source.getServerCapabilities()?.resources).toBeUndefined();
+    expect((await source.getClient()!.listResources()).resources).toEqual([]);
   });
 });

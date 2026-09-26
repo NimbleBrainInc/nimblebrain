@@ -184,6 +184,7 @@ describe("execute (tools/call) — unified recovery", () => {
     const internal = source as unknown as {
       cachedTools: unknown[];
       client: Record<string, unknown>;
+      taskClient: unknown;
     };
     // Task-augmentation is read off the cached tool descriptor.
     internal.cachedTools = [
@@ -195,11 +196,10 @@ describe("execute (tools/call) — unified recovery", () => {
     ];
     // The throttle lands on the task stream, which is the path that can be
     // refused AFTER the task already exists server-side.
-    internal.client.experimental = {
-      tasks: {
-        callToolStream: () => {
-          throw new Error("Streamable HTTP error: Failed to open SSE stream: Too Many Requests");
-        },
+    internal.taskClient = {
+      era: "legacy",
+      callToolStream: () => {
+        throw new Error("Streamable HTTP error: Failed to open SSE stream: Too Many Requests");
       },
     };
     const restart = spyRestart(source, true);
@@ -338,6 +338,7 @@ describe("execute (tools/call) — unified recovery", () => {
     const internal = source as unknown as {
       cachedTools: unknown[];
       client: Record<string, unknown>;
+      taskClient: unknown;
     };
     internal.cachedTools = [
       {
@@ -346,19 +347,18 @@ describe("execute (tools/call) — unified recovery", () => {
         execution: { taskSupport: "required" },
       },
     ];
-    internal.client.experimental = {
-      tasks: {
-        callToolStream: async function* () {
-          yield { type: "taskCreated", task: { taskId: "t1", status: "working" } };
-          yield {
-            type: "result",
-            result: {
-              content: [{ type: "text", text: "Invalid params" }],
-              isError: true,
-              _meta: { [INFRA_ERROR_META_KEY]: true, "connector.own/hint": "keep me" },
-            },
-          };
-        },
+    internal.taskClient = {
+      era: "legacy",
+      callToolStream: async function* () {
+        yield { type: "taskCreated", task: { taskId: "t1", status: "working" } };
+        yield {
+          type: "result",
+          result: {
+            content: [{ type: "text", text: "Invalid params" }],
+            isError: true,
+            _meta: { [INFRA_ERROR_META_KEY]: true, "connector.own/hint": "keep me" },
+          },
+        };
       },
     };
 

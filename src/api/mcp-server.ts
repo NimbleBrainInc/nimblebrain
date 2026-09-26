@@ -1,6 +1,11 @@
 /**
  * MCP Server endpoint — exposes the platform as an MCP server via Streamable HTTP.
  *
+ * Two protocol eras on one URL. A request carrying the 2026-07-28 `_meta`
+ * envelope is served per request by an SDK v2 server (`handleModern`); every
+ * other request is 2025-era traffic for the sessionful leg this header
+ * describes, on SDK v1. Both legs mount the same handlers (`createHandlers`).
+ *
  * External MCP clients (Claude Code, Open WebUI, etc.) connect to
  * `/mcp/<wsId>` and reach that workspace's tools through the standard MCP
  * protocol.
@@ -68,11 +73,43 @@
 
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { CancelTaskRequestSchema, GetTaskPayloadRequestSchema, GetTaskRequestSchema } from "@modelcontextprotocol/core";
-import { Server, WebStandardStreamableHTTPServerTransport, isInitializeRequest, ProtocolError, RELATED_TASK_META_KEY, ProtocolErrorCode } from "@modelcontextprotocol/server";
-import type { CallToolRequest, CreateTaskResult, ListResourcesResult, ListResourceTemplatesResult, ReadResourceResult, Resource, ServerCapabilities } from "@modelcontextprotocol/server";
-/* @mcp-codemod-error Unknown SDK import path: @modelcontextprotocol/sdk/experimental/tasks/interfaces.js. Manual migration required. */
 import { isTerminal } from "@modelcontextprotocol/sdk/experimental/tasks/interfaces.js";
+import { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
+import {
+  CallToolRequestSchema,
+  CancelTaskRequestSchema,
+  ErrorCode,
+  GetTaskPayloadRequestSchema,
+  GetTaskRequestSchema,
+  isInitializeRequest,
+  ListResourcesRequestSchema,
+  ListResourceTemplatesRequestSchema,
+  ListToolsRequestSchema,
+  McpError,
+  RELATED_TASK_META_KEY,
+  ReadResourceRequestSchema,
+  type ServerCapabilities,
+} from "@modelcontextprotocol/sdk/types.js";
+import type {
+  CallToolRequest,
+  CallToolResult,
+  CreateTaskResult,
+  ListResourcesRequest,
+  ListResourcesResult,
+  ListResourceTemplatesRequest,
+  ListResourceTemplatesResult,
+  ListToolsResult,
+  ReadResourceRequest,
+  ReadResourceResult,
+  Resource,
+  Tool,
+} from "@modelcontextprotocol/server";
+import {
+  createMcpHandler,
+  isLegacyRequest,
+  Server as ModernServer,
+} from "@modelcontextprotocol/server";
 import { isToolEnabled, isToolVisibleToRole, type ResolvedFeatures } from "../config/features.ts";
 import { isInternalTool, type ToolResult } from "../engine/types.ts";
 import type { UserIdentity } from "../identity/provider.ts";
@@ -93,6 +130,7 @@ import { McpSource } from "../tools/mcp-source.ts";
 import { bareToolName } from "../tools/namespace.ts";
 import type { ToolRegistry } from "../tools/registry.ts";
 import { splitInnerToolName } from "../util/tool-name.ts";
+import { toWireJson } from "../util/wire-json.ts";
 import {
   createMcpTaskStore,
   type McpTaskStore,
@@ -334,6 +372,12 @@ export class McpServerHost {
     features: ResolvedFeatures,
     sessionCtx: McpSessionContext,
   ): Promise<Response> {
+    // A request carrying the 2026-07-28 `_meta` envelope claim is served per
+    // request, with no session: the SDK's own classifier decides, so this
+    // routing and the SDK's can never disagree. Everything else is 2025-era
+    // traffic for the sessionful leg below.
+    if (!(await isLegacyRequest(request))) return this.handleModern(request, features, sessionCtx);
+
     const sessionId = request.headers.get("mcp-session-id");
 
     if (sessionId) {
@@ -395,6 +439,26 @@ export class McpServerHost {
     }
 
     return this.initializeSession(request, body, features, sessionCtx);
+  }
+
+  /**
+   * Serve one 2026-07-28 request. There is no session to bind: the route has
+   * already authenticated the caller and checked membership of the URL's
+   * workspace on this very request, and the server built for it is walled to
+   * that (identity, workspace) exactly as a 2025 session is. `legacy: "reject"`
+   * because 2025 traffic never reaches this leg; `isLegacyRequest` routed it
+   * to the sessionful one.
+   */
+  private handleModern(
+    request: Request,
+    features: ResolvedFeatures,
+    sessionCtx: McpSessionContext,
+  ): Promise<Response> {
+    const handler = createMcpHandler(() => createModernServer(this.runtime, features, sessionCtx), {
+      legacy: "reject",
+      onerror: (err) => log.warn(`[mcp] modern request failed: ${err.message}`),
+    });
+    return handler.fetch(request);
   }
 
   private async handleDelete(request: Request, sessionCtx: McpSessionContext): Promise<Response> {
@@ -565,7 +629,7 @@ export class McpServerHost {
       }
     };
 
-    const server = createServer(this.runtime, features, sessionCtx);
+    const server = createLegacyServer(this.runtime, features, sessionCtx);
     await server.connect(transport);
     return transport.handleRequest(request, { parsedBody });
   }
@@ -624,10 +688,11 @@ export class McpServerHost {
     });
   }
 }
-
 /**
- * Create a new MCP Server instance for one session. Each session gets its
- * own Server + Transport pair.
+ * The requests `/mcp` answers, bound to one (identity, workspace). Both eras
+ * mount the same handlers, so the two cannot drift: the 2025 leg on a
+ * sessionful SDK v1 `Server` (`createLegacyServer`), the 2026-07-28 leg on a
+ * per-request SDK v2 `Server` (`createModernServer`).
  *
  * The session is walled to its one workspace (`sessionCtx.workspaceId`, from
  * the URL). `tools/list` serves that workspace's tools (bare) plus the caller's
@@ -635,45 +700,33 @@ export class McpServerHost {
  * routes through `routeToolCall`, and no name can address another workspace:
  * the `ws_<id>-` form is retired and refused as `invalid_tool_name`.
  *
+ * `taskStore` is the 2025 leg's session task store; the modern leg has none,
+ * so a `tools/call` there never starts a task.
+ *
  * When `runtime` is null (legacy unit-test path), tool handlers degrade
  * to safe no-ops: `tools/list` returns empty and `tools/call` rejects
  * with `-32601 Method not found`.
  */
-function createServer(
+interface McpHandlers {
+  listTools(): Promise<ListToolsResult>;
+  callTool(request: CallToolRequest): Promise<CallToolResult | CreateTaskResult>;
+  listResources(request: ListResourcesRequest): Promise<ListResourcesResult>;
+  listResourceTemplates(
+    request: ListResourceTemplatesRequest,
+  ): Promise<ListResourceTemplatesResult>;
+  readResource(request: ReadResourceRequest): Promise<ReadResourceResult>;
+}
+
+function createHandlers(
   runtime: Runtime | null,
   features: ResolvedFeatures,
   sessionCtx: McpSessionContext,
-): Server {
-  // Build a session-scoped in-memory task store. Passing it via
-  // ProtocolOptions.taskStore makes the SDK install tasks/{get,result,cancel,list};
-  // `registerTaskHandlers` below replaces the first three so a request's scope
-  // reaches the store.
-  //
-  // The task store is identity-bound. The `recordTask` call stamps the
-  // per-task `ownerContext` with the routed workspace so cross-tenant lookups
-  // surface as -32602 "task not found" per spec §8 security guidance.
-  const taskStore: McpTaskStore | undefined = runtime
-    ? createMcpTaskStore({
-        identity: sessionCtx.identity,
-      })
-    : undefined;
-
-  const server = new Server(
-    { name: "nimblebrain", version: MCP_SERVER_VERSION },
-    {
-      capabilities: {
-        tools: {},
-        resources: {},
-        ...(taskStore ? { tasks: TASKS_CAPABILITY } : {}),
-      },
-      ...(taskStore ? { taskStore } : {}),
-    },
-  );
+  taskStore: McpTaskStore | undefined,
+): McpHandlers {
   const identityId = sessionCtx.identity?.id ?? null;
   const wsId = sessionCtx.workspaceId;
-  if (taskStore) registerTaskHandlers(server, taskStore, wsId);
 
-  server.setRequestHandler('tools/list', async () => {
+  const listTools = async (): Promise<ListToolsResult> => {
     if (!runtime || !identityId) {
       // Unauthenticated / no-runtime path: empty list, not an error — the SDK
       // requires a response.
@@ -701,33 +754,26 @@ function createServer(
         .map((t) => ({
           name: t.name,
           description: t.description,
-          inputSchema: t.inputSchema as {
-            type: "object";
-            properties?: Record<string, unknown>;
-            required?: string[];
-          },
+          // The SDK's own schema types, not a restated copy: the value was
+          // validated at the source's listing, and a hand-written shape goes
+          // stale the next time the spec tightens what a JSON Schema may hold.
+          inputSchema: toWireJson(t.inputSchema) as Tool["inputSchema"],
           ...(t.outputSchema
-            ? {
-                outputSchema: t.outputSchema as {
-                  type: "object";
-                  properties?: Record<string, unknown>;
-                  required?: string[];
-                },
-              }
+            ? { outputSchema: toWireJson(t.outputSchema) as NonNullable<Tool["outputSchema"]> }
             : {}),
           ...(t.annotations ? { annotations: t.annotations } : {}),
           ...(t.meta ? { _meta: t.meta } : {}),
         })),
     };
-  });
+  };
 
-  server.setRequestHandler('tools/call', async (request) => {
+  const callTool = async (request: CallToolRequest): Promise<CallToolResult | CreateTaskResult> => {
     const { name, arguments: args } = request.params;
     const taskParam = request.params.task; // { ttl?, pollInterval? } | undefined
 
     if (!runtime || !identityId) {
-      throw new ProtocolError(
-        ProtocolErrorCode.MethodNotFound,
+      throw new McpError(
+        ErrorCode.MethodNotFound,
         "tools/call not available on this session (runtime not wired)",
       );
     }
@@ -773,7 +819,7 @@ function createServer(
       sessionCtx,
       taskStore,
     );
-  });
+  };
 
   // ── resources/list ────────────────────────────────────────────────
   //
@@ -788,12 +834,18 @@ function createServer(
   // server's, cursor and `nextCursor` passed straight through. Without it, the
   // workspace-wide listing an MCP client gets returns everything in a single
   // response (no `cursor` plumbing across sources).
-  server.setRequestHandler('resources/list', async (request) => {
+  const listResources = async (request: ListResourcesRequest): Promise<ListResourcesResult> => {
     const scoped = scopedSourceName(request.params?._meta);
     if (scoped !== undefined) {
       const empty: ListResourcesResult = { resources: [] };
       return fromOneSource(runtime, sessionCtx, scoped, empty, (client) =>
-        client.listResources(cursorParams(request.params?.cursor)),
+        // Page-level on purpose: the SDK's `listResources()` without a cursor
+        // aggregates every page, and a scoped listing passes the source's own
+        // pagination through.
+        client.request({
+          method: "resources/list",
+          params: cursorParams(request.params?.cursor) ?? {},
+        }),
       );
     }
 
@@ -810,18 +862,23 @@ function createServer(
       await collectSourceResources(src, resources);
     }
     return { resources };
-  });
+  };
 
   // ── resources/templates/list ──────────────────────────────────────
   //
   // The same wall, the same one-source scoping and the same single-response
   // workspace-wide listing as `resources/list`.
-  server.setRequestHandler('resources/templates/list', async (request) => {
+  const listResourceTemplates = async (
+    request: ListResourceTemplatesRequest,
+  ): Promise<ListResourceTemplatesResult> => {
     const empty: ListResourceTemplatesResult = { resourceTemplates: [] };
     const scoped = scopedSourceName(request.params?._meta);
     if (scoped !== undefined) {
       return fromOneSource(runtime, sessionCtx, scoped, empty, (client) =>
-        client.listResourceTemplates(cursorParams(request.params?.cursor)),
+        client.request({
+          method: "resources/templates/list",
+          params: cursorParams(request.params?.cursor) ?? {},
+        }),
       );
     }
 
@@ -843,7 +900,7 @@ function createServer(
       }
     }
     return { resourceTemplates };
-  });
+  };
 
   // ── resources/read ────────────────────────────────────────────────
   //
@@ -856,10 +913,10 @@ function createServer(
   // first (below), then the session's one workspace — never a sweep across
   // every workspace the identity belongs to. We deliberately do not distinguish "doesn't exist" from "exists
   // but out of reach": per MCP spec guidance, avoid leaking existence.
-  server.setRequestHandler('resources/read', async (request) => {
+  const readResource = async (request: ReadResourceRequest): Promise<ReadResourceResult> => {
     const uri = request.params.uri;
     if (!runtime || !identityId) {
-      throw new ProtocolError(RESOURCE_NOT_FOUND_CODE, `Resource not found: ${uri}`, { uri });
+      throw new McpError(RESOURCE_NOT_FOUND_CODE, `Resource not found: ${uri}`, { uri });
     }
 
     const scoped = scopedSourceName(request.params._meta);
@@ -888,9 +945,94 @@ function createServer(
     // The URI resolved in neither the caller's identity sources nor the
     // focused workspace. Per MCP spec, raise a JSON-RPC error — the SDK
     // transport converts McpError into a proper `error` envelope.
-    throw new ProtocolError(RESOURCE_NOT_FOUND_CODE, `Resource not found: ${uri}`, { uri });
-  });
+    throw new McpError(RESOURCE_NOT_FOUND_CODE, `Resource not found: ${uri}`, { uri });
+  };
 
+  return { listTools, callTool, listResources, listResourceTemplates, readResource };
+}
+
+/**
+ * The 2025 leg: a session's SDK v1 `Server`, with the session's task store.
+ *
+ * It stays on SDK v1 because SDK v2 cannot serve the 2025 task vocabulary: its
+ * wire seam refuses a task-shaped `tools/call` result on the way out as well as
+ * on the way in, explicit result schema or not. The iframe bridge and any 2025
+ * client starting a task-augmented call depend on that result. When the SDK
+ * serves it (typescript-sdk#2599), this leg moves to SDK v2 and the v1
+ * dependency goes.
+ *
+ * The task store is identity-bound. `ProtocolOptions.taskStore` makes the SDK
+ * install tasks/{get,result,cancel,list}; `registerTaskHandlers` replaces the
+ * first three so a request's scope reaches the store. The `recordTask` call
+ * stamps the per-task `ownerContext` with the routed workspace so cross-tenant
+ * lookups surface as -32602 "task not found" per spec §8 security guidance.
+ */
+function createLegacyServer(
+  runtime: Runtime | null,
+  features: ResolvedFeatures,
+  sessionCtx: McpSessionContext,
+): Server {
+  const taskStore: McpTaskStore | undefined = runtime
+    ? createMcpTaskStore({
+        identity: sessionCtx.identity,
+      })
+    : undefined;
+
+  const server = new Server(
+    { name: "nimblebrain", version: MCP_SERVER_VERSION },
+    {
+      capabilities: {
+        tools: {},
+        resources: {},
+        ...(taskStore ? { tasks: TASKS_CAPABILITY } : {}),
+      },
+      ...(taskStore ? { taskStore } : {}),
+    },
+  );
+  if (taskStore) registerTaskHandlers(server, taskStore, sessionCtx.workspaceId);
+
+  const handlers = createHandlers(runtime, features, sessionCtx, taskStore);
+  server.setRequestHandler(ListToolsRequestSchema, () => handlers.listTools());
+  server.setRequestHandler(CallToolRequestSchema, (request) => handlers.callTool(request));
+  server.setRequestHandler(ListResourcesRequestSchema, (request) =>
+    handlers.listResources(request),
+  );
+  server.setRequestHandler(ListResourceTemplatesRequestSchema, (request) =>
+    handlers.listResourceTemplates(request),
+  );
+  server.setRequestHandler(ReadResourceRequestSchema, (request) => handlers.readResource(request));
+  return server;
+}
+
+/**
+ * The 2026-07-28 leg: an SDK v2 `Server` built for one request by
+ * `createMcpHandler`, which answers `server/discover` and serves the request
+ * under the per-request `_meta` envelope. The same handlers as the 2025 leg,
+ * minus tasks: the 2026 revision has no task methods in core, and the tasks
+ * extension is not served here.
+ */
+function createModernServer(
+  runtime: Runtime | null,
+  features: ResolvedFeatures,
+  sessionCtx: McpSessionContext,
+): ModernServer {
+  const server = new ModernServer(
+    { name: "nimblebrain", version: MCP_SERVER_VERSION },
+    { capabilities: { tools: {}, resources: {} } },
+  );
+  const handlers = createHandlers(runtime, features, sessionCtx, undefined);
+  server.setRequestHandler("tools/list", () => handlers.listTools());
+  server.setRequestHandler("tools/call", async (request) => {
+    const result = await handlers.callTool(request);
+    // Without a task store `callTool` never starts a task, so this is the
+    // tool's own result.
+    return result as CallToolResult;
+  });
+  server.setRequestHandler("resources/list", (request) => handlers.listResources(request));
+  server.setRequestHandler("resources/templates/list", (request) =>
+    handlers.listResourceTemplates(request),
+  );
+  server.setRequestHandler("resources/read", (request) => handlers.readResource(request));
   return server;
 }
 
@@ -928,7 +1070,7 @@ export function mapRouteToolError(err: unknown): never {
     // Pass the error's own text through: for the retired `ws_<id>-` form it names
     // the bare tool to call instead, and a fixed string would leave an external
     // client with no way to recover.
-    throw new ProtocolError(ProtocolErrorCode.InvalidParams, err.message, {
+    throw new McpError(ErrorCode.InvalidParams, err.message, {
       reason: "invalid_tool_name",
       input: err.input,
       parse: err.reason,
@@ -940,14 +1082,14 @@ export function mapRouteToolError(err: unknown): never {
     // isn't allowed for this identity. The MCP draft's tasks spec sets the
     // precedent of using `-32602` for owner-mismatch task lookups; we mirror
     // that here so a misrouted call doesn't get classified as a server bug.
-    throw new ProtocolError(ProtocolErrorCode.InvalidParams, `Access denied to workspace "${err.wsId}"`, {
+    throw new McpError(ErrorCode.InvalidParams, `Access denied to workspace "${err.wsId}"`, {
       reason: "workspace_access_denied",
       wsId: err.wsId,
     });
   }
   if (err instanceof UnknownToolSource) {
-    throw new ProtocolError(
-      ProtocolErrorCode.MethodNotFound,
+    throw new McpError(
+      ErrorCode.MethodNotFound,
       `No tool source "${err.sourceName}" in workspace "${err.wsId}"`,
       {
         reason: "unknown_tool_source",
@@ -958,15 +1100,15 @@ export function mapRouteToolError(err: unknown): never {
     );
   }
   if (err instanceof UnknownIdentitySource) {
-    throw new ProtocolError(
-      ProtocolErrorCode.InvalidParams,
+    throw new McpError(
+      ErrorCode.InvalidParams,
       `No identity source "${err.sourceName}" for "${err.toolName}"`,
       { reason: "unknown_identity_source", toolName: err.toolName },
     );
   }
   if (err instanceof ConnectorGrantDenied) {
-    throw new ProtocolError(
-      ProtocolErrorCode.InvalidParams,
+    throw new McpError(
+      ErrorCode.InvalidParams,
       `Personal connector "${err.connector}" is not granted to this workspace`,
       { reason: "connector_grant_denied", connector: err.connector, wsId: err.workspaceId },
     );
@@ -1169,14 +1311,14 @@ function assertTaskNegotiation(
   isTaskRequest: boolean,
 ): void {
   if (taskSupport === "required" && !isTaskRequest) {
-    throw new ProtocolError(
-      ProtocolErrorCode.MethodNotFound,
+    throw new McpError(
+      ErrorCode.MethodNotFound,
       `Tool ${name} requires task augmentation (taskSupport: 'required')`,
     );
   }
   if (isTaskRequest && (!taskSupport || taskSupport === "forbidden")) {
-    throw new ProtocolError(
-      ProtocolErrorCode.MethodNotFound,
+    throw new McpError(
+      ErrorCode.MethodNotFound,
       `Tool ${name} does not support task augmentation (taskSupport: ${taskSupport ?? "none"})`,
     );
   }
@@ -1241,33 +1383,30 @@ async function startWorkspaceTask(
  * task's own terminal result).
  */
 function registerTaskHandlers(server: Server, taskStore: McpTaskStore, wsId: string): void {
-  /* @mcp-codemod-error Task handler registration: setRequestHandler(GetTaskRequestSchema, ...). The experimental tasks feature was removed in v2 (SEP-2663); the tasks/* method strings are not part of the typed RequestMethod surface. Remove this registration. See docs/migration/upgrade-to-v2.md#experimental-tasks-interception-removed. */
-  server.setRequestHandler(GetTaskRequestSchema, async (request, ctx) => {
+  server.setRequestHandler(GetTaskRequestSchema, async (request, extra) => {
     const { taskId, _meta } = request.params;
-    const task = await taskStore.getTask(taskId, ctx.sessionId, taskScope(_meta, wsId));
+    const task = await taskStore.getTask(taskId, extra.sessionId, taskScope(_meta, wsId));
     if (!task) {
-      throw new ProtocolError(ProtocolErrorCode.InvalidParams, "Failed to retrieve task: Task not found");
+      throw new McpError(ErrorCode.InvalidParams, "Failed to retrieve task: Task not found");
     }
     return { ...task };
   });
 
-  /* @mcp-codemod-error Task handler registration: setRequestHandler(GetTaskPayloadRequestSchema, ...). The experimental tasks feature was removed in v2 (SEP-2663); the tasks/* method strings are not part of the typed RequestMethod surface. Remove this registration. See docs/migration/upgrade-to-v2.md#experimental-tasks-interception-removed. */
-  server.setRequestHandler(GetTaskPayloadRequestSchema, async (request, ctx) => {
+  server.setRequestHandler(GetTaskPayloadRequestSchema, async (request, extra) => {
     const { taskId, _meta } = request.params;
-    const result = await taskStore.getTaskResult(taskId, ctx.sessionId, taskScope(_meta, wsId));
+    const result = await taskStore.getTaskResult(taskId, extra.sessionId, taskScope(_meta, wsId));
     return { ...result, _meta: { ...result._meta, [RELATED_TASK_META_KEY]: { taskId } } };
   });
 
-  /* @mcp-codemod-error Task handler registration: setRequestHandler(CancelTaskRequestSchema, ...). The experimental tasks feature was removed in v2 (SEP-2663); the tasks/* method strings are not part of the typed RequestMethod surface. Remove this registration. See docs/migration/upgrade-to-v2.md#experimental-tasks-interception-removed. */
-  server.setRequestHandler(CancelTaskRequestSchema, async (request, ctx) => {
+  server.setRequestHandler(CancelTaskRequestSchema, async (request, extra) => {
     const { taskId, _meta } = request.params;
     const scope = taskScope(_meta, wsId);
     try {
-      const task = await taskStore.getTask(taskId, ctx.sessionId, scope);
-      if (!task) throw new ProtocolError(ProtocolErrorCode.InvalidParams, `Task not found: ${taskId}`);
+      const task = await taskStore.getTask(taskId, extra.sessionId, scope);
+      if (!task) throw new McpError(ErrorCode.InvalidParams, `Task not found: ${taskId}`);
       if (isTerminal(task.status)) {
-        throw new ProtocolError(
-          ProtocolErrorCode.InvalidParams,
+        throw new McpError(
+          ErrorCode.InvalidParams,
           `Cannot cancel task in terminal status: ${task.status}`,
         );
       }
@@ -1275,18 +1414,18 @@ function registerTaskHandlers(server: Server, taskStore: McpTaskStore, wsId: str
         taskId,
         "cancelled",
         "Client cancelled task execution.",
-        ctx.sessionId,
+        extra.sessionId,
         scope,
       );
-      const cancelled = await taskStore.getTask(taskId, ctx.sessionId, scope);
+      const cancelled = await taskStore.getTask(taskId, extra.sessionId, scope);
       if (!cancelled) {
-        throw new ProtocolError(ProtocolErrorCode.InvalidParams, `Task not found after cancellation: ${taskId}`);
+        throw new McpError(ErrorCode.InvalidParams, `Task not found after cancellation: ${taskId}`);
       }
       return { _meta: {}, ...cancelled };
     } catch (err) {
-      if (err instanceof ProtocolError) throw err;
-      throw new ProtocolError(
-        ProtocolErrorCode.InvalidRequest,
+      if (err instanceof McpError) throw err;
+      throw new McpError(
+        ErrorCode.InvalidRequest,
         `Failed to cancel task: ${err instanceof Error ? err.message : String(err)}`,
       );
     }
@@ -1394,7 +1533,7 @@ async function readFromOneSource(
     (client) => client.readResource({ uri }),
   );
   if (result?.contents && result.contents.length > 0) return result;
-  throw new ProtocolError(RESOURCE_NOT_FOUND_CODE, `Resource not found: ${uri}`, { uri });
+  throw new McpError(RESOURCE_NOT_FOUND_CODE, `Resource not found: ${uri}`, { uri });
 }
 
 /**

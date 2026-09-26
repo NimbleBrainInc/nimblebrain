@@ -259,7 +259,7 @@ Codegen sources:
 
 For tools whose work exceeds the stock MCP request timeout (~60s) — research runs, batch imports, multi-stage analyses — use `callToolAsTask` instead of `callTool`. The host returns a `CreateTaskResult` immediately with a `taskId`; the actual `CallToolResult` is fetched separately via `tasks/result` once the task reaches a terminal state.
 
-This implements the [MCP 2025-11-25 tasks utility](https://modelcontextprotocol.io/specification/2025-11-25) end-to-end across the iframe SDK, the platform bridge, and the bundled MCP server.
+This implements the [MCP 2025-11-25 tasks utility](https://modelcontextprotocol.io/specification/2025-11-25) end-to-end across the iframe SDK, the platform bridge, and the bundled MCP server. Between the host and your server, the host speaks whichever task vocabulary the connection negotiated: that utility on a 2025-era connection, the [tasks extension](https://github.com/modelcontextprotocol/ext-tasks) (`io.modelcontextprotocol/tasks`) on a `2026-07-28` one.
 
 <Aside type="caution">
 `callToolAsTask` is on `Synapse` (`createSynapse()`), not `App` (`connect()`). For task-aware apps, use `createSynapse()` and `<SynapseProvider>`. The `connect()` path is for short-running, request/response tools.
@@ -274,7 +274,7 @@ This implements the [MCP 2025-11-25 tasks utility](https://modelcontextprotocol.
 | Long-running, multi-phase, or progress-emitting | `callToolAsTask` / `useCallToolAsTask` |
 | Returns in milliseconds (CRUD, lookups) | `callTool` |
 
-The agent itself uses task augmentation automatically when a tool declares `execution.taskSupport: "optional"`. This page is about the **iframe-side** API for UIs that need to fire long-running tools from a button click and reflect lifecycle in the UI.
+The agent itself uses task augmentation automatically: on a 2025-era connection when a tool declares `execution.taskSupport: "optional"`, and on a `2026-07-28` connection whenever the server advertises the tasks extension, since that revision lets the server decide per call. This page is about the **iframe-side** API for UIs that need to fire long-running tools from a button click and reflect lifecycle in the UI.
 
 ### React hook (recommended)
 
@@ -342,7 +342,7 @@ await handle.cancel();
 
 ### Authoring task-aware tools
 
-The server side declares `execution.taskSupport: "optional"` (or `"required"`) on the tool's `tools/list` entry. With FastMCP (Python), `TaskConfig` does this in one decorator:
+The server side declares `execution.taskSupport: "optional"` (or `"required"`) on the tool's `tools/list` entry. With FastMCP (Python), `TaskConfig` does this in one decorator. On FastMCP 4, register the tasks extension too (`mcp.add_extension(TasksExtension(...))` from `fastmcp_tasks`); it serves tasks to `2026-07-28` clients only, so a 2025-era client runs the same tool inline:
 
 ```python
 from fastmcp import FastMCP

@@ -8,7 +8,7 @@ The platform serves three audiences with three protocol surfaces. They are not t
 
 | Audience | Surface | When |
 |---|---|---|
-| External MCP clients (Claude, Claude Code, Cursor, any RFC-conformant client) | `POST /mcp/<wsId>` (Streamable HTTP MCP) | Any caller speaking the MCP protocol from outside the platform. Stateful: server allocates `Mcp-Session-Id` bound to workspace + identity. |
+| External MCP clients (Claude, Claude Code, Cursor, any RFC-conformant client) | `POST /mcp/<wsId>` (Streamable HTTP MCP) | Any caller speaking the MCP protocol from outside the platform. A 2025-era client is stateful: the server allocates `Mcp-Session-Id` bound to workspace + identity. A `2026-07-28` client is served per request, with no session. |
 | Iframe widgets (synapse apps in sandboxed `<iframe>`s) | postMessage → `bridge.ts` → MCP SDK Client → `/mcp/<active wsId>` | Sandboxed UI talking via the MCP App ext-apps protocol. The bridge is the only iframe path; it shares one `Mcp-Session-Id` per browser tab for the active workspace, and a switch closes it and opens one on the new path. |
 | Platform's own web shell (first-party React UI: header, settings, chat) | `POST /v1/workspaces/<wsId>/tools/call`, `…/resources/read`, `GET /v1/...` (REST) | Trusted same-origin code. Stateless per request: the workspace is in each request's path; no session, no transport lifecycle. |
 
@@ -51,9 +51,13 @@ ADR-0036. Bare `/mcp` is refused (`404`, naming the URL shape) — never a defau
 
 ADR-0037. A route is workspace-scoped (`/v1/workspaces/:wsId/…`, `WORKSPACE_ROUTE_PREFIX` + `requireWorkspace(ctx)` in `src/api/middleware/workspace.ts`, the same `isAddressedWorkspaceMember` check as `/mcp`) or identity-scoped (`/v1/…`, no workspace: bootstrap, `/v1/events`, a conversation or file located by its own id). There is no optional-workspace middleware and no fallback to the personal workspace: a route that sometimes needs a workspace is two routes or a workspace-scoped one. `X-Workspace-Id` is read nowhere; it stays only in the inbound strip lists (`src/hooks/declaration.ts`), because a bundle might trust it. A browser write under `/v1/workspaces/` from another origin is refused unless CORS allows that origin (`rejectCrossSiteWrites`, `src/api/middleware/fetch-site.ts`): a form or `text/plain` post needs no preflight, and `SameSite=Lax` does not stop one from another origin on the same site. The web client builds each path with `workspacePath()` (`web/src/api/client.ts`) and throws `no_active_workspace` rather than send one without a workspace.
 
+## Two eras on one `/mcp/<wsId>`
+
+`McpServerHost.handlePost` routes on the SDK's own classifier, `isLegacyRequest`: a request carrying the `2026-07-28` `_meta` envelope goes to a per-request SDK v2 server (`createMcpHandler`, `legacy: "reject"`); everything else goes to the sessionful 2025 leg below, on SDK v1. Both legs mount one set of handlers (`createHandlers` in `mcp-server.ts`), so the wall, the tool names and the error shapes cannot drift. The 2025 leg stays on SDK v1 because SDK v2 refuses to send a task-shaped `tools/call` result (typescript-sdk#2599), and the iframe bridge's `callToolAsTask` needs one. Do not add per-session state the modern leg would need: it has no session.
+
 ## MCP Session Architecture
 
-Two-layer state model for `/mcp`. Don't merge them.
+Two-layer state model for the 2025 leg of `/mcp`. Don't merge them.
 
 - **Transport map** (`McpServerHost.transports`): per-process LRU `Map<sessionId, TransportEntry>`. Owns the live `WebStandardStreamableHTTPServerTransport`, the SDK `Server` instance, in-flight JSON-RPC state, and `lastAccessedAt`. Process-bound — never serialize, never share across processes.
 - **`SessionRegistry`** (`src/api/session-store/`): pluggable cluster-shared metadata. Stores `{sessionId, identityId, workspaceId, createdAt, lastAccessedAt}` only; `workspaceId` is half the binding a session-miss answer compares before saying `unavailable`. **No pod / instance / owner fields** — adding any would leak deployment vocabulary into a metadata interface. Implementations: `InMemorySessionRegistry` (default) and `RedisSessionRegistry`.

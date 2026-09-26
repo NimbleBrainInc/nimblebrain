@@ -1204,10 +1204,10 @@ export class ConnectorLifecycleManager {
         }
       })
       .catch((err) => {
-        // The SDK's OAuth error classes (InvalidGrantError, InvalidClientError,
-        // …) carry their detail in `.name` with an EMPTY `.message`, so fall
-        // back to the name — otherwise the surfaced diagnostic is blank, which
-        // is nearly as useless as swallowing it.
+        // An error with an empty `.message` falls back to its `.name`, so the
+        // surfaced diagnostic is never blank, which is nearly as useless as
+        // swallowing it. (The SDK's `OAuthError` carries the OAuth error code,
+        // e.g. `invalid_grant`, as its message.)
         const msg = err instanceof Error ? err.message || err.name : String(err);
         // Always surface the failure. The interactive path (capturedAuthUrl
         // set) used to be swallowed here: if the background start() failed

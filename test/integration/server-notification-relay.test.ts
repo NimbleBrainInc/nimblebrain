@@ -205,11 +205,16 @@ describe("resource listings scoped to one server", () => {
       await client.callTool({ name: "notes__save", arguments: {} });
       await client.callTool({ name: "other__save", arguments: {} });
 
-      const first = await client.listResources(scoped("notes"));
+      // Page-level: the SDK's `listResources()` without a cursor aggregates
+      // every page, which would hide the pass-through under test.
+      const first = await client.request({ method: "resources/list", params: scoped("notes") });
       expect(first.resources.map((r) => r.uri)).toEqual(["notes://0"]);
       expect(first.nextCursor).toBe("1");
 
-      const second = await client.listResources({ ...scoped("notes"), cursor: first.nextCursor });
+      const second = await client.request({
+        method: "resources/list",
+        params: { ...scoped("notes"), cursor: first.nextCursor },
+      });
       expect(second.resources.map((r) => r.uri)).toEqual(["notes://1"]);
       expect(second.nextCursor).toBeUndefined();
     } finally {

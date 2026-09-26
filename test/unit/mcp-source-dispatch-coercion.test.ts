@@ -176,20 +176,21 @@ function buildTaskSource(schema: Record<string, unknown>): DispatchCapture {
       result: { content: [{ type: "text", text: "ok" }], isError: false } as CallToolResult,
     };
   }
-  const fakeClient = {
-    experimental: {
-      tasks: {
-        callToolStream: (req: { name: string; arguments?: Record<string, unknown> }) => {
-          captured = req.arguments;
-          return taskStream();
-        },
-      },
+  const fakeTaskClient = {
+    era: "legacy",
+    callToolStream: (req: { name: string; arguments?: Record<string, unknown> }) => {
+      captured = req.arguments;
+      return taskStream();
     },
-    close: async () => {},
   };
 
-  const internals = source as unknown as { client: unknown; cachedTools: unknown };
-  internals.client = fakeClient;
+  const internals = source as unknown as {
+    client: unknown;
+    taskClient: unknown;
+    cachedTools: unknown;
+  };
+  internals.client = { close: async () => {} };
+  internals.taskClient = fakeTaskClient;
   internals.cachedTools = [
     {
       name: "outlook__OUTLOOK_CREATE_DRAFT",

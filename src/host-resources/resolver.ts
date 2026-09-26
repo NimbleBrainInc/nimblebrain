@@ -1,5 +1,5 @@
-import { ProtocolError, ProtocolErrorCode } from "@modelcontextprotocol/server";
 import type { ListResourcesResult, ReadResourceResult } from "@modelcontextprotocol/server";
+import { ProtocolError, ProtocolErrorCode } from "@modelcontextprotocol/server";
 import { isTextMime } from "../files/mime.ts";
 import type { FileStore } from "../files/store.ts";
 import { FILE_URI_SCHEME, fileIdToUri, uriToFileId } from "../files/uri.ts";
@@ -151,9 +151,13 @@ export class FileBackedHostResourcesResolver implements HostResourcesResolver {
     // breaking polite pagination loops. Reject loudly so the connector
     // SDK can detect the missing feature.
     if (params.cursor && params.cursor.length > 0) {
-      throw new ProtocolError(ProtocolErrorCode.InvalidParams, "Pagination is not supported in this version", {
-        cursor: params.cursor,
-      });
+      throw new ProtocolError(
+        ProtocolErrorCode.InvalidParams,
+        "Pagination is not supported in this version",
+        {
+          cursor: params.cursor,
+        },
+      );
     }
 
     const store = this.getFileStore(ctx.workspaceId);
@@ -173,9 +177,13 @@ export class FileBackedHostResourcesResolver implements HostResourcesResolver {
     // rejected — silently returning all files lies about whether the
     // filter ran.
     if (params.filter?.tags !== undefined && !Array.isArray(params.filter.tags)) {
-      throw new ProtocolError(ProtocolErrorCode.InvalidParams, "filter.tags must be an array of strings", {
-        receivedType: typeof params.filter.tags,
-      });
+      throw new ProtocolError(
+        ProtocolErrorCode.InvalidParams,
+        "filter.tags must be an array of strings",
+        {
+          receivedType: typeof params.filter.tags,
+        },
+      );
     }
     const tagFilter = params.filter?.tags ?? [];
     const filteredByTags =
