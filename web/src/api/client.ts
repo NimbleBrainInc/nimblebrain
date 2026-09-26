@@ -914,6 +914,11 @@ export async function installConnector(
   serverName: string;
   scope: "workspace";
   wsId: string;
+  /**
+   * Set when the install landed but something about it is wrong — most often
+   * an eager start that threw, leaving the connector unconnected.
+   */
+  warning?: string;
 }> {
   const result = await callTool("nb", "manage_connectors", {
     action: "install",

@@ -19,8 +19,8 @@
 const NON_INTERACTIVE_AUTH: readonly string[] = ["provider", "smithery"];
 
 /**
- * True when installing this kind should go straight to Configure instead of
- * launching an auth flow.
+ * True when installing this kind finishes at the install itself, with no auth
+ * flow to launch.
  */
 export function installCompletesWithoutSignIn(auth: string): boolean {
   return NON_INTERACTIVE_AUTH.includes(auth);
