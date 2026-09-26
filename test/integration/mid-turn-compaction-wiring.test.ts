@@ -86,12 +86,11 @@ async function startRuntime(workDir: string, compaction: boolean) {
 
 /** One chat turn. The loop inside it is what this test is about. */
 async function sendTurn(baseUrl: string): Promise<string> {
-  const res = await fetch(`${baseUrl}/v1/chat`, {
+  const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${API_KEY}`,
-      "X-Workspace-Id": TEST_WORKSPACE_ID,
     },
     body: JSON.stringify({ message: "Work through this with your tools." }),
   });

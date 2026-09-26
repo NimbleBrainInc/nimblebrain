@@ -90,7 +90,7 @@ export function parseNamespacedToolName(s: string): { scope: ToolScope; toolName
  * Extract the **bare source/app name** from a full wire tool name.
  *
  * A wire name is `[ws_<id>-]<source>__<tool>`. The REST surfaces that own a
- * resource — `POST /v1/resources/read`, `GET /v1/apps/:name/resources/*` —
+ * resource — `POST /v1/workspaces/:wsId/resources/read`, `GET /v1/workspaces/:wsId/apps/:name/resources/*` —
  * key the workspace registry by the **bare** source name (`synapse-collateral`),
  * NOT the namespaced one. Hand-slicing on `__` alone leaves the `ws_<id>-`
  * prefix attached (`ws_<id>-synapse-collateral`), which then fails
@@ -102,7 +102,7 @@ export function parseNamespacedToolName(s: string): { scope: ToolScope; toolName
  * re-resolves it — `getResources(appName, …)`, `readResource(appName, …)`,
  * `openArtifact({ appName, … })` — and none renders it as text, so it is an
  * identity, not a label. De-marking it would hand those callers `gmail` for a
- * `my_gmail__send` call, and `GET /v1/apps/gmail/resources/*` resolves through
+ * `my_gmail__send` call, and `GET /v1/workspaces/:wsId/apps/gmail/resources/*` resolves through
  * the WORKSPACE registry: a same-named workspace app would serve its UI, mount
  * in the transcript, and its bridge would then dispatch bare `gmail__*` — the
  * workspace source, on the workspace's credentials, for a call the user made

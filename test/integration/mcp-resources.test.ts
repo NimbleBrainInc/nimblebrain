@@ -231,10 +231,10 @@ describe("MCP /mcp — resources", () => {
 
   it("resources/read on a known URI returns the resource's bytes", async () => {
     // Parity acceptance criterion: /mcp's `resources/read` must return the
-    // same shape as `POST /v1/resources/read` — `{ contents: [{ uri,
-    // mimeType?, text?, blob? }] }` — with identical bytes for a given URI.
+    // same shape as `POST /v1/workspaces/:wsId/resources/read` — `{ contents:
+    // [{ uri, mimeType?, text?, blob? }] }` — with identical bytes for a given URI.
     //
-    // We can't exercise the legacy REST endpoint directly here because it
+    // We can't exercise the REST endpoint directly here because it
     // goes through `Runtime.readAppResource`, which checks connector lifecycle
     // state (`lifecycle.getInstance`) and returns null for sources added
     // straight to the registry. We still assert the canonical spec shape

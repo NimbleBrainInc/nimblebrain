@@ -3,7 +3,7 @@
 //
 // The third leg of ToolWidgets, beside InlineAppView (ui://) and
 // ResourceLinkView (everything else). It fetches the artifact through the host
-// resolver (POST /v1/resources/read, which the host routes to the data plane
+// resolver (POST …/resources/read, which the host routes to the data plane
 // and resolves as the viewing user — RLS enforced) and hands the bytes to the
 // curated, sanitizing ArtifactRenderer registry, keyed by mime_type.
 //

@@ -6,7 +6,7 @@
  * `admin` member role. Org role (`orgRole`) grants NO bypass — an org
  * admin/owner who is not a workspace admin member cannot write workspace
  * content. This mirrors the existing skills behavior and the HTTP
- * `resolveWorkspace` middleware, which already requires membership.
+ * `requireWorkspace` middleware, which already requires membership.
  *
  * Pure (no I/O): callers fetch the `Workspace` and pass it in. The
  * structured `WorkspaceWriteDecision` lets each call site adapt to its own

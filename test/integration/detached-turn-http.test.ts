@@ -65,10 +65,10 @@ async function readSse(res: Response, ms: number): Promise<string[]> {
 }
 
 describe("detached turn HTTP surface", () => {
-  it("POST /v1/chat/start returns a conversation id immediately", async () => {
-    const res = await fetch(`${baseUrl}/v1/chat/start`, {
+  it("POST /v1/workspaces/:wsId/chat/start returns a conversation id immediately", async () => {
+    const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat/start`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", "X-Workspace-Id": TEST_WORKSPACE_ID },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ message: "Hello over HTTP", workspaceId: TEST_WORKSPACE_ID }),
     });
     expect(res.status).toBe(200);
@@ -77,9 +77,9 @@ describe("detached turn HTTP surface", () => {
   });
 
   it("GET /v1/conversations/:id/events replays the turn (incl. the user message)", async () => {
-    const startRes = await fetch(`${baseUrl}/v1/chat/start`, {
+    const startRes = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat/start`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", "X-Workspace-Id": TEST_WORKSPACE_ID },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ message: "Replay me", workspaceId: TEST_WORKSPACE_ID }),
     });
     const { conversationId } = await startRes.json();
@@ -88,9 +88,7 @@ describe("detached turn HTTP surface", () => {
     // replay the whole turn from the RunBus (within the grace window).
     await new Promise((r) => setTimeout(r, 100));
 
-    const evRes = await fetch(`${baseUrl}/v1/conversations/${conversationId}/events`, {
-      headers: { "X-Workspace-Id": TEST_WORKSPACE_ID },
-    });
+    const evRes = await fetch(`${baseUrl}/v1/conversations/${conversationId}/events`);
     expect(evRes.status).toBe(200);
     const types = await readSse(evRes, 400);
     expect(types).toContain("subscribed");
@@ -99,15 +97,14 @@ describe("detached turn HTTP surface", () => {
   });
 
   it("POST /v1/conversations/:id/cancel returns ok for the owner", async () => {
-    const startRes = await fetch(`${baseUrl}/v1/chat/start`, {
+    const startRes = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat/start`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", "X-Workspace-Id": TEST_WORKSPACE_ID },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ message: "cancel target", workspaceId: TEST_WORKSPACE_ID }),
     });
     const { conversationId } = await startRes.json();
     const res = await fetch(`${baseUrl}/v1/conversations/${conversationId}/cancel`, {
       method: "POST",
-      headers: { "X-Workspace-Id": TEST_WORKSPACE_ID },
     });
     expect(res.status).toBe(200);
     const body = await res.json();
@@ -117,7 +114,6 @@ describe("detached turn HTTP surface", () => {
   it("cancel of a non-existent conversation is 404", async () => {
     const res = await fetch(`${baseUrl}/v1/conversations/conv_0000000000000000/cancel`, {
       method: "POST",
-      headers: { "X-Workspace-Id": TEST_WORKSPACE_ID },
     });
     expect(res.status).toBe(404);
   });
@@ -141,9 +137,9 @@ describe("detached turn HTTP surface", () => {
     });
     writeFileSync(join(convDir, `${convId}.jsonl`), `${meta}\n`);
 
-    const res = await fetch(`${baseUrl}/v1/chat/start`, {
+    const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat/start`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", "X-Workspace-Id": TEST_WORKSPACE_ID },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         message: "resume corrupt",
         conversationId: convId,
@@ -156,9 +152,9 @@ describe("detached turn HTTP surface", () => {
   });
 
   it("start with a malformed conversationId is 400, not 500 (JSON)", async () => {
-    const res = await fetch(`${baseUrl}/v1/chat/start`, {
+    const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat/start`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", "X-Workspace-Id": TEST_WORKSPACE_ID },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         message: "traversal attempt",
         conversationId: "../../foo",
@@ -174,9 +170,8 @@ describe("detached turn HTTP surface", () => {
     const form = new FormData();
     form.set("message", "traversal attempt");
     form.set("conversationId", "../../foo");
-    const res = await fetch(`${baseUrl}/v1/chat/start`, {
+    const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat/start`, {
       method: "POST",
-      headers: { "X-Workspace-Id": TEST_WORKSPACE_ID },
       body: form,
     });
     expect(res.status).toBe(400);
@@ -201,9 +196,7 @@ describe("detached turn HTTP surface", () => {
   it("GET /v1/conversations/:id/events on another user's conversation is 403", async () => {
     const convId = "conv_0a0a0a0a0a0a0a0a";
     await seedOtherUserConversation(convId);
-    const res = await fetch(`${baseUrl}/v1/conversations/${convId}/events`, {
-      headers: { "X-Workspace-Id": TEST_WORKSPACE_ID },
-    });
+    const res = await fetch(`${baseUrl}/v1/conversations/${convId}/events`);
     expect(res.status).toBe(403);
     expect((await res.json()).error).toBe("conversation_access_denied");
   });
@@ -213,33 +206,29 @@ describe("detached turn HTTP surface", () => {
     await seedOtherUserConversation(convId);
     const res = await fetch(`${baseUrl}/v1/conversations/${convId}/cancel`, {
       method: "POST",
-      headers: { "X-Workspace-Id": TEST_WORKSPACE_ID },
     });
     expect(res.status).toBe(403);
     expect((await res.json()).error).toBe("conversation_access_denied");
   });
 
   it("malformed conversationId on the events + cancel routes is 400, not 500", async () => {
-    const evRes = await fetch(`${baseUrl}/v1/conversations/bogus/events`, {
-      headers: { "X-Workspace-Id": TEST_WORKSPACE_ID },
-    });
+    const evRes = await fetch(`${baseUrl}/v1/conversations/bogus/events`);
     expect(evRes.status).toBe(400);
     expect((await evRes.json()).error).toBe("bad_request");
 
     const cancelRes = await fetch(`${baseUrl}/v1/conversations/not-a-conv-id/cancel`, {
       method: "POST",
-      headers: { "X-Workspace-Id": TEST_WORKSPACE_ID },
     });
     expect(cancelRes.status).toBe(400);
     expect((await cancelRes.json()).error).toBe("bad_request");
   });
 
-  it("POST /v1/chat/start on another user's conversation is 403", async () => {
+  it("POST /v1/workspaces/:wsId/chat/start on another user's conversation is 403", async () => {
     const convId = "conv_0c0c0c0c0c0c0c0c";
     await seedOtherUserConversation(convId);
-    const res = await fetch(`${baseUrl}/v1/chat/start`, {
+    const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat/start`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", "X-Workspace-Id": TEST_WORKSPACE_ID },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         message: "hijack attempt",
         conversationId: convId,

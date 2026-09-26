@@ -30,8 +30,8 @@ export const TOOL_SCHEMAS: ToolSchema[] = [
   {
     name: "create",
     description:
-      "Create a scheduled automation. `manifest` is the config; `body` is the prompt sent " +
-      "to POST /v1/chat on each run. Generates a kebab-case id from `manifest.name`. " +
+      "Create a scheduled automation. `manifest` is the config; `body` is the prompt that " +
+      "opens each run. Generates a kebab-case id from `manifest.name`. " +
       "Idempotent: returns the existing automation if one with the same id exists. " +
       "Scope: automations are owned by the creating user and are NOT locked to one workspace — " +
       "a scheduled run executes as the owner and can use tools and connectors from any workspace " +

@@ -7,7 +7,7 @@ import type { UserIdentity } from "../../../src/identity/provider.ts";
 // Cross-workspace coverage for the OTHER two endpoints the qualified-name
 // resolver was wired into (handleReadResource is covered separately). A
 // qualified `ws_<id>-<source>` names its own workspace: it must resolve there
-// by membership (not the ambient X-Workspace-Id) and address the registry by
+// by membership (not the workspace in the URL) and address the registry by
 // the BARE source name. handleToolCall additionally normalizes the tool name.
 
 const features = {} as unknown as ResolvedFeatures; // our tool isn't feature-mapped → always enabled
@@ -23,11 +23,17 @@ interface ToolCallStub {
   recoverable?: string;
 }
 
-function makeToolCallRuntime(opts: ToolCallStub = {}): { runtime: Runtime; executed: string[] } {
+function makeToolCallRuntime(opts: ToolCallStub = {}): {
+  runtime: Runtime;
+  executed: string[];
+  /** Workspaces whose registry the handler opened, in order. */
+  registryWs: string[];
+} {
   const memberOf = opts.memberOf ?? [];
   const sourceName = opts.sourceName ?? "synapse-collateral";
   const toolNames = opts.toolNames ?? [`${sourceName}__preview`];
   const executed: string[] = [];
+  const registryWs: string[] = [];
   const source = {
     name: sourceName,
     tools: async () => toolNames.map((name) => ({ name })),
@@ -47,7 +53,10 @@ function makeToolCallRuntime(opts: ToolCallStub = {}): { runtime: Runtime; execu
     getWorkspaceStore: () => ({
       getWorkspacesForUser: async () => memberOf.map((id) => ({ id })),
     }),
-    ensureWorkspaceRegistry: async () => registry,
+    ensureWorkspaceRegistry: async (wsId: string) => {
+      registryWs.push(wsId);
+      return registry;
+    },
     recoverWorkspaceSource: async (_wsId: string, name: string) => {
       if (present.has(name)) return true;
       if (name !== opts.recoverable) return false;
@@ -55,11 +64,11 @@ function makeToolCallRuntime(opts: ToolCallStub = {}): { runtime: Runtime; execu
       return true;
     },
   } as unknown as Runtime;
-  return { runtime, executed };
+  return { runtime, executed, registryWs };
 }
 
 function toolReq(body: unknown): Request {
-  return new Request("http://x/v1/tools/call", {
+  return new Request("http://x/v1/workspaces/ws_user_u1/tools/call", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -67,13 +76,13 @@ function toolReq(body: unknown): Request {
 }
 
 describe("handleToolCall — qualified cross-workspace server", () => {
-  it("resolves to the owning workspace (ignoring X-Workspace-Id) and normalizes the tool name", async () => {
+  it("resolves to the owning workspace (not the workspace in the URL) and normalizes the tool name", async () => {
     const { runtime, executed } = makeToolCallRuntime({ memberOf: ["ws_nimblebrain_shared"] });
     const res = await handleToolCall(
       toolReq({ server: "ws_nimblebrain_shared-synapse-collateral", tool: "preview" }),
       runtime,
       features,
-      // Ambient workspace is the user's PERSONAL ws — not where the tool lives.
+      // The workspace in the URL is the user's own — not where the tool lives.
       { workspaceId: "ws_user_u1", identity: identityU1 },
     );
     expect(res.status).toBe(200);
@@ -150,19 +159,19 @@ describe("handleToolCall — qualified cross-workspace server", () => {
     expect(res.status).toBe(401);
   });
 
-  it("keeps the workspace_required contract for a bare source with no workspace", async () => {
-    // Regression guard: the shared resolver must not silently downgrade this
-    // endpoint's original `workspace_required` error to `bad_request`.
-    const { runtime } = makeToolCallRuntime();
-    const res = await handleToolCall(toolReq({ server: "calendar", tool: "main" }), runtime, features, {
+  it("resolves a bare source in the workspace from the URL", async () => {
+    const { runtime, executed, registryWs } = makeToolCallRuntime({ sourceName: "calendar" });
+    const res = await handleToolCall(toolReq({ server: "calendar", tool: "preview" }), runtime, features, {
+      workspaceId: "ws_user_u1",
       identity: identityU1,
     });
-    expect(res.status).toBe(400);
-    expect((await res.json()).error).toBe("workspace_required");
+    expect(res.status).toBe(200);
+    expect(registryWs).toEqual(["ws_user_u1"]);
+    expect(executed).toEqual(["calendar__preview"]);
   });
 });
 
-// ── handleResourceProxy (GET /v1/apps/:name/resources/*) ────────────
+// ── handleResourceProxy (GET /v1/workspaces/:wsId/apps/:name/resources/*) ──
 
 function makeProxyRuntime(opts: {
   memberOf?: string[];
@@ -211,7 +220,7 @@ describe("handleResourceProxy — qualified cross-workspace app", () => {
       "ws_nimblebrain_shared-synapse-collateral",
       "main", // not "primary" — avoids the lifecycle/placement lookup
       runtime,
-      "ws_user_u1", // ambient personal ws, must be overridden by the name
+      "ws_user_u1", // the workspace in the URL, overridden by the name
       identityU1,
     );
     expect(res.status).toBe(200);
@@ -248,7 +257,7 @@ describe("handleResourceProxy — qualified cross-workspace app", () => {
     );
     expect(res.status).toBe(200);
     // The heal must target the RESOLVED workspace and the BARE source name —
-    // the ambient workspace or the qualified name here would heal nothing.
+    // the workspace in the URL or the qualified name here would heal nothing.
     expect(recoverCalls).toEqual([
       { wsId: "ws_nimblebrain_shared", name: "synapse-collateral" },
     ]);

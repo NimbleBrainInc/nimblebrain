@@ -11,7 +11,7 @@
 //
 // This set MIRRORS the backend identity-source set (`Runtime.getIdentitySource`
 // in `src/runtime/runtime.ts`). It is keyed by **source / server name** — the
-// value the resource host (`/v1/apps/:name/...`) and the bridge use — not the
+// value the resource host (`…/apps/:name/...`) and the bridge use — not the
 // placement route. Keep the two tiers in lockstep: a source is identity-scoped
 // on both or neither. Set: `conversations`, `files`, `automations`.
 //

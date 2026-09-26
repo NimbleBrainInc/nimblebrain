@@ -121,7 +121,7 @@ export function createNotificationsSource(runtime: Runtime, eventSink: EventSink
     if (!wsId) {
       throw new Error(
         "[notifications] no workspace in scope (notifications are workspace-owned) — " +
-          "the caller must carry a bound workspace, e.g. a validated X-Workspace-Id.",
+          "call through a workspace's URL (/v1/workspaces/<wsId>/… or /mcp/<wsId>).",
       );
     }
     return runtime.getNotificationStore(wsId);
@@ -179,8 +179,8 @@ export function createNotificationsSource(runtime: Runtime, eventSink: EventSink
       return {
         ok: false,
         reason:
-          "No workspace in scope. Notification settings are workspace-owned; the caller must " +
-          "carry a bound workspace, e.g. a validated X-Workspace-Id.",
+          "No workspace in scope. Notification settings are workspace-owned; call through a " +
+          "workspace's URL (/v1/workspaces/<wsId>/… or /mcp/<wsId>).",
       };
     }
     const identity = runtime.getCurrentIdentity();

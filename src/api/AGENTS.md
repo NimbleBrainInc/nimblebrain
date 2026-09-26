@@ -10,7 +10,7 @@ The platform serves three audiences with three protocol surfaces. They are not t
 |---|---|---|
 | External MCP clients (Claude, Claude Code, Cursor, any RFC-conformant client) | `POST /mcp/<wsId>` (Streamable HTTP MCP) | Any caller speaking the MCP protocol from outside the platform. Stateful: server allocates `Mcp-Session-Id` bound to workspace + identity. |
 | Iframe widgets (synapse apps in sandboxed `<iframe>`s) | postMessage → `bridge.ts` → MCP SDK Client → `/mcp/<active wsId>` | Sandboxed UI talking via the MCP App ext-apps protocol. The bridge is the only iframe path; it shares one `Mcp-Session-Id` per browser tab for the active workspace, and a switch closes it and opens one on the new path. |
-| Platform's own web shell (first-party React UI: header, settings, chat) | `POST /v1/tools/call`, `POST /v1/resources/read`, `GET /v1/...` (REST) | Trusted same-origin code. Stateless per request: `X-Workspace-Id` header on each fetch; no session, no transport lifecycle. |
+| Platform's own web shell (first-party React UI: header, settings, chat) | `POST /v1/workspaces/<wsId>/tools/call`, `…/resources/read`, `GET /v1/...` (REST) | Trusted same-origin code. Stateless per request: the workspace is in each request's path; no session, no transport lifecycle. |
 
 > **`/mcp/<wsId>` is walled to the workspace in its URL.** Bare `/mcp` is refused. See "`/mcp/<wsId>` is walled to the workspace in its URL" below, the wall itself in `src/orchestrator/AGENTS.md`, and ADR-0036.
 
@@ -24,20 +24,20 @@ The platform serves three audiences with three protocol surfaces. They are not t
 
 The exceptions are real but narrow: add a route only when the endpoint genuinely **can't be a tool call**. Concretely:
 
-- Sets a session-bound cookie that future requests need to present (`/v1/mcp-auth/initiate` sets `nb_oauth_state`).
+- Sets a session-bound cookie that future requests need to present (`/v1/workspaces/:wsId/mcp-auth/initiate` sets `nb_oauth_state`).
 - Is itself the redirect target of an external flow (`/v1/mcp-auth/callback` is loaded by the vendor's browser, not by our client).
 - Streams non-JSON bytes (multipart upload, SSE for the chat stream).
 - Serves raw bytes the browser loads directly, where it cannot send headers (`GET /v1/files/:fileId` behind an `<img>`).
 
 If none of those apply, write a tool action. A simple JSON read like "what's the OAuth redirect URI?" is a tool action, not a route.
 
-**Why split**, not consolidate: the web shell and external MCP clients have different correctness requirements. The shell is trusted same-origin React with its own React lifecycle; making it speak MCP would force it into stateful session lifecycle (workspace-bound `Mcp-Session-Id`, reset on switch, etc.) for zero gain. Keeping it on stateless REST means workspace switching is a no-op on transport state — next fetch reads the new `X-Workspace-Id` and goes. The bridge needs MCP because external MCP clients also use `/mcp`, so iframes inherit a spec-aligned protocol surface for free.
+**Why split**, not consolidate: the web shell and external MCP clients have different correctness requirements. The shell is trusted same-origin React with its own React lifecycle; making it speak MCP would force it into stateful session lifecycle (workspace-bound `Mcp-Session-Id`, reset on switch, etc.) for zero gain. Keeping it on stateless REST means workspace switching is a no-op on transport state — the next fetch builds its path from the new workspace and goes. The bridge needs MCP because external MCP clients also use `/mcp`, so iframes inherit a spec-aligned protocol surface for free.
 
-`/v1/tools/call` and `/v1/resources/read` are NOT being deprecated. They are the platform's first-party API and stay alive indefinitely.
+`tools/call` and `resources/read` under `/v1/workspaces/<wsId>/` are NOT being deprecated. They are the platform's first-party API and stay alive indefinitely.
 
 ## `/mcp/<wsId>` is walled to the workspace in its URL
 
-ADR-0036. Bare `/mcp` is refused (`404`, naming the URL shape) — never a default workspace, never an identity-only surface. `routes/mcp.ts` authenticates against the canonical resource URL (`mcpResourceUrl`, `src/api/mcp-resource.ts`, built from `publicOrigin()` — never from `Host`/`X-Forwarded-*`), then checks membership of `<wsId>` on every request; a non-member, an unknown workspace and a malformed id all get the same `404 Workspace not found`. The session is bound to (identity, workspace) — `McpServerHost.ownsTransport` refuses a session id presented at another workspace's URL exactly like an unknown one, and the registry's `unavailable` is shown only to the bound caller. `tools/list` returns that workspace's tools (bare) + identity tools; `resources/list`/`read` reach identity resources and that one workspace, never a sweep. Do NOT reintroduce a per-request workspace header on this path, and do NOT build the resource URL from the request.
+ADR-0036. Bare `/mcp` is refused (`404`, naming the URL shape) — never a default workspace, never an identity-only surface. `routes/mcp.ts` authenticates against the canonical resource URL (`mcpResourceUrl`, `src/api/mcp-resource.ts`, built from `publicOrigin()` — never from `Host`/`X-Forwarded-*`), then checks membership of `<wsId>` on every request (`isAddressedWorkspaceMember`, `src/api/workspace-address.ts`); a non-member, an unknown workspace and a malformed id all get the same `404 Workspace not found`. The session is bound to (identity, workspace) — `McpServerHost.ownsTransport` refuses a session id presented at another workspace's URL exactly like an unknown one, and the registry's `unavailable` is shown only to the bound caller. `tools/list` returns that workspace's tools (bare) + identity tools; `resources/list`/`read` reach identity resources and that one workspace, never a sweep. Do NOT reintroduce a per-request workspace header on this path, and do NOT build the resource URL from the request.
 
 **Which credentials reach `/mcp/<wsId>`** — the provider verifies the signature and reports a `TokenGrant` on `VerifiedIdentity` (`src/identity/provider.ts`); `grantAdmits` (`src/api/auth-middleware.ts`) applies the rule above every provider. Never branch on a provider name in `/mcp` code.
 
@@ -45,7 +45,11 @@ ADR-0036. Bare `/mcp` is refused (`404`, naming the URL shape) — never a defau
 |---|---|---|
 | MCP authorization-server token | `grant.kind === "resource"` (WorkOS: issuer is AuthKit) | `aud` contains `mcpResourceUrl(wsId)` exactly, then membership. Refused on `/v1/*`. |
 | Web app login (WorkOS User Management, OIDC, dev) | `grant.kind === "first_party"` | membership |
-| Internal connector-to-host token | `validateInternalToken` | `403` — allowed only on `/v1/chat*` |
+| Internal connector-to-host token | `validateInternalToken` | `403` — allowed only on `/v1/workspaces/<wsId>/chat` and `/chat/stream`, where it carries no identity and so is a member of nothing outside dev mode |
+
+## REST names its workspace in the path
+
+ADR-0037. A route is workspace-scoped (`/v1/workspaces/:wsId/…`, `WORKSPACE_ROUTE_PREFIX` + `requireWorkspace(ctx)` in `src/api/middleware/workspace.ts`, the same `isAddressedWorkspaceMember` check as `/mcp`) or identity-scoped (`/v1/…`, no workspace: bootstrap, `/v1/events`, a conversation or file located by its own id). There is no optional-workspace middleware and no fallback to the personal workspace: a route that sometimes needs a workspace is two routes or a workspace-scoped one. `X-Workspace-Id` is read nowhere; it stays only in the inbound strip lists (`src/hooks/declaration.ts`), because a bundle might trust it. A browser write under `/v1/workspaces/` from another origin is refused unless CORS allows that origin (`rejectCrossSiteWrites`, `src/api/middleware/fetch-site.ts`): a form or `text/plain` post needs no preflight, and `SameSite=Lax` does not stop one from another origin on the same site. The web client builds each path with `workspacePath()` (`web/src/api/client.ts`) and throws `no_active_workspace` rather than send one without a workspace.
 
 ## MCP Session Architecture
 

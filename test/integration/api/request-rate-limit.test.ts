@@ -120,18 +120,18 @@ describe("chat rate limiting", () => {
   it("returns 429 after exceeding chat limit", async () => {
     // Exhaust the limit
     for (let i = 0; i < 3; i++) {
-      const res = await fetch(`${baseUrl}/v1/chat`, {
+      const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat`, {
         method: "POST",
-        headers: authHeaders({ "X-Workspace-Id": TEST_WORKSPACE_ID }),
+        headers: authHeaders(),
         body: JSON.stringify({ message: `msg ${i}`, workspaceId: TEST_WORKSPACE_ID }),
       });
       expect(res.status).toBe(200);
     }
 
     // Next request should be rate-limited
-    const res = await fetch(`${baseUrl}/v1/chat`, {
+    const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat`, {
       method: "POST",
-      headers: authHeaders({ "X-Workspace-Id": TEST_WORKSPACE_ID }),
+      headers: authHeaders(),
       body: JSON.stringify({ message: "over limit", workspaceId: TEST_WORKSPACE_ID }),
     });
 
@@ -154,16 +154,16 @@ describe("tool-call rate limiting", () => {
   it("returns 429 after exceeding tool-call limit", async () => {
     // Exhaust the limit — these return 400/404 but still count
     for (let i = 0; i < 3; i++) {
-      await fetch(`${baseUrl}/v1/tools/call`, {
+      await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/tools/call`, {
         method: "POST",
-        headers: authHeaders({ "X-Workspace-Id": TEST_WORKSPACE_ID }),
+        headers: authHeaders(),
         body: JSON.stringify({ server: "x", tool: "y", arguments: {} }),
       });
     }
 
-    const res = await fetch(`${baseUrl}/v1/tools/call`, {
+    const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/tools/call`, {
       method: "POST",
-      headers: authHeaders({ "X-Workspace-Id": TEST_WORKSPACE_ID }),
+      headers: authHeaders(),
       body: JSON.stringify({ server: "x", tool: "y", arguments: {} }),
     });
 
@@ -173,9 +173,9 @@ describe("tool-call rate limiting", () => {
   });
 
   it("does not rate-limit shell or file endpoints when tools/call is exhausted", async () => {
-    // tools/call is exhausted, but /v1/shell should still work
-    const shellRes = await fetch(`${baseUrl}/v1/shell`, {
-      headers: authHeaders({ "X-Workspace-Id": TEST_WORKSPACE_ID }),
+    // tools/call is exhausted, but the workspace shell should still work
+    const shellRes = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/shell`, {
+      headers: authHeaders(),
     });
     expect(shellRes.status).toBe(200);
   });

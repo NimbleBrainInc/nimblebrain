@@ -5,7 +5,7 @@ import { ApiClientError, type ReadResourceContent, readResource } from "../api/c
 export interface ResourceLinkViewProps {
   /** URI from the resource_link content block (e.g., `collateral://exports/exp_abc.pdf`). */
   uri: string;
-  /** Server/app that owns the resource — forwarded to POST /v1/resources/read. */
+  /** Server/app that owns the resource — forwarded to POST /v1/workspaces/:wsId/resources/read. */
   appName: string;
   /** Optional display name from the resource_link block. */
   name?: string;

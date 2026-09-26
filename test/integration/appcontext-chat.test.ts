@@ -33,11 +33,11 @@ afterAll(async () => {
 	rmSync(testDir, { recursive: true, force: true });
 });
 
-describe("POST /v1/chat with appContext", () => {
+describe("POST /v1/workspaces/:wsId/chat with appContext", () => {
 	it("succeeds when appContext is provided", async () => {
-		const res = await fetch(`${baseUrl}/v1/chat`, {
+		const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat`, {
 			method: "POST",
-			headers: { "Content-Type": "application/json", "X-Workspace-Id": TEST_WORKSPACE_ID },
+			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({
 				message: "Hello from app",
 				appContext: { appName: "my-app", serverName: "my-server" },
@@ -52,9 +52,9 @@ describe("POST /v1/chat with appContext", () => {
 	});
 
 	it("succeeds without appContext (backwards compatible)", async () => {
-		const res = await fetch(`${baseUrl}/v1/chat`, {
+		const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat`, {
 			method: "POST",
-			headers: { "Content-Type": "application/json", "X-Workspace-Id": TEST_WORKSPACE_ID },
+			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({ message: "No context", workspaceId: TEST_WORKSPACE_ID }),
 		});
 
@@ -65,11 +65,11 @@ describe("POST /v1/chat with appContext", () => {
 	});
 });
 
-describe("POST /v1/chat/stream with appContext", () => {
+describe("POST /v1/workspaces/:wsId/chat/stream with appContext", () => {
 	it("succeeds when appContext is provided", async () => {
-		const res = await fetch(`${baseUrl}/v1/chat/stream`, {
+		const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat/stream`, {
 			method: "POST",
-			headers: { "Content-Type": "application/json", "X-Workspace-Id": TEST_WORKSPACE_ID },
+			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({
 				message: "Stream with context",
 				appContext: { appName: "my-app", serverName: "my-server" },
@@ -87,9 +87,9 @@ describe("POST /v1/chat/stream with appContext", () => {
 	});
 
 	it("succeeds without appContext (backwards compatible)", async () => {
-		const res = await fetch(`${baseUrl}/v1/chat/stream`, {
+		const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat/stream`, {
 			method: "POST",
-			headers: { "Content-Type": "application/json", "X-Workspace-Id": TEST_WORKSPACE_ID },
+			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({ message: "Stream no context", workspaceId: TEST_WORKSPACE_ID }),
 		});
 

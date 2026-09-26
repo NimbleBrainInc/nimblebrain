@@ -51,11 +51,11 @@ afterAll(async () => {
 });
 
 describe("per-route body limits", () => {
-  it("rejects >1MB JSON on /v1/tools/call with structured details", async () => {
+  it("rejects >1MB JSON on /v1/workspaces/:wsId/tools/call with structured details", async () => {
     const oversized = "x".repeat(1_100_000);
-    const res = await fetch(`${baseUrl}/v1/tools/call`, {
+    const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/tools/call`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", "X-Workspace-Id": TEST_WORKSPACE_ID },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ server: "x", tool: "y", arguments: { blob: oversized } }),
     });
     expect(res.status).toBe(413);
@@ -67,21 +67,20 @@ describe("per-route body limits", () => {
     expect(body.details?.contentType).toContain("application/json");
   });
 
-  it("rejects >1MB JSON on /v1/chat", async () => {
+  it("rejects >1MB JSON on /v1/workspaces/:wsId/chat", async () => {
     const oversized = "x".repeat(1_100_000);
-    const res = await fetch(`${baseUrl}/v1/chat`, {
+    const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", "X-Workspace-Id": TEST_WORKSPACE_ID },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ message: oversized, workspaceId: TEST_WORKSPACE_ID }),
     });
     expect(res.status).toBe(413);
   });
 
-  it("rejects multipart on /v1/chat/stream when over filesConfig.maxTotalSize", async () => {
+  it("rejects multipart on /v1/workspaces/:wsId/chat/stream when over filesConfig.maxTotalSize", async () => {
     // maxTotalSize was configured to 10 MB above; a 12 MB multipart body must 413.
-    const res = await fetch(`${baseUrl}/v1/chat/stream`, {
+    const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat/stream`, {
       method: "POST",
-      headers: { "X-Workspace-Id": TEST_WORKSPACE_ID },
       body: multipartBody(12 * 1024 * 1024),
     });
     expect(res.status).toBe(413);
@@ -91,13 +90,12 @@ describe("per-route body limits", () => {
     expect(body.details?.contentType).toContain("multipart/form-data");
   });
 
-  it("allows in-budget multipart on /v1/chat/stream past the 1MB JSON cap", async () => {
+  it("allows in-budget multipart on /v1/workspaces/:wsId/chat/stream past the 1MB JSON cap", async () => {
     // 2 MB multipart — under the 10 MB multipart budget but well over the 1 MB
     // JSON cap. Middleware must let this through so the ingest layer (which
     // enforces per-file/MIME rules) sees it.
-    const res = await fetch(`${baseUrl}/v1/chat/stream`, {
+    const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat/stream`, {
       method: "POST",
-      headers: { "X-Workspace-Id": TEST_WORKSPACE_ID },
       body: multipartBody(2 * 1024 * 1024),
     });
     expect(res.status).not.toBe(413);
@@ -112,20 +110,18 @@ describe("per-route body limits", () => {
   // five make it near-certain.
   it("leaves the connection usable after a multipart refusal", async () => {
     for (let i = 0; i < 5; i++) {
-      const refused = await fetch(`${baseUrl}/v1/chat/stream`, {
+      const refused = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat/stream`, {
         method: "POST",
-        headers: { "X-Workspace-Id": TEST_WORKSPACE_ID },
-        body: multipartBody(12 * 1024 * 1024),
+          body: multipartBody(12 * 1024 * 1024),
       });
       expect(refused.status).toBe(413);
       await refused.arrayBuffer();
 
       // Same origin, so this rides the pooled connection the refusal just used.
       // A regression presents as a hang here, not as a wrong status.
-      const followUp = await fetch(`${baseUrl}/v1/chat/stream`, {
+      const followUp = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat/stream`, {
         method: "POST",
-        headers: { "X-Workspace-Id": TEST_WORKSPACE_ID },
-        body: multipartBody(1024),
+          body: multipartBody(1024),
         signal: AbortSignal.timeout(5_000),
       });
       expect(followUp.status).not.toBe(413);

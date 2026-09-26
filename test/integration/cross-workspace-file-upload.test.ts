@@ -5,18 +5,17 @@
  * its attached files MUST land in that SAME workspace's partition
  * (`workspaces/<wsId>/files/<ownerId>/`) — the partition the chat READ path
  * rehydrates from. When a file is uploaded *attached to a conversation* on a
- * request that is NOT focused on that conversation's workspace (unfocused, or
- * focused on a different workspace), the upload must resolve the conversation's
- * authoritative workspace (probe + locator) and write THERE — not into the
- * request's header/personal partition.
+ * request addressed to a different workspace, the upload must resolve the
+ * conversation's authoritative workspace (probe + locator) and write THERE —
+ * not into the partition of the workspace in the request path.
  *
  * The sibling resume test (`runtime/cross-workspace-file-resume.test.ts`) pins
  * the read side by seeding the registry directly. This one drives the REAL
- * upload handler over HTTP (`POST /v1/resources` → `handleResourceUpload`) so it
- * exercises the actual partition-selection logic — the bug lived in the write
- * path. If the handler reverts to partitioning by the request header, the
- * attachment lands in the personal workspace while the chat reads from workspace
- * A → it silently vanishes, and the assertions below fail.
+ * upload handler over HTTP (`POST /v1/workspaces/:wsId/resources` →
+ * `handleResourceUpload`) so it exercises the actual partition-selection logic.
+ * If the handler partitions by the workspace in the path, the attachment lands
+ * in the personal workspace while the chat reads from workspace A → it silently
+ * vanishes, and the assertions below fail.
  */
 
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
@@ -26,6 +25,7 @@ import { join } from "node:path";
 import { type ServerHandle, startServer } from "../../src/api/server.ts";
 import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
+import { ensureUserWorkspace } from "../../src/workspace/provisioning.ts";
 import { personalWorkspaceIdFor } from "../../src/workspace/workspace-store.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { provisionTestWorkspace } from "../helpers/test-workspace.ts";
@@ -36,10 +36,9 @@ const testDir = join(tmpdir(), `nb-cross-workspace-file-upload-${Date.now()}`);
 const WORKSPACE_A = "ws_workspace_a";
 // Dev mode: no identity on the request → the dev owner.
 const OWNER = DEV_IDENTITY.id;
-// An UNFOCUSED request (no X-Workspace-Id) falls back to the owner's personal
-// workspace, a DIFFERENT workspace than WORKSPACE_A. That gap is the
-// cross-workspace hop the fix must bridge by resolving the conversation's
-// workspace from the locator.
+// The upload is addressed to the owner's personal workspace, a DIFFERENT
+// workspace than WORKSPACE_A. That gap is the cross-workspace hop the handler
+// must bridge by resolving the conversation's workspace from the locator.
 const PERSONAL = personalWorkspaceIdFor(OWNER);
 
 let runtime: Runtime;
@@ -54,6 +53,10 @@ beforeAll(async () => {
     workDir: testDir,
   });
   await provisionTestWorkspace(runtime, WORKSPACE_A);
+  await ensureUserWorkspace(runtime.getWorkspaceStore(), {
+    id: DEV_IDENTITY.id,
+    displayName: DEV_IDENTITY.displayName,
+  });
   handle = startServer({ runtime, port: 0 });
   baseUrl = `http://localhost:${handle.port}`;
 });
@@ -65,21 +68,20 @@ afterAll(async () => {
 });
 
 describe("cross-workspace upload writes to the conversation's workspace (not the request)", () => {
-  it("a file attached to a workspace-A conversation lands in A even when the request is unfocused", async () => {
+  it("a file attached to a workspace-A conversation lands in A even when the request addresses another workspace", async () => {
     // 1) Born in workspace A (focused on WORKSPACE_A) — the conversation lives
     //    under workspaces/ws_workspace_a/conversations/<owner>/<convId>.jsonl.
     const born = await runtime.chat({ message: "hello from workspace A", workspaceId: WORKSPACE_A });
     const convId = born.conversationId;
 
     // 2) Drive the REAL upload handler attached to that conversation, with the
-    //    request UNFOCUSED (no X-Workspace-Id). The header/personal partition is
-    //    PERSONAL; the conversation's workspace is A — they disagree, so this is
-    //    the cross-workspace case the fix targets.
+    //    request addressed to PERSONAL. The conversation's workspace is A —
+    //    they disagree, so this is the cross-workspace case.
     const form = new FormData();
     form.append("file", new Blob(["workspace-A attachment bytes"], { type: "text/plain" }), "attach.txt");
     form.append("conversationId", convId);
 
-    const res = await fetch(`${baseUrl}/v1/resources`, { method: "POST", body: form });
+    const res = await fetch(`${baseUrl}/v1/workspaces/${PERSONAL}/resources`, { method: "POST", body: form });
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.files).toHaveLength(1);
@@ -92,8 +94,8 @@ describe("cross-workspace upload writes to the conversation's workspace (not the
     expect(inWorkspaceA).not.toBeNull();
     expect(inWorkspaceA?.workspaceId).toBe(WORKSPACE_A);
 
-    // …and NOT in the request's personal partition. With the write-side bug,
-    // the upload partitions by the header (personal) and these two flip:
+    // …and NOT in the partition of the workspace in the path. Partitioning by
+    // the path (personal) would flip these two:
     // present in PERSONAL, absent in A → the attachment is lost on resume.
     expect(await runtime.getWorkspaceFileStore(PERSONAL, OWNER).findEntry(fileId)).toBeNull();
 

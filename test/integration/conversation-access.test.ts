@@ -13,7 +13,8 @@
  *    ConversationAccessDeniedError; non-existent id creates new; missing
  *    request.identity throws when an identity provider is configured.
  *  - HTTP/SSE: ConversationAccessDeniedError → 403 conversation_access_denied
- *    on /v1/chat; → SSE error event on /v1/chat/stream.
+ *    on /v1/workspaces/:wsId/chat; → SSE error event on
+ *    /v1/workspaces/:wsId/chat/stream.
  */
 
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
@@ -343,13 +344,12 @@ describe("HTTP/SSE — ConversationAccessDeniedError mapping", () => {
     rmSync(workDir, { recursive: true, force: true });
   });
 
-  test("POST /v1/chat returns 403 conversation_access_denied when Bob resumes Alice's conversation", async () => {
-    const res = await fetch(`${baseUrl}/v1/chat`, {
+  test("POST /v1/workspaces/:wsId/chat returns 403 conversation_access_denied when Bob resumes Alice's conversation", async () => {
+    const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${BOB_TOKEN}`,
-        "X-Workspace-Id": TEST_WORKSPACE_ID,
       },
       body: JSON.stringify({ message: "bob steals", conversationId: aliceConvId }),
     });
@@ -360,13 +360,12 @@ describe("HTTP/SSE — ConversationAccessDeniedError mapping", () => {
     expect(body.details?.conversationId).toBe(aliceConvId);
   });
 
-  test("POST /v1/chat/stream emits SSE error event when Bob resumes Alice's conversation", async () => {
-    const res = await fetch(`${baseUrl}/v1/chat/stream`, {
+  test("POST /v1/workspaces/:wsId/chat/stream emits SSE error event when Bob resumes Alice's conversation", async () => {
+    const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat/stream`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${BOB_TOKEN}`,
-        "X-Workspace-Id": TEST_WORKSPACE_ID,
       },
       body: JSON.stringify({ message: "bob streams a steal", conversationId: aliceConvId }),
     });

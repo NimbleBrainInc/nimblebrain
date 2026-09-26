@@ -42,6 +42,14 @@ first-party login session is bound to no resource. Either way, **membership of
 `<wsId>`, checked per request, authorizes** — the audience only prevents replay.
 An MCP session is bound to (identity, workspace).
 
+REST addresses a workspace the same way: `/v1/workspaces/<wsId>/…` (ADR-0037),
+admitted by the same membership check. A route either acts on a workspace and
+names it in its path, or acts on the caller or on a primitive its own id
+locates (bootstrap, the event stream, a conversation, a file) and names none.
+No header, argument or default selects a workspace for a request. Bootstrap
+alone suggests one — the web shell's default focus, the caller's personal
+workspace — and the URL the user is on overrides it.
+
 A workspace exists because `create` made it and stops existing because `delete`
 archived it. **No write brings one into being**: a writer may create paths
 inside a workspace root, and fails naming the workspace when the root is gone.
@@ -214,6 +222,7 @@ The decision log is `adr/`. Foundational (secure RBAC):
 - [0007](adr/0007-offboarding-revokes-active-use.md) — offboarding revokes active use; ownership is necessary, not sufficient
 - [0008](adr/0008-notifications-are-pulled-and-routed-by-the-operator.md) — notifications are pulled into a workspace inbox and routed by the operator
 - [0036](adr/0036-an-mcp-connection-is-addressed-to-one-workspace-by-url.md) — an MCP connection is addressed to one workspace by URL; a token is valid only for its resource; membership authorizes
+- [0037](adr/0037-a-workspace-is-addressed-by-url-on-every-surface.md) — a workspace is addressed by URL on every surface; a route is workspace-scoped or identity-scoped, and its path says which
 
 Manage skills:
 

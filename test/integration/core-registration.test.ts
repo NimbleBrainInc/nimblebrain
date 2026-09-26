@@ -71,14 +71,13 @@ describe("nb-core registration in Runtime", () => {
 });
 
 // =============================================================================
-// 2. Resource serving via GET /v1/apps/nb/resources/:path
+// 2. Resource serving via GET /v1/workspaces/:wsId/apps/nb/resources/:path
 // =============================================================================
 
 // The endpoint returns an MCP `ReadResourceResult`-shaped envelope so the
 // per-content `_meta` (including ext-apps `_meta.ui.*`) reaches the client
-// unchanged. Previously it returned raw HTML with `Content-Type: text/html`;
-// that contract was widened when `_meta.ui` plumbing shipped.
-describe("GET /v1/apps/nb/resources/:path", () => {
+// unchanged.
+describe("GET /v1/workspaces/:wsId/apps/nb/resources/:path", () => {
 	function extractHtml(envelope: unknown): string {
 		const contents = (envelope as { contents?: Array<{ text?: string }> })
 			.contents;
@@ -87,8 +86,7 @@ describe("GET /v1/apps/nb/resources/:path", () => {
 
 	it("returns HTML for app-nav", async () => {
 		const res = await fetch(
-			`${baseUrl}/v1/apps/nb/resources/app-nav`,
-			{ headers: { "X-Workspace-Id": TEST_WORKSPACE_ID } },
+			`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/apps/nb/resources/app-nav`,
 		);
 		expect(res.status).toBe(200);
 		expect(res.headers.get("Content-Type")).toMatch(/application\/json/);
@@ -102,8 +100,7 @@ describe("GET /v1/apps/nb/resources/:path", () => {
 		const resources = ["app-nav", "settings-link", "model-selector"];
 		for (const name of resources) {
 			const res = await fetch(
-				`${baseUrl}/v1/apps/nb/resources/${name}`,
-				{ headers: { "X-Workspace-Id": TEST_WORKSPACE_ID } },
+				`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/apps/nb/resources/${name}`,
 			);
 			expect(res.status).toBe(200);
 			expect(res.headers.get("Content-Type")).toMatch(/application\/json/);
@@ -115,8 +112,7 @@ describe("GET /v1/apps/nb/resources/:path", () => {
 
 	it("returns 404 for unknown core resource", async () => {
 		const res = await fetch(
-			`${baseUrl}/v1/apps/nb/resources/unknown`,
-			{ headers: { "X-Workspace-Id": TEST_WORKSPACE_ID } },
+			`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/apps/nb/resources/unknown`,
 		);
 		expect(res.status).toBe(404);
 		const body = await res.json();
@@ -128,11 +124,11 @@ describe("GET /v1/apps/nb/resources/:path", () => {
 // 3. Tool call proxy with server=nb
 // =============================================================================
 
-describe("POST /v1/tools/call with server=nb", () => {
+describe("POST /v1/workspaces/:wsId/tools/call with server=nb", () => {
 	it("calls nb__list_apps and returns data", async () => {
-		const res = await fetch(`${baseUrl}/v1/tools/call`, {
+		const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/tools/call`, {
 			method: "POST",
-			headers: { "Content-Type": "application/json", "X-Workspace-Id": TEST_WORKSPACE_ID },
+			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({
 				server: "nb",
 				tool: "list_apps",
@@ -146,9 +142,9 @@ describe("POST /v1/tools/call with server=nb", () => {
 	});
 
 	it("returns 404 for unknown tool on nb server", async () => {
-		const res = await fetch(`${baseUrl}/v1/tools/call`, {
+		const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/tools/call`, {
 			method: "POST",
-			headers: { "Content-Type": "application/json", "X-Workspace-Id": TEST_WORKSPACE_ID },
+			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({
 				server: "nb",
 				tool: "nonexistent_tool",
@@ -161,16 +157,15 @@ describe("POST /v1/tools/call with server=nb", () => {
 	});
 });
 
-describe("POST /v1/tools/call with an identity source (conversations)", () => {
-	// conversations is a kernel identity source — removed from workspace
+describe("POST /v1/workspaces/:wsId/tools/call with an identity source (conversations)", () => {
+	// conversations is a kernel identity source — absent from workspace
 	// registries. The REST tool-call path must resolve it through the identity
-	// door (like /mcp), not the workspace registry, which would 404 "not found
-	// on server". Regression guard for the bug where clicking/searching
-	// conversations failed after the registry partition.
-	it("routes conversations__list through the identity door with NO workspace", async () => {
-		const res = await fetch(`${baseUrl}/v1/tools/call`, {
+	// door (like /mcp), not the workspace registry in the path, which would 404
+	// "not found on server".
+	it("routes conversations__list through the identity door", async () => {
+		const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/tools/call`, {
 			method: "POST",
-			headers: { "Content-Type": "application/json" }, // no X-Workspace-Id
+			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({ server: "conversations", tool: "list", arguments: {} }),
 		});
 		expect(res.status).toBe(200);
@@ -178,10 +173,10 @@ describe("POST /v1/tools/call with an identity source (conversations)", () => {
 		expect(body.isError).toBe(false);
 	});
 
-	it("ignores a (stale) X-Workspace-Id on an identity source — search still routes", async () => {
-		const res = await fetch(`${baseUrl}/v1/tools/call`, {
+	it("routes conversations__search through the identity door", async () => {
+		const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/tools/call`, {
 			method: "POST",
-			headers: { "Content-Type": "application/json", "X-Workspace-Id": TEST_WORKSPACE_ID },
+			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({
 				server: "conversations",
 				tool: "search",

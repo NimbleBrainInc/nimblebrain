@@ -110,8 +110,7 @@ describe("runtime.chat — orchestrator error taxonomy (T006)", () => {
     // Naming a second workspace is unexpressible, so a real-but-unreachable
     // workspace and a bogus one fail identically, at parse — no lookup, no leak.
     // The `WorkspaceToolUnavailable → workspace_access_denied` mapping is covered
-    // by the /mcp no-`X-Workspace-Id` case in
-    // `mcp-server-identity-bound.test.ts`.
+    // in `test/unit/orchestrator/route-error-mapping.test.ts`.
     fixture = await createTwoWorkspaceFixture();
     const wsStore = fixture.runtime.getWorkspaceStore();
     const stranger = await wsStore.create("Stranger Workspace", "stranger");

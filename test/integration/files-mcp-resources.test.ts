@@ -28,10 +28,10 @@ import { personalWorkspaceIdFor } from "../../src/workspace/workspace-store.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
 
-// Stage 2 (T006): chat is identity-bound. Chat-multipart uploads land
-// in the identity's personal workspace, not the `X-Workspace-Id` of the
-// request. The downstream `files__*` tools / `resources/read` must read
-// from the same workspace — the dev identity's personal workspace.
+// Files are workspace-owned. Chat-multipart uploads land in the workspace in
+// the request path, and the downstream `files__*` tools / `resources/read`
+// read from the workspace in theirs — here, the dev identity's personal
+// workspace for both.
 const PERSONAL_WS_ID = personalWorkspaceIdFor(DEV_IDENTITY.id);
 
 const PNG_BYTES = Buffer.from([
@@ -74,9 +74,8 @@ async function uploadChatFile(content: string | Buffer, filename: string, mimeTy
   const bytes = typeof content === "string" ? Buffer.from(content) : content;
   form.append("files", new File([new Uint8Array(bytes)], filename, { type: mimeType }));
 
-  const res = await fetch(`${baseUrl}/v1/chat/stream`, {
+  const res = await fetch(`${baseUrl}/v1/workspaces/${PERSONAL_WS_ID}/chat/stream`, {
     method: "POST",
-    headers: { "X-Workspace-Id": PERSONAL_WS_ID },
     body: form,
   });
   if (res.status !== 200) {
@@ -85,9 +84,9 @@ async function uploadChatFile(content: string | Buffer, filename: string, mimeTy
   await res.text();
 
   // Look the id up via files__list (the canonical workspace listing).
-  const listRes = await fetch(`${baseUrl}/v1/tools/call`, {
+  const listRes = await fetch(`${baseUrl}/v1/workspaces/${PERSONAL_WS_ID}/tools/call`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", "X-Workspace-Id": PERSONAL_WS_ID },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ server: "files", tool: "list", arguments: { limit: 100 } }),
   });
   const listBody = (await listRes.json()) as { content: { type: string; text: string }[] };
@@ -100,9 +99,9 @@ async function uploadChatFile(content: string | Buffer, filename: string, mimeTy
 }
 
 async function readResource(uri: string): Promise<{ status: number; body: unknown }> {
-  const res = await fetch(`${baseUrl}/v1/resources/read`, {
+  const res = await fetch(`${baseUrl}/v1/workspaces/${PERSONAL_WS_ID}/resources/read`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", "X-Workspace-Id": PERSONAL_WS_ID },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ server: "files", uri }),
   });
   return { status: res.status, body: await res.json() };
@@ -203,19 +202,17 @@ describe("workspace files exposed as MCP resources", () => {
     expect(body).toBeDefined();
   });
 
-  it("resolves identity files with NO workspace header (identity-scoped, not workspace-gated)", async () => {
+  it("does not resolve a file from another workspace's path, even for its owner", async () => {
     const id = await uploadChatFile("cross-workspace\n", "x.txt", "text/plain");
-    // Read with no X-Workspace-Id at all. Files are identity-owned, so the
-    // resource read routes through the identity door — a workspace header is
-    // neither required nor consulted. This is the cross-workspace guarantee:
-    // the file resolves from the owner's store regardless of focus.
-    const res = await fetch(`${baseUrl}/v1/resources/read`, {
+    // The caller is a member of TEST_WORKSPACE_ID too, and `files` routes
+    // through the identity door — but the file store is the workspace in the
+    // path, so a file uploaded in the personal workspace is not found there.
+    const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/resources/read`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ server: "files", uri: `files://${id}` }),
     });
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as { contents: Array<{ text?: string }> };
-    expect(body.contents[0]?.text).toBe("cross-workspace\n");
+    expect(res.status).not.toBe(200);
+    expect(await res.text()).not.toContain("cross-workspace");
   });
 });

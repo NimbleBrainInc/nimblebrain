@@ -8,11 +8,17 @@ export function constantTimeEqual(a: string, b: string): boolean {
 }
 
 /**
- * Paths that the internal token is allowed to access.
- * Internal tokens are scoped to chat endpoints only — no tool calls,
- * resource access, or other privileged operations.
+ * Paths that the internal token is allowed to access: a workspace's chat
+ * endpoints only — no tool calls, resource access, or other privileged
+ * operations. The workspace route still admits only a member of the workspace
+ * in the path, and this token carries no identity.
  */
-export const INTERNAL_TOKEN_ALLOWED_PATHS = new Set(["/v1/chat", "/v1/chat/stream"]);
+const INTERNAL_TOKEN_PATH_RE = /^\/v1\/workspaces\/[^/]+\/chat(?:\/stream)?$/;
+
+/** Whether the internal token may reach `pathname`. */
+export function isInternalTokenPath(pathname: string): boolean {
+  return INTERNAL_TOKEN_PATH_RE.test(pathname);
+}
 
 /**
  * Validate an internal token against the expected value and the requested path.
@@ -30,7 +36,7 @@ export function validateInternalToken(
     return new Response(null, { status: 401 });
   }
   // Token is valid — enforce path scope (POST only)
-  if (method !== "POST" || !INTERNAL_TOKEN_ALLOWED_PATHS.has(pathname)) {
+  if (method !== "POST" || !isInternalTokenPath(pathname)) {
     return new Response(JSON.stringify({ error: "Forbidden" }), {
       status: 403,
       headers: { "Content-Type": "application/json" },

@@ -113,7 +113,7 @@ function makeApp(): Hono {
   const app = new Hono();
   app.route("/", mcpRoutes(ctx));
   // A REST route behind the same middleware every `/v1/*` group uses.
-  app.post("/v1/tools/call", requireAuth(ctx.authOptions), (c) => c.json({ ok: true }));
+  app.post(`/v1/workspaces/${WS_A}/tools/call`, requireAuth(ctx.authOptions), (c) => c.json({ ok: true }));
   return app;
 }
 
@@ -257,12 +257,12 @@ describe("first-party credentials", () => {
 
 describe("a token is valid only for its resource", () => {
   it("refuses an aud-bound MCP token on a /v1/* REST route", async () => {
-    const res = await post(makeApp(), "/v1/tools/call", "alice-aud-exact");
+    const res = await post(makeApp(), `/v1/workspaces/${WS_A}/tools/call`, "alice-aud-exact");
     expect(res.status).toBe(401);
   });
 
   it("still accepts the first-party token on REST", async () => {
-    const res = await post(makeApp(), "/v1/tools/call", "alice-first-party");
+    const res = await post(makeApp(), `/v1/workspaces/${WS_A}/tools/call`, "alice-first-party");
     expect(res.status).toBe(200);
   });
 });

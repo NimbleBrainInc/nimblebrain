@@ -1248,7 +1248,7 @@ function filterHostContextForSpec(ctx: Record<string, unknown>): Record<string, 
 
 /**
  * Open the OS file picker, then upload the selected files to the
- * workspace file store via `POST /v1/resources`. Returns the
+ * workspace file store via `POST /v1/workspaces/:wsId/resources`. Returns the
  * persisted `WorkspaceFile` entries — bytes never traverse the
  * iframe-bridge boundary, so files of any size the server's
  * `maxFileSize` allows work without base64 inflation or hitting the
@@ -1318,7 +1318,7 @@ interface RequestFileResult {
 }
 
 /**
- * Validate picked files against `maxSize`, upload them via `POST /v1/resources`,
+ * Validate picked files against `maxSize`, upload them via `POST /v1/workspaces/:wsId/resources`,
  * and resolve to the persisted entries — an empty list when nothing was chosen.
  * Throws on the first oversize file or an upload failure.
  */

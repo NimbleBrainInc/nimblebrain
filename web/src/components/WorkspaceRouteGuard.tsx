@@ -14,8 +14,9 @@ const loadingWorkspace = (
  * Route guard for `/w/:slug/*`.
  *
  * The URL slug is the single source of truth for the focused workspace. The
- * wire workspace (`X-Workspace-Id`, sent from the ambient `activeWorkspaceId`)
- * is a *projection* of that slug — never an independent value.
+ * wire workspace (the `/v1/workspaces/<wsId>/…` path REST helpers build from
+ * the ambient `activeWorkspaceId`) is a *projection* of that slug — never an
+ * independent value.
  *
  * The projection is set **synchronously during render**, before the `Outlet`'s
  * descendants render. That ordering is the whole point: a descendant's data

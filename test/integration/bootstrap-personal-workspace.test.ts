@@ -3,8 +3,8 @@
  * `workspaces[].isPersonal` flag on each entry.
  *
  * Runs handleBootstrap directly against a real Runtime — no HTTP server
- * needed since the handler accepts (Request, Runtime, identity) and
- * returns a Response.
+ * needed since the handler accepts (Runtime, identity) and returns a
+ * Response.
  */
 
 import { mkdirSync, rmSync } from "node:fs";
@@ -48,7 +48,7 @@ afterEach(async () => {
 });
 
 async function bootstrapFor(userId: string): Promise<BootstrapResponse> {
-  const res = await handleBootstrap(new Request("http://_/v1/bootstrap"), runtime, {
+  const res = await handleBootstrap(runtime, {
     id: userId,
     email: `${userId}@example.test`,
     displayName: userId,

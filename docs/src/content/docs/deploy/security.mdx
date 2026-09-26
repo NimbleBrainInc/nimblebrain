@@ -109,7 +109,7 @@ If you use a custom domain with the web UI, that domain must be in `ALLOWED_ORIG
 These headers are always permitted in CORS requests:
 
 ```
-Content-Type, Authorization, Mcp-Session-Id, Last-Event-ID, Mcp-Protocol-Version, X-Workspace-Id
+Content-Type, Authorization, Mcp-Session-Id, Last-Event-ID, Mcp-Protocol-Version
 ```
 
 These headers are exposed to client JavaScript:
@@ -117,6 +117,10 @@ These headers are exposed to client JavaScript:
 ```
 Mcp-Session-Id, Mcp-Protocol-Version
 ```
+
+### Cross-origin writes to a workspace
+
+CORS stops a script on another origin from reading a response, but a plain form or `text/plain` POST needs no preflight, and `SameSite=Lax` sends the session cookie on it when the other origin is on the same site. So a write to a workspace route (`POST`, `PATCH`, `DELETE` under `/v1/workspaces/`) that the browser marks `Sec-Fetch-Site: same-site` or `cross-site` is refused with `403 cross_site_request`, unless its `Origin` is in `ALLOWED_ORIGINS`. Same-origin requests, and clients that are not browsers, are unaffected.
 
 ## Network architecture
 

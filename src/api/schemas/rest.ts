@@ -11,10 +11,10 @@
 // Response shapes are type-only (no runtime check) — we generate them,
 // we trust them.
 //
-// Migration scope: this module covers `/v1/tools/call` and `/v1/chat`
+// Migration scope: this module covers `/v1/workspaces/:wsId/tools/call` and `/v1/workspaces/:wsId/chat`
 // only — the highest-traffic endpoints. The remaining REST routes
 // (`/v1/auth/*`, `/v1/bootstrap`, `/v1/events`, `/v1/resources/*`,
-// `/v1/shell`, `/v1/files/*`, `/v1/apps/*`, well-known, mcp internals)
+// `/v1/workspaces/:wsId/shell`, `/v1/files/*`, `/v1/workspaces/:wsId/apps/*`, well-known, mcp internals)
 // are tracked in #163 for a follow-up PR. Until then they continue to
 // use hand-rolled shape checks; do not add new routes that follow that
 // pattern — add them here.
@@ -23,7 +23,7 @@
 import { type Static, Type } from "@sinclair/typebox";
 import { CONVERSATION_ID_RE } from "../../conversation/types.ts";
 
-// ── /v1/tools/call ───────────────────────────────────────────────────────
+// ── /v1/workspaces/:wsId/tools/call ─────────────────────────────────────────
 
 export const ToolCallRequestEnvelope = Type.Object(
   {
@@ -45,14 +45,14 @@ export const ToolCallRequestEnvelope = Type.Object(
 );
 export type ToolCallRequestEnvelope = Static<typeof ToolCallRequestEnvelope>;
 
-// ── /v1/chat ─────────────────────────────────────────────────────────────
+// ── /v1/workspaces/:wsId/chat ───────────────────────────────────────────────
 
 const ContentPart = Type.Object({ type: Type.String() }, { additionalProperties: true });
 
 const FileReference = Type.Object({ id: Type.String() }, { additionalProperties: true });
 
 /**
- * JSON body schema for `/v1/chat` and `/v1/chat/stream`. Multipart form
+ * JSON body schema for `/v1/workspaces/:wsId/chat` and `/v1/workspaces/:wsId/chat/stream`. Multipart form
  * uploads have their own parse path (parseMultipartChatBody) and don't
  * go through this schema.
  *
@@ -84,7 +84,7 @@ export const ChatRequestBody = Type.Object(
     workspaceId: Type.Optional(
       Type.String({
         description:
-          "DEPRECATED: the chat surface is identity-bound; tools come from every workspace the caller can see and each call routes by namespace prefix, so this body field is ignored on /v1/chat (kept for client compatibility). The focused workspace comes from the X-Workspace-Id header instead, which scopes the prompt briefing (installed apps + house rules) — not this field. Per-tool-call workspace attribution lives on each tool.done event's `workspaceId` field.",
+          "DEPRECATED and ignored (kept for client compatibility). The workspace is the one in the URL, /v1/workspaces/<wsId>/chat; it scopes the tools and the prompt briefing (installed apps + house rules). Per-tool-call workspace attribution lives on each tool.done event's `workspaceId` field.",
       }),
     ),
     appContext: Type.Optional(

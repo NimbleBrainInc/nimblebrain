@@ -2,16 +2,12 @@ import { Hono } from "hono";
 import { createMiddleware } from "hono/factory";
 import { publicOrigin } from "../../oauth/public-origin.ts";
 import { authenticateRequest, isAuthError } from "../auth-middleware.ts";
-import {
-  isWorkspaceIdShape,
-  MCP_PATH_PREFIX,
-  mcpResourceMetadataUrl,
-  mcpResourceUrl,
-} from "../mcp-resource.ts";
+import { MCP_PATH_PREFIX, mcpResourceMetadataUrl, mcpResourceUrl } from "../mcp-resource.ts";
 import type { McpSessionContext } from "../mcp-server.ts";
 import { bodyLimit } from "../middleware/body-limit.ts";
 import { requestRateLimit } from "../middleware/rate-limit.ts";
 import { type AppContext, type AuthEnv, apiError } from "../types.ts";
+import { isAddressedWorkspaceMember, isWorkspaceIdShape } from "../workspace-address.ts";
 
 /**
  * Build the WWW-Authenticate header value for MCP OAuth discovery.
@@ -132,12 +128,9 @@ export function mcpRoutes(ctx: AppContext) {
       // Membership authorizes; the token's audience only proved it was minted
       // for this URL. Checked on every request, fail-closed, and a non-member
       // gets exactly the unknown-workspace answer.
-      const workspace = await ctx.workspaceStore.get(wsId);
-      const isMember =
-        workspace !== null &&
-        workspace.id === wsId &&
-        workspace.members.some((m) => m.userId === identity.id);
-      if (!isMember) return workspaceNotFound();
+      if (!(await isAddressedWorkspaceMember(ctx.workspaceStore, wsId, identity.id))) {
+        return workspaceNotFound();
+      }
 
       const sessionCtx: McpSessionContext = { identity, workspaceId: wsId };
       return ctx.mcpHost.handle(c.req.raw, features, sessionCtx);

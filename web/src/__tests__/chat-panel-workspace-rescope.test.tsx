@@ -336,9 +336,9 @@ describe("ChatProvider reconciles a foreign-workspace conversation after a refre
 });
 
 describe("Focus is route-derived, so bootstrap's default is never a phantom switch", () => {
-  // A cold load sends no `X-Workspace-Id` (the ambient id is null until bootstrap
-  // returns), so the server answers with its default focus — the user's personal
-  // workspace — even when the URL is another workspace. `activeWorkspace` therefore
+  // On a cold load the ambient id is null until bootstrap returns, and bootstrap
+  // answers with its default focus — the user's personal workspace — even when
+  // the URL is another workspace. `activeWorkspace` therefore
   // starts on that default and only reconciles to the route a render later. Focus
   // must not follow that intermediate value: it is indistinguishable from a real
   // workspace switch, and clearing on it discards the very conversation the

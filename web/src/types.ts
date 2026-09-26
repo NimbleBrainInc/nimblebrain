@@ -23,7 +23,7 @@ export interface AppInfo {
   ui: ConnectorUiMeta | null;
 }
 
-/** Tool call result from POST /v1/tools/call. */
+/** Tool call result from POST /v1/workspaces/:wsId/tools/call. */
 export interface ToolCallResult {
   content: Array<{ type: string; text?: string; [key: string]: unknown }>;
   structuredContent?: Record<string, unknown>;
@@ -59,7 +59,7 @@ export interface AppContext {
   };
 }
 
-/** Chat request body for POST /v1/chat and POST /v1/chat/stream. */
+/** Chat request body for POST /v1/workspaces/:wsId/chat and POST /v1/workspaces/:wsId/chat/stream. */
 export interface ChatRequest {
   message: string;
   conversationId?: string;
@@ -70,7 +70,7 @@ export interface ChatRequest {
 
 /**
  * Token usage for a single chat turn — the wire shape returned by
- * `POST /v1/chat` and the SSE `done` event. Mirrors `TurnUsage` from
+ * `POST /v1/workspaces/:wsId/chat` and the SSE `done` event. Mirrors `TurnUsage` from
  * the runtime (`src/runtime/types.ts`) plus `costUsd` which the API
  * boundary computes from `(model, usage)`. Cache and reasoning fields
  * are optional per the canonical `TokenUsage` shape.
@@ -83,7 +83,7 @@ export interface TurnUsage extends UsageShape {
   costUsd: number;
 }
 
-/** Full chat result from POST /v1/chat and the final SSE "done" event. */
+/** Full chat result from POST /v1/workspaces/:wsId/chat and the final SSE "done" event. */
 export interface ChatResult {
   response: string;
   conversationId: string;

@@ -2,8 +2,8 @@
 // WorkspaceRouteGuard — single-source-of-truth invariant.
 //
 // The URL slug is authoritative for the active workspace; the wire
-// workspace (`X-Workspace-Id`, from the ambient `activeWorkspaceId`) is a
-// projection of it. The load-bearing contract: a workspace-scoped child
+// workspace (the `/v1/workspaces/<wsId>/…` path REST helpers build from the
+// ambient `activeWorkspaceId`) is a projection of it. The load-bearing contract: a workspace-scoped child
 // must NOT mount until the ambient workspace equals the route — otherwise
 // a descendant's data fetch reads the stale ambient value (the bootstrap
 // personal default, or the previous route's workspace) and shows one

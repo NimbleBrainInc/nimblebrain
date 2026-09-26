@@ -470,7 +470,7 @@ describe("ActivityCollector", () => {
 				event: "http.error",
 				status: 400,
 				method: "POST",
-				path: "/v1/tools/call",
+				path: "/v1/workspaces/ws_a/tools/call",
 				error: "invalid_input",
 				message: "/description: must be string",
 				userId: "usr_1",
@@ -481,7 +481,7 @@ describe("ActivityCollector", () => {
 				event: "http.error",
 				status: 401,
 				method: "POST",
-				path: "/v1/chat/stream",
+				path: "/v1/workspaces/ws_a/chat/stream",
 				error: "unknown",
 				message: "Unauthorized",
 				userId: null,
@@ -499,11 +499,11 @@ describe("ActivityCollector", () => {
 		expect(result.errors).toHaveLength(2);
 		expect(result.errors[0].source).toBe("http");
 		expect(result.errors[0].message).toBe("400 invalid_input: /description: must be string");
-		expect(result.errors[0].context).toBe("POST /v1/tools/call");
+		expect(result.errors[0].context).toBe("POST /v1/workspaces/ws_a/tools/call");
 		expect(result.errors[0].timestamp).toBe("2025-01-01T10:00:00Z");
 		expect(result.errors[1].source).toBe("http");
 		expect(result.errors[1].message).toBe("401 unknown: Unauthorized");
-		expect(result.errors[1].context).toBe("POST /v1/chat/stream");
+		expect(result.errors[1].context).toBe("POST /v1/workspaces/ws_a/chat/stream");
 		expect(result.totals.errors).toBe(2);
 	});
 
@@ -514,7 +514,7 @@ describe("ActivityCollector", () => {
 				event: "http.error",
 				status: 403,
 				method: "POST",
-				path: "/v1/tools/call",
+				path: "/v1/workspaces/ws_a/tools/call",
 				error: "forbidden",
 				message: "Insufficient permissions",
 			},
@@ -553,7 +553,7 @@ describe("ActivityCollector", () => {
 				event: "http.error",
 				status: 400,
 				method: "POST",
-				path: "/v1/tools/call",
+				path: "/v1/workspaces/ws_a/tools/call",
 				error: "invalid_input",
 				message: "bad args",
 			},

@@ -11,7 +11,7 @@
  *     conversation (`findConversation`, the SSE event stream).
  *   - RESUME is denied — continuing the chat would grant the workspace's tools to
  *     someone offboarded from it, so the membership gate refuses it (`403`),
- *     regardless of which workspace the request is focused on.
+ *     regardless of which workspace the request is addressed to.
  *
  * This replaces the earlier "conversations outlive their workspace context"
  * stance, which dated from when conversations lived at flat top-level storage
@@ -146,14 +146,13 @@ describe("conversation access after the owner is removed from its workspace", ()
 
   test("an owned conversation in A stays readable but cannot be resumed after Alice leaves A", async () => {
     // 1. Alice POSTs a chat in shared_a — produces a conversation born in the
-    //    focused workspace (the `X-Workspace-Id`, sharedA), stored under
-    //    `workspaces/<sharedA>/conversations/<ownerId>/` and sealed to it (#584).
-    const createRes = await fetch(`${baseUrl}/v1/chat`, {
+    //    workspace the request is addressed to (sharedA, from the path), stored
+    //    under `workspaces/<sharedA>/conversations/<ownerId>/` and sealed to it.
+    const createRes = await fetch(`${baseUrl}/v1/workspaces/${sharedA}/chat`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${ALICE_TOKEN}`,
-        "X-Workspace-Id": sharedA,
       },
       body: JSON.stringify({ message: "hello from workspace A" }),
     });
@@ -204,35 +203,35 @@ describe("conversation access after the owner is removed from its workspace", ()
     expect(sseRes.headers.get("Content-Type")).toMatch(/text\/event-stream/);
     await sseRes.body?.cancel();
 
-    // 5. But chatting IN shared_a is refused with the standard
-    //    non-member 403 — workspace resolution happens at the HTTP
+    // 5. But chatting IN shared_a is refused with the workspace gate's single
+    //    answer for a workspace the caller cannot reach (404, indistinguishable
+    //    from an unknown workspace) — the `:wsId` gate runs at the HTTP
     //    boundary before the runtime even sees the request.
-    const refusedRes = await fetch(`${baseUrl}/v1/chat`, {
+    const refusedRes = await fetch(`${baseUrl}/v1/workspaces/${sharedA}/chat`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${ALICE_TOKEN}`,
-        "X-Workspace-Id": sharedA,
       },
       body: JSON.stringify({ message: "still in A?", conversationId: convId }),
     });
-    expect(refusedRes.status).toBe(403);
-    const refusedBody = await refusedRes.json();
-    expect(refusedBody.error).toBe("workspace_error");
-    expect(refusedBody.message).toMatch(/not a member/i);
+    expect(refusedRes.status).toBe(404);
+    expect(await refusedRes.json()).toEqual({
+      error: "workspace_error",
+      message: "Workspace not found",
+    });
 
-    // 6. RESUME is denied — even focused on a DIFFERENT workspace Alice IS a
+    // 6. RESUME is denied — even addressed to a DIFFERENT workspace Alice IS a
     //    member of (sharedB passes the door's membership check). The conversation
     //    is sealed to sharedA, so resolution would bind tools to sharedA, which
     //    Alice was removed from. The membership gate refuses with a 403, NOT a
     //    silent continuation. (This is the resume analog of step 5's HTTP-boundary
-    //    refusal, but on the conversation's OWN workspace rather than the header's.)
-    const continueRes = await fetch(`${baseUrl}/v1/chat`, {
+    //    refusal, but on the conversation's OWN workspace rather than the path's.)
+    const continueRes = await fetch(`${baseUrl}/v1/workspaces/${sharedB}/chat`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${ALICE_TOKEN}`,
-        "X-Workspace-Id": sharedB,
       },
       body: JSON.stringify({
         message: "continuing in workspace B",

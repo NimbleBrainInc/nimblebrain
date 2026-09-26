@@ -6,5 +6,5 @@ import type { AppContext, AuthEnv } from "../types.ts";
 export function bootstrapRoutes(ctx: AppContext) {
   return new Hono<AuthEnv>()
     .use("*", requireAuth(ctx.authOptions))
-    .get("/v1/bootstrap", (c) => handleBootstrap(c.req.raw, ctx.runtime, c.var.identity));
+    .get("/v1/bootstrap", (c) => handleBootstrap(ctx.runtime, c.var.identity));
 }

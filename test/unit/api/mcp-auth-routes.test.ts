@@ -18,12 +18,17 @@ import { _clearAll, register as registerFlow } from "../../../src/tools/oauth-fl
  * cache headers). The provider, lifecycle, and registry all have their own
  * tests; this file covers the route-handler logic directly.
  *
- * The middleware (`requireAuth`, `requireWorkspace`) is bypassed by setting
- * `c.var.workspaceId` from a parent app. We're testing the route's cookie
- * binding, not the auth/workspace middleware (which has its own tests).
+ * The workspace-scoped initiate route runs its real middleware in dev mode:
+ * `requireAuth` passes with no identity, and `requireWorkspace` admits the dev
+ * user to the workspace named in the path because the stub store lists it as
+ * a member. We're testing the route's cookie binding, not the auth/workspace
+ * middleware (which has its own tests).
  */
 
 const WS_ID = "ws_test";
+/** The dev user `requireWorkspace` admits when no identity provider is configured. */
+const DEV_USER_ID = "usr_default";
+const INITIATE_PATH = `/v1/workspaces/${WS_ID}/mcp-auth/initiate`;
 const WS_OWNER = { kind: "workspace", wsId: WS_ID } as const;
 const USER_ID = "usr_test";
 
@@ -90,27 +95,24 @@ function makeApp(
       getAllowInsecureRemotes: () => false,
       // Dev-mode: no real identity → the fixed test user.
       resolveRequestUserId: () => USER_ID,
+      // No identity provider: requireWorkspace() treats the caller as the dev user.
+      getIdentityProvider: () => null,
     },
-    // Dev-mode auth so requireAuth() passes through without an identity. No
-    // identity → requireWorkspace() also passes through without setting
-    // workspaceId. We set it ourselves in the wrapping middleware below.
+    // Dev-mode auth so requireAuth() passes through without an identity.
     authOptions: { mode: { type: "dev" }, eventSink: { emit: () => {} } },
-    workspaceStore: {},
+    workspaceStore: {
+      get: async (id: string) =>
+        id === WS_ID ? { id, members: [{ userId: DEV_USER_ID, role: "admin" }] } : null,
+    },
     secureCookies,
   } as unknown as AppContext;
 
   const app = new Hono<AppEnv>();
-  // Bypass the workspace middleware by pre-setting the var. The route's own
-  // requireWorkspace middleware (in dev mode) is a no-op.
-  app.use("*", async (c, next) => {
-    c.set("workspaceId", WS_ID);
-    await next();
-  });
   app.route("/", mcpAuthRoutes(ctx));
   return app;
 }
 
-describe("POST /v1/mcp-auth/initiate", () => {
+describe("POST /v1/workspaces/:wsId/mcp-auth/initiate", () => {
   let app: Hono<AppEnv>;
   let lifecycle: StubLifecycle;
 
@@ -125,7 +127,7 @@ describe("POST /v1/mcp-auth/initiate", () => {
     lifecycle.instances.set(`granola|${WS_ID}`, { oauthScope: "workspace" });
     lifecycle.authUrls.set(`granola|${WS_ID}|_workspace`, authUrl);
 
-    const res = await app.request("http://localhost/v1/mcp-auth/initiate", {
+    const res = await app.request(`http://localhost${INITIATE_PATH}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ serverName: "granola" }),
@@ -154,7 +156,7 @@ describe("POST /v1/mcp-auth/initiate", () => {
     );
     const prodApp = makeApp(lifecycle, /* secureCookies */ true);
 
-    const res = await prodApp.request("http://api.example.com/v1/mcp-auth/initiate", {
+    const res = await prodApp.request(`http://api.example.com${INITIATE_PATH}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ serverName: "granola" }),
@@ -171,7 +173,7 @@ describe("POST /v1/mcp-auth/initiate", () => {
     lifecycle.instances.set(`minted|${WS_ID}`, { oauthScope: "workspace" });
     lifecycle.authUrls.set(`minted|${WS_ID}|_workspace`, null);
 
-    const res = await app.request("http://localhost/v1/mcp-auth/initiate", {
+    const res = await app.request(`http://localhost${INITIATE_PATH}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ serverName: "minted" }),
@@ -184,7 +186,7 @@ describe("POST /v1/mcp-auth/initiate", () => {
   });
 
   test("returns 404 with no cookie when connector is not installed", async () => {
-    const res = await app.request("http://localhost/v1/mcp-auth/initiate", {
+    const res = await app.request(`http://localhost${INITIATE_PATH}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ serverName: "no-such-connector" }),
@@ -198,7 +200,7 @@ describe("POST /v1/mcp-auth/initiate", () => {
   });
 
   test("returns 400 on missing serverName", async () => {
-    const res = await app.request("http://localhost/v1/mcp-auth/initiate", {
+    const res = await app.request(`http://localhost${INITIATE_PATH}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({}),
@@ -210,7 +212,7 @@ describe("POST /v1/mcp-auth/initiate", () => {
   });
 
   test("returns 400 on non-JSON body", async () => {
-    const res = await app.request("http://localhost/v1/mcp-auth/initiate", {
+    const res = await app.request(`http://localhost${INITIATE_PATH}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: "not-json",
@@ -227,12 +229,41 @@ describe("POST /v1/mcp-auth/initiate", () => {
       "https://granola.test/auth?client_id=x",
     );
 
-    const res = await app.request("http://localhost/v1/mcp-auth/initiate", {
+    const res = await app.request(`http://localhost${INITIATE_PATH}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ serverName: "bad" }),
     });
     expect(res.status).toBe(500);
+  });
+
+  test("returns 404 workspace_error and starts no flow for a workspace the caller is not in", async () => {
+    lifecycle.instances.set(`granola|ws_other`, { oauthScope: "workspace" });
+    lifecycle.authUrls.set(`granola|ws_other|_workspace`, "https://granola.test/auth?state=s");
+
+    const res = await app.request("http://localhost/v1/workspaces/ws_other/mcp-auth/initiate", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ serverName: "granola" }),
+    });
+
+    expect(res.status).toBe(404);
+    expect((await res.json()).error).toBe("workspace_error");
+    expect(res.headers.get("Set-Cookie")).toBeNull();
+  });
+
+  test("the unscoped /v1/mcp-auth/initiate path is not a route", async () => {
+    lifecycle.instances.set(`granola|${WS_ID}`, { oauthScope: "workspace" });
+    lifecycle.authUrls.set(`granola|${WS_ID}|_workspace`, "https://granola.test/auth?state=s");
+
+    const res = await app.request("http://localhost/v1/mcp-auth/initiate", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ serverName: "granola" }),
+    });
+
+    expect(res.status).toBe(404);
+    expect(res.headers.get("Set-Cookie")).toBeNull();
   });
 });
 
@@ -627,7 +658,7 @@ describe("bouncer mode: state envelope wrap on initiate / unwrap on callback", (
     lifecycle.instances.set(`granola|${WS_ID}`, { oauthScope: "workspace" });
     lifecycle.authUrls.set(`granola|${WS_ID}|_workspace`, authUrl);
 
-    const res = await app.request("http://localhost/v1/mcp-auth/initiate", {
+    const res = await app.request(`http://localhost${INITIATE_PATH}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ serverName: "granola" }),

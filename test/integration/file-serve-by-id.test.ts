@@ -4,7 +4,7 @@
  * A file is WORKSPACE-owned, but its id is globally unique, so the bare id
  * addresses it: the file locator resolves the id to its workspace within the
  * caller's own owner partitions, with NO workspace or conversation in the URL (a
- * browser `<img>` GET can't send `X-Workspace-Id`, and doesn't need to). This is
+ * browser `<img>` GET carries only the URL, and needs nothing else). This is
  * what makes a file attached to a conversation in workspace A resolve even when
  * the client is focused elsewhere — there is no client-supplied coordinate to
  * get wrong.
@@ -60,16 +60,14 @@ describe("GET /v1/files resolves the workspace from the file id", () => {
     const form = new FormData();
     form.append("file", new Blob(["served bytes"], { type: "text/plain" }), "served.txt");
     form.append("conversationId", convId);
-    const upload = await fetch(`${baseUrl}/v1/resources`, { method: "POST", body: form });
+    const upload = await fetch(`${baseUrl}/v1/workspaces/${WORKSPACE_A}/resources`, { method: "POST", body: form });
     expect(upload.status).toBe(200);
     const uploadBody = await upload.json();
     const fileId: string = uploadBody.files[0].id;
     expect(uploadBody.files[0].workspaceId).toBe(WORKSPACE_A);
 
-    // Download by bare id — no ?ws, no conversationId. The locator resolves the
-    // id to workspace A within the owner's partitions. The personal workspace
-    // (PERSONAL) is the "focused elsewhere" workspace the file does NOT live in;
-    // the bare id resolves regardless, which is the whole point.
+    // Download by bare id — no workspace, no conversationId. The locator
+    // resolves the id to workspace A within the owner's partitions.
     const byId = await fetch(`${baseUrl}/v1/files/${fileId}`);
     expect(byId.status).toBe(200);
     expect(await byId.text()).toBe("served bytes");
@@ -89,7 +87,7 @@ describe("GET /v1/files resolves the workspace from the file id", () => {
     const form = new FormData();
     form.append("file", new Blob(["heal me"], { type: "text/plain" }), "heal.txt");
     form.append("conversationId", born.conversationId);
-    const upload = await fetch(`${baseUrl}/v1/resources`, { method: "POST", body: form });
+    const upload = await fetch(`${baseUrl}/v1/workspaces/${WORKSPACE_A}/resources`, { method: "POST", body: form });
     const fileId: string = (await upload.json()).files[0].id;
 
     // Poison the cache: claim the file lives somewhere it doesn't.

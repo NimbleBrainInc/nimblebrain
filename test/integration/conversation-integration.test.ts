@@ -8,6 +8,7 @@ import { createEchoModel } from "../helpers/echo-model.ts";
 import { startServer } from "../../src/api/server.ts";
 import type { ServerHandle } from "../../src/api/server.ts";
 import type { StoredMessage } from "../../src/conversation/types.ts";
+import { TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
 
 function tempDir(): string {
 	const dir = join(tmpdir(), `nb-integration-${crypto.randomUUID()}`);
@@ -239,7 +240,7 @@ describe("API full-flow integration", () => {
 
 	it.skip("chat → list → rename → search → fork → delete → verify gone", async () => {
 		// --- create via chat ---
-		const chatRes = await fetch(`${baseUrl}/v1/chat`, {
+		const chatRes = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({ message: "Tell me about integration testing" }),

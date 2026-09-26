@@ -14,7 +14,7 @@ When your manifest declares a resource URI like `ui://dashboard`, NimbleBrain re
 The flow:
 
 1. User navigates to your app (e.g., `/app/my-app`).
-2. The web client requests `GET /v1/apps/my-app/resources/primary`.
+2. The web client requests `GET /v1/workspaces/<wsId>/apps/my-app/resources/primary`, in the workspace the user is in.
 3. The platform resolves `"primary"` to your first placement's `resourceUri`.
 4. The platform calls `resources/read` on your MCP server for that URI.
 5. The platform returns a `ReadResourceResult` envelope; the web client loads the HTML from it into an iframe.
@@ -116,11 +116,12 @@ server.resource("dashboard", "ui://dashboard", async () => ({
 The platform API exposes app resources at:
 
 ```
-GET /v1/apps/:name/resources/:path
+GET /v1/workspaces/:wsId/apps/:name/resources/:path
 ```
 
 | Parameter | Description |
 |-----------|-------------|
+| `:wsId` | The workspace the app is installed in. The caller must be a member; any other id gets `404 workspace_error`. |
 | `:name` | The source name — a connector's `serverName`, or a platform app's name. |
 | `:path` | The full path after `ui://` in your resource URI. |
 
@@ -135,10 +136,10 @@ def crm_ui() -> str:
 ```
 
 ```
-GET /v1/apps/synapse-crm/resources/crm/main
+GET /v1/workspaces/ws_acme/apps/synapse-crm/resources/crm/main
 ```
 
-Returns a JSON envelope in the shape of the MCP `ReadResourceResult`, so a client reads the protocol directly — including `_meta` (e.g. ext-apps `_meta.ui.csp`) — without a translation layer. `POST /v1/resources/read` returns the same shape.
+Returns a JSON envelope in the shape of the MCP `ReadResourceResult`, so a client reads the protocol directly — including `_meta` (e.g. ext-apps `_meta.ui.csp`) — without a translation layer. `POST /v1/workspaces/:wsId/resources/read` returns the same shape.
 
 ```json
 {
@@ -159,7 +160,7 @@ The HTML is `contents[0].text`. A binary resource carries base64 in `blob` inste
 The path `primary` is special. It resolves to the `resourceUri` from the first placement in your manifest:
 
 ```
-GET /v1/apps/synapse-crm/resources/primary
+GET /v1/workspaces/ws_acme/apps/synapse-crm/resources/primary
 → reads ui://crm/main (from placement resourceUri)
 ```
 
@@ -186,9 +187,9 @@ def contact_detail() -> str:
 Access them through the proxy:
 
 ```
-GET /v1/apps/synapse-crm/resources/crm/main
-GET /v1/apps/synapse-crm/resources/crm/settings
-GET /v1/apps/synapse-crm/resources/crm/contact-detail
+GET /v1/workspaces/ws_acme/apps/synapse-crm/resources/crm/main
+GET /v1/workspaces/ws_acme/apps/synapse-crm/resources/crm/settings
+GET /v1/workspaces/ws_acme/apps/synapse-crm/resources/crm/contact-detail
 ```
 
 Use multiple resources when you need separate views for different [placements](/apps/placements) (e.g., a sidebar widget and a main view).
@@ -213,7 +214,7 @@ NimbleBrain's own surfaces — the conversation list, files, and automations —
 When the resource proxy receives a request for a built-in's view, it calls `resources/read` on that in-process app through the same dispatch path it uses for any other server:
 
 ```
-GET /v1/apps/files/resources/primary  → files app's ui:// resource
+GET /v1/workspaces/ws_acme/apps/files/resources/primary  → files app's ui:// resource
 ```
 
 This means the built-ins and your app are governed by one contract. Anything the platform's own UI can do through `ui://` and the bridge, your app can do too.

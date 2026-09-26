@@ -7,7 +7,6 @@ import type {
 } from "../identity/provider.ts";
 import { TransientAuthError } from "../identity/provider.ts";
 import { log } from "../observability/log.ts";
-import type { WorkspaceStore } from "../workspace/workspace-store.ts";
 import { constantTimeEqual, validateInternalToken } from "./auth-utils.ts";
 
 // ── Auth mode detection ───────────────────────────────────────────
@@ -150,74 +149,6 @@ async function verifyWithProvider(
 export function grantAdmits(grant: TokenGrant, resource: string | undefined): boolean {
   if (grant.kind === "first_party") return true;
   return resource !== undefined && grant.audience.includes(resource);
-}
-
-// ── Workspace context ────────────────────────────────────────────
-
-/** Valid workspace ID: ws_ prefix followed by 1-64 alphanumeric/underscore chars. */
-export const WORKSPACE_ID_RE = /^ws_[a-z0-9_]{1,64}$/i;
-
-/** Error thrown when workspace resolution fails. */
-export class WorkspaceResolutionError extends Error {
-  constructor(
-    message: string,
-    public readonly statusCode: 400 | 403,
-  ) {
-    super(message);
-    this.name = "WorkspaceResolutionError";
-  }
-}
-
-/**
- * Resolve the workspace for a request.
- *
- * Pure selection — does NOT create, default-pick, or auto-provision.
- * Provisioning is an identity-layer concern (see ensureUserWorkspace
- * wired into each provider's verifyRequest). Defaulting to "the user's
- * only workspace" was a footgun: a client that "just worked" one day
- * would 400 the next when the user was added to a second workspace.
- * Honest contract: the caller names the workspace via X-Workspace-Id
- * on every data-path request. Bootstrap is the only place the server
- * is allowed to pick a default, and it does that in its own handler
- * (not through this resolver).
- *
- * Returns the resolved workspace ID.
- * Throws WorkspaceResolutionError (400 or 403) on failure.
- */
-export async function resolveWorkspace(
-  req: Request,
-  identity: UserIdentity,
-  workspaceStore: WorkspaceStore,
-): Promise<string> {
-  const workspaceId = req.headers.get("x-workspace-id");
-  if (!workspaceId) {
-    throw new WorkspaceResolutionError(
-      "Workspace required. Set the X-Workspace-Id header. " +
-        "The workspace ID is available from GET /v1/bootstrap or Workspace settings → General → Workspace ID.",
-      400,
-    );
-  }
-
-  // Validate workspace ID format (prevents path traversal)
-  if (!WORKSPACE_ID_RE.test(workspaceId)) {
-    throw new WorkspaceResolutionError("Invalid workspace ID format.", 400);
-  }
-
-  // Validate membership
-  const workspace = await workspaceStore.get(workspaceId);
-  if (!workspace) {
-    throw new WorkspaceResolutionError(`Workspace "${workspaceId}" not found.`, 400);
-  }
-
-  const isMember = workspace.members.some((m) => m.userId === identity.id);
-  if (!isMember) {
-    throw new WorkspaceResolutionError(
-      `Access denied: not a member of workspace "${workspaceId}".`,
-      403,
-    );
-  }
-
-  return workspaceId;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────

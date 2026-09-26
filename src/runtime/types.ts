@@ -288,7 +288,7 @@ export interface ChatRequest {
   maxIterations?: number;
   /**
    * The workspace the chat is *focused* on (the `/w/:slug` the user is
-   * viewing, plumbed from the `X-Workspace-Id` header). Drives the
+   * viewing, plumbed from the workspace in the chat URL). Drives the
    * deterministic, workspace-scoped **briefing**: the Installed Apps
    * section and the org/workspace instruction overlays reflect THIS
    * workspace, identical for every member (no per-user generation).

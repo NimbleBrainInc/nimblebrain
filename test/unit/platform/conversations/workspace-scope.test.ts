@@ -180,7 +180,7 @@ describe("conversations__list — ambient workspace scoping", () => {
   });
 
   test("denies when no workspace is in scope", async () => {
-    // e.g. an external `/mcp` call with no `X-Workspace-Id`. Deny rather than
+    // e.g. a background job with no workspace bound. Deny rather than
     // guess a workspace — the same posture as `files__*`.
     const result = await exec("list", {}, undefined);
     expect(result.isError).toBe(true);

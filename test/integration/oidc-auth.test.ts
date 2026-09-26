@@ -135,7 +135,7 @@ async function buildJwt(opts: TokenOptions = {}): Promise<string> {
 }
 
 function bearerRequest(token: string): Request {
-  return new Request("http://localhost/v1/chat", {
+  return new Request("http://localhost/v1/bootstrap", {
     headers: { Authorization: `Bearer ${token}` },
   });
 }

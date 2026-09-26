@@ -104,7 +104,7 @@ export interface Connection {
   state: ConnectionState;
   /**
    * Authorization URL to send the user's browser to. Populated only while
-   * `state === "pending_auth"`. Read by `/v1/mcp-auth/initiate` to issue
+   * `state === "pending_auth"`. Read by `/v1/workspaces/:wsId/mcp-auth/initiate` to issue
    * the redirect; cleared when the connection transitions away from
    * pending_auth.
    */

@@ -1,75 +1,37 @@
 import { createMiddleware } from "hono/factory";
-import type { WorkspaceStore } from "../../workspace/workspace-store.ts";
-import { resolveWorkspace, WorkspaceResolutionError } from "../auth-middleware.ts";
-import { type AppEnv, apiError } from "../types.ts";
+import { DEV_IDENTITY } from "../../identity/providers/dev.ts";
+import { type AppContext, type AppEnv, apiError } from "../types.ts";
+import { isAddressedWorkspaceMember } from "../workspace-address.ts";
+
+/** Path prefix of every workspace-scoped REST route: `/v1/workspaces/<wsId>/…`. */
+export const WORKSPACE_ROUTE_PREFIX = "/v1/workspaces/:wsId";
 
 /**
- * Workspace resolution middleware. When identity exists, workspace MUST resolve
- * or the request is rejected. No silent pass-through without workspace.
+ * The one answer for a workspace this caller cannot reach: malformed, unknown,
+ * or not theirs. `workspace_error` is the code the web shell recovers from.
  */
-export function requireWorkspace(workspaceStore: WorkspaceStore) {
-  return createMiddleware<AppEnv>(async (c, next) => {
-    const identity = c.var.identity;
-
-    // No identity = dev mode — pass through (auth middleware handles enforcement)
-    if (!identity) {
-      await next();
-      return;
-    }
-
-    // Identity exists — workspace resolution is mandatory
-    try {
-      const wsId = await resolveWorkspace(c.req.raw, identity, workspaceStore);
-      c.set("workspaceId", wsId);
-    } catch (e) {
-      if (e instanceof WorkspaceResolutionError) {
-        return apiError(e.statusCode, "workspace_error", e.message);
-      }
-      throw e;
-    }
-
-    await next();
-  });
+function workspaceNotFound(): Response {
+  return apiError(404, "workspace_error", "Workspace not found");
 }
 
 /**
- * Workspace resolution middleware for routes where the workspace is
- * **optional**. Post-Stage-1 conversation read routes need this: the
- * conversation itself is user-owned (located by `findConversation`), so
- * an `X-Workspace-Id` header isn't required to authorize the read. But
- * if a client sends one — typically the chat UI does so callers don't
- * have to special-case which routes drop it — we still validate it so
- * malformed values 400 instead of silently passing.
+ * Admit a request to the workspace named by the route's `:wsId` and set it as
+ * `c.var.workspaceId`. Runs after `requireAuth`. The check is the one `/mcp/<wsId>`
+ * uses (`isAddressedWorkspaceMember`), on every request.
  *
- * Semantics:
- *  - Header absent → pass through (no `workspaceId` set on context).
- *  - Header present + valid + caller is a member → set `workspaceId`,
- *    pass through.
- *  - Header present + malformed / unknown / non-member → 400/403, same
- *    shape as `requireWorkspace` (don't silently ignore a bad header).
+ * With no identity on the request, the caller is the dev user only when no
+ * identity provider is configured; otherwise (the internal connector token)
+ * there is no member to admit.
  */
-export function optionalWorkspace(workspaceStore: WorkspaceStore) {
+export function requireWorkspace(ctx: AppContext) {
   return createMiddleware<AppEnv>(async (c, next) => {
-    const identity = c.var.identity;
-    if (!identity) {
-      await next();
-      return;
+    const wsId = c.req.param("wsId") ?? "";
+    const callerId =
+      c.var.identity?.id ?? (ctx.runtime.getIdentityProvider() ? null : DEV_IDENTITY.id);
+    if (!callerId || !(await isAddressedWorkspaceMember(ctx.workspaceStore, wsId, callerId))) {
+      return workspaceNotFound();
     }
-    // Absent header → fine. Distinguish "absent" from "present but
-    // malformed" so we don't 400 every unauthenticated drive-by.
-    if (!c.req.raw.headers.get("x-workspace-id")) {
-      await next();
-      return;
-    }
-    try {
-      const wsId = await resolveWorkspace(c.req.raw, identity, workspaceStore);
-      c.set("workspaceId", wsId);
-    } catch (e) {
-      if (e instanceof WorkspaceResolutionError) {
-        return apiError(e.statusCode, "workspace_error", e.message);
-      }
-      throw e;
-    }
+    c.set("workspaceId", wsId);
     await next();
   });
 }

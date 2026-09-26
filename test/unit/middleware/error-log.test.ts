@@ -53,11 +53,11 @@ describe("errorLog middleware", () => {
       await next();
     });
     app.use("*", errorLog({ runtime: stubRuntime(workDir), eventSink: sink }));
-    app.post("/v1/tools/call", (c) =>
+    app.post("/v1/workspaces/ws_test/tools/call", (c) =>
       c.json({ error: "invalid_input", message: "/description: must be string" }, 400),
     );
 
-    const res = await app.request("/v1/tools/call", { method: "POST" });
+    const res = await app.request("/v1/workspaces/ws_test/tools/call", { method: "POST" });
     expect(res.status).toBe(400);
 
     const records = readLogLines(workDir, "ws_test");
@@ -65,7 +65,7 @@ describe("errorLog middleware", () => {
     expect(records[0].event).toBe("http.error");
     expect(records[0].status).toBe(400);
     expect(records[0].method).toBe("POST");
-    expect(records[0].path).toBe("/v1/tools/call");
+    expect(records[0].path).toBe("/v1/workspaces/ws_test/tools/call");
     expect(records[0].error).toBe("invalid_input");
     expect(records[0].message).toBe("/description: must be string");
     expect(records[0].userId).toBe("usr_1");
