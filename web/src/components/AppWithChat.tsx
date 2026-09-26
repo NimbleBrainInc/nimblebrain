@@ -23,7 +23,6 @@
 
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import { useLocation } from "react-router-dom";
-import type { UiChatContext } from "../bridge/types";
 import { useChatContext } from "../context/ChatContext";
 import { useChatPanelContext } from "../context/ChatPanelContext";
 import { useFocusedApp } from "../context/FocusedAppContext";
@@ -50,13 +49,12 @@ function restoreSavedConversation(chat: ReturnType<typeof useChatContext>) {
 
 interface AppWithChatProps {
   placement: PlacementEntry;
-  onNavigate: (route: string) => void;
 }
 
 const TRANSITION_STANDARD = "300ms cubic-bezier(0.33, 1, 0.68, 1)";
 const TRANSITION_FULLSCREEN = "350ms cubic-bezier(0.4, 0, 0.2, 1)";
 
-export function AppWithChat({ placement, onNavigate }: AppWithChatProps) {
+export function AppWithChat({ placement }: AppWithChatProps) {
   const { panelState, openPanel, toggleFullscreen } = useChatPanelContext();
 
   const chat = useChatContext();
@@ -120,18 +118,11 @@ export function AppWithChat({ placement, onNavigate }: AppWithChatProps) {
   }, [appContext, setFocusedApp]);
 
   const handleChat = useCallback(
-    (message: string, context?: UiChatContext) => {
+    (message: string) => {
       if (panelState === "closed") {
         openPanel();
       }
-      let formatted = message;
-      if (context) {
-        const parts: string[] = [appContext.appName];
-        if (context.action) parts.push(`action: ${context.action}`);
-        if (context.entity) parts.push(`entity: ${context.entity.type}/${context.entity.id}`);
-        formatted = `[App Context: ${parts.join(" | ")}]\n${message}`;
-      }
-      chat.sendMessage(formatted, appContext);
+      chat.sendMessage(message, appContext);
     },
     [panelState, openPanel, chat, appContext],
   );
@@ -160,12 +151,7 @@ export function AppWithChat({ placement, onNavigate }: AppWithChatProps) {
               : `opacity ${TRANSITION_STANDARD}, transform ${TRANSITION_STANDARD}, filter ${TRANSITION_STANDARD}`,
           }}
         >
-          <SlotRenderer
-            placements={[placement]}
-            className="w-full h-full"
-            onChat={handleChat}
-            onNavigate={onNavigate}
-          />
+          <SlotRenderer placements={[placement]} className="w-full h-full" onChat={handleChat} />
         </div>
       )}
     </div>

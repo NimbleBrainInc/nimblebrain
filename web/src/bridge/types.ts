@@ -6,7 +6,7 @@
 // iframe trust boundary) and TypeScript types (Static<>). See `./schemas.ts`
 // for the trust-boundary policy and the canonical envelope shapes.
 //
-// Non-envelope types (BridgeCallbacks, UiChatContext) live here because
+// Non-envelope types (BridgeCallbacks) live here because
 // they describe the host's API to its callers, not a wire shape that
 // crosses a trust boundary.
 // ---------------------------------------------------------------------------
@@ -46,21 +46,12 @@ export type {
 // Bridge callbacks
 // ---------------------------------------------------------------------------
 
-/** Context attached to a ui/message from an app (extracted from _meta). */
-export interface UiChatContext {
-  action?: string;
-  entity?: { type: string; id: string };
-  state?: Record<string, unknown>;
-}
-
 /** Callbacks the bridge invokes when the iframe sends messages. */
 export interface BridgeCallbacks {
   /** Called when the iframe sends a ui/message with chat content. */
-  onChat?: (message: string, context?: UiChatContext) => void;
+  onChat?: (message: string) => void;
   /** Called when the iframe requests a resize (inline views). */
   onResize?: (height: number) => void;
-  /** Called when the iframe requests navigation to a route. */
-  onNavigate?: (route: string) => void;
   /** Called when the iframe requests a semantic action. */
   onAction?: (action: string, params: Record<string, unknown>) => void;
   /** Called when the iframe confirms handshake complete. */

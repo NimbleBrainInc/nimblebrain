@@ -3,18 +3,14 @@
  *
  * Each resource is rendered via the Shell component (render.tsx) with
  * per-resource styles and a client-side script that uses the lightweight
- * postMessage bridge to call tools and navigate.
+ * postMessage bridge to call tools.
  */
 
 import { renderResource } from "./render.tsx";
-import { APP_NAV_SCRIPT } from "./scripts/app-nav.ts";
 import { MODEL_SELECTOR_SCRIPT } from "./scripts/model-selector.ts";
-import { SETTINGS_LINK_SCRIPT } from "./scripts/settings-link.ts";
-import { APP_NAV_STYLES, MODEL_SELECTOR_STYLES, SETTINGS_LINK_STYLES } from "./styles.ts";
+import { MODEL_SELECTOR_STYLES } from "./styles.ts";
 
 const resources: Record<string, () => string> = {
-  "app-nav": () => renderResource(APP_NAV_STYLES, APP_NAV_SCRIPT),
-  "settings-link": () => renderResource(SETTINGS_LINK_STYLES, SETTINGS_LINK_SCRIPT),
   "model-selector": () => renderResource(MODEL_SELECTOR_STYLES, MODEL_SELECTOR_SCRIPT),
 };
 

@@ -20,7 +20,7 @@
 // spec names a third party's extensions.
 // ---------------------------------------------------------------------------
 
-/** App → host notification: run a host action (navigate, open a panel). */
+/** App → host notification: run a host action (open an app or a conversation). */
 export const ACTION_METHOD = "ai.nimblebrain/action";
 /** App → host request: the host's file picker, answered `{ files }`. */
 export const REQUEST_FILE_METHOD = "ai.nimblebrain/request-file";
@@ -29,11 +29,3 @@ export const KEYDOWN_METHOD = "ai.nimblebrain/keydown";
 
 /** Every extension this host serves, and therefore declares. */
 export const NIMBLEBRAIN_EXTENSIONS = [ACTION_METHOD, REQUEST_FILE_METHOD, KEYDOWN_METHOD] as const;
-
-/**
- * `_meta` key carrying an app's chat context on a `ui/message` text block.
- *
- * A `_meta` key is namespaced by whoever defines it, and this one is ours: the
- * spec says nothing about what a view attaches to the text it sends.
- */
-export const CHAT_CONTEXT_META_KEY = "ai.nimblebrain/context";

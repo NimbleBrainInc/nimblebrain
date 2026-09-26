@@ -43,7 +43,7 @@ async def start_research(query: str, ctx: Context) -> dict:
 
 ### What the engine does automatically
 
-1. On `initialize`, advertises `capabilities.tasks.{requests.tools.call, cancel, list}` so servers know the client supports the task flow. (`src/tools/mcp-source.ts`)
+1. On `initialize`, advertises `capabilities.tasks.{requests.tools.call, cancel}` so servers know the client supports the task flow. `tasks.list` is not claimed: nothing calls `listTasks`, and SEP-2663 removes `tasks/list` from the spec. (`src/tools/mcp-source.ts::buildClient`, ADR-0023)
 2. When calling a tool whose `execution.taskSupport` is `"optional"` or `"required"`, dispatches through the SDK's streaming API: `client.experimental.tasks.callToolStream(...)`. (`src/tools/mcp-source.ts::callToolAsTask`)
 3. Consumes the response stream — `taskCreated` → `taskStatus`* → terminal `result | error` — and emits `tool.progress` events on every `taskStatus` so the chat UI renders live.
 4. Run-scoped `AbortSignal` is threaded through `ToolRouter.execute(call, signal)` → `ToolSource.execute(..., signal)` → RequestOptions on the stream. An abort becomes `tasks/cancel` automatically via the SDK.

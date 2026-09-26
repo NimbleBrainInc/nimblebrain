@@ -1,0 +1,102 @@
+---
+title: NimbleBrain and MCP
+description: How NimbleBrain uses the Model Context Protocol as a client, a server, and an MCP Apps host, and the ai.nimblebrain/* extensions it adds where the specification has no answer yet.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+NimbleBrain is built on the [Model Context Protocol](https://modelcontextprotocol.io). Every tool the agent calls, every app it renders, and every external client that reaches a workspace does so over MCP. A server written to the specification works here without modification. The extensions on this page are additions for things the specification does not cover yet, and a server that ignores all of them still works.
+
+## Three roles
+
+NimbleBrain plays three MCP roles at once, and each one is a different contract for you:
+
+| Role | Who is on the other side | What you build against |
+|---|---|---|
+| **MCP client** | The MCP servers installed in a workspace (connectors) | [Protocol support](/mcp/protocol-support/): the capabilities the host advertises, and the [extensions](#extensions) it offers a server |
+| **MCP Apps host** | An app's `ui://` view, running in a sandboxed iframe | The [MCP App Bridge](/apps/bridge/): the ext-apps specification plus three bridge extensions |
+| **MCP server** | External clients (Claude, Cursor, another agent) connecting to a workspace | The [MCP endpoint](/connect/mcp-endpoint/): one Streamable HTTP server per workspace |
+
+Most server developers only need the first row. Build a spec-compliant server, and then use the extensions that fit.
+
+## Why extensions exist
+
+The specification describes a conversation between one client and one server. NimbleBrain is a long-running, multi-workspace host: it runs agents with no human present, keeps files that belong to a workspace, renders apps inside a shell, and routes events to people. Some of what a server needs from that host has no place in the specification yet.
+
+For those needs, the host defines an extension. It does this only when all three of these hold:
+
+1. **The specification has no mechanism for it.** When the specification (or the MCP Apps extension) covers a need, the host implements the specification's version and does not add its own.
+2. **Something on the other side of the wire reads it.** An extension is a contract between two parties, so it ships with a named consumer. A signal the host sends only to itself is not an extension, and is not listed as one. Such keys are [reserved](/mcp/reserved-keys/) instead.
+3. **Ignoring it is safe.** Every extension has a defined fallback, which is simply the behavior without it.
+
+## Design rules
+
+The rules below apply to every extension, so a developer who learns one can predict the rest.
+
+**One namespace.** Every extension method, capability, and `_meta` key is named under `ai.nimblebrain/`, the reversed form of a domain NimbleBrain owns. This is the [naming convention the specification sets](https://modelcontextprotocol.io/specification/latest/basic/index#meta) for third-party keys, so nothing here can collide with the specification or another vendor.
+
+**Negotiated, never assumed.** A server learns which extensions the host offers from the `initialize` handshake. Server-facing capabilities arrive in `capabilities.extensions`. The bridge extensions arrive in `hostCapabilities.experimental`, because the MCP Apps handshake type has no `extensions` field yet. Code that uses an extension checks for it first and falls back when it is absent. That way the same server runs on NimbleBrain and on any other host.
+
+**Specification shapes, renamed.** Where an extension does something the specification already has a shape for, it reuses that shape exactly. For example, [`ai.nimblebrain/resources/read`](/mcp/host-resources/) takes a standard `ReadResourceRequest` and returns a standard `ReadResourceResult`, and the error codes are the specification's. If the specification adopts the capability, moving to it means dropping the prefix from the method name, with no schema migration.
+
+**A key the host acts on is host-owned.** A `_meta` key a server sets is a claim made by that server. When the host's own behavior depends on a key, such as its loop guard or its skill delivery, the host sets that key itself and removes any copy a server sends. Those keys are listed under [reserved keys](/mcp/reserved-keys/), so a server author knows that setting one has no effect. Every other `_meta` key a server sets passes through untouched.
+
+**The host tells a server nothing it would not need.** A request carries what the specification defines and what a negotiated extension adds. It never says how a call was triggered or whether anyone is watching. A server that behaves differently when no one is looking is exactly the server that information would help.
+
+## Extensions
+
+Each entry names the parties the extension connects, its identifier, and why it exists.
+
+### Between the host and an MCP server
+
+| Extension | Direction | Why it exists |
+|---|---|---|
+| [`ai.nimblebrain/host-resources`](/mcp/host-resources/) | Host → server (capability), then server → host (requests) | MCP resources flow from server to client only. A server that needs a file the user gave the workspace would otherwise have it pasted into a tool argument by the model: slow, expensive in tokens, and capped by the context window. With this extension, the server reads the file from the host by URI. |
+
+### Between an operator's catalog and the host
+
+These keys are metadata on a server's entry in the [connectors catalog](/config/connectors-catalog/), which uses the MCP Registry's `ServerDetail` format. They never travel in an MCP message.
+
+| Extension | Authored by | Why it exists |
+|---|---|---|
+| [`ai.nimblebrain/host`](/apps/manifest/) | The server's publisher | How the server takes part in the host: where its views appear in the shell, what it adds to the daily briefing, which webhooks it accepts, its notification outbox, and the install and uninstall events it wants. The specification describes a server's tools, not its place in an application shell. |
+| [`ai.nimblebrain/connector`](/config/connectors-catalog/) | The operator | How to install the server: how it authenticates (DCR, a static OAuth client, or a brokered provider), which secrets the workspace supplies, and how it is tagged in Browse. This is decided by whoever runs the platform, not by the server. |
+
+### Between a server's events and the host
+
+| Extension | Direction | Why it exists |
+|---|---|---|
+| [`ai.nimblebrain/notification`](/apps/notifications/#the-ainimblebrainnotification-block) | Server → host, on an outbox event | A server that learns something nobody asked for (a reply arrived, a job finished) publishes it as an event on its outbox resource. The host renders and routes these events to people. This block gives the host the title, body, and level to render them with. The event itself follows the shape of the MCP triggers-and-events proposal. |
+
+### Between an app view and the host
+
+These are methods on the [MCP App Bridge](/apps/bridge/#nimblebrain-extensions-ainimblebrain), used by an app's `ui://` view running inside the shell. An app hands the agent its state with the specification's `ui/update-model-context`; there is no NimbleBrain equivalent.
+
+| Extension | Direction | Why it exists |
+|---|---|---|
+| [`ai.nimblebrain/request-file`](/apps/bridge/#ainimblebrainrequest-file) | App → host | The MCP Apps specification can hand a user a file (`ui/download-file`) but cannot ask for one. A sandboxed iframe cannot reach the workspace's file store, so the host opens the picker and stores the chosen files for the app. |
+| [`ai.nimblebrain/action`](/apps/bridge/#ainimblebrainaction) | App → host | Asks the shell to do something only the shell can do, such as open a conversation or switch to another app. The specification lets an app open a link or post a message, but not move the shell. |
+| `ai.nimblebrain/keydown` | App → host | A sandboxed iframe that has focus captures every keystroke, so the shell's keyboard shortcuts stop working while the user is inside an app. This forwards the shortcut keys to the shell. |
+
+### Resource conventions
+
+A server can also offer the host something by publishing an ordinary MCP resource at a URI the host knows to look for. These need no capability and no new method: a server that does not publish them simply offers nothing.
+
+| URI | Why it exists |
+|---|---|
+| [`app://instructions`](/apps/custom-instructions/) | Guidance the user saved for this app. The host adds it to the agent's prompt on every turn. The server owns where it is stored and how it is edited. |
+| [`skill://<name>/SKILL.md`](/using/skills/) | A skill the server publishes: guidance the agent loads when it is relevant, following the Agent Skills format. The host finds it by listing the server's resources. |
+
+<Aside type="note" title="Tool visibility uses the specification">
+To make a tool callable by its app but hidden from the model, set the MCP Apps
+specification's `_meta.ui.visibility` to `["app"]`. The host honors it on every
+tool listing it gives a model, whether in chat or at the MCP endpoint. There is
+no NimbleBrain-specific key for this.
+</Aside>
+
+## Related
+
+- [Protocol support](/mcp/protocol-support/): specification revisions, transports, and advertised capabilities
+- [Reserved keys](/mcp/reserved-keys/): `ai.nimblebrain/*` keys a server must not send
+- [MCP Apps](/concepts/mcp-apps/): what an app is and how it renders
+- [The MCP endpoint](/connect/mcp-endpoint/): connecting an external client to a workspace

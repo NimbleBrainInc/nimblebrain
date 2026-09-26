@@ -5126,13 +5126,8 @@ export class Runtime {
   }
 
   /** Get home dashboard configuration with defaults applied. */
-  getHomeConfig(): { userName: string; timezone: string; cacheTtlMinutes: number } {
-    const identity = this.getCurrentIdentity();
-    return {
-      userName: identity?.displayName ?? "there",
-      timezone: identity?.preferences?.timezone ?? "",
-      cacheTtlMinutes: this.config.home?.cacheTtlMinutes ?? 5,
-    };
+  getHomeConfig(): { cacheTtlMinutes: number } {
+    return { cacheTtlMinutes: this.config.home?.cacheTtlMinutes ?? 5 };
   }
 
   /** Get the structured log directory path. */

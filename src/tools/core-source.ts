@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { readFile, rename, writeFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { resolve } from "node:path";
 import { artifactResolutionsTotal } from "../api/metrics.ts";
 import { OVERRIDE_WRITABLE_KEYS } from "../config/overrides.ts";
 import { textContent } from "../engine/content-helpers.ts";
@@ -38,7 +38,6 @@ const pkg = JSON.parse(readFileSync(pkgPath, "utf-8")) as {
 // Prefer the build-time-injected git tag; fall back to package.json for local dev.
 const VERSION = process.env.NB_VERSION || pkg.version;
 
-import { ActivityCollector } from "../services/activity-collector.ts";
 import { BriefingCache } from "../services/briefing-cache.ts";
 import { collectBriefingFacets } from "../services/briefing-collector.ts";
 import { BriefingGenerator } from "../services/briefing-generator.ts";
@@ -473,8 +472,6 @@ function artifactReadErrorResult(err: unknown, uri: string): ToolResult {
 
 /** The authenticated caller resolved by the runtime for the current request. */
 type CurrentIdentity = NonNullable<ReturnType<Runtime["getCurrentIdentity"]>>;
-/** The workspace's home/briefing config (user name, timezone, cache TTL). */
-type HomeConfig = ReturnType<Runtime["getHomeConfig"]>;
 
 /**
  * Build the briefing tool result. `content` carries the rendered briefing (the
@@ -491,26 +488,20 @@ function briefingOk(briefing: BriefingOutput, note: string): ToolResult {
 }
 
 /**
- * Get or create the briefing cache for one member of one workspace. A briefing
- * is built from its caller (greeting name, timezone, their own conversations),
- * so the key covers both; a per-workspace slot would serve one member's
- * briefing to the others.
+ * Get or create the workspace's briefing cache. One entry serves every member
+ * because the briefing is built only from the workspace's facets, and a facet
+ * answers for the workspace, never for the caller who happened to trigger the
+ * generation. Adding a per-viewer input to `generateBriefing` breaks this key.
  */
 function getBriefingCache(
-  caches: Map<string, Map<string, BriefingCache>>,
+  caches: Map<string, BriefingCache>,
   wsId: string,
-  userId: string,
   cacheTtlMinutes: number,
 ): BriefingCache {
-  let byUser = caches.get(wsId);
-  if (!byUser) {
-    byUser = new Map();
-    caches.set(wsId, byUser);
-  }
-  let cache = byUser.get(userId);
+  let cache = caches.get(wsId);
   if (!cache) {
     cache = new BriefingCache(cacheTtlMinutes);
-    byUser.set(userId, cache);
+    caches.set(wsId, cache);
   }
   return cache;
 }
@@ -552,30 +543,18 @@ function recordBriefingUsage(
 }
 
 /**
- * Collect activity + facets, then run the fast model (the slow part). Reads
- * request-scoped state (workspace, identity, model slot), so it must run inside a
- * request context — the foreground request's, or the re-established one for the
- * background refresh.
+ * Resolve the workspace's facets, then run the fast model (the slow part).
+ * Facet tools dispatch through the registry, which reads the workspace and
+ * identity from the request context, so this must run inside one — the
+ * foreground request's, or the re-established one for the background refresh.
  */
 async function generateBriefing(
   runtime: Runtime,
   wsId: string,
   identity: CurrentIdentity,
-  homeConfig: HomeConfig,
 ): Promise<BriefingOutput> {
   const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
   const until = new Date().toISOString();
-  const collector = new ActivityCollector({
-    logDir: join(runtime.getWorkspaceScopedDir(wsId), "logs"),
-    conversations: {
-      kind: "store",
-      // Bound to this workspace here, at the boundary — the collector receives
-      // an already-scoped lister and cannot widen it.
-      list: (o, a) => runtime.listConversations(wsId, o, a),
-    },
-    access: { userId: identity.id },
-  });
-  const activity = await collector.collect({ since });
   const registry = runtime.getRegistryForCurrentWorkspace();
   const instances = runtime.getConnectorInstancesForWorkspace(wsId);
   const facetContext = await collectBriefingFacets(instances, registry, { since, until });
@@ -583,14 +562,9 @@ async function generateBriefing(
   const generator = new BriefingGenerator(
     runtime.resolveModel(modelString),
     modelString,
-    {
-      userName: homeConfig.userName,
-      timezone: homeConfig.timezone,
-      cacheTtlMinutes: homeConfig.cacheTtlMinutes,
-    },
     (usage, llmMs) => recordBriefingUsage(runtime, wsId, identity, modelString, usage, llmMs),
   );
-  return generator.generate(activity, facetContext);
+  return generator.generate(facetContext);
 }
 
 /**
@@ -603,7 +577,6 @@ function serveCachedBriefing(
   briefingCache: BriefingCache,
   wsId: string,
   identity: CurrentIdentity,
-  homeConfig: HomeConfig,
 ): ToolResult | null {
   // Fresh cache → instant.
   const fresh = briefingCache.get();
@@ -614,7 +587,7 @@ function serveCachedBriefing(
   // the first generation.
   const stale = briefingCache.getStale();
   if (!stale) return null;
-  scheduleBriefingRefresh(runtime, briefingCache, wsId, identity, homeConfig);
+  scheduleBriefingRefresh(runtime, briefingCache, wsId, identity);
   return briefingOk(stale, "Briefing (refreshing in background).");
 }
 
@@ -631,14 +604,13 @@ function scheduleBriefingRefresh(
   briefingCache: BriefingCache,
   wsId: string,
   identity: CurrentIdentity,
-  homeConfig: HomeConfig,
 ): void {
   if (!briefingCache.beginRefresh()) return;
   const bgCtx: RequestContext = {
     identity,
     workspaceId: wsId,
   };
-  void runWithRequestContext(bgCtx, () => generateBriefing(runtime, wsId, identity, homeConfig))
+  void runWithRequestContext(bgCtx, () => generateBriefing(runtime, wsId, identity))
     .then((b) => briefingCache.set(b))
     .catch((err) =>
       log.warn(
@@ -657,10 +629,9 @@ function scheduleBriefingRefresh(
  * passes them to `defineInProcessApp` to build the in-process MCP server.
  */
 export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
-  // Briefing caches keyed by workspace ID, then by the caller's user ID. Each
-  // entry regenerates on its own TTL, so fast-model briefing calls scale with
-  // the members who open the overview, not with the number of workspaces.
-  const briefingCaches = new Map<string, Map<string, BriefingCache>>();
+  // Briefing caches keyed by workspace ID. One briefing serves every member, so
+  // fast-model briefing calls scale with workspaces, not with members.
+  const briefingCaches = new Map<string, BriefingCache>();
 
   const toolDefs: InProcessTool[] = [
     {
@@ -1217,7 +1188,7 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
     {
       name: "briefing",
       description:
-        "Generate a personalized activity briefing for the workspace using the fast model slot. Returns a summary of recent activity, upcoming items, and anything needing attention. May take a few seconds.",
+        "Generate the workspace briefing from the facets its installed apps declare, using the fast model slot. Returns a summary of recent activity, upcoming items, and anything needing attention across the workspace, the same for every member. May take a few seconds.",
       meta: { ui: { visibility: ["app"] } },
       inputSchema: {
         type: "object",
@@ -1230,12 +1201,11 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
       },
       handler: async (input): Promise<ToolResult> => {
         try {
-          const homeConfig = runtime.getHomeConfig();
+          const { cacheTtlMinutes } = runtime.getHomeConfig();
           const wsId = runtime.requireWorkspaceId();
 
-          // Conversations live at the user level (post-Stage 1); the activity
-          // collector reads the top-level store with an ownership filter so
-          // the briefing stays scoped to the caller, not the whole deployment.
+          // Facet tools run through the registry as an authenticated caller,
+          // and the generation's usage is attributed to that caller.
           const identity = runtime.getCurrentIdentity();
           if (!identity) {
             return {
@@ -1244,25 +1214,20 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
             };
           }
 
-          const briefingCache = getBriefingCache(
-            briefingCaches,
-            wsId,
-            identity.id,
-            homeConfig.cacheTtlMinutes,
-          );
+          const briefingCache = getBriefingCache(briefingCaches, wsId, cacheTtlMinutes);
 
           // Skip the cache entirely on force_refresh; otherwise serve a fresh or
           // stale-while-revalidating result if one is cached.
           const cached = input.force_refresh
             ? null
-            : serveCachedBriefing(runtime, briefingCache, wsId, identity, homeConfig);
+            : serveCachedBriefing(runtime, briefingCache, wsId, identity);
           if (cached) return cached;
 
           // No cached briefing yet (first generation), or an explicit
           // force_refresh: generate synchronously. generate() throws on LLM
           // failure → the outer catch turns it into an isError result, which
           // the workspace overview renders as a retry state.
-          const briefing = await generateBriefing(runtime, wsId, identity, homeConfig);
+          const briefing = await generateBriefing(runtime, wsId, identity);
           briefingCache.set(briefing);
           return briefingOk(briefing, "Briefing generated.");
         } catch (err) {

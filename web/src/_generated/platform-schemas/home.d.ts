@@ -34,10 +34,12 @@ export interface BriefingSection {
     category: "recent" | "upcoming" | "attention";
     action?: BriefingAction;
 }
-/** Complete briefing output returned by `nb__briefing`. */
+/**
+ * Complete briefing output returned by `nb__briefing`. One per workspace,
+ * written from the facets its installed apps declare and shared by every
+ * member, so it carries nothing about the viewer.
+ */
 export interface BriefingOutput {
-    greeting: string;
-    date: string;
     lede: string;
     sections: BriefingSection[];
     state: BriefingState;

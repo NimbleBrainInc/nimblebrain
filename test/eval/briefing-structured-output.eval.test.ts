@@ -14,7 +14,7 @@ import type { LanguageModelV4 } from "@ai-sdk/provider";
 import { buildModelResolver } from "../../src/model/registry.ts";
 import type { BriefingContext } from "../../src/services/briefing-collector.ts";
 import { BriefingGenerator } from "../../src/services/briefing-generator.ts";
-import type { ActivityOutput, BriefingOutput, HomeConfig } from "../../src/services/home-types.ts";
+import type { BriefingOutput } from "../../src/services/home-types.ts";
 
 // ---------------------------------------------------------------------------
 // Provider config
@@ -33,66 +33,8 @@ const PROVIDERS: ProviderSpec[] = [
 ];
 
 // ---------------------------------------------------------------------------
-// Test fixtures — realistic activity data matching production patterns
+// Test fixtures — realistic facet data matching production patterns
 // ---------------------------------------------------------------------------
-
-function makeConfig(): HomeConfig {
-  return {
-    userName: "Mat",
-    timezone: "Pacific/Honolulu",
-    cacheTtlMinutes: 15,
-  };
-}
-
-/** Activity with multiple data points — exercises all section types. */
-function richActivity(): ActivityOutput {
-  return {
-    period: { since: "2026-04-13T00:00:00Z", until: "2026-04-14T00:00:00Z" },
-    conversations: [
-      {
-        id: "conv-1",
-        created_at: "2026-04-13T09:00:00Z",
-        updated_at: "2026-04-13T09:15:00Z",
-        message_count: 8,
-        tool_call_count: 5,
-        input_tokens: 3200,
-        output_tokens: 1800,
-        preview: "Review Q2 pipeline and update CRM contacts",
-        had_errors: false,
-      },
-      {
-        id: "conv-2",
-        created_at: "2026-04-13T14:00:00Z",
-        updated_at: "2026-04-13T14:30:00Z",
-        message_count: 12,
-        tool_call_count: 8,
-        input_tokens: 5000,
-        output_tokens: 3000,
-        preview: "Draft proposal for Acme Corp engagement",
-        had_errors: true,
-      },
-    ],
-    connector_events: [
-      { connector: "@nimblebraininc/granola", event: "crashed", timestamp: "2026-04-13T11:00:00Z", detail: "Connection timeout" },
-      { connector: "@nimblebraininc/granola", event: "recovered", timestamp: "2026-04-13T11:02:00Z" },
-    ],
-    tool_usage: [
-      { tool: "search_meetings", server: "granola", call_count: 6, error_count: 1, avg_latency_ms: 250 },
-      { tool: "list_contacts", server: "synapse-crm", call_count: 4, error_count: 0, avg_latency_ms: 80 },
-      { tool: "create_draft", server: "gmail", call_count: 2, error_count: 0, avg_latency_ms: 400 },
-    ],
-    errors: [
-      { timestamp: "2026-04-13T14:20:00Z", source: "tool", message: "granola search_meetings: timeout after 5000ms", context: "conv-2" },
-    ],
-    totals: {
-      conversations: 2,
-      tool_calls: 12,
-      input_tokens: 8200,
-      output_tokens: 4800,
-      errors: 1,
-    },
-  };
-}
 
 /** Facet context simulating installed apps with briefing data. */
 function richFacetContext(): BriefingContext {
@@ -202,27 +144,16 @@ describe("briefing structured output", () => {
       const skipReason = apiKey ? undefined : `${spec.envVar} not set`;
 
       it.skipIf(!apiKey)(
-        "generates valid briefing from rich activity + facets",
+        "generates valid briefing from facets",
         async () => {
           const model = resolveModel(spec)!;
-          const gen = new BriefingGenerator(model, spec.modelString, makeConfig());
-          const briefing = await gen.generate(richActivity(), richFacetContext());
+          const gen = new BriefingGenerator(model, spec.modelString);
+          const briefing = await gen.generate(richFacetContext());
           assertValidBriefing(briefing, spec.name);
 
           // With 13 overdue follow-ups, at least one section should be a warning
           const hasWarning = briefing.sections.some((s) => s.type === "warning");
           expect(hasWarning).toBe(true);
-        },
-        30_000,
-      );
-
-      it.skipIf(!apiKey)(
-        "generates valid briefing from activity only (no facets)",
-        async () => {
-          const model = resolveModel(spec)!;
-          const gen = new BriefingGenerator(model, spec.modelString, makeConfig());
-          const briefing = await gen.generate(richActivity());
-          assertValidBriefing(briefing, `${spec.name}/no-facets`);
         },
         30_000,
       );

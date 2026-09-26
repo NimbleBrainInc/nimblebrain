@@ -4,8 +4,6 @@ import { buildCoreResourceMap } from "../../src/tools/core-resources/index.ts";
 const RESOURCES = buildCoreResourceMap();
 
 const ALL_NAMES = [
-	"app-nav",
-	"settings-link",
 	"model-selector",
 ] as const;
 
@@ -29,8 +27,8 @@ describe("buildCoreResourceMap", () => {
 		});
 	}
 
-	it("app-nav contains postMessage bridge code", () => {
-		const html = get("app-nav")!;
+	it("model-selector contains postMessage bridge code", () => {
+		const html = get("model-selector")!;
 		expect(html).toContain("postMessage");
 		expect(html).toContain("tools/call");
 	});
@@ -41,11 +39,6 @@ describe("buildCoreResourceMap", () => {
 			expect(html).not.toMatch(/<script\s+src=/);
 			expect(html).not.toMatch(/<link\s+.*href=.*\.css/);
 		}
-	});
-
-	it("settings-link navigates to /app/settings", () => {
-		const html = get("settings-link")!;
-		expect(html).toContain("/app/settings");
 	});
 
 	it("model-selector contains model input", () => {

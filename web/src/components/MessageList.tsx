@@ -40,6 +40,8 @@ function UsageChip({ usage }: { usage: NonNullable<ChatMessage["usage"]> }) {
   );
 }
 
+// Stored user messages from older hosts start with an `[App Context: …]` line;
+// it renders collapsed rather than as message text.
 const APP_CONTEXT_RE = /^\[App Context:[^\]]*\]\n/;
 
 function formatRelativeTime(iso: string): string {

@@ -6,7 +6,7 @@ import { createBridge } from "../bridge/bridge";
 import { buildHostContext, buildHostExtensions } from "../bridge/host-extensions";
 import type { CreateIframeOptions } from "../bridge/iframe";
 import { createAppIframe } from "../bridge/iframe";
-import type { BridgeCallbacks, UiChatContext } from "../bridge/types";
+import type { BridgeCallbacks } from "../bridge/types";
 import { useTheme } from "../context/ThemeContext";
 import { useWorkspaceContext } from "../context/WorkspaceContext";
 import type { PlacementEntry } from "../types";
@@ -16,8 +16,7 @@ interface SlotRendererProps {
   className?: string;
   /** If set, only show the placement matching this route */
   routeFilter?: string;
-  onChat?: (message: string, context?: UiChatContext) => void;
-  onNavigate?: (route: string) => void;
+  onChat?: (message: string) => void;
 }
 
 /**
@@ -84,13 +83,7 @@ function mountPlacement(
   return createBridge(iframe, entry.serverName, callbacks);
 }
 
-export function SlotRenderer({
-  placements,
-  className,
-  routeFilter,
-  onChat,
-  onNavigate,
-}: SlotRendererProps) {
+export function SlotRenderer({ placements, className, routeFilter, onChat }: SlotRendererProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const bridgesRef = useRef<BridgeHandle[]>([]);
   const { mode } = useTheme();
@@ -109,8 +102,6 @@ export function SlotRenderer({
   // when callback identity changes (e.g. during chat streaming).
   const onChatRef = useRef(onChat);
   onChatRef.current = onChat;
-  const onNavigateRef = useRef(onNavigate);
-  onNavigateRef.current = onNavigate;
 
   const filtered = routeFilter ? placements.filter((p) => p.route === routeFilter) : placements;
 
@@ -129,7 +120,6 @@ export function SlotRenderer({
     // so none of them close over the entry. Built once outside the loop.
     const bridgeCallbacks: BridgeCallbacks = {
       onChat: (...args) => onChatRef.current?.(...args),
-      onNavigate: (...args) => onNavigateRef.current?.(...args),
       getHostExtensions: () => buildHostExtensions(workspaceRef.current),
     };
 
