@@ -315,6 +315,10 @@
 - Bundle authors who want to support custom instructions: publish `app://instructions` from your MCP server. See [the bundle-author guide](https://docs.nimblebrain.ai/apps/custom-instructions/) and the `synapse-todo-board` reference implementation.
 - The connection-revalidator sweep interval is now `NB_CONNECTION_REVALIDATE_INTERVAL_SECONDS` (the cadence is provider-agnostic). The legacy `COMPOSIO_MONITOR_INTERVAL_SECONDS` is still honored (slated for removal, #727), so no action is required.
 
+### Changed
+
+- **Host-owned `_meta` keys.** `ai.nimblebrain/non-advancing` is stripped from connector results, like the skill markers; the platform's own tools still set it. Outbound `tools/call` no longer carries `ai.nimblebrain/unattended`: a server is not told that a call was fired by configuration with no one watching. The reason stays in the audit line.
+
 ## [0.4.0] - 2026-04-24
 
 ### Highlights

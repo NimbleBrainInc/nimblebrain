@@ -147,7 +147,13 @@ export interface ToolResult {
  *
  * It rides in `_meta` — the MCP-blessed channel for metadata-about-a-result —
  * rather than `structuredContent` (the tool's data) or a bespoke top-level
- * field (dropped at the boundary). Any tool, in-process or connector, can set it.
+ * field (dropped at the boundary): the platform's own tools are in-process MCP
+ * servers, so `_meta` is the only channel that reaches the engine.
+ *
+ * Host-owned: set by the platform's own in-process tools (`nb__search`) and
+ * stripped from anything a connector returns (`hostOwnedMetaStripped`). Only the
+ * tool knows what "no progress" means for its own result, which is why the flag
+ * lives on the result and not in a host heuristic.
  */
 export const NON_ADVANCING_META_KEY = "ai.nimblebrain/non-advancing";
 
@@ -171,9 +177,7 @@ export const NON_ADVANCING_META_KEY = "ai.nimblebrain/non-advancing";
  * trip after three.
  *
  * Host-owned, because the supervisor trusts it unconditionally: a connector able to
- * set it could exempt itself from the guard permanently. That is the asymmetry
- * with `NON_ADVANCING_META_KEY` above, which IS safe to accept from a connector —
- * setting that one makes the guard stricter; this one makes it weaker.
+ * set it could exempt itself from the guard permanently.
  *
  * `McpSource` owns it on two channels, and both need closing because a connector
  * controls both:
@@ -200,25 +204,6 @@ export const INFRA_ERROR_META_KEY = "ai.nimblebrain/infra-error";
  * source of the key: use {@link isInternalTool} to read it and this const as the
  * annotation key to set it, so a rename can never split the read/write sites.
  */
-/**
- * Reverse-DNS `_meta` key stamped on the OUTBOUND `tools/call` of an unattended
- * dispatch — a single tool call made with no session, from stored
- * configuration, on behalf of a named principal. Its value is the caller's own
- * short opaque `reason` string, so a server that cares can tell a
- * configuration-fired call from a chat turn and answer differently (skip a
- * confirmation prompt, tag what it writes). A server that does not care ignores
- * it, which is why nothing about the dispatch depends on it being read.
- *
- * Host-owned in the same sense as {@link INFRA_ERROR_META_KEY}: it asserts
- * something about the CALLER, and only the host is in a position to know it. So
- * it is stripped from every RESULT, in-process sources included — unlike the
- * skill markers, whose strip is conditioned on crossing a real transport.
- * Nothing downstream reads it off a result, so a copy coming back is at best
- * noise and at worst a provenance claim made by the party being asked about,
- * and the audit line, not the result, is where that provenance is recorded.
- */
-export const UNATTENDED_META_KEY = "ai.nimblebrain/unattended";
-
 export const INTERNAL_TOOL_ANNOTATION = "ai.nimblebrain/internal";
 
 /** True when a tool carries {@link INTERNAL_TOOL_ANNOTATION} in its `_meta`. */
