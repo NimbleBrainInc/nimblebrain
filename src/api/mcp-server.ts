@@ -1336,8 +1336,9 @@ export const RESOURCE_SOURCE_META_KEY = "ai.nimblebrain/source";
  * tell a view's call from an agent's, because every iframe and the agent share
  * one `/mcp` session. A client that names a source only narrows what it can
  * reach, so accepting the key from any client widens nothing. A name that
- * matches no listed tool is left to routing, which answers it as it would any
- * other call.
+ * matches no listed tool is refused too: its visibility cannot be read, and
+ * routing would still reach a source whose listing failed (it reconnects on
+ * demand), so letting it through would skip the check rather than the call.
  */
 async function assertAppMayCall(
   name: string,
@@ -1355,10 +1356,12 @@ async function assertAppMayCall(
   }
   const tools = await runtime.listToolsForWorkspace(wsId, identityId);
   const tool = tools.find((t) => t.name === name);
-  if (tool && !isAppCallable(tool)) {
+  if (!tool || !isAppCallable(tool)) {
     throw new McpError(
       ErrorCode.InvalidParams,
-      `Tool "${name}" is not callable from an app: its visibility does not include "app".`,
+      tool
+        ? `Tool "${name}" is not callable from an app: its visibility does not include "app".`
+        : `Tool "${name}" is not callable from an app: it is not listed, so its visibility is unknown.`,
       { reason: "not_app_callable", toolName: name },
     );
   }

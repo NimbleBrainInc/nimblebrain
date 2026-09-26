@@ -220,6 +220,21 @@ describe("MCP Apps tool visibility — an app's tools/call", () => {
     }
   });
 
+  it("is refused for a tool its server does not list", async () => {
+    const client = await createMcpClient();
+    try {
+      await expect(
+        client.callTool({
+          name: "vis__nonexistent",
+          arguments: {},
+          _meta: { [RESOURCE_SOURCE_META_KEY]: "vis" },
+        }),
+      ).rejects.toThrow(/it is not listed/);
+    } finally {
+      await client.close();
+    }
+  });
+
   it("is refused for another server's tool", async () => {
     const client = await createMcpClient();
     try {
