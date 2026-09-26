@@ -17,6 +17,14 @@ import type { SkillManifest } from "./schemas/skill-manifest.ts";
 
 export interface Skill {
   manifest: SkillManifest;
+  /** The body, or `""` while {@link Skill.loadBody} has not been resolved. */
   body: string;
   sourcePath: string;
+  /**
+   * Present on a skill whose body is fetched only when needed (a
+   * server-published skill, per the MCP Skills Extension). Resolve it with
+   * `hydrateSkill` where the body reaches the model; everything else reads the
+   * manifest alone.
+   */
+  loadBody?: () => Promise<string | null>;
 }

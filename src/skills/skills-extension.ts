@@ -16,7 +16,6 @@
  */
 
 import { createHash } from "node:crypto";
-import { isDeepStrictEqual } from "node:util";
 import matter from "gray-matter";
 import { z } from "zod";
 
@@ -110,16 +109,45 @@ export function verifySkillEntrypoint(
   }
   let fetched: unknown;
   try {
-    // JSON round-trip: the listing carries frontmatter "rendered as JSON", so
-    // a YAML value with no JSON form (a date) compares in its JSON rendering.
-    fetched = JSON.parse(JSON.stringify(matter(text).data));
+    fetched = matter(text).data;
   } catch {
     return { ok: false, reason: "frontmatter_mismatch" };
   }
-  if (!isDeepStrictEqual(fetched, entry.frontmatter)) {
+  if (!frontmatterEqual(fetched, entry.frontmatter)) {
     return { ok: false, reason: "frontmatter_mismatch" };
   }
   return { ok: true };
+}
+
+/**
+ * Field-by-field equality of frontmatter parsed from YAML against the listing's
+ * JSON rendering of it. JSON has no date type, so a YAML timestamp the parser
+ * turned into a `Date` equals a listed string naming the same instant
+ * (`2026-01-01` or `2026-01-01T00:00:00.000Z`). Every other value compares
+ * strictly.
+ */
+function frontmatterEqual(fetched: unknown, listed: unknown): boolean {
+  if (fetched instanceof Date) {
+    return typeof listed === "string" && new Date(listed).getTime() === fetched.getTime();
+  }
+  if (Array.isArray(fetched)) {
+    return (
+      Array.isArray(listed) &&
+      listed.length === fetched.length &&
+      fetched.every((value, i) => frontmatterEqual(value, listed[i]))
+    );
+  }
+  if (fetched && typeof fetched === "object") {
+    if (!listed || typeof listed !== "object" || Array.isArray(listed)) return false;
+    const a = fetched as Record<string, unknown>;
+    const b = listed as Record<string, unknown>;
+    const keys = Object.keys(a);
+    return (
+      keys.length === Object.keys(b).length &&
+      keys.every((key) => Object.hasOwn(b, key) && frontmatterEqual(a[key], b[key]))
+    );
+  }
+  return fetched === listed;
 }
 
 /**

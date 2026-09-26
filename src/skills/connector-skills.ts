@@ -1,59 +1,47 @@
 /**
  * Server-skill adapter (SEP-2640 `io.modelcontextprotocol/skills`).
  *
- * Synthesizes Layer 3 `Skill` objects from the skills an MCP server publishes:
- * the entries of its `skills/list` when it declares the extension
- * (`skills-extension.ts`), otherwise the `skill://<name>/SKILL.md` resources
- * `resources/list` returns. This makes a server-side workflow guide
- * discoverable through the same tool-affined loading machinery that picks up
- * filesystem skills — no need for the chat to be scoped to a specific app via
- * `appContext`.
+ * Synthesizes Layer 3 `Skill` objects from the `skills/list` entries of an MCP
+ * server that declares the Skills extension (`skills-extension.ts`). A server
+ * that does not declare it publishes no skills; its `skill://` resources are
+ * ordinary resources (ADR-0011).
  *
  * Why this exists:
  *
- *   An MCP server can publish its agent guidance as skill resources — markdown
- *   playbooks (Agent-Skills frontmatter + body) teaching the agent how to chain
- *   tools, recover from errors, etc. Per SEP-2640 the entrypoint is always
- *   `skill://<skill-path>/SKILL.md`, whose final path segment is the skill's
- *   frontmatter `name`. The runtime DISCOVERS these by listing the server's
- *   resources — it never guesses the URI from the source name. That guess
- *   (`skill://<serverName>/usage`) silently missed every fleet connector, whose
- *   `source.name` is the reverse-DNS slug (`ai-nimblebrain-<x>-mcp`) rather than
- *   the skill's short name. The earlier path also only fired when the request
- *   had `appContext` pinning the conversation to that server; in a
- *   workspace-level chat where the server's tools are visible but no app is
- *   "entered," the skill went unread — including the directive that tells the
- *   model which tool to use. Production case: a cobranding turn looped on
- *   `list_documents` until the supervisor halted because the model never read
- *   the rules.
+ *   An MCP server publishes its agent guidance as skills — markdown playbooks
+ *   (Agent-Skills frontmatter + body) teaching the agent how to chain tools,
+ *   recover from errors, etc. The runtime discovers them from the server's own
+ *   listing and never guesses a URI from the source name, which differs from
+ *   the skill's path on every connector named by a reverse-DNS slug. Discovery
+ *   runs for every MCP source in the workspace, not only an entered app, so a
+ *   workspace-level chat that can call a server's tools also gets the guidance
+ *   for using them.
  *
- *   This adapter closes both gaps. At chat-build time, for each MCP source in
- *   the active workspace registry, the runtime discovers its `skill://…/SKILL.md`
- *   resources and wraps each body in a synthetic `Skill`. The synthesized skill
- *   then flows through `partitionSkillsByRole`: a `dynamic` skill routes to the
- *   `selectLayer3Skills` capability channel with `toolAffinity: ["<serverName>__*"]`
- *   (loads when the server's tools are in the active toolset); an `always` skill
- *   routes to the always-on context channel (composed every turn, the same
- *   reliable path filesystem `always` skills use).
+ *   Each entry becomes a synthetic `Skill` built from the listing alone: the
+ *   entry's frontmatter carries the name, description, and loading
+ *   configuration. The body is not read until the skill is needed — the
+ *   extension forbids fetching a skill's files ahead of need — so the `Skill`
+ *   carries a `loadBody` the composer resolves through `hydrateSkill`. The
+ *   synthesized skill flows through `partitionSkillsByRole`: a `dynamic` skill
+ *   routes to the `selectLayer3Skills` capability channel with
+ *   `toolAffinity: ["<serverName>__*"]` (loads when the server's tools are in
+ *   the active toolset); an `always` skill routes to the always-on context
+ *   channel (composed every turn, the same path filesystem `always` skills use).
  *
- *   Loading config is READ from the discovered skill's frontmatter, not
- *   invented: a server declares `metadata.nimblebrain.loading-strategy` (and an
- *   optional `priority` and `triggers`) exactly as a filesystem skill does, and
- *   the host honors it — identical frontmatter must not behave differently by
- *   origin. A skill that declares nothing defaults to `dynamic` — backward-compatible
- *   with servers that publish tool-affined usage guidance and never opt in. This
- *   lets a server route an always-present workflow guide to the reliable context
- *   channel, rather than the capability channel that only selects once at
- *   turn-start (so a workflow skill could silently never load once its tools were
- *   promoted after selection).
+ *   Loading config is READ from the skill's frontmatter, not invented: a server
+ *   declares `metadata.nimblebrain.loading-strategy` (and an optional
+ *   `priority` and `triggers`) exactly as a filesystem skill does, and the host
+ *   honors it — identical frontmatter must not behave differently by origin. A
+ *   skill that declares nothing defaults to `dynamic`.
  *
- *   This is strictly additive. The `appContext`-driven `<app-guide>` injection
- *   remains untouched — it has different semantics (per-app focus, trust-score
- *   gating, reference-resource hint) than role-based skill composition.
+ *   The `appContext`-driven `<app-guide>` injection is separate — it has
+ *   different semantics (per-app focus, trust-score gating, reference-resource
+ *   hint) than role-based skill composition.
  */
 
 import matter from "gray-matter";
 
+import type { SkillEntry } from "./skills-extension.ts";
 import type { Skill, SkillLoadingStrategy, SkillScope } from "./types.ts";
 
 /** Scope tag used on synthesized server skills. */
@@ -104,27 +92,16 @@ export function parseConnectorSkillName(
 }
 
 /**
- * SEP-2640 skill entrypoint: `skill://<skill-path>/SKILL.md`. A skill is a
- * `skill://` resource whose URI ends in `/SKILL.md`; supporting files
- * (`skill://…/scripts/x.py`) share the prefix but are not entrypoints.
+ * A skill discovered on an MCP server, from its `skills/list` entry. It
+ * carries no body: the body is fetched when the skill is needed.
  */
-export const SKILL_ENTRYPOINT_RE = /^skill:\/\/.+\/SKILL\.md$/;
-
-/** True iff `uri` is a SEP-2640 skill entrypoint (`skill://…/SKILL.md`). */
-export function isSkillEntrypointUri(uri: string): boolean {
-  return SKILL_ENTRYPOINT_RE.test(uri);
-}
-
-/** A skill discovered on an MCP server: its entrypoint URI + parsed content. */
 export interface DiscoveredSkill {
-  /** The `skill://…/SKILL.md` entrypoint URI. */
+  /** The skill's `SKILL.md` URI. */
   uri: string;
-  /** Frontmatter `name` (falls back to the final skill-path segment). */
+  /** Frontmatter `name`, qualified by skill path when it collides on one server. */
   name: string;
-  /** Frontmatter `description` (empty string when absent). */
+  /** Frontmatter `description`. */
   description: string;
-  /** SKILL.md body, frontmatter stripped and truncated to budget. */
-  body: string;
   /**
    * Declared `metadata.nimblebrain.loading-strategy`, when the server set one.
    * `undefined` means the skill opted out — synthesis defaults it to `dynamic`.
@@ -137,12 +114,19 @@ export interface DiscoveredSkill {
    * `SkillMatcher` fires on. Absent when the server declared none.
    */
   triggers?: string[];
-  /**
-   * Every file URI of the skill, from its `skills/list` manifest (SEP-2640).
-   * Absent when the server listed none: a `"dynamic"` skill, or a server
-   * enumerated with `resources/list`.
-   */
-  files?: string[];
+  /** The listing entry: what a fetched body is verified against. */
+  entry: SkillEntry;
+}
+
+/** A discovered skill built from a validated `skills/list` entry. */
+export function discoveredSkillFromEntry(entry: SkillEntry): DiscoveredSkill {
+  return {
+    uri: entry.uri,
+    name: entry.frontmatter.name,
+    description: entry.frontmatter.description,
+    ...readDeclaredLoading(entry.frontmatter),
+    entry,
+  };
 }
 
 /**
@@ -174,7 +158,7 @@ function skillPath(uri: string): string {
  * `metadata.nimblebrain.*` fields the filesystem loader reads
  * (`mapFrontmatterToManifest`). Every field is READ, not invented, so identical
  * frontmatter means identical loading behavior whether the skill came off disk
- * or off an MCP server's `skill://…/SKILL.md` resource.
+ * or from an MCP server's `skills/list` entry.
  *
  * Lenient by design: a discovered skill is authored by an arbitrary MCP server,
  * so — unlike the strict on-disk loader — a non-conforming or absent block does
@@ -258,9 +242,15 @@ export interface ConnectorSkillInput {
   skillName: string;
   /** Skill `description` from frontmatter (may be empty). */
   description: string;
-  /** SKILL.md body, already frontmatter-stripped and truncated to budget. */
-  body: string;
-  /** The `skill://…/SKILL.md` entrypoint URI the body was read from. */
+  /**
+   * Fetch the body when the skill is needed: frontmatter-stripped, truncated to
+   * budget, verified, or `null` when it cannot be. The synthesized `Skill`
+   * carries it and an empty `body` until {@link hydrateSkill} resolves it.
+   */
+  loadBody?: () => Promise<string | null>;
+  /** A body already in hand, for a skill that needs no fetch. */
+  body?: string;
+  /** The skill's `SKILL.md` URI. */
   uri: string;
   /**
    * Declared loading strategy from the skill's frontmatter. Defaults to
@@ -280,8 +270,8 @@ export interface ConnectorSkillInput {
 }
 
 /**
- * Synthesize a `Skill` from a server-exposed `skill://<name>/SKILL.md` resource,
- * honoring the strategy the skill DECLARES:
+ * Synthesize a `Skill` from a server-published skill, honoring the strategy the
+ * skill DECLARES:
  *  - `dynamic` (the default when none is declared): tool-affined to
  *    `<serverName>__*`, so it loads via `selectLayer3Skills` whenever the
  *    server's tools are in the active toolset.
@@ -309,8 +299,7 @@ export interface ConnectorSkillInput {
  * skill's own name and who published it.
  */
 export function synthesizeConnectorSkill(input: ConnectorSkillInput): Skill {
-  const { serverName, skillName, description, body, uri, loadingStrategy, priority, triggers } =
-    input;
+  const { serverName, skillName, description, uri, loadingStrategy, priority, triggers } = input;
   return {
     manifest: {
       name: connectorSkillManifestName(serverName, skillName),
@@ -322,7 +311,21 @@ export function synthesizeConnectorSkill(input: ConnectorSkillInput): Skill {
       ...(triggers?.length ? { triggers } : {}),
       status: "active",
     },
-    body,
+    body: input.body ?? "",
     sourcePath: uri,
+    ...(input.loadBody ? { loadBody: input.loadBody } : {}),
   };
+}
+
+/**
+ * Resolve a skill's body if it is fetched on demand, or `null` when the fetch
+ * fails. The result carries no `loadBody`, so it can be composed as is. Call
+ * this only where the body is about to reach the model.
+ */
+export async function hydrateSkill(skill: Skill): Promise<Skill | null> {
+  if (!skill.loadBody) return skill;
+  const body = await skill.loadBody();
+  if (body === null) return null;
+  const { loadBody: _loaded, ...rest } = skill;
+  return { ...rest, body };
 }

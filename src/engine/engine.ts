@@ -910,6 +910,12 @@ function buildRunErrorData(runId: string, err: unknown): Record<string, unknown>
   };
 }
 
+/** A surfaced overlay whose body is still being fetched. */
+interface PendingOverlayFetch {
+  data: Omit<ConnectorSkillInjectedPayload, "skillBody">;
+  body: Promise<string | null>;
+}
+
 /** Per-tool-call context shared across an iteration's concurrent executions. */
 interface ToolExecContext {
   config: EngineConfig;
@@ -919,6 +925,8 @@ interface ToolExecContext {
   injectedConnectorSkills: Set<string>;
   /** Drained into history after this iteration's tool results. */
   pendingOverlayDeliveries: ConnectorSkillInjectedPayload[];
+  /** Surfaced overlays whose bodies are still being fetched; settled before the drain. */
+  pendingOverlayFetches: PendingOverlayFetch[];
   toolSchemaMap: Map<string, ToolSchema>;
   promotedLastUsed: Map<string, number>;
   bumpUseCounter: () => number;
@@ -975,6 +983,7 @@ export class AgentEngine {
     // results lets the guidance land in THIS run, before the model's next
     // action — which is the point of surfacing it on first use at all.
     const pendingOverlayDeliveries: ConnectorSkillInjectedPayload[] = [];
+    const pendingOverlayFetches: PendingOverlayFetch[] = [];
 
     let iteration = 0;
     const cumulativeUsage: TokenUsage = emptyUsage();
@@ -1061,6 +1070,7 @@ export class AgentEngine {
           connectorSkillCandidates,
           injectedConnectorSkills,
           pendingOverlayDeliveries,
+          pendingOverlayFetches,
         );
 
         // Backstop: cap active tools by evicting LRU agent-promoted entries.
@@ -1409,6 +1419,7 @@ export class AgentEngine {
           connectorSkillCandidates,
           injectedConnectorSkills,
           pendingOverlayDeliveries,
+          pendingOverlayFetches,
           toolSchemaMap,
           promotedLastUsed,
           bumpUseCounter,
@@ -1441,6 +1452,16 @@ export class AgentEngine {
         // that continuation is its real, user-visible output. `user` is the
         // role the codebase already injects synthetic non-user guidance under
         // (see `appendFinalStepReminder`), and it is trailing-safe.
+        // An overlay whose body is fetched on demand (a server-published
+        // skill) is recorded once its body is in hand. It is recorded before
+        // the next `llm.response`, the same iteration the injector fired in,
+        // so replay places it where the live run does. A body that cannot be
+        // fetched is not delivered, and the skill stays eligible.
+        await this.settleOverlayFetches(
+          pendingOverlayFetches,
+          injectedConnectorSkills,
+          pendingOverlayDeliveries,
+        );
         for (const overlay of pendingOverlayDeliveries) {
           history.push({
             role: "user",
@@ -1775,11 +1796,20 @@ export class AgentEngine {
     candidates: ConnectorSkillCandidate[],
     injected: Set<string>,
     pending: ConnectorSkillInjectedPayload[],
+    fetches: PendingOverlayFetch[],
   ): void {
     for (const candidate of candidates) {
       if (injected.has(candidate.name)) continue;
       if (!candidate.toolAffinity.some((p) => toolMatches(toolName, p))) continue;
       injected.add(candidate.name);
+      if (candidate.loadBody) {
+        // Fetched now, alongside the tool call, and settled before the drain.
+        fetches.push({
+          data: { runId, toolName, skillName: candidate.name, scope: candidate.scope },
+          body: candidate.loadBody().catch(() => null),
+        });
+        continue;
+      }
       const data = {
         runId,
         toolName,
@@ -1793,6 +1823,30 @@ export class AgentEngine {
       // message from the same fields, so live and replay agree.
       pending.push(data);
     }
+  }
+
+  /**
+   * Settle the overlays surfaced this iteration whose bodies were fetched on
+   * demand: record each one that arrived (`connector.skill.injected`) and queue
+   * it for delivery, and make a skill whose fetch failed eligible again. Drains
+   * `fetches`.
+   */
+  private async settleOverlayFetches(
+    fetches: PendingOverlayFetch[],
+    injected: Set<string>,
+    pending: ConnectorSkillInjectedPayload[],
+  ): Promise<void> {
+    for (const fetch of fetches) {
+      const skillBody = await fetch.body;
+      if (skillBody === null) {
+        injected.delete(fetch.data.skillName);
+        continue;
+      }
+      const data = { ...fetch.data, skillBody };
+      this.events.emit({ type: "connector.skill.injected", data });
+      pending.push(data);
+    }
+    fetches.length = 0;
   }
 
   /**
@@ -2017,6 +2071,7 @@ export class AgentEngine {
       ctx.connectorSkillCandidates,
       ctx.injectedConnectorSkills,
       ctx.pendingOverlayDeliveries,
+      ctx.pendingOverlayFetches,
     );
 
     const start = performance.now();

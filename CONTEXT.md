@@ -185,8 +185,10 @@ duplicate the side effect.
 A unit of guidance in the Agent Skills format. The file is the standard,
 unmodified, with the runtime's own configuration nested under
 `metadata.nimblebrain` and validated by one schema (ADR-0009). A skill comes off
-the filesystem, off an MCP server's `skill://…/SKILL.md` resource (a peer, not a
-lesser kind — ADR-0011), or from a curated connector overlay (ADR-0013).
+the filesystem, from an MCP server's `skills/list` under the MCP Skills
+Extension (a peer, not a lesser kind; its body fetched when needed and verified
+against the listed digest — ADR-0011), or from a curated connector overlay
+(ADR-0013).
 
 ### Role / channel
 A skill's declared `loading-strategy`, and the prompt channel that follows from

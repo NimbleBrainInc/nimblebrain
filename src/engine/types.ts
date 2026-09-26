@@ -633,6 +633,12 @@ export interface ConnectorSkillCandidate {
   description?: string;
   /** The overlay body (markdown) to surface into history, verbatim. */
   body: string;
+  /**
+   * Present when the body is fetched on demand (a server-published skill):
+   * the engine calls it when the candidate fires, and surfaces nothing when it
+   * resolves `null`. `body` is empty until then.
+   */
+  loadBody?: () => Promise<string | null>;
   /** Scope label for containment / telemetry. Always `"connector"` in v1. */
   scope: string;
   /** Tool-affinity globs (e.g. `["<server>__*"]`); the first match triggers surfacing. */

@@ -1128,10 +1128,22 @@ async function handleUseSkill(
     }
   }
 
+  // A server-published skill's body is fetched here, on activation — the
+  // MCP Skills Extension forbids fetching it ahead of need.
+  const body = skill.loadBody ? await skill.loadBody() : skill.body;
+  if (body === null) {
+    return {
+      content: textContent(
+        `Skill "${name}" could not be loaded: its server did not return content matching the skill it listed. Try again later.`,
+      ),
+      isError: true,
+    };
+  }
+
   // Cap the delivered body with the same budget every other prompt-bound
-  // skill body gets (connector `skill://` discovery caps at read; filesystem
-  // bodies are capped here).
-  const capped = truncateMarkdownToBudget(skill.body, MAX_SKILL_BODY_CHARS);
+  // skill body gets (a server-published body is capped when fetched;
+  // filesystem bodies are capped here).
+  const capped = truncateMarkdownToBudget(body, MAX_SKILL_BODY_CHARS);
   const tokens = approxTokens(capped.body);
   const out: SkillsUseOutput = { status: "loaded", name: skill.name, scope: skill.scope, tokens };
   return {

@@ -162,10 +162,19 @@ Uninstalling the connector removes its materialized overlays.
 
 ## Skills published by an MCP server
 
-A server can publish its own guidance as skills, per the MCP [Skills Extension](https://github.com/modelcontextprotocol/modelcontextprotocol/blob/main/seps/2640-skills-extension.md) (`io.modelcontextprotocol/skills`). The platform declares the extension when it connects, and finds a server's skills one of two ways:
+A server publishes its own guidance as skills through the MCP [Skills Extension](https://github.com/modelcontextprotocol/modelcontextprotocol/blob/main/seps/2640-skills-extension.md) (`io.modelcontextprotocol/skills`). The platform declares the extension when it connects, and a server that does not declare it publishes no skills: its `skill://` resources are ordinary resources.
 
-- **The server declares the extension.** The platform enumerates it with `skills/list`, which is the record of what is a skill there. Each `SKILL.md` it reads must match the listed SHA-256 digest, size, and frontmatter, or that skill is not loaded and discovery retries on the next turn. A `skill://` resource the listing leaves out is an ordinary resource.
-- **The server does not declare it.** The platform lists the server's resources and loads every `skill://<skill-path>/SKILL.md`.
+To publish skills, a server must:
+
+1. Declare the extension in its capabilities: `"extensions": { "io.modelcontextprotocol/skills": {} }`, alongside the `resources` capability.
+2. Implement `skills/list`, returning one entry per skill: the `SKILL.md` URI, its frontmatter verbatim as JSON, and a `resources` manifest of every file in the skill with its SHA-256 `digest` and byte `size` (or `"dynamic"` for generated content).
+3. Implement `skills/get`, returning the same entry for one skill URI.
+4. Serve each file with `resources/read`.
+
+How the platform uses them:
+
+- **Discovery reads the listing only.** The catalog and each skill's loading rules come from the listed frontmatter; no `SKILL.md` is fetched until the skill is needed. An `always` skill is fetched when a turn composes it, a `dynamic` skill when tool-affinity or a trigger selects it or when the agent activates it with `nb__use_skill`.
+- **Every fetched `SKILL.md` is verified.** Its bytes must match the listed digest and size, and its frontmatter the listed frontmatter, or the skill does not load that turn. A verified body is cached by digest, so an unchanged skill is not fetched again; a server that updates a skill lists the new digest.
 
 The skill's name is its frontmatter `name`. When two skills on one server share a name, each is named by its full skill path instead (`acme/billing/refunds`). The platform reads the **same** `metadata.nimblebrain.*` block documented above off that published frontmatter, so a published skill loads by the rules its author writes rather than a fixed convention:
 

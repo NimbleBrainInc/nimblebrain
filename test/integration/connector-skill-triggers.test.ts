@@ -43,6 +43,7 @@ import { Runtime } from "../../src/runtime/runtime.ts";
 import { McpSource } from "../../src/tools/mcp-source.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { type RemoteMcpFixture, startRemoteMcpServer } from "../helpers/remote-mcp-fixture.ts";
+import { SKILLS_EXTENSION_CAPABILITY, serveSkills } from "../helpers/skills-server.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
 
 /** Reverse-DNS slug, like a real fleet connector — never the skill's own name. */
@@ -93,7 +94,7 @@ function createFixtureServer(): Server {
 
   const server = new Server(
     { name: "capture", version: "0.1.0" },
-    { capabilities: { tools: {}, resources: {} } },
+    { capabilities: { tools: {}, resources: {}, ...SKILLS_EXTENSION_CAPABILITY } },
   );
 
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
@@ -117,6 +118,7 @@ function createFixtureServer(): Server {
     ],
   }));
 
+  serveSkills(server, () => bodies);
   server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
     const text = bodies[request.params.uri];
     if (!text) throw new Error(`Resource not found: ${request.params.uri}`);

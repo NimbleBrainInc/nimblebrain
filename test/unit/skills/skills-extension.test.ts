@@ -115,6 +115,17 @@ describe("verifySkillEntrypoint", () => {
     });
   });
 
+  it("matches a YAML date against the listing's string for the same instant", () => {
+    const text = "---\nname: refunds\ndescription: Process refunds\nreleased: 2026-01-01\n---\nbody\n";
+    const listed = (released: string) =>
+      entryFor(text, {
+        frontmatter: { name: "refunds", description: "Process refunds", released },
+      });
+    expect(verifySkillEntrypoint(listed("2026-01-01"), text)).toEqual({ ok: true });
+    expect(verifySkillEntrypoint(listed("2026-01-01T00:00:00.000Z"), text)).toEqual({ ok: true });
+    expect(verifySkillEntrypoint(listed("2026-01-02"), text).ok).toBe(false);
+  });
+
   it("checks only frontmatter for a dynamic skill", () => {
     const entry = entryFor(SKILL_MD, { resources: "dynamic" });
     expect(verifySkillEntrypoint(entry, `${SKILL_MD}\nextra body`)).toEqual({ ok: true });

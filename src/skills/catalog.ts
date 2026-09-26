@@ -23,7 +23,10 @@ import type { Skill } from "./types.ts";
 export interface ActivatableSkill {
   name: string;
   description?: string;
+  /** The body, or `""` when {@link ActivatableSkill.loadBody} fetches it on activation. */
   body: string;
+  /** Fetches the body of a skill whose body is loaded only on demand; `null` when it cannot be. */
+  loadBody?: () => Promise<string | null>;
   /**
    * Provenance label for the activation block. A filesystem skill carries its
    * storage tier (`org` / `workspace` / `user`); a server-published one carries
@@ -73,6 +76,7 @@ export function collectActivatableSkills(pools: {
       name: s.manifest.name,
       ...(s.manifest.description ? { description: s.manifest.description } : {}),
       body: s.body,
+      ...(s.loadBody ? { loadBody: s.loadBody } : {}),
       scope: s.manifest.scope ?? "org",
     });
   };

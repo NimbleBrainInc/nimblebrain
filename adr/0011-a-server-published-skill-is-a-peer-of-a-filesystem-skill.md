@@ -8,10 +8,12 @@
 
 An MCP server knows how its own tools are meant to be chained: which call comes
 first, what to do with a partial result, which of two similar tools is the right
-one. That knowledge is guidance, not code, and SEP-2640
-(`io.modelcontextprotocol/skills`) gives it a wire form — the server publishes it
-as a `skill://<skill-path>/SKILL.md` resource, whose body is an Agent Skills
-document like any other.
+one. That knowledge is guidance, not code, and the MCP Skills Extension (SEP-2640,
+`io.modelcontextprotocol/skills`) gives it a wire form: a server that declares
+the extension lists its skills with `skills/list` — each entry a `SKILL.md` URI,
+its frontmatter verbatim, and a manifest of the skill's files with digests — and
+serves the files as resources. The body is an Agent Skills document like any
+other.
 
 The runtime already has a loader, a router, and four channels for exactly this
 kind of document. The question is whether a skill that arrived over MCP is the
@@ -29,14 +31,24 @@ after the model has already chosen wrong.
 **A server-published skill is a peer of a filesystem skill. Its frontmatter, not
 its origin, decides its channel.**
 
-Discovery is by listing, never by convention
-(`src/skills/connector-skills.ts`, driven from the runtime's per-source discovery).
-The runtime issues `resources/list` against each MCP source in the active
-workspace registry and takes every URI matching the SEP-2640 entrypoint shape
-`skill://…/SKILL.md`. It does not construct a URI from the source's name: a
-server's name is its own, and a guessed URI misses every server whose resource
-path and source name differ — silently, because a resource that is not there and
-a resource nobody asked for look identical.
+**A server publishes skills only through the Skills extension.** The runtime
+declares the extension, and against each MCP source in the active workspace
+registry that declares it, enumerates `skills/list`
+(`src/skills/connector-skills.ts`, driven from the runtime's per-source
+discovery). The listing is the record of what is a skill on that server. A
+server that does not declare the extension publishes none, and a `skill://`
+resource is an ordinary resource whatever its path: the extension forbids
+concluding that a resource is a skill from its URI scheme. The runtime never
+constructs a URI from the source's name either: a server's name is its own, and
+a guessed URI misses every server whose skill path and source name differ.
+
+**A skill's body is fetched when it is needed, and verified.** Discovery reads
+the listing alone; the entry's frontmatter carries everything routing needs. The
+`SKILL.md` is read with `resources/read` when the skill reaches the model — an
+`always` skill each turn it composes, a `dynamic` skill when selected or
+activated — and is used only if its bytes match the listed digest and size and
+its frontmatter matches the listed frontmatter. A verified body is cached by
+digest, so an unchanged skill is not re-read and its composed bytes do not move.
 
 **The declared loading configuration is read, not invented.** The same
 `metadata.nimblebrain.*` fields the filesystem loader reads (ADR-0009) —
@@ -74,8 +86,12 @@ Peer means the same *channel* rules, not the same *trust* posture.
   server's workflow means.
 - A server can choose the reliable channel when it needs to, and pay for it. The
   choice — and the cost — sit with the party that knows the workflow.
-- Discovery costs a `resources/list` per source per chat build. Sources that
-  publish no skills contribute nothing but that call.
+- Discovery costs one `skills/list` per declaring source per discovery TTL, and
+  nothing for a source that does not declare the extension. A body costs a
+  `resources/read` the first time a given digest is needed.
+- A server that serves `skill://` resources without declaring the extension
+  publishes nothing here. Its author declares the extension and implements
+  `skills/list` and `skills/get`.
 - Two servers publishing the same skill name coexist, because the manifest name
   namespaces them. A server skill and a filesystem skill sharing a bare name do
   not — see ADR-0019.
@@ -85,6 +101,12 @@ Peer means the same *channel* rules, not the same *trust* posture.
 
 ## Alternatives considered
 
+- **Treating every listed `skill://…/SKILL.md` resource as a skill** — rejected:
+  the Skills extension forbids inferring a skill from a URI scheme, and a
+  resource listing carries no digest to verify the body against.
+- **Reading every body at discovery** — rejected: the extension forbids fetching
+  a skill's files ahead of need, and the listing already carries what routing
+  reads.
 - **Deriving the skill URI from the source name** — rejected: it is a guess that
   fails silently against any server whose resource path differs from its name.
 - **Pinning every server skill to the tool-affined channel** — rejected: it takes

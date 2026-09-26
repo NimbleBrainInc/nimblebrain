@@ -5,12 +5,12 @@
  * is a reverse-DNS SLUG (`ai-nimblebrain-test-mcp`, like a fleet connector) that
  * exposes:
  *   - one tool (`ai-nimblebrain-test-mcp__doit`) so its tools land in the toolset
- *   - one SEP-2640 skill resource at the SHORT-name `skill://test/SKILL.md`,
- *     discovered via `resources/list` (NOT a guessed URI)
+ *   - one SEP-2640 skill at the SHORT-name `skill://test/SKILL.md`, discovered
+ *     from the server's `skills/list` (NOT a guessed URI)
  *
- * The slug-vs-short-name split is the exact production bug: discovery must find
- * the skill by listing resources, since the old guess (`skill://<sourceName>/…`)
- * looked under the slug and missed the short-name path.
+ * The slug-vs-short-name split is why discovery reads the server's listing: a
+ * URI guessed from the source name (`skill://<sourceName>/…`) looks under the
+ * slug and misses the short-name path.
  *
  * Then runs a chat with NO `appContext` — the failing production case — and
  * verifies the synthesized skill flows through `selectLayer3Skills` and appears
@@ -35,6 +35,7 @@ import { reconstructMessages } from "../../src/conversation/event-reconstructor.
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { McpSource } from "../../src/tools/mcp-source.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
+import { SKILLS_EXTENSION_CAPABILITY, serveSkills } from "../helpers/skills-server.ts";
 import { type RemoteMcpFixture, startRemoteMcpServer } from "../helpers/remote-mcp-fixture.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
 
@@ -53,7 +54,7 @@ Always call test__doit before anything else.`;
 function createSkillFixtureServer(): Server {
   const server = new Server(
     { name: "test", version: "0.1.0" },
-    { capabilities: { tools: {}, resources: {} } },
+    { capabilities: { tools: {}, resources: {}, ...SKILLS_EXTENSION_CAPABILITY } },
   );
 
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
@@ -77,6 +78,7 @@ function createSkillFixtureServer(): Server {
     "skill://test/SKILL.md": SKILL_BODY,
     "skill://test/reference": "# Reference. Detailed tool catalog and error recovery.",
   };
+  serveSkills(server, () => bodies);
   server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
     const text = bodies[request.params.uri];
     if (text === undefined) throw new Error(`Resource not found: ${request.params.uri}`);
@@ -503,7 +505,7 @@ DYNAMIC_USAGE_MARKER — call multi__doit correctly.`;
 function createMultiSkillFixtureServer(): Server {
   const server = new Server(
     { name: "multi", version: "0.1.0" },
-    { capabilities: { tools: {}, resources: {} } },
+    { capabilities: { tools: {}, resources: {}, ...SKILLS_EXTENSION_CAPABILITY } },
   );
 
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
@@ -527,6 +529,7 @@ function createMultiSkillFixtureServer(): Server {
     "skill://always-guide/SKILL.md": ALWAYS_SKILL_BODY,
     "skill://dynamic-usage/SKILL.md": DYNAMIC_SKILL_BODY,
   };
+  serveSkills(server, () => bodies);
   server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
     const text = bodies[request.params.uri];
     if (text === undefined) throw new Error(`Resource not found: ${request.params.uri}`);

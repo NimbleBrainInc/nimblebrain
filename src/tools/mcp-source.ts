@@ -838,9 +838,9 @@ export class McpSource implements ToolSource {
    * Phase 1 advertises the capability; handlers land in Phase 2.
    *
    * It also carries `io.modelcontextprotocol/skills` (SEP-2640), because skill
-   * discovery consumes it: against a server that declares the extension,
-   * {@link listSkills} enumerates with `skills/list` and the runtime verifies
-   * each `SKILL.md` it reads against the listed digest and frontmatter.
+   * discovery consumes it: a server that declares the extension is enumerated
+   * with {@link listSkills}, and the runtime verifies each `SKILL.md` it later
+   * reads against the listed digest and frontmatter.
    */
   private buildClient(): Client {
     return new Client(
@@ -1107,9 +1107,8 @@ export class McpSource implements ToolSource {
    * before the handshake completes and after `stop()`.
    *
    * Exposed so a caller can honour the spec's rule that declared capabilities
-   * are authoritative — `listResources` already reads them through the client
-   * for exactly that reason — without reaching through {@link getClient}, which
-   * hands out the whole SDK surface for what is one read.
+   * are authoritative without reaching through {@link getClient}, which hands
+   * out the whole SDK surface for what is one read.
    */
   getServerCapabilities(): ServerCapabilities | undefined {
     return this.client?.getServerCapabilities();
@@ -1926,89 +1925,6 @@ export class McpSource implements ToolSource {
     return { text: JSON.stringify(first), meta };
   }
 
-  /**
-   * Enumerate the server's resources via `resources/list` (best-effort).
-   *
-   * Used for skill discovery on a server that does not declare the Skills
-   * extension (SEP-2640; a server that does is enumerated by
-   * {@link listSkills}): the runtime lists its resources and reads the
-   * `skill://<name>/SKILL.md` entrypoints. Returns `{ resources, ok, truncated }`: `ok: false` means the
-   * enumeration couldn't complete cleanly — a transport error mid-list (partial
-   * `resources`) or a torn-down client — so the caller declines to cache it as a
-   * stable "no skills" and retries next turn. Only a genuine successful response —
-   * a clean empty page (no skills / no `resources` capability) or a cap-bounded
-   * read — is `ok: true`. A caller treating `ok: true` as a complete enumeration
-   * must ALSO check `truncated`: a cap-bounded read succeeds with resources still
-   * unenumerated, and caching it as "this is everything" is the silent-skip this
-   * field exists to prevent.
-   * Unlike `readResource`, this probe does NOT route failures through
-   * session recovery — a server that simply doesn't list resources must not
-   * restart-storm the source. Pagination is followed up to a small page cap so a
-   * misbehaving server can't spin the request path.
-   */
-  async listResources(): Promise<{
-    resources: Array<{ uri: string; name?: string; mimeType?: string }>;
-    ok: boolean;
-    /**
-     * The 10-page ceiling was hit with a cursor still outstanding, so later
-     * resources exist and were not enumerated. Distinct from `ok: false`: the
-     * calls all SUCCEEDED, the result is just short. Callers that treat a
-     * successful enumeration as complete — caching it, or reporting "this
-     * server publishes no skills" — must consult this too.
-     */
-    truncated: boolean;
-  }> {
-    if (!this.client) return { resources: [], ok: false, truncated: false }; // torn-down client is transient — retry (cheap no-op)
-    // A server that advertised NO `resources` capability has none — that is a
-    // COMPLETE enumeration of nothing, not a failure. Without this the call
-    // throws `Method not found` and reports as a transport failure, which is
-    // both a wasted round trip per source and a permanent false positive for
-    // every tools-only server (among the in-process platform sources, `usage`
-    // and `compose`; the rest advertise `resources` and are probed).
-    //
-    // Only a POSITIVE "no resources" short-circuits. Absent capabilities means
-    // we do not know yet, and answering "complete, nothing here" on a guess is
-    // the same silent skip this signal exists to make impossible — so an
-    // unknown server is probed exactly as before.
-    //
-    // The trade this buys: a server that DOES implement `resources/list` but
-    // omits `resources` from its declared capabilities now reads as a clean
-    // empty and caches as complete, with no degraded signal. Declared
-    // capabilities are authoritative per spec, and probing past them would
-    // restore the always-firing false positive above — but it is the one new
-    // way this change can make a skill go dark.
-    const caps = this.client.getServerCapabilities();
-    if (caps && !caps.resources) {
-      return { resources: [], ok: true, truncated: false };
-    }
-    const resources: Array<{ uri: string; name?: string; mimeType?: string }> = [];
-    let cursor: string | undefined;
-    try {
-      for (let page = 0; page < 10; page++) {
-        const result = await this.client.listResources(cursor ? { cursor } : undefined);
-        for (const resource of result.resources ?? []) {
-          resources.push({ uri: resource.uri, name: resource.name, mimeType: resource.mimeType });
-        }
-        cursor = result.nextCursor;
-        if (!cursor) break;
-      }
-      if (cursor) {
-        // Hit the page ceiling with more to read — surface it rather than silently
-        // drop later resources (a skill past the cap would go undiscovered).
-        log.warn("[mcp] listResources hit the 10-page cap; later resources not enumerated", {
-          source: this.name,
-        });
-        return { resources, ok: true, truncated: true };
-      }
-    } catch {
-      // A transport error cut the enumeration short: report `ok: false` so the caller
-      // declines to cache this partial as a stable "no skills" (never recover/restart
-      // the source — this is a probe, not the app-surface readResource path).
-      return { resources, ok: false, truncated: false };
-    }
-    return { resources, ok: true, truncated: false };
-  }
-
   /** True when the server declared the Skills extension (SEP-2640) in its `initialize` result. */
   declaresSkillsExtension(): boolean {
     const extensions = this.client?.getServerCapabilities()?.extensions;
@@ -2021,11 +1937,12 @@ export class McpSource implements ToolSource {
    * Call only against a server for which {@link declaresSkillsExtension} is
    * true: declaring the extension is what commits a server to the method.
    * Entries come back unvalidated, for the caller to check one at a time.
-   * `ok` and `truncated` mean what they mean on {@link listResources}: a
-   * failed call leaves a partial result (`ok: false`), and the page cap can
-   * stop the walk with a cursor outstanding (`truncated: true`). Either way
-   * the result is not the server's whole listing. Failures do not route
-   * through session recovery, for the same reason as `listResources`.
+   * A failed call leaves a partial result (`ok: false`), and the 10-page cap
+   * can stop the walk with a cursor outstanding (`truncated: true`); either
+   * way the result is not the server's whole listing, and a caller must not
+   * cache it as complete. Failures do not route through session recovery: this
+   * is a discovery probe, and a misbehaving server must not restart-storm the
+   * source.
    */
   async listSkills(): Promise<{ entries: unknown[]; ok: boolean; truncated: boolean }> {
     if (!this.client) return { entries: [], ok: false, truncated: false };

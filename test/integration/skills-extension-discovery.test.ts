@@ -1,16 +1,18 @@
 /**
- * Server-published skill discovery over a real transport, both ways a server
- * can publish (SEP-2640):
+ * Server-published skills over a real transport (SEP-2640).
  *
- * - A server that declares `io.modelcontextprotocol/skills` is enumerated with
- *   `skills/list`. Its listing is the record of what is a skill, so a
- *   `skill://…/SKILL.md` resource it does not list is not one, and a listed
- *   `SKILL.md` whose bytes do not match the listed digest is not loaded.
- * - A server that does not declare it is enumerated with `resources/list`.
- *
- * Read through `listActivatableSkills`, the set a turn can activate.
+ * - Only a server that declares `io.modelcontextprotocol/skills` publishes
+ *   skills, and its `skills/list` is the record of what they are. A
+ *   `skill://…/SKILL.md` resource is an ordinary resource otherwise.
+ * - Discovery reads the listing only. A body is fetched when the skill is
+ *   needed — an `always` skill when a turn composes it, an on-demand skill
+ *   when it is activated — and is verified against the listed digest, size,
+ *   and frontmatter before it is used.
+ * - A verified body is cached by digest, and a digest that failed
+ *   verification is not re-read every turn.
  */
 
+import type { LanguageModelV4, LanguageModelV4CallOptions } from "@ai-sdk/provider";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import {
   ListResourcesRequestSchema,
@@ -18,92 +20,114 @@ import {
   ReadResourceRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { z } from "zod";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { SKILLS_EXTENSION_ID } from "../../src/skills/skills-extension.ts";
 import { McpSource } from "../../src/tools/mcp-source.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { type RemoteMcpFixture, startRemoteMcpServer } from "../helpers/remote-mcp-fixture.ts";
+import {
+  SKILLS_EXTENSION_CAPABILITY,
+  SkillsListRequestSchema,
+  skillEntryFor,
+} from "../helpers/skills-server.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
 
 const EXT_SERVER = "ai-nimblebrain-ext-mcp";
 const PLAIN_SERVER = "ai-nimblebrain-plain-mcp";
 
-function skillMd(name: string, marker: string): string {
-  return `---\nname: ${name}\ndescription: ${name} guidance\n---\n\n${marker}\n`;
+function skillMd(name: string, marker: string, extra = ""): string {
+  return `---\nname: ${name}\ndescription: ${name} guidance\n${extra}---\n\n${marker}\n`;
 }
 
+const ALWAYS = "metadata:\n  nimblebrain:\n    loading-strategy: always\n";
+
+/** Everything the extension server serves over `resources/read`. */
 const bodies: Record<string, string> = {
-  "skill://listed/SKILL.md": skillMd("listed", "LISTED_BODY"),
-  "skill://tampered/SKILL.md": skillMd("tampered", "TAMPERED_BODY"),
-  "skill://decoy/SKILL.md": skillMd("decoy", "DECOY_BODY"),
+  "skill://listed/SKILL.md": skillMd("listed", "LISTED_BODY", ALWAYS),
+  "skill://tampered/SKILL.md": skillMd("tampered", "TAMPERED_BODY", ALWAYS),
+  // A YAML date the listing renders as a JSON string.
+  "skill://ondemand/SKILL.md": skillMd("ondemand", "ONDEMAND_BODY", "released: 2026-01-01\n"),
+  "skill://decoy/SKILL.md": skillMd("decoy", "DECOY_BODY", ALWAYS),
 };
 
-function entry(uri: string, name: string, text: string) {
-  const bytes = new TextEncoder().encode(text);
-  return {
-    uri,
-    frontmatter: { name, description: `${name} guidance` },
-    resources: [
-      { uri, digest: `sha256:${createHash("sha256").update(bytes).digest("hex")}`, size: bytes.length },
-    ],
-  };
-}
-
-const SkillsListRequestSchema = z.object({
-  method: z.literal("skills/list"),
-  params: z.object({ cursor: z.string().optional() }).loose().optional(),
-});
-
+/** `resources/read` calls each server received, by URI. */
+const reads: Record<string, string[]> = { ext: [], plain: [] };
 /** Client capabilities the extension server saw on `initialize`. */
 let seenClientExtensions: Record<string, unknown> | undefined;
 
-function readHandler(server: Server): void {
+function resourceHandlers(server: Server, log: string[]): void {
+  server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: [] }));
+  server.setRequestHandler(ListResourcesRequestSchema, async () => ({
+    resources: Object.keys(bodies).map((uri) => ({ uri, name: uri, mimeType: "text/markdown" })),
+  }));
   server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
+    log.push(request.params.uri);
     const text = bodies[request.params.uri];
     if (!text) throw new Error(`Resource not found: ${request.params.uri}`);
     return { contents: [{ uri: request.params.uri, mimeType: "text/markdown", text }] };
   });
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: [] }));
-  // Every `skill://` resource is listed, including ones the skills listing omits.
-  server.setRequestHandler(ListResourcesRequestSchema, async () => ({
-    resources: Object.keys(bodies).map((uri) => ({ uri, name: uri, mimeType: "text/markdown" })),
-  }));
 }
 
 function createExtensionServer(): Server {
   const server = new Server(
     { name: "ext", version: "0.1.0" },
-    { capabilities: { tools: {}, resources: {}, extensions: { [SKILLS_EXTENSION_ID]: {} } } },
+    { capabilities: { tools: {}, resources: {}, ...SKILLS_EXTENSION_CAPABILITY } },
   );
   server.oninitialized = () => {
     seenClientExtensions = server.getClientCapabilities()?.extensions as
       | Record<string, unknown>
       | undefined;
   };
-  readHandler(server);
+  resourceHandlers(server, reads.ext!);
   server.setRequestHandler(SkillsListRequestSchema, async () => ({
     skills: [
-      entry("skill://listed/SKILL.md", "listed", bodies["skill://listed/SKILL.md"]!),
+      skillEntryFor("skill://listed/SKILL.md", bodies["skill://listed/SKILL.md"]!),
+      skillEntryFor("skill://ondemand/SKILL.md", bodies["skill://ondemand/SKILL.md"]!),
       // Listed with the digest of different bytes than the server serves.
-      entry("skill://tampered/SKILL.md", "tampered", "not what is served"),
+      {
+        ...skillEntryFor("skill://tampered/SKILL.md", bodies["skill://tampered/SKILL.md"]!),
+        resources: skillEntryFor("skill://tampered/SKILL.md", "not what is served").resources,
+      },
     ],
   }));
   return server;
 }
 
+/** Serves the same `skill://` resources but does not declare the extension. */
 function createPlainServer(): Server {
   const server = new Server(
     { name: "plain", version: "0.1.0" },
     { capabilities: { tools: {}, resources: {} } },
   );
-  readHandler(server);
+  resourceHandlers(server, reads.plain!);
   return server;
+}
+
+let lastPrompt: LanguageModelV4CallOptions["prompt"] | undefined;
+
+function createCapturingModel(): LanguageModelV4 {
+  const echo = createEchoModel();
+  return {
+    ...echo,
+    doStream: (options: LanguageModelV4CallOptions) => {
+      lastPrompt = options.prompt;
+      return echo.doStream(options);
+    },
+  };
+}
+
+function lastPromptText(): string {
+  return (lastPrompt ?? [])
+    .map((m) =>
+      typeof m.content === "string"
+        ? m.content
+        : m.content.map((p) => ("text" in p ? p.text : "")).join(" "),
+    )
+    .join("\n");
 }
 
 const testDir = join(tmpdir(), `nimblebrain-skills-extension-${Date.now()}`);
@@ -127,7 +151,7 @@ async function connect(name: string, make: () => Server): Promise<void> {
 beforeAll(async () => {
   mkdirSync(testDir, { recursive: true });
   runtime = await Runtime.start({
-    model: { provider: "custom", adapter: createEchoModel() },
+    model: { provider: "custom", adapter: createCapturingModel() },
     logging: { disabled: true },
     workDir: testDir,
     telemetry: { enabled: false },
@@ -144,25 +168,46 @@ afterAll(async () => {
   if (existsSync(testDir)) rmSync(testDir, { recursive: true });
 });
 
-describe("server skill discovery (SEP-2640)", () => {
+describe("server-published skills (SEP-2640)", () => {
   it("advertises the extension to the server", () => {
     expect(seenClientExtensions?.[SKILLS_EXTENSION_ID]).toEqual({});
   });
 
-  it("takes an extension server's skills from skills/list, verified", async () => {
+  it("builds the catalog from the listing without reading a body", async () => {
     const names = (await runtime.listActivatableSkills(TEST_WORKSPACE_ID, null)).map((s) => s.name);
-    const ext = names.filter((n) => n.startsWith(`connector:${EXT_SERVER}:`));
-    // `decoy` is a skill:// resource the listing omits; `tampered` fails its digest.
-    expect(ext).toEqual([`connector:${EXT_SERVER}:listed`]);
+    expect(names).toContain(`connector:${EXT_SERVER}:ondemand`);
+    expect(reads.ext).toEqual([]);
   });
 
-  it("takes a non-declaring server's skills from resources/list", async () => {
+  it("composes a verified `always` body and drops one that fails verification", async () => {
+    await runtime.chat({ workspaceId: TEST_WORKSPACE_ID, message: "hello" });
+    const prompt = lastPromptText();
+    expect(prompt).toContain("LISTED_BODY");
+    expect(prompt).not.toContain("TAMPERED_BODY");
+    // Unlisted `decoy` is not a skill; `ondemand` is not needed yet.
+    expect(prompt).not.toContain("DECOY_BODY");
+    expect([...reads.ext!].sort()).toEqual(["skill://listed/SKILL.md", "skill://tampered/SKILL.md"]);
+  });
+
+  it("serves an unchanged body from the digest cache and does not re-read a failed digest", async () => {
+    reads.ext!.length = 0;
+    await runtime.chat({ workspaceId: TEST_WORKSPACE_ID, message: "again" });
+    expect(lastPromptText()).toContain("LISTED_BODY");
+    expect(reads.ext).toEqual([]);
+  });
+
+  it("fetches an on-demand skill's body when it is activated, verifying a YAML date", async () => {
+    const skill = (await runtime.listActivatableSkills(TEST_WORKSPACE_ID, null)).find(
+      (s) => s.name === `connector:${EXT_SERVER}:ondemand`,
+    );
+    expect(await skill?.loadBody?.()).toContain("ONDEMAND_BODY");
+    expect(reads.ext).toEqual(["skill://ondemand/SKILL.md"]);
+  });
+
+  it("finds no skills on a server that does not declare the extension", async () => {
     const names = (await runtime.listActivatableSkills(TEST_WORKSPACE_ID, null)).map((s) => s.name);
-    const plain = names.filter((n) => n.startsWith(`connector:${PLAIN_SERVER}:`)).sort();
-    expect(plain).toEqual([
-      `connector:${PLAIN_SERVER}:decoy`,
-      `connector:${PLAIN_SERVER}:listed`,
-      `connector:${PLAIN_SERVER}:tampered`,
-    ]);
+    expect(names.some((n) => n.startsWith(`connector:${PLAIN_SERVER}:`))).toBe(false);
+    expect(lastPromptText()).not.toContain("DECOY_BODY");
+    expect(reads.plain).toEqual([]);
   });
 });
