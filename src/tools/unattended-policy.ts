@@ -6,8 +6,8 @@
  * a scheduled run inside its lane have to be spelled differently here:
  *
  *   - **A run has surfacing.** `executeTask` filters the tool list it shows the
- *     model, and `surfaceTools` drops every `INTERNAL_TOOL_ANNOTATION`
- *     tool from it. Neither is a boundary — an internal tool stays callable by
+ *     model, and `surfaceTools` drops every tool whose `ui.visibility` lacks
+ *     `"model"`. Neither is a boundary — an app-only tool stays callable by
  *     name, deliberately, because the web shell reaches it that way.
  *   - **A single dispatch has none.** There is no list, so a name that
  *     surfacing would have hidden arrives at the door regardless. What the
@@ -47,7 +47,7 @@ import { isTaskForbiddenIdentityTool } from "./identity-sources.ts";
  * `nb__manage_connectors` installs and disconnects connectors and drives the
  * OAuth handshakes behind them, so reaching it unattended is how a dispatch
  * would acquire capabilities its principal never granted it. It carries
- * `INTERNAL_TOOL_ANNOTATION`, which keeps it out of every listing — the
+ * `ui.visibility: ["app"]`, which keeps it out of every listing — the
  * reason a scheduled run has never needed it named here, and the reason a
  * dispatch does.
  */

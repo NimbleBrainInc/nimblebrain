@@ -6,7 +6,7 @@
  */
 
 import { beforeEach, describe, expect, test } from "bun:test";
-import { isInternalTool } from "../../../../src/engine/types.ts";
+import { isModelVisible } from "../../../../src/engine/types.ts";
 import { buildHookUrl } from "../../../../src/hooks/token.ts";
 import type { HookRegistration } from "../../../../src/hooks/types.ts";
 import { createHooksSource } from "../../../../src/platform/hooks/source.ts";
@@ -88,7 +88,7 @@ async function list(): Promise<Record<string, unknown>> {
 }
 
 describe("the webhook tools are not agent capabilities", () => {
-  test("both are internal, so no LLM listing carries them", async () => {
+  test("both are app-only, so no LLM listing carries them", async () => {
     const tools = await source.tools();
     // Namespaced on the wire, which is the name the settings page calls.
     expect(tools.map((t) => t.name).sort()).toEqual([
@@ -99,7 +99,7 @@ describe("the webhook tools are not agent capabilities", () => {
     // in a message, a file, or an outbound email — handing a working capability
     // to whoever received it. An admin reading it off their own screen cannot.
     for (const tool of tools) {
-      expect(isInternalTool(tool)).toBe(true);
+      expect(isModelVisible(tool)).toBe(false);
     }
   });
 });

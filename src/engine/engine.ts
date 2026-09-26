@@ -56,7 +56,7 @@ import {
   type EngineResult,
   type EventSink,
   type FinishReason,
-  isInternalTool,
+  isModelVisible,
   type ResolvedThinking,
   SKILL_ACTIVATED_META_KEY,
   SKILL_ACTIVATED_SYNTHETIC,
@@ -1026,13 +1026,13 @@ export class AgentEngine {
             message: `${toolName} was not found in the current tool registry.`,
           };
         }
-        if (isInternalTool(schema)) {
+        if (!isModelVisible(schema)) {
           return {
             ok: false,
             toolName,
             changed: false,
-            reason: "internal_tool",
-            message: `${toolName} is an internal tool and cannot be added to the active tool list.`,
+            reason: "not_model_visible",
+            message: `${toolName} is not visible to the model and cannot be added to the active tool list.`,
           };
         }
         if (config.toolPromotion && !config.toolPromotion.isToolEligible(schema)) {

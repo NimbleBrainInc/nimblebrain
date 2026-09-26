@@ -5,7 +5,7 @@ import type { CatalogListing } from "../connectors/catalog/types.ts";
 import type { ConnectorLifecycleManager } from "../connectors/runtime/lifecycle.ts";
 import { textContent } from "../engine/content-helpers.ts";
 import type { EventSink, ToolPromotionControls, ToolResult, ToolSchema } from "../engine/types.ts";
-import { isInternalTool, NON_ADVANCING_META_KEY } from "../engine/types.ts";
+import { isModelVisible, NON_ADVANCING_META_KEY } from "../engine/types.ts";
 import { log } from "../observability/log.ts";
 import { createUseSkillToolDef } from "../platform/skills/source.ts";
 import { getRequestContext } from "../runtime/request-context.ts";
@@ -843,7 +843,7 @@ async function searchTools(
     ? await runtime.listDiscoverableTools()
     : await getRegistry().availableTools();
   const all = discoverable.filter(
-    (t) => toolEligibilityCtx?.isToolEligible(t) ?? !isInternalTool(t),
+    (t) => toolEligibilityCtx?.isToolEligible(t) ?? isModelVisible(t),
   );
   if (!q) return groupToolsBySource(all);
   const matches = rankToolSearchResults(all, q);

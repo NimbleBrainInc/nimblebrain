@@ -489,7 +489,7 @@ describe("AgentEngine", () => {
     expect(events.filter((e) => e.type === "tool.released")).toHaveLength(1); // a__one
   });
 
-  it("nb__manage_tools rejects internal tools per-item without affecting other items", async () => {
+  it("nb__manage_tools rejects app-only tools per-item without affecting other items", async () => {
     let callCount = 0;
     const seenToolLists: string[][] = [];
     const model = createMockModel((options) => {
@@ -534,7 +534,7 @@ describe("AgentEngine", () => {
         name: "internal__secret",
         description: "Internal secret tool",
         inputSchema: { type: "object", properties: {} },
-        meta: { "ai.nimblebrain/internal": true },
+        meta: { ui: { visibility: ["app"] } },
       },
     ];
 
@@ -580,7 +580,7 @@ describe("AgentEngine", () => {
     expect(manageCall).toBeDefined();
     // Per-item failure does not fail the whole call; structuredContent reports it.
     expect(manageCall?.ok).toBe(true);
-    // Only the public tool was promoted; the internal one was rejected per-item.
+    // Only the public tool was promoted; the app-only one was rejected per-item.
     expect(events.filter((e) => e.type === "tool.promoted")).toHaveLength(1);
   });
 

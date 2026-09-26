@@ -38,27 +38,27 @@ describe("mcpAuthCallbackUrl — single callback-URL authority", () => {
   });
 
   it("returns the bouncer callback when bouncer mode is enabled (its presence is the mode signal)", () => {
-    const bouncerCallback = "https://connect.nimblebrain.ai/v1/mcp-auth/callback";
+    const bouncerCallback = "https://connect.example.com/v1/mcp-auth/callback";
     process.env.NB_OAUTH_BOUNCER_CALLBACK_URL = bouncerCallback;
     process.env.NB_OAUTH_BOUNCER_TENANT_KEY = randomBytes(32).toString("base64");
     process.env.NB_TENANT_ID = "tenant-a";
     // Even with a tenant-direct public origin set, bouncer wins — this is the
     // exact prod config where boot-start used to diverge onto the tenant host.
-    process.env.NB_PLATFORM_HOST = "hq.platform.nimblebrain.ai";
+    process.env.NB_PLATFORM_HOST = "nb.example.com";
     _resetBouncerModeForTest();
 
     expect(mcpAuthCallbackUrl()).toBe(bouncerCallback);
   });
 
   it("falls back to the tenant public origin when not in bouncer mode", () => {
-    process.env.NB_PLATFORM_HOST = "hq.platform.nimblebrain.ai";
-    expect(mcpAuthCallbackUrl()).toBe("https://hq.platform.nimblebrain.ai/v1/mcp-auth/callback");
+    process.env.NB_PLATFORM_HOST = "nb.example.com";
+    expect(mcpAuthCallbackUrl()).toBe("https://nb.example.com/v1/mcp-auth/callback");
   });
 
   it("derives from the custom domain when canonical, even outside bouncer mode", () => {
-    process.env.NB_PLATFORM_HOST = "hq.platform.nimblebrain.ai";
-    process.env.NB_CUSTOM_DOMAIN = "brain.hq.com";
-    expect(mcpAuthCallbackUrl()).toBe("https://brain.hq.com/v1/mcp-auth/callback");
+    process.env.NB_PLATFORM_HOST = "nb.example.com";
+    process.env.NB_CUSTOM_DOMAIN = "brain.tenant-a.com";
+    expect(mcpAuthCallbackUrl()).toBe("https://brain.tenant-a.com/v1/mcp-auth/callback");
   });
 
   it("defaults to the localhost dev callback when neither bouncer nor host facts are set", () => {

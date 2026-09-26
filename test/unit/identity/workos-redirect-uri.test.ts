@@ -53,22 +53,22 @@ afterEach(() => {
 
 describe("WorkosIdentityProvider redirectUri derivation", () => {
   it("derives the redirect URI from publicOrigin() when instance.json omits it", () => {
-    process.env.NB_PLATFORM_HOST = "acme.platform.nimblebrain.ai";
+    process.env.NB_PLATFORM_HOST = "acme.nb.example.com";
     process.env.NB_CUSTOM_DOMAIN = "brain.acme.com";
     const provider = makeProvider({ adapter: "workos", clientId: "client_test" });
     expect(redirectUriOf(provider)).toBe("https://brain.acme.com/v1/auth/callback");
   });
 
   it("derives the platform host when no custom domain is configured", () => {
-    process.env.NB_PLATFORM_HOST = "acme.platform.nimblebrain.ai";
+    process.env.NB_PLATFORM_HOST = "acme.nb.example.com";
     const provider = makeProvider({ adapter: "workos", clientId: "client_test" });
     expect(redirectUriOf(provider)).toBe(
-      "https://acme.platform.nimblebrain.ai/v1/auth/callback",
+      "https://acme.nb.example.com/v1/auth/callback",
     );
   });
 
   it("uses an explicit redirectUri over the derived one (legacy override)", () => {
-    process.env.NB_PLATFORM_HOST = "acme.platform.nimblebrain.ai";
+    process.env.NB_PLATFORM_HOST = "acme.nb.example.com";
     process.env.NB_CUSTOM_DOMAIN = "brain.acme.com";
     const provider = makeProvider({
       adapter: "workos",
@@ -82,7 +82,7 @@ describe("WorkosIdentityProvider redirectUri derivation", () => {
     // The Helm init container always writes the redirectUri key; with the legacy
     // secret unset it lands as "". `??` would keep that empty value and break the
     // WorkOS authorize URL — the booby-trap the runtime must absorb.
-    process.env.NB_PLATFORM_HOST = "acme.platform.nimblebrain.ai";
+    process.env.NB_PLATFORM_HOST = "acme.nb.example.com";
     process.env.NB_CUSTOM_DOMAIN = "brain.acme.com";
     const provider = makeProvider({ adapter: "workos", clientId: "client_test", redirectUri: "" });
     expect(redirectUriOf(provider)).toBe("https://brain.acme.com/v1/auth/callback");

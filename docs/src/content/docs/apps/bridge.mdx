@@ -271,7 +271,7 @@ Call a tool on your app's MCP server. This is a JSON-RPC **request** — the res
 ```
 
 <Aside type="note">
-Tool calls are scoped to your app's MCP server: the bridge routes `tools/call` with your app's server name. A server named in `_meta["ai.nimblebrain/server"]` or in a top-level `server` is ignored, and a tool name qualified with another server's name (`other__tool`) is refused.
+Tool calls are scoped to your app's MCP server: the bridge routes `tools/call` with your app's server name. A server named in `_meta["ai.nimblebrain/server"]` or in a top-level `server` is ignored, and a tool name qualified with another server's name (`other__tool`) is refused. A call to one of your own server's tools is refused too when the tool's `_meta.ui.visibility` does not include `"app"` (a tool that declares `["model"]`): the error is `-32602` with `data.reason: "not_app_callable"`. A tool that declares `["app"]` is callable from your view but hidden from the agent.
 </Aside>
 
 ### `resources/read`

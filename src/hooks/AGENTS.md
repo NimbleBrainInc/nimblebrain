@@ -33,7 +33,7 @@ Three more rules that are load-bearing, not stylistic:
 - **No agent-facing surface, and one operator-authored path out.** Nothing mints
   or rotates a hook from a tool the model can reach.
   `hooks__list_webhooks` / `hooks__rotate_webhook` carry
-  `INTERNAL_TOOL_ANNOTATION` — stripped from the chat tool list and from
+  `ui.visibility: ["app"]` — stripped from the chat tool list and from
   `tools/list`, reached by the web shell's Webhooks settings tab.
   A path from a delivery to an agent run now exists, and its bounds are what
   make it safe rather than its absence: it runs only through a delivery route a

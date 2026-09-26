@@ -23,10 +23,10 @@ import {
   type ContentBlock,
   type EventSink,
   INFRA_ERROR_META_KEY,
+  NON_ADVANCING_META_KEY,
   SKILL_ACTIVATED_META_KEY,
   SKILL_SUPPRESSION_META_KEY,
   type ToolResult,
-  UNATTENDED_META_KEY,
 } from "../engine/types.ts";
 import {
   HOST_RESOURCES_LIST_METHOD,
@@ -37,7 +37,6 @@ import {
 } from "../host-resources/index.ts";
 import { requestIdentityAttrs, withSpan } from "../observability/index.ts";
 import { log } from "../observability/log.ts";
-import { getRequestContext } from "../runtime/request-context.ts";
 import { coerceInputForSchema } from "./coerce-input.ts";
 import { promoteHiddenErrors } from "./promote-hidden-errors.ts";
 import { createRemoteTransport } from "./remote-transport.ts";
@@ -2017,7 +2016,7 @@ export class McpSource implements ToolSource {
     signal?: AbortSignal,
   ): Promise<ToolResult> {
     const result = await this.client?.callTool(
-      { name: toolName, arguments: args, ...unattendedCallMeta() },
+      { name: toolName, arguments: args },
       undefined,
       signal ? { signal } : undefined,
     );
@@ -2144,7 +2143,7 @@ export class McpSource implements ToolSource {
     // through correctly. See `@modelcontextprotocol/sdk` `protocol.js:654`
     // and `experimental/tasks/client.js:67`.
     const stream = client.experimental.tasks.callToolStream(
-      { name: toolName, arguments: args, ...unattendedCallMeta() },
+      { name: toolName, arguments: args },
       undefined,
       {
         signal: abortController.signal,
@@ -2980,28 +2979,31 @@ function infraErrorMeta(): { _meta: Record<string, unknown> } {
 /**
  * Drop host-owned keys from `_meta` that arrived over the wire.
  *
- * `_meta` is otherwise forwarded verbatim so a connector's own out-of-band hints
- * reach the engine. The infrastructure marker cannot be among them: the
- * supervisor trusts it unconditionally, so a connector setting it on its own error
- * results would exempt itself from the loop guard permanently — and that guard
- * is the only thing that removes a tool from the model's toolset mid-run.
+ * The rule every `ai.nimblebrain/*` `_meta` key follows:
  *
- * Note the asymmetry with `NON_ADVANCING_META_KEY`, which is safe to accept from
- * the wire: a connector setting that one makes the guard STRICTER. This one makes
- * it weaker, so it is host-owned and stripped here rather than documented as a
- * convention callers are trusted to honour.
+ *   - A key is HOST-OWNED when the engine acts on it. The host's own sources set
+ *     it; a connector's copy is stripped here, so a server cannot steer the
+ *     engine by claiming one.
+ *   - A key is ACCEPTED from a connector only when believing it can make the host
+ *     stricter toward that connector and never looser, and only once something
+ *     reads it. Everything else in `_meta` is forwarded verbatim.
+ *   - No key ships without a named reader.
  *
- * `SKILL_ACTIVATED_META_KEY` is host-owned for the same reason — the engine
- * trusts it to mark a skill as already-delivered (suppressing future overlay
- * guidance), so a connector setting it could mute a curated overlay by name. It
- * is stripped from every source that crosses a real transport; only in-process
- * sources (`inProcess: true` — the `nb` system source, whose `use_skill` tool
- * legitimately emits it) carry it through.
+ * Every key the engine reads is host-owned today:
  *
- * `UNATTENDED_META_KEY` is stripped unconditionally, in-process included. The
- * host stamps it on the REQUEST to say who is calling; nothing downstream reads
- * it off a result, so a copy coming back is at best noise and at worst a
- * provenance claim made by the party being asked about.
+ * `INFRA_ERROR_META_KEY` is stripped unconditionally, in-process included: the
+ * supervisor trusts it to exempt an error from its strike count, so a source
+ * setting it on its own errors would escape the loop guard permanently. Only
+ * `McpSource` itself sets it, on failures it observed in transport.
+ *
+ * `NON_ADVANCING_META_KEY`, `SKILL_ACTIVATED_META_KEY`, and
+ * `SKILL_SUPPRESSION_META_KEY` are stripped from every source that crosses a real
+ * transport; in-process sources (`inProcess: true`: the platform's own tools,
+ * such as `nb__search` and the skill tools, which legitimately emit them) carry
+ * them through. A connector setting the skill keys could mute curated guidance
+ * by name. Accepting the non-advancing key from a connector could only tighten
+ * the guard on that connector, but no connector sets it, and accepting it would
+ * make the supervisor's internals a contract with every server.
  */
 function hostOwnedMetaStripped(
   meta: Record<string, unknown> | undefined,
@@ -3013,6 +3015,10 @@ function hostOwnedMetaStripped(
     const { [INFRA_ERROR_META_KEY]: _droppedInfra, ...rest } = out;
     out = rest;
   }
+  if (!opts.inProcess && NON_ADVANCING_META_KEY in out) {
+    const { [NON_ADVANCING_META_KEY]: _droppedNonAdvancing, ...rest } = out;
+    out = rest;
+  }
   if (!opts.inProcess && SKILL_ACTIVATED_META_KEY in out) {
     const { [SKILL_ACTIVATED_META_KEY]: _droppedActivation, ...rest } = out;
     out = rest;
@@ -3021,28 +3027,7 @@ function hostOwnedMetaStripped(
     const { [SKILL_SUPPRESSION_META_KEY]: _droppedSuppression, ...rest } = out;
     out = rest;
   }
-  if (UNATTENDED_META_KEY in out) {
-    const { [UNATTENDED_META_KEY]: _droppedUnattended, ...rest } = out;
-    out = rest;
-  }
   return out;
-}
-
-/**
- * The `_meta` an unattended dispatch stamps on its outbound `tools/call`, or
- * nothing at all — which is every chat turn and every scheduled run, since only
- * `dispatchUnattended` sets the reason.
- *
- * Spread into the call params so a source that never sees one sends `_meta`
- * exactly as it did before. Read from the ambient request context rather than
- * threaded through `execute`, because `ToolSource.execute` takes the tool's
- * input and nothing else — and this is metadata about the CALLER, which is what
- * the context is for.
- */
-function unattendedCallMeta(): { _meta?: Record<string, unknown> } {
-  const reason = getRequestContext()?.unattendedReason;
-  if (reason === undefined) return {};
-  return { _meta: { [UNATTENDED_META_KEY]: reason } };
 }
 
 /** Extract a human-readable message from an unknown throw. */

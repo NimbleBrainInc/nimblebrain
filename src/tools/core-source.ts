@@ -4,7 +4,7 @@ import { join, resolve } from "node:path";
 import { artifactResolutionsTotal } from "../api/metrics.ts";
 import { OVERRIDE_WRITABLE_KEYS } from "../config/overrides.ts";
 import { textContent } from "../engine/content-helpers.ts";
-import { INTERNAL_TOOL_ANNOTATION, type ThinkingEffort, type ToolResult } from "../engine/types.ts";
+import type { ThinkingEffort, ToolResult } from "../engine/types.ts";
 import {
   type ArtifactListItem,
   type ArtifactListOptions,
@@ -490,16 +490,27 @@ function briefingOk(briefing: BriefingOutput, note: string): ToolResult {
   };
 }
 
-/** Get or create the per-workspace briefing cache. */
+/**
+ * Get or create the briefing cache for one member of one workspace. A briefing
+ * is built from its caller (greeting name, timezone, their own conversations),
+ * so the key covers both; a per-workspace slot would serve one member's
+ * briefing to the others.
+ */
 function getBriefingCache(
-  caches: Map<string, BriefingCache>,
+  caches: Map<string, Map<string, BriefingCache>>,
   wsId: string,
+  userId: string,
   cacheTtlMinutes: number,
 ): BriefingCache {
-  let cache = caches.get(wsId);
+  let byUser = caches.get(wsId);
+  if (!byUser) {
+    byUser = new Map();
+    caches.set(wsId, byUser);
+  }
+  let cache = byUser.get(userId);
   if (!cache) {
     cache = new BriefingCache(cacheTtlMinutes);
-    caches.set(wsId, cache);
+    byUser.set(userId, cache);
   }
   return cache;
 }
@@ -646,14 +657,16 @@ function scheduleBriefingRefresh(
  * passes them to `defineInProcessApp` to build the in-process MCP server.
  */
 export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
-  // Per-workspace briefing caches keyed by workspace ID (or "_global" for dev mode).
-  const briefingCaches = new Map<string, BriefingCache>();
+  // Briefing caches keyed by workspace ID, then by the caller's user ID. Each
+  // entry regenerates on its own TTL, so fast-model briefing calls scale with
+  // the members who open the overview, not with the number of workspaces.
+  const briefingCaches = new Map<string, Map<string, BriefingCache>>();
 
   const toolDefs: InProcessTool[] = [
     {
       name: "list_apps",
       description: "List installed apps/connectors with status, tool count, and trust scores.",
-      meta: { [INTERNAL_TOOL_ANNOTATION]: true },
+      meta: { ui: { visibility: ["app"] } },
       inputSchema: {
         type: "object",
         properties: {},
@@ -680,7 +693,7 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
       name: "get_config",
       description:
         "Get current runtime configuration: default model, configured providers, and limits.",
-      meta: { [INTERNAL_TOOL_ANNOTATION]: true },
+      meta: { ui: { visibility: ["app"] } },
       inputSchema: {
         type: "object",
         properties: {},
@@ -747,7 +760,7 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
       name: "version",
       description:
         "Get platform version info: agent version and all dependency versions from package.json.",
-      meta: { [INTERNAL_TOOL_ANNOTATION]: true },
+      meta: { ui: { visibility: ["app"] } },
       inputSchema: {
         type: "object",
         properties: {},
@@ -776,7 +789,7 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
       name: "set_model_config",
       description:
         "Update model selection and runtime limits. Writes atomically to nimblebrain.overrides.json (preserved across deploys). Does not allow changing API keys or secrets.",
-      meta: { [INTERNAL_TOOL_ANNOTATION]: true },
+      meta: { ui: { visibility: ["app"] } },
       inputSchema: {
         type: "object",
         properties: {
@@ -1030,7 +1043,7 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
       name: "manage_identity",
       description:
         "Write or reset the workspace agent personality override. Only workspace admins or org admins can modify.",
-      meta: { [INTERNAL_TOOL_ANNOTATION]: true },
+      meta: { ui: { visibility: ["app"] } },
       inputSchema: {
         type: "object",
         properties: {
@@ -1110,7 +1123,7 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
       name: "workspace_info",
       description:
         "Get workspace metadata: platform version, telemetry status, and install ID. Used by the web client on startup.",
-      meta: { [INTERNAL_TOOL_ANNOTATION]: true },
+      meta: { ui: { visibility: ["app"] } },
       inputSchema: {
         type: "object",
         properties: {},
@@ -1205,7 +1218,7 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
       name: "briefing",
       description:
         "Generate a personalized activity briefing for the workspace using the fast model slot. Returns a summary of recent activity, upcoming items, and anything needing attention. May take a few seconds.",
-      meta: { [INTERNAL_TOOL_ANNOTATION]: true },
+      meta: { ui: { visibility: ["app"] } },
       inputSchema: {
         type: "object",
         properties: {
@@ -1231,7 +1244,12 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
             };
           }
 
-          const briefingCache = getBriefingCache(briefingCaches, wsId, homeConfig.cacheTtlMinutes);
+          const briefingCache = getBriefingCache(
+            briefingCaches,
+            wsId,
+            identity.id,
+            homeConfig.cacheTtlMinutes,
+          );
 
           // Skip the cache entirely on force_refresh; otherwise serve a fresh or
           // stale-while-revalidating result if one is cached.
