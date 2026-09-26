@@ -490,16 +490,27 @@ function briefingOk(briefing: BriefingOutput, note: string): ToolResult {
   };
 }
 
-/** Get or create the per-workspace briefing cache. */
+/**
+ * Get or create the briefing cache for one member of one workspace. A briefing
+ * is built from its caller (greeting name, timezone, their own conversations),
+ * so the key covers both; a per-workspace slot would serve one member's
+ * briefing to the others.
+ */
 function getBriefingCache(
-  caches: Map<string, BriefingCache>,
+  caches: Map<string, Map<string, BriefingCache>>,
   wsId: string,
+  userId: string,
   cacheTtlMinutes: number,
 ): BriefingCache {
-  let cache = caches.get(wsId);
+  let byUser = caches.get(wsId);
+  if (!byUser) {
+    byUser = new Map();
+    caches.set(wsId, byUser);
+  }
+  let cache = byUser.get(userId);
   if (!cache) {
     cache = new BriefingCache(cacheTtlMinutes);
-    caches.set(wsId, cache);
+    byUser.set(userId, cache);
   }
   return cache;
 }
@@ -646,8 +657,10 @@ function scheduleBriefingRefresh(
  * passes them to `defineInProcessApp` to build the in-process MCP server.
  */
 export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
-  // Per-workspace briefing caches keyed by workspace ID (or "_global" for dev mode).
-  const briefingCaches = new Map<string, BriefingCache>();
+  // Briefing caches keyed by workspace ID, then by the caller's user ID. Each
+  // entry regenerates on its own TTL, so fast-model briefing calls scale with
+  // the members who open the overview, not with the number of workspaces.
+  const briefingCaches = new Map<string, Map<string, BriefingCache>>();
 
   const toolDefs: InProcessTool[] = [
     {
@@ -1231,7 +1244,12 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
             };
           }
 
-          const briefingCache = getBriefingCache(briefingCaches, wsId, homeConfig.cacheTtlMinutes);
+          const briefingCache = getBriefingCache(
+            briefingCaches,
+            wsId,
+            identity.id,
+            homeConfig.cacheTtlMinutes,
+          );
 
           // Skip the cache entirely on force_refresh; otherwise serve a fresh or
           // stale-while-revalidating result if one is cached.
