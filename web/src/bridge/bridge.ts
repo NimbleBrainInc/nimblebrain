@@ -83,11 +83,6 @@ export function getAppState(appName: string): AppStateEntry | undefined {
   return appStateStore.get(appName);
 }
 
-/** Clear app state (call when app is unmounted). */
-export function clearAppState(appName: string): void {
-  appStateStore.delete(appName);
-}
-
 /** Handle returned by createBridge. Used to send messages and tear down. */
 export interface BridgeHandle {
   /** Send a ui/notifications/tool-result notification (agent-side tool result). */

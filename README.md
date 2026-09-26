@@ -492,11 +492,9 @@ When total tools ≤30, all are surfaced directly. Above 30 with no skill matche
 
 | Tool | What it does |
 |------|-------------|
-| `nb__list_apps` | List installed apps with status and tools |
 | `nb__get_config` | Get runtime configuration (providers, model, limits) |
 | `nb__set_model_config` | Update model selection and runtime limits (admin only) |
 | `nb__manage_identity` | Write or reset workspace agent identity override (admin only) |
-| `nb__version` | Platform version info |
 | `nb__workspace_info` | Workspace metadata, telemetry status |
 | `nb__briefing` | Generate personalized activity briefing (workspace overview) |
 | `nb__manage_users` | Create, update, delete, or list users (admin only) |

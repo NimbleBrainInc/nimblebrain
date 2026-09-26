@@ -34,11 +34,7 @@ import { ConnectorLifecycleManager } from "../connectors/runtime/lifecycle.ts";
 import { serverNameFromRef, slugifyServerName } from "../connectors/runtime/paths.ts";
 import { setConnectionRunningHandler } from "../connectors/runtime/pending-auth-buffer.ts";
 import type { ConnectorMcpDeps } from "../connectors/runtime/startup.ts";
-import type {
-  AppInfo,
-  ConnectorInstance,
-  PlacementDeclaration,
-} from "../connectors/runtime/types.ts";
+import type { ConnectorInstance, PlacementDeclaration } from "../connectors/runtime/types.ts";
 import {
   type ConnectorTeardownOutcome,
   uninstallWorkspaceConnector,
@@ -2586,7 +2582,7 @@ export class Runtime {
    * `visible.has(serverName)` is load-bearing, not a redundant guard: an
    * installed connector that is not RUNNING — a boot-start that failed, or a
    * connector torn down by a disconnect — must stay out of the agent's view
-   * (`getApps` → `nb__list_apps`), because `buildAppInfo` carries no liveness
+   * (`buildAppsList`), because `buildAppInfo` carries no liveness
    * into the prompt: a down connector would read as an ordinary usable app whose
    * tools are inexplicably missing. Deleting this filter surfaces every such
    * record as a usable app.
@@ -5057,37 +5053,6 @@ export class Runtime {
   /** Get the file context configuration with defaults applied. */
   getFilesConfig(): FileConfig {
     return { ...DEFAULT_FILE_CONFIG, ...this.config.files };
-  }
-
-  /** Build AppInfo list for GET /v1/apps endpoint (workspace-scoped). */
-  async getApps(): Promise<AppInfo[]> {
-    const registry = this.getRegistryForCurrentWorkspace();
-    const wsId = this._currentWorkspaceId?.();
-    if (!wsId) {
-      throw new Error("No workspace in request context. Every request must be workspace-scoped.");
-    }
-    const apps: AppInfo[] = [];
-    for (const instance of this.getConnectorInstancesForWorkspace(wsId)) {
-      let toolCount = 0;
-      try {
-        const source = registry.getSources().find((s) => s.name === instance.serverName);
-        if (source) {
-          const tools = await source.tools();
-          toolCount = tools.length;
-        }
-      } catch {
-        // Source may be stopped or crashed
-      }
-      apps.push({
-        name: instance.serverName,
-        connectorName: instance.connectorName,
-        version: instance.version,
-        status: instance.state,
-        toolCount,
-        ui: instance.ui,
-      });
-    }
-    return apps;
   }
 
   /**

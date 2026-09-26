@@ -30,11 +30,7 @@ import { canWriteWorkspaceScoped } from "../workspace/authz.ts";
 import type { InProcessTool } from "./in-process-app.ts";
 
 const pkgPath = resolve(import.meta.dirname ?? __dirname, "../../package.json");
-const pkg = JSON.parse(readFileSync(pkgPath, "utf-8")) as {
-  name: string;
-  version: string;
-  dependencies: Record<string, string>;
-};
+const pkg = JSON.parse(readFileSync(pkgPath, "utf-8")) as { version: string };
 // Prefer the build-time-injected git tag; fall back to package.json for local dev.
 const VERSION = process.env.NB_VERSION || pkg.version;
 
@@ -635,32 +631,6 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
 
   const toolDefs: InProcessTool[] = [
     {
-      name: "list_apps",
-      description: "List installed apps/connectors with status, tool count, and trust scores.",
-      meta: { ui: { visibility: ["app"] } },
-      inputSchema: {
-        type: "object",
-        properties: {},
-      },
-      handler: async (): Promise<ToolResult> => {
-        try {
-          const apps = await runtime.getApps();
-          return {
-            content: textContent(`${apps.length} app(s) installed.`),
-            structuredContent: { apps },
-            isError: false,
-          };
-        } catch (err) {
-          return {
-            content: textContent(
-              `Failed to list apps: ${err instanceof Error ? err.message : String(err)}`,
-            ),
-            isError: true,
-          };
-        }
-      },
-    },
-    {
       name: "get_config",
       description:
         "Get current runtime configuration: default model, configured providers, and limits.",
@@ -725,27 +695,6 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
             isError: true,
           };
         }
-      },
-    },
-    {
-      name: "version",
-      description:
-        "Get platform version info: agent version and all dependency versions from package.json.",
-      meta: { ui: { visibility: ["app"] } },
-      inputSchema: {
-        type: "object",
-        properties: {},
-      },
-      handler: async (): Promise<ToolResult> => {
-        return {
-          content: textContent(`${pkg.name} v${VERSION}`),
-          structuredContent: {
-            name: pkg.name,
-            version: VERSION,
-            dependencies: pkg.dependencies,
-          },
-          isError: false,
-        };
       },
     },
     {

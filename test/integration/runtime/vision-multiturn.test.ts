@@ -103,13 +103,13 @@ beforeAll(async () => {
   mkdirSync(testDir, { recursive: true });
   // Two scripted turns:
   //  1. Model "calls" a tool — forces the engine to issue a second iteration.
-  //     The system tool `nb__list_apps` exists on every workspace (no connectors
+  //     The system tool `nb__workspace_info` exists on every workspace (no connectors
   //     required), so we don't need to install anything to satisfy the call.
   //  2. Model produces final text.
   const { model, prompts } = createRecordingModel([
     {
       text: "Looking at the image now…",
-      toolCalls: [{ id: "call_1", name: "nb__list_apps", input: "{}" }],
+      toolCalls: [{ id: "call_1", name: "nb__workspace_info", input: "{}" }],
     },
     { text: "Done — that's John Doe, VP Sales at Acme." },
   ]);

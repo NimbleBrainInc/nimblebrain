@@ -111,7 +111,7 @@ describe("Core Source", () => {
 		try {
 			const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
 			const tools = await source.tools();
-			expect(tools).toHaveLength(10);
+			expect(tools).toHaveLength(8);
 			for (const tool of tools) {
 				expect(tool.name).toMatch(/^nb__/);
 			}
@@ -119,13 +119,11 @@ describe("Core Source", () => {
 			expect(names).toEqual([
 				"nb__briefing",
 				"nb__get_config",
-				"nb__list_apps",
 				"nb__list_artifacts",
 				"nb__manage_identity",
 				"nb__read_artifact",
 				"nb__set_model_config",
 				"nb__set_preferences",
-				"nb__version",
 				"nb__workspace_info",
 			]);
 		} finally {
@@ -151,19 +149,18 @@ describe("Core Source", () => {
 		}
 	});
 
-	it("nb__list_apps returns app list", async () => {
+	it("nb__workspace_info returns the platform version", async () => {
 		const runtime = await makeRuntime();
 		try {
 			await provisionTestWorkspace(runtime);
 			const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
 			const result = await runWithRequestContext(
 				{ identity: null, workspaceId: TEST_WORKSPACE_ID },
-				() => source.execute("list_apps", {}),
+				() => source.execute("workspace_info", {}),
 			);
 			expect(result.isError).toBe(false);
 			const data = result.structuredContent as Record<string, unknown>;
-			expect(data.apps).toBeDefined();
-			expect(Array.isArray(data.apps)).toBe(true);
+			expect(typeof data.version).toBe("string");
 		} finally {
 			await runtime.shutdown();
 		}

@@ -13,16 +13,6 @@ export type ConnectionState =
   | "stopped"
   | "pending_auth";
 
-/** App info returned by GET /v1/apps. */
-export interface AppInfo {
-  name: string;
-  connectorName: string;
-  version: string;
-  status: ConnectionState;
-  toolCount: number;
-  ui: ConnectorUiMeta | null;
-}
-
 /** Tool call result from POST /v1/workspaces/:wsId/tools/call. */
 export interface ToolCallResult {
   content: Array<{ type: string; text?: string; [key: string]: unknown }>;

@@ -43,7 +43,7 @@ function chatResponse(overrides: Record<string, unknown> = {}) {
 		skillName: null,
 		toolCalls: [
 			{ id: "tc1", name: "nb__briefing", input: {}, output: "ok", ok: true, ms: 100 },
-			{ id: "tc2", name: "nb__list_apps", input: {}, output: "ok", ok: true, ms: 50 },
+			{ id: "tc2", name: "nb__workspace_info", input: {}, output: "ok", ok: true, ms: 50 },
 		],
 		inputTokens: 1200,
 		outputTokens: 350,
