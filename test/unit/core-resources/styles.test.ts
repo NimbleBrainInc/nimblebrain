@@ -3,7 +3,6 @@ import {
 	APP_NAV_STYLES,
 	BASE_STYLES,
 	MODEL_SELECTOR_STYLES,
-	SETTINGS_LINK_STYLES,
 } from "../../../src/tools/core-resources/styles.ts";
 
 describe("core-resources styles use CSS variables", () => {
@@ -26,7 +25,6 @@ describe("core-resources styles use CSS variables", () => {
 		const styles = [
 			BASE_STYLES,
 			APP_NAV_STYLES,
-			SETTINGS_LINK_STYLES,
 			MODEL_SELECTOR_STYLES,
 		];
 		for (const css of styles) {
@@ -42,7 +40,6 @@ describe("core-resources styles use CSS variables", () => {
 		const styles = [
 			BASE_STYLES,
 			APP_NAV_STYLES,
-			SETTINGS_LINK_STYLES,
 			MODEL_SELECTOR_STYLES,
 		];
 		for (const css of styles) {

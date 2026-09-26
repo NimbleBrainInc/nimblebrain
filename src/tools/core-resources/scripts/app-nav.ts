@@ -16,7 +16,7 @@ function render(apps) {
 
 app.addEventListener("click", (e) => {
   const el = e.target.closest(".app");
-  if (el) navigate("/app/" + el.dataset.route);
+  if (el) openApp(el.dataset.route);
 });
 
 async function load() {

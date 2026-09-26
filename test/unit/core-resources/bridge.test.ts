@@ -51,7 +51,7 @@ function loadBridge(opts: { connectDelay?: number; result?: unknown } = {}) {
 
   const factory = new Function(
     "Synapse",
-    `${BRIDGE_HELPER}\nreturn { callTool: callTool, navigate: navigate, parseResult: parseResult };`,
+    `${BRIDGE_HELPER}\nreturn { callTool: callTool, openApp: openApp, parseResult: parseResult };`,
   );
   return { ...factory(Synapse), calls, actions };
 }
@@ -91,10 +91,10 @@ describe("the core-resources bridge preamble", () => {
     expect(bridge.calls[0].args).toEqual({});
   });
 
-  it("navigates through the host action, once connected", async () => {
+  it("opens an app by name through the host action, once connected", async () => {
     const bridge = loadBridge({ connectDelay: 5 });
-    await bridge.navigate("/app/settings");
-    expect(bridge.actions).toEqual([{ name: "navigate", params: { route: "/app/settings" } }]);
+    await bridge.openApp("crm");
+    expect(bridge.actions).toEqual([{ name: "openApp", params: { name: "crm" } }]);
   });
 
   it("parseResult prefers structuredContent and otherwise passes the value through", () => {

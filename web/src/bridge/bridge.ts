@@ -44,12 +44,7 @@ import { getActiveWorkspaceId, uploadResource, type WorkspaceFile } from "../api
 import { appNameFromToolName } from "../lib/namespaced-tool";
 import { getMcpBridgeClient, withSessionRetry } from "../mcp-bridge-client";
 import { openAppChannel } from "./app-channel";
-import {
-  ACTION_METHOD,
-  CHAT_CONTEXT_META_KEY,
-  KEYDOWN_METHOD,
-  REQUEST_FILE_METHOD,
-} from "./extensions";
+import { ACTION_METHOD, KEYDOWN_METHOD, REQUEST_FILE_METHOD } from "./extensions";
 import { buildHostCapabilities } from "./host-capabilities";
 import { buildHostStyles } from "./host-extensions";
 import type { LoggingMessageNotification } from "./schemas";
@@ -63,7 +58,6 @@ import type {
   ResourcesReadMessage,
   SynapseRequestFileMessage,
   UiActionMessage,
-  UiChatContext,
   UiMessageMessage,
   UiToolResultError,
   UiToolResultMessage,
@@ -865,15 +859,10 @@ function handleUiMessage(
   if (Array.isArray(params.content)) {
     const textBlock = params.content.find((b: Record<string, unknown>) => b.type === "text");
     if (textBlock?.text) {
-      const context = textBlock._meta?.[CHAT_CONTEXT_META_KEY] as UiChatContext | undefined;
       if (callbacks?.onChat) {
-        callbacks.onChat(textBlock.text, context);
+        callbacks.onChat(textBlock.text);
       } else {
-        window.dispatchEvent(
-          new CustomEvent("nb:chat", {
-            detail: { message: textBlock.text, context },
-          }),
-        );
+        window.dispatchEvent(new CustomEvent("nb:chat", { detail: { message: textBlock.text } }));
       }
     }
   }
@@ -927,18 +916,14 @@ function handleUpdateModelContext(
 }
 
 /**
- * Handle an ai.nimblebrain/action: route `navigate` to onNavigate, otherwise invoke
- * onAction (or dispatch an `nb:action` event when no callback is wired).
+ * Handle an ai.nimblebrain/action: invoke onAction, or dispatch an `nb:action`
+ * event when no callback is wired. The shell resolves the action by name.
  */
 function handleSynapseAction(
   params: UiActionMessage["params"],
   callbacks: BridgeCallbacks | undefined,
 ): void {
   const { action, ...actionParams } = params;
-  if (action === "navigate" && actionParams.route && callbacks?.onNavigate) {
-    callbacks.onNavigate(actionParams.route as string);
-    return;
-  }
   if (callbacks?.onAction) {
     callbacks.onAction(action, actionParams);
   } else {

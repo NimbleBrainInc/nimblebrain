@@ -97,7 +97,7 @@ describe("GET /v1/workspaces/:wsId/apps/nb/resources/:path", () => {
 	});
 
 	it("returns HTML for every core resource", async () => {
-		const resources = ["app-nav", "settings-link", "model-selector"];
+		const resources = ["app-nav", "model-selector"];
 		for (const name of resources) {
 			const res = await fetch(
 				`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/apps/nb/resources/${name}`,

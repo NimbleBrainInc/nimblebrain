@@ -5,7 +5,6 @@ const RESOURCES = buildCoreResourceMap();
 
 const ALL_NAMES = [
 	"app-nav",
-	"settings-link",
 	"model-selector",
 ] as const;
 
@@ -43,9 +42,10 @@ describe("buildCoreResourceMap", () => {
 		}
 	});
 
-	it("settings-link navigates to /app/settings", () => {
-		const html = get("settings-link")!;
-		expect(html).toContain("/app/settings");
+	it("app-nav opens an app by name, not by route", () => {
+		const html = get("app-nav")!;
+		expect(html).toContain('action("openApp"');
+		expect(html).not.toContain('"navigate"');
 	});
 
 	it("model-selector contains model input", () => {
