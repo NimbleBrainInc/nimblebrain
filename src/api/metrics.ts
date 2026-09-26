@@ -16,6 +16,7 @@
  * enableDefaultMetrics(), called once at server start.
  */
 import { Counter, collectDefaultMetrics, Gauge, Histogram, Registry } from "prom-client";
+import type { SealFailureReason } from "../tools/credential-store.ts";
 import type { ConnectorHealth } from "../tools/health-monitor.ts";
 import type { LlmCallOrigin } from "../usage/types.ts";
 
@@ -438,6 +439,42 @@ let healthStatusProvider: (() => ConnectorHealth[]) | null = null;
 export function registerConnectorHealthGauge(getStatus: () => ConnectorHealth[]): void {
   healthStatusProvider = getStatus;
 }
+
+// ---------------------------------------------------------------------------
+// Credential store — the two states of sealing that must reach an alert rather
+// than sit in a workspace log. `reason` is the only label anywhere here: a key
+// name discloses which vendors a tenant uses, and a workspace or user id is
+// unbounded. The audit line that accompanies every increment carries both, so
+// the metric says THAT something failed and the log says WHERE.
+// ---------------------------------------------------------------------------
+
+/**
+ * Stored secrets that failed to become a usable value, by `reason` — the closed
+ * set `audit.credential_seal_failure` carries. One increment per audit line.
+ */
+export const credentialSealFailuresTotal = new Counter({
+  name: "nb_credential_seal_failures_total",
+  help: "Stored secrets that could not be opened, re-sealed, or were refused as plaintext, by reason.",
+  labelNames: ["reason"] as const,
+  registers: [metricsRegistry],
+});
+
+export function recordCredentialSealFailure(reason: SealFailureReason): void {
+  credentialSealFailuresTotal.inc({ reason });
+}
+
+/**
+ * `1` while a store with a sealing key configured still accepts plaintext — its
+ * boot sweep could not prove every secret sealed, so the control that refuses a
+ * planted plaintext file is off. `0` otherwise, including for a store with no
+ * key, which accepts plaintext by design. Set from the store's boot reconcile
+ * event; nothing else changes strict mode, so it holds until the next boot.
+ */
+export const credentialStorePlaintextAccepted = new Gauge({
+  name: "nb_credential_store_plaintext_accepted",
+  help: "1 when a sealing credential store still accepts plaintext secrets (strict mode off), else 0.",
+  registers: [metricsRegistry],
+});
 
 /** Token usage subset needed for metrics — a structural slice of `TokenUsage`. */
 interface UsageForMetrics {

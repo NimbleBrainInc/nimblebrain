@@ -255,11 +255,25 @@ function isMissingDirectory(err: unknown): boolean {
  * audit line carries, so a query over the log can group by cause without
  * parsing prose.
  */
-type SealFailureReason =
+export type SealFailureReason =
   | CredentialSealFailure
   | "no_sealer"
   | "plaintext_refused"
   | "reseal_skipped";
+
+/** The closed set above as values, for a consumer that must reject anything outside it. */
+const SEAL_FAILURE_REASONS: Record<SealFailureReason, true> = {
+  malformed: true,
+  unknown_kid: true,
+  auth_failed: true,
+  no_sealer: true,
+  plaintext_refused: true,
+  reseal_skipped: true,
+};
+
+export function isSealFailureReason(value: unknown): value is SealFailureReason {
+  return typeof value === "string" && Object.hasOwn(SEAL_FAILURE_REASONS, value);
+}
 
 /**
  * What an operator does about each way an open can fail. Separate strings
@@ -617,7 +631,10 @@ export class FileCredentialStore implements CredentialStore {
     const sealer = this.#sealer;
     // Nothing to reconcile without one, and strict mode stays off: an unsealed
     // deployment is plaintext by design, not by omission.
-    if (!sealer) return;
+    if (!sealer) {
+      this.#emitReconciled(false);
+      return;
+    }
 
     const tally = emptyTally();
     const scopes = await this.#everyScope(tally);
@@ -650,6 +667,20 @@ export class FileCredentialStore implements CredentialStore {
       plaintextSkipped: tally.plaintextSkipped,
       unreadable: tally.unreadable,
       strictPlaintextRefusal: this.#strictPlaintextRefusal,
+    });
+    this.#emitReconciled(true);
+  }
+
+  /**
+   * Announce what the sweep decided, once per boot. A sealed store that still
+   * accepts plaintext has a control switched off, and that is a standing state
+   * worth alerting on rather than a line in one boot log. Only `reconcile`
+   * changes strict mode, so this one event is the whole story.
+   */
+  #emitReconciled(sealed: boolean): void {
+    this.#eventSink?.emit({
+      type: "credential_store.reconciled",
+      data: { sealed, strictPlaintextRefusal: this.#strictPlaintextRefusal },
     });
   }
 
