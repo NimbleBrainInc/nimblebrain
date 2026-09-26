@@ -110,6 +110,7 @@ body {
 .dot-success { background: var(--nb-color-success); }
 .dot-failure { background: var(--nb-color-danger); }
 .dot-timeout { background: var(--nb-color-warning); }
+.dot-degraded { background: var(--nb-color-warning); }
 .dot-disabled { background: var(--color-text-tertiary); }
 .dot-backoff { background: var(--nb-color-warning); }
 /* The running dot pulses on its OWN keyframe, not the shared breathe.

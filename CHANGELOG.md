@@ -33,6 +33,7 @@
 
 ### Added
 
+- **Automation runs that finished with lost work read `degraded`, not `success`.** A run whose failed tool call no later call made good (an email not sent, a record not written) now records `status: "degraded"` naming the tools, whatever its final answer claims, and `nb_automation_runs_total{status}` counts every run by status ([docs](https://docs.nimblebrain.ai/using/automations/#run-history)).
 - **Tool visibility follows the MCP Apps spec.** A tool's `_meta.ui.visibility` is honored for every tool, a connector's included: without `"model"` it is left out of every agent tool list (chat, `nb__search`, `/mcp` `tools/list`) yet stays callable by name, and an app's `tools/call` to a tool without `"app"` is refused ([docs](https://docs.nimblebrain.ai/apps/bridge/#toolscall)).
 - **Organization → Archives.** Org admins see every deleted workspace's archive (name, ID, size, archived-at) and can purge one permanently, behind a confirm. Nothing is purged automatically ([docs](https://docs.nimblebrain.ai/guide/settings/#archives-orgarchives)).
 - **Three spec requests an app could send but the host never answered.** `ui/download-file` hands the user a file as MCP resource blocks (embed the bytes; a `ResourceLink` is refused rather than fetched, which would make the host an SSRF proxy), `ui/request-display-mode` reports the mode actually in effect, and `notifications/message` reaches the browser console. `downloadFile` is now advertised alongside the `logging` capability that was already claimed ([docs](https://docs.nimblebrain.ai/apps/bridge/)).

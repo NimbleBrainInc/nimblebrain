@@ -103,7 +103,7 @@ export declare const AutomationsStatusInput: import("@sinclair/typebox").TObject
 export type AutomationsStatusInput = Static<typeof AutomationsStatusInput>;
 export declare const AutomationsRunsInput: import("@sinclair/typebox").TObject<{
     automationId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-    status: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"skipped" | "running" | "success" | "failure" | "timeout" | "cancelled">>;
+    status: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"skipped" | "running" | "success" | "degraded" | "failure" | "timeout" | "cancelled">>;
     since: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     limit: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
 }>;
@@ -127,7 +127,7 @@ export type AutomationsRunResultInput = Static<typeof AutomationsRunResultInput>
  * — the list view shows the most recent COMPLETED run's outcome, never
  * one in flight.
  */
-export type AutomationLastRunStatus = "success" | "failure" | "timeout" | "skipped";
+export type AutomationLastRunStatus = "success" | "degraded" | "failure" | "timeout" | "skipped";
 /**
  * Summary row returned per automation by `handleList`. Subset of the
  * stored `Automation` shape plus a couple of human-formatted fields the
@@ -187,7 +187,7 @@ export interface AutomationRunRecord {
     automationId: string;
     startedAt: string;
     completedAt?: string;
-    status: "running" | "success" | "failure" | "timeout" | "cancelled" | "skipped";
+    status: "running" | "success" | "degraded" | "failure" | "timeout" | "cancelled" | "skipped";
     inputTokens: number;
     outputTokens: number;
     toolCalls: number;

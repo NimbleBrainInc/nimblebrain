@@ -299,6 +299,23 @@ export const artifactResolutionsTotal = new Counter({
 });
 
 /**
+ * Automation runs recorded, by terminal status: `success`, `degraded`,
+ * `failure`, `timeout`, `cancelled`, or `skipped`. `degraded` is a run that
+ * finished with a failed tool call no later call made good, so part of its
+ * work did not happen; the ratio of `degraded` plus `failure` to the total is
+ * the automation health signal. Counted where the run record is written, so
+ * every run the run list shows is counted once. No automation or workspace
+ * label: both are tenant-unbounded, and one pod per tenant already attributes
+ * it. The run record names the automation.
+ */
+export const automationRunsTotal = new Counter({
+  name: "nb_automation_runs_total",
+  help: "Automation runs recorded, by terminal status.",
+  labelNames: ["status"] as const,
+  registers: [metricsRegistry],
+});
+
+/**
  * App-server notifications relayed to the server's own views, by outcome.
  * `outcome` is a closed set: `forwarded` counts deliveries sent to views;
  * `coalesced` counts notifications that arrived inside an open coalescing

@@ -115,6 +115,14 @@ A few properties worth knowing:
 
 In Kubernetes, point a `ServiceMonitor` (or your scrape config) at the platform service's `/metrics` path. Do not expose it to the internet.
 
+### Automation run metrics
+
+| Metric | Type | Labels | What it says |
+|---|---|---|---|
+| `nb_automation_runs_total` | counter | `status` | Automation runs recorded, by status: `success`, `degraded`, `failure`, `timeout`, `cancelled`, `skipped`. See [run history](/using/automations/#run-history) for what each means. |
+
+`degraded` counts runs that finished with a tool call that failed and was never retried to success: an email that was not sent, or a record that was not written. The ratio of `degraded` plus `failure` to all runs is the automation health signal to alert on. There is no automation or workspace label: both are unbounded, and the run record names the automation.
+
 ### Notification poll metrics
 
 An app can declare an [outbox](/config/nimblebrain-json/#notifications) — a resource the runtime reads on a schedule for facts the app recorded that nobody asked for. That poll is a standing background cost, so it is metered by what it costs rather than by what it carried:

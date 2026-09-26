@@ -70,7 +70,7 @@ export interface Automation {
   lastRunAt?: string;
 
   /** Status of last completed run. */
-  lastRunStatus?: "success" | "failure" | "timeout" | "skipped";
+  lastRunStatus?: "success" | "degraded" | "failure" | "timeout" | "skipped";
 
   /** ISO timestamp of next scheduled run. */
   nextRunAt?: string;
@@ -210,7 +210,12 @@ export interface AutomationRun {
   automationId: string;
   startedAt: string;
   completedAt?: string;
-  status: "running" | "success" | "failure" | "timeout" | "cancelled" | "skipped";
+  /**
+   * `degraded`: the run finished, but a tool call failed and no later call made
+   * it good, so part of its work did not happen (`error` names the tools). It is
+   * not a failure: it neither extends an error streak nor backs the schedule off.
+   */
+  status: "running" | "success" | "degraded" | "failure" | "timeout" | "cancelled" | "skipped";
   inputTokens: number;
   outputTokens: number;
   toolCalls: number;

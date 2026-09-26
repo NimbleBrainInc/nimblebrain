@@ -299,6 +299,80 @@ function abandonedTools(toolCalls: TaskFnResult["toolCalls"]): string[] {
   return names;
 }
 
+/**
+ * Failure reasons that mean the agent named a tool that does not exist, the
+ * probing the connector set above excludes for the same reason. The name is
+ * wrong, so no later call under it can succeed, and counting it would mark a
+ * run degraded for a typo it corrected.
+ */
+const MISNAMED_TOOL_REASONS = new Set(["invalid_tool_name", "unknown_identity_source"]);
+
+/** A tool call's input as a stable string: object keys sorted, so `{a,b}` and `{b,a}` match. */
+function inputKey(input: unknown): string {
+  const seen = new WeakSet<object>();
+  const normalize = (value: unknown): unknown => {
+    if (value === null || typeof value !== "object") return value;
+    if (seen.has(value)) return "[circular]";
+    seen.add(value);
+    if (Array.isArray(value)) return value.map(normalize);
+    const out: Record<string, unknown> = {};
+    for (const key of Object.keys(value).sort()) {
+      out[key] = normalize((value as Record<string, unknown>)[key]);
+    }
+    return out;
+  };
+  return JSON.stringify(normalize(input)) ?? "undefined";
+}
+
+/**
+ * Failed tool calls that nothing later in the run made good, as
+ * `{ name, count }` per tool in first-failure order.
+ *
+ * A failed call is resolved when a LATER call to the same tool succeeds on the
+ * same job. What counts as the same job depends on how the run used the tool:
+ *
+ *   - Several distinct inputs succeeded → the tool did several jobs (one record
+ *     per call), so a failure is resolved only by a later success on the SAME
+ *     input. A write that failed and was never retried stays unresolved even
+ *     though its neighbours succeeded.
+ *   - One distinct input succeeded → the tool did one job, and any failure
+ *     before that success was an attempt at it: a rejected argument shape,
+ *     then the corrected one.
+ *   - Nothing succeeded → every failure is unresolved.
+ *
+ * Read from the activity log alone. Tool annotations (`readOnlyHint`) would
+ * separate a failed read from a failed write, but they are the server's claim
+ * about itself and must not relax a check (see `ToolSchema.annotations`).
+ */
+function unresolvedFailures(
+  toolCalls: TaskFnResult["toolCalls"],
+): Array<{ name: string; count: number }> {
+  if (!Array.isArray(toolCalls)) return [];
+  const calls = toolCalls.map((tc) => ({
+    name: typeof tc.name === "string" ? tc.name : "(unknown tool)",
+    key: inputKey(tc.input),
+    ok: tc.ok === true,
+    misnamed: typeof tc.errorReason === "string" && MISNAMED_TOOL_REASONS.has(tc.errorReason),
+  }));
+  const successKeys = new Map<string, Set<string>>();
+  for (const c of calls) {
+    if (!c.ok) continue;
+    const keys = successKeys.get(c.name) ?? new Set<string>();
+    keys.add(c.key);
+    successKeys.set(c.name, keys);
+  }
+  const counts = new Map<string, number>();
+  calls.forEach((c, i) => {
+    if (c.ok || c.misnamed) return;
+    const oneJob = successKeys.get(c.name)?.size === 1;
+    const resolved = calls
+      .slice(i + 1)
+      .some((later) => later.ok && later.name === c.name && (oneJob || later.key === c.key));
+    if (!resolved) counts.set(c.name, (counts.get(c.name) ?? 0) + 1);
+  });
+  return [...counts].map(([name, count]) => ({ name, count }));
+}
+
 /** Tool-call entries (loosely typed in `TaskFnResult`) whose routing failed. */
 function unreachableConnectorCalls(toolCalls: TaskFnResult["toolCalls"]): string[] {
   if (!Array.isArray(toolCalls)) return [];
@@ -311,6 +385,53 @@ function unreachableConnectorCalls(toolCalls: TaskFnResult["toolCalls"]): string
     }
   }
   return names;
+}
+
+/**
+ * What the tool calls say about a run the model called complete, or null when
+ * they agree with it. Checked most-specific first; see `mapResultToRun`.
+ */
+function toolCallVerdict(
+  toolCalls: TaskFnResult["toolCalls"],
+): { status: "failure" | "degraded"; error: string } | null {
+  const unreachable = unreachableConnectorCalls(toolCalls);
+  if (unreachable.length > 0) {
+    const unique = [...new Set(unreachable)];
+    return {
+      status: "failure",
+      error:
+        `Connector unavailable during run: ${unique.length} tool call type(s) could not be ` +
+        `routed (${unique.join(", ")}). The required connector is missing, disconnected, or ` +
+        `in a workspace this automation cannot reach — the run did not complete its intended action.`,
+    };
+  }
+  // The connector case above is the more specific diagnosis, so it wins the
+  // message when both hold. This is the general one: the call routed to a
+  // reachable tool that then failed every single time.
+  const abandoned = abandonedTools(toolCalls);
+  if (abandoned.length > 0) {
+    const one = abandoned.length === 1;
+    return {
+      status: "failure",
+      error:
+        `Tool never succeeded during run: ${abandoned.join(", ")}. Every call to ` +
+        `${one ? "this tool" : "these tools"} failed, so the work ` +
+        `${one ? "it was" : "they were"} responsible for did not happen — ` +
+        `the model finished and wrote a deliverable anyway.`,
+    };
+  }
+  const unresolved = unresolvedFailures(toolCalls);
+  if (unresolved.length > 0) {
+    const total = unresolved.reduce((n, u) => n + u.count, 0);
+    return {
+      status: "degraded",
+      error:
+        `${total} tool call(s) failed and were not retried to success: ` +
+        `${unresolved.map((u) => `${u.name} ×${u.count}`).join(", ")}. ` +
+        `The run finished, but that part of its work did not happen.`,
+    };
+  }
+  return null;
 }
 
 function mapResultToRun(
@@ -335,33 +456,25 @@ function mapResultToRun(
   //      (`abandonedTools`) — nothing it was responsible for happened.
   //
   // Either downgrades to `failure` and names the tool(s), so the run list shows
-  // it instead of burying it in the conversation. Both are attempted-call
-  // signals: a required tool the model never tries at all still produces
-  // nothing to catch here, and needs the model to self-report the gap.
+  // it instead of burying it in the conversation. A third, weaker signal marks
+  // the run `degraded` rather than failed:
+  //
+  //   3. A failed call that no later call made good (`unresolvedFailures`) —
+  //      part of the work did not happen, though the rest may have.
+  //
+  // All three are attempted-call signals: a required tool the model never tries
+  // at all still produces nothing to catch here. None reads the final answer,
+  // which is the model's account of the run and says "done" in exactly the
+  // runs these exist to catch.
   //
   // Only overrides an otherwise-`success` run; a run already classified
   // failure/timeout keeps its (stronger) status.
   let error: string | undefined;
   if (status === "success") {
-    const unreachable = unreachableConnectorCalls(data.toolCalls);
-    const abandoned = abandonedTools(data.toolCalls);
-    if (unreachable.length > 0) {
-      status = "failure";
-      const unique = [...new Set(unreachable)];
-      error =
-        `Connector unavailable during run: ${unique.length} tool call type(s) could not be ` +
-        `routed (${unique.join(", ")}). The required connector is missing, disconnected, or ` +
-        `in a workspace this automation cannot reach — the run did not complete its intended action.`;
-    } else if (abandoned.length > 0) {
-      // The connector case above is the more specific diagnosis, so it wins the
-      // message when both hold. This is the general one: the call routed to a
-      // reachable tool that then failed every single time.
-      status = "failure";
-      error =
-        `Tool never succeeded during run: ${abandoned.join(", ")}. Every call to ` +
-        `${abandoned.length === 1 ? "this tool" : "these tools"} failed, so the work ` +
-        `${abandoned.length === 1 ? "it was" : "they were"} responsible for did not happen — ` +
-        `the model finished and wrote a deliverable anyway.`;
+    const verdict = toolCallVerdict(data.toolCalls);
+    if (verdict) {
+      status = verdict.status;
+      error = verdict.error;
     }
   }
 

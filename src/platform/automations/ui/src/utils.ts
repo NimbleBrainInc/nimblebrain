@@ -63,6 +63,7 @@ export function statusDotClass(
   if (!status) return "dot-disabled";
   const map: Record<string, string> = {
     success: "dot-success",
+    degraded: "dot-degraded",
     failure: "dot-failure",
     timeout: "dot-timeout",
     running: "dot-running",

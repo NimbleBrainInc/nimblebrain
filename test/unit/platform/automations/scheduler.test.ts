@@ -18,6 +18,7 @@ import {
 	loadOwnerAutomations,
 	saveAutomation,
 } from "../../../../src/platform/automations/store.ts";
+import { automationRunsTotal } from "../../../../src/api/metrics.ts";
 import { seedWorkspaceRoot } from "../../../helpers/test-workspace.ts";
 
 // ---------------------------------------------------------------------------
@@ -1831,5 +1832,62 @@ describe("Scheduler — event schedules", () => {
 		const outcome = await scheduler.runFromEvent(WS, OWNER, "reply-triage", { preamble: "x" });
 		expect("run" in outcome && outcome.run.trigger).toBe("event");
 		scheduler.stop();
+	});
+});
+
+describe("Scheduler — degraded runs", () => {
+	let tmpDir: string;
+
+	beforeEach(() => {
+		tmpDir = makeTmpDir();
+	});
+
+	afterEach(() => {
+		rmSync(tmpDir, { recursive: true, force: true });
+	});
+
+	/** One `nb_automation_runs_total` series. Read as a delta: the registry is process-global. */
+	async function runsCounted(status: string): Promise<number> {
+		const metric = await automationRunsTotal.get();
+		return metric.values.find((v) => v.labels.status === status)?.value ?? 0;
+	}
+
+	async function runOnce(auto: Automation, executor: Executor): Promise<Automation> {
+		const defs = new Map<string, Automation>();
+		defs.set(auto.id, auto);
+		seedDefs(tmpDir, defs);
+		const scheduler = new Scheduler(executor, { workDir: tmpDir });
+		scheduler.start();
+		await scheduler.onTimer();
+		scheduler.stop();
+		return loadDefs(tmpDir).get(auto.id)!;
+	}
+
+	it("records lastRunStatus degraded and clears the error streak", async () => {
+		const auto = makeAutomation({
+			consecutiveErrors: 5,
+			nextRunAt: new Date(Date.now() - 1000).toISOString(),
+		});
+		const degraded: AutomationRun = {
+			...makeSuccessRun(auto.id),
+			status: "degraded",
+			error: "1 tool call(s) failed and were not retried to success: outlook__send_mail ×1.",
+		};
+		const updated = await runOnce(auto, createMockExecutor(degraded));
+		expect(updated.lastRunStatus).toBe("degraded");
+		expect(updated.consecutiveErrors).toBe(0);
+		expect(updated.enabled).toBe(true);
+	});
+
+	it("counts each recorded run once, by status", async () => {
+		const before = { degraded: await runsCounted("degraded"), failure: await runsCounted("failure") };
+
+		const a = makeAutomation({ id: "a", nextRunAt: new Date(Date.now() - 1000).toISOString() });
+		await runOnce(a, createMockExecutor({ ...makeSuccessRun("a"), status: "degraded" }));
+		const b = makeAutomation({ id: "b", nextRunAt: new Date(Date.now() - 1000).toISOString() });
+		await runOnce(b, createThrowingExecutor(new Error("boom")));
+
+		expect(await runsCounted("degraded")).toBe(before.degraded + 1);
+		expect(await runsCounted("failure")).toBe(before.failure + 1);
 	});
 });

@@ -223,7 +223,7 @@ export declare const PlatformToolCatalog: {
         readonly runs: {
             readonly input: import("@sinclair/typebox").TObject<{
                 automationId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-                status: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"skipped" | "running" | "success" | "failure" | "timeout" | "cancelled">>;
+                status: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"skipped" | "running" | "success" | "degraded" | "failure" | "timeout" | "cancelled">>;
                 since: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
                 limit: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
             }>;
