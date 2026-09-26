@@ -46,7 +46,8 @@ The `auth.adapter` field selects the identity provider. Two adapters are configu
         "organizationId": "org_01XYZ...",
         "apiKey": "sk_live_...",
         "authkitDomain": "myapp",
-        "adminRoleSlugs": ["org-admin"]
+        "adminRoleSlugs": ["org-admin"],
+        "firstPartyClientIds": ["client_01DEF..."]
       },
       "orgName": "Acme",
       "orgId": "org_acme"
@@ -87,6 +88,17 @@ The `auth.adapter` field selects the identity provider. Two adapters are configu
 | `apiKey` | `string` | No | WorkOS API key. Can also come from the `WORKOS_API_KEY` env var. |
 | `authkitDomain` | `string` | No | AuthKit subdomain for MCP OAuth (e.g. `"myapp"` → `myapp.authkit.app`). When set, `/mcp/<workspaceId>` accepts AuthKit-issued Bearer JWTs whose audience is exactly that URL, and exposes `/.well-known/oauth-protected-resource/mcp/<workspaceId>` for MCP client discovery. AuthKit needs a resource indicator covering `<origin>/mcp/*` for each public host, or it ignores the client's `resource` and every token is refused. |
 | `adminRoleSlugs` | `string[]` | No | WorkOS membership role slugs that map to the app `admin` role (case-insensitive). Omit to use the defaults `["admin", "owner"]`. An explicit list **replaces** the defaults and must contain at least one non-empty slug — an empty list is rejected at startup. Set this when your WorkOS org's admin role carries a custom slug. |
+| `firstPartyClientIds` | `string[]` | No | Client IDs of your own apps that sign users in through AuthKit and call the REST API with the resulting token, such as a chat-channel bridge. See [First-party clients](#first-party-clients). Omitted or empty, no AuthKit token is first-party. |
+
+### First-party clients
+
+An AuthKit token is normally a resource token: valid only at the `/mcp/<workspaceId>` its audience names, and refused on every `/v1/*` route. An app you run yourself that obtains tokens from AuthKit without naming a resource cannot use them anywhere, so list its client ID in `firstPartyClientIds`.
+
+A token whose signed `client_id` claim is listed is first-party, like a web login session: it is admitted on every route, and workspace membership gates what it reaches. Every other AuthKit token is unchanged.
+
+The token's audience never makes it first-party. A token an external MCP client refreshes without a `resource` carries the same audience as your app's token, so only the client it was issued to tells them apart.
+
+The field fails closed: missing, empty, or a client ID that isn't listed, and the token stays a resource token.
 
 <Aside type="caution">
   For WorkOS, prefer the env var `WORKOS_API_KEY` over `auth.apiKey` in production so the secret doesn't sit in a config file that lands in version control or backups.

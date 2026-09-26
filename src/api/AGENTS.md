@@ -43,8 +43,8 @@ ADR-0036. Bare `/mcp` is refused (`404`, naming the URL shape) — never a defau
 
 | Credential | Recognised by | At `/mcp/<wsId>` |
 |---|---|---|
-| MCP authorization-server token | `grant.kind === "resource"` (WorkOS: issuer is AuthKit) | `aud` contains `mcpResourceUrl(wsId)` exactly, then membership. Refused on `/v1/*`. |
-| Web app login (WorkOS User Management, OIDC, dev) | `grant.kind === "first_party"` | membership |
+| MCP authorization-server token | `grant.kind === "resource"` (WorkOS: issuer is AuthKit, `client_id` not in `firstPartyClientIds`) | `aud` contains `mcpResourceUrl(wsId)` exactly, then membership. Refused on `/v1/*`. |
+| Web app login (WorkOS User Management, OIDC, dev), or an AuthKit token whose signed `client_id` is in `firstPartyClientIds` (ADR-0038) | `grant.kind === "first_party"` | membership |
 | Internal connector-to-host token | `validateInternalToken` | `403` — allowed only on `/v1/workspaces/<wsId>/chat` and `/chat/stream`, where it carries no identity and so is a member of nothing outside dev mode |
 
 ## REST names its workspace in the path

@@ -24,8 +24,9 @@ export interface UserIdentity {
  * while verifying the signature, reported so a provider-independent layer can
  * decide where the credential is valid (`authenticateRequest`).
  *
- * - `first_party` — issued to this instance's own client: the web app's login
- *   session. Not minted for any one resource; membership gates what it reaches.
+ * - `first_party` — issued to one of the operator's own clients: the web app's
+ *   login session, or an app the provider's configuration names as first-party.
+ *   Not bound to any one resource; membership gates what it reaches.
  * - `resource` — minted by the authorization server external MCP clients use,
  *   for the resources in `audience` (the token's `aud`, normalized to a list).
  *   Valid only at a resource whose canonical URL is exactly one of them.
