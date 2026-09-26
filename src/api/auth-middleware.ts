@@ -193,7 +193,7 @@ export async function resolveWorkspace(
   if (!workspaceId) {
     throw new WorkspaceResolutionError(
       "Workspace required. Set the X-Workspace-Id header. " +
-        "The workspace ID is available from GET /v1/bootstrap or Settings → Profile → MCP Connection.",
+        "The workspace ID is available from GET /v1/bootstrap or Workspace settings → General → Workspace ID.",
       400,
     );
   }

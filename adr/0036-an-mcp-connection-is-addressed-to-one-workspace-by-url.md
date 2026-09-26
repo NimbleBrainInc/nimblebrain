@@ -48,10 +48,14 @@ minted for, but not who may use a workspace.
   reconnect with the workspace's URL.
 - Reaching two workspaces takes two connections, and switching workspace in the
   web app opens a new bridge session.
+- Only the canonical public origin serves MCP. A client that reaches the
+  instance through another host reads metadata naming the canonical origin,
+  which spec clients reject, so users take the URL from the settings tab, which
+  always shows the canonical one.
 - The authorization server must have a resource indicator covering
-  `<origin>/mcp/*` for every public host, custom domains included, or it ignores
-  `resource` and every token is refused. That is deployment configuration the
-  runtime cannot check.
+  `<origin>/mcp/*` for the canonical origin (for each tenant's, custom domains
+  included), or it ignores `resource` and every token is refused. That is
+  deployment configuration the runtime cannot check.
 
 ## Alternatives considered
 

@@ -24,10 +24,9 @@
 // ---------------------------------------------------------------------------
 
 import { afterEach, describe, expect, mock, test } from "bun:test";
-
+import { realClient } from "../../test/setup";
 import {
   addAuthLifecycleHandler,
-  addWorkspaceLifecycleHandler,
   setActiveWorkspaceId,
   setAuthLifecycleHandler,
   setAuthToken,
@@ -201,17 +200,19 @@ describe("addAuthLifecycleHandler — multi-listener", () => {
 });
 
 describe("workspace lifecycle handlers", () => {
+  // Through `realClient`: other suites replace `../api/client` process-wide
+  // with a mock whose `setActiveWorkspaceId` does nothing (see test/setup.ts).
   test("fire on a real workspace change only, never on a noop set", () => {
     const handler = mock(() => {});
-    const off = addWorkspaceLifecycleHandler(handler);
+    const off = realClient.addWorkspaceLifecycleHandler(handler);
     try {
-      setActiveWorkspaceId("ws-wl-1");
-      setActiveWorkspaceId("ws-wl-1");
-      setActiveWorkspaceId("ws-wl-2");
+      realClient.setActiveWorkspaceId("ws-wl-1");
+      realClient.setActiveWorkspaceId("ws-wl-1");
+      realClient.setActiveWorkspaceId("ws-wl-2");
       expect(handler).toHaveBeenCalledTimes(2);
     } finally {
       off();
-      setActiveWorkspaceId(null);
+      realClient.setActiveWorkspaceId(null);
     }
   });
 });

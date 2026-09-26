@@ -47,7 +47,7 @@ export function Dashboard() {
       setError(null);
       try {
         // No workspace argument. The list is walled to the workspace the REQUEST
-        // resolves to (the host sends `X-Workspace-Id` on every call), so the
+        // resolves to (the host's session is at the workspace's `/mcp/<wsId>`), so the
         // scope can't be wrong here and can't be omitted into a cross-workspace
         // read — which is what happened while the host-context handshake was
         // still in flight and this app had no workspace to send.

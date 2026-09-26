@@ -48,7 +48,7 @@ function McpUrl({ url }: { url: string | null }) {
   if (!url) {
     return (
       <p className="text-sm text-muted-foreground">
-        The server did not report this workspace's MCP URL. Reload the page to fetch it.
+        The server did not report this workspace's MCP URL, so it cannot be shown here.
       </p>
     );
   }
