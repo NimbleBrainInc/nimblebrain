@@ -1,0 +1,121 @@
+---
+title: Obot Gateway Setup
+description: Reach MCP servers an Obot installation fronts, using one Obot API key.
+---
+
+import { Steps, Aside } from '@astrojs/starlight/components';
+
+[Obot](https://obot.ai) is a self-hosted MCP gateway. An organization registers MCP servers in it — remote endpoints it proxies, or packages it hosts itself — and every client reaches each one at `https://<obot-host>/mcp-connect/<server-id>` with an Obot API key. Obot audits each JSON-RPC call and applies its own access policies on the way through.
+
+From the platform's side that is a **gateway** in the same sense as [MCP360](/gateways/mcp360/): fixed endpoints, one account-wide key, nothing brokered per connection. You declare the key once, publish the endpoints as catalog entries, and workspace admins install them from Browse like any other connector.
+
+Reach for this when an organization already runs Obot and wants the platform's connectors to go through it, so that Obot's audit log and access policies cover the agent's traffic too.
+
+## One-time setup
+
+<Steps>
+1. **Mint an Obot API key.**
+
+   In Obot, create an API key whose scope covers the servers you intend to publish (`mcpServerIds`, or `*`). The key is issued to the Obot user who creates it and is shown once. It is the credential the platform sends on every request.
+
+2. **Declare the gateway in `nimblebrain.json`.**
+
+   ```jsonc
+   {
+     "connectors": {
+       "gateways": {
+         "obot": {}
+       }
+     }
+   }
+   ```
+
+   The name you choose here is what catalog entries reference. Leaving the block empty reads the key from `OBOT_API_KEY`; set `apiKey` to declare it inline instead.
+
+3. **Add a catalog entry for each server.**
+
+   Each server Obot fronts is its own endpoint, so each is its own entry. The URL is the server's `connectURL` as Obot reports it, and the entry names the gateway in `providerAuth.provider`.
+
+   ```yaml
+   servers:
+     - name: ai.obot/people-directory
+       title: People Directory
+       description: Company people directory, via Obot
+       version: "1.0.0"
+       remotes:
+         - type: streamable-http
+           url: https://obot.example.com/mcp-connect/ms1abcd
+       _meta:
+         ai.nimblebrain/connector:
+           auth: provider
+           providerAuth:
+             provider: obot
+             config: {}
+           tags: [people]
+   ```
+
+   Catalog entries are deployment configuration. See [Connectors Catalog](/config/connectors-catalog/) for where the file lives and how to mount it.
+
+4. **Verify the gateway registered.**
+
+   Start the platform and look for this line:
+
+   ```
+   [gateway:obot] credential provider registered
+   ```
+
+   The entries now appear in **Settings → Connectors → Browse**, and installing one connects with no sign-in step.
+</Steps>
+
+## Configuration reference
+
+| Field | Default | Notes |
+|---|---|---|
+| `apiKey` | none | Falls back to `<NAME>_API_KEY`, so a gateway named `obot` reads `OBOT_API_KEY`. A blank declared value counts as absent and falls through to the environment. |
+
+The gateway name is yours to pick, and it must match `providerAuth.provider` in every entry that uses it. `minted`, `composio`, and `smithery` are reserved by built-in credential providers; declaring one of those logs a warning and skips it rather than displacing the built-in.
+
+## What passes through
+
+For a server Obot registers with the `remote` runtime, Obot relays the MCP session as a plain reverse proxy: it inspects each message for its audit log and forwards it unchanged. Everything the platform depends on survives the hop, checked against Obot v0.26.0 with a probe server on the far side:
+
+- tool-level `_meta` and `execution.taskSupport` in `tools/list`;
+- result-level `_meta`, `structuredContent`, and image content;
+- `ui://` resources with their `text/html;profile=mcp-app` MIME type and resource `_meta`, so MCP Apps render;
+- the host-resources server-to-client requests (`ai.nimblebrain/resources/read` and `list`), which a connector uses to read the caller's files;
+- task-augmented calls end to end (`tools/call` → `tasks/get` → `tasks/result`);
+- `notifications/resources/list_changed`, so live app views refresh.
+
+Obot records each of these as its own audit entry, including the server-to-client requests.
+
+## Register servers with the `remote` runtime
+
+Obot hosts `npx` and `uvx` packages behind its own stdio wrapper, and that wrapper terminates the MCP session rather than relaying it. Its list handlers — `tools/list`, `prompts/list`, `resources/list`, `resources/templates/list` — reject a request whose `params` object is absent with `-32602 invalid <method> request`. The platform's MCP client omits `params` on a first page, which the MCP schema permits, so a connector pointed at a package-hosted server installs, starts, and lists **zero tools** — the install itself reports the `-32602` and offers **Connect** to retry, and the retry fails the same way. Calls that always carry `params`, such as `resources/read`, work on the same server.
+
+Until Obot's wrapper accepts the omitted `params` (tracked upstream as [obot-platform/obot#8000](https://github.com/obot-platform/obot/issues/8000)), publish only servers Obot registers as `remote`: run the package as an HTTP MCP server somewhere Obot can reach, and register that URL. The `containerized` runtime has not been checked either way.
+
+## What this shape costs you
+
+One key serves the whole instance, so Obot sees a single caller no matter which workspace made the request. Every entry in Obot's audit log names the user who minted the key. You get no per-workspace attribution on the Obot side, and no way to revoke one workspace's access without revoking everyone's.
+
+That is inherent to a gateway rather than a gap in the integration. Obot is also an OAuth 2.1 authorization server toward MCP clients; an `auth: dcr` entry pointed at the same `connectURL` would give Obot one identity per workspace instead. That path is not covered by this guide.
+
+## Troubleshooting
+
+**Boot logs no `credential provider registered` line.** No `connectors.gateways` block is declared. The block is what creates the provider.
+
+**Installing succeeds but reports a failed start naming a missing API key.** The gateway is declared and no key resolved. The install itself still commits — the connector appears in the workspace and stays disconnected — and the message names both places to set the key.
+
+**A connector's first request returns 401.** Obot rejected the key. Check that it has not been revoked, and that its scope includes this server's id — a key scoped to specific `mcpServerIds` returns 401 for any other server.
+
+**A request returns 402.** Obot's license check found a configured provider without its entitlement and is refusing gateway traffic. That is an Obot-side condition; nothing in the platform configuration changes it.
+
+**The connector starts and lists zero tools, with `invalid tools/list request` in the install message.** The server is package-hosted (`npx` or `uvx`) — see [Register servers with the `remote` runtime](#register-servers-with-the-remote-runtime).
+
+**Boot warns that a name is reserved.** Rename the gateway. A gateway may not take a name a built-in credential provider already holds.
+
+## Related
+
+- [MCP360](/gateways/mcp360/) — the same gateway shape, for a hosted vendor
+- [Connector Providers](/config/connector-providers/) — how gateways differ from brokered providers
+- [Connectors Catalog](/config/connectors-catalog/) — authoring catalog entries
