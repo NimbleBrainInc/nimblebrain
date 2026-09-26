@@ -271,7 +271,7 @@ export interface FocusedAppInfo {
   referenceResourceUri?: string;
 }
 
-/** App state entry from the bridge's appStateStore. */
+/** App state a live app view pushed via `ui/update-model-context` (the web bridge's `getAppState`). */
 export interface AppStateInfo {
   state: Record<string, unknown>;
   summary?: string;
