@@ -27,7 +27,7 @@ import { validateToolInput } from "./validate-input.ts";
  * interchangeable:
  *
  *  - `meta` goes on the wire as `_meta`, the free-form reverse-DNS namespace.
- *    Platform conventions live here — `"ai.nimblebrain/internal": true` hides a
+ *    The MCP Apps `ui` block lives here — `ui: { visibility: ["app"] }` hides a
  *    tool from the agent's tool list.
  *  - `annotations` goes on the wire as `annotations`, the spec's closed set of
  *    behavioural hints (`destructiveHint` and friends).

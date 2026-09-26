@@ -1,6 +1,6 @@
 import type { ConnectorRef } from "../connectors/runtime/types.ts";
 import { textContent } from "../engine/content-helpers.ts";
-import { INTERNAL_TOOL_ANNOTATION, type ToolResult } from "../engine/types.ts";
+import type { ToolResult } from "../engine/types.ts";
 import type { UserIdentity } from "../identity/provider.ts";
 import { ORG_ADMIN_ROLES } from "../identity/types.ts";
 import type { UserStore } from "../identity/user.ts";
@@ -97,7 +97,7 @@ export function createManageWorkspacesTool(ctx: ManageWorkspacesContext): InProc
     name: "manage_workspaces",
     description:
       "Manage workspaces and their members. Workspace CRUD and claim_admin require org admin. Member management requires workspace admin membership. claim_admin lets an org admin seat themselves as admin of a shared workspace that has no admin member, to recover one that would otherwise be unmanageable. list_archives and purge_archive (org admin) list the archives deleted workspaces leave under archived/ and permanently remove one, named by its directory. Conversation sharing was removed in Stage 1 of the cross-workspace refactor and returns in Stage 4 with policy-gated primitives.",
-    meta: { [INTERNAL_TOOL_ANNOTATION]: true },
+    meta: { ui: { visibility: ["app"] } },
     inputSchema: {
       type: "object",
       properties: {

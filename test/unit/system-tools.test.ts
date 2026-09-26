@@ -281,7 +281,7 @@ describe("System Tools", () => {
 		expect(result._meta?.[NON_ADVANCING_META_KEY]).toBe(true);
 	});
 
-	it("search with scope=tools excludes internal tools from results", async () => {
+	it("search with scope=tools excludes app-only tools from results", async () => {
 		const registry = new ToolRegistry();
 		const source = await makeInProcessSource("test", [
 			{
@@ -292,10 +292,10 @@ describe("System Tools", () => {
 			},
 			{
 				name: "hidden",
-				description: "Hidden internal tool",
+				description: "Hidden app-only tool",
 				inputSchema: { type: "object", properties: {} },
 				handler: async () => ({ content: textContent("ok"), isError: false }),
-				meta: { "ai.nimblebrain/internal": true },
+				meta: { ui: { visibility: ["app"] } },
 			},
 		]);
 		registry.addSource(source);
@@ -549,8 +549,8 @@ describe("System Tools", () => {
 						ok: false,
 						toolName,
 						changed: false,
-						reason: "internal_tool",
-						message: `${toolName} is an internal tool and cannot be added.`,
+						reason: "not_model_visible",
+						message: `${toolName} is not visible to the model and cannot be added.`,
 					};
 				}
 				return { ok: true, toolName, changed: true, message: `${toolName} added` };
@@ -594,7 +594,7 @@ describe("System Tools", () => {
 		}>(result);
 		expect(structured?.promoted[0]?.ok).toBe(true);
 		expect(structured?.promoted[1]?.ok).toBe(false);
-		expect(structured?.promoted[1]?.reason).toBe("internal_tool");
+		expect(structured?.promoted[1]?.reason).toBe("not_model_visible");
 	});
 
 	it("manage_tools accepts exact tool names returned by search", async () => {

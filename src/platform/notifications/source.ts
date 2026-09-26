@@ -1,5 +1,5 @@
 import { textContent } from "../../engine/content-helpers.ts";
-import { type EventSink, INTERNAL_TOOL_ANNOTATION, type ToolResult } from "../../engine/types.ts";
+import type { EventSink, ToolResult } from "../../engine/types.ts";
 import {
   DEFAULT_SOURCE_MAX_LEVEL,
   ROUTES_EXECUTE,
@@ -72,7 +72,7 @@ const MARK_READ_DESCRIPTION =
   "in the current workspace are reported as skipped rather than failing the call.";
 
 /**
- * Why the three settings tools are INTERNAL.
+ * Why the three settings tools are app-only (`ui.visibility: ["app"]`).
  *
  * They are stripped from every LLM listing — chat and `/mcp` alike — while
  * staying callable by name, so the workspace settings surface reaches them and
@@ -346,7 +346,7 @@ export function createNotificationsSource(runtime: Runtime, eventSink: EventSink
     {
       name: "settings",
       description: SETTINGS_DESCRIPTION,
-      meta: { [INTERNAL_TOOL_ANNOTATION]: true },
+      meta: { ui: { visibility: ["app"] } },
       inputSchema: NotificationsSettingsInput,
       handler: async (): Promise<ToolResult> => {
         const auth = await requireAdmin();
@@ -362,7 +362,7 @@ export function createNotificationsSource(runtime: Runtime, eventSink: EventSink
     {
       name: "set_source_level",
       description: SET_SOURCE_LEVEL_DESCRIPTION,
-      meta: { [INTERNAL_TOOL_ANNOTATION]: true },
+      meta: { ui: { visibility: ["app"] } },
       inputSchema: NotificationsSetSourceLevelInput,
       handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
         const auth = await requireAdmin();
@@ -394,7 +394,7 @@ export function createNotificationsSource(runtime: Runtime, eventSink: EventSink
     {
       name: "set_routes",
       description: SET_ROUTES_DESCRIPTION,
-      meta: { [INTERNAL_TOOL_ANNOTATION]: true },
+      meta: { ui: { visibility: ["app"] } },
       inputSchema: NotificationsSetRoutesInput,
       handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
         const auth = await requireAdmin();
@@ -419,7 +419,7 @@ export function createNotificationsSource(runtime: Runtime, eventSink: EventSink
     {
       name: "send_test",
       description: SEND_TEST_DESCRIPTION,
-      meta: { [INTERNAL_TOOL_ANNOTATION]: true },
+      meta: { ui: { visibility: ["app"] } },
       inputSchema: NotificationsSendTestInput,
       handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
         const auth = await requireAdmin();

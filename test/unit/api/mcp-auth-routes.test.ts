@@ -634,7 +634,7 @@ describe("bouncer mode: state envelope wrap on initiate / unwrap on callback", (
     // bouncer 302s the callback back to this tenant's `publicOrigin()` (the
     // return leg). Set it so the callback handler can build the return URL —
     // without it, `publicOrigin()` fails closed (NB_TENANT_ID set, no host facts).
-    process.env.NB_PLATFORM_HOST = `${TID}.platform.nimblebrain.ai`;
+    process.env.NB_PLATFORM_HOST = `${TID}.nb.example.com`;
     const { _resetBouncerModeForTest } = await import("../../../src/oauth/bouncer-config.ts");
     _resetBouncerModeForTest();
     lifecycle = makeStubLifecycle();
