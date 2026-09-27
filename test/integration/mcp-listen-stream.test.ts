@@ -28,6 +28,7 @@ interface OpenListen {
 const listens: OpenListen[] = [];
 let down = false;
 let hangCancel = false;
+let endAfterAck = false;
 
 const server = Bun.serve({
   port: 0,
@@ -67,6 +68,7 @@ const server = Bun.serve({
                 params: { _meta: { [SUBSCRIPTION_ID_META_KEY]: id }, notifications: filter },
               }),
             );
+            if (endAfterAck) controller.close();
           },
         });
         return new Response(stream, { headers: { "content-type": "text/event-stream" } });
@@ -87,6 +89,7 @@ beforeEach(() => {
   listens.length = 0;
   down = false;
   hangCancel = false;
+  endAfterAck = false;
 });
 
 async function connect(): Promise<McpSource> {
@@ -100,6 +103,9 @@ async function connect(): Promise<McpSource> {
   return source;
 }
 
+/** Past this, a stream that ends counts as one that was held, and is re-listened at once. */
+const HELD_MS = 1_100;
+
 /** The filter of the stream the source currently holds, as the server acknowledged it. */
 function liveFilter(source: McpSource): unknown {
   return (source as unknown as { subscription: { honoredFilter: unknown } | null }).subscription
@@ -111,6 +117,7 @@ describe("the listen stream on a 2026-07-28 connection", () => {
     const source = await connect();
     try {
       expect(listens).toHaveLength(1);
+      await sleep(HELD_MS);
       const first = listens[0]!;
       first.stream.enqueue(sse({ jsonrpc: "2.0", id: first.id, result: { resultType: "complete" } }));
       first.stream.close();
@@ -125,6 +132,7 @@ describe("the listen stream on a 2026-07-28 connection", () => {
   it("keeps retrying a re-listen that fails until the server is back", async () => {
     const source = await connect();
     try {
+      await sleep(HELD_MS);
       down = true;
       listens[0]!.stream.close();
       await sleep(300);
@@ -133,6 +141,19 @@ describe("the listen stream on a 2026-07-28 connection", () => {
       await sleep(1_500);
       expect(listens).toHaveLength(2);
       expect(liveFilter(source)).toBeDefined();
+    } finally {
+      await source.stop();
+    }
+  });
+
+  it("backs off from a server that ends every stream as soon as it opens", async () => {
+    endAfterAck = true;
+    const source = await connect();
+    try {
+      // Listens at 0 s and 1 s, then waits 2 s; without the backoff this is a
+      // re-listen every round trip.
+      await sleep(1_500);
+      expect(listens.length).toBeLessThanOrEqual(2);
     } finally {
       await source.stop();
     }

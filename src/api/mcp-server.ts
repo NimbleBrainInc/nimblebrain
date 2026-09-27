@@ -381,7 +381,7 @@ export class McpServerHost {
     const key = `${era}|${userAgent}`;
     if (this.seenClientEras.has(key) || this.seenClientEras.size >= MAX_SEEN_CLIENT_ERAS) return;
     this.seenClientEras.add(key);
-    log.info(`[mcp] client era=${era} userAgent="${userAgent}"`);
+    log.info(`[mcp] client era=${era} userAgent=${JSON.stringify(userAgent)}`);
   }
 
   private async handlePost(

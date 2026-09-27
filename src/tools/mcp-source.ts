@@ -846,9 +846,9 @@ export class McpSource implements ToolSource {
    * when its turn comes, so the stream acknowledged last is the widest asked
    * for. A replaced stream is closed after its successor is acknowledged, so no
    * window goes unwatched. Any close this source did not ask for (the server
-   * ending it, or the connection dropping it) re-listens, and a failed listen
-   * retries with backoff, both for as long as this client is the source's
-   * current one. A failure costs change notifications and nothing else, so it
+   * ending it, or the connection dropping it) re-listens, and a failed listen,
+   * or a stream that ends as soon as it opens, retries with backoff, both for
+   * as long as this client is the source's current one. A failure costs change notifications and nothing else, so it
    * is logged, not thrown.
    */
   private listen(): Promise<void> {
@@ -873,36 +873,46 @@ export class McpSource implements ToolSource {
     try {
       next = await client.listen(filter);
     } catch (err) {
-      this.listenFailures++;
-      const delayMs = Math.min(
-        LISTEN_RETRY_BASE_MS * 2 ** (this.listenFailures - 1),
-        LISTEN_RETRY_MAX_MS,
-      );
-      log.debug(
-        "mcp",
-        `[${this.name}] subscriptions/listen failed, retrying in ${delayMs}ms — ${
-          err instanceof Error ? err.message : String(err)
-        }`,
-      );
-      const timer = setTimeout(() => {
-        if (this.client === client) void this.listen();
-      }, delayMs);
-      timer.unref?.();
+      this.retryListenLater(client, err instanceof Error ? err.message : String(err));
       return;
     }
     if (this.client !== client) {
       void next.close().catch(() => {});
       return;
     }
-    this.listenFailures = 0;
     const previous = this.subscription;
     this.subscription = next;
     if (previous) void previous.close().catch(() => {});
+    const openedAt = Date.now();
     void next.closed.then((why) => {
-      if (why === "local" || this.subscription !== next || this.client !== client) return;
+      if (this.client !== client) return;
+      // A stream counts as a successful listen once it has stayed open a
+      // while, so a peer that acknowledges and hangs up at once is retried
+      // with backoff rather than re-listened in a tight loop.
+      const held = Date.now() - openedAt >= LISTEN_RETRY_BASE_MS;
+      if (held) this.listenFailures = 0;
+      if (why === "local" || this.subscription !== next) return;
       this.subscription = null;
-      void this.listen();
+      if (held) void this.listen();
+      else this.retryListenLater(client, "the stream ended as soon as it opened");
     });
+  }
+
+  /** Count a failed listen and listen again after the backoff, while `client` is current. */
+  private retryListenLater(client: Client, reason: string): void {
+    this.listenFailures++;
+    const delayMs = Math.min(
+      LISTEN_RETRY_BASE_MS * 2 ** (this.listenFailures - 1),
+      LISTEN_RETRY_MAX_MS,
+    );
+    log.debug(
+      "mcp",
+      `[${this.name}] subscriptions/listen failed, retrying in ${delayMs}ms — ${reason}`,
+    );
+    const timer = setTimeout(() => {
+      if (this.client === client) void this.listen();
+    }, delayMs);
+    timer.unref?.();
   }
 
   /** The protocol version this connection negotiated, or `undefined` before connect and after `stop()`. */
