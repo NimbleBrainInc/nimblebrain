@@ -179,15 +179,20 @@ describe("opening the chat panel", () => {
   });
 
   test("on the phone layout clears inert but leaves the composer unfocused", async () => {
-    const desktopWidth = window.innerWidth;
-    Object.defineProperty(window, "innerWidth", { configurable: true, value: 390 });
+    const viewport = window as unknown as {
+      innerWidth: number;
+      innerHeight: number;
+      happyDOM: { setViewport(v: { width: number; height: number }): void };
+    };
+    const desktop = { width: viewport.innerWidth, height: viewport.innerHeight };
+    viewport.happyDOM.setViewport({ width: 390, height: 844 });
     try {
       await mountChrome();
       await act(async () => toggleButton()?.click());
       expectOpen();
       expect(document.activeElement).not.toBe(textarea());
     } finally {
-      Object.defineProperty(window, "innerWidth", { configurable: true, value: desktopWidth });
+      viewport.happyDOM.setViewport(desktop);
     }
   });
 });
