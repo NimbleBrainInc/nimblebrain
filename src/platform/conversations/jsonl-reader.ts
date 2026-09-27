@@ -36,9 +36,8 @@ export interface ConversationMeta {
   ownerId?: string;
   /**
    * The workspace the conversation ran in — the breadcrumb the
-   * runtime stamps on the line-1 header at create time. Absent on legacy
-   * files written before workspace stamping; the workspace the file is
-   * stored under is authoritative either way.
+   * runtime stamps on the line-1 header at create time. May be absent; the
+   * workspace the file is stored under is authoritative either way.
    */
   workspaceId?: string;
 }

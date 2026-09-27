@@ -107,8 +107,7 @@ export async function handleGet(
     // holds an open conversation can tell which workspace it belongs to — the
     // web chat panel uses it to avoid resuming a conversation from a workspace
     // the user is no longer viewing (a fresh draft is started instead). Absent
-    // on legacy records predating workspace stamping; absence therefore means
-    // "don't reconcile".
+    // when the record carries no stamp, which means "don't reconcile".
     ...(conversation.meta.workspaceId ? { workspaceId: conversation.meta.workspaceId } : {}),
   };
 

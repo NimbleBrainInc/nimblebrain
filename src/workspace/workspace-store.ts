@@ -153,8 +153,8 @@ export interface ArchiveMarker {
 }
 
 /**
- * Fields a workspace record carried when the workspace provisioned for a user
- * was a sole-owner "personal" workspace. Read only to retire them
+ * Fields a workspace record on disk may carry and no code honors. Read only to
+ * remove them
  * (`retireLegacyPersonalWorkspaces`); `update` drops them on write.
  */
 interface LegacyPersonalFields {
@@ -215,8 +215,8 @@ export class WorkspaceStore {
   }
 
   /**
-   * Workspaces whose record still carries a legacy personal field, each with
-   * the owner it names when it was a personal one. Read by
+   * Workspaces whose record carries `isPersonal` or `ownerUserId`, each with
+   * the owner it names when `isPersonal` is true. Read by
    * `retireLegacyPersonalWorkspaces` at boot and by nothing else — no other
    * code may treat a workspace as personal.
    */
@@ -372,8 +372,8 @@ export class WorkspaceStore {
     // level; strip it at runtime too, since a caller can cast past the type.
     const { members: _members, ...safePatch } = patch as Partial<Workspace>;
 
-    // A record written before every workspace became ordinary may still carry
-    // the legacy personal fields; a write is where they leave the record.
+    // A record on disk may carry `isPersonal` / `ownerUserId`, which no code
+    // honors; a write is where they leave the record.
     const {
       isPersonal: _isPersonal,
       ownerUserId: _ownerUserId,

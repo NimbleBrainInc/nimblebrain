@@ -35,7 +35,7 @@ In dev mode (no [`instance.json`](/config/instance-json/), no auth configured) t
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `id` | `string` | Yes | Workspace ID. Opaque `ws_<16-hex>` (older workspaces may carry `ws_user_<userId>`), `_dev` in dev mode. Name-independent — never parse it. |
+| `id` | `string` | Yes | Workspace ID. Opaque, usually `ws_<16-hex>` (some are `ws_user_<id>`), `_dev` in dev mode. Name-independent — never parse it. |
 | `name` | `string` | Yes | Human-readable workspace name shown in the UI. Freely editable; changing it does not change the id or on-disk path. |
 | `about` | `string \| null` | No | Short human-readable description, set in the workspace settings UI. Surfaced on the org "About" view and the workspace directory. Defaults to `null`. |
 | `members` | `array` | Yes | Users with access. Each entry is `{ userId, role }` where role is `"admin"` or `"member"`. |

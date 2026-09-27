@@ -89,10 +89,9 @@ export function mcpAuthRoutes(ctx: AppContext) {
         return apiError(404, "connector_not_found", `Connector "${serverName}" not installed.`);
       }
 
-      // Stage 2: every URL connector is workspace-scoped (legacy `"user"`
-      // literal was deleted), so the workspace principal is the only
-      // legal value here. `instance.oauthScope` is always `"workspace"`
-      // or undefined post-Stage-2.
+      // Every URL connector is workspace-scoped, so the workspace principal
+      // is the only legal value here. `instance.oauthScope` is always
+      // `"workspace"` or undefined.
       const principalId = WORKSPACE_PRINCIPAL_ID;
 
       const started = await startAuthorization(ctx, serverName, wsId, principalId);

@@ -908,14 +908,12 @@ export class ConnectorLifecycleManager {
     if (!instance.ref || !("url" in instance.ref)) {
       throw new Error(`[lifecycle] missing URL ref for "${serverName}" — cannot construct source`);
     }
-    // Stage 2: every URL connector is workspace-scoped (the legacy
-    // `oauthScope: "user"` literal was deleted). The only legal
-    // principal is `WORKSPACE_PRINCIPAL_ID`; a member-scoped call
-    // would be a regression of the schema cut.
+    // Every URL connector is workspace-scoped, so the only legal principal
+    // is `WORKSPACE_PRINCIPAL_ID`.
     if (principalId !== WORKSPACE_PRINCIPAL_ID) {
       throw new Error(
         `[lifecycle] startAuth: principal "${principalId}" is not a workspace principal — ` +
-          "The legacy user-scope path was removed; install the connector into a workspace, or as a personal connector.",
+          "install the connector into a workspace, or as a personal connector.",
       );
     }
 
@@ -1353,9 +1351,8 @@ export class ConnectorLifecycleManager {
    * tuple. Stops `source.stop()` and removes the source from the
    * workspace registry.
    *
-   * Stage 2 collapsed the member-scope (user-pool) branch — every URL
-   * workspace connector binds to a workspace. Personal connectors live on
-   * the identity plane and never reach here.
+   * Every URL workspace connector binds to a workspace. Personal connectors
+   * live on the identity plane and never reach here.
    *
    * Idempotent: silently no-ops if no source is currently wired up.
    */

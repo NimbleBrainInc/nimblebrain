@@ -348,9 +348,8 @@ export async function startWorkspaceConnectors(
     // — mirrors the discriminator in `lifecycle.seedUrlConnectionState`, which
     // consumes the same predicate.
     //
-    // Every URL connector here is workspace-scoped (the legacy
-    // `oauthScope: "user"` literal was deleted). Personal connectors live on
-    // the identity plane and never reach this path.
+    // Every URL connector here is workspace-scoped. Personal connectors live
+    // on the identity plane and never reach this path.
     if (
       !(await urlConnectorHasBootAuth(
         managedConnectors,

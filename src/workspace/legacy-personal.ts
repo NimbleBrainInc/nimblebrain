@@ -5,22 +5,20 @@ import type { Workspace } from "./types.ts";
 import type { WorkspaceStore } from "./workspace-store.ts";
 
 /**
- * Retire the legacy personal-workspace fields at boot. Idempotent.
+ * Remove `isPersonal` / `ownerUserId` from workspace records at boot. Idempotent.
  *
- * The workspace provisioned for a user was once a sole-owner "personal"
- * workspace, marked on disk with `isPersonal` and `ownerUserId`. Every
- * workspace is now ordinary, so no code reads those fields; this reconcile is
- * where they leave. For each former personal workspace, before its fields go:
+ * No code honors those fields — every workspace is ordinary (ADR-0039) — so
+ * this reconcile is where they leave the records that carry them. For each
+ * record with `isPersonal: true` and an `ownerUserId`, before the fields go:
  *
  * - the owner's `preferences.defaultWorkspaceId` is set to it when unset, so
  *   the owner keeps landing where they always have;
  * - it is renamed to `provisionedWorkspaceName(owner.displayName)` when it
- *   still carries exactly the name provisioning used to give it
- *   (`"<displayName>'s Workspace"`). A name anyone edited is kept;
+ *   is named exactly `"<displayName>'s Workspace"`. Any other name is kept;
  * - its owner is seated as admin when missing from its member list.
  *
- * Its id stays as it is. Ids are opaque, and a former personal workspace's id
- * is in URLs and MCP client configurations that a rename would break.
+ * Its id stays as it is. Ids are opaque, and this one is in URLs and MCP
+ * client configurations that a rename would break.
  *
  * Runs before anything serves, so no request sees a half-retired record. A
  * crash midway leaves the fields on the records not yet written, and the next
@@ -45,8 +43,8 @@ export async function retireLegacyPersonalWorkspaces(
 }
 
 /**
- * Carry a former personal workspace's owner over: their default, the
- * workspace's provisioned name, and their seat. Returns the name to keep.
+ * Settle the owner a record names: their default, the workspace's name, and
+ * their seat. Returns the name to keep.
  */
 async function settleOwner(
   store: WorkspaceStore,
@@ -66,9 +64,8 @@ async function settleOwner(
       name = provisionedWorkspaceName(owner.displayName);
     }
   }
-  // A personal workspace's owner was a member by rule, and access checks
-  // assumed it without reading the list. Where the list lost them, seat
-  // them as admin, or the owner would be locked out of their own data.
+  // The owner's data in this workspace is reachable only through membership,
+  // so an owner missing from the list is seated as admin.
   if (!workspace.members.some((m) => m.userId === ownerUserId)) {
     await store.addMember(workspace.id, ownerUserId, "admin");
   }
