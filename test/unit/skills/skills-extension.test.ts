@@ -227,6 +227,27 @@ describe("McpSource skills extension", () => {
     expect(await source.listSkills()).toEqual({ entries: [], ok: false, truncated: false });
   });
 
+  // The Python `mcp` SDK validates a request against its known methods before
+  // routing, so an unknown `skills/list` comes back `-32602`, not `-32601`.
+  it("reads -32602 on a 2025-era probe as a complete listing of nothing", async () => {
+    const source = makeSource({
+      request: async () => {
+        throw rpcError(-32602);
+      },
+    });
+    expect(await source.listSkills()).toEqual({ entries: [], ok: true, truncated: false });
+  });
+
+  it("reads -32602 from a server that declared the extension as a failure", async () => {
+    const source = makeSource({
+      getServerCapabilities: () => ({ extensions: { [SKILLS_EXTENSION_ID]: {} } }),
+      request: async () => {
+        throw rpcError(-32602);
+      },
+    });
+    expect(await source.listSkills()).toEqual({ entries: [], ok: false, truncated: false });
+  });
+
   it("follows skills/list pagination", async () => {
     const methods: string[] = [];
     const source = makeSource({

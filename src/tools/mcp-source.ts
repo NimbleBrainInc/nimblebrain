@@ -2247,7 +2247,9 @@ export class McpSource implements ToolSource {
    *   in-process source is the platform's own app and is `none`). Some SDKs omit
    *   `capabilities.extensions` from the legacy `initialize` result (the
    *   Python `mcp` SDK does), so a server that serves the extension cannot say
-   *   so there. Discovery asks once per window, and `-32601` means none.
+   *   so there. Discovery asks once per window, and a server that does not
+   *   know the method means none: `-32601`, or `-32602` from the Python SDK,
+   *   which rejects an unknown method as a request that failed validation.
    *
    * This decides only whether to ask. What is a skill still comes from the
    * server's own listing, never from a resource's URI scheme, which is the
@@ -2267,8 +2269,8 @@ export class McpSource implements ToolSource {
    *
    * Call only when {@link skillsDiscovery} is not `none`. Entries come back
    * unvalidated, for the caller to check one at a time. On a `probe`, a
-   * `-32601` answer to the first page is a complete, empty listing: the
-   * server does not serve the extension. Otherwise a failed call leaves a
+   * `-32601` or `-32602` answer to the first page is a complete, empty
+   * listing: the server does not serve the extension. Otherwise a failed call leaves a
    * partial result (`ok: false`), and the 10-page cap can stop the walk with
    * a cursor outstanding (`truncated: true`); either way the result is not the
    * server's whole listing, and a caller must not cache it as complete.
@@ -2303,7 +2305,10 @@ export class McpSource implements ToolSource {
       }
     } catch (err) {
       const code = (err as { code?: unknown } | null)?.code;
-      if (probing && page === 0 && code === -32601) {
+      // Unknown method: `-32601` per JSON-RPC, `-32602` from the Python SDK,
+      // which validates a request against its known methods before routing.
+      // Only on an undeclared probe: from a declaring server either is a failure.
+      if (probing && page === 0 && (code === -32601 || code === -32602)) {
         return { entries: [], ok: true, truncated: false };
       }
       return { entries, ok: false, truncated: false };

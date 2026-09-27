@@ -290,6 +290,35 @@ describe("bodies on need", () => {
     expect(reads().length).toBe(before);
   });
 
+  // A failure is what one server returned. It must not lock the same digest
+  // out of another workspace or server that serves the right bytes.
+  it("remembers a verification failure per workspace and server, not per digest", async () => {
+    const text = bodies["skill://listed/SKILL.md"]!;
+    const entry = skillEntryFor("skill://shared/SKILL.md", text);
+    const internals = runtime as unknown as {
+      fetchVerifiedSkillText: (ws: string, server: string, e: unknown) => Promise<unknown>;
+      loadServerSkillBody: (ws: string, server: string, e: unknown) => Promise<unknown>;
+      skillBodyCache: Map<string, string>;
+    };
+    // The listed body may already be verified by an earlier test; start cold.
+    internals.skillBodyCache.clear();
+    const fetch = spyOn(internals, "fetchVerifiedSkillText");
+    try {
+      fetch.mockImplementationOnce(async () => ({ ok: false, reason: "unverified" }));
+      expect(await internals.loadServerSkillBody("ws_a", "impostor", entry)).toEqual({
+        ok: false,
+        reason: "unverified",
+      });
+      fetch.mockImplementationOnce(async () => ({ ok: true, text }));
+      expect(await internals.loadServerSkillBody("ws_b", "honest", entry)).toEqual({
+        ok: true,
+        body: expect.stringContaining("LISTED_BODY"),
+      });
+    } finally {
+      fetch.mockRestore();
+    }
+  });
+
   it("fetches an on-demand skill's body when it is activated, verifying a YAML date", async () => {
     const skill = (await runtime.listActivatableSkills(TEST_WORKSPACE_ID, null)).find(
       (s) => s.name === "connector:modern-declared:ondemand",

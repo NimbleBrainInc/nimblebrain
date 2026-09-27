@@ -484,7 +484,12 @@ export class Runtime {
    * moves to new content names a new digest, so an entry is never stale.
    */
   private skillBodyCache = new Map<string, string>();
-  /** Digests whose fetched bytes failed verification, with when, for the discovery TTL. */
+  /**
+   * Skill bodies that failed verification, with when, for the discovery TTL.
+   * Keyed by workspace, server, and digest, unlike the verified cache: a
+   * failure says what one server returned, and must not lock the same digest
+   * out of another workspace or server that serves the right bytes.
+   */
   private skillBodyFailures = new Map<string, number>();
   /**
    * Conversation IDs with an in-flight chat() call. Prevents concurrent runs on
@@ -2859,9 +2864,10 @@ export class Runtime {
    * listing entry (digest, size, frontmatter); content that fails is never used.
    *
    * A verified body is cached by its digest, so a turn does not re-fetch a
-   * skill whose listing is unchanged. A digest that failed verification is
-   * remembered for the discovery TTL, so a stale listing costs one read per
-   * TTL rather than one per turn; the next listing carries the new digest.
+   * skill whose listing is unchanged. A verification failure is remembered
+   * per workspace, server, and digest for the discovery TTL, so a stale listing
+   * costs one read per TTL rather than one per turn; the next listing carries
+   * the new digest.
    * A `"dynamic"` skill has no digest and is fetched each time it is needed.
    */
   private async loadServerSkillBody(
@@ -2873,10 +2879,11 @@ export class Runtime {
       entry.resources === "dynamic"
         ? undefined
         : entry.resources.find((file) => file.uri === entry.uri)?.digest;
-    if (digest) {
+    const failureKey = digest ? `${wsId}\0${serverName}\0${digest}` : undefined;
+    if (digest && failureKey) {
       const cached = this.skillBodyCache.get(digest);
       if (cached !== undefined) return { ok: true, body: cached };
-      const failedAt = this.skillBodyFailures.get(digest);
+      const failedAt = this.skillBodyFailures.get(failureKey);
       if (failedAt !== undefined && Date.now() - failedAt < Runtime.SKILL_CACHE_TTL) {
         return { ok: false, reason: "unverified" };
       }
@@ -2885,8 +2892,8 @@ export class Runtime {
     if (!fetched.ok) {
       // Only a verification failure is remembered: an unreachable server is a
       // transport fault, retried the next time the skill is needed.
-      if (digest && fetched.reason === "unverified") {
-        boundedSet(this.skillBodyFailures, digest, Date.now());
+      if (failureKey && fetched.reason === "unverified") {
+        boundedSet(this.skillBodyFailures, failureKey, Date.now());
       }
       return { ok: false, reason: fetched.reason };
     }
@@ -5006,9 +5013,14 @@ export class Runtime {
     const loadedConnectorContext = await hydrateSkills(
       withoutSuppressed(connectorContext, suppressed),
     );
+    // Layer 3 is hydrated for the same reason: the status detail prints each
+    // selected skill's body, and a server skill's body is fetched only on need.
+    const loadedLayer3 = await hydrateSelected(
+      layer3.filter((sel) => !suppressed.has(sel.skill.manifest.name)),
+    );
     return {
       context: [...context, ...loadedConnectorContext],
-      layer3: layer3.filter((sel) => !suppressed.has(sel.skill.manifest.name)),
+      layer3: loadedLayer3,
     };
   }
 
