@@ -176,15 +176,19 @@ export function ChatChrome() {
   // take focus; this runs after the commit that clears `inert`, which is the
   // earliest the composer can accept it. Every open path lands here — the
   // toggle, ⌘K, ⌘⇧K, `?chat=` deep links, and `openPanel` from an app or the
-  // command palette. On close, focus left inside the now-inert panel (Esc,
-  // Close, Back, ⌘K) moves to the floating toggle, the control that reopens it.
+  // command palette. Opening is an explicit move to the chat, so it takes focus
+  // even from an app iframe, which MessageInput's turn-ended refocus leaves
+  // alone. On the phone layout the composer is not focused, since that raises
+  // the on-screen keyboard over the conversation. On close, focus left inside
+  // the now-inert panel (Esc, Close, Back, ⌘K) moves to the floating toggle,
+  // the control that reopens it.
   const isOpen = panelState !== "closed";
   const wasOpenRef = useRef(isOpen);
   useEffect(() => {
     const wasOpen = wasOpenRef.current;
     wasOpenRef.current = isOpen;
     if (isOpen) {
-      if (!wasOpen) panelRef.current?.requestInputFocus();
+      if (!wasOpen && !isMobile) panelRef.current?.requestInputFocus();
       return;
     }
     if (!wasOpen) return;
@@ -192,7 +196,7 @@ export function ChatChrome() {
     const stranded =
       active === null || active === document.body || panelElRef.current?.contains(active);
     if (stranded) toggleButtonRef.current?.focus({ preventScroll: true });
-  }, [isOpen]);
+  }, [isOpen, isMobile]);
 
   // Keyboard shortcuts — Esc closes, ⌘K toggles, ⌘⇧K toggles fullscreen.
   useEffect(() => {

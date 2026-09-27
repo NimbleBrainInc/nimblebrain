@@ -177,6 +177,19 @@ describe("opening the chat panel", () => {
     expectOpen();
     expect(document.activeElement).toBe(textarea());
   });
+
+  test("on the phone layout clears inert but leaves the composer unfocused", async () => {
+    const desktopWidth = window.innerWidth;
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 390 });
+    try {
+      await mountChrome();
+      await act(async () => toggleButton()?.click());
+      expectOpen();
+      expect(document.activeElement).not.toBe(textarea());
+    } finally {
+      Object.defineProperty(window, "innerWidth", { configurable: true, value: desktopWidth });
+    }
+  });
 });
 
 describe("closing the chat panel with focus inside it", () => {
@@ -202,5 +215,24 @@ describe("closing the chat panel with focus inside it", () => {
     expectClosed();
     expect(panel().contains(document.activeElement)).toBe(false);
     expect(document.activeElement).toBe(toggleButton());
+  });
+});
+
+describe("closing the chat panel with focus outside it", () => {
+  test("leaves focus where the user put it", async () => {
+    await mountChrome();
+    await press("k", { metaKey: true });
+    const outside = document.createElement("button");
+    document.body.appendChild(outside);
+    try {
+      act(() => outside.focus());
+      expect(document.activeElement).toBe(outside);
+
+      await press("Escape");
+      expectClosed();
+      expect(document.activeElement).toBe(outside);
+    } finally {
+      outside.remove();
+    }
   });
 });
