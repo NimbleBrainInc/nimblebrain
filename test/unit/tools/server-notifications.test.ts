@@ -76,7 +76,7 @@ async function source(name: string): Promise<McpSource> {
 
 describe("the allowlist has one home", () => {
   test("the web shell relays exactly the methods the runtime relays", () => {
-    expect([...RELAYED_TO_VIEWS].sort()).toEqual(Object.keys(RELAYED_SERVER_NOTIFICATIONS).sort());
+    expect([...RELAYED_TO_VIEWS].sort()).toEqual([...RELAYED_SERVER_NOTIFICATIONS].sort());
   });
 
   test("the bridge advertises listChanged for each relayed method, and no other", () => {

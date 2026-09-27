@@ -6,8 +6,7 @@ import { Runtime } from "../../src/runtime/runtime.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { startServer } from "../../src/api/server.ts";
 import type { ServerHandle } from "../../src/api/server.ts";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import type { ConnectorRef, PlacementDeclaration } from "../../src/connectors/runtime/types.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
 

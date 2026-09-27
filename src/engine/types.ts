@@ -1,10 +1,6 @@
 import type { LanguageModelV4Message } from "@ai-sdk/provider";
 import type { McpUiToolVisibility } from "@modelcontextprotocol/ext-apps";
-import type {
-  ContentBlock,
-  TextContent,
-  ToolAnnotations,
-} from "@modelcontextprotocol/sdk/types.js";
+import type { ContentBlock, TextContent, ToolAnnotations } from "@modelcontextprotocol/server";
 import type { TokenUsage } from "../usage/types.ts";
 
 export type { ContentBlock, TextContent };

@@ -1,5 +1,4 @@
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
+import { Server } from "@modelcontextprotocol/server";
 import { type RemoteMcpFixture, startRemoteMcpServer } from "./remote-mcp-fixture.ts";
 
 export type FakeConnectorServer = RemoteMcpFixture;
@@ -17,14 +16,14 @@ export function startFakeConnectorServer(toolNames: string[]): FakeConnectorServ
       { name: "fake-connector", version: "0.1.0" },
       { capabilities: { tools: {} } },
     );
-    server.setRequestHandler(ListToolsRequestSchema, async () => ({
+    server.setRequestHandler('tools/list', async () => ({
       tools: toolNames.map((name) => ({
         name,
         description: name,
         inputSchema: { type: "object", properties: {} },
       })),
     }));
-    server.setRequestHandler(CallToolRequestSchema, async () => ({
+    server.setRequestHandler('tools/call', async () => ({
       content: [{ type: "text", text: "ok" }],
     }));
     return server;

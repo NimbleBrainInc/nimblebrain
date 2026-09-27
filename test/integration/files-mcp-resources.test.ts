@@ -17,8 +17,7 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { Client, ResourceNotFoundError, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { RESOURCE_SOURCE_META_KEY } from "../../src/api/mcp-server.ts";
 import { type ServerHandle, startServer } from "../../src/api/server.ts";
 import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
@@ -187,7 +186,7 @@ describe("workspace files exposed as MCP resources", () => {
       for (const source of ["conversations", "db-query"]) {
         await expect(
           client.readResource({ uri, _meta: { [RESOURCE_SOURCE_META_KEY]: source } }),
-        ).rejects.toMatchObject({ code: -32002 });
+        ).rejects.toBeInstanceOf(ResourceNotFoundError);
       }
     } finally {
       await client.close();

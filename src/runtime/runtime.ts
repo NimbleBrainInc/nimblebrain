@@ -1852,13 +1852,8 @@ export class Runtime {
     });
 
     // Always-on context channel: the `always` skills across every tier
-    // (core/builtin/org + workspace + user) plus the always-on connector skills,
-    // then the workspace identity/persona override when the narrated workspace
-    // sets one.
-    const requestContextSkills = withIdentityOverride(
-      [...poolContext, ...connectorContext],
-      activeWorkspace?.identity,
-    );
+    // (core/builtin/org + workspace + user) plus the always-on connector skills.
+    const requestContextSkills = [...poolContext, ...connectorContext];
     const layer3Entries: Layer3SkillEntry[] = selectedLayer3.map((s) => ({
       name: s.skill.manifest.name,
       body: s.skill.body,
@@ -5712,15 +5707,6 @@ function buildSurfaceOptions(
   };
 }
 
-/** Append the workspace identity/persona override skill to the context channel when the workspace sets one. */
-function withIdentityOverride(
-  contextBase: Skill[],
-  workspaceIdentity: string | undefined,
-): Skill[] {
-  if (!workspaceIdentity) return contextBase;
-  return [...contextBase, makeIdentitySkill(workspaceIdentity)];
-}
-
 /**
  * Build the per-request `transformContext` hook: slice history → apply the
  * provider reasoning-replay policy → window by token budget. `overflowAttempt`
@@ -5787,34 +5773,6 @@ export function buildContextAssembledPayload(input: {
   ];
   const totalTokens = sources.reduce((sum, s) => sum + s.tokens, 0);
   return { sources, excluded: [], totalTokens };
-}
-
-/**
- * Create a synthetic identity skill from a workspace's identity markdown.
- * Injected at priority 1 (core context layer) so it becomes the agent persona.
- */
-/**
- * Exported so the compose-effective-context debug tool can build the
- * same per-request identity override `runtime.chat()` uses, instead of
- * silently composing against the bare global `contextSkills` (which
- * would lie about what's in the prompt for any workspace that has
- * `workspace.identity` set).
- */
-export function makeIdentitySkill(body: string): Skill {
-  return {
-    manifest: {
-      name: "identity-override",
-      description: "Workspace identity override",
-      loadingStrategy: "always",
-      priority: 1,
-      status: "active",
-      // It's the workspace's identity field, so the ledger labels it
-      // `workspace`, not the `?? "org"` fallback in the payload builder.
-      scope: "workspace",
-    },
-    body,
-    sourcePath: "",
-  };
 }
 
 /**

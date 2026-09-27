@@ -50,7 +50,7 @@ describe("nb-core registration in Runtime", () => {
 		const coreTools = tools.filter((t) => t.name.startsWith("nb__"));
 		expect(coreTools.length).toBeGreaterThanOrEqual(6);
 		const names = coreTools.map((t) => t.name).sort();
-		expect(names).toContain("nb__manage_identity");
+		expect(names).toContain("nb__set_preferences");
 	});
 
 	it("nb__ tools are callable via ToolRegistry.execute()", async () => {

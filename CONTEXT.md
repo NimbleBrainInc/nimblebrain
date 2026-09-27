@@ -37,8 +37,12 @@ non-personal workspace has an opaque id `ws_<16-hex>`, members, and roles
 
 An MCP connection is addressed to one workspace by URL: `<publicOrigin>/mcp/<wsId>`
 (ADR-0036). Bare `/mcp` names none and is refused. A token from the MCP
-authorization server is valid only at the URL its `aud` names exactly; a
-first-party login session is bound to no resource. Either way, **membership of
+authorization server is valid only at the URL its `aud` names exactly. A
+first-party credential is bound to no resource: the instance's login session,
+or an authorization-server token issued to a client the operator configures as
+its own (ADR-0038). A credential's audience says where it may be used; the
+client it was issued to says whose app holds it, and only a configured
+first-party client gets first-party standing. Either way, **membership of
 `<wsId>`, checked per request, authorizes** — the audience only prevents replay.
 An MCP session is bound to (identity, workspace).
 
@@ -223,6 +227,7 @@ The decision log is `adr/`. Foundational (secure RBAC):
 - [0008](adr/0008-notifications-are-pulled-and-routed-by-the-operator.md) — notifications are pulled into a workspace inbox and routed by the operator
 - [0036](adr/0036-an-mcp-connection-is-addressed-to-one-workspace-by-url.md) — an MCP connection is addressed to one workspace by URL; a token is valid only for its resource; membership authorizes
 - [0037](adr/0037-a-workspace-is-addressed-by-url-on-every-surface.md) — a workspace is addressed by URL on every surface; a route is workspace-scoped or identity-scoped, and its path says which
+- [0038](adr/0038-a-credential-is-first-party-by-the-client-it-was-issued-to.md) — a credential's audience says where it may be used; the client it was issued to says whose app holds it; only a configured first-party client gets first-party standing
 
 Manage skills:
 

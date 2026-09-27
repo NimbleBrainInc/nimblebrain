@@ -20,13 +20,7 @@
  */
 
 import type { LanguageModelV4, LanguageModelV4CallOptions } from "@ai-sdk/provider";
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import {
-  CallToolRequestSchema,
-  ListResourcesRequestSchema,
-  ListToolsRequestSchema,
-  ReadResourceRequestSchema,
-} from "@modelcontextprotocol/sdk/types.js";
+import { Server } from "@modelcontextprotocol/server";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -76,24 +70,24 @@ function createMultiSkillServer(): Server {
     { name: "multiskill", version: "0.1.0" },
     { capabilities: { tools: {}, resources: {} } },
   );
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({
+  server.setRequestHandler('tools/list', async () => ({
     tools: TOOL_NAMES.map((n) => ({
       name: n,
       description: `Do ${n}`,
       inputSchema: { type: "object", properties: {} },
     })),
   }));
-  server.setRequestHandler(CallToolRequestSchema, async () => ({
+  server.setRequestHandler('tools/call', async () => ({
     content: [{ type: "text", text: "done" }],
   }));
-  server.setRequestHandler(ListResourcesRequestSchema, async () => ({
+  server.setRequestHandler('resources/list', async () => ({
     resources: SKILLS.map((s) => ({
       uri: `skill://${s.slug}/SKILL.md`,
       name: s.slug,
       mimeType: "text/markdown",
     })),
   }));
-  server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
+  server.setRequestHandler('resources/read', async (request) => {
     const text = bodies[request.params.uri];
     if (!text) throw new Error(`Resource not found: ${request.params.uri}`);
     return { contents: [{ uri: request.params.uri, mimeType: "text/markdown", text }] };
@@ -130,16 +124,16 @@ ${NEIGHBOUR_PHRASE} — this rule must be in context on every turn.`;
     { name: "neighbour", version: "0.1.0" },
     { capabilities: { tools: {}, resources: {} } },
   );
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({
+  server.setRequestHandler('tools/list', async () => ({
     tools: [{ name: "ping", description: "Ping", inputSchema: { type: "object", properties: {} } }],
   }));
-  server.setRequestHandler(CallToolRequestSchema, async () => ({
+  server.setRequestHandler('tools/call', async () => ({
     content: [{ type: "text", text: "done" }],
   }));
-  server.setRequestHandler(ListResourcesRequestSchema, async () => ({
+  server.setRequestHandler('resources/list', async () => ({
     resources: [{ uri, name: "orientation", mimeType: "text/markdown" }],
   }));
-  server.setRequestHandler(ReadResourceRequestSchema, async () => ({
+  server.setRequestHandler('resources/read', async () => ({
     contents: [{ uri, mimeType: "text/markdown", text: body }],
   }));
 

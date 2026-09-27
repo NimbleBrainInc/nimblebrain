@@ -11,7 +11,7 @@
  */
 
 import { describe, expect, it } from "bun:test";
-import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
+import type { CallToolResult } from "@modelcontextprotocol/server";
 import type { EventSink } from "../../src/engine/types.ts";
 import { NON_ADVANCING_META_KEY } from "../../src/engine/types.ts";
 import { runWithRequestContext } from "../../src/runtime/request-context.ts";

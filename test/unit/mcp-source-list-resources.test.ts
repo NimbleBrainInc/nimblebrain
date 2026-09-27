@@ -25,6 +25,10 @@ import { McpSource } from "../../src/tools/mcp-source.ts";
  * omits it is an incomplete double rather than a case production can reach.
  * Default it to a resources-capable server — what every test here is about —
  * and let a test that cares state its own.
+ *
+ * A stub states one page as `listResources(params)`; the probe asks for each
+ * page with a page-level `request({ method: "resources/list", params })`, which
+ * the stub answers through the same function.
  */
 function makeSource(client: unknown): McpSource {
   const source = new McpSource(
@@ -32,9 +36,22 @@ function makeSource(client: unknown): McpSource {
     { type: "remote", url: new URL("http://localhost:0/mcp") },
     new NoopEventSink(),
   );
+  const page = (client as { listResources?: (params?: { cursor?: string }) => unknown } | null)
+    ?.listResources;
   const stub =
-    client && typeof client === "object" && !("getServerCapabilities" in client)
-      ? { getServerCapabilities: () => ({ resources: {} }), ...client }
+    client && typeof client === "object"
+      ? {
+          ...("getServerCapabilities" in client
+            ? {}
+            : { getServerCapabilities: () => ({ resources: {} }) }),
+          ...(page
+            ? {
+                request: (req: { method: string; params?: { cursor?: string } }) =>
+                  page(req.params?.cursor ? { cursor: req.params.cursor } : undefined),
+              }
+            : {}),
+          ...client,
+        }
       : client;
   (source as unknown as { client: unknown }).client = stub;
   return source;
