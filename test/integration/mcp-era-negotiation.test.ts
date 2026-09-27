@@ -35,6 +35,10 @@ import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import { type ServerHandle, startServer } from "../../src/api/server.ts";
 import { textContent } from "../../src/engine/content-helpers.ts";
 import type { ToolResult } from "../../src/engine/types.ts";
+import {
+  HOST_RESOURCES_CAPABILITY_KEY,
+  HOST_RESOURCES_CAPABILITY_V1,
+} from "../../src/host-resources/index.ts";
 import { log } from "../../src/observability/log.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { McpSource } from "../../src/tools/mcp-source.ts";
@@ -210,6 +214,67 @@ describe("McpSource era fallback", () => {
     try {
       await expect(source.start()).rejects.toBeDefined();
       expect(seen).not.toContain("initialize");
+    } finally {
+      await source.stop();
+      served.close();
+    }
+  });
+});
+
+/**
+ * ADR-0023: a capability declared is a capability served. The host-resources
+ * methods are server→client requests, which only the 2025 era carries, so the
+ * claim rides the 2025 `initialize` and no 2026-07-28 request envelope.
+ */
+describe("the host-resources claim", () => {
+  it("rides the 2025 initialize handshake", async () => {
+    const legacy = legacyServer();
+    let claimed: Record<string, unknown> | undefined;
+    const served = serve(async (request) => {
+      const body = await bodyOf(request);
+      if (body?.method === "initialize") {
+        claimed = (body.params?.capabilities as { extensions?: Record<string, unknown> })
+          ?.extensions;
+      }
+      return legacy(request);
+    });
+    const source = await connect(served.url);
+    try {
+      expect(source.getNegotiatedProtocolVersion()).toBe("2025-11-25");
+      expect(claimed?.[HOST_RESOURCES_CAPABILITY_KEY]).toEqual(HOST_RESOURCES_CAPABILITY_V1);
+    } finally {
+      await source.stop();
+      served.close();
+    }
+  });
+
+  it("is absent from every 2026-07-28 request envelope, the probe included", async () => {
+    const modern = modernServer({ extensions: { [TASKS_EXTENSION_ID]: {} } });
+    const envelopes: Array<{ method: string; extensions: Record<string, unknown> }> = [];
+    const served = serve(async (request) => {
+      const body = await bodyOf(request);
+      const caps = body?.params?._meta?.[CLIENT_CAPABILITIES_META_KEY] as
+        | { extensions?: Record<string, unknown> }
+        | undefined;
+      if (body?.method && caps) {
+        envelopes.push({ method: body.method, extensions: caps.extensions ?? {} });
+      }
+      return modern(request);
+    });
+    const source = await connect(served.url);
+    try {
+      expect(source.getNegotiatedProtocolVersion()).toBe("2026-07-28");
+      await source.tools();
+      // Every call to a server advertising the tasks extension takes the task
+      // wire, so this covers the wire's own envelope too.
+      await source.execute("echo", { text: "hi" });
+      const methods = envelopes.map((e) => e.method);
+      expect(methods).toContain("server/discover");
+      expect(methods).toContain("tools/list");
+      expect(methods).toContain("tools/call");
+      for (const { extensions } of envelopes) {
+        expect(extensions[HOST_RESOURCES_CAPABILITY_KEY]).toBeUndefined();
+      }
     } finally {
       await source.stop();
       served.close();

@@ -25,11 +25,11 @@ For end-user client setup walkthroughs, see [Connecting External Clients](/conne
 
 Every member sees the workspace's URL under **Workspace settings → MCP**, with a copy button. `<origin>` is the instance's configured public origin (its custom domain, when it has one), not whichever host you happen to reach it on.
 
-The methods correspond to the Streamable HTTP session lifecycle:
+The methods, on each [protocol era](#protocol-versions):
 
-- **POST** — initialize a session or send subsequent JSON-RPC messages.
-- **DELETE** — terminate a session (with a valid `Mcp-Session-Id`).
-- **GET** — returns `405 Method Not Allowed` with `Allow: POST, DELETE`. NimbleBrain does not offer the optional GET-style server-to-client SSE channel; progress and task updates flow over the POST that started them. Spec-compliant clients fall back to POST-only automatically.
+- **POST** — every JSON-RPC message. A 2025-era client opens a session with `initialize` and sends the rest of its messages in it. A `2026-07-28` client sends each request on its own.
+- **DELETE** — terminate a 2025-era session (with a valid `Mcp-Session-Id`). A `2026-07-28` client has no session to end.
+- **GET** — returns `405 Method Not Allowed` with `Allow: POST, DELETE` on either era. NimbleBrain does not offer the optional GET-style server-to-client SSE channel; progress and task updates flow over the POST that started them. Spec-compliant clients fall back to POST-only automatically.
 
 <Aside type="caution" title="Bare /mcp is refused">
 `/mcp` with no workspace is not an endpoint. It answers `404` with a JSON-RPC error naming the URL shape to use, and no workspace is ever chosen for you. A client configured with the bare URL must be reconfigured with its workspace's URL.
@@ -125,9 +125,9 @@ The endpoint serves both protocol eras on the same URL, and a request's own shap
 | A client that… | Is served |
 |---|---|
 | Negotiates `2026-07-28` (its requests carry the per-request `_meta` envelope; it probes with `server/discover`) | Per request, with no session: each request is authenticated, membership-checked and answered on its own. `server/discover` answers the server's capabilities. |
-| Opens with the 2025 `initialize` handshake (every 2025-era client, including today's Claude connector) | In a session, as below. |
+| Opens with the 2025 `initialize` handshake (`2025-11-25` or an earlier revision) | In a session, as below. |
 
-The tools, resources, workspace wall and error shapes are the same on both. Task-augmented `tools/call` (`params.task`, then `tasks/get`, `tasks/result`, `tasks/cancel`) is served to 2025-era clients only; the 2026-07-28 revision moved tasks out of the core protocol, and this endpoint does not serve the tasks extension.
+The tools, resources, workspace wall and error shapes are the same on both. Neither era advertises `listChanged` or `resources.subscribe`, so a `2026-07-28` client has nothing to open a `subscriptions/listen` stream for. Task-augmented `tools/call` (`params.task`, then `tasks/get`, `tasks/result`, `tasks/cancel`) is served to 2025-era clients only; the 2026-07-28 revision moved tasks out of the core protocol, and this endpoint does not serve the tasks extension.
 
 ## Sessions
 

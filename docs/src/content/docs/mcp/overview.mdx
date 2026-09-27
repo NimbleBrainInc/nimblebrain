@@ -35,7 +35,7 @@ The rules below apply to every extension, so a developer who learns one can pred
 
 **One namespace.** Every extension method, capability, and `_meta` key is named under `ai.nimblebrain/`, the reversed form of a domain NimbleBrain owns. This is the [naming convention the specification sets](https://modelcontextprotocol.io/specification/latest/basic/index#meta) for third-party keys, so nothing here can collide with the specification or another vendor.
 
-**Negotiated, never assumed.** A server learns which extensions the host offers from the `initialize` handshake. Server-facing capabilities arrive in `capabilities.extensions`. The bridge extensions arrive in `hostCapabilities.experimental`, because the MCP Apps handshake type has no `extensions` field yet. Code that uses an extension checks for it first and falls back when it is absent. That way the same server runs on NimbleBrain and on any other host.
+**Negotiated, never assumed.** A server learns which extensions the host offers from the client capabilities the host sends: in the `initialize` handshake on a 2025-era connection, and in each request's `_meta` envelope on `2026-07-28`. Server-facing capabilities arrive in `capabilities.extensions`, and the host claims one only on the eras where it serves it. The bridge extensions arrive in `hostCapabilities.experimental`, because the MCP Apps handshake type has no `extensions` field yet. Code that uses an extension checks for it first and falls back when it is absent. That way the same server runs on NimbleBrain and on any other host.
 
 **Specification shapes, renamed.** Where an extension does something the specification already has a shape for, it reuses that shape exactly. For example, [`ai.nimblebrain/resources/read`](/mcp/host-resources/) takes a standard `ReadResourceRequest` and returns a standard `ReadResourceResult`, and the error codes are the specification's. If the specification adopts the capability, moving to it means dropping the prefix from the method name, with no schema migration.
 
@@ -51,7 +51,7 @@ Each entry names the parties the extension connects, its identifier, and why it 
 
 | Extension | Direction | Why it exists |
 |---|---|---|
-| [`ai.nimblebrain/host-resources`](/mcp/host-resources/) | Host → server (capability), then server → host (requests) | MCP resources flow from server to client only. A server that needs a file the user gave the workspace would otherwise have it pasted into a tool argument by the model: slow, expensive in tokens, and capped by the context window. With this extension, the server reads the file from the host by URI. |
+| [`ai.nimblebrain/host-resources`](/mcp/host-resources/) | Host → server (capability), then server → host (requests), on 2025-era connections only | MCP resources flow from server to client only. A server that needs a file the user gave the workspace would otherwise have it pasted into a tool argument by the model: slow, expensive in tokens, and capped by the context window. With this extension, the server reads the file from the host by URI. |
 
 ### Between an operator's catalog and the host
 

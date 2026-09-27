@@ -1,11 +1,17 @@
 import type {
   CallToolResult,
   ClientCapabilities,
+  ClientOptions,
   CreateTaskResult,
   Implementation,
+  Request as JsonRpcRequest,
   McpSubscription,
   PriorDiscovery,
+  RequestMethod,
+  RequestOptions,
+  ResultTypeMap,
   ServerCapabilities,
+  StandardSchemaV1,
   Task,
   Transport,
 } from "@modelcontextprotocol/client";
@@ -307,6 +313,49 @@ export function toolListChanged(a: readonly Tool[], b: readonly Tool[]): boolean
       .sort()
       .join("\u0000");
   return signature(a) !== signature(b);
+}
+
+/**
+ * A `Client` whose 2025 `initialize` handshake claims more than the
+ * capabilities it was constructed with.
+ *
+ * SDK v2 fixes a client's capabilities at construction and sends that one
+ * value everywhere: in `initialize` on a 2025-era connection, and in the
+ * per-request `_meta` envelope on a 2026-07-28 one, the `server/discover`
+ * probe included. The era is known only after the probe, and capabilities
+ * cannot change once the transport is attached, so an era-specific claim goes
+ * on the one request only the 2025 era sends. `initialize` is sent through
+ * `request()` from the SDK's single handshake path, which this override
+ * rewrites; every other request passes through untouched.
+ */
+class EraCapabilitiesClient extends Client {
+  constructor(
+    clientInfo: Implementation,
+    options: ClientOptions,
+    private readonly initializeCapabilities: ClientCapabilities,
+  ) {
+    super(clientInfo, options);
+  }
+
+  override request<M extends RequestMethod>(
+    request: { method: M; params?: Record<string, unknown> },
+    options?: RequestOptions,
+  ): Promise<ResultTypeMap[M]>;
+  override request<T extends StandardSchemaV1>(
+    request: JsonRpcRequest,
+    resultSchema: T,
+    options?: RequestOptions,
+  ): Promise<StandardSchemaV1.InferOutput<T>>;
+  override request(request: JsonRpcRequest, ...rest: [unknown?, unknown?]): Promise<unknown> {
+    const sent =
+      request.method === "initialize"
+        ? { ...request, params: { ...request.params, capabilities: this.initializeCapabilities } }
+        : request;
+    // The implementation signature is wider than either SDK overload, so the
+    // super call goes through the overload-erased shape both funnel into.
+    const send = super.request as (r: JsonRpcRequest, ...a: unknown[]) => Promise<unknown>;
+    return send.call(this, sent, ...rest);
+  }
 }
 
 /**
@@ -1014,9 +1063,11 @@ export class McpSource implements ToolSource {
   }
 
   /**
-   * The capabilities this client claims. One value, read by `buildClient` and
-   * by the task wire's per-request envelope, so a connection and its task
-   * calls cannot claim different things.
+   * The capabilities this client claims on every era. One value, read by
+   * `buildClient` and by the task wire's per-request envelope, so a connection
+   * and its task calls cannot claim different things. On a 2026-07-28
+   * connection the SDK attaches it to every request's `_meta` envelope, the
+   * `server/discover` probe included.
    *
    * `tasks` is the 2025-11-25 task capability: a legacy-era server with
    * `execution.taskSupport` on a tool sees that we will attach
@@ -1026,18 +1077,24 @@ export class McpSource implements ToolSource {
    * claimed here, because a claim on the connection would opt every SDK call
    * in, and the SDK cannot read a task result; the task wire claims it per
    * request instead (`mcp-task-client.ts`).
-   *
-   * The `extensions` block carries NimbleBrain-namespaced vendor capabilities
-   * (e.g. `ai.nimblebrain/host-resources`) per the MCP extensions spec —
-   * https://modelcontextprotocol.io/extensions/overview. On a 2025-era
-   * connection they ride `initialize`; on a 2026-07-28 connection the SDK
-   * attaches them to every request's `_meta` envelope.
    */
   private static readonly CAPABILITIES: ClientCapabilities = {
     tasks: {
       requests: { tools: { call: {} } },
       cancel: {},
     },
+  };
+
+  /**
+   * What the 2025 `initialize` handshake claims: `CAPABILITIES` plus the
+   * NimbleBrain-namespaced extensions (`ai.nimblebrain/host-resources`, per
+   * https://modelcontextprotocol.io/extensions/overview). The host-resources
+   * methods are server→client requests, a channel only the 2025 era has, so
+   * the extension is claimed only on the handshake of a connection that can
+   * reach them (ADR-0023).
+   */
+  private static readonly INITIALIZE_CAPABILITIES: ClientCapabilities = {
+    ...McpSource.CAPABILITIES,
     extensions: hostExtensions(),
   };
 
@@ -1052,10 +1109,11 @@ export class McpSource implements ToolSource {
    * remote connectors move eras on their own schedules.
    */
   private buildClient(): Client {
-    return new Client(CLIENT_INFO, {
-      capabilities: McpSource.CAPABILITIES,
-      versionNegotiation: { mode: "auto" },
-    });
+    return new EraCapabilitiesClient(
+      CLIENT_INFO,
+      { capabilities: McpSource.CAPABILITIES, versionNegotiation: { mode: "auto" } },
+      McpSource.INITIALIZE_CAPABILITIES,
+    );
   }
 
   /**
@@ -1066,9 +1124,9 @@ export class McpSource implements ToolSource {
    * the surface).
    *
    * These are server→client requests, a channel only the 2025 era has: on a
-   * 2026-07-28 connection the SDK drops inbound requests, so a connector that
-   * negotiates the modern era cannot reach them. The capability is still
-   * advertised on both eras; it is the connector's to read.
+   * 2026-07-28 connection the SDK drops inbound requests. The capability is
+   * claimed in the 2025 `initialize` only (`INITIALIZE_CAPABILITIES`), so a
+   * connector sees it exactly where it can call these methods.
    *
    * Handlers do three things, in order: rate-limit check (throws
    * `-32004` on exhaustion), delegate to the resolver (which enforces
