@@ -4,7 +4,7 @@
  * described. Plus `McpSource.listSkills`, the enumeration those checks run on.
  */
 
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, spyOn } from "bun:test";
 import { createHash } from "node:crypto";
 import { NoopEventSink } from "../../../src/adapters/noop-events.ts";
 import { disambiguateSkillNames } from "../../../src/skills/connector-skills.ts";
@@ -16,6 +16,7 @@ import {
   verifySkillEntrypoint,
 } from "../../../src/skills/skills-extension.ts";
 import { McpSource } from "../../../src/tools/mcp-source.ts";
+import { makeInProcessSource } from "../../helpers/in-process-source.ts";
 
 const SKILL_MD = `---
 name: refunds
@@ -188,6 +189,23 @@ describe("McpSource skills extension", () => {
     expect(makeSource(declares, "legacy").skillsDiscovery()).toBe("declared");
     expect(makeSource({}, "modern").skillsDiscovery()).toBe("none");
     expect(makeSource({}, "legacy").skillsDiscovery()).toBe("probe");
+  });
+
+  it("never asks an undeclared in-process source, the platform's own app", async () => {
+    const source = await makeInProcessSource("platform-app", []);
+    try {
+      expect(source.getNegotiatedProtocolVersion()).not.toBe("2026-07-28");
+      expect(source.skillsDiscovery()).toBe("none");
+      const client = source.getClient();
+      const request = client ? spyOn(client, "request") : undefined;
+      // Discovery's gate: the runtime calls `listSkills` only when this is not `none`.
+      if (source.skillsDiscovery() !== "none") await source.listSkills();
+      expect(request?.mock.calls.some(([r]) => (r as { method?: string }).method === "skills/list")).toBe(
+        false,
+      );
+    } finally {
+      await source.stop();
+    }
   });
 
   it("reads -32601 on a 2025-era probe as a complete listing of nothing", async () => {

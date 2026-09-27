@@ -2243,7 +2243,8 @@ export class McpSource implements ToolSource {
    *   Declaring is what commits a server to the method.
    * - `none`: a 2026-07-28 connection without the declaration. The
    *   extensions a modern server advertises are complete, so it has no skills.
-   * - `probe`: a 2025-era connection without the declaration. Some SDKs omit
+   * - `probe`: a 2025-era remote connection without the declaration (an
+   *   in-process source is the platform's own app and is `none`). Some SDKs omit
    *   `capabilities.extensions` from the legacy `initialize` result (the
    *   Python `mcp` SDK does), so a server that serves the extension cannot say
    *   so there. Discovery asks once per window, and `-32601` means none.
@@ -2254,6 +2255,10 @@ export class McpSource implements ToolSource {
    */
   skillsDiscovery(): "declared" | "probe" | "none" {
     if (SKILLS_EXTENSION_ID in this.serverExtensions()) return "declared";
+    // An in-process source is the platform's own app: its skills reach the
+    // model through the skills source and the filesystem pool, so an
+    // undeclared one is never asked.
+    if (this.mode.type === "inProcess") return "none";
     return this.protocolEra === "modern" ? "none" : "probe";
   }
 
