@@ -11,6 +11,7 @@
 
 import { Cron } from "croner";
 import { log } from "../../observability/log.ts";
+import { runDetached } from "../../runtime/request-context.ts";
 import { WorkspaceRootMissingError } from "../../workspace/context.ts";
 import {
   appendRun,
@@ -667,7 +668,10 @@ export class Scheduler {
       }
     }
 
-    this.timer = setTimeout(() => this.onTimer(), minDelay);
+    // Detached: `reload()` arms from inside the tool call that mutated an
+    // automation, and each fire re-arms from the previous one, so a timer that
+    // kept its creator's context would run every later tick as that request.
+    this.timer = runDetached(() => setTimeout(() => this.onTimer(), minDelay));
   }
 
   /**

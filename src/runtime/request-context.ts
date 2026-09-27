@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
+import { context, ROOT_CONTEXT } from "@opentelemetry/api";
 import type { ToolPromotionControls } from "../engine/types.ts";
 import type { UserIdentity } from "../identity/provider.ts";
 import type { ModelSlots } from "./types.ts";
@@ -109,6 +110,19 @@ const storage = new AsyncLocalStorage<RequestContext>();
  */
 export function runWithRequestContext<T>(ctx: RequestContext, fn: () => T): T {
   return storage.run(ctx, fn);
+}
+
+/**
+ * Run `fn` with no request context and no active trace.
+ *
+ * For arming work that outlives the caller — a timer, a background loop. A
+ * `setTimeout` captures the async context it is created in, so a timer armed
+ * inside a request fires as that request (its identity, workspace, and trace)
+ * and hands the same context to every timer it re-arms. Arm through this and
+ * each fire starts clean, like boot-time work does.
+ */
+export function runDetached<T>(fn: () => T): T {
+  return storage.exit(() => context.with(ROOT_CONTEXT, fn));
 }
 
 /**
