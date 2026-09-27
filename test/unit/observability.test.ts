@@ -10,7 +10,12 @@ import {
   requestIdentityAttrs,
   withSpan,
 } from "../../src/observability/index.ts";
-import { type RequestContext, runWithRequestContext } from "../../src/runtime/request-context.ts";
+import {
+  getRequestContext,
+  type RequestContext,
+  runDetached,
+  runWithRequestContext,
+} from "../../src/runtime/request-context.ts";
 
 const exporter = new InMemorySpanExporter();
 
@@ -108,6 +113,40 @@ describe("currentTraceId / injectTraceparent", () => {
       const headers = injectTraceparent({} as Record<string, string>);
       expect(headers.traceparent).toContain(id ?? "");
     });
+  });
+});
+
+describe("runDetached", () => {
+  // A timer captures the context it is created in, so what matters is the
+  // context each timer's callback sees, not the context at the call site.
+  function fireLater<T>(read: () => T): Promise<T> {
+    return new Promise((resolve) => setTimeout(() => resolve(read()), 0));
+  }
+  const read = () => ({ traceId: currentTraceId(), ctx: getRequestContext() });
+
+  it("arms a timer that fires outside the caller's trace and request", async () => {
+    await runWithRequestContext(identityCtx(), () =>
+      withSpan("agent.turn", {}, async () => {
+        const callerTrace = currentTraceId();
+        const inherited = await fireLater(read);
+        const detached = await runDetached(() => fireLater(read));
+
+        expect(inherited.traceId).toBe(callerTrace);
+        expect(inherited.ctx?.workspaceId).toBe("ws_abc123");
+        expect(detached.traceId).toBeUndefined();
+        expect(detached.ctx).toBeUndefined();
+      }),
+    );
+  });
+
+  it("opens a new root trace for a span started inside it", async () => {
+    await withSpan("agent.turn", {}, async () => {
+      await runDetached(() => withSpan("llm.call", {}, async () => {}));
+    });
+    const outer = spanNamed("agent.turn");
+    const detached = spanNamed("llm.call");
+    expect(detached.spanContext().traceId).not.toBe(outer.spanContext().traceId);
+    expect(detached.parentSpanContext).toBeUndefined();
   });
 });
 

@@ -20,6 +20,7 @@ import {
   type Attributes,
   context,
   propagation,
+  ROOT_CONTEXT,
   type Span,
   SpanStatusCode,
   trace,
@@ -182,6 +183,11 @@ export async function withInboundSpan<T>(
   });
   const parent = propagation.extract(context.active(), carrier);
   return context.with(parent, () => withSpan(name, attrs, fn));
+}
+
+/** Run `fn` with no active span, so any span it opens starts a new trace. */
+export function withRootContext<T>(fn: () => T): T {
+  return context.with(ROOT_CONTEXT, fn);
 }
 
 /** The active trace id (32-hex), or undefined outside any span. For log

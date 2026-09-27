@@ -1,7 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import { context, ROOT_CONTEXT } from "@opentelemetry/api";
 import type { ToolPromotionControls } from "../engine/types.ts";
 import type { UserIdentity } from "../identity/provider.ts";
+import { withRootContext } from "../observability/tracing.ts";
 import type { ModelSlots } from "./types.ts";
 
 /**
@@ -122,7 +122,7 @@ export function runWithRequestContext<T>(ctx: RequestContext, fn: () => T): T {
  * each fire starts clean, like boot-time work does.
  */
 export function runDetached<T>(fn: () => T): T {
-  return storage.exit(() => context.with(ROOT_CONTEXT, fn));
+  return storage.exit(() => withRootContext(fn));
 }
 
 /**
