@@ -28,6 +28,8 @@ const PINNED_MAX_OUTPUT = 16384;
 /** What the override file holds; `set_model_config` clears it in this fake. */
 let pinnedMaxOutput: number | undefined = PINNED_MAX_OUTPUT;
 let refreshFails = false;
+/** While set, `set_model_config` waits on it, holding the save in flight. */
+let saveGate: Promise<void> | null = null;
 const tools: string[] = [];
 
 mock.module("../src/api/client", () => ({
@@ -51,6 +53,7 @@ mock.module("../src/api/client", () => ({
         isError: false,
       };
     }
+    if (tool === "set_model_config" && saveGate) await saveGate;
     if (tool === "set_model_config" && args.clearMaxOutputTokens === true) {
       pinnedMaxOutput = undefined;
     }
@@ -74,6 +77,7 @@ afterEach(() => {
   mounted = null;
   pinnedMaxOutput = PINNED_MAX_OUTPUT;
   refreshFails = false;
+  saveGate = null;
   tools.length = 0;
 });
 
@@ -111,12 +115,22 @@ async function clear(el: HTMLInputElement) {
   });
 }
 
-async function save(container: HTMLElement) {
+/**
+ * Whether the field sits in a disabled fieldset. Browsers report such a field
+ * as `:disabled`; happy-dom does not propagate a fieldset's disabled state.
+ */
+const locked = (el: HTMLElement) => el.closest("fieldset:disabled") !== null;
+
+function saveButton(container: HTMLElement) {
   const button = Array.from(container.querySelectorAll("button")).find((b) =>
-    b.textContent?.includes("Save"),
+    b.textContent?.includes("Sav"),
   );
   if (!button) throw new Error("Save button not found");
-  await act(async () => button.click());
+  return button;
+}
+
+async function save(container: HTMLElement) {
+  await act(async () => saveButton(container).click());
   await flush();
 }
 
@@ -143,5 +157,23 @@ describe("the Model tab after clearing an override", () => {
     await clear(maxOutputField(mounted.container)!);
     await save(mounted.container);
     expect(mounted.container.textContent).toContain("Model configuration saved.");
+  });
+
+  // The save ends by reloading every field, so an edit made mid-save would be
+  // overwritten; the form is locked until the reload lands.
+  test("locks the fields while the save is in flight", async () => {
+    let release = () => {};
+    saveGate = new Promise((resolve) => {
+      release = resolve;
+    });
+    mounted = await mount();
+    await clear(maxOutputField(mounted.container)!);
+    await act(async () => saveButton(mounted!.container).click());
+    await flush();
+    expect(locked(maxOutputField(mounted.container)!)).toBe(true);
+
+    await act(async () => release());
+    await flush();
+    expect(locked(maxOutputField(mounted.container)!)).toBe(false);
   });
 });

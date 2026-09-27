@@ -170,146 +170,151 @@ export function ModelTab() {
       feedback={feedback}
       save={{ onSave: handleSave, saving, disabled: saving }}
     >
-      <Section title="Models" flush>
-        <div className="space-y-4">
-          <ModelSelect
-            id="defaultModel"
-            label="Default Model"
-            value={defaultModel}
-            onChange={setDefaultModel}
-            availableModels={availableModels}
-            placeholder={
-              resolved ? `Use the default (${resolved.models.default})` : "Use the default"
-            }
-          />
-
-          <ModelSelect
-            id="fastModel"
-            label="Fast Model"
-            value={fastModel}
-            onChange={setFastModel}
-            availableModels={availableModels}
-            placeholder={
-              resolved
-                ? `Follow the default model (${resolved.models.fast})`
-                : "Follow the default model"
-            }
-          />
-        </div>
-      </Section>
-
-      <Section title="Limits" description="Runtime caps applied to every conversation.">
-        <div className="space-y-4">
-          <div className="space-y-1.5">
-            <Label htmlFor="maxIterations">Max Iterations</Label>
-            <Input
-              id="maxIterations"
-              type="number"
-              min={1}
-              max={25}
-              value={maxIterations ?? ""}
-              placeholder={resolved ? String(resolved.maxIterations) : ""}
-              onChange={(e) => setMaxIterations(numberOrNull(e.target.value))}
-            />
-          </div>
-
-          <div className="space-y-1.5">
-            <Label htmlFor="maxInputTokens">Max Input Tokens</Label>
-            <Input
-              id="maxInputTokens"
-              type="number"
-              min={0}
-              value={maxInputTokens ?? ""}
-              placeholder={resolved ? String(resolved.maxInputTokens) : ""}
-              onChange={(e) => setMaxInputTokens(numberOrNull(e.target.value))}
-            />
-          </div>
-
-          <div className="space-y-1.5">
-            <Label htmlFor="maxOutputTokens">Max Output Tokens</Label>
-            <Input
-              id="maxOutputTokens"
-              type="number"
-              min={0}
-              value={maxOutputTokens ?? ""}
-              placeholder={resolved ? String(resolved.maxOutputTokens) : ""}
-              onChange={(e) => setMaxOutputTokens(numberOrNull(e.target.value))}
-            />
-          </div>
-        </div>
-      </Section>
-
-      <Section
-        title="Extended Thinking"
-        description="Applies to every provider that supports reasoning. Billed as output tokens; adaptive only engages when the model judges it useful."
-      >
-        <div className="space-y-4">
-          <div className="space-y-1.5">
-            <Label htmlFor="thinking">Mode</Label>
-            <Select
-              id="thinking"
-              value={thinking}
-              onChange={(e) =>
-                setThinking(e.target.value as ThinkingMode | typeof THINKING_DEFAULT)
+      {/* Locked while saving: the save ends by reloading every field from
+          `get_config`, which would overwrite an edit made mid-save. */}
+      <fieldset disabled={saving} className="min-w-0 space-y-6">
+        <Section title="Models" flush>
+          <div className="space-y-4">
+            <ModelSelect
+              id="defaultModel"
+              label="Default Model"
+              value={defaultModel}
+              onChange={setDefaultModel}
+              availableModels={availableModels}
+              placeholder={
+                resolved ? `Use the default (${resolved.models.default})` : "Use the default"
               }
-            >
-              <option value={THINKING_DEFAULT}>
-                Default (reasoning models think at medium effort, others not at all)
-              </option>
-              <option value="off">
-                Off — not enforceable on Opus 4.7/4.8, Sonnet 5, or Opus 5
-              </option>
-              <option value="adaptive">Adaptive — model decides per call</option>
-              <option value="enabled">Enabled — always reason</option>
-            </Select>
-          </div>
+            />
 
-          {tuningAppliesTo(thinking) && (
+            <ModelSelect
+              id="fastModel"
+              label="Fast Model"
+              value={fastModel}
+              onChange={setFastModel}
+              availableModels={availableModels}
+              placeholder={
+                resolved
+                  ? `Follow the default model (${resolved.models.fast})`
+                  : "Follow the default model"
+              }
+            />
+          </div>
+        </Section>
+
+        <Section title="Limits" description="Runtime caps applied to every conversation.">
+          <div className="space-y-4">
             <div className="space-y-1.5">
-              <Label htmlFor="thinkingEffort">Effort</Label>
+              <Label htmlFor="maxIterations">Max Iterations</Label>
+              <Input
+                id="maxIterations"
+                type="number"
+                min={1}
+                max={25}
+                value={maxIterations ?? ""}
+                placeholder={resolved ? String(resolved.maxIterations) : ""}
+                onChange={(e) => setMaxIterations(numberOrNull(e.target.value))}
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <Label htmlFor="maxInputTokens">Max Input Tokens</Label>
+              <Input
+                id="maxInputTokens"
+                type="number"
+                min={0}
+                value={maxInputTokens ?? ""}
+                placeholder={resolved ? String(resolved.maxInputTokens) : ""}
+                onChange={(e) => setMaxInputTokens(numberOrNull(e.target.value))}
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <Label htmlFor="maxOutputTokens">Max Output Tokens</Label>
+              <Input
+                id="maxOutputTokens"
+                type="number"
+                min={0}
+                value={maxOutputTokens ?? ""}
+                placeholder={resolved ? String(resolved.maxOutputTokens) : ""}
+                onChange={(e) => setMaxOutputTokens(numberOrNull(e.target.value))}
+              />
+            </div>
+          </div>
+        </Section>
+
+        <Section
+          title="Extended Thinking"
+          description="Applies to every provider that supports reasoning. Billed as output tokens; adaptive only engages when the model judges it useful."
+        >
+          <div className="space-y-4">
+            <div className="space-y-1.5">
+              <Label htmlFor="thinking">Mode</Label>
               <Select
-                id="thinkingEffort"
-                value={thinkingEffort}
+                id="thinking"
+                value={thinking}
                 onChange={(e) =>
-                  setThinkingEffort(e.target.value as ThinkingEffort | typeof EFFORT_DEFAULT)
+                  setThinking(e.target.value as ThinkingMode | typeof THINKING_DEFAULT)
                 }
               >
-                <option value={EFFORT_DEFAULT}>Default (medium)</option>
-                {THINKING_EFFORT_OPTIONS.map((o) => (
-                  <option key={o.value} value={o.value}>
-                    {o.label}
-                  </option>
-                ))}
+                <option value={THINKING_DEFAULT}>
+                  Default (reasoning models think at medium effort, others not at all)
+                </option>
+                <option value="off">
+                  Off — not enforceable on Opus 4.7/4.8, Sonnet 5, or Opus 5
+                </option>
+                <option value="adaptive">Adaptive — model decides per call</option>
+                <option value="enabled">Enabled — always reason</option>
               </Select>
-              <p className="text-xs text-muted-foreground">
-                How hard to think. Applies to the default policy too, not only to Enabled. Carries
-                to every provider — models that meter thinking in tokens get a budget sized from it.
-              </p>
             </div>
-          )}
 
-          {tuningAppliesTo(thinking) && (
-            <div className="space-y-1.5">
-              <Label htmlFor="thinkingBudgetTokens">Thinking Budget Tokens</Label>
-              <Input
-                id="thinkingBudgetTokens"
-                type="number"
-                min={1024}
-                placeholder="Not set — Effort applies"
-                value={thinkingBudgetTokens ?? ""}
-                onChange={(e) =>
-                  setThinkingBudgetTokens(e.target.value === "" ? null : Number(e.target.value))
-                }
-              />
-              <p className="text-xs text-muted-foreground">
-                Optional. Min 1024, and capped to leave room for the answer. Only honored by
-                providers that meter thinking in tokens (Anthropic up to 4.6, Gemini 2.5); elsewhere
-                Effort applies.
-              </p>
-            </div>
-          )}
-        </div>
-      </Section>
+            {tuningAppliesTo(thinking) && (
+              <div className="space-y-1.5">
+                <Label htmlFor="thinkingEffort">Effort</Label>
+                <Select
+                  id="thinkingEffort"
+                  value={thinkingEffort}
+                  onChange={(e) =>
+                    setThinkingEffort(e.target.value as ThinkingEffort | typeof EFFORT_DEFAULT)
+                  }
+                >
+                  <option value={EFFORT_DEFAULT}>Default (medium)</option>
+                  {THINKING_EFFORT_OPTIONS.map((o) => (
+                    <option key={o.value} value={o.value}>
+                      {o.label}
+                    </option>
+                  ))}
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  How hard to think. Applies to the default policy too, not only to Enabled. Carries
+                  to every provider — models that meter thinking in tokens get a budget sized from
+                  it.
+                </p>
+              </div>
+            )}
+
+            {tuningAppliesTo(thinking) && (
+              <div className="space-y-1.5">
+                <Label htmlFor="thinkingBudgetTokens">Thinking Budget Tokens</Label>
+                <Input
+                  id="thinkingBudgetTokens"
+                  type="number"
+                  min={1024}
+                  placeholder="Not set — Effort applies"
+                  value={thinkingBudgetTokens ?? ""}
+                  onChange={(e) =>
+                    setThinkingBudgetTokens(e.target.value === "" ? null : Number(e.target.value))
+                  }
+                />
+                <p className="text-xs text-muted-foreground">
+                  Optional. Min 1024, and capped to leave room for the answer. Only honored by
+                  providers that meter thinking in tokens (Anthropic up to 4.6, Gemini 2.5);
+                  elsewhere Effort applies.
+                </p>
+              </div>
+            )}
+          </div>
+        </Section>
+      </fieldset>
     </SettingsFormPage>
   );
 }
