@@ -785,6 +785,14 @@ export interface EngineResult {
   stopReason: StopReason;
   /** Final LLM call's finish reason. Useful for diagnosing why the loop ended. */
   finishReason?: FinishReason;
+  /**
+   * Final LLM call's provider-native stop reason (`LanguageModelV4FinishReason.raw`,
+   * e.g. Anthropic `end_turn` / `compaction`), or `NO_FINISH_PART_RAW` when the
+   * stream ended without a finish part. Several raw values collapse to the
+   * unified "other", so this is what names the actual cause. Absent when the
+   * provider reported none.
+   */
+  finishReasonRaw?: string;
 }
 
 export interface ToolCallRecord {

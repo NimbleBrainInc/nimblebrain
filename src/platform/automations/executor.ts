@@ -104,6 +104,10 @@ export interface TaskFnResult {
   runId: string;
   toolCalls: TaskFnToolCall[];
   stopReason: string;
+  /** The last model call's unified finish reason (see runtime `TaskResult`). */
+  finishReason?: string;
+  /** The last model call's provider-native stop reason (see runtime `TaskResult`). */
+  finishReasonRaw?: string;
   usage: { inputTokens: number; outputTokens: number; iterations: number };
 }
 
@@ -313,6 +317,27 @@ function unreachableConnectorCalls(toolCalls: TaskFnResult["toolCalls"]): string
   return names;
 }
 
+/**
+ * The error for a failed run whose stopReason is "other". That value covers
+ * several distinct outcomes, so the status alone cannot say why the run
+ * failed. A last call that declared tool use (unified "tool-calls") yet ended
+ * the run carried no readable tool call; any other case is a stop the SDK
+ * could not classify (an unrecognized provider stop, a stream that ended with
+ * no finish part). Both name the model call's raw stop reason.
+ */
+function unrecognizedStopError(
+  status: AutomationRun["status"],
+  stopReason: AutomationRun["stopReason"],
+  data: Pick<TaskFnResult, "finishReason" | "finishReasonRaw">,
+): string | undefined {
+  if (status !== "failure" || stopReason !== "other") return undefined;
+  const raw = `provider stop reason: ${data.finishReasonRaw ?? "not reported"}`;
+  if (data.finishReason === "tool-calls") {
+    return `Model ended its turn to call a tool, but no tool call could be read from the response (${raw}).`;
+  }
+  return `Model turn ended without a recognized stop (${raw}).`;
+}
+
 function mapResultToRun(
   automation: Automation,
   startedAt: string,
@@ -364,6 +389,7 @@ function mapResultToRun(
         `the model finished and wrote a deliverable anyway.`;
     }
   }
+  error ??= unrecognizedStopError(status, stopReason, data);
 
   return {
     // Adopt the runtime's runId verbatim — the run, its index summary, and its

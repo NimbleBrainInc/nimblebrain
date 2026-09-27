@@ -582,6 +582,15 @@ function deriveStopReason(finish: FinishReason | undefined): StopReason {
 }
 
 /**
+ * The provider-native finish reason as an optional `finishReasonRaw` field.
+ * Several distinct provider stops share the unified "other", so the raw value
+ * is what names the cause. Empty when the provider reported none.
+ */
+function rawFinishReasonField(raw: string | undefined): { finishReasonRaw?: string } {
+  return raw ? { finishReasonRaw: raw } : {};
+}
+
+/**
  * Sanitize messages before sending to the LLM API.
  * Removes empty text content blocks that cause "text content blocks must be non-empty" errors.
  * This can happen when conversation history contains assistant messages from tool-only turns.
@@ -1149,6 +1158,8 @@ export class AgentEngine {
     // stop reason can reflect why the model actually exited (length cap,
     // content filter, etc.) rather than always reporting "complete".
     let lastFinishReason: FinishReason | undefined;
+    // The same call's provider-native stop reason (see `EngineResult.finishReasonRaw`).
+    let lastFinishReasonRaw: string | undefined;
 
     // Auto-resume bookkeeping for output-ceiling truncations. When a turn
     // is cut off at the model's max output tokens (`finishReason: "length"`)
@@ -1313,6 +1324,8 @@ export class AgentEngine {
         // `unified` is non-optional in the V4 spec and stream.ts defaults
         // to "other" if no finish part arrives, so no fallback needed.
         lastFinishReason = response.finishReason.unified;
+        const rawFinish = rawFinishReasonField(response.finishReason.raw);
+        lastFinishReasonRaw = rawFinish.finishReasonRaw;
 
         // Record the atomic LLM call fact
         this.events.emit({
@@ -1334,6 +1347,7 @@ export class AgentEngine {
             // windowing that returned over budget.
             estimatedInputTokens,
             finishReason: lastFinishReason,
+            ...rawFinish,
           },
         });
 
@@ -1473,6 +1487,7 @@ export class AgentEngine {
       iteration,
       maxIter,
       lastFinishReason,
+      lastFinishReasonRaw,
       totalMs,
       output,
       allToolCalls,
@@ -1492,6 +1507,7 @@ export class AgentEngine {
     iteration: number;
     maxIter: number;
     lastFinishReason: FinishReason | undefined;
+    lastFinishReasonRaw: string | undefined;
     totalMs: number;
     output: string;
     allToolCalls: ToolCallRecord[];
@@ -1503,6 +1519,7 @@ export class AgentEngine {
       iteration,
       maxIter,
       lastFinishReason,
+      lastFinishReasonRaw,
       totalMs,
       output,
       allToolCalls,
@@ -1530,6 +1547,7 @@ export class AgentEngine {
       llmMs: cumulativeLlmMs,
       stopReason,
       ...(lastFinishReason !== undefined ? { finishReason: lastFinishReason } : {}),
+      ...(lastFinishReasonRaw !== undefined ? { finishReasonRaw: lastFinishReasonRaw } : {}),
     };
   }
 

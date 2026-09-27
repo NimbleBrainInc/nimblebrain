@@ -230,6 +230,67 @@ describe("createDirectExecutor — stopReason → status", () => {
 });
 
 // ---------------------------------------------------------------------------
+// stopReason "other" is shared by several provider outcomes, so a failed run
+// carries the model call's raw stop reason in `error`.
+// ---------------------------------------------------------------------------
+
+describe("createDirectExecutor — stopReason other names the raw stop reason", () => {
+	function taskFnWith(result: Partial<TaskFnResult>): TaskFn {
+		return async (): Promise<TaskFnResult> => ({
+			output: "done",
+			runId: "run_test000000",
+			toolCalls: [],
+			stopReason: "other",
+			usage: { inputTokens: 10, outputTokens: 5, iterations: 1 },
+			...result,
+		});
+	}
+
+	test("sets error naming the provider stop reason", async () => {
+		const executor = createDirectExecutor(
+			taskFnWith({ finishReasonRaw: "compaction" }),
+			() => ({}),
+		);
+		const { run } = await executor(makeAutomation());
+		expect(run.status).toBe("failure");
+		expect(run.stopReason).toBe("other");
+		expect(run.error).toBe(
+			"Model turn ended without a recognized stop (provider stop reason: compaction).",
+		);
+	});
+
+	test("says so when the provider reported no stop reason", async () => {
+		const executor = createDirectExecutor(taskFnWith({}), () => ({}));
+		const { run } = await executor(makeAutomation());
+		expect(run.error).toBe(
+			"Model turn ended without a recognized stop (provider stop reason: not reported).",
+		);
+	});
+
+	test("names a declared tool call that could not be read", async () => {
+		const executor = createDirectExecutor(
+			taskFnWith({ finishReason: "tool-calls", finishReasonRaw: "tool_use" }),
+			() => ({}),
+		);
+		const { run } = await executor(makeAutomation());
+		expect(run.status).toBe("failure");
+		expect(run.error).toBe(
+			"Model ended its turn to call a tool, but no tool call could be read from the response (provider stop reason: tool_use).",
+		);
+	});
+
+	test("leaves other stop reasons' error unset", async () => {
+		const executor = createDirectExecutor(
+			taskFnWith({ stopReason: "length", finishReasonRaw: "max_tokens" }),
+			() => ({}),
+		);
+		const { run } = await executor(makeAutomation());
+		expect(run.status).toBe("failure");
+		expect(run.error).toBeUndefined();
+	});
+});
+
+// ---------------------------------------------------------------------------
 // Connector-unreachable de-masking. A run can end `complete` (→ would-be
 // `success`) while a tool call hit a connector that couldn't be routed — the
 // agent "completes" by writing around the gap. That is the silent failure

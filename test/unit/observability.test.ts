@@ -2,6 +2,8 @@ import { SpanStatusCode } from "@opentelemetry/api";
 import { beforeAll, beforeEach, describe, expect, it } from "bun:test";
 import { InMemorySpanExporter, SimpleSpanProcessor } from "@opentelemetry/sdk-trace-base";
 import { NodeTracerProvider } from "@opentelemetry/sdk-trace-node";
+import type { LanguageModelV4, LanguageModelV4StreamPart } from "@ai-sdk/provider";
+import { callModel, NO_FINISH_PART_RAW } from "../../src/model/stream.ts";
 import { log } from "../../src/observability/log.ts";
 import type { UserIdentity } from "../../src/identity/provider.ts";
 import {
@@ -92,6 +94,65 @@ describe("withSpan", () => {
     const child = spanNamed("llm.call");
     expect(child.spanContext().traceId).toBe(turn.spanContext().traceId);
     expect(child.parentSpanContext?.spanId).toBe(turn.spanContext().spanId);
+  });
+});
+
+describe("llm.call span", () => {
+  function finishOnlyModel(finish: LanguageModelV4StreamPart | null): LanguageModelV4 {
+    return {
+      specificationVersion: "v4",
+      provider: "test",
+      modelId: "test-1",
+      supportedUrls: {},
+      async doGenerate() {
+        throw new Error("doGenerate not used");
+      },
+      async doStream() {
+        return {
+          stream: new ReadableStream<LanguageModelV4StreamPart>({
+            start(controller) {
+              controller.enqueue({ type: "stream-start", warnings: [] });
+              if (finish) controller.enqueue(finish);
+              controller.close();
+            },
+          }),
+        };
+      },
+    };
+  }
+  const usage = {
+    inputTokens: { total: 1, noCache: undefined, cacheRead: undefined, cacheWrite: undefined },
+    outputTokens: { total: 1, text: undefined, reasoning: undefined },
+  };
+  const prompt = { prompt: [] };
+
+  it("stamps the provider's raw finish reason next to the unified one", async () => {
+    await callModel(
+      finishOnlyModel({
+        type: "finish",
+        usage,
+        finishReason: { unified: "other", raw: "compaction" },
+      }),
+      prompt,
+      () => {},
+    );
+    const attrs = spanNamed("llm.call").attributes;
+    expect(attrs["llm.finish_reason"]).toBe("other");
+    expect(attrs["llm.finish_reason_raw"]).toBe("compaction");
+  });
+
+  it("stamps the no-finish-part marker when the stream ends without a finish", async () => {
+    await callModel(finishOnlyModel(null), prompt, () => {});
+    expect(spanNamed("llm.call").attributes["llm.finish_reason_raw"]).toBe(NO_FINISH_PART_RAW);
+  });
+
+  it("omits the raw attribute when the provider reports none", async () => {
+    await callModel(
+      finishOnlyModel({ type: "finish", usage, finishReason: { unified: "stop", raw: undefined } }),
+      prompt,
+      () => {},
+    );
+    expect(spanNamed("llm.call").attributes["llm.finish_reason_raw"]).toBeUndefined();
   });
 });
 

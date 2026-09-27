@@ -2278,6 +2278,36 @@ describe("AgentEngine", () => {
       const llmDone = events.find((e) => e.type === "llm.done");
       expect(llmDone).toBeDefined();
       expect((llmDone!.data as Record<string, unknown>).finishReason).toBe("length");
+      // No raw reason reported → the field is absent, not undefined-valued.
+      expect("finishReasonRaw" in (llmDone!.data as Record<string, unknown>)).toBe(false);
+    });
+
+    it("carries the raw finish reason on llm.done and the engine result", async () => {
+      const events: EngineEvent[] = [];
+      const sink: EventSink = {
+        emit(event: EngineEvent) {
+          events.push(event);
+        },
+      };
+
+      const model = createEchoModel({
+        responses: [{ text: "", finishReason: "other", finishReasonRaw: "compaction" }],
+      });
+      const result = await new AgentEngine(
+        model,
+        new StaticToolRouter([], () => ({ content: textContent(""), isError: false })),
+        sink,
+      ).run(
+        defaultConfig,
+        "",
+        [{ role: "user", content: [{ type: "text", text: "x" }] }],
+        [],
+      );
+
+      const llmDone = events.find((e) => e.type === "llm.done");
+      expect((llmDone!.data as Record<string, unknown>).finishReasonRaw).toBe("compaction");
+      expect(result.stopReason).toBe("other");
+      expect(result.finishReasonRaw).toBe("compaction");
     });
 
     // The estimate is computed in `callOnce`, over the prompt the cache policy

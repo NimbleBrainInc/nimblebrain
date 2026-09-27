@@ -839,6 +839,10 @@ export class EventSourcedConversationStore implements ConversationStore, EventSi
   /** Map an engine `llm.done` to a persisted `llm.response`, backfilling usage if omitted. */
   private mapLlmDone({ ts, d, runId }: EngineEventContext): LlmResponseEvent {
     const finishReason = d.finishReason as LlmResponseEvent["finishReason"];
+    const finishReasonRaw =
+      typeof d.finishReasonRaw === "string" && d.finishReasonRaw !== ""
+        ? d.finishReasonRaw
+        : undefined;
     // Defensive default at the write boundary: a malformed emitter
     // must not produce `usage: undefined` in the JSONL — that
     // corrupts the file forever and crashes every downstream reader.
@@ -865,6 +869,7 @@ export class EventSourcedConversationStore implements ConversationStore, EventSi
       usage,
       llmMs: (d.llmMs as number) ?? 0,
       ...(finishReason !== undefined ? { finishReason } : {}),
+      ...(finishReasonRaw !== undefined ? { finishReasonRaw } : {}),
     };
   }
 

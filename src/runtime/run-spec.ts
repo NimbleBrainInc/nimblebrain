@@ -186,6 +186,10 @@ export interface RunHandle {
   skillName: string | null;
   toolCalls: ChatResult["toolCalls"];
   stopReason: string;
+  /** The last model call's unified finish reason. See `EngineResult.finishReason`. */
+  finishReason?: string;
+  /** The last model call's provider-native stop reason. See `EngineResult.finishReasonRaw`. */
+  finishReasonRaw?: string;
   usage: TurnUsage;
 }
 
