@@ -68,7 +68,7 @@ Each pass through the loop is one **iteration**. Defaults:
 |---------|---------|----------|
 | Max iterations | 25 | 50 |
 | Max input tokens | 500,000 | — |
-| Max output tokens | the model's catalog output limit | — |
+| Max output tokens | the model's catalog output limit (16,384 for a model the catalog lacks) | — |
 | `models.default` | `anthropic:claude-sonnet-4-6` | — |
 
 The engine stops for one of these reasons:
