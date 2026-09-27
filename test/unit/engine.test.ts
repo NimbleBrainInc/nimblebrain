@@ -2310,6 +2310,33 @@ describe("AgentEngine", () => {
       expect(result.finishReasonRaw).toBe("compaction");
     });
 
+    it("omits an empty raw finish reason from llm.done and the engine result", async () => {
+      const events: EngineEvent[] = [];
+      const sink: EventSink = {
+        emit(event: EngineEvent) {
+          events.push(event);
+        },
+      };
+
+      const model = createEchoModel({
+        responses: [{ text: "", finishReason: "other", finishReasonRaw: "" }],
+      });
+      const result = await new AgentEngine(
+        model,
+        new StaticToolRouter([], () => ({ content: textContent(""), isError: false })),
+        sink,
+      ).run(
+        defaultConfig,
+        "",
+        [{ role: "user", content: [{ type: "text", text: "x" }] }],
+        [],
+      );
+
+      const llmDone = events.find((e) => e.type === "llm.done");
+      expect("finishReasonRaw" in (llmDone!.data as Record<string, unknown>)).toBe(false);
+      expect("finishReasonRaw" in result).toBe(false);
+    });
+
     // The estimate is computed in `callOnce`, over the prompt the cache policy
     // actually produced. Asserting it here rather than on a hand-built event
     // is the only thing that binds that computation — the adapter and console
