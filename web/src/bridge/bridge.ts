@@ -86,19 +86,31 @@ interface AppStateEntry {
 const appStateByBridge = new Map<symbol, { appName: string; entry: AppStateEntry }>();
 
 /**
+ * Bridges whose iframe is out of the viewport (scrolled away in the chat, or
+ * hidden). A bridge is on screen until its observer says otherwise, so a host
+ * without `IntersectionObserver` treats every live view as on screen.
+ */
+const offScreenBridges = new Set<symbol>();
+
+/**
  * The app state the prompt should carry for `appName`, from its live views.
  *
  * Several views of one app can be live at once (its full-page slot beside an
  * inline view in the chat, or two inline views), and the prompt has one state
- * slot. The most recent push wins: it comes from the view the user last
- * changed, so it best describes what they are looking at now.
+ * slot. A view on screen beats one off screen: an inline view from an earlier
+ * turn can push when it mounts, scrolled out of sight, after the slot the user
+ * is looking at last pushed. Among views equally on or off screen, the most
+ * recent push wins: it comes from the view the user last changed.
  */
 export function getAppState(appName: string): AppStateEntry | undefined {
+  let latestOnScreen: AppStateEntry | undefined;
   let latest: AppStateEntry | undefined;
-  for (const view of appStateByBridge.values()) {
-    if (view.appName === appName) latest = view.entry;
+  for (const [key, view] of appStateByBridge) {
+    if (view.appName !== appName) continue;
+    latest = view.entry;
+    if (!offScreenBridges.has(key)) latestOnScreen = view.entry;
   }
-  return latest;
+  return latestOnScreen ?? latest;
 }
 
 /** Handle returned by createBridge. Used to send messages and tear down. */
@@ -127,6 +139,16 @@ export function createBridge(
   let destroyed = false;
   // This bridge's key in `appStateByBridge`, released in `destroy()`.
   const stateKey = Symbol(appName);
+  const screenObserver =
+    typeof IntersectionObserver === "undefined"
+      ? null
+      : new IntersectionObserver((entries) => {
+          const last = entries[entries.length - 1];
+          if (!last || destroyed) return;
+          if (last.isIntersecting) offScreenBridges.delete(stateKey);
+          else offScreenBridges.add(stateKey);
+        });
+  screenObserver?.observe(iframe);
 
   // Nothing reaches the app before it has sent `ui/notifications/initialized`
   // except the answers to its own requests — the `ui/initialize` response
@@ -497,6 +519,8 @@ export function createBridge(
       destroyed = true;
       held.length = 0;
       appStateByBridge.delete(stateKey);
+      offScreenBridges.delete(stateKey);
+      screenObserver?.disconnect();
       closeChannel();
       window.removeEventListener("message", handleMessage);
       // Unsubscribe from notifications/tasks/status so post-destroy

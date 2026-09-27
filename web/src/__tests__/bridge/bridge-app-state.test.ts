@@ -4,10 +4,11 @@
 // `ui/update-model-context` is the pushing view's current context, so the
 // state lives exactly as long as that view's bridge. `getAppState` answers
 // from the live bridges of an app; a destroyed bridge contributes nothing,
-// and a reopened view reports nothing until it pushes its own state.
+// a reopened view reports nothing until it pushes its own state, and a view
+// on screen beats one scrolled out of sight.
 // ---------------------------------------------------------------------------
 
-import { afterEach, describe, expect, mock, test } from "bun:test";
+import { afterAll, afterEach, describe, expect, mock, test } from "bun:test";
 import { realClient } from "../../../test/setup";
 
 mock.module("../../api/client", () => ({
@@ -31,6 +32,22 @@ mock.module("../../mcp-bridge-client", () => ({
 
 const { createBridge, getAppState } = await import("../../bridge/bridge");
 
+// The test DOM has no layout, so a stub observer lets each view report its
+// own visibility: `setOnScreen` delivers the entry a real observer would.
+const screenCallbacks = new Map<Element, IntersectionObserverCallback>();
+const RealIntersectionObserver = globalThis.IntersectionObserver;
+globalThis.IntersectionObserver = class {
+  constructor(private readonly callback: IntersectionObserverCallback) {}
+  observe(target: Element) {
+    screenCallbacks.set(target, this.callback);
+  }
+  disconnect() {}
+} as unknown as typeof IntersectionObserver;
+
+afterAll(() => {
+  globalThis.IntersectionObserver = RealIntersectionObserver;
+});
+
 // ---------------------------------------------------------------------------
 // Harness
 // ---------------------------------------------------------------------------
@@ -38,6 +55,7 @@ const { createBridge, getAppState } = await import("../../bridge/bridge");
 interface View {
   destroy(): void;
   push(state: Record<string, unknown>): void;
+  setOnScreen(onScreen: boolean): void;
 }
 
 const live: Array<{ destroy(): void }> = [];
@@ -74,6 +92,10 @@ function mountView(appName: string): View {
       });
       Object.defineProperty(event, "source", { configurable: true, get: () => stubWindow });
       window.dispatchEvent(event);
+    },
+    setOnScreen(onScreen) {
+      const entry = { isIntersecting: onScreen } as IntersectionObserverEntry;
+      screenCallbacks.get(iframe)?.([entry], {} as IntersectionObserver);
     },
   };
   live.push(view);
@@ -113,6 +135,28 @@ describe("app state lifetime", () => {
 
     slot.push({ from: "slot", n: 2 });
     expect(getAppState("lifetime-latest")?.state).toEqual({ from: "slot", n: 2 });
+  });
+
+  test("a view on screen beats a later push from one off screen", () => {
+    const slot = mountView("lifetime-screen");
+    const inline = mountView("lifetime-screen");
+    inline.setOnScreen(false);
+    slot.push({ from: "slot" });
+    inline.push({ from: "inline" });
+    expect(getAppState("lifetime-screen")?.state).toEqual({ from: "slot" });
+
+    inline.setOnScreen(true);
+    expect(getAppState("lifetime-screen")?.state).toEqual({ from: "inline" });
+  });
+
+  test("with no view on screen, the most recent push still answers", () => {
+    const slot = mountView("lifetime-offscreen");
+    const inline = mountView("lifetime-offscreen");
+    slot.push({ from: "slot" });
+    inline.push({ from: "inline" });
+    slot.setOnScreen(false);
+    inline.setOnScreen(false);
+    expect(getAppState("lifetime-offscreen")?.state).toEqual({ from: "inline" });
   });
 
   test("a reopened view reports nothing until it pushes", () => {
