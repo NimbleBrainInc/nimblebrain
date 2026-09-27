@@ -45,8 +45,33 @@ describe("AgentEngine — output-ceiling (length) truncation", () => {
     expect(result.output).toBe("Part one");
     expect(result.iterations).toBe(1);
     expect(prompts).toHaveLength(1);
-    for (const prompt of prompts) {
-      expect(prompt[prompt.length - 1]?.role).not.toBe("assistant");
-    }
+  });
+
+  it("runs the tool path when a length-truncated turn carries a tool call", async () => {
+    // Only a no-tool-call length turn ends the run; a turn with a tool call
+    // executes it and calls the model again with the tool result.
+    const schemas = [
+      { name: "noop", description: "noop", inputSchema: { type: "object", properties: {} } },
+    ];
+    const model = createEchoModel({
+      responses: [
+        {
+          text: "calling",
+          finishReason: "length",
+          toolCalls: [{ toolCallId: "c1", toolName: "noop", input: "{}" }],
+        },
+        { text: "after tool", finishReason: "stop" },
+      ],
+    });
+
+    const result = await new AgentEngine(
+      model,
+      new StaticToolRouter(schemas, () => ({ content: textContent("tool ran"), isError: false })),
+      new NoopEventSink(),
+    ).run(config, "sys", [{ role: "user", content: [{ type: "text", text: "Go." }] }], schemas);
+
+    expect(result.toolCalls).toHaveLength(1);
+    expect(result.stopReason).toBe("complete");
+    expect(result.iterations).toBe(2);
   });
 });
