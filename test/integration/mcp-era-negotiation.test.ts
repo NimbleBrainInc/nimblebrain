@@ -229,19 +229,22 @@ describe("McpSource era fallback", () => {
 describe("the host-resources claim", () => {
   it("rides the 2025 initialize handshake", async () => {
     const legacy = legacyServer();
-    let claimed: Record<string, unknown> | undefined;
+    let claimed: { tasks?: unknown; extensions?: Record<string, unknown> } | undefined;
     const served = serve(async (request) => {
       const body = await bodyOf(request);
       if (body?.method === "initialize") {
-        claimed = (body.params?.capabilities as { extensions?: Record<string, unknown> })
-          ?.extensions;
+        claimed = body.params?.capabilities as typeof claimed;
       }
       return legacy(request);
     });
     const source = await connect(served.url);
     try {
       expect(source.getNegotiatedProtocolVersion()).toBe("2025-11-25");
-      expect(claimed?.[HOST_RESOURCES_CAPABILITY_KEY]).toEqual(HOST_RESOURCES_CAPABILITY_V1);
+      expect(claimed?.extensions?.[HOST_RESOURCES_CAPABILITY_KEY]).toEqual(
+        HOST_RESOURCES_CAPABILITY_V1,
+      );
+      // The extension is added to the constructed claims, not swapped in for them.
+      expect(claimed?.tasks).toEqual({ requests: { tools: { call: {} } }, cancel: {} });
     } finally {
       await source.stop();
       served.close();

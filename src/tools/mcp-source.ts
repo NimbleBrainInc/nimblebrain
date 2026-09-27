@@ -316,7 +316,7 @@ export function toolListChanged(a: readonly Tool[], b: readonly Tool[]): boolean
 }
 
 /**
- * A `Client` whose 2025 `initialize` handshake claims more than the
+ * A `Client` whose 2025 `initialize` handshake claims extensions beyond the
  * capabilities it was constructed with.
  *
  * SDK v2 fixes a client's capabilities at construction and sends that one
@@ -326,13 +326,14 @@ export function toolListChanged(a: readonly Tool[], b: readonly Tool[]): boolean
  * cannot change once the transport is attached, so an era-specific claim goes
  * on the one request only the 2025 era sends. `initialize` is sent through
  * `request()` from the SDK's single handshake path, which this override
- * rewrites; every other request passes through untouched.
+ * extends by adding the extensions to the capabilities the SDK put there;
+ * every other request passes through untouched.
  */
 class EraCapabilitiesClient extends Client {
   constructor(
     clientInfo: Implementation,
     options: ClientOptions,
-    private readonly initializeCapabilities: ClientCapabilities,
+    private readonly initializeExtensions: NonNullable<ClientCapabilities["extensions"]>,
   ) {
     super(clientInfo, options);
   }
@@ -347,10 +348,15 @@ class EraCapabilitiesClient extends Client {
     options?: RequestOptions,
   ): Promise<StandardSchemaV1.InferOutput<T>>;
   override request(request: JsonRpcRequest, ...rest: [unknown?, unknown?]): Promise<unknown> {
-    const sent =
-      request.method === "initialize"
-        ? { ...request, params: { ...request.params, capabilities: this.initializeCapabilities } }
-        : request;
+    let sent = request;
+    if (request.method === "initialize") {
+      const claimed = (request.params?.capabilities ?? {}) as ClientCapabilities;
+      const capabilities: ClientCapabilities = {
+        ...claimed,
+        extensions: { ...claimed.extensions, ...this.initializeExtensions },
+      };
+      sent = { ...request, params: { ...request.params, capabilities } };
+    }
     // The implementation signature is wider than either SDK overload, so the
     // super call goes through the overload-erased shape both funnel into.
     const send = super.request as (r: JsonRpcRequest, ...a: unknown[]) => Promise<unknown>;
@@ -1086,17 +1092,15 @@ export class McpSource implements ToolSource {
   };
 
   /**
-   * What the 2025 `initialize` handshake claims: `CAPABILITIES` plus the
+   * What the 2025 `initialize` handshake claims on top of `CAPABILITIES`: the
    * NimbleBrain-namespaced extensions (`ai.nimblebrain/host-resources`, per
    * https://modelcontextprotocol.io/extensions/overview). The host-resources
    * methods are server→client requests, a channel only the 2025 era has, so
    * the extension is claimed only on the handshake of a connection that can
    * reach them (ADR-0023).
    */
-  private static readonly INITIALIZE_CAPABILITIES: ClientCapabilities = {
-    ...McpSource.CAPABILITIES,
-    extensions: hostExtensions(),
-  };
+  private static readonly INITIALIZE_EXTENSIONS: NonNullable<ClientCapabilities["extensions"]> =
+    hostExtensions();
 
   /**
    * The client this source connects with. One builder, called on the initial
@@ -1112,7 +1116,7 @@ export class McpSource implements ToolSource {
     return new EraCapabilitiesClient(
       CLIENT_INFO,
       { capabilities: McpSource.CAPABILITIES, versionNegotiation: { mode: "auto" } },
-      McpSource.INITIALIZE_CAPABILITIES,
+      McpSource.INITIALIZE_EXTENSIONS,
     );
   }
 
@@ -1125,7 +1129,7 @@ export class McpSource implements ToolSource {
    *
    * These are server→client requests, a channel only the 2025 era has: on a
    * 2026-07-28 connection the SDK drops inbound requests. The capability is
-   * claimed in the 2025 `initialize` only (`INITIALIZE_CAPABILITIES`), so a
+   * claimed in the 2025 `initialize` only (`INITIALIZE_EXTENSIONS`), so a
    * connector sees it exactly where it can call these methods.
    *
    * Handlers do three things, in order: rate-limit check (throws
