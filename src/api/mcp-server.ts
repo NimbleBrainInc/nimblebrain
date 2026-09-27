@@ -1573,6 +1573,24 @@ function jsonRpcError(status: number, code: number, message: string): Response {
   );
 }
 
+/** Cap on a client-supplied string written to a log line. */
+const MAX_LOGGED_FIELD_CHARS = 200;
+
+/**
+ * A client-supplied value as a log field: length-capped and JSON-quoted, so a
+ * newline, a quote, or a `key=value` inside it cannot forge another field or line.
+ */
+function fmtClientField(value: string): string {
+  return JSON.stringify(value.slice(0, MAX_LOGGED_FIELD_CHARS));
+}
+
+/** The `clientInfo` an initialize request declares, as a quoted `name/version`. */
+function fmtClientInfo(body: unknown): string {
+  const info = isInitializeRequest(body) ? body.params.clientInfo : undefined;
+  if (!info?.name) return "none";
+  return fmtClientField(info.version ? `${info.name}/${info.version}` : info.name);
+}
+
 /**
  * Build a `key=value` log fragment with the request context that matters for
  * session-miss diagnosis: a sessionId prefix (UUIDs are not sensitive but the
@@ -1581,24 +1599,10 @@ function jsonRpcError(status: number, code: number, message: string): Response {
  * which names the client on lines where no session (and so no `clientInfo`)
  * exists.
  *
- * The workspace is the one the request's URL names. The user agent is
- * client-controlled, so it is length-capped and JSON-quoted: a newline or a
- * `key=value` inside it cannot forge another field or line.
+ * The workspace is the one the request's URL names. The IP and user agent are
+ * client-controlled (the left-most `x-forwarded-for` entry is whatever the
+ * caller sent), so both go through `fmtClientField`.
  */
-/** Cap on a client-supplied string (user agent, `clientInfo`) written to a log line. */
-const MAX_LOGGED_FIELD_CHARS = 200;
-
-/**
- * The `clientInfo` an initialize request declares, as a JSON-quoted
- * `name/version` (capped, like the user agent, because the client writes it).
- */
-function fmtClientInfo(body: unknown): string {
-  const info = isInitializeRequest(body) ? body.params.clientInfo : undefined;
-  if (!info?.name) return "none";
-  const label = info.version ? `${info.name}/${info.version}` : info.name;
-  return JSON.stringify(label.slice(0, MAX_LOGGED_FIELD_CHARS));
-}
-
 function fmtSessionContext(
   request: Request,
   sessionId: string | null,
@@ -1607,8 +1611,9 @@ function fmtSessionContext(
   const sidPrefix = sessionId ? sessionId.slice(0, 8) : "none";
   const identityId = sessionCtx?.identity?.id ?? "none";
   const workspaceId = sessionCtx?.workspaceId ?? "none";
-  const ip = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "direct";
+  const ip = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
   const ua = request.headers.get("user-agent");
-  const uaField = ua ? JSON.stringify(ua.slice(0, MAX_LOGGED_FIELD_CHARS)) : "none";
-  return `sessionId=${sidPrefix} identity=${identityId} workspace=${workspaceId} ip=${ip} ua=${uaField}`;
+  const ipField = ip ? fmtClientField(ip) : "direct";
+  const uaField = ua ? fmtClientField(ua) : "none";
+  return `sessionId=${sidPrefix} identity=${identityId} workspace=${workspaceId} ip=${ipField} ua=${uaField}`;
 }
