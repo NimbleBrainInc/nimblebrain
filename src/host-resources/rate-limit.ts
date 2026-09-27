@@ -1,4 +1,4 @@
-import { McpError } from "@modelcontextprotocol/sdk/types.js";
+import { ProtocolError } from "@modelcontextprotocol/server";
 
 /**
  * Server-error code for "rate limited." Lives in the JSON-RPC
@@ -90,7 +90,7 @@ export class TokenBucketRateLimit implements HostResourcesRateLimit {
       const deficit = 1 - bucket.tokens;
       const retryAfterMs = Math.ceil((deficit / this.ratePerSec) * 1000);
       this.buckets.set(key, bucket);
-      throw new McpError(RATE_LIMITED, "Rate limited", { retryAfterMs });
+      throw new ProtocolError(RATE_LIMITED, "Rate limited", { retryAfterMs });
     }
 
     bucket.tokens -= 1;

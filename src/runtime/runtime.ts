@@ -57,15 +57,16 @@ import {
   type ConversationMutation,
   EventSourcedConversationStore,
 } from "../conversation/event-sourced-store.ts";
-import { type ConversationLocation, ConversationLocator } from "../conversation/locator.ts";
+import { ConversationLocator } from "../conversation/locator.ts";
 import { workspaceConversationsDir } from "../conversation/paths.ts";
-import type {
-  Conversation,
-  ConversationAccessContext,
-  ConversationListResult,
-  CreateConversationOptions,
-  ListOptions,
-  StoredMessage,
+import {
+  CONVERSATION_ID_RE,
+  type Conversation,
+  type ConversationAccessContext,
+  type ConversationListResult,
+  type CreateConversationOptions,
+  type ListOptions,
+  type StoredMessage,
 } from "../conversation/types.ts";
 import { applyReasoningReplayPolicy, windowMessages } from "../conversation/window.ts";
 import { AgentEngine } from "../engine/engine.ts";
@@ -218,6 +219,7 @@ import type { Workspace } from "../workspace/types.ts";
 import { personalWorkspaceIdFor, WorkspaceStore } from "../workspace/workspace-store.ts";
 import {
   ConversationAccessDeniedError,
+  ConversationNotFoundError,
   ConversationWorkspaceAccessDeniedError,
   ModelNotAllowedError,
   RunInProgressError,
@@ -1078,35 +1080,33 @@ export class Runtime {
       ...(request.metadata ? { metadata: request.metadata } : {}),
     });
 
-    // Resolve the conversation's workspace store: the conversation's own workspace on
-    // resume (authoritative, from the locator), or the workspace it's born in
-    // (`wsId`) for a new conversation. The workspace owns the directory.
-    const { store, convWsId } = await this.resolveChatStore(request.conversationId, wsId, ownerId);
+    // The conversation's store: the caller's partition of the workspace this
+    // turn acts in. A named conversation must already be there, or this throws
+    // before anything shared moves.
+    const store = this.resolveChatStore(request.conversationId, wsId, ownerId);
 
     // This door creates conversations too, so its binding resolves under the
     // same context as the chat door's — see `buildTurnContext`.
-    const turnCtx = await this.buildTurnContext(request.identity ?? DEV_IDENTITY, convWsId);
+    const turnCtx = await this.buildTurnContext(request.identity ?? DEV_IDENTITY, wsId);
 
     // Reserve the run (throws RunInProgressError if one is already active). The
     // returned signal is the RunBus's — NOT the HTTP request's — so a client
     // disconnect won't abort generation.
     //
-    // For a provided id: authorize, THEN reserve the run. Ownership is checked
-    // before `begin` mutates shared run state — an unauthorized caller never
-    // flips `isActive`. There is no `await` between the load+ownership check and
-    // `begin` (the check is synchronous), so nothing can create the conversation
-    // in that gap; `begin` is still the serialization point for `create` (a
-    // concurrent same-id start throws `RunInProgressError` at `begin` before it
-    // can reach the truncating write). On a create failure we `evict` OUR
-    // reservation — passing the signal `begin` returned so that if the create
-    // await let a cancel + a fresh same-id `begin` slip in, we don't evict that
-    // newer live run. A fresh conversation has no id until create(), so that
-    // path begins after.
+    // For a provided id: authorize, THEN reserve the run, so an unauthorized
+    // caller never flips `isActive`. A provided id is only ever resumed, never
+    // created, so a concurrent start on the same id meets `RunInProgressError`
+    // at `begin`. A fresh conversation has no id until create(), so that path
+    // begins after.
     let conversationId: string;
     let signal: AbortSignal;
     if (request.conversationId) {
       const existing = await store.load(request.conversationId);
-      if (existing && existing.ownerId !== ownerId) {
+      if (!existing) throw new ConversationNotFoundError(request.conversationId, wsId);
+      // Defense in depth: `resolveChatStore` opened the caller's own partition,
+      // so a record owned by someone else there means a corrupt file, not a
+      // path a request can reach.
+      if (existing.ownerId !== ownerId) {
         throw new ConversationAccessDeniedError(request.conversationId, ownerId);
       }
       // Second authz gate (resume): the owner must still be a member of the
@@ -1116,22 +1116,9 @@ export class Runtime {
       // detached, so a refusal there would surface as an error frame on the
       // stream rather than a 403. Refuse before `begin` mutates shared run
       // state. Reads stay owner-gated.
-      if (existing) {
-        await this.assertOwnerIsWorkspaceMember(request.conversationId, convWsId, ownerId);
-      }
-      signal = this.runBus.begin(request.conversationId);
-      try {
-        conversationId =
-          existing?.id ??
-          (
-            await runWithRequestContext(turnCtx, () =>
-              store.create({ ...makeCreateOpts(), id: request.conversationId }),
-            )
-          ).id;
-      } catch (err) {
-        this.runBus.evict(request.conversationId, signal);
-        throw err;
-      }
+      await this.assertOwnerIsWorkspaceMember(request.conversationId, wsId, ownerId);
+      conversationId = existing.id;
+      signal = this.runBus.begin(conversationId);
     } else {
       conversationId = (await runWithRequestContext(turnCtx, () => store.create(makeCreateOpts())))
         .id;
@@ -1240,28 +1227,17 @@ export class Runtime {
     const sessionWsId = await this.prepareSessionWorkspace(requestIdentity);
 
     // The conversation's workspace — the binding, and the ONE workspace this
-    // turn resolves against. A chat is born in the focused workspace
-    // (`request.workspaceId`, REQUIRED on the HTTP chat door so it's always
-    // present there), or the caller's personal workspace when absent — the
-    // embedded / dev path only (`?? sessionWsId`) — and stays there for its
-    // whole life. On resume the workspace is read from the conversation's own
-    // path via the locator (authoritative), NOT from the request header — so a
-    // conversation answered while you're focused elsewhere still resolves its
-    // own tools, skills, apps, files, and workspace context. The conversation
-    // is a sealed container; the focused workspace only decides where a NEW
-    // chat is born.
-    //
-    // `convWsId` is authoritative: on a cross-workspace resume `resolveChatStore`
-    // relocates to the workspace the conversation actually lives in. It is what
-    // the run is walled to AND what its prompt narrates — a conversation in a
-    // personal workspace is narrated like any other, since a personal workspace
-    // is just a workspace.
-    const requestWsId = request.workspaceId ?? sessionWsId;
-    const { store, convWsId } = await this.resolveChatStore(
-      request.conversationId,
-      requestWsId,
-      ownerId,
-    );
+    // turn resolves against: the workspace the request addresses
+    // (`request.workspaceId`, from the URL on the HTTP chat door), or the
+    // caller's personal workspace when absent — the embedded / dev path only
+    // (`?? sessionWsId`). A new chat is born there and stays there for its whole
+    // life; a resumed one must already be stored there, so the workspace a
+    // request names is the one the turn runs in. It is what the run is walled
+    // to AND what its prompt narrates — a conversation in a personal workspace
+    // is narrated like any other, since a personal workspace is just a
+    // workspace.
+    const convWsId = request.workspaceId ?? sessionWsId;
+    const store = this.resolveChatStore(request.conversationId, convWsId, ownerId);
 
     const turnCtx = await this.buildTurnContext(requestIdentity, convWsId);
 
@@ -1288,7 +1264,7 @@ export class Runtime {
     // binding and the tint that lets a person's preference outrank the org
     // default reads identity from there. See `buildTurnContext`.
     const { conversation, resumed } = await runWithRequestContext(turnCtx, () =>
-      this.loadOrCreateConversation(request, store, makeCreateOpts, ownerId),
+      this.loadOrCreateConversation(request, store, makeCreateOpts, ownerId, convWsId),
     );
 
     // The conversation's binding wins over both the request override and the
@@ -1554,9 +1530,8 @@ export class Runtime {
 
     // Files are workspace-owned: rehydrate a `files://` URI from the workspace
     // the run acts in, under the owner's partition — never another workspace's
-    // store. On a cross-workspace resume that is the conversation's workspace,
-    // not the request header; they differ, and reading from the header would
-    // miss the attachment entirely. For a one-shot run this is a pass-through
+    // store. For a chat that is the workspace its request addresses, where a
+    // resumed conversation and its attachments are stored. For a one-shot run this is a pass-through
     // unless the prompt carries file refs, run for shape consistency with the
     // engine's message contract.
     const fileStore = this.getWorkspaceFileStore(spec.workspaceId, ownerId);
@@ -1881,13 +1856,8 @@ export class Runtime {
     });
 
     // Always-on context channel: the `always` skills across every tier
-    // (core/builtin/org + workspace + user) plus the always-on connector skills,
-    // then the workspace identity/persona override when the narrated workspace
-    // sets one.
-    const requestContextSkills = withIdentityOverride(
-      [...poolContext, ...connectorContext],
-      activeWorkspace?.identity,
-    );
+    // (core/builtin/org + workspace + user) plus the always-on connector skills.
+    const requestContextSkills = [...poolContext, ...connectorContext];
     const layer3Entries: Layer3SkillEntry[] = selectedLayer3.map((s) => ({
       name: s.skill.manifest.name,
       body: s.skill.body,
@@ -2208,16 +2178,22 @@ export class Runtime {
     store: EventSourcedConversationStore,
     makeCreateOpts: () => CreateConversationOptions,
     ownerId: string,
+    convWsId: string,
   ): Promise<{ conversation: Conversation; resumed: boolean }> {
     let conversation: Conversation;
     let resumed = false;
     if (request.conversationId) {
       const existing = await store.load(request.conversationId);
+      // Defense in depth, as in `startTurn`: the store is the caller's own
+      // partition, so no request reaches this with another owner's record.
       if (existing && existing.ownerId !== ownerId) {
         throw new ConversationAccessDeniedError(request.conversationId, ownerId);
       }
-      resumed = existing !== null;
-      conversation = existing ?? (await store.create(makeCreateOpts()));
+      // `resolveChatStore` found it a moment ago; absent now means it was
+      // deleted in between, which is the same answer.
+      if (!existing) throw new ConversationNotFoundError(request.conversationId, convWsId);
+      resumed = true;
+      conversation = existing;
     } else {
       conversation = await store.create(makeCreateOpts());
     }
@@ -3584,24 +3560,17 @@ export class Runtime {
   }
 
   /**
-   * Resolve the workspace store for a chat turn. On resume the conversation's workspace
-   * is authoritative (read from the locator); for a new conversation it's the
-   * workspace the chat is born in (`createConvWsId` = the focused workspace, or the
-   * caller's personal workspace when unfocused). Returns the store plus the resolved
-   * workspace id so the create path can stamp the binding.
+   * The store a chat turn reads and writes: the caller's partition of the
+   * workspace the request addresses. A named conversation must already be there
+   * (see `assertConversationInWorkspace`); a new one is born there.
    */
-  private async resolveChatStore(
+  private resolveChatStore(
     conversationId: string | undefined,
-    createConvWsId: string,
+    wsId: string,
     ownerId: string,
-  ): Promise<{ store: EventSourcedConversationStore; convWsId: string }> {
-    const { wsId, loc } = await this.resolveConversationLocation(
-      conversationId,
-      createConvWsId,
-      ownerId,
-    );
-    const store = this.workspaceConversationStore(wsId, loc?.ownerId ?? ownerId);
-    return { store, convWsId: wsId };
+  ): EventSourcedConversationStore {
+    if (conversationId) this.assertConversationInWorkspace(conversationId, wsId, ownerId);
+    return this.workspaceConversationStore(wsId, ownerId);
   }
 
   /**
@@ -3646,46 +3615,24 @@ export class Runtime {
   }
 
   /**
-   * The workspace a conversation lives in — for code outside the chat path (the
-   * upload handlers, the file-serve route, and the per-turn `workspaceId`
-   * that scopes the agent's `files__*` tools) that must resolve the SAME
-   * partition `chat()` reads from when it rehydrates. A conversation not yet on
-   * disk (a new chat) is born in `fallbackWsId`.
+   * Refuse a conversation id that is not one of `ownerId`'s conversations in
+   * `wsId`. The workspace a chat or upload acts in is the one its request
+   * addresses (ADR-0037), never one read off the conversation, so a
+   * conversation stored in another workspace, one owned by someone else, and
+   * one that does not exist all throw the same `ConversationNotFoundError`.
+   * One `existsSync` on the caller's own partition: no tenant scan.
+   *
+   * Public for the upload handlers, which attach files to a conversation and
+   * must refuse the same ids the chat door refuses.
    */
-  async resolveConversationWorkspaceId(
-    conversationId: string | undefined,
-    fallbackWsId: string,
-    ownerId: string,
-  ): Promise<string> {
-    return (await this.resolveConversationLocation(conversationId, fallbackWsId, ownerId)).wsId;
-  }
-
-  /**
-   * The single probe-then-locate for "which workspace does this conversation live
-   * in" — the one place the partition rule lives, so the read (`resolveChatStore`),
-   * the write (`resolveConversationWorkspaceId` → upload handlers / file serve), and
-   * the file-tool scope (`RequestContext.workspaceId`) cannot drift apart.
-   * Hot path: probe the focused/personal workspace directly (O(1) `existsSync`, no
-   * tenant scan) — only a cross-workspace deep-link falls back to the locator walk.
-   */
-  private async resolveConversationLocation(
-    conversationId: string | undefined,
-    fallbackWsId: string,
-    ownerId: string,
-  ): Promise<{ wsId: string; loc: ConversationLocation | undefined }> {
-    if (conversationId) {
-      const directDir = workspaceConversationsDir(
-        resolveWorkDir(this.config),
-        fallbackWsId,
-        ownerId,
-      );
-      if (existsSync(join(directDir, `${conversationId}.jsonl`))) {
-        return { wsId: fallbackWsId, loc: undefined };
-      }
-      const loc = await this.getConversationLocator().locate(conversationId);
-      if (loc) return { wsId: loc.wsId, loc };
+  assertConversationInWorkspace(conversationId: string, wsId: string, ownerId: string): void {
+    const dir = workspaceConversationsDir(resolveWorkDir(this.config), wsId, ownerId);
+    if (
+      !CONVERSATION_ID_RE.test(conversationId) ||
+      !existsSync(join(dir, `${conversationId}.jsonl`))
+    ) {
+      throw new ConversationNotFoundError(conversationId, wsId);
     }
-    return { wsId: fallbackWsId, loc: undefined };
   }
 
   /**
@@ -5067,13 +5014,8 @@ export class Runtime {
   }
 
   /** Get home dashboard configuration with defaults applied. */
-  getHomeConfig(): { userName: string; timezone: string; cacheTtlMinutes: number } {
-    const identity = this.getCurrentIdentity();
-    return {
-      userName: identity?.displayName ?? "there",
-      timezone: identity?.preferences?.timezone ?? "",
-      cacheTtlMinutes: this.config.home?.cacheTtlMinutes ?? 5,
-    };
+  getHomeConfig(): { cacheTtlMinutes: number } {
+    return { cacheTtlMinutes: this.config.home?.cacheTtlMinutes ?? 5 };
   }
 
   /** Get the structured log directory path. */
@@ -5800,15 +5742,6 @@ function buildSurfaceOptions(
   };
 }
 
-/** Append the workspace identity/persona override skill to the context channel when the workspace sets one. */
-function withIdentityOverride(
-  contextBase: Skill[],
-  workspaceIdentity: string | undefined,
-): Skill[] {
-  if (!workspaceIdentity) return contextBase;
-  return [...contextBase, makeIdentitySkill(workspaceIdentity)];
-}
-
 /**
  * Build the per-request `transformContext` hook: slice history → apply the
  * provider reasoning-replay policy → window by token budget. `overflowAttempt`
@@ -5875,34 +5808,6 @@ export function buildContextAssembledPayload(input: {
   ];
   const totalTokens = sources.reduce((sum, s) => sum + s.tokens, 0);
   return { sources, excluded: [], totalTokens };
-}
-
-/**
- * Create a synthetic identity skill from a workspace's identity markdown.
- * Injected at priority 1 (core context layer) so it becomes the agent persona.
- */
-/**
- * Exported so the compose-effective-context debug tool can build the
- * same per-request identity override `runtime.chat()` uses, instead of
- * silently composing against the bare global `contextSkills` (which
- * would lie about what's in the prompt for any workspace that has
- * `workspace.identity` set).
- */
-export function makeIdentitySkill(body: string): Skill {
-  return {
-    manifest: {
-      name: "identity-override",
-      description: "Workspace identity override",
-      loadingStrategy: "always",
-      priority: 1,
-      status: "active",
-      // It's the workspace's identity field, so the ledger labels it
-      // `workspace`, not the `?? "org"` fallback in the payload builder.
-      scope: "workspace",
-    },
-    body,
-    sourcePath: "",
-  };
 }
 
 /**

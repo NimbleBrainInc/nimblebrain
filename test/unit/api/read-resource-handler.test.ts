@@ -26,7 +26,7 @@ interface StubOptions {
   sources?: string[];
   identitySources?: string[];
   resource?: ResourceData | null;
-  /** Workspace ids the calling identity is a member of (for qualified-name resolution). */
+  /** Workspace ids the calling identity is a member of. */
   memberOf?: string[];
   captureCall?: (args: { server: string; uri: string; workspaceId: string }) => void;
   captureIdentityCall?: (args: { server: string; uri: string }) => void;
@@ -232,55 +232,50 @@ describe("handleReadResource", () => {
     expect(res.status).toBe(400);
   });
 
-  // Cross-workspace: a qualified `ws_<id>-<source>` server names its OWN
-  // workspace. The owning workspace — not the workspace in the URL — is
-  // authoritative, and the registry/readAppResource are keyed on the BARE
-  // source name. Regression for the preview-from-another-workspace 403.
-  it("resolves a qualified server to its owning workspace, not the workspace in the URL", async () => {
+  // The workspace is the one in the URL path (ADR-0037). A qualified
+  // `ws_<id>-<source>` server is refused — never routed to the workspace it
+  // names, never stripped to its bare remainder.
+  it("refuses a qualified server with a 400, even for a member of the named workspace", async () => {
     const calls: Array<{ server: string; uri: string; workspaceId: string }> = [];
     const runtime = makeStubRuntime({
-      sources: ["synapse-collateral"], // registry keyed on the bare source name
-      memberOf: ["ws_nimblebrain_shared"],
+      sources: ["synapse-collateral"],
+      memberOf: ["ws_tenant_a"],
       resource: { text: "ok", mimeType: "text/plain" },
       captureCall: (c) => calls.push(c),
     });
     const res = await handleReadResource(
-      req({ server: "ws_nimblebrain_shared-synapse-collateral", uri: "collateral://exports/e.pdf" }),
+      req({ server: "ws_tenant_a-synapse-collateral", uri: "collateral://exports/e.pdf" }),
       runtime,
-      // The workspace in the URL is the user's own, not where the doc lives.
       { workspaceId: "ws_user_u1", identity: { id: "u1" } as never },
     );
-    expect(res.status).toBe(200);
-    // readAppResource gets the bare source + the workspace parsed from the name.
-    expect(calls).toEqual([
-      { server: "synapse-collateral", uri: "collateral://exports/e.pdf", workspaceId: "ws_nimblebrain_shared" },
-    ]);
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toBe("bad_request");
+    expect(body.message).toContain("uses the retired ws_<id>- server-name form");
+    expect(body.message).toContain('"synapse-collateral"');
+    expect(body.details).toEqual({
+      server: "ws_tenant_a-synapse-collateral",
+      reason: "legacy_namespaced_form",
+    });
+    expect(calls).toEqual([]);
   });
 
-  it("returns 403 for a qualified server the caller is not a member of", async () => {
+  it("resolves a bare server in the workspace in the URL", async () => {
+    const calls: Array<{ server: string; uri: string; workspaceId: string }> = [];
     const runtime = makeStubRuntime({
       sources: ["synapse-collateral"],
-      memberOf: ["ws_some_other"], // not a member of ws_nimblebrain_shared
       resource: { text: "ok", mimeType: "text/plain" },
+      captureCall: (c) => calls.push(c),
     });
     const res = await handleReadResource(
-      req({ server: "ws_nimblebrain_shared-synapse-collateral", uri: "collateral://exports/e.pdf" }),
+      req({ server: "synapse-collateral", uri: "collateral://exports/e.pdf" }),
       runtime,
-      { workspaceId: "ws_user_u1", identity: { id: "u1" } as never },
+      { workspaceId: "ws_tenant_a", identity: { id: "u1" } as never },
     );
-    expect(res.status).toBe(403);
-    const body = await res.json();
-    expect(body.error).toBe("workspace_access_denied");
-  });
-
-  it("returns 401 for a qualified server with no identity", async () => {
-    const runtime = makeStubRuntime({ sources: ["synapse-collateral"], memberOf: ["ws_x"] });
-    const res = await handleReadResource(
-      req({ server: "ws_x-synapse-collateral", uri: "collateral://exports/e.pdf" }),
-      runtime,
-      { workspaceId: "ws_x" },
-    );
-    expect(res.status).toBe(401);
+    expect(res.status).toBe(200);
+    expect(calls).toEqual([
+      { server: "synapse-collateral", uri: "collateral://exports/e.pdf", workspaceId: "ws_tenant_a" },
+    ]);
   });
 });
 

@@ -135,6 +135,17 @@ export default defineConfig({
             ],
           },
           {
+            label: 'MCP',
+            link: '/mcp/overview',
+            icon: 'seti:json',
+            items: [
+              { label: 'NimbleBrain and MCP', slug: 'mcp/overview' },
+              { label: 'Protocol Support', slug: 'mcp/protocol-support' },
+              { label: 'Host Resources', slug: 'mcp/host-resources' },
+              { label: 'Reserved Keys', slug: 'mcp/reserved-keys' },
+            ],
+          },
+          {
             label: 'Connect via MCP',
             link: '/connect/external-clients',
             icon: 'external',

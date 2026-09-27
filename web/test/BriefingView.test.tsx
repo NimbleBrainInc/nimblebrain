@@ -58,8 +58,6 @@ function findButton(c: HTMLElement, text: string): HTMLButtonElement | null {
 
 function makeBriefing(overrides: Partial<BriefingOutput> = {}): BriefingOutput {
   return {
-    greeting: "Good morning",
-    date: "Monday, May 25, 2026",
     lede: "Two things need a look; everything else is quiet.",
     state: "attention",
     generated_at: "2026-05-25T08:00:00.000Z",
@@ -165,6 +163,17 @@ describe("BriefingView", () => {
       />,
     );
     expect(findByTestId(mounted.container, "workspace-briefing-empty")).not.toBeNull();
+  });
+
+  test("renders nothing when no app provides facets", async () => {
+    mounted = await mount(
+      <BriefingView
+        briefing={makeBriefing({ sections: [], state: "empty", lede: "" })}
+        error={null}
+        onRetry={() => {}}
+      />,
+    );
+    expect(findByTestId(mounted.container, "workspace-briefing")).toBeNull();
   });
 
   test("renders an error with a working Retry", async () => {

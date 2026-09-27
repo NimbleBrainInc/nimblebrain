@@ -50,7 +50,7 @@ describe("nb-core registration in Runtime", () => {
 		const coreTools = tools.filter((t) => t.name.startsWith("nb__"));
 		expect(coreTools.length).toBeGreaterThanOrEqual(6);
 		const names = coreTools.map((t) => t.name).sort();
-		expect(names).toContain("nb__manage_identity");
+		expect(names).toContain("nb__set_preferences");
 	});
 
 	it("nb__ tools are callable via ToolRegistry.execute()", async () => {
@@ -84,9 +84,9 @@ describe("GET /v1/workspaces/:wsId/apps/nb/resources/:path", () => {
 		return contents?.[0]?.text ?? "";
 	}
 
-	it("returns HTML for app-nav", async () => {
+	it("returns HTML for model-selector", async () => {
 		const res = await fetch(
-			`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/apps/nb/resources/app-nav`,
+			`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/apps/nb/resources/model-selector`,
 		);
 		expect(res.status).toBe(200);
 		expect(res.headers.get("Content-Type")).toMatch(/application\/json/);
@@ -97,7 +97,7 @@ describe("GET /v1/workspaces/:wsId/apps/nb/resources/:path", () => {
 	});
 
 	it("returns HTML for every core resource", async () => {
-		const resources = ["app-nav", "settings-link", "model-selector"];
+		const resources = ["model-selector"];
 		for (const name of resources) {
 			const res = await fetch(
 				`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/apps/nb/resources/${name}`,

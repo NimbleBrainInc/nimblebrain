@@ -31,6 +31,27 @@ export class ConversationAccessDeniedError extends Error {
 }
 
 /**
+ * Thrown when a chat or upload names a conversation that is not one of the
+ * caller's conversations in the workspace the request addresses. A request
+ * under `/v1/workspaces/<wsId>/` reaches only conversations stored under that
+ * workspace (ADR-0037), so a conversation stored in another workspace, one
+ * owned by someone else, and one that does not exist are one answer: the
+ * caller learns nothing about where, or whether, the id exists.
+ *
+ * The HTTP handler maps this to `404 conversation_not_found`.
+ */
+export class ConversationNotFoundError extends Error {
+  readonly code = "conversation_not_found";
+  constructor(
+    public readonly conversationId: string,
+    public readonly workspaceId: string,
+  ) {
+    super(`Conversation ${conversationId} not found in workspace ${workspaceId}`);
+    this.name = "ConversationNotFoundError";
+  }
+}
+
+/**
  * Thrown when the owner of a conversation tries to RESUME it but is no longer a
  * member of the workspace the conversation lives in. A conversation is sealed to
  * its workspace (its tools/skills/apps resolve there), so resuming it as a

@@ -16,14 +16,19 @@ Scope: the first-party React shell under `web/` (a separate package). Layout, ty
 
 `ChatProvider` (`web/src/context/ChatContext.tsx`) watches the **focus** workspace, derived from the `/w/:slug` route and membership-gated. Never from `WorkspaceContext`'s `activeWorkspace`, which starts on bootstrap's default and reconciles to the route a render later — keying focus off that intermediate value looks like a workspace switch and clears the conversation the per-tab restore just reopened. Reading `activeWorkspace` is fine for display-only consumers; it is the *focus* decision that must come from the route.
 
-Re-scoping uses the narrow `newConversation()` (back to the panel's unsent chat, or a fresh one once a send was attempted in it; an unsent chat has no workspace until its first send), **not** `chatStore.reset()` (that is the identity-change broad reset). A conversation belongs to one workspace, so the panel doesn't carry it into another. Two triggers:
+The panel keeps its conversation and the URL's workspace in agreement, because a chat runs in the workspace its URL names and the server answers a conversation from any other workspace as unknown (`404 conversation_not_found`). When they disagree, one gives:
 
-1. **In-session switch.** `A→B` re-scopes and clears the open conversation. A `null` focus on home/identity routes is *held*, not reset, so `A→home→A` keeps context.
-2. **Mount / async-focus reconcile.** After a refresh the panel restores the last conversation from per-tab storage with no transition to catch a workspace mismatch. Once the conversation's own workspace is known (`conversationMeta.workspaceId`, from `conversations__get`) it re-scopes if that differs from the focus. This fires only when the workspace is **known** — a not-yet-loaded conversation is left alone, which is the open-in-progress race guard.
+- **The URL, for a conversation the user chose.** `openConversation` (a `?chat=` deep link through `openPanel`, Recents, an app's `openConversation` action) marks the conversation followed; once its workspace is known and differs from the focus, the provider navigates to `/w/<its slug>`, and the arrival is not treated as a switch away from it. Only for a workspace the user belongs to.
+- **The conversation, otherwise.** `loadConversation` alone (the per-tab restore) never moves the URL: the URL the user loaded wins. Re-scoping uses the narrow `newConversation()` (back to the panel's unsent chat, or a fresh one once a send was attempted in it; an unsent chat has no workspace until its first send), **not** `chatStore.reset()` (that is the identity-change broad reset).
+
+Two triggers:
+
+1. **In-session switch.** `A→B` re-scopes and clears the open conversation, unless the switch is the followed conversation arriving at its own workspace. A `null` focus on home/identity routes is *held*, not reset, so `A→home→A` keeps context.
+2. **Mount / async-focus / open reconcile.** Once the conversation's own workspace is known (`conversationMeta.workspaceId`, from `conversations__get`) it follows or re-scopes as above if that differs from the focus. This fires only when the workspace is **known** — a not-yet-loaded conversation is left alone, which is the open-in-progress race guard.
 
 Opening a conversation from within its own workspace doesn't change focus and matches, so it isn't cleared.
 
-**The reconcile is the single guard.** `useChat` knows nothing about workspaces, so do not add a send-time backstop: by the time a send can run, the passive reconcile effect has already re-scoped the panel. The runtime still binds a resumed turn to the conversation's OWN workspace regardless of focus (the seal), so a mis-target is a wrong-conversation-selected bug, never a cross-workspace leak.
+**The reconcile is the single guard.** `useChat` knows nothing about workspaces, so do not add a send-time backstop. A send in the moment before the conversation's workspace loads goes to the focused path and, for a conversation from elsewhere, is refused as unknown; it never runs in another workspace.
 
 ## Web Shell — Main-Area Views Beside the Docked Chat
 

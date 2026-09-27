@@ -478,10 +478,10 @@ describe("dispatchUnattended — a call that goes through", () => {
   });
 
   // `unattended` is what bars the authoring surface at the sources themselves,
-  // below anything this door checks by name; `unattendedReason` is what the
-  // outbound `_meta` stamp reads. Both must survive the router's per-call
-  // context rebuild, which is an allowlist — a field not named there vanishes.
-  test("the dispatched tool sees unattended and the reason in its request context", async () => {
+  // below anything this door checks by name. It must survive the router's
+  // per-call context rebuild, which is an allowlist — a field not named there
+  // vanishes.
+  test("the dispatched tool sees unattended in its request context", async () => {
     const crm = makeSpySource("crm");
     const runtime = makeStubRuntime({
       workDir,
@@ -492,7 +492,6 @@ describe("dispatchUnattended — a call that goes through", () => {
     await call(runtime, "crm__search");
 
     expect(crm.calls[0]?.context?.unattended).toBe(true);
-    expect(crm.calls[0]?.context?.unattendedReason).toBe(REASON);
     expect(crm.calls[0]?.context?.workspaceId).toBe(WS);
     expect(crm.calls[0]?.context?.identity?.id).toBe(PRINCIPAL);
   });

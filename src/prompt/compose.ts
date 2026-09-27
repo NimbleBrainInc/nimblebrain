@@ -271,7 +271,7 @@ export interface FocusedAppInfo {
   referenceResourceUri?: string;
 }
 
-/** App state entry from the bridge's appStateStore. */
+/** App state a live app view pushed via `ui/update-model-context` (the web bridge's `getAppState`). */
 export interface AppStateInfo {
   state: Record<string, unknown>;
   summary?: string;
@@ -895,7 +895,6 @@ const INTERACTION_RULES = `### Interaction Rules
 - If unsure which tool to use, call \`nb__search\` with \`scope: "tools"\` and a keyword. Its top matches are activated automatically — call them directly. Only use \`nb__manage_tools\` to activate a different match from the results, or to remove tools when clearly switching domains (batch removes with the next adds).
 - When the user says "undo" or "go back," check if the app has undo, snapshot, or history tools. If not, say undo is not available for this app.
 - When the user gives vague feedback ("I don't like it," "make it better"), ask ONE clarifying question about what specifically to change.
-- Messages may include an \`[App Context: ...]\` header with metadata from the app. Use it to understand what the user was looking at.
 - Other apps are still available via \`nb__search\` (scope: "tools") if the user's request spans apps; its top matches are auto-activated, so you can usually call them directly.`;
 
 function formatFocusedAppSection(focusedApp: FocusedAppInfo): string {

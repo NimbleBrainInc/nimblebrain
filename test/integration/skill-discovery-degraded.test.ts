@@ -1,29 +1,4 @@
-/**
- * A knowingly-incomplete skill enumeration is loud, and is not cached as
- * complete.
- *
- * The composition-flap incident's real defect was not the flap: it was that a
- * workspace whose connectors publish `always` skills composed none of them and
- * nothing said so, because `skills: 0` is indistinguishable from "this
- * workspace has no skills". These pin the two halves of the guard — the signal
- * carries a machine-readable reason, and a short result never becomes the
- * cached answer for the TTL.
- *
- * The degraded fixtures each break a different leg — a throwing
- * `resources/list`, an endless cursor, a listed skill that cannot be read —
- * rather than returning zero resources. A clean enumeration that returns
- * nothing is NOT degraded — telling that from "never published" needs a
- * remembered baseline, which would page an operator on every legitimate
- * uninstall.
- */
-
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import {
-  CallToolRequestSchema,
-  ListResourcesRequestSchema,
-  ListToolsRequestSchema,
-  ReadResourceRequestSchema,
-} from "@modelcontextprotocol/sdk/types.js";
+import { Server } from "@modelcontextprotocol/server";
 import { afterAll, beforeAll, describe, expect, it, spyOn } from "bun:test";
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -58,12 +33,12 @@ HEALTHY-MARKER — this rule must be in context on every turn.`;
 
 /** The two verbs every fixture below answers the same way. */
 function withPingTool(server: Server, toolName = "ping"): Server {
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({
+  server.setRequestHandler('tools/list', async () => ({
     tools: [
       { name: toolName, description: "Ping", inputSchema: { type: "object", properties: {} } },
     ],
   }));
-  server.setRequestHandler(CallToolRequestSchema, async () => ({
+  server.setRequestHandler('tools/call', async () => ({
     content: [{ type: "text", text: "done" }],
   }));
   return server;
@@ -74,7 +49,7 @@ function createFailingServer(): Server {
   const server = withPingTool(
     new Server({ name: "failing", version: "0.1.0" }, { capabilities: { tools: {}, resources: {} } }),
   );
-  server.setRequestHandler(ListResourcesRequestSchema, async () => {
+  server.setRequestHandler('resources/list', async () => {
     throw new Error("resources/list is unavailable");
   });
   return server;
@@ -89,7 +64,7 @@ function createTruncatedServer(): Server {
     ),
   );
   let page = 0;
-  server.setRequestHandler(ListResourcesRequestSchema, async () => {
+  server.setRequestHandler('resources/list', async () => {
     page++;
     return {
       resources: [{ uri: `res://filler/${page}`, name: `filler-${page}` }],
@@ -107,10 +82,10 @@ function createUnreadableServer(): Server {
       { capabilities: { tools: {}, resources: {} } },
     ),
   );
-  server.setRequestHandler(ListResourcesRequestSchema, async () => ({
+  server.setRequestHandler('resources/list', async () => ({
     resources: [{ uri: "skill://broken/SKILL.md", name: "broken", mimeType: "text/markdown" }],
   }));
-  server.setRequestHandler(ReadResourceRequestSchema, async () => {
+  server.setRequestHandler('resources/read', async () => {
     throw new Error("resources/read is unavailable");
   });
   return server;
@@ -122,10 +97,10 @@ function createHealthyServer(): Server {
     new Server({ name: "healthy", version: "0.1.0" }, { capabilities: { tools: {}, resources: {} } }),
     "go",
   );
-  server.setRequestHandler(ListResourcesRequestSchema, async () => ({
+  server.setRequestHandler('resources/list', async () => ({
     resources: [{ uri: "skill://guide/SKILL.md", name: "guide", mimeType: "text/markdown" }],
   }));
-  server.setRequestHandler(ReadResourceRequestSchema, async (req) => ({
+  server.setRequestHandler('resources/read', async (req) => ({
     contents: [{ uri: req.params.uri, mimeType: "text/markdown", text: SKILL_BODY }],
   }));
   return server;

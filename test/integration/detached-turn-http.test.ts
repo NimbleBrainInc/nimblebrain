@@ -121,10 +121,8 @@ describe("detached turn HTTP surface", () => {
   it("start on a pre-migration (ownerless) conversation is 422, not 500", async () => {
     // Seed a corrupted conversation: line-1 metadata without ownerId makes the
     // store throw ConversationCorruptedError on load (the resume path). It must
-    // live at the exact workspace path the resume resolves (TEST_WORKSPACE_ID +
-    // the dev caller's owner partition) — the locator skips ownerless files, so
-    // the corrupted-load is reached via `resolveChatStore`'s deterministic
-    // workspace-store fallback, not the locator.
+    // live at the exact path the resume reads: the workspace in the URL
+    // (TEST_WORKSPACE_ID) and the dev caller's owner partition.
     const convId = "conv_dead00000000beef"; // conv_ + 16 hex
     const convDir = workspaceConversationsDir(testDir, TEST_WORKSPACE_ID, DEV_OWNER);
     mkdirSync(convDir, { recursive: true });
@@ -223,7 +221,7 @@ describe("detached turn HTTP surface", () => {
     expect((await cancelRes.json()).error).toBe("bad_request");
   });
 
-  it("POST /v1/workspaces/:wsId/chat/start on another user's conversation is 403", async () => {
+  it("POST /v1/workspaces/:wsId/chat/start on another user's conversation is 404, as for an unknown one", async () => {
     const convId = "conv_0c0c0c0c0c0c0c0c";
     await seedOtherUserConversation(convId);
     const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat/start`, {
@@ -235,7 +233,8 @@ describe("detached turn HTTP surface", () => {
         workspaceId: TEST_WORKSPACE_ID,
       }),
     });
-    expect(res.status).toBe(403);
-    expect((await res.json()).error).toBe("conversation_access_denied");
+    expect(res.status).toBe(404);
+    expect((await res.json()).error).toBe("conversation_not_found");
+    expect(runtime.isTurnActive(convId)).toBe(false);
   });
 });

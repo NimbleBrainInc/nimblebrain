@@ -19,8 +19,8 @@ export interface RequestContext {
    * workspace created at first login, and it reaches this field the same way
    * any other does.
    *
-   * Set on every door: chat (the conversation's own workspace — a chat resumed
-   * in A while the client is focused on B reads A), automation runs
+   * Set on every door: chat (the workspace its request addresses, which a
+   * resume shares with its conversation), automation runs
    * (provenance), `/mcp` (the membership-validated workspace in its URL),
    * REST (the membership-validated workspace in its URL), and each
    * per-call restamp (the routed workspace, which the wall guarantees is the
@@ -98,18 +98,6 @@ export interface RequestContext {
    * is not (see that module's trust-boundary note).
    */
   unattended?: boolean;
-  /**
-   * The caller's own short opaque string identifying WHAT made an unattended
-   * dispatch — `"route:rt_…"` for a notification route. Set only by
-   * `dispatchUnattended`; absent in a chat and in a scheduled run, which have
-   * a conversation and a run id to be identified by.
-   *
-   * Two readers, and they are the whole of it: the audit line, and the
-   * outbound `_meta` stamp under `UNATTENDED_META_KEY` so a connector can tell a
-   * configuration-fired call from a chat turn. The host never parses it — a
-   * caller may put anything short in here, and the value decides nothing.
-   */
-  unattendedReason?: string;
 }
 
 const storage = new AsyncLocalStorage<RequestContext>();

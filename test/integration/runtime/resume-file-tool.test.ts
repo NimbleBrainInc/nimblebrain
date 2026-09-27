@@ -1,18 +1,17 @@
 /**
- * Cross-workspace resume → file-TOOL partition.
+ * Resume → file-TOOL partition.
  *
- * Sibling to `cross-workspace-file-resume.test.ts`, which pins the *rehydration*
+ * Sibling to `resume-file-rehydration.test.ts`, which pins the *rehydration*
  * read (the `files://` attachment the runtime inlines into the prompt). This one
  * pins the other half: the agent's identity-door `files__*` TOOLS. When the model
- * calls `files__list` during a cross-workspace resume, the tool resolves its
- * workspace-owned store from `RequestContext.workspaceId`, which `chat()` sets
- * to the conversation's authoritative workspace (`convWsId`) — NOT the request
- * header / personal workspace. So a tool call on an UNFOCUSED resume reads the
- * conversation's workspace (A), where the file lives, and finds it.
+ * calls `files__list` during a resume, the tool resolves its workspace-owned
+ * store from `RequestContext.workspaceId`, which `chat()` sets to the workspace
+ * the turn runs in — the one its request names, which for a resume is the
+ * conversation's own (a resume naming any other is refused). So the tool reads
+ * the conversation's workspace (A), where the file lives, and finds it.
  *
  * The rehydration test never invokes a file tool, so it cannot catch a regression
- * in this path (e.g. `workspaceId` reverting to `request.workspaceId ??
- * sessionWsId`, or the identity-tool-router dropping `workspaceId` from its
+ * in this path (e.g. the identity-tool-router dropping `workspaceId` from its
  * per-call restamp). This test exercises the tool directly.
  */
 
@@ -23,12 +22,13 @@ import { join } from "node:path";
 import type { LanguageModelV4, LanguageModelV4CallOptions } from "@ai-sdk/provider";
 import type { FileStore } from "../../../src/files/store.ts";
 import { DEV_IDENTITY } from "../../../src/identity/providers/dev.ts";
+import { ConversationNotFoundError } from "../../../src/runtime/errors.ts";
 import { Runtime } from "../../../src/runtime/runtime.ts";
 import { personalWorkspaceIdFor } from "../../../src/workspace/workspace-store.ts";
 import { createEchoModel } from "../../helpers/echo-model.ts";
 import { provisionTestWorkspace } from "../../helpers/test-workspace.ts";
 
-const testDir = join(tmpdir(), `nb-cross-workspace-file-tool-resume-${Date.now()}`);
+const testDir = join(tmpdir(), `nb-resume-file-tool-${Date.now()}`);
 
 afterAll(() => {
   if (existsSync(testDir)) rmSync(testDir, { recursive: true, force: true });
@@ -38,8 +38,8 @@ afterAll(() => {
 const WORKSPACE_A = "ws_workspace_a";
 // Dev mode: no identity on the request → the dev owner.
 const OWNER = DEV_IDENTITY.id;
-// The resume is UNFOCUSED → it falls back to the owner's personal workspace,
-// a DIFFERENT workspace than WORKSPACE_A. That is the cross-workspace hop.
+// An UNFOCUSED request falls back to the owner's personal workspace — a
+// different workspace than WORKSPACE_A.
 const PERSONAL = personalWorkspaceIdFor(OWNER);
 
 // The resume message — distinct from the born message so the model adapter can
@@ -87,8 +87,8 @@ function createResumeFileToolModel(): LanguageModelV4 {
   };
 }
 
-describe("cross-workspace resume scopes the file TOOL to the conversation's workspace (not the request)", () => {
-  it("files__list on an UNFOCUSED resume reads workspace A's partition and finds the attachment", async () => {
+describe("a resume scopes the file TOOL to the workspace it runs in", () => {
+  it("files__list on a resume in A reads A's partition, and an UNFOCUSED resume is refused", async () => {
     const workDir = join(testDir, "file-tool-from-workspace");
     mkdirSync(workDir, { recursive: true });
 
@@ -121,8 +121,7 @@ describe("cross-workspace resume scopes the file TOOL to the conversation's work
       visibility: "private",
     });
 
-    // Sanity: the personal workspace — where an un-fixed resume would scope the
-    // file tool — does NOT hold the file. So a `files__list` that returns it can
+    // Sanity: the personal workspace does NOT hold the file. So a `files__list` that returns it can
     // only have resolved to workspace A.
     expect(await runtime.getWorkspaceFileStore(PERSONAL, OWNER).findEntry(saved.id)).toBeNull();
 
@@ -137,10 +136,20 @@ describe("cross-workspace resume scopes the file TOOL to the conversation's work
       return store;
     };
 
-    // 4) Cross-workspace resume: UNFOCUSED (no workspaceId) → the request
-    //    workspace is the owner's personal workspace, NOT workspace A. The model
-    //    emits a `files__list` tool call; its store must resolve to A.
-    const result = await runtime.chat({ message: RESUME_MSG, conversationId: convId });
+    // 4) A resume UNFOCUSED (no workspaceId → the personal workspace) is refused
+    //    before the model runs, so no file tool is ever scoped to PERSONAL.
+    await expect(
+      runtime.chat({ message: RESUME_MSG, conversationId: convId }),
+    ).rejects.toBeInstanceOf(ConversationNotFoundError);
+    expect(calls).toEqual([]);
+
+    // 5) The resume in A: the model emits a `files__list` tool call; its store
+    //    resolves to A.
+    const result = await runtime.chat({
+      message: RESUME_MSG,
+      conversationId: convId,
+      workspaceId: WORKSPACE_A,
+    });
 
     runtime.getWorkspaceFileStore = origGetFileStore;
 
@@ -151,15 +160,13 @@ describe("cross-workspace resume scopes the file TOOL to the conversation's work
     expect(listCall?.ok).toBe(true);
 
     // And it read A's partition: the listing contains the attachment that only
-    // exists in workspace A. (Reverting the fix scopes it to PERSONAL, where the
-    // file does not exist, so `total` is 0 and this fails.)
+    // exists in workspace A.
     expect(listCall?.output).toContain(saved.id);
     expect(listCall?.output).toContain("attach.txt");
     expect(listCall?.output).toContain('"total": 1');
 
-    // Every partition the resume touched is the conversation's workspace (A) —
-    // never the request's personal workspace. This covers the rehydration store
-    // AND the file-tool store, both of which must follow `convWsId`.
+    // Every partition the resume touched is the conversation's workspace (A).
+    // This covers the rehydration store AND the file-tool store.
     expect(calls.length).toBeGreaterThan(0);
     for (const c of calls) {
       expect(c.wsId).toBe(WORKSPACE_A);
