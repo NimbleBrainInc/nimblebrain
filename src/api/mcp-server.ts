@@ -557,6 +557,11 @@ export class McpServerHost {
         // The session is bound to the identity and workspace that initialized
         // it; `ownsTransport` holds every later request to both.
         this.transports.set(sid, { transport, identityId, workspaceId, lastAccessedAt: now });
+        // The one line that names the client by its own declared `clientInfo`;
+        // later misses for this session carry only the user agent.
+        log.info(
+          `[mcp] session initialized ${fmtSessionContext(request, sid, sessionCtx)} client=${fmtClientInfo(parsedBody)}`,
+        );
         // Fire-and-forget the registry write. The session is already live
         // on this process; if the registry is down we still serve the client.
         this.registry
@@ -1571,11 +1576,29 @@ function jsonRpcError(status: number, code: number, message: string): Response {
 /**
  * Build a `key=value` log fragment with the request context that matters for
  * session-miss diagnosis: a sessionId prefix (UUIDs are not sensitive but the
- * prefix keeps lines greppable), identity (for cross-tenant correlation), and
- * the client IP from `x-forwarded-for` (the ALB sets it).
+ * prefix keeps lines greppable), identity (for cross-tenant correlation), the
+ * client IP from `x-forwarded-for` (the ALB sets it), and the `User-Agent`,
+ * which names the client on lines where no session (and so no `clientInfo`)
+ * exists.
  *
- * The workspace is the one the request's URL names.
+ * The workspace is the one the request's URL names. The user agent is
+ * client-controlled, so it is length-capped and JSON-quoted: a newline or a
+ * `key=value` inside it cannot forge another field or line.
  */
+/** Cap on a client-supplied string (user agent, `clientInfo`) written to a log line. */
+const MAX_LOGGED_FIELD_CHARS = 200;
+
+/**
+ * The `clientInfo` an initialize request declares, as a JSON-quoted
+ * `name/version` (capped, like the user agent, because the client writes it).
+ */
+function fmtClientInfo(body: unknown): string {
+  const info = isInitializeRequest(body) ? body.params.clientInfo : undefined;
+  if (!info?.name) return "none";
+  const label = info.version ? `${info.name}/${info.version}` : info.name;
+  return JSON.stringify(label.slice(0, MAX_LOGGED_FIELD_CHARS));
+}
+
 function fmtSessionContext(
   request: Request,
   sessionId: string | null,
@@ -1585,5 +1608,7 @@ function fmtSessionContext(
   const identityId = sessionCtx?.identity?.id ?? "none";
   const workspaceId = sessionCtx?.workspaceId ?? "none";
   const ip = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "direct";
-  return `sessionId=${sidPrefix} identity=${identityId} workspace=${workspaceId} ip=${ip}`;
+  const ua = request.headers.get("user-agent");
+  const uaField = ua ? JSON.stringify(ua.slice(0, MAX_LOGGED_FIELD_CHARS)) : "none";
+  return `sessionId=${sidPrefix} identity=${identityId} workspace=${workspaceId} ip=${ip} ua=${uaField}`;
 }

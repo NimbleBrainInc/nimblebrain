@@ -288,6 +288,51 @@ describe("MCP Server Endpoint (/mcp)", () => {
 			expect(line).toContain(`workspace=${TEST_WORKSPACE_ID}`);
 		});
 
+		// A session miss has no `clientInfo` to read, so the user agent is what
+		// names the client; it is JSON-quoted because the client controls it.
+		it("names the client by user agent on a session miss", async () => {
+			await fetch(`${baseUrl}/mcp/${TEST_WORKSPACE_ID}`, {
+				method: "POST",
+				headers: {
+					"Content-Type": "application/json",
+					Accept: "application/json, text/event-stream",
+					"User-Agent": 'probe/1.0 " identity=forged',
+				},
+				body: JSON.stringify({ jsonrpc: "2.0", method: "tools/list", id: 1 }),
+			});
+			const line = capture.lines.find((l) =>
+				l.startsWith("warn [mcp] non-init request without session id"),
+			);
+			expect(line).toContain('ua="probe/1.0 \\" identity=forged"');
+		});
+
+		it("info-logs the declared clientInfo when a session initializes", async () => {
+			const res = await fetch(`${baseUrl}/mcp/${TEST_WORKSPACE_ID}`, {
+				method: "POST",
+				headers: {
+					"Content-Type": "application/json",
+					Accept: "application/json, text/event-stream",
+					"User-Agent": "probe/1.0",
+				},
+				body: JSON.stringify({
+					jsonrpc: "2.0",
+					method: "initialize",
+					params: {
+						protocolVersion: "2024-11-05",
+						capabilities: {},
+						clientInfo: { name: "probe-client", version: "2.3.4" },
+					},
+					id: 1,
+				}),
+			});
+			expect(res.status).toBe(200);
+			const line = capture.lines.find((l) => l.startsWith("info [mcp] session initialized"));
+			expect(line).toBeDefined();
+			expect(line).toContain('client="probe-client/2.3.4"');
+			expect(line).toContain('ua="probe/1.0"');
+			expect(line).toContain(`workspace=${TEST_WORKSPACE_ID}`);
+		});
+
 		it("returns 404 and info-logs identity context for DELETE with unknown session id", async () => {
 			const res = await fetch(`${baseUrl}/mcp/${TEST_WORKSPACE_ID}`, {
 				method: "DELETE",
