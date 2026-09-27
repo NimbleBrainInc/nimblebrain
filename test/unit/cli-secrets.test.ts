@@ -246,6 +246,16 @@ describe("scope selection", () => {
     ["an unknown flag", ["list", "--recursive"]],
   ];
 
+  test("an unknown command is reported before any config is opened", async () => {
+    const err: string[] = [];
+    const io = { stdout: () => {}, stderr: (line: string) => err.push(line), readValue: async () => "" };
+    const code = await runSecrets(["frobnicate"], io, () => {
+      throw new Error("the store was opened");
+    });
+    expect(code).toBe(2);
+    expect(err.join("\n")).toContain('unknown command "frobnicate"');
+  });
+
   for (const [label, argv] of bad) {
     test(`${label} exits 2 with usage`, async () => {
       const h = harness();

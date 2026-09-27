@@ -1,7 +1,7 @@
 import { existsSync, realpathSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
-import { DEFAULT_CREDENTIAL_STORE_BACKEND, type SecretsConfig } from "../config/secrets.ts";
+import { credentialStoreBackendName, type SecretsConfig } from "../config/secrets.ts";
 import { defaultWorkDir } from "../connectors/runtime/paths.ts";
 import type { CredentialScope, CredentialStore } from "../tools/credential-store.ts";
 import {
@@ -227,7 +227,7 @@ function openStore(configPath: string | undefined): OpenedStore {
     // Always set by `loadConfig`; optional only on the shared `RuntimeConfig`.
     configPath: config.configPath ?? "",
     workDir,
-    backend: secrets?.backend ?? DEFAULT_CREDENTIAL_STORE_BACKEND,
+    backend: credentialStoreBackendName(secrets),
   };
 }
 
@@ -296,6 +296,12 @@ export async function runSecrets(
     );
     return 2;
   }
+  // Before the store is opened, so a mistyped command is reported as one and
+  // not as whatever opening the config would have said.
+  if (action !== "set" && action !== "list" && action !== "delete") {
+    io.stderr(action ? `unknown command "${action}"\n${USAGE}` : USAGE);
+    return 2;
+  }
 
   try {
     const scope = parseScope(values);
@@ -307,9 +313,6 @@ export async function runSecrets(
         return await listSecrets(opened.store, scope, key, io);
       case "delete":
         return await deleteSecret(opened, scope, key, io);
-      default:
-        io.stderr(action ? `unknown command "${action}"\n${USAGE}` : USAGE);
-        return 2;
     }
   } catch (err) {
     if (err instanceof UsageError) {
