@@ -28,6 +28,7 @@ import { useChatPanelContext } from "../context/ChatPanelContext";
 import { useFocusedApp } from "../context/FocusedAppContext";
 import { getSavedConversationId, setSavedConversationId } from "../lib/active-conversation-storage";
 import { useIsMobile } from "../lib/hooks/use-is-mobile";
+import { cn } from "../lib/utils";
 import type { AppContext, PlacementEntry } from "../types";
 import { SlotRenderer } from "./SlotRenderer";
 
@@ -129,31 +130,37 @@ export function AppWithChat({ placement }: AppWithChatProps) {
 
   const isSidebar = panelState === "sidebar";
   const isFullscreen = panelState === "fullscreen";
-  const hideMobileApp = isMobile && isSidebar;
+  // On a phone the sidebar is a full-width overlay that covers the app.
+  // Covering is presentation, not lifetime: the app area stays mounted in
+  // every panel state, so the iframe, its bridge, and the view's pushed
+  // state survive. Only unmounting this component (or a new placement)
+  // tears the view down. Hidden with `visibility`, not `display: none`, so
+  // the iframe keeps its size and the app sees no resize while covered.
+  const coveredOnMobile = isMobile && isSidebar;
 
   return (
     <div className="relative flex h-dvh w-full overflow-hidden">
-      {/* App area — hidden on mobile when chat sidebar is open.
-          marginRight (chat panel push-over) is handled at the shell
-          level on <main> now; AppWithChat keeps only the iframe-
-          specific fullscreen styling (opacity/blur when chat
-          fullscreen covers the iframe). */}
-      {!hideMobileApp && (
-        <div
-          className={
-            isFullscreen
-              ? "flex-1 h-full min-w-0 opacity-30 scale-[0.98] blur-sm pointer-events-none transition-all duration-350 ease-out"
-              : "flex-1 h-full min-w-0"
-          }
-          style={{
-            transition: isFullscreen
-              ? `opacity ${TRANSITION_FULLSCREEN}, transform ${TRANSITION_FULLSCREEN}, filter ${TRANSITION_FULLSCREEN}`
-              : `opacity ${TRANSITION_STANDARD}, transform ${TRANSITION_STANDARD}, filter ${TRANSITION_STANDARD}`,
-          }}
-        >
-          <SlotRenderer placements={[placement]} className="w-full h-full" onChat={handleChat} />
-        </div>
-      )}
+      {/* App area. marginRight (chat panel push-over) is handled at the
+          shell level on <main>; AppWithChat keeps only the iframe-specific
+          styling: opacity/blur when fullscreen chat covers the iframe, and
+          invisible + inert while the mobile sidebar covers it. */}
+      <div
+        data-testid="app-with-chat-area"
+        className={cn(
+          "flex-1 h-full min-w-0",
+          isFullscreen &&
+            "opacity-30 scale-[0.98] blur-sm pointer-events-none transition-all duration-350 ease-out",
+          coveredOnMobile && "invisible",
+        )}
+        {...(coveredOnMobile ? { inert: true, "aria-hidden": true } : {})}
+        style={{
+          transition: isFullscreen
+            ? `opacity ${TRANSITION_FULLSCREEN}, transform ${TRANSITION_FULLSCREEN}, filter ${TRANSITION_FULLSCREEN}`
+            : `opacity ${TRANSITION_STANDARD}, transform ${TRANSITION_STANDARD}, filter ${TRANSITION_STANDARD}`,
+        }}
+      >
+        <SlotRenderer placements={[placement]} className="w-full h-full" onChat={handleChat} />
+      </div>
     </div>
   );
 }
