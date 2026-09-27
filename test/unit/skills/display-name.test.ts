@@ -28,8 +28,8 @@ describe("skillDisplayName", () => {
   });
 
   test("handles the in-memory sentinel and an empty name", () => {
-    expect(skillDisplayName({ id: "skill-in-memory:identity-override" })).toBe(
-      "skill-in-memory:identity-override",
+    expect(skillDisplayName({ id: "skill-in-memory:example" })).toBe(
+      "skill-in-memory:example",
     );
     expect(skillDisplayName({ id: "/work/skills/x.md", name: "" })).toBe("x");
   });
