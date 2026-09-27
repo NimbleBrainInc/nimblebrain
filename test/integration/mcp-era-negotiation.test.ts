@@ -5,7 +5,7 @@
  * server, the same assertions on each — the negotiated version, tools, a tool
  * call, a `ui://` read, and the extensions the server advertises. The task wire
  * against a 2025 task server and a SEP-2663 one, and the legacy retry after a
- * probe that meets an HTTP 5xx.
+ * probe that meets an HTTP 500 (and not after a gateway's 502/503/504).
  *
  * Server role: `/mcp/<wsId>` answering a 2026-07-28 client and a 2025 client
  * with the same bare, workspace-walled tool names.
@@ -178,7 +178,7 @@ describe.each([
 });
 
 describe("McpSource era fallback", () => {
-  it("connects on the 2025 era when the server/discover probe meets an HTTP 5xx", async () => {
+  it("connects on the 2025 era when the server/discover probe meets an HTTP 500", async () => {
     const legacy = legacyServer();
     const served = serve(async (request) => {
       const body = await bodyOf(request);
@@ -196,6 +196,40 @@ describe("McpSource era fallback", () => {
       served.close();
     }
   });
+
+  it.each([502, 503, 504])(
+    "does not fall back to the 2025 era when a gateway answers the probe with %i",
+    async (status) => {
+      // A 2026 server behind an edge whose upstream is restarting: the probe
+      // meets the gateway's error, and the next connect meets the server.
+      const modern = modernServer();
+      let gatewayDown = true;
+      const seen: string[] = [];
+      const served = serve(async (request) => {
+        const body = await bodyOf(request);
+        if (body?.method) seen.push(body.method);
+        if (gatewayDown && body?.method === "server/discover") {
+          return new Response("bad gateway", { status });
+        }
+        return modern(request);
+      });
+      const source = new McpSource(
+        "era",
+        { type: "remote", url: new URL(served.url), allowInsecure: true },
+        new NoopEventSink(),
+      );
+      try {
+        await expect(source.start()).rejects.toBeDefined();
+        expect(seen).not.toContain("initialize");
+        gatewayDown = false;
+        await source.start();
+        expect(source.getNegotiatedProtocolVersion()).toBe("2026-07-28");
+      } finally {
+        await source.stop();
+        served.close();
+      }
+    },
+  );
 
   it("does not retry on the 2025 era when the probe is refused for authorization", async () => {
     const legacy = legacyServer();

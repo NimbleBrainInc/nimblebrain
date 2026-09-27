@@ -785,11 +785,11 @@ export class McpSource implements ToolSource {
   }
 
   /**
-   * Connect, and if the `server/discover` probe met an HTTP 5xx, connect once
+   * Connect, and if the `server/discover` probe met an HTTP 500, connect once
    * more on the 2025 era. The SDK reads a 5xx as a server failure rather than
    * era evidence, but a 2025-era server that answers any method it does not
    * know with a 500 connected before this runtime probed, and must still
-   * connect. Both connect seams (`start()` and the OAuth retry) go through
+   * connect (see `isEraProbeServerFailure` for why a gateway 5xx does not). Both connect seams (`start()` and the OAuth retry) go through
    * here, so the fallback holds on either.
    *
    * The retry rebuilds the transport and client and passes a `legacy` prior,
@@ -2963,6 +2963,25 @@ export class McpSource implements ToolSource {
 }
 
 /**
+ * Whether a connect failed because the `server/discover` probe met an HTTP 500
+ * — the one probe failure a 2025-era server can cause just by being strict
+ * about methods it does not know. Only 500: it is the server's own answer.
+ * A 502, 503 or 504 comes from a proxy or gateway in front of the server (an
+ * edge whose upstream is restarting) and says nothing about the server's era;
+ * falling back on one would pin a 2026-07-28 server to the 2025 era for the
+ * life of the connection, and a 2026-only feature (the tasks extension) with
+ * it. Auth refusals and network failures are excluded too: those fail the
+ * legacy handshake the same way.
+ */
+function isEraProbeServerFailure(err: unknown): boolean {
+  return (
+    err instanceof SdkHttpError &&
+    err.code === SdkErrorCode.EraNegotiationFailed &&
+    err.status === 500
+  );
+}
+
+/**
  * Distinguish a genuine "the resource is not here" outcome from a transport /
  * connection failure, for `readResource`'s catch.
  *
@@ -2978,20 +2997,6 @@ export class McpSource implements ToolSource {
  * of these — it carries no application error code — so it returns `false` and
  * must NOT be masked as a missing resource.
  */
-/**
- * Whether a connect failed because the `server/discover` probe met an HTTP 5xx
- * — the one probe failure a 2025-era server can cause just by being strict
- * about methods it does not know. Auth refusals and network failures are
- * excluded: those fail the legacy handshake the same way.
- */
-function isEraProbeServerFailure(err: unknown): boolean {
-  return (
-    err instanceof SdkHttpError &&
-    err.code === SdkErrorCode.EraNegotiationFailed &&
-    err.status >= 500
-  );
-}
-
 export function isMcpResourceMiss(err: unknown): boolean {
   if (err === null || typeof err !== "object") return false;
   const code = (err as { code?: unknown }).code;
