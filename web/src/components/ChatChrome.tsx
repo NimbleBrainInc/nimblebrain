@@ -16,6 +16,7 @@
 // ---------------------------------------------------------------------------
 
 import { MessageSquare } from "lucide-react";
+import type { Ref } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "react-router-dom";
 import { useChatContext } from "../context/ChatContext";
@@ -57,16 +58,19 @@ function resolvePanelWidth({
 
 /** Floating chat toggle shown when the panel is closed; badges the unread assistant-message count. */
 function ChatToggleButton({
+  buttonRef,
   visible,
   unreadCount,
   onOpen,
 }: {
+  buttonRef: Ref<HTMLButtonElement>;
   visible: boolean;
   unreadCount: number;
   onOpen: () => void;
 }) {
   return (
     <button
+      ref={buttonRef}
       type="button"
       onClick={onOpen}
       className="fixed bottom-6 right-6 z-40 flex items-center justify-center w-12 h-12 rounded-full bg-primary text-primary-foreground shadow-lg hover:bg-primary/90 transition-all duration-200"
@@ -91,6 +95,8 @@ export function ChatChrome() {
   const { panelState, panelWidth, setPanelWidth, openPanel, closePanel, toggleFullscreen } =
     useChatPanelContext();
   const panelRef = useRef<ChatPanelRef>(null);
+  const panelElRef = useRef<HTMLDivElement>(null);
+  const toggleButtonRef = useRef<HTMLButtonElement>(null);
   const chat = useChatContext();
   const sidebar = useSidebar();
   const isMobile = useIsMobile();
@@ -166,6 +172,28 @@ export function ChatChrome() {
     setButtonVisible(false);
   }, [panelState]);
 
+  // Focus follows the panel. The closed panel is inert, so nothing in it can
+  // take focus; this runs after the commit that clears `inert`, which is the
+  // earliest the composer can accept it. Every open path lands here — the
+  // toggle, ⌘K, ⌘⇧K, `?chat=` deep links, and `openPanel` from an app or the
+  // command palette. On close, focus left inside the now-inert panel (Esc,
+  // Close, Back, ⌘K) moves to the floating toggle, the control that reopens it.
+  const isOpen = panelState !== "closed";
+  const wasOpenRef = useRef(isOpen);
+  useEffect(() => {
+    const wasOpen = wasOpenRef.current;
+    wasOpenRef.current = isOpen;
+    if (isOpen) {
+      if (!wasOpen) panelRef.current?.requestInputFocus();
+      return;
+    }
+    if (!wasOpen) return;
+    const active = document.activeElement;
+    const stranded =
+      active === null || active === document.body || panelElRef.current?.contains(active);
+    if (stranded) toggleButtonRef.current?.focus({ preventScroll: true });
+  }, [isOpen]);
+
   // Keyboard shortcuts — Esc closes, ⌘K toggles, ⌘⇧K toggles fullscreen.
   useEffect(() => {
     // Esc — close the panel when it's open; left to the browser when already closed.
@@ -175,23 +203,22 @@ export function ChatChrome() {
       closePanel();
     }
 
-    // ⌘⇧K — toggle fullscreen, opening the panel first when it's closed, then focus the composer.
+    // ⌘⇧K — toggle fullscreen, opening the panel first when it's closed, then
+    // focus the composer (the focus effect above does it on open).
     function toggleFullscreenShortcut() {
       if (panelState === "closed") {
         openPanel();
         toggleFullscreen();
-        setTimeout(() => panelRef.current?.requestInputFocus(), 350);
       } else {
         toggleFullscreen();
         setTimeout(() => panelRef.current?.requestInputFocus(), 100);
       }
     }
 
-    // ⌘K — open the panel (focusing the composer once it settles) or close it.
+    // ⌘K — open the panel (the focus effect above focuses the composer) or close it.
     function togglePanelShortcut() {
       if (panelState === "closed") {
         openPanel();
-        setTimeout(() => panelRef.current?.requestInputFocus(), 350);
       } else {
         closePanel();
       }
@@ -238,7 +265,6 @@ export function ChatChrome() {
 
   const isSidebar = panelState === "sidebar";
   const isFullscreen = panelState === "fullscreen";
-  const isOpen = isSidebar || isFullscreen;
   const transitionTiming = isFullscreen ? TRANSITION_FULLSCREEN : TRANSITION_STANDARD;
   const panelWidthValue = resolvePanelWidth({
     isMobile,
@@ -252,14 +278,20 @@ export function ChatChrome() {
       {/* Floating chat toggle — visible when panel is closed */}
       {panelState === "closed" && (
         <ChatToggleButton
+          buttonRef={toggleButtonRef}
           visible={buttonVisible}
           unreadCount={unreadCount}
           onOpen={() => openPanel()}
         />
       )}
 
-      {/* Chat panel — full-width on mobile, fixed sidebar on desktop */}
+      {/* Chat panel — full-width on mobile, fixed sidebar on desktop. It stays
+          mounted when closed so the slide plays and the chat keeps its state,
+          and is inert + aria-hidden then: no focusable controls, not announced. */}
       <div
+        ref={panelElRef}
+        inert={!isOpen}
+        aria-hidden={!isOpen}
         className="fixed top-0 right-0 h-full z-10 bg-background"
         data-testid="chat-chrome-panel"
         style={{
