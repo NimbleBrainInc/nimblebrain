@@ -158,10 +158,10 @@ describe("detached turns (server-authoritative streaming)", () => {
     // BEFORE runBus.begin() flips the run active — otherwise an unauthorized
     // caller could mutate another user's run state.
     const convId = "conv_d00dd00dd00dd00d";
-    // Seed the foreign conversation in its owner's workspace
-    // (`workspaces/ws_user_<id>/conversations/<ownerId>/`).
+    // Seed the foreign conversation in a workspace of its owner's
+    // (`workspaces/<wsId>/conversations/<ownerId>/`).
     const foreignOwner = "usr_someone_else";
-    const convDir = workspaceConversationsDir(testDir, `ws_user_${foreignOwner}`, foreignOwner);
+    const convDir = workspaceConversationsDir(testDir, "ws_someone_elses", foreignOwner);
     mkdirSync(convDir, { recursive: true });
     writeFileSync(
       join(convDir, `${convId}.jsonl`),
@@ -198,21 +198,23 @@ describe("detached turns (server-authoritative streaming)", () => {
     await awaitTurn(conversationId);
   });
 
-  it("starts an identity-level turn with no workspaceId (personal-workspace fallback)", async () => {
-    // Parity with the sync `chat()` path: a runtime-level turn with no
-    // workspace is identity-level, not an error. startTurn falls back to the
-    // caller's personal workspace instead of throwing. (REST always names the
-    // workspace in its path, so this is reachable only from in-process callers.)
+  it("starts a turn with no workspaceId in dev mode (default-workspace fallback)", async () => {
+    // Parity with the sync `chat()` path: in dev mode (no identity provider) a
+    // runtime-level turn with no workspace runs in the caller's default
+    // workspace instead of throwing. (REST always names the workspace in its
+    // path, so this is reachable only from in-process callers.)
     const { conversationId } = await runtime.startTurn({ message: "no workspace here" });
     expect(conversationId).toMatch(/^conv_/);
 
     const { status } = await awaitTurn(conversationId);
     expect(status).toBe("done");
 
-    // Conversation persisted with the personal-workspace breadcrumb.
+    // Conversation persisted with the default-workspace breadcrumb: the dev
+    // user's only membership, so no new workspace was provisioned.
     const conv = await runtime.findConversation(conversationId, { userId: "usr_default" });
     expect(conv).not.toBeNull();
-    expect(conv?.workspaceId).toBe("ws_user_usr_default");
+    expect(conv?.workspaceId).toBe(TEST_WORKSPACE_ID);
+    expect(await runtime.getWorkspaceStore().getWorkspacesForUser("usr_default")).toHaveLength(1);
   });
 });
 

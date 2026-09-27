@@ -20,7 +20,6 @@ import { beforeAll, describe, expect, it, spyOn } from "bun:test";
 import { log } from "../../../src/observability/log.ts";
 import type { WorkosAuth } from "../../../src/identity/instance.ts";
 import { WorkosIdentityProvider } from "../../../src/identity/providers/workos.ts";
-import { WorkspaceStore } from "../../../src/workspace/workspace-store.ts";
 
 // ── Key generation helpers (mirror workos-authkit.test.ts) ──────────
 
@@ -98,8 +97,7 @@ function createProvider(configOverrides?: Partial<WorkosAuth>): {
   refreshCapture: RefreshCapture;
 } {
   const config = { ...BASE_CONFIG, ...configOverrides };
-  const workspaceStore = new WorkspaceStore(mkdtempSync(join(tmpdir(), "workos-orgscope-")));
-  const provider = new WorkosIdentityProvider(config, undefined, workspaceStore);
+  const provider = new WorkosIdentityProvider(config, undefined);
   const refreshCapture: RefreshCapture = {};
 
   const workos = (provider as unknown as { workos: Record<string, unknown> }).workos;

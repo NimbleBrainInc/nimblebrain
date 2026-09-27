@@ -24,7 +24,6 @@ import type { FileStore } from "../../../src/files/store.ts";
 import { DEV_IDENTITY } from "../../../src/identity/providers/dev.ts";
 import { ConversationNotFoundError } from "../../../src/runtime/errors.ts";
 import { Runtime } from "../../../src/runtime/runtime.ts";
-import { personalWorkspaceIdFor } from "../../../src/workspace/workspace-store.ts";
 import { createEchoModel } from "../../helpers/echo-model.ts";
 import { provisionTestWorkspace } from "../../helpers/test-workspace.ts";
 
@@ -38,9 +37,9 @@ afterAll(() => {
 const WORKSPACE_A = "ws_workspace_a";
 // Dev mode: no identity on the request → the dev owner.
 const OWNER = DEV_IDENTITY.id;
-// An UNFOCUSED request falls back to the owner's personal workspace — a
-// different workspace than WORKSPACE_A.
-const PERSONAL = personalWorkspaceIdFor(OWNER);
+// Another workspace the owner belongs to, provisioned before WORKSPACE_A so it
+// is the owner's default: a dev-mode request that names no workspace runs here.
+const HOME = "ws_home";
 
 // The resume message — distinct from the born message so the model adapter can
 // tell the two turns apart and only emit the tool call on the resume.
@@ -97,6 +96,7 @@ describe("a resume scopes the file TOOL to the workspace it runs in", () => {
       logging: { disabled: true },
       workDir,
     });
+    await provisionTestWorkspace(runtime, HOME, "Home");
     await provisionTestWorkspace(runtime, WORKSPACE_A);
 
     // 1) Born in workspace A (focused on WORKSPACE_A).
@@ -121,9 +121,9 @@ describe("a resume scopes the file TOOL to the workspace it runs in", () => {
       visibility: "private",
     });
 
-    // Sanity: the personal workspace does NOT hold the file. So a `files__list` that returns it can
+    // Sanity: the default workspace does NOT hold the file. So a `files__list` that returns it can
     // only have resolved to workspace A.
-    expect(await runtime.getWorkspaceFileStore(PERSONAL, OWNER).findEntry(saved.id)).toBeNull();
+    expect(await runtime.getWorkspaceFileStore(HOME, OWNER).findEntry(saved.id)).toBeNull();
 
     // 3) Spy on getWorkspaceFileStore to capture every partition the resume
     //    touches — including the one the `files__list` tool resolves via
@@ -136,8 +136,8 @@ describe("a resume scopes the file TOOL to the workspace it runs in", () => {
       return store;
     };
 
-    // 4) A resume UNFOCUSED (no workspaceId → the personal workspace) is refused
-    //    before the model runs, so no file tool is ever scoped to PERSONAL.
+    // 4) A resume UNFOCUSED (no workspaceId → the default workspace) is refused
+    //    before the model runs, so no file tool is ever scoped to HOME.
     await expect(
       runtime.chat({ message: RESUME_MSG, conversationId: convId }),
     ).rejects.toBeInstanceOf(ConversationNotFoundError);
@@ -170,7 +170,7 @@ describe("a resume scopes the file TOOL to the workspace it runs in", () => {
     expect(calls.length).toBeGreaterThan(0);
     for (const c of calls) {
       expect(c.wsId).toBe(WORKSPACE_A);
-      expect(c.wsId).not.toBe(PERSONAL);
+      expect(c.wsId).not.toBe(HOME);
     }
 
     await runtime.shutdown();

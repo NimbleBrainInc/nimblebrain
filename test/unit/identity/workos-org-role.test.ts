@@ -19,11 +19,9 @@ import { WorkosIdentityProvider } from "../../../src/identity/providers/workos.t
 import type { UserIdentity } from "../../../src/identity/provider.ts";
 import type { OrgRole } from "../../../src/identity/types.ts";
 import { UserStore } from "../../../src/identity/user.ts";
-import { WorkspaceStore } from "../../../src/workspace/workspace-store.ts";
 
 let workDir: string;
 let userStore: UserStore;
-let workspaceStore: WorkspaceStore;
 
 const BASE_CONFIG: WorkosAuth = {
   adapter: "workos",
@@ -36,7 +34,6 @@ const BASE_CONFIG: WorkosAuth = {
 beforeEach(async () => {
   workDir = await mkdtemp(join(tmpdir(), "nb-workos-role-"));
   userStore = new UserStore(workDir);
-  workspaceStore = new WorkspaceStore(workDir);
 });
 
 afterEach(() => {
@@ -51,7 +48,6 @@ function makeProvider(memberships: Map<string, string>, configOverride?: Partial
   const provider = new WorkosIdentityProvider(
     { ...BASE_CONFIG, ...configOverride },
     userStore,
-    workspaceStore,
   );
   const workos = (provider as unknown as { workos: Record<string, unknown> }).workos;
   workos.userManagement = {

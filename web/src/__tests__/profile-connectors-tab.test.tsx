@@ -278,7 +278,7 @@ describe("ProfileConnectorsTab", () => {
     ];
     mounted = await mountWithWorkspaces([
       { id: "ws_helix", name: "Helix", memberCount: 1, connectors: [] },
-      { id: "ws_user_x", name: "Home Space", memberCount: 1, connectors: [], isPersonal: true },
+      { id: "ws_mine", name: "Mat's workspace", memberCount: 1, connectors: [] },
     ]);
     const container = mounted.container;
     const buttons = () => [...container.getElementsByTagName("button")];
@@ -288,14 +288,14 @@ describe("ProfileConnectorsTab", () => {
 
     const text = container.textContent ?? "";
     expect(text).toContain("Helix");
-    expect(text).toContain("Home Space");
-    // The personal workspace is listed like any other (marked, not special-cased).
-    expect(text).toContain("personal");
+    expect(text).toContain("Mat's workspace");
+    // Every workspace is listed by name alone — none is marked apart.
+    expect(text).not.toContain("· personal");
     // Already-granted workspace → Revoke; ungranted → Grant.
     expect(buttons().some((b) => b.textContent === "Revoke")).toBe(true);
 
     await click(buttons().find((b) => b.textContent === "Grant"));
-    expect(grantConnector).toHaveBeenCalledWith("granola", "ws_user_x");
+    expect(grantConnector).toHaveBeenCalledWith("granola", "ws_mine");
   });
 
   test("shows an error state when the list load fails", async () => {

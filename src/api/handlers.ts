@@ -1390,7 +1390,7 @@ export async function handleBootstrap(
       memberCount: ws.members.length,
       connectorCount: ws.connectors.length,
       // Deprecated: true for the default workspace (`activeWorkspace`). Kept
-      // only for the channels service, which reads it to pick a default; read
+      // only for a companion service that reads it to pick a default; read
       // `activeWorkspace` instead.
       isPersonal: ws.id === activeWorkspace,
       // The workspace's MCP endpoint in canonical form (the configured public

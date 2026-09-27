@@ -15,7 +15,6 @@ import { beforeAll, describe, expect, it } from "bun:test";
 import type { WorkosAuth } from "../../../src/identity/instance.ts";
 import { TransientAuthError } from "../../../src/identity/provider.ts";
 import { WorkosIdentityProvider } from "../../../src/identity/providers/workos.ts";
-import { WorkspaceStore } from "../../../src/workspace/workspace-store.ts";
 
 // ── Key generation helpers (shared with workos-authkit.test.ts) ──
 
@@ -98,8 +97,7 @@ function jwksResponseBody() {
 }
 
 function createProvider() {
-  const workspaceStore = new WorkspaceStore(mkdtempSync(join(tmpdir(), "workos-stale-")));
-  const provider = new WorkosIdentityProvider(CONFIG, undefined, workspaceStore);
+  const provider = new WorkosIdentityProvider(CONFIG, undefined);
 
   const workos = (provider as unknown as { workos: Record<string, unknown> }).workos;
   workos.userManagement = {

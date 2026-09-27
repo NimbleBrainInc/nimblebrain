@@ -6,7 +6,7 @@
  * Sibling to the `resume-file-*` tests, which pin the FILE half (rehydration
  * read + `files__*` tool partition). This one pins everything the model reasons
  * with. A conversation born in workspace A and resumed from B (or unfocused, the
- * personal workspace) is refused as an unknown conversation before the model
+ * owner's default workspace) is refused as an unknown conversation before the model
  * runs (ADR-0037): the thread's history and the agent's tools, house rules and
  * self-reported workspace can never come from two workspaces.
  */
@@ -19,7 +19,6 @@ import type { LanguageModelV4, LanguageModelV4CallOptions } from "@ai-sdk/provid
 import { DEV_IDENTITY } from "../../../src/identity/providers/dev.ts";
 import { ConversationNotFoundError } from "../../../src/runtime/errors.ts";
 import { Runtime } from "../../../src/runtime/runtime.ts";
-import { personalWorkspaceIdFor } from "../../../src/workspace/workspace-store.ts";
 import { createEchoModel } from "../../helpers/echo-model.ts";
 import { provisionTestWorkspace } from "../../helpers/test-workspace.ts";
 
@@ -34,8 +33,10 @@ const WORKSPACE_A_NAME = "Alpha Workspace";
 const WORKSPACE_B = "ws_workspace_b";
 const WORKSPACE_B_NAME = "Bravo Workspace";
 const OWNER = DEV_IDENTITY.id;
-const PERSONAL = personalWorkspaceIdFor(OWNER);
-const PERSONAL_NAME = "Home Workspace";
+// Another workspace the owner belongs to, provisioned before WORKSPACE_A so it
+// is the owner's default: a dev-mode request that names no workspace runs here.
+const HOME = "ws_home";
+const HOME_NAME = "Home Workspace";
 
 const RESUME_MSG = "which workspace am I in";
 
@@ -122,13 +123,14 @@ describe("a resume runs only in the conversation's own workspace", () => {
       logging: { disabled: true },
       workDir,
     });
+    await provisionTestWorkspace(runtime, HOME, HOME_NAME);
     await provisionTestWorkspace(runtime, WORKSPACE_A, WORKSPACE_A_NAME);
 
     // Born focused on workspace A → the conversation lives in A.
     const born = await runtime.chat({ message: "hello from A", workspaceId: WORKSPACE_A });
 
-    // UNFOCUSED (no workspaceId): the turn would run in the owner's PERSONAL
-    // workspace, where the conversation is not.
+    // UNFOCUSED (no workspaceId): the turn would run in the owner's default
+    // workspace (HOME), where the conversation is not.
     await expect(
       runtime.chat({ message: RESUME_MSG, conversationId: born.conversationId }),
     ).rejects.toBeInstanceOf(ConversationNotFoundError);
@@ -174,16 +176,16 @@ describe("a resume runs only in the conversation's own workspace", () => {
     expect(prompt).toContain(WORKSPACE_A_NAME);
     expect(prompt).not.toContain(WORKSPACE_B);
     expect(prompt).not.toContain(WORKSPACE_B_NAME);
-    expect(prompt).not.toContain(PERSONAL);
+    expect(prompt).not.toContain(HOME);
 
     await runtime.shutdown();
   });
 
-  it("a conversation IN the personal workspace narrates it as a workspace, not 'home'", async () => {
-    // A personal workspace is just a workspace (JIT-provisioned at login). A chat
-    // born there narrates the personal workspace like any other — it is no longer
-    // the silent, unnamed "identity-level home" bridge.
-    const workDir = join(testDir, "personal-narrated");
+  it("a conversation IN the default workspace narrates it as a workspace, not 'home'", async () => {
+    // The owner's default workspace is just a workspace. A chat born there
+    // narrates it like any other — not the silent, unnamed "identity-level
+    // home" bridge.
+    const workDir = join(testDir, "default-narrated");
     mkdirSync(workDir, { recursive: true });
     const captured: Captured[] = [];
 
@@ -192,11 +194,11 @@ describe("a resume runs only in the conversation's own workspace", () => {
       logging: { disabled: true },
       workDir,
     });
-    await provisionTestWorkspace(runtime, PERSONAL, PERSONAL_NAME);
+    await provisionTestWorkspace(runtime, HOME, HOME_NAME);
 
-    // Born focused on the personal workspace → convWsId === PERSONAL. The
+    // Born focused on the default workspace → convWsId === HOME. The
     // capturing model only records the RESUME_MSG turn (see createCapturingModel).
-    await runtime.chat({ message: RESUME_MSG, workspaceId: PERSONAL });
+    await runtime.chat({ message: RESUME_MSG, workspaceId: HOME });
 
     expect(captured.length).toBeGreaterThan(0);
     const prompt = captured.at(-1)?.prompt ?? "";
@@ -204,8 +206,8 @@ describe("a resume runs only in the conversation's own workspace", () => {
     // Narrated as its own "## Workspace" block (id + name), NOT the old
     // identity-level "home / not in any single workspace" block.
     expect(prompt).toContain("## Workspace");
-    expect(prompt).toContain(PERSONAL);
-    expect(prompt).toContain(PERSONAL_NAME);
+    expect(prompt).toContain(HOME);
+    expect(prompt).toContain(HOME_NAME);
     expect(prompt).not.toContain("not in any single workspace");
 
     await runtime.shutdown();

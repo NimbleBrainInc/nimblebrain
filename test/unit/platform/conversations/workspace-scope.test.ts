@@ -34,7 +34,7 @@ import {
 
 const OWNER_ID = "usr_test";
 const PEER_ID = "usr_peer";
-/** Must match `personalWorkspaceIdFor(OWNER_ID)` — the personal-workspace derivation. */
+/** A workspace id in the legacy `ws_user_<userId>` form — opaque like any other. */
 const WS_PERSONAL = `ws_user_${OWNER_ID}`;
 const WS_A = "ws_aaaaaaaaaaaaaaaa";
 const WS_B = "ws_bbbbbbbbbbbbbbbb";

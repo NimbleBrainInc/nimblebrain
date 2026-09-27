@@ -1603,14 +1603,7 @@ async function handleInstallRemoteOAuth(
 
   // Dedup (which self-heals an orphaned workspace.json entry) short-circuits
   // before any expensive wiring so a re-click doesn't burn a brokered session.
-  const dupResult = await handleDuplicateInstall(
-    ctx,
-    wsId,
-    ws,
-    entry,
-    action,
-    serverName,
-  );
+  const dupResult = await handleDuplicateInstall(ctx, wsId, ws, entry, action, serverName);
   if (dupResult) return dupResult;
 
   // Fresh-install: resolve the wiring now that we know we're going to commit.

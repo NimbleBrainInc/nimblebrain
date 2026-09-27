@@ -18,8 +18,7 @@ import {
 } from "../../src/tools/connector-tools.ts";
 import { ToolRegistry } from "../../src/tools/registry.ts";
 import { WorkspaceContext } from "../../src/workspace/context.ts";
-import { ensureUserWorkspace } from "../../src/workspace/provisioning.ts";
-import { personalWorkspaceIdFor, WorkspaceStore } from "../../src/workspace/workspace-store.ts";
+import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
 import { installTestCredentialStore } from "../helpers/credential-store.ts";
 
 /** Read metadata every store read now carries; the audit trail is asserted in credential-store.test.ts. */
@@ -908,25 +907,17 @@ describe("manage_connectors.install", () => {
     expect(text.toLowerCase()).toContain("install action is required");
   });
 
-  test("personal-workspace install: an explicit personal wsId targets personalWorkspaceIdFor(userId); stored ref has oauthScope=workspace", async () => {
-    // Any workspace is a valid install target, personal included — the
-    // caller supplies the target wsId (from the active `/w/<slug>` route
-    // or an explicit arg) and the tool installs there with no special-
-    // casing of `isPersonal`. Pin three things:
-    //   - The recorded `wsId` IS `personalWorkspaceIdFor(callerId)`
-    //     (the canonical helper, NOT a hand-built `ws_user_<id>`
-    //     template literal — `check:personal-workspace-id` is `src/`-
-    //     only but assertion through the helper keeps the test
-    //     coupled to the real construction site).
+  test("single-member workspace install: an explicit wsId is the target; stored ref has oauthScope=workspace", async () => {
+    // Any workspace is a valid install target — the caller supplies the
+    // target wsId (from the active `/w/<slug>` route or an explicit arg) and
+    // the tool installs there. Pin three things:
+    //   - The recorded `wsId` is the one supplied.
     //   - The persisted ConnectorRef carries `oauthScope: "workspace"`.
     //     The "user" literal is gone (T008) and stays gone.
     //   - The slug-shaped serverName is unchanged.
-    const adminPersonalWsId = personalWorkspaceIdFor(ADMIN_USER.id);
-    // Provision the admin's personal workspace so the install lookup
-    // succeeds. Mirrors the production boot-time scaffold.
-    await h.workspaceStore.create("Admin Personal", `user_${ADMIN_USER.id}`, {
-      isPersonal: true,
-      ownerUserId: ADMIN_USER.id,
+    const adminPersonalWsId = "ws_admin_own";
+    await h.workspaceStore.create("Admin's workspace", adminPersonalWsId.slice(3), {
+      members: [{ userId: ADMIN_USER.id, role: "admin" }],
     });
     const tool = buildTool(h, ADMIN_USER);
     const result = await tool.handler({
@@ -1256,18 +1247,18 @@ describe("deriveConnectorStatus", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────
-// install — personal workspace admits only connectors (remote MCP)
+// install — no workspace is connectors-only
 // ─────────────────────────────────────────────────────────────────────
 
-describe("manage_connectors.install — personal workspace is connectors-only", () => {
+describe("manage_connectors.install — a single-member workspace admits any install kind", () => {
   let h: Harness;
+  const OWN_WS = "ws_admin_own";
 
   beforeEach(async () => {
     h = buildHarness();
     await provisionWorkspace(h); // shared ws_acme, ADMIN_USER is admin
-    await ensureUserWorkspace(h.workspaceStore, {
-      id: ADMIN_USER.id,
-      displayName: ADMIN_USER.displayName,
+    await h.workspaceStore.create("Admin's workspace", OWN_WS.slice(3), {
+      members: [{ userId: ADMIN_USER.id, role: "admin" }],
     });
   });
 
@@ -1275,36 +1266,13 @@ describe("manage_connectors.install — personal workspace is connectors-only", 
     rmSync(h.workDir, { recursive: true, force: true });
   });
 
-  const PERSONAL_MSG = /personal workspace is for connectors/i;
-
-  test("rejects a non-remote-oauth install into the personal workspace", async () => {
-    const personalWs = personalWorkspaceIdFor(ADMIN_USER.id);
-    const tool = buildTool(h, ADMIN_USER, personalWs);
+  test("a non-remote-oauth install is not refused for who belongs to the workspace", async () => {
+    const tool = buildTool(h, ADMIN_USER, OWN_WS);
     const result = await tool.handler({ action: "install", entry: unsupportedEntry() });
-    expect(result.isError).toBe(true);
-    expect(structured(result).error).not.toBe("permission_denied"); // owner IS admin of their personal ws
+    // Whatever the outcome, it is never a connectors-only rejection.
+    expect(structured(result).error).not.toBe("permission_denied");
     const text = (result.content?.[0] as { text?: string })?.text ?? "";
-    expect(text).toMatch(PERSONAL_MSG);
-  });
-
-  test("admits a remote-oauth connector into the personal workspace (gate passes)", async () => {
-    const personalWs = personalWorkspaceIdFor(ADMIN_USER.id);
-    const tool = buildTool(h, ADMIN_USER, personalWs);
-    const result = await tool.handler({ action: "install", entry: dropboxEntry() });
-    // remote-oauth is a connector — the gate must NOT block it. (It may still
-    // fail later for an unrelated reason, e.g. missing operator setup — that's
-    // not the personal-workspace gate.)
-    const text = (result.content?.[0] as { text?: string })?.text ?? "";
-    expect(text).not.toMatch(PERSONAL_MSG);
-  });
-
-  test("does not apply the connectors-only gate to a shared workspace", async () => {
-    const tool = buildTool(h, ADMIN_USER, h.wsId); // shared ws_acme
-    const result = await tool.handler({ action: "install", entry: unsupportedEntry() });
-    // A non-connector install is admitted in a shared workspace — whatever
-    // the outcome, it is never the personal-workspace rejection.
-    const text = (result.content?.[0] as { text?: string })?.text ?? "";
-    expect(text).not.toMatch(PERSONAL_MSG);
+    expect(text).not.toMatch(/personal workspace/i);
   });
 });
 

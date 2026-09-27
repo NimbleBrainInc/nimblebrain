@@ -25,7 +25,6 @@ import { type ServerHandle, startServer } from "../../src/api/server.ts";
 import type { WorkosAuth } from "../../src/identity/instance.ts";
 import { WorkosIdentityProvider } from "../../src/identity/providers/workos.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
-import type { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 
 const AUTHKIT_DOMAIN = "testapp";
@@ -81,7 +80,7 @@ function channelsLike(clientId: string): Promise<string> {
 
 // ── A server per configuration ────────────────────────────────────
 
-function workosProvider(config: Partial<WorkosAuth>, store: WorkspaceStore): WorkosIdentityProvider {
+function workosProvider(config: Partial<WorkosAuth>): WorkosIdentityProvider {
   const provider = new WorkosIdentityProvider(
     {
       adapter: "workos",
@@ -93,7 +92,6 @@ function workosProvider(config: Partial<WorkosAuth>, store: WorkspaceStore): Wor
       ...config,
     },
     undefined,
-    store,
   );
   const workos = (provider as unknown as { workos: Record<string, unknown> }).workos;
   workos.userManagement = {
@@ -130,7 +128,7 @@ function serve(config: Partial<WorkosAuth>): string {
   const handle = startServer({
     runtime,
     port: 0,
-    provider: workosProvider(config, runtime.getWorkspaceStore()),
+    provider: workosProvider(config),
   });
   servers.push(handle);
   return `http://localhost:${handle.port}`;

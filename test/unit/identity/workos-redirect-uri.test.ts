@@ -14,11 +14,9 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import type { WorkosAuth } from "../../../src/identity/instance.ts";
 import { WorkosIdentityProvider } from "../../../src/identity/providers/workos.ts";
-import { WorkspaceStore } from "../../../src/workspace/workspace-store.ts";
 
 function makeProvider(config: WorkosAuth): WorkosIdentityProvider {
-  const workspaceStore = new WorkspaceStore(mkdtempSync(join(tmpdir(), "workos-redirect-")));
-  return new WorkosIdentityProvider(config, undefined, workspaceStore);
+  return new WorkosIdentityProvider(config, undefined);
 }
 
 function redirectUriOf(provider: WorkosIdentityProvider): string {

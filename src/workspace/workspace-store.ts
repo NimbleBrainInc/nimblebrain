@@ -374,8 +374,11 @@ export class WorkspaceStore {
 
     // A record written before every workspace became ordinary may still carry
     // the legacy personal fields; a write is where they leave the record.
-    const { isPersonal: _isPersonal, ownerUserId: _ownerUserId, ...current } =
-      ws as Workspace & LegacyPersonalFields;
+    const {
+      isPersonal: _isPersonal,
+      ownerUserId: _ownerUserId,
+      ...current
+    } = ws as Workspace & LegacyPersonalFields;
     const updated: Workspace = {
       ...current,
       ...safePatch,

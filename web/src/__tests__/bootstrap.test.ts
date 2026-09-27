@@ -22,7 +22,6 @@ function bootstrapWs(
     name: "Test",
     memberCount: 1,
     connectorCount: 0,
-    isPersonal: false,
     ...partial,
   };
 }

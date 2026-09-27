@@ -12,7 +12,7 @@
  *   - A session id opened at one workspace's URL is refused at another's.
  *
  * Setup: a single `Runtime` with two workspaces the dev identity belongs to
- * (Helix + personal, each with a counter source) plus a `stranger` workspace
+ * (Helix + one of its own, each with a counter source) plus a `stranger` workspace
  * it is NOT a member of, so we can assert both the honored and the fail-closed
  * paths. The endpoint is dev-mode (no auth); `DEV_IDENTITY` is the caller.
  */
@@ -29,8 +29,6 @@ import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { defineInProcessApp, type InProcessTool } from "../../src/tools/in-process-app.ts";
 import type { McpSource } from "../../src/tools/mcp-source.ts";
-import { ensureUserWorkspace } from "../../src/workspace/provisioning.ts";
-import { personalWorkspaceIdFor } from "../../src/workspace/workspace-store.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 
 // ── In-process counter source ─────────────────────────────────────
@@ -102,6 +100,8 @@ let handle: ServerHandle;
 let baseUrl: string;
 let sharedSource: ReturnType<typeof buildCounterSource>;
 let personalSource: ReturnType<typeof buildCounterSource>;
+/** The dev identity's own workspace (it alone belongs to it). Set in `beforeAll`. */
+let ownWsId: string;
 let strangerSource: ReturnType<typeof buildCounterSource>;
 
 const testDir = join(tmpdir(), `nb-mcp-identity-bound-${Date.now()}`);
@@ -136,12 +136,11 @@ beforeAll(async () => {
   await wsStore.create("Helix", SHARED_WS_ID.slice(3));
   await wsStore.addMember(SHARED_WS_ID, DEV_IDENTITY.id, "admin");
 
-  // Personal workspace via the same helper production uses on first login.
-  await ensureUserWorkspace(wsStore, {
-    id: DEV_IDENTITY.id,
-    displayName: DEV_IDENTITY.displayName,
+  // A workspace the dev identity alone belongs to.
+  const ownWs = await wsStore.create("Dev's workspace", undefined, {
+    members: [{ userId: DEV_IDENTITY.id, role: "admin" }],
   });
-  const personalWsId = personalWorkspaceIdFor(DEV_IDENTITY.id);
+  ownWsId = ownWs.id;
 
   // Stranger workspace — exists, has a source, but the dev identity is NOT a
   // member. Membership is deliberately not granted.
@@ -149,7 +148,7 @@ beforeAll(async () => {
 
   // Per-workspace registries + counter sources.
   const sharedReg = await runtime.ensureWorkspaceRegistry(SHARED_WS_ID);
-  const personalReg = await runtime.ensureWorkspaceRegistry(personalWsId);
+  const personalReg = await runtime.ensureWorkspaceRegistry(ownWsId);
   const strangerReg = await runtime.ensureWorkspaceRegistry(STRANGER_WS_ID);
 
   sharedSource = buildCounterSource(SHARED_SOURCE_NAME, SHARED_TOOL_BARE, SHARED_RESOURCE_URI);
@@ -183,7 +182,7 @@ afterAll(async () => {
 // ── Helpers ───────────────────────────────────────────────────────
 
 function personalWsId(): string {
-  return personalWorkspaceIdFor(DEV_IDENTITY.id);
+  return ownWsId;
 }
 
 // Wire names are bare: the workspace a call lands in is the one in the
@@ -200,7 +199,7 @@ function personalToolName(): string {
 }
 
 /**
- * The personal workspace's tool in the legacy `ws_<id>-` form.
+ * The dev identity's own workspace's tool in the legacy `ws_<id>-` form.
  *
  * Required for the cross-workspace denial test, and the requirement is the
  * point: a BARE name cannot express another workspace at all, so there is
@@ -361,7 +360,7 @@ describe("/mcp/<wsId> for a member (walled to that workspace)", () => {
   });
 
   it("SECURITY: another member workspace cannot be NAMED, so it cannot be reached", async () => {
-    // Session = Helix; the dev IS a member of the personal workspace too.
+    // Session = Helix; the dev IS a member of its own workspace too.
     // Naming it is impossible rather than denied: the `ws_<id>-` form is
     // retired, so this is rejected as a stale wire name before any workspace
     // resolution. The guarantee is structural: no name addresses a second
@@ -477,7 +476,7 @@ describe("/mcp/<wsId> resources are walled to the URL's workspace", () => {
   });
 
   it("SECURITY: resources/read of another member workspace's resource is refused", async () => {
-    // Session walled to Helix; the dev is a member of the personal workspace
+    // Session walled to Helix; the dev is a member of its own workspace
     // too, but its resources are out of reach — the read must fail, never
     // return the other workspace's data.
     const client = await createMcpClient(SHARED_WS_ID);

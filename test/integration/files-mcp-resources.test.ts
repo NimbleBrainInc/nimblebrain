@@ -22,16 +22,14 @@ import { RESOURCE_SOURCE_META_KEY } from "../../src/api/mcp-server.ts";
 import { type ServerHandle, startServer } from "../../src/api/server.ts";
 import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
-import { ensureUserWorkspace } from "../../src/workspace/provisioning.ts";
-import { personalWorkspaceIdFor } from "../../src/workspace/workspace-store.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
 
 // Files are workspace-owned. Chat-multipart uploads land in the workspace in
 // the request path, and the downstream `files__*` tools / `resources/read`
-// read from the workspace in theirs — here, the dev identity's personal
-// workspace for both.
-const PERSONAL_WS_ID = personalWorkspaceIdFor(DEV_IDENTITY.id);
+// read from the workspace in theirs — here, a workspace of the dev identity's
+// own for both. Assigned in `beforeAll`.
+let DEV_WS_ID: string;
 
 const PNG_BYTES = Buffer.from([
   0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
@@ -51,11 +49,11 @@ beforeAll(async () => {
     workDir: testDir,
   });
   await provisionTestWorkspace(runtime);
-  await ensureUserWorkspace(runtime.getWorkspaceStore(), {
-    id: DEV_IDENTITY.id,
-    displayName: DEV_IDENTITY.displayName,
+  const devWs = await runtime.getWorkspaceStore().create("Dev's workspace", undefined, {
+    members: [{ userId: DEV_IDENTITY.id, role: "admin" }],
   });
-  await runtime.ensureWorkspaceRegistry(PERSONAL_WS_ID);
+  DEV_WS_ID = devWs.id;
+  await runtime.ensureWorkspaceRegistry(DEV_WS_ID);
   handle = startServer({ runtime, port: 0 });
   baseUrl = `http://localhost:${handle.port}`;
 });
@@ -73,7 +71,7 @@ async function uploadChatFile(content: string | Buffer, filename: string, mimeTy
   const bytes = typeof content === "string" ? Buffer.from(content) : content;
   form.append("files", new File([new Uint8Array(bytes)], filename, { type: mimeType }));
 
-  const res = await fetch(`${baseUrl}/v1/workspaces/${PERSONAL_WS_ID}/chat/stream`, {
+  const res = await fetch(`${baseUrl}/v1/workspaces/${DEV_WS_ID}/chat/stream`, {
     method: "POST",
     body: form,
   });
@@ -83,7 +81,7 @@ async function uploadChatFile(content: string | Buffer, filename: string, mimeTy
   await res.text();
 
   // Look the id up via files__list (the canonical workspace listing).
-  const listRes = await fetch(`${baseUrl}/v1/workspaces/${PERSONAL_WS_ID}/tools/call`, {
+  const listRes = await fetch(`${baseUrl}/v1/workspaces/${DEV_WS_ID}/tools/call`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ server: "files", tool: "list", arguments: { limit: 100 } }),
@@ -98,7 +96,7 @@ async function uploadChatFile(content: string | Buffer, filename: string, mimeTy
 }
 
 async function readResource(uri: string): Promise<{ status: number; body: unknown }> {
-  const res = await fetch(`${baseUrl}/v1/workspaces/${PERSONAL_WS_ID}/resources/read`, {
+  const res = await fetch(`${baseUrl}/v1/workspaces/${DEV_WS_ID}/resources/read`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ server: "files", uri }),
@@ -144,12 +142,12 @@ describe("workspace files exposed as MCP resources", () => {
     // the other cases above exercise. `files` is a kernel identity source that
     // lives outside every workspace registry, so the `/mcp` handler resolves it
     // through the identity door. Files are workspace-owned, so the read resolves in
-    // the workspace the session's URL names (here the dev user's personal
+    // the workspace the session's URL names (here the dev user's own
     // workspace, where the upload landed).
     // This drives the real MCP SDK client end-to-end to lock in the fix.
     const id = await uploadChatFile(PNG_BYTES, "bridge.png", "image/png");
 
-    const transport = new StreamableHTTPClientTransport(new URL(`${baseUrl}/mcp/${PERSONAL_WS_ID}`));
+    const transport = new StreamableHTTPClientTransport(new URL(`${baseUrl}/mcp/${DEV_WS_ID}`));
     const client = new Client({ name: "files-mcp-bridge-test", version: "1.0.0" });
     await client.connect(transport);
     try {
@@ -173,7 +171,7 @@ describe("workspace files exposed as MCP resources", () => {
     const id = await uploadChatFile("scoped\n", "scoped.txt", "text/plain");
     const uri = `files://${id}`;
 
-    const transport = new StreamableHTTPClientTransport(new URL(`${baseUrl}/mcp/${PERSONAL_WS_ID}`));
+    const transport = new StreamableHTTPClientTransport(new URL(`${baseUrl}/mcp/${DEV_WS_ID}`));
     const client = new Client({ name: "files-mcp-scoped-test", version: "1.0.0" });
     await client.connect(transport);
     try {
@@ -205,7 +203,7 @@ describe("workspace files exposed as MCP resources", () => {
     const id = await uploadChatFile("cross-workspace\n", "x.txt", "text/plain");
     // The caller is a member of TEST_WORKSPACE_ID too, and `files` routes
     // through the identity door — but the file store is the workspace in the
-    // path, so a file uploaded in the personal workspace is not found there.
+    // path, so a file uploaded in the dev user's own workspace is not found there.
     const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/resources/read`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },

@@ -100,7 +100,7 @@ function createProvider(configOverrides?: Partial<WorkosAuth>): {
 } {
   const config = { ...BASE_CONFIG, ...configOverrides };
   const workspaceStore = new WorkspaceStore(mkdtempSync(join(tmpdir(), "workos-authkit-")));
-  const provider = new WorkosIdentityProvider(config, undefined, workspaceStore);
+  const provider = new WorkosIdentityProvider(config, undefined);
 
   // Mock the WorkOS SDK to handle resolveUser internals
   const workos = (provider as unknown as { workos: Record<string, unknown> }).workos;
@@ -228,11 +228,10 @@ describe("verifyRequest with AuthKit JWT", () => {
     expect(identity!.email).toBe("user_authkit_1@test.com");
   });
 
-  it("provisions a workspace on successful AuthKit auth (MCP OAuth path)", async () => {
-    // AuthKit tokens never route through exchangeCode (that's the browser
-    // auth-code flow). verifyRequest is the only place the invariant
-    // "authenticated user has ≥1 workspace" can be established for this
-    // path — so workspace provisioning must live there.
+  it("creates no workspace on successful AuthKit auth (bootstrap provisions)", async () => {
+    // Authentication creates no workspace. A request on the MCP OAuth path
+    // names its workspace in the URL and is admitted by membership; the web
+    // shell's bootstrap is where a user who belongs to none gets one.
     const { provider, workspaceStore } = createProvider();
     const nowSec = Math.floor(Date.now() / 1000);
     const token = await createJwt(
@@ -249,11 +248,7 @@ describe("verifyRequest with AuthKit JWT", () => {
     const identity = await provider.verifyRequest(makeRequest(token));
     expect(identity).not.toBeNull();
 
-    const workspaces = await workspaceStore.getWorkspacesForUser(identity!.id);
-    expect(workspaces).toHaveLength(1);
-    expect(workspaces[0]!.members).toEqual([
-      { userId: identity!.id, role: "admin" },
-    ]);
+    expect(await workspaceStore.getWorkspacesForUser(identity!.id)).toHaveLength(0);
   });
 
   it("rejects expired AuthKit JWT", async () => {

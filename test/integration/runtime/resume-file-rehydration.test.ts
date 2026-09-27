@@ -18,7 +18,6 @@ import type { FileStore } from "../../../src/files/store.ts";
 import { DEV_IDENTITY } from "../../../src/identity/providers/dev.ts";
 import { ConversationNotFoundError } from "../../../src/runtime/errors.ts";
 import { Runtime } from "../../../src/runtime/runtime.ts";
-import { personalWorkspaceIdFor } from "../../../src/workspace/workspace-store.ts";
 import { createEchoModel } from "../../helpers/echo-model.ts";
 import { provisionTestWorkspace } from "../../helpers/test-workspace.ts";
 
@@ -32,9 +31,9 @@ afterAll(() => {
 const WORKSPACE_A = "ws_workspace_a";
 // Dev mode: no identity on the request → the dev owner.
 const OWNER = DEV_IDENTITY.id;
-// An UNFOCUSED request falls back to the owner's personal workspace — a
-// different workspace than WORKSPACE_A.
-const PERSONAL = personalWorkspaceIdFor(OWNER);
+// Another workspace the owner belongs to, provisioned before WORKSPACE_A so it
+// is the owner's default: a dev-mode request that names no workspace runs here.
+const HOME = "ws_home";
 
 describe("a resume rehydrates files from the workspace it runs in", () => {
   it("a file attached in workspace A is found on a resume in A, and a resume from elsewhere reads nothing", async () => {
@@ -46,6 +45,7 @@ describe("a resume rehydrates files from the workspace it runs in", () => {
       logging: { disabled: true },
       workDir,
     });
+    await provisionTestWorkspace(runtime, HOME, "Home");
     await provisionTestWorkspace(runtime, WORKSPACE_A);
 
     // 1) Born in workspace A (focused on WORKSPACE_A) — the conversation lives
@@ -72,9 +72,9 @@ describe("a resume rehydrates files from the workspace it runs in", () => {
       visibility: "private",
     });
 
-    // Sanity: the personal workspace does NOT hold the file. So "found" can only
+    // Sanity: the default workspace does NOT hold the file. So "found" can only
     // mean "resolved to workspace A".
-    expect(await runtime.getWorkspaceFileStore(PERSONAL, OWNER).findEntry(saved.id)).toBeNull();
+    expect(await runtime.getWorkspaceFileStore(HOME, OWNER).findEntry(saved.id)).toBeNull();
 
     // 3) Spy on getWorkspaceFileStore to capture the partition rehydration
     //    resolves to. The chat path builds exactly one file store (the
@@ -88,7 +88,7 @@ describe("a resume rehydrates files from the workspace it runs in", () => {
       return store;
     };
 
-    // 4) A resume UNFOCUSED (no workspaceId → the personal workspace) is refused
+    // 4) A resume UNFOCUSED (no workspaceId → the default workspace) is refused
     //    before any partition is opened: the conversation is not there.
     await expect(
       runtime.chat({ message: "resume from elsewhere", conversationId: convId }),
@@ -104,7 +104,7 @@ describe("a resume rehydrates files from the workspace it runs in", () => {
     expect(calls.length).toBeGreaterThan(0);
     for (const c of calls) {
       expect(c.wsId).toBe(WORKSPACE_A);
-      expect(c.wsId).not.toBe(PERSONAL);
+      expect(c.wsId).not.toBe(HOME);
     }
 
     // The store rehydration actually used finds the attachment — it is not lost.

@@ -1,6 +1,7 @@
 import type { UserStore } from "../identity/user.ts";
 import { log } from "../observability/log.ts";
 import { provisionedWorkspaceName } from "./provisioning.ts";
+import type { Workspace } from "./types.ts";
 import type { WorkspaceStore } from "./workspace-store.ts";
 
 /**
@@ -15,7 +16,8 @@ import type { WorkspaceStore } from "./workspace-store.ts";
  *   the owner keeps landing where they always have;
  * - it is renamed to `provisionedWorkspaceName(owner.displayName)` when it
  *   still carries exactly the name provisioning used to give it
- *   (`"<displayName>'s Workspace"`). A name anyone edited is kept.
+ *   (`"<displayName>'s Workspace"`). A name anyone edited is kept;
+ * - its owner is seated as admin when missing from its member list.
  *
  * Its id stays as it is. Ids are opaque, and a former personal workspace's id
  * is in URLs and MCP client configurations that a rename would break.
@@ -30,20 +32,9 @@ export async function retireLegacyPersonalWorkspaces(
 ): Promise<void> {
   const legacy = await store.listLegacyPersonal();
   for (const { workspace, ownerUserId } of legacy) {
-    let name = workspace.name;
-    if (ownerUserId) {
-      const owner = await users.get(ownerUserId);
-      if (owner) {
-        if (!owner.preferences.defaultWorkspaceId) {
-          await users.update(ownerUserId, {
-            preferences: { ...owner.preferences, defaultWorkspaceId: workspace.id },
-          });
-        }
-        if (workspace.name === `${owner.displayName}'s Workspace`) {
-          name = provisionedWorkspaceName(owner.displayName);
-        }
-      }
-    }
+    const name = ownerUserId
+      ? await settleOwner(store, users, workspace, ownerUserId)
+      : workspace.name;
     // `update` drops the legacy fields on write, so it runs even when the
     // name is unchanged.
     await store.update(workspace.id, { name });
@@ -51,4 +42,35 @@ export async function retireLegacyPersonalWorkspaces(
   if (legacy.length > 0) {
     log.info(`[workspace] retired legacy personal fields on ${legacy.length} workspace(s)`);
   }
+}
+
+/**
+ * Carry a former personal workspace's owner over: their default, the
+ * workspace's provisioned name, and their seat. Returns the name to keep.
+ */
+async function settleOwner(
+  store: WorkspaceStore,
+  users: UserStore,
+  workspace: Workspace,
+  ownerUserId: string,
+): Promise<string> {
+  let name = workspace.name;
+  const owner = await users.get(ownerUserId);
+  if (owner) {
+    if (!owner.preferences.defaultWorkspaceId) {
+      await users.update(ownerUserId, {
+        preferences: { ...owner.preferences, defaultWorkspaceId: workspace.id },
+      });
+    }
+    if (workspace.name === `${owner.displayName}'s Workspace`) {
+      name = provisionedWorkspaceName(owner.displayName);
+    }
+  }
+  // A personal workspace's owner was a member by rule, and access checks
+  // assumed it without reading the list. Where the list lost them, seat
+  // them as admin, or the owner would be locked out of their own data.
+  if (!workspace.members.some((m) => m.userId === ownerUserId)) {
+    await store.addMember(workspace.id, ownerUserId, "admin");
+  }
+  return name;
 }

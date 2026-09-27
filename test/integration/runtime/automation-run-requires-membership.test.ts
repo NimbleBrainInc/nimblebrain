@@ -6,7 +6,8 @@
  * Membership there is validated at create, not per run — so a since-removed owner
  * would otherwise keep acting in a workspace they left. `executeTask` denies the
  * run early with `WorkspaceMembershipRevokedError` (the automations analog of the
- * conversation resume gate). Personal / no-workspace tasks are never gated.
+ * conversation resume gate). A member's run, and a dev-mode task that names no
+ * workspace (it runs in the caller's default one), are not refused.
  */
 
 import { afterAll, describe, expect, it } from "bun:test";
@@ -16,7 +17,6 @@ import { join } from "node:path";
 import { DEV_IDENTITY } from "../../../src/identity/providers/dev.ts";
 import { WorkspaceMembershipRevokedError } from "../../../src/runtime/errors.ts";
 import { Runtime } from "../../../src/runtime/runtime.ts";
-import { personalWorkspaceIdFor } from "../../../src/workspace/workspace-store.ts";
 import { createEchoModel } from "../../helpers/echo-model.ts";
 import { provisionTestWorkspace } from "../../helpers/test-workspace.ts";
 
@@ -63,13 +63,13 @@ describe("executeTask requires current membership of the automation's provenance
     await runtime.shutdown();
   });
 
-  it("does not gate a personal-workspace or workspaceless task", async () => {
-    const runtime = await startRuntime("personal");
-    const personal = await runtime.executeTask({
-      prompt: "personal task",
-      workspaceId: personalWorkspaceIdFor(OWNER),
+  it("does not gate a sole member's task or a dev-mode workspaceless task", async () => {
+    const runtime = await startRuntime("own");
+    const own = await runtime.getWorkspaceStore().create("Own", undefined, {
+      members: [{ userId: OWNER, role: "admin" }],
     });
-    expect(personal.output).toBeDefined();
+    const ownRun = await runtime.executeTask({ prompt: "own task", workspaceId: own.id });
+    expect(ownRun.output).toBeDefined();
 
     const none = await runtime.executeTask({ prompt: "no workspace" });
     expect(none.output).toBeDefined();

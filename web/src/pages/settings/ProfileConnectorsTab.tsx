@@ -383,9 +383,7 @@ function WorkspaceGrantRow({
 }) {
   return (
     <div className="flex items-center justify-between gap-3 py-1">
-      <span className="truncate text-sm">
-        {ws.name}
-      </span>
+      <span className="truncate text-sm">{ws.name}</span>
       <Button
         type="button"
         size="sm"

@@ -13,7 +13,6 @@ import { join } from "node:path";
 import { LegacyOAuthScopeError } from "../../src/connectors/runtime/lifecycle.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { writeJsonAtomic } from "../../src/util/atomic-json.ts";
-import { personalWorkspaceIdFor } from "../../src/workspace/workspace-store.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 
 const USER_ID = "user_legacy_alpha";
@@ -25,12 +24,12 @@ async function makeWorkDir(prefix: string): Promise<string> {
 }
 
 async function seedWorkspaceWithLegacyConnector(workDir: string, userId: string): Promise<void> {
-  const wsId = personalWorkspaceIdFor(userId);
+  const wsId = "ws_0123456789abcdef";
   const wsDir = join(workDir, "workspaces", wsId);
   mkdirSync(wsDir, { recursive: true });
   const wsJson = {
     id: wsId,
-    name: "Personal",
+    name: "Legacy",
     members: [{ userId, role: "admin" }],
     connectors: [
       // Legacy on-disk shape: pre-Stage-2 records carried oauthScope: "user".
@@ -42,8 +41,6 @@ async function seedWorkspaceWithLegacyConnector(workDir: string, userId: string)
     ],
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
-    isPersonal: true,
-    ownerUserId: userId,
     about: null,
   };
   await writeJsonAtomic(join(wsDir, "workspace.json"), wsJson);

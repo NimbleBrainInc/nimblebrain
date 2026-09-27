@@ -80,7 +80,6 @@ const WORKSPACES: WorkspaceInfo[] = [
     name: "Team",
     connectors: [],
     memberCount: 2,
-    isPersonal: false,
     userRole: "admin",
   },
   {
@@ -88,7 +87,6 @@ const WORKSPACES: WorkspaceInfo[] = [
     name: "Other",
     connectors: [],
     memberCount: 2,
-    isPersonal: false,
     userRole: "admin",
   },
 ];

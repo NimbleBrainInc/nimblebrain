@@ -5,7 +5,7 @@
  *
  * The browser may still send an `X-Workspace-Id` header (a stale client, a
  * proxy); the server gives it no meaning anywhere:
- *   - `GET  /v1/bootstrap` answers with the caller's personal workspace as
+ *   - `GET  /v1/bootstrap` answers with the caller's default workspace as
  *     `activeWorkspace`, whatever the header names — a workspace the caller
  *     belongs to, or one they do not.
  *
@@ -82,7 +82,7 @@ describe("bootstrap ignores X-Workspace-Id", () => {
   let runtime: Runtime;
   let handle: ServerHandle;
   let baseUrl: string;
-  let personalWs: string;
+  let defaultWs: string;
   let sharedWs: string;
   let foreignWs: string;
 
@@ -104,9 +104,14 @@ describe("bootstrap ignores X-Workspace-Id", () => {
     );
 
     const wsStore = runtime.getWorkspaceStore();
-    // Alice's personal workspace — the one bootstrap always answers with.
-    personalWs = (await ensureUserWorkspace(wsStore, { id: ALICE.id, displayName: ALICE.displayName }))
-      .id;
+    // Alice's provisioned workspace, recorded as her default — the one
+    // bootstrap always answers with.
+    const provisioned = await ensureUserWorkspace(
+      wsStore,
+      { id: ALICE.id, displayName: ALICE.displayName },
+      runtime.getUserStore(),
+    );
+    defaultWs = provisioned[0]!.id;
     // A shared workspace Alice belongs to — a header naming it must not move
     // the active workspace.
     const shared = await wsStore.create("Acme Corp", "acme_corp");
@@ -148,8 +153,8 @@ describe("bootstrap ignores X-Workspace-Id", () => {
   test("a header naming another workspace the caller belongs to does not move activeWorkspace", async () => {
     const { status, body } = await bootstrapWithHeader(sharedWs);
     expect(status).toBe(200);
-    expect(body.activeWorkspace).toBe(personalWs);
-    expect(body.shell.chatEndpoint).toBe(`/v1/workspaces/${personalWs}/chat/stream`);
+    expect(body.activeWorkspace).toBe(defaultWs);
+    expect(body.shell.chatEndpoint).toBe(`/v1/workspaces/${defaultWs}/chat/stream`);
     // The shared workspace is still listed — the header just chooses nothing.
     expect(body.workspaces.map((w) => w.id)).toContain(sharedWs);
   });
@@ -157,7 +162,7 @@ describe("bootstrap ignores X-Workspace-Id", () => {
   test("a header naming a non-member workspace does not break bootstrap", async () => {
     const { status, body } = await bootstrapWithHeader(foreignWs);
     expect(status).toBe(200);
-    expect(body.activeWorkspace).toBe(personalWs);
+    expect(body.activeWorkspace).toBe(defaultWs);
     expect(body.workspaces.map((w) => w.id)).not.toContain(foreignWs);
   });
 
@@ -185,7 +190,7 @@ describe("bootstrap ignores X-Workspace-Id", () => {
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${ALICE_TOKEN}`,
-        "X-Workspace-Id": personalWs,
+        "X-Workspace-Id": defaultWs,
       },
       body: JSON.stringify({ message: "hello" }),
     });

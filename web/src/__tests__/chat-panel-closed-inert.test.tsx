@@ -52,7 +52,6 @@ const WS_A: WorkspaceInfo = {
   name: "Alpha",
   connectors: [],
   memberCount: 1,
-  isPersonal: false,
   userRole: "admin",
 };
 

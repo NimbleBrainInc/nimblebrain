@@ -21,8 +21,6 @@ import { join } from "node:path";
 import { type ServerHandle, startServer } from "../../src/api/server.ts";
 import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
-import { ensureUserWorkspace } from "../../src/workspace/provisioning.ts";
-import { personalWorkspaceIdFor } from "../../src/workspace/workspace-store.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { provisionTestWorkspace } from "../helpers/test-workspace.ts";
 
@@ -32,8 +30,8 @@ const testDir = join(tmpdir(), `nb-upload-conversation-workspace-${Date.now()}`)
 const WORKSPACE_A = "ws_workspace_a";
 // Dev mode: no identity on the request → the dev owner.
 const OWNER = DEV_IDENTITY.id;
-// The owner's personal workspace — a DIFFERENT workspace than WORKSPACE_A.
-const PERSONAL = personalWorkspaceIdFor(OWNER);
+// Another workspace the owner belongs to — a DIFFERENT workspace than WORKSPACE_A.
+const OTHER = "ws_workspace_other";
 
 let runtime: Runtime;
 let handle: ServerHandle;
@@ -47,10 +45,7 @@ beforeAll(async () => {
     workDir: testDir,
   });
   await provisionTestWorkspace(runtime, WORKSPACE_A);
-  await ensureUserWorkspace(runtime.getWorkspaceStore(), {
-    id: DEV_IDENTITY.id,
-    displayName: DEV_IDENTITY.displayName,
-  });
+  await provisionTestWorkspace(runtime, OTHER);
   handle = startServer({ runtime, port: 0 });
   baseUrl = `http://localhost:${handle.port}`;
 });
@@ -69,10 +64,10 @@ function attachmentForm(conversationId: string, extra: Record<string, string> = 
   return form;
 }
 
-async function registrySizes(): Promise<{ a: number; personal: number }> {
+async function registrySizes(): Promise<{ a: number; other: number }> {
   return {
     a: (await runtime.getWorkspaceFileStore(WORKSPACE_A, OWNER).readRegistry()).length,
-    personal: (await runtime.getWorkspaceFileStore(PERSONAL, OWNER).readRegistry()).length,
+    other: (await runtime.getWorkspaceFileStore(OTHER, OWNER).readRegistry()).length,
   };
 }
 
@@ -94,11 +89,11 @@ describe("an upload attached to a conversation writes only to the workspace in t
       const unknownId = "conv_0000000000000003";
       const before = await registrySizes();
 
-      const inA = await fetch(`${baseUrl}/v1/workspaces/${PERSONAL}${route.path}`, {
+      const inA = await fetch(`${baseUrl}/v1/workspaces/${OTHER}${route.path}`, {
         method: "POST",
         body: attachmentForm(born.conversationId, route.extra),
       });
-      const unknown = await fetch(`${baseUrl}/v1/workspaces/${PERSONAL}${route.path}`, {
+      const unknown = await fetch(`${baseUrl}/v1/workspaces/${OTHER}${route.path}`, {
         method: "POST",
         body: attachmentForm(unknownId, route.extra),
       });
@@ -128,6 +123,6 @@ describe("an upload attached to a conversation writes only to the workspace in t
     expect(body.files[0].workspaceId).toBe(WORKSPACE_A);
     expect(body.files[0].conversationId).toBe(born.conversationId);
     expect(await runtime.getWorkspaceFileStore(WORKSPACE_A, OWNER).findEntry(fileId)).not.toBeNull();
-    expect(await runtime.getWorkspaceFileStore(PERSONAL, OWNER).findEntry(fileId)).toBeNull();
+    expect(await runtime.getWorkspaceFileStore(OTHER, OWNER).findEntry(fileId)).toBeNull();
   });
 });
