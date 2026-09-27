@@ -789,8 +789,9 @@ export class McpSource implements ToolSource {
    * more on the 2025 era. The SDK reads a 5xx as a server failure rather than
    * era evidence, but a 2025-era server that answers any method it does not
    * know with a 500 connected before this runtime probed, and must still
-   * connect (see `isEraProbeServerFailure` for why a gateway 5xx does not). Both connect seams (`start()` and the OAuth retry) go through
-   * here, so the fallback holds on either.
+   * connect (see `isEraProbeServerFailure` for why a gateway 5xx does not).
+   * Both connect seams (`start()` and the OAuth retry) go through here, so the
+   * fallback holds on either.
    *
    * The retry rebuilds the transport and client and passes a `legacy` prior,
    * so the SDK skips the probe and runs the 2025 `initialize` handshake. A
@@ -2972,6 +2973,10 @@ export class McpSource implements ToolSource {
  * life of the connection, and a 2026-only feature (the tasks extension) with
  * it. Auth refusals and network failures are excluded too: those fail the
  * legacy handshake the same way.
+ *
+ * The cost: a strict 2025-era server whose host turns its 500 into a 502 (an
+ * unhandled throw in a function behind a gateway, such as AWS Lambda behind
+ * API Gateway) never connects, and every re-probe fails with that 502.
  */
 function isEraProbeServerFailure(err: unknown): boolean {
   return (
