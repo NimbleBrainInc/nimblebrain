@@ -820,6 +820,60 @@ describe("status tool — scope: skills", () => {
 		expect(text).not.toContain("Workspace & User Skills");
 	});
 
+	// A server skill's body is fetched only when it is needed: the overview
+	// lists names, and the detail view fetches the one body it prints.
+	describe("a tool-affined server skill", () => {
+		function serverSkill(loadBody: Skill["loadBody"]) {
+			const skill: Skill = {
+				manifest: {
+					name: "connector:crm:lookup",
+					description: "CRM lookup guidance",
+					loadingStrategy: "dynamic",
+					priority: 50,
+					status: "active",
+				},
+				body: "",
+				sourcePath: "skill://lookup/SKILL.md",
+				loadBody,
+			};
+			return [{ skill, loadedBy: "tool_affinity" as const, reason: "tool: crm__search" }];
+		}
+
+		it("is listed by the overview without fetching its body", async () => {
+			let fetched = 0;
+			const layer3 = serverSkill(async () => {
+				fetched++;
+				return { ok: true, body: "LOOKUP_BODY" };
+			});
+			const source = await makeStatusSource({ context: [], matchable: [] }, undefined, layer3);
+			const result = await source.execute("status", { scope: "skills" });
+			expect(extractText(result.content)).toContain("connector:crm:lookup");
+			expect(fetched).toBe(0);
+		});
+
+		it("has its body fetched and printed by the detail view", async () => {
+			const layer3 = serverSkill(async () => ({ ok: true, body: "LOOKUP_BODY" }));
+			const source = await makeStatusSource({ context: [], matchable: [] }, undefined, layer3);
+			const result = await source.execute("status", {
+				scope: "skills",
+				name: "connector:crm:lookup",
+			});
+			expect(result.isError).toBe(false);
+			expect(extractText(result.content)).toContain("LOOKUP_BODY");
+		});
+
+		it("is reported as unfetchable when its body cannot be loaded", async () => {
+			const layer3 = serverSkill(async () => ({ ok: false, reason: "unreachable" }));
+			const source = await makeStatusSource({ context: [], matchable: [] }, undefined, layer3);
+			const result = await source.execute("status", {
+				scope: "skills",
+				name: "connector:crm:lookup",
+			});
+			expect(result.isError).toBe(true);
+			expect(extractText(result.content)).toContain("could not be fetched");
+		});
+	});
+
 	it("shows matchable skills with triggers", async () => {
 		const source = await makeStatusSource({ context: [], matchable: [matchableSkill] });
 		const result = await source.execute("status", { scope: "skills" });

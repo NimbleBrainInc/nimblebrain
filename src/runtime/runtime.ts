@@ -5013,14 +5013,11 @@ export class Runtime {
     const loadedConnectorContext = await hydrateSkills(
       withoutSuppressed(connectorContext, suppressed),
     );
-    // Layer 3 is hydrated for the same reason: the status detail prints each
-    // selected skill's body, and a server skill's body is fetched only on need.
-    const loadedLayer3 = await hydrateSelected(
-      layer3.filter((sel) => !suppressed.has(sel.skill.manifest.name)),
-    );
+    // Layer 3 is returned unfetched: the overview lists names only, and the
+    // detail view fetches the one body it prints.
     return {
       context: [...context, ...loadedConnectorContext],
-      layer3: loadedLayer3,
+      layer3: layer3.filter((sel) => !suppressed.has(sel.skill.manifest.name)),
     };
   }
 
