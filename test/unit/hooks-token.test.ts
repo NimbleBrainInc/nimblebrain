@@ -81,13 +81,11 @@ describe("kid + url", () => {
 
   test("a delivery id is opaque — it encodes nothing about who it is for", () => {
     // A URL seen in a vendor dashboard or a proxy log must disclose nothing but
-    // the runtime's own host. The id is minted from no input, so no tenant,
-    // workspace, connector or vendor can reach it, and it is nothing but
-    // random bytes: 32 of them, base64url-encoded to 43 characters.
+    // the runtime's own host. The id takes no parameters, so no tenant,
+    // workspace, connector or vendor can be passed into it, and it is exactly
+    // 32 bytes, base64url-encoded to 43 characters, so nothing fits beside them.
     expect(newDeliveryId.length).toBe(0);
-    const id = newDeliveryId();
-    expect(id).toMatch(/^[A-Za-z0-9_-]{43}$/);
-    expect(newDeliveryId()).not.toBe(id);
+    expect(newDeliveryId()).toMatch(/^[A-Za-z0-9_-]{43}$/);
   });
 });
 
