@@ -1,8 +1,6 @@
 import { WorkOS } from "@workos-inc/node";
 import { isAllowedOriginScheme, publicOrigin } from "../../oauth/public-origin.ts";
 import { log } from "../../observability/log.ts";
-import { ensureUserWorkspace } from "../../workspace/provisioning.ts";
-import type { WorkspaceStore } from "../../workspace/workspace-store.ts";
 import type { WorkosAuth } from "../instance.ts";
 import {
   type AuthorizationServer,
@@ -215,7 +213,6 @@ export class WorkosIdentityProvider implements IdentityProvider {
   /** Client IDs whose AuthKit tokens are first-party; empty means none are. */
   private firstPartyClientIds: ReadonlySet<string>;
   private userStore: UserStore | null;
-  private workspaceStore: WorkspaceStore;
 
   private jwksCache: CachedJwks | null = null;
   private authkitJwksCache: CachedJwks | null = null;
@@ -236,15 +233,8 @@ export class WorkosIdentityProvider implements IdentityProvider {
   /**
    * userStore is optional because WorkOS itself is the source of truth for
    * users (managedUsers: true); the local profile is a cache for preferences.
-   * workspaceStore is required: Phase 1 establishes the "authenticated user
-   * has ≥1 workspace" invariant at the identity boundary, and that requires
-   * a place to create workspaces.
    */
-  constructor(
-    config: WorkosAuth,
-    userStore: UserStore | undefined,
-    workspaceStore: WorkspaceStore,
-  ) {
+  constructor(config: WorkosAuth, userStore: UserStore | undefined) {
     const apiKey = process.env.WORKOS_API_KEY ?? config.apiKey ?? "";
     this.workos = new WorkOS(apiKey, { clientId: config.clientId });
     this.clientId = config.clientId;
@@ -260,7 +250,6 @@ export class WorkosIdentityProvider implements IdentityProvider {
       (config.firstPartyClientIds ?? []).map((id) => id.trim()).filter((id) => id.length > 0),
     );
     this.userStore = userStore ?? null;
-    this.workspaceStore = workspaceStore;
     this.capabilities = {
       authCodeFlow: true,
       tokenRefresh: true,
@@ -314,16 +303,7 @@ export class WorkosIdentityProvider implements IdentityProvider {
       ? await this.verifyAuthkitToken(parsed, payload.sub)
       : await this.verifyUserManagementToken(parsed, payload.sub);
 
-    // Enforce the invariant "authenticated user has ≥1 workspace" on every
-    // successful auth — covers the AuthKit/MCP-OAuth path (which never hits
-    // exchangeCode) and self-heals any user whose workspace was lost to
-    // admin deletion, partial failure, or migration. Idempotent; the happy
-    // path is one filesystem read.
     if (!identity) return null;
-    await ensureUserWorkspace(this.workspaceStore, {
-      id: identity.id,
-      displayName: identity.displayName,
-    });
     const grant: TokenGrant =
       !fromAuthkit || this.isFirstPartyClient(payload.client_id)
         ? FIRST_PARTY_GRANT

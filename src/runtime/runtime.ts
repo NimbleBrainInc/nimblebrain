@@ -218,9 +218,10 @@ import { createProcessLedger, type UsageLedger } from "../usage/ledger.ts";
 import { clearUsageLedger, recordLlmCall, setUsageLedger } from "../usage/record.ts";
 import type { TokenUsage } from "../usage/types.ts";
 import { WorkspaceContext } from "../workspace/context.ts";
-import { ensureUserWorkspace } from "../workspace/provisioning.ts";
+import { retireLegacyPersonalWorkspaces } from "../workspace/legacy-personal.ts";
+import { defaultWorkspaceFor, ensureUserWorkspace } from "../workspace/provisioning.ts";
 import type { Workspace } from "../workspace/types.ts";
-import { personalWorkspaceIdFor, WorkspaceStore } from "../workspace/workspace-store.ts";
+import { WorkspaceStore } from "../workspace/workspace-store.ts";
 import {
   ConversationAccessDeniedError,
   ConversationNotFoundError,
@@ -655,7 +656,8 @@ export class Runtime {
     const instanceConfig = await loadInstanceConfig(workDir);
     const userStore = new UserStore(workDir);
     const workspaceStore = new WorkspaceStore(workDir);
-    const identityProvider = createIdentityProvider(instanceConfig, userStore, workspaceStore);
+    await retireLegacyPersonalWorkspaces(workspaceStore, userStore);
+    const identityProvider = createIdentityProvider(instanceConfig, userStore);
 
     // Mint the scoped internal-API auth token (the internal-API bearer checked
     // in auth-middleware). Rotated on every runtime restart — never persisted.
@@ -1055,7 +1057,7 @@ export class Runtime {
       identity,
       // The conversation's own workspace — the one this turn is sealed to, for
       // its tools, its skills, its files, and its config. Not the client's
-      // currently-focused workspace and not the caller's personal one.
+      // currently-focused workspace.
       workspaceId: convWsId,
       workspaceModelOverride: boundWorkspace?.models ?? null,
     };
@@ -1076,14 +1078,13 @@ export class Runtime {
     // handlers — one shared resolver, no forked copy to drift out of sync.
     const ownerId = resolveRequestOwnerId(request.identity, this._identityProvider !== null);
     // `workspaceId` names the workspace this turn acts from. The HTTP chat door
-    // takes it from the URL (`/v1/workspaces/<wsId>/chat*`), so it's always
-    // present for HTTP callers; the `?? personal` default below serves only
-    // embedded / dev / CLI callers that drive the runtime directly.
-    // It's the conversation metadata breadcrumb here and is delegated to `chat()`
-    // below, which re-resolves the same default for tool scope. (Pre-Stage-2 the
-    // missing-workspace case hard-threw a raw 500 on chat-start; the default
-    // keeps the embedded path working.)
-    const wsId = request.workspaceId ?? personalWorkspaceIdFor(ownerId);
+    // takes it from the URL (`/v1/workspaces/<wsId>/chat*`); see
+    // `resolveRequestWorkspace` for a caller that omits it. The resolved id is
+    // handed to `chat()` below so both halves of the turn run in one workspace.
+    const wsId = await this.resolveRequestWorkspace(
+      request.identity ?? DEV_IDENTITY,
+      request.workspaceId,
+    );
     // Built on demand, not up front: `resolveRequestModelString` refuses a
     // model outside the allowlist, and on a resume its result is discarded in
     // favour of the pin. Evaluating eagerly would refuse a request over a value
@@ -1155,7 +1156,7 @@ export class Runtime {
 
     const busSink = this.createRunBusSink(conversationId);
     // Detached: run to completion regardless of the caller's connection.
-    void this.chat({ ...request, conversationId, signal }, busSink)
+    void this.chat({ ...request, workspaceId: wsId, conversationId, signal }, busSink)
       .then((result) => {
         // Publish a terminal `done` carrying the final result so viewers
         // finalize the assistant message, then close the run.
@@ -1239,22 +1240,14 @@ export class Runtime {
     const ownerId = resolveRequestOwnerId(request.identity, this._identityProvider !== null);
     const requestIdentity = request.identity ?? DEV_IDENTITY;
 
-    // Provision the caller's personal workspace. It is where a chat with no
-    // focused workspace is born, and its registry has to exist before the
-    // session bridge runs — nothing else about the turn resolves against it.
-    const sessionWsId = await this.prepareSessionWorkspace(requestIdentity);
-
     // The conversation's workspace — the binding, and the ONE workspace this
     // turn resolves against: the workspace the request addresses
-    // (`request.workspaceId`, from the URL on the HTTP chat door), or the
-    // caller's personal workspace when absent — the embedded / dev path only
-    // (`?? sessionWsId`). A new chat is born there and stays there for its whole
-    // life; a resumed one must already be stored there, so the workspace a
-    // request names is the one the turn runs in. It is what the run is walled
-    // to AND what its prompt narrates — a conversation in a personal workspace
-    // is narrated like any other, since a personal workspace is just a
-    // workspace.
-    const convWsId = request.workspaceId ?? sessionWsId;
+    // (`request.workspaceId`, from the URL on the HTTP chat door; see
+    // `resolveRequestWorkspace` for a caller that omits it). A new chat is born
+    // there and stays there for its whole life; a resumed one must already be
+    // stored there, so the workspace a request names is the one the turn runs
+    // in. It is what the run is walled to AND what its prompt narrates.
+    const convWsId = await this.resolveRequestWorkspace(requestIdentity, request.workspaceId);
     const store = this.resolveChatStore(request.conversationId, convWsId, ownerId);
 
     const turnCtx = await this.buildTurnContext(requestIdentity, convWsId);
@@ -1265,8 +1258,8 @@ export class Runtime {
     // uses, so it runs only where a conversation is actually created.
     const makeCreateOpts = (): CreateConversationOptions => ({
       ownerId,
-      // The conversation's workspace binding — the workspace it's born in (focused,
-      // or personal when unfocused). Authoritative: the conversation is stored
+      // The conversation's workspace binding — the workspace it's born in.
+      // Authoritative: the conversation is stored
       // under `workspaces/<workspaceId>/conversations/<ownerId>/`, and this is
       // fixed for its whole life (no mid-chat workspace switching).
       workspaceId: convWsId,
@@ -1335,7 +1328,7 @@ export class Runtime {
     // decides the model it bills. AsyncLocalStorage propagates into the detached
     // promise, so the scope holds after this function returns.
     runWithRequestContext(handle.context, () =>
-      this.maybeGenerateTitle(conversation, request, store, handle.output, sessionWsId),
+      this.maybeGenerateTitle(conversation, request, store, handle.output),
     );
 
     return {
@@ -1367,9 +1360,9 @@ export class Runtime {
    *    The runtime owns this framing — connectors cannot spoof it by wrapping the
    *    user message.
    *  - `workspaceId` is optional: present → that workspace's tool scope +
-   *    briefing; absent → the run is housed in the owner's personal workspace
-   *    (its tools + identity tools) and narrates no workspace. Either way the
-   *    run is walled to one workspace.
+   *    briefing; absent → the run is housed in the workspace
+   *    `resolveRequestWorkspace` stands in (dev mode only) and narrates no
+   *    workspace. Either way the run is walled to one workspace.
    *  - An abort returns what the run accomplished instead of throwing: nothing
    *    else records this run's events, so silent abandonment would lose them.
    */
@@ -1380,23 +1373,21 @@ export class Runtime {
     const ownerId = resolveRequestOwnerId(request.identity, this._identityProvider !== null);
     const requestIdentity = request.identity ?? DEV_IDENTITY;
 
-    // The owner's personal workspace — where an unfocused run is housed. Its
-    // registry has to exist before anything resolves against it.
-    const sessionWsId = await this.prepareSessionWorkspace(requestIdentity);
-
-    // The run's single working workspace: the focused workspace, or the personal
-    // one when unfocused. Tool scope, skill/connector scope, connector overlays,
-    // model slots, and file provenance all key off this one id. Only a focused
-    // run narrates a workspace; an unfocused one is walled to the personal
-    // workspace without being about it, so `TASK_IDENTITY` carries the framing.
+    // The run's single working workspace: the focused workspace, or — for a
+    // caller that names none — the one `resolveRequestWorkspace` stands in.
+    // Tool scope, skill/connector scope, connector overlays, model slots, and
+    // file provenance all key off this one id. Only a focused run narrates a
+    // workspace; an unfocused one is walled to its workspace without being
+    // about it, so `TASK_IDENTITY` carries the framing.
     const focusedWsId = request.workspaceId;
+    const runWsId = focusedWsId ?? (await this.resolveRequestWorkspace(requestIdentity, undefined));
 
     const handle = await this.startRun({
       // An automation fires as `schedule` (a cron tick) or `manual` (Run now);
       // anything driving the runtime directly is `api`.
       trigger: request.trigger ?? "api",
       principal: { identity: requestIdentity, ownerId },
-      workspaceId: focusedWsId ?? sessionWsId,
+      workspaceId: runWsId,
       ...(focusedWsId ? { briefingWorkspaceId: focusedWsId } : {}),
       input: {
         content: [{ type: "text", text: request.prompt }],
@@ -1475,7 +1466,6 @@ export class Runtime {
     // door, so the invariant holds by construction rather than by each caller
     // remembering to re-implement it. It runs before the opening message is
     // written and before any tool is bound, so a refused run touches nothing.
-    // Personal workspaces are sole-member by construction and never gate.
     //
     // The two refusals differ because the callers' contracts do, not because
     // the check does: a chat resume is a 403 to a person; an automation run is
@@ -1993,9 +1983,9 @@ export class Runtime {
    * The workspace a run ACTS in owns its model slots, its tools, and its file
    * partition; the workspace it is FOCUSED on is the one the prompt narrates
    * (apps, overlays, persona, the "## Workspace" block). They are the same
-   * workspace except for an unfocused run, which is housed in the owner's
-   * personal workspace without being about it — so it narrates nothing and
-   * takes that workspace's slots.
+   * workspace except for an unfocused run, which is housed in a workspace
+   * without being about it — so it narrates nothing and takes that
+   * workspace's slots.
    */
   private async resolveRunWorkspaces(
     spec: RunSpec,
@@ -2132,18 +2122,33 @@ export class Runtime {
   // ── chat / task turn helpers (shared setup) ──────────────────────
 
   /**
-   * Ensure the identity's personal (session) workspace exists and has a
-   * registry, returning its id. Idempotent belt-and-suspenders for embedded /
-   * dev / CLI callers that never went through HTTP auth.
+   * The workspace a request runs in. The HTTP doors always name one
+   * (ADR-0037), so `workspaceId` is absent only for a caller driving the
+   * runtime directly. With an identity provider configured that is a caller
+   * bug and throws: the server does not choose a workspace for a request. In
+   * dev mode (no provider) the caller's default workspace stands in,
+   * provisioned if they have none, with its registry ready.
    */
-  private async prepareSessionWorkspace(identity: UserIdentity): Promise<string> {
-    const sessionWsId = personalWorkspaceIdFor(identity.id);
-    await ensureUserWorkspace(this._workspaceStore, {
-      id: identity.id,
-      ...(identity.displayName ? { displayName: identity.displayName } : {}),
-    });
-    await this.ensureWorkspaceRegistry(sessionWsId);
-    return sessionWsId;
+  private async resolveRequestWorkspace(
+    identity: UserIdentity,
+    workspaceId: string | undefined,
+  ): Promise<string> {
+    if (workspaceId !== undefined) return workspaceId;
+    if (this._identityProvider !== null) {
+      throw new Error("[runtime] request names no workspace; pass workspaceId");
+    }
+    const memberships = await ensureUserWorkspace(
+      this._workspaceStore,
+      {
+        id: identity.id,
+        ...(identity.displayName ? { displayName: identity.displayName } : {}),
+      },
+      this._userStore,
+    );
+    const user = await this._userStore.get(identity.id);
+    const wsId = defaultWorkspaceFor(memberships, user?.preferences).id;
+    await this.ensureWorkspaceRegistry(wsId);
+    return wsId;
   }
 
   /**
@@ -2187,7 +2192,7 @@ export class Runtime {
   /**
    * The workspace briefing surfaces (apps + the workspace overlay) for a turn.
    * `wsId` is the conversation's own (chat) or focused (task) workspace;
-   * `undefined` (personal/session) yields empty apps and an empty overlay.
+   * `undefined` (an unfocused task) yields empty apps and an empty overlay.
    */
   private async buildWorkspaceBriefing(wsId: string | undefined): Promise<{
     apps: PromptAppInfo[];
@@ -2372,18 +2377,16 @@ export class Runtime {
    * the title + its aux usage and broadcasts `conversation.title` on the global
    * SSE. Best-effort — a failure only logs.
    *
-   * `wsId: sessionWsId` (the owner's personal workspace) — NOT
-   * `conversation.workspaceId`: the SSE layer scopes `scope: "workspace"` events
-   * to clients whose membership set contains this wsId. Conversations are
-   * owner-scoped and the owner is always a member of their own personal
-   * workspace, so this reaches exactly the owner's tabs.
+   * The event names the conversation's owner (`ownerId`), not its workspace:
+   * a conversation is private to its owner, and the SSE layer delivers an
+   * owner-stamped event to that identity's connections alone (`SSE_ROUTES` in
+   * `src/api/events.ts`).
    */
   private maybeGenerateTitle(
     conversation: Conversation,
     request: ChatRequest,
     store: EventSourcedConversationStore,
     output: string,
-    sessionWsId: string,
   ): void {
     if (conversation.title !== null) return;
     const titleSlot = this.getModelSlot("fast");
@@ -2423,7 +2426,7 @@ export class Runtime {
         await store.update(conversation.id, { title });
         this.defaultEvents.emit({
           type: "conversation.title",
-          data: { conversationId: conversation.id, title, wsId: sessionWsId },
+          data: { conversationId: conversation.id, title, ownerId: conversation.ownerId },
         });
       })
       .catch((err) => {
@@ -3457,8 +3460,7 @@ export class Runtime {
    * The caller's personal connectors granted into the session's workspace
    * `sessionWsId`, as bare `<connector>__<tool>` schemas — the identity-door form
    * `routeIdentityCall` dispatches (never namespaced, so they never hit the
-   * workspace wall). Uniform across every workspace (a personal workspace is just
-   * a workspace, with no special "own home" surfacing): only connectors the owner
+   * workspace wall). Uniform across every workspace: only connectors the owner
    * granted to THIS workspace surface (deny by default), and only their
    * non-`disallow`ed tools.
    *
@@ -3686,9 +3688,7 @@ export class Runtime {
   }
 
   /**
-   * True if `principalId` may currently act in `wsId`. Personal workspaces are
-   * sole-member by construction (always true); shared workspaces require current
-   * membership. The one "is this principal still allowed in this workspace"
+   * True if `principalId` is currently a member of `wsId`. The one "is this principal still allowed in this workspace"
    * check behind every gate that asks it: the run-start door (`startRun`, for a
    * conversation resume and an automation run alike) and the unattended
    * dispatch (ADR-0007).
@@ -3698,7 +3698,6 @@ export class Runtime {
    * the same way rather than reimplementing it against the store.
    */
   async isPrincipalWorkspaceMember(wsId: string, principalId: string): Promise<boolean> {
-    if (wsId === personalWorkspaceIdFor(principalId)) return true;
     const ws = await this._workspaceStore.get(wsId);
     return ws?.members.some((m) => m.userId === principalId) ?? false;
   }
@@ -3714,7 +3713,7 @@ export class Runtime {
    * person can see it and nothing shared has moved.
    *
    * Reads stay owner-gated: a removed member can still read their own authored
-   * conversation. Personal workspaces are sole-member and never gate.
+   * conversation.
    */
   private async assertOwnerIsWorkspaceMember(
     conversationId: string,

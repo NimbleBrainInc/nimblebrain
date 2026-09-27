@@ -22,7 +22,7 @@ An automation has:
 
 Each automation is **owned by a workspace and a user** — it lives at `workspaces/<wsId>/automations/<ownerId>/`, and that path is the wall. A scheduled run fires as its owner, focused on the workspace it was created in, and is walled to that **provenance workspace**: it reaches only the tools and connectors installed there, with no reach into the owner's other workspaces.
 
-This has one practical consequence: if an automation needs to reach a connector (for example, to post to Teams or Slack), that connector must be installed in the **same workspace the automation was created in**. A connector connected only in another workspace — including the owner's personal workspace — is never reachable by that automation, and a run that tries is recorded as a failure.
+This has one practical consequence: if an automation needs to reach a connector (for example, to post to Teams or Slack), that connector must be installed in the **same workspace the automation was created in**. A connector connected only in another workspace is never reachable by that automation, and a run that tries is recorded as a failure.
 
 <Aside type="note">
 Automation runs use your **timezone** for cron scheduling. The default is `Pacific/Honolulu`, overridable by the operator with the `NB_TIMEZONE` environment variable. A schedule can also carry its own IANA timezone.

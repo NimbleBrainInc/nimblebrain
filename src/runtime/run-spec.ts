@@ -146,9 +146,9 @@ export interface RunSpec {
   /**
    * The workspace the prompt NARRATES — installed apps, instruction overlays,
    * the "## Workspace" block, the workspace persona. Equal to `workspaceId` for
-   * a run focused on its workspace; absent for a run merely *housed* in the
-   * owner's personal workspace (an unfocused automation), which is walled to
-   * that workspace without being about it.
+   * a run focused on its workspace; absent for a run merely *housed* in a
+   * workspace (an unfocused task), which is walled to that workspace without
+   * being about it.
    */
   briefingWorkspaceId?: string;
   /** Present when the run belongs to a persisted conversation. */

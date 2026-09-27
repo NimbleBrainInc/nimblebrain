@@ -16,9 +16,7 @@ export interface RequestContext {
    * may read and write, whose tools it may dispatch, and whose config applies.
    *
    * There is exactly one, because a session reaches exactly one workspace (the
-   * wall). A personal workspace is not special in this model — it is the
-   * workspace created at first login, and it reaches this field the same way
-   * any other does.
+   * wall).
    *
    * Set on every door: chat (the workspace its request addresses, which a
    * resume shares with its conversation), automation runs

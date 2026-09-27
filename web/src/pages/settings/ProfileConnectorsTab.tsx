@@ -25,7 +25,7 @@ import { EmptyState, InlineError, Section, SettingsPageHeader } from "./componen
  * per connector — grants/revokes it into the caller's workspaces.
  *
  * A personal connector is identity-bound and must be granted into EVERY
- * workspace it's used in (the personal workspace included — no free-at-home);
+ * workspace it's used in (no free-at-home);
  * only then do its tools surface to the agent there. Connecting redirects the
  * browser through the connector's OAuth flow (`installPersonalConnector` → a
  * Connect initiate → the vendor's authorization URL); the callback lands back
@@ -385,7 +385,6 @@ function WorkspaceGrantRow({
     <div className="flex items-center justify-between gap-3 py-1">
       <span className="truncate text-sm">
         {ws.name}
-        {ws.isPersonal ? <span className="text-muted-foreground"> · personal</span> : null}
       </span>
       <Button
         type="button"

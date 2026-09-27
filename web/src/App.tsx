@@ -313,6 +313,7 @@ function AuthenticatedAppContent({
         wsCtx.activeWorkspace?.id,
         wsCtx.setActiveWorkspace,
         () => navigate("/", { replace: true }),
+        () => window.location.assign("/"),
       );
     });
     return () => setOnWorkspaceError(null);

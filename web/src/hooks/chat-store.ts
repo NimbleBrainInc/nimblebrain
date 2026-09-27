@@ -154,8 +154,7 @@ export interface LoadedConversationMeta {
    * `conversations__get` metadata). The panel uses it to avoid resuming a
    * conversation that belongs to a workspace other than the one currently
    * focused — see `ChatProvider`'s re-scope effect. Absent on legacy records
-   * with no stamped workspace (they read as the owner's personal workspace);
-   * absence means "workspace unknown — don't reconcile", which preserves the
+   * with no stamped workspace; absence means "workspace unknown — don't reconcile", which preserves the
    * open-in-progress race guard.
    */
   workspaceId?: string;

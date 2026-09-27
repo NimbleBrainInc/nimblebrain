@@ -63,8 +63,7 @@ export function mcpAuthRoutes(ctx: AppContext) {
   //
   // Workspace-authed. Body: { serverName }. Stage 2: every URL connector
   // is workspace-scoped, so the principal is always `WORKSPACE_PRINCIPAL_ID`.
-  // Personal connectors bind to the user's personal workspace, which is
-  // itself a workspace from the lifecycle's vantage. Calls
+  // Personal connectors live on the identity plane, not here. Calls
   // `lifecycle.startAuth`, which is idempotent on double-click and tears
   // down stale sources (so disconnect → reconnect works without a
   // process restart).
@@ -91,8 +90,7 @@ export function mcpAuthRoutes(ctx: AppContext) {
       }
 
       // Stage 2: every URL connector is workspace-scoped (legacy `"user"`
-      // literal was deleted). Personal connectors bind to the user's
-      // personal workspace, so the workspace principal is the only
+      // literal was deleted), so the workspace principal is the only
       // legal value here. `instance.oauthScope` is always `"workspace"`
       // or undefined post-Stage-2.
       const principalId = WORKSPACE_PRINCIPAL_ID;

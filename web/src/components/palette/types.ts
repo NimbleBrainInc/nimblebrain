@@ -96,8 +96,8 @@ export interface CommandSourceContext {
   /**
    * True when the current route is a workspace route (`/w/:slug`). Chat lives
    * only inside a workspace, so the chat action gates on this — NOT on
-   * `activeWorkspaceSlug`, which is set (to the personal workspace) even on the
-   * home / profile surfaces.
+   * `activeWorkspaceSlug`, which is set (to the user's default workspace) even
+   * on the home / profile surfaces.
    */
   isWorkspaceRoute?: boolean;
 }

@@ -15,15 +15,6 @@ export interface WorkspaceInfo {
   /** The signed-in user's role within this workspace, when they're a member. */
   userRole?: "admin" | "member";
   /**
-   * `true` for the user's personal workspace (auto-provisioned at first
-   * login, sole-owner-by-design). Connectors install into whichever
-   * workspace is active, personal or shared; this flag only marks the
-   * sole-owner workspace for display. The platform's bootstrap endpoint
-   * sets this; the `parseWorkspaceListResponse` fallback also propagates
-   * it so the shell mounted via either path agrees.
-   */
-  isPersonal?: boolean;
-  /**
    * The workspace's MCP endpoint in canonical form (`<origin>/mcp/<wsId>`),
    * reported by the server. Absent when the entry came from a path that does
    * not carry it.
@@ -73,7 +64,7 @@ export function WorkspaceProvider({
   );
   const [activeWorkspace, setActiveState] = useState<WorkspaceInfo | null>(() => {
     // The default focus comes from the server (`initialActiveId`, the user's
-    // personal workspace). When the URL is a `/w/:slug` deep-link, the route
+    // default workspace). When the URL is a `/w/:slug` deep-link, the route
     // guard overrides this from the slug. There is no persisted "remembered
     // selection" — the URL is the single source of truth for which workspace
     // the user is in.
@@ -126,10 +117,10 @@ export function WorkspaceProvider({
 
         setWorkspaces(list);
 
-        // No bootstrap data → default the focus to the personal workspace,
-        // then the first membership. No persisted selection to restore; the
-        // URL (route guard) overrides this when it's a `/w/:slug` deep-link.
-        const initial = list.find((w) => w.isPersonal) ?? list[0] ?? null;
+        // No bootstrap data → default the focus to the first membership. No
+        // persisted selection to restore; the URL (route guard) overrides this
+        // when it's a `/w/:slug` deep-link.
+        const initial = list[0] ?? null;
 
         if (initial) {
           setActiveState(initial);

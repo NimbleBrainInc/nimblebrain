@@ -218,8 +218,8 @@ function taskTrigger(trigger: AutomationRunTrigger): NonNullable<TaskFnRequest["
  *                                 (`route.ts`: `getSource()` returned nothing).
  *                                 (Orchestrator reason; see `error-mapping.ts`.)
  *   - `workspace_access_denied` → the run ATTEMPTED a call into a workspace its
- *                                 owner isn't a member of (e.g. another user's
- *                                 personal workspace) — unreachable by design.
+ *                                 owner isn't a member of — unreachable by
+ *                                 design.
  *                                 (Orchestrator reason.)
  *   - `reauth_required`         → the run ATTEMPTED a call to an INSTALLED
  *                                 connector whose authorization had expired /

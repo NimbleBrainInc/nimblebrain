@@ -1106,7 +1106,7 @@ function formatNoWorkspaceContext(): string {
     "",
     "The user is at their identity-level home — **not in any single workspace**. There is no current workspace. If the user asks which workspace they're in, tell them they're at their home view, not a specific one.",
     "",
-    "Your active tools are your personal workspace's — its apps plus the platform tools. A specific workspace's apps and tools are **not reachable from the home view**: to use them, the user must open that workspace. `nb__search` here searches only your personal workspace — it does not reach into other workspaces, so it won't surface a workspace's apps.",
+    "Your active tools are those of the one workspace this session runs in — its apps plus the platform tools. Another workspace's apps and tools are **not reachable from the home view**: to use them, the user must open that workspace. `nb__search` here searches only this session's workspace — it does not reach into other workspaces, so it won't surface their apps.",
     "",
     IDENTITY_SCOPE_NOTE,
   ].join("\n");

@@ -297,7 +297,8 @@ export interface ChatRequest {
    * its tools plus the caller's identity tools, all bare, via
    * `listToolsForWorkspace(workspaceId)`. There is no cross-workspace union.
    * Absent → the chat isn't focused on a workspace (e.g. the home control
-   * panel); it falls back to the personal workspace, which is then the workspace.
+   * panel); only a dev-mode caller may omit it, and the caller's default
+   * workspace then stands in (`Runtime.resolveRequestWorkspace`).
    */
   workspaceId?: string;
   /**

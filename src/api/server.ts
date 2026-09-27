@@ -199,11 +199,7 @@ export function startServer(options: ServerOptions): ServerHandle {
   const isDevMode = effectiveProvider === null;
   if (!effectiveProvider) {
     const workDir = runtime.getWorkDir();
-    effectiveProvider = new DevIdentityProvider(
-      workDir,
-      runtime.getUserStore(),
-      runtime.getWorkspaceStore(),
-    );
+    effectiveProvider = new DevIdentityProvider(workDir, runtime.getUserStore());
   }
   const authMode = resolveAuthMode(effectiveProvider);
   const authConfigured = authMode.type !== "dev";

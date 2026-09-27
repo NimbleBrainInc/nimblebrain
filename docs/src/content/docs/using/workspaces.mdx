@@ -102,12 +102,14 @@ In the web UI, switch workspaces from the workspace navigator at the top of the 
 
 Each workspace has a stable URL of the form `/w/<id>/...`. The agent's active tools follow your focused workspace; the full set of tools across every workspace you belong to is reachable on demand through `nb__search`.
 
-## Personal workspaces
+## Your first workspace
 
-Every user has a personal workspace — a private space where you can experiment with apps and conversations without affecting your team. It shows a lock icon in the workspace navigator and uses a stable `ws_user_<userId>` ID.
+When you first sign in, NimbleBrain creates a workspace for you, named after you (for example, "Mat's workspace"), with you as its admin. It is an ordinary workspace: add members to share it, rename it, or leave it like any other. Sharing a workspace shares the accounts connected in it with its members.
+
+That workspace is your default — the one you land on when no workspace is open. If you ever belong to no workspace, a new one is created for you the next time you open NimbleBrain.
 
 <Aside type="note">
-NimbleBrain guarantees every authenticated user has at least one workspace. The personal workspace is provisioned on first login and re-created on the next login if it is ever deleted.
+Workspaces created before this change keep an ID of the form `ws_user_<userId>`. IDs are opaque; the old form still works everywhere, including in MCP endpoint URLs.
 </Aside>
 
 ## Connecting external MCP clients

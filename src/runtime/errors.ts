@@ -64,8 +64,7 @@ export class ConversationNotFoundError extends Error {
  * `ConversationAccessDeniedError` so it inherits the same
  * `403 conversation_access_denied` HTTP mapping (the caller learns only "no
  * access"), while staying a distinct type so logs/telemetry/tests can tell an
- * offboarding denial from an ownership denial. Personal workspaces are
- * sole-member by construction, so this only ever fires for shared workspaces.
+ * offboarding denial from an ownership denial.
  */
 export class ConversationWorkspaceAccessDeniedError extends ConversationAccessDeniedError {
   constructor(
@@ -86,7 +85,6 @@ export class ConversationWorkspaceAccessDeniedError extends ConversationAccessDe
  * resume gate). The stable `code` lets the automations scheduler recognize this
  * outcome and record the run as **skipped** (not a failure — no consecutive-error
  * count, no auto-disable) so the automation self-heals if the owner is re-added.
- * Personal workspaces are sole-member by construction, so this never fires there.
  */
 export class WorkspaceMembershipRevokedError extends Error {
   readonly code = "workspace_membership_revoked";

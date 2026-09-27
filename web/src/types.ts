@@ -147,7 +147,6 @@ export interface ConfigChangedEvent {
 export interface ConversationTitleEvent {
   conversationId: string;
   title: string;
-  wsId?: string;
 }
 
 /**
@@ -410,12 +409,6 @@ export interface BootstrapResponse {
     role: "admin" | "member";
     memberCount: number;
     connectorCount: number;
-    /**
-     * `true` for the user's personal workspace. Pre-Stage-1 deployments
-     * return `false` for every workspace until the
-     * `migrate-personal-workspaces` script runs.
-     */
-    isPersonal: boolean;
     /** The workspace's MCP endpoint, canonical form: `<publicOrigin>/mcp/<wsId>`. */
     mcpUrl: string;
   }>;

@@ -915,7 +915,7 @@ export class ConnectorLifecycleManager {
     if (principalId !== WORKSPACE_PRINCIPAL_ID) {
       throw new Error(
         `[lifecycle] startAuth: principal "${principalId}" is not a workspace principal — ` +
-          "Stage 2 cut the legacy user-scope path; bind the connector to the owner's personal workspace instead.",
+          "The legacy user-scope path was removed; install the connector into a workspace, or as a personal connector.",
       );
     }
 
@@ -1354,8 +1354,8 @@ export class ConnectorLifecycleManager {
    * workspace registry.
    *
    * Stage 2 collapsed the member-scope (user-pool) branch — every URL
-   * connector now binds to a workspace, including personal connectors
-   * (those bind to the owner's personal workspace).
+   * workspace connector binds to a workspace. Personal connectors live on
+   * the identity plane and never reach here.
    *
    * Idempotent: silently no-ops if no source is currently wired up.
    */

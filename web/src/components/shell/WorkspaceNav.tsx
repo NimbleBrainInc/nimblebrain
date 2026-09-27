@@ -7,8 +7,7 @@
 // one workspace at a time, so exactly one workspace is ever open here. The way
 // to "see another workspace's stuff" is to focus it (the accordion swings over).
 //
-// Personal sorts first as the "Home · Personal" row. The focused workspace's
-// subtree nests its identity views (Conversations / Automations / Files), then
+// Workspaces sort by name. The focused workspace's subtree nests its identity views (Conversations / Automations / Files), then
 // its APPS (People, Tasks, … — capped with a View-all overflow), then a
 // CONNECTORS row — each routed into `/w/<slug>/…`. The identity views' TOOLS
 // still dispatch bare through the identity door (see lib/identity-apps); the
@@ -20,7 +19,7 @@
 // there is no cross-workspace list), so the UI nests them under the workspace.
 // ---------------------------------------------------------------------------
 
-import { ArrowRight, ChevronRight, Home, Plus } from "lucide-react";
+import { ArrowRight, ChevronRight, Plus } from "lucide-react";
 import { useCallback, useMemo } from "react";
 import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
 import { useNotifications } from "../../context/NotificationsContext";
@@ -60,8 +59,7 @@ export function WorkspaceNav({ collapsed = false }: WorkspaceNavProps) {
       // setActiveWorkspaceId (it must not fire the bridge reset hook).
       const switching = wsCtx.activeWorkspace?.id !== ws.id;
       if (switching) wsCtx.setActiveWorkspace(ws);
-      // Every workspace opens its own overview — Personal included. Personal is
-      // just the workspace labelled "Home · Personal", not a detour through the
+      // Every workspace opens its own overview, not a detour through the
       // global landing grid. A switch keeps the mobile drawer open: it expands
       // the new workspace's views, and the user picks one of them next.
       navigate(`/w/${toSlug(ws.id)}/`, switching ? { state: KEEP_DRAWER_OPEN } : undefined);
@@ -198,8 +196,8 @@ function WorkspaceTreeNode({
   );
 }
 
-// The clickable workspace header row: a disclosure chevron, the avatar (or a
-// Home glyph for Personal), and the name. The whole row focuses the workspace —
+// The clickable workspace header row: a disclosure chevron, the avatar, and
+// the name. The whole row focuses the workspace —
 // the chevron is a state indicator, not a separate toggle, since exactly one
 // workspace (the focused one) is ever expanded.
 function WorkspaceHeaderRow({
@@ -211,8 +209,7 @@ function WorkspaceHeaderRow({
   focused: boolean;
   onSelect: () => void;
 }) {
-  const isPersonal = workspace.isPersonal === true;
-  const label = isPersonal ? "Home · Personal" : workspace.name;
+  const label = workspace.name;
   return (
     <button
       type="button"
@@ -225,7 +222,6 @@ function WorkspaceHeaderRow({
       data-testid="sidebar-workspace-header"
       data-workspace-id={workspace.id}
       data-focused={focused ? "true" : "false"}
-      data-is-personal={isPersonal ? "true" : "false"}
       className={cn(
         "group flex items-center gap-1.5 text-sm transition-colors text-left rounded-sm mx-2 my-px px-1.5 py-1.5",
         focused
@@ -237,25 +233,14 @@ function WorkspaceHeaderRow({
         aria-hidden="true"
         className={cn("size-3.5 shrink-0 transition-transform", focused && "rotate-90")}
       />
-      <WorkspaceGlyph workspace={workspace} personal={isPersonal} />
+      <WorkspaceGlyph workspace={workspace} />
       <span className="flex-1 truncate">{label}</span>
     </button>
   );
 }
 
-// The avatar slot. Personal shows a Home glyph (it's home, not a named team);
-// every other workspace shows its deterministic letter+color avatar.
-function WorkspaceGlyph({ workspace, personal }: { workspace: WorkspaceInfo; personal: boolean }) {
-  if (personal) {
-    return (
-      <span
-        aria-hidden="true"
-        className="size-[18px] shrink-0 flex items-center justify-center rounded-sm bg-sidebar-foreground/10"
-      >
-        <Home className="size-3" />
-      </span>
-    );
-  }
+// The avatar slot: the workspace's deterministic letter+color avatar.
+function WorkspaceGlyph({ workspace }: { workspace: WorkspaceInfo }) {
   const avatar = getWorkspaceAvatar(workspace);
   return (
     <span
@@ -279,8 +264,7 @@ function WorkspaceAvatarButton({
   focused: boolean;
   onSelect: () => void;
 }) {
-  const isPersonal = workspace.isPersonal === true;
-  const label = isPersonal ? "Home · Personal" : workspace.name;
+  const label = workspace.name;
   return (
     <button
       type="button"
@@ -291,13 +275,12 @@ function WorkspaceAvatarButton({
       data-testid="sidebar-workspace-header"
       data-workspace-id={workspace.id}
       data-focused={focused ? "true" : "false"}
-      data-is-personal={isPersonal ? "true" : "false"}
       className={cn(
         "flex items-center justify-center p-1.5 mx-2 my-px rounded-sm transition-colors",
         focused ? "bg-sidebar-foreground/10" : "hover:bg-sidebar-foreground/5",
       )}
     >
-      <WorkspaceGlyph workspace={workspace} personal={isPersonal} />
+      <WorkspaceGlyph workspace={workspace} />
     </button>
   );
 }

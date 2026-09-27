@@ -2,8 +2,6 @@ import { existsSync, mkdirSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { log } from "../../observability/log.ts";
-import { ensureUserWorkspace } from "../../workspace/provisioning.ts";
-import type { WorkspaceStore } from "../../workspace/workspace-store.ts";
 import {
   type CreateUserInput,
   type CreateUserResult,
@@ -42,27 +40,17 @@ export class DevIdentityProvider implements IdentityProvider {
 
   private initialized = false;
   private usersDir: string;
-  private workspaceStore: WorkspaceStore;
 
   constructor(
     workDir: string,
     private userStore: UserStore,
-    workspaceStore: WorkspaceStore,
   ) {
     this.usersDir = join(workDir, "users");
-    this.workspaceStore = workspaceStore;
     log.warn("Running in dev mode — no authentication configured");
   }
 
   async verifyRequest(_req: Request): Promise<VerifiedIdentity | null> {
     await this.ensureUserProfile();
-    // Run on every request (idempotent) so the "authenticated user has
-    // ≥1 workspace" invariant self-heals if the dev workspace is deleted
-    // out from under the process.
-    await ensureUserWorkspace(this.workspaceStore, {
-      id: DEV_IDENTITY.id,
-      displayName: DEV_IDENTITY.displayName,
-    });
     return { ...DEV_IDENTITY, grant: FIRST_PARTY_GRANT };
   }
 

@@ -36,11 +36,6 @@ export function bootstrapWorkspacesToInfo(
     memberCount: ws.memberCount,
     connectors: [],
     userRole: ws.role,
-    // `isPersonal` flows through unchanged from bootstrap. The shell uses
-    // it to badge the personal workspace and to enforce the personal-
-    // workspace invariants in workspace settings. Pre-Stage-1 deployments
-    // return `false` for every workspace.
-    isPersonal: ws.isPersonal,
     mcpUrl: ws.mcpUrl,
   }));
 }
@@ -78,12 +73,6 @@ export function parseWorkspaceListResponse(raw: unknown): WorkspaceInfo[] {
           ? (ws.connectors as Array<{ name?: string; path?: string }>)
           : [],
         ...(userRole ? { userRole } : {}),
-        // Pass through `isPersonal` from either contract. Bootstrap
-        // returns it directly; `manage_workspaces.list` surfaces it too.
-        // It no longer gates connector installs (every workspace is a
-        // valid target) — it only marks the sole-owner workspace for
-        // display. Missing field degrades to "not identified as personal."
-        ...(typeof ws.isPersonal === "boolean" ? { isPersonal: ws.isPersonal } : {}),
       };
     });
 }

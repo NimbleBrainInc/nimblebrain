@@ -32,8 +32,9 @@ it belongs in an MCP server, a Synapse app, or upstream MCP — not the runtime.
 ### Workspace
 The authorization boundary (ADR-0001). A session reaches exactly **one**
 workspace plus the caller's identity tools — never a union across workspaces. A
-non-personal workspace has an opaque id `ws_<16-hex>`, members, and roles
-(`admin` | `member`).
+workspace has an opaque id (`ws_<16-hex>`), members, and roles
+(`admin` | `member`). How a workspace came to exist never changes what it is
+(ADR-0039).
 
 An MCP connection is addressed to one workspace by URL: `<publicOrigin>/mcp/<wsId>`
 (ADR-0036). Bare `/mcp` names none and is refused. A token from the MCP
@@ -51,7 +52,7 @@ admitted by the same membership check. A route either acts on a workspace and
 names it in its path, or acts on the caller or on a primitive its own id
 locates (bootstrap, the event stream, a conversation, a file) and names none.
 No header, argument, qualified name or default selects a workspace for a request, and a conversation is resumed only at its own workspace's path. Bootstrap
-alone suggests one — the web shell's default focus, the caller's personal
+alone suggests one — the web shell's default focus, the caller's default
 workspace — and the URL the user is on overrides it.
 
 A workspace exists because `create` made it and stops existing because `delete`
@@ -61,10 +62,13 @@ So a workspace directory on disk is always one a create produced, which is what
 lets `list()` treat an unparseable `workspace.json` as corruption rather than as
 a tree some writer conjured.
 
-### Personal workspace
-A user's own workspace, `ws_user_<userId>`, sole-owned. It is a workspace like
-any other — "everything is workspace-bound" holds with no "no-workspace" void.
-Home = your personal workspace.
+### Default workspace
+The workspace a user lands in when nothing names one:
+`preferences.defaultWorkspaceId`, while they are a member of it, else their
+earliest membership. A user who belongs to no workspace gets one at bootstrap,
+named for them with them as admin, and it becomes their default. It is an
+ordinary workspace — it can be shared, and nothing marks how it was made
+(ADR-0039).
 
 ### Owner
 The authenticated principal a primitive belongs to. Stored as an `<ownerId>`
@@ -230,6 +234,7 @@ The decision log is `adr/`. Foundational (secure RBAC):
 - [0036](adr/0036-an-mcp-connection-is-addressed-to-one-workspace-by-url.md) — an MCP connection is addressed to one workspace by URL; a token is valid only for its resource; membership authorizes
 - [0037](adr/0037-a-workspace-is-addressed-by-url-on-every-surface.md) — a workspace is addressed by URL on every surface; a route is workspace-scoped or identity-scoped, and its path says which
 - [0038](adr/0038-a-credential-is-first-party-by-the-client-it-was-issued-to.md) — a credential's audience says where it may be used; the client it was issued to says whose app holds it; only a configured first-party client gets first-party standing
+- [0039](adr/0039-the-first-workspace-is-an-ordinary-workspace.md) — the workspace provisioned for a user is an ordinary workspace; the default a user lands in is a preference
 
 Manage skills:
 

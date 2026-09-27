@@ -38,7 +38,7 @@ import { validateToolInput } from "../tools/validate-input.ts";
 import { estimateCost } from "../usage/cost.ts";
 import { bytesToBase64 } from "../util/base64.ts";
 import { splitInnerToolName } from "../util/tool-name.ts";
-import { PersonalWorkspaceInvariantError } from "../workspace/errors.ts";
+import { defaultWorkspaceFor, ensureUserWorkspace } from "../workspace/provisioning.ts";
 import type { WorkspaceStore } from "../workspace/workspace-store.ts";
 import type { ConversationEventManager } from "./conversation-events.ts";
 import type { SseEventManager } from "./events.ts";
@@ -319,44 +319,6 @@ function conversationCorruptedResponse(err: ConversationCorruptedError): Respons
     conversationId: err.conversationId,
     reason: err.reason,
   });
-}
-
-/**
- * Map `PersonalWorkspaceInvariantError` to a structured 422 response.
- * Mirrors `conversationCorruptedResponse` — 422 over 500 because the
- * request is well-formed; the state it would produce isn't. The
- * `reason` field is the structured handle clients use to react (e.g.
- * surface "cannot remove members from a personal workspace" without
- * parsing the human message).
- */
-function personalWorkspaceInvariantResponse(err: PersonalWorkspaceInvariantError): Response {
-  return apiError(422, "personal_workspace_invariant", err.message, {
-    workspaceId: err.workspaceId,
-    reason: err.reason,
-  });
-}
-
-/**
- * Recognize the structuredContent shape that the workspace-mgmt tool
- * handlers emit when they catch `PersonalWorkspaceInvariantError`.
- * `structuredContent` rides through the in-process MCP serialization
- * intact, so we can re-detect the original invariant violation from the
- * tool result on the HTTP side without preserving the typed class
- * across the boundary. See `workspace-mgmt-tools.ts::personalWorkspaceInvariantToolResult`.
- */
-function isPersonalWorkspaceInvariantToolResult(structured: unknown): structured is {
-  error: "personal_workspace_invariant";
-  workspaceId: string;
-  reason: string;
-  message?: string;
-} {
-  if (!structured || typeof structured !== "object") return false;
-  const obj = structured as Record<string, unknown>;
-  return (
-    obj.error === "personal_workspace_invariant" &&
-    typeof obj.workspaceId === "string" &&
-    typeof obj.reason === "string"
-  );
 }
 
 /** Handle POST /v1/workspaces/:wsId/chat/stream — SSE streaming chat request. */
@@ -1235,31 +1197,6 @@ function emitBridgeToolDone(
   eventSink?.emit(event);
 }
 
-/**
- * Recognize a PersonalWorkspaceInvariantError encoded in the tool result and map
- * it to a clean 422 (same body as the direct-throw path), or null when the result
- * isn't that shape. The error class doesn't survive the in-process MCP
- * serialization boundary, so workspace-mgmt tool handlers encode it as
- * `structuredContent.error === "personal_workspace_invariant"`.
- */
-function personalWorkspaceInvariantResultResponse(
-  result: Awaited<ReturnType<ToolRegistry["execute"]>>,
-): Response | null {
-  if (!result.isError || !isPersonalWorkspaceInvariantToolResult(result.structuredContent)) {
-    return null;
-  }
-  const sc = result.structuredContent;
-  return apiError(
-    422,
-    "personal_workspace_invariant",
-    typeof sc.message === "string" ? sc.message : "Personal-workspace invariant violated",
-    {
-      workspaceId: sc.workspaceId,
-      reason: sc.reason,
-    },
-  );
-}
-
 /** Handle POST /v1/workspaces/:wsId/tools/call — direct tool invocation. */
 export async function handleToolCall(
   request: Request,
@@ -1363,24 +1300,8 @@ export async function handleToolCall(
       identity,
       eventWorkspaceId,
     );
-    // Typed invariant errors get mapped to clean HTTP status codes
-    // (mirrors how /v1/workspaces/:wsId/chat handles ConversationCorruptedError). The
-    // direct-throw path (in-process tool that bubbles up to here without
-    // crossing the MCP serialization boundary) preserves the typed
-    // class. The structuredContent-marker path below handles the case
-    // where the error already became a ToolResult inside an in-process
-    // MCP source.
-    if (err instanceof PersonalWorkspaceInvariantError) {
-      return personalWorkspaceInvariantResponse(err);
-    }
     throw err;
   }
-
-  // Recognize a PersonalWorkspaceInvariantError encoded in the tool result so
-  // callers (web shell, external MCP clients) see a clean 422 with the same
-  // structured body as the direct-throw path above.
-  const invariantResponse = personalWorkspaceInvariantResultResponse(result);
-  if (invariantResponse) return invariantResponse;
 
   const ms = Math.round(performance.now() - t0);
   // Emit bridge.tool.done after execution (ephemeral SSE + durable event sink)
@@ -1415,70 +1336,25 @@ export async function handleBootstrap(
     return apiError(401, "authentication_required", "Authentication is required");
   }
 
-  // 1. Workspaces the user is a member of
-  const allWorkspaces = await runtime.getWorkspaceStore().list();
-  const userWorkspaces = allWorkspaces.filter((ws) =>
-    ws.members.some((m) => m.userId === identity.id),
+  // 1. Workspaces the user is a member of. A user who belongs to none — new,
+  // or removed from every one — gets one here: bootstrap is where the web shell
+  // starts, and the shell needs a workspace to show.
+  const userWorkspaces = await ensureUserWorkspace(
+    runtime.getWorkspaceStore(),
+    {
+      id: identity.id,
+      ...(identity.displayName ? { displayName: identity.displayName } : {}),
+    },
+    runtime.getUserStore(),
   );
 
-  // Invariant (Phase 1): authenticated users have at least one workspace.
-  // Provisioning runs at the identity boundary (provider.provisionUser →
-  // ensureUserWorkspace). If we hit zero here, something upstream is broken
-  // and we want to know loudly, not silently leak every workspace's apps.
-  if (userWorkspaces.length === 0) {
-    return apiError(
-      500,
-      "workspace_invariant_violation",
-      "Authenticated user has no workspace. Provisioning should have run at login.",
-    );
-  }
-
-  // 2. Identify the user's personal workspace. Stage 1 invariant:
-  //    every user has exactly one personal workspace where
-  //    `isPersonal === true && ownerUserId === identity.id`. If for any
-  //    reason there are multiple (data corruption — shouldn't happen),
-  //    pick the earliest-created and log a warning so operators notice.
-  //    If there are zero (pre-migration deployment) `personalWorkspaceId` stays
-  //    `null` and the active-workspace fallback below uses the first membership
-  //    instead. Local only — clients read `workspaces[].isPersonal`, which
-  //    carries the same fact per entry.
-  const personalCandidates = userWorkspaces.filter(
-    (ws) => ws.isPersonal === true && ws.ownerUserId === identity.id,
-  );
-  let personalWorkspaceId: string | null = null;
-  if (personalCandidates.length === 1) {
-    personalWorkspaceId = personalCandidates[0]!.id;
-  } else if (personalCandidates.length > 1) {
-    // Earliest by createdAt — list() already sorts ascending, but be
-    // explicit so a future change to list ordering doesn't silently
-    // change which workspace counts as "the" personal one.
-    const earliest = personalCandidates
-      .slice()
-      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))[0]!;
-    personalWorkspaceId = earliest.id;
-    log.warn(
-      `[bootstrap] user ${identity.id} has ${personalCandidates.length} personal workspaces; ` +
-        `picking earliest-created ${earliest.id}. This is data corruption — investigate.`,
-    );
-  } else {
-    // Zero personal workspaces. Expected for legacy tenants in the
-    // pre-migration window — `ensureUserWorkspace` creates one on the
-    // next login, or the operator runs `migrate:personal-workspaces`.
-    // Per-login bootstrap is high-volume; `log.info` (dim, greppable)
-    // is enough — `console.warn` would create alarming yellow noise
-    // for an expected pre-migration state.
-    log.info(
-      `[bootstrap] user ${identity.id} has no personal workspace. ` +
-        `Run \`bun run migrate:personal-workspaces\` or trigger a re-login.`,
-    );
-  }
-
-  // 3. The default focus. The client's URL (`/w/:slug`) says which workspace
+  // 2-3. The default focus. The client's URL (`/w/:slug`) says which workspace
   // the user is in; bootstrap only supplies one for workspace-agnostic routes
-  // (home, profile): the user's personal workspace, falling back to the first
-  // membership pre-migration. This is the one place the server chooses a
-  // workspace, and it reads nothing from the request to do it.
-  const activeWorkspace: string = personalWorkspaceId ?? userWorkspaces[0]!.id;
+  // (home, profile): the user's default workspace. This is the one place the
+  // server chooses a workspace, and it reads nothing from the request to do it.
+  // The profile is read fresh, since provisioning may have just set the default.
+  const profile = await runtime.getUserStore().get(identity.id);
+  const activeWorkspace: string = defaultWorkspaceFor(userWorkspaces, profile?.preferences).id;
 
   // 4. Shell placements for the active workspace (ambient + scoped, merged).
   const placements = runtime.getPlacementRegistry().forWorkspace(activeWorkspace);
@@ -1513,9 +1389,10 @@ export async function handleBootstrap(
       role: ws.members.find((m) => m.userId === identity.id)!.role,
       memberCount: ws.members.length,
       connectorCount: ws.connectors.length,
-      // `isPersonal` defaults to `false` on disk for pre-Stage-1 workspaces;
-      // backfilled eagerly by the personal-workspace migration.
-      isPersonal: ws.isPersonal === true,
+      // Deprecated: true for the default workspace (`activeWorkspace`). Kept
+      // only for the channels service, which reads it to pick a default; read
+      // `activeWorkspace` instead.
+      isPersonal: ws.id === activeWorkspace,
       // The workspace's MCP endpoint in canonical form (the configured public
       // origin, never the request's host), for the settings page to show.
       mcpUrl: mcpResourceUrl(ws.id),

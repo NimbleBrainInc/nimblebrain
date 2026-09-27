@@ -37,9 +37,9 @@ export const TOOL_SCHEMAS: ToolSchema[] = [
       "a scheduled run executes as the owner and can use tools and connectors from any workspace " +
       "the owner is a member of (the workspace it was created in is just the default focus). " +
       "A connector is reachable only where it is installed AND the owner is a member; a connector " +
-      "in another user's personal workspace is never reachable. So for an automation that posts to " +
-      "a shared destination (e.g. Teams/Slack), the connector must live in a SHARED workspace the " +
-      "owner belongs to — not a personal one.",
+      "in a workspace the owner does not belong to is never reachable. So for an automation that " +
+      "posts to a shared destination (e.g. Teams/Slack), the connector must live in a workspace the " +
+      "owner belongs to.",
     inputSchema: AutomationsCreateInput,
   },
   {
