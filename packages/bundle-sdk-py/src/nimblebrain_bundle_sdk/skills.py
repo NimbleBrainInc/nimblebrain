@@ -23,7 +23,8 @@ import json
 import mimetypes
 import re
 import warnings
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import AsyncIterator, Iterable, Mapping, Sequence
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from functools import cached_property
 from os import PathLike
@@ -58,22 +59,24 @@ _FRONTMATTER = re.compile(r"^---\r?\n(.*?)\r?\n---[ \t]*(?:\r?\n|$)", re.DOTALL)
 
 
 class _FrontmatterLoader(yaml.SafeLoader):
-    """PyYAML's safe loader, narrowed toward YAML 1.2 for the scalars that differ.
+    """PyYAML's safe loader, with YAML 1.2 core-schema booleans and numbers.
 
     Hosts re-parse `SKILL.md` and compare its frontmatter field by field with
-    the entry, typically with a YAML 1.2 parser. Under YAML 1.1 (PyYAML's
-    default) `yes`/`no`/`on`/`off` are booleans and `2026-01-01` is a date,
-    which renders differently in JSON than the string a 1.2 parser yields, so
-    the entry would fail the host's comparison. Only `true`/`false` resolve to
-    booleans here, and timestamps stay strings.
+    the entry, typically with a YAML 1.2 parser. YAML 1.1 (PyYAML's default)
+    reads `yes`/`on` as booleans, `2026-01-01` as a date, `017` as octal 15,
+    and `1:30` and `1_000` as integers, where a 1.2 parser yields the strings
+    or the decimal 17, so the entry would fail the host's comparison. Here
+    only the 1.2 core forms resolve: `true`/`false`, decimal, `0o`, and `0x`
+    integers, and 1.2 floats. Timestamps stay strings.
     """
 
 
+_YAML_1_1_SCALARS = ("bool", "int", "float", "timestamp")
 _FrontmatterLoader.yaml_implicit_resolvers = {
     first: [
         (tag, regexp)
         for tag, regexp in resolvers
-        if tag not in ("tag:yaml.org,2002:bool", "tag:yaml.org,2002:timestamp")
+        if tag not in {f"tag:yaml.org,2002:{t}" for t in _YAML_1_1_SCALARS}
     ]
     for first, resolvers in yaml.SafeLoader.yaml_implicit_resolvers.items()
 }
@@ -82,6 +85,28 @@ _FrontmatterLoader.add_implicit_resolver(
     re.compile(r"^(?:true|True|TRUE|false|False|FALSE)$"),
     list("tTfF"),
 )
+_FrontmatterLoader.add_implicit_resolver(
+    "tag:yaml.org,2002:int",
+    re.compile(r"^(?:[-+]?[0-9]+|0o[0-7]+|0x[0-9a-fA-F]+)$"),
+    list("-+0123456789"),
+)
+_FrontmatterLoader.add_implicit_resolver(
+    "tag:yaml.org,2002:float",
+    re.compile(
+        r"^(?:[-+]?(?:\.[0-9]+|[0-9]+(?:\.[0-9]*)?)(?:[eE][-+]?[0-9]+)?"
+        r"|[-+]?\.(?:inf|Inf|INF)|\.(?:nan|NaN|NAN))$"
+    ),
+    list("-+.0123456789"),
+)
+
+
+def _construct_int(loader: yaml.SafeLoader, node: yaml.ScalarNode) -> int:
+    # PyYAML's constructor reads a leading `0` as octal; YAML 1.2 does not.
+    value = str(loader.construct_scalar(node))
+    return int(value, {"0o": 8, "0x": 16}.get(value[:2], 10))
+
+
+_FrontmatterLoader.add_constructor("tag:yaml.org,2002:int", _construct_int)
 
 
 def _parse_frontmatter(text: str, where: str) -> dict[str, Any]:
@@ -367,23 +392,48 @@ class SkillsExtension(ServerExtension):
     def __init__(self, skills: Iterable[SkillInput]) -> None:
         self.catalog = SkillsCatalog(skills)
 
+    # The resources this extension registered, by URI; None until bound.
+    _resources: dict[str, Any] | None = None
+
     def _bind(self, server: Any) -> None:
         # FastMCP's `ServerExtension` has no resource contribution, and the
         # resources must exist exactly when the extension does, so they are
         # registered as the server binds the extension (`add_extension`).
         super()._bind(server)
+        self._resources = {}
         for skill, file in self.catalog.unique_files():
             meta = skill.resource_metadata(file)
             if file.text is not None:
-                server.add_resource(
-                    FastMCPTextResource(uri=AnyUrl(file.uri), text=file.text, **meta)
-                )
+                resource = FastMCPTextResource(uri=AnyUrl(file.uri), text=file.text, **meta)
             else:
-                server.add_resource(
-                    FastMCPBinaryResource(uri=AnyUrl(file.uri), data=file.data, **meta)
+                resource = FastMCPBinaryResource(uri=AnyUrl(file.uri), data=file.data, **meta)
+            server.add_resource(resource)
+            self._resources[file.uri] = resource
+
+    @asynccontextmanager
+    async def lifespan(self) -> AsyncIterator[None]:
+        # FastMCP keeps the last resource registered at a URI and only warns,
+        # so a `skill://` resource registered by hand after this extension
+        # would be served in place of the listed bytes and fail every host's
+        # digest check. The server's registrations are complete by the time
+        # it starts, so the check runs here.
+        for uri, resource in (self._resources or {}).items():
+            if await self.server.get_resource(uri) is not resource:
+                raise RuntimeError(
+                    f"{uri} is served by another resource registered at the same URI; "
+                    "the skills extension serves every skill file, so remove the other one"
                 )
+        yield
 
     def methods(self) -> Sequence[FastMCPMethodBinding]:
+        # `add_extension` binds before it reads the methods. `_bind` is
+        # FastMCP-private, so if a FastMCP release stops calling it the skill
+        # files would be listed but never served; fail registration instead.
+        if self._resources is None:
+            raise RuntimeError(
+                "SkillsExtension was not bound before its methods were read; "
+                "this FastMCP version is not supported"
+            )
         catalog = self.catalog
         return (
             FastMCPMethodBinding(

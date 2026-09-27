@@ -119,7 +119,9 @@ extension answers `skills/list` and `skills/get` with each skill's entry (its
 for every file) and serves every file through `resources/read` at
 `skill://<skill-path>/<file-path>`. A host verifies each file it reads against
 the digest, so the bytes served and the bytes listed come from one place: the
-extension. Do not also register `skill://` resources by hand.
+extension. Do not also register `skill://` resources by hand: FastMCP serves
+the last resource registered at a URI, so a FastMCP server that registers one
+over a skill file fails at startup.
 
 A skill is a directory holding a `SKILL.md` (frontmatter with `name` and
 `description`) and any reference files:
@@ -182,8 +184,9 @@ A skill beyond the SEP-2640 limits (512 files or 16 MiB) warns.
 
 Notes on the wire:
 
-- Frontmatter is parsed with YAML 1.2 semantics for booleans and dates
-  (`yes` and `2026-01-01` stay strings), matching the parsers hosts compare with.
+- Frontmatter is parsed with YAML 1.2 semantics for booleans, numbers, and
+  dates (`yes`, `1:30`, and `2026-01-01` stay strings, and `017` is 17),
+  matching the parsers hosts compare with.
 - Text files are served as text resources and anything that is not UTF-8 as a
   blob; either way the digest covers the raw file bytes.
 - `skills/list` returns every skill in one page. On protocol 2026-07-28 both

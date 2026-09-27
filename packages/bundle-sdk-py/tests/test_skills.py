@@ -93,6 +93,37 @@ def test_frontmatter_is_verbatim_and_yaml_1_2_scalars_stay_strings() -> None:
     assert flags.frontmatter["metadata"] == {"on": "yes", "real": True}
 
 
+def test_frontmatter_numbers_follow_yaml_1_2() -> None:
+    values = "\n".join(
+        f"  {k}: {v}"
+        for k, v in [
+            ("clock", "1:30"),
+            ("underscored", "1_000"),
+            ("binary", "0b101"),
+            ("leading_zero", "017"),
+            ("octal", "0o17"),
+            ("hex", "0x1F"),
+            ("negative", "-5"),
+            ("exponent", "1e3"),
+            ("decimal", "2.5"),
+        ]
+    )
+    skill = SkillDefinition(
+        "nums", {"SKILL.md": f"---\nname: nums\ndescription: d\nmetadata:\n{values}\n---\n"}
+    )
+    assert skill.frontmatter["metadata"] == {
+        "clock": "1:30",
+        "underscored": "1_000",
+        "binary": "0b101",
+        "leading_zero": 17,
+        "octal": 15,
+        "hex": 31,
+        "negative": -5,
+        "exponent": 1000.0,
+        "decimal": 2.5,
+    }
+
+
 def test_generated_skill_under_a_prefixed_path() -> None:
     skill = generated_refunds()
     entry = skill.entry()
@@ -277,8 +308,9 @@ async def test_unknown_cursor_is_invalid_params(wire_name: str) -> None:
         assert excinfo.value.code == mcp_types.INVALID_PARAMS
 
 
-async def test_cache_attributes_only_on_modern_protocol() -> None:
-    async with mcpserver_wire() as modern:
+@pytest.mark.parametrize("wire_name", ["fastmcp", "mcpserver"])
+async def test_cache_attributes_only_on_modern_protocol(wire_name: str) -> None:
+    async with WIRES[wire_name]() as modern:
         result = await modern.list()
         assert (result["ttlMs"], result["cacheScope"]) == (0, "private")
         got = await modern.get("skill://pdf-processing/SKILL.md")
@@ -298,3 +330,21 @@ async def test_skill_md_resource_metadata_comes_from_frontmatter() -> None:
     assert skill_md.description == "Extract, fill, and assemble PDF documents."
     assert skill_md.mime_type == "text/markdown"
     assert resources["skill://pdf-processing/scripts/extract.py"].mime_type == "text/x-python"
+
+
+def test_fastmcp_extension_must_be_bound_before_its_methods() -> None:
+    with pytest.raises(RuntimeError, match="not bound"):
+        SkillsExtension([FIXTURE]).methods()
+
+
+async def test_fastmcp_start_fails_when_a_skill_uri_is_registered_again() -> None:
+    server = FastMCP("skills-test")
+    server.add_extension(SkillsExtension([FIXTURE]))
+
+    @server.resource("skill://pdf-processing/SKILL.md")
+    def hand_registered() -> str:
+        return "an older SKILL.md"
+
+    with pytest.raises(RuntimeError, match="another resource"):
+        async with FastMCPClient(server):
+            pass
