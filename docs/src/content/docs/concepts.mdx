@@ -71,11 +71,12 @@ Each pass through the loop is one **iteration**. Defaults:
 | Max output tokens | 16,384 | — |
 | `models.default` | `anthropic:claude-sonnet-4-6` | — |
 
-The engine stops for one of three reasons:
+The engine stops for one of these reasons:
 
 - **`complete`** — the model responded without requesting any tool calls
 - **`max_iterations`** — the iteration limit was reached
 - **`token_budget`** — cumulative input tokens exceeded `maxInputTokens`. When this happens, tool calls from the current LLM response are dropped (not executed) to avoid running tools whose results can't be processed.
+- **`cancelled`** — the run was stopped before it finished: the user pressed Stop, an automation run was cancelled or timed out, or the runtime aborted it (for example on shutdown). The conversation keeps what the turn did before the stop.
 
 All tool calls within a single iteration run in parallel via `Promise.all()`.
 

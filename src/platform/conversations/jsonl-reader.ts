@@ -60,7 +60,11 @@ export interface DisplayMessage {
   /** Aggregate LLM usage for the whole turn; undefined for user messages. */
   usage?: DisplayUsage;
   files?: DisplayFile[];
-  /** Non-"complete" run terminations bubble up here ("max_iterations", "error"). */
+  /**
+   * Non-"complete" run terminations bubble up here: a `run.done` stopReason
+   * verbatim ("max_iterations", "cancelled", …), "error" for a `run.error`,
+   * "interrupted" for a run with no terminal event.
+   */
   stopReason?: string;
   /**
    * True when this assistant turn has no terminal event yet (no run.done /

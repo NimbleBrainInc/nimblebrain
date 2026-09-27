@@ -755,9 +755,14 @@ export type FinishReason = "stop" | "length" | "content-filter" | "tool-calls" |
  *   - `content_filter`   — last LLM call was blocked by provider moderation
  *   - `error`            — last LLM call's finish reason was `error`
  *   - `other`            — anything else (provider returned `other` / `unknown`)
+ *   - `cancelled`        — the run's abort signal fired, whatever the cause
+ *                          (the Stop button, an automation cancel or timeout,
+ *                          the per-run event cap, shutdown). It appears only
+ *                          on the `run.done` event: the engine rethrows the
+ *                          abort, so no EngineResult carries it.
  *
  * `error` here is the *finish-reason* error category, not a thrown engine
- * error — the latter still emits `run.error` instead.
+ * error — the latter emits `run.error` instead.
  *
  * Note the casing asymmetry vs `FinishReason`: the V4 spec uses
  * kebab-case (`content-filter`, `tool-calls`); our run-level union uses
@@ -771,7 +776,8 @@ export type StopReason =
   | "length"
   | "content_filter"
   | "error"
-  | "other";
+  | "other"
+  | "cancelled";
 
 /** Result returned from a single engine run. */
 export interface EngineResult {

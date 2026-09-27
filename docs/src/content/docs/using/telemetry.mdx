@@ -22,7 +22,7 @@ Telemetry events fall into four categories:
 | Event | Properties |
 |-------|-----------|
 | `agent.chat_started` | Whether a skill matched, tool count, whether this is a resumed conversation |
-| `agent.chat_completed` | Iteration count, tool call count, stop reason (`complete`, `max_iterations`, `token_budget`), LLM latency, tool latency, total time, input/output token counts |
+| `agent.chat_completed` | Iteration count, tool call count, stop reason (`complete`, `max_iterations`, `token_budget`, `cancelled`), LLM latency, tool latency, total time, input/output token counts |
 | `agent.error` | Error type name only (e.g., `AnthropicError`), structured error code if available |
 
 ### Connector lifecycle events

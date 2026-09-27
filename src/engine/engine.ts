@@ -901,6 +901,14 @@ function buildToolResults(toolResults: ToolExecResult[]): {
   return { toolResultParts, toolCallRecords };
 }
 
+/**
+ * The iteration count a run reports: the zero-based loop counter plus the
+ * in-progress iteration when the loop exited before the cap.
+ */
+function reportedIterationCount(iteration: number, maxIter: number): number {
+  return iteration + (iteration < maxIter ? 1 : 0);
+}
+
 /** Shape the `run.error` event payload from a thrown value. */
 function buildRunErrorData(runId: string, err: unknown): Record<string, unknown> {
   return {
@@ -1181,9 +1189,8 @@ export class AgentEngine {
         //      until the model finishes.
         //
         // Cooperative throughout: we never preempt running work, just
-        // stop starting new work. The runtime catch translates the
-        // thrown AbortError into the appropriate `run.error` event for
-        // SSE consumers.
+        // stop starting new work. The run's catch below ends an aborted
+        // run with `run.done` stopReason "cancelled" and rethrows.
         throwIfAborted(config.signal);
 
         // Offer the history this loop has grown back to the caller, which may
@@ -1461,7 +1468,7 @@ export class AgentEngine {
         iteration++;
       }
     } catch (err) {
-      this.events.emit({ type: "run.error", data: buildRunErrorData(runId, err) });
+      this.emitThrownRunEnd({ runId, err, signal: config.signal, iteration, maxIter, runStart });
       throw err;
     } finally {
       unregisterToolControls?.();
@@ -1479,6 +1486,36 @@ export class AgentEngine {
       cumulativeUsage,
       cumulativeLlmMs,
     });
+  }
+
+  /**
+   * Emit the terminal event for a run whose loop threw. When the run's abort
+   * signal fired, whatever the cause, the run was stopped rather than failed,
+   * so it ends with `run.done` stopReason "cancelled" rather than `run.error`. The caller still rethrows: callers
+   * classify the abort themselves.
+   */
+  private emitThrownRunEnd(params: {
+    runId: string;
+    err: unknown;
+    signal: AbortSignal | undefined;
+    iteration: number;
+    maxIter: number;
+    runStart: number;
+  }): void {
+    const { runId, err, signal, iteration, maxIter, runStart } = params;
+    if (signal?.aborted) {
+      this.events.emit({
+        type: "run.done",
+        data: {
+          runId,
+          stopReason: "cancelled" satisfies StopReason,
+          iterations: reportedIterationCount(iteration, maxIter),
+          totalMs: Math.round(performance.now() - runStart),
+        },
+      });
+      return;
+    }
+    this.events.emit({ type: "run.error", data: buildRunErrorData(runId, err) });
   }
 
   /**
@@ -1511,7 +1548,7 @@ export class AgentEngine {
     } = params;
     const stopReason: StopReason =
       iteration >= maxIter ? "max_iterations" : deriveStopReason(lastFinishReason);
-    const reportedIterations = iteration + (iteration < maxIter ? 1 : 0);
+    const reportedIterations = reportedIterationCount(iteration, maxIter);
     this.events.emit({
       type: "run.done",
       data: {
