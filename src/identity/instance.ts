@@ -49,6 +49,17 @@ export interface WorkosAuth {
    * app `owner`.
    */
   adminRoleSlugs?: string[];
+  /**
+   * Client IDs of this operator's own apps that obtain tokens from AuthKit
+   * (for example a chat-channel bridge). An AuthKit token whose signed
+   * `client_id` claim is listed is first-party — admitted on every route,
+   * gated by workspace membership, like the web login. Any other AuthKit token
+   * is a resource token, valid only at the `/mcp/<wsId>` its `aud` names.
+   * Omitted or empty, no AuthKit token is first-party. The audience never
+   * decides this: a token any MCP client refreshes without a `resource`
+   * carries the same `aud` as one of these apps' tokens.
+   */
+  firstPartyClientIds?: string[];
 }
 
 export type AuthConfig = OidcAuth | WorkosAuth;
@@ -87,6 +98,14 @@ function validateAdminRoleSlugs(value: unknown): string[] | undefined {
       "instance.json: workos auth 'adminRoleSlugs' must contain at least one " +
         'non-empty slug (omit the field to use the default ["admin", "owner"])',
     );
+  return value as string[];
+}
+
+/** Validate optional first-party client IDs — an array of strings; empty means none. */
+function validateFirstPartyClientIds(value: unknown): string[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value) || value.some((s) => typeof s !== "string"))
+    throw new Error("instance.json: workos auth 'firstPartyClientIds' must be an array of strings");
   return value as string[];
 }
 
@@ -144,6 +163,8 @@ function buildWorkosAuth(auth: Record<string, unknown>): WorkosAuth {
   if (authkitDomain !== undefined) workos.authkitDomain = authkitDomain;
   const adminRoleSlugs = validateAdminRoleSlugs(auth.adminRoleSlugs);
   if (adminRoleSlugs !== undefined) workos.adminRoleSlugs = adminRoleSlugs;
+  const firstPartyClientIds = validateFirstPartyClientIds(auth.firstPartyClientIds);
+  if (firstPartyClientIds !== undefined) workos.firstPartyClientIds = firstPartyClientIds;
   return workos;
 }
 

@@ -2,15 +2,8 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import {
-  CallToolRequestSchema,
-  ListResourcesRequestSchema,
-  ListToolsRequestSchema,
-  ReadResourceRequestSchema,
-} from "@modelcontextprotocol/sdk/types.js";
+import { Server } from "@modelcontextprotocol/server";
+import { Client, ResourceNotFoundError, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import { RESOURCE_SOURCE_META_KEY } from "../../src/api/mcp-server.ts";
 import type { ServerHandle } from "../../src/api/server.ts";
@@ -46,24 +39,24 @@ function createFixtureServer(config: FixtureConfig): Server {
     { capabilities: { tools: {}, resources: {} } },
   );
 
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({
+  server.setRequestHandler('tools/list', async () => ({
     tools: [
       { name: "ping", description: "Returns pong", inputSchema: { type: "object", properties: {} } },
     ],
   }));
 
-  server.setRequestHandler(CallToolRequestSchema, async () => ({
+  server.setRequestHandler('tools/call', async () => ({
     content: [{ type: "text", text: "pong" }],
   }));
 
-  server.setRequestHandler(ListResourcesRequestSchema, async () => ({
+  server.setRequestHandler('resources/list', async () => ({
     resources: [
       { uri: dashboardUri, name: "Dashboard", mimeType: "text/html" },
       { uri: greetingUri, name: "Greeting", mimeType: "text/plain" },
     ],
   }));
 
-  server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
+  server.setRequestHandler('resources/read', async (request) => {
     if (request.params.uri === dashboardUri) {
       return {
         contents: [{ uri: request.params.uri, mimeType: "text/html", text: config.htmlBody }],
@@ -390,7 +383,7 @@ describe("MCP /mcp — resources/read scoped to one source", () => {
     try {
       await expect(
         client.readResource({ uri: "ui://neighbor/dashboard", _meta: scopedTo("fixture") }),
-      ).rejects.toMatchObject({ code: -32002 });
+      ).rejects.toBeInstanceOf(ResourceNotFoundError);
     } finally {
       await client.close();
     }
@@ -403,7 +396,7 @@ describe("MCP /mcp — resources/read scoped to one source", () => {
       for (const source of ["no-such-source", "other"]) {
         await expect(
           client.readResource({ uri: "ui://neighbor/dashboard", _meta: scopedTo(source) }),
-        ).rejects.toMatchObject({ code: -32002 });
+        ).rejects.toBeInstanceOf(ResourceNotFoundError);
       }
     } finally {
       await client.close();

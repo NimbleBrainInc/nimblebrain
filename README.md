@@ -186,7 +186,7 @@ No connectors are installed by default. Platform apps (home, conversations, file
 NimbleBrain splits configuration across two files:
 
 - **`nimblebrain.json`** — instance-level settings (models, HTTP, logging, limits, feature flags). One file per deployment.
-- **`workspace.json`** — per-workspace settings (connectors, skill directories, optional model + identity overrides). One file per workspace under `<workDir>/workspaces/<ws-id>/`.
+- **`workspace.json`** — per-workspace settings (connectors, skill directories, optional model overrides). One file per workspace under `<workDir>/workspaces/<ws-id>/`.
 
 This split is the workspace isolation boundary: two workspaces in the same deployment can install different connectors without touching the instance config. See [Workspace Isolation](#workspace-isolation) below.
 
@@ -223,7 +223,6 @@ A fully specified example:
   "features":  { "catalogSearch": true },
   "maxIterations": 25,
   "maxInputTokens": 500000,
-  "maxOutputTokens": 16384,
   "workDir": "~/.nimblebrain"
 }
 ```
@@ -247,12 +246,11 @@ Each workspace has its own config at `<workDir>/workspaces/<ws-id>/workspace.jso
     { "url": "https://mcp.example.com/mcp", "serverName": "example" }
   ],
   "skillDirs": ["./skills"],
-  "models": { "default": "anthropic:claude-opus-4-6" },
-  "identity": { "name": "Acme Copilot" }
+  "models": { "default": "anthropic:claude-opus-4-6" }
 }
 ```
 
-`connectors`, `skillDirs`, and optional `models` / `identity` overrides live here, not in `nimblebrain.json`. `skillDirs`, `home` and `preferences` placed at the top level of `nimblebrain.json` are stripped on load — the runtime treats them as configuration errors rather than falling back to a global scope. A workspace-shaped `connectors` array there is rejected outright, because in that file the name is the provider and gateway block.
+`connectors`, `skillDirs`, and optional `models` overrides live here, not in `nimblebrain.json`. `skillDirs`, `home` and `preferences` placed at the top level of `nimblebrain.json` are stripped on load — the runtime treats them as configuration errors rather than falling back to a global scope. A workspace-shaped `connectors` array there is rejected outright, because in that file the name is the provider and gateway block.
 
 ### Workspace Isolation
 
@@ -492,11 +490,8 @@ When total tools ≤30, all are surfaced directly. Above 30 with no skill matche
 
 | Tool | What it does |
 |------|-------------|
-| `nb__list_apps` | List installed apps with status and tools |
 | `nb__get_config` | Get runtime configuration (providers, model, limits) |
 | `nb__set_model_config` | Update model selection and runtime limits (admin only) |
-| `nb__manage_identity` | Write or reset workspace agent identity override (admin only) |
-| `nb__version` | Platform version info |
 | `nb__workspace_info` | Workspace metadata, telemetry status |
 | `nb__briefing` | Generate personalized activity briefing (workspace overview) |
 | `nb__manage_users` | Create, update, delete, or list users (admin only) |
@@ -597,7 +592,7 @@ Placements with a `route` field get React Router routes in `App.tsx`. Routes fro
 
 **Files:**
 - `nimblebrain.json` — instance config. Validated at startup against `src/config/nimblebrain-config.schema.json` (JSON Schema draft-07, AJV). Unknown keys warn; structural errors throw. Workspace-owned fields (`skillDirs`, `preferences`, `home`) are stripped on load. `identity` and `contextFile` are deprecated with a warning.
-- `<workDir>/workspaces/<wsId>/workspace.json` — per-workspace config. Owns `connectors`, `skillDirs`, and optional `models` / `identity` overrides.
+- `<workDir>/workspaces/<wsId>/workspace.json` — per-workspace config. Owns `connectors`, `skillDirs`, and optional `models` overrides.
 - `<workDir>/instance.json` — auth configuration (OIDC or WorkOS adapter). Absence signals dev mode.
 
 **Config resolution** for `nimblebrain.json` (when no `--config` flag):
@@ -689,7 +684,7 @@ These are non-negotiable patterns. Violating them causes production bugs:
 | `models.fast` | `anthropic:claude-haiku-4-5-20251001` |
 | Max iterations | 25 (hard cap: 50) |
 | Max input tokens | 500,000 |
-| Max output tokens | 16,384 |
+| Max output tokens | the model's catalog output limit (16,384 for a model the catalog lacks) |
 | Max history messages | 40 |
 | Max tool result size | 1,000,000 chars (0 disables) |
 | Default connectors | none (platform capabilities are built in) |
@@ -707,7 +702,9 @@ These are non-negotiable patterns. Violating them causes production bugs:
 | `@ai-sdk/anthropic` | Anthropic provider (prompt caching, streaming) |
 | `@ai-sdk/openai` | OpenAI provider |
 | `@ai-sdk/google` | Google Gemini provider |
-| `@modelcontextprotocol/sdk` | MCP client and server (Streamable HTTP, SSE, in-memory) |
+| `@modelcontextprotocol/client` | MCP client to connectors: negotiates the 2026-07-28 or a 2025 protocol revision per connection (Streamable HTTP, SSE, in-memory) |
+| `@modelcontextprotocol/server` | MCP servers: platform apps (in-memory) and the 2026-07-28 leg of `/mcp/<wsId>` |
+| `@modelcontextprotocol/sdk` | The 2025-era leg of `/mcp/<wsId>` and the iframe bridge, which carry the 2025-11-25 task vocabulary the v2 packages do not serve |
 | `ajv` + `ajv-formats` | JSON Schema validation for MCPB manifests |
 | `gray-matter` | YAML frontmatter parsing for skill files |
 | `posthog-node` | Anonymous product telemetry (server-side) |

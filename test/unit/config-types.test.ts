@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { getValidator } from "../../src/config/index.ts";
 import type { ConnectionState } from "../../src/connectors/runtime/connection.ts";
-import type { AppInfo, HostManifestMeta, ConnectorUiMeta } from "../../src/connectors/runtime/types.ts";
+import type { HostManifestMeta, ConnectorUiMeta } from "../../src/connectors/runtime/types.ts";
 import type { RuntimeConfig } from "../../src/runtime/types.ts";
 import type { EngineEventType } from "../../src/engine/types.ts";
 
@@ -101,38 +101,6 @@ describe("EngineEventType", () => {
 		for (const evt of origEvents) {
 			expect(typeof evt).toBe("string");
 		}
-	});
-});
-
-describe("AppInfo type", () => {
-	it("matches the GET /v1/apps response shape", () => {
-		const app: AppInfo = {
-			name: "tasks",
-			connectorName: "@nimblebraininc/tasks",
-			version: "1.2.0",
-			status: "running",
-			toolCount: 12,
-			ui: {
-				name: "Tasks",
-				icon: "✓",
-				primaryView: { resourceUri: "ui://tasks/board" },
-			},
-		};
-		expect(app.name).toBe("tasks");
-		expect(app.status).toBe("running");
-		expect(app.ui?.primaryView?.resourceUri).toBe("ui://tasks/board");
-	});
-
-	it("supports null ui for apps without a frontend", () => {
-		const app: AppInfo = {
-			name: "weather",
-			connectorName: "@nimblebraininc/weather",
-			version: "0.3.0",
-			status: "running",
-			toolCount: 3,
-			ui: null,
-		};
-		expect(app.ui).toBeNull();
 	});
 });
 

@@ -10,11 +10,11 @@ import { log } from "../observability/log.ts";
 import { createUseSkillToolDef } from "../platform/skills/source.ts";
 import { getRequestContext } from "../runtime/request-context.ts";
 import type { Runtime } from "../runtime/runtime.ts";
+import { hydrateSkill } from "../skills/connector-skills.ts";
 import type { SelectedSkill } from "../skills/select.ts";
 import { approxTokens } from "../skills/tokens.ts";
 import type { Skill } from "../skills/types.ts";
 import { createManageConnectorsTool } from "./connector-tools.ts";
-import { buildCoreResourceMap } from "./core-resources/index.ts";
 import { createCoreToolDefs } from "./core-source.ts";
 import { defineInProcessApp, type InProcessTool } from "./in-process-app.ts";
 import { createManageToolsToolDefs } from "./manage-tools.ts";
@@ -40,7 +40,7 @@ export type GetSkillsFn = () => { context: Skill[]; matchable: Skill[] };
 
 /**
  * Factory that creates the `nb` system source as an in-process MCP server.
- * Merges core platform tools (list_apps, get_config, etc.) with system tools
+ * Merges core platform tools (get_config, briefing, etc.) with system tools
  * (search, status, etc.) into a single "nb" source.
  *
  * Returns a started, ready-to-use source. Async because the underlying
@@ -182,7 +182,6 @@ export async function createSystemTools(
       name: "nb",
       version: "1.0.0",
       tools: [...coreToolDefs, ...manageToolsToolDefs, ...filteredSystemDefs],
-      resources: buildCoreResourceMap(),
     },
     eventSink ?? new NoopEventSink(),
   );
@@ -457,7 +456,7 @@ async function handleSkillStatus(
 
   // Single skill detail view
   if (nameQuery) {
-    return skillDetailResult(context, layer3, matchable, nameQuery);
+    return await skillDetailResult(context, layer3, matchable, nameQuery);
   }
 
   // Overview: categorize all skills
@@ -538,19 +537,31 @@ function formatAlwaysOnCost(context: readonly Skill[]): string | null {
   ].join("\n");
 }
 
-/** Single-skill detail view for status(scope="skills", name=...). */
-function skillDetailResult(
+/**
+ * Single-skill detail view for status(scope="skills", name=...). A server
+ * skill's body is fetched here, the one place status prints it.
+ */
+async function skillDetailResult(
   context: readonly Skill[],
   layer3: readonly SelectedSkill[],
   matchable: readonly Skill[],
   nameQuery: string,
-): ToolResult {
+): Promise<ToolResult> {
   const all = [...context, ...layer3.map((s) => s.skill), ...matchable];
-  const skill = all.find((s) => s.manifest.name.toLowerCase() === nameQuery.toLowerCase());
-  if (!skill) {
+  const found = all.find((s) => s.manifest.name.toLowerCase() === nameQuery.toLowerCase());
+  if (!found) {
     return {
       content: textContent(
         `No skill found with name "${nameQuery}". Use status with scope "skills" to list all.`,
+      ),
+      isError: true,
+    };
+  }
+  const skill = await hydrateSkill(found);
+  if (!skill) {
+    return {
+      content: textContent(
+        `Skill "${found.manifest.name}" is listed, but its body could not be fetched.`,
       ),
       isError: true,
     };

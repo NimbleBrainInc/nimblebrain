@@ -1061,6 +1061,18 @@ export function createUseSkillToolDef(runtime: Runtime): InProcessTool {
 }
 
 /**
+ * What `nb__use_skill` tells the model when a server-published skill's body
+ * could not be fetched. The two causes call for different next steps: an
+ * unreachable server may answer a retry; content that fails verification will
+ * not load until the server's listing and files agree again.
+ */
+function skillLoadFailureMessage(name: string, reason: "unreachable" | "unverified"): string {
+  return reason === "unreachable"
+    ? `Skill "${name}" could not be loaded: its server did not answer. Try again shortly.`
+    : `Skill "${name}" could not be loaded: its server returned content that does not match the skill it listed (digest, size, or frontmatter), so it was not used. Retrying will not help until the server is fixed; continue without this skill.`;
+}
+
+/**
  * `nb__use_skill` core: deliver a catalog skill's full body into the
  * conversation, exactly once.
  *
@@ -1128,10 +1140,18 @@ async function handleUseSkill(
     }
   }
 
+  // A server-published skill's body is fetched here, on activation — the
+  // MCP Skills Extension forbids fetching it ahead of need.
+  const loaded = skill.loadBody ? await skill.loadBody() : { ok: true as const, body: skill.body };
+  if (!loaded.ok) {
+    return { content: textContent(skillLoadFailureMessage(name, loaded.reason)), isError: true };
+  }
+  const body = loaded.body;
+
   // Cap the delivered body with the same budget every other prompt-bound
-  // skill body gets (connector `skill://` discovery caps at read; filesystem
-  // bodies are capped here).
-  const capped = truncateMarkdownToBudget(skill.body, MAX_SKILL_BODY_CHARS);
+  // skill body gets (a server-published body is capped when fetched;
+  // filesystem bodies are capped here).
+  const capped = truncateMarkdownToBudget(body, MAX_SKILL_BODY_CHARS);
   const tokens = approxTokens(capped.body);
   const out: SkillsUseOutput = { status: "loaded", name: skill.name, scope: skill.scope, tokens };
   return {

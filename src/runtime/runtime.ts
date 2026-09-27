@@ -34,11 +34,7 @@ import { ConnectorLifecycleManager } from "../connectors/runtime/lifecycle.ts";
 import { serverNameFromRef, slugifyServerName } from "../connectors/runtime/paths.ts";
 import { setConnectionRunningHandler } from "../connectors/runtime/pending-auth-buffer.ts";
 import type { ConnectorMcpDeps } from "../connectors/runtime/startup.ts";
-import type {
-  AppInfo,
-  ConnectorInstance,
-  PlacementDeclaration,
-} from "../connectors/runtime/types.ts";
+import type { ConnectorInstance, PlacementDeclaration } from "../connectors/runtime/types.ts";
 import {
   type ConnectorTeardownOutcome,
   uninstallWorkspaceConnector,
@@ -158,7 +154,9 @@ import {
 } from "../skills/connector-skill-store.ts";
 import {
   type DiscoveredSkill,
-  isSkillEntrypointUri,
+  disambiguateSkillNames,
+  discoveredSkillFromEntry,
+  hydrateSkill,
   PUBLISHED_SKILL_SCOPE,
   parseSkillMarkdown,
   synthesizeConnectorSkill,
@@ -173,9 +171,15 @@ import {
 } from "../skills/loader.ts";
 import { type SkillMatch, SkillMatcher } from "../skills/matcher.ts";
 import { partitionSkillsByRole, type SelectedSkill, selectLayer3Skills } from "../skills/select.ts";
+import {
+  listedSkillFiles,
+  parseSkillEntry,
+  type SkillEntry,
+  verifySkillEntrypoint,
+} from "../skills/skills-extension.ts";
 import { approxTokens } from "../skills/tokens.ts";
 import { MAX_SKILL_BODY_CHARS, truncateMarkdownToBudget } from "../skills/truncate.ts";
-import type { Skill } from "../skills/types.ts";
+import type { Skill, SkillBodyLoad } from "../skills/types.ts";
 import { TelemetryManager } from "../telemetry/manager.ts";
 import { PostHogEventSink } from "../telemetry/posthog-sink.ts";
 import {
@@ -459,10 +463,10 @@ export class Runtime {
   /** Getter for current workspace ID (set per-request). */
   private _currentWorkspaceId: (() => string | null) | null = null;
   /**
-   * Cache of the skills discovered on each MCP source (its `skill://…/SKILL.md`
-   * resources, parsed + truncated). An empty array is the common "this server
-   * publishes no skills" case — without caching it, `loadConnectorSkills` would
-   * re-list + re-read every non-skill source on every chat.
+   * Cache of the skills discovered on each MCP source (its `skills/list`
+   * entries; bodies live in `skillBodyCache`). An empty array is the common
+   * "this server publishes no skills" case — without caching it,
+   * `loadConnectorSkills` would re-list every source on every chat.
    *
    * Keyed by **workspace AND server name**, because a server name identifies a
    * source only within one workspace: a connector installed in N workspaces is N
@@ -473,6 +477,20 @@ export class Runtime {
    */
   private skillResourceCache = new Map<string, { skills: DiscoveredSkill[]; fetchedAt: number }>();
   private static readonly SKILL_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+  /**
+   * Verified, budget-capped server skill bodies keyed by the `SKILL.md`
+   * digest their listing entry carries. Content-addressed: equal digests are
+   * equal bytes, whichever server or workspace listed them, and a listing that
+   * moves to new content names a new digest, so an entry is never stale.
+   */
+  private skillBodyCache = new Map<string, string>();
+  /**
+   * Skill bodies that failed verification, with when, for the discovery TTL.
+   * Keyed by workspace, server, and digest, unlike the verified cache: a
+   * failure says what one server returned, and must not lock the same digest
+   * out of another workspace or server that serves the right bytes.
+   */
+  private skillBodyFailures = new Map<string, number>();
   /**
    * Conversation IDs with an in-flight chat() call. Prevents concurrent runs on
    * the same conversation.
@@ -1404,6 +1422,8 @@ export class Runtime {
       runId: handle.runId,
       toolCalls: handle.toolCalls,
       stopReason: handle.stopReason,
+      ...(handle.finishReason !== undefined ? { finishReason: handle.finishReason } : {}),
+      ...(handle.finishReasonRaw !== undefined ? { finishReasonRaw: handle.finishReasonRaw } : {}),
       usage: handle.usage,
     };
   }
@@ -1675,6 +1695,8 @@ export class Runtime {
       skillName,
       toolCalls: result.toolCalls,
       stopReason: result.stopReason,
+      ...(result.finishReason !== undefined ? { finishReason: result.finishReason } : {}),
+      ...(result.finishReasonRaw !== undefined ? { finishReasonRaw: result.finishReasonRaw } : {}),
       usage: {
         ...result.usage,
         model: spec.model,
@@ -1840,9 +1862,9 @@ export class Runtime {
     // in — the skill disk read and the connector discovery each happen once per
     // run, not twice.
     const {
-      context: connectorContext,
+      context: connectorContextSelected,
       capability: connectorCapability,
-      layer3: selectedLayer3,
+      layer3: selectedLayer3Unloaded,
     } = await this.selectRequestLayer3({
       wsId: spec.workspaceId,
       userId,
@@ -1855,14 +1877,24 @@ export class Runtime {
       connectorPool,
     });
 
+    // Server-published skills carry no body until one is needed (the MCP Skills
+    // Extension forbids fetching a skill's files ahead of need). Every skill
+    // selected above is about to reach the model, so this is where their
+    // bodies are fetched: `always` skills every turn, the matched and
+    // tool-affinity skills when selected. A body served from the digest cache
+    // is byte-identical turn to turn, so the cached prefix holds. A skill whose
+    // body cannot be fetched or verified drops out of this turn.
+    const [connectorContext, matchedSkill, selectedLayer3] = await Promise.all([
+      hydrateSkills(connectorContextSelected),
+      skill ? hydrateSkill(skill) : Promise.resolve(null),
+      hydrateSelected(selectedLayer3Unloaded),
+    ]);
+    const composedMatch =
+      skillMatch && matchedSkill ? { ...skillMatch, skill: matchedSkill } : null;
+
     // Always-on context channel: the `always` skills across every tier
-    // (core/builtin/org + workspace + user) plus the always-on connector skills,
-    // then the workspace identity/persona override when the narrated workspace
-    // sets one.
-    const requestContextSkills = withIdentityOverride(
-      [...poolContext, ...connectorContext],
-      activeWorkspace?.identity,
-    );
+    // (core/builtin/org + workspace + user) plus the always-on connector skills.
+    const requestContextSkills = [...poolContext, ...connectorContext];
     const layer3Entries: Layer3SkillEntry[] = selectedLayer3.map((s) => ({
       name: s.skill.manifest.name,
       body: s.skill.body,
@@ -1895,7 +1927,7 @@ export class Runtime {
     // framing — a connector cannot spoof it by wrapping the user message.
     const { stableSystem, volatileHead } = composeSystemSegments(
       requestContextSkills,
-      skill,
+      matchedSkill,
       apps,
       focusedApp,
       appState,
@@ -1915,8 +1947,8 @@ export class Runtime {
     return {
       tools,
       hasProxiedTools: proxied.length > 0,
-      skill,
-      skillMatch,
+      skill: matchedSkill,
+      skillMatch: composedMatch,
       selectedLayer3,
       alwaysOnSkills: requestContextSkills,
       connectorSkillCandidates: [
@@ -2244,13 +2276,18 @@ export class Runtime {
     let focusedSkillUri: string | undefined;
     try {
       const sourceTools = await source.tools();
-      // Primary = the first skill this source lists (resources/list order), and
+      // Primary = the first skill this source lists (listing order), and
       // the only one this briefing carries. Its URI is returned as
       // `focusedSkillUri` so the caller excludes just this skill from the connector
       // pool; every OTHER skill the same server publishes still routes by its
       // declared strategy, exactly as it does outside an app.
       const [primarySkill] = await this.discoverServerSkills(appWsId, appContext.serverName);
-      const skillResource = primarySkill?.body ?? null;
+      // The entered app's guide rides `<app-guide>` this turn, so its body is
+      // needed now.
+      const loaded = primarySkill
+        ? await this.loadServerSkillBody(appWsId, appContext.serverName, primarySkill.entry)
+        : null;
+      const skillResource = loaded?.ok ? loaded.body : null;
       // Only claim the exclusion when the body actually reaches the briefing.
       if (skillResource) focusedSkillUri = primarySkill?.uri;
       // Companion reference lives beside the skill (SEP-2640 supporting files share
@@ -2258,8 +2295,8 @@ export class Runtime {
       // name, whose reverse-DNS slug won't match the skill's short path.
       const referenceUri = primarySkill?.uri.replace(/\/SKILL\.md$/, "/reference");
       const hasReference =
-        referenceUri && source instanceof McpSource
-          ? await this.hasResource(source, referenceUri)
+        primarySkill && referenceUri
+          ? await this.skillHasFile(source, primarySkill, referenceUri)
           : false;
       focusedApp = {
         name: appContext.appName,
@@ -2586,7 +2623,7 @@ export class Runtime {
    * `visible.has(serverName)` is load-bearing, not a redundant guard: an
    * installed connector that is not RUNNING — a boot-start that failed, or a
    * connector torn down by a disconnect — must stay out of the agent's view
-   * (`getApps` → `nb__list_apps`), because `buildAppInfo` carries no liveness
+   * (`buildAppsList`), because `buildAppInfo` carries no liveness
    * into the prompt: a down connector would read as an ordinary usable app whose
    * tools are inexplicably missing. Deleting this filter surfaces every such
    * record as a usable app.
@@ -2682,21 +2719,20 @@ export class Runtime {
   }
 
   /**
-   * Discover the skills an MCP server exposes, parsed and truncated, with
-   * caching, for ONE workspace's instance of that server. Per SEP-2640
-   * (`io.modelcontextprotocol/skills`) a skill is a
-   * `skill://<name>/SKILL.md` markdown resource; the runtime lists the source's
-   * resources (`resources/list`) and reads the ones whose URI is a skill
-   * entrypoint — it never guesses the URI from the source name (that guess,
-   * `skill://<serverName>/usage`, missed every fleet connector whose name is a
-   * reverse-DNS slug).
+   * Discover the skills an MCP server publishes, for ONE workspace's instance
+   * of that server, with caching. Only a server that declares the Skills
+   * extension (SEP-2640, `io.modelcontextprotocol/skills`) publishes skills;
+   * its `skills/list` entries are the record of what they are, and a
+   * `skill://` resource it does not list is an ordinary resource (ADR-0011).
+   * Discovery reads the listing only: no `SKILL.md` is fetched here, because
+   * the extension forbids fetching a skill's files ahead of need. Bodies are
+   * fetched by {@link loadServerSkillBody} when a skill is composed.
    *
    * Only a COMPLETE enumeration is cached — including the common "this server
    * has no skills" empty, which would otherwise re-list on every chat and
-   * N×-multiply the request-path latency over a stable source set. Three short
+   * N×-multiply the request-path latency over a stable source set. Two short
    * results are NOT cached, so they retry next turn: a transport error
-   * (`ok: false`), a page-cap truncation (`truncated`), and a listed skill
-   * entrypoint whose read failed (the shortfall counted below).
+   * (`ok: false`) and a page-cap truncation (`truncated`).
    *
    * `SharedSourceRef`-wrapped sources are unwrapped before the `McpSource`
    * check; shared sources arrive wrapped and would otherwise be silently
@@ -2739,9 +2775,8 @@ export class Runtime {
 
     const { skills, shortfall } = await this.enumerateServerSkills(unwrapped);
     // Cache only a COMPLETE enumeration. Pinning a short one as a stable
-    // "this is everything" keeps a real skill dark for the whole TTL — and
-    // the truncated and unreadable shortfalls read as success, so they would
-    // cache without this.
+    // "this is everything" keeps a real skill dark for the whole TTL — and a
+    // truncated listing reads as success, so it would cache without this.
     if (shortfall) {
       reportSkillDiscoveryDegraded({
         wsId,
@@ -2756,71 +2791,143 @@ export class Runtime {
   }
 
   /**
-   * List a source's resources and read every skill entrypoint among them.
+   * Enumerate a source's skills from its `skills/list`, or nothing when it
+   * does not serve the Skills extension (see `McpSource.skillsDiscovery` for
+   * how a 2025-era connection that cannot declare it is asked anyway).
    *
-   * `shortfall` names the first way the result is knowingly incomplete, in
-   * check order: a transport error cut `resources/list` short
-   * (`enumeration_failed`), the page ceiling stopped it with a cursor
-   * outstanding (`enumeration_truncated`), or a LISTED entrypoint failed to
-   * read (`skill_unreadable`). The entrypoint count exists because
-   * `readSkillResource` swallows a failed/empty read (one bad skill must not
-   * sink the discovery) — without it, a list-then-fail-to-read server returns
-   * a reduced set that looks complete.
+   * `shortfall` names the way the result is knowingly incomplete: a transport
+   * error cut the enumeration short (`enumeration_failed`), or the page
+   * ceiling stopped it with a cursor outstanding (`enumeration_truncated`). An
+   * entry the extension calls invalid is dropped without a shortfall:
+   * re-listing will not fix it.
    */
   private async enumerateServerSkills(source: McpSource): Promise<{
     skills: DiscoveredSkill[];
-    shortfall?: "enumeration_failed" | "enumeration_truncated" | "skill_unreadable";
+    shortfall?: "enumeration_failed" | "enumeration_truncated";
   }> {
+    if (source.skillsDiscovery() === "none") return { skills: [] };
     const skills: DiscoveredSkill[] = [];
-    const { resources, ok, truncated } = await source.listResources();
-    let entrypoints = 0;
-    for (const resource of resources) {
-      if (isSkillEntrypointUri(resource.uri)) entrypoints++;
-      const skill = await this.readSkillResource(source, resource.uri);
-      if (skill) skills.push(skill);
+    const { entries, ok, truncated } = await source.listSkills();
+    for (const raw of entries) {
+      const entry = parseSkillEntry(raw);
+      if (entry) skills.push(discoveredSkillFromEntry(entry));
+      else log.warn("[skill] invalid skills/list entry dropped", { source: source.name });
     }
-    if (!ok) return { skills, shortfall: "enumeration_failed" };
-    if (truncated) return { skills, shortfall: "enumeration_truncated" };
-    if (skills.length < entrypoints) return { skills, shortfall: "skill_unreadable" };
-    return { skills };
+    const named = disambiguateSkillNames(skills);
+    if (!ok) return { skills: named, shortfall: "enumeration_failed" };
+    if (truncated) return { skills: named, shortfall: "enumeration_truncated" };
+    return { skills: named };
   }
 
-  /** Read one skill entrypoint resource into a parsed, budget-capped `DiscoveredSkill`, or `undefined` when the URI isn't a skill entrypoint or the resource is unreadable/empty. */
-  private async readSkillResource(
-    source: McpSource,
-    uri: string,
-  ): Promise<DiscoveredSkill | undefined> {
-    if (!isSkillEntrypointUri(uri)) return undefined;
-    let text: string | undefined;
-    try {
-      text = (await source.readResource(uri))?.text;
-    } catch {
-      // A single unreadable skill resource must not sink the whole discovery.
-      return undefined;
+  /**
+   * Read a skill's `SKILL.md` from the workspace's own instance of its server
+   * and verify it against the listing entry. A failure is reported and says
+   * whether the server was unreachable or its content failed verification.
+   */
+  private async fetchVerifiedSkillText(
+    wsId: string,
+    serverName: string,
+    entry: SkillEntry,
+  ): Promise<{ ok: true; text: string } | { ok: false; reason: "unreachable" | "unverified" }> {
+    const source = this._workspaceRegistries
+      .get(wsId)
+      ?.getSources()
+      .find((s) => s.name === serverName);
+    const unwrapped = source instanceof SharedSourceRef ? source.unwrap() : source;
+    if (!(unwrapped instanceof McpSource)) return { ok: false, reason: "unreachable" };
+    const text = await unwrapped
+      .readResource(entry.uri)
+      .then((data) => data?.text)
+      .catch(() => undefined);
+    if (!text) {
+      reportSkillDiscoveryDegraded({ wsId, serverName, reason: "skill_unreadable", recovered: 0 });
+      return { ok: false, reason: "unreachable" };
     }
-    if (!text) return undefined;
-    const parsed = parseSkillMarkdown(uri, text);
+    const verified = verifySkillEntrypoint(entry, text);
+    if (!verified.ok) {
+      log.warn("[skill] server skill failed verification against its skills/list entry", {
+        source: serverName,
+        uri: entry.uri,
+        reason: verified.reason,
+      });
+      reportSkillDiscoveryDegraded({ wsId, serverName, reason: "skill_unverified", recovered: 0 });
+      return { ok: false, reason: "unverified" };
+    }
+    return { ok: true, text };
+  }
+
+  /**
+   * Fetch, verify, parse, and budget-cap one server-published skill's body, or
+   * `null` when it cannot be used this turn.
+   *
+   * Called only where the body is about to reach the model: an `always` skill
+   * every turn, a `dynamic` skill when tool-affinity or a trigger selects it or
+   * a surface-once candidate fires, a catalog skill on `nb__use_skill`, and an
+   * entered app's primary skill. The `SKILL.md` is read with `resources/read`
+   * from the workspace's own instance of the server and verified against the
+   * listing entry (digest, size, frontmatter); content that fails is never used.
+   *
+   * A verified body is cached by its digest, so a turn does not re-fetch a
+   * skill whose listing is unchanged. A verification failure is remembered
+   * per workspace, server, and digest for the discovery TTL, so a stale listing
+   * costs one read per TTL rather than one per turn; the next listing carries
+   * the new digest.
+   * A `"dynamic"` skill has no digest and is fetched each time it is needed.
+   */
+  private async loadServerSkillBody(
+    wsId: string,
+    serverName: string,
+    entry: SkillEntry,
+  ): Promise<SkillBodyLoad> {
+    const digest =
+      entry.resources === "dynamic"
+        ? undefined
+        : entry.resources.find((file) => file.uri === entry.uri)?.digest;
+    const failureKey = digest ? `${wsId}\0${serverName}\0${digest}` : undefined;
+    if (digest && failureKey) {
+      const cached = this.skillBodyCache.get(digest);
+      if (cached !== undefined) return { ok: true, body: cached };
+      const failedAt = this.skillBodyFailures.get(failureKey);
+      if (failedAt !== undefined && Date.now() - failedAt < Runtime.SKILL_CACHE_TTL) {
+        return { ok: false, reason: "unverified" };
+      }
+    }
+    const fetched = await this.fetchVerifiedSkillText(wsId, serverName, entry);
+    if (!fetched.ok) {
+      // Only a verification failure is remembered: an unreachable server is a
+      // transport fault, retried the next time the skill is needed.
+      if (failureKey && fetched.reason === "unverified") {
+        boundedSet(this.skillBodyFailures, failureKey, Date.now());
+      }
+      return { ok: false, reason: fetched.reason };
+    }
+    const parsed = parseSkillMarkdown(entry.uri, fetched.text);
     // Token budget: cap the body (heading-aware, so a trailing "rules"
     // section isn't sliced mid-rule — a production tool-selection failure).
     const capped = truncateMarkdownToBudget(parsed.body, MAX_SKILL_BODY_CHARS);
     if (capped.truncated) {
       log.warn(
-        `[skill] server skill truncated to ${MAX_SKILL_BODY_CHARS} chars (${capped.sectionsOmitted} section(s) omitted) — ${uri}`,
+        `[skill] server skill truncated to ${MAX_SKILL_BODY_CHARS} chars (${capped.sectionsOmitted} section(s) omitted) — ${entry.uri}`,
       );
     }
-    return {
-      uri,
-      name: parsed.name,
-      description: parsed.description,
-      body: capped.body,
-      // Preserve the loading config the server declared (undefined = opted out;
-      // synthesis defaults strategy to `dynamic`). Triggers ride along so a
-      // server-published skill is reachable by the phrase matcher, not only by
-      // tool-affinity — the same field, read the same way, as on disk.
-      ...(parsed.loadingStrategy ? { loadingStrategy: parsed.loadingStrategy } : {}),
-      ...(parsed.priority !== undefined ? { priority: parsed.priority } : {}),
-      ...(parsed.triggers?.length ? { triggers: parsed.triggers } : {}),
-    };
+    if (digest) boundedSet(this.skillBodyCache, digest, capped.body);
+    return { ok: true, body: capped.body };
+  }
+
+  /**
+   * Whether `uri` is a file of `skill`. A skill with a file manifest answers
+   * from it: the extension forbids reading a file of the skill that the
+   * manifest does not list. A `"dynamic"` skill has none, so the server is
+   * asked.
+   */
+  private async skillHasFile(
+    source: ToolSource,
+    skill: DiscoveredSkill,
+    uri: string,
+  ): Promise<boolean> {
+    const files = listedSkillFiles(skill.entry);
+    if (files) return files.includes(uri);
+    return source instanceof McpSource ? this.hasResource(source, uri) : false;
   }
 
   /** Check if an MCP source exposes a specific resource URI. */
@@ -2871,8 +2978,8 @@ export class Runtime {
   }
 
   /**
-   * Discover every MCP source in `wsId`'s registry that exposes SEP-2640
-   * `skill://<name>/SKILL.md` resources and synthesize a `Skill` for each,
+   * Discover every MCP source in `wsId`'s registry that publishes skills
+   * (SEP-2640 `skills/list`) and synthesize a body-less `Skill` for each,
    * honoring the loading strategy the skill declares in its frontmatter. A
    * `dynamic` skill (the default when none is declared) tool-affines to
    * `<serverName>__*` and loads via `selectLayer3Skills` whenever the server's
@@ -2965,7 +3072,7 @@ export class Runtime {
               serverName: name,
               skillName: s.name,
               description: s.description,
-              body: s.body,
+              loadBody: () => this.loadServerSkillBody(wsId, name, s.entry),
               uri: s.uri,
               ...(s.loadingStrategy ? { loadingStrategy: s.loadingStrategy } : {}),
               ...(s.priority !== undefined ? { priority: s.priority } : {}),
@@ -4648,6 +4755,7 @@ export class Runtime {
       .map((s) => ({
         name: s.manifest.name,
         body: s.body,
+        ...(s.loadBody ? { loadBody: bodyOrNull(s.loadBody) } : {}),
         scope: s.manifest.scope ?? PUBLISHED_SKILL_SCOPE,
         toolAffinity: s.manifest.toolAffinity ?? [],
       }));
@@ -4791,8 +4899,8 @@ export class Runtime {
    * prompt received the workspace/user-tier set.
    *
    * The pool merges per-conversation tier skills (org + workspace + user, via
-   * {@link loadConversationSkills}) with server-exposed `skill://<name>/SKILL.md`
-   * skills from the focused workspace only — a connector installed there whose
+   * {@link loadConversationSkills}) with server-published skills from the
+   * focused workspace only — a connector installed there whose
    * tools land in the workspace's tool list must also surface its workflow
    * guidance, else the model gets the namespaced tool name with no
    * instructions. A connector in another workspace never contributes here.
@@ -4903,9 +5011,16 @@ export class Runtime {
       capabilityPool: capability,
     });
     // Include always-on connector skills in the reported context so the status
-    // surface matches what the prompt actually composes.
+    // surface matches what the prompt actually composes. They compose every
+    // turn, so their bodies (which the always-on cost reads) are needed anyway
+    // and come from the digest cache the turn fills.
+    const loadedConnectorContext = await hydrateSkills(
+      withoutSuppressed(connectorContext, suppressed),
+    );
+    // Layer 3 is returned unfetched: the overview lists names only, and the
+    // detail view fetches the one body it prints.
     return {
-      context: [...context, ...withoutSuppressed(connectorContext, suppressed)],
+      context: [...context, ...loadedConnectorContext],
       layer3: layer3.filter((sel) => !suppressed.has(sel.skill.manifest.name)),
     };
   }
@@ -5057,37 +5172,6 @@ export class Runtime {
   /** Get the file context configuration with defaults applied. */
   getFilesConfig(): FileConfig {
     return { ...DEFAULT_FILE_CONFIG, ...this.config.files };
-  }
-
-  /** Build AppInfo list for GET /v1/apps endpoint (workspace-scoped). */
-  async getApps(): Promise<AppInfo[]> {
-    const registry = this.getRegistryForCurrentWorkspace();
-    const wsId = this._currentWorkspaceId?.();
-    if (!wsId) {
-      throw new Error("No workspace in request context. Every request must be workspace-scoped.");
-    }
-    const apps: AppInfo[] = [];
-    for (const instance of this.getConnectorInstancesForWorkspace(wsId)) {
-      let toolCount = 0;
-      try {
-        const source = registry.getSources().find((s) => s.name === instance.serverName);
-        if (source) {
-          const tools = await source.tools();
-          toolCount = tools.length;
-        }
-      } catch {
-        // Source may be stopped or crashed
-      }
-      apps.push({
-        name: instance.serverName,
-        connectorName: instance.connectorName,
-        version: instance.version,
-        status: instance.state,
-        toolCount,
-        ui: instance.ui,
-      });
-    }
-    return apps;
   }
 
   /**
@@ -5667,6 +5751,44 @@ function buildWorkspaceContext(
   return workspace ? { id: workspace.id, name: workspace.name } : { id: wsId };
 }
 
+/** A skill body loader as the engine's surface-once channel takes it: the body, or `null`. */
+function bodyOrNull(load: () => Promise<SkillBodyLoad>): () => Promise<string | null> {
+  return async () => {
+    const loaded = await load();
+    return loaded.ok ? loaded.body : null;
+  };
+}
+
+/** Resolve each skill's on-demand body, dropping any that cannot be fetched. */
+async function hydrateSkills(skills: Skill[]): Promise<Skill[]> {
+  const loaded = await Promise.all(skills.map(hydrateSkill));
+  return loaded.filter((sk): sk is Skill => sk !== null);
+}
+
+/** {@link hydrateSkills} over a selection, keeping each entry's selection facts. */
+async function hydrateSelected(selected: SelectedSkill[]): Promise<SelectedSkill[]> {
+  const loaded = await Promise.all(
+    selected.map(async (sel) => {
+      const sk = await hydrateSkill(sel.skill);
+      return sk ? { ...sel, skill: sk } : null;
+    }),
+  );
+  return loaded.filter((sel): sel is SelectedSkill => sel !== null);
+}
+
+/** Entries a body cache holds before evicting its oldest. */
+const SKILL_BODY_CACHE_MAX = 512;
+
+/** `map.set` that evicts the oldest entry once the map holds {@link SKILL_BODY_CACHE_MAX}. */
+function boundedSet<V>(map: Map<string, V>, key: string, value: V): void {
+  map.delete(key);
+  if (map.size >= SKILL_BODY_CACHE_MAX) {
+    const oldest = map.keys().next().value;
+    if (oldest !== undefined) map.delete(oldest);
+  }
+  map.set(key, value);
+}
+
 /**
  * Report a skill enumeration the runtime KNOWS came back short.
  *
@@ -5698,6 +5820,7 @@ function reportSkillDiscoveryDegraded(input: {
   reason:
     | "enumeration_failed"
     | "enumeration_truncated"
+    | "skill_unverified"
     | "skill_unreadable"
     | "source_unavailable";
   recovered: number;
@@ -5745,15 +5868,6 @@ function buildSurfaceOptions(
     ...(focusedServerName ? { focusedServerName } : {}),
     ...(requestAllowedTools ? { requestAllowedTools } : {}),
   };
-}
-
-/** Append the workspace identity/persona override skill to the context channel when the workspace sets one. */
-function withIdentityOverride(
-  contextBase: Skill[],
-  workspaceIdentity: string | undefined,
-): Skill[] {
-  if (!workspaceIdentity) return contextBase;
-  return [...contextBase, makeIdentitySkill(workspaceIdentity)];
 }
 
 /**
@@ -5822,34 +5936,6 @@ export function buildContextAssembledPayload(input: {
   ];
   const totalTokens = sources.reduce((sum, s) => sum + s.tokens, 0);
   return { sources, excluded: [], totalTokens };
-}
-
-/**
- * Create a synthetic identity skill from a workspace's identity markdown.
- * Injected at priority 1 (core context layer) so it becomes the agent persona.
- */
-/**
- * Exported so the compose-effective-context debug tool can build the
- * same per-request identity override `runtime.chat()` uses, instead of
- * silently composing against the bare global `contextSkills` (which
- * would lie about what's in the prompt for any workspace that has
- * `workspace.identity` set).
- */
-export function makeIdentitySkill(body: string): Skill {
-  return {
-    manifest: {
-      name: "identity-override",
-      description: "Workspace identity override",
-      loadingStrategy: "always",
-      priority: 1,
-      status: "active",
-      // It's the workspace's identity field, so the ledger labels it
-      // `workspace`, not the `?? "org"` fallback in the payload builder.
-      scope: "workspace",
-    },
-    body,
-    sourcePath: "",
-  };
 }
 
 /**

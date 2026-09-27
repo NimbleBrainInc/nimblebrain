@@ -21,7 +21,7 @@ declares its own tier and no third party can claim one.
 
 The fourth member has to cover everything that is not one of those three
 directories: a skill vendored with the platform image, and a skill synthesized
-from a server's `skill://…/SKILL.md` resource, which has no file at all
+from a server's `skills/list` entry, which has no file here at all
 (ADR-0011). What those two share is not an origin — one is first-party and one
 is arbitrary third-party content — but a storage fact: neither is stored where
 this instance authors skills, so neither can be edited here.

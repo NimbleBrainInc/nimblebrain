@@ -505,5 +505,13 @@ export interface TaskResult {
     errorReason?: string;
   }>;
   stopReason: string;
+  /**
+   * The last model call's unified finish reason and provider-native stop
+   * reason. See `EngineResult.finishReason` / `finishReasonRaw`. Together they
+   * let the caller explain a `stopReason` of "other", which several distinct
+   * provider outcomes share.
+   */
+  finishReason?: string;
+  finishReasonRaw?: string;
   usage: TurnUsage;
 }

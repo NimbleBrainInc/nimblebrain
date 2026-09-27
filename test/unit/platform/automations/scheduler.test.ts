@@ -19,6 +19,10 @@ import {
 	saveAutomation,
 } from "../../../../src/platform/automations/store.ts";
 import { automationRunsTotal } from "../../../../src/api/metrics.ts";
+import {
+	getRequestContext,
+	runWithRequestContext,
+} from "../../../../src/runtime/request-context.ts";
 import { seedWorkspaceRoot } from "../../../helpers/test-workspace.ts";
 
 // ---------------------------------------------------------------------------
@@ -406,6 +410,33 @@ describe("Scheduler — timer arming", () => {
 			expect(capturedDelay).toBeGreaterThanOrEqual(0);
 			expect(capturedDelay).toBeLessThanOrEqual(delayMs + 100);
 			expect(capturedDelay).toBeLessThan(60_000);
+		} finally {
+			scheduler.stop();
+			globalThis.setTimeout = originalSetTimeout;
+		}
+	});
+
+	it("arms the timer outside the request that triggered a reload", () => {
+		const auto = makeAutomation({ nextRunAt: new Date(Date.now() + 30_000).toISOString() });
+		seedDefs(tmpDir, new Map([[auto.id, auto]]));
+		const scheduler = new Scheduler(createMockExecutor(), { workDir: tmpDir });
+
+		// The context a timer captures is the one active when it is created.
+		const originalSetTimeout = globalThis.setTimeout;
+		const armedIn: unknown[] = [];
+		globalThis.setTimeout = ((fn: Function, delay?: number) => {
+			armedIn.push(getRequestContext());
+			return originalSetTimeout(fn, delay);
+		}) as typeof globalThis.setTimeout;
+
+		try {
+			scheduler.start();
+			runWithRequestContext(
+				{ identity: { id: "usr_caller" } as never, workspaceId: WS },
+				() => scheduler.reload(),
+			);
+			expect(armedIn.length).toBeGreaterThanOrEqual(2);
+			expect(armedIn.every((ctx) => ctx === undefined)).toBe(true);
 		} finally {
 			scheduler.stop();
 			globalThis.setTimeout = originalSetTimeout;

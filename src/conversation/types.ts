@@ -394,6 +394,14 @@ export interface LlmResponseEvent {
    * field existed.
    */
   finishReason?: "stop" | "length" | "content-filter" | "tool-calls" | "error" | "other";
+  /**
+   * The provider's own stop reason for this call (AI SDK V4
+   * `finishReason.raw`, e.g. Anthropic `end_turn`), or `NO_FINISH_PART_RAW`
+   * when the stream ended without a finish part. Several raw values map to
+   * the unified `"other"`, so this names the actual cause. Absent when the
+   * provider reported none.
+   */
+  finishReasonRaw?: string;
 }
 
 export interface ToolStartEvent {

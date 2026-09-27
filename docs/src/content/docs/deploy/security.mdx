@@ -289,6 +289,25 @@ when you set one) gets one
 the tool, the caller's own reason string, and the outcome. Since a dispatch
 leaves no transcript behind, this line is the record.
 
+## Data at rest
+
+Everything a deployment keeps lives in its work directory (`NB_WORK_DIR`, `/data` in the container): conversations, files, workspace records, logs, and the credential store, which holds API keys, OAuth tokens and client secrets. Anyone who can read that directory, or any copy of it, can read all of it. Two layers protect it, and they cover different things.
+
+**Encrypt the volume.** Put the work directory on storage that is encrypted at rest. That protects the disk, its snapshots, and the backups taken from them.
+
+- **Docker:** encrypt the host's disk, or the device backing the volume.
+- **Kubernetes:** use a StorageClass that encrypts. On AWS EBS that is the class parameter `encrypted: "true"`; turning on EBS encryption by default for the account, in each region you use, also covers volumes created any other way.
+
+A snapshot or backup has the encryption of the volume it was taken from. Backups of an unencrypted volume stay unencrypted for as long as they are retained, and encrypting the volume later does not change them.
+
+A volume cannot be encrypted in place. To move an existing one: stop the workload, snapshot the volume, create an encrypted volume from the snapshot, create a PersistentVolume for it, re-create the claim bound to that PersistentVolume (a claim's `volumeName` cannot be changed), and then delete the snapshot, which is an unencrypted copy of the data. Set the PersistentVolume's `reclaimPolicy` to what the old one had. If a CSI driver manages the claim, give the new volume the tags the driver uses to recognize its own volumes, or it cannot delete the volume later.
+
+**Seal the credential store.** Sealing encrypts each stored secret under a key held in the environment, so secrets stay protected where the disk is not, and in every copy of the work directory: a `tar` backup, a copied volume, the archive of a workspace deleted after sealing was on. See [Sealing the files](/config/secrets/#sealing-the-files).
+
+The boot sweep that seals existing secrets does not walk `archived/`, so a workspace deleted before sealing was on keeps its secrets in plaintext. Rotate those credentials at the vendor, then remove the archive with `manage_workspaces purge_archive`.
+
+Neither layer protects against someone who can read the running process's environment or open a shell in its container. That is an access-control boundary, not an encryption one.
+
 ## Production checklist
 
 Use this checklist before exposing NimbleBrain to any network:
@@ -303,3 +322,5 @@ Use this checklist before exposing NimbleBrain to any network:
 | Connector list reviewed | `cat workspaces/<wsId>/workspace.json` — only connectors you trust are installed |
 | Firewall restricts inbound ports | Only 443 (HTTPS) and 22 (SSH) reachable from the internet |
 | Backups configured | Test your volume backup and restore procedure |
+| Work directory on an encrypted volume | Your platform reports the volume encrypted (on AWS: `aws ec2 describe-volumes --volume-ids <id> --query 'Volumes[].Encrypted'`) |
+| Credential store sealed | `secrets.config.seal` is set, and this prints nothing: `find /data -path '*/credentials/secrets/*' -type f ! -name '.*' \| while read -r f; do head -c5 "$f" \| grep -q '^NBS1\.' \|\| echo "$f"; done` |

@@ -25,6 +25,7 @@ import { useCallback, useMemo } from "react";
 import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
 import { useNotifications } from "../../context/NotificationsContext";
 import { useShellContext } from "../../context/ShellContext";
+import { KEEP_DRAWER_OPEN } from "../../context/SidebarContext";
 import { useWorkspaceAppIcons } from "../../context/WorkspaceAppIconsContext";
 import { useWorkspaceContext, type WorkspaceInfo } from "../../context/WorkspaceContext";
 import { resolveIcon } from "../../lib/icons";
@@ -57,11 +58,13 @@ export function WorkspaceNav({ collapsed = false }: WorkspaceNavProps) {
       // React-layer equality guard mirrors the api/client setter's T009
       // invariant: re-focusing the active workspace is a no-op for
       // setActiveWorkspaceId (it must not fire the bridge reset hook).
-      if (wsCtx.activeWorkspace?.id !== ws.id) wsCtx.setActiveWorkspace(ws);
+      const switching = wsCtx.activeWorkspace?.id !== ws.id;
+      if (switching) wsCtx.setActiveWorkspace(ws);
       // Every workspace opens its own overview — Personal included. Personal is
       // just the workspace labelled "Home · Personal", not a detour through the
-      // global landing grid.
-      navigate(`/w/${toSlug(ws.id)}/`);
+      // global landing grid. A switch keeps the mobile drawer open: it expands
+      // the new workspace's views, and the user picks one of them next.
+      navigate(`/w/${toSlug(ws.id)}/`, switching ? { state: KEEP_DRAWER_OPEN } : undefined);
     },
     [wsCtx, navigate],
   );

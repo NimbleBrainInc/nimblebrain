@@ -37,4 +37,17 @@ minimumReleaseAge = 1209600
 #
 # Scoped to the one package, not to `@nimblebrain/*`. A future first-party
 # dependency should be a decision someone makes, not one this line already made.
-minimumReleaseAgeExcludes = ["@types/bun", "@nimblebrain/synapse"]
+#
+# The three MCP SDK v2 packages are excluded because the runtime tracks the
+# protocol as it is fixed: the 2026-07-28 revision and its extensions land in
+# patch and minor releases (the tasks extension's `Mcp-Name` binding arrived in
+# 2.1.0), and a peer on the new revision refuses a request the older release
+# builds. The window's protection is traded for that, deliberately and for
+# these three names only; every other `@modelcontextprotocol/*` package keeps it.
+minimumReleaseAgeExcludes = [
+  "@types/bun",
+  "@nimblebrain/synapse",
+  "@modelcontextprotocol/client",
+  "@modelcontextprotocol/core",
+  "@modelcontextprotocol/server",
+]

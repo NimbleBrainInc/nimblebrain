@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { McpError } from "@modelcontextprotocol/sdk/types.js";
+import { ProtocolError } from "@modelcontextprotocol/server";
 import {
   FileBackedHostResourcesResolver,
   type HostResourceContext,
@@ -115,24 +115,24 @@ describe("FileBackedHostResourcesResolver.read", () => {
   });
 
   it("rejects URIs whose scheme is not in the allowlist", async () => {
-    let caught: McpError | null = null;
+    let caught: ProtocolError | null = null;
     try {
       await makeResolver().read("entities://e_abc", ctxA);
     } catch (e) {
-      caught = e as McpError;
+      caught = e as ProtocolError;
     }
-    expect(caught).toBeInstanceOf(McpError);
+    expect(caught).toBeInstanceOf(ProtocolError);
     expect(caught?.code).toBe(INVALID_PARAMS);
     const data = caught?.data as { supported?: string[] } | undefined;
     expect(data?.supported).toContain("files");
   });
 
   it("returns -32002 for unknown file ids (workspace has the id space, but id not present)", async () => {
-    let caught: McpError | null = null;
+    let caught: ProtocolError | null = null;
     try {
       await makeResolver().read("files://fl_doesnotexist", ctxA);
     } catch (e) {
-      caught = e as McpError;
+      caught = e as ProtocolError;
     }
     expect(caught?.code).toBe(RESOURCE_NOT_FOUND);
   });
@@ -144,11 +144,11 @@ describe("FileBackedHostResourcesResolver.read", () => {
     // genuinely-missing id gets. This prevents cross-workspace inventory
     // enumeration.
     const idInB = await seedFile(storeB, "secret.txt", "ws_b only", "text/plain");
-    let caught: McpError | null = null;
+    let caught: ProtocolError | null = null;
     try {
       await makeResolver().read(`files://${idInB}`, ctxA);
     } catch (e) {
-      caught = e as McpError;
+      caught = e as ProtocolError;
     }
     expect(caught?.code).toBe(RESOURCE_NOT_FOUND);
     // The same lookup from workspace B succeeds, proving the file does exist.
@@ -167,11 +167,11 @@ describe("FileBackedHostResourcesResolver.read", () => {
     // to the store factory, which lands in storeB (no such file) → -32002. If
     // the resolver stopped honoring `ctx.workspaceId` (the regression this
     // guards), B would read A's store and leak the file across workspaces.
-    let caught: McpError | null = null;
+    let caught: ProtocolError | null = null;
     try {
       await makeResolver().read(`files://${id}`, ctxB);
     } catch (e) {
-      caught = e as McpError;
+      caught = e as ProtocolError;
     }
     expect(caught?.code).toBe(RESOURCE_NOT_FOUND);
   });
@@ -183,13 +183,13 @@ describe("FileBackedHostResourcesResolver.read", () => {
       // 10-byte cap, way below the 100-byte fixture
       10,
     );
-    let caught: McpError | null = null;
+    let caught: ProtocolError | null = null;
     try {
       await resolver.read(`files://${id}`, ctxA);
     } catch (e) {
-      caught = e as McpError;
+      caught = e as ProtocolError;
     }
-    expect(caught).toBeInstanceOf(McpError);
+    expect(caught).toBeInstanceOf(ProtocolError);
     // Pin the JSON-RPC code so doc/impl drift fails CI. `-32005` lives in
     // the impl-defined server-error range, alongside `-32004 Rate limited`
     // — both are deliberate quota responses, not server faults.
@@ -223,11 +223,11 @@ describe("FileBackedHostResourcesResolver.list", () => {
   });
 
   it("rejects an unsupported scheme filter with -32602", async () => {
-    let caught: McpError | null = null;
+    let caught: ProtocolError | null = null;
     try {
       await makeResolver().list({ filter: { scheme: "entities" } }, ctxA);
     } catch (e) {
-      caught = e as McpError;
+      caught = e as ProtocolError;
     }
     expect(caught?.code).toBe(INVALID_PARAMS);
   });
@@ -240,7 +240,7 @@ describe("FileBackedHostResourcesResolver.list", () => {
   // was rejected as misleading (the connector gets all files back instead
   // of a clear error).
   it("rejects non-array tags filter with -32602", async () => {
-    let caught: McpError | null = null;
+    let caught: ProtocolError | null = null;
     try {
       // Pass a string where the type cast expects string[]. Coerced
       // through `unknown` because the resolver's TS signature would
@@ -251,7 +251,7 @@ describe("FileBackedHostResourcesResolver.list", () => {
         ctxA,
       );
     } catch (e) {
-      caught = e as McpError;
+      caught = e as ProtocolError;
     }
     expect(caught?.code).toBe(INVALID_PARAMS);
   });

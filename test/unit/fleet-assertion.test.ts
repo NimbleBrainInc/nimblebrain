@@ -2,7 +2,7 @@ import { createHash, hkdfSync, randomBytes } from "node:crypto";
 import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { AuthorizationServerMetadata } from "@modelcontextprotocol/sdk/shared/auth.js";
+import type { AuthorizationServerMetadata } from "@modelcontextprotocol/server";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { buildTenantAssertion } from "../../src/oauth/fleet-assertion.ts";
 import { signEnvelope, verifyEnvelopeAsTenant } from "../../src/oauth/envelope.ts";

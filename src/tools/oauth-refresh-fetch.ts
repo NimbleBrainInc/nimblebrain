@@ -1,4 +1,4 @@
-import type { FetchLike } from "@modelcontextprotocol/sdk/shared/transport.js";
+import type { FetchLike } from "@modelcontextprotocol/server";
 import { log } from "../observability/log.ts";
 
 /**

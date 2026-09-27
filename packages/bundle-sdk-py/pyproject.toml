@@ -1,12 +1,12 @@
 [project]
 name = "nimblebrain-bundle-sdk"
-version = "0.1.0"
-description = "Python SDK for NimbleBrain MCP bundles. Lets bundles read workspace files via the ai.nimblebrain/host-resources extension."
+version = "0.2.0"
+description = "Python SDK for NimbleBrain MCP bundles: read workspace files via ai.nimblebrain/host-resources, and publish skills via the MCP Skills extension (SEP-2640)."
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.11"
 authors = [{ name = "NimbleBrain" }]
-keywords = ["mcp", "nimblebrain", "bundle", "host-resources"]
+keywords = ["mcp", "nimblebrain", "bundle", "host-resources", "skills"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
@@ -27,26 +27,29 @@ dependencies = [
     # across a major by transitive resolution.
     "fastmcp>=4.0.0,<5",
     # The underlying MCP types (ReadResourceResult, ListResourcesResult,
-    # ClientCapabilities) are imported from this. FastMCP depends on it
+    # ClientCapabilities) and the SEP-2133 `Extension` API the skills
+    # extension builds on are imported from this. FastMCP depends on it
     # transitively; pinning explicitly so the SDK's import paths don't
     # silently break when FastMCP's transitive resolution shifts.
     #
-    # The upper bound is intentional and deliberately narrow. The SDK's
-    # custom-method dispatch (`cast(ServerRequest, ...)` in `host.py`)
-    # relies on `ServerSession.send_request` dumping and forwarding the
-    # request rather than validating it against the `ServerRequest`
-    # union — behaviour mcp's public surface does not guarantee, and
-    # whose loss shows up at runtime, not at import. Capability
-    # detection is the same kind of surface: 2.x moved `extensions`
-    # from an `extra="allow"` passthrough to a declared field, which
-    # changed how it must be read.
+    # The floor is 2.0.0 because every surface the SDK uses is present
+    # and unchanged from 2.0.0 on: `mcp.server.extension` is identical
+    # across 2.0.0-2.2.x, and so is `ServerSession.send_request`, which
+    # the host-resources dispatch (`cast(ServerRequest, ...)` in
+    # `host.py`) relies on to dump and forward the request rather than
+    # validate it against the `ServerRequest` union. mcp's public surface
+    # does not guarantee that behaviour, and its loss would show up at
+    # runtime, not at import.
     #
-    # No pull-request job runs this package's tests, so a single-minor
-    # bound is the only thing forcing each upstream minor to be
-    # verified by hand. Widen it to a major bound once PR-time coverage
-    # exists; cut an SDK major if the dispatch shape itself has to
-    # change.
-    "mcp>=2.1.1,<2.2.0",
+    # That is why the ceiling is a minor, not the major: no pull-request
+    # job runs this package's tests, so the bound is what forces each
+    # upstream minor to be checked (diff `mcp/server/session.py` and
+    # `mcp/server/extension.py`, run the suite) before it is admitted.
+    # Widen it to `<3` once PR-time coverage exists; cut an SDK major if
+    # the dispatch shape itself has to change.
+    "mcp>=2.0.0,<2.3.0",
+    # SKILL.md frontmatter parsing for the skills extension.
+    "pyyaml>=6.0",
 ]
 
 [project.urls]

@@ -399,13 +399,3 @@ export interface StartConnectorResult {
   /** The actual source name registered in the ToolRegistry. */
   sourceName: string;
 }
-
-/** App info returned by GET /v1/apps. */
-export interface AppInfo {
-  name: string;
-  connectorName: string;
-  version: string;
-  status: ConnectionState;
-  toolCount: number;
-  ui: ConnectorUiMeta | null;
-}

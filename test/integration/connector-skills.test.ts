@@ -5,12 +5,12 @@
  * is a reverse-DNS SLUG (`ai-nimblebrain-test-mcp`, like a fleet connector) that
  * exposes:
  *   - one tool (`ai-nimblebrain-test-mcp__doit`) so its tools land in the toolset
- *   - one SEP-2640 skill resource at the SHORT-name `skill://test/SKILL.md`,
- *     discovered via `resources/list` (NOT a guessed URI)
+ *   - one SEP-2640 skill at the SHORT-name `skill://test/SKILL.md`, discovered
+ *     from the server's `skills/list` (NOT a guessed URI)
  *
- * The slug-vs-short-name split is the exact production bug: discovery must find
- * the skill by listing resources, since the old guess (`skill://<sourceName>/…`)
- * looked under the slug and missed the short-name path.
+ * The slug-vs-short-name split is why discovery reads the server's listing: a
+ * URI guessed from the source name (`skill://<sourceName>/…`) looks under the
+ * slug and misses the short-name path.
  *
  * Then runs a chat with NO `appContext` — the failing production case — and
  * verifies the synthesized skill flows through `selectLayer3Skills` and appears
@@ -19,13 +19,7 @@
  */
 
 import type { LanguageModelV4, LanguageModelV4CallOptions } from "@ai-sdk/provider";
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import {
-  CallToolRequestSchema,
-  ListResourcesRequestSchema,
-  ListToolsRequestSchema,
-  ReadResourceRequestSchema,
-} from "@modelcontextprotocol/sdk/types.js";
+import { Server } from "@modelcontextprotocol/server";
 import { afterAll, beforeAll, describe, expect, it, spyOn } from "bun:test";
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -35,6 +29,7 @@ import { reconstructMessages } from "../../src/conversation/event-reconstructor.
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { McpSource } from "../../src/tools/mcp-source.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
+import { SKILLS_EXTENSION_CAPABILITY, serveSkills } from "../helpers/skills-server.ts";
 import { type RemoteMcpFixture, startRemoteMcpServer } from "../helpers/remote-mcp-fixture.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
 
@@ -53,20 +48,20 @@ Always call test__doit before anything else.`;
 function createSkillFixtureServer(): Server {
   const server = new Server(
     { name: "test", version: "0.1.0" },
-    { capabilities: { tools: {}, resources: {} } },
+    { capabilities: { tools: {}, resources: {}, ...SKILLS_EXTENSION_CAPABILITY } },
   );
 
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({
+  server.setRequestHandler('tools/list', async () => ({
     tools: [
       { name: "doit", description: "Do the thing", inputSchema: { type: "object", properties: {} } },
     ],
   }));
 
-  server.setRequestHandler(CallToolRequestSchema, async () => ({
+  server.setRequestHandler('tools/call', async () => ({
     content: [{ type: "text", text: "done" }],
   }));
 
-  server.setRequestHandler(ListResourcesRequestSchema, async () => ({
+  server.setRequestHandler('resources/list', async () => ({
     resources: [
       { uri: "skill://test/SKILL.md", name: "test", mimeType: "text/markdown" },
       { uri: "skill://test/reference", name: "test-reference", mimeType: "text/markdown" },
@@ -77,7 +72,8 @@ function createSkillFixtureServer(): Server {
     "skill://test/SKILL.md": SKILL_BODY,
     "skill://test/reference": "# Reference. Detailed tool catalog and error recovery.",
   };
-  server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
+  serveSkills(server, () => bodies);
+  server.setRequestHandler('resources/read', async (request) => {
     const text = bodies[request.params.uri];
     if (text === undefined) throw new Error(`Resource not found: ${request.params.uri}`);
     return { contents: [{ uri: request.params.uri, mimeType: "text/markdown", text }] };
@@ -96,15 +92,15 @@ function createSkilllessFixtureServer(): Server {
     { name: "test", version: "0.1.0" },
     { capabilities: { tools: {}, resources: {} } },
   );
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({
+  server.setRequestHandler('tools/list', async () => ({
     tools: [
       { name: "doit", description: "Do the thing", inputSchema: { type: "object", properties: {} } },
     ],
   }));
-  server.setRequestHandler(CallToolRequestSchema, async () => ({
+  server.setRequestHandler('tools/call', async () => ({
     content: [{ type: "text", text: "done" }],
   }));
-  server.setRequestHandler(ListResourcesRequestSchema, async () => ({ resources: [] }));
+  server.setRequestHandler('resources/list', async () => ({ resources: [] }));
   return server;
 }
 
@@ -503,20 +499,20 @@ DYNAMIC_USAGE_MARKER — call multi__doit correctly.`;
 function createMultiSkillFixtureServer(): Server {
   const server = new Server(
     { name: "multi", version: "0.1.0" },
-    { capabilities: { tools: {}, resources: {} } },
+    { capabilities: { tools: {}, resources: {}, ...SKILLS_EXTENSION_CAPABILITY } },
   );
 
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({
+  server.setRequestHandler('tools/list', async () => ({
     tools: [
       { name: "doit", description: "Do the thing", inputSchema: { type: "object", properties: {} } },
     ],
   }));
 
-  server.setRequestHandler(CallToolRequestSchema, async () => ({
+  server.setRequestHandler('tools/call', async () => ({
     content: [{ type: "text", text: "done" }],
   }));
 
-  server.setRequestHandler(ListResourcesRequestSchema, async () => ({
+  server.setRequestHandler('resources/list', async () => ({
     resources: [
       { uri: "skill://always-guide/SKILL.md", name: "always-guide", mimeType: "text/markdown" },
       { uri: "skill://dynamic-usage/SKILL.md", name: "dynamic-usage", mimeType: "text/markdown" },
@@ -527,7 +523,8 @@ function createMultiSkillFixtureServer(): Server {
     "skill://always-guide/SKILL.md": ALWAYS_SKILL_BODY,
     "skill://dynamic-usage/SKILL.md": DYNAMIC_SKILL_BODY,
   };
-  server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
+  serveSkills(server, () => bodies);
+  server.setRequestHandler('resources/read', async (request) => {
     const text = bodies[request.params.uri];
     if (text === undefined) throw new Error(`Resource not found: ${request.params.uri}`);
     return { contents: [{ uri: request.params.uri, mimeType: "text/markdown", text }] };

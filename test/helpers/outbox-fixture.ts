@@ -1,37 +1,4 @@
-/**
- * A fixture MCP server that serves a notifications outbox.
- *
- * The poller's whole contract is with a server it does not control, so the only
- * honest way to test it is against a real MCP server on a real transport. This
- * is one: an in-process `Server` over `InMemoryTransport`, answering
- * `resources/read` on `fixture://outbox` with the poll-result shape the
- * notifications design defines, and — unlike every platform built-in — actually
- * serving `resources/subscribe`, so the update hint has something to exercise.
- *
- * Two properties are deliberate:
- *
- *   - **The cursor is opaque.** It is an encoded token, not the row index it
- *     wraps, so a runtime that tried to derive or compare positions from it
- *     would have to decode it, and the tests would catch that. The real outbox
- *     library packs an epoch and a snapshot horizon in there; nothing about the
- *     runtime's behaviour may depend on knowing that.
- *   - **`fixture://` is the server's own scheme.** An outbox declared under one
- *     of the schemes the runtime already resolves (`ui`, `skill`, …) is refused
- *     at parse, so a fixture using one would be testing the wrong thing.
- */
-
-import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import {
-  ErrorCode,
-  ListResourcesRequestSchema,
-  ListResourceTemplatesRequestSchema,
-  McpError,
-  ReadResourceRequestSchema,
-  ListToolsRequestSchema,
-  SubscribeRequestSchema,
-  UnsubscribeRequestSchema,
-} from "@modelcontextprotocol/sdk/types.js";
+import { InMemoryTransport, Server, ProtocolError, ProtocolErrorCode } from "@modelcontextprotocol/server";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import { McpSource } from "../../src/tools/mcp-source.ts";
 
@@ -128,9 +95,9 @@ export async function makeOutboxFixture(
           },
         );
 
-        server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: [] }));
-        server.setRequestHandler(ListResourcesRequestSchema, async () => ({ resources: [] }));
-        server.setRequestHandler(ListResourceTemplatesRequestSchema, async () => ({
+        server.setRequestHandler('tools/list', async () => ({ tools: [] }));
+        server.setRequestHandler('resources/list', async () => ({ resources: [] }));
+        server.setRequestHandler('resources/templates/list', async () => ({
           resourceTemplates: [
             {
               uriTemplate: `${FIXTURE_OUTBOX_URI}{?cursor,maxEvents,maxAgeMs}`,
@@ -141,18 +108,18 @@ export async function makeOutboxFixture(
         }));
 
         if (options.supportsSubscribe) {
-          server.setRequestHandler(SubscribeRequestSchema, async (request) => {
+          server.setRequestHandler('resources/subscribe', async (request) => {
             subscriptions.push(request.params.uri);
             return {};
           });
-          server.setRequestHandler(UnsubscribeRequestSchema, async () => ({}));
+          server.setRequestHandler('resources/unsubscribe', async () => ({}));
         }
 
-        server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
+        server.setRequestHandler('resources/read', async (request) => {
           const { uri } = request.params;
           const [base, query = ""] = uri.split("?", 2);
           if (base !== FIXTURE_OUTBOX_URI) {
-            throw new McpError(ErrorCode.InvalidParams, `Resource not found: ${uri}`, { uri });
+            throw new ProtocolError(ProtocolErrorCode.InvalidParams, `Resource not found: ${uri}`, { uri });
           }
           const params = new URLSearchParams(query);
           const rawCursor = params.get("cursor") ?? undefined;

@@ -6,8 +6,9 @@
 
 ## Context
 
-MCP's `initialize` handshake is where a client tells every server what it can
-do. A server reads that block and changes its behaviour: it will hand back a
+A client tells every server what it can do: in the `initialize` handshake on a
+2025-era connection, and in every request's `_meta` envelope on a `2026-07-28`
+one. A server reads that block and changes its behaviour: it will hand back a
 task rather than block a request, or route a question back through the client,
 or emit log notifications, depending on what the client claimed.
 
@@ -26,7 +27,8 @@ collide.
 **One builder produces the client and its claims** (`buildClient`,
 `src/tools/mcp-source.ts`), called on the initial start and again on the OAuth
 retry rebuild, so two connections to the same server cannot claim different
-things. It advertises exactly two blocks.
+things. It advertises exactly two blocks, and a block is claimed only on the
+eras where it is served.
 
 **`tasks`, because it is exercised.** The client honours task-augmented
 `tools/call` and can cancel what it started: a server that marks a tool with
@@ -36,6 +38,15 @@ block the request. The stream is opened, polled, and cancelled by real code path
 lists tasks, and SEP-2663 removes the method from the spec, so claiming it would
 invite a client that never arrives.
 
+**A claim is per era, because what is served is.** The host-resources methods
+are server→client requests, and `2026-07-28` removed that channel, so
+`ai.nimblebrain/host-resources` is claimed in the 2025 `initialize` and on no
+`2026-07-28` request, the `server/discover` probe included. SDK v2 fixes a
+client's capabilities at construction and sends them on both eras, before the
+era is known; the builder constructs the client with the claims that hold on
+every era and adds the 2025-only ones to `initialize`, the one request only
+that era sends.
+
 **`extensions`, for NimbleBrain-namespaced vendor capabilities** (ADR-0024) —
 never `experimental`. `extensions` is the coordinated mechanism, the keys are
 reverse-DNS so they cannot collide, and a server reads the block to decide
@@ -43,7 +54,9 @@ whether to use an extension or fall back. The field is taken from the SDK's
 generated spec types, which track the specification's draft schema and run ahead
 of the revision the SDK negotiates on the wire; it travels on the SDK's
 authority, not the pinned revision's, and that gap closes on its own as the
-revision lands.
+revision lands. The block also carries the official extensions this client
+consumes: `io.modelcontextprotocol/skills` is claimed on both eras, because
+skill discovery (`skills/list`, ADR-0011) runs on both.
 
 **Sampling, elicitation, roots, and logging are not advertised**, and this is not
 a not-yet.
@@ -63,8 +76,9 @@ The same rule binds the other direction. An in-process source does not advertise
 
 ## Consequences
 
-- Every capability in the handshake is backed by code that runs. A server that
-  adapts to what this client claims gets the behaviour it adapted to.
+- Every capability the client claims is backed by code that runs on that era.
+  A server that adapts to what this client claims gets the behaviour it adapted
+  to.
 - The runtime cannot use sampling to borrow a server's model choice, cannot ask
   a user a mid-call question through MCP, and gets no server log stream. The
   first two are permanent for a server-side host; the third is a deprecation to

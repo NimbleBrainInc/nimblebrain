@@ -170,6 +170,25 @@ describe("runtime.executeTask", () => {
     expect(result.usage.iterations).toBeGreaterThan(0);
   });
 
+  it("returns the last call's unified and raw finish reasons", async () => {
+    // The automations executor reads these to explain a run that ended
+    // "other"; its unit tests inject a TaskFnResult, so only this test covers
+    // the engine → run handle → TaskResult passthrough.
+    runtime = await bootRuntime({
+      responses: [{ text: "", finishReason: "other", finishReasonRaw: "compaction" }],
+    });
+    await provisionWorkspaces(runtime);
+
+    const result = await runtime.executeTask({
+      prompt: "do the thing",
+      identity: { id: TEST_USER_ID, displayName: TEST_USER_DISPLAY },
+    });
+
+    expect(result.stopReason).toBe("other");
+    expect(result.finishReason).toBe("other");
+    expect(result.finishReasonRaw).toBe("compaction");
+  });
+
   it("each call gets a distinct runId (no resume path)", async () => {
     runtime = await bootRuntime(undefined);
     await provisionWorkspaces(runtime);

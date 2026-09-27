@@ -81,6 +81,11 @@ function stopReasonMessage(stopReason: string): string {
       // branch and reads "Run ended: interrupted", which is worse than the
       // sentence the client used to stamp on this same state.
       return "This response was interrupted before it finished. Send another message to continue.";
+    case "cancelled":
+      // The run's abort signal fired: the Stop button, a timeout, the per-run
+      // event cap, or shutdown. Whatever the turn produced before the stop is
+      // shown above; the wording holds for every one of those causes.
+      return "This response was stopped before it finished.";
     case "content_filter":
       return "The response was blocked by content filtering. Try rephrasing your request.";
     case "error":

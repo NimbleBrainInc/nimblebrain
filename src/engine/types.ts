@@ -1,10 +1,6 @@
 import type { LanguageModelV4Message } from "@ai-sdk/provider";
 import type { McpUiToolVisibility } from "@modelcontextprotocol/ext-apps";
-import type {
-  ContentBlock,
-  TextContent,
-  ToolAnnotations,
-} from "@modelcontextprotocol/sdk/types.js";
+import type { ContentBlock, TextContent, ToolAnnotations } from "@modelcontextprotocol/server";
 import type { TokenUsage } from "../usage/types.ts";
 
 export type { ContentBlock, TextContent };
@@ -309,14 +305,6 @@ export type EngineEventType =
    * Payload: { runId, attempt, previousMessageCount, errorMessage }.
    */
   | "context.overflow_recovery"
-  /**
-   * Emitted when a turn is cut off at the model's output ceiling
-   * (`finishReason: "length"`) with no pending tool call and the engine
-   * auto-resumes it from the partial text rather than ending the run.
-   * Payload: { runId, continuation } where `continuation` is the 1-based
-   * resume count (bounded by MAX_LENGTH_CONTINUATIONS).
-   */
-  | "context.length_continuation"
   | "connector.installed"
   | "connector.uninstalled"
   /**
@@ -404,7 +392,14 @@ export type EngineEventType =
    * nobody watched is still something an operator can read back. Payload:
    * { principalId, workspaceId, tool, reason, outcome, classification?, ms }.
    */
-  | "audit.unattended_dispatch";
+  | "audit.unattended_dispatch"
+  /**
+   * The credential store finished its boot reconcile. Payload:
+   * { sealed, strictPlaintextRefusal } — whether a sealing key is configured,
+   * and whether the sweep saw enough to refuse plaintext from now on. Emitted
+   * once per boot; nothing after it changes either field.
+   */
+  | "credential_store.reconciled";
 
 /**
  * Generic event envelope. Per-event-type payload schemas are declared in
@@ -633,6 +628,12 @@ export interface ConnectorSkillCandidate {
   description?: string;
   /** The overlay body (markdown) to surface into history, verbatim. */
   body: string;
+  /**
+   * Present when the body is fetched on demand (a server-published skill):
+   * the engine calls it when the candidate fires, and surfaces nothing when it
+   * resolves `null`. `body` is empty until then.
+   */
+  loadBody?: () => Promise<string | null>;
   /** Scope label for containment / telemetry. Always `"connector"` in v1. */
   scope: string;
   /** Tool-affinity globs (e.g. `["<server>__*"]`); the first match triggers surfacing. */
@@ -755,9 +756,14 @@ export type FinishReason = "stop" | "length" | "content-filter" | "tool-calls" |
  *   - `content_filter`   — last LLM call was blocked by provider moderation
  *   - `error`            — last LLM call's finish reason was `error`
  *   - `other`            — anything else (provider returned `other` / `unknown`)
+ *   - `cancelled`        — the run's abort signal fired, whatever the cause
+ *                          (the Stop button, an automation cancel or timeout,
+ *                          the per-run event cap, shutdown). It appears only
+ *                          on the `run.done` event: the engine rethrows the
+ *                          abort, so no EngineResult carries it.
  *
  * `error` here is the *finish-reason* error category, not a thrown engine
- * error — the latter still emits `run.error` instead.
+ * error — the latter emits `run.error` instead.
  *
  * Note the casing asymmetry vs `FinishReason`: the V4 spec uses
  * kebab-case (`content-filter`, `tool-calls`); our run-level union uses
@@ -771,7 +777,8 @@ export type StopReason =
   | "length"
   | "content_filter"
   | "error"
-  | "other";
+  | "other"
+  | "cancelled";
 
 /** Result returned from a single engine run. */
 export interface EngineResult {
@@ -785,6 +792,14 @@ export interface EngineResult {
   stopReason: StopReason;
   /** Final LLM call's finish reason. Useful for diagnosing why the loop ended. */
   finishReason?: FinishReason;
+  /**
+   * Final LLM call's provider-native stop reason (`LanguageModelV4FinishReason.raw`,
+   * e.g. Anthropic `end_turn` / `compaction`), or `NO_FINISH_PART_RAW` when the
+   * stream ended without a finish part. Several raw values collapse to the
+   * unified "other", so this is what names the actual cause. Absent when the
+   * provider reported none.
+   */
+  finishReasonRaw?: string;
 }
 
 export interface ToolCallRecord {

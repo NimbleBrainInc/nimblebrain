@@ -8,7 +8,7 @@ import type {
   LanguageModelV4ToolResultPart,
   SharedV4ProviderOptions,
 } from "@ai-sdk/provider";
-import { DEFAULT_MAX_DIRECT_TOOLS, MAX_ITERATIONS, MAX_LENGTH_CONTINUATIONS } from "../limits.ts";
+import { DEFAULT_MAX_DIRECT_TOOLS, MAX_ITERATIONS } from "../limits.ts";
 import { applyCachePolicy } from "../model/cache-policy.ts";
 import {
   GOOGLE_THINKING_LEVELS,
@@ -515,47 +515,6 @@ function buildThinkingProviderOptions(
 }
 
 /**
- * True if any reasoning (extended-thinking) block in the content lacks its
- * provider signature. A signed thinking block round-trips on replay; an
- * unsigned one — produced when `finishReason: "length"` cuts the model off
- * mid-thinking, before the signature arrives (src/model/stream.ts) — cannot
- * be replayed as the trailing assistant message: Anthropic rejects it
- * ("thinking blocks in the latest assistant message cannot be modified",
- * src/model/inbound-fit.ts). The signature lives at
- * `providerMetadata.anthropic.signature`. Conservative for other providers:
- * any reasoning block we can't confirm is signed counts as unsigned, so the
- * caller surfaces the truncation instead of risking a 400.
- */
-function hasUnsignedReasoning(content: LanguageModelV4Content[]): boolean {
-  for (const block of content) {
-    if (block.type !== "reasoning") continue;
-    const meta = (block as { providerMetadata?: Record<string, unknown> }).providerMetadata;
-    const anthropic = meta?.anthropic as { signature?: unknown } | undefined;
-    const signed = typeof anthropic?.signature === "string" && anthropic.signature.length > 0;
-    if (!signed) return true;
-  }
-  return false;
-}
-
-/**
- * Whether a no-tool-call turn that hit the output ceiling can be auto-resumed
- * from its partial text. False once MAX_LENGTH_CONTINUATIONS is reached, or when
- * the turn's reasoning was cut off unsigned — replaying that as the trailing
- * assistant message is exactly what Anthropic rejects.
- */
-function canResumeFromLength(
-  finishReason: FinishReason | undefined,
-  lengthContinuations: number,
-  content: LanguageModelV4Content[],
-): boolean {
-  return (
-    finishReason === "length" &&
-    lengthContinuations < MAX_LENGTH_CONTINUATIONS &&
-    !hasUnsignedReasoning(content)
-  );
-}
-
-/**
  * Map a per-call finish reason to a run-level stop reason. Called once
  * the agent loop has exited (no pending tool calls). The iteration cap
  * is checked first by the caller — this only handles model-driven exits.
@@ -579,6 +538,15 @@ function deriveStopReason(finish: FinishReason | undefined): StopReason {
     default:
       return "other";
   }
+}
+
+/**
+ * The provider-native finish reason as an optional `finishReasonRaw` field.
+ * Several distinct provider stops share the unified "other", so the raw value
+ * is what names the cause. Empty when the provider reported none.
+ */
+function rawFinishReasonField(raw: string | undefined): { finishReasonRaw?: string } {
+  return raw ? { finishReasonRaw: raw } : {};
 }
 
 /**
@@ -901,6 +869,14 @@ function buildToolResults(toolResults: ToolExecResult[]): {
   return { toolResultParts, toolCallRecords };
 }
 
+/**
+ * The iteration count a run reports: the zero-based loop counter plus the
+ * in-progress iteration when the loop exited before the cap.
+ */
+function reportedIterationCount(iteration: number, maxIter: number): number {
+  return iteration + (iteration < maxIter ? 1 : 0);
+}
+
 /** Shape the `run.error` event payload from a thrown value. */
 function buildRunErrorData(runId: string, err: unknown): Record<string, unknown> {
   return {
@@ -908,6 +884,12 @@ function buildRunErrorData(runId: string, err: unknown): Record<string, unknown>
     error: err instanceof Error ? err.message : String(err),
     type: err instanceof Error ? err.constructor.name : "Error",
   };
+}
+
+/** A surfaced overlay whose body is still being fetched. */
+interface PendingOverlayFetch {
+  data: Omit<ConnectorSkillInjectedPayload, "skillBody">;
+  body: Promise<string | null>;
 }
 
 /** Per-tool-call context shared across an iteration's concurrent executions. */
@@ -919,6 +901,8 @@ interface ToolExecContext {
   injectedConnectorSkills: Set<string>;
   /** Drained into history after this iteration's tool results. */
   pendingOverlayDeliveries: ConnectorSkillInjectedPayload[];
+  /** Surfaced overlays whose bodies are still being fetched; settled before the drain. */
+  pendingOverlayFetches: PendingOverlayFetch[];
   toolSchemaMap: Map<string, ToolSchema>;
   promotedLastUsed: Map<string, number>;
   bumpUseCounter: () => number;
@@ -975,6 +959,7 @@ export class AgentEngine {
     // results lets the guidance land in THIS run, before the model's next
     // action — which is the point of surfacing it on first use at all.
     const pendingOverlayDeliveries: ConnectorSkillInjectedPayload[] = [];
+    const pendingOverlayFetches: PendingOverlayFetch[] = [];
 
     let iteration = 0;
     const cumulativeUsage: TokenUsage = emptyUsage();
@@ -1061,6 +1046,7 @@ export class AgentEngine {
           connectorSkillCandidates,
           injectedConnectorSkills,
           pendingOverlayDeliveries,
+          pendingOverlayFetches,
         );
 
         // Backstop: cap active tools by evicting LRU agent-promoted entries.
@@ -1149,17 +1135,8 @@ export class AgentEngine {
     // stop reason can reflect why the model actually exited (length cap,
     // content filter, etc.) rather than always reporting "complete".
     let lastFinishReason: FinishReason | undefined;
-
-    // Auto-resume bookkeeping for output-ceiling truncations. When a turn
-    // is cut off at the model's max output tokens (`finishReason: "length"`)
-    // with no pending tool call, the engine re-prompts the model to continue
-    // from its partial text instead of ending the run with a half-written
-    // answer (see the `toolCalls.length === 0` branch). `lengthContinuations`
-    // bounds that to `MAX_LENGTH_CONTINUATIONS`; `resumingFromLength`
-    // suppresses the inter-turn blank line so the resumed text stitches
-    // seamlessly onto the partial.
-    let lengthContinuations = 0;
-    let resumingFromLength = false;
+    // The same call's provider-native stop reason (see `EngineResult.finishReasonRaw`).
+    let lastFinishReasonRaw: string | undefined;
 
     const unregisterToolControls = config.toolPromotion?.registerControls(toolControls);
     try {
@@ -1181,9 +1158,8 @@ export class AgentEngine {
         //      until the model finishes.
         //
         // Cooperative throughout: we never preempt running work, just
-        // stop starting new work. The runtime catch translates the
-        // thrown AbortError into the appropriate `run.error` event for
-        // SSE consumers.
+        // stop starting new work. The run's catch below ends an aborted
+        // run with `run.done` stopReason "cancelled" and rethrows.
         throwIfAborted(config.signal);
 
         // Offer the history this loop has grown back to the caller, which may
@@ -1294,15 +1270,7 @@ export class AgentEngine {
         const llmMs = Math.round(performance.now() - llmStart);
 
         // Accumulate text output (add newline between turns if needed).
-        // When this turn is the resumption of a length-truncated one, stitch
-        // directly onto the partial with no separator — the model is
-        // continuing mid-thought, so a blank line would inject a false break.
-        output = this.accumulateAssistantText(output, response.content, resumingFromLength, runId);
-        // Consume the resume flag unconditionally: it must not leak into a
-        // later iteration if this resumed turn produced no text block (e.g.
-        // tool-call- or reasoning-only), which would wrongly glue a genuinely
-        // new turn onto the previous one.
-        resumingFromLength = false;
+        output = this.accumulateAssistantText(output, response.content, runId);
 
         const turnUsage = computeTurnUsage(response.usage);
         addUsage(cumulativeUsage, turnUsage);
@@ -1313,6 +1281,8 @@ export class AgentEngine {
         // `unified` is non-optional in the V4 spec and stream.ts defaults
         // to "other" if no finish part arrives, so no fallback needed.
         lastFinishReason = response.finishReason.unified;
+        const rawFinish = rawFinishReasonField(response.finishReason.raw);
+        lastFinishReasonRaw = rawFinish.finishReasonRaw;
 
         // Record the atomic LLM call fact
         this.events.emit({
@@ -1334,6 +1304,7 @@ export class AgentEngine {
             // windowing that returned over budget.
             estimatedInputTokens,
             finishReason: lastFinishReason,
+            ...rawFinish,
           },
         });
 
@@ -1343,54 +1314,12 @@ export class AgentEngine {
         );
 
         if (toolCalls.length === 0) {
-          // A turn with no tool call usually means the model is done — but
-          // `finishReason: "length"` means it was cut off at the output
-          // ceiling mid-answer, not finished. Re-prompt it to continue from
-          // its partial text instead of ending the run with a truncated
-          // response. Bounded by MAX_LENGTH_CONTINUATIONS so a pathologically
-          // long answer can't spin forever (it then ends as stopReason
-          // "length", same as before this fix). Only fires for text
-          // truncation: a length cut with tool calls present takes the normal
-          // tool path below.
-          //
-          // Guard: never resume a turn whose reasoning was cut off mid-stream.
-          // A thinking block only carries its provider signature once the
-          // block completes; a length cut during thinking drains an UNSIGNED
-          // reasoning block (see src/model/stream.ts). Replaying an unsigned
-          // thinking block as the trailing assistant message is exactly what
-          // Anthropic rejects ("thinking blocks in the latest assistant
-          // message cannot be modified" — src/model/inbound-fit.ts). In that
-          // case fall through to `break` and surface stopReason "length"; the
-          // user re-prompts and the model starts a fresh, fully-signed turn.
-          if (canResumeFromLength(lastFinishReason, lengthContinuations, response.content)) {
-            lengthContinuations += 1;
-            // Seed history with the partial assistant text so the next call
-            // continues from where it stopped. `normalizeForReplay` fixes the
-            // stream→prompt shape, same as the tool path below.
-            //
-            // Provider note: this relies on assistant-message *prefill
-            // continuation* — a trailing assistant message is the turn to
-            // continue. That's Anthropic semantics (the configured default
-            // and the model this fix was written against). OpenAI/Google
-            // instead treat a trailing assistant message as context and start
-            // a fresh turn, which `resumingFromLength` would then glue on with
-            // no separator — a mildly disjoint resume, still bounded by
-            // MAX_LENGTH_CONTINUATIONS and no worse than a crash. We don't gate
-            // by provider here on purpose: this engine is provider-agnostic
-            // (provider-specific replay lives in the runtime hook, e.g.
-            // applyReasoningReplayPolicy). If a non-Anthropic model ever
-            // becomes a default, thread a `supportsAssistantPrefillContinuation`
-            // capability through EngineConfig and gate on it rather than
-            // string-matching the provider in here.
-            history.push({ role: "assistant", content: normalizeForReplay(response.content) });
-            resumingFromLength = true;
-            this.events.emit({
-              type: "context.length_continuation",
-              data: { runId, continuation: lengthContinuations },
-            });
-            iteration++;
-            continue;
-          }
+          // A turn with no tool call ends the run. A `finishReason: "length"`
+          // turn (cut off at the output ceiling) ends it too, surfacing as
+          // stopReason "length": resuming it would send a history that ends
+          // on the partial assistant message, which is an assistant prefill
+          // that current Anthropic models reject with a 400. The user sends
+          // another message to continue.
           break; // Model is done
         }
 
@@ -1409,6 +1338,7 @@ export class AgentEngine {
           connectorSkillCandidates,
           injectedConnectorSkills,
           pendingOverlayDeliveries,
+          pendingOverlayFetches,
           toolSchemaMap,
           promotedLastUsed,
           bumpUseCounter,
@@ -1441,6 +1371,16 @@ export class AgentEngine {
         // that continuation is its real, user-visible output. `user` is the
         // role the codebase already injects synthetic non-user guidance under
         // (see `appendFinalStepReminder`), and it is trailing-safe.
+        // An overlay whose body is fetched on demand (a server-published
+        // skill) is recorded once its body is in hand. It is recorded before
+        // the next `llm.response`, the same iteration the injector fired in,
+        // so replay places it where the live run does. A body that cannot be
+        // fetched is not delivered, and the skill stays eligible.
+        await this.settleOverlayFetches(
+          pendingOverlayFetches,
+          injectedConnectorSkills,
+          pendingOverlayDeliveries,
+        );
         for (const overlay of pendingOverlayDeliveries) {
           history.push({
             role: "user",
@@ -1461,7 +1401,7 @@ export class AgentEngine {
         iteration++;
       }
     } catch (err) {
-      this.events.emit({ type: "run.error", data: buildRunErrorData(runId, err) });
+      this.emitThrownRunEnd({ runId, err, signal: config.signal, iteration, maxIter, runStart });
       throw err;
     } finally {
       unregisterToolControls?.();
@@ -1473,12 +1413,43 @@ export class AgentEngine {
       iteration,
       maxIter,
       lastFinishReason,
+      lastFinishReasonRaw,
       totalMs,
       output,
       allToolCalls,
       cumulativeUsage,
       cumulativeLlmMs,
     });
+  }
+
+  /**
+   * Emit the terminal event for a run whose loop threw. When the run's abort
+   * signal fired, whatever the cause, the run was stopped rather than failed,
+   * so it ends with `run.done` stopReason "cancelled" rather than `run.error`. The caller still rethrows: callers
+   * classify the abort themselves.
+   */
+  private emitThrownRunEnd(params: {
+    runId: string;
+    err: unknown;
+    signal: AbortSignal | undefined;
+    iteration: number;
+    maxIter: number;
+    runStart: number;
+  }): void {
+    const { runId, err, signal, iteration, maxIter, runStart } = params;
+    if (signal?.aborted) {
+      this.events.emit({
+        type: "run.done",
+        data: {
+          runId,
+          stopReason: "cancelled" satisfies StopReason,
+          iterations: reportedIterationCount(iteration, maxIter),
+          totalMs: Math.round(performance.now() - runStart),
+        },
+      });
+      return;
+    }
+    this.events.emit({ type: "run.error", data: buildRunErrorData(runId, err) });
   }
 
   /**
@@ -1492,6 +1463,7 @@ export class AgentEngine {
     iteration: number;
     maxIter: number;
     lastFinishReason: FinishReason | undefined;
+    lastFinishReasonRaw: string | undefined;
     totalMs: number;
     output: string;
     allToolCalls: ToolCallRecord[];
@@ -1503,6 +1475,7 @@ export class AgentEngine {
       iteration,
       maxIter,
       lastFinishReason,
+      lastFinishReasonRaw,
       totalMs,
       output,
       allToolCalls,
@@ -1511,7 +1484,7 @@ export class AgentEngine {
     } = params;
     const stopReason: StopReason =
       iteration >= maxIter ? "max_iterations" : deriveStopReason(lastFinishReason);
-    const reportedIterations = iteration + (iteration < maxIter ? 1 : 0);
+    const reportedIterations = reportedIterationCount(iteration, maxIter);
     this.events.emit({
       type: "run.done",
       data: {
@@ -1530,6 +1503,7 @@ export class AgentEngine {
       llmMs: cumulativeLlmMs,
       stopReason,
       ...(lastFinishReason !== undefined ? { finishReason: lastFinishReason } : {}),
+      ...(lastFinishReasonRaw !== undefined ? { finishReasonRaw: lastFinishReasonRaw } : {}),
     };
   }
 
@@ -1729,27 +1703,17 @@ export class AgentEngine {
 
   /**
    * Append this turn's assistant text to the running output, emitting the
-   * inter-turn separator (`\n\n`) when needed. When this turn is the resumption
-   * of a length-truncated one (`resumingFromLength`), stitch directly onto the
-   * partial with no separator — the model is continuing mid-thought, so a blank
-   * line would inject a false break. Returns the new output; does not consume
-   * the resume flag.
+   * inter-turn separator (`\n\n`) when needed. Returns the new output.
    */
   private accumulateAssistantText(
     currentOutput: string,
     content: LanguageModelV4Content[],
-    resumingFromLength: boolean,
     runId: string,
   ): string {
     let output = currentOutput;
     for (const block of content) {
       if (block.type === "text") {
-        if (
-          !resumingFromLength &&
-          output.length > 0 &&
-          !output.endsWith("\n") &&
-          block.text.length > 0
-        ) {
+        if (output.length > 0 && !output.endsWith("\n") && block.text.length > 0) {
           output += "\n\n";
           this.events.emit({ type: "text.delta", data: { runId, text: "\n\n" } });
         }
@@ -1775,11 +1739,20 @@ export class AgentEngine {
     candidates: ConnectorSkillCandidate[],
     injected: Set<string>,
     pending: ConnectorSkillInjectedPayload[],
+    fetches: PendingOverlayFetch[],
   ): void {
     for (const candidate of candidates) {
       if (injected.has(candidate.name)) continue;
       if (!candidate.toolAffinity.some((p) => toolMatches(toolName, p))) continue;
       injected.add(candidate.name);
+      if (candidate.loadBody) {
+        // Fetched now, alongside the tool call, and settled before the drain.
+        fetches.push({
+          data: { runId, toolName, skillName: candidate.name, scope: candidate.scope },
+          body: candidate.loadBody().catch(() => null),
+        });
+        continue;
+      }
       const data = {
         runId,
         toolName,
@@ -1793,6 +1766,30 @@ export class AgentEngine {
       // message from the same fields, so live and replay agree.
       pending.push(data);
     }
+  }
+
+  /**
+   * Settle the overlays surfaced this iteration whose bodies were fetched on
+   * demand: record each one that arrived (`connector.skill.injected`) and queue
+   * it for delivery, and make a skill whose fetch failed eligible again. Drains
+   * `fetches`.
+   */
+  private async settleOverlayFetches(
+    fetches: PendingOverlayFetch[],
+    injected: Set<string>,
+    pending: ConnectorSkillInjectedPayload[],
+  ): Promise<void> {
+    for (const fetch of fetches) {
+      const skillBody = await fetch.body;
+      if (skillBody === null) {
+        injected.delete(fetch.data.skillName);
+        continue;
+      }
+      const data = { ...fetch.data, skillBody };
+      this.events.emit({ type: "connector.skill.injected", data });
+      pending.push(data);
+    }
+    fetches.length = 0;
   }
 
   /**
@@ -2017,6 +2014,7 @@ export class AgentEngine {
       ctx.connectorSkillCandidates,
       ctx.injectedConnectorSkills,
       ctx.pendingOverlayDeliveries,
+      ctx.pendingOverlayFetches,
     );
 
     const start = performance.now();

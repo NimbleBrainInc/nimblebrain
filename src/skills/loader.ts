@@ -184,6 +184,43 @@ export function readSkillMtime(path: string): string {
  */
 const warnedTruncatedPaths = new Set<string>();
 
+/**
+ * Invalid-frontmatter warnings already emitted, keyed by path and error text —
+ * the same per-turn re-parse would otherwise repeat one skip on every turn of
+ * every conversation. Keying on the errors too means an edit that breaks the
+ * file a different way warns again.
+ */
+const warnedInvalidFrontmatter = new Set<string>();
+
+/**
+ * Warn that a skill was skipped for invalid frontmatter, once per path and
+ * error text (see `warnedInvalidFrontmatter`).
+ */
+function warnInvalidFrontmatterOnce(
+  sourcePath: string,
+  data: Record<string, unknown>,
+  errorList: string[],
+): void {
+  const errors = errorList.join("; ");
+  const warnKey = `${sourcePath}\0${errors}`;
+  if (warnedInvalidFrontmatter.has(warnKey)) return;
+  warnedInvalidFrontmatter.add(warnKey);
+  // Turn a silent skip into an actionable instruction when the file is still
+  // in the pre-cutover format (legacy top-level fields) — the operator likely
+  // deployed without running the one-time migration.
+  const looksLegacy = [
+    "type",
+    "requires-bundles",
+    "applies-to-tools",
+    "loading-strategy",
+    "loading_strategy",
+  ].some((k) => k in data);
+  const hint = looksLegacy
+    ? " — legacy format detected; run `bun run migrate:skill-frontmatter`"
+    : "";
+  log.warn(`[skill] invalid frontmatter in ${sourcePath} — skipped: ${errors}${hint}`);
+}
+
 /** Parse SKILL.md content string. Exported for testing. */
 export function parseSkillContent(
   raw: string,
@@ -198,22 +235,7 @@ export function parseSkillContent(
   // transform lives; `scope` is stamped afterwards by `collectScopedSkills`.
   const result = validateFrontmatter(data);
   if (!result.ok) {
-    // Turn a silent skip into an actionable instruction when the file is still
-    // in the pre-cutover format (legacy top-level fields) — the operator likely
-    // deployed without running the one-time migration.
-    const looksLegacy = [
-      "type",
-      "requires-bundles",
-      "applies-to-tools",
-      "loading-strategy",
-      "loading_strategy",
-    ].some((k) => k in data);
-    const hint = looksLegacy
-      ? " — legacy format detected; run `bun run migrate:skill-frontmatter`"
-      : "";
-    log.warn(
-      `[skill] invalid frontmatter in ${sourcePath} — skipped: ${result.errors.join("; ")}${hint}`,
-    );
+    warnInvalidFrontmatterOnce(sourcePath, data, result.errors);
     return null;
   }
   const manifest = mapFrontmatterToManifest(result.value);

@@ -16,7 +16,9 @@ A read is attributable: `get(scope, key, { caller, purpose })` returns a `Redact
 
 ## Long-Running Tools (MCP Tasks)
 
-Any MCP tool whose work exceeds the stock MCP request timeout (~60 s) must be written as a **task-augmented tool**. The engine implements the client side of the MCP draft 2025-11-25 `tasks` utility end-to-end; connector authors only have to opt in.
+Any MCP tool whose work exceeds the stock MCP request timeout (~60 s) must be written as a **task-augmented tool**. The engine implements the client side of both task vocabularies, chosen by the era the connection negotiated: the 2025-11-25 `tasks` utility, and on `2026-07-28` the tasks extension (`io.modelcontextprotocol/tasks`, SEP-2663). Connector authors only have to opt in.
+
+**The runtime drives the task wire itself** (`src/tools/mcp-task-client.ts`), on the connection's own transport: SDK v2 reads neither vocabulary (typescript-sdk#2189). Keep every task call behind the `TaskClient` seam so the file can be replaced by the SDK's client when it ships, and never claim the tasks extension on the connection's capabilities: the SDK cannot read a task result, so the claim goes on the task wire's own requests only.
 
 ### Authoring a long-running tool
 
@@ -43,14 +45,14 @@ async def start_research(query: str, ctx: Context) -> dict:
 
 ### What the engine does automatically
 
-1. On `initialize`, advertises `capabilities.tasks.{requests.tools.call, cancel}` so servers know the client supports the task flow. `tasks.list` is not claimed: nothing calls `listTasks`, and SEP-2663 removes `tasks/list` from the spec. (`src/tools/mcp-source.ts::buildClient`, ADR-0023)
-2. When calling a tool whose `execution.taskSupport` is `"optional"` or `"required"`, dispatches through the SDK's streaming API: `client.experimental.tasks.callToolStream(...)`. (`src/tools/mcp-source.ts::callToolAsTask`)
-3. Consumes the response stream — `taskCreated` → `taskStatus`* → terminal `result | error` — and emits `tool.progress` events on every `taskStatus` so the chat UI renders live.
-4. Run-scoped `AbortSignal` is threaded through `ToolRouter.execute(call, signal)` → `ToolSource.execute(..., signal)` → RequestOptions on the stream. An abort becomes `tasks/cancel` automatically via the SDK.
+1. On a 2025-era connection, advertises `capabilities.tasks.{requests.tools.call, cancel}` so servers know the client supports the task flow. `tasks.list` is not claimed: nothing calls `listTasks`, and SEP-2663 removes `tasks/list` from the spec (ADR-0023). On `2026-07-28`, each task-path `tools/call` names the tasks extension in its own `_meta` client capabilities. (`src/tools/mcp-source.ts`, `src/tools/mcp-task-client.ts`)
+2. Takes the task path for a tool whose `execution.taskSupport` is `"optional"` or `"required"` (2025 era), or for every call to a server advertising the tasks extension (`2026-07-28`, where the server decides per call and a complete answer is accepted too). (`src/tools/mcp-source.ts::execute`)
+3. Polls the task — `taskCreated` → `taskStatus`* → terminal `result | error` — and emits `tool.progress` events on every `taskStatus` so the chat UI renders live.
+4. Run-scoped `AbortSignal` is threaded through `ToolRouter.execute(call, signal)` → `ToolSource.execute(..., signal)` → the task stream. An abort sends `tasks/cancel`.
 5. Inline tool calls (taskSupport omitted / forbidden) use the regular `client.callTool(...)` path and the same signal.
-6. Crash-retry semantics: **inline calls** restart the subprocess and retry on transport error. **Task-augmented calls do not retry** — task state lives server-side; retrying would create a confusing duplicate. Surfacing the error lets the agent decide whether to initiate a new run.
+6. Crash-retry semantics: **inline calls** restart the subprocess and retry on transport error. **Task-augmented calls do not retry** — task state lives server-side; retrying would create a confusing duplicate. Surfacing the error lets the agent decide whether to initiate a new run. On a `2026-07-28` connection to a server advertising the tasks extension every call takes the task path, so none of that server's calls is retried, and each keeps a task handle (a synthetic `nb-inline-*` one when the server answered outright) until the sweeper's grace window ends.
 
-The spec-compliant task flow does NOT use the 60 s MCP request timeout — `tools/call` returns in milliseconds with a `CreateTaskResult`, and the SDK handles polling internally.
+The spec-compliant task flow does NOT use the 60 s MCP request timeout — `tools/call` returns in milliseconds with a task, and the task wire polls it.
 
 Default TTL attached to outbound task-augmented requests is one hour (`DEFAULT_TASK_TTL_MS` in `src/tools/mcp-source.ts`). Servers may clamp it lower.
 

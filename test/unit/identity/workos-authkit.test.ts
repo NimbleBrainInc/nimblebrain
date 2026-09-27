@@ -408,6 +408,43 @@ describe("verifyRequest reports the token's grant", () => {
     expect(verified?.grant).toEqual({ kind: "resource", audience: [] });
   });
 
+  it("reports an AuthKit token as first-party when its client_id is configured", async () => {
+    const { provider } = createProvider({ firstPartyClientIds: ["client_test_channels"] });
+    const token = await authkitToken({ client_id: "client_test_channels", aud: "client_test_authkit" });
+    const verified = await provider.verifyRequest(makeRequest(token));
+    expect(verified?.grant).toEqual({ kind: "first_party" });
+  });
+
+  it("reports an AuthKit token whose client_id is not configured as a resource token", async () => {
+    const { provider } = createProvider({ firstPartyClientIds: ["client_test_channels"] });
+    const token = await authkitToken({ client_id: "client_test_mcp", aud: "client_test_authkit" });
+    const verified = await provider.verifyRequest(makeRequest(token));
+    expect(verified?.grant).toEqual({ kind: "resource", audience: ["client_test_authkit"] });
+  });
+
+  it("never reads first-party standing from aud", async () => {
+    const { provider } = createProvider({ firstPartyClientIds: ["client_test_channels"] });
+    const token = await authkitToken({ client_id: "client_test_mcp", aud: "client_test_channels" });
+    const verified = await provider.verifyRequest(makeRequest(token));
+    expect(verified?.grant).toEqual({ kind: "resource", audience: ["client_test_channels"] });
+  });
+
+  it("reports a listed client_id in a non-string shape as a resource token", async () => {
+    const { provider } = createProvider({ firstPartyClientIds: ["client_test_channels"] });
+    const token = await authkitToken({ client_id: ["client_test_channels"] });
+    const verified = await provider.verifyRequest(makeRequest(token));
+    expect(verified?.grant).toEqual({ kind: "resource", audience: [] });
+  });
+
+  it("reports no AuthKit token as first-party when no client IDs are configured", async () => {
+    for (const firstPartyClientIds of [undefined, [], [" "]]) {
+      const { provider } = createProvider({ firstPartyClientIds });
+      const token = await authkitToken({ client_id: "client_test_channels", aud: "client_test_authkit" });
+      const verified = await provider.verifyRequest(makeRequest(token));
+      expect(verified?.grant).toEqual({ kind: "resource", audience: ["client_test_authkit"] });
+    }
+  });
+
   it("reports a User Management token as first-party", async () => {
     const { provider } = createProvider({ authkitDomain: undefined });
     const nowSec = Math.floor(Date.now() / 1000);

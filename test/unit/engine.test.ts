@@ -1565,16 +1565,9 @@ describe("AgentEngine", () => {
       expect(result.finishReason).toBe("stop");
     });
 
-    it("derives stopReason='length' when truncation persists past auto-resume", async () => {
-      // A single recoverable length-truncation now auto-resumes rather than
-      // ending the run (see engine-length-continuation.test.ts). The run only
-      // surfaces stopReason 'length' once the bounded resume is exhausted, so
-      // drive a model that keeps hitting the ceiling.
+    it("derives stopReason='length' from finish=length", async () => {
       const model = createEchoModel({
-        responses: Array.from({ length: 8 }, () => ({
-          text: "x",
-          finishReason: "length" as const,
-        })),
+        responses: [{ text: "x", finishReason: "length" }],
       });
       const result = await makeEngine(model).run(
         defaultConfig,
@@ -2278,6 +2271,63 @@ describe("AgentEngine", () => {
       const llmDone = events.find((e) => e.type === "llm.done");
       expect(llmDone).toBeDefined();
       expect((llmDone!.data as Record<string, unknown>).finishReason).toBe("length");
+      // No raw reason reported → the field is absent, not undefined-valued.
+      expect("finishReasonRaw" in (llmDone!.data as Record<string, unknown>)).toBe(false);
+    });
+
+    it("carries the raw finish reason on llm.done and the engine result", async () => {
+      const events: EngineEvent[] = [];
+      const sink: EventSink = {
+        emit(event: EngineEvent) {
+          events.push(event);
+        },
+      };
+
+      const model = createEchoModel({
+        responses: [{ text: "", finishReason: "other", finishReasonRaw: "compaction" }],
+      });
+      const result = await new AgentEngine(
+        model,
+        new StaticToolRouter([], () => ({ content: textContent(""), isError: false })),
+        sink,
+      ).run(
+        defaultConfig,
+        "",
+        [{ role: "user", content: [{ type: "text", text: "x" }] }],
+        [],
+      );
+
+      const llmDone = events.find((e) => e.type === "llm.done");
+      expect((llmDone!.data as Record<string, unknown>).finishReasonRaw).toBe("compaction");
+      expect(result.stopReason).toBe("other");
+      expect(result.finishReasonRaw).toBe("compaction");
+    });
+
+    it("omits an empty raw finish reason from llm.done and the engine result", async () => {
+      const events: EngineEvent[] = [];
+      const sink: EventSink = {
+        emit(event: EngineEvent) {
+          events.push(event);
+        },
+      };
+
+      const model = createEchoModel({
+        responses: [{ text: "", finishReason: "other", finishReasonRaw: "" }],
+      });
+      const result = await new AgentEngine(
+        model,
+        new StaticToolRouter([], () => ({ content: textContent(""), isError: false })),
+        sink,
+      ).run(
+        defaultConfig,
+        "",
+        [{ role: "user", content: [{ type: "text", text: "x" }] }],
+        [],
+      );
+
+      const llmDone = events.find((e) => e.type === "llm.done");
+      expect("finishReasonRaw" in (llmDone!.data as Record<string, unknown>)).toBe(false);
+      expect("finishReasonRaw" in result).toBe(false);
     });
 
     // The estimate is computed in `callOnce`, over the prompt the cache policy
@@ -3908,6 +3958,78 @@ describe("malformed tool call input", () => {
       // loop before the next round-trip.
       expect(modelCalls).toBe(1);
       expect(toolCallCount).toBe(1);
+    });
+
+    it("ends an aborted run with run.done stopReason cancelled, not run.error", async () => {
+      // Stop is not a failure: the persisted terminal event must say the run
+      // was cancelled so the transcript and the replayed history label it
+      // honestly. The throw still propagates for the caller's abort handling.
+      const controller = new AbortController();
+      let modelCalls = 0;
+      const model = createMockModel(() => {
+        modelCalls++;
+        if (modelCalls === 1) {
+          return {
+            content: [
+              { type: "tool-call", toolCallId: "call_1", toolName: "test__noop", input: "{}" },
+            ],
+            inputTokens: 10,
+            outputTokens: 5,
+          };
+        }
+        // The user presses Stop while the second model call is in flight.
+        controller.abort();
+        throw new DOMException("The operation was aborted.", "AbortError");
+      });
+      const events: EngineEvent[] = [];
+      const engine = makeEngine(
+        model,
+        {
+          schemas: [
+            { name: "test__noop", description: "noop", inputSchema: { type: "object", properties: {} } },
+          ],
+          handler: () => ({ content: textContent("noop"), isError: false }),
+        },
+        { emit: (e) => events.push(e) },
+      );
+
+      await expect(
+        engine.run(
+          { ...defaultConfig, signal: controller.signal },
+          "",
+          [{ role: "user", content: [{ type: "text", text: "go" }] }],
+          [],
+        ),
+      ).rejects.toMatchObject({ name: "AbortError" });
+
+      expect(events.find((e) => e.type === "run.error")).toBeUndefined();
+      const done = events.filter((e) => e.type === "run.done");
+      expect(done).toHaveLength(1);
+      expect(done[0]!.data.stopReason).toBe("cancelled");
+      expect(done[0]!.data.iterations).toBe(2);
+      expect(typeof done[0]!.data.totalMs).toBe("number");
+      expect(done[0]!.data.runId).toBe(events.find((e) => e.type === "run.start")!.data.runId);
+    });
+
+    it("emits run.done cancelled for a signal aborted before the first model call", async () => {
+      const controller = new AbortController();
+      controller.abort();
+      const events: EngineEvent[] = [];
+      const engine = makeEngine(undefined, undefined, { emit: (e) => events.push(e) });
+
+      await expect(
+        engine.run(
+          { ...defaultConfig, signal: controller.signal },
+          "",
+          [{ role: "user", content: [{ type: "text", text: "go" }] }],
+          [],
+        ),
+      ).rejects.toMatchObject({ name: "AbortError" });
+
+      expect(events.find((e) => e.type === "run.error")).toBeUndefined();
+      const done = events.find((e) => e.type === "run.done");
+      expect(done?.data.stopReason).toBe("cancelled");
+      expect(done?.data.iterations).toBe(1);
     });
 
     it("throws immediately when signal is already aborted on entry", async () => {

@@ -58,8 +58,6 @@ export interface Workspace {
   skillDirs?: string[];
   /** Optional model slot overrides for this workspace. */
   models?: Partial<ModelSlots>;
-  /** Optional markdown identity override for this workspace's agent persona. */
-  identity?: string;
   /**
    * Per-workspace catalog allow-list. When set, only catalog entries
    * whose `id` is in this array appear on the Connections page for
