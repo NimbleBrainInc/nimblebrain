@@ -223,7 +223,6 @@ A fully specified example:
   "features":  { "catalogSearch": true },
   "maxIterations": 25,
   "maxInputTokens": 500000,
-  "maxOutputTokens": 16384,
   "workDir": "~/.nimblebrain"
 }
 ```
@@ -685,7 +684,7 @@ These are non-negotiable patterns. Violating them causes production bugs:
 | `models.fast` | `anthropic:claude-haiku-4-5-20251001` |
 | Max iterations | 25 (hard cap: 50) |
 | Max input tokens | 500,000 |
-| Max output tokens | 16,384 |
+| Max output tokens | the model's catalog output limit (16,384 for a model the catalog lacks) |
 | Max history messages | 40 |
 | Max tool result size | 1,000,000 chars (0 disables) |
 | Default connectors | none (platform capabilities are built in) |
