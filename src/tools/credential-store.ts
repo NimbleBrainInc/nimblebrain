@@ -261,8 +261,11 @@ export type SealFailureReason =
   | "plaintext_refused"
   | "reseal_skipped";
 
-/** The closed set above as values, for a consumer that must reject anything outside it. */
-const SEAL_FAILURE_REASONS: Record<SealFailureReason, true> = {
+/**
+ * The closed set above as values, for a consumer that must reject anything
+ * outside it or enumerate it ahead of the first failure.
+ */
+export const SEAL_FAILURE_REASONS: Record<SealFailureReason, true> = {
   malformed: true,
   unknown_kid: true,
   auth_failed: true,

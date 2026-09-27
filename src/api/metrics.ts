@@ -16,7 +16,7 @@
  * enableDefaultMetrics(), called once at server start.
  */
 import { Counter, collectDefaultMetrics, Gauge, Histogram, Registry } from "prom-client";
-import type { SealFailureReason } from "../tools/credential-store.ts";
+import { SEAL_FAILURE_REASONS, type SealFailureReason } from "../tools/credential-store.ts";
 import type { ConnectorHealth } from "../tools/health-monitor.ts";
 import type { LlmCallOrigin } from "../usage/types.ts";
 
@@ -441,7 +441,7 @@ export function registerConnectorHealthGauge(getStatus: () => ConnectorHealth[])
 }
 
 // ---------------------------------------------------------------------------
-// Credential store — the two states of sealing that must reach an alert rather
+// Credential store — the states of sealing that must reach an alert rather
 // than sit in a workspace log. `reason` is the only label anywhere here: a key
 // name discloses which vendors a tenant uses, and a workspace or user id is
 // unbounded. The audit line that accompanies every increment carries both, so
@@ -451,6 +451,9 @@ export function registerConnectorHealthGauge(getStatus: () => ConnectorHealth[])
 /**
  * Stored secrets that failed to become a usable value, by `reason` — the closed
  * set `audit.credential_seal_failure` carries. One increment per audit line.
+ *
+ * Every reason starts at 0, so the first failure after boot moves `increase()`
+ * instead of creating a series that is born at 1 and reads as no change.
  */
 export const credentialSealFailuresTotal = new Counter({
   name: "nb_credential_seal_failures_total",
@@ -458,6 +461,9 @@ export const credentialSealFailuresTotal = new Counter({
   labelNames: ["reason"] as const,
   registers: [metricsRegistry],
 });
+for (const reason of Object.keys(SEAL_FAILURE_REASONS)) {
+  credentialSealFailuresTotal.inc({ reason }, 0);
+}
 
 export function recordCredentialSealFailure(reason: SealFailureReason): void {
   credentialSealFailuresTotal.inc({ reason });
@@ -473,6 +479,19 @@ export function recordCredentialSealFailure(reason: SealFailureReason): void {
 export const credentialStorePlaintextAccepted = new Gauge({
   name: "nb_credential_store_plaintext_accepted",
   help: "1 when a sealing credential store still accepts plaintext secrets (strict mode off), else 0.",
+  registers: [metricsRegistry],
+});
+
+/**
+ * `1` when the credential store has a sealing key configured, `0` when it keeps
+ * secrets as plaintext files. The plaintext-accepted gauge reads `0` for both a
+ * clean sealed sweep and no key at all; this one tells them apart, so a
+ * deployment that dropped its `seal` block can be alerted on. Set from the same
+ * boot reconcile event.
+ */
+export const credentialStoreSealed = new Gauge({
+  name: "nb_credential_store_sealed",
+  help: "1 when the credential store has a sealing key configured, else 0.",
   registers: [metricsRegistry],
 });
 

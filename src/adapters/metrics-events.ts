@@ -1,5 +1,6 @@
 import {
   credentialStorePlaintextAccepted,
+  credentialStoreSealed,
   llmErrorsTotal,
   llmInputTokensEstimatedTotal,
   llmRequestDurationSeconds,
@@ -162,10 +163,11 @@ export class MetricsEventSink implements EventSink {
     if (isSealFailureReason(data.reason)) recordCredentialSealFailure(data.reason);
   }
 
-  /** Record whether a sealing store came out of its boot sweep still accepting plaintext. */
+  /** Record whether the store is sealed, and whether its boot sweep left it accepting plaintext. */
   private onCredentialStoreReconciled(data: EventData): void {
-    const accepted = data.sealed === true && data.strictPlaintextRefusal !== true;
-    credentialStorePlaintextAccepted.set(accepted ? 1 : 0);
+    const sealed = data.sealed === true;
+    credentialStoreSealed.set(sealed ? 1 : 0);
+    credentialStorePlaintextAccepted.set(sealed && data.strictPlaintextRefusal !== true ? 1 : 0);
   }
 
   /** Get (or lazily create) the per-run promoted/called tracking state. */

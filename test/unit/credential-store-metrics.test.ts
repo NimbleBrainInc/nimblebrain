@@ -13,9 +13,10 @@ import { MetricsEventSink } from "../../src/adapters/metrics-events.ts";
 import {
   credentialSealFailuresTotal,
   credentialStorePlaintextAccepted,
+  credentialStoreSealed,
 } from "../../src/api/metrics.ts";
 import { type CredentialSealer, createCredentialSealer } from "../../src/tools/credential-seal.ts";
-import { FileCredentialStore } from "../../src/tools/credential-store.ts";
+import { FileCredentialStore, SEAL_FAILURE_REASONS } from "../../src/tools/credential-store.ts";
 import { seedWorkspaceRoot } from "../helpers/test-workspace.ts";
 
 const KEY_A = Buffer.alloc(32, 0x11);
@@ -32,10 +33,16 @@ async function plaintextAccepted(): Promise<number> {
   return metric.values[0]?.value ?? 0;
 }
 
+async function sealed(): Promise<number> {
+  const metric = await credentialStoreSealed.get();
+  return metric.values[0]?.value ?? 0;
+}
+
 const cleanups: (() => void)[] = [];
 afterEach(() => {
   for (const c of cleanups.splice(0)) c();
   credentialStorePlaintextAccepted.set(0);
+  credentialStoreSealed.set(0);
 });
 
 function fresh(sealer?: CredentialSealer) {
@@ -55,6 +62,14 @@ function fresh(sealer?: CredentialSealer) {
 }
 
 describe("nb_credential_seal_failures_total", () => {
+  test("every reason has a series before its first failure", async () => {
+    // A series born at 1 reads as no change to increase(); one that exists at 0
+    // makes the first failure after boot an increase.
+    const metric = await credentialSealFailuresTotal.get();
+    const present = new Set(metric.values.map((s) => s.labels.reason));
+    for (const reason of Object.keys(SEAL_FAILURE_REASONS)) expect(present.has(reason)).toBe(true);
+  });
+
   test("one increment per audit event, under its own reason", async () => {
     const sink = new MetricsEventSink();
     const before = { skipped: await failures("reseal_skipped"), kid: await failures("unknown_kid") };
@@ -136,10 +151,25 @@ describe("nb_credential_store_plaintext_accepted", () => {
   });
 });
 
+describe("nb_credential_store_sealed", () => {
+  test("1 for a store with a sealing key", async () => {
+    const { store } = fresh(createCredentialSealer([KEY_A]));
+    await store.reconcile?.();
+    expect(await sealed()).toBe(1);
+  });
+
+  test("0 for a store with no sealing key", async () => {
+    credentialStoreSealed.set(1);
+    const { store } = fresh();
+    await store.reconcile?.();
+    expect(await sealed()).toBe(0);
+  });
+});
+
 describe("labels", () => {
   // A key name discloses which vendors a tenant uses, and a workspace or user id
   // is unbounded. The audit log says where; the metric says only why.
-  test("reason is the only label on either series", async () => {
+  test("reason is the only label on any series", async () => {
     new MetricsEventSink().emit({
       type: "audit.credential_seal_failure",
       data: {
@@ -157,8 +187,10 @@ describe("labels", () => {
     const counter = await credentialSealFailuresTotal.get();
     expect(counter.values.length).toBeGreaterThan(0);
     for (const s of counter.values) expect(Object.keys(s.labels)).toEqual(["reason"]);
-    const gauge = await credentialStorePlaintextAccepted.get();
-    expect(gauge.values.length).toBeGreaterThan(0);
-    for (const s of gauge.values) expect(Object.keys(s.labels)).toEqual([]);
+    for (const g of [credentialStorePlaintextAccepted, credentialStoreSealed]) {
+      const gauge = await g.get();
+      expect(gauge.values.length).toBeGreaterThan(0);
+      for (const s of gauge.values) expect(Object.keys(s.labels)).toEqual([]);
+    }
   });
 });
