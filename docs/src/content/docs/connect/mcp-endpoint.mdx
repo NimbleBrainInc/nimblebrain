@@ -7,7 +7,7 @@ import { Aside, Tabs, TabItem } from '@astrojs/starlight/components';
 
 Each workspace has its own **Streamable HTTP MCP server** at `/mcp/<workspaceId>`. It is NimbleBrain's public programmatic surface: external MCP clients (Claude, Claude Code, Cursor, another NimbleBrain instance, or any MCP-compatible host) connect to one workspace's URL and reach that workspace's tools.
 
-The runtime also serves a `/v1/*` REST API, but that is a trusted same-origin surface for the bundled web client — not a supported external integration point. For programmatic access from outside the platform, use the MCP endpoint.
+The runtime also serves a `/v1/*` REST API, but that is a trusted surface for the bundled web client and for apps the operator runs and lists as [first-party clients](/config/instance-json/#first-party-clients) — not a supported external integration point. For programmatic access from outside the platform, use the MCP endpoint.
 
 This makes NimbleBrain both an MCP **client** (connecting to installed connectors) and an MCP **server** (exposing composed tools to external hosts). The composition layer in between, which handles tool aggregation, feature gating, and role filtering, is what external clients benefit from without needing to know about individual connectors.
 

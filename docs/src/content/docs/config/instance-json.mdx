@@ -88,7 +88,7 @@ The `auth.adapter` field selects the identity provider. Two adapters are configu
 | `apiKey` | `string` | No | WorkOS API key. Can also come from the `WORKOS_API_KEY` env var. |
 | `authkitDomain` | `string` | No | AuthKit subdomain for MCP OAuth (e.g. `"myapp"` → `myapp.authkit.app`). When set, `/mcp/<workspaceId>` accepts AuthKit-issued Bearer JWTs whose audience is exactly that URL, and exposes `/.well-known/oauth-protected-resource/mcp/<workspaceId>` for MCP client discovery. AuthKit needs a resource indicator covering `<origin>/mcp/*` for each public host, or it ignores the client's `resource` and every token is refused. |
 | `adminRoleSlugs` | `string[]` | No | WorkOS membership role slugs that map to the app `admin` role (case-insensitive). Omit to use the defaults `["admin", "owner"]`. An explicit list **replaces** the defaults and must contain at least one non-empty slug — an empty list is rejected at startup. Set this when your WorkOS org's admin role carries a custom slug. |
-| `firstPartyClientIds` | `string[]` | No | Client IDs of your own apps that sign users in through AuthKit and call the REST API with the resulting token, such as a chat-channel bridge. See [First-party clients](#first-party-clients). Omitted or empty, no AuthKit token is first-party. |
+| `firstPartyClientIds` | `string[]` | No | Client IDs of your own apps that sign users in through AuthKit and call the REST API with the resulting token, such as a chat-channel bridge. See [First-party clients](#first-party-clients). Takes effect only with `authkitDomain` set, since without it no token is recognized as AuthKit-issued. Omitted or empty, no AuthKit token is first-party. |
 
 ### First-party clients
 
