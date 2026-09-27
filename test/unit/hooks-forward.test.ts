@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { FetchLike } from "@modelcontextprotocol/sdk/shared/transport.js";
+import type { FetchLike } from "@modelcontextprotocol/server";
 import { buildForwardHeaders, forwardDelivery } from "../../src/hooks/forward.ts";
 import {
   _resetCredentialStoreForTest,

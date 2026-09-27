@@ -42,7 +42,7 @@
 import matter from "gray-matter";
 
 import type { SkillEntry } from "./skills-extension.ts";
-import type { Skill, SkillLoadingStrategy, SkillScope } from "./types.ts";
+import type { Skill, SkillBodyLoad, SkillLoadingStrategy, SkillScope } from "./types.ts";
 
 /** Scope tag used on synthesized server skills. */
 export const PUBLISHED_SKILL_SCOPE: SkillScope = "provided";
@@ -244,10 +244,10 @@ export interface ConnectorSkillInput {
   description: string;
   /**
    * Fetch the body when the skill is needed: frontmatter-stripped, truncated to
-   * budget, verified, or `null` when it cannot be. The synthesized `Skill`
+   * budget, verified, or the reason it cannot be. The synthesized `Skill`
    * carries it and an empty `body` until {@link hydrateSkill} resolves it.
    */
-  loadBody?: () => Promise<string | null>;
+  loadBody?: () => Promise<SkillBodyLoad>;
   /** A body already in hand, for a skill that needs no fetch. */
   body?: string;
   /** The skill's `SKILL.md` URI. */
@@ -324,8 +324,8 @@ export function synthesizeConnectorSkill(input: ConnectorSkillInput): Skill {
  */
 export async function hydrateSkill(skill: Skill): Promise<Skill | null> {
   if (!skill.loadBody) return skill;
-  const body = await skill.loadBody();
-  if (body === null) return null;
+  const loaded = await skill.loadBody();
+  if (!loaded.ok) return null;
   const { loadBody: _loaded, ...rest } = skill;
-  return { ...rest, body };
+  return { ...rest, body: loaded.body };
 }

@@ -10,7 +10,7 @@
  */
 
 import { createHash } from "node:crypto";
-import type { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import type { Server } from "@modelcontextprotocol/server";
 import matter from "gray-matter";
 import { z } from "zod";
 import { SKILLS_EXTENSION_ID } from "../../src/skills/skills-extension.ts";
@@ -18,16 +18,24 @@ import { SKILLS_EXTENSION_ID } from "../../src/skills/skills-extension.ts";
 /** Spread into a fixture server's `capabilities` to declare the extension. */
 export const SKILLS_EXTENSION_CAPABILITY = { extensions: { [SKILLS_EXTENSION_ID]: {} } };
 
-/** Request schema for registering a custom `skills/list` handler. */
-export const SkillsListRequestSchema = z.object({
-  method: z.literal("skills/list"),
-  params: z.object({ cursor: z.string().optional() }).loose().optional(),
-});
+const SkillsListParamsSchema = z.object({ cursor: z.string().optional() }).loose().optional();
+const SkillsGetParamsSchema = z.object({ uri: z.string() }).loose();
 
-const SkillsGetRequestSchema = z.object({
-  method: z.literal("skills/get"),
-  params: z.object({ uri: z.string() }).loose(),
-});
+/** A `skills/list` result: entries, and a cursor when more pages follow. */
+export interface SkillsListResult {
+  skills: unknown[];
+  nextCursor?: string;
+}
+
+/** Answer `skills/list` with `handler`, for a fixture that shapes the listing itself. */
+export function handleSkillsList(
+  server: Server,
+  handler: () => SkillsListResult | Promise<SkillsListResult>,
+): void {
+  server.setRequestHandler("skills/list", { params: SkillsListParamsSchema }, async () =>
+    handler(),
+  );
+}
 
 /** One manifest row: a file's URI, digest, and size. */
 function fileRow(uri: string, text: string) {
@@ -70,10 +78,10 @@ export function serveSkills(server: Server, files: () => Record<string, string>)
       .filter(([uri]) => uri.endsWith("/SKILL.md"))
       .map(([uri, text]) => skillEntryFor(uri, text, all));
   };
-  server.setRequestHandler(SkillsListRequestSchema, async () => ({ skills: entries() }));
-  server.setRequestHandler(SkillsGetRequestSchema, async (request) => {
-    const skill = entries().find((entry) => entry.uri === request.params.uri);
-    if (!skill) throw new Error(`Unknown skill: ${request.params.uri}`);
+  handleSkillsList(server, () => ({ skills: entries() }));
+  server.setRequestHandler("skills/get", { params: SkillsGetParamsSchema }, async (params) => {
+    const skill = entries().find((entry) => entry.uri === params.uri);
+    if (!skill) throw new Error(`Unknown skill: ${params.uri}`);
     return { skill };
   });
 }

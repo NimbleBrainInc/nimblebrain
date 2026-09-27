@@ -212,6 +212,8 @@ export class WorkosIdentityProvider implements IdentityProvider {
   private organizationId: string | undefined;
   private authkitDomain: string | undefined;
   private adminRoleSlugs: Set<string>;
+  /** Client IDs whose AuthKit tokens are first-party; empty means none are. */
+  private firstPartyClientIds: ReadonlySet<string>;
   private userStore: UserStore | null;
   private workspaceStore: WorkspaceStore;
 
@@ -254,6 +256,9 @@ export class WorkosIdentityProvider implements IdentityProvider {
     this.organizationId = config.organizationId;
     this.authkitDomain = config.authkitDomain;
     this.adminRoleSlugs = normalizeAdminRoleSlugs(config.adminRoleSlugs);
+    this.firstPartyClientIds = new Set(
+      (config.firstPartyClientIds ?? []).map((id) => id.trim()).filter((id) => id.length > 0),
+    );
     this.userStore = userStore ?? null;
     this.workspaceStore = workspaceStore;
     this.capabilities = {
@@ -294,10 +299,15 @@ export class WorkosIdentityProvider implements IdentityProvider {
     // Both branches route their rejections through reject() so failures carry the
     // same reason field and severity — one reason-keyed view covers both issuers.
     //
-    // The issuer also decides the grant. An AuthKit token was minted for the
-    // resource the client named, so it carries its (signature-covered)
-    // audience; a User Management token was issued to this instance's own
-    // login client, so it is first-party.
+    // The issuer and the client decide the grant. A User Management token was
+    // issued to this instance's own login client, so it is first-party. An
+    // AuthKit token is first-party only when the client it was issued to (its
+    // signed `client_id`) is one the operator lists as its own; any other was
+    // minted for the resource its client named, so it carries its
+    // (signature-covered) audience. The audience never decides first-party
+    // standing: it says where a token may be used, not whose app holds it, and
+    // an MCP client that refreshes without a `resource` gets the same `aud`
+    // as a first-party app.
     const authkitIssuer = this.authkitOrigin();
     const fromAuthkit = authkitIssuer !== null && payload.iss === authkitIssuer;
     const identity = fromAuthkit
@@ -314,10 +324,16 @@ export class WorkosIdentityProvider implements IdentityProvider {
       id: identity.id,
       displayName: identity.displayName,
     });
-    const grant: TokenGrant = fromAuthkit
-      ? { kind: "resource", audience: audienceList(payload.aud) }
-      : FIRST_PARTY_GRANT;
+    const grant: TokenGrant =
+      !fromAuthkit || this.isFirstPartyClient(payload.client_id)
+        ? FIRST_PARTY_GRANT
+        : { kind: "resource", audience: audienceList(payload.aud) };
     return { ...identity, grant };
+  }
+
+  /** Whether a verified AuthKit token's `client_id` claim names a configured first-party client. */
+  private isFirstPartyClient(clientId: unknown): boolean {
+    return typeof clientId === "string" && this.firstPartyClientIds.has(clientId);
   }
 
   /**

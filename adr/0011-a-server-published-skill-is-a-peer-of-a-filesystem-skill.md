@@ -32,13 +32,21 @@ after the model has already chosen wrong.
 its origin, decides its channel.**
 
 **A server publishes skills only through the Skills extension.** The runtime
-declares the extension, and against each MCP source in the active workspace
-registry that declares it, enumerates `skills/list`
+claims the extension on both protocol eras and enumerates `skills/list` against
+each MCP source in the active workspace registry that serves it
 (`src/skills/connector-skills.ts`, driven from the runtime's per-source
-discovery). The listing is the record of what is a skill on that server. A
-server that does not declare the extension publishes none, and a `skill://`
-resource is an ordinary resource whatever its path: the extension forbids
-concluding that a resource is a skill from its URI scheme. The runtime never
+discovery). The listing is the record of what is a skill on that server, and a
+`skill://` resource is an ordinary resource whatever its path: the extension
+forbids concluding that a resource is a skill from its URI scheme.
+
+**Whether to ask follows the era.** On a `2026-07-28` connection the runtime
+asks only a server that advertises the extension, as the SEP requires. On a
+2025-era connection it asks every server once per discovery window, because
+some SDKs leave `capabilities.extensions` out of the legacy `initialize` result,
+so a server that serves the extension cannot declare it there; a `-32601`
+answer means the server has no skills. Asking is not inferring: what is a skill
+still comes only from the server's own listing, never from a URI scheme, so
+this stays within SEP-2640. The runtime never
 constructs a URI from the source's name either: a server's name is its own, and
 a guessed URI misses every server whose skill path and source name differ.
 
@@ -86,8 +94,9 @@ Peer means the same *channel* rules, not the same *trust* posture.
   server's workflow means.
 - A server can choose the reliable channel when it needs to, and pay for it. The
   choice — and the cost — sit with the party that knows the workflow.
-- Discovery costs one `skills/list` per declaring source per discovery TTL, and
-  nothing for a source that does not declare the extension. A body costs a
+- Discovery costs one `skills/list` per source per discovery TTL: per declaring
+  source on a `2026-07-28` connection, per source on a 2025-era one (the
+  runtime's own in-process apps included, which answer `-32601`). A body costs a
   `resources/read` the first time a given digest is needed.
 - A server that serves `skill://` resources without declaring the extension
   publishes nothing here. Its author declares the extension and implements

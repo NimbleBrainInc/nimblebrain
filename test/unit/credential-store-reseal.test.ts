@@ -41,9 +41,11 @@ const READ = { caller: "test", purpose: "unit test" };
 function fresh(sealer?: CredentialSealer) {
   const dir = mkdtempSync(join(tmpdir(), "nb-reseal-"));
   seedWorkspaceRoot(dir, "ws_test");
+  // The audit stream only: the sweep also announces its outcome, and these tests
+  // assert on what an operator reads back from the log.
   const events: EngineEvent[] = [];
   const store = new FileCredentialStore(dir, {
-    eventSink: { emit: (e) => events.push(e) },
+    eventSink: { emit: (e) => e.type.startsWith("audit.") && events.push(e) },
     ...(sealer ? { sealer } : {}),
   });
   return { store, dir, events, cleanup: () => rmSync(dir, { recursive: true, force: true }) };

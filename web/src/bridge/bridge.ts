@@ -67,7 +67,7 @@ import type {
 import { validateAppToHostMessage } from "./validate";
 
 // ---------------------------------------------------------------------------
-// App state store (module-level, shared across bridges)
+// App state (ui/update-model-context), one entry per live bridge
 // ---------------------------------------------------------------------------
 
 interface AppStateEntry {
@@ -76,16 +76,41 @@ interface AppStateEntry {
   updatedAt: string;
 }
 
-const appStateStore = new Map<string, AppStateEntry>();
+/**
+ * State belongs to the view that pushed it: `ui/update-model-context` is that
+ * view's current context (MCP Apps), not a durable record of the app. So each
+ * bridge owns its entry and `destroy()` releases it, and a reopened view
+ * reports nothing until it pushes. Entries are re-inserted on every push, so
+ * iteration order is push order.
+ */
+const appStateByBridge = new Map<symbol, { appName: string; entry: AppStateEntry }>();
 
-/** Get the latest app state pushed via ui/update-model-context. */
+/**
+ * Bridges whose iframe is out of the viewport (scrolled away in the chat, or
+ * hidden). A bridge is on screen until its observer says otherwise, so a host
+ * without `IntersectionObserver` treats every live view as on screen.
+ */
+const offScreenBridges = new Set<symbol>();
+
+/**
+ * The app state the prompt should carry for `appName`, from its live views.
+ *
+ * Several views of one app can be live at once (its full-page slot beside an
+ * inline view in the chat, or two inline views), and the prompt has one state
+ * slot. A view on screen beats one off screen: an inline view from an earlier
+ * turn can push when it mounts, scrolled out of sight, after the slot the user
+ * is looking at last pushed. Among views equally on or off screen, the most
+ * recent push wins: it comes from the view the user last changed.
+ */
 export function getAppState(appName: string): AppStateEntry | undefined {
-  return appStateStore.get(appName);
-}
-
-/** Clear app state (call when app is unmounted). */
-export function clearAppState(appName: string): void {
-  appStateStore.delete(appName);
+  let latestOnScreen: AppStateEntry | undefined;
+  let latest: AppStateEntry | undefined;
+  for (const [key, view] of appStateByBridge) {
+    if (view.appName !== appName) continue;
+    latest = view.entry;
+    if (!offScreenBridges.has(key)) latestOnScreen = view.entry;
+  }
+  return latestOnScreen ?? latest;
 }
 
 /** Handle returned by createBridge. Used to send messages and tear down. */
@@ -112,6 +137,18 @@ export function createBridge(
   callbacks?: BridgeCallbacks,
 ): BridgeHandle {
   let destroyed = false;
+  // This bridge's key in `appStateByBridge`, released in `destroy()`.
+  const stateKey = Symbol(appName);
+  const screenObserver =
+    typeof IntersectionObserver === "undefined"
+      ? null
+      : new IntersectionObserver((entries) => {
+          const last = entries[entries.length - 1];
+          if (!last || destroyed) return;
+          if (last.isIntersecting) offScreenBridges.delete(stateKey);
+          else offScreenBridges.add(stateKey);
+        });
+  screenObserver?.observe(iframe);
 
   // Nothing reaches the app before it has sent `ui/notifications/initialized`
   // except the answers to its own requests — the `ui/initialize` response
@@ -307,7 +344,7 @@ export function createBridge(
       // Spec: ui/update-model-context
       // -----------------------------------------------------------------
       case "ui/update-model-context":
-        handleUpdateModelContext(msg.params, msg.id, appName, postToIframe);
+        handleUpdateModelContext(msg.params, msg.id, stateKey, appName, postToIframe);
         break;
 
       // -----------------------------------------------------------------
@@ -481,6 +518,9 @@ export function createBridge(
     destroy(): void {
       destroyed = true;
       held.length = 0;
+      appStateByBridge.delete(stateKey);
+      offScreenBridges.delete(stateKey);
+      screenObserver?.disconnect();
       closeChannel();
       window.removeEventListener("message", handleMessage);
       // Unsubscribe from notifications/tasks/status so post-destroy
@@ -891,12 +931,13 @@ function serveUiMessage(
 }
 
 /**
- * Handle a spec `ui/update-model-context`: store the app's latest visible
+ * Handle a spec `ui/update-model-context`: store this view's latest visible
  * state (with a text summary when present) and ack when the message had an id.
  */
 function handleUpdateModelContext(
   params: UiUpdateModelContextMessage["params"],
   id: string | number | undefined,
+  stateKey: symbol,
   appName: string,
   postToIframe: PostToIframe,
 ): void {
@@ -905,10 +946,11 @@ function handleUpdateModelContext(
     Array.isArray(content) && content.length > 0 && content[0].type === "text"
       ? content[0].text
       : undefined;
-  appStateStore.set(appName, {
-    state: structuredContent ?? {},
-    summary,
-    updatedAt: new Date().toISOString(),
+  // Delete first so the re-insert moves this view to the end of push order.
+  appStateByBridge.delete(stateKey);
+  appStateByBridge.set(stateKey, {
+    appName,
+    entry: { state: structuredContent ?? {}, summary, updatedAt: new Date().toISOString() },
   });
   // The same helper the served requests use: id `0` is an id, and a frame
   // without one is a notification that takes no answer.

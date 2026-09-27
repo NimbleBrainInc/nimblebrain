@@ -30,7 +30,7 @@ export const SKILLS_LIST_METHOD = "skills/list" as const;
  * optional settings; `directoryRead` is a server-side setting and has no
  * client counterpart.
  */
-export function skillsClientExtension(): Record<string, object> {
+export function skillsClientExtension(): Record<string, Record<string, never>> {
   return { [SKILLS_EXTENSION_ID]: {} };
 }
 

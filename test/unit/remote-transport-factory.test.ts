@@ -13,11 +13,8 @@ import {
 } from "../../src/tools/credential-store.ts";
 import type { EngineEvent } from "../../src/engine/types.ts";
 import { seedWorkspaceRoot } from "../helpers/test-workspace.ts";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
-import { auth, type OAuthClientProvider } from "@modelcontextprotocol/sdk/client/auth.js";
-import type { OAuthClientInformationFull, OAuthTokens } from "@modelcontextprotocol/sdk/shared/auth.js";
-import type { FetchLike, Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
+import { StreamableHTTPClientTransport, SSEClientTransport, auth } from "@modelcontextprotocol/client";
+import type { OAuthClientProvider, OAuthClientInformationFull, OAuthTokens, FetchLike, Transport } from "@modelcontextprotocol/client";
 
 describe("createRemoteTransport", () => {
 	test("default returns StreamableHTTPClientTransport", async () => {

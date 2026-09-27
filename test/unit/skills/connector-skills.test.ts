@@ -18,6 +18,7 @@ import {
   synthesizeConnectorSkill,
 } from "../../../src/skills/connector-skills.ts";
 import { SkillMatcher } from "../../../src/skills/matcher.ts";
+import type { SkillBodyLoad } from "../../../src/skills/types.ts";
 import { partitionSkillsByRole, selectLayer3Skills } from "../../../src/skills/select.ts";
 
 describe("discoveredSkillFromEntry", () => {
@@ -44,7 +45,7 @@ describe("discoveredSkillFromEntry", () => {
 });
 
 describe("hydrateSkill", () => {
-  const lazy = (load: () => Promise<string | null>) =>
+  const lazy = (load: () => Promise<SkillBodyLoad>) =>
     synthesizeConnectorSkill({
       serverName: "srv",
       skillName: "s",
@@ -57,7 +58,7 @@ describe("hydrateSkill", () => {
     let calls = 0;
     const skill = lazy(async () => {
       calls++;
-      return "the body";
+      return { ok: true, body: "the body" };
     });
     expect(skill.body).toBe("");
     expect(calls).toBe(0);
@@ -68,7 +69,9 @@ describe("hydrateSkill", () => {
   });
 
   test("a failed fetch yields null, and a skill with no loader passes through", async () => {
-    expect(await hydrateSkill(lazy(async () => null))).toBeNull();
+    expect(
+      await hydrateSkill(lazy(async () => ({ ok: false, reason: "unreachable" }))),
+    ).toBeNull();
     const eager = synthesizeConnectorSkill({
       serverName: "srv",
       skillName: "s",

@@ -6,8 +6,7 @@ import { Runtime } from "../../src/runtime/runtime.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { startServer } from "../../src/api/server.ts";
 import type { ServerHandle } from "../../src/api/server.ts";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import type { ConnectorRef, PlacementDeclaration } from "../../src/connectors/runtime/types.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
 
@@ -162,7 +161,7 @@ describe("Connector with placements → /v1/workspaces/:wsId/shell", () => {
 });
 
 // =============================================================================
-// 3. MCP client → /mcp → lists nb__ tools → calls nb__list_apps
+// 3. MCP client → /mcp → lists nb__ tools → calls nb__workspace_info
 // =============================================================================
 
 describe("MCP client e2e with nb tools", () => {
@@ -177,14 +176,14 @@ describe("MCP client e2e with nb tools", () => {
 			expect(coreTools.length).toBeGreaterThanOrEqual(7);
 
 			// A genuinely agent-facing nb__ tool — not an app-only (`ui.visibility: ["app"]`)
-			// one (e.g. list_apps), which the /mcp listing strips.
+			// one (e.g. workspace_info), which the /mcp listing strips.
 			const names = coreTools.map((t) => t.name).sort();
 			expect(names).toContain(`${NB_PREFIX}search`);
 			// Regression pin: app-only tools are absent from the /mcp listing
-			// (list_apps is one). Fails if the filter
+			// (workspace_info is one). Fails if the filter
 			// in mcp-server.ts tools/list is dropped, even though the tool stays
 			// callable by name (see the callTool tests below).
-			expect(names).not.toContain(`${NB_PREFIX}list_apps`);
+			expect(names).not.toContain(`${NB_PREFIX}workspace_info`);
 		} finally {
 			await client.close();
 		}
@@ -204,11 +203,11 @@ describe("MCP client e2e with nb tools", () => {
 		}
 	});
 
-	it("callTool nb__list_apps returns structured data", async () => {
+	it("callTool nb__workspace_info returns structured data", async () => {
 		const client = await createMcpClient();
 		try {
 			const result = await client.callTool({
-				name: `${NB_PREFIX}list_apps`,
+				name: `${NB_PREFIX}workspace_info`,
 				arguments: {},
 			});
 			expect(result.isError).toBeFalsy();
@@ -216,7 +215,7 @@ describe("MCP client e2e with nb tools", () => {
 			const textBlocks = result.content as Array<{ type: string; text: string }>;
 			expect(textBlocks[0]!.type).toBe("text");
 			// MCP protocol returns content blocks, not structuredContent.
-			// The text should contain a human-readable app listing.
+			// The text should contain a human-readable workspace summary.
 			expect(textBlocks[0]!.text.length).toBeGreaterThan(0);
 		} finally {
 			await client.close();
@@ -230,11 +229,11 @@ describe("MCP client e2e with nb tools", () => {
 // =============================================================================
 
 describe("POST /v1/workspaces/:wsId/tools/call — all core tools via Bridge proxy", () => {
-	it("list_apps returns array", async () => {
+	it("workspace_info returns content", async () => {
 		const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/tools/call`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ server: "nb", tool: "list_apps", arguments: {} }),
+			body: JSON.stringify({ server: "nb", tool: "workspace_info", arguments: {} }),
 		});
 		expect(res.status).toBe(200);
 		const body = await res.json();

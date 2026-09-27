@@ -1,4 +1,4 @@
-import { McpError } from "@modelcontextprotocol/sdk/types.js";
+import { ProtocolError } from "@modelcontextprotocol/server";
 import { describe, expect, it, spyOn } from "bun:test";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import { isMcpResourceMiss, McpSource } from "../../src/tools/mcp-source.ts";
@@ -14,9 +14,9 @@ import { isMcpResourceMiss, McpSource } from "../../src/tools/mcp-source.ts";
  */
 describe("isMcpResourceMiss — allowlist of genuine misses", () => {
   it("treats resource/method/params JSON-RPC errors as misses", () => {
-    expect(isMcpResourceMiss(new McpError(-32002, "Resource not found"))).toBe(true);
-    expect(isMcpResourceMiss(new McpError(-32601, "Method not found"))).toBe(true);
-    expect(isMcpResourceMiss(new McpError(-32602, "Invalid params"))).toBe(true);
+    expect(isMcpResourceMiss(new ProtocolError(-32002, "Resource not found"))).toBe(true);
+    expect(isMcpResourceMiss(new ProtocolError(-32601, "Method not found"))).toBe(true);
+    expect(isMcpResourceMiss(new ProtocolError(-32602, "Invalid params"))).toBe(true);
   });
 
   it("treats a not-found message (no code) as a miss", () => {
@@ -26,7 +26,7 @@ describe("isMcpResourceMiss — allowlist of genuine misses", () => {
 
   it("does NOT treat transport failures as misses", () => {
     expect(isMcpResourceMiss(new Error("Connection closed"))).toBe(false);
-    expect(isMcpResourceMiss(new McpError(-32000, "Connection closed"))).toBe(false);
+    expect(isMcpResourceMiss(new ProtocolError(-32000, "Connection closed"))).toBe(false);
     expect(isMcpResourceMiss(new Error("fetch failed"))).toBe(false);
     expect(isMcpResourceMiss(new Error("request timed out"))).toBe(false);
   });
@@ -85,7 +85,7 @@ describe("McpSource.readResource — log scoping (no probe spam)", () => {
   });
 
   it("does NOT log a genuine miss even on the app-surface path", async () => {
-    const source = makeSourceWithThrowingClient(new McpError(-32002, "Resource not found"));
+    const source = makeSourceWithThrowingClient(new ProtocolError(-32002, "Resource not found"));
     const spy = spyOn(console, "error").mockImplementation(() => {});
     try {
       expect(await source.readResource("ui://x", { logFailures: true })).toBeNull();
@@ -127,7 +127,7 @@ describe("McpSource.readResource — log scoping (no probe spam)", () => {
   });
 
   it("never throws — the 404 (null) contract holds for every caller", async () => {
-    const miss = makeSourceWithThrowingClient(new McpError(-32002, "Resource not found"));
+    const miss = makeSourceWithThrowingClient(new ProtocolError(-32002, "Resource not found"));
     const transport = makeSourceWithThrowingClient(new Error("Connection closed"));
     expect(await miss.readResource("ui://x")).toBeNull();
     expect(await transport.readResource("ui://x", { logFailures: true })).toBeNull();
@@ -181,7 +181,7 @@ describe("McpSource.readResource — remote session self-heal (issue #571)", () 
 
   it("does NOT restart on a genuine resource miss", async () => {
     const source = makeSource(async () => {
-      throw new McpError(-32002, "Resource not found");
+      throw new ProtocolError(-32002, "Resource not found");
     });
     const restart = spyOn(
       source as unknown as { tryRestart: () => Promise<boolean> },

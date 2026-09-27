@@ -293,12 +293,10 @@ function MobileNavItem({
   label: string;
   end?: boolean;
 }) {
-  const { setDrawerOpen } = useSidebar();
   return (
     <NavLink
       to={to}
       end={end}
-      onClick={() => setDrawerOpen(false)}
       className={({ isActive }) =>
         `flex items-center gap-3 px-3 py-2.5 mx-2 rounded-sm text-sm transition-colors ${
           isActive

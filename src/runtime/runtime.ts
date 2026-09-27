@@ -34,11 +34,7 @@ import { ConnectorLifecycleManager } from "../connectors/runtime/lifecycle.ts";
 import { serverNameFromRef, slugifyServerName } from "../connectors/runtime/paths.ts";
 import { setConnectionRunningHandler } from "../connectors/runtime/pending-auth-buffer.ts";
 import type { ConnectorMcpDeps } from "../connectors/runtime/startup.ts";
-import type {
-  AppInfo,
-  ConnectorInstance,
-  PlacementDeclaration,
-} from "../connectors/runtime/types.ts";
+import type { ConnectorInstance, PlacementDeclaration } from "../connectors/runtime/types.ts";
 import {
   type ConnectorTeardownOutcome,
   uninstallWorkspaceConnector,
@@ -183,7 +179,7 @@ import {
 } from "../skills/skills-extension.ts";
 import { approxTokens } from "../skills/tokens.ts";
 import { MAX_SKILL_BODY_CHARS, truncateMarkdownToBudget } from "../skills/truncate.ts";
-import type { Skill } from "../skills/types.ts";
+import type { Skill, SkillBodyLoad } from "../skills/types.ts";
 import { TelemetryManager } from "../telemetry/manager.ts";
 import { PostHogEventSink } from "../telemetry/posthog-sink.ts";
 import {
@@ -1888,13 +1884,8 @@ export class Runtime {
       skillMatch && matchedSkill ? { ...skillMatch, skill: matchedSkill } : null;
 
     // Always-on context channel: the `always` skills across every tier
-    // (core/builtin/org + workspace + user) plus the always-on connector skills,
-    // then the workspace identity/persona override when the narrated workspace
-    // sets one.
-    const requestContextSkills = withIdentityOverride(
-      [...poolContext, ...connectorContext],
-      activeWorkspace?.identity,
-    );
+    // (core/builtin/org + workspace + user) plus the always-on connector skills.
+    const requestContextSkills = [...poolContext, ...connectorContext];
     const layer3Entries: Layer3SkillEntry[] = selectedLayer3.map((s) => ({
       name: s.skill.manifest.name,
       body: s.skill.body,
@@ -2284,9 +2275,10 @@ export class Runtime {
       const [primarySkill] = await this.discoverServerSkills(appWsId, appContext.serverName);
       // The entered app's guide rides `<app-guide>` this turn, so its body is
       // needed now.
-      const skillResource = primarySkill
+      const loaded = primarySkill
         ? await this.loadServerSkillBody(appWsId, appContext.serverName, primarySkill.entry)
         : null;
+      const skillResource = loaded?.ok ? loaded.body : null;
       // Only claim the exclusion when the body actually reaches the briefing.
       if (skillResource) focusedSkillUri = primarySkill?.uri;
       // Companion reference lives beside the skill (SEP-2640 supporting files share
@@ -2622,7 +2614,7 @@ export class Runtime {
    * `visible.has(serverName)` is load-bearing, not a redundant guard: an
    * installed connector that is not RUNNING — a boot-start that failed, or a
    * connector torn down by a disconnect — must stay out of the agent's view
-   * (`getApps` → `nb__list_apps`), because `buildAppInfo` carries no liveness
+   * (`buildAppsList`), because `buildAppInfo` carries no liveness
    * into the prompt: a down connector would read as an ordinary usable app whose
    * tools are inexplicably missing. Deleting this filter surfaces every such
    * record as a usable app.
@@ -2791,7 +2783,8 @@ export class Runtime {
 
   /**
    * Enumerate a source's skills from its `skills/list`, or nothing when it
-   * does not declare the Skills extension.
+   * does not serve the Skills extension (see `McpSource.skillsDiscovery` for
+   * how a 2025-era connection that cannot declare it is asked anyway).
    *
    * `shortfall` names the way the result is knowingly incomplete: a transport
    * error cut the enumeration short (`enumeration_failed`), or the page
@@ -2803,7 +2796,7 @@ export class Runtime {
     skills: DiscoveredSkill[];
     shortfall?: "enumeration_failed" | "enumeration_truncated";
   }> {
-    if (!source.declaresSkillsExtension()) return { skills: [] };
+    if (source.skillsDiscovery() === "none") return { skills: [] };
     const skills: DiscoveredSkill[] = [];
     const { entries, ok, truncated } = await source.listSkills();
     for (const raw of entries) {
@@ -2820,26 +2813,26 @@ export class Runtime {
   /**
    * Read a skill's `SKILL.md` from the workspace's own instance of its server
    * and verify it against the listing entry. A failure is reported and says
-   * whether the body was unreadable or failed verification.
+   * whether the server was unreachable or its content failed verification.
    */
   private async fetchVerifiedSkillText(
     wsId: string,
     serverName: string,
     entry: SkillEntry,
-  ): Promise<{ ok: true; text: string } | { ok: false; reason: "unreadable" | "unverified" }> {
+  ): Promise<{ ok: true; text: string } | { ok: false; reason: "unreachable" | "unverified" }> {
     const source = this._workspaceRegistries
       .get(wsId)
       ?.getSources()
       .find((s) => s.name === serverName);
     const unwrapped = source instanceof SharedSourceRef ? source.unwrap() : source;
-    if (!(unwrapped instanceof McpSource)) return { ok: false, reason: "unreadable" };
+    if (!(unwrapped instanceof McpSource)) return { ok: false, reason: "unreachable" };
     const text = await unwrapped
       .readResource(entry.uri)
       .then((data) => data?.text)
       .catch(() => undefined);
     if (!text) {
       reportSkillDiscoveryDegraded({ wsId, serverName, reason: "skill_unreadable", recovered: 0 });
-      return { ok: false, reason: "unreadable" };
+      return { ok: false, reason: "unreachable" };
     }
     const verified = verifySkillEntrypoint(entry, text);
     if (!verified.ok) {
@@ -2875,25 +2868,27 @@ export class Runtime {
     wsId: string,
     serverName: string,
     entry: SkillEntry,
-  ): Promise<string | null> {
+  ): Promise<SkillBodyLoad> {
     const digest =
       entry.resources === "dynamic"
         ? undefined
         : entry.resources.find((file) => file.uri === entry.uri)?.digest;
     if (digest) {
       const cached = this.skillBodyCache.get(digest);
-      if (cached !== undefined) return cached;
+      if (cached !== undefined) return { ok: true, body: cached };
       const failedAt = this.skillBodyFailures.get(digest);
-      if (failedAt !== undefined && Date.now() - failedAt < Runtime.SKILL_CACHE_TTL) return null;
+      if (failedAt !== undefined && Date.now() - failedAt < Runtime.SKILL_CACHE_TTL) {
+        return { ok: false, reason: "unverified" };
+      }
     }
     const fetched = await this.fetchVerifiedSkillText(wsId, serverName, entry);
     if (!fetched.ok) {
-      // Only a verification failure is remembered: an unreadable body is a
+      // Only a verification failure is remembered: an unreachable server is a
       // transport fault, retried the next time the skill is needed.
       if (digest && fetched.reason === "unverified") {
         boundedSet(this.skillBodyFailures, digest, Date.now());
       }
-      return null;
+      return { ok: false, reason: fetched.reason };
     }
     const parsed = parseSkillMarkdown(entry.uri, fetched.text);
     // Token budget: cap the body (heading-aware, so a trailing "rules"
@@ -2905,7 +2900,7 @@ export class Runtime {
       );
     }
     if (digest) boundedSet(this.skillBodyCache, digest, capped.body);
-    return capped.body;
+    return { ok: true, body: capped.body };
   }
 
   /**
@@ -4749,7 +4744,7 @@ export class Runtime {
       .map((s) => ({
         name: s.manifest.name,
         body: s.body,
-        ...(s.loadBody ? { loadBody: s.loadBody } : {}),
+        ...(s.loadBody ? { loadBody: bodyOrNull(s.loadBody) } : {}),
         scope: s.manifest.scope ?? PUBLISHED_SKILL_SCOPE,
         toolAffinity: s.manifest.toolAffinity ?? [],
       }));
@@ -5164,37 +5159,6 @@ export class Runtime {
   /** Get the file context configuration with defaults applied. */
   getFilesConfig(): FileConfig {
     return { ...DEFAULT_FILE_CONFIG, ...this.config.files };
-  }
-
-  /** Build AppInfo list for GET /v1/apps endpoint (workspace-scoped). */
-  async getApps(): Promise<AppInfo[]> {
-    const registry = this.getRegistryForCurrentWorkspace();
-    const wsId = this._currentWorkspaceId?.();
-    if (!wsId) {
-      throw new Error("No workspace in request context. Every request must be workspace-scoped.");
-    }
-    const apps: AppInfo[] = [];
-    for (const instance of this.getConnectorInstancesForWorkspace(wsId)) {
-      let toolCount = 0;
-      try {
-        const source = registry.getSources().find((s) => s.name === instance.serverName);
-        if (source) {
-          const tools = await source.tools();
-          toolCount = tools.length;
-        }
-      } catch {
-        // Source may be stopped or crashed
-      }
-      apps.push({
-        name: instance.serverName,
-        connectorName: instance.connectorName,
-        version: instance.version,
-        status: instance.state,
-        toolCount,
-        ui: instance.ui,
-      });
-    }
-    return apps;
   }
 
   /**
@@ -5774,6 +5738,14 @@ function buildWorkspaceContext(
   return workspace ? { id: workspace.id, name: workspace.name } : { id: wsId };
 }
 
+/** A skill body loader as the engine's surface-once channel takes it: the body, or `null`. */
+function bodyOrNull(load: () => Promise<SkillBodyLoad>): () => Promise<string | null> {
+  return async () => {
+    const loaded = await load();
+    return loaded.ok ? loaded.body : null;
+  };
+}
+
 /** Resolve each skill's on-demand body, dropping any that cannot be fetched. */
 async function hydrateSkills(skills: Skill[]): Promise<Skill[]> {
   const loaded = await Promise.all(skills.map(hydrateSkill));
@@ -5885,15 +5857,6 @@ function buildSurfaceOptions(
   };
 }
 
-/** Append the workspace identity/persona override skill to the context channel when the workspace sets one. */
-function withIdentityOverride(
-  contextBase: Skill[],
-  workspaceIdentity: string | undefined,
-): Skill[] {
-  if (!workspaceIdentity) return contextBase;
-  return [...contextBase, makeIdentitySkill(workspaceIdentity)];
-}
-
 /**
  * Build the per-request `transformContext` hook: slice history → apply the
  * provider reasoning-replay policy → window by token budget. `overflowAttempt`
@@ -5960,34 +5923,6 @@ export function buildContextAssembledPayload(input: {
   ];
   const totalTokens = sources.reduce((sum, s) => sum + s.tokens, 0);
   return { sources, excluded: [], totalTokens };
-}
-
-/**
- * Create a synthetic identity skill from a workspace's identity markdown.
- * Injected at priority 1 (core context layer) so it becomes the agent persona.
- */
-/**
- * Exported so the compose-effective-context debug tool can build the
- * same per-request identity override `runtime.chat()` uses, instead of
- * silently composing against the bare global `contextSkills` (which
- * would lie about what's in the prompt for any workspace that has
- * `workspace.identity` set).
- */
-export function makeIdentitySkill(body: string): Skill {
-  return {
-    manifest: {
-      name: "identity-override",
-      description: "Workspace identity override",
-      loadingStrategy: "always",
-      priority: 1,
-      status: "active",
-      // It's the workspace's identity field, so the ledger labels it
-      // `workspace`, not the `?? "org"` fallback in the payload builder.
-      scope: "workspace",
-    },
-    body,
-    sourcePath: "",
-  };
 }
 
 /**

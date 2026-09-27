@@ -134,8 +134,10 @@ async function verifyWithProvider(
  * Whether a verified credential is valid for the request's resource. The rule
  * is here, above every provider, so it holds whatever the provider is:
  *
- * - A first-party credential (the web app's login) is not bound to a resource;
- *   it is valid on every route, and membership gates what it reaches.
+ * - A first-party credential (the web app's login, or a token the provider's
+ *   configuration names as issued to one of the operator's own apps) is not
+ *   bound to a resource; it is valid on every route, and membership gates
+ *   what it reaches.
  * - A resource token is valid only at the resource it was minted for: its
  *   audience must contain the canonical URL exactly. No prefix match and no
  *   normalization — the authorization server echoes the client's `resource`

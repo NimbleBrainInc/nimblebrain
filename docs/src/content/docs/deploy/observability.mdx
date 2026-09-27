@@ -129,6 +129,20 @@ An app can declare an [outbox](/config/nimblebrain-json/#notifications) — a re
 
 `source` is the connector's MCP source name, bucketed to `other` for a name outside the label charset. There is no workspace label: one runtime serves one tenant, so the scrape already attributes it, and a workspace label would be unbounded.
 
+### Credential store metrics
+
+The states of [sealed secrets](/config/secrets/#sealing-the-files) that should page someone rather than sit in the workspace log:
+
+| Metric | Type | Labels | What it says |
+|---|---|---|---|
+| `nb_credential_seal_failures_total` | counter | `reason` | Stored secrets that failed to become a usable value, one per `audit.credential_seal_failure` line. `reason` is `malformed`, `unknown_kid`, `auth_failed`, `no_sealer`, `plaintext_refused` or `reseal_skipped`. |
+| `nb_credential_store_plaintext_accepted` | gauge | — | `1` when a sealing key is configured and the boot sweep could not prove every secret sealed, so plaintext files are still accepted. `0` after a clean sweep, and `0` with no sealing key, where plaintext is the configuration. Set once per boot. |
+| `nb_credential_store_sealed` | gauge | — | `1` when a sealing key is configured, `0` when secrets are plaintext files. Alert on `0` for a deployment that is meant to be sealed. Set once per boot. |
+
+`reason` is the only label. A key name would disclose which vendors a deployment uses, and a workspace or user id is unbounded; the audit line beside each increment names the scope, key and wanted key id.
+
+Alert on the counter's value (`nb_credential_seal_failures_total > 0`), not on `increase()` or `rate()`. The boot sweep runs before the first scrape, so a failure it finds is already in the first sample and never shows as an increase. A restart resets the counter and the next sweep counts the failure again.
+
 ## Background loops
 
 Two loops run on timers inside the runtime process: the **connection revalidator**, which re-checks connectors whose upstream credential can lapse without a transport error ([`NB_CONNECTION_REVALIDATE_INTERVAL_SECONDS`](/config/environment/#runtime--server)), and the **notification poller**, which reads declared outboxes ([`notifications.poll`](/config/nimblebrain-json/#notifications)).

@@ -106,12 +106,12 @@ async function makeRuntime(): Promise<Runtime> {
 }
 
 describe("Core Source", () => {
-	it("tools() returns 10 tools with nb__ prefix", async () => {
+	it("tools() returns 7 tools with nb__ prefix", async () => {
 		const runtime = await makeRuntime();
 		try {
 			const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
 			const tools = await source.tools();
-			expect(tools).toHaveLength(10);
+			expect(tools).toHaveLength(7);
 			for (const tool of tools) {
 				expect(tool.name).toMatch(/^nb__/);
 			}
@@ -119,13 +119,10 @@ describe("Core Source", () => {
 			expect(names).toEqual([
 				"nb__briefing",
 				"nb__get_config",
-				"nb__list_apps",
 				"nb__list_artifacts",
-				"nb__manage_identity",
 				"nb__read_artifact",
 				"nb__set_model_config",
 				"nb__set_preferences",
-				"nb__version",
 				"nb__workspace_info",
 			]);
 		} finally {
@@ -151,19 +148,18 @@ describe("Core Source", () => {
 		}
 	});
 
-	it("nb__list_apps returns app list", async () => {
+	it("nb__workspace_info returns the platform version", async () => {
 		const runtime = await makeRuntime();
 		try {
 			await provisionTestWorkspace(runtime);
 			const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
 			const result = await runWithRequestContext(
 				{ identity: null, workspaceId: TEST_WORKSPACE_ID },
-				() => source.execute("list_apps", {}),
+				() => source.execute("workspace_info", {}),
 			);
 			expect(result.isError).toBe(false);
 			const data = result.structuredContent as Record<string, unknown>;
-			expect(data.apps).toBeDefined();
-			expect(Array.isArray(data.apps)).toBe(true);
+			expect(typeof data.version).toBe("string");
 		} finally {
 			await runtime.shutdown();
 		}
@@ -1419,120 +1415,6 @@ describe("Core Source", () => {
 			expect(b.structuredContent?.lede).toBe("3 follow-ups are overdue.");
 			// Nothing about the member who triggered the generation is in it.
 			expect(JSON.stringify(b)).not.toContain("Alice");
-		} finally {
-			await runtime.shutdown();
-		}
-	});
-
-	// ----------------------------------------------------------------------
-	// manage_identity authorization (STRICT workspace-scoped write gate)
-	// ----------------------------------------------------------------------
-	//
-	// The gate now delegates to `canWriteWorkspaceScoped`: only a workspace
-	// member with role "admin" may write the workspace identity override.
-	// `orgRole` (org admin/owner) grants NO bypass — an org admin who is not
-	// a workspace admin member is denied. Null identity (dev/unauthenticated
-	// mode) is intentionally allowed through, matching prior behavior.
-	function identityCtx(identity: unknown) {
-		return {
-			identity: identity as never,
-			workspaceId: TEST_WORKSPACE_ID,
-		};
-	}
-
-	it("nb__manage_identity denies an org admin/owner who is NOT a workspace member", async () => {
-		const runtime = await makeRuntime();
-		try {
-			await provisionTestWorkspace(runtime);
-			const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
-
-			// Org owner, but not a member of the active workspace.
-			const orgOwner = {
-				id: "usr_orgowner",
-				email: "owner@example.com",
-				displayName: "Org Owner",
-				orgRole: "owner",
-				preferences: {},
-			};
-
-			const result = await runWithRequestContext(identityCtx(orgOwner), () =>
-				source.execute("manage_identity", { body: "should be denied" }),
-			);
-			expect(result.isError).toBe(true);
-			expect(extractText(result.content)).toContain("Not a member");
-		} finally {
-			await runtime.shutdown();
-		}
-	});
-
-	it("nb__manage_identity allows a workspace admin member (no orgRole bypass needed)", async () => {
-		const runtime = await makeRuntime();
-		try {
-			await provisionTestWorkspace(runtime);
-			await runtime.getWorkspaceStore().addMember(TEST_WORKSPACE_ID, "usr_wsadmin", "admin");
-			const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
-
-			// Plain org member, but a workspace admin — allowed.
-			const wsAdmin = {
-				id: "usr_wsadmin",
-				email: "wsadmin@example.com",
-				displayName: "Workspace Admin",
-				orgRole: "member",
-				preferences: {},
-			};
-
-			const result = await runWithRequestContext(identityCtx(wsAdmin), () =>
-				source.execute("manage_identity", { body: "hello identity" }),
-			);
-			expect(result.isError).toBe(false);
-			const data = result.structuredContent as Record<string, unknown>;
-			expect(data.success).toBe(true);
-			const ws = await runtime.getWorkspaceStore().get(TEST_WORKSPACE_ID);
-			expect(ws?.identity).toBe("hello identity");
-		} finally {
-			await runtime.shutdown();
-		}
-	});
-
-	it("nb__manage_identity denies a workspace non-admin member even if they are an org owner", async () => {
-		const runtime = await makeRuntime();
-		try {
-			await provisionTestWorkspace(runtime);
-			await runtime.getWorkspaceStore().addMember(TEST_WORKSPACE_ID, "usr_wsmember", "member");
-			const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
-
-			// Org owner AND a workspace member, but only "member" role — denied.
-			// Proves orgRole grants no bypass for workspace-scoped writes.
-			const wsMember = {
-				id: "usr_wsmember",
-				email: "member@example.com",
-				displayName: "Workspace Member",
-				orgRole: "owner",
-				preferences: {},
-			};
-
-			const result = await runWithRequestContext(identityCtx(wsMember), () =>
-				source.execute("manage_identity", { body: "should be denied" }),
-			);
-			expect(result.isError).toBe(true);
-			expect(extractText(result.content)).toContain("workspace admin");
-		} finally {
-			await runtime.shutdown();
-		}
-	});
-
-	it("nb__manage_identity allows a null identity through (dev/unauthenticated mode preserved)", async () => {
-		const runtime = await makeRuntime();
-		try {
-			await provisionTestWorkspace(runtime);
-			const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
-
-			const result = await runWithRequestContext(identityCtx(null), () =>
-				source.execute("manage_identity", { body: "dev write" }),
-			);
-			expect(result.isError).toBe(false);
-			const ws = await runtime.getWorkspaceStore().get(TEST_WORKSPACE_ID);
-			expect(ws?.identity).toBe("dev write");
 		} finally {
 			await runtime.shutdown();
 		}

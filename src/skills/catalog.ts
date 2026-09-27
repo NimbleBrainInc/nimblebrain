@@ -13,7 +13,7 @@
  */
 
 import type { ConnectorSkillCandidate } from "../engine/types.ts";
-import type { Skill } from "./types.ts";
+import type { Skill, SkillBodyLoad } from "./types.ts";
 
 /**
  * One activatable skill, with the body the activation tool delivers. The
@@ -26,7 +26,7 @@ export interface ActivatableSkill {
   /** The body, or `""` when {@link ActivatableSkill.loadBody} fetches it on activation. */
   body: string;
   /** Fetches the body of a skill whose body is loaded only on demand; `null` when it cannot be. */
-  loadBody?: () => Promise<string | null>;
+  loadBody?: () => Promise<SkillBodyLoad>;
   /**
    * Provenance label for the activation block. A filesystem skill carries its
    * storage tier (`org` / `workspace` / `user`); a server-published one carries

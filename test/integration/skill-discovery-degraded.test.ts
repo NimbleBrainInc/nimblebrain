@@ -17,12 +17,7 @@
  * uninstall.
  */
 
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import {
-  CallToolRequestSchema,
-  ListToolsRequestSchema,
-  ReadResourceRequestSchema,
-} from "@modelcontextprotocol/sdk/types.js";
+import { Server } from "@modelcontextprotocol/server";
 import { afterAll, beforeAll, describe, expect, it, spyOn } from "bun:test";
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -35,8 +30,8 @@ import { McpSource } from "../../src/tools/mcp-source.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { type RemoteMcpFixture, startRemoteMcpServer } from "../helpers/remote-mcp-fixture.ts";
 import {
+  handleSkillsList,
   SKILLS_EXTENSION_CAPABILITY,
-  SkillsListRequestSchema,
   serveSkills,
   skillEntryFor,
 } from "../helpers/skills-server.ts";
@@ -63,12 +58,12 @@ HEALTHY-MARKER — this rule must be in context on every turn.`;
 
 /** The two verbs every fixture below answers the same way. */
 function withPingTool(server: Server, toolName = "ping"): Server {
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({
+  server.setRequestHandler('tools/list', async () => ({
     tools: [
       { name: toolName, description: "Ping", inputSchema: { type: "object", properties: {} } },
     ],
   }));
-  server.setRequestHandler(CallToolRequestSchema, async () => ({
+  server.setRequestHandler('tools/call', async () => ({
     content: [{ type: "text", text: "done" }],
   }));
   return server;
@@ -80,7 +75,7 @@ const SKILLS_CAPS = { capabilities: { tools: {}, resources: {}, ...SKILLS_EXTENS
 /** Server whose `skills/list` throws; `tools/list` still answers. */
 function createFailingServer(): Server {
   const server = withPingTool(new Server({ name: "failing", version: "0.1.0" }, SKILLS_CAPS));
-  server.setRequestHandler(SkillsListRequestSchema, async () => {
+  handleSkillsList(server, async () => {
     throw new Error("skills/list is unavailable");
   });
   return server;
@@ -89,10 +84,7 @@ function createFailingServer(): Server {
 /** Server whose `skills/list` always returns a cursor — never finishes. */
 function createTruncatedServer(): Server {
   const server = withPingTool(new Server({ name: "truncated", version: "0.1.0" }, SKILLS_CAPS));
-  server.setRequestHandler(SkillsListRequestSchema, async () => ({
-    skills: [],
-    nextCursor: "more",
-  }));
+  handleSkillsList(server, () => ({ skills: [], nextCursor: "more" }));
   return server;
 }
 
@@ -100,10 +92,10 @@ function createTruncatedServer(): Server {
 function createUnreadableServer(): Server {
   const server = withPingTool(new Server({ name: "unreadable", version: "0.1.0" }, SKILLS_CAPS));
   const body = SKILL_BODY.replace("name: guide", "name: broken");
-  server.setRequestHandler(SkillsListRequestSchema, async () => ({
+  handleSkillsList(server, () => ({
     skills: [skillEntryFor("skill://broken/SKILL.md", body)],
   }));
-  server.setRequestHandler(ReadResourceRequestSchema, async () => {
+  server.setRequestHandler('resources/read', async () => {
     throw new Error("resources/read is unavailable");
   });
   return server;
@@ -113,7 +105,7 @@ function createUnreadableServer(): Server {
 function createHealthyServer(): Server {
   const server = withPingTool(new Server({ name: "healthy", version: "0.1.0" }, SKILLS_CAPS), "go");
   serveSkills(server, () => ({ "skill://guide/SKILL.md": SKILL_BODY }));
-  server.setRequestHandler(ReadResourceRequestSchema, async (req) => ({
+  server.setRequestHandler("resources/read", async (req) => ({
     contents: [{ uri: req.params.uri, mimeType: "text/markdown", text: SKILL_BODY }],
   }));
   return server;
@@ -282,11 +274,16 @@ describe("degraded skill discovery", () => {
       runtime as unknown as {
         loadConnectorSkills: (
           wsId: string,
-        ) => Promise<Array<{ manifest: { name: string }; loadBody?: () => Promise<string | null> }>>;
+        ) => Promise<
+          Array<{
+            manifest: { name: string };
+            loadBody?: () => Promise<{ ok: boolean; body?: string }>;
+          }>
+        >;
       }
     ).loadConnectorSkills(TEST_WORKSPACE_ID);
     const healthySkill = pool.find((s) => s.manifest.name === `connector:${HEALTHY_NAME}:guide`);
-    expect(await healthySkill?.loadBody?.()).toContain("HEALTHY-MARKER");
+    expect((await healthySkill?.loadBody?.())?.body).toContain("HEALTHY-MARKER");
   });
 
   it("reports source_unavailable only for a connector believed running — an auth-resting connector stays silent", async () => {

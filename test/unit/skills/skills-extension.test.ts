@@ -156,26 +156,57 @@ describe("disambiguateSkillNames", () => {
   });
 });
 
-/** An `McpSource` whose SDK client is a stub. */
-function makeSource(client: unknown): McpSource {
+/**
+ * An `McpSource` whose SDK client is a stub, on the given era. The stub
+ * defaults to a server that advertises no extensions.
+ */
+function makeSource(client: unknown, era: "legacy" | "modern" = "legacy"): McpSource {
   const source = new McpSource(
     "stub",
     { type: "remote", url: new URL("http://localhost:0/mcp") },
     new NoopEventSink(),
   );
-  (source as unknown as { client: unknown }).client = client;
+  const stub =
+    client && typeof client === "object" && !("getServerCapabilities" in client)
+      ? { getServerCapabilities: () => ({}), ...client }
+      : client;
+  const internals = source as unknown as { client: unknown; protocolEra: string };
+  internals.client = stub;
+  internals.protocolEra = era;
   return source;
 }
 
+/** A JSON-RPC error with `code`, as the SDK surfaces a server's error answer. */
+function rpcError(code: number): Error & { code: number } {
+  return Object.assign(new Error(`rpc ${code}`), { code });
+}
+
 describe("McpSource skills extension", () => {
-  it("reads the extension from the server's declared capabilities", () => {
-    const declares = makeSource({
-      getServerCapabilities: () => ({ resources: {}, extensions: { [SKILLS_EXTENSION_ID]: {} } }),
+  it("asks a declaring server on either era, and an undeclared one only on the 2025 era", () => {
+    const declares = { getServerCapabilities: () => ({ extensions: { [SKILLS_EXTENSION_ID]: {} } }) };
+    expect(makeSource(declares, "modern").skillsDiscovery()).toBe("declared");
+    expect(makeSource(declares, "legacy").skillsDiscovery()).toBe("declared");
+    expect(makeSource({}, "modern").skillsDiscovery()).toBe("none");
+    expect(makeSource({}, "legacy").skillsDiscovery()).toBe("probe");
+  });
+
+  it("reads -32601 on a 2025-era probe as a complete listing of nothing", async () => {
+    const source = makeSource({
+      request: async () => {
+        throw rpcError(-32601);
+      },
     });
-    const silent = makeSource({ getServerCapabilities: () => ({ resources: {} }) });
-    expect(declares.declaresSkillsExtension()).toBe(true);
-    expect(silent.declaresSkillsExtension()).toBe(false);
-    expect(makeSource(null).declaresSkillsExtension()).toBe(false);
+    expect(await source.listSkills()).toEqual({ entries: [], ok: true, truncated: false });
+  });
+
+  it("reads -32601 from a server that declared the extension as a failure", async () => {
+    const source = makeSource({
+      getServerCapabilities: () => ({ extensions: { [SKILLS_EXTENSION_ID]: {} } }),
+      request: async () => {
+        throw rpcError(-32601);
+      },
+    });
+    expect(await source.listSkills()).toEqual({ entries: [], ok: false, truncated: false });
   });
 
   it("follows skills/list pagination", async () => {

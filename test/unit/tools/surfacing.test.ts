@@ -612,8 +612,8 @@ describe("surfaceTools — catalog activation is reachable without a promote", (
 describe("surfaceTools — ui.visibility filtering", () => {
 	it("excludes tools whose ui.visibility lacks \"model\" from direct tools", () => {
 		const internalTool: ToolSchema = {
-			name: "nb__manage_identity",
-			description: "Internal identity tool",
+			name: "nb__app_only",
+			description: "App-only tool",
 			inputSchema: { type: "object", properties: {} },
 			meta: { ui: { visibility: ["app"] } },
 		};
@@ -623,7 +623,7 @@ describe("surfaceTools — ui.visibility filtering", () => {
 		const result = surfaceTools(all, null);
 
 		const directNames = result.direct.map((t) => t.name);
-		expect(directNames).not.toContain("nb__manage_identity");
+		expect(directNames).not.toContain("nb__app_only");
 		expect(directNames).toContain("nb__search");
 	});
 

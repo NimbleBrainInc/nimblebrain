@@ -495,7 +495,6 @@ export class WorkspaceStore {
         | "connectors"
         | "skillDirs"
         | "models"
-        | "identity"
         | "oauthOperatorApps"
         | "hooks"
         | "notifications"

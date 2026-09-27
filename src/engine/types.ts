@@ -1,10 +1,6 @@
 import type { LanguageModelV4Message } from "@ai-sdk/provider";
 import type { McpUiToolVisibility } from "@modelcontextprotocol/ext-apps";
-import type {
-  ContentBlock,
-  TextContent,
-  ToolAnnotations,
-} from "@modelcontextprotocol/sdk/types.js";
+import type { ContentBlock, TextContent, ToolAnnotations } from "@modelcontextprotocol/server";
 import type { TokenUsage } from "../usage/types.ts";
 
 export type { ContentBlock, TextContent };
@@ -404,7 +400,14 @@ export type EngineEventType =
    * nobody watched is still something an operator can read back. Payload:
    * { principalId, workspaceId, tool, reason, outcome, classification?, ms }.
    */
-  | "audit.unattended_dispatch";
+  | "audit.unattended_dispatch"
+  /**
+   * The credential store finished its boot reconcile. Payload:
+   * { sealed, strictPlaintextRefusal } — whether a sealing key is configured,
+   * and whether the sweep saw enough to refuse plaintext from now on. Emitted
+   * once per boot; nothing after it changes either field.
+   */
+  | "credential_store.reconciled";
 
 /**
  * Generic event envelope. Per-event-type payload schemas are declared in

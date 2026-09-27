@@ -90,11 +90,11 @@ def dashboard() -> str:
 ### TypeScript (MCP SDK)
 
 ```typescript
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { McpServer } from "@modelcontextprotocol/server";
 
 const server = new McpServer({ name: "my-app", version: "1.0.0" });
 
-server.resource("dashboard", "ui://dashboard", async () => ({
+server.registerResource("dashboard", "ui://dashboard", {}, async () => ({
   contents: [{
     uri: "ui://dashboard",
     mimeType: "text/html;profile=mcp-app",

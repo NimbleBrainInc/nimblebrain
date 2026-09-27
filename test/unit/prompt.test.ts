@@ -115,58 +115,6 @@ describe("composeSystemPrompt", () => {
   });
 });
 
-describe("composeSystemPrompt — workspace identity", () => {
-  it("workspace identity override replaces default identity", () => {
-    const identitySkill = makeContextSkill("identity-override", 1, "You are LegalBot for Acme Law.");
-    const result = composeSystemPrompt([identitySkill]);
-    expect(result).toContain("You are LegalBot for Acme Law.");
-    expect(result).not.toContain(DEFAULT_IDENTITY);
-  });
-
-  it("workspace identity coexists with soul.md core skill", () => {
-    const soul = makeContextSkill("soul", 0, "Core system instructions.");
-    const identitySkill = makeContextSkill("identity-override", 1, "You are LegalBot.");
-    const result = composeSystemPrompt([soul, identitySkill]);
-    expect(result).toContain("Core system instructions.");
-    expect(result).toContain("You are LegalBot.");
-  });
-
-  it("no workspace identity falls back to DEFAULT_IDENTITY", () => {
-    const result = composeSystemPrompt([]);
-    expect(result).toContain(DEFAULT_IDENTITY);
-  });
-
-  it("workspace identity appears in Layer 0 (core context)", () => {
-    const soul = makeContextSkill("soul", 0, "Core.");
-    const identitySkill = makeContextSkill("identity-override", 1, "Workspace persona.");
-    const userCtx = makeContextSkill("user-skill", 20, "User context.");
-    const result = composeSystemPrompt([soul, identitySkill, userCtx]);
-
-    // Identity should appear before user context
-    const identityIdx = result.indexOf("Workspace persona.");
-    const userIdx = result.indexOf("User context.");
-    expect(identityIdx).toBeGreaterThan(-1);
-    expect(userIdx).toBeGreaterThan(identityIdx);
-  });
-
-  it("different workspace identities produce different prompts", () => {
-    const legalIdentity = makeContextSkill("identity-override", 1, "You are LegalBot for Acme Law.");
-    const marketingIdentity = makeContextSkill(
-      "identity-override",
-      1,
-      "You are MarketBot for creative campaigns.",
-    );
-
-    const legalPrompt = composeSystemPrompt([legalIdentity]);
-    const marketingPrompt = composeSystemPrompt([marketingIdentity]);
-
-    expect(legalPrompt).toContain("LegalBot");
-    expect(legalPrompt).not.toContain("MarketBot");
-    expect(marketingPrompt).toContain("MarketBot");
-    expect(marketingPrompt).not.toContain("LegalBot");
-  });
-});
-
 const sampleApps: PromptAppInfo[] = [
   { name: "tasks", ui: { name: "Tasks", primaryView: "board" } },
 ];

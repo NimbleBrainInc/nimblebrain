@@ -9,6 +9,7 @@ import { Aside, Tabs, TabItem } from '@astrojs/starlight/components';
 |---|---|
 | **Capability** | `ai.nimblebrain/host-resources`, in the client's `capabilities.extensions` |
 | **Methods** | `ai.nimblebrain/resources/read`, `ai.nimblebrain/resources/list`, sent by the server to the host |
+| **Eras** | 2025-era connections only. Not claimed or served on `2026-07-28`; see [Which connections can use it](#which-connections-can-use-it) |
 | **Schemas** | The specification's `ReadResourceRequest`/`Result` and `ListResourcesRequest`/`Result`, unchanged |
 | **Fallback** | The tool takes the content inline as an argument |
 
@@ -20,9 +21,17 @@ On NimbleBrain, that gap shows up constantly. A user drops a contract, a spreads
 
 With this extension, the tool takes a URI such as `files://fl_abc123`, and the server reads the file from the host itself. The model passes a short reference and never sees the bytes.
 
+## Which connections can use it
+
+The methods are served on 2025-era connections only: a connection that negotiated `2025-11-25` or an earlier revision through `initialize`.
+
+They are requests the server sends to the client. The `2026-07-28` revision removed server-to-client requests: a server that needs something from the client mid-request answers with `input_required` and a closed set of input requests (elicitation, sampling, roots), and that set has no place for an extension's method yet. Adding one is proposed upstream in [modelcontextprotocol#2919](https://github.com/modelcontextprotocol/modelcontextprotocol/issues/2919). Until the specification has such a hook, a server that negotiated `2026-07-28` with the host cannot reach these methods, and its tools should take content inline.
+
+The host claims the capability only where it serves the methods, so checking for the capability is enough. On a 2025-era connection it is in the `initialize` request. On a `2026-07-28` connection it is absent from every request's `_meta["io.modelcontextprotocol/clientCapabilities"]`. A server that also wants to be explicit can check the negotiated protocol version: the methods are reachable only when it is earlier than `2026-07-28`.
+
 ## Capability
 
-The host advertises the capability on every `initialize`:
+On a 2025-era connection, the host advertises the capability in `initialize`:
 
 ```json
 {
@@ -162,7 +171,7 @@ async def summarize(file_uri: str | None = None, text: str | None = None, ctx: C
 </TabItem>
 <TabItem label="Wire (any SDK)">
 
-1. After `initialize`, read `clientCapabilities.extensions["ai.nimblebrain/host-resources"]`.
+1. After `initialize`, read `clientCapabilities.extensions["ai.nimblebrain/host-resources"]`. On a `2026-07-28` connection the capability is never present, so the tool always takes the fallback.
 2. If `read.enabled` is true and the URI's scheme is in `schemes`, send an `ai.nimblebrain/resources/read` request to the client over the same session.
 3. Parse the result as a standard `ReadResourceResult`.
 4. Otherwise, fall back to inline content.
