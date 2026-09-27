@@ -7,7 +7,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { useLocation } from "react-router-dom";
+import { useLocation, useNavigationType } from "react-router-dom";
 
 type SidebarState = "expanded" | "collapsed" | "hidden";
 
@@ -89,14 +89,17 @@ export function SidebarProvider({ children }: { children: React.ReactNode }) {
   // where to go, and the destination must not stay covered. Keyed on
   // `location.key`, which changes on every navigation — a tap on the page
   // already open (a same-URL replace) and a search-only change included —
-  // and not on the first render.
+  // and not on the first render. KEEP_DRAWER_OPEN is honored only on the
+  // navigation that carries it: history restores an entry's state on back and
+  // forward, and those still close the drawer.
   const location = useLocation();
+  const navigationType = useNavigationType();
   const lastKeyRef = useRef(location.key);
   useEffect(() => {
     if (location.key === lastKeyRef.current) return;
     lastKeyRef.current = location.key;
-    if (!keepsDrawerOpen(location.state)) setDrawerOpen(false);
-  }, [location]);
+    if (navigationType === "POP" || !keepsDrawerOpen(location.state)) setDrawerOpen(false);
+  }, [location, navigationType]);
 
   const toggle = useCallback(() => {
     if (state === "hidden") {

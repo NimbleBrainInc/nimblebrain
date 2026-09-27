@@ -8,7 +8,8 @@
 //   2. The drawer does not close on the provider's first render.
 //   3. Switching workspaces in the tree keeps it open (KEEP_DRAWER_OPEN): the
 //      switch expands the new workspace's views for the user to pick from.
-//      Re-selecting the focused workspace opens its overview and closes it.
+//      Re-selecting the focused workspace opens its overview and closes it,
+//      and so does going back or forward to a switch's history entry.
 // ---------------------------------------------------------------------------
 
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
@@ -238,6 +239,20 @@ describe("mobile drawer — a navigation closes it", () => {
     await click(workspaceHeader(c, "ws_team"));
 
     expect(probe.path).toBe("/w/team/");
+    expect(probe.isDrawerOpen).toBe(false);
+  });
+
+  test("going back to a workspace switch closes the drawer", async () => {
+    const c = await mount({ initialPath: "/w/team/" });
+    await openDrawer();
+    await click(workspaceHeader(c, "ws_other"));
+    await click(linkTo(c, "/w/other/conversations"));
+    await openDrawer();
+
+    // The switch's history entry still carries KEEP_DRAWER_OPEN.
+    await act(async () => probe.navigate(-1));
+
+    expect(probe.path).toBe("/w/other/");
     expect(probe.isDrawerOpen).toBe(false);
   });
 });
