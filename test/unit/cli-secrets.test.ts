@@ -8,7 +8,15 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable } from "node:stream";
@@ -42,7 +50,12 @@ function harness(store?: CredentialStore) {
     store: backing,
     io,
     run: (argv: string[], readValue?: () => Promise<string>) =>
-      runSecrets(argv, readValue ? { ...io, readValue } : io, () => backing),
+      runSecrets(argv, readValue ? { ...io, readValue } : io, () => ({
+        store: backing,
+        configPath: join(dir, "nimblebrain.json"),
+        workDir: dir,
+        backend: "file",
+      })),
     cleanup: () => rmSync(dir, { recursive: true, force: true }),
   };
 }
@@ -353,21 +366,39 @@ describe("where the command decides to write — the real openStore", () => {
   // characterization, for the reasons their own comments give.
   const KEY_ENV = "NB_TEST_CLI_SEAL_KEY";
 
-  function scenario(): { dir: string; io: SecretsCommandIo; out: string[]; cleanup: () => void } {
-    const dir = mkdtempSync(join(tmpdir(), "nb-cli-openstore-"));
+  /**
+   * Runs from a fresh temp directory, because config resolution reads the
+   * current one: from a checkout holding a `.nimblebrain/`, these tests would
+   * otherwise resolve that instead of the config they set up.
+   */
+  function scenario(): {
+    dir: string;
+    io: SecretsCommandIo;
+    out: string[];
+    err: string[];
+    cleanup: () => void;
+  } {
+    // Real path, so it compares equal to what `process.cwd()` reports on a
+    // platform whose temp directory sits behind a symlink.
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), "nb-cli-openstore-")));
     const out: string[] = [];
+    const err: string[] = [];
     const previousKey = process.env[KEY_ENV];
     const previousWorkDir = process.env.NB_WORK_DIR;
+    const previousCwd = process.cwd();
     process.env[KEY_ENV] = Buffer.alloc(32, 0x11).toString("base64");
+    process.chdir(dir);
     return {
       dir,
       out,
+      err,
       io: {
         stdout: (line) => out.push(line),
-        stderr: () => {},
+        stderr: (line) => err.push(line),
         readValue: async () => "sk-from-the-real-path",
       },
       cleanup: () => {
+        process.chdir(previousCwd);
         if (previousKey === undefined) delete process.env[KEY_ENV];
         else process.env[KEY_ENV] = previousKey;
         if (previousWorkDir === undefined) delete process.env.NB_WORK_DIR;
@@ -435,6 +466,83 @@ describe("where the command decides to write — the real openStore", () => {
       await runSecrets(["set", "acme.key"], s.io);
       expect(await runSecrets(["list"], s.io)).toBe(0);
       expect(s.out.map((l) => l.split("\t")[0])).toEqual(["acme.key"]);
+    } finally {
+      s.cleanup();
+    }
+  });
+
+  test("a config in the current directory and another in the work directory: exits 2, names both, writes nothing", async () => {
+    // Resolution would take the current directory's and write there, silently,
+    // while the server in the work directory never sees the value.
+    const s = scenario();
+    try {
+      const deployment = join(s.dir, "deployment");
+      mkdirSync(deployment);
+      writeFileSync(join(deployment, "nimblebrain.json"), SEALED_CONFIG(deployment));
+      process.env.NB_WORK_DIR = deployment;
+      const local = join(s.dir, ".nimblebrain");
+      mkdirSync(local);
+      writeFileSync(join(local, "nimblebrain.json"), SEALED_CONFIG(local));
+
+      for (const argv of [["set", "acme.key"], ["delete", "acme.key"], ["list"]]) {
+        expect(await runSecrets(argv, s.io)).toBe(2);
+      }
+      const said = s.err.join("\n");
+      expect(said).toContain(join(local, "nimblebrain.json"));
+      expect(said).toContain(join(deployment, "nimblebrain.json"));
+      expect(said).toContain("--config");
+      expect(existsSync(join(deployment, "credentials"))).toBe(false);
+      expect(existsSync(join(local, "credentials"))).toBe(false);
+
+      // Naming one resolves it, and the write lands there.
+      expect(
+        await runSecrets(["set", "acme.key", "--config", join(deployment, "nimblebrain.json")], s.io),
+      ).toBe(0);
+      expect(existsSync(join(deployment, "credentials", "secrets", "acme.key"))).toBe(true);
+      expect(existsSync(join(local, "credentials"))).toBe(false);
+    } finally {
+      s.cleanup();
+    }
+  });
+
+  test("the same file reached both ways is not ambiguous", async () => {
+    const s = scenario();
+    try {
+      const local = join(s.dir, ".nimblebrain");
+      mkdirSync(local);
+      writeFileSync(join(local, "nimblebrain.json"), SEALED_CONFIG(local));
+      process.env.NB_WORK_DIR = local;
+      expect(await runSecrets(["set", "acme.key"], s.io)).toBe(0);
+      expect(existsSync(join(local, "credentials", "secrets", "acme.key"))).toBe(true);
+    } finally {
+      s.cleanup();
+    }
+  });
+
+  test("set and delete say where they are writing first, and never the value", async () => {
+    const s = scenario();
+    try {
+      process.env.NB_WORK_DIR = s.dir;
+      writeFileSync(join(s.dir, "nimblebrain.json"), SEALED_CONFIG(s.dir));
+      const expected = `config ${join(s.dir, "nimblebrain.json")} · work dir ${s.dir} · backend file · seals yes`;
+
+      expect(await runSecrets(["set", "acme.key"], s.io)).toBe(0);
+      expect(s.err[0]).toBe(expected);
+      expect(await runSecrets(["delete", "acme.key"], s.io)).toBe(0);
+      expect(s.err).toEqual([expected, "set acme.key", expected, "deleted acme.key"]);
+      expect(s.err.join("\n")).not.toContain("sk-from-the-real-path");
+    } finally {
+      s.cleanup();
+    }
+  });
+
+  test("an unsealed deployment says so", async () => {
+    const s = scenario();
+    try {
+      process.env.NB_WORK_DIR = s.dir;
+      writeFileSync(join(s.dir, "nimblebrain.json"), JSON.stringify({ version: "1" }));
+      expect(await runSecrets(["set", "acme.key"], s.io)).toBe(0);
+      expect(s.err[0]).toEndWith("backend file · seals no");
     } finally {
       s.cleanup();
     }

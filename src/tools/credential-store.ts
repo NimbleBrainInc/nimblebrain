@@ -131,6 +131,12 @@ export interface CredentialStore {
    * `put`.
    */
   assertKeyRecognized?(): Promise<void>;
+  /**
+   * Whether a write is sealed before it reaches storage. Descriptive: an
+   * operator-facing writer reports it so a person can see what a write is about
+   * to do. Nothing branches on it. Omitted by a backend that does not say.
+   */
+  readonly seals?: boolean;
 }
 
 /**
@@ -401,6 +407,10 @@ export class FileCredentialStore implements CredentialStore {
     this.#workDir = workDir;
     this.#eventSink = opts?.eventSink;
     this.#sealer = opts?.sealer;
+  }
+
+  get seals(): boolean {
+    return this.#sealer !== undefined;
   }
 
   /**
