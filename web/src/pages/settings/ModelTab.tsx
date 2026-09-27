@@ -91,28 +91,31 @@ export function ModelTab() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
 
+  // Fetch `get_config` into the form. Runs on mount and again after every
+  // save, because a save changes what `resolved` reports: clearing an override
+  // moves its field's placeholder to the new effective value.
+  const loadConfig = useCallback(async () => {
+    const config = parseToolResult<ModelConfig>(await callTool("nb", "get_config"));
+    const qualify = (id: string | undefined) => qualifyModelId(id, config.availableModels ?? {});
+    setDefaultModel(qualify(config.models?.default));
+    setFastModel(qualify(config.models?.fast));
+    setMaxIterations(config.maxIterations ?? null);
+    setMaxInputTokens(config.maxInputTokens ?? null);
+    setMaxOutputTokens(config.maxOutputTokens ?? null);
+    setResolved(config.resolved);
+    setThinking(config.thinking ?? THINKING_DEFAULT);
+    setThinkingEffort(config.thinkingEffort ?? EFFORT_DEFAULT);
+    setThinkingBudgetTokens(config.thinkingBudgetTokens ?? null);
+    setAvailableModels(config.availableModels ?? {});
+  }, []);
+
   useEffect(() => {
-    callTool("nb", "get_config")
-      .then((res) => {
-        const config = parseToolResult<ModelConfig>(res);
-        const qualify = (id: string | undefined) =>
-          qualifyModelId(id, config.availableModels ?? {});
-        setDefaultModel(qualify(config.models?.default));
-        setFastModel(qualify(config.models?.fast));
-        setMaxIterations(config.maxIterations ?? null);
-        setMaxInputTokens(config.maxInputTokens ?? null);
-        setMaxOutputTokens(config.maxOutputTokens ?? null);
-        setResolved(config.resolved);
-        setThinking(config.thinking ?? THINKING_DEFAULT);
-        setThinkingEffort(config.thinkingEffort ?? EFFORT_DEFAULT);
-        setThinkingBudgetTokens(config.thinkingBudgetTokens ?? null);
-        setAvailableModels(config.availableModels ?? {});
-      })
+    loadConfig()
       .catch((err) => {
         setLoadError(err instanceof Error ? err.message : "Failed to load configuration.");
       })
       .finally(() => setLoading(false));
-  }, []);
+  }, [loadConfig]);
 
   const handleSave = useCallback(async () => {
     setSaving(true);
@@ -136,6 +139,9 @@ export function ModelTab() {
         ...thinkingPatch,
       });
       setFeedback({ type: "success", message: "Model configuration saved." });
+      // The save has landed; a failed refresh only leaves the old placeholders
+      // until the next load, so it does not turn the save into an error.
+      await loadConfig().catch(() => {});
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Failed to save configuration.";
       setFeedback({ type: "error", message: msg });
@@ -151,6 +157,7 @@ export function ModelTab() {
     thinking,
     thinkingEffort,
     thinkingBudgetTokens,
+    loadConfig,
   ]);
 
   return (
