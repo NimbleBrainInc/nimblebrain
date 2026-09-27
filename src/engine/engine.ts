@@ -8,7 +8,7 @@ import type {
   LanguageModelV4ToolResultPart,
   SharedV4ProviderOptions,
 } from "@ai-sdk/provider";
-import { DEFAULT_MAX_DIRECT_TOOLS, MAX_ITERATIONS, MAX_LENGTH_CONTINUATIONS } from "../limits.ts";
+import { DEFAULT_MAX_DIRECT_TOOLS, MAX_ITERATIONS } from "../limits.ts";
 import { applyCachePolicy } from "../model/cache-policy.ts";
 import {
   GOOGLE_THINKING_LEVELS,
@@ -512,47 +512,6 @@ function buildThinkingProviderOptions(
       // Unknown provider: say nothing and let it apply its own default.
       return {};
   }
-}
-
-/**
- * True if any reasoning (extended-thinking) block in the content lacks its
- * provider signature. A signed thinking block round-trips on replay; an
- * unsigned one — produced when `finishReason: "length"` cuts the model off
- * mid-thinking, before the signature arrives (src/model/stream.ts) — cannot
- * be replayed as the trailing assistant message: Anthropic rejects it
- * ("thinking blocks in the latest assistant message cannot be modified",
- * src/model/inbound-fit.ts). The signature lives at
- * `providerMetadata.anthropic.signature`. Conservative for other providers:
- * any reasoning block we can't confirm is signed counts as unsigned, so the
- * caller surfaces the truncation instead of risking a 400.
- */
-function hasUnsignedReasoning(content: LanguageModelV4Content[]): boolean {
-  for (const block of content) {
-    if (block.type !== "reasoning") continue;
-    const meta = (block as { providerMetadata?: Record<string, unknown> }).providerMetadata;
-    const anthropic = meta?.anthropic as { signature?: unknown } | undefined;
-    const signed = typeof anthropic?.signature === "string" && anthropic.signature.length > 0;
-    if (!signed) return true;
-  }
-  return false;
-}
-
-/**
- * Whether a no-tool-call turn that hit the output ceiling can be auto-resumed
- * from its partial text. False once MAX_LENGTH_CONTINUATIONS is reached, or when
- * the turn's reasoning was cut off unsigned — replaying that as the trailing
- * assistant message is exactly what Anthropic rejects.
- */
-function canResumeFromLength(
-  finishReason: FinishReason | undefined,
-  lengthContinuations: number,
-  content: LanguageModelV4Content[],
-): boolean {
-  return (
-    finishReason === "length" &&
-    lengthContinuations < MAX_LENGTH_CONTINUATIONS &&
-    !hasUnsignedReasoning(content)
-  );
 }
 
 /**
@@ -1150,17 +1109,6 @@ export class AgentEngine {
     // content filter, etc.) rather than always reporting "complete".
     let lastFinishReason: FinishReason | undefined;
 
-    // Auto-resume bookkeeping for output-ceiling truncations. When a turn
-    // is cut off at the model's max output tokens (`finishReason: "length"`)
-    // with no pending tool call, the engine re-prompts the model to continue
-    // from its partial text instead of ending the run with a half-written
-    // answer (see the `toolCalls.length === 0` branch). `lengthContinuations`
-    // bounds that to `MAX_LENGTH_CONTINUATIONS`; `resumingFromLength`
-    // suppresses the inter-turn blank line so the resumed text stitches
-    // seamlessly onto the partial.
-    let lengthContinuations = 0;
-    let resumingFromLength = false;
-
     const unregisterToolControls = config.toolPromotion?.registerControls(toolControls);
     try {
       while (iteration < maxIter) {
@@ -1294,15 +1242,7 @@ export class AgentEngine {
         const llmMs = Math.round(performance.now() - llmStart);
 
         // Accumulate text output (add newline between turns if needed).
-        // When this turn is the resumption of a length-truncated one, stitch
-        // directly onto the partial with no separator — the model is
-        // continuing mid-thought, so a blank line would inject a false break.
-        output = this.accumulateAssistantText(output, response.content, resumingFromLength, runId);
-        // Consume the resume flag unconditionally: it must not leak into a
-        // later iteration if this resumed turn produced no text block (e.g.
-        // tool-call- or reasoning-only), which would wrongly glue a genuinely
-        // new turn onto the previous one.
-        resumingFromLength = false;
+        output = this.accumulateAssistantText(output, response.content, runId);
 
         const turnUsage = computeTurnUsage(response.usage);
         addUsage(cumulativeUsage, turnUsage);
@@ -1343,54 +1283,12 @@ export class AgentEngine {
         );
 
         if (toolCalls.length === 0) {
-          // A turn with no tool call usually means the model is done — but
-          // `finishReason: "length"` means it was cut off at the output
-          // ceiling mid-answer, not finished. Re-prompt it to continue from
-          // its partial text instead of ending the run with a truncated
-          // response. Bounded by MAX_LENGTH_CONTINUATIONS so a pathologically
-          // long answer can't spin forever (it then ends as stopReason
-          // "length", same as before this fix). Only fires for text
-          // truncation: a length cut with tool calls present takes the normal
-          // tool path below.
-          //
-          // Guard: never resume a turn whose reasoning was cut off mid-stream.
-          // A thinking block only carries its provider signature once the
-          // block completes; a length cut during thinking drains an UNSIGNED
-          // reasoning block (see src/model/stream.ts). Replaying an unsigned
-          // thinking block as the trailing assistant message is exactly what
-          // Anthropic rejects ("thinking blocks in the latest assistant
-          // message cannot be modified" — src/model/inbound-fit.ts). In that
-          // case fall through to `break` and surface stopReason "length"; the
-          // user re-prompts and the model starts a fresh, fully-signed turn.
-          if (canResumeFromLength(lastFinishReason, lengthContinuations, response.content)) {
-            lengthContinuations += 1;
-            // Seed history with the partial assistant text so the next call
-            // continues from where it stopped. `normalizeForReplay` fixes the
-            // stream→prompt shape, same as the tool path below.
-            //
-            // Provider note: this relies on assistant-message *prefill
-            // continuation* — a trailing assistant message is the turn to
-            // continue. That's Anthropic semantics (the configured default
-            // and the model this fix was written against). OpenAI/Google
-            // instead treat a trailing assistant message as context and start
-            // a fresh turn, which `resumingFromLength` would then glue on with
-            // no separator — a mildly disjoint resume, still bounded by
-            // MAX_LENGTH_CONTINUATIONS and no worse than a crash. We don't gate
-            // by provider here on purpose: this engine is provider-agnostic
-            // (provider-specific replay lives in the runtime hook, e.g.
-            // applyReasoningReplayPolicy). If a non-Anthropic model ever
-            // becomes a default, thread a `supportsAssistantPrefillContinuation`
-            // capability through EngineConfig and gate on it rather than
-            // string-matching the provider in here.
-            history.push({ role: "assistant", content: normalizeForReplay(response.content) });
-            resumingFromLength = true;
-            this.events.emit({
-              type: "context.length_continuation",
-              data: { runId, continuation: lengthContinuations },
-            });
-            iteration++;
-            continue;
-          }
+          // A turn with no tool call ends the run. A `finishReason: "length"`
+          // turn (cut off at the output ceiling) ends it too, surfacing as
+          // stopReason "length": resuming it would send a history that ends
+          // on the partial assistant message, which is an assistant prefill
+          // that current Anthropic models reject with a 400. The user sends
+          // another message to continue.
           break; // Model is done
         }
 
@@ -1729,27 +1627,17 @@ export class AgentEngine {
 
   /**
    * Append this turn's assistant text to the running output, emitting the
-   * inter-turn separator (`\n\n`) when needed. When this turn is the resumption
-   * of a length-truncated one (`resumingFromLength`), stitch directly onto the
-   * partial with no separator — the model is continuing mid-thought, so a blank
-   * line would inject a false break. Returns the new output; does not consume
-   * the resume flag.
+   * inter-turn separator (`\n\n`) when needed. Returns the new output.
    */
   private accumulateAssistantText(
     currentOutput: string,
     content: LanguageModelV4Content[],
-    resumingFromLength: boolean,
     runId: string,
   ): string {
     let output = currentOutput;
     for (const block of content) {
       if (block.type === "text") {
-        if (
-          !resumingFromLength &&
-          output.length > 0 &&
-          !output.endsWith("\n") &&
-          block.text.length > 0
-        ) {
+        if (output.length > 0 && !output.endsWith("\n") && block.text.length > 0) {
           output += "\n\n";
           this.events.emit({ type: "text.delta", data: { runId, text: "\n\n" } });
         }
