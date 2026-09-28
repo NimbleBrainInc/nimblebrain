@@ -30,6 +30,8 @@ function buildRemoteSource(initial: RawTool[]) {
   let current: RawTool[] = initial;
   let listCalls = 0;
   const fakeClient = {
+    // A connected client: it has the server's capabilities from the handshake.
+    getServerCapabilities: () => ({ tools: {} }),
     listTools: async () => {
       listCalls += 1;
       return { tools: current };

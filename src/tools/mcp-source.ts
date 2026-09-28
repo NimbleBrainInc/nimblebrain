@@ -1639,10 +1639,19 @@ export class McpSource implements ToolSource {
    * namespace here is silent — the server said something about the tool and the
    * host simply never heard it, which is how a tool that declares
    * `destructiveHint` gets treated like a read-only one.
+   *
+   * A client that has not finished its handshake counts as not started. The
+   * client exists before `connect()` resolves (for a remote OAuth source, for
+   * the whole of pending auth, while the source is already registered), and the
+   * SDK answers `listTools()` on it with an empty list rather than an error, as
+   * if the server advertised no tools. Memoized, that empty list would outlive
+   * the connect.
    */
   private fetchToolList(): Promise<Tool[]> {
     if (this.toolsFetchInFlight) return this.toolsFetchInFlight;
-    if (!this.client) throw new Error(`McpSource "${this.name}" not started`);
+    if (!this.client?.getServerCapabilities()) {
+      throw new Error(`McpSource "${this.name}" not started`);
+    }
     const client = this.client;
     const p = (async () => {
       const response = await client.listTools();
