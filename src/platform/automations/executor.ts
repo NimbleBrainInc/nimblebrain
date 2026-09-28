@@ -4,8 +4,8 @@
  * `createDirectExecutor` runs each automation via `runtime.executeTask()`
  * in-process (wired in `platform/automations/source.ts`) — the only path now
  * that automations is an in-process platform source (the former HTTP executor
- * + standalone MCP server were removed). A scheduled run fires as the
- * automation's owner; see `getExecutorContext` in the platform source.
+ * + standalone MCP server were removed). Every run fires as the automation's
+ * owner; see `resolveExecutorContext` in the platform source.
  *
  * No retry logic — the scheduler handles backoff.
  */
@@ -678,16 +678,13 @@ function classifyAbortedRun(
  *
  * @param taskFn      Direct reference to runtime.executeTask() or equivalent.
  * @param getContext  Returns the workspace/identity context for the run. Called
- *                    per-execution so it can read current state. The `trigger`
- *                    tells it whether to act as the automation's owner
- *                    (`scheduled`) or the current request's user (`manual`).
+ *                    per-execution so it can read current state. Every trigger
+ *                    gets the same answer: the automation's owner, in its
+ *                    workspace.
  */
 export function createDirectExecutor(
   taskFn: TaskFn,
-  getContext: (
-    automation: Automation | undefined,
-    trigger: AutomationRunTrigger,
-  ) => ExecutorContext,
+  getContext: (automation: Automation) => ExecutorContext,
 ) {
   return async function executeDirect(
     automation: Automation,
@@ -697,7 +694,7 @@ export function createDirectExecutor(
   ): Promise<{ run: AutomationRun; result: AutomationRunResult | null }> {
     const startedAt = new Date().toISOString();
     const timeoutMs = automation.maxRunDurationMs ?? DEFAULT_TIMEOUT_MS;
-    const ctx = getContext(automation, trigger);
+    const ctx = getContext(automation);
 
     // Combined cancellation: a single controller aborts when EITHER the
     // scheduler's external signal fires (manual cancel, scheduler stop)

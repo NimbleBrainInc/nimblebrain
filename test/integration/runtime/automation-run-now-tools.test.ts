@@ -1,0 +1,132 @@
+/**
+ * Run now tests the scheduled run, so it runs with the scheduled run's
+ * authority: an org admin who clicks Run now gets the tools the schedule will
+ * get, not their own. An automation run acts as `{ id: ownerId }` with no org
+ * role, so admin-only tools are closed to both.
+ *
+ * Admin-only tools are app-only: they are never in a run's offered tool list,
+ * whoever runs it. What an org role changes is whether a call to one succeeds.
+ * So each run calls one, and the test compares both the offered tool list and
+ * the call's outcome. The control run proves the comparison can fail: the same
+ * admin identity handed to `executeTask` directly gets the call through.
+ */
+
+import type { LanguageModelV4, LanguageModelV4CallOptions } from "@ai-sdk/provider";
+import { afterAll, describe, expect, it } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import type { UserIdentity } from "../../../src/identity/provider.ts";
+import { DEV_IDENTITY } from "../../../src/identity/providers/dev.ts";
+import { createDirectExecutor } from "../../../src/platform/automations/executor.ts";
+import { resolveExecutorContext } from "../../../src/platform/automations/source.ts";
+import type { Automation } from "../../../src/platform/automations/types.ts";
+import { runWithRequestContext } from "../../../src/runtime/request-context.ts";
+import { Runtime } from "../../../src/runtime/runtime.ts";
+import type { TaskRequest } from "../../../src/runtime/types.ts";
+import { createEchoModel } from "../../helpers/echo-model.ts";
+import { provisionTestWorkspace } from "../../helpers/test-workspace.ts";
+
+const WS = "ws_run_now_tools";
+const ADMIN_ONLY_TOOL = "nb__manage_users";
+const RUNS = 3;
+
+const workDir = mkdtempSync(join(tmpdir(), "nb-run-now-tools-"));
+
+afterAll(() => {
+  rmSync(workDir, { recursive: true, force: true });
+});
+
+/**
+ * An echo model that records the tool names each run is offered. Every run it
+ * serves calls the admin-only tool, then finishes.
+ */
+function recordingModel(): { model: LanguageModelV4; offered: string[][] } {
+  const offered: string[][] = [];
+  const inner = createEchoModel({
+    responses: Array.from({ length: RUNS }, (_, i) => [
+      {
+        toolCalls: [
+          {
+            toolCallId: `tc_admin_${i}`,
+            toolName: ADMIN_ONLY_TOOL,
+            input: JSON.stringify({ action: "list" }),
+          },
+        ],
+      },
+      { text: "done" },
+    ]).flat(),
+  });
+  // Only a run's first model call is recorded: the list it opens with.
+  let calls = 0;
+  const record = (options: LanguageModelV4CallOptions) => {
+    if (calls++ % 2 === 0) offered.push((options.tools ?? []).map((t) => t.name).sort());
+  };
+  const model: LanguageModelV4 = {
+    ...inner,
+    async doGenerate(options) {
+      record(options);
+      return inner.doGenerate(options);
+    },
+    async doStream(options) {
+      record(options);
+      return inner.doStream(options);
+    },
+  };
+  return { model, offered };
+}
+
+describe("Run now gets the scheduled run's tools", () => {
+  it("an org admin's manual run gets the scheduled run's tools, admin-only tools closed to both", async () => {
+    const { model, offered } = recordingModel();
+    const runtime = await Runtime.start({
+      model: { provider: "custom", adapter: model },
+      logging: { disabled: true },
+      workDir,
+    });
+    try {
+      await provisionTestWorkspace(runtime, WS, "Run now");
+
+      const admin = { ...DEV_IDENTITY, orgRole: "admin" } as UserIdentity;
+      const automation = {
+        id: "weekly-report",
+        name: "Weekly report",
+        prompt: "Write the weekly report",
+        ownerId: admin.id,
+        workspaceId: WS,
+      } as Automation;
+      const executor = createDirectExecutor(
+        (req) => runtime.executeTask(req as TaskRequest),
+        resolveExecutorContext,
+      );
+
+      // Control: the admin's own identity gets the admin-only call through.
+      const control = await runtime.executeTask({
+        prompt: "control",
+        workspaceId: WS,
+        identity: admin,
+      });
+      expect(control.toolCalls[0]?.name).toBe(ADMIN_ONLY_TOOL);
+      expect(control.toolCalls[0]?.ok).toBe(true);
+
+      // Run now, clicked by the admin inside their own request context.
+      const manual = await runWithRequestContext({ identity: admin, workspaceId: WS }, () =>
+        executor(automation, undefined, "manual"),
+      );
+      const scheduled = await executor(automation, undefined, "scheduled");
+
+      const [, manualTools, scheduledTools] = offered;
+      expect(manualTools).toEqual(scheduledTools);
+      expect(manualTools).not.toContain(ADMIN_ONLY_TOOL);
+
+      const manualCall = manual.result?.activityLog[0];
+      const scheduledCall = scheduled.result?.activityLog[0];
+      expect(manualCall?.name).toBe(ADMIN_ONLY_TOOL);
+      expect(manualCall?.ok).toBe(false);
+      expect(scheduledCall?.ok).toBe(false);
+      expect(manualCall?.output).toBe(scheduledCall?.output);
+    } finally {
+      await runtime.shutdown();
+    }
+  });
+});

@@ -1,93 +1,93 @@
 import { describe, expect, test } from "bun:test";
-import type { AutomationRunTrigger } from "../../../../src/platform/automations/scheduler.ts";
-import type { Automation } from "../../../../src/platform/automations/types.ts";
 import type { UserIdentity } from "../../../../src/identity/provider.ts";
+import {
+  createDirectExecutor,
+  type TaskFnRequest,
+} from "../../../../src/platform/automations/executor.ts";
+import { runWithRequestContext } from "../../../../src/runtime/request-context.ts";
+import type { Automation } from "../../../../src/platform/automations/types.ts";
 import { resolveExecutorContext } from "../../../../src/platform/automations/source.ts";
-import type { RequestContext } from "../../../../src/runtime/request-context.ts";
 
 // The automation under test is owned by, and focused on, workspace A.
 const automation = {
   id: "nb-morning-sweep",
+  name: "Morning sweep",
+  prompt: "Sweep the inbox",
   ownerId: "usr_owner_a",
   workspaceId: "ws_a_shared",
 } as Automation;
 
-// An ambient request context for a DIFFERENT workspace B — the stale context a
-// scheduler timer can capture when an automation is created/edited from a chat
-// in workspace B (AsyncLocalStorage propagates through the re-arm `setTimeout`).
-const otherWorkspaceCtx: RequestContext = {
-  identity: { id: "usr_other_b", email: "b@example.com", displayName: "B", orgRole: "member" } as UserIdentity,
+// An org admin clicking Run now from another workspace: the context a manual
+// run is dispatched inside.
+const adminElsewhere = {
+  identity: {
+    id: "usr_admin_b",
+    email: "b@example.com",
+    displayName: "B",
+    orgRole: "admin",
+  } as UserIdentity,
   workspaceId: "ws_b_other",
 };
 
 describe("resolveExecutorContext", () => {
-  // The bug: a scheduled run inheriting workspace B's context ran focused on B,
-  // not its own workspace A. The scheduled path must IGNORE ambient context.
-  test("scheduled run ignores an ambient (leaked) workspace context", () => {
-    const ctx = resolveExecutorContext(automation, "scheduled", otherWorkspaceCtx);
+  test("acts as the automation's owner, in the automation's workspace", () => {
+    const ctx = resolveExecutorContext(automation);
     expect(ctx.workspaceId).toBe("ws_a_shared");
     expect(ctx.identity).toEqual({ id: "usr_owner_a" });
   });
 
-  test("scheduled run uses the automation's owner + provenance when no ambient context", () => {
-    const ctx = resolveExecutorContext(automation, "scheduled", undefined);
+  // The scheduler's timer and the notifications poller can run inside a
+  // context some earlier request left behind. Who a run acts as never rests on
+  // what that context holds.
+  test("ignores an ambient request context for another workspace and person", () => {
+    const ctx = runWithRequestContext(adminElsewhere, () => resolveExecutorContext(automation));
     expect(ctx.workspaceId).toBe("ws_a_shared");
     expect(ctx.identity).toEqual({ id: "usr_owner_a" });
   });
 
-  // An event run is dispatched from the notifications poller's tick, which
-  // carries whatever ambient context the last request left behind — the same
-  // hazard the scheduled path has, arriving by a different door. It acts as the
-  // automation's owner, which is what makes the membership re-check in
-  // `executeTask` ask about the right person.
-  test("event run ignores an ambient (leaked) workspace context", () => {
-    const ctx = resolveExecutorContext(automation, "event", otherWorkspaceCtx);
-    expect(ctx.workspaceId).toBe("ws_a_shared");
-    expect(ctx.identity).toEqual({ id: "usr_owner_a" });
+  // The identity carries the owner's id and nothing else: no org role, so the
+  // run's tools are the same however it was woken.
+  test("carries no org role", () => {
+    expect(resolveExecutorContext(automation).identity).not.toHaveProperty("orgRole");
   });
 
-  // A manual test-button run is dispatched synchronously inside the clicking
-  // user's genuine context, so it legitimately uses it.
-  test("manual run uses the ambient request context", () => {
-    const ctx = resolveExecutorContext(automation, "manual", otherWorkspaceCtx);
-    expect(ctx.workspaceId).toBe("ws_b_other");
-    expect(ctx.identity).toEqual(otherWorkspaceCtx.identity);
-  });
-
-  test("manual run falls back to the automation's owner + provenance with no ambient context", () => {
-    const ctx = resolveExecutorContext(automation, "manual", undefined);
-    expect(ctx.workspaceId).toBe("ws_a_shared");
-    expect(ctx.identity).toEqual({ id: "usr_owner_a" });
-  });
-
-  // An identity-scoped ambient context (no workspace) must not leak a workspace
-  // into a manual run; it falls back to the automation's provenance.
-  test("manual run with an identity-scope context falls back to provenance workspace", () => {
-    const identityCtx: RequestContext = {
-      identity: { id: "usr_other_b", email: "b@example.com", displayName: "B", orgRole: "member" } as UserIdentity,
-    };
-    const ctx = resolveExecutorContext(automation, "manual", identityCtx);
-    expect(ctx.workspaceId).toBe("ws_a_shared");
-    expect(ctx.identity).toEqual(identityCtx.identity);
-  });
-
-  test("scheduled run with an automation lacking owner/workspace yields undefined fields", () => {
-    const ctx = resolveExecutorContext({ id: "x" } as Automation, "scheduled", otherWorkspaceCtx);
+  test("an automation lacking owner/workspace yields undefined fields", () => {
+    const ctx = resolveExecutorContext({ id: "x" } as Automation);
     expect(ctx.workspaceId).toBeUndefined();
     expect(ctx.identity).toBeUndefined();
   });
+});
 
-  // Fail-closed: only an explicit "manual" reads ambient context. An unknown or
-  // missing trigger (e.g. an untyped/test caller, or a future trigger value)
-  // must fall through to the isolated owner/provenance path — never the ambient
-  // workspace — so a new dispatch path that forgets to opt in can't leak.
-  test("an unknown/undefined trigger does NOT read ambient context", () => {
-    const ctx = resolveExecutorContext(
-      automation,
-      undefined as unknown as AutomationRunTrigger,
-      otherWorkspaceCtx,
+// Run now is the scheduled run, run now: the task the executor hands the
+// runtime names the same workspace and the same identity for both triggers,
+// even when an org admin in another workspace clicks the button.
+describe("a manual run builds the scheduled run's context", () => {
+  test("manual and scheduled runs send the same workspace and identity", async () => {
+    const requests: TaskFnRequest[] = [];
+    const executor = createDirectExecutor(async (req) => {
+      requests.push(req);
+      return {
+        output: "ok",
+        runId: "run_test000000",
+        toolCalls: [],
+        stopReason: "complete",
+        usage: { inputTokens: 1, outputTokens: 1, iterations: 1 },
+      };
+    }, resolveExecutorContext);
+
+    await runWithRequestContext(adminElsewhere, () =>
+      executor(automation, undefined, "manual"),
     );
-    expect(ctx.workspaceId).toBe("ws_a_shared");
-    expect(ctx.identity).toEqual({ id: "usr_owner_a" });
+    await executor(automation, undefined, "scheduled");
+
+    const [manual, scheduled] = requests;
+    expect(manual?.trigger).toBe("manual");
+    expect(scheduled?.trigger).toBe("schedule");
+    expect(manual?.workspaceId).toBe("ws_a_shared");
+    expect(manual?.identity).toEqual({ id: "usr_owner_a" });
+    expect({ workspaceId: manual?.workspaceId, identity: manual?.identity }).toEqual({
+      workspaceId: scheduled?.workspaceId,
+      identity: scheduled?.identity,
+    });
   });
 });
