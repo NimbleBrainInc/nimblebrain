@@ -45,7 +45,7 @@ export interface BriefingCollectorDeps {
 export interface BriefingCollector {
   /**
    * One item per discovered facet of each running connector in `instances`,
-   * in instance order then the server's listing order. Items whose count is
+   * in the shell's app order then the server's listing order. Items whose count is
    * zero are omitted. `force` skips cached listings and counts.
    */
   collect(
@@ -154,11 +154,18 @@ export function createBriefingCollector(deps: BriefingCollectorDeps): BriefingCo
     cache,
     async collect(wsId, instances, opts) {
       const force = opts?.force ?? false;
-      const running = instances.filter((inst) => inst.wsId === wsId && inst.state === "running");
+      // The shell's app order: first placement's priority, lower first (default 100).
+      const running = instances
+        .filter((inst) => inst.wsId === wsId && inst.state === "running")
+        .sort((a, b) => appPriority(a) - appPriority(b));
       const perConnector = await Promise.all(
         running.map((inst) => collectConnector(wsId, inst, force)),
       );
       return perConnector.flat().filter((item) => item.state !== "ok" || item.count > 0);
     },
   };
+}
+
+function appPriority(inst: ConnectorInstance): number {
+  return inst.ui?.placements?.[0]?.priority ?? 100;
 }

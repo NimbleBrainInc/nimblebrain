@@ -135,6 +135,31 @@ describe("discovery", () => {
 });
 
 describe("reads", () => {
+  it("orders apps as the shell does, by first placement priority", async () => {
+    const low = await serve("second", {
+      resources: () => [facetEntry("drafts", "Drafts")],
+      read: (uri) => counts[uri] ?? "{}",
+    });
+    const high = await serve("first", {
+      resources: () => [facetEntry("blocked", "Blocked")],
+      read: (uri) => counts[uri] ?? "{}",
+    });
+    const withPriority = (name: string, priority: number): ConnectorInstance => {
+      const inst = instance(name);
+      return {
+        ...inst,
+        ui: { ...inst.ui!, placements: [{ ...inst.ui!.placements![0]!, priority }] },
+      };
+    };
+
+    const items = await collectorFor([low.source, high.source]).collect(WS, [
+      withPriority("second", 200),
+      withPriority("first", 10),
+    ]);
+
+    expect(items.map((i) => i.facet)).toEqual(["blocked", "drafts"]);
+  });
+
   it("omits a zero count and renders no action for an app without a route", async () => {
     const { source } = await serve("mixed", {
       resources: () => [facetEntry("zero", "Nothing"), facetEntry("drafts", "Drafts")],
