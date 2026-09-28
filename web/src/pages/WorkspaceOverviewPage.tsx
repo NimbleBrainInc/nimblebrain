@@ -22,7 +22,6 @@
 import { Settings } from "lucide-react";
 import { useCallback } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import type { BriefingAction } from "../_generated/platform-schemas/home";
 import { BriefingView } from "../components/briefing/BriefingView";
 import { ConnectorIcon } from "../components/connectors/ConnectorIcon";
 import { useShellContext } from "../context/ShellContext";
@@ -53,12 +52,11 @@ export function WorkspaceOverviewPage() {
     refresh: refreshBriefing,
   } = useWorkspaceBriefing(workspace?.id);
 
-  const handleBriefingAction = useCallback(
-    (action: BriefingAction) => {
-      if (action.type !== "navigate" || !action.route) return;
-      // Facet navigate actions carry the app's route (e.g. "@scope/name").
+  const handleBriefingOpen = useCallback(
+    (route: string) => {
+      // An item carries its app's placement route (e.g. "@scope/name").
       // Absolute paths pass through; bare routes open the app in this workspace.
-      navigate(action.route.startsWith("/") ? action.route : `/w/${slug}/app/${action.route}`);
+      navigate(route.startsWith("/") ? route : `/w/${slug}/app/${route}`);
     },
     [navigate, slug],
   );
@@ -116,15 +114,14 @@ export function WorkspaceOverviewPage() {
           </Link>
         </header>
 
-        {/* Briefing — LLM summary of recent workspace activity, generated from
-            the installed apps' declared facets. Restored from the pre-reorg
-            home surface. */}
+        {/* Briefing — what is waiting in the installed apps, one count per
+            facet each app's server reports. */}
         <div className="mb-10">
           <BriefingView
             briefing={briefing}
             error={briefingError}
             onRetry={refreshBriefing}
-            onAction={handleBriefingAction}
+            onOpen={handleBriefingOpen}
           />
         </div>
 

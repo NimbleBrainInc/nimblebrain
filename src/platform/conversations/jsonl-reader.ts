@@ -225,8 +225,8 @@ interface LlmResponseEvent {
 }
 
 /**
- * Usage for a forked fast-slot model call (compaction summarizer, auto-title,
- * briefing) that runs outside the agentic loop and emits no `llm.response`.
+ * Usage for a forked fast-slot model call (compaction summarizer, auto-title)
+ * that runs outside the agentic loop and emits no `llm.response`.
  * Mirrors the runtime's `AuxUsageEvent`. Carries no content and is never a
  * message — `reconstructFromEvents` skips it — but its usage is summed into
  * the conversation totals so the connector matches the runtime aggregator.
@@ -375,7 +375,7 @@ function accumulateEventMetrics(
     acc.totalOutputTokens += evt.usage?.outputTokens ?? 0;
     acc.lastModel = evt.model;
   } else if (isAuxUsage(evt)) {
-    // Forked fast-slot calls (compaction/title/briefing) emit no
+    // Forked fast-slot calls (compaction/title) emit no
     // llm.response; count their usage so the app's totals match the
     // runtime aggregator (which counts aux.usage too).
     acc.totalInputTokens += evt.usage?.inputTokens ?? 0;

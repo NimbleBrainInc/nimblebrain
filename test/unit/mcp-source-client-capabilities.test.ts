@@ -17,6 +17,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import type { Server } from "@modelcontextprotocol/server";
 import { textContent } from "../../src/engine/content-helpers.ts";
 import { HOST_RESOURCES_CAPABILITY_KEY } from "../../src/host-resources/capability.ts";
+import { FACETS_EXTENSION_ID } from "../../src/services/facets-extension.ts";
 import { SKILLS_EXTENSION_ID } from "../../src/skills/skills-extension.ts";
 import type { McpSource } from "../../src/tools/mcp-source.ts";
 import { makeInProcessSource } from "../helpers/in-process-source.ts";
@@ -59,6 +60,12 @@ describe("McpSource client capabilities", () => {
     source = await makeInProcessSource("caps-skills", []);
     // Exercised by `listSkills` + verification in the runtime's discovery.
     expect(declaredCapabilities(source)?.extensions?.[SKILLS_EXTENSION_ID]).toEqual({});
+  });
+
+  test("declares the facets extension, which the briefing collector consumes", async () => {
+    source = await makeInProcessSource("caps-facets", []);
+    // Exercised by the briefing collector's listing and reads.
+    expect(declaredCapabilities(source)?.extensions?.[FACETS_EXTENSION_ID]).toEqual({});
   });
 
   // A platform source has no `connectorContext`, so no host-resources handlers

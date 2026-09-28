@@ -1,25 +1,18 @@
 // The briefing output contract lives in the platform schema — the single
-// source of truth, codegen'd to the web shell. Import for local use below and
-// re-export so backend callers keep importing from `../services/home-types.ts`.
-import type {
-  BriefingAction,
-  BriefingOutput,
-  BriefingSection,
-  BriefingState,
-} from "../platform/schemas/home.ts";
+// source of truth, codegen'd to the web shell. Re-exported so backend callers
+// import from `../services/home-types.ts`.
+export type { BriefingItem, BriefingOutput } from "../platform/schemas/home.ts";
 
-export type { BriefingAction, BriefingOutput, BriefingSection, BriefingState };
-
-/** Briefing input — passed to the `nb__briefing` tool. */
-export interface BriefingInput {
-  force_refresh?: boolean;
-}
-
-/** In-memory cache entry for a generated briefing. */
-export interface BriefingCacheEntry {
-  briefing: BriefingOutput;
-  generatedAt: number;
-  invalidated: boolean;
+/**
+ * Action attached to an automation failure in `home__activity` output.
+ * `type` discriminates the payload: `navigate` uses `route`, `startChat` uses
+ * `prompt`; the unused one is null.
+ */
+export interface ActivityAction {
+  type: "navigate" | "startChat";
+  label: string;
+  route: string | null;
+  prompt: string | null;
 }
 
 /** Activity query input — passed to home__activity tool. */
@@ -65,7 +58,7 @@ export interface AutomationFailure {
   name: string;
   status: "failure" | "timeout" | "degraded";
   error?: string;
-  action: BriefingAction;
+  action: ActivityAction;
 }
 
 /** Conversation summary for activity reporting. */

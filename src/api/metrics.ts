@@ -154,8 +154,8 @@ export const llmCallsTotal = new Counter({
  * the p99-latency alert. Buckets run long (to 300s): an agentic call with a
  * large context and tool streaming sits far right of an HTTP histogram, so the
  * 0.005–10s bucket set used for `http_request_duration_seconds` would clip the
- * tail the alert cares about. Forked fast-slot calls (compaction / title /
- * briefing) are not observed here — they emit no `llm.done` and record usage at
+ * tail the alert cares about. Forked fast-slot calls (compaction / title)
+ * are not observed here — they emit no `llm.done` and record usage at
  * their own call sites (same boundary as the token counters).
  *
  * Completed-calls SLI: only successful calls (`llm.done`) are sampled. A call
@@ -531,13 +531,13 @@ interface UsageForMetrics {
  * metrics is bounded label cardinality, so a typo at a call site is a compile
  * error rather than a silently-minted new series.
  */
-export type LlmUsageSource = "main" | "title" | "compaction" | "briefing";
+export type LlmUsageSource = "main" | "title" | "compaction";
 
 /**
  * Record one LLM call's usage: a call increment plus token counts split into
  * fresh / cache_read / cache_write / output. Called for both the main agentic
  * loop (`source: "main"`) and the forked fast-slot calls (`compaction` /
- * `title` / `briefing`), so fleet token spend is attributable by origin.
+ * `title`), so fleet token spend is attributable by origin.
  */
 export function recordLlmUsage(
   source: LlmUsageSource,

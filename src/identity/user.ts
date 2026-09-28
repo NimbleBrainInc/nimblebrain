@@ -14,7 +14,7 @@ export interface UserPreferences {
    *
    * `default` only, and deliberately not `Partial<ModelSlots>`: `fast` carries
    * the full tool surface and a small-context model there degrades compaction
-   * and briefing in a way the chooser never sees, so it stays operator-owned.
+   * and titles in a way the chooser never sees, so it stays operator-owned.
    * Widening this is a decision, not a fill-in.
    */
   models?: { default?: string };

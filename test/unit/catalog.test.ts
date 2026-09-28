@@ -12,7 +12,6 @@ import {
 	isModelAllowed,
 	listModels,
 	listProviders,
-	openaiAcceptsMinimalEffort,
 	openaiRestrictedEffortModelIds,
 	openaiSupportedEfforts,
 	openaiUnmeasuredReasoningModels,
@@ -502,8 +501,7 @@ describe("OpenAI effort support", () => {
 			"medium",
 			"minimal",
 		]);
-		expect(openaiAcceptsMinimalEffort("openai:gpt-5")).toBe(true);
-		expect(openaiAcceptsMinimalEffort("openai:gpt-5.1")).toBe(false);
+		expect(openaiSupportedEfforts("openai:gpt-5.1").has("minimal")).toBe(false);
 		// Anything unlisted takes the full ladder, and never minimal.
 		expect([...openaiSupportedEfforts("openai:not-a-model")].sort()).toEqual([
 			"high",

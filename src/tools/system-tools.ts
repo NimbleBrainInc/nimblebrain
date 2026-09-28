@@ -624,7 +624,7 @@ function handleConfigStatus(runtime?: Runtime): ToolResult {
     "Configured values. A run can be given different limits than these, and the input",
     "figure is a cap — the budget is bounded further by the model's context window.",
     `Default model (what a new conversation starts on): ${defaultModel}`,
-    `Fast model (titles, compaction, briefings): ${models.fast}`,
+    `Fast model (titles, compaction): ${models.fast}`,
     `Providers: ${configuredProviders.join(", ")}`,
     `Max iterations: ${maxIterations}`,
     `Max input tokens: ${maxInputTokens.toLocaleString()}`,

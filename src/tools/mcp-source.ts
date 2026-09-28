@@ -44,6 +44,7 @@ import {
 } from "../host-resources/index.ts";
 import { requestIdentityAttrs, withSpan } from "../observability/index.ts";
 import { log } from "../observability/log.ts";
+import { facetsClientExtension } from "../services/facets-extension.ts";
 import {
   SKILLS_EXTENSION_ID,
   SKILLS_LIST_METHOD,
@@ -1094,13 +1095,16 @@ export class McpSource implements ToolSource {
    * `io.modelcontextprotocol/skills` (SEP-2640) is claimed on both eras
    * because skill discovery runs on both: {@link listSkills} enumerates, and
    * the runtime verifies each `SKILL.md` it later reads against the listing.
+   * `ai.nimblebrain/facets` is claimed on both eras for the same reason: the
+   * briefing collector lists and reads facets over whichever era connected,
+   * and the extension needs no server→client channel.
    */
   private static readonly CAPABILITIES: ClientCapabilities = {
     tasks: {
       requests: { tools: { call: {} } },
       cancel: {},
     },
-    extensions: skillsClientExtension(),
+    extensions: { ...skillsClientExtension(), ...facetsClientExtension() },
   };
 
   /**
@@ -2146,7 +2150,7 @@ export class McpSource implements ToolSource {
    */
   async readResource(
     uri: string,
-    opts?: { logFailures?: boolean; reconnect?: boolean },
+    opts?: { logFailures?: boolean; reconnect?: boolean; signal?: AbortSignal },
   ): Promise<ResourceData | null> {
     if (!this.client) {
       // A torn-down client (a source degraded/crashed without re-creation) is the
@@ -2185,8 +2189,10 @@ export class McpSource implements ToolSource {
       }
       return null;
     };
+    // A caller's signal bounds the read and its recovery retry alike.
+    const request = opts?.signal ? { signal: opts.signal } : undefined;
     try {
-      return this.toResourceData(await this.client.readResource({ uri }));
+      return this.toResourceData(await this.client.readResource({ uri }, request));
     } catch (err) {
       // Route every failure through the shared recovery. A genuine MCP miss
       // (`shape.miss`) stays a silent null — e.g. a skill:// or app://instructions
@@ -2198,7 +2204,7 @@ export class McpSource implements ToolSource {
         err,
         async () => {
           if (!this.client) throw err; // restart produced no client — keep recovering
-          return this.toResourceData(await this.client.readResource({ uri }));
+          return this.toResourceData(await this.client.readResource({ uri }, request));
         },
         {
           idempotent: true,
@@ -2213,6 +2219,24 @@ export class McpSource implements ToolSource {
           reauth: logAndNull,
         },
       );
+    }
+  }
+
+  /**
+   * The server's whole `resources/list`, every page, best-effort. `ok: false`
+   * when there is no client or the listing failed, including a server whose
+   * cursor never converges (the SDK's page cap); a caller must not cache that
+   * as the server's listing. Failures do not route through session recovery:
+   * this is a discovery read, and a misbehaving server must not restart-storm
+   * the source.
+   */
+  async listResources(): Promise<{ resources: unknown[]; ok: boolean }> {
+    if (!this.client) return { resources: [], ok: false };
+    try {
+      const { resources } = await this.client.listResources(undefined, { cacheMode: "bypass" });
+      return { resources, ok: true };
+    } catch {
+      return { resources: [], ok: false };
     }
   }
 

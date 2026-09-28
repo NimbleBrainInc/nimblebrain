@@ -15,7 +15,7 @@ import type { RunTrigger } from "./run-spec.ts";
 export interface ModelSlots {
   /** Primary model for chat and general requests. */
   default: string;
-  /** Cheap/fast model for briefings, auto-title, and both history folds. */
+  /** Cheap/fast model for auto-title and both history folds. */
   fast: string;
 }
 
@@ -232,8 +232,6 @@ export interface RuntimeConfig {
     userName?: string;
     /** IANA timezone (e.g., "Pacific/Honolulu"). Empty uses system timezone. */
     timezone?: string;
-    /** Briefing cache TTL in minutes. Default: 5. */
-    cacheTtlMinutes?: number;
   };
 
   /**

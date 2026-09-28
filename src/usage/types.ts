@@ -20,7 +20,7 @@ import type { LanguageModelV4Usage } from "@ai-sdk/provider";
 
 /**
  * Who a priced LLM call was made on behalf of, as distinct from *which slot*
- * made it (`LlmUsageSource` — main / title / compaction / briefing).
+ * made it (`LlmUsageSource` — main / title / compaction).
  *
  * Derived from the request context, never asserted by a caller: `task` when the
  * context is unattended, `chat` when it carries a conversation, `system` for a
@@ -89,7 +89,7 @@ export interface UsageLedgerEntry {
   /**
    * The engine run this call belongs to — one `run.start`→`run.done` span,
    * which is one assistant turn. Present for chat and task alike; absent on
-   * the forked fast-slot calls (title, compaction, briefing), which emit no
+   * the forked fast-slot calls (title, compaction), which emit no
    * event and are not a turn of their own.
    */
   runId?: string;
@@ -156,7 +156,7 @@ export interface TokenUsage {
  * Cost treats an absent split as all-1h (the 2x rate; see `cost.ts`), so a
  * caller that sets `cache_control` breakpoints AND maps usage only through here
  * would over-cost its cache writes. Safe for the current callers (the forked
- * `fast`-slot utility calls — compaction summarizer, auto-title, briefing —
+ * `fast`-slot utility calls — compaction summarizer, auto-title —
  * issue raw `doGenerate` with no breakpoints, so `cacheWriteTokens` is ~0); the
  * engine layers the 1h split on top of this for the main loop.
  */

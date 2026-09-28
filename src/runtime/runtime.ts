@@ -5132,11 +5132,6 @@ export class Runtime {
     return this.resolveModelFn(modelString);
   }
 
-  /** Get home dashboard configuration with defaults applied. */
-  getHomeConfig(): { cacheTtlMinutes: number } {
-    return { cacheTtlMinutes: this.config.home?.cacheTtlMinutes ?? 5 };
-  }
-
   /** Get the structured log directory path. */
   getLogDir(): string {
     return this.config.logging?.dir ?? join(resolveWorkDir(this.config), "logs");
