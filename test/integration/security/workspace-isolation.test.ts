@@ -3,7 +3,8 @@
  *
  * These tests verify that:
  * 1. Path traversal via the workspace id in /v1/workspaces/<wsId>/ is blocked
- * 2. Malformed and unknown workspace ids get one indistinguishable answer
+ * 2. Malformed, unknown and non-member workspace ids get one indistinguishable
+ *    answer
  * 3. Concurrent requests don't contaminate each other's workspace context
  * 4. Identity-scoped routes need no workspace
  * 5. SSE events are scoped to workspace
@@ -22,7 +23,7 @@ import type {
 } from "../../../src/connectors/runtime/types.ts";
 import { Runtime } from "../../../src/runtime/runtime.ts";
 import { createEchoModel } from "../../helpers/echo-model.ts";
-import { createTestAuthAdapter } from "../../helpers/test-auth-adapter.ts";
+import { TEST_IDENTITY, TestAuthAdapter } from "../../helpers/test-auth-adapter.ts";
 import { startServer } from "../../../src/api/server.ts";
 import type { ServerHandle } from "../../../src/api/server.ts";
 import { SseEventManager } from "../../../src/api/events.ts";
@@ -47,13 +48,16 @@ beforeAll(async () => {
     logging: { disabled: true },
   });
 
+  // A real provider, built without the stores, so it provisions nothing: the
+  // caller's memberships are exactly the ones set here.
   handle = startServer({
     runtime,
     port: 0,
-    authAdapter: createTestAuthAdapter(TEST_KEY, runtime),
+    provider: new TestAuthAdapter(TEST_KEY),
   });
   baseUrl = `http://localhost:${handle.port}`;
   await provisionTestWorkspace(runtime);
+  await runtime.getWorkspaceStore().addMember(TEST_WORKSPACE_ID, TEST_IDENTITY.id, "admin");
 });
 
 afterAll(async () => {
@@ -83,7 +87,7 @@ function chatAt(wsSegment: string): Promise<Response> {
 
 const WORKSPACE_NOT_FOUND = { error: "workspace_error", message: "Workspace not found" };
 
-describe("V1: Path traversal via the workspace id in the path", () => {
+describe("V1: Admission of the workspace id in the path", () => {
   // A literal `..` segment is resolved by the URL parser before the request is
   // sent (and `%2e%2e` counts as one), so traversal arrives encoded: the router
   // matches it as a single `:wsId` segment and the gate sees the decoded id.
@@ -119,6 +123,15 @@ describe("V1: Path traversal via the workspace id in the path", () => {
     expect(unknown.status).toBe(404);
     expect(malformed.status).toBe(unknown.status);
     expect(await malformed.json()).toEqual(await unknown.json());
+  });
+
+  it("answers a workspace the caller does not belong to exactly as an unknown one", async () => {
+    // The dev user is this workspace's only member, so under the dev provider,
+    // where every request is the dev user, the request would be admitted.
+    const other = await provisionTestWorkspace(runtime, "ws_not_a_member");
+    const nonMember = await chatAt(other);
+    expect(nonMember.status).toBe(404);
+    expect(await nonMember.json()).toEqual(WORKSPACE_NOT_FOUND);
   });
 });
 
