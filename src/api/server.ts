@@ -51,8 +51,6 @@ export interface ServerHandle {
   sseManager: SseEventManager;
   /** Shorthand for server.port */
   port: number;
-  /** Scoped internal-API auth token (the internal-API bearer). Rotated on every restart. */
-  internalToken: string;
   /** Stop the server and health monitor. */
   stop(closeConnections?: boolean): void;
 }
@@ -85,8 +83,6 @@ export function startServer(options: ServerOptions): ServerHandle {
   // included; its absence never selects one.
   const provider = optProvider ?? runtime.getIdentityProvider();
   if (!provider) throw missingInstanceConfigError(runtime.getWorkDir());
-  // Read the scoped internal token minted by the runtime at startup.
-  const internalToken = runtime.getInternalToken();
 
   // Effective CORS allowlist = operator-declared extras (ALLOWED_ORIGINS) ∪ the
   // canonical hosts (custom domain + platform subdomain). Folding the canonical
@@ -224,7 +220,7 @@ export function startServer(options: ServerOptions): ServerHandle {
   const ctx: AppContext = {
     runtime,
     features: runtime.getFeatures(),
-    authOptions: { mode: authMode, internalToken, eventSink: runtime.getEventSink() },
+    authOptions: { mode: authMode, eventSink: runtime.getEventSink() },
     provider,
     workspaceStore: runtime.getWorkspaceStore(),
     sseManager,
@@ -248,7 +244,6 @@ export function startServer(options: ServerOptions): ServerHandle {
     // webOrigin, vendor-facing → publicOrigin). Identical to publicOrigin() in
     // prod; decoupled from the CORS allowlist (no longer ALLOWED_ORIGINS[0]).
     appOrigin: webOrigin(),
-    internalToken,
     mcpHost,
   };
 
@@ -264,7 +259,6 @@ export function startServer(options: ServerOptions): ServerHandle {
     server,
     healthMonitor,
     sseManager,
-    internalToken,
     get port(): number {
       return server.port as number;
     },

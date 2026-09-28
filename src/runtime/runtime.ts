@@ -409,7 +409,6 @@ export class Runtime {
   /** This runtime's own ledger handle, so `shutdown` releases only its own. */
   private usageLedger?: UsageLedger;
   private _features: ResolvedFeatures;
-  private _internalToken: string;
   private _instanceConfig: InstanceConfig | null;
   private _userStore: UserStore;
   private _workspaceStore: WorkspaceStore;
@@ -525,7 +524,6 @@ export class Runtime {
     placementRegistry: PlacementRegistry,
     telemetryManager: TelemetryManager,
     features: ResolvedFeatures,
-    internalToken: string,
     instanceConfig: InstanceConfig | null,
     userStore: UserStore,
     workspaceStore: WorkspaceStore,
@@ -544,7 +542,6 @@ export class Runtime {
     this.placementRegistry = placementRegistry;
     this.telemetryManager = telemetryManager;
     this._features = features;
-    this._internalToken = internalToken;
     this._instanceConfig = instanceConfig;
     this._userStore = userStore;
     this._workspaceStore = workspaceStore;
@@ -663,10 +660,6 @@ export class Runtime {
     const identityProvider = instanceConfig
       ? createIdentityProvider(instanceConfig, userStore, workDir)
       : null;
-
-    // Mint the scoped internal-API auth token (the internal-API bearer checked
-    // in auth-middleware). Rotated on every runtime restart — never persisted.
-    const internalToken = crypto.randomUUID();
 
     initWorkDir(config);
 
@@ -809,7 +802,6 @@ export class Runtime {
       placementRegistry,
       telemetryManager,
       features,
-      internalToken,
       instanceConfig,
       userStore,
       workspaceStore,
@@ -2720,11 +2712,6 @@ export class Runtime {
         };
       },
     };
-  }
-
-  /** Scoped internal-API auth token (the internal-API bearer). Rotated on every restart. */
-  getInternalToken(): string {
-    return this._internalToken;
   }
 
   /**

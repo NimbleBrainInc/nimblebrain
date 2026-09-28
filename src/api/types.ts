@@ -108,6 +108,5 @@ export interface AppContext {
    */
   secureCookies: boolean;
   appOrigin: string | undefined;
-  internalToken: string;
   mcpHost: McpServerHost;
 }

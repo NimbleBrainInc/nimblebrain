@@ -37,7 +37,6 @@ function optionsWith(verify: () => Promise<VerifiedIdentity | null>, sink: Event
   const provider = { verifyRequest: verify } as unknown as IdentityProvider;
   return {
     mode: { type: "adapter", provider },
-    internalToken: "internal-token-not-used-here",
     eventSink: sink,
   } as unknown as AuthMiddlewareOptions;
 }

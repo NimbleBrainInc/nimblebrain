@@ -31,7 +31,6 @@ const WS_A = "ws_a";
 const WS_B = "ws_b";
 const CANONICAL_A = `${ORIGIN}/mcp/${WS_A}`;
 const CLIENT_ID = "client_test_0001";
-const INTERNAL_TOKEN = "internal-token-for-mcp-path-tests";
 
 function identity(id: string): UserIdentity {
   return { id, email: `${id}@example.com`, displayName: id, orgRole: "member", preferences: {} };
@@ -93,7 +92,6 @@ function makeCtx(): AppContext {
     authOptions: {
       mode: { type: "adapter", provider },
       eventSink: { emit: () => {} },
-      internalToken: INTERNAL_TOKEN,
     },
     runtime: { getFeatures: () => resolveFeatures() },
     workspaceStore: { get: async (id: string) => WORKSPACES.get(id) ?? null },
@@ -238,12 +236,6 @@ describe("first-party credentials", () => {
     const res = await post(makeApp(), `/mcp/${WS_B}`, "alice-first-party");
     expect(res.status).toBe(200);
     expect(reached).toEqual([{ identity: ALICE, workspaceId: WS_B }]);
-  });
-
-  it("refuses the internal connector-to-host token before anything reaches the host", async () => {
-    const res = await post(makeApp(), `/mcp/${WS_A}`, INTERNAL_TOKEN);
-    expect(res.status).toBe(403);
-    expect(reached).toEqual([]);
   });
 
   it("answers 401 with the workspace's discovery header when there is no credential", async () => {

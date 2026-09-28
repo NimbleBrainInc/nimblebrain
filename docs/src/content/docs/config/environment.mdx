@@ -66,12 +66,11 @@ The platform builds every outward-facing URL (OAuth callbacks, post-login landin
 | `MCP_MAX_SESSIONS` | No | `100` | Max concurrent live MCP sessions on `/mcp` per process. A well-formed initialize at capacity evicts the least-recently-used session and is admitted — it is never a 4xx. Non-positive / non-integer values are rejected with a warning and the default is used. |
 | `MCP_SESSION_TTL_SECONDS` | No | `28800` (8 h) | MCP session inactivity TTL in seconds. Each request resets the clock — actively-used sessions never expire. **Highest priority**, overriding [`sessionStore.ttlSeconds`](/config/nimblebrain-json/#sessionstore) in `nimblebrain.json`. Non-positive / non-integer values fall back to the default. |
 
-### Service-to-service & secrets
+### Secrets
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `WORKOS_API_KEY` | When `auth.adapter: "workos"` and no `apiKey` in `instance.json` | — | WorkOS API key. Also settable via `instance.json → auth.apiKey`. |
-| `NB_INTERNAL_TOKEN` | No | — | Shared secret for service-to-service calls. |
 
 <Aside type="caution">
   `NB_API_KEY` is **not** an authentication gate. It does not enable, configure, or bypass auth. To configure auth, use [`instance.json`](/config/instance-json/).

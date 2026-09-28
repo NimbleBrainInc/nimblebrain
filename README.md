@@ -320,7 +320,6 @@ The working directory is set via `NB_WORK_DIR` (see Environment Variables).
 | Variable | Purpose |
 |----------|---------|
 | `WORKOS_API_KEY` | WorkOS API key (when `auth.adapter: "workos"` in `instance.json`) |
-| `NB_INTERNAL_TOKEN` | Shared secret for service-to-service calls (never forwarded to connectors) |
 | `POSTHOG_API_KEY` | PostHog key for anonymous product telemetry |
 | `NB_TELEMETRY_DISABLED` | Set to `1` to disable telemetry (also `DO_NOT_TRACK=1`) |
 
@@ -634,10 +633,6 @@ All default to `true`. What `false` does depends on the flag: most withhold a to
 **Enforcement.** For the flags that withhold a tool, three layers: (1) the tool is not built into its source at startup, so it reaches no tool list and no dispatcher; (2) `POST /v1/workspaces/:wsId/tools/call` returns `403 feature_disabled`; (3) MCP `tools/list` filters it and `tools/call` returns an error. `toolDiscovery`, `catalogSearch`, and `fileContext` are enforced inside the handler instead — the tool or endpoint is present and refuses. `compaction` gates no call path at all. Tools outside the table (`nb__status`, the read-only platform surfaces, `nb__search` itself) are never gated.
 
 Full reference: [Feature flags](https://docs.nimblebrain.ai/config/features/) on docs.nimblebrain.ai.
-
-#### Connector Env Isolation
-
-Connector processes receive a **filtered** host environment. Default allowlist: `PATH`, `HOME`, `USER`, `SHELL`, `LANG`, `LC_ALL`, `LC_CTYPE`, `TERM`, `TMPDIR`, `TZ`, `XDG_DATA_HOME`, `XDG_CONFIG_HOME`, `NODE_ENV`, `BUN_ENV`, `NB_WORK_DIR`, `UPJACK_ROOT`, `PYTHONPATH`, `VIRTUAL_ENV`, `NODE_PATH`. Hard deny (never passed): `NB_API_KEY`, `NB_INTERNAL_TOKEN`. Opt in via `allowedEnv` in connector config.
 
 #### Remote Connector Security
 

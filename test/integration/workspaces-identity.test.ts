@@ -320,7 +320,6 @@ describe("Auth flow", () => {
     const { NoopEventSink } = await import("../../src/adapters/noop-events.ts");
     const result = await authenticateRequest(req, {
       mode,
-      internalToken: "internal-test-token-12345",
       eventSink: new NoopEventSink(),
     });
 
