@@ -5,7 +5,6 @@ import { createAutomationsSource } from "./automations/source.ts";
 import { createComposeSource } from "./compose/source.ts";
 import { createConversationsSource } from "./conversations/source.ts";
 import { createFilesSource } from "./files/source.ts";
-import { createHomeSource } from "./home/source.ts";
 import { createHooksSource } from "./hooks/source.ts";
 import { createInstructionsSource } from "./instructions/source.ts";
 import { createNotificationsSource } from "./notifications/source.ts";
@@ -37,7 +36,6 @@ export async function createPlatformSources(
 ): Promise<ToolSource[]> {
   // Order doesn't matter — placements control UI ordering.
   const sources: ToolSource[] = [
-    createHomeSource(runtime, eventSink),
     await createConversationsSource(runtime, eventSink),
     createFilesSource(runtime, eventSink),
     await createAutomationsSource(runtime, eventSink),

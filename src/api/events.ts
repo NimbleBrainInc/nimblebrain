@@ -166,8 +166,8 @@ function clientReceives(client: SseClient, audience: SseAudience): boolean {
  * Tracks connected SSE clients, broadcasts events per the `SSE_ROUTES`
  * table, and sends heartbeats at a configurable interval (default 30s).
  *
- * Maintains a bounded in-memory event buffer so that consumers (e.g.
- * ActivityCollector) can query recent events without being SSE clients.
+ * Maintains a bounded in-memory event buffer so that in-process code can
+ * query recent events (`getEventsSince`) without being an SSE client.
  *
  * **Identity-scoped clients.** The `/v1/events` route uses
  * `addIdentityClient`, which binds a connection to an identity and caches

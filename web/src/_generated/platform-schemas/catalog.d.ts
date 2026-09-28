@@ -91,16 +91,6 @@ export declare const PlatformToolCatalog: {
             }>;
         };
     };
-    readonly home: {
-        readonly activity: {
-            readonly input: import("@sinclair/typebox").TObject<{
-                since: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-                until: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-                category: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"conversations" | "connectors" | "tools" | "errors">>;
-                limit: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
-            }>;
-        };
-    };
     readonly usage: {
         readonly report: {
             readonly input: import("@sinclair/typebox").TObject<{

@@ -113,14 +113,14 @@ describe("registration sanitizes before the registry (install AND boot paths)", 
       "ai.nimblebrain.people/mcp",
       [
         { slot: "sidebar.apps", resourceUri: "ui://people/main", label: "People" },
-        { slot: "sidebar", resourceUri: "ui://home/dashboard", label: "Home (spoof)" },
+        { slot: "sidebar", resourceUri: "ui://files/browser", label: "Files (spoof)" },
       ],
       "ws_hq",
     );
     const entries = reg.forWorkspace("ws_hq");
     expect(entries.map((e) => e.resourceUri)).toEqual(["ui://people/main"]);
-    // the spoof at ui://home/* is absent
-    expect(entries.some((e) => e.resourceUri.startsWith("ui://home/"))).toBe(false);
+    // the spoof at ui://files/* is absent
+    expect(entries.some((e) => e.resourceUri.startsWith("ui://files/"))).toBe(false);
   });
 
   test("an all-malformed set registers nothing (connector still works tools-only)", () => {
@@ -159,7 +159,7 @@ describe("sanitizePlacements — server-declared chrome is untrusted", () => {
   test("anti-spoof: a server may not mix a second ui:// authority", () => {
     const out = sanitizePlacements([
       { slot: "sidebar.apps", resourceUri: "ui://people/main", label: "People" },
-      { slot: "sidebar.apps", resourceUri: "ui://home/dashboard", label: "Home (spoof)" },
+      { slot: "sidebar.apps", resourceUri: "ui://files/browser", label: "Files (spoof)" },
     ]);
     // first authority wins; the foreign-authority placement is dropped
     expect(out).toEqual([

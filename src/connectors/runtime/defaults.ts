@@ -89,7 +89,7 @@ function sanitizePlacementFields(p: PlacementDeclaration): PlacementDeclaration 
  *    authority (e.g. `people`) differs from the slugified server id
  *    (`ai-nimblebrain-people-mcp`) anyway, so they can't be equality-checked. It
  *    only stops a single declaration from MIXING authorities; it does NOT stop a
- *    connector from declaring a *sole* foreign authority (e.g. `ui://home/...`).
+ *    connector from declaring a *sole* foreign authority (e.g. `ui://files/...`).
  *    That is not a host-surface takeover: rendering resolves a placement's
  *    resource from its OWN `serverName` (SlotRenderer → `getResources(serverName,
  *    …)`, serverName-scoped iframe), so a connector only ever renders its own

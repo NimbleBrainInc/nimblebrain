@@ -8,8 +8,7 @@
  *
  * The cap has to sit at the wire. The index's stored preview backs
  * case-insensitive substring matching for `list?search=`, so truncating at
- * production would silently narrow recall — which is why `home__activity` caps
- * in its collector rather than in the index, and why this does the same.
+ * production would silently narrow recall.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";

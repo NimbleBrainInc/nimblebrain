@@ -20,7 +20,7 @@ Get NimbleBrain running locally with Docker Compose. You need Docker and an [Ant
    }
    ```
 
-   Both `$schema` and `version` are part of the config. This minimal file starts NimbleBrain with no MCP apps installed. The agent still has built-in platform capabilities (home, conversations, files, automations, skills, usage). You install apps from the web UI in step 5 to give it domain-specific tools.
+   Both `$schema` and `version` are part of the config. This minimal file starts NimbleBrain with no MCP apps installed. The agent still has built-in platform capabilities (conversations, files, automations, skills, usage). You install apps from the web UI in step 5 to give it domain-specific tools.
 
    <Aside type="note">
    Apps are not listed in `nimblebrain.json`. Per-workspace app installs live in `workspace.json`, which the runtime manages for you. The config file is for runtime settings (model, limits, features), not app inventory.

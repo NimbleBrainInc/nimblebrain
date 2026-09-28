@@ -1,26 +1,10 @@
-import { type Static, Type } from "@sinclair/typebox";
-import { StringEnum } from "./_shared.ts";
-
-export const HomeActivityInput = Type.Object({
-  since: Type.Optional(Type.String({ description: "ISO timestamp. Default: 24 hours ago." })),
-  until: Type.Optional(Type.String({ description: "ISO timestamp. Default: now." })),
-  category: Type.Optional(
-    StringEnum(["conversations", "connectors", "tools", "errors"] as const, {
-      description: "Filter to one category.",
-    }),
-  ),
-  limit: Type.Optional(Type.Number({ description: "Max items per category. Default: 50." })),
-});
-export type HomeActivityInput = Static<typeof HomeActivityInput>;
-
 // ── Briefing output ────────────────────────────────────────────────────────
 //
 // Canonical contract for the `nb__briefing` tool's structured output. Per the
 // output-schema convention these are type-only (we don't wire-validate
-// outputs): `src/services/home-types.ts` re-exports them for the backend, and
-// `bun run codegen` emits them to `web/src/_generated/platform-schemas/home.d.ts`
-// for the web briefing surface. Single source of truth — do not hand-redeclare
-// on either side.
+// outputs): the backend imports them from here, and `bun run codegen` emits
+// them to `web/src/_generated/platform-schemas/home.d.ts` for the web briefing
+// surface. Single source of truth — do not hand-redeclare on either side.
 
 /**
  * One facet of one app: `<count> <label>`, opening the app. Built from a count

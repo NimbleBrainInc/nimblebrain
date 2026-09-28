@@ -14,8 +14,7 @@ interface ErrorLogDeps {
  * HTTP error logging middleware for workspace-scoped routes.
  *
  * Runs after the handler completes. For any 4xx/5xx response, writes a
- * structured JSONL record to the workspace's log directory so that
- * ActivityCollector (and `home__activity`) can surface it.
+ * structured JSONL record to the workspace's log directory.
  *
  * Also emits an `http.error` event to the global EventSink for PostHog
  * and any other sinks in the pipeline.
@@ -54,7 +53,7 @@ export function errorLog({ runtime, eventSink }: ErrorLogDeps) {
       workspaceId: workspaceId ?? null,
     };
 
-    // Write to workspace-scoped log (where ActivityCollector reads from)
+    // Write to the workspace-scoped log
     try {
       const wsDir = runtime.getWorkspaceScopedDir(workspaceId);
       const logDir = join(wsDir, "logs");

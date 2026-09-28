@@ -15,6 +15,7 @@
 
 import type { ConnectorInstance } from "../connectors/runtime/types.ts";
 import { log } from "../observability/log.ts";
+import type { BriefingItem } from "../platform/schemas/home.ts";
 import type { McpSource } from "../tools/mcp-source.ts";
 import { createFacetCache, type FacetCache, type FacetReading } from "./briefing-cache.ts";
 import {
@@ -23,7 +24,6 @@ import {
   parseFacetCount,
   selectFacets,
 } from "./facets-extension.ts";
-import type { BriefingItem } from "./home-types.ts";
 
 /**
  * How long a server's facet listing is reused. Discovery does not wait on

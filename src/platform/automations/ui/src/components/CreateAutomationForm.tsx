@@ -12,13 +12,6 @@ export const TEMPLATES: Array<{
   schedule: ScheduleSpec | null;
 }> = [
   {
-    id: "daily-briefing",
-    name: "Daily Briefing",
-    description: "Morning summary of activity and priorities",
-    prompt: "Generate a briefing of today's activity, upcoming events, and priorities.",
-    schedule: { type: "cron", expression: "0 8 * * *", timezone: "Pacific/Honolulu" },
-  },
-  {
     id: "monitor-changes",
     name: "Monitor Changes",
     description: "Check for updates on a topic every 30 minutes",
@@ -207,7 +200,7 @@ export function CreateAutomationForm({
             type="text"
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder="Daily Briefing"
+            placeholder="Weekly Summary"
             // biome-ignore lint/a11y/noAutofocus: intentional focus on form open
             autoFocus
           />
@@ -220,7 +213,7 @@ export function CreateAutomationForm({
             className="inline-edit-textarea"
             value={prompt}
             onChange={(e) => setPrompt(e.target.value)}
-            placeholder="Generate a briefing of today's activity, upcoming events, and priorities."
+            placeholder="Summarize the week's activity, key decisions, and open items."
             rows={3}
           />
         </div>

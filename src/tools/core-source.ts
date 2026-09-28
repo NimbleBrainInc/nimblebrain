@@ -27,8 +27,8 @@ const pkg = JSON.parse(readFileSync(pkgPath, "utf-8")) as { version: string };
 // Prefer the build-time-injected git tag; fall back to package.json for local dev.
 const VERSION = process.env.NB_VERSION || pkg.version;
 
+import type { BriefingItem, BriefingOutput } from "../platform/schemas/home.ts";
 import { createBriefingCollector } from "../services/briefing-collector.ts";
-import type { BriefingItem, BriefingOutput } from "../services/home-types.ts";
 
 // --- set_model_config helpers -------------------------------------------------
 // The handler is a linear validate → normalize → merge → write pipeline; each

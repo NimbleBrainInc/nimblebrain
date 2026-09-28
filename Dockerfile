@@ -32,8 +32,8 @@ COPY --chown=1000:1000 scripts/ scripts/
 COPY --chown=1000:1000 bunfig.toml ./
 COPY --chown=1000:1000 instrument/ instrument/
 
-# Build the platform app UIs (home, conversations, files, automations) — each
-# is its own single-file Vite app and must build in the container because dist/
+# Build every platform app UI (`src/platform/*/ui`) — each is its own
+# single-file Vite app and must build in the container because dist/
 # is gitignored. UI deps are installed fresh here and removed after build; the
 # source tree's nested node_modules are excluded by .dockerignore
 # (**/node_modules) so they never enter the build context.

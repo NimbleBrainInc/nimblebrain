@@ -252,7 +252,7 @@ The `ghcr.io/nimblebraininc/nimblebrain-runtime` image runs the platform on Bun.
 |-----------|---------|---------|
 | Bun | latest | JavaScript/TypeScript runtime (runs the platform itself) |
 | Python | 3.13 | Base image |
-| Node.js + npm | 24 | Builds the in-image platform app UIs (home, conversations, files, automations) |
+| Node.js + npm | 24 | Builds the in-image platform app UIs |
 | Git, curl, unzip | System | Install steps and the health check |
 
 The container runs as a non-root user (UID 1000). The entrypoint is `bun run src/cli/index.ts serve`, which starts the HTTP API server on port 27247 with `NB_WORK_DIR=/data` and `NB_HOST=0.0.0.0`.

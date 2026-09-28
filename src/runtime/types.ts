@@ -242,10 +242,8 @@ export interface RuntimeConfig {
     enabled?: boolean;
   };
 
-  /** Home dashboard configuration. */
+  /** Legacy tenant defaults; `preferences` takes precedence over both. */
   home?: {
-    /** Enable the Home dashboard. Default: true. */
-    enabled?: boolean;
     /** Legacy fallback for `preferences.displayName`. */
     userName?: string;
     /** IANA timezone (e.g., "Pacific/Honolulu"). Empty uses system timezone. */

@@ -18,7 +18,6 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createFilesSource } from "../../../src/platform/files/source.ts";
-import { createHomeSource } from "../../../src/platform/home/source.ts";
 import { createUsageSource } from "../../../src/platform/usage/source.ts";
 import { createConversationsSource } from "../../../src/platform/conversations/source.ts";
 import { NoopEventSink } from "../../../src/adapters/noop-events.ts";
@@ -69,15 +68,6 @@ describe("Connector audit — every inline connector has compilable schemas", ()
     const dir = mkdtempSync(join(tmpdir(), "nb-audit-files-"));
     try {
       await auditSource(createFilesSource(makeRuntime(dir), new NoopEventSink()));
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
-
-  test("home", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "nb-audit-home-"));
-    try {
-      await auditSource(createHomeSource(makeRuntime(dir), new NoopEventSink()));
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

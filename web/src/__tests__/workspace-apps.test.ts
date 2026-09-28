@@ -26,7 +26,7 @@ function p(over: Partial<PlacementEntry> & { serverName: string; slot: string })
 describe("workspaceApps", () => {
   test("keeps only grouped sidebar slots", () => {
     const out = workspaceApps([
-      p({ serverName: "home", slot: "sidebar" }), // core nav — excluded
+      p({ serverName: "core-nav", slot: "sidebar" }), // core nav — excluded
       p({ serverName: "tray", slot: "sidebar.bottom" }), // utility tray — excluded
       p({ serverName: "main-app", slot: "main" }), // not a sidebar slot — excluded
       p({ serverName: "crm", slot: "sidebar.apps" }), // app — kept
@@ -58,7 +58,7 @@ describe("workspaceApps", () => {
   });
 
   test("returns [] when there are no app placements", () => {
-    expect(workspaceApps([p({ serverName: "home", slot: "sidebar" })])).toEqual([]);
+    expect(workspaceApps([p({ serverName: "core-nav", slot: "sidebar" })])).toEqual([]);
     expect(workspaceApps([])).toEqual([]);
   });
 
