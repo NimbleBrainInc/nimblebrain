@@ -23,6 +23,7 @@ import type {
   AutomationsStatusOutput,
 } from "../schemas/automations.ts";
 import { createAutomation, deleteAutomation, updateAutomation } from "./domain.ts";
+import { containsRecursiveTool } from "./executor.ts";
 import type { ReadRunsOptions } from "./store.ts";
 import {
   type Automation,
@@ -317,11 +318,21 @@ export interface ValidatableAutomationFields {
   maxIterations?: number;
   maxInputTokens?: number;
   maxRunDurationMs?: number;
+  allowedTools?: string[];
 }
 
 export function validateAutomationFields(args: ValidatableAutomationFields): void {
   if (args.schedule) validateSchedule(args.schedule);
   validateNumericLimits(args);
+  // The executor refuses to run such an automation; refusing it here tells the
+  // author at write time instead of at the first run.
+  const recursive = containsRecursiveTool(args.allowedTools);
+  if (recursive !== null) {
+    throw new Error(
+      `allowedTools may not include "${recursive}": an automation cannot create, update, or ` +
+        "delete automations from its own runs.",
+    );
+  }
 }
 
 /**
@@ -406,11 +417,10 @@ function validateNumericLimits(args: ValidatableAutomationFields): void {
 
 /**
  * Strict input shape for `automations__create`. The validator has already
- * enforced shape — handler reads typed fields directly. Operator-only
- * fields (`source`, `allowedTools`) are NOT in this shape; the LLM-facing
- * handler hardcodes `source: "agent"` and never sets the others. An
- * internal caller bypasses this handler and calls `createAutomation` from
- * `domain.ts` directly with the full shape.
+ * enforced shape — handler reads typed fields directly. The operator-only
+ * field `source` is NOT in this shape; the LLM-facing handler hardcodes
+ * `source: "agent"`. An internal caller bypasses this handler and calls
+ * `createAutomation` from `domain.ts` directly with the full shape.
  */
 interface CreateInput {
   manifest: {
@@ -423,6 +433,7 @@ interface CreateInput {
     maxIterations?: number;
     maxInputTokens?: number;
     maxRunDurationMs?: number;
+    allowedTools?: string[];
     tokenBudget?: Automation["tokenBudget"];
   };
   body: string;
@@ -444,11 +455,11 @@ export function handleCreate(args: Record<string, unknown>, ctx: ToolContext): o
       maxIterations: manifest.maxIterations,
       maxInputTokens: manifest.maxInputTokens,
       maxRunDurationMs: manifest.maxRunDurationMs,
+      allowedTools: manifest.allowedTools,
       tokenBudget: manifest.tokenBudget,
       enabled: manifest.enabled,
       // LLM-facing path: stamp `agent` source and derive ownership from
-      // request context. `allowedTools` is intentionally not reachable
-      // from this surface.
+      // request context.
       source: "agent",
       ownerId: ctx.currentUserId,
       workspaceId: ctx.currentWorkspaceId,

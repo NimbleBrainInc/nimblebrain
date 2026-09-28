@@ -9,8 +9,8 @@
  *
  * Why split this out:
  *
- *   - The LLM-facing schema must be minimal (no `source`, no
- *     `allowedTools`) — operator/runtime fields only.
+ *   - The LLM-facing schema must be minimal (no `source`) — operator/runtime
+ *     fields stay off it.
  *   - But an internal caller legitimately needs to set those fields.
  *   - Without this split, internal callers either (a) pass the wrong
  *     shape and silently no-op, or (b) sneak operator fields back into
@@ -100,9 +100,9 @@ function resetBudgetWindowIfChanged(
 
 /**
  * Full create input for the domain. Includes operator-only fields the
- * LLM-facing schema does NOT expose: `source`, `allowedTools`, `ownerId`,
- * `workspaceId`. The tool handler hardcodes `source: "agent"` and derives
- * ownership from request context.
+ * LLM-facing schema does NOT expose: `source`, `ownerId`, `workspaceId`.
+ * The tool handler hardcodes `source: "agent"` and derives ownership from
+ * request context.
  */
 export interface DomainCreateInput {
   name: string;
@@ -116,9 +116,9 @@ export interface DomainCreateInput {
   maxRunDurationMs?: number;
   tokenBudget?: TokenBudget;
   enabled?: boolean;
+  allowedTools?: string[];
   // Operator/runtime fields:
   source?: AutomationSource;
-  allowedTools?: string[];
   ownerId?: string;
   workspaceId?: string;
 }
@@ -135,7 +135,6 @@ export interface DomainUpdatePatch {
   maxRunDurationMs?: number;
   tokenBudget?: TokenBudget;
   enabled?: boolean;
-  // Operator-only:
   allowedTools?: string[];
 }
 

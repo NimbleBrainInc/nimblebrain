@@ -582,6 +582,58 @@ describe("handleUpdate", () => {
 			handleUpdate(updateArgs("Nonexistent"), ctx),
 		).toThrow("Automation not found");
 	});
+	test("sets allowedTools", () => {
+		const ctx = makeCtx();
+		handleCreate(
+			createArgs("Scoped", "Do it", { type: "interval", intervalMs: 60_000 }),
+			ctx,
+		);
+
+		const result = handleUpdate(
+			updateArgs("Scoped", { allowedTools: ["crm__*"] }),
+			ctx,
+		) as { automation: Automation };
+
+		expect(result.automation.allowedTools).toEqual(["crm__*"]);
+	});
+
+	test("refuses allowedTools that name an automation-authoring tool", () => {
+		const ctx = makeCtx();
+		handleCreate(
+			createArgs("Scoped", "Do it", { type: "interval", intervalMs: 60_000 }),
+			ctx,
+		);
+
+		expect(() =>
+			handleUpdate(updateArgs("Scoped", { allowedTools: ["automations__update"] }), ctx),
+		).toThrow(/allowedTools may not include "automations__update"/);
+	});
+});
+
+describe("handleCreate — allowedTools", () => {
+	test("stores the list on the automation", () => {
+		const ctx = makeCtx();
+		const result = handleCreate(
+			createArgs("Scoped", "Do it", { type: "interval", intervalMs: 60_000 }, {
+				allowedTools: ["crm__*", "files__read"],
+			}),
+			ctx,
+		) as { automation: Automation };
+
+		expect(result.automation.allowedTools).toEqual(["crm__*", "files__read"]);
+	});
+
+	test("refuses a list that names automations__create", () => {
+		const ctx = makeCtx();
+		expect(() =>
+			handleCreate(
+				createArgs("Loop", "Do it", { type: "interval", intervalMs: 60_000 }, {
+					allowedTools: ["files__*", "automations__create"],
+				}),
+				ctx,
+			),
+		).toThrow(/allowedTools may not include/);
+	});
 });
 
 // ---------------------------------------------------------------------------

@@ -78,11 +78,37 @@ const Schedule = Type.Object(
   { required: ["type"] },
 );
 
-const TokenBudget = Type.Object({
-  maxInputTokens: Type.Optional(Type.Number()),
-  maxOutputTokens: Type.Optional(Type.Number()),
-  period: Type.Optional(StringEnum(["daily", "monthly"] as const)),
-});
+const TokenBudget = Type.Object(
+  {
+    maxInputTokens: Type.Optional(
+      Type.Number({
+        minimum: 1,
+        description: "Most input tokens this automation's runs may use in total per period.",
+      }),
+    ),
+    maxOutputTokens: Type.Optional(
+      Type.Number({
+        minimum: 1,
+        description: "Most output tokens this automation's runs may use in total per period.",
+      }),
+    ),
+    period: Type.Optional(
+      StringEnum(["daily", "monthly"] as const, {
+        description:
+          "When the running totals reset: at the start of each day or month. Omit for a " +
+          "lifetime total that never resets.",
+      }),
+    ),
+  },
+  {
+    description:
+      "Spending limit across runs, in tokens (not dollars). Checked after each run " +
+      "completes: once the period's total passes a cap, the automation is disabled and " +
+      "stays disabled until someone re-enables it. The run that crosses the cap finishes; " +
+      "to bound a single run, use maxInputTokens and maxIterations. Offer one when the " +
+      "automation runs often or unattended for long.",
+  },
+);
 
 // Manifest fields shared by create + update. `name` is required for create
 // (rebuilt with explicit required); update uses the same fields minus name
@@ -113,6 +139,16 @@ const ManifestFields = {
   maxInputTokens: Type.Optional(
     Type.Number({ description: "Max input tokens per run. Default 200000." }),
   ),
+  allowedTools: Type.Optional(
+    Type.Array(Type.String(), {
+      description:
+        "Tools this automation's runs may use, as names or globs: `gmail__*` for a " +
+        "connector's tools, `files__read` for one tool. Tools outside the list are neither " +
+        "shown nor callable; the `nb__*` system tools stay available. Prefer a `<connector>__*` " +
+        "glob, since a connector can rename its tools. Omit or leave empty to allow every tool in the " +
+        "workspace. May not name automations__create, automations__update, or automations__delete.",
+    }),
+  ),
   maxRunDurationMs: Type.Optional(
     Type.Number({ description: "Max wall-clock per run (ms). Default 120000." }),
   ),
@@ -130,6 +166,7 @@ const UpdateManifestFields = {
   model: ManifestFields.model,
   maxIterations: ManifestFields.maxIterations,
   maxInputTokens: ManifestFields.maxInputTokens,
+  allowedTools: ManifestFields.allowedTools,
   maxRunDurationMs: ManifestFields.maxRunDurationMs,
   tokenBudget: ManifestFields.tokenBudget,
 };

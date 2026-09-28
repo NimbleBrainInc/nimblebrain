@@ -220,6 +220,7 @@ import {
 } from "../tools/server-notifications.ts";
 import { surfaceTools } from "../tools/surfacing.ts";
 import { createSystemTools } from "../tools/system-tools.ts";
+import { isToolAllowedForRun } from "../tools/tool-pattern.ts";
 import type { ResourceData, Tool, ToolSource } from "../tools/types.ts";
 import { toToolSchema } from "../tools/types.ts";
 import { createProcessLedger, type UsageLedger } from "../usage/ledger.ts";
@@ -451,8 +452,8 @@ export class Runtime {
   /**
    * Domain-context getter for the automations app. Set by the automations
    * source factory; consumed by an internal caller that needs the full
-   * domain shape — including the operator-only `source` and `allowedTools`
-   * fields the LLM-facing tool schema deliberately doesn't expose. See
+   * domain shape — including the operator-only `source` field the
+   * LLM-facing tool schema deliberately doesn't expose. See
    * `src/platform/AGENTS.md` § 1.4.
    */
   private _automationsContextGetter: (() => AutomationDomainContext) | null = null;
@@ -1616,6 +1617,7 @@ export class Runtime {
       identityId: ownerId,
       workspaceId: spec.workspaceId,
       perCallWorkspaceMap,
+      allowedTools: spec.input.allowedTools,
     });
     const engine = new AgentEngine(this.resolveModelFn(spec.model), identityToolRouter, engineSink);
 
@@ -2453,12 +2455,16 @@ export class Runtime {
     identityId: string;
     workspaceId: string;
     perCallWorkspaceMap: Map<string, string>;
+    allowedTools: string[] | undefined;
   }): ToolRouter {
-    const { identityId, workspaceId, perCallWorkspaceMap } = opts;
+    const { identityId, workspaceId, perCallWorkspaceMap, allowedTools } = opts;
     return new IdentityToolRouter({
       identityId,
       workspaceId,
       runtime: this,
+      ...(allowedTools
+        ? { isToolAllowed: (name: string) => isToolAllowedForRun(name, allowedTools) }
+        : {}),
       onWorkspaceDispatch: (callId, wsId) => {
         perCallWorkspaceMap.set(callId, wsId);
       },

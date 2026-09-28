@@ -31,7 +31,7 @@ export interface Automation {
   /** Force a specific skill match (bypass trigger/keyword matching). */
   skill?: string;
 
-  /** Tool allowlist (glob patterns). Passed as allowedTools on chat request. */
+  /** Tool allowlist (glob patterns) for this automation's runs. Empty or absent: every tool. */
   allowedTools?: string[];
 
   /** Max agentic iterations per run. Default: 25. Hard cap: 50. */
