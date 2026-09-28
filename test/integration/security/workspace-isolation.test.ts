@@ -30,7 +30,6 @@ import { SseEventManager } from "../../../src/api/events.ts";
 import type { ToolResult } from "../../../src/engine/types.ts";
 import type { Tool, ToolSource } from "../../../src/tools/types.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../../helpers/test-workspace.ts";
-import { devProvider } from "../../helpers/dev-provider.ts";
 
 // ── Test setup: authenticated server ────────────────────────────
 
@@ -52,7 +51,6 @@ beforeAll(async () => {
   // A real provider, built without the stores, so it provisions nothing: the
   // caller's memberships are exactly the ones set here.
   handle = startServer({
-    provider: devProvider(runtime),
     runtime,
     port: 0,
     provider: new TestAuthAdapter(TEST_KEY),
