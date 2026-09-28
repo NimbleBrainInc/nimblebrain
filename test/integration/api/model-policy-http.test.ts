@@ -21,7 +21,7 @@ const DEV_OWNER = "usr_default";
 beforeAll(async () => {
   mkdirSync(testDir, { recursive: true });
   runtime = await Runtime.start({
-    identityProvider: devProvider(testDir),
+    identityProvider: devProvider,
     model: { provider: "custom", adapter: createEchoModel() },
     // Carries the allowlist. It also displaces the echo adapter, so a turn that
     // clears the gate then fails against a placeholder key — which is fine

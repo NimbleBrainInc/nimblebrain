@@ -142,7 +142,7 @@ async function serve(config: Partial<WorkosAuth>): Promise<string> {
   const workDir = join(testDir, `server-${runtimes.length}`);
   cpSync(seedDir, workDir, { recursive: true });
   const runtime = await Runtime.start({
-    identityProvider: workosProvider(config),
+    identityProvider: () => workosProvider(config),
     model: { provider: "custom", adapter: createEchoModel() },
     logging: { disabled: true },
     workDir,

@@ -80,7 +80,7 @@ describe("POST /v1/workspaces/:wsId/chat/stream — concurrency protection", () 
 
     const workDir = makeWorkDir();
     runtime = await Runtime.start({
-      identityProvider: devProvider(workDir),
+      identityProvider: devProvider,
       workDir,
       model: { provider: "custom", adapter: gatedModel },
       logging: { disabled: true },
@@ -127,7 +127,7 @@ describe("POST /v1/workspaces/:wsId/chat/stream — concurrency protection", () 
   test("concurrent stream requests produce exactly one successful run; the rest are rejected", async () => {
     const workDir = makeWorkDir();
     runtime = await Runtime.start({
-      identityProvider: devProvider(workDir),
+      identityProvider: devProvider,
       workDir,
       model: { provider: "custom", adapter: createEchoModel() },
       logging: { disabled: true },

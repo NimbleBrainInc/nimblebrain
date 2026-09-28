@@ -43,7 +43,7 @@ beforeAll(async () => {
   workDir = join(tmpdir(), `nb-workspace-isolation-${Date.now()}`);
   mkdirSync(workDir, { recursive: true });
   runtime = await Runtime.start({
-    identityProvider: new TestAuthAdapter(TEST_KEY),
+    identityProvider: () => new TestAuthAdapter(TEST_KEY),
     workDir,
     model: { provider: "custom", adapter: createEchoModel() },
     logging: { disabled: true },

@@ -117,7 +117,7 @@ beforeAll(async () => {
   recorded = { prompts };
 
   runtime = await Runtime.start({
-    identityProvider: devProvider(testDir),
+    identityProvider: devProvider,
     model: { provider: "custom", adapter: model },
     logging: { disabled: true },
     workDir: testDir,

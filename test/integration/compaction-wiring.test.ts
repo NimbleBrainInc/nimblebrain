@@ -61,7 +61,7 @@ beforeAll(async () => {
   });
 
   runtime = await Runtime.start({
-    identityProvider: testAuthAdapter(API_KEY, workDir),
+    identityProvider: testAuthAdapter(API_KEY),
     model: { provider: "custom", adapter: model },
     models: { fast: CONFIGURED_FAST_MODEL },
     logging: { disabled: true },

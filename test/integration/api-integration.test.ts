@@ -63,7 +63,7 @@ describe("integration: full flow with auth", () => {
 	beforeAll(async () => {
 		mkdirSync(workDir, { recursive: true });
 		runtime = await Runtime.start({
-			identityProvider: testAuthAdapter(API_KEY, workDir),
+			identityProvider: testAuthAdapter(API_KEY),
 			model: { provider: "custom", adapter: createEchoModel() },
 			logging: { disabled: true },
 			workDir,
@@ -154,7 +154,7 @@ describe("integration: concurrent authenticated load", () => {
 	beforeAll(async () => {
 		mkdirSync(workDir, { recursive: true });
 		runtime = await Runtime.start({
-			identityProvider: testAuthAdapter(API_KEY, workDir),
+			identityProvider: testAuthAdapter(API_KEY),
 			model: { provider: "custom", adapter: createEchoModel() },
 			logging: { disabled: true },
 			workDir,
@@ -241,7 +241,7 @@ describe("integration: windowing under load", () => {
 		process.env.NB_CHAT_RATE_LIMIT = "200";
 
 		runtime = await Runtime.start({
-			identityProvider: devProvider(windowTestDir),
+			identityProvider: devProvider,
 			model: { provider: "custom", adapter: createEchoModel() },
 			logging: { disabled: true },
 			maxInputTokens: 2000, // Low budget to trigger windowing
@@ -354,7 +354,7 @@ describe("integration: auth boundary", () => {
 	beforeAll(async () => {
 		mkdirSync(workDir, { recursive: true });
 		runtime = await Runtime.start({
-			identityProvider: testAuthAdapter(API_KEY, workDir),
+			identityProvider: testAuthAdapter(API_KEY),
 			model: { provider: "custom", adapter: createEchoModel() },
 			logging: { disabled: true },
 			workDir,
@@ -429,7 +429,7 @@ describe("E2E: install app -> tool call via API", () => {
 		mkdirSync(testDir, { recursive: true });
 
 		runtime = await Runtime.start({
-			identityProvider: devProvider(testDir),
+			identityProvider: devProvider,
 			model: { provider: "custom", adapter: createEchoModel() },
 			logging: { disabled: true },
 			workDir: testDir,
@@ -519,7 +519,7 @@ describe("E2E: tool call via API", () => {
 		mkdirSync(sseTestDir, { recursive: true });
 
 		runtime = await Runtime.start({
-			identityProvider: devProvider(sseTestDir),
+			identityProvider: devProvider,
 			model: { provider: "custom", adapter: createEchoModel() },
 			logging: { disabled: true },
 			workDir: sseTestDir,
@@ -588,7 +588,7 @@ describe("E2E: multi-step conversation -> history -> conversations list consiste
 		mkdirSync(multiStepDir, { recursive: true });
 
 		runtime = await Runtime.start({
-			identityProvider: devProvider(multiStepDir),
+			identityProvider: devProvider,
 			model: { provider: "custom", adapter: createEchoModel() },
 			logging: { disabled: true },
 			workDir: multiStepDir,

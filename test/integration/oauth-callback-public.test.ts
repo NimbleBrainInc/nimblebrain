@@ -42,7 +42,7 @@ beforeAll(async () => {
 	process.env.COMPOSIO_API_KEY = "test-composio-key-oauth-callback-public";
 	_resetComposioConfigForTest();
 	runtime = await Runtime.start({
-		identityProvider: testAuthAdapter(API_KEY, testDir),
+		identityProvider: testAuthAdapter(API_KEY),
 		model: { provider: "custom", adapter: createEchoModel() },
 		logging: { disabled: true },
 		http: { port: 0, host: "127.0.0.1" },

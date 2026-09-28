@@ -32,7 +32,7 @@ let wsForeign: string;
 beforeAll(async () => {
   mkdirSync(testDir, { recursive: true });
   runtime = await Runtime.start({
-    identityProvider: testAuthAdapter(API_KEY, testDir),
+    identityProvider: testAuthAdapter(API_KEY),
     model: { provider: "custom", adapter: createEchoModel() },
     logging: { disabled: true },
     workDir: testDir,

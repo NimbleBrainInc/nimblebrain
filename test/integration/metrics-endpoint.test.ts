@@ -30,7 +30,7 @@ beforeAll(async () => {
   mkdirSync(workDir, { recursive: true });
   // No metrics config of any kind — this is the bare local/no-k8s setup.
   runtime = await Runtime.start({
-    identityProvider: testAuthAdapter(API_KEY, workDir),
+    identityProvider: testAuthAdapter(API_KEY),
     model: { provider: "custom", adapter: createEchoModel() },
     logging: { disabled: true },
     workDir,

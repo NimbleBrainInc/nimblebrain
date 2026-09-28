@@ -103,7 +103,7 @@ describe("conversation access after the owner is removed from its workspace", ()
   beforeAll(async () => {
     mkdirSync(workDir, { recursive: true });
     runtime = await Runtime.start({
-      identityProvider: new TokenAuthAdapter({ [ALICE_TOKEN]: ALICE }),
+      identityProvider: () => new TokenAuthAdapter({ [ALICE_TOKEN]: ALICE }),
       model: { provider: "custom", adapter: createEchoModel() },
       logging: { disabled: true },
       workDir,

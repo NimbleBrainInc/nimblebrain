@@ -60,7 +60,7 @@ beforeAll(async () => {
   workDir = await mkdtemp(join(tmpdir(), "nb-mcp-ws-scope-"));
 
   runtime = await Runtime.start({
-    identityProvider: devProvider(workDir),
+    identityProvider: devProvider,
     model: { provider: "custom", adapter: createEchoModel() },
     logging: { disabled: true },
     workDir,

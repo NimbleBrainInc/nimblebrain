@@ -224,7 +224,7 @@ describe("API full-flow integration", () => {
 	beforeAll(async () => {
 		runtimeWorkDir = tempDir();
 		runtime = await Runtime.start({
-			identityProvider: devProvider(runtimeWorkDir),
+			identityProvider: devProvider,
 			workDir: runtimeWorkDir,
 			model: { provider: "custom", adapter: createEchoModel() },
 			logging: { disabled: true },

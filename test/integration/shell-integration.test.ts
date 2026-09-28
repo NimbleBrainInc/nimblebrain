@@ -26,7 +26,7 @@ beforeAll(async () => {
 	mkdirSync(workDir, { recursive: true });
 
 	runtime = await Runtime.start({
-		identityProvider: devProvider(workDir),
+		identityProvider: devProvider,
 		model: { provider: "custom", adapter: createEchoModel() },
 		workDir,
 		logging: { disabled: true },

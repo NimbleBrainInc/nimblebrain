@@ -121,7 +121,7 @@ describe("/v1/conversations/:id/events — identity-scoped", () => {
   test("setup", async () => {
     mkdirSync(workDir, { recursive: true });
     runtime = await Runtime.start({
-      identityProvider: testAuthAdapter(API_KEY, workDir),
+      identityProvider: testAuthAdapter(API_KEY),
       model: { provider: "custom", adapter: createEchoModel() },
       logging: { disabled: true },
       workDir,
@@ -250,7 +250,7 @@ describe("/v1/conversations/:id/events — dev provider", () => {
   test("setup", async () => {
     mkdirSync(workDir, { recursive: true });
     runtime = await Runtime.start({
-      identityProvider: devProvider(workDir),
+      identityProvider: devProvider,
       model: { provider: "custom", adapter: createEchoModel() },
       logging: { disabled: true },
       workDir,
@@ -315,7 +315,7 @@ describe("ownerless conversation file — no 500s", () => {
   test("setup", async () => {
     mkdirSync(workDir, { recursive: true });
     runtime = await Runtime.start({
-      identityProvider: testAuthAdapter(API_KEY, workDir),
+      identityProvider: testAuthAdapter(API_KEY),
       model: { provider: "custom", adapter: createEchoModel() },
       logging: { disabled: true },
       workDir,

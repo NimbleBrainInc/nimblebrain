@@ -561,7 +561,7 @@ describe("/mcp/<wsId> on both eras", () => {
     info = spyOn(log, "info");
     workDir = await mkdtemp(join(tmpdir(), "nb-mcp-era-"));
     runtime = await Runtime.start({
-      identityProvider: devProvider(workDir),
+      identityProvider: devProvider,
       model: { provider: "custom", adapter: createEchoModel() },
       logging: { disabled: true },
       workDir,

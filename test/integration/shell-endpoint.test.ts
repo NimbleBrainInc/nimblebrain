@@ -20,7 +20,7 @@ const testDir = join(tmpdir(), `nimblebrain-shell-${Date.now()}`);
 beforeAll(async () => {
 	mkdirSync(testDir, { recursive: true });
 	runtime = await Runtime.start({
-		identityProvider: devProvider(testDir),
+		identityProvider: devProvider,
 		model: { provider: "custom", adapter: createEchoModel() },
 		logging: { disabled: true },
 		workDir: testDir,
@@ -80,7 +80,7 @@ describe("GET /v1/workspaces/:wsId/shell auth", () => {
 	beforeAll(async () => {
 		mkdirSync(shellAuthDir, { recursive: true });
 		authRuntime = await Runtime.start({
-			identityProvider: testAuthAdapter(TEST_API_KEY, shellAuthDir),
+			identityProvider: testAuthAdapter(TEST_API_KEY),
 			model: { provider: "custom", adapter: createEchoModel() },
 			logging: { disabled: true },
 			workDir: shellAuthDir,

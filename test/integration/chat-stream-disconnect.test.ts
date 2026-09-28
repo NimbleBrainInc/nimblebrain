@@ -91,7 +91,7 @@ describe("POST /v1/workspaces/:wsId/chat/stream — run survives client disconne
     const workDir = join(tmpdir(), `nb-detach-${Date.now()}`);
     mkdirSync(workDir, { recursive: true });
     runtime = await Runtime.start({
-      identityProvider: devProvider(workDir),
+      identityProvider: devProvider,
       model: { provider: "custom", adapter: gatedModel },
       logging: { disabled: true },
       workDir,

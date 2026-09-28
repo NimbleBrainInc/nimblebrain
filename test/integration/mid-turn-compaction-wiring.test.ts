@@ -67,7 +67,7 @@ function growingModel() {
 async function startRuntime(workDir: string, compaction: boolean) {
   mkdirSync(workDir, { recursive: true });
   const runtime = await Runtime.start({
-    identityProvider: testAuthAdapter(API_KEY, workDir),
+    identityProvider: testAuthAdapter(API_KEY),
     model: { provider: "custom", adapter: growingModel() },
     logging: { disabled: true },
     workDir,

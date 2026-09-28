@@ -658,9 +658,11 @@ export class Runtime {
     // authenticates with this one. No `instance.json` (and none passed in)
     // leaves the runtime without a provider; only an in-process caller can use
     // such a runtime, because the server refuses to start on it.
-    const identityProvider =
-      config.identityProvider ??
-      (instanceConfig ? createIdentityProvider(instanceConfig, userStore, workDir) : null);
+    const identityProvider = config.identityProvider
+      ? config.identityProvider({ workDir, userStore, workspaceStore })
+      : instanceConfig
+        ? createIdentityProvider(instanceConfig, userStore, workDir)
+        : null;
 
     initWorkDir(config);
 

@@ -85,7 +85,7 @@ beforeAll(async () => {
 	mkdirSync(testDir, { recursive: true });
 
 	runtime = await Runtime.start({
-		identityProvider: devProvider(testDir),
+		identityProvider: devProvider,
 		model: { provider: "custom", adapter: createEchoModel() },
 		logging: { disabled: true },
 		workDir: testDir,
@@ -384,7 +384,7 @@ describe("MCP Server Auth", () => {
 		mkdirSync(authTestDir, { recursive: true });
 
 		authRuntime = await Runtime.start({
-			identityProvider: testAuthAdapter(TEST_API_KEY, authTestDir),
+			identityProvider: testAuthAdapter(TEST_API_KEY),
 			model: { provider: "custom", adapter: createEchoModel() },
 			logging: { disabled: true },
 			workDir: authTestDir,

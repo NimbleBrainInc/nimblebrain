@@ -33,7 +33,7 @@ const workDir = join(tmpdir(), `nimblebrain-chat-metadata-${Date.now()}`);
 beforeAll(async () => {
 	mkdirSync(workDir, { recursive: true });
 	runtime = await Runtime.start({
-		identityProvider: testAuthAdapter(API_KEY, workDir),
+		identityProvider: testAuthAdapter(API_KEY),
 		model: { provider: "custom", adapter: createEchoModel() },
 		logging: { disabled: true },
 		workDir,

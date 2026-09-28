@@ -297,7 +297,7 @@ describe("HTTP — a conversation that is not the caller's in the path's workspa
     workDir = join(tmpdir(), `nb-conv-access-http-${Date.now()}`);
     mkdirSync(workDir, { recursive: true });
     runtime = await Runtime.start({
-      identityProvider: new MultiUserAuthAdapter({
+      identityProvider: () => new MultiUserAuthAdapter({
         [ALICE_TOKEN]: ALICE,
         [BOB_TOKEN]: BOB,
       }),

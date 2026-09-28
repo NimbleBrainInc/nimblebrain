@@ -49,9 +49,10 @@ admits everyone.
   real identity, so the dev user passes them as an org owner and an admin of its
   workspaces, not by skipping them. CORS, secure cookies and request rate limits
   are the same under `dev` as under any provider.
-- A `Runtime` started in-process from a workdir with no `instance.json` has no
-  provider. Its permission checks then let every call through, and a call with
-  no identity runs as `usr_default`. Only an in-process caller reaches that
+- A `Runtime` started in-process from a workdir with no `instance.json`, and
+  with no `identityProvider` passed to `Runtime.start`, has no provider. Its
+  permission checks then let every call through, and a call with no identity
+  runs as `usr_default`. Only an in-process caller reaches that
   runtime; the server refuses to serve it.
 
 ## Alternatives considered
