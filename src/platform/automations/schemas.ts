@@ -33,13 +33,12 @@ export const TOOL_SCHEMAS: ToolSchema[] = [
       "Create a scheduled automation. `manifest` is the config; `body` is the prompt that " +
       "opens each run. Generates a kebab-case id from `manifest.name`. " +
       "Idempotent: returns the existing automation if one with the same id exists. " +
-      "Scope: automations are owned by the creating user and are NOT locked to one workspace — " +
-      "a scheduled run executes as the owner and can use tools and connectors from any workspace " +
-      "the owner is a member of (the workspace it was created in is just the default focus). " +
-      "A connector is reachable only where it is installed AND the owner is a member; a connector " +
-      "in a workspace the owner does not belong to is never reachable. So for an automation that " +
-      "posts to a shared destination (e.g. Teams/Slack), the connector must live in a workspace the " +
-      "owner belongs to.",
+      "Scope: an automation belongs to the workspace it is created in, and runs as the creating " +
+      "user. A run reaches only that workspace's tools and connectors (including personal " +
+      "connectors granted to it) plus the owner's own tools — never another workspace's. So for " +
+      "an automation that posts to a shared destination (e.g. Teams/Slack), create it in the " +
+      "workspace where that connector is installed. Runs stop while the owner is not a member " +
+      "of the workspace.",
     inputSchema: AutomationsCreateInput,
   },
   {
