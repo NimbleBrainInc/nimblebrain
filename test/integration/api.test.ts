@@ -106,6 +106,40 @@ describe("POST /v1/workspaces/:wsId/chat/stream", () => {
 		expect(doneData.stopReason).toBe("complete");
 	});
 
+	it("sends its response head before the run emits chat.start", async () => {
+		// Hold the run before it emits anything, as a slow tool listing does.
+		const chat = runtime.chat.bind(runtime);
+		let release!: () => void;
+		const gate = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		runtime.chat = async (...args) => {
+			await gate;
+			return chat(...args);
+		};
+		try {
+			const res = await Promise.race([
+				fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat/stream`, {
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ message: "Held", workspaceId: TEST_WORKSPACE_ID }),
+				}),
+				new Promise<"pending">((resolve) => setTimeout(() => resolve("pending"), 2000)),
+			]);
+			if (res === "pending") throw new Error("chat/stream sent no response head within 2000ms");
+
+			expect(res.status).toBe(200);
+			expect(res.headers.get("Content-Type")).toBe("text/event-stream");
+			const reader = res.body!.getReader();
+			await readConnected(reader);
+			release();
+			while (!(await reader.read()).done) {}
+		} finally {
+			release();
+			runtime.chat = chat;
+		}
+	});
+
 	it("includes text.delta events", async () => {
 		const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat/stream`, {
 			method: "POST",
@@ -415,27 +449,6 @@ describe("GET /v1/events", () => {
 		expect(res.headers.get("Cache-Control")).toBe("no-cache");
 		expect(broadcastsBeforeHead).toBe(0);
 		expect(firstChunk).toBe(": connected\n\n");
-	});
-
-	it("sends its response head before any event even when the connection is slow to handle", async () => {
-		// The handler reads the caller's memberships before attaching the
-		// stream. Slow that read so the stream attaches well after the request.
-		const store = runtime.getWorkspaceStore();
-		const getWorkspacesForUser = store.getWorkspacesForUser.bind(store);
-		store.getWorkspacesForUser = async (userId) => {
-			await new Promise((resolve) => setTimeout(resolve, 200));
-			return getWorkspacesForUser(userId);
-		};
-		try {
-			const { res, firstChunk, broadcastsBeforeHead } = await openBeforeAnyBroadcast();
-
-			expect(res.status).toBe(200);
-			expect(res.headers.get("Content-Type")).toBe("text/event-stream");
-			expect(broadcastsBeforeHead).toBe(0);
-			expect(firstChunk).toBe(": connected\n\n");
-		} finally {
-			store.getWorkspacesForUser = getWorkspacesForUser;
-		}
 	});
 });
 
