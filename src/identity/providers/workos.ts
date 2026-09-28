@@ -54,12 +54,10 @@ const JWKS_CACHE_TTL_MS = 5 * 60 * 1000;
 
 /**
  * Why a `verifyRequest` call rejected a token. Each value names one of the
- * provider's silent `return null` exits so an operator triaging an
- * involuntary logout sees the specific gate instead of a bare 401.
- * `org_mismatch` is a token, from either issuer, whose `org_id` is not the
- * configured org or is absent: one minted for another org of a multi-org
- * user, or a refresh that landed on the user's default org. See
- * {@link WorkosIdentityProvider.reject}.
+ * provider's `return null` exits, so a 401 in the logs carries the gate that
+ * produced it. `org_mismatch` is a token, from either issuer, whose `org_id`
+ * is not the configured org or is absent, such as one minted for another org
+ * of a multi-org user. See {@link WorkosIdentityProvider.reject}.
  */
 type WorkosRejectReason =
   | "no_token"
@@ -161,8 +159,8 @@ function normalizeAdminRoleSlugs(slugs: string[] | undefined): Set<string> {
 }
 
 /**
- * Resolve the WorkOS OAuth `redirect_uri`. An explicit value (legacy
- * `WORKOS_REDIRECT_URI`) overrides; **empty or blank-only counts as absent** and
+ * Resolve the WorkOS OAuth `redirect_uri`. An explicit value
+ * (`WORKOS_REDIRECT_URI`) overrides; **empty or blank-only counts as absent** and
  * derives `${publicOrigin()}/v1/auth/callback`. The empty case is load-bearing:
  * the Helm init container emits `"redirectUri":""` whenever the secret is unset
  * (and `instance.ts` keeps `""` as a present field, since `"" !== undefined`), so
@@ -248,7 +246,7 @@ export class WorkosIdentityProvider implements IdentityProvider {
     const apiKey = process.env.WORKOS_API_KEY ?? config.apiKey ?? "";
     this.workos = new WorkOS(apiKey, { clientId: config.clientId });
     this.clientId = config.clientId;
-    // Explicit override (legacy WORKOS_REDIRECT_URI) wins; absent OR empty
+    // Explicit override (WORKOS_REDIRECT_URI) wins; absent OR empty
     // derives from publicOrigin(). See resolveWorkosRedirectUri — the empty case
     // matters because the chart emits redirectUri:"" when the secret is unset.
     // A derived value must match a redirect URI registered in the WorkOS dashboard.
@@ -397,7 +395,7 @@ export class WorkosIdentityProvider implements IdentityProvider {
       }
     }
 
-    // Provision user on first login — sync profile + create private workspace
+    // Provision user on first login — sync the local profile
     await this.provisionUser(result.user);
 
     return {
@@ -411,17 +409,15 @@ export class WorkosIdentityProvider implements IdentityProvider {
       const result = await this.workos.userManagement.authenticateWithRefreshToken({
         clientId: this.clientId,
         refreshToken,
-        // Pin the refresh to the configured organization. Without it, WorkOS
-        // mints the new access token against the user's *default* org, which
-        // for a multi-org user can differ from the org this session was
-        // established under (buildAuthorizationUrl pins organizationId on the
-        // authorization request, so the original token is org-scoped;
-        // exchangeCode then enforces membership in it). The drifted token then
-        // fails verifyRequest's org_id gate on the very next request — a refresh
-        // that "succeeds" yet yields a token the session rejects, which the
-        // client surfaces to the user as an involuntary logout (Sentry
-        // `retry_401`). Pinning keeps token mint and token verify in agreement.
-        // Omitted when no org is configured.
+        // Pin the refresh to the configured organization, so token mint and
+        // token verify agree. Without it, WorkOS mints the new access token
+        // against the user's *default* org, which for a multi-org user can
+        // differ from the org this session was established under
+        // (buildAuthorizationUrl pins organizationId on the authorization
+        // request, and exchangeCode enforces membership in it). That token
+        // fails verifyRequest's org_id gate on the next request, so a refresh
+        // that succeeds would still log the user out. Omitted when no org is
+        // configured.
         ...(this.organizationId ? { organizationId: this.organizationId } : {}),
       });
       return {
@@ -500,13 +496,10 @@ export class WorkosIdentityProvider implements IdentityProvider {
   /**
    * Log a structured reason for a verify rejection, then return null.
    *
-   * `verifyRequest` has several `return null` exits that were, until now,
-   * indistinguishable downstream — each surfaced only as the auth
-   * middleware's generic "[auth] authentication failed". An operator
-   * triaging an involuntary logout (a freshly *refreshed* token that the
-   * very next request rejected — the client emits Sentry `retry_401`)
-   * could not tell a routine expiry from an `org_id` mismatch without
-   * reading source. Naming the gate makes the cause greppable.
+   * Every `return null` exit in `verifyRequest` goes through here, because the
+   * auth middleware logs only a generic "[auth] authentication failed". The
+   * reason tells a routine expiry from an `org_id` mismatch or a bad
+   * signature without reading source, and makes each cause greppable.
    *
    * Routine, self-healing reasons (`no_token`, `token_expired` — a refresh
    * fixes both) log at debug to avoid flooding the warn stream on every
@@ -623,8 +616,9 @@ export class WorkosIdentityProvider implements IdentityProvider {
         return cached.identity;
       }
       // No cache young enough to fall back on, so we never reached a verdict
-      // about this user. Returning null here is what produced the spurious 401
-      // the stale fallback above exists to avoid — the caller gets 503 and retries.
+      // about this user. Returning null would 401 a valid session, the outcome
+      // the stale fallback above exists to avoid; throw so the caller gets 503
+      // and retries.
       this.transient("user_unresolvable", {
         userId: workosUserId,
         stale_age_s: cached ? Math.round((nowMs - cached.fetchedAt) / 1000) : null,
@@ -760,11 +754,10 @@ export class WorkosIdentityProvider implements IdentityProvider {
       log.error(`[workos] resolveOrgRole failed for user=${workosUserId}`, {
         error: err instanceof Error ? err.message : String(err),
       });
-      // An API error is not a verdict about membership. `null` here is read by
-      // resolveUser as *definitively* lost access: it denies AND deletes the
-      // cached identity, so a memberships-endpoint hiccup becomes the
-      // involuntary logout — with the stale-identity fallback destroyed on the
-      // way out, taking the next request with it. Throw instead, so it
+      // An API error is not a verdict about membership. resolveUser reads
+      // `null` as *definitively* lost access: it denies AND deletes the cached
+      // identity, so returning it here would log a valid user out and destroy
+      // the stale-identity fallback for the next request. Throw instead, so it
       // classifies as unavailability like every other dependency failure and
       // resolveUser's catch decides between stale cache and 503.
       this.transient("org_role_unresolvable", { userId: workosUserId });
@@ -774,10 +767,9 @@ export class WorkosIdentityProvider implements IdentityProvider {
   /**
    * Provision a user on first login via auth code flow.
    *
-   * Syncs the local profile from WorkOS. Workspace provisioning happens on
-   * every verifyRequest (see verifyRequest above) so the invariant is
-   * self-healing for any path — this includes AuthKit/MCP-OAuth which does
-   * not route through exchangeCode.
+   * Syncs the local profile from WorkOS. It creates no workspace: a user who
+   * belongs to none gets one from `ensureUserWorkspace` when the web shell
+   * bootstraps (`GET /v1/bootstrap`).
    */
   private async provisionUser(workosUser: {
     id: string;
