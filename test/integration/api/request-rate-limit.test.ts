@@ -88,6 +88,7 @@ beforeAll(async () => {
 
   mkdirSync(testDir, { recursive: true });
   runtime = await Runtime.start({
+    identityProvider: () => new TokenAuthAdapter(),
     model: { provider: "custom", adapter: createEchoModel() },
     logging: { disabled: true },
     workDir: testDir,
@@ -96,7 +97,7 @@ beforeAll(async () => {
   await provisionTestWorkspace(runtime);
 
   // WITH a provider → not dev mode → rate limiting is active.
-  handle = startServer({ runtime, port: 0, provider: new TokenAuthAdapter() });
+  handle = startServer({ runtime, port: 0});
   baseUrl = `http://localhost:${handle.port}`;
 });
 

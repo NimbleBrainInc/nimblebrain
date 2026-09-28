@@ -292,9 +292,6 @@ describe("ConnectorLifecycleManager — instance tracking", () => {
 				manifestName: "ai.nimblebrain/crm",
 				version: "0.1.0",
 				ui: null,
-				briefing: {
-					facets: [{ name: "deals", label: "Deals", type: "delta", tool: "crm__deals" }],
-				},
 			},
 			"ws_eng",
 		);
@@ -302,7 +299,6 @@ describe("ConnectorLifecycleManager — instance tracking", () => {
 		const instance = lifecycle.getInstance("crm", "ws_eng")!;
 		expect(instance.connectorName).toBe("ai.nimblebrain/crm");
 		expect(instance.version).toBe("0.1.0");
-		expect(instance.briefing?.facets).toHaveLength(1);
 		expect(instance.wsId).toBe("ws_eng");
 	});
 

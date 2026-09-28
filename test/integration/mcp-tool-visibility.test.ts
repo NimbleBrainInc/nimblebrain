@@ -27,6 +27,7 @@ import { surfaceTools } from "../../src/tools/surfacing.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { type RemoteMcpFixture, startRemoteMcpServer } from "../helpers/remote-mcp-fixture.ts";
 import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
 
 /** A third-party server declaring each visibility the spec allows. */
 function createVisibilityServer(): Server {
@@ -83,6 +84,7 @@ let neighborSource: McpSource;
 beforeAll(async () => {
   mkdirSync(testDir, { recursive: true });
   runtime = await Runtime.start({
+    identityProvider: devProvider,
     model: { provider: "custom", adapter: createEchoModel() },
     logging: { disabled: true },
     workDir: testDir,
@@ -108,7 +110,7 @@ beforeAll(async () => {
   await neighborSource.start();
   registry.addSource(neighborSource);
 
-  handle = startServer({ runtime, port: 0 });
+  handle = startServer({ runtime, port: 0});
   baseUrl = `http://localhost:${handle.port}`;
 }, 30_000);
 

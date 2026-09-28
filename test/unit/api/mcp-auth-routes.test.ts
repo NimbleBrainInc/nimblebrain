@@ -9,6 +9,8 @@ import { mcpAuthRoutes } from "../../../src/api/routes/mcp-auth.ts";
 import type { AppContext, AppEnv } from "../../../src/api/types.ts";
 import { ConnectorBusyError } from "../../../src/connectors/runtime/lifecycle.ts";
 import { IdentityConnectorStore } from "../../../src/identity/connector-store.ts";
+import { FIRST_PARTY_GRANT } from "../../../src/identity/provider.ts";
+import { DEV_IDENTITY } from "../../../src/identity/providers/dev.ts";
 import { log } from "../../../src/observability/log.ts";
 import { _clearAll, register as registerFlow } from "../../../src/tools/oauth-flow-registry.ts";
 
@@ -26,8 +28,15 @@ import { _clearAll, register as registerFlow } from "../../../src/tools/oauth-fl
  */
 
 const WS_ID = "ws_test";
-/** The dev user `requireWorkspace` admits when no identity provider is configured. */
+/** The dev user, the one member of `WS_ID`. */
 const DEV_USER_ID = "usr_default";
+/** Auth that verifies every request as the dev user, as the `dev` provider does. */
+const DEV_AUTH = {
+  provider: {
+    verifyRequest: async () => ({ ...DEV_IDENTITY, grant: FIRST_PARTY_GRANT }),
+  },
+  eventSink: { emit: () => {} },
+};
 const INITIATE_PATH = `/v1/workspaces/${WS_ID}/mcp-auth/initiate`;
 const WS_OWNER = { kind: "workspace", wsId: WS_ID } as const;
 const USER_ID = "usr_test";
@@ -93,13 +102,10 @@ function makeApp(
       getLifecycle: () => lifecycle,
       getWorkDir: () => workDir,
       getAllowInsecureRemotes: () => false,
-      // Dev-mode: no real identity → the fixed test user.
+      // The route's owner resolution, fixed to the test user.
       resolveRequestUserId: () => USER_ID,
-      // No identity provider: requireWorkspace() treats the caller as the dev user.
-      getIdentityProvider: () => null,
     },
-    // Dev-mode auth so requireAuth() passes through without an identity.
-    authOptions: { mode: { type: "dev" }, eventSink: { emit: () => {} } },
+    authOptions: DEV_AUTH,
     workspaceStore: {
       get: async (id: string) =>
         id === WS_ID ? { id, members: [{ userId: DEV_USER_ID, role: "admin" }] } : null,
@@ -144,7 +150,7 @@ describe("POST /v1/workspaces/:wsId/mcp-auth/initiate", () => {
     expect(setCookie!).toContain("SameSite=Lax");
     expect(setCookie!).toContain("Path=/v1/mcp-auth/callback");
     expect(setCookie!).toContain("Max-Age=900");
-    // secureCookies=false (dev) → no Secure flag
+    // secureCookies=false → no Secure flag
     expect(setCookie!).not.toContain("Secure");
   });
 
@@ -327,7 +333,7 @@ describe("GET /v1/mcp-auth/callback", () => {
         getWorkDir: () => "/tmp/nb-test",
         getAllowInsecureRemotes: () => false,
       },
-      authOptions: { mode: { type: "dev" }, eventSink: { emit: () => {} } },
+      authOptions: DEV_AUTH,
       workspaceStore: {},
       secureCookies: false,
     } as unknown as AppContext;

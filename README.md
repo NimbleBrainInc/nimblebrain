@@ -17,13 +17,17 @@ Ships as container images on GHCR (`ghcr.io/nimblebraininc/nimblebrain`, `ghcr.i
 # Prerequisites: Docker
 export ANTHROPIC_API_KEY=sk-ant-...
 
+# The identity provider. `dev` signs every request in as one local developer,
+# with no login: keep it on your own machine.
+echo '{"auth":{"adapter":"dev"}}' > instance.json
+
 docker compose up
 # Pulls ghcr.io/nimblebraininc/nimblebrain + nimblebrain-web
 # Web UI:  http://localhost:27246
 # API:     http://localhost:27246/v1/health
 ```
 
-Open `http://localhost:27246` in your browser. Auth is configured via `instance.json` (see Configuration).
+Open `http://localhost:27246` in your browser. The runtime does not start without `instance.json`; for a real identity provider (`oidc` or `workos`), see [instance.json](https://docs.nimblebrain.ai/config/instance-json/).
 
 To build from source instead of pulling (e.g. when developing against local changes), run `docker compose up --build`.
 
@@ -39,7 +43,7 @@ bun run dev
 # Web on http://localhost:27246 (Vite HMR, proxies /v1/* to :27247)
 ```
 
-One command, one terminal. Output is prefixed `[api]` / `[web]`. Ctrl+C stops both.
+One command, one terminal. Output is prefixed `[api]` / `[web]`. Ctrl+C stops both. The dev launchers write `{"auth":{"adapter":"dev"}}` to the workdir's `instance.json` when it has none.
 
 For API-only development (no web client):
 
@@ -235,7 +239,7 @@ A fully specified example:
 
 ### `workspace.json` (per-workspace config)
 
-Each workspace has its own config at `<workDir>/workspaces/<ws-id>/workspace.json`. In dev mode (no `instance.json`), the runtime uses a single `_dev` workspace.
+Each workspace has its own config at `<workDir>/workspaces/<ws-id>/workspace.json`.
 
 ```json
 {
@@ -316,7 +320,6 @@ The working directory is set via `NB_WORK_DIR` (see Environment Variables).
 | Variable | Purpose |
 |----------|---------|
 | `WORKOS_API_KEY` | WorkOS API key (when `auth.adapter: "workos"` in `instance.json`) |
-| `NB_INTERNAL_TOKEN` | Shared secret for service-to-service calls (never forwarded to connectors) |
 | `POSTHOG_API_KEY` | PostHog key for anonymous product telemetry |
 | `NB_TELEMETRY_DISABLED` | Set to `1` to disable telemetry (also `DO_NOT_TRACK=1`) |
 
@@ -523,11 +526,11 @@ User-uploaded files are persisted in the workspace `FileStore` and referenced fr
 
 Pluggable authentication via `IdentityProvider` interface (`src/identity/provider.ts`). Configured via `instance.json` in the work directory:
 
-- **`dev`** — No auth, default when no `instance.json` exists. All requests get a default identity.
+- **`dev`** — No login: every request is one local developer (`usr_default`, org owner). Chosen only by writing `{"auth":{"adapter":"dev"}}`.
 - **`oidc`** — JWT verification via any OIDC provider. Auto-provisions users on first valid login.
 - **`workos`** — Full OAuth code flow with PKCE, token refresh, managed users via WorkOS. Supports MCP OAuth for external client access via AuthKit.
 
-Each request carries a `UserIdentity` (id, name, email, role) threaded through `AppContext` in Hono middleware.
+With no `instance.json` the server refuses to start; a missing file never selects a provider. Each request carries a `UserIdentity` (id, name, email, role) threaded through `AppContext` in Hono middleware.
 
 ### Workspace System
 
@@ -551,7 +554,7 @@ Connectors can be installed per-workspace (tracked via `ConnectorInstance.wsId`)
 
 **Authentication:** Bearer token via `Authorization` header or HttpOnly session cookie (`nb_session`). Cookie attributes: HttpOnly, SameSite=Lax, Secure in production. Bearer header takes precedence over cookie.
 
-**CORS:** Dynamic. Dev mode: `Access-Control-Allow-Origin: *`. With auth: only `ALLOWED_ORIGINS` env var origins, with credentials support.
+**CORS:** The same under every identity provider: only `ALLOWED_ORIGINS` env var origins, with credentials support; with it unset, same-origin only.
 
 **MCP endpoint (`/mcp/<wsId>`):** Streamable HTTP, one per workspace; bare `/mcp` is refused. The bundled web UI's app bridge uses it, and external MCP clients (Claude, Claude Code, Cursor) connect to a workspace's URL (Workspace settings → MCP). A token from the authorization server is accepted only when its `aud` is exactly that URL, and membership of the workspace is checked on every request. 100 concurrent sessions (env: `MCP_MAX_SESSIONS`, LRU-evicted at the cap rather than 429'd), 8-hour idle TTL (env: `MCP_SESSION_TTL_SECONDS`). When `authkitDomain` is configured, returns `WWW-Authenticate` header on 401 for automatic OAuth discovery by MCP clients. Full setup guide: [MCP Endpoint](https://docs.nimblebrain.ai/api/mcp-endpoint/) and [Connecting External Clients](https://docs.nimblebrain.ai/guide/mcp-connect/) on docs.nimblebrain.ai.
 
@@ -593,7 +596,7 @@ Placements with a `route` field get React Router routes in `App.tsx`. Routes fro
 **Files:**
 - `nimblebrain.json` — instance config. Validated at startup against `src/config/nimblebrain-config.schema.json` (JSON Schema draft-07, AJV). Unknown keys warn; structural errors throw. Workspace-owned fields (`skillDirs`, `preferences`, `home`) are stripped on load. `identity` and `contextFile` are deprecated with a warning.
 - `<workDir>/workspaces/<wsId>/workspace.json` — per-workspace config. Owns `connectors`, `skillDirs`, and optional `models` overrides.
-- `<workDir>/instance.json` — auth configuration (OIDC or WorkOS adapter). Absence signals dev mode.
+- `<workDir>/instance.json` — the identity provider (`dev`, `oidc`, or `workos` adapter). Required: `serve` refuses to start without it.
 
 **Config resolution** for `nimblebrain.json` (when no `--config` flag):
 1. `--workdir <dir>` → `<dir>/nimblebrain.json`
@@ -630,10 +633,6 @@ All default to `true`. What `false` does depends on the flag: most withhold a to
 **Enforcement.** For the flags that withhold a tool, three layers: (1) the tool is not built into its source at startup, so it reaches no tool list and no dispatcher; (2) `POST /v1/workspaces/:wsId/tools/call` returns `403 feature_disabled`; (3) MCP `tools/list` filters it and `tools/call` returns an error. `toolDiscovery`, `catalogSearch`, and `fileContext` are enforced inside the handler instead — the tool or endpoint is present and refuses. `compaction` gates no call path at all. Tools outside the table (`nb__status`, the read-only platform surfaces, `nb__search` itself) are never gated.
 
 Full reference: [Feature flags](https://docs.nimblebrain.ai/config/features/) on docs.nimblebrain.ai.
-
-#### Connector Env Isolation
-
-Connector processes receive a **filtered** host environment. Default allowlist: `PATH`, `HOME`, `USER`, `SHELL`, `LANG`, `LC_ALL`, `LC_CTYPE`, `TERM`, `TMPDIR`, `TZ`, `XDG_DATA_HOME`, `XDG_CONFIG_HOME`, `NODE_ENV`, `BUN_ENV`, `NB_WORK_DIR`, `UPJACK_ROOT`, `PYTHONPATH`, `VIRTUAL_ENV`, `NODE_PATH`. Hard deny (never passed): `NB_API_KEY`, `NB_INTERNAL_TOKEN`. Opt in via `allowedEnv` in connector config.
 
 #### Remote Connector Security
 

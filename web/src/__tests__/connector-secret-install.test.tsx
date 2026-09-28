@@ -71,17 +71,13 @@ mock.module("../api/client", () => ({
   installConnector,
 }));
 
-// The page is admin-gated; the flow under test is only reachable for an admin.
-mock.module("../hooks/useScopedRole", () => ({
-  useCanWriteActiveWorkspace: () => true,
-}));
-
 const React = await import("react");
 const ReactDOMClient = await import("react-dom/client");
 const { act } = await import("react");
 const { MemoryRouter, Route, Routes, useLocation } = await import("react-router-dom");
 
 const { ConnectorBrowsePage } = await import("../pages/settings/ConnectorBrowsePage");
+const { WorkspaceProvider } = await import("../context/WorkspaceContext");
 
 // The real router, not a mock of it: a whole-module `react-router-dom` stub is
 // registered process-wide by bun and breaks every other suite that renders one.
@@ -94,15 +90,28 @@ function LocationProbe() {
   return null;
 }
 
+// The page is admin-gated; the flow under test is only reachable for an admin.
+// The real provider, not a mock of `useScopedRole`: a module mock is
+// process-wide, and a partial one hands every later suite its stubbed answer.
+const ADMIN_WORKSPACE = {
+  id: "ws_acme",
+  name: "Acme",
+  memberCount: 1,
+  connectors: [],
+  userRole: "admin" as const,
+};
+
 function Page() {
   return (
-    <MemoryRouter initialEntries={["/w/acme/settings/connectors/browse"]}>
-      <LocationProbe />
-      <Routes>
-        <Route path="/w/:slug/settings/connectors/browse" element={<ConnectorBrowsePage />} />
-        <Route path="*" element={null} />
-      </Routes>
-    </MemoryRouter>
+    <WorkspaceProvider initialWorkspaces={[ADMIN_WORKSPACE]} initialActiveId="ws_acme">
+      <MemoryRouter initialEntries={["/w/acme/settings/connectors/browse"]}>
+        <LocationProbe />
+        <Routes>
+          <Route path="/w/:slug/settings/connectors/browse" element={<ConnectorBrowsePage />} />
+          <Route path="*" element={null} />
+        </Routes>
+      </MemoryRouter>
+    </WorkspaceProvider>
   );
 }
 

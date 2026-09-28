@@ -212,7 +212,7 @@ export class ToolRegistry implements ToolRouter {
     const all: ToolSchema[] = [];
     for (const source of this.sources.values()) {
       // Per-source error containment. A connector in `starting` /
-      // `pending_auth` / `dead` state has `this.client === null` and
+      // `pending_auth` / `dead` state has no connected client and
       // throws `"<name>" not started` from McpSource.tools(). Without
       // this guard, ONE stuck connector's enumeration error rejects
       // the whole call and every chat turn fails — exactly the

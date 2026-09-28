@@ -1486,7 +1486,8 @@ type AccessMode = "read" | "write";
  *                   write also requires `admin` role in that workspace.
  *   - user        — read+write: only the owning user.
  *
- * Dev mode (no identity provider) opens everything, matching the
+ * No identity provider (an in-process runtime with no `instance.json`)
+ * opens everything, matching the
  * `instructions.ts` precedent.
  *
  * For "create" operations the path doesn't exist yet — pass the

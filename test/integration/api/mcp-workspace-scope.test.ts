@@ -18,6 +18,7 @@ import { SharedSourceRef } from "../../../src/tools/registry.ts";
 import type { ToolSource, Tool } from "../../../src/tools/types.ts";
 import type { ToolResult } from "../../../src/engine/types.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../../helpers/test-workspace.ts";
+import { devProvider } from "../../helpers/dev-provider.ts";
 
 // ── Fake tool sources ───────────────────────────────────────────────
 
@@ -59,6 +60,7 @@ beforeAll(async () => {
   workDir = await mkdtemp(join(tmpdir(), "nb-mcp-ws-scope-"));
 
   runtime = await Runtime.start({
+    identityProvider: devProvider,
     model: { provider: "custom", adapter: createEchoModel() },
     logging: { disabled: true },
     workDir,
@@ -104,7 +106,7 @@ beforeAll(async () => {
 
   // Denied source is NOT added to workspace registry
 
-  handle = startServer({ runtime, port: 0 });
+  handle = startServer({ runtime, port: 0});
   baseUrl = `http://localhost:${handle.port}`;
 });
 

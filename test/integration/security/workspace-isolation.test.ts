@@ -17,7 +17,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import type {
-  BriefingBlock,
   ConnectorRef,
   ConnectorUiMeta,
 } from "../../../src/connectors/runtime/types.ts";
@@ -43,6 +42,7 @@ beforeAll(async () => {
   workDir = join(tmpdir(), `nb-workspace-isolation-${Date.now()}`);
   mkdirSync(workDir, { recursive: true });
   runtime = await Runtime.start({
+    identityProvider: () => new TestAuthAdapter(TEST_KEY),
     workDir,
     model: { provider: "custom", adapter: createEchoModel() },
     logging: { disabled: true },
@@ -53,7 +53,6 @@ beforeAll(async () => {
   handle = startServer({
     runtime,
     port: 0,
-    provider: new TestAuthAdapter(TEST_KEY),
   });
   baseUrl = `http://localhost:${handle.port}`;
   await provisionTestWorkspace(runtime);
@@ -308,7 +307,6 @@ describe("V6: getConnectorInstancesForWorkspace — two workspaces, same connect
       manifestName: `ai.nimblebrain/${serverName}`,
       version: "1.0.0",
       ui: { name: "Leak Check", icon: "bug" } as ConnectorUiMeta,
-      briefing: null as BriefingBlock | null,
     };
 
     const lifecycle = runtime.getLifecycle();
@@ -353,7 +351,6 @@ describe("V6: getConnectorInstancesForWorkspace — two workspaces, same connect
       manifestName: `ai.nimblebrain/${serverName}`,
       version: "1.0.0",
       ui: null,
-      briefing: null as BriefingBlock | null,
     };
     await runtime.getLifecycle().seedInstance(serverName, ref.url, ref, meta, ws.id);
     // Deliberately do NOT add the source to the registry.

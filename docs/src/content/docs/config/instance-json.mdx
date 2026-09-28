@@ -1,6 +1,6 @@
 ---
 title: instance.json
-description: Authentication and identity — dev mode (no file), plus the OIDC and WorkOS adapters.
+description: Authentication and identity — the dev, OIDC and WorkOS adapters. The server does not start without this file.
 ---
 
 import { Tabs, TabItem, Aside } from '@astrojs/starlight/components';
@@ -11,15 +11,28 @@ import { Tabs, TabItem, Aside } from '@astrojs/starlight/components';
   Authentication is configured **here**, not through an environment variable. There is no `NB_API_KEY` auth gate.
 </Aside>
 
-## Dev mode — the absence of the file
+## The file is required
 
-If `<workDir>/instance.json` does not exist, the runtime starts in **dev mode**: no auth gate, and every request authenticates as a single built-in identity (`usr_default`, org role `owner`). This is the default for `bun run dev`, worktree dev, and any local checkout. You only create `instance.json` when you want real authentication.
+`serve` does not start without `<workDir>/instance.json`. It exits with an error naming the path and the two ways to write it. A missing file never selects an identity provider, because a deployment that lost its config would otherwise admit every caller as an owner.
+
+The dev launchers (`bun run dev` and its variants, including `dev:worktree`) write the `dev` adapter into a workdir that has no `instance.json`, and leave an existing one alone. With Docker Compose, write the file next to `docker-compose.yml`; it is mounted into the container's workdir.
 
 ## Adapters
 
-The `auth.adapter` field selects the identity provider. Two adapters are configurable: `oidc` and `workos`. (Dev mode is not an adapter value — it is the no-file state above.)
+The `auth.adapter` field selects the identity provider: `dev`, `oidc`, or `workos`.
 
 <Tabs>
+  <TabItem label="Dev">
+    ```json title="instance.json"
+    {
+      "auth": {
+        "adapter": "dev"
+      }
+    }
+    ```
+
+    No login. Every request authenticates as one built-in identity (`usr_default`, org role `owner`), with no credential checked. It passes the same authorization checks as any other user, as the org owner and an admin of its workspaces. Use it on your own machine only: anyone who can reach the server is that owner.
+  </TabItem>
   <TabItem label="OIDC">
     ```json title="instance.json"
     {
@@ -109,9 +122,9 @@ The field fails closed: missing, empty, or a client ID that isn't listed, and th
 `instance.json` is validated at load:
 
 - Missing or non-object `auth` throws.
-- An unknown `adapter` value (anything other than `oidc` / `workos`) throws, naming the accepted set.
+- An unknown `adapter` value (anything other than `dev` / `oidc` / `workos`) throws, naming the accepted set.
 - Each adapter's required fields are type-checked; a missing or wrong-typed field throws with a field-specific message.
-- A malformed file crashes the deployment at startup rather than silently falling back to dev mode — an auth misconfiguration must fail loud, not open.
+- A malformed file, like a missing one, stops the deployment at startup. An auth misconfiguration fails loud, never open.
 
 The file is written atomically (temp-then-rename) whenever the runtime persists changes to it.
 

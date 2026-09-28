@@ -24,6 +24,7 @@ import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
 
 // Files are workspace-owned. Chat-multipart uploads land in the workspace in
 // the request path, and the downstream `files__*` tools / `resources/read`
@@ -44,6 +45,7 @@ const testDir = join(tmpdir(), `nb-files-mcp-resources-${Date.now()}`);
 beforeAll(async () => {
   mkdirSync(testDir, { recursive: true });
   runtime = await Runtime.start({
+    identityProvider: devProvider,
     model: { provider: "custom", adapter: createEchoModel() },
     logging: { disabled: true },
     workDir: testDir,
@@ -54,7 +56,7 @@ beforeAll(async () => {
   });
   DEV_WS_ID = devWs.id;
   await runtime.ensureWorkspaceRegistry(DEV_WS_ID);
-  handle = startServer({ runtime, port: 0 });
+  handle = startServer({ runtime, port: 0});
   baseUrl = `http://localhost:${handle.port}`;
 });
 

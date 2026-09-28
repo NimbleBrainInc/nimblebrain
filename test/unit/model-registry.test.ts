@@ -199,15 +199,14 @@ describe("nebius request shape", () => {
   });
 
   it("sends a schema-bearing response_format as json_schema, not json_object", async () => {
-    // The home briefing sends a schema on every generation. Without
-    // `supportsStructuredOutputs` the adapter drops it to `{type:"json_object"}`
-    // — no schema, no strict decoding.
+    // Without `supportsStructuredOutputs` the adapter drops a schema to
+    // `{type:"json_object"}` — no schema, no strict decoding.
     const body = await captureNebiusRequest((resolve) =>
       resolve("nebius:Qwen/Qwen3-32B").doStream({
         prompt: [{ role: "user", content: [{ type: "text", text: "x" }] }],
         responseFormat: {
           type: "json",
-          name: "briefing",
+          name: "summary",
           schema: { type: "object", properties: { lede: { type: "string" } } },
         },
       }),

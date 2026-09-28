@@ -1,66 +1,98 @@
-import type { BriefingCacheEntry, BriefingOutput } from "./home-types.ts";
+/**
+ * Per-facet count cache for the workspace briefing.
+ *
+ * One entry per `(workspaceId, serverName, facetName)`, holding the count and
+ * when it was read. A facet answers for the workspace over the workspace's own
+ * connection, so nothing about the member who asked enters the key or the
+ * entry, and one read serves every member.
+ *
+ * - Fresh for {@link FACET_FRESH_MS}: served without a read.
+ * - Stale up to {@link FACET_STALE_CEILING_MS}: served while one background
+ *   refresh runs.
+ * - Beyond that, or never read: the caller waits for the read, and a failed
+ *   read is `unavailable`.
+ *
+ * Reads are single-flight per key: concurrent loads share one `resources/read`.
+ */
 
-export class BriefingCache {
-  private entry: BriefingCacheEntry | null = null;
-  private ttlMs: number;
-  private refreshing = false;
+export const FACET_FRESH_MS = 60_000;
+export const FACET_STALE_CEILING_MS = 10 * 60_000;
 
-  constructor(ttlMinutes: number) {
-    this.ttlMs = ttlMinutes * 60 * 1000;
-  }
+/** The facet a cache entry answers for. */
+export interface FacetKey {
+  workspaceId: string;
+  serverName: string;
+  facetName: string;
+}
 
+export interface FacetCacheEntry {
+  count: number;
+  /** Epoch ms of the read that produced `count`. */
+  at: number;
+}
+
+export type FacetReading = { state: "ok"; count: number } | { state: "unavailable" };
+
+export interface FacetCache {
   /**
-   * In-flight guard for stale-while-revalidate. `beginRefresh()` claims the
-   * single background-regeneration slot — returns `true` for the first caller,
-   * `false` while one is already running — so a burst of dashboard loads
-   * during the regen window doesn't fan out into N concurrent (fast-model)
-   * regenerations. Always pair a successful `beginRefresh()` with `endRefresh()`.
+   * The facet's count, from the cache or from `fetch`. `fetch` returns the
+   * count or throws; a throw never escapes, it reads as `unavailable` (or,
+   * inside the stale window, leaves the stale count in place). `force` skips a
+   * fresh or stale entry and waits for a read.
    */
-  beginRefresh(): boolean {
-    if (this.refreshing) return false;
-    this.refreshing = true;
-    return true;
-  }
+  read(
+    key: FacetKey,
+    fetch: () => Promise<number>,
+    opts?: { force?: boolean },
+  ): Promise<FacetReading>;
+  /** Current entries by encoded key, for inspection. */
+  entries(): ReadonlyMap<string, Readonly<FacetCacheEntry>>;
+}
 
-  endRefresh(): void {
-    this.refreshing = false;
-  }
+/**
+ * Encode a key. Workspace ids (`ws_[a-z0-9_]+`) and server names hold no NUL,
+ * so no two triples collide.
+ */
+export function facetCacheKey(key: FacetKey): string {
+  return `${key.workspaceId}\0${key.serverName}\0${key.facetName}`;
+}
 
-  get(): BriefingOutput | null {
-    if (!this.entry) return null;
-    if (this.entry.invalidated) return null;
-    if (Date.now() - this.entry.generatedAt > this.ttlMs) return null;
-    return { ...this.entry.briefing, cached: true };
-  }
+export function createFacetCache(now: () => number = Date.now): FacetCache {
+  const entries = new Map<string, FacetCacheEntry>();
+  const inflight = new Map<string, Promise<number>>();
 
-  /**
-   * Return the last briefing even if it's past its TTL — but not if it was
-   * explicitly invalidated, and not when there's none. For stale-while-
-   * revalidate: serve this instantly while a fresh one regenerates in the
-   * background, so a dashboard load never waits on the LLM after the first
-   * generation.
-   */
-  getStale(): BriefingOutput | null {
-    if (!this.entry) return null;
-    if (this.entry.invalidated) return null;
-    return { ...this.entry.briefing, cached: true };
-  }
+  const refresh = (k: string, fetch: () => Promise<number>): Promise<number> => {
+    const running = inflight.get(k);
+    if (running) return running;
+    const pending = fetch()
+      .then((count) => {
+        entries.set(k, { count, at: now() });
+        return count;
+      })
+      .finally(() => inflight.delete(k));
+    inflight.set(k, pending);
+    return pending;
+  };
 
-  set(briefing: BriefingOutput): void {
-    this.entry = {
-      briefing,
-      generatedAt: Date.now(),
-      invalidated: false,
-    };
-  }
-
-  invalidate(): void {
-    if (this.entry) {
-      this.entry.invalidated = true;
-    }
-  }
-
-  isStale(): boolean {
-    return this.get() === null;
-  }
+  return {
+    async read(key, fetch, opts) {
+      const k = facetCacheKey(key);
+      const entry = entries.get(k);
+      if (entry && !opts?.force) {
+        const age = now() - entry.at;
+        if (age < FACET_FRESH_MS) return { state: "ok", count: entry.count };
+        if (age <= FACET_STALE_CEILING_MS) {
+          // The fetch logs its own failure; the stale count stays until the ceiling.
+          refresh(k, fetch).catch(() => {});
+          return { state: "ok", count: entry.count };
+        }
+      }
+      try {
+        return { state: "ok", count: await refresh(k, fetch) };
+      } catch {
+        return { state: "unavailable" };
+      }
+    },
+    entries: () => entries,
+  };
 }

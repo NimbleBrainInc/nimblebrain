@@ -81,14 +81,14 @@ servers:
         name: Weather
         icon: cloud-sun
         placements:
-          - slot: main
+          - slot: sidebar.apps
             resourceUri: ui://dashboard
             route: weather
             label: Weather
             icon: cloud-sun
 ```
 
-This registers a main view at `/app/weather` and adds a sidebar entry under the "Apps" group. Registration and sidebar placement come from the `placements` array — the `ui://dashboard` resource is an HTML page served by your MCP server and rendered in an iframe.
+This adds a **Weather** entry under the workspace's "Apps" group and registers its page at `/w/<slug>/app/weather`. Registration and sidebar placement come from the `placements` array — the `ui://dashboard` resource is an HTML page served by your MCP server and rendered in an iframe.
 
 <Aside type="tip">
 You don't need UI to build a useful app. Many powerful apps are tools-only — the agent calls them directly during conversations.

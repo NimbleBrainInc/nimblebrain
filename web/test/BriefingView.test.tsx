@@ -1,4 +1,4 @@
-// BriefingView — render contract for the restored workspace briefing surface.
+// BriefingView — render contract for the workspace overview's facet counts.
 // Uses the container/createRoot harness (happy-dom + testing-library's
 // `screen.getByText` don't mix); query via container.textContent + testids.
 
@@ -58,35 +58,23 @@ function findButton(c: HTMLElement, text: string): HTMLButtonElement | null {
 
 function makeBriefing(overrides: Partial<BriefingOutput> = {}): BriefingOutput {
   return {
-    lede: "Two things need a look; everything else is quiet.",
-    state: "attention",
     generated_at: "2026-05-25T08:00:00.000Z",
-    cached: false,
-    sections: [
+    items: [
       {
-        id: "s-recent",
-        text: "Closed **3 deals** yesterday.",
-        type: "positive",
-        category: "recent",
+        app: "CRM",
+        facet: "overdue",
+        label: "Follow-ups overdue",
+        count: 2,
+        route: "@acme/crm",
+        state: "ok",
       },
       {
-        id: "s-attention",
-        text: "2 follow-ups are overdue.",
-        type: "warning",
-        category: "attention",
-        action: { type: "navigate", label: "View deals", route: "@acme/crm", prompt: null },
-      },
-      {
-        id: "s-upcoming",
-        text: "A renewal is due Friday.",
-        type: "neutral",
-        category: "upcoming",
-        action: {
-          type: "startChat",
-          label: "Draft outreach",
-          route: null,
-          prompt: "Draft a renewal email",
-        },
+        app: "Tasks",
+        facet: "blocked",
+        label: "Tasks blocked",
+        count: 0,
+        route: null,
+        state: "unavailable",
       },
     ],
     ...overrides,
@@ -94,84 +82,55 @@ function makeBriefing(overrides: Partial<BriefingOutput> = {}): BriefingOutput {
 }
 
 describe("BriefingView", () => {
-  test("renders the lede and section texts, inline markdown as <strong>", async () => {
+  test("renders each item as its count and label, with the app", async () => {
     mounted = await mount(
       <BriefingView briefing={makeBriefing()} error={null} onRetry={() => {}} />,
     );
     const text = mounted.container.textContent ?? "";
-    expect(text).toContain("Two things need a look");
-    expect(text).toContain("follow-ups are overdue");
-    expect(text).toContain("renewal is due Friday");
-    // getElementsByTagName, not querySelector — happy-dom's querySelector
-    // throws under bun in this setup (see the other web component tests).
-    const strongs = Array.from(mounted.container.getElementsByTagName("strong"));
-    expect(strongs.some((s) => s.textContent === "3 deals")).toBe(true);
+    expect(text).toContain("2 Follow-ups overdue");
+    expect(text).toContain("CRM");
+    expect(text).toContain("Tasks blocked — unavailable");
   });
 
-  test("orders categories attention → recent → upcoming", async () => {
-    mounted = await mount(
-      <BriefingView briefing={makeBriefing()} error={null} onRetry={() => {}} />,
-    );
-    const text = mounted.container.textContent ?? "";
-    const attention = text.indexOf("Needs attention");
-    const recent = text.indexOf("Recent");
-    const upcoming = text.indexOf("Coming up");
-    expect(attention).toBeGreaterThanOrEqual(0);
-    expect(attention).toBeLessThan(recent);
-    expect(recent).toBeLessThan(upcoming);
-  });
-
-  test("renders a button for navigate actions and fires onAction", async () => {
-    let calls = 0;
-    mounted = await mount(
-      <BriefingView
-        briefing={makeBriefing()}
-        error={null}
-        onRetry={() => {}}
-        onAction={() => {
-          calls++;
-        }}
-      />,
-    );
-    const btn = findButton(mounted.container, "View deals");
-    expect(btn).not.toBeNull();
-    await act(async () => {
-      btn?.click();
+  test("renders a label as text, never as markup", async () => {
+    const briefing = makeBriefing({
+      items: [
+        {
+          app: "CRM",
+          facet: "x",
+          label: "<b>bold</b>",
+          count: 1,
+          route: null,
+          state: "ok",
+        },
+      ],
     });
-    expect(calls).toBe(1);
+    mounted = await mount(<BriefingView briefing={briefing} error={null} onRetry={() => {}} />);
+    expect(mounted.container.getElementsByTagName("b")).toHaveLength(0);
+    expect(mounted.container.textContent ?? "").toContain("<b>bold</b>");
   });
 
-  test("does NOT render a button for startChat actions (v1)", async () => {
+  test("opens an item's app route, and offers no action without one", async () => {
+    const opened: string[] = [];
     mounted = await mount(
       <BriefingView
         briefing={makeBriefing()}
         error={null}
         onRetry={() => {}}
-        onAction={() => {}}
+        onOpen={(route) => opened.push(route)}
       />,
     );
-    expect(mounted.container.textContent ?? "").toContain("renewal is due Friday");
-    expect(findButton(mounted.container, "Draft outreach")).toBeNull();
+    const buttons = Array.from(mounted.container.getElementsByTagName("button"));
+    expect(buttons).toHaveLength(1);
+    await act(async () => {
+      findButton(mounted!.container, "Open")?.click();
+    });
+    expect(opened).toEqual(["@acme/crm"]);
   });
 
-  test("shows an empty state when there are no sections", async () => {
+  test("renders nothing when no item is waiting", async () => {
     mounted = await mount(
-      <BriefingView
-        briefing={makeBriefing({ sections: [], state: "all-clear", lede: "" })}
-        error={null}
-        onRetry={() => {}}
-      />,
-    );
-    expect(findByTestId(mounted.container, "workspace-briefing-empty")).not.toBeNull();
-  });
-
-  test("renders nothing when no app provides facets", async () => {
-    mounted = await mount(
-      <BriefingView
-        briefing={makeBriefing({ sections: [], state: "empty", lede: "" })}
-        error={null}
-        onRetry={() => {}}
-      />,
+      <BriefingView briefing={makeBriefing({ items: [] })} error={null} onRetry={() => {}} />,
     );
     expect(findByTestId(mounted.container, "workspace-briefing")).toBeNull();
   });

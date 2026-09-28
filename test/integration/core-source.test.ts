@@ -2,7 +2,6 @@ import { describe, expect, it, afterAll } from "bun:test";
 import { mkdirSync, writeFileSync, rmSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import type { LanguageModelV4 } from "@ai-sdk/provider";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { runWithRequestContext } from "../../src/runtime/request-context.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
@@ -20,41 +19,14 @@ import {
 	thinkingPatchFor,
 } from "../../web/src/pages/settings/thinking-patch.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
-import { createMockModel } from "../helpers/mock-model.ts";
-import type { ToolSource } from "../../src/tools/types.ts";
-
-/** Model adapter that throws on doGenerate, counting invocations. Used
- * to exercise the briefing tool's cache-on-failure rule: when the LLM
- * call fails, the tool should not cache the error result, so a
- * subsequent call regenerates (and the model is called again). */
-function createThrowingModel(err: Error): {
-	model: LanguageModelV4;
-	getCalls: () => number;
-} {
-	let calls = 0;
-	const model: LanguageModelV4 = {
-		specificationVersion: "v4",
-		provider: "mock-throwing",
-		modelId: "mock-throwing-model",
-		supportedUrls: {},
-		async doGenerate() {
-			calls++;
-			throw err;
-		},
-		async doStream() {
-			throw new Error("Not implemented for this test");
-		},
-	};
-	return { model, getCalls: () => calls };
-}
+import type { McpSource } from "../../src/tools/mcp-source.ts";
+import { facetEntry, startFacetsSource } from "../helpers/facets-server.ts";
 
 /**
- * Install a running app in the test workspace that declares one briefing
- * facet. The facet names no tool or resource, so it resolves to its
- * description without a server round-trip; what matters is that a facet
- * exists, which is what sends the briefing to the model.
+ * Install a running app in the test workspace whose server advertises the
+ * facets extension and lists one facet, served over a real MCP connection.
  */
-async function seedFacetApp(runtime: Runtime): Promise<void> {
+async function seedFacetApp(runtime: Runtime): Promise<McpSource> {
 	const serverName = "facet_app";
 	const url = `https://${serverName}.example.com/mcp`;
 	await runtime.getLifecycle().seedInstance(
@@ -65,28 +37,19 @@ async function seedFacetApp(runtime: Runtime): Promise<void> {
 		{ url, serverName, transport: { type: "streamable-http", auth: { type: "bearer", token: "t" } } },
 		{
 			version: "1.0.0",
-			ui: null,
-			briefing: {
-				facets: [
-					{
-						name: "overdue",
-						label: "Overdue follow-ups",
-						type: "attention",
-						description: "3 follow-ups are overdue",
-					},
-				],
+			ui: {
+				name: "Facet App",
+				placements: [{ slot: "sidebar.apps", resourceUri: "ui://facet_app/main", route: "@acme/facet-app" }],
 			},
 		},
 		TEST_WORKSPACE_ID,
 	);
-	const source: ToolSource = {
-		name: serverName,
-		start: async () => {},
-		stop: async () => {},
-		tools: async () => [],
-		execute: async () => ({ content: [] }),
-	};
+	const { source } = await startFacetsSource(serverName, {
+		resources: () => [facetEntry("overdue", "Follow-ups overdue")],
+		read: () => '{"count": 3}',
+	});
 	runtime.getRegistryForWorkspace(TEST_WORKSPACE_ID).addSource(source);
+	return source;
 }
 
 const testDir = join(tmpdir(), `nimblebrain-core-source-${Date.now()}`);
@@ -1301,99 +1264,14 @@ describe("Core Source", () => {
 		}
 	});
 
-	// ----------------------------------------------------------------------
-	// Cache-on-failure contract
-	// ----------------------------------------------------------------------
-	//
-	// The central rule this PR enforces: when generator.generate() throws,
-	// the tool returns isError AND does not cache the failure. A future
-	// refactor that accidentally moves cache.set above the await (or
-	// inverts the conditional) would silently reintroduce the original
-	// "stuck cached canned string" bug. This test locks that wiring.
-	it("nb__briefing does not cache when the LLM call fails", async () => {
-		const workDir = join(testDir, `work-briefing-cache-${Date.now()}`);
-		mkdirSync(workDir, { recursive: true });
-		const { model, getCalls } = createThrowingModel(new Error("LLM down for test"));
-
-		const runtime = await Runtime.start({
-			model: { provider: "custom", adapter: model },
-			workDir,
-			logging: { disabled: true },
-		});
+	// The briefing is read over the workspace's connection, which carries no
+	// member, so every member of the workspace is served the same items.
+	it("nb__briefing serves byte-identical items to every workspace member", async () => {
+		const runtime = await makeRuntime();
+		let facetSource: McpSource | undefined;
 		try {
 			await provisionTestWorkspace(runtime);
-			const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
-
-			// The briefing requires an authenticated identity: facet tools
-			// run through the registry as the caller.
-			const ctx = {
-				identity: { id: "user_test", email: "test@example.com" } as never,
-				workspaceId: TEST_WORKSPACE_ID,
-			};
-
-			// Seed a facet — without one the generator short-circuits to a
-			// quiet briefing and the model never gets invoked (the cache test
-			// would pass vacuously).
-			await seedFacetApp(runtime);
-
-			// First call: model throws, tool returns isError.
-			const first = await runWithRequestContext(ctx, () =>
-				source.execute("briefing", {}),
-			);
-			expect(first.isError).toBe(true);
-			expect(getCalls()).toBe(1);
-
-			// Second call: if the first call had been cached, the tool would
-			// short-circuit before invoking the generator and the model
-			// counter would stay at 1. We expect it to climb to 2 — proving
-			// the failure path skipped cache.set.
-			const second = await runWithRequestContext(ctx, () =>
-				source.execute("briefing", {}),
-			);
-			expect(second.isError).toBe(true);
-			expect(getCalls()).toBe(2);
-		} finally {
-			await runtime.shutdown();
-		}
-	});
-
-	// The briefing is built only from the workspace's facets, so one generation
-	// serves every member: the second member is served the first member's
-	// cached briefing, and the model runs once.
-	it("nb__briefing serves one cached briefing to every workspace member", async () => {
-		const workDir = join(testDir, `work-briefing-shared-${Date.now()}`);
-		mkdirSync(workDir, { recursive: true });
-		let calls = 0;
-		const model = createMockModel(() => {
-			calls++;
-			return {
-				content: [
-					{
-						type: "text",
-						text: JSON.stringify({
-							lede: "3 follow-ups are overdue.",
-							sections: [
-								{
-									id: "overdue",
-									text: "3 follow-ups are overdue.",
-									type: "warning",
-									category: "attention",
-									action: null,
-								},
-							],
-						}),
-					},
-				],
-			};
-		});
-		const runtime = await Runtime.start({
-			model: { provider: "custom", adapter: model },
-			workDir,
-			logging: { disabled: true },
-		});
-		try {
-			await provisionTestWorkspace(runtime);
-			await seedFacetApp(runtime);
+			facetSource = await seedFacetApp(runtime);
 			const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
 			const ctxFor = (id: string, displayName: string) => ({
 				identity: { id, email: `${id}@example.com`, displayName } as never,
@@ -1404,18 +1282,27 @@ describe("Core Source", () => {
 				source.execute("briefing", {}),
 			);
 			const b = await runWithRequestContext(ctxFor("user_b", "Bob"), () =>
-				source.execute("briefing", {}),
+				source.execute("briefing", { force_refresh: true }),
 			);
 
 			expect(a.isError).toBe(false);
 			expect(b.isError).toBe(false);
-			expect(calls).toBe(1);
-			expect(b.structuredContent?.cached).toBe(true);
-			expect(b.structuredContent?.generated_at).toBe(a.structuredContent?.generated_at);
-			expect(b.structuredContent?.lede).toBe("3 follow-ups are overdue.");
-			// Nothing about the member who triggered the generation is in it.
+			const itemsA = JSON.stringify(a.structuredContent?.items);
+			expect(itemsA).toBe(JSON.stringify(b.structuredContent?.items));
+			expect(a.structuredContent?.items).toEqual([
+				{
+					app: "Facet App",
+					facet: "overdue",
+					label: "Follow-ups overdue",
+					count: 3,
+					route: "@acme/facet-app",
+					state: "ok",
+				},
+			]);
+			expect(extractText(a.content)).toBe("3 Follow-ups overdue (Facet App)");
 			expect(JSON.stringify(b)).not.toContain("Alice");
 		} finally {
+			await facetSource?.stop();
 			await runtime.shutdown();
 		}
 	});

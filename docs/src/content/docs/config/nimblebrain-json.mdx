@@ -208,7 +208,7 @@ The `models` object declares two role-based slots. Each value is a `provider:mod
 | Slot | Used for |
 |------|----------|
 | `default` | Chat, general requests, most tool-using turns |
-| `fast` | Conversation titles, the home briefing, and both history folds — end-of-turn compaction and the mid-turn fold. Cheap/fast workloads, but still needs a large context window: see below |
+| `fast` | Conversation titles and both history folds — end-of-turn compaction and the mid-turn fold. Cheap/fast workloads, but still needs a large context window: see below |
 
 A workspace can override individual slots via `workspace.json → models`. When a per-request model specifies a slot name (e.g. `"model": "fast"`), it's resolved against these slots. `"alias:fast"` is the same reference written explicitly; both spellings resolve identically.
 

@@ -24,7 +24,7 @@ import { workspaceConversationsDir } from "../../src/conversation/paths.ts";
 import type { ConversationEvent } from "../../src/conversation/types.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { createMockModel } from "../helpers/mock-model.ts";
-import { createTestAuthAdapter, TEST_IDENTITY } from "../helpers/test-auth-adapter.ts";
+import { TEST_IDENTITY, testAuthAdapter } from "../helpers/test-auth-adapter.ts";
 import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
 
 const API_KEY = "mid-turn-compaction-wiring-key-1234";
@@ -67,6 +67,7 @@ function growingModel() {
 async function startRuntime(workDir: string, compaction: boolean) {
   mkdirSync(workDir, { recursive: true });
   const runtime = await Runtime.start({
+    identityProvider: testAuthAdapter(API_KEY),
     model: { provider: "custom", adapter: growingModel() },
     logging: { disabled: true },
     workDir,
@@ -79,7 +80,6 @@ async function startRuntime(workDir: string, compaction: boolean) {
   const handle = startServer({
     runtime,
     port: 0,
-    provider: createTestAuthAdapter(API_KEY, runtime),
   });
   return { runtime, handle, baseUrl: `http://localhost:${handle.port}` };
 }

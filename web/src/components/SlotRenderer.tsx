@@ -3,13 +3,18 @@ import { useEffect, useRef } from "react";
 import { getResources, uiPathFromUri } from "../api/client";
 import type { BridgeHandle } from "../bridge/bridge";
 import { createBridge } from "../bridge/bridge";
-import { buildHostContext, buildHostExtensions } from "../bridge/host-extensions";
+import {
+  buildHostContext,
+  buildHostExtensions,
+  type ConnectorForHostContext,
+} from "../bridge/host-extensions";
 import type { CreateIframeOptions } from "../bridge/iframe";
 import { createAppIframe } from "../bridge/iframe";
 import type { BridgeCallbacks } from "../bridge/types";
 import { useTheme } from "../context/ThemeContext";
 import { useWorkspaceContext } from "../context/WorkspaceContext";
 import type { PlacementEntry } from "../types";
+import { buildSizedHtml, DEFAULT_CONTENT_HEIGHT, RUNAWAY_HEIGHT_GUARD } from "./content-height";
 
 interface SlotRendererProps {
   placements: PlacementEntry[];
@@ -17,6 +22,18 @@ interface SlotRendererProps {
   /** If set, only show the placement matching this route */
   routeFilter?: string;
   onChat?: (message: string) => void;
+  /**
+   * Whether the viewer can manage the connector these placements belong to.
+   * Set only by the connector settings page; when set, it reaches the app as
+   * the `connector` host-context extension. Every other mount leaves it unset.
+   */
+  canManage?: boolean;
+  /**
+   * Size each iframe to its content instead of filling the container. For a
+   * placement in a flow layout (a page section), where `height: 100%` has no
+   * height to resolve against.
+   */
+  fitContent?: boolean;
 }
 
 /**
@@ -57,9 +74,10 @@ function mountPlacement(
   resource: { html: string; metaUi?: McpUiResourceMeta },
   themeMode: CreateIframeOptions["themeMode"],
   callbacks: BridgeCallbacks,
+  fitContent: boolean,
 ): BridgeHandle {
   const { html, metaUi } = resource;
-  const iframe = createAppIframe(html, entry.serverName, {
+  const iframe = createAppIframe(fitContent ? buildSizedHtml(html) : html, entry.serverName, {
     themeMode,
     connectDomains: metaUi?.csp?.connectDomains,
     resourceDomains: metaUi?.csp?.resourceDomains,
@@ -69,7 +87,7 @@ function mountPlacement(
     prefersBorder: metaUi?.prefersBorder,
   });
   iframe.style.width = "100%";
-  iframe.style.height = "100%";
+  iframe.style.height = fitContent ? `${DEFAULT_CONTENT_HEIGHT}px` : "100%";
   iframe.style.display = "block";
   iframe.style.opacity = "0";
   iframe.style.transition = "opacity 200ms ease-in";
@@ -80,10 +98,26 @@ function mountPlacement(
     iframe.style.opacity = "1";
   });
 
-  return createBridge(iframe, entry.serverName, callbacks);
+  if (!fitContent) return createBridge(iframe, entry.serverName, callbacks);
+  return createBridge(iframe, entry.serverName, {
+    ...callbacks,
+    // A non-positive report comes from an app whose root has not rendered yet;
+    // keep the current height until it reports real content.
+    onResize: (reported) => {
+      const h = Math.min(reported, RUNAWAY_HEIGHT_GUARD);
+      if (h > 0) iframe.style.height = `${h}px`;
+    },
+  });
 }
 
-export function SlotRenderer({ placements, className, routeFilter, onChat }: SlotRendererProps) {
+export function SlotRenderer({
+  placements,
+  className,
+  routeFilter,
+  onChat,
+  canManage,
+  fitContent = false,
+}: SlotRendererProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const bridgesRef = useRef<BridgeHandle[]>([]);
   const { mode } = useTheme();
@@ -97,6 +131,11 @@ export function SlotRenderer({ placements, className, routeFilter, onChat }: Slo
   // workspace from the render that mounted the iframe.
   const workspaceRef = useRef(activeWorkspace);
   workspaceRef.current = activeWorkspace;
+  // Same reason as `workspaceRef`: the handshake reads the value current when
+  // the iframe finishes loading, not the one from the render that mounted it.
+  const connector: ConnectorForHostContext = canManage === undefined ? undefined : { canManage };
+  const connectorRef = useRef(connector);
+  connectorRef.current = connector;
 
   // Keep callbacks in refs so the iframe-mounting effect doesn't re-run
   // when callback identity changes (e.g. during chat streaming).
@@ -108,7 +147,7 @@ export function SlotRenderer({ placements, className, routeFilter, onChat }: Slo
   // Stable key: only re-mount iframes when the actual placements change
   const placementKey = filtered.map((p) => p.resourceUri).join(",");
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: re-mount iframes only when placementKey changes — `filtered` is read at run time but changes identity every render (depending on it would thrash iframes), and mode is read through a ref
+  // biome-ignore lint/correctness/useExhaustiveDependencies: re-mount iframes only when placementKey changes — `filtered` is read at run time but changes identity every render (depending on it would thrash iframes), mode is read through a ref, and `fitContent` is fixed per mount site
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
@@ -120,7 +159,7 @@ export function SlotRenderer({ placements, className, routeFilter, onChat }: Slo
     // so none of them close over the entry. Built once outside the loop.
     const bridgeCallbacks: BridgeCallbacks = {
       onChat: (...args) => onChatRef.current?.(...args),
-      getHostExtensions: () => buildHostExtensions(workspaceRef.current),
+      getHostExtensions: () => buildHostExtensions(workspaceRef.current, connectorRef.current),
     };
 
     // Fetch + mount one placement. A failure is contained here: it renders its
@@ -132,7 +171,14 @@ export function SlotRenderer({ placements, className, routeFilter, onChat }: Slo
         const resourcePath = uiPathFromUri(entry.resourceUri);
         const resource = await getResources(entry.serverName, resourcePath);
         if (cancelled) return null;
-        return mountPlacement(container!, entry, resource, modeRef.current, bridgeCallbacks);
+        return mountPlacement(
+          container!,
+          entry,
+          resource,
+          modeRef.current,
+          bridgeCallbacks,
+          fitContent,
+        );
       } catch (err) {
         console.warn(`Failed to load placement ${entry.resourceUri}:`, err);
         if (!cancelled) appendLoadError(container!, entry, err);
@@ -165,18 +211,25 @@ export function SlotRenderer({ placements, className, routeFilter, onChat }: Slo
     // Callbacks are accessed via refs so bridges always call the latest version.
   }, [placementKey]);
 
-  // Propagate host-context changes (theme + workspace) to mounted iframes
-  // via the ext-apps `host-context-changed` notification. Iframes stay
+  // Propagate host-context changes (theme, workspace, manage flag) to mounted
+  // iframes via the ext-apps `host-context-changed` notification. Iframes stay
   // mounted; apps that observe `useHostContext()` (or `useTheme()`) re-render
-  // and refetch workspace-scoped data without losing local state.
+  // and refetch workspace-scoped data without losing local state. A role
+  // change mid-session reaches a mounted settings component this way.
   useEffect(() => {
-    const ctx = buildHostContext(mode, activeWorkspace);
+    const ctx = buildHostContext(
+      mode,
+      activeWorkspace,
+      canManage === undefined ? undefined : { canManage },
+    );
     for (const bridge of bridgesRef.current) {
       bridge.setHostContext(ctx);
     }
-  }, [mode, activeWorkspace]);
+  }, [mode, activeWorkspace, canManage]);
 
   if (filtered.length === 0) return null;
 
-  return <div ref={containerRef} className={`w-full h-full ${className ?? ""}`} />;
+  return (
+    <div ref={containerRef} className={`w-full ${fitContent ? "" : "h-full"} ${className ?? ""}`} />
+  );
 }

@@ -28,6 +28,8 @@ import { startServer } from "../../src/api/server.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { createMockModel } from "../helpers/mock-model.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
+import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 
 const SENTINEL = "DETACH_SENTINEL";
 const BACKGROUND_REPLY = "completed in the background after disconnect";
@@ -89,16 +91,17 @@ describe("POST /v1/workspaces/:wsId/chat/stream — run survives client disconne
     const workDir = join(tmpdir(), `nb-detach-${Date.now()}`);
     mkdirSync(workDir, { recursive: true });
     runtime = await Runtime.start({
+      identityProvider: devProvider,
       model: { provider: "custom", adapter: gatedModel },
       logging: { disabled: true },
       workDir,
     });
     await provisionTestWorkspace(runtime);
-    handle = startServer({ runtime, port: 0 });
+    handle = startServer({ runtime, port: 0});
     const baseUrl = `http://localhost:${handle.port}`;
 
     // Seed a conversation to get a stable convId to assert against.
-    const seed = await runtime.chat({ message: "seed", workspaceId: TEST_WORKSPACE_ID });
+    const seed = await runtime.chat({ identity: DEV_IDENTITY, message: "seed", workspaceId: TEST_WORKSPACE_ID });
     const convId = seed.conversationId;
 
     // Start the streamed turn. The model gates, so the run is in-flight

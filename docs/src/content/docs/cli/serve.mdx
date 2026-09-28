@@ -70,7 +70,7 @@ bun run src/cli/index.ts serve --port 27247
 
 The deployed container image runs exactly `bun run src/cli/index.ts serve`.
 
-Authentication is configured through `instance.json` (the `oidc` or `workos` adapter), not an environment variable — there is no `NB_API_KEY`. `ALLOWED_ORIGINS` controls CORS. See [Connect via MCP](/connect/mcp-endpoint/) and [Security](/deploy/security/) for details.
+Authentication is configured through `<workDir>/instance.json` (the `dev`, `oidc` or `workos` adapter), not an environment variable — there is no `NB_API_KEY`. `serve` does not start without the file. `ALLOWED_ORIGINS` controls CORS. See [Connect via MCP](/connect/mcp-endpoint/) and [Security](/deploy/security/) for details.
 
 ## Debug mode
 

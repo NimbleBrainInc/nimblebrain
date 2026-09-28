@@ -34,6 +34,7 @@ import { IdentityToolRouter } from "../../src/runtime/identity-tool-router.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { stopAllToolSurfaceWatches } from "../../src/tools/connector-surface.ts";
 import { defineInProcessApp, type InProcessTool } from "../../src/tools/in-process-app.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel, type EchoModelResponse } from "../helpers/echo-model.ts";
 
 const ADMIN_WS = "ws_helix";
@@ -146,6 +147,7 @@ beforeAll(async () => {
   process.env[CATALOG_DIR_ENV] = catalogDir;
 
   runtime = await Runtime.start({
+    identityProvider: devProvider,
     model: { provider: "custom", adapter: recordingModel() },
     logging: { disabled: true },
     workDir: testDir,
@@ -255,7 +257,11 @@ describe("the chat engine door (IdentityToolRouter)", () => {
           },
         ],
       });
-      const result = await runtime.chat({ message: "find acme tools", workspaceId: wsId });
+      const result = await runtime.chat({
+        identity: DEV_IDENTITY,
+        message: "find acme tools",
+        workspaceId: wsId,
+      });
       return result.toolCalls.find((c) => c.name === "nb__search")?.output ?? "";
     };
     const memberFound = await searchIn(MEMBER_WS);
@@ -270,6 +276,7 @@ describe("the chat engine door (IdentityToolRouter)", () => {
     const offeredIn = async (wsId: string): Promise<string[]> => {
       offered.length = 0;
       await runtime.chat({
+        identity: DEV_IDENTITY,
         message: "hello",
         workspaceId: wsId,
         appContext: { appName: "Acme CRM", serverName: SERVER },
@@ -296,7 +303,7 @@ describe("the chat engine door (IdentityToolRouter)", () => {
         },
         { toolCalls: [{ toolCallId: "p2", toolName: CONFIGURE, input: "{}" }] },
       );
-      await runtime.chat({ message: "configure it", workspaceId: wsId });
+      await runtime.chat({ identity: DEV_IDENTITY, message: "configure it", workspaceId: wsId });
     };
     resetCalls();
     await promoteAndCall(MEMBER_WS);

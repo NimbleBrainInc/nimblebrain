@@ -56,11 +56,10 @@ const TRANSIENT_PATTERNS: RegExp[] = [
 // ---------------------------------------------------------------------------
 
 /**
- * What initiated a run. A `scheduled` run fires from the timer with no user
- * present, so it must act as the automation's owner/provenance and must NOT
- * inherit any ambient request context (the timer can capture a stale one — see
- * `getExecutorContext`). A `manual` run is a user clicking "test", dispatched
- * synchronously inside that user's request context, which it legitimately uses.
+ * What initiated a run: the timer (`scheduled`), an operator's Run now
+ * (`manual`), or a batch of notifications (`event`). It is recorded on the run
+ * and decides nothing about who the run acts as: every run acts as the
+ * automation's owner, in its workspace (see `resolveExecutorContext`).
  */
 export type AutomationRunTrigger = "scheduled" | "manual" | "event";
 

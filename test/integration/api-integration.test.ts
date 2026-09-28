@@ -4,12 +4,13 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
-import { createTestAuthAdapter } from "../helpers/test-auth-adapter.ts";
+import { testAuthAdapter } from "../helpers/test-auth-adapter.ts";
 import { startServer } from "../../src/api/server.ts";
 import type { ServerHandle } from "../../src/api/server.ts";
 import { makeInProcessSource } from "../helpers/in-process-source.ts";
 import { textContent, extractText } from "../../src/engine/content-helpers.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
 
 // --- SSE parsing helper ---
 
@@ -62,6 +63,7 @@ describe("integration: full flow with auth", () => {
 	beforeAll(async () => {
 		mkdirSync(workDir, { recursive: true });
 		runtime = await Runtime.start({
+			identityProvider: testAuthAdapter(API_KEY),
 			model: { provider: "custom", adapter: createEchoModel() },
 			logging: { disabled: true },
 			workDir,
@@ -72,7 +74,6 @@ describe("integration: full flow with auth", () => {
 		handle = startServer({
 			runtime,
 			port: 0,
-			provider: createTestAuthAdapter(API_KEY, runtime),
 		});
 		baseUrl = `http://localhost:${handle.port}`;
 	});
@@ -153,6 +154,7 @@ describe("integration: concurrent authenticated load", () => {
 	beforeAll(async () => {
 		mkdirSync(workDir, { recursive: true });
 		runtime = await Runtime.start({
+			identityProvider: testAuthAdapter(API_KEY),
 			model: { provider: "custom", adapter: createEchoModel() },
 			logging: { disabled: true },
 			workDir,
@@ -163,7 +165,6 @@ describe("integration: concurrent authenticated load", () => {
 		handle = startServer({
 			runtime,
 			port: 0,
-			provider: createTestAuthAdapter(API_KEY, runtime),
 		});
 		baseUrl = `http://localhost:${handle.port}`;
 	});
@@ -240,6 +241,7 @@ describe("integration: windowing under load", () => {
 		process.env.NB_CHAT_RATE_LIMIT = "200";
 
 		runtime = await Runtime.start({
+			identityProvider: devProvider,
 			model: { provider: "custom", adapter: createEchoModel() },
 			logging: { disabled: true },
 			maxInputTokens: 2000, // Low budget to trigger windowing
@@ -352,6 +354,7 @@ describe("integration: auth boundary", () => {
 	beforeAll(async () => {
 		mkdirSync(workDir, { recursive: true });
 		runtime = await Runtime.start({
+			identityProvider: testAuthAdapter(API_KEY),
 			model: { provider: "custom", adapter: createEchoModel() },
 			logging: { disabled: true },
 			workDir,
@@ -362,7 +365,6 @@ describe("integration: auth boundary", () => {
 		handle = startServer({
 			runtime,
 			port: 0,
-			provider: createTestAuthAdapter(API_KEY, runtime),
 		});
 		baseUrl = `http://localhost:${handle.port}`;
 	});
@@ -427,6 +429,7 @@ describe("E2E: install app -> tool call via API", () => {
 		mkdirSync(testDir, { recursive: true });
 
 		runtime = await Runtime.start({
+			identityProvider: devProvider,
 			model: { provider: "custom", adapter: createEchoModel() },
 			logging: { disabled: true },
 			workDir: testDir,
@@ -471,7 +474,7 @@ describe("E2E: install app -> tool call via API", () => {
 			},
 		}, undefined, TEST_WORKSPACE_ID);
 
-		handle = startServer({ runtime, port: 0 });
+		handle = startServer({ runtime, port: 0});
 		baseUrl = `http://localhost:${handle.port}`;
 	});
 
@@ -516,6 +519,7 @@ describe("E2E: tool call via API", () => {
 		mkdirSync(sseTestDir, { recursive: true });
 
 		runtime = await Runtime.start({
+			identityProvider: devProvider,
 			model: { provider: "custom", adapter: createEchoModel() },
 			logging: { disabled: true },
 			workDir: sseTestDir,
@@ -543,7 +547,7 @@ describe("E2E: tool call via API", () => {
 			name: "@test/notes",
 		}, undefined, TEST_WORKSPACE_ID);
 
-		handle = startServer({ runtime, port: 0 });
+		handle = startServer({ runtime, port: 0});
 		baseUrl = `http://localhost:${handle.port}`;
 	});
 
@@ -584,13 +588,14 @@ describe("E2E: multi-step conversation -> history -> conversations list consiste
 		mkdirSync(multiStepDir, { recursive: true });
 
 		runtime = await Runtime.start({
+			identityProvider: devProvider,
 			model: { provider: "custom", adapter: createEchoModel() },
 			logging: { disabled: true },
 			workDir: multiStepDir,
 		});
 		await provisionTestWorkspace(runtime);
 
-		handle = startServer({ runtime, port: 0 });
+		handle = startServer({ runtime, port: 0});
 		baseUrl = `http://localhost:${handle.port}`;
 	});
 

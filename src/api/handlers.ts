@@ -17,7 +17,6 @@ import {
 } from "../host-resources/artifacts/index.ts";
 import type { IdentityProvider, UserIdentity } from "../identity/provider.ts";
 import { RefreshTokenError } from "../identity/provider.ts";
-import { DEV_IDENTITY } from "../identity/providers/dev.ts";
 import { getAvailableModels } from "../model/catalog.ts";
 import { log } from "../observability/log.ts";
 import {
@@ -236,7 +235,7 @@ export async function handleChatCancel(
   if (!CONVERSATION_ID_RE.test(conversationId)) {
     return apiError(400, "bad_request", "Invalid conversationId format");
   }
-  const callerId = identity?.id ?? (runtime.getIdentityProvider() ? null : DEV_IDENTITY.id);
+  const callerId = identity?.id;
   if (!callerId) {
     return apiError(401, "authentication_required", "Authentication required.");
   }

@@ -26,7 +26,7 @@ import { workspaceConversationsDir } from "../../src/conversation/paths.ts";
 import type { ConversationEvent } from "../../src/conversation/types.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { createMockModel } from "../helpers/mock-model.ts";
-import { createTestAuthAdapter, TEST_IDENTITY } from "../helpers/test-auth-adapter.ts";
+import { TEST_IDENTITY, testAuthAdapter } from "../helpers/test-auth-adapter.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
 
 /** The instance-configured fast slot, and the workspace override that must win. */
@@ -61,6 +61,7 @@ beforeAll(async () => {
   });
 
   runtime = await Runtime.start({
+    identityProvider: testAuthAdapter(API_KEY),
     model: { provider: "custom", adapter: model },
     models: { fast: CONFIGURED_FAST_MODEL },
     logging: { disabled: true },
@@ -81,7 +82,6 @@ beforeAll(async () => {
   handle = startServer({
     runtime,
     port: 0,
-    provider: createTestAuthAdapter(API_KEY, runtime),
   });
   baseUrl = `http://localhost:${handle.port}`;
 });

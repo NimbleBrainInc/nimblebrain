@@ -49,7 +49,6 @@ import {
   startConnectorSource,
 } from "./startup.ts";
 import type {
-  BriefingBlock,
   BrokeredRef,
   ConnectorInstance,
   ConnectorRef,
@@ -83,7 +82,6 @@ type SeedManifestMeta = {
   version: string;
   description?: string;
   ui: ConnectorUiMeta | null;
-  briefing?: BriefingBlock | null;
 };
 
 // ---------------------------------------------------------------------------
@@ -2212,7 +2210,6 @@ function buildSeededInstance(
     description: manifestMeta?.description,
     state: "running",
     ui: ref.ui ?? manifestMeta?.ui ?? null,
-    briefing: manifestMeta?.briefing ?? null,
     wsId,
     oauthScope: "workspace",
     // Needed to reconstruct McpSources on-demand (URL, transport config,

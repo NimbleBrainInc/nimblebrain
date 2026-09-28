@@ -11,15 +11,15 @@ Placements control where your app's UI appears in the NimbleBrain shell layout. 
 
 The shell layout has the following slots:
 
-| Slot | Location | Description |
-|------|----------|-------------|
-| `sidebar` | Left sidebar, top zone | Scrollable navigation items. Priority `< 10` is ungrouped core nav; `>= 10` is grouped under "general". |
-| `sidebar.apps` | Left sidebar, "Apps" group | Items grouped under the "Apps" heading. |
-| `sidebar.bottom` | Left sidebar, bottom zone | Pinned items below the scrollable area (e.g., settings). |
-| `main` | Central content area | Full-page views rendered in iframes. Requires a `route`. |
-| `settings` | Settings → Apps | A per-app settings section, rendered as a tab under **Settings → This Workspace → Apps**. |
+| Slot | Where it renders | Description |
+|------|------------------|-------------|
+| `sidebar.<group>` | Left sidebar, under the focused workspace's **Apps** heading, and the workspace overview's app grid | Your app's entry in the workspace. Every `sidebar.<group>` placement renders in the one **Apps** group, whatever the group name. Give it a `route`. |
+| `sidebar` | No nav entry for a connector | Reserved for the host's own views (Conversations, Automations, Files). A connector's `sidebar` placement with a `route` still registers that route. |
+| `sidebar.bottom` | The bottom of the mobile navigation drawer | A pinned item. It does not render in the desktop sidebar. |
+| `main` | A route, with no nav entry | A full-page view. Requires a `route`. Reachable by URL or when your app navigates to it. |
+| `settings` | The connector's settings page | Your connector's settings component, rendered after the host's own sections on **Settings → Connectors → your connector**. See [Settings sections](/apps/manifest/#settings-sections). |
 
-A `"sidebar.<group>"` slot renders under a named group heading derived from the group name (e.g., `"sidebar.apps"` → "Apps").
+An unknown slot is dropped, never fatal.
 
 ## Declaring placements
 
@@ -34,19 +34,16 @@ Add a `placements` array to your manifest's `_meta["ai.nimblebrain/host"]`:
       "icon": "check-square",
       "placements": [
         {
-          "slot": "sidebar",
-          "resourceUri": "ui://sidebar-widget",
+          "slot": "sidebar.apps",
+          "resourceUri": "ui://dashboard",
           "priority": 30,
           "label": "Tasks",
           "icon": "check-square",
           "route": "tasks"
         },
         {
-          "slot": "main",
-          "resourceUri": "ui://dashboard",
-          "route": "tasks",
-          "label": "Tasks",
-          "icon": "check-square"
+          "slot": "settings",
+          "resourceUri": "ui://settings"
         }
       ]
     }
@@ -56,7 +53,7 @@ Add a `placements` array to your manifest's `_meta["ai.nimblebrain/host"]`:
 
 ## Priority sorting
 
-Placements are sorted by **slot, then `priority`** (ascending). Lower priority values appear first within a slot. There is no further tie-break — placements with the same slot and priority keep their registration order.
+Within a slot, placements sort by `priority`, ascending, then by `label` (or `route`) alphabetically. The default priority is `100`.
 
 ```
 priority: 10  → appears first
@@ -64,42 +61,32 @@ priority: 50  → appears second
 priority: 100 → appears third (default)
 ```
 
-The default priority is `100`. NimbleBrain's built-in items use low priorities to appear at the top. Set a priority below 50 to appear near the top, or leave it at the default to appear after core items.
+The sidebar shows the first four apps under **Apps**, then a **View all** link to the workspace overview, which lists every app. There is no grouping by priority band.
 
 ## Route-based navigation
 
-Placements with a `route` field register a URL path in the shell. The route is prefixed with `/app/`:
+A placement with a `route` registers a URL inside the workspace, under `/w/<slug>/app/`:
 
 | `route` value | URL |
 |---------------|-----|
-| `"tasks"` | `/app/tasks` |
-| `"my-app/settings"` | `/app/my-app/settings` |
+| `"tasks"` | `/w/<slug>/app/tasks` |
+| `"my-app/reports"` | `/w/<slug>/app/my-app/reports` |
 
-When a user clicks a sidebar item with a route, the shell navigates to `/app/<route>` and loads the placement's `resourceUri` in the main content iframe.
+Clicking the app in the sidebar opens that URL and loads the placement's `resourceUri` in the main area, beside the docked chat.
 
 ## Sidebar rendering
 
-The shell layout renders sidebar items in two zones:
+Under the focused workspace, the sidebar shows:
 
-### Top zone (scrollable)
+1. **The host's views**: Conversations, Automations, Files, and the Inbox.
+2. **Apps**: `sidebar.<group>` placements, sorted by priority, capped at four with a **View all** link.
+3. **Connectors**: a link to the workspace's connectors.
 
-1. **Core nav** — `sidebar` placements with priority `< 10` (built-ins like Home and Conversations) render ungrouped at the top.
-2. **Grouped sidebar placements** — `sidebar` placements with priority `>= 10` group under "general"; `sidebar.<group>` placements group under their named heading (e.g., `sidebar.apps` → "Apps"). Items within each group are sorted by priority.
-3. **App routes** — `"main"` slot placements with routes appear under the "Apps" heading.
+The group name in `sidebar.<group>` is not shown as a heading; every group renders under **Apps**. A `main` placement never appears here. To give your app a nav entry, declare a `sidebar.apps` placement with a `route`.
 
-### Bottom zone (pinned)
+### Mobile drawer
 
-Items with `slot: "sidebar.bottom"` are pinned below the scrollable area, separated by a border. Use this for settings or admin panels.
-
-```json
-{
-  "slot": "sidebar.bottom",
-  "resourceUri": "ui://settings",
-  "label": "Settings",
-  "icon": "settings",
-  "route": "settings"
-}
-```
+On narrow screens the sidebar becomes a drawer. `sidebar.bottom` placements render at its foot, linking to their route. A `sidebar.bottom` placement with `route: "settings"` is not rendered: declare connector settings with the `settings` slot.
 
 ## Icons
 
@@ -116,13 +103,7 @@ The resolver converts kebab-case to PascalCase for Lucide component lookup. If t
 
 ## Size hints
 
-The `size` field provides a hint to the slot renderer:
-
-| Value | Description |
-|-------|-------------|
-| `"compact"` | Minimal height, suitable for sidebar widgets. |
-| `"full"` | Fills available space (default behavior for main views). |
-| `"auto"` | Let the content determine the size. Pair with `ui/notifications/size-changed` bridge messages. |
+The `size` field (`"compact"`, `"full"`, `"auto"`) is accepted as a hint. The shell does not read it. A `main` or `sidebar.<group>` view fills the main area; a `settings` component is sized to its content.
 
 ## Placement registry internals
 
@@ -152,9 +133,7 @@ const items = registry.forWorkspace("ws_engineering");
 // → sorted by slot then priority
 ```
 
-## Example: sidebar + main view
-
-A common pattern is one sidebar item that links to a main view:
+## Example: an app with a nav entry
 
 ```json title="manifest.json"
 {
@@ -165,7 +144,7 @@ A common pattern is one sidebar item that links to a main view:
       "icon": "users",
       "placements": [
         {
-          "slot": "main",
+          "slot": "sidebar.apps",
           "resourceUri": "ui://dashboard",
           "route": "crm",
           "label": "CRM",
@@ -178,8 +157,8 @@ A common pattern is one sidebar item that links to a main view:
 }
 ```
 
-This creates a sidebar entry under "Apps" (because the `"main"` slot with a route automatically appears in the sidebar) and loads `ui://dashboard` when clicked.
+This adds **CRM** under the workspace's **Apps** heading and to the workspace overview, and loads `ui://dashboard` at `/w/<slug>/app/crm` when clicked.
 
 <Aside type="tip">
-You don't need both a `"sidebar"` and a `"main"` placement for the same view. A `"main"` placement with a `route` automatically appears in the sidebar under the "Apps" group.
+One `sidebar.apps` placement with a `route` gives your app both a nav entry and a page. Add a `main` placement only for a second page you reach by navigation, not from the sidebar.
 </Aside>

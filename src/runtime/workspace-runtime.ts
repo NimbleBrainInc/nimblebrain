@@ -232,7 +232,6 @@ function unstartedUrlConnectorEntry(
     meta: {
       version: "remote",
       ui: connector.ui ?? null,
-      briefing: null,
     },
     ...(startError ? { startError } : {}),
   };

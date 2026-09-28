@@ -17,47 +17,38 @@ export type HomeActivityInput = Static<typeof HomeActivityInput>;
 //
 // Canonical contract for the `nb__briefing` tool's structured output. Per the
 // output-schema convention these are type-only (we don't wire-validate
-// outputs): `src/services/home-types.ts` re-exports them for the backend
-// (generator, cache, core-source), and `bun run codegen` emits them to
-// `web/src/_generated/platform-schemas/home.d.ts` for the web briefing surface.
-// Single source of truth — do not hand-redeclare on either side.
-
-/** Dashboard state derived from briefing content. */
-export type BriefingState = "empty" | "quiet" | "all-clear" | "normal" | "attention";
+// outputs): `src/services/home-types.ts` re-exports them for the backend, and
+// `bun run codegen` emits them to `web/src/_generated/platform-schemas/home.d.ts`
+// for the web briefing surface. Single source of truth — do not hand-redeclare
+// on either side.
 
 /**
- * Action attached to a briefing section. `type` discriminates the payload —
- * `navigate` uses `route`, `startChat` uses `prompt` — but both fields are
- * always present (null for the unused variant) because the LLM structured-
- * output schema requires every property. Consumers check `type` first.
+ * One facet of one app: `<count> <label>`, opening the app. Built from a count
+ * the app's server returned over the `ai.nimblebrain/facets` extension; nothing
+ * in it is generated. `label` and `count` are untrusted server data: render the
+ * label as text and the count as a number.
  */
-export interface BriefingAction {
-  type: "navigate" | "startChat";
+export interface BriefingItem {
+  /** The app's display name. */
+  app: string;
+  /** The facet's name, stable within the app's server. */
+  facet: string;
+  /** The facet resource's `title`. */
   label: string;
-  /** Set on navigate actions; null on startChat. */
+  /** Things waiting, as the server counted them. 0 when `state` is `unavailable`. */
+  count: number;
+  /** The app's first placement route, or null when it has none. */
   route: string | null;
-  /** Set on startChat actions; null on navigate. */
-  prompt: string | null;
-}
-
-/** Individual briefing section — one line item under a category heading. */
-export interface BriefingSection {
-  id: string;
-  text: string;
-  type: "positive" | "neutral" | "warning";
-  category: "recent" | "upcoming" | "attention";
-  action?: BriefingAction;
+  /** `unavailable` when the read failed, timed out, or returned no valid count. */
+  state: "ok" | "unavailable";
 }
 
 /**
  * Complete briefing output returned by `nb__briefing`. One per workspace,
- * written from the facets its installed apps declare and shared by every
- * member, so it carries nothing about the viewer.
+ * shared by every member, so it carries nothing about the viewer. An item
+ * whose count is zero is omitted; an empty `items` means nothing is waiting.
  */
 export interface BriefingOutput {
-  lede: string;
-  sections: BriefingSection[];
-  state: BriefingState;
+  items: BriefingItem[];
   generated_at: string;
-  cached: boolean;
 }

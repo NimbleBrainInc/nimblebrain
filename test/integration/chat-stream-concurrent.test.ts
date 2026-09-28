@@ -17,6 +17,8 @@ import { createEchoModel } from "../helpers/echo-model.ts";
 import { createMockModel } from "../helpers/mock-model.ts";
 import { makeTestWorkDir } from "../helpers/test-workdir.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
+import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 
 interface SSEEvent {
   event: string;
@@ -76,17 +78,19 @@ describe("POST /v1/workspaces/:wsId/chat/stream — concurrency protection", () 
       return { content: [{ type: "text", text: "unblocked" }] };
     });
 
+    const workDir = makeWorkDir();
     runtime = await Runtime.start({
-      workDir: makeWorkDir(),
+      identityProvider: devProvider,
+      workDir,
       model: { provider: "custom", adapter: gatedModel },
       logging: { disabled: true },
     });
     await provisionTestWorkspace(runtime);
-    handle = startServer({ runtime, port: 0 });
+    handle = startServer({ runtime, port: 0});
     const baseUrl = `http://localhost:${handle.port}`;
 
     // Seed a conversation (first doGenerate call returns immediately).
-    const seed = await runtime.chat({
+    const seed = await runtime.chat({ identity: DEV_IDENTITY,
       message: "seed",
       workspaceId: TEST_WORKSPACE_ID,
     });
@@ -95,7 +99,7 @@ describe("POST /v1/workspaces/:wsId/chat/stream — concurrency protection", () 
     // Start a second runtime.chat() but don't await — the lock is acquired
     // synchronously before the first internal await, and doGenerate will
     // block on the gate, so the lock is held while we make the HTTP call.
-    const inFlight = runtime.chat({
+    const inFlight = runtime.chat({ identity: DEV_IDENTITY,
       message: "holding the lock",
       conversationId: convId,
       workspaceId: TEST_WORKSPACE_ID,
@@ -121,17 +125,19 @@ describe("POST /v1/workspaces/:wsId/chat/stream — concurrency protection", () 
   });
 
   test("concurrent stream requests produce exactly one successful run; the rest are rejected", async () => {
+    const workDir = makeWorkDir();
     runtime = await Runtime.start({
-      workDir: makeWorkDir(),
+      identityProvider: devProvider,
+      workDir,
       model: { provider: "custom", adapter: createEchoModel() },
       logging: { disabled: true },
     });
     await provisionTestWorkspace(runtime);
-    handle = startServer({ runtime, port: 0 });
+    handle = startServer({ runtime, port: 0});
     const baseUrl = `http://localhost:${handle.port}`;
 
     // Seed a conversation we can contend on.
-    const seed = await runtime.chat({
+    const seed = await runtime.chat({ identity: DEV_IDENTITY,
       message: "seed",
       workspaceId: TEST_WORKSPACE_ID,
     });

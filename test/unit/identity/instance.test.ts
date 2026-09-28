@@ -149,6 +149,19 @@ describe("loadInstanceConfig", () => {
     expect(result).toBeNull();
   });
 
+  test("loads the dev adapter", async () => {
+    await writeFile(join(workDir, "instance.json"), JSON.stringify({ auth: { adapter: "dev" } }));
+
+    const config = await loadInstanceConfig(workDir);
+    expect(config).toEqual({ auth: { adapter: "dev" } });
+  });
+
+  test("throws on a non-string auth adapter", async () => {
+    await writeFile(join(workDir, "instance.json"), JSON.stringify({ auth: { adapter: 42 } }));
+
+    await expect(loadInstanceConfig(workDir)).rejects.toThrow('unknown auth adapter "42"');
+  });
+
   test("throws on malformed JSON", async () => {
     await writeFile(join(workDir, "instance.json"), "{ not valid json }");
 

@@ -16,9 +16,12 @@ import type { Connection, ConnectionState } from "./connection.ts";
  *   "sidebar.<group>"          → named group with label (e.g., "sidebar.apps" → "Apps")
  *   "sidebar.bottom"           → pinned to bottom zone
  *   "main"                     → app route (page content, not a nav item)
+ *   "settings"                 → the component rendered on the connector's settings page.
+ *                                Claims no navigation. The host renders the first by
+ *                                priority; `route` and `label` are ignored.
  */
 export interface PlacementDeclaration {
-    /** Which slot this UI fills (e.g., "sidebar", "sidebar.apps", "sidebar.bottom", "main"). */
+    /** Which slot this UI fills (e.g., "sidebar", "sidebar.apps", "sidebar.bottom", "main", "settings"). */
     slot: string;
     /** ui:// resource URI served by this MCP server. */
     resourceUri: string;
@@ -256,15 +259,13 @@ export interface HostManifestMeta {
     name?: string;
     icon?: string;
     /**
-     * RESERVED — not consumed by the host (grouping/briefing prioritization is
-     * not wired to it). Tolerated for back-compat; slated for removal (nimblebrain#503).
+     * RESERVED — not consumed by the host (grouping is not wired to it). Tolerated for back-compat; slated for removal (nimblebrain#503).
      */
     category?: string;
     placements?: PlacementDeclaration[];
     primaryView?: {
         resourceUri: string;
     };
-    briefing?: BriefingBlock;
     /**
      * Inbound event streams this server accepts, one per vendor. The runtime
      * mints a capability URL per `(workspace, connector, vendor)` at install and
@@ -321,26 +322,6 @@ export interface HostManifestMeta {
      */
     admin_tools?: string[];
 }
-/** Briefing declaration — how this app contributes to the daily briefing. */
-export interface BriefingBlock {
-    priority?: "high" | "medium" | "low";
-    facets: BriefingFacet[];
-}
-/** A single briefing facet — one dimension of summary data.
- *  Resolved via one of: resource (MCP resource read) or tool (MCP tool call).
- *  Both answers come from the server that declared the facet, over MCP. */
-export interface BriefingFacet {
-    name: string;
-    label: string;
-    type: "attention" | "upcoming" | "activity" | "delta" | "kpi";
-    resource?: string;
-    tool?: string;
-    tool_input?: Record<string, unknown>;
-    /** Shown when the facet declares neither `tool` nor `resource`, and when
-     *  resolution fails. The only facet field besides label/type the briefing
-     *  reads — see `buildUserPayload` in `services/briefing-generator.ts`. */
-    description?: string;
-}
 /** Runtime tracking for an installed connector. One per source. */
 export interface ConnectorInstance {
     /** Short server name (e.g. "ipinfo"). Used as the ToolRegistry source key. */
@@ -355,8 +336,6 @@ export interface ConnectorInstance {
     state: ConnectionState;
     /** UI placement metadata from _meta["ai.nimblebrain/host"]. */
     ui: ConnectorUiMeta | null;
-    /** Briefing metadata from _meta["ai.nimblebrain/host"].briefing. */
-    briefing: BriefingBlock | null;
     /**
      * Workspace that owns this instance. Required — every connector instance
      * belongs to exactly one workspace. Global/platform sources are
@@ -397,7 +376,6 @@ export interface LocalConnectorMeta {
     /** Human-readable description from manifest. */
     description?: string;
     ui: ConnectorUiMeta | null;
-    briefing: BriefingBlock | null;
 }
 /** Result from starting a connector source — includes the actual registered source name. */
 export interface StartConnectorResult {

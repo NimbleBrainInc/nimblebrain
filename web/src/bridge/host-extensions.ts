@@ -24,11 +24,26 @@ export type WorkspaceForHostContext = {
 } | null;
 
 /**
+ * What the viewer may do with the connector whose settings component is
+ * mounted. Supplied only by the connector settings page, so every other mount
+ * point's payload carries no `connector` key.
+ *
+ * `canManage` is the same rule the page's host sections gate on: workspace
+ * membership role `admin`, with no org-admin bypass. It lets a component
+ * disable controls it knows the viewer cannot use. It is not the permission:
+ * the server decides every call on its own.
+ */
+export type ConnectorForHostContext = { canManage: boolean } | undefined;
+
+/**
  * Non-spec extension keys to merge into the `ui/initialize` hostContext
  * response. Bridge merges these alongside theme/styles; spec fields win
  * on key collisions.
  */
-export function buildHostExtensions(workspace: WorkspaceForHostContext): Record<string, unknown> {
+export function buildHostExtensions(
+  workspace: WorkspaceForHostContext,
+  connector?: ConnectorForHostContext,
+): Record<string, unknown> {
   const ext: Record<string, unknown> = workspace
     ? {
         workspace: {
@@ -37,6 +52,7 @@ export function buildHostExtensions(workspace: WorkspaceForHostContext): Record<
         },
       }
     : {};
+  if (connector) ext.connector = { canManage: connector.canManage };
   return ext;
 }
 
@@ -66,10 +82,11 @@ export function buildHostStyles(variables: ThemeTokens): Record<string, unknown>
 export function buildHostContext(
   mode: "light" | "dark",
   workspace: WorkspaceForHostContext,
+  connector?: ConnectorForHostContext,
 ): Record<string, unknown> {
   const tokens = getThemeTokens(mode);
   return {
-    ...buildHostExtensions(workspace),
+    ...buildHostExtensions(workspace, connector),
     theme: mode,
     styles: buildHostStyles(tokens),
   };

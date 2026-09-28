@@ -15,14 +15,14 @@ NimbleBrain uses pluggable authentication adapters configured via `instance.json
 
 | Adapter | Use case | Configuration |
 |---------|----------|--------------|
-| **dev** | Local development | No `instance.json` (default) |
+| **dev** | Local development | `adapter: "dev"`: every request is one built-in owner, no login |
 | **oidc** | Enterprise / SSO | Authorization-code flow against any OIDC provider |
 | **workos** | Enterprise / SSO via WorkOS | AuthKit-hosted login (`adapter: "workos"`) |
 
-The adapter is selected by the `auth.adapter` field in `instance.json`. With no `instance.json` present, the platform runs in dev mode.
+The adapter is selected by the `auth.adapter` field in `instance.json`. The server does not start without the file: a missing identity config never selects an adapter.
 
 <Aside type="danger">
-Running without an `instance.json` (dev mode) disables all authentication. The CORS policy falls back to `Access-Control-Allow-Origin: *`. Anyone who can reach the server has full access to the agent, including shell execution via the bash connector.
+The `dev` adapter checks no credential. Anyone who can reach the server is its org owner, with full access to the agent and every connector installed in its workspaces.
 </Aside>
 
 ### How authentication works
@@ -73,25 +73,18 @@ The `Secure` flag is automatically omitted for localhost connections (where `htt
 
 ## CORS
 
-Cross-Origin Resource Sharing controls which domains can make API requests from a browser. NimbleBrain has three CORS modes depending on your configuration. The deciding factor is whether **auth is configured** (an `instance.json` adapter is present), not any single environment variable:
+Cross-Origin Resource Sharing controls which domains can make API requests from a browser. The policy is the same for every auth adapter, `dev` included; `ALLOWED_ORIGINS` decides it:
 
-### Mode 1: No auth configured (development)
+### `ALLOWED_ORIGINS` unset
 
-When no `instance.json` adapter is configured (dev mode):
-- `Access-Control-Allow-Origin: *`
-- No credentials support
-- Any origin can make requests
-
-### Mode 2: Auth configured, no `ALLOWED_ORIGINS`
-
-When an auth adapter is configured but `ALLOWED_ORIGINS` is not:
+When `ALLOWED_ORIGINS` is not set:
 - No `Access-Control-Allow-Origin` header is sent
 - Only same-origin requests work (browser enforces this)
 - Cross-origin requests from any domain are blocked
 
-### Mode 3: Auth configured + `ALLOWED_ORIGINS` (production)
+### `ALLOWED_ORIGINS` set (production)
 
-When both are set:
+When it is set:
 - `Access-Control-Allow-Origin` is set to the requesting origin only if it appears in the allow list
 - `Access-Control-Allow-Credentials: true` enables cookie-based auth
 - `Vary: Origin` ensures caches differentiate by origin

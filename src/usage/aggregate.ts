@@ -319,7 +319,7 @@ function groupKeyFor(record: LlmCallRecord, groupBy: UsageGroupBy, modelKey: str
       // `runId`. Preferring `parentRunId` rolls those rows onto the turn that
       // spawned them rather than billing one turn as several.
       //
-      // The forked fast-slot calls (title, compaction, briefing) carry no
+      // The forked fast-slot calls (title, compaction) carry no
       // engine run at all, and neither do records predating `runId`; both
       // group under "none".
       return record.parentRunId ?? record.runId ?? "none";

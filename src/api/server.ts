@@ -5,15 +5,13 @@ import {
   ConnectionRevalidator,
   revalidatorIntervalMsFromEnv,
 } from "../connectors/runtime/connection-revalidator.ts";
-import type { IdentityProvider } from "../identity/provider.ts";
-import { DevIdentityProvider } from "../identity/providers/dev.ts";
+import { missingInstanceConfigError } from "../identity/instance.ts";
 import { canonicalOrigins, webOrigin } from "../oauth/public-origin.ts";
 import { shutdownTracing } from "../observability/index.ts";
 import { log } from "../observability/log.ts";
 import type { Runtime } from "../runtime/runtime.ts";
 import { HealthMonitor } from "../tools/health-monitor.ts";
 import { createApp } from "./app.ts";
-import { resolveAuthMode } from "./auth-middleware.ts";
 import { ConversationEventManager } from "./conversation-events.ts";
 import { SseEventManager } from "./events.ts";
 import { McpServerHost } from "./mcp-server.ts";
@@ -30,8 +28,6 @@ import type { AppContext } from "./types.ts";
 export interface ServerOptions {
   runtime: Runtime;
   port?: number;
-  /** Pluggable identity provider. Falls back to DevIdentityProvider (no auth) when null. */
-  provider?: IdentityProvider | null;
   /**
    * Pluggable cluster-shared session metadata store. When omitted, a process-
    * local in-memory registry is constructed with the runtime's configured TTL
@@ -47,8 +43,6 @@ export interface ServerHandle {
   sseManager: SseEventManager;
   /** Shorthand for server.port */
   port: number;
-  /** Scoped internal-API auth token (the internal-API bearer). Rotated on every restart. */
-  internalToken: string;
   /** Stop the server and health monitor. */
   stop(closeConnections?: boolean): void;
 }
@@ -57,7 +51,7 @@ export interface ServerHandle {
  * Parse ALLOWED_ORIGINS env var into a Set of *additional* CORS origins. The
  * canonical hosts (custom domain + platform subdomain) are folded in separately
  * via `canonicalOrigins()` at server start, so they never need to be listed
- * here by hand. `null` (var unset) keeps CORS permissive for local dev.
+ * here by hand. `null` (var unset) allows same-origin requests only.
  */
 const envAllowedOrigins: Set<string> | null = process.env.ALLOWED_ORIGINS
   ? new Set(
@@ -75,14 +69,18 @@ const envAllowedOrigins: Set<string> | null = process.env.ALLOWED_ORIGINS
  * Returns a ServerHandle for lifecycle control.
  */
 export function startServer(options: ServerOptions): ServerHandle {
-  const { runtime, port = 27247, provider: optProvider = null } = options;
-  // Read the scoped internal token minted by the runtime at startup.
-  const internalToken = runtime.getInternalToken();
+  const { runtime, port = 27247 } = options;
+  // The runtime owns the identity provider; the server authenticates with that
+  // one and has none of its own, so the two cannot disagree about who a caller
+  // is. Refuse before anything starts when there is none: `instance.json` names
+  // the provider, `dev` included, and its absence never selects one.
+  const provider = runtime.getIdentityProvider();
+  if (!provider) throw missingInstanceConfigError(runtime.getWorkDir());
 
   // Effective CORS allowlist = operator-declared extras (ALLOWED_ORIGINS) ∪ the
   // canonical hosts (custom domain + platform subdomain). Folding the canonical
   // origins in here means they're always allowed without being listed by hand.
-  // `null` (no ALLOWED_ORIGINS) stays permissive for local dev.
+  // `null` (no ALLOWED_ORIGINS) allows same-origin requests only.
   const allowedOrigins: Set<string> | null = envAllowedOrigins
     ? new Set([...envAllowedOrigins, ...canonicalOrigins()])
     : null;
@@ -148,7 +146,6 @@ export function startServer(options: ServerOptions): ServerHandle {
   //     high — far above human navigation, low enough to stop a hot loop.
   //   - `/v1/workspaces/:wsId/chat` (chatLimiter) is first-party + LLM-expensive, so it stays
   //     modest.
-  // All are bypassed in dev mode (see `isDevMode` below).
   const chatRateLimit = Number(process.env.NB_CHAT_RATE_LIMIT) || 20;
   const toolRateLimit = Number(process.env.NB_TOOL_RATE_LIMIT) || 600;
   const mcpRateLimit = Number(process.env.NB_MCP_RATE_LIMIT) || 300;
@@ -188,22 +185,6 @@ export function startServer(options: ServerOptions): ServerHandle {
     sseManager.emit(event);
   };
 
-  // Resolve identity provider. `isDevMode` is captured BEFORE the dev
-  // substitution: when no real provider is configured we still install a
-  // DevIdentityProvider (so the local app authenticates as a single
-  // `usr_default`), which makes `authMode` look like a real adapter. The
-  // honest "is this local dev" signal is therefore "was a real provider
-  // configured", not the post-substitution auth mode. Request rate limiting
-  // keys off this to bypass in dev.
-  let effectiveProvider: IdentityProvider | null = optProvider ?? runtime.getIdentityProvider();
-  const isDevMode = effectiveProvider === null;
-  if (!effectiveProvider) {
-    const workDir = runtime.getWorkDir();
-    effectiveProvider = new DevIdentityProvider(workDir, runtime.getUserStore());
-  }
-  const authMode = resolveAuthMode(effectiveProvider);
-  const authConfigured = authMode.type !== "dev";
-
   // Construct the per-pod MCP host. The transport map lives here; the
   // session-metadata registry is either supplied by the caller (production
   // bootstrap building a Redis registry from config) or defaulted to an
@@ -225,8 +206,8 @@ export function startServer(options: ServerOptions): ServerHandle {
   const ctx: AppContext = {
     runtime,
     features: runtime.getFeatures(),
-    authOptions: { mode: authMode, internalToken, eventSink: runtime.getEventSink() },
-    provider: effectiveProvider,
+    authOptions: { provider, eventSink: runtime.getEventSink() },
+    provider,
     workspaceStore: runtime.getWorkspaceStore(),
     sseManager,
     conversationEventManager,
@@ -236,24 +217,22 @@ export function startServer(options: ServerOptions): ServerHandle {
     hookWorkspaceLimiter,
     toolCallLimiter,
     mcpLimiter,
-    isDevMode,
     eventSink: runtime.getEventSink(),
-    // Secure cookies whenever auth is configured (i.e. not dev mode). A
-    // configured deployment is always fronted by a TLS-terminating edge, so the
-    // browser↔edge leg is HTTPS regardless of the container's plain-HTTP listen
-    // address. Deriving this from the listen address is wrong: Bun binds
-    // `0.0.0.0` in production, which must NOT be read as localhost.
-    secureCookies: authConfigured,
+    // Every provider's cookies are `Secure`. A deployment is fronted by a
+    // TLS-terminating edge, so the browser↔edge leg is HTTPS regardless of the
+    // container's plain-HTTP listen address, and browsers treat
+    // http://localhost as a secure context. Deriving this from the listen
+    // address is wrong: Bun binds `0.0.0.0` in production.
+    secureCookies: true,
     // Post-login landing — a user-facing browser destination, so it uses
     // webOrigin() like the connectors return (one rule: browser-facing →
     // webOrigin, vendor-facing → publicOrigin). Identical to publicOrigin() in
     // prod; decoupled from the CORS allowlist (no longer ALLOWED_ORIGINS[0]).
     appOrigin: webOrigin(),
-    internalToken,
     mcpHost,
   };
 
-  const app = createApp(ctx, authConfigured, allowedOrigins);
+  const app = createApp(ctx, allowedOrigins);
 
   const server = Bun.serve({
     port,
@@ -265,7 +244,6 @@ export function startServer(options: ServerOptions): ServerHandle {
     server,
     healthMonitor,
     sseManager,
-    internalToken,
     get port(): number {
       return server.port as number;
     },

@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { Server, WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/server";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import { McpSource } from "../../src/tools/mcp-source.ts";
+import { resolveWithCode } from "../../src/tools/oauth-flow-registry.ts";
 import { WorkspaceOAuthProvider } from "../../src/tools/workspace-oauth-provider.ts";
 import { seedWorkspaceRoot } from "../helpers/test-workspace.ts";
 import { installTestCredentialStore, resetTestCredentialStore } from "../helpers/credential-store.ts";
@@ -238,6 +239,57 @@ describe("McpSource — OAuth retry path", () => {
     expect(tools[0]?.name).toBe("retry-test__noop");
     // Connect completed via the retry seam → exactly one readiness emit.
     expect(readinessFires).toBe(1);
+
+    await source.stop();
+  }, 15_000);
+
+  it("a tools() read during pending auth does not pin an empty list once auth completes", async () => {
+    let authorizationUrl: string | undefined;
+    const pending = Promise.withResolvers<void>();
+    const provider = new WorkspaceOAuthProvider({
+      owner: { type: "workspace", wsId: "ws_test" },
+      serverName: "pending-test",
+      workDir,
+      callbackUrl: CALLBACK,
+      allowInsecureRemotes: true,
+      onInteractiveAuthRequired: (url) => {
+        authorizationUrl = url;
+        pending.resolve();
+      },
+    });
+    // A user-initiated connect: the browser flow is allowed, so start() parks
+    // on the pending flow instead of failing fast.
+    provider.setInteractiveAuthAllowed(true);
+
+    const source = new McpSource(
+      "pending-test",
+      {
+        type: "remote",
+        url: new URL(server.url),
+        allowInsecure: true,
+        authProvider: provider,
+      },
+      new NoopEventSink(),
+    );
+
+    const started = source.start();
+    await pending.promise;
+
+    // The source is registered at pending auth, so a registry build or a
+    // status read asks it for tools before its client has connected.
+    await expect(source.tools()).rejects.toThrow(/not started/);
+
+    // The user completes the browser flow; the callback route resolves it.
+    if (!authorizationUrl) throw new Error("no authorization URL");
+    const redirect = await fetch(authorizationUrl, { redirect: "manual" });
+    const callback = new URL(redirect.headers.get("location") ?? "");
+    const state = callback.searchParams.get("state") ?? "";
+    const code = callback.searchParams.get("code") ?? "";
+    expect(resolveWithCode(state, code)).toBe(true);
+    await started;
+
+    const tools = await source.tools();
+    expect(tools.map((t) => t.name)).toEqual(["pending-test__noop"]);
 
     await source.stop();
   }, 15_000);

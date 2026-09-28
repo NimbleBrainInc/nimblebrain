@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
-import { createTestAuthAdapter } from "../helpers/test-auth-adapter.ts";
+import { testAuthAdapter } from "../helpers/test-auth-adapter.ts";
 import { startServer } from "../../src/api/server.ts";
 import type { ServerHandle } from "../../src/api/server.ts";
 import { log } from "../../src/observability/log.ts";
@@ -13,6 +13,7 @@ import type { ToolSource, Tool } from "../../src/tools/types.ts";
 import type { ToolResult } from "../../src/engine/types.ts";
 import { textContent } from "../../src/engine/content-helpers.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
 
 // ---------------------------------------------------------------------------
 // Log capture helper
@@ -84,6 +85,7 @@ beforeAll(async () => {
 	mkdirSync(testDir, { recursive: true });
 
 	runtime = await Runtime.start({
+		identityProvider: devProvider,
 		model: { provider: "custom", adapter: createEchoModel() },
 		logging: { disabled: true },
 		workDir: testDir,
@@ -94,7 +96,7 @@ beforeAll(async () => {
 	const wsRegistry = runtime.getRegistryForWorkspace(TEST_WORKSPACE_ID);
 	wsRegistry.addSource(new FakeToolSource());
 
-	handle = startServer({ runtime, port: 0 });
+	handle = startServer({ runtime, port: 0});
 	baseUrl = `http://localhost:${handle.port}`;
 });
 
@@ -382,6 +384,7 @@ describe("MCP Server Auth", () => {
 		mkdirSync(authTestDir, { recursive: true });
 
 		authRuntime = await Runtime.start({
+			identityProvider: testAuthAdapter(TEST_API_KEY),
 			model: { provider: "custom", adapter: createEchoModel() },
 			logging: { disabled: true },
 			workDir: authTestDir,
@@ -392,7 +395,6 @@ describe("MCP Server Auth", () => {
 		authHandle = startServer({
 			runtime: authRuntime,
 			port: 0,
-			provider: createTestAuthAdapter(TEST_API_KEY, authRuntime),
 		});
 		authUrl = `http://localhost:${authHandle.port}`;
 	});

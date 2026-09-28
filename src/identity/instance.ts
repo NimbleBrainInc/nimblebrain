@@ -62,7 +62,16 @@ export interface WorkosAuth {
   firstPartyClientIds?: string[];
 }
 
-export type AuthConfig = OidcAuth | WorkosAuth;
+/**
+ * The dev identity provider: every request authenticates as one local
+ * developer, with no credential checked. Chosen only by writing it here, so an
+ * instance without `instance.json` has no provider at all rather than this one.
+ */
+export interface DevAuth {
+  adapter: "dev";
+}
+
+export type AuthConfig = OidcAuth | WorkosAuth | DevAuth;
 
 // ── Instance config ─────────────────────────────────────────────────
 
@@ -75,7 +84,7 @@ export interface InstanceConfig {
 
 // ── Validation ──────────────────────────────────────────────────────
 
-const VALID_ADAPTERS = new Set(["oidc", "workos"]);
+const VALID_ADAPTERS = new Set(["dev", "oidc", "workos"]);
 
 /** Return a defined string, throwing `fieldError` on a non-string; `undefined` passes through unchanged. */
 function optionalString(value: unknown, fieldError: string): string | undefined {
@@ -180,6 +189,7 @@ function validateAuthConfig(raw: unknown): AuthConfig {
     );
   }
 
+  if (adapter === "dev") return { adapter: "dev" };
   if (adapter === "oidc") return buildOidcAuth(auth);
   if (adapter === "workos") return buildWorkosAuth(auth);
   throw new Error(`instance.json: unknown auth adapter "${adapter}"`);
@@ -222,7 +232,8 @@ function uniqueTmpSuffix(): string {
 
 /**
  * Load instance config from `workDir/instance.json`.
- * Returns null if the file does not exist (dev mode signal).
+ * Returns null if the file does not exist: the instance then has no identity
+ * provider, and the HTTP server refuses to start (`missingInstanceConfigError`).
  * Throws on malformed JSON or schema validation failure.
  */
 export async function loadInstanceConfig(workDir: string): Promise<InstanceConfig | null> {
@@ -248,6 +259,24 @@ export async function loadInstanceConfig(workDir: string): Promise<InstanceConfi
   // resolved. Same instance scope and same rule as `nimblebrain.json` — any
   // string field here may be a reference instead.
   return validateInstanceConfig(await resolveInstanceCredentialRefs(raw));
+}
+
+/**
+ * The startup error for an instance with no `instance.json`. It names the file
+ * and the two ways to write it, because a missing identity config never
+ * defaults to one.
+ */
+export function missingInstanceConfigError(workDir: string): Error {
+  const filePath = join(workDir, INSTANCE_FILE);
+  return new Error(
+    `No identity provider: ${filePath} does not exist, and the server does not start without one.\n` +
+      `  Local development, every request as one developer with no login:\n` +
+      `    {"auth":{"adapter":"dev"}}\n` +
+      `  A real identity provider:\n` +
+      `    {"auth":{"adapter":"oidc","issuer":"https://idp.example.com","clientId":"<client id>","allowedDomains":["example.com"]}}\n` +
+      `    or {"auth":{"adapter":"workos","clientId":"<client id>"}}\n` +
+      `  See https://docs.nimblebrain.ai/config/instance-json/`,
+  );
 }
 
 /**

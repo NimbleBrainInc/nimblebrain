@@ -8,7 +8,7 @@ import { requireWorkspace, WORKSPACE_ROUTE_PREFIX } from "../middleware/workspac
 import type { AppContext, AppEnv } from "../types.ts";
 
 export function chatRoutes(ctx: AppContext) {
-  const rl = requestRateLimit(ctx.chatLimiter, { bypass: ctx.isDevMode });
+  const rl = requestRateLimit(ctx.chatLimiter);
   // maxTotalSize is snapshot at route construction. Today filesConfig is
   // built once from startup config + defaults and never mutated; if that
   // invariant changes, make this limit lazy.

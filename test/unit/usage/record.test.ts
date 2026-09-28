@@ -121,7 +121,7 @@ describe("each id in the ledger lands under its own name", () => {
   });
 
   test("a forked fast-slot call has no turn of its own", () => {
-    // Title/compaction/briefing emit no event, so there is no engine run to
+    // Title and compaction emit no event, so there is no engine run to
     // attribute them to — they belong to the scope they ran in.
     const rec = fieldsFor({ identity: null, conversationId: "conv-42" });
     expect(rec.runId).toBeUndefined();
@@ -215,10 +215,8 @@ describe("origin follows the scope, whatever the source", () => {
     expect(sample?.labels.origin).toBe("task");
   });
 
-  test("with no scope at all it records system — still reachable, via the background briefing", async () => {
-    // `scheduleBriefingRefresh` runs its own context of `{identity, workspaceId}`
-    // with no `conversationId`, so `system` is a live value, not dead code.
-    recordLlmCall({ source: "briefing", model: "test-model-c", usage: USAGE });
+  test("with no scope at all it records system", async () => {
+    recordLlmCall({ source: "title", model: "test-model-c", usage: USAGE });
 
     const sample = await callSample({ model: "test-model-c" });
     expect(sample?.labels.origin).toBe("system");

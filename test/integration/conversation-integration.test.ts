@@ -9,6 +9,7 @@ import { startServer } from "../../src/api/server.ts";
 import type { ServerHandle } from "../../src/api/server.ts";
 import type { StoredMessage } from "../../src/conversation/types.ts";
 import { TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
 
 function tempDir(): string {
 	const dir = join(tmpdir(), `nb-integration-${crypto.randomUUID()}`);
@@ -223,12 +224,13 @@ describe("API full-flow integration", () => {
 	beforeAll(async () => {
 		runtimeWorkDir = tempDir();
 		runtime = await Runtime.start({
+			identityProvider: devProvider,
 			workDir: runtimeWorkDir,
 			model: { provider: "custom", adapter: createEchoModel() },
 			logging: { disabled: true },
 		});
 
-		handle = startServer({ runtime, port: 0 });
+		handle = startServer({ runtime, port: 0});
 		baseUrl = `http://localhost:${handle.port}`;
 	});
 

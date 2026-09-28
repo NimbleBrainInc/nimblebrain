@@ -47,6 +47,7 @@ import { SharedSourceRef } from "../../src/tools/registry.ts";
 import type { Tool, ToolSource } from "../../src/tools/types.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
 
 const FACETS = "ai.nimblebrain/facets";
 const APP_HTML = "<!doctype html><title>era</title>";
@@ -560,13 +561,14 @@ describe("/mcp/<wsId> on both eras", () => {
     info = spyOn(log, "info");
     workDir = await mkdtemp(join(tmpdir(), "nb-mcp-era-"));
     runtime = await Runtime.start({
+      identityProvider: devProvider,
       model: { provider: "custom", adapter: createEchoModel() },
       logging: { disabled: true },
       workDir,
     });
     await provisionTestWorkspace(runtime);
     runtime.getRegistryForWorkspace(TEST_WORKSPACE_ID).addSource(new SharedSourceRef(new FixtureSource()));
-    handle = startServer({ runtime, port: 0 });
+    handle = startServer({ runtime, port: 0});
   });
 
   afterAll(async () => {
