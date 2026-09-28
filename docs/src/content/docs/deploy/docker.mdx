@@ -26,6 +26,13 @@ services:
     volumes:
       - workspace:/data
       - ./skills:/app/skills:ro
+      # The identity provider. The platform does not start without it.
+      - type: bind
+        source: ./instance.json
+        target: /data/instance.json
+        read_only: true
+        bind:
+          create_host_path: false
     environment:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
@@ -89,7 +96,7 @@ The `web` container runs Caddy, which serves the static UI files and reverse-pro
 Authentication is configured through an `instance.json` adapter (`dev`, `oidc`, or `workos`), not an environment variable. There is no `NB_API_KEY` — see [Security](/deploy/security) for adapter setup.
 
 <Aside type="caution">
-Running without authentication (no `instance.json`) runs in **dev mode** and disables auth entirely. CORS falls back to `Access-Control-Allow-Origin: *`. This is acceptable for local development but never for production. See [Security](/deploy/security) for auth adapter setup.
+The platform does not start without `instance.json`. The `dev` adapter (`{"auth":{"adapter":"dev"}}`) checks no credential, so every request is one built-in owner. That is acceptable for local development but never for production. See [Security](/deploy/security) for auth adapter setup.
 </Aside>
 
 ### Health check
@@ -121,7 +128,13 @@ The `web` service uses `depends_on` with `condition: service_healthy`, so it onl
    export ANTHROPIC_API_KEY=sk-ant-api03-your-key-here
    ```
 
-   This starts the platform in dev mode (no authentication). Configure an `instance.json` adapter before exposing it to a network — see [Security](/deploy/security).
+   Then write `instance.json` next to `docker-compose.yml`. For a local trial, the `dev` adapter:
+
+   ```bash
+   echo '{"auth":{"adapter":"dev"}}' > instance.json
+   ```
+
+   It checks no credential. Configure a real adapter before exposing the platform to a network — see [Security](/deploy/security).
 
 2. **Start the services**
 
@@ -160,7 +173,7 @@ The `web` service uses `depends_on` with `condition: service_healthy`, so it onl
 
 4. **Open the UI**
 
-   Go to [http://localhost:27246](http://localhost:27246). In dev mode the UI opens straight to the agent. Once an `instance.json` adapter is configured, you sign in through that adapter's flow (for example the OIDC provider's hosted login).
+   Go to [http://localhost:27246](http://localhost:27246). With the `dev` adapter the UI opens straight to the agent. With a real adapter, you sign in through that adapter's flow (for example the OIDC provider's hosted login).
 
 </Steps>
 
@@ -285,7 +298,7 @@ docker compose logs platform
 
 Common causes:
 - `ANTHROPIC_API_KEY` is missing or invalid
-- A malformed `instance.json` — the server refuses to start if the auth adapter config is invalid. Check the logs for the validation error and see [Security](/deploy/security).
+- A missing or malformed `instance.json` — the server refuses to start without a valid auth adapter config. Check the logs for the validation error and see [Security](/deploy/security).
 
 ### Web container won't start
 

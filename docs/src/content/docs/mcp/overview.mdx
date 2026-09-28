@@ -51,6 +51,7 @@ Each entry names the parties the extension connects, its identifier, and why it 
 
 | Extension | Direction | Why it exists |
 |---|---|---|
+| [`ai.nimblebrain/facets`](/apps/facets/) | Server → host (capability and marked resources), on both eras | A server holds work that needs someone, and the workspace overview should say how much without a model or a side channel. The server lists each count as a resource with a `_meta` marker and answers `resources/read` with `{ "count": n }`; the host renders `<count> <title>`. |
 | [`ai.nimblebrain/host-resources`](/mcp/host-resources/) | Host → server (capability), then server → host (requests), on 2025-era connections only | MCP resources flow from server to client only. A server that needs a file the user gave the workspace would otherwise have it pasted into a tool argument by the model: slow, expensive in tokens, and capped by the context window. With this extension, the server reads the file from the host by URI. |
 
 ### Between an operator's catalog and the host
@@ -59,7 +60,7 @@ These keys are metadata on a server's entry in the [connectors catalog](/config/
 
 | Extension | Authored by | Why it exists |
 |---|---|---|
-| [`ai.nimblebrain/host`](/apps/manifest/) | The server's publisher | How the server takes part in the host: where its views appear in the shell, what it adds to the daily briefing, which webhooks it accepts, its notification outbox, and the install and uninstall events it wants. The specification describes a server's tools, not its place in an application shell. |
+| [`ai.nimblebrain/host`](/apps/manifest/) | The server's publisher | How the server takes part in the host: where its views appear in the shell, which webhooks it accepts, its notification outbox, and the install and uninstall events it wants. The specification describes a server's tools, not its place in an application shell. |
 | [`ai.nimblebrain/connector`](/config/connectors-catalog/) | The operator | How to install the server: how it authenticates (DCR, a static OAuth client, or a brokered provider), which secrets the workspace supplies, and how it is tagged in Browse. This is decided by whoever runs the platform, not by the server. |
 
 ### Between a server's events and the host

@@ -24,7 +24,6 @@ function seedInstance(lifecycle: ConnectorLifecycleManager, serverName: string, 
     version: "remote",
     state: "starting",
     ui: null,
-    briefing: null,
     type: "plain",
     wsId,
   };

@@ -36,7 +36,7 @@ describe("DevIdentityProvider", () => {
   test("logs warning on construction", () => {
     new DevIdentityProvider(workDir, userStore);
     expect(warnSpy).toHaveBeenCalledWith(
-      "Running in dev mode — no authentication configured",
+      "instance.json selects the dev identity provider: every request is the local developer, with no login",
     );
   });
 

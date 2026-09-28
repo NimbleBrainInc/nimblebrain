@@ -74,7 +74,7 @@ describe("slot names vs the model catalog", () => {
 
 describe("the reasoning slot is gone", () => {
   // It never had a runtime consumer — `default` serves every chat turn, `fast`
-  // serves titles, the briefing and both folds — so it was a configurable field
+  // serves titles and both folds — so it was a configurable field
   // implying routing the engine never did.
   test("is not a slot name", () => {
     expect(isModelSlot("reasoning")).toBe(false);

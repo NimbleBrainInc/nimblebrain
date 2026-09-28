@@ -18,28 +18,16 @@
  *    the chat path). Content does not leak.
  *  - Conversation exists and the caller is the owner → 200 SSE.
  *
- * Dev-mode: when no identity provider is configured (`bun run
- * dev:worktree`, `Runtime.start` without an `instance.json`), the
- * caller is treated as `DEV_IDENTITY` (`usr_default`) — same fallback
- * `runtime.chat` uses for the analogous case. Production deployments
- * with an identity provider configured but middleware that fails to
- * populate `c.var.identity` get a 401 (don't silently default to
- * usr_default and pool every user's reads).
+ * A request with no identity gets a 401 (never a default to
+ * usr_default that would pool every user's reads).
  */
 
 import { Hono } from "hono";
 import { CONVERSATION_ID_RE } from "../../conversation/types.ts";
-import type { UserIdentity } from "../../identity/provider.ts";
-import { DEV_IDENTITY } from "../../identity/providers/dev.ts";
 import { ConversationCorruptedError } from "../../runtime/errors.ts";
 import { requireAuth } from "../middleware/auth.ts";
 import { errorLog } from "../middleware/error-log.ts";
 import { type AppContext, type AppEnv, apiError } from "../types.ts";
-
-/** Resolve the caller id, falling back to DEV_IDENTITY only when no identity provider is configured. */
-function resolveCallerId(identity: UserIdentity | undefined, ctx: AppContext): string | null {
-  return identity?.id ?? (ctx.runtime.getIdentityProvider() ? null : DEV_IDENTITY.id);
-}
 
 /** Look up a conversation, surfacing a `ConversationCorruptedError` as a value instead of a throw. */
 async function findConversationOrCorrupted(ctx: AppContext, conversationId: string) {
@@ -89,13 +77,9 @@ export function conversationEventRoutes(ctx: AppContext) {
         return apiError(400, "bad_request", "Invalid conversationId format");
       }
 
-      // Resolve the caller id. Authenticated request → identity.id.
-      // Dev mode (no identity provider configured) → fall back to
-      // DEV_IDENTITY so the same conversations `runtime.chat` minted
-      // under usr_default are readable. Misconfigured production
-      // (provider exists but middleware didn't populate identity) →
-      // 401 instead of pooling reads under a sentinel user.
-      const callerId = resolveCallerId(c.var.identity, ctx);
+      // The caller is the authenticated identity; none → 401 instead of
+      // pooling reads under a sentinel user.
+      const callerId = c.var.identity?.id;
       if (!callerId) {
         return apiError(401, "authentication_required", "Authentication required.");
       }

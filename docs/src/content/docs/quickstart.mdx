@@ -26,6 +26,16 @@ Get NimbleBrain running locally with Docker Compose. You need Docker and an [Ant
    Apps are not listed in `nimblebrain.json`. Per-workspace app installs live in `workspace.json`, which the runtime manages for you. The config file is for runtime settings (model, limits, features), not app inventory.
    </Aside>
 
+   Create `instance.json` beside it. It names the identity provider, and the platform does not start without it. The `dev` adapter signs every request in as one local developer, with no login:
+
+   ```json title="instance.json"
+   {
+     "auth": {
+       "adapter": "dev"
+     }
+   }
+   ```
+
 2. **Create a Docker Compose file**
 
    ```yaml title="docker-compose.yml"
@@ -36,6 +46,7 @@ Get NimbleBrain running locally with Docker Compose. You need Docker and an [Ant
        volumes:
          - workspace:/data
          - ./nimblebrain.json:/data/nimblebrain.json:ro
+         - ./instance.json:/data/instance.json:ro
        environment:
          - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
        networks:
@@ -83,10 +94,10 @@ Get NimbleBrain running locally with Docker Compose. You need Docker and an [Ant
 
    Go to [http://localhost:27246](http://localhost:27246).
 
-   There is no login screen by default. With no `instance.json` present, NimbleBrain runs in **dev mode** — requests are unauthenticated and you act as a single built-in user. This is the right setup for trying things out locally.
+   There is no login screen: the `dev` adapter in `instance.json` makes you a single built-in user. This is the right setup for trying things out locally.
 
    <Aside type="caution">
-   Dev mode has no authentication. Before exposing NimbleBrain to a network, configure a real auth adapter (`oidc` or `workos`) in `instance.json`. See [Installation](/installation) and the configuration reference.
+   The `dev` adapter checks no credential. Before exposing NimbleBrain to a network, switch `instance.json` to a real adapter (`oidc` or `workos`). See [`instance.json`](/config/instance-json/).
    </Aside>
 
    Try sending a message:

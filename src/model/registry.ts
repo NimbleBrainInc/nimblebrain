@@ -117,8 +117,7 @@ export function buildRegistry(config: ProvidersConfig): Provider {
     //   ledger tokens, no reasoning tokens.
     // `supportsStructuredOutputs` — without it a schema-bearing
     //   `responseFormat` degrades to `{"type":"json_object"}`, dropping the
-    //   schema and strict decoding. The home briefing sends exactly that shape
-    //   on every generation.
+    //   schema and strict decoding.
     providers.nebius = createOpenAICompatible({
       name: "nebius",
       apiKey: nebiusApiKey,

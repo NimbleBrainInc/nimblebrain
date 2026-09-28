@@ -8,6 +8,7 @@ import { createEchoModel } from "../helpers/echo-model.ts";
 import { startServer } from "../../src/api/server.ts";
 import type { ServerHandle } from "../../src/api/server.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
 
 
 const testDir = join(tmpdir(), `nimblebrain-core-reg-${Date.now()}`);
@@ -20,12 +21,13 @@ beforeAll(async () => {
 	const workDir = join(testDir, "work");
 	mkdirSync(workDir, { recursive: true });
 	runtime = await Runtime.start({
+		identityProvider: devProvider,
 		model: { provider: "custom", adapter: createEchoModel() },
 		workDir,
 		logging: { disabled: true },
 	});
 	await provisionTestWorkspace(runtime);
-	handle = startServer({ runtime, port: 0 });
+	handle = startServer({ runtime, port: 0});
 	baseUrl = `http://localhost:${handle.port}`;
 });
 

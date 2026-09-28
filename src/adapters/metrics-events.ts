@@ -35,7 +35,7 @@ export const MAX_TRACKED_RUNS = 1000;
  * Prometheus or k8s required.
  *
  * Covers the main agentic loop. The forked fast-slot calls (compaction
- * summarizer, auto-title, briefing) emit no `llm.done`, so their usage is
+ * summarizer, auto-title) emit no `llm.done`, so their usage is
  * recorded at their own call sites via `recordLlmCall(...)` — which is also
  * where their `origin` is derived, since not all of them run inside a request
  * scope (see `src/usage/record.ts`).

@@ -39,6 +39,7 @@ Docker Compose runs the platform and web UI as two containers. This is the recom
        volumes:
          - workspace:/data
          - ./nimblebrain.json:/data/nimblebrain.json:ro
+         - ./instance.json:/data/instance.json:ro
        environment:
          - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
          - OPENAI_API_KEY=${OPENAI_API_KEY:-}
@@ -79,7 +80,7 @@ Docker Compose runs the platform and web UI as two containers. This is the recom
 
    The platform API runs on port 27247 (internal). The web UI is published on port 27246. Health is checked internally at `http://localhost:27247/v1/health`.
 
-   With no `instance.json` present, the platform runs in **dev mode** — unauthenticated, single built-in user. To require real auth, add an `instance.json` next to your config with an `oidc` or `workos` adapter (see [Authentication](#authentication) below).
+   The platform does not start without `instance.json` (see [Authentication](#authentication) below). For a local trial, write the `dev` adapter first: `echo '{"auth":{"adapter":"dev"}}' > instance.json`.
 
 </Steps>
 
@@ -136,7 +137,7 @@ Run from source for development. Requires [Bun](https://bun.sh) 1.2.0 or newer (
    bun run dev
    ```
 
-   This starts both the API server (with file watching and auto-restart) and the web client (Vite HMR) in a single terminal. The dev workdir is project-local (`.nimblebrain/`). Dev mode runs unauthenticated — no auth setup required locally.
+   This starts both the API server (with file watching and auto-restart) and the web client (Vite HMR) in a single terminal. The dev workdir is project-local (`.nimblebrain/`). The launcher writes the `dev` adapter to the workdir's `instance.json` when it has none, so no auth setup is required locally.
 
 </Steps>
 
@@ -174,10 +175,10 @@ There is no `NB_API_KEY` request-auth variable. Authentication is configured thr
 
 ## Authentication
 
-NimbleBrain's auth mode is determined by the presence of an `instance.json` file alongside your config:
+`<workDir>/instance.json` names the identity provider, and the platform does not start without it:
 
-- **No `instance.json`** — the platform runs in **dev mode**: requests are unauthenticated and resolve to a single built-in user. Fine for local development; not for shared or networked deployments.
-- **`instance.json` with an `auth.adapter`** — a real identity provider is used. Supported adapters are `oidc` (any OpenID Connect issuer) and `workos`. On successful login the provider's callback sets an `nb_session` cookie.
+- **`"adapter": "dev"`** — no login: every request resolves to a single built-in user. Fine for local development; not for shared or networked deployments.
+- **`"adapter": "oidc"` or `"workos"`** — a real identity provider (any OpenID Connect issuer, or WorkOS). On successful login the provider's callback sets an `nb_session` cookie.
 
 ```json title="instance.json (OIDC example)"
 {

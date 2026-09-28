@@ -8,19 +8,16 @@ const STATIC_CORS_HEADERS: Record<string, string> = {
 };
 
 /**
- * CORS middleware. Matches current server.ts behavior:
- * - Dev mode (no auth): Access-Control-Allow-Origin: *
- * - Auth + ALLOWED_ORIGINS: origin whitelist with credentials
- * - Auth + no ALLOWED_ORIGINS: same-origin only (no header)
+ * CORS middleware, the same under every identity provider:
+ * - ALLOWED_ORIGINS set: origin allowlist with credentials
+ * - ALLOWED_ORIGINS unset: same-origin only (no header)
  */
-export function corsMiddleware(authConfigured: boolean, allowedOrigins: Set<string> | null) {
+export function corsMiddleware(allowedOrigins: Set<string> | null) {
   return createMiddleware(async (c, next) => {
     // CORS preflight
     if (c.req.method === "OPTIONS") {
       const res = new Response(null, { status: 204 });
-      for (const [k, v] of Object.entries(
-        buildCorsHeaders(c.req.raw, authConfigured, allowedOrigins),
-      )) {
+      for (const [k, v] of Object.entries(buildCorsHeaders(c.req.raw, allowedOrigins))) {
         res.headers.set(k, v);
       }
       return res;
@@ -29,9 +26,7 @@ export function corsMiddleware(authConfigured: boolean, allowedOrigins: Set<stri
     await next();
 
     // Apply CORS headers to all responses
-    for (const [k, v] of Object.entries(
-      buildCorsHeaders(c.req.raw, authConfigured, allowedOrigins),
-    )) {
+    for (const [k, v] of Object.entries(buildCorsHeaders(c.req.raw, allowedOrigins))) {
       c.res.headers.set(k, v);
     }
   });
@@ -39,14 +34,9 @@ export function corsMiddleware(authConfigured: boolean, allowedOrigins: Set<stri
 
 function buildCorsHeaders(
   request: Request,
-  authConfigured: boolean,
   allowedOrigins: Set<string> | null,
 ): Record<string, string> {
   const hdrs = { ...STATIC_CORS_HEADERS };
-  if (!authConfigured) {
-    hdrs["Access-Control-Allow-Origin"] = "*";
-    return hdrs;
-  }
   const origin = request.headers.get("origin");
   if (origin && allowedOrigins?.has(origin)) {
     hdrs["Access-Control-Allow-Origin"] = origin;

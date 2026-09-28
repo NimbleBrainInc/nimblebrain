@@ -1,107 +1,112 @@
-import { describe, test, expect, beforeEach } from "bun:test";
-import { BriefingCache } from "../../../src/services/briefing-cache.ts";
-import type { BriefingOutput } from "../../../src/services/home-types.ts";
+/**
+ * The per-facet count cache: fresh for a minute, served stale for up to ten
+ * while one refresh runs, and unavailable past that when the read fails.
+ */
 
-function makeBriefing(overrides?: Partial<BriefingOutput>): BriefingOutput {
-	return {
-		lede: "All clear.",
-		sections: [],
-		state: "all-clear",
-		generated_at: new Date().toISOString(),
-		cached: false,
-		...overrides,
-	};
+import { describe, expect, it } from "bun:test";
+import {
+  createFacetCache,
+  FACET_FRESH_MS,
+  FACET_STALE_CEILING_MS,
+} from "../../../src/services/briefing-cache.ts";
+
+const KEY = { workspaceId: "ws_a", serverName: "tasks", facetName: "blocked" };
+
+function harness() {
+  let clock = 1_000_000;
+  const cache = createFacetCache(() => clock);
+  let calls = 0;
+  let next: () => Promise<number> = async () => 1;
+  const fetch = () => {
+    calls++;
+    return next();
+  };
+  return {
+    cache,
+    fetch,
+    advance: (ms: number) => {
+      clock += ms;
+    },
+    calls: () => calls,
+    answer: (fn: () => Promise<number>) => {
+      next = fn;
+    },
+  };
 }
 
-describe("BriefingCache", () => {
-	let cache: BriefingCache;
+describe("createFacetCache", () => {
+  it("serves a fresh count without reading", async () => {
+    const h = harness();
+    expect(await h.cache.read(KEY, h.fetch)).toEqual({ state: "ok", count: 1 });
+    h.advance(FACET_FRESH_MS - 1);
+    expect(await h.cache.read(KEY, h.fetch)).toEqual({ state: "ok", count: 1 });
+    expect(h.calls()).toBe(1);
+  });
 
-	beforeEach(() => {
-		cache = new BriefingCache(30); // 30 min TTL
-	});
+  it("serves a stale count at once and refreshes it in the background", async () => {
+    const h = harness();
+    await h.cache.read(KEY, h.fetch);
+    h.advance(FACET_FRESH_MS);
+    h.answer(async () => 5);
 
-	test("initial state: get() returns null, isStale() returns true", () => {
-		expect(cache.get()).toBeNull();
-		expect(cache.isStale()).toBe(true);
-	});
+    expect(await h.cache.read(KEY, h.fetch)).toEqual({ state: "ok", count: 1 });
+    await Bun.sleep(0);
+    expect(await h.cache.read(KEY, h.fetch)).toEqual({ state: "ok", count: 5 });
+    expect(h.calls()).toBe(2);
+  });
 
-	test("set() then get() returns briefing with cached: true", () => {
-		const briefing = makeBriefing();
-		cache.set(briefing);
-		const result = cache.get();
-		expect(result).not.toBeNull();
-		expect(result!.cached).toBe(true);
-		expect(result!.lede).toBe("All clear.");
-	});
+  it("keeps the stale count when the background refresh fails", async () => {
+    const h = harness();
+    await h.cache.read(KEY, h.fetch);
+    h.advance(FACET_FRESH_MS);
+    h.answer(async () => {
+      throw new Error("down");
+    });
 
-	test("invalidate() causes get() to return null", () => {
-		cache.set(makeBriefing());
-		cache.invalidate();
-		expect(cache.get()).toBeNull();
-		expect(cache.isStale()).toBe(true);
-	});
+    expect(await h.cache.read(KEY, h.fetch)).toEqual({ state: "ok", count: 1 });
+    await Bun.sleep(0);
+    expect(await h.cache.read(KEY, h.fetch)).toEqual({ state: "ok", count: 1 });
+  });
 
-	test("re-set after invalidation works", () => {
-		cache.set(makeBriefing());
-		cache.invalidate();
-		expect(cache.get()).toBeNull();
-		cache.set(makeBriefing({ lede: "Updated" }));
-		const result = cache.get();
-		expect(result).not.toBeNull();
-		expect(result!.lede).toBe("Updated");
-	});
+  it("is unavailable past the ceiling when the read fails", async () => {
+    const h = harness();
+    await h.cache.read(KEY, h.fetch);
+    h.advance(FACET_STALE_CEILING_MS + 1);
+    h.answer(async () => {
+      throw new Error("down");
+    });
 
-	test("expired cache returns null", () => {
-		const originalNow = Date.now;
-		try {
-			const cache31 = new BriefingCache(30);
-			Date.now = originalNow;
-			cache31.set(makeBriefing());
-			Date.now = () => originalNow() + 31 * 60 * 1000;
-			expect(cache31.get()).toBeNull();
-		} finally {
-			Date.now = originalNow;
-		}
-	});
+    expect(await h.cache.read(KEY, h.fetch)).toEqual({ state: "unavailable" });
+  });
 
-	test("not expired within TTL", () => {
-		const originalNow = Date.now;
-		try {
-			cache.set(makeBriefing());
-			Date.now = () => originalNow() + 15 * 60 * 1000; // 15 minutes (within 30 min TTL)
-			expect(cache.get()).not.toBeNull();
-		} finally {
-			Date.now = originalNow;
-		}
-	});
+  it("is unavailable when the first read fails", async () => {
+    const h = harness();
+    h.answer(async () => {
+      throw new Error("down");
+    });
+    expect(await h.cache.read(KEY, h.fetch)).toEqual({ state: "unavailable" });
+  });
 
-	test("getStale() returns an expired entry (stale-while-revalidate) while get() returns null", () => {
-		const originalNow = Date.now;
-		try {
-			cache.set(makeBriefing({ lede: "Stale but serviceable" }));
-			Date.now = () => originalNow() + 31 * 60 * 1000; // past the 30 min TTL
-			expect(cache.get()).toBeNull(); // fresh check fails
-			const stale = cache.getStale(); // but stale is still served
-			expect(stale).not.toBeNull();
-			expect(stale!.cached).toBe(true);
-			expect(stale!.lede).toBe("Stale but serviceable");
-		} finally {
-			Date.now = originalNow;
-		}
-	});
+  it("shares one read between concurrent loads of the same facet", async () => {
+    const h = harness();
+    let release!: (n: number) => void;
+    h.answer(() => new Promise<number>((resolve) => (release = resolve)));
 
-	test("getStale() returns null when empty or invalidated", () => {
-		expect(cache.getStale()).toBeNull(); // empty
-		cache.set(makeBriefing());
-		cache.invalidate();
-		expect(cache.getStale()).toBeNull(); // invalidated is not served, even as stale
-	});
+    const both = Promise.all([h.cache.read(KEY, h.fetch), h.cache.read(KEY, h.fetch)]);
+    release(4);
 
-	test("beginRefresh() is a single-flight guard — blocks a second start until endRefresh()", () => {
-		expect(cache.beginRefresh()).toBe(true); // first caller claims the slot
-		expect(cache.beginRefresh()).toBe(false); // a concurrent caller is turned away
-		cache.endRefresh();
-		expect(cache.beginRefresh()).toBe(true); // released → acquirable again
-	});
+    expect(await both).toEqual([
+      { state: "ok", count: 4 },
+      { state: "ok", count: 4 },
+    ]);
+    expect(h.calls()).toBe(1);
+  });
+
+  it("reads again on force, even when fresh", async () => {
+    const h = harness();
+    await h.cache.read(KEY, h.fetch);
+    h.answer(async () => 9);
+    expect(await h.cache.read(KEY, h.fetch, { force: true })).toEqual({ state: "ok", count: 9 });
+    expect(h.calls()).toBe(2);
+  });
 });
-

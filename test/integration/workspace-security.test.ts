@@ -17,7 +17,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, test } from "bun:test";
 
 import { ConnectorLifecycleManager } from "../../src/connectors/runtime/lifecycle.ts";
-import type { BriefingBlock, ConnectorRef, ConnectorUiMeta } from "../../src/connectors/runtime/types.ts";
+import type { ConnectorRef, ConnectorUiMeta } from "../../src/connectors/runtime/types.ts";
 import { DevIdentityProvider } from "../../src/identity/providers/dev.ts";
 import { UserStore } from "../../src/identity/user.ts";
 import { PlacementRegistry } from "../../src/runtime/placement-registry.ts";
@@ -317,7 +317,6 @@ describe("Workspace security: same connector installed in two workspaces", () =>
       manifestName: "ai.nimblebrain/crm",
       version: "1.0.0",
       ui: { name: "CRM", icon: "cards" } as ConnectorUiMeta,
-      briefing: null as BriefingBlock | null,
     };
 
     await lifecycle.seedInstance("crm", ref.url, ref, meta, "ws_eng");

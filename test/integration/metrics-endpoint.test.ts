@@ -17,7 +17,7 @@ import { startServer } from "../../src/api/server.ts";
 import type { ServerHandle } from "../../src/api/server.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
-import { createTestAuthAdapter } from "../helpers/test-auth-adapter.ts";
+import { testAuthAdapter } from "../helpers/test-auth-adapter.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
 
 const API_KEY = "metrics-endpoint-test-key-1234";
@@ -30,6 +30,7 @@ beforeAll(async () => {
   mkdirSync(workDir, { recursive: true });
   // No metrics config of any kind — this is the bare local/no-k8s setup.
   runtime = await Runtime.start({
+    identityProvider: testAuthAdapter(API_KEY),
     model: { provider: "custom", adapter: createEchoModel() },
     logging: { disabled: true },
     workDir,
@@ -38,7 +39,6 @@ beforeAll(async () => {
   handle = startServer({
     runtime,
     port: 0,
-    provider: createTestAuthAdapter(API_KEY, runtime),
   });
   baseUrl = `http://localhost:${handle.port}`;
 });

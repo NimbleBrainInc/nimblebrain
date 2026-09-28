@@ -393,8 +393,7 @@ export type OpenAIEffort = (typeof OPENAI_EFFORTS)[number];
 /**
  * Every tier OpenAI accepts on the wire. `minimal` sits below the ladder and is
  * deliberately not in OPENAI_EFFORTS: it is reachable only by a caller that
- * asks for it by name (the home briefing), never by stepping down from a
- * requested depth.
+ * asks for it by name, never by stepping down from a requested depth.
  */
 export type OpenAIWireEffort = OpenAIEffort | "minimal";
 
@@ -466,11 +465,6 @@ const OPENAI_UNAVAILABLE: ReadonlySet<string> = new Set([
   "gpt-5.3-codex-spark",
   "gpt-realtime-2.1",
 ]);
-
-/** Whether this model accepts the sub-`low` `minimal` tier. */
-export function openaiAcceptsMinimalEffort(modelString: string): boolean {
-  return openaiSupportedEfforts(modelString).has("minimal");
-}
 
 /**
  * Catalog reasoning models nobody has measured. Non-empty means `sync-models`

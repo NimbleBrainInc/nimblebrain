@@ -45,7 +45,8 @@ ADR-0036. Bare `/mcp` is refused (`404`, naming the URL shape) — never a defau
 |---|---|---|
 | MCP authorization-server token | `grant.kind === "resource"` (WorkOS: issuer is AuthKit, `client_id` not in `firstPartyClientIds`) | `aud` contains `mcpResourceUrl(wsId)` exactly, then membership. Refused on `/v1/*`. |
 | Web app login (WorkOS User Management, OIDC, dev), or an AuthKit token whose signed `client_id` is in `firstPartyClientIds` (ADR-0038) | `grant.kind === "first_party"` | membership |
-| Internal connector-to-host token | `validateInternalToken` | `403` — allowed only on `/v1/workspaces/<wsId>/chat` and `/chat/stream`, where it carries no identity and so is a member of nothing outside dev mode |
+
+These are the only credentials, on every route. There is no shared secret or service token: `authenticateRequest` admits a caller only through the identity provider, because a credential with no identity is a member of no workspace and so reaches nothing. The `dev` provider verifies every request as the local developer, so a dev request carries an identity like any other. The server authenticates with the runtime's provider and has none of its own (`startServer` takes no provider). A service that calls the runtime signs a user in and holds a first-party token (ADR-0038).
 
 ## REST names its workspace in the path
 

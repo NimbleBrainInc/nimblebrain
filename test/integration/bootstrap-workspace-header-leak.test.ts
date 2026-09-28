@@ -89,6 +89,7 @@ describe("bootstrap ignores X-Workspace-Id", () => {
   beforeAll(async () => {
     mkdirSync(workDir, { recursive: true });
     runtime = await Runtime.start({
+      identityProvider: () => new TokenAuthAdapter({ [ALICE_TOKEN]: ALICE }),
       model: { provider: "custom", adapter: createEchoModel() },
       logging: { disabled: true },
       workDir,
@@ -124,7 +125,6 @@ describe("bootstrap ignores X-Workspace-Id", () => {
     handle = startServer({
       runtime,
       port: 0,
-      provider: new TokenAuthAdapter({ [ALICE_TOKEN]: ALICE }),
     });
     baseUrl = `http://localhost:${handle.port}`;
   });

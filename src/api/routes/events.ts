@@ -1,5 +1,4 @@
 import { Hono } from "hono";
-import { DEV_IDENTITY } from "../../identity/providers/dev.ts";
 import { handleEvents } from "../handlers.ts";
 import { requireAuth } from "../middleware/auth.ts";
 import { errorLog } from "../middleware/error-log.ts";
@@ -15,12 +14,10 @@ import { type AppContext, type AppEnv, apiError } from "../types.ts";
  * `membershipChanged` (see `SseEventManager` and
  * `WorkspaceStore.onMembershipChanged`).
  *
- * Dev-mode parity: when no identity provider is configured, fall back
- * to `DEV_IDENTITY` (`usr_default`) so `bun run dev` works without an
- * auth gate. Misconfigured production (provider exists but middleware
- * didn't populate `c.var.identity`) → 401 instead of silently pooling
- * reads under the sentinel user — same posture as
- * `/v1/conversations/:id/events`.
+ * A request with no identity gets a 401, never reads pooled under a
+ * sentinel user — same posture as `/v1/conversations/:id/events`. The
+ * `dev` identity provider verifies every request as `usr_default`, so
+ * `bun run dev` passes like any other login.
  *
  * Middleware is chained per-route (not via `.use("*")`) so a future
  * sibling route mounted on this sub-app doesn't accidentally inherit
@@ -32,8 +29,7 @@ export function eventRoutes(ctx: AppContext) {
     requireAuth(ctx.authOptions),
     errorLog(ctx),
     async (c) => {
-      const identity = c.var.identity;
-      const callerId = identity?.id ?? (ctx.runtime.getIdentityProvider() ? null : DEV_IDENTITY.id);
+      const callerId = c.var.identity?.id;
       if (!callerId) {
         return apiError(401, "authentication_required", "Authentication required.");
       }

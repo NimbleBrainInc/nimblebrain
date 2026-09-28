@@ -108,7 +108,7 @@ export function mcpRoutes(ctx: AppContext) {
   app.all(
     `${MCP_PATH_PREFIX}/:wsId`,
     requireMcpAuth(ctx),
-    requestRateLimit(ctx.mcpLimiter, { bypass: ctx.isDevMode }),
+    requestRateLimit(ctx.mcpLimiter),
     bodyLimit(1_048_576),
     async (c) => {
       const features = ctx.runtime.getFeatures();

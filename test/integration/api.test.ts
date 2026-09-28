@@ -5,10 +5,11 @@ import { tmpdir } from "node:os";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { readConnected } from "../helpers/sse.ts";
-import { createTestAuthAdapter } from "../helpers/test-auth-adapter.ts";
+import { testAuthAdapter } from "../helpers/test-auth-adapter.ts";
 import { startServer } from "../../src/api/server.ts";
 import type { ServerHandle } from "../../src/api/server.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
 
 let runtime: Runtime;
 let handle: ServerHandle;
@@ -18,6 +19,7 @@ const testDir = join(tmpdir(), `nimblebrain-api-test-${Date.now()}`);
 beforeAll(async () => {
 	mkdirSync(testDir, { recursive: true });
 	runtime = await Runtime.start({
+		identityProvider: devProvider,
 		model: { provider: "custom", adapter: createEchoModel() },
 		logging: { disabled: true },
 		workDir: testDir,
@@ -25,7 +27,7 @@ beforeAll(async () => {
 
 	await provisionTestWorkspace(runtime);
 
-	handle = startServer({ runtime, port: 0 }); // port 0 = random available port
+	handle = startServer({ runtime, port: 0}); // port 0 = random available port
 	baseUrl = `http://localhost:${handle.port}`;
 });
 
@@ -247,6 +249,7 @@ describe("Bearer token authentication", () => {
 	beforeAll(async () => {
 		mkdirSync(authDir, { recursive: true });
 		authRuntime = await Runtime.start({
+			identityProvider: testAuthAdapter(TEST_API_KEY),
 			model: { provider: "custom", adapter: createEchoModel() },
 			logging: { disabled: true },
 			workDir: authDir,
@@ -257,7 +260,6 @@ describe("Bearer token authentication", () => {
 		authHandle = startServer({
 			runtime: authRuntime,
 			port: 0,
-			provider: createTestAuthAdapter(TEST_API_KEY, authRuntime),
 		});
 		authUrl = `http://localhost:${authHandle.port}`;
 	});
@@ -565,6 +567,7 @@ describe("auth enforcement on new endpoints", () => {
 	beforeAll(async () => {
 		mkdirSync(authDir2, { recursive: true });
 		authRuntime2 = await Runtime.start({
+			identityProvider: testAuthAdapter(TEST_KEY),
 			model: { provider: "custom", adapter: createEchoModel() },
 			logging: { disabled: true },
 			workDir: authDir2,
@@ -575,7 +578,6 @@ describe("auth enforcement on new endpoints", () => {
 		authHandle2 = startServer({
 			runtime: authRuntime2,
 			port: 0,
-			provider: createTestAuthAdapter(TEST_KEY, authRuntime2),
 		});
 		authUrl2 = `http://localhost:${authHandle2.port}`;
 	});

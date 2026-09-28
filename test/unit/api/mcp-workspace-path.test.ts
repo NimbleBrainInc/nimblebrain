@@ -16,6 +16,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { Hono } from "hono";
 import { requireAuth } from "../../../src/api/middleware/auth.ts";
 import type { McpSessionContext } from "../../../src/api/mcp-server.ts";
+import { RequestRateLimiter } from "../../../src/api/rate-limiter.ts";
 import { mcpRoutes } from "../../../src/api/routes/mcp.ts";
 import type { AppContext } from "../../../src/api/types.ts";
 import { resolveFeatures } from "../../../src/config/features.ts";
@@ -31,7 +32,6 @@ const WS_A = "ws_a";
 const WS_B = "ws_b";
 const CANONICAL_A = `${ORIGIN}/mcp/${WS_A}`;
 const CLIENT_ID = "client_test_0001";
-const INTERNAL_TOKEN = "internal-token-for-mcp-path-tests";
 
 function identity(id: string): UserIdentity {
   return { id, email: `${id}@example.com`, displayName: id, orgRole: "member", preferences: {} };
@@ -91,9 +91,8 @@ function makeCtx(): AppContext {
   return {
     provider,
     authOptions: {
-      mode: { type: "adapter", provider },
+      provider,
       eventSink: { emit: () => {} },
-      internalToken: INTERNAL_TOKEN,
     },
     runtime: { getFeatures: () => resolveFeatures() },
     workspaceStore: { get: async (id: string) => WORKSPACES.get(id) ?? null },
@@ -103,8 +102,8 @@ function makeCtx(): AppContext {
         return Response.json({ ok: true });
       },
     },
-    // Bypasses the request rate limiter; nothing else here reads it.
-    isDevMode: true,
+    // Generous enough that no test here meets the limit.
+    mcpLimiter: new RequestRateLimiter(10_000, 60_000),
   } as unknown as AppContext;
 }
 
@@ -238,12 +237,6 @@ describe("first-party credentials", () => {
     const res = await post(makeApp(), `/mcp/${WS_B}`, "alice-first-party");
     expect(res.status).toBe(200);
     expect(reached).toEqual([{ identity: ALICE, workspaceId: WS_B }]);
-  });
-
-  it("refuses the internal connector-to-host token before anything reaches the host", async () => {
-    const res = await post(makeApp(), `/mcp/${WS_A}`, INTERNAL_TOKEN);
-    expect(res.status).toBe(403);
-    expect(reached).toEqual([]);
   });
 
   it("answers 401 with the workspace's discovery header when there is no credential", async () => {

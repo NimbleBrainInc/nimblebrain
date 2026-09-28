@@ -601,6 +601,7 @@ export interface AuxUsageEvent {
   ts: string;
   type: "aux.usage";
   /** Which forked call produced this usage. */
+  // `briefing` is read-only: historical lines carry it, nothing writes it now.
   source: "compaction" | "title" | "briefing";
   model: string;
   usage: TokenUsage;

@@ -15,6 +15,7 @@ import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { provisionTestWorkspace } from "../helpers/test-workspace.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
 
 // Files uploaded with a chat land in the workspace the chat is addressed to
 // (`/v1/workspaces/<wsId>/chat/*`). The test uploads and reads in a workspace
@@ -30,6 +31,7 @@ const testDir = join(tmpdir(), `nimblebrain-chat-file-visibility-${Date.now()}`)
 beforeAll(async () => {
   mkdirSync(testDir, { recursive: true });
   runtime = await Runtime.start({
+    identityProvider: devProvider,
     model: { provider: "custom", adapter: createEchoModel() },
     logging: { disabled: true },
     workDir: testDir,
@@ -43,7 +45,7 @@ beforeAll(async () => {
   });
   DEV_WS_ID = devWs.id;
   await runtime.ensureWorkspaceRegistry(DEV_WS_ID);
-  handle = startServer({ runtime, port: 0 });
+  handle = startServer({ runtime, port: 0});
   baseUrl = `http://localhost:${handle.port}`;
 });
 

@@ -138,7 +138,6 @@ describe("lifecycle.startAuth — interactive-flow failure is surfaced, not swal
       version: "remote",
       state: "starting",
       ui: null,
-      briefing: null,
       type: "plain",
       wsId: WS,
       oauthScope: "workspace",

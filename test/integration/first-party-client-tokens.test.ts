@@ -17,7 +17,7 @@
  */
 
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { mkdirSync, rmSync } from "node:fs";
+import { cpSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { mcpResourceUrl } from "../../src/api/mcp-resource.ts";
@@ -25,6 +25,7 @@ import { type ServerHandle, startServer } from "../../src/api/server.ts";
 import type { WorkosAuth } from "../../src/identity/instance.ts";
 import { WorkosIdentityProvider } from "../../src/identity/providers/workos.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
+import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 
 const AUTHKIT_DOMAIN = "testapp";
@@ -40,10 +41,11 @@ const USER = "user_test_channels";
 const KID = "authkit-key-1";
 
 const testDir = join(tmpdir(), `nb-first-party-clients-${Date.now()}`);
+/** The workspaces every server's runtime starts from, so their ids agree. */
+const seedDir = join(testDir, "seed");
 
 let privateKey: CryptoKey;
 let publicJwk: JsonWebKey;
-let runtime: Runtime;
 /** Wall-clock deadline for every token, so tests share one clock. */
 let nowSec: number;
 /** A workspace USER belongs to. */
@@ -52,6 +54,7 @@ let wsMember: string;
 let wsForeign: string;
 
 const servers: ServerHandle[] = [];
+const runtimes: Runtime[] = [];
 
 // ── JWT helpers ───────────────────────────────────────────────────
 
@@ -85,7 +88,7 @@ function channelsLike(clientId: string): Promise<string> {
   return authkitToken({ client_id: clientId, aud: ENV_CLIENT_ID });
 }
 
-// ── A server per configuration ────────────────────────────────────
+// ── A runtime and server per configuration ────────────────────────
 
 function workosProvider(config: Partial<WorkosAuth>): WorkosIdentityProvider {
   const provider = new WorkosIdentityProvider(
@@ -131,12 +134,22 @@ function workosProvider(config: Partial<WorkosAuth>): WorkosIdentityProvider {
   return provider;
 }
 
-function serve(config: Partial<WorkosAuth>): string {
-  const handle = startServer({
-    runtime,
-    port: 0,
-    provider: workosProvider(config),
+/**
+ * The server authenticates with its runtime's provider, so each WorkOS
+ * configuration gets a runtime of its own, over a copy of the seeded workspaces.
+ */
+async function serve(config: Partial<WorkosAuth>): Promise<string> {
+  const workDir = join(testDir, `server-${runtimes.length}`);
+  cpSync(seedDir, workDir, { recursive: true });
+  const runtime = await Runtime.start({
+    identityProvider: () => workosProvider(config),
+    model: { provider: "custom", adapter: createEchoModel() },
+    logging: { disabled: true },
+    workDir,
   });
+  runtimes.push(runtime);
+  await runtime.ensureWorkspaceRegistry(wsMember);
+  const handle = startServer({ runtime, port: 0 });
   servers.push(handle);
   return `http://localhost:${handle.port}`;
 }
@@ -161,26 +174,20 @@ beforeAll(async () => {
   publicJwk = await crypto.subtle.exportKey("jwk", keyPair.publicKey);
   nowSec = Math.floor(Date.now() / 1000);
 
-  mkdirSync(testDir, { recursive: true });
-  runtime = await Runtime.start({
-    model: { provider: "custom", adapter: createEchoModel() },
-    logging: { disabled: true },
-    workDir: testDir,
-  });
-  const store = runtime.getWorkspaceStore();
+  mkdirSync(seedDir, { recursive: true });
+  const store = new WorkspaceStore(seedDir);
   wsMember = (await store.create("Acme Corp")).id;
   wsForeign = (await store.create("Elsewhere")).id;
   await store.addMember(wsMember, USER, "member");
   await store.addMember(wsForeign, "user_test_someone_else", "admin");
-  await runtime.ensureWorkspaceRegistry(wsMember);
 
-  configured = serve({ firstPartyClientIds: [CHANNELS_CLIENT_ID] });
-  unconfigured = serve({});
+  configured = await serve({ firstPartyClientIds: [CHANNELS_CLIENT_ID] });
+  unconfigured = await serve({});
 });
 
 afterAll(async () => {
   for (const handle of servers) handle.stop(true);
-  await runtime.shutdown();
+  for (const runtime of runtimes) await runtime.shutdown();
   rmSync(testDir, { recursive: true, force: true });
 });
 
@@ -317,7 +324,7 @@ describe("with no first-party client IDs configured", () => {
   });
 
   it("refuses it with an empty list too", async () => {
-    const empty = serve({ firstPartyClientIds: [] });
+    const empty = await serve({ firstPartyClientIds: [] });
     const token = await channelsLike(CHANNELS_CLIENT_ID);
     expect((await chatStart(empty, wsMember, token)).status).toBe(401);
     expect((await bootstrap(empty, token)).status).toBe(401);
