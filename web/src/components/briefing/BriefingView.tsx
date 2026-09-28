@@ -20,13 +20,6 @@ import type { InstalledConnector } from "../../api/client";
 import { cn } from "../../lib/utils";
 import { statusLabel } from "../connectors/ConnectorStatusHero";
 
-/** Statuses a member resolves on the connector's page. `connecting` and `starting` are in flight. */
-const ATTENTION_STATUSES: ReadonlySet<InstalledConnector["status"]> = new Set([
-  "needs_auth",
-  "needs_setup",
-  "failed",
-]);
-
 interface BriefingViewProps {
   briefing: BriefingOutput | null;
   /** The workspace's installed connectors; each needing attention adds a row. */
@@ -134,7 +127,9 @@ export function BriefingView({
   onOpen,
   onOpenConnector,
 }: BriefingViewProps) {
-  const needsAttention = connectors.filter((c) => ATTENTION_STATUSES.has(c.status));
+  // Every status but `ready`, `connecting` and `starting` included: an OAuth
+  // abandoned mid-flow stays `connecting`, and its page is where it is cancelled.
+  const needsAttention = connectors.filter((c) => c.status !== "ready");
   const items = briefing?.items ?? [];
   const empty = !loading && !error && items.length === 0 && needsAttention.length === 0;
 

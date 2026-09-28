@@ -188,11 +188,7 @@ describe("BriefingView", () => {
     mounted = await mount(
       view({
         briefing: makeBriefing({ items: [] }),
-        connectors: [
-          connector("gmail", "needs_auth", "Gmail"),
-          connector("crm", "ready", "CRM"),
-          connector("slack", "starting", "Slack"),
-        ],
+        connectors: [connector("gmail", "needs_auth", "Gmail"), connector("crm", "ready", "CRM")],
         onOpenConnector: (s) => opened.push(s),
       }),
     );
@@ -205,17 +201,28 @@ describe("BriefingView", () => {
     expect(opened).toEqual(["gmail"]);
   });
 
-  test("uses the connector page's labels for setup and failure", async () => {
+  test("every status but ready gets a row, with the connector page's label", async () => {
     mounted = await mount(
       view({
         briefing: makeBriefing({ items: [] }),
-        connectors: [connector("a", "needs_setup"), connector("b", "failed")],
+        connectors: [
+          connector("a", "needs_setup"),
+          connector("b", "failed"),
+          connector("c", "connecting"),
+          connector("d", "starting"),
+        ],
       }),
     );
     const text = findAllByTestId(mounted.container, "briefing-connector-status").map(
       (r) => r.textContent,
     );
-    expect(text).toEqual(["Configuration required · a", "Failed · b"]);
+    expect(text).toEqual([
+      "Configuration required · a",
+      "Failed · b",
+      "Connecting… · c",
+      "Starting… · d",
+    ]);
+    expect(findByTestId(mounted.container, "workspace-briefing-empty")).toBeNull();
   });
 
   describe("empty state", () => {
