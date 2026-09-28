@@ -258,7 +258,7 @@ Each workspace has its own config at `<workDir>/workspaces/<ws-id>/workspace.jso
 
 ### Workspace Isolation
 
-Connectors, tool registries, and conversation data are scoped to a workspace. Every tool handler resolves its workspace via `runtime.requireWorkspaceId()` before touching data. In dev mode this returns `"_dev"`; behind auth it resolves from the request's session or API key.
+Connectors, tool registries, and conversation data are scoped to a workspace. Every tool handler resolves its workspace via `runtime.requireWorkspaceId()` before touching data. It resolves from the workspace the request names, and throws when none is in scope.
 
 Two workspaces that install the same connector spawn independent subprocesses with data directories under `<workDir>/workspaces/<wsId>/data/<connector>/`, so their entity data never crosses. Sidebar placements, briefing facets, and the app list are filtered per workspace.
 
@@ -540,7 +540,7 @@ Connectors can be installed per-workspace (tracked via `ConnectorInstance.wsId`)
 
 `createSystemTools()` takes `getRegistry: () => ToolRegistry` (callback) instead of a direct registry reference, enabling dynamic workspace-scoped registries. The runtime maintains a `_workspaceRegistries` map keyed by workspace ID.
 
-**Workspace isolation in tool handlers:** All tool handlers that access data must use `runtime.requireWorkspaceId()` (throws if missing). Do not use `getCurrentWorkspaceId()` (nullable) or `getConnectorInstances()` (unfiltered) in tool handlers. In dev mode, `requireWorkspaceId()` returns `"_dev"`.
+**Workspace isolation in tool handlers:** All tool handlers that access data must use `runtime.requireWorkspaceId()` (throws if missing). Do not use `getCurrentWorkspaceId()` (nullable) or `getConnectorInstances()` (unfiltered) in tool handlers.
 
 ### System Prompt Composition
 
