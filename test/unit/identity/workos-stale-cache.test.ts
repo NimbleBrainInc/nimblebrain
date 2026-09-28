@@ -247,6 +247,40 @@ describe("resolveUser stale cache fallback", () => {
     expect(second!.email).toBe("user_resolve_1@test.com");
   });
 
+  it("serves the stale identity until the stale limit, then signals unavailable", async () => {
+    const provider = createProvider();
+    const baseTime = Date.now();
+    provider.now = () => baseTime;
+    expect(
+      await provider.verifyRequest(makeRequest(await makeValidToken("user_stale_limit", baseTime))),
+    ).not.toBeNull();
+
+    const workos = (provider as unknown as { workos: Record<string, unknown> }).workos;
+    (workos.userManagement as Record<string, unknown>).getUser = async () => {
+      throw new Error("WorkOS API timeout");
+    };
+
+    // Just inside the limit: the cached identity is still served.
+    const inside = baseTime + 29 * 60 * 1000;
+    provider.now = () => inside;
+    const served = await provider.verifyRequest(
+      makeRequest(await makeValidToken("user_stale_limit", inside)),
+    );
+    expect(served?.id).toBe("user_stale_limit");
+
+    // Past it: no verdict, so 503 rather than the old answer or a 401.
+    const past = baseTime + 31 * 60 * 1000;
+    provider.now = () => past;
+    const err = await provider
+      .verifyRequest(makeRequest(await makeValidToken("user_stale_limit", past)))
+      .then(
+        () => null,
+        (e: unknown) => e,
+      );
+    expect(err).toBeInstanceOf(TransientAuthError);
+    expect((err as TransientAuthError).reason).toBe("user_unresolvable");
+  });
+
   it("signals unavailable when WorkOS API fails and no user cache exists", async () => {
     const provider = createProvider();
 

@@ -112,7 +112,7 @@ The root document, `/.well-known/oauth-protected-resource`, returns `404`: the o
 </TabItem>
 </Tabs>
 
-NimbleBrain verifies each access token's signature against the authorization server's JWKS (RS256, issuer validation), then applies the audience rule. When `organizationId` is set on the adapter, only members of that WorkOS organization can authenticate.
+NimbleBrain verifies each access token's signature against the authorization server's JWKS (RS256, issuer validation), then applies the audience rule. When `organizationId` is set on the adapter, a token must be issued for that WorkOS organization (its `org_id` claim) and its user must be a member of it.
 
 ### Operator requirement: a resource indicator per public host
 

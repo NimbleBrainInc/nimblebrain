@@ -62,7 +62,14 @@ function base64UrlEncode(data: Uint8Array): string {
 
 async function authkitToken(claims: Record<string, unknown>): Promise<string> {
   const header = { alg: "RS256", typ: "JWT", kid: KID };
-  const payload = { sub: USER, iss: AUTHKIT_ISSUER, iat: nowSec, exp: nowSec + 300, ...claims };
+  const payload = {
+    sub: USER,
+    iss: AUTHKIT_ISSUER,
+    org_id: "org_test",
+    iat: nowSec,
+    exp: nowSec + 300,
+    ...claims,
+  };
   const enc = (o: unknown) => base64UrlEncode(new TextEncoder().encode(JSON.stringify(o)));
   const signingInput = `${enc(header)}.${enc(payload)}`;
   const signature = await crypto.subtle.sign(
@@ -75,7 +82,7 @@ async function authkitToken(claims: Record<string, unknown>): Promise<string> {
 
 /** A token shaped like the one the channels bridge presents: aud is the environment's client ID. */
 function channelsLike(clientId: string): Promise<string> {
-  return authkitToken({ client_id: clientId, aud: ENV_CLIENT_ID, org_id: "org_test" });
+  return authkitToken({ client_id: clientId, aud: ENV_CLIENT_ID });
 }
 
 // ── A server per configuration ────────────────────────────────────
@@ -231,6 +238,17 @@ describe("a channels-like token whose client_id is listed", () => {
     expect(res.status).toBe(200);
   });
 
+  it("is refused on /v1/* and at /mcp/<ws> when minted for another org", async () => {
+    const token = await authkitToken({
+      client_id: CHANNELS_CLIENT_ID,
+      aud: ENV_CLIENT_ID,
+      org_id: "org_other",
+    });
+    expect((await chatStart(configured, wsMember, token)).status).toBe(401);
+    expect((await bootstrap(configured, token)).status).toBe(401);
+    expect((await mcpInitialize(configured, wsMember, token)).status).toBe(401);
+  });
+
   it("gets the unknown-workspace 404 for a workspace its user does not belong to", async () => {
     const token = await channelsLike(CHANNELS_CLIENT_ID);
     for (const [label, send] of [
@@ -269,6 +287,15 @@ describe("an AuthKit token whose client_id is not listed", () => {
   it("is refused when it carries no client_id", async () => {
     const token = await authkitToken({ aud: ENV_CLIENT_ID });
     expect((await bootstrap(configured, token)).status).toBe(401);
+  });
+
+  it("is refused at the /mcp/<ws> its aud names when minted for another org", async () => {
+    const token = await authkitToken({
+      client_id: MCP_CLIENT_ID,
+      aud: mcpResourceUrl(wsMember),
+      org_id: "org_other",
+    });
+    expect((await mcpInitialize(configured, wsMember, token)).status).toBe(401);
   });
 
   it("is still admitted at the /mcp/<ws> its aud names, and nowhere on /v1/*", async () => {
