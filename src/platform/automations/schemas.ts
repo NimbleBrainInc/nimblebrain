@@ -35,10 +35,11 @@ export const TOOL_SCHEMAS: ToolSchema[] = [
       "Idempotent: returns the existing automation if one with the same id exists. " +
       "Scope: an automation belongs to the workspace it is created in, and runs as the creating " +
       "user. A run reaches only that workspace's tools and connectors (including personal " +
-      "connectors granted to it) plus the owner's own tools — never another workspace's. So for " +
-      "an automation that posts to a shared destination (e.g. Teams/Slack), create it in the " +
-      "workspace where that connector is installed. Runs stop while the owner is not a member " +
-      "of the workspace.",
+      "connectors granted to it) plus the owner's own tools, except those that create, change, " +
+      "delete, or trigger automations — never another workspace's. So for an automation that " +
+      "posts to a shared destination (e.g. Teams/Slack), create it in the workspace where that " +
+      "connector is installed or granted. Runs stop while the owner is not a member of the " +
+      "workspace.",
     inputSchema: AutomationsCreateInput,
   },
   {
