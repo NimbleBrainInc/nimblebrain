@@ -117,12 +117,13 @@ beforeAll(async () => {
   recorded = { prompts };
 
   runtime = await Runtime.start({
+    identityProvider: devProvider(testDir),
     model: { provider: "custom", adapter: model },
     logging: { disabled: true },
     workDir: testDir,
   });
   await provisionTestWorkspace(runtime);
-  handle = startServer({ runtime, port: 0, provider: devProvider(runtime) });
+  handle = startServer({ runtime, port: 0});
   baseUrl = `http://localhost:${handle.port}`;
 });
 

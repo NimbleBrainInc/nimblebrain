@@ -8,30 +8,17 @@ import type {
 import { TransientAuthError } from "../identity/provider.ts";
 import { log } from "../observability/log.ts";
 
-// ── Auth mode detection ───────────────────────────────────────────
-
-export type AuthMode = { type: "adapter"; provider: IdentityProvider } | { type: "dev" };
-
-/**
- * Determine the auth mode from the available configuration.
- * IdentityProvider (from instance.json or DevIdentityProvider) > dev mode (no provider).
- */
-export function resolveAuthMode(provider: IdentityProvider | null): AuthMode {
-  if (provider) return { type: "adapter", provider };
-  return { type: "dev" };
-}
-
 // ── Middleware ─────────────────────────────────────────────────────
 
 export interface AuthMiddlewareOptions {
-  /** Auth mode — adapter or dev. */
-  mode: AuthMode;
+  /** The runtime's identity provider; every request is verified by it. */
+  provider: IdentityProvider;
   /** Event sink for audit logging. */
   eventSink: EventSink;
 }
 
-/** Successful auth result — identity is undefined in dev mode. */
-export type AuthSuccess = { identity: UserIdentity | undefined };
+/** Successful auth result: the caller the provider verified. */
+export type AuthSuccess = { identity: UserIdentity };
 
 /** Auth check result: a Response (rejection) or AuthSuccess. */
 export type AuthResult = Response | AuthSuccess;
@@ -42,11 +29,10 @@ export function isAuthError(result: AuthResult): result is Response {
 }
 
 /**
- * Authenticate a request against the configured auth mode.
- *
- * - "dev": pass-through, no identity.
- * - "adapter": IdentityProvider.verifyRequest(), then the credential's grant
- *   against `resource` (see {@link grantAdmits}).
+ * Authenticate a request with the identity provider:
+ * `IdentityProvider.verifyRequest()`, then the credential's grant against
+ * `resource` (see {@link grantAdmits}). The `dev` provider verifies every
+ * request as the local developer, so it passes the same way.
  *
  * `resource` is the canonical URL of the protected resource the request
  * addresses (`/mcp/<wsId>`), or undefined for every other route.
@@ -59,32 +45,19 @@ export async function authenticateRequest(
   options: AuthMiddlewareOptions,
   resource?: string,
 ): Promise<AuthResult> {
-  const { mode } = options;
-
-  // Dev mode — no auth required
-  if (mode.type === "dev") {
-    return { identity: undefined };
+  const verified = await verifyWithProvider(req, options.provider);
+  if (verified instanceof Response) return verified;
+  if (verified) {
+    const { grant, ...identity } = verified;
+    if (grantAdmits(grant, resource)) return { identity };
+    // A valid token presented where it is not valid: 401 so a client
+    // re-runs discovery and obtains one for this resource.
+    log.warn("[auth] token audience does not name this resource", {
+      path: new URL(req.url).pathname,
+    });
   }
-
-  // IdentityProvider mode
-  if (mode.type === "adapter") {
-    const verified = await verifyWithProvider(req, mode.provider);
-    if (verified instanceof Response) return verified;
-    if (verified) {
-      const { grant, ...identity } = verified;
-      if (grantAdmits(grant, resource)) return { identity };
-      // A valid token presented where it is not valid: 401 so a client
-      // re-runs discovery and obtains one for this resource.
-      log.warn("[auth] token audience does not name this resource", {
-        path: new URL(req.url).pathname,
-      });
-    }
-    // Unauthenticated
-    logAuthFailure(req, options.eventSink);
-    return new Response(null, { status: 401 });
-  }
-
-  // Unreachable, but satisfy TypeScript
+  // Unauthenticated
+  logAuthFailure(req, options.eventSink);
   return new Response(null, { status: 401 });
 }
 

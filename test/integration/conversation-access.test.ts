@@ -297,6 +297,10 @@ describe("HTTP — a conversation that is not the caller's in the path's workspa
     workDir = join(tmpdir(), `nb-conv-access-http-${Date.now()}`);
     mkdirSync(workDir, { recursive: true });
     runtime = await Runtime.start({
+      identityProvider: new MultiUserAuthAdapter({
+        [ALICE_TOKEN]: ALICE,
+        [BOB_TOKEN]: BOB,
+      }),
       model: { provider: "custom", adapter: createEchoModel() },
       logging: { disabled: true },
       workDir,
@@ -332,10 +336,6 @@ describe("HTTP — a conversation that is not the caller's in the path's workspa
     handle = startServer({
       runtime,
       port: 0,
-      provider: new MultiUserAuthAdapter({
-        [ALICE_TOKEN]: ALICE,
-        [BOB_TOKEN]: BOB,
-      }),
     });
     baseUrl = `http://localhost:${handle.port}`;
   });

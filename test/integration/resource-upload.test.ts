@@ -19,6 +19,7 @@ const TOTAL_LIMIT = 1 * 1024 * 1024;
 beforeAll(async () => {
   mkdirSync(testDir, { recursive: true });
   runtime = await Runtime.start({
+    identityProvider: devProvider(testDir),
     model: { provider: "custom", adapter: createEchoModel() },
     logging: { disabled: true },
     workDir: testDir,
@@ -29,7 +30,7 @@ beforeAll(async () => {
     },
   });
   await provisionTestWorkspace(runtime);
-  handle = startServer({ runtime, port: 0, provider: devProvider(runtime) });
+  handle = startServer({ runtime, port: 0});
   baseUrl = `http://localhost:${handle.port}`;
 });
 
@@ -149,7 +150,7 @@ describe("POST /v1/workspaces/:wsId/resources", () => {
   });
 
   it("persists tags / description / conversationId metadata onto the FileEntry", async () => {
-    const { conversationId } = await runtime.chat({
+    const { conversationId } = await runtime.chat({ identity: DEV_IDENTITY,
       message: "a conversation to attach to",
       workspaceId: TEST_WORKSPACE_ID,
     });

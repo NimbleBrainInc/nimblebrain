@@ -5,7 +5,7 @@ import type { SecretsConfig } from "../config/secrets.ts";
 import type { ConnectorsConfig } from "../connectors/providers/config.ts";
 import type { EventSink, ThinkingEffort } from "../engine/types.ts";
 import type { ContentPart, FileReference } from "../files/types.ts";
-import type { UserIdentity } from "../identity/provider.ts";
+import type { IdentityProvider, UserIdentity } from "../identity/provider.ts";
 import type { ProvidersConfig } from "../model/registry.ts";
 import type { NotificationsPollConfig } from "../notifications/poll-config.ts";
 import type { TokenUsage } from "../usage/types.ts";
@@ -210,6 +210,13 @@ export interface RuntimeConfig {
    * Subdirectories: conversations/, skills/, cache/
    */
   workDir?: string;
+
+  /**
+   * The identity provider, for an in-process caller that builds its own (a
+   * test). Omitted, the runtime builds the one `<workDir>/instance.json` names.
+   * The HTTP server authenticates with whichever one the runtime holds.
+   */
+  identityProvider?: IdentityProvider;
 
   /**
    * Which backend holds this deployment's secrets, and that backend's own

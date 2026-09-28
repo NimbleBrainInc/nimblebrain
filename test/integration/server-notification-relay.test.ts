@@ -98,6 +98,7 @@ const settle = () => new Promise((resolve) => setTimeout(resolve, 20));
 beforeAll(async () => {
   mkdirSync(testDir, { recursive: true });
   runtime = await Runtime.start({
+    identityProvider: devProvider(testDir),
     model: { provider: "custom", adapter: createEchoModel() },
     logging: { disabled: true },
     workDir: testDir,
@@ -110,7 +111,7 @@ beforeAll(async () => {
     runtime.getRegistryForWorkspace(TEST_WORKSPACE_ID).addSource(source);
   }
 
-  handle = startServer({ runtime, port: 0, provider: devProvider(runtime) });
+  handle = startServer({ runtime, port: 0});
   baseUrl = `http://localhost:${handle.port}`;
 });
 

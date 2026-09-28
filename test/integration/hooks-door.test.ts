@@ -127,7 +127,6 @@ const captureFetch = (async (url: string | URL | Request, init?: RequestInit) =>
 
 function makeCtx(over: Partial<AppContext> = {}): AppContext {
   return {
-    isDevMode: false,
     runtime: { getWorkspaceStore: () => store, getAllowInsecureRemotes: () => false },
     ...over,
   } as unknown as AppContext;

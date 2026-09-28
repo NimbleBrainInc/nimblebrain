@@ -561,13 +561,14 @@ describe("/mcp/<wsId> on both eras", () => {
     info = spyOn(log, "info");
     workDir = await mkdtemp(join(tmpdir(), "nb-mcp-era-"));
     runtime = await Runtime.start({
+      identityProvider: devProvider(workDir),
       model: { provider: "custom", adapter: createEchoModel() },
       logging: { disabled: true },
       workDir,
     });
     await provisionTestWorkspace(runtime);
     runtime.getRegistryForWorkspace(TEST_WORKSPACE_ID).addSource(new SharedSourceRef(new FixtureSource()));
-    handle = startServer({ runtime, port: 0, provider: devProvider(runtime) });
+    handle = startServer({ runtime, port: 0});
   });
 
   afterAll(async () => {

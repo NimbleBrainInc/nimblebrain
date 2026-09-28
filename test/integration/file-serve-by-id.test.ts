@@ -36,12 +36,13 @@ let baseUrl: string;
 beforeAll(async () => {
   mkdirSync(testDir, { recursive: true });
   runtime = await Runtime.start({
+    identityProvider: devProvider(testDir),
     model: { provider: "custom", adapter: createEchoModel() },
     logging: { disabled: true },
     workDir: testDir,
   });
   await provisionTestWorkspace(runtime, WORKSPACE_A);
-  handle = startServer({ runtime, port: 0, provider: devProvider(runtime) });
+  handle = startServer({ runtime, port: 0});
   baseUrl = `http://localhost:${handle.port}`;
 });
 
@@ -55,7 +56,7 @@ describe("GET /v1/files resolves the workspace from the file id", () => {
   it("serves a workspace-A attachment by bare id, no workspace in the URL", async () => {
     // A conversation born in workspace A; a file uploaded to it (the upload
     // resolves the conversation's workspace, A — the file lives under A).
-    const born = await runtime.chat({ message: "hi", workspaceId: WORKSPACE_A });
+    const born = await runtime.chat({ identity: DEV_IDENTITY, message: "hi", workspaceId: WORKSPACE_A });
     const convId = born.conversationId;
 
     const form = new FormData();
@@ -84,7 +85,7 @@ describe("GET /v1/files resolves the workspace from the file id", () => {
     // stale hit by poisoning the memo with a workspace the file is NOT in, then
     // assert the download still 200s — proving the memo read fails, the entry is
     // dropped, and the disk re-resolve recovers the real workspace (A).
-    const born = await runtime.chat({ message: "hi", workspaceId: WORKSPACE_A });
+    const born = await runtime.chat({ identity: DEV_IDENTITY, message: "hi", workspaceId: WORKSPACE_A });
     const form = new FormData();
     form.append("file", new Blob(["heal me"], { type: "text/plain" }), "heal.txt");
     form.append("conversationId", born.conversationId);

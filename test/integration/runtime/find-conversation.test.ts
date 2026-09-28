@@ -25,11 +25,12 @@ import { tmpdir } from "node:os";
 import type { ServerHandle } from "../../../src/api/server.ts";
 import { startServer } from "../../../src/api/server.ts";
 import { workspaceConversationsDir } from "../../../src/conversation/paths.ts";
-import { createTestAuthAdapter, TEST_IDENTITY } from "../../helpers/test-auth-adapter.ts";
+import { TEST_IDENTITY, testAuthAdapter } from "../../helpers/test-auth-adapter.ts";
 import { Runtime } from "../../../src/runtime/runtime.ts";
 import { createEchoModel } from "../../helpers/echo-model.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../../helpers/test-workspace.ts";
 import { devProvider } from "../../helpers/dev-provider.ts";
+import { DEV_IDENTITY } from "../../../src/identity/providers/dev.ts";
 
 const ALICE = { id: "usr_alice", email: "alice@example.com" };
 const BOB = { id: "usr_bob", email: "bob@example.com" };
@@ -120,6 +121,7 @@ describe("/v1/conversations/:id/events — identity-scoped", () => {
   test("setup", async () => {
     mkdirSync(workDir, { recursive: true });
     runtime = await Runtime.start({
+      identityProvider: testAuthAdapter(API_KEY, workDir),
       model: { provider: "custom", adapter: createEchoModel() },
       logging: { disabled: true },
       workDir,
@@ -128,7 +130,6 @@ describe("/v1/conversations/:id/events — identity-scoped", () => {
     handle = startServer({
       runtime,
       port: 0,
-      provider: createTestAuthAdapter(API_KEY, runtime),
     });
     baseUrl = `http://localhost:${handle.port}`;
 
@@ -232,16 +233,14 @@ describe("/v1/conversations/:id/events — identity-scoped", () => {
 });
 
 // ---------------------------------------------------------------------------
-// /v1/conversations/:id/events — dev mode (no identity provider configured)
+// /v1/conversations/:id/events — the dev identity provider
 //
-// Regression for round-6 QA C1: the route's handler read `identity.id`
-// unconditionally; in dev mode `c.var.identity` is undefined and the
-// handler threw `TypeError: Cannot read properties of undefined`.
-// `bun run dev:worktree` (or any auth-disabled deployment) would 500
-// the moment the web client opened the SSE.
+// `bun run dev:worktree` runs the dev provider. The web client opens this SSE
+// the moment it loads a conversation, so the dev user's own conversation must
+// stream (200), not 500.
 // ---------------------------------------------------------------------------
 
-describe("/v1/conversations/:id/events — dev mode (no provider)", () => {
+describe("/v1/conversations/:id/events — dev provider", () => {
   const workDir = join(tmpdir(), `nb-find-conv-events-dev-${Date.now()}`);
   let runtime: Runtime;
   let handle: ServerHandle;
@@ -251,21 +250,20 @@ describe("/v1/conversations/:id/events — dev mode (no provider)", () => {
   test("setup", async () => {
     mkdirSync(workDir, { recursive: true });
     runtime = await Runtime.start({
+      identityProvider: devProvider(workDir),
       model: { provider: "custom", adapter: createEchoModel() },
       logging: { disabled: true },
       workDir,
     });
     await provisionTestWorkspace(runtime);
-    // No `provider` → dev mode. The auth middleware passes through
-    // without setting c.var.identity.
-    handle = startServer({ runtime, port: 0, provider: devProvider(runtime) });
+    // The dev provider verifies every request as `usr_default`.
+    handle = startServer({ runtime, port: 0 });
     baseUrl = `http://localhost:${handle.port}`;
 
-    // Seed a conversation via runtime.chat without an identity. The
-    // runtime's dev-mode fallback mints the conversation under
-    // `usr_default`, which is what `DEV_IDENTITY.id` resolves to and
-    // what the route's dev fallback compares against.
+    // Seed a conversation as the dev user, the identity the dev provider
+    // gives the route's request.
     const seed = await runtime.chat({
+      identity: DEV_IDENTITY,
       message: "seed in dev mode",
       workspaceId: TEST_WORKSPACE_ID,
     });
@@ -317,6 +315,7 @@ describe("ownerless conversation file — no 500s", () => {
   test("setup", async () => {
     mkdirSync(workDir, { recursive: true });
     runtime = await Runtime.start({
+      identityProvider: testAuthAdapter(API_KEY, workDir),
       model: { provider: "custom", adapter: createEchoModel() },
       logging: { disabled: true },
       workDir,
@@ -325,7 +324,6 @@ describe("ownerless conversation file — no 500s", () => {
     handle = startServer({
       runtime,
       port: 0,
-      provider: createTestAuthAdapter(API_KEY, runtime),
     });
     baseUrl = `http://localhost:${handle.port}`;
 

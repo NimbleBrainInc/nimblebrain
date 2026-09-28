@@ -79,12 +79,9 @@ describe("isAddressedWorkspaceMember", () => {
 });
 
 /** An app with one workspace-scoped route that echoes the workspace it was admitted to. */
-function makeApp(opts: { identity?: UserIdentity; providerConfigured?: boolean } = {}) {
+function makeApp(opts: { identity?: UserIdentity } = {}) {
   const { store } = makeStore();
-  const ctx = {
-    workspaceStore: store,
-    runtime: { getIdentityProvider: () => (opts.providerConfigured === false ? null : {}) },
-  } as unknown as AppContext;
+  const ctx = { workspaceStore: store } as unknown as AppContext;
   const app = new Hono<AppEnv>();
   app.use("*", async (c, next) => {
     if (opts.identity) c.set("identity", opts.identity);
@@ -138,15 +135,15 @@ describe("requireWorkspace", () => {
     expect(withHeader).toEqual(refused);
   });
 
-  it("admits no one when a provider is configured and the request has no identity", async () => {
-    const app = makeApp({ providerConfigured: true });
+  it("admits no one when the request has no identity", async () => {
+    const app = makeApp();
     const refused = await probe(makeApp({ identity: ALICE }), "ws_nosuch");
     expect(await probe(app, "ws_dev")).toEqual(refused);
     expect(await probe(app, "ws_acme")).toEqual(refused);
   });
 
-  it("treats an identity-less request as the dev user when no provider is configured", async () => {
-    const app = makeApp({ providerConfigured: false });
+  it("admits the dev user to its own workspace as a member, and to no other", async () => {
+    const app = makeApp({ identity: DEV_IDENTITY });
     expect((await probe(app, "ws_dev")).status).toBe(200);
     expect((await probe(app, "ws_acme")).status).toBe(404);
   });

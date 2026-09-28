@@ -16,6 +16,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { Hono } from "hono";
 import { requireAuth } from "../../../src/api/middleware/auth.ts";
 import type { McpSessionContext } from "../../../src/api/mcp-server.ts";
+import { RequestRateLimiter } from "../../../src/api/rate-limiter.ts";
 import { mcpRoutes } from "../../../src/api/routes/mcp.ts";
 import type { AppContext } from "../../../src/api/types.ts";
 import { resolveFeatures } from "../../../src/config/features.ts";
@@ -90,7 +91,7 @@ function makeCtx(): AppContext {
   return {
     provider,
     authOptions: {
-      mode: { type: "adapter", provider },
+      provider,
       eventSink: { emit: () => {} },
     },
     runtime: { getFeatures: () => resolveFeatures() },
@@ -101,8 +102,8 @@ function makeCtx(): AppContext {
         return Response.json({ ok: true });
       },
     },
-    // Bypasses the request rate limiter; nothing else here reads it.
-    isDevMode: true,
+    // Generous enough that no test here meets the limit.
+    mcpLimiter: new RequestRateLimiter(10_000, 60_000),
   } as unknown as AppContext;
 }
 

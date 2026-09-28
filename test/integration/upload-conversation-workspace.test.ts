@@ -41,13 +41,14 @@ let baseUrl: string;
 beforeAll(async () => {
   mkdirSync(testDir, { recursive: true });
   runtime = await Runtime.start({
+    identityProvider: devProvider(testDir),
     model: { provider: "custom", adapter: createEchoModel() },
     logging: { disabled: true },
     workDir: testDir,
   });
   await provisionTestWorkspace(runtime, WORKSPACE_A);
   await provisionTestWorkspace(runtime, OTHER);
-  handle = startServer({ runtime, port: 0, provider: devProvider(runtime) });
+  handle = startServer({ runtime, port: 0});
   baseUrl = `http://localhost:${handle.port}`;
 });
 
@@ -86,7 +87,7 @@ describe("an upload attached to a conversation writes only to the workspace in t
 
   for (const route of UPLOAD_ROUTES) {
     it(`${route.name}: a conversation in another workspace is refused like an unknown one, and nothing is stored`, async () => {
-      const born = await runtime.chat({ message: "hello from A", workspaceId: WORKSPACE_A });
+      const born = await runtime.chat({ identity: DEV_IDENTITY, message: "hello from A", workspaceId: WORKSPACE_A });
       const unknownId = "conv_0000000000000003";
       const before = await registrySizes();
 
@@ -112,7 +113,7 @@ describe("an upload attached to a conversation writes only to the workspace in t
   }
 
   it("resources: a conversation in the path's workspace takes the file there", async () => {
-    const born = await runtime.chat({ message: "hello from A", workspaceId: WORKSPACE_A });
+    const born = await runtime.chat({ identity: DEV_IDENTITY, message: "hello from A", workspaceId: WORKSPACE_A });
     const res = await fetch(`${baseUrl}/v1/workspaces/${WORKSPACE_A}/resources`, {
       method: "POST",
       body: attachmentForm(born.conversationId),

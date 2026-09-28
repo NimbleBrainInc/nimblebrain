@@ -20,10 +20,7 @@ import type { IdentityProvider, CreateUserResult } from "../../src/identity/prov
 import type { User } from "../../src/identity/user.ts";
 import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
 import { JsonlConversationStore } from "../../src/conversation/jsonl-store.ts";
-import {
-  authenticateRequest,
-  resolveAuthMode,
-} from "../../src/api/auth-middleware.ts";
+import { authenticateRequest } from "../../src/api/auth-middleware.ts";
 import { isAddressedWorkspaceMember } from "../../src/api/workspace-address.ts";
 import {
   buildProcessInventory,
@@ -312,14 +309,11 @@ describe("Auth flow", () => {
       auth: { adapter: "oidc", issuer: "https://auth.example.com", clientId: "test", allowedDomains: ["example.com"] },
     });
 
-    const mode = resolveAuthMode(mockProvider);
-    expect(mode.type).toBe("adapter");
-
     // Request with no auth header
     const req = new Request("http://localhost/v1/bootstrap");
     const { NoopEventSink } = await import("../../src/adapters/noop-events.ts");
     const result = await authenticateRequest(req, {
-      mode,
+      provider: mockProvider,
       eventSink: new NoopEventSink(),
     });
 
@@ -329,7 +323,7 @@ describe("Auth flow", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Dev mode: no instance.json -> everything works as single user
+// Dev adapter: every request is the single built-in user
 // ---------------------------------------------------------------------------
 
 describe("Dev mode", () => {
@@ -376,11 +370,6 @@ describe("Dev mode", () => {
     expect(workspaces.length).toBeGreaterThanOrEqual(1);
     const defaultWs = workspaces[0]!;
     expect(defaultWs.members.some((m) => m.userId === "usr_default")).toBe(true);
-  });
-
-  test("dev mode auth mode resolves to dev when no adapter and no api key", () => {
-    const mode = resolveAuthMode(null);
-    expect(mode.type).toBe("dev");
   });
 });
 

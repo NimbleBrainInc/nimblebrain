@@ -1,11 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { NoopEventSink } from "../../../src/adapters/noop-events.ts";
-import {
-  type AuthMode,
-  authenticateRequest,
-  isAuthError,
-  resolveAuthMode,
-} from "../../../src/api/auth-middleware.ts";
+import { authenticateRequest, isAuthError } from "../../../src/api/auth-middleware.ts";
 import {
   FIRST_PARTY_GRANT,
   type IdentityProvider,
@@ -77,45 +72,6 @@ function makeRequest(
   });
 }
 
-// ── resolveAuthMode ───────────────────────────────────────────────
-
-describe("resolveAuthMode", () => {
-  it("returns adapter mode when provider is provided", () => {
-    const provider = createMockProvider("key", makeIdentity());
-    const mode = resolveAuthMode(provider);
-    expect(mode.type).toBe("adapter");
-  });
-
-  it("returns dev mode when no provider is provided", () => {
-    const mode = resolveAuthMode(null);
-    expect(mode.type).toBe("dev");
-  });
-});
-
-// ── Dev mode ──────────────────────────────────────────────────────
-
-describe("authenticateRequest — dev mode", () => {
-  const options = {
-    mode: { type: "dev" } as AuthMode,
-    eventSink: noopSink,
-  };
-
-  it("allows unauthenticated requests", async () => {
-    const req = makeRequest("/v1/workspaces/ws_a/chat", { method: "POST" });
-    const result = await authenticateRequest(req, options);
-    expect(isAuthError(result)).toBe(false);
-  });
-
-  it("returns undefined identity in dev mode", async () => {
-    const req = makeRequest("/v1/workspaces/ws_a/shell");
-    const result = await authenticateRequest(req, options);
-    expect(isAuthError(result)).toBe(false);
-    if (!isAuthError(result)) {
-      expect(result.identity).toBeUndefined();
-    }
-  });
-});
-
 // ── Adapter mode ──────────────────────────────────────────────────
 
 describe("authenticateRequest — adapter mode", () => {
@@ -124,7 +80,7 @@ describe("authenticateRequest — adapter mode", () => {
   const provider = createMockProvider(validAdapterKey, identity);
 
   const options = {
-    mode: { type: "adapter", provider } as AuthMode,
+    provider,
     eventSink: noopSink,
   };
 
@@ -208,7 +164,7 @@ describe("authenticateRequest — identity in return value", () => {
     const identity = makeIdentity({ email: "identity-test@example.com" });
     const provider = createMockProvider("my-key", identity);
     const options = {
-      mode: { type: "adapter", provider } as AuthMode,
+      provider,
     };
 
     const req = makeRequest("/v1/workspaces/ws_a/shell", {
@@ -231,10 +187,10 @@ describe("authenticateRequest — identity in return value", () => {
     const provider2 = createMockProvider("key-2", identity2);
 
     const options1 = {
-      mode: { type: "adapter", provider: provider1 } as AuthMode,
+      provider: provider1,
     };
     const options2 = {
-      mode: { type: "adapter", provider: provider2 } as AuthMode,
+      provider: provider2,
     };
 
     const req1 = makeRequest("/v1/workspaces/ws_a/shell", {

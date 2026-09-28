@@ -18,8 +18,8 @@ import type {
   VerifiedIdentity,
 } from "../../src/identity/provider.ts";
 import { FIRST_PARTY_GRANT } from "../../src/identity/provider.ts";
-import type { User, UserStore } from "../../src/identity/user.ts";
-import type { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
+import { type User, UserStore } from "../../src/identity/user.ts";
+import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
 
 export const TEST_IDENTITY: UserIdentity = {
   id: "usr_test",
@@ -126,11 +126,10 @@ export class TestAuthAdapter implements IdentityProvider {
 }
 
 /**
- * Create a TestAuthAdapter wired to a runtime's stores for workspace provisioning.
+ * A TestAuthAdapter over a workDir's stores, for
+ * `Runtime.start({ identityProvider })`: built before the runtime exists, it
+ * provisions into the same user and workspace stores the runtime reads.
  */
-export function createTestAuthAdapter(
-  apiKey: string,
-  runtime: { getUserStore(): UserStore; getWorkspaceStore(): WorkspaceStore; getWorkDir(): string },
-): TestAuthAdapter {
-  return new TestAuthAdapter(apiKey, runtime.getUserStore(), runtime.getWorkspaceStore(), runtime.getWorkDir());
+export function testAuthAdapter(apiKey: string, workDir: string): TestAuthAdapter {
+  return new TestAuthAdapter(apiKey, new UserStore(workDir), new WorkspaceStore(workDir), workDir);
 }

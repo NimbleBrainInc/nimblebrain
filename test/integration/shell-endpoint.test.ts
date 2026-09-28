@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
-import { createTestAuthAdapter } from "../helpers/test-auth-adapter.ts";
+import { testAuthAdapter } from "../helpers/test-auth-adapter.ts";
 import { startServer } from "../../src/api/server.ts";
 import type { ServerHandle } from "../../src/api/server.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
@@ -20,6 +20,7 @@ const testDir = join(tmpdir(), `nimblebrain-shell-${Date.now()}`);
 beforeAll(async () => {
 	mkdirSync(testDir, { recursive: true });
 	runtime = await Runtime.start({
+		identityProvider: devProvider(testDir),
 		model: { provider: "custom", adapter: createEchoModel() },
 		logging: { disabled: true },
 		workDir: testDir,
@@ -27,7 +28,7 @@ beforeAll(async () => {
 
 	await provisionTestWorkspace(runtime);
 
-	handle = startServer({ runtime, port: 0, provider: devProvider(runtime) });
+	handle = startServer({ runtime, port: 0});
 	baseUrl = `http://localhost:${handle.port}`;
 });
 
@@ -79,6 +80,7 @@ describe("GET /v1/workspaces/:wsId/shell auth", () => {
 	beforeAll(async () => {
 		mkdirSync(shellAuthDir, { recursive: true });
 		authRuntime = await Runtime.start({
+			identityProvider: testAuthAdapter(TEST_API_KEY, shellAuthDir),
 			model: { provider: "custom", adapter: createEchoModel() },
 			logging: { disabled: true },
 			workDir: shellAuthDir,
@@ -89,7 +91,6 @@ describe("GET /v1/workspaces/:wsId/shell auth", () => {
 		authHandle = startServer({
 			runtime: authRuntime,
 			port: 0,
-			provider: createTestAuthAdapter(TEST_API_KEY, authRuntime),
 		});
 		authUrl = `http://localhost:${authHandle.port}`;
 	});

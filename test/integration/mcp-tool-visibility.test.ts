@@ -84,6 +84,7 @@ let neighborSource: McpSource;
 beforeAll(async () => {
   mkdirSync(testDir, { recursive: true });
   runtime = await Runtime.start({
+    identityProvider: devProvider(testDir),
     model: { provider: "custom", adapter: createEchoModel() },
     logging: { disabled: true },
     workDir: testDir,
@@ -109,7 +110,7 @@ beforeAll(async () => {
   await neighborSource.start();
   registry.addSource(neighborSource);
 
-  handle = startServer({ runtime, port: 0, provider: devProvider(runtime) });
+  handle = startServer({ runtime, port: 0});
   baseUrl = `http://localhost:${handle.port}`;
 }, 30_000);
 

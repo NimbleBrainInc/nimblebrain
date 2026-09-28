@@ -45,6 +45,7 @@ const testDir = join(tmpdir(), `nb-files-mcp-resources-${Date.now()}`);
 beforeAll(async () => {
   mkdirSync(testDir, { recursive: true });
   runtime = await Runtime.start({
+    identityProvider: devProvider(testDir),
     model: { provider: "custom", adapter: createEchoModel() },
     logging: { disabled: true },
     workDir: testDir,
@@ -55,7 +56,7 @@ beforeAll(async () => {
   });
   DEV_WS_ID = devWs.id;
   await runtime.ensureWorkspaceRegistry(DEV_WS_ID);
-  handle = startServer({ runtime, port: 0, provider: devProvider(runtime) });
+  handle = startServer({ runtime, port: 0});
   baseUrl = `http://localhost:${handle.port}`;
 });
 

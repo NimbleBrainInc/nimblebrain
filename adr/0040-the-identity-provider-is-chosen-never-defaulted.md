@@ -26,6 +26,11 @@ admits everyone.
   write for dev and for a real provider. The HTTP server is the layer that
   admits requests, so it holds the check: it does not start without a provider,
   and it never constructs one of its own.
+- **The runtime is the one owner of the provider.** It builds the provider
+  `instance.json` names (or takes one from an in-process caller), and the server
+  authenticates with that one. The server has no provider of its own, so the
+  identity a request carries is the identity the runtime's permission checks
+  judge.
 - **The dev launchers make the dev choice, on disk.** `bun run dev` and its
   variants write the `dev` adapter into a workdir that has no `instance.json`,
   and leave an existing one alone. The choice is made by the tool the developer
@@ -42,7 +47,8 @@ admits everyone.
   it is absent; the quickstart writes the `dev` adapter first.
 - Under `dev`, the runtime's own authorization checks see a real provider and a
   real identity, so the dev user passes them as an org owner and an admin of its
-  workspaces, not by skipping them.
+  workspaces, not by skipping them. CORS, secure cookies and request rate limits
+  are the same under `dev` as under any provider.
 - A `Runtime` started in-process from a workdir with no `instance.json` has no
   provider. Its permission checks then let every call through, and a call with
   no identity runs as `usr_default`. Only an in-process caller reaches that

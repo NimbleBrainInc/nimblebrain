@@ -224,12 +224,13 @@ describe("API full-flow integration", () => {
 	beforeAll(async () => {
 		runtimeWorkDir = tempDir();
 		runtime = await Runtime.start({
+			identityProvider: devProvider(runtimeWorkDir),
 			workDir: runtimeWorkDir,
 			model: { provider: "custom", adapter: createEchoModel() },
 			logging: { disabled: true },
 		});
 
-		handle = startServer({ runtime, port: 0, provider: devProvider(runtime) });
+		handle = startServer({ runtime, port: 0});
 		baseUrl = `http://localhost:${handle.port}`;
 	});
 

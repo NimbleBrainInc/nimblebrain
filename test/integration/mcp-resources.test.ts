@@ -94,6 +94,7 @@ beforeAll(async () => {
   mkdirSync(testDir, { recursive: true });
 
   runtime = await Runtime.start({
+    identityProvider: devProvider(testDir),
     model: { provider: "custom", adapter: createEchoModel() },
     logging: { disabled: true },
     workDir: testDir,
@@ -149,7 +150,7 @@ beforeAll(async () => {
   const otherReg = runtime.getRegistryForWorkspace(OTHER_WORKSPACE_ID);
   otherReg.addSource(otherSource);
 
-  handle = startServer({ runtime, port: 0, provider: devProvider(runtime) });
+  handle = startServer({ runtime, port: 0});
   baseUrl = `http://localhost:${handle.port}`;
   // Generous hook timeout: this setup starts a Runtime, provisions two
   // workspaces, and stands up two MCP servers. The 5s default hook timeout

@@ -84,6 +84,7 @@ describe("the two config routes agree", () => {
   beforeAll(async () => {
     mkdirSync(workDir, { recursive: true });
     runtime = await Runtime.start({
+      identityProvider: new TokenAuthAdapter({ [TOKEN]: PICKY }),
       model: { provider: "custom", adapter: createEchoModel() },
       models: { default: "anthropic:claude-sonnet-5", fast: "anthropic:claude-sonnet-5" },
       providers: { anthropic: { apiKey: "k" } },
@@ -106,7 +107,6 @@ describe("the two config routes agree", () => {
     handle = startServer({
       runtime,
       port: 0,
-      provider: new TokenAuthAdapter({ [TOKEN]: PICKY }),
     });
     baseUrl = `http://localhost:${handle.port}`;
   });

@@ -1,12 +1,12 @@
 import { DevIdentityProvider } from "../../src/identity/providers/dev.ts";
-import type { Runtime } from "../../src/runtime/runtime.ts";
+import { UserStore } from "../../src/identity/user.ts";
 
 /**
- * The dev identity provider over a test runtime's stores, for `startServer`
- * when the test's workDir has no `instance.json`: every request is
- * `DEV_IDENTITY`. The server never picks this itself, so a test that wants
- * it says so.
+ * The dev identity provider over a test workDir, for
+ * `Runtime.start({ identityProvider })`: every request is `DEV_IDENTITY`. A
+ * test whose workDir has no `instance.json` chooses it here, so the runtime
+ * (and the server serving it) authenticates with it.
  */
-export function devProvider(runtime: Runtime): DevIdentityProvider {
-  return new DevIdentityProvider(runtime.getWorkDir(), runtime.getUserStore());
+export function devProvider(workDir: string): DevIdentityProvider {
+  return new DevIdentityProvider(workDir, new UserStore(workDir));
 }

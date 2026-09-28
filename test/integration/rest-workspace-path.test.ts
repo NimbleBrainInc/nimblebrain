@@ -15,7 +15,7 @@ import type { ServerHandle } from "../../src/api/server.ts";
 import { startServer } from "../../src/api/server.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
-import { createTestAuthAdapter, TEST_IDENTITY } from "../helpers/test-auth-adapter.ts";
+import { TEST_IDENTITY, testAuthAdapter } from "../helpers/test-auth-adapter.ts";
 
 const API_KEY = "rest-workspace-path-test-key";
 const testDir = join(tmpdir(), `nb-rest-workspace-path-${Date.now()}`);
@@ -32,6 +32,7 @@ let wsForeign: string;
 beforeAll(async () => {
   mkdirSync(testDir, { recursive: true });
   runtime = await Runtime.start({
+    identityProvider: testAuthAdapter(API_KEY, testDir),
     model: { provider: "custom", adapter: createEchoModel() },
     logging: { disabled: true },
     workDir: testDir,
@@ -45,7 +46,7 @@ beforeAll(async () => {
   await store.addMember(wsForeign, "usr_someone_else", "admin");
   for (const id of [wsA, wsB]) await runtime.ensureWorkspaceRegistry(id);
 
-  handle = startServer({ runtime, port: 0, provider: createTestAuthAdapter(API_KEY, runtime) });
+  handle = startServer({ runtime, port: 0});
   baseUrl = `http://localhost:${handle.port}`;
 });
 

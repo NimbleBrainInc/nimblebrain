@@ -12,9 +12,9 @@ const ORIGIN = "https://nb.example.com";
 const PARTNER = "https://partner.example.com";
 
 describe("CORS", () => {
-  function preflight(authConfigured: boolean, allowed: Set<string> | null) {
+  function preflight(allowed: Set<string> | null) {
     const app = new Hono();
-    app.use("*", corsMiddleware(authConfigured, allowed));
+    app.use("*", corsMiddleware(allowed));
     return app.request(`${ORIGIN}/v1/workspaces/ws_acme/tools/call`, {
       method: "OPTIONS",
       headers: {
@@ -26,7 +26,7 @@ describe("CORS", () => {
   }
 
   it("does not allow the X-Workspace-Id header, with or without an allowlist", async () => {
-    for (const res of [await preflight(false, null), await preflight(true, new Set([PARTNER]))]) {
+    for (const res of [await preflight(null), await preflight(new Set([PARTNER]))]) {
       const allowed = (res.headers.get("Access-Control-Allow-Headers") ?? "")
         .split(",")
         .map((h) => h.trim().toLowerCase());

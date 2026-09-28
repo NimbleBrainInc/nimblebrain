@@ -21,11 +21,7 @@ import { toolRoutes } from "./routes/tools.ts";
 import { wellKnownRoutes } from "./routes/well-known.ts";
 import { type AppContext, apiError } from "./types.ts";
 
-export function createApp(
-  ctx: AppContext,
-  authConfigured: boolean,
-  allowedOrigins: Set<string> | null,
-) {
+export function createApp(ctx: AppContext, allowedOrigins: Set<string> | null) {
   const app = new Hono();
 
   // Turn on process/runtime metrics for this server (idempotent).
@@ -39,7 +35,7 @@ export function createApp(
   app.use("*", metricsMiddleware());
 
   // Global CORS middleware
-  app.use("*", corsMiddleware(authConfigured, allowedOrigins));
+  app.use("*", corsMiddleware(allowedOrigins));
   app.use("*", securityHeaders());
   // Workspace-scoped writes take the session cookie; refuse a browser's
   // cross-origin write that no CORS preflight would have stopped.

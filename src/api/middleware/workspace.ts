@@ -1,5 +1,4 @@
 import { createMiddleware } from "hono/factory";
-import { DEV_IDENTITY } from "../../identity/providers/dev.ts";
 import { type AppContext, type AppEnv, apiError } from "../types.ts";
 import { isAddressedWorkspaceMember } from "../workspace-address.ts";
 
@@ -17,16 +16,13 @@ function workspaceNotFound(): Response {
 /**
  * Admit a request to the workspace named by the route's `:wsId` and set it as
  * `c.var.workspaceId`. Runs after `requireAuth`. The check is the one `/mcp/<wsId>`
- * uses (`isAddressedWorkspaceMember`), on every request.
- *
- * With no identity on the request, the caller is the dev user only when no
- * identity provider is configured; otherwise there is no member to admit.
+ * uses (`isAddressedWorkspaceMember`), on every request. A request with no
+ * identity is a member of no workspace, whatever the identity provider.
  */
 export function requireWorkspace(ctx: AppContext) {
   return createMiddleware<AppEnv>(async (c, next) => {
     const wsId = c.req.param("wsId") ?? "";
-    const callerId =
-      c.var.identity?.id ?? (ctx.runtime.getIdentityProvider() ? null : DEV_IDENTITY.id);
+    const callerId = c.var.identity?.id;
     if (!callerId || !(await isAddressedWorkspaceMember(ctx.workspaceStore, wsId, callerId))) {
       return workspaceNotFound();
     }

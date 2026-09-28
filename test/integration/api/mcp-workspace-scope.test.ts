@@ -60,6 +60,7 @@ beforeAll(async () => {
   workDir = await mkdtemp(join(tmpdir(), "nb-mcp-ws-scope-"));
 
   runtime = await Runtime.start({
+    identityProvider: devProvider(workDir),
     model: { provider: "custom", adapter: createEchoModel() },
     logging: { disabled: true },
     workDir,
@@ -105,7 +106,7 @@ beforeAll(async () => {
 
   // Denied source is NOT added to workspace registry
 
-  handle = startServer({ runtime, port: 0, provider: devProvider(runtime) });
+  handle = startServer({ runtime, port: 0});
   baseUrl = `http://localhost:${handle.port}`;
 });
 

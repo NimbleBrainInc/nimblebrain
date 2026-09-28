@@ -21,12 +21,13 @@ beforeAll(async () => {
 	const workDir = join(testDir, "work");
 	mkdirSync(workDir, { recursive: true });
 	runtime = await Runtime.start({
+		identityProvider: devProvider(workDir),
 		model: { provider: "custom", adapter: createEchoModel() },
 		workDir,
 		logging: { disabled: true },
 	});
 	await provisionTestWorkspace(runtime);
-	handle = startServer({ runtime, port: 0, provider: devProvider(runtime) });
+	handle = startServer({ runtime, port: 0});
 	baseUrl = `http://localhost:${handle.port}`;
 });
 

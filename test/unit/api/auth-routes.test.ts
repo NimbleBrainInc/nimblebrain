@@ -16,7 +16,7 @@ function makeCtx(): AppContext {
   return {
     provider,
     authOptions: {
-      mode: { type: "adapter", provider },
+      provider,
       eventSink: { emit: () => {} },
     },
     secureCookies: false,

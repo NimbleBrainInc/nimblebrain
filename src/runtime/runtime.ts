@@ -654,12 +654,13 @@ export class Runtime {
     const userStore = new UserStore(workDir);
     const workspaceStore = new WorkspaceStore(workDir);
     await retireLegacyPersonalWorkspaces(workspaceStore, userStore);
-    // No `instance.json` leaves the runtime without a provider. Only an
-    // in-process caller can use such a runtime: the HTTP server refuses to
-    // start on it.
-    const identityProvider = instanceConfig
-      ? createIdentityProvider(instanceConfig, userStore, workDir)
-      : null;
+    // The runtime is the one owner of the identity provider: the server
+    // authenticates with this one. No `instance.json` (and none passed in)
+    // leaves the runtime without a provider; only an in-process caller can use
+    // such a runtime, because the server refuses to start on it.
+    const identityProvider =
+      config.identityProvider ??
+      (instanceConfig ? createIdentityProvider(instanceConfig, userStore, workDir) : null);
 
     initWorkDir(config);
 

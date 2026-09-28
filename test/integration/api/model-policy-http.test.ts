@@ -21,6 +21,7 @@ const DEV_OWNER = "usr_default";
 beforeAll(async () => {
   mkdirSync(testDir, { recursive: true });
   runtime = await Runtime.start({
+    identityProvider: devProvider(testDir),
     model: { provider: "custom", adapter: createEchoModel() },
     // Carries the allowlist. It also displaces the echo adapter, so a turn that
     // clears the gate then fails against a placeholder key — which is fine
@@ -30,7 +31,7 @@ beforeAll(async () => {
     workDir: testDir,
   });
   await provisionTestWorkspace(runtime);
-  handle = startServer({ runtime, port: 0, provider: devProvider(runtime) });
+  handle = startServer({ runtime, port: 0});
   baseUrl = `http://localhost:${handle.port}`;
 });
 

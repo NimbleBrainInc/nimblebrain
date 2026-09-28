@@ -70,6 +70,8 @@ import {
 } from "../../src/connectors/providers/composio/connection.ts";
 import { slugifyServerName } from "../../src/connectors/runtime/paths.ts";
 import { IdentityConnectorStore } from "../../src/identity/connector-store.ts";
+import { FIRST_PARTY_GRANT } from "../../src/identity/provider.ts";
+import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 import { _resetComposioConfigForTest } from "../../src/connectors/providers/composio/config.ts";
 import {
   _resetConnectorsConfigForTest,
@@ -80,6 +82,12 @@ import {
   composioUserId,
 } from "../../src/connectors/providers/composio/sdk.ts";
 import { seedWorkspaceRoot } from "../helpers/test-workspace.ts";
+
+/** Auth that verifies every request as the dev user, as the `dev` provider does. */
+const DEV_AUTH = {
+  provider: { verifyRequest: async () => ({ ...DEV_IDENTITY, grant: FIRST_PARTY_GRANT }) },
+  eventSink: { emit: () => {} },
+};
 
 function sha256Hex(input: string): string {
   return createHash("sha256").update(input).digest("hex");
@@ -639,14 +647,9 @@ describe("POST /v1/workspaces/:wsId/composio-auth/initiate", () => {
     ctx: ReturnType<typeof stubCtx>;
   } {
     const ctx = stubCtx("/tmp/nb-initiate-test", catalogEntry);
-    // Override authOptions with a dev-mode shape so requireAuth passes
-    // through. The unknown cast is unavoidable — the AuthMiddlewareOptions
-    // type isn't exported broadly and the runtime check just needs
-    // `mode.type === "dev"`.
-    (ctx as unknown as { authOptions: unknown }).authOptions = {
-      mode: { type: "dev" },
-      eventSink: { emit: () => {} },
-    };
+    // Auth that verifies every request as the dev user, as the `dev`
+    // provider does, so requireAuth admits it.
+    (ctx as unknown as { authOptions: unknown }).authOptions = DEV_AUTH;
     const app = new Hono<AppEnv>();
     app.route("/", composioAuthRoutes(ctx));
     return { app, ctx };
@@ -707,10 +710,7 @@ describe("POST /v1/workspaces/:wsId/composio-auth/initiate", () => {
     seedWorkspaceRoot(dir, "ws_test");
     try {
       const ctx = stubCtx(dir, composioEntry("com.google/gmail"));
-      (ctx as unknown as { authOptions: unknown }).authOptions = {
-        mode: { type: "dev" },
-        eventSink: { emit: () => {} },
-      };
+      (ctx as unknown as { authOptions: unknown }).authOptions = DEV_AUTH;
       const app = new Hono<AppEnv>();
       app.route("/", composioAuthRoutes(ctx));
 
@@ -766,10 +766,7 @@ describe("POST /v1/workspaces/:wsId/composio-auth/initiate", () => {
       const ctx = stubCtx(dir, composioEntry("com.google/gmail"), {
         ensureSourceRegisteredError: new Error("startConnectorSource refused"),
       });
-      (ctx as unknown as { authOptions: unknown }).authOptions = {
-        mode: { type: "dev" },
-        eventSink: { emit: () => {} },
-      };
+      (ctx as unknown as { authOptions: unknown }).authOptions = DEV_AUTH;
       const app = new Hono<AppEnv>();
       app.route("/", composioAuthRoutes(ctx));
 
@@ -997,10 +994,7 @@ describe("POST /v1/composio-auth/initiate-identity", () => {
     opts: { seedInstall?: boolean } = {},
   ): Promise<{ app: Hono<AppEnv>; ctx: ReturnType<typeof stubCtx> }> {
     const ctx = stubCtx(dir, catalogEntry, { userId: USER_ID });
-    (ctx as unknown as { authOptions: unknown }).authOptions = {
-      mode: { type: "dev" },
-      eventSink: { emit: () => {} },
-    };
+    (ctx as unknown as { authOptions: unknown }).authOptions = DEV_AUTH;
     // A personal connector must be installed on the identity before it can be
     // connected; seed the install ref so the route's precheck passes (skip it to
     // exercise the not-installed path).

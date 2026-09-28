@@ -554,7 +554,7 @@ Connectors can be installed per-workspace (tracked via `ConnectorInstance.wsId`)
 
 **Authentication:** Bearer token via `Authorization` header or HttpOnly session cookie (`nb_session`). Cookie attributes: HttpOnly, SameSite=Lax, Secure in production. Bearer header takes precedence over cookie.
 
-**CORS:** Dynamic. Dev mode: `Access-Control-Allow-Origin: *`. With auth: only `ALLOWED_ORIGINS` env var origins, with credentials support.
+**CORS:** The same under every identity provider: only `ALLOWED_ORIGINS` env var origins, with credentials support; with it unset, same-origin only.
 
 **MCP endpoint (`/mcp/<wsId>`):** Streamable HTTP, one per workspace; bare `/mcp` is refused. The bundled web UI's app bridge uses it, and external MCP clients (Claude, Claude Code, Cursor) connect to a workspace's URL (Workspace settings → MCP). A token from the authorization server is accepted only when its `aud` is exactly that URL, and membership of the workspace is checked on every request. 100 concurrent sessions (env: `MCP_MAX_SESSIONS`, LRU-evicted at the cap rather than 429'd), 8-hour idle TTL (env: `MCP_SESSION_TTL_SECONDS`). When `authkitDomain` is configured, returns `WWW-Authenticate` header on 401 for automatic OAuth discovery by MCP clients. Full setup guide: [MCP Endpoint](https://docs.nimblebrain.ai/api/mcp-endpoint/) and [Connecting External Clients](https://docs.nimblebrain.ai/guide/mcp-connect/) on docs.nimblebrain.ai.
 
