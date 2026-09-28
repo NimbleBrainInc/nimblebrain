@@ -298,6 +298,27 @@ describe("the host-resources claim", () => {
     }
   });
 
+  it("is absent from the 2025 initialize of a source that registers no handlers", async () => {
+    const legacy = legacyServer();
+    let claimed: { extensions?: Record<string, unknown> } | undefined;
+    const served = serve(async (request) => {
+      const body = await bodyOf(request);
+      if (body?.method === "initialize") {
+        claimed = body.params?.capabilities as typeof claimed;
+      }
+      return legacy(request);
+    });
+    const source = await connect(served.url);
+    try {
+      expect(source.getNegotiatedProtocolVersion()).toBe("2025-11-25");
+      expect(claimed).toBeDefined();
+      expect(claimed?.extensions?.[HOST_RESOURCES_CAPABILITY_KEY]).toBeUndefined();
+    } finally {
+      await source.stop();
+      served.close();
+    }
+  });
+
   it("is absent from every 2026-07-28 request envelope, the probe included", async () => {
     const modern = modernServer({ extensions: { [TASKS_EXTENSION_ID]: {} } });
     const envelopes: Array<{ method: string; extensions: Record<string, unknown> }> = [];

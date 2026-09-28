@@ -45,7 +45,10 @@ are server→client requests, and `2026-07-28` removed that channel, so
 client's capabilities at construction and sends them on both eras, before the
 era is known; the builder constructs the client with the claims that hold on
 every era and adds the 2025-only ones to `initialize`, the one request only
-that era sends.
+that era sends. The claim is also per source: only a source that registers the
+host-resources handlers (one built with a connector context) makes it, so a
+source that would answer the methods with method-not-found never advertises
+them.
 
 **`extensions`, for NimbleBrain-namespaced vendor capabilities** (ADR-0024) —
 never `experimental`. `extensions` is the coordinated mechanism, the keys are
