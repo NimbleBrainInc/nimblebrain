@@ -26,6 +26,7 @@ import { Runtime } from "../../../src/runtime/runtime.ts";
 import type { TaskRequest } from "../../../src/runtime/types.ts";
 import { createEchoModel } from "../../helpers/echo-model.ts";
 import { provisionTestWorkspace } from "../../helpers/test-workspace.ts";
+import { devProvider } from "../../helpers/dev-provider.ts";
 
 const WS = "ws_run_now_tools";
 const ADMIN_ONLY_TOOL = "nb__manage_users";
@@ -81,6 +82,7 @@ describe("Run now gets the scheduled run's tools", () => {
   it("an org admin's manual run gets the scheduled run's tools, admin-only tools closed to both", async () => {
     const { model, offered } = recordingModel();
     const runtime = await Runtime.start({
+      identityProvider: devProvider,
       model: { provider: "custom", adapter: model },
       logging: { disabled: true },
       workDir,

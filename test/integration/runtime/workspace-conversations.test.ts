@@ -23,6 +23,7 @@ import { join } from "node:path";
 import { workspaceConversationsDir } from "../../../src/conversation/paths.ts";
 import { Runtime } from "../../../src/runtime/runtime.ts";
 import { createEchoModel } from "../../helpers/echo-model.ts";
+import { devProvider } from "../../helpers/dev-provider.ts";
 
 const testDir = join(tmpdir(), `nb-ws-conv-${Date.now()}`);
 
@@ -30,10 +31,14 @@ afterAll(() => {
   if (existsSync(testDir)) rmSync(testDir, { recursive: true });
 });
 
-/** The id of the workspace a dev-mode request with no `workspaceId` ran in: the owner's only one. */
+/** The owner's own workspace: their only one, created with them as admin if they have none. */
 async function defaultWorkspaceId(runtime: Runtime, ownerId: string): Promise<string> {
-  const [ws] = await runtime.getWorkspaceStore().getWorkspacesForUser(ownerId);
-  return ws!.id;
+  const store = runtime.getWorkspaceStore();
+  const [ws] = await store.getWorkspacesForUser(ownerId);
+  if (ws) return ws.id;
+  const created = await store.create("Home", undefined, { members: [{ userId: ownerId, role: "admin" }] });
+  await runtime.ensureWorkspaceRegistry(created.id);
+  return created.id;
 }
 
 /** The workspace-owned path for a conversation born in `ownerId`'s default workspace. */
@@ -59,6 +64,7 @@ describe("conversation persistence — workspace layout", () => {
     mkdirSync(workDir, { recursive: true });
 
     const runtime = await Runtime.start({
+      identityProvider: devProvider,
       model: { provider: "custom", adapter: createEchoModel() },
       workDir,
     });
@@ -71,7 +77,7 @@ describe("conversation persistence — workspace layout", () => {
       preferences: {},
     };
 
-    const result = await runtime.chat({ message: "hello", identity });
+    const result = await runtime.chat({ message: "hello", identity, workspaceId: await defaultWorkspaceId(runtime, identity.id) });
     expect(result.conversationId).toMatch(/^conv_/);
 
     // File lives under the default workspace's owner partition.
@@ -90,6 +96,7 @@ describe("conversation persistence — workspace layout", () => {
     mkdirSync(workDir, { recursive: true });
 
     const runtime = await Runtime.start({
+      identityProvider: devProvider,
       model: { provider: "custom", adapter: createEchoModel() },
       workDir,
     });
@@ -102,8 +109,8 @@ describe("conversation persistence — workspace layout", () => {
       preferences: {},
     };
 
-    const r1 = await runtime.chat({ message: "hello 1", identity });
-    const r2 = await runtime.chat({ message: "hello 2", identity });
+    const r1 = await runtime.chat({ message: "hello 1", identity, workspaceId: await defaultWorkspaceId(runtime, identity.id) });
+    const r2 = await runtime.chat({ message: "hello 2", identity, workspaceId: await defaultWorkspaceId(runtime, identity.id) });
 
     expect(existsSync(await defaultWorkspaceConvPath(runtime, workDir, identity.id, r1.conversationId))).toBe(true);
     expect(existsSync(await defaultWorkspaceConvPath(runtime, workDir, identity.id, r2.conversationId))).toBe(true);
@@ -116,6 +123,7 @@ describe("conversation persistence — workspace layout", () => {
     mkdirSync(workDir, { recursive: true });
 
     const runtime = await Runtime.start({
+      identityProvider: devProvider,
       model: { provider: "custom", adapter: createEchoModel() },
       workDir,
     });
@@ -128,7 +136,7 @@ describe("conversation persistence — workspace layout", () => {
       preferences: {},
     };
 
-    const result = await runtime.chat({ message: "hello metadata", identity });
+    const result = await runtime.chat({ message: "hello metadata", identity, workspaceId: await defaultWorkspaceId(runtime, identity.id) });
 
     const convFile = await defaultWorkspaceConvPath(runtime, workDir, identity.id, result.conversationId);
     const content = readFileSync(convFile, "utf-8");
@@ -149,6 +157,7 @@ describe("conversation persistence — workspace layout", () => {
     mkdirSync(workDir, { recursive: true });
 
     const runtime = await Runtime.start({
+      identityProvider: devProvider,
       model: { provider: "custom", adapter: createEchoModel() },
       workDir,
     });
@@ -161,7 +170,7 @@ describe("conversation persistence — workspace layout", () => {
       preferences: {},
     };
 
-    const result = await runtime.chat({ message: "hello userId", identity });
+    const result = await runtime.chat({ message: "hello userId", identity, workspaceId: await defaultWorkspaceId(runtime, identity.id) });
 
     const convFile = await defaultWorkspaceConvPath(runtime, workDir, identity.id, result.conversationId);
     const content = readFileSync(convFile, "utf-8");
@@ -182,6 +191,7 @@ describe("conversation persistence — workspace layout", () => {
     mkdirSync(workDir, { recursive: true });
 
     const runtime = await Runtime.start({
+      identityProvider: devProvider,
       model: { provider: "custom", adapter: createEchoModel() },
       workDir,
     });
@@ -194,7 +204,7 @@ describe("conversation persistence — workspace layout", () => {
       preferences: {},
     };
 
-    const result1 = await runtime.chat({ message: "first message", identity });
+    const result1 = await runtime.chat({ message: "first message", identity, workspaceId: await defaultWorkspaceId(runtime, identity.id) });
 
     // Wait briefly for fire-and-forget title generation to settle.
     await new Promise((resolve) => setTimeout(resolve, 100));
@@ -203,6 +213,7 @@ describe("conversation persistence — workspace layout", () => {
       message: "second message",
       conversationId: result1.conversationId,
       identity,
+      workspaceId: await defaultWorkspaceId(runtime, identity.id),
     });
 
     expect(result2.conversationId).toBe(result1.conversationId);
@@ -216,39 +227,6 @@ describe("conversation persistence — workspace layout", () => {
     const content = readFileSync(convFile, "utf-8");
     const lines = content.split("\n").filter(Boolean);
     expect(lines.length).toBeGreaterThanOrEqual(5);
-
-    await runtime.shutdown();
-  });
-
-  it("dev-mode chat (no identity on request) creates a user-message event with no userId stamp", async () => {
-    const workDir = join(testDir, "no-identity");
-    mkdirSync(workDir, { recursive: true });
-
-    const runtime = await Runtime.start({
-      model: { provider: "custom", adapter: createEchoModel() },
-      workDir,
-    });
-
-    // Dev mode (no instance.json): identity is optional on the request.
-    // Conversation ownership falls back to DEV_IDENTITY (`usr_default`),
-    // but the user-message event only stamps `userId` when the request
-    // carries an explicit identity — the absence is preserved on the
-    // wire as an audit signal that this turn was an anonymous dev call.
-    const result = await runtime.chat({ message: "no identity" });
-
-    // Dev fallback owner is `usr_default`; its conversation lives in that
-    // identity's default workspace.
-    const convFile = await defaultWorkspaceConvPath(runtime, workDir, "usr_default", result.conversationId);
-    const content = readFileSync(convFile, "utf-8");
-    const lines = content.split("\n").filter(Boolean);
-    const userEvent = lines
-      .slice(1)
-      .map((l) => JSON.parse(l))
-      .find((e: Record<string, unknown>) => e.type === "user.message");
-
-    expect(userEvent).toBeDefined();
-    expect(userEvent.type).toBe("user.message");
-    expect(userEvent.userId).toBeUndefined();
 
     await runtime.shutdown();
   });

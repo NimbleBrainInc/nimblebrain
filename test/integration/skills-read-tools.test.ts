@@ -20,6 +20,7 @@ import { runWithRequestContext } from "../../src/runtime/request-context.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { createMockModel } from "../helpers/mock-model.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
 
 const testDir = join(tmpdir(), `nimblebrain-skills-read-${Date.now()}`);
 
@@ -97,6 +98,7 @@ describe("skills read tools — end-to-end", () => {
     }));
 
     const runtime = await Runtime.start({
+      identityProvider: devProvider,
       model: { provider: "custom", adapter: model },
       workDir,
       logging: { disabled: true },
@@ -108,7 +110,7 @@ describe("skills read tools — end-to-end", () => {
     try {
       // Run a turn — this triggers Layer 3 selection and emits skills.loaded /
       // context.assembled into the conversation jsonl.
-      const chat = await runtime.chat({ message: "hi", workspaceId: wsId });
+      const chat = await runtime.chat({ identity: DEV_IDENTITY, message: "hi", workspaceId: wsId });
       const convId = chat.conversationId;
 
       // skills__list — sees the workspace skill (and the Layer 1 vendored guide).

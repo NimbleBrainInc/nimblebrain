@@ -36,6 +36,8 @@ import {
   skillEntryFor,
 } from "../helpers/skills-server.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
+import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 
 const FAILING_NAME = "ai-nimblebrain-failing-mcp";
 const HEALTHY_NAME = "ai-nimblebrain-healthy-mcp";
@@ -142,6 +144,7 @@ async function startSource(name: string, makeServer: () => Server): Promise<McpS
 beforeAll(async () => {
   mkdirSync(testDir, { recursive: true });
   runtime = await Runtime.start({
+    identityProvider: devProvider,
     model: { provider: "custom", adapter: createEchoModel() },
     logging: { disabled: true },
     workDir: testDir,
@@ -171,7 +174,7 @@ describe("degraded skill discovery", () => {
   it("reports a failed enumeration with a machine-readable reason", async () => {
     const warn = spyOn(log, "warn").mockImplementation(() => {});
     try {
-      await runtime.chat({ workspaceId: TEST_WORKSPACE_ID, message: "hello" });
+      await runtime.chat({ identity: DEV_IDENTITY, workspaceId: TEST_WORKSPACE_ID, message: "hello" });
       const calls = degradedCalls(warn);
       const failed = calls.find((f) => f.server === FAILING_NAME);
       expect(failed).toBeDefined();
@@ -187,7 +190,7 @@ describe("degraded skill discovery", () => {
     // leaving the operator one line for an outage that spans hours.
     const warn = spyOn(log, "warn").mockImplementation(() => {});
     try {
-      await runtime.chat({ workspaceId: TEST_WORKSPACE_ID, message: "again" });
+      await runtime.chat({ identity: DEV_IDENTITY, workspaceId: TEST_WORKSPACE_ID, message: "again" });
       expect(degradedCalls(warn).some((f) => f.server === FAILING_NAME)).toBe(true);
     } finally {
       warn.mockRestore();
@@ -197,7 +200,7 @@ describe("degraded skill discovery", () => {
   it("says nothing about a server that enumerates cleanly", async () => {
     const warn = spyOn(log, "warn").mockImplementation(() => {});
     try {
-      await runtime.chat({ workspaceId: TEST_WORKSPACE_ID, message: "third" });
+      await runtime.chat({ identity: DEV_IDENTITY, workspaceId: TEST_WORKSPACE_ID, message: "third" });
       expect(degradedCalls(warn).some((f) => f.server === HEALTHY_NAME)).toBe(false);
     } finally {
       warn.mockRestore();
@@ -212,11 +215,11 @@ describe("degraded skill discovery", () => {
     // the TTL. The second turn proves the short set was not cached.
     const warn = spyOn(log, "warn").mockImplementation(() => {});
     try {
-      await runtime.chat({ workspaceId: TEST_WORKSPACE_ID, message: "capped" });
+      await runtime.chat({ identity: DEV_IDENTITY, workspaceId: TEST_WORKSPACE_ID, message: "capped" });
       const first = degradedCalls(warn).find((f) => f.server === TRUNCATED_NAME);
       expect(first?.reason).toBe("enumeration_truncated");
       warn.mockClear();
-      await runtime.chat({ workspaceId: TEST_WORKSPACE_ID, message: "capped again" });
+      await runtime.chat({ identity: DEV_IDENTITY, workspaceId: TEST_WORKSPACE_ID, message: "capped again" });
       const second = degradedCalls(warn).find((f) => f.server === TRUNCATED_NAME);
       expect(second?.reason).toBe("enumeration_truncated");
     } finally {
@@ -230,12 +233,12 @@ describe("degraded skill discovery", () => {
     // read and says why the skill did not compose.
     const warn = spyOn(log, "warn").mockImplementation(() => {});
     try {
-      await runtime.chat({ workspaceId: TEST_WORKSPACE_ID, message: "unreadable" });
+      await runtime.chat({ identity: DEV_IDENTITY, workspaceId: TEST_WORKSPACE_ID, message: "unreadable" });
       const first = degradedCalls(warn).find((f) => f.server === UNREADABLE_NAME);
       expect(first?.reason).toBe("skill_unreadable");
       expect(first?.recovered).toBe(0);
       warn.mockClear();
-      await runtime.chat({ workspaceId: TEST_WORKSPACE_ID, message: "unreadable again" });
+      await runtime.chat({ identity: DEV_IDENTITY, workspaceId: TEST_WORKSPACE_ID, message: "unreadable again" });
       expect(degradedCalls(warn).some((f) => f.server === UNREADABLE_NAME)).toBe(true);
     } finally {
       warn.mockRestore();
@@ -249,7 +252,7 @@ describe("degraded skill discovery", () => {
     // deliberately degraded fixtures may appear.
     const warn = spyOn(log, "warn").mockImplementation(() => {});
     try {
-      await runtime.chat({ workspaceId: TEST_WORKSPACE_ID, message: "fifth" });
+      await runtime.chat({ identity: DEV_IDENTITY, workspaceId: TEST_WORKSPACE_ID, message: "fifth" });
       const servers = new Set(degradedCalls(warn).map((f) => f.server as string));
       expect(servers.size).toBeGreaterThan(0);
       for (const server of servers) {
@@ -266,6 +269,7 @@ describe("degraded skill discovery", () => {
     // discovery next to the degraded fixtures, and its body loads. (An empty
     // pool or a dropped body fails this — asserting only on types could not.)
     const { response } = await runtime.chat({
+      identity: DEV_IDENTITY,
       workspaceId: TEST_WORKSPACE_ID,
       message: "fourth",
     });
@@ -313,12 +317,12 @@ describe("degraded skill discovery", () => {
       const seeded = lifecycle.getInstances().find((i) => i.serverName === GHOST_NAME);
       expect(seeded?.state).toBe("not_authenticated");
 
-      await runtime.chat({ workspaceId: TEST_WORKSPACE_ID, message: "ghost quiet" });
+      await runtime.chat({ identity: DEV_IDENTITY, workspaceId: TEST_WORKSPACE_ID, message: "ghost quiet" });
       expect(degradedCalls(warn).some((f) => f.server === GHOST_NAME)).toBe(false);
 
       if (seeded) seeded.state = "running";
       warn.mockClear();
-      await runtime.chat({ workspaceId: TEST_WORKSPACE_ID, message: "ghost loud" });
+      await runtime.chat({ identity: DEV_IDENTITY, workspaceId: TEST_WORKSPACE_ID, message: "ghost loud" });
       const ghost = degradedCalls(warn).find((f) => f.server === GHOST_NAME);
       expect(ghost?.reason).toBe("source_unavailable");
       expect(ghost?.recovered).toBe(0);

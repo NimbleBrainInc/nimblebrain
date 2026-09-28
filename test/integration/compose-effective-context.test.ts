@@ -25,6 +25,7 @@ import { extractText } from "../../src/engine/content-helpers.ts";
 import type { LanguageModelV4 } from "@ai-sdk/provider";
 import { createMockModel } from "../helpers/mock-model.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
 
 const testDir = join(tmpdir(), `nimblebrain-compose-${Date.now()}`);
 
@@ -162,6 +163,7 @@ describe("compose_effective_context — live mode", () => {
   it("returns traced layers with paths for every operator-authored skill", async () => {
     const workDir = join(testDir, "live-basic");
     const runtime = await Runtime.start({
+      identityProvider: devProvider,
       model: { provider: "custom", adapter: makeModel() },
       workDir,
       logging: { disabled: true },
@@ -219,6 +221,7 @@ describe("compose_effective_context — live mode", () => {
   it("returns the workspace_context layer with the workspace id", async () => {
     const workDir = join(testDir, "live-ws");
     const runtime = await Runtime.start({
+      identityProvider: devProvider,
       model: { provider: "custom", adapter: makeModel() },
       workDir,
       logging: { disabled: true },
@@ -238,6 +241,7 @@ describe("compose_effective_context — live mode", () => {
   it("errors when called without a conversation_id and no current conversation in scope", async () => {
     const workDir = join(testDir, "no-conv");
     const runtime = await Runtime.start({
+      identityProvider: devProvider,
       model: { provider: "custom", adapter: makeModel() },
       workDir,
       logging: { disabled: true },
@@ -258,6 +262,7 @@ describe("compose_effective_context — historical mode", () => {
   it("returns layer3 skills for a recorded run with hash status 'match' when the body is unchanged", async () => {
     const workDir = join(testDir, "historical-match");
     const runtime = await Runtime.start({
+      identityProvider: devProvider,
       model: { provider: "custom", adapter: makeModel() },
       workDir,
       logging: { disabled: true },
@@ -280,6 +285,7 @@ describe("compose_effective_context — historical mode", () => {
 
     // Run a chat to record skills.loaded with the contentHash.
     const result = await runtime.chat({
+      identity: DEV_IDENTITY,
       workspaceId: TEST_WORKSPACE_ID,
       message: "test message",
     });
@@ -323,6 +329,7 @@ describe("compose_effective_context — historical mode", () => {
     // the surrounding (trusted) layer text. Mirrors the live-path guarantee.
     const workDir = join(testDir, "historical-escape");
     const runtime = await Runtime.start({
+      identityProvider: devProvider,
       model: { provider: "custom", adapter: makeModel() },
       workDir,
       logging: { disabled: true },
@@ -340,6 +347,7 @@ describe("compose_effective_context — historical mode", () => {
     await runtime.reloadSkills();
 
     const result = await runtime.chat({
+      identity: DEV_IDENTITY,
       workspaceId: TEST_WORKSPACE_ID,
       message: "test message",
     });
@@ -362,6 +370,7 @@ describe("compose_effective_context — historical mode", () => {
   it("flags 'drift' when the skill body has been edited since the run", async () => {
     const workDir = join(testDir, "historical-drift");
     const runtime = await Runtime.start({
+      identityProvider: devProvider,
       model: { provider: "custom", adapter: makeModel() },
       workDir,
       logging: { disabled: true },
@@ -379,6 +388,7 @@ describe("compose_effective_context — historical mode", () => {
     await runtime.reloadSkills();
 
     const result = await runtime.chat({
+      identity: DEV_IDENTITY,
       workspaceId: TEST_WORKSPACE_ID,
       message: "test message",
     });
@@ -418,6 +428,7 @@ describe("compose_effective_context — historical mode", () => {
     // body verbatim with hashStatus="recovered".
     const workDir = join(testDir, "historical-recovered");
     const runtime = await Runtime.start({
+      identityProvider: devProvider,
       model: { provider: "custom", adapter: makeModel() },
       workDir,
       logging: { disabled: true },
@@ -435,6 +446,7 @@ describe("compose_effective_context — historical mode", () => {
 
     // Run a chat — records `skills.loaded` with the original body's hash.
     const result = await runtime.chat({
+      identity: DEV_IDENTITY,
       workspaceId: TEST_WORKSPACE_ID,
       message: "test",
     });
@@ -478,6 +490,7 @@ describe("compose_effective_context — conversation_id resolution", () => {
   it("falls back to RequestContext.conversationId when input omits the id", async () => {
     const workDir = join(testDir, "ctx-fallback");
     const runtime = await Runtime.start({
+      identityProvider: devProvider,
       model: { provider: "custom", adapter: makeModel() },
       workDir,
       logging: { disabled: true },
@@ -495,6 +508,7 @@ describe("compose_effective_context — conversation_id resolution", () => {
   it("explicit conversation_id wins over RequestContext", async () => {
     const workDir = join(testDir, "explicit-wins");
     const runtime = await Runtime.start({
+      identityProvider: devProvider,
       model: { provider: "custom", adapter: makeModel() },
       workDir,
       logging: { disabled: true },

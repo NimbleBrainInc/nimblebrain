@@ -24,6 +24,9 @@ import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
+import { devWorkspace } from "../helpers/dev-provider.ts";
+import { asDevUser } from "../helpers/dev-provider.ts";
 
 const SHARED_SKILL_NAME = "shared-voice-rules";
 const SHARED_SKILL_BODY =
@@ -37,6 +40,7 @@ beforeAll(async () => {
   mkdirSync(testDir, { recursive: true });
 
   runtime = await Runtime.start({
+    identityProvider: devProvider,
     model: { provider: "custom", adapter: createEchoModel() },
     logging: { disabled: true },
     workDir: testDir,
@@ -66,6 +70,7 @@ afterAll(async () => {
 describe("Layer 3 — workspace-tier `loading_strategy: always` skills", () => {
   it("loads the focused workspace's `always` skill into `skills.loaded`", async () => {
     const chat = await runtime.chat({
+      identity: DEV_IDENTITY,
       workspaceId: TEST_WORKSPACE_ID,
       message: "hello",
     });
@@ -107,7 +112,7 @@ describe("Layer 3 — workspace-tier `loading_strategy: always` skills", () => {
     // the status path read a boot-time cache instead of the per-request Layer-3
     // set. `describeRequestSkills` now reports through the SAME path `chat`
     // composes with, so the two surfaces can no longer disagree.
-    const { layer3 } = await runtime.describeRequestSkills(TEST_WORKSPACE_ID);
+    const { layer3 } = await asDevUser(() => runtime.describeRequestSkills(TEST_WORKSPACE_ID));
     const entry = layer3.find((s) => s.skill.manifest.name === SHARED_SKILL_NAME);
     expect(entry).toBeDefined();
     expect(entry?.skill.manifest.scope).toBe("workspace");
@@ -127,21 +132,21 @@ describe("Layer 3 — workspace-tier `loading_strategy: always` skills", () => {
       `---\nname: ${ctxName}\ndescription: Team voice\nmetadata:\n  nimblebrain:\n    loading-strategy: always\n    priority: 30\n---\n\nMatch the user's voice.\n`,
     );
 
-    const { context, layer3 } = await runtime.describeRequestSkills(TEST_WORKSPACE_ID);
+    const { context, layer3 } = await asDevUser(() => runtime.describeRequestSkills(TEST_WORKSPACE_ID));
     expect(context.some((s) => s.manifest.name === ctxName)).toBe(true);
     expect(context.find((s) => s.manifest.name === ctxName)?.manifest.scope).toBe("workspace");
     expect(layer3.some((s) => s.skill.manifest.name === ctxName)).toBe(false);
   });
 
   it("does NOT load the focused workspace's skill when chatting from home (no focus)", async () => {
-    // Home control panel = no `workspaceId` on the request (dev mode). The turn
-    // runs in the caller's default workspace, and Layer 3 workspace-tier skills
-    // come from there, NOT bleed in from another workspace the user happens to
-    // belong to. This pins the one-workspace semantic so a future refactor
+    // A turn in the caller's own (default) workspace takes Layer 3
+    // workspace-tier skills from there, NOT from another workspace the user
+    // happens to belong to. This pins the one-workspace semantic so a future refactor
     // toward "load across every accessible workspace" becomes a deliberate
     // decision, not an accidental one.
     const chat = await runtime.chat({
-      // No workspaceId — home mode.
+      identity: DEV_IDENTITY,
+      workspaceId: await devWorkspace(runtime),
       message: "hello from home",
     });
 

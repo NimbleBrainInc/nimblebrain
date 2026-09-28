@@ -15,6 +15,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { handleBootstrap } from "../../src/api/handlers.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
 
 interface BootstrapResponse {
   user: { id: string };
@@ -59,6 +60,7 @@ beforeEach(async () => {
   workDir = join(tmpdir(), `nb-bootstrap-test-${Date.now()}-${Math.random().toString(16).slice(2)}`);
   mkdirSync(workDir, { recursive: true });
   runtime = await Runtime.start({
+    identityProvider: devProvider,
     model: { provider: "custom", adapter: createEchoModel() },
     logging: { disabled: true },
     workDir,

@@ -2,7 +2,7 @@
  * Integration tests: Identity Wiring Smoke Test (Task 007)
  *
  * Verifies the complete wired system works end-to-end:
- * - Runtime.start() in dev mode exposes functional identity stores
+ * - Runtime.start() with the dev provider exposes functional identity stores
  * - Management tools are registered in the tool registry
  * - Chat with workspace context creates conversations in the right place
  * - Chat without a workspace (dev mode) runs in the caller's default workspace
@@ -16,6 +16,8 @@ import { workspaceConversationsDir } from "../../src/conversation/paths.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
+import { DevIdentityProvider } from "../../src/identity/providers/dev.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -37,13 +39,14 @@ afterAll(() => {
 });
 
 // ---------------------------------------------------------------------------
-// 1. Runtime.start() in dev mode
+// 1. Runtime.start() under the dev provider
 // ---------------------------------------------------------------------------
 
-describe("Runtime.start() dev mode identity wiring", () => {
+describe("Runtime.start() identity wiring under the dev provider", () => {
   it("exposes functional UserStore after startup", async () => {
     const workDir = makeTempDir("user-store");
     const runtime = await Runtime.start({
+      identityProvider: devProvider,
       workDir,
       model: { provider: "custom", adapter: createEchoModel() },
     });
@@ -68,6 +71,7 @@ describe("Runtime.start() dev mode identity wiring", () => {
   it("exposes functional WorkspaceStore after startup", async () => {
     const workDir = makeTempDir("ws-store");
     const runtime = await Runtime.start({
+      identityProvider: devProvider,
       workDir,
       model: { provider: "custom", adapter: createEchoModel() },
     });
@@ -87,14 +91,15 @@ describe("Runtime.start() dev mode identity wiring", () => {
     await runtime.shutdown();
   });
 
-  it("getIdentityProvider() returns null in dev mode (no instance.json)", async () => {
+  it("getIdentityProvider() returns the provider passed in, with no instance config", async () => {
     const workDir = makeTempDir("no-auth");
     const runtime = await Runtime.start({
+      identityProvider: devProvider,
       workDir,
       model: { provider: "custom", adapter: createEchoModel() },
     });
 
-    expect(runtime.getIdentityProvider()).toBeNull();
+    expect(runtime.getIdentityProvider()).toBeInstanceOf(DevIdentityProvider);
     expect(runtime.getInstanceConfig()).toBeNull();
 
     await runtime.shutdown();
@@ -109,6 +114,7 @@ describe("Management tools in registry", () => {
   it("tool registry contains workspace and conversation management tools", async () => {
     const workDir = makeTempDir("mgmt-tools");
     const runtime = await Runtime.start({
+      identityProvider: devProvider,
       workDir,
       model: { provider: "custom", adapter: createEchoModel() },
     });
@@ -128,81 +134,34 @@ describe("Management tools in registry", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 3. Chat without a workspace (dev mode)
+// 3. A chat that names no workspace
 // ---------------------------------------------------------------------------
 //
-// A chat that names no workspace runs, in dev mode, in the caller's default
-// workspace — provisioned for them if they belong to none. The conversation file
-// lives in that workspace's owner partition, and its metadata records the
-// workspace.
+// The runtime never chooses a workspace for a request, under any identity
+// provider: a chat naming none is refused, and nothing is provisioned for it.
 
-describe("Chat without a workspace (dev mode)", () => {
-  it("conversation lives in the provisioned workspace with ownerId; metadata records that workspace", async () => {
-    const workDir = makeTempDir("identity-bound-chat");
+describe("Chat without a workspace", () => {
+  it("is refused, and provisions no workspace for the caller", async () => {
+    const workDir = makeTempDir("no-workspace-chat");
     const runtime = await Runtime.start({
+      identityProvider: devProvider,
       workDir,
       model: { provider: "custom", adapter: createEchoModel() },
     });
 
-    // No `workspaceId` — dev mode stands in the caller's default workspace.
-    const result = await runtime.chat({
-      message: "hello from identity-bound chat",
-      identity: {
-        id: "usr_alice",
-        email: "alice@example.com",
-        displayName: "Alice",
-        orgRole: "member",
-        preferences: {},
-      },
-    });
-
-    expect(result.conversationId).toMatch(/^conv_/);
-
-    // One workspace was provisioned for Alice; the conversation lives in its
-    // owner partition and its metadata names it.
-    const aliceWorkspaces = await runtime.getWorkspaceStore().getWorkspacesForUser("usr_alice");
-    expect(aliceWorkspaces).toHaveLength(1);
-    const aliceWsId = aliceWorkspaces[0]!.id;
-    const convFile = join(
-      workspaceConversationsDir(workDir, aliceWsId, "usr_alice"),
-      `${result.conversationId}.jsonl`,
-    );
-    expect(existsSync(convFile)).toBe(true);
-
-    const content = readFileSync(convFile, "utf-8");
-    const metadataLine = JSON.parse(content.split("\n")[0]!);
-    expect(metadataLine.ownerId).toBe("usr_alice");
-    expect(metadataLine.workspaceId).toBe(aliceWsId);
-    expect(aliceWsId).toMatch(/^ws_[0-9a-f]{16}$/);
-
-    // Nothing was written at the old flat top-level path.
-    expect(existsSync(join(workDir, "conversations", `${result.conversationId}.jsonl`))).toBe(
-      false,
-    );
-
-    await runtime.shutdown();
-  });
-
-  it("chat in dev mode (no identity, no workspaceId) succeeds via DEV_IDENTITY fallback", async () => {
-    const workDir = makeTempDir("dev-mode-chat");
-    const runtime = await Runtime.start({
-      workDir,
-      model: { provider: "custom", adapter: createEchoModel() },
-    });
-
-    const result = await runtime.chat({ message: "ping" });
-
-    expect(result.response).toBeTruthy();
-    expect(result.conversationId).toMatch(/^conv_/);
-
-    // Identity-bound under DEV_IDENTITY (`usr_default`); the conversation
-    // lives in the workspace provisioned for that identity.
-    const [devWs] = await runtime.getWorkspaceStore().getWorkspacesForUser("usr_default");
-    const convFile = join(
-      workspaceConversationsDir(workDir, devWs!.id, "usr_default"),
-      `${result.conversationId}.jsonl`,
-    );
-    expect(existsSync(convFile)).toBe(true);
+    await expect(
+      runtime.chat({
+        message: "hello with no workspace",
+        identity: {
+          id: "usr_alice",
+          email: "alice@example.com",
+          displayName: "Alice",
+          orgRole: "member",
+          preferences: {},
+        },
+      }),
+    ).rejects.toThrow("request names no workspace");
+    expect(await runtime.getWorkspaceStore().getWorkspacesForUser("usr_alice")).toHaveLength(0);
 
     await runtime.shutdown();
   });

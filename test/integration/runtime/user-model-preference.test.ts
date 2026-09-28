@@ -9,6 +9,8 @@ import { Runtime } from "../../../src/runtime/runtime.ts";
 import { createEchoModel } from "../../helpers/echo-model.ts";
 import { createCoreToolDefs } from "../../../src/tools/core-source.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../../helpers/test-workspace.ts";
+import { devProvider } from "../../helpers/dev-provider.ts";
+import { DEV_IDENTITY } from "../../../src/identity/providers/dev.ts";
 
 const testDir = join(tmpdir(), `nimblebrain-user-model-pref-${Date.now()}`);
 
@@ -23,6 +25,7 @@ async function start(name: string, allowlist?: string[]) {
   const workDir = join(testDir, name);
   mkdirSync(workDir, { recursive: true });
   const runtime = await Runtime.start({
+    identityProvider: devProvider,
     model: { provider: "custom", adapter: createEchoModel() },
     models: { default: CONFIGURED_DEFAULT, fast: CONFIGURED_DEFAULT },
     ...(allowlist ? { providers: { anthropic: { apiKey: "k", models: allowlist } } } : {}),
@@ -202,7 +205,7 @@ describe("an empty model id is not a choice", () => {
     try {
       for (const model of ["", "   "]) {
         const err = await runtime
-          .chat({ message: "hi", workspaceId: TEST_WORKSPACE_ID, model })
+          .chat({ identity: DEV_IDENTITY, message: "hi", workspaceId: TEST_WORKSPACE_ID, model })
           .then(
             () => null,
             (e) => e,
@@ -227,6 +230,7 @@ describe("a caller's own choice never becomes everyone's default", () => {
     const workDir = join(testDir, "no-leak");
     mkdirSync(workDir, { recursive: true });
     const runtime = await Runtime.start({
+      identityProvider: devProvider,
       model: { provider: "custom", adapter: createEchoModel() },
       workDir,
     });
@@ -261,6 +265,7 @@ describe("the settings view is the configured one", () => {
     const workDir = join(testDir, "settings-view");
     mkdirSync(workDir, { recursive: true });
     const runtime = await Runtime.start({
+      identityProvider: devProvider,
       model: { provider: "custom", adapter: createEchoModel() },
       models: { default: CONFIGURED_DEFAULT, fast: CONFIGURED_DEFAULT },
       workDir,

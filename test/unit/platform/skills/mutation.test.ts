@@ -42,9 +42,17 @@ interface FakeIdentity {
   preferences: { timezone: string; locale: string; theme: string };
 }
 
+/** The dev user, as the `dev` provider verifies every request: org owner. */
+const DEV_USER: FakeIdentity = {
+  id: "usr_default",
+  email: "dev@localhost",
+  displayName: "Developer",
+  orgRole: "owner",
+  preferences: { timezone: "UTC", locale: "en-US", theme: "system" },
+};
+
 class FakeRuntime {
-  identity: FakeIdentity | null = null;
-  hasIdentityProvider = false;
+  identity: FakeIdentity | null = DEV_USER;
   wsId: string | null = null;
   workspaces = new Map<
     string,
@@ -57,6 +65,8 @@ class FakeRuntime {
     const convDir = join(workDir, "conversations");
     mkdirSync(convDir, { recursive: true });
     this._store = new EventSourcedConversationStore({ dir: convDir });
+    // The dev user administers the workspace these tests write to.
+    this.setMember("ws_demo", DEV_USER.id, "admin");
   }
 
   getWorkDir(): string {
@@ -64,9 +74,6 @@ class FakeRuntime {
   }
   getCurrentIdentity(): FakeIdentity | null {
     return this.identity;
-  }
-  getIdentityProvider(): object | null {
-    return this.hasIdentityProvider ? ({} as object) : null;
   }
   requireWorkspaceId(): string {
     if (!this.wsId) throw new Error("no workspace");
@@ -149,7 +156,7 @@ function readManifestField(path: string, key: string): string | undefined {
 // ── create ───────────────────────────────────────────────────────────────
 
 describe("skills__create", () => {
-  test("writes a platform-scope skill in dev mode and emits skill.created", async () => {
+  test("the dev user, an org owner, writes an org-scope skill and emits skill.created", async () => {
     const src = await buildSource();
     const client = src.getClient()!;
     const result = await client.callTool({
@@ -269,7 +276,6 @@ describe("skills__create", () => {
   });
 
   test("non-admin denied for platform scope when identity provider is configured", async () => {
-    runtime.hasIdentityProvider = true;
     runtime.identity = {
       id: "u1",
       email: "u@ex.com",
@@ -323,7 +329,6 @@ describe("skills — workspace-scope write gate", () => {
   const WS = "ws_gate";
 
   function setIdentity(id: string, orgRole: "owner" | "admin" | "member"): void {
-    runtime.hasIdentityProvider = true;
     runtime.wsId = WS;
     seedWorkspaceRoot(workDir, WS);
     runtime.identity = {
@@ -828,7 +833,6 @@ describe("skills__update", () => {
   // hallucination loop trying to fix its role instead of refreshing its
   // path. Existence-first surfaces the actual cause.
   test("stale org-scope id (file moved away) returns 'not found', not 'permission denied'", async () => {
-    runtime.hasIdentityProvider = true;
     runtime.identity = {
       id: "u_member",
       email: "m@ex.com",
@@ -852,7 +856,6 @@ describe("skills__update", () => {
   });
 
   test("permission-denied error carries scope + role causation", async () => {
-    runtime.hasIdentityProvider = true;
     runtime.identity = {
       id: "u_member",
       email: "m@ex.com",
@@ -908,7 +911,6 @@ describe("skills__update", () => {
 // permission denial on extant files but not the stale-id case).
 describe("skills__read — stale-id regression", () => {
   test("stale org-scope id (file moved away) returns 'not found', not 'permission denied'", async () => {
-    runtime.hasIdentityProvider = true;
     runtime.identity = {
       id: "u_member",
       email: "m@ex.com",
@@ -1228,7 +1230,6 @@ describe("durable status is set_status only", () => {
 
 describe("cross-workspace access — regression", () => {
   function configureCrossWorkspaceFixture() {
-    runtime.hasIdentityProvider = true;
     runtime.identity = {
       id: "u_alice",
       email: "alice@ex.com",
@@ -1318,7 +1319,6 @@ describe("cross-workspace access — regression", () => {
   });
 
   test("workspace member but not admin: read allowed, write denied", async () => {
-    runtime.hasIdentityProvider = true;
     runtime.identity = {
       id: "u_bob",
       email: "bob@ex.com",
@@ -1363,7 +1363,6 @@ describe("cross-workspace access — regression", () => {
   });
 
   test("user-scope skills: another user's path is permission_denied", async () => {
-    runtime.hasIdentityProvider = true;
     runtime.identity = {
       id: "u_alice",
       email: "alice@ex.com",

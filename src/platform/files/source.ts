@@ -464,9 +464,8 @@ export function createFilesSource(runtime: Runtime, eventSink: EventSink): McpSo
   function getStore(): FileStore {
     // Resolve the owner through the one shared rule (`resolveRequestUserId`) —
     // the same path automations' source, the REST file handlers, and chat
-    // rehydration use, so "who am I" never drifts between sources. Fail-closed
-    // in production (throws when an identity provider is configured but the
-    // request carries no identity); DEV_IDENTITY only in dev.
+    // rehydration use, so "who am I" never drifts between sources. Fail-closed:
+    // a request with no identity throws.
     const ownerId = runtime.resolveRequestUserId(runtime.getCurrentIdentity() ?? undefined);
     // Files are workspace-owned: the workspace comes from the request context
     // (set on both doors). Deny when none is in scope.

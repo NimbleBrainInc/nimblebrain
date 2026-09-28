@@ -12,6 +12,7 @@ import { join } from "node:path";
 import { workspaceConversationsDir } from "../../../src/conversation/paths.ts";
 import { Runtime } from "../../../src/runtime/runtime.ts";
 import { createEchoModel } from "../../helpers/echo-model.ts";
+import { devProvider } from "../../helpers/dev-provider.ts";
 
 const ALICE = { id: "usr_alice", email: "alice@example.com" };
 const workDir = join(tmpdir(), `nb-conv-cache-${Date.now()}`);
@@ -23,6 +24,7 @@ let convId: string;
 beforeAll(async () => {
   mkdirSync(workDir, { recursive: true });
   runtime = await Runtime.start({
+    identityProvider: devProvider,
     model: { provider: "custom", adapter: createEchoModel() },
     logging: { disabled: true },
     workDir,

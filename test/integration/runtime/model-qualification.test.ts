@@ -6,6 +6,8 @@ import type { EngineEvent, EventSink } from "../../../src/engine/types.ts";
 import { Runtime } from "../../../src/runtime/runtime.ts";
 import { createEchoModel } from "../../helpers/echo-model.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../../helpers/test-workspace.ts";
+import { devProvider } from "../../helpers/dev-provider.ts";
+import { DEV_IDENTITY } from "../../../src/identity/providers/dev.ts";
 
 const testDir = join(tmpdir(), `nimblebrain-model-qualification-${Date.now()}`);
 
@@ -29,6 +31,7 @@ describe("model qualification at runtime boundary", () => {
     mkdirSync(workDir, { recursive: true });
 
     const runtime = await Runtime.start({
+      identityProvider: devProvider,
       model: { provider: "custom", adapter: createEchoModel() },
       workDir,
     });
@@ -39,6 +42,7 @@ describe("model qualification at runtime boundary", () => {
 
     await runtime.chat(
       {
+        identity: DEV_IDENTITY,
         message: "hello",
         workspaceId: TEST_WORKSPACE_ID,
         // Bare id, as it would be on disk for a legacy tenant.
@@ -63,6 +67,7 @@ describe("model qualification at runtime boundary", () => {
     mkdirSync(workDir, { recursive: true });
 
     const runtime = await Runtime.start({
+      identityProvider: devProvider,
       model: { provider: "custom", adapter: createEchoModel() },
       workDir,
     });
@@ -73,6 +78,7 @@ describe("model qualification at runtime boundary", () => {
 
     await runtime.chat(
       {
+        identity: DEV_IDENTITY,
         message: "hello",
         workspaceId: TEST_WORKSPACE_ID,
         model: "google:gemini-3.1-pro-preview",
@@ -95,6 +101,7 @@ describe("model qualification at runtime boundary", () => {
     mkdirSync(workDir, { recursive: true });
 
     const runtime = await Runtime.start({
+      identityProvider: devProvider,
       model: { provider: "custom", adapter: createEchoModel() },
       workDir,
       // Stored config simulates the legacy state: bare ids saved by an
@@ -123,6 +130,7 @@ describe("model qualification at runtime boundary", () => {
     mkdirSync(workDir, { recursive: true });
 
     const runtime = await Runtime.start({
+      identityProvider: devProvider,
       model: { provider: "custom", adapter: createEchoModel() },
       workDir,
       models: {
@@ -138,7 +146,7 @@ describe("model qualification at runtime boundary", () => {
         const sink: EventSink = { emit: (e) => events.push(e) };
 
         await runtime.chat(
-          { message: "hello", workspaceId: TEST_WORKSPACE_ID, model: spelling },
+          { identity: DEV_IDENTITY, message: "hello", workspaceId: TEST_WORKSPACE_ID, model: spelling },
           sink,
         );
 

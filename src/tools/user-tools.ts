@@ -11,7 +11,7 @@ export interface ManageUsersContext {
   /** Returns the requesting user's identity, or null if unauthenticated. */
   getIdentity: () => UserIdentity | null;
   userStore: UserStore;
-  provider: IdentityProvider | null;
+  provider: IdentityProvider;
 }
 
 // ── Permission check ──────────────────────────────────────────────
@@ -169,45 +169,22 @@ async function handleCreate(
   }
 
   try {
-    if (ctx.provider) {
-      const result: CreateUserResult = await ctx.provider.createUser({
-        email,
-        displayName,
-        orgRole: orgRole as "owner" | "admin" | "member",
-      });
-      return {
-        content: textContent(`Created user ${result.user.email}.`),
-        structuredContent: {
-          user: {
-            id: result.user.id,
-            email: result.user.email,
-            displayName: result.user.displayName,
-            orgRole: result.user.orgRole,
-            createdAt: result.user.createdAt,
-          },
-        },
-        isError: false,
-      };
-    }
-
-    // Fallback: use UserStore directly (no API key returned)
-    const user = await ctx.userStore.create({
+    const result: CreateUserResult = await ctx.provider.createUser({
       email,
       displayName,
       orgRole: orgRole as "owner" | "admin" | "member",
     });
-    const userData = {
-      user: {
-        id: user.id,
-        email: user.email,
-        displayName: user.displayName,
-        orgRole: user.orgRole,
-        createdAt: user.createdAt,
-      },
-    };
     return {
-      content: textContent(`Created user ${user.email}.`),
-      structuredContent: userData,
+      content: textContent(`Created user ${result.user.email}.`),
+      structuredContent: {
+        user: {
+          id: result.user.id,
+          email: result.user.email,
+          displayName: result.user.displayName,
+          orgRole: result.user.orgRole,
+          createdAt: result.user.createdAt,
+        },
+      },
       isError: false,
     };
   } catch (err) {
@@ -344,7 +321,7 @@ async function handleDelete(
     }
 
     // Drop any cached identity so the access revocation takes effect immediately.
-    ctx.provider?.invalidateUser?.(userId);
+    ctx.provider.invalidateUser?.(userId);
 
     return {
       content: textContent(
@@ -376,7 +353,7 @@ async function handleRestore(
       return userNotFoundResult(userId);
     }
 
-    ctx.provider?.invalidateUser?.(userId);
+    ctx.provider.invalidateUser?.(userId);
 
     return {
       content: textContent(`Restored user ${userId}. They can sign in again.`),

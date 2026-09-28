@@ -26,6 +26,7 @@ import { Runtime } from "../../src/runtime/runtime.ts";
 import { startWorkspaceConnectors } from "../../src/runtime/workspace-runtime.ts";
 import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
 
 const UNREACHABLE = "http://127.0.0.1:1/mcp";
 
@@ -105,6 +106,7 @@ describe("startWorkspaceConnectors — unreachable URL connector at boot", () =>
     await store.update(ws.id, { connectors: [unreachableConnector("unreachable")] });
 
     const runtime = await Runtime.start({
+      identityProvider: devProvider,
       model: { provider: "custom", adapter: createEchoModel() },
       logging: { disabled: true },
       allowInsecureRemotes: true,
@@ -156,6 +158,7 @@ describe("startWorkspaceConnectors — unreachable URL connector at boot", () =>
     let runtime: Runtime;
     try {
       runtime = await Runtime.start({
+        identityProvider: devProvider,
         model: { provider: "custom", adapter: createEchoModel() },
         logging: { disabled: true },
         allowInsecureRemotes: true,

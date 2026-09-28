@@ -9,6 +9,8 @@ import { createEchoModel } from "../helpers/echo-model.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
 import type { ToolSchema } from "../../src/engine/types.ts";
 import type { Skill } from "../../src/skills/types.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
+import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 
 const testDir = join(tmpdir(), `nimblebrain-chat-ext-${Date.now()}`);
 
@@ -157,6 +159,7 @@ describe("ChatRequest.metadata — conversation persistence", () => {
   it("metadata is persisted in conversation object", async () => {
     const workDir = join(testDir, `meta-${Date.now()}`);
     const runtime = await Runtime.start({
+      identityProvider: devProvider,
       model: { provider: "custom", adapter: createEchoModel() },
       workDir,
     });
@@ -165,6 +168,7 @@ describe("ChatRequest.metadata — conversation persistence", () => {
       await provisionTestWorkspace(runtime);
 
       const result = await runtime.chat({
+        identity: DEV_IDENTITY,
         message: "hello",
         workspaceId: TEST_WORKSPACE_ID,
         metadata: { source: "automation", id: "test-123" },
@@ -191,6 +195,7 @@ describe("ChatRequest.metadata — conversation persistence", () => {
   it("chat without metadata — no metadata field in conversation", async () => {
     const workDir = join(testDir, `nometa-${Date.now()}`);
     const runtime = await Runtime.start({
+      identityProvider: devProvider,
       model: { provider: "custom", adapter: createEchoModel() },
       workDir,
     });
@@ -199,6 +204,7 @@ describe("ChatRequest.metadata — conversation persistence", () => {
       await provisionTestWorkspace(runtime);
 
       const result = await runtime.chat({
+        identity: DEV_IDENTITY,
         message: "hello",
         workspaceId: TEST_WORKSPACE_ID,
       });
@@ -213,6 +219,7 @@ describe("ChatRequest.metadata — conversation persistence", () => {
   it("metadata is only set on new conversations, not overwritten on existing", async () => {
     const workDir = join(testDir, `metakeep-${Date.now()}`);
     const runtime = await Runtime.start({
+      identityProvider: devProvider,
       model: { provider: "custom", adapter: createEchoModel() },
       workDir,
     });
@@ -222,6 +229,7 @@ describe("ChatRequest.metadata — conversation persistence", () => {
 
       // First message sets metadata
       const result1 = await runtime.chat({
+        identity: DEV_IDENTITY,
         message: "hello",
         workspaceId: TEST_WORKSPACE_ID,
         metadata: { source: "first" },
@@ -229,6 +237,7 @@ describe("ChatRequest.metadata — conversation persistence", () => {
 
       // Second message with different metadata on same conversation — original metadata kept
       await runtime.chat({
+        identity: DEV_IDENTITY,
         message: "world",
         conversationId: result1.conversationId,
         workspaceId: TEST_WORKSPACE_ID,

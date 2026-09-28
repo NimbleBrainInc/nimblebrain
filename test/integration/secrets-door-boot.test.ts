@@ -42,6 +42,7 @@ import {
 import { requireCredentialStore } from "../../src/tools/credential-store.ts";
 import { CREDENTIAL_PROVIDER } from "../../src/tools/credential-transport-credential.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
 
 let runtime: Runtime;
 let testDir: string;
@@ -60,6 +61,7 @@ beforeAll(async () => {
   _resetCredentialStoreBackendsForTest();
 
   runtime = await Runtime.start({
+    identityProvider: devProvider,
     model: { provider: "custom", adapter: createEchoModel() },
     logging: { disabled: true },
     workDir: testDir,
@@ -101,6 +103,7 @@ test("an unregistered `secrets.backend` fails the boot, not the first read", asy
   const dir = mkdtempSync(join(tmpdir(), "secrets-backend-boot-"));
   try {
     const boot = Runtime.start({
+      identityProvider: devProvider,
       model: { provider: "custom", adapter: createEchoModel() },
       logging: { disabled: true },
       workDir: dir,

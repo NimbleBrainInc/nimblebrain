@@ -9,6 +9,8 @@ import { Runtime } from "../../src/runtime/runtime.ts";
 import { makeInProcessSource } from "../helpers/in-process-source.ts";
 import { createMockModel } from "../helpers/mock-model.ts";
 import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
+import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 
 /**
  * Connector-skill binding lifecycle (P4), through the real Runtime — hermetic
@@ -75,6 +77,7 @@ describe("connector-skill binding lifecycle (runtime wiring)", () => {
   it("binds at install, loads as a candidate, lists, hides from skills__list, removes on uninstall", async () => {
     const workDir = join(testDir, "bind-cycle");
     const runtime = await Runtime.start({
+      identityProvider: devProvider,
       model: { provider: "custom", adapter: fixtureModel() },
       workDir,
       logging: { disabled: true },
@@ -150,6 +153,7 @@ describe("connector-skill binding lifecycle (runtime wiring)", () => {
     });
 
     const runtime = await Runtime.start({
+      identityProvider: devProvider,
       model: { provider: "custom", adapter: model },
       workDir,
       logging: { disabled: true },
@@ -177,11 +181,13 @@ describe("connector-skill binding lifecycle (runtime wiring)", () => {
     expect(lock).toHaveLength(1);
 
     const t1 = await runtime.chat({
+      identity: DEV_IDENTITY,
       workspaceId: TEST_WORKSPACE_ID,
       message: "go",
       allowedTools: ["mytool__ping"],
     });
     const t2 = await runtime.chat({
+      identity: DEV_IDENTITY,
       workspaceId: TEST_WORKSPACE_ID,
       conversationId: t1.conversationId,
       message: "again",

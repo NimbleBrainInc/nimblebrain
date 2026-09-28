@@ -6,6 +6,8 @@ import { ModelNotAllowedError } from "../../../src/runtime/errors.ts";
 import { Runtime } from "../../../src/runtime/runtime.ts";
 import { createEchoModel } from "../../helpers/echo-model.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../../helpers/test-workspace.ts";
+import { devProvider } from "../../helpers/dev-provider.ts";
+import { DEV_IDENTITY } from "../../../src/identity/providers/dev.ts";
 
 const testDir = join(tmpdir(), `nimblebrain-request-model-policy-${Date.now()}`);
 
@@ -18,6 +20,7 @@ async function startWithAllowlist(name: string, models: string[], slots?: Record
   const workDir = join(testDir, name);
   mkdirSync(workDir, { recursive: true });
   const runtime = await Runtime.start({
+    identityProvider: devProvider,
     model: { provider: "custom", adapter: createEchoModel() },
     providers: { anthropic: { apiKey: "test-key", models } },
     ...(slots ? { models: slots as never } : {}),
@@ -38,6 +41,7 @@ async function startWithAllowlist(name: string, models: string[], slots?: Record
 const chatError = (runtime: Runtime, model?: string): Promise<unknown> =>
   runtime
     .chat({
+      identity: DEV_IDENTITY,
       message: "hi",
       workspaceId: TEST_WORKSPACE_ID,
       ...(model !== undefined ? { model } : {}),
@@ -126,6 +130,7 @@ describe("a deployment with no providers config has no policy to enforce", () =>
     const workDir = join(testDir, name);
     mkdirSync(workDir, { recursive: true });
     const runtime = await Runtime.start({
+      identityProvider: devProvider,
       model: { provider: "custom", adapter: createEchoModel() },
       workDir,
     });
@@ -176,6 +181,7 @@ describe("the gate runs where the model is used, not on every turn", () => {
 
       const err = await runtime
         .chat({
+          identity: DEV_IDENTITY,
           message: "again",
           workspaceId: TEST_WORKSPACE_ID,
           conversationId: id,

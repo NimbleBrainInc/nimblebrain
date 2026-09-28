@@ -1,18 +1,11 @@
 import type { UserIdentity } from "./provider.ts";
-import { DEV_IDENTITY } from "./providers/dev.ts";
 
 /**
  * Resolve the owning user id for a request, applying one strict rule used
  * everywhere identity-scoped data is reached (conversations, files,
- * automations):
- *
- *   - An identity provider is configured (production / `instance.json`):
- *     the request MUST carry an identity. Absence is a misconfigured
- *     deployment (auth middleware didn't populate it) — throw, never
- *     silently own the data as a sentinel user.
- *   - No identity provider (dev / tests / CLI): fall back to `DEV_IDENTITY`
- *     (`usr_default`). The fallback is gated on the provider being absent so
- *     the same path can't degrade production into "owned by usr_default."
+ * automations): the request MUST carry an identity, under every identity
+ * provider (`dev` included). Absence means a caller skipped authentication —
+ * throw, never silently own the data as a sentinel user.
  *
  * This is the single source of truth for that resolution. `runtime.chat()`,
  * the host-resources `files://` resolver, and the REST file handlers all call
@@ -20,15 +13,17 @@ import { DEV_IDENTITY } from "./providers/dev.ts";
  * same identity-scoped store. Drift here would strand files in one store while
  * reads look in another.
  */
-export function resolveRequestOwnerId(
-  identity: UserIdentity | null | undefined,
-  identityProviderConfigured: boolean,
-): string {
-  if (!identity && identityProviderConfigured) {
+export function resolveRequestOwnerId(identity: UserIdentity | null | undefined): string {
+  return requireRequestIdentity(identity).id;
+}
+
+/** The request's identity, or a throw when it carries none (see `resolveRequestOwnerId`). */
+export function requireRequestIdentity(identity: UserIdentity | null | undefined): UserIdentity {
+  if (!identity) {
     throw new Error(
-      "[identity] no identity on request but an identity provider is configured — " +
-        "auth middleware must populate it before any identity-scoped data access.",
+      "[identity] no identity on request — auth middleware (or an in-process " +
+        "caller) must supply it before any identity-scoped data access.",
     );
   }
-  return (identity ?? DEV_IDENTITY).id;
+  return identity;
 }

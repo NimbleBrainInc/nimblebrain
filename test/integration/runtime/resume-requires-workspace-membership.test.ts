@@ -20,6 +20,8 @@ import { ConversationWorkspaceAccessDeniedError } from "../../../src/runtime/err
 import { Runtime } from "../../../src/runtime/runtime.ts";
 import { createEchoModel } from "../../helpers/echo-model.ts";
 import { provisionTestWorkspace } from "../../helpers/test-workspace.ts";
+import { devProvider } from "../../helpers/dev-provider.ts";
+import { devWorkspace } from "../../helpers/dev-provider.ts";
 
 const testDir = join(tmpdir(), `nb-resume-membership-${Date.now()}`);
 const WORKSPACE_A = "ws_workspace_a";
@@ -33,6 +35,7 @@ async function startRuntime(name: string): Promise<Runtime> {
   const workDir = join(testDir, name);
   mkdirSync(workDir, { recursive: true });
   return Runtime.start({
+    identityProvider: devProvider,
     model: { provider: "custom", adapter: createEchoModel() },
     logging: { disabled: true },
     workDir,
@@ -44,12 +47,13 @@ describe("resume requires current membership of the conversation's workspace", (
     const runtime = await startRuntime("chat-removed");
     await provisionTestWorkspace(runtime, WORKSPACE_A, "Alpha");
 
-    const born = await runtime.chat({ message: "hello from A", workspaceId: WORKSPACE_A });
+    const born = await runtime.chat({ identity: DEV_IDENTITY, message: "hello from A", workspaceId: WORKSPACE_A });
     await runtime.getWorkspaceStore().removeMember(WORKSPACE_A, OWNER);
 
     let thrown: unknown;
     try {
       await runtime.chat({
+        identity: DEV_IDENTITY,
         message: "still here?",
         conversationId: born.conversationId,
         workspaceId: WORKSPACE_A,
@@ -69,12 +73,13 @@ describe("resume requires current membership of the conversation's workspace", (
     const runtime = await startRuntime("start-removed");
     await provisionTestWorkspace(runtime, WORKSPACE_A, "Alpha");
 
-    const born = await runtime.chat({ message: "hello from A", workspaceId: WORKSPACE_A });
+    const born = await runtime.chat({ identity: DEV_IDENTITY, message: "hello from A", workspaceId: WORKSPACE_A });
     await runtime.getWorkspaceStore().removeMember(WORKSPACE_A, OWNER);
 
     let thrown: unknown;
     try {
       await runtime.startTurn({
+        identity: DEV_IDENTITY,
         message: "still here?",
         conversationId: born.conversationId,
         workspaceId: WORKSPACE_A,
@@ -91,9 +96,10 @@ describe("resume requires current membership of the conversation's workspace", (
     const runtime = await startRuntime("still-member");
     await provisionTestWorkspace(runtime, WORKSPACE_A, "Alpha");
 
-    const born = await runtime.chat({ message: "hello from A", workspaceId: WORKSPACE_A });
+    const born = await runtime.chat({ identity: DEV_IDENTITY, message: "hello from A", workspaceId: WORKSPACE_A });
     // No removal — Alice stays a member.
     const resumed = await runtime.chat({
+      identity: DEV_IDENTITY,
       message: "still here",
       conversationId: born.conversationId,
       workspaceId: WORKSPACE_A,
@@ -103,13 +109,16 @@ describe("resume requires current membership of the conversation's workspace", (
     await runtime.shutdown();
   });
 
-  it("resumes a conversation born in the dev-mode default workspace", async () => {
+  it("resumes a conversation born in the dev user's own workspace", async () => {
     const runtime = await startRuntime("default-ws");
 
-    // Born unfocused → the caller's default workspace, where they are a member;
-    // the resume resolves the same default and is not gated.
-    const born = await runtime.chat({ message: "hello from home" });
+    // Born in the caller's own workspace, where they are a member; the resume
+    // names the same workspace and is not gated.
+    const home = await devWorkspace(runtime);
+    const born = await runtime.chat({ identity: DEV_IDENTITY, message: "hello from home", workspaceId: home });
     const resumed = await runtime.chat({
+      identity: DEV_IDENTITY,
+      workspaceId: home,
       message: "still here",
       conversationId: born.conversationId,
     });

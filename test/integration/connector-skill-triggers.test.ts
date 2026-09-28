@@ -39,6 +39,8 @@ import { createEchoModel } from "../helpers/echo-model.ts";
 import { type RemoteMcpFixture, startRemoteMcpServer } from "../helpers/remote-mcp-fixture.ts";
 import { SKILLS_EXTENSION_CAPABILITY, serveSkills } from "../helpers/skills-server.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
+import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 
 /** Reverse-DNS slug, like a real fleet connector — never the skill's own name. */
 const SERVER_NAME = "ai-nimblebrain-capture-mcp";
@@ -178,6 +180,7 @@ beforeAll(async () => {
   mkdirSync(testDir, { recursive: true });
 
   runtime = await Runtime.start({
+    identityProvider: devProvider,
     model: { provider: "custom", adapter: createCapturingModel() },
     logging: { disabled: true },
     workDir: testDir,
@@ -234,6 +237,7 @@ describe("server-published skill triggers", () => {
     // cannot select this skill. A hit is the trigger channel or nothing.
     lastPrompt = undefined;
     const chat = await runtime.chat({
+      identity: DEV_IDENTITY,
       workspaceId: TEST_WORKSPACE_ID,
       message: `Actually ${CAPTURE_TRIGGER} — we stopped doing that last year.`,
       allowedTools: [],
@@ -254,6 +258,7 @@ describe("server-published skill triggers", () => {
 
   it("does not fire on a message naming no declared phrase", async () => {
     const chat = await runtime.chat({
+      identity: DEV_IDENTITY,
       workspaceId: TEST_WORKSPACE_ID,
       message: "just a plain unrelated greeting",
       allowedTools: [],
@@ -265,6 +270,7 @@ describe("server-published skill triggers", () => {
     // `quiet` is discovered and synthesized from the same server; it just has no
     // phrases. Nothing about being server-published should make it matchable.
     const chat = await runtime.chat({
+      identity: DEV_IDENTITY,
       workspaceId: TEST_WORKSPACE_ID,
       message: "Nothing here should ever trigger-match, quiet skill.",
       allowedTools: [],
@@ -278,6 +284,7 @@ describe("server-published skill triggers", () => {
     // order is load-bearing: the conversation pool goes first, and the tenant's
     // own authoring beats a vendor's.
     const chat = await runtime.chat({
+      identity: DEV_IDENTITY,
       workspaceId: TEST_WORKSPACE_ID,
       message: `Help me ${CONTESTED_TRIGGER} today.`,
       allowedTools: [],
@@ -292,6 +299,7 @@ describe("server-published skill triggers", () => {
     // is the ordinary case, not a corner. The body must not be paid for twice.
     lastPrompt = undefined;
     const chat = await runtime.chat({
+      identity: DEV_IDENTITY,
       workspaceId: TEST_WORKSPACE_ID,
       message: `Hold on, ${CAPTURE_TRIGGER}.`,
       allowedTools: [TOOL_NAME],

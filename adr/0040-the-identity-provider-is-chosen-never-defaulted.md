@@ -22,15 +22,18 @@ admits everyone.
 - **The identity provider is chosen by name in `instance.json`.** The adapters
   are `dev`, `oidc` and `workos`, validated and constructed the same way.
   `{"auth":{"adapter":"dev"}}` is the whole dev config.
-- **No `instance.json`, no server.** `serve` refuses to start and says what to
-  write for dev and for a real provider. The HTTP server is the layer that
-  admits requests, so it holds the check: it does not start without a provider,
-  and it never constructs one of its own.
-- **The runtime is the one owner of the provider.** It builds the provider
-  `instance.json` names (or takes one from an in-process caller), and the server
-  authenticates with that one. The server has no provider of its own, so the
-  identity a request carries is the identity the runtime's permission checks
-  judge.
+- **No provider, no runtime.** `Runtime.start` builds the provider
+  `instance.json` names, or takes one an in-process caller passes (a test). With
+  neither it refuses to start, and `serve` exits saying what to write for dev
+  and for a real provider. There is no state in which the runtime runs without
+  a provider.
+- **The runtime is the one owner of the provider.** The server authenticates
+  with the runtime's provider and has none of its own, so the identity a
+  request carries is the identity the runtime's permission checks judge.
+- **Every run names its caller and its workspace.** A chat, turn or task with
+  no identity, or naming no workspace, is refused under every provider. The
+  runtime never falls back to the dev user or chooses a workspace; an
+  in-process caller passes both, as the HTTP doors and the scheduler do.
 - **The dev launchers make the dev choice, on disk.** `bun run dev` and its
   variants write the `dev` adapter into a workdir that has no `instance.json`,
   and leave an existing one alone. The choice is made by the tool the developer
@@ -49,11 +52,11 @@ admits everyone.
   real identity, so the dev user passes them as an org owner and an admin of its
   workspaces, not by skipping them. CORS, secure cookies and request rate limits
   are the same under `dev` as under any provider.
-- A `Runtime` started in-process from a workdir with no `instance.json`, and
-  with no `identityProvider` passed to `Runtime.start`, has no provider. Its
-  permission checks then let every call through, and a call with no identity
-  runs as `usr_default`. Only an in-process caller reaches that
-  runtime; the server refuses to serve it.
+- No permission check in the runtime has a branch for a missing provider. A
+  future entry point that starts a `Runtime` without the server (a worker, a
+  script) gets the same checks the server does, or does not start.
+- An in-process caller, the test suite included, chooses its provider and
+  names the identity and workspace of each run.
 
 ## Alternatives considered
 
@@ -66,6 +69,6 @@ admits everyone.
   inherited silently by every child process and CI job.
 - **Default to dev and warn** — rejected: a warning in a log does not stop the
   requests it describes.
-- **Refuse in `Runtime.start` too** — not taken: the runtime is also started
-  in-process by callers that admit no requests, such as the test suite, and the
-  refusal belongs to the layer that admits them.
+- **Refuse only at the server** — rejected: a runtime with no provider skipped
+  its own permission checks and ran identity-less calls as `usr_default`. That
+  is the same fail-open for any caller other than the server.

@@ -30,6 +30,7 @@ import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
 
 const USER_SKILL_NAME = "user-deploy-widget";
 const USER_TRIGGER = "deploy the orbital widget";
@@ -68,6 +69,7 @@ beforeAll(async () => {
   writeTriggerSkill(join(testDir, "skills"), ORG_SKILL_NAME, ORG_TRIGGER);
 
   runtime = await Runtime.start({
+    identityProvider: devProvider,
     model: { provider: "custom", adapter: createEchoModel() },
     logging: { disabled: true },
     workDir: testDir,
@@ -92,6 +94,7 @@ afterAll(async () => {
 describe("per-request skill matcher", () => {
   it("matches a user-tier `type: skill` on its trigger phrase", async () => {
     const chat = await runtime.chat({
+      identity: DEV_IDENTITY,
       workspaceId: TEST_WORKSPACE_ID,
       message: `Please ${USER_TRIGGER} now.`,
     });
@@ -101,6 +104,7 @@ describe("per-request skill matcher", () => {
 
   it("still matches an org-tier `type: skill` on its trigger phrase (no regression)", async () => {
     const chat = await runtime.chat({
+      identity: DEV_IDENTITY,
       workspaceId: TEST_WORKSPACE_ID,
       message: `Can you ${ORG_TRIGGER}?`,
     });
@@ -109,6 +113,7 @@ describe("per-request skill matcher", () => {
 
   it("matches no skill when the message contains neither trigger", async () => {
     const chat = await runtime.chat({
+      identity: DEV_IDENTITY,
       workspaceId: TEST_WORKSPACE_ID,
       message: "just a plain unrelated greeting",
     });

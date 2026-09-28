@@ -8,7 +8,8 @@
  *   - `scope: "user"` (default) is gated to the caller's own spend via the
  *     aggregator's ownerFilter — a member can't see peers' usage.
  *   - `scope: "org"` requires org admin/owner; a member is denied.
- *   - Dev mode (no identity provider) bypasses the gate and sees everything.
+ *   - The dev user is an org owner: it reads the org scope on its role, and
+ *     its user scope is its own spend.
  *   - The response echoes the resolved `scope`.
  */
 
@@ -32,7 +33,6 @@ interface FakeIdentity {
 
 class FakeRuntime {
   identity: FakeIdentity | null = null;
-  hasIdentityProvider = false;
 
   constructor(private workDir: string) {}
 
@@ -42,9 +42,6 @@ class FakeRuntime {
   }
   getCurrentIdentity() {
     return this.identity;
-  }
-  getIdentityProvider() {
-    return this.hasIdentityProvider ? ({} as object) : null;
   }
 }
 
@@ -121,7 +118,6 @@ function parse(result: { content?: Array<{ type: string; text?: string }> }): Us
 describe("usage source — scope: user", () => {
   test("members see only their own conversations (ownerFilter)", async () => {
     const src = await buildSource();
-    runtime.hasIdentityProvider = true;
     runtime.identity = { id: "usr_alice", orgRole: "member" };
 
     const client = src.getClient()!;
@@ -140,7 +136,6 @@ describe("usage source — scope: user", () => {
 
   test("defaults to user scope when scope omitted", async () => {
     const src = await buildSource();
-    runtime.hasIdentityProvider = true;
     runtime.identity = { id: "usr_bob", orgRole: "member" };
 
     const client = src.getClient()!;
@@ -154,7 +149,6 @@ describe("usage source — scope: user", () => {
 
   test("unauthenticated caller (provider present, no identity) is denied", async () => {
     const src = await buildSource();
-    runtime.hasIdentityProvider = true;
     runtime.identity = null;
 
     const client = src.getClient()!;
@@ -166,7 +160,6 @@ describe("usage source — scope: user", () => {
 describe("usage source — scope: org", () => {
   test("org admin sees all users, attributed by owner with groupBy:user", async () => {
     const src = await buildSource();
-    runtime.hasIdentityProvider = true;
     runtime.identity = { id: "usr_admin", orgRole: "admin" };
 
     const client = src.getClient()!;
@@ -186,7 +179,6 @@ describe("usage source — scope: org", () => {
 
   test("org admin can request user and day breakdowns in one report", async () => {
     const src = await buildSource();
-    runtime.hasIdentityProvider = true;
     runtime.identity = { id: "usr_admin", orgRole: "admin" };
 
     const client = src.getClient()!;
@@ -207,7 +199,6 @@ describe("usage source — scope: org", () => {
 
   test("member is denied org scope", async () => {
     const src = await buildSource();
-    runtime.hasIdentityProvider = true;
     runtime.identity = { id: "usr_alice", orgRole: "member" };
 
     const client = src.getClient()!;
@@ -219,11 +210,12 @@ describe("usage source — scope: org", () => {
   });
 });
 
-describe("usage source — dev mode", () => {
-  test("no identity provider: org scope sees everything without a gate", async () => {
+describe("usage source — the dev user", () => {
+  const DEV_USER: FakeIdentity = { id: "usr_default", orgRole: "owner" };
+
+  test("reads the org scope as an org owner", async () => {
     const src = await buildSource();
-    runtime.hasIdentityProvider = false;
-    runtime.identity = null;
+    runtime.identity = DEV_USER;
 
     const client = src.getClient()!;
     const result = await client.callTool({
@@ -237,16 +229,23 @@ describe("usage source — dev mode", () => {
     expect(data.totals.conversations).toBe(2);
   });
 
-  test("no identity provider: user scope is unfiltered (dev sees all)", async () => {
+  test("its user scope is its own spend, not everyone's", async () => {
     const src = await buildSource();
-    runtime.hasIdentityProvider = false;
-    runtime.identity = null;
+    runtime.identity = DEV_USER;
 
     const client = src.getClient()!;
     const result = await client.callTool({ name: "report", arguments: { period: "all" } });
     const data = parse(result as { content?: Array<{ type: string; text?: string }> });
 
-    // Dev mode: no ownerFilter, so both conversations are visible.
-    expect(data.totals.conversations).toBe(2);
+    expect(data.totals.conversations).toBe(0);
+  });
+
+  test("a call with no identity is refused", async () => {
+    const src = await buildSource();
+    runtime.identity = null;
+
+    const client = src.getClient()!;
+    const result = await client.callTool({ name: "report", arguments: { period: "all" } });
+    expect(result.isError).toBe(true);
   });
 });

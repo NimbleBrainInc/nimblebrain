@@ -21,6 +21,9 @@ import {
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
 import type { McpSource } from "../../src/tools/mcp-source.ts";
 import { facetEntry, startFacetsSource } from "../helpers/facets-server.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
+import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
+import { asDevUser } from "../helpers/dev-provider.ts";
 
 /**
  * Install a running app in the test workspace whose server advertises the
@@ -62,6 +65,7 @@ async function makeRuntime(): Promise<Runtime> {
 	const workDir = join(testDir, `work-${Date.now()}`);
 	mkdirSync(workDir, { recursive: true });
 	return Runtime.start({
+		identityProvider: devProvider,
 		model: { provider: "custom", adapter: createEchoModel() },
 		workDir,
 		logging: { disabled: true },
@@ -117,7 +121,7 @@ describe("Core Source", () => {
 			await provisionTestWorkspace(runtime);
 			const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
 			const result = await runWithRequestContext(
-				{ identity: null, workspaceId: TEST_WORKSPACE_ID },
+				{ identity: DEV_IDENTITY, workspaceId: TEST_WORKSPACE_ID },
 				() => source.execute("workspace_info", {}),
 			);
 			expect(result.isError).toBe(false);
@@ -132,7 +136,7 @@ describe("Core Source", () => {
 		const runtime = await makeRuntime();
 		try {
 			const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
-			const result = await source.execute("nonexistent_tool", {});
+			const result = await asDevUser(() => source.execute("nonexistent_tool", {}));
 			expect(result.isError).toBe(true);
 			expect(extractText(result.content)).toContain("Unknown tool");
 		} finally {
@@ -147,6 +151,7 @@ describe("Core Source", () => {
 		writeFileSync(configPath, JSON.stringify({ version: "1" }));
 
 		const runtime = await Runtime.start({
+			identityProvider: devProvider,
 			model: { provider: "custom", adapter: createEchoModel() },
 			workDir,
 			configPath,
@@ -154,9 +159,9 @@ describe("Core Source", () => {
 		});
 		try {
 			const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
-			const result = await source.execute("set_model_config", {
+			const result = await asDevUser(() => source.execute("set_model_config", {
 				defaultModel: "claude-haiku-4-5-20251001",
-			});
+			}));
 			expect(result.isError).toBe(false);
 			const data = result.structuredContent as Record<string, unknown>;
 			expect(data.success).toBe(true);
@@ -178,6 +183,7 @@ describe("Core Source", () => {
 		writeFileSync(configPath, JSON.stringify({ version: "1" }));
 
 		const runtime = await Runtime.start({
+			identityProvider: devProvider,
 			model: { provider: "custom", adapter: createEchoModel() },
 			workDir,
 			configPath,
@@ -185,9 +191,9 @@ describe("Core Source", () => {
 		});
 		try {
 			const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
-			const result = await source.execute("set_model_config", {
+			const result = await asDevUser(() => source.execute("set_model_config", {
 				defaultModel: "unconfigured-provider:some-model",
-			});
+			}));
 			expect(result.isError).toBe(true);
 			expect(extractText(result.content)).toContain("Invalid model");
 		} finally {
@@ -202,6 +208,7 @@ describe("Core Source", () => {
 		writeFileSync(configPath, JSON.stringify({ version: "1" }));
 
 		const runtime = await Runtime.start({
+			identityProvider: devProvider,
 			model: { provider: "custom", adapter: createEchoModel() },
 			workDir,
 			configPath,
@@ -209,9 +216,9 @@ describe("Core Source", () => {
 		});
 		try {
 			const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
-			const result = await source.execute("set_model_config", {
+			const result = await asDevUser(() => source.execute("set_model_config", {
 				maxIterations: 60,
-			});
+			}));
 			expect(result.isError).toBe(true);
 			expect(extractText(result.content)).toContain("1 and 50");
 		} finally {
@@ -226,6 +233,7 @@ describe("Core Source", () => {
 		writeFileSync(configPath, JSON.stringify({ version: "1", maxIterations: 5 }));
 
 		const runtime = await Runtime.start({
+			identityProvider: devProvider,
 			model: { provider: "custom", adapter: createEchoModel() },
 			workDir,
 			configPath,
@@ -233,9 +241,9 @@ describe("Core Source", () => {
 		});
 		try {
 			const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
-			await source.execute("set_model_config", {
+			await asDevUser(() => source.execute("set_model_config", {
 				maxOutputTokens: 8192,
-			});
+			}));
 
 			// Override file must be valid JSON with only the field we wrote.
 			// The seed file is NOT touched — it stays Helm-managed.
@@ -266,6 +274,7 @@ describe("Core Source", () => {
 		writeFileSync(configPath, JSON.stringify({ version: "1" }));
 
 		const runtime = await Runtime.start({
+			identityProvider: devProvider,
 			model: { provider: "custom", adapter: createEchoModel() },
 			workDir,
 			configPath,
@@ -273,9 +282,9 @@ describe("Core Source", () => {
 		});
 		try {
 			const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
-			const result = await source.execute("set_model_config", {
+			const result = await asDevUser(() => source.execute("set_model_config", {
 				thinking: "enabled",
-			});
+			}));
 			expect(result.isError).toBe(false);
 			expect(runtime.getOperatorConfig().thinking).toBe("enabled");
 			expect(runtime.getOperatorConfig().thinkingBudgetTokens).toBeUndefined();
@@ -291,6 +300,7 @@ describe("Core Source", () => {
 		writeFileSync(configPath, JSON.stringify({ version: "1" }));
 
 		const runtime = await Runtime.start({
+			identityProvider: devProvider,
 			model: { provider: "custom", adapter: createEchoModel() },
 			workDir,
 			configPath,
@@ -299,7 +309,7 @@ describe("Core Source", () => {
 		try {
 			const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
 			expect(
-				(await source.execute("set_model_config", { thinkingEffort: "xhigh" })).isError,
+				(await asDevUser(() => source.execute("set_model_config", { thinkingEffort: "xhigh" }))).isError,
 			).toBe(false);
 			expect(runtime.getOperatorConfig().thinkingEffort).toBe("xhigh");
 			const raw = JSON.parse(
@@ -310,7 +320,7 @@ describe("Core Source", () => {
 			// Clearing has to land on both disk and the live process. Reaching
 			// only one leaves them disagreeing until restart.
 			expect(
-				(await source.execute("set_model_config", { clearThinkingEffort: true })).isError,
+				(await asDevUser(() => source.execute("set_model_config", { clearThinkingEffort: true }))).isError,
 			).toBe(false);
 			expect(runtime.getOperatorConfig().thinkingEffort).toBeUndefined();
 			const cleared = JSON.parse(
@@ -345,6 +355,7 @@ describe("Core Source", () => {
 		writeFileSync(configPath, JSON.stringify({ version: "1" }));
 
 		const runtime = await Runtime.start({
+			identityProvider: devProvider,
 			model: { provider: "custom", adapter: createEchoModel() },
 			workDir,
 			configPath,
@@ -369,10 +380,10 @@ describe("Core Source", () => {
 				const patch = thinkingPatchFor(c.mode, c.effort, c.budget);
 				// Sent alongside the rest of the panel's payload, because a
 				// rejection here also drops the model slots and limits.
-				const result = await source.execute("set_model_config", {
+				const result = await asDevUser(() => source.execute("set_model_config", {
 					...patch,
 					maxIterations: 12,
-				});
+				}));
 				const label = `${JSON.stringify(c.mode)}/${c.effort}/${c.budget}`;
 				expect(`${label}: ${result.isError}`).toBe(`${label}: false`);
 				// The save landed in full, not just the thinking half.
@@ -394,6 +405,7 @@ describe("Core Source", () => {
 		writeFileSync(configPath, JSON.stringify({ version: "1" }));
 
 		const runtime = await Runtime.start({
+			identityProvider: devProvider,
 			model: { provider: "custom", adapter: createEchoModel() },
 			workDir,
 			configPath,
@@ -401,7 +413,7 @@ describe("Core Source", () => {
 		});
 		try {
 			const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
-			const result = await source.execute("set_model_config", { thinkingEffort: "extreme" });
+			const result = await asDevUser(() => source.execute("set_model_config", { thinkingEffort: "extreme" }));
 			expect(result.isError).toBe(true);
 			// The schema enum rejects it at the tool boundary, before the
 			// hand-written validator runs — same belt-and-braces `thinking` has.
@@ -419,6 +431,7 @@ describe("Core Source", () => {
 		writeFileSync(configPath, JSON.stringify({ version: "1" }));
 
 		const runtime = await Runtime.start({
+			identityProvider: devProvider,
 			model: { provider: "custom", adapter: createEchoModel() },
 			workDir,
 			configPath,
@@ -426,10 +439,10 @@ describe("Core Source", () => {
 		});
 		try {
 			const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
-			const result = await source.execute("set_model_config", {
+			const result = await asDevUser(() => source.execute("set_model_config", {
 				thinking: "enabled",
 				thinkingBudgetTokens: 8192,
-			});
+			}));
 			expect(result.isError).toBe(false);
 			const raw = JSON.parse(
 				require("node:fs").readFileSync(deriveOverridePath(configPath), "utf-8"),
@@ -459,6 +472,7 @@ describe("Core Source", () => {
 		);
 
 		const runtime = await Runtime.start({
+			identityProvider: devProvider,
 			model: { provider: "custom", adapter: createEchoModel() },
 			workDir,
 			configPath,
@@ -466,10 +480,10 @@ describe("Core Source", () => {
 		});
 		try {
 			const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
-			const result = await source.execute("set_model_config", {
+			const result = await asDevUser(() => source.execute("set_model_config", {
 				thinking: "enabled",
 				clearThinkingBudget: true,
-			});
+			}));
 			expect(result.isError).toBe(false);
 			const raw = JSON.parse(require("node:fs").readFileSync(overridePath, "utf-8"));
 			expect(raw.thinking).toBe("enabled");
@@ -497,6 +511,7 @@ describe("Core Source", () => {
 		);
 
 		const runtime = await Runtime.start({
+			identityProvider: devProvider,
 			model: { provider: "custom", adapter: createEchoModel() },
 			workDir,
 			configPath,
@@ -504,9 +519,9 @@ describe("Core Source", () => {
 		});
 		try {
 			const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
-			const result = await source.execute("set_model_config", {
+			const result = await asDevUser(() => source.execute("set_model_config", {
 				clearThinking: true,
-			});
+			}));
 			expect(result.isError).toBe(false);
 			const raw = JSON.parse(require("node:fs").readFileSync(overridePath, "utf-8"));
 			expect(raw.thinking).toBeUndefined();
@@ -534,6 +549,7 @@ describe("Core Source", () => {
 		);
 
 		const runtime = await Runtime.start({
+			identityProvider: devProvider,
 			model: { provider: "custom", adapter: createEchoModel() },
 			workDir,
 			configPath,
@@ -541,9 +557,9 @@ describe("Core Source", () => {
 		});
 		try {
 			const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
-			const result = await source.execute("set_model_config", {
+			const result = await asDevUser(() => source.execute("set_model_config", {
 				clearThinkingBudget: true,
-			});
+			}));
 			expect(result.isError).toBe(false);
 			const raw = JSON.parse(require("node:fs").readFileSync(overridePath, "utf-8"));
 			expect(raw.thinking).toBe("adaptive");
@@ -569,6 +585,7 @@ describe("Core Source", () => {
 		writeFileSync(configPath, JSON.stringify({ version: "1" }));
 
 		const runtime = await Runtime.start({
+			identityProvider: devProvider,
 			model: { provider: "custom", adapter: createEchoModel() },
 			workDir,
 			configPath,
@@ -580,10 +597,10 @@ describe("Core Source", () => {
 			// anything: with no mode set the resolver reads the budget and resolves
 			// to `enabled` at it, so this is a coherent request — drop the mode
 			// override, keep metering thinking at 4096.
-			const result = await source.execute("set_model_config", {
+			const result = await asDevUser(() => source.execute("set_model_config", {
 				clearThinking: true,
 				thinkingBudgetTokens: 4096,
-			});
+			}));
 			expect(result.isError).toBe(false);
 			expect(runtime.getOperatorConfig().thinkingBudgetTokens).toBe(4096);
 			expect(extractText(result.content)).not.toContain(
@@ -605,6 +622,7 @@ describe("Core Source", () => {
 		writeFileSync(configPath, JSON.stringify({}));
 
 		const runtime = await Runtime.start({
+			identityProvider: devProvider,
 			model: { provider: "custom", adapter: createEchoModel() },
 			workDir,
 			configPath,
@@ -612,10 +630,10 @@ describe("Core Source", () => {
 		});
 		try {
 			const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
-			const result = await source.execute("set_model_config", {
+			const result = await asDevUser(() => source.execute("set_model_config", {
 				thinking: "off",
 				clearThinking: true,
-			});
+			}));
 			expect(result.isError).toBe(true);
 			expect(extractText(result.content)).toContain("Cannot set both");
 		} finally {
@@ -637,6 +655,7 @@ describe("Core Source", () => {
 			const configPath = join(workDir, "nimblebrain.json");
 			writeFileSync(configPath, JSON.stringify({ version: "1" }));
 			const runtime = await Runtime.start({
+				identityProvider: devProvider,
 				model: { provider: "custom", adapter: createEchoModel() },
 				workDir,
 				configPath,
@@ -702,7 +721,7 @@ describe("Core Source", () => {
 			// list compared to a copy of itself cannot detect drift from the tool.
 			const { runtime, source } = await startWithPolicy("no-dropped-keys");
 			try {
-				const res = await source.execute("set_model_config", {
+				const res = await asDevUser(() => source.execute("set_model_config", {
 					models: { default: "anthropic:claude-sonnet-5", fast: "anthropic:claude-sonnet-5" },
 					maxIterations: 12,
 					maxInputTokens: 400000,
@@ -710,7 +729,7 @@ describe("Core Source", () => {
 					thinking: "enabled",
 					thinkingEffort: "high",
 					thinkingBudgetTokens: 4096,
-				});
+				}));
 				expect(res.isError).toBe(false);
 
 				const written = JSON.parse(
@@ -731,9 +750,9 @@ describe("Core Source", () => {
 			// told it worked while nothing changed.
 			const { runtime, source } = await startWithPolicy("unwritable");
 			try {
-				const res = await source.execute("set_model_config", {
+				const res = await asDevUser(() => source.execute("set_model_config", {
 					modelPolicy: { allowed: ["anthropic:claude-sonnet-5"] },
-				});
+				}));
 				expect(res.isError).toBe(true);
 				expect(extractText(res.content)).toContain("nimblebrain.json");
 			} finally {
@@ -756,7 +775,7 @@ describe("Core Source", () => {
 				"anthropic:claude-sonnet-5",
 			]);
 			try {
-				const cfg = (await source.execute("get_config", {}))
+				const cfg = (await asDevUser(() => source.execute("get_config", {})))
 					.structuredContent as Record<string, unknown>;
 				const models = cfg.availableModels as Record<string, { id: string }[]>;
 				expect(models.anthropic.map((m) => m.id)).toEqual(["claude-sonnet-5"]);
@@ -785,6 +804,7 @@ describe("Core Source", () => {
 			expect(loaded.modelPolicy?.allowed).toEqual(["anthropic:claude-sonnet-5"]);
 
 			const runtime = await Runtime.start({
+				identityProvider: devProvider,
 				...loaded,
 				model: { provider: "custom", adapter: createEchoModel() },
 				workDir,
@@ -832,9 +852,9 @@ describe("Core Source", () => {
 				"anthropic:claude-sonnet-5",
 			]);
 			try {
-				const res = await source.execute("set_model_config", {
+				const res = await asDevUser(() => source.execute("set_model_config", {
 					models: { fast: "anthropic:claude-opus-5" },
-				});
+				}));
 				expect(res.isError).toBe(true);
 				expect(extractText(res.content)).toContain("not in this organization's allowed models");
 			} finally {
@@ -849,9 +869,9 @@ describe("Core Source", () => {
 				"anthropic:claude-sonnet-5",
 			]);
 			try {
-				const res = await source.execute("set_model_config", {
+				const res = await asDevUser(() => source.execute("set_model_config", {
 					defaultModel: "anthropic:claude-opus-5",
-				});
+				}));
 				expect(res.isError).toBe(true);
 				expect(runtime.isModelPermitted(runtime.configuredModelSlots().default)).toBe(true);
 			} finally {
@@ -867,12 +887,12 @@ describe("Core Source", () => {
 				"anthropic:claude-haiku-4-5-20251001",
 			]);
 			try {
-				const res = await source.execute("set_model_config", {
+				const res = await asDevUser(() => source.execute("set_model_config", {
 					models: {
 						default: "anthropic:claude-haiku-4-5-20251001",
 						fast: "anthropic:claude-haiku-4-5-20251001",
 					},
-				});
+				}));
 				expect(`isError: ${res.isError} — ${extractText(res.content)}`).toContain(
 					"isError: false",
 				);
@@ -891,7 +911,7 @@ describe("Core Source", () => {
 				{ defaultModel: "anthropic:claude-sonnet-5" },
 			);
 			try {
-				const res = await source.execute("set_model_config", { models: { fast: "" } });
+				const res = await asDevUser(() => source.execute("set_model_config", { models: { fast: "" } }));
 				expect(`isError: ${res.isError} — ${extractText(res.content)}`).toContain(
 					"isError: false",
 				);
@@ -910,7 +930,7 @@ describe("Core Source", () => {
 				"anthropic:claude-sonnet-5",
 			]);
 			try {
-				const res = await source.execute("set_model_config", { models: { fast: "" } });
+				const res = await asDevUser(() => source.execute("set_model_config", { models: { fast: "" } }));
 				expect(res.isError).toBe(true);
 				expect(extractText(res.content)).toContain("which the fast slot uses");
 			} finally {
@@ -977,9 +997,9 @@ describe("Core Source", () => {
 				"anthropic:claude-haiku-4-5-20251001",
 			]);
 			try {
-				const res = await source.execute("set_model_config", {
+				const res = await asDevUser(() => source.execute("set_model_config", {
 					models: { fast: "claude-haiku-4-5-20251001" },
-				});
+				}));
 				expect(`isError: ${res.isError} — ${extractText(res.content)}`).toBe(
 					"isError: false — Configuration updated: models.",
 				);
@@ -1020,6 +1040,7 @@ describe("Core Source", () => {
 			const configPath = join(workDir, "nimblebrain.json");
 			writeFileSync(configPath, JSON.stringify({ version: "1" }));
 			const runtime = await Runtime.start({
+				identityProvider: devProvider,
 				model: { provider: "custom", adapter: createEchoModel() },
 				workDir,
 				configPath,
@@ -1037,7 +1058,7 @@ describe("Core Source", () => {
 		it("publishes nothing the operator did not set, and the effective values separately", async () => {
 			const { runtime, source, overridePath } = await startBare("bare-publish");
 			try {
-				const cfg = (await source.execute("get_config", {}))
+				const cfg = (await asDevUser(() => source.execute("get_config", {})))
 					.structuredContent as Record<string, unknown>;
 
 				// Nothing is set, so every editable key is absent — that is the
@@ -1079,7 +1100,7 @@ describe("Core Source", () => {
 			// render, and a stale one silently stops posting anything at all.
 			const { runtime, source, overridePath } = await startBare("noop-save");
 			try {
-				const cfg = (await source.execute("get_config", {}))
+				const cfg = (await asDevUser(() => source.execute("get_config", {})))
 					.structuredContent as Record<string, unknown>;
 				const writable = (OVERRIDE_WRITABLE_KEYS as readonly string[]).filter((k) => k in cfg);
 
@@ -1088,10 +1109,10 @@ describe("Core Source", () => {
 				// there is nothing for a naive client to hand back.
 				expect(writable).toEqual([]);
 
-				const result = await source.execute(
+				const result = await asDevUser(() => source.execute(
 					"set_model_config",
 					Object.fromEntries(writable.map((k) => [k, cfg[k]])),
-				);
+				));
 				expect(result.isError).toBe(false);
 
 				expect(readOverride(overridePath)).toEqual({});
@@ -1104,14 +1125,14 @@ describe("Core Source", () => {
 		it("a cleared limit leaves disk, process, and the published config agreeing", async () => {
 			const { runtime, source, overridePath } = await startBare("clear-limit");
 			try {
-				const setResult = await source.execute("set_model_config", { maxIterations: 12 });
+				const setResult = await asDevUser(() => source.execute("set_model_config", { maxIterations: 12 }));
 				expect(setResult.isError).toBe(false);
 				expect(readOverride(overridePath).maxIterations).toBe(12);
 				expect(runtime.getMaxIterations()).toBe(12);
 
-				const clearResult = await source.execute("set_model_config", {
+				const clearResult = await asDevUser(() => source.execute("set_model_config", {
 					clearMaxIterations: true,
-				});
+				}));
 				expect(clearResult.isError).toBe(false);
 
 				// Absent on disk, absent from the live process, and back to the
@@ -1121,7 +1142,7 @@ describe("Core Source", () => {
 				expect(runtime.getOperatorConfig().maxIterations).toBeUndefined();
 				expect(runtime.getMaxIterations()).toBe(DEFAULT_MAX_ITERATIONS);
 
-				const cfg = (await source.execute("get_config", {}))
+				const cfg = (await asDevUser(() => source.execute("get_config", {})))
 					.structuredContent as Record<string, unknown>;
 				expect("maxIterations" in cfg).toBe(false);
 				expect((cfg.resolved as Record<string, unknown>).maxIterations).toBe(
@@ -1136,14 +1157,14 @@ describe("Core Source", () => {
 			const { runtime, source, overridePath } = await startBare("clear-slot");
 			try {
 				const beforeAnySet = runtime.getDefaultModel();
-				await source.execute("set_model_config", {
+				await asDevUser(() => source.execute("set_model_config", {
 					models: { default: "anthropic:claude-haiku-4-5-20251001" },
-				});
+				}));
 				expect(runtime.getDefaultModel()).toBe("anthropic:claude-haiku-4-5-20251001");
 
-				const clearResult = await source.execute("set_model_config", {
+				const clearResult = await asDevUser(() => source.execute("set_model_config", {
 					models: { default: "" },
-				});
+				}));
 				expect(clearResult.isError).toBe(false);
 
 				// Not stored as `""`: the slot resolver falls back on nullish
@@ -1175,6 +1196,7 @@ describe("Core Source", () => {
 
 		// First runtime: simulate the operator changing config.
 		const r1 = await Runtime.start({
+			identityProvider: devProvider,
 			model: { provider: "custom", adapter: createEchoModel() },
 			workDir,
 			configPath,
@@ -1182,10 +1204,10 @@ describe("Core Source", () => {
 		});
 		try {
 			const source = await makeInProcessSource("nb", createCoreToolDefs(r1));
-			const result = await source.execute("set_model_config", {
+			const result = await asDevUser(() => source.execute("set_model_config", {
 				defaultModel: "claude-haiku-4-5-20251001",
 				thinking: "off",
-			});
+			}));
 			expect(result.isError).toBe(false);
 		} finally {
 			await r1.shutdown();
@@ -1206,6 +1228,7 @@ describe("Core Source", () => {
 		// override, not the seed — that's the whole point.
 		const loaded = loadConfig({ config: configPath });
 		const r2 = await Runtime.start({
+			identityProvider: devProvider,
 			...loaded,
 			model: { provider: "custom", adapter: createEchoModel() },
 			workDir,
@@ -1254,9 +1277,9 @@ describe("Core Source", () => {
 		const runtime = await makeRuntime();
 		try {
 			const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
-			const result = await source.execute("set_model_config", {
+			const result = await asDevUser(() => source.execute("set_model_config", {
 				maxIterations: 5,
-			});
+			}));
 			expect(result.isError).toBe(true);
 			expect(extractText(result.content)).toContain("No config override path");
 		} finally {

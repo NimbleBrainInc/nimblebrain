@@ -7,6 +7,8 @@ import { createEchoModel } from "../helpers/echo-model.ts";
 import { createCoreToolDefs } from "../../src/tools/core-source.ts";
 import { makeInProcessSource } from "../helpers/in-process-source.ts";
 import { extractText } from "../../src/engine/content-helpers.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
+import { asDevUser } from "../helpers/dev-provider.ts";
 
 const testDir = join(tmpdir(), `nimblebrain-get-config-${Date.now()}`);
 
@@ -18,6 +20,7 @@ async function makeRuntime(overrides?: Record<string, unknown>): Promise<Runtime
 	const workDir = join(testDir, `work-${Date.now()}`);
 	mkdirSync(workDir, { recursive: true });
 	return Runtime.start({
+		identityProvider: devProvider,
 		model: { provider: "custom", adapter: createEchoModel() },
 		workDir,
 		logging: { disabled: true },
@@ -30,7 +33,7 @@ describe("get_config tool", () => {
 		const runtime = await makeRuntime();
 		try {
 			const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
-			const result = await source.execute("get_config", {});
+			const result = await asDevUser(() => source.execute("get_config", {}));
 			expect(result.isError).toBe(false);
 			const config = result.structuredContent as Record<string, unknown>;
 			expect(Array.isArray(config.configuredProviders)).toBe(true);
@@ -58,7 +61,7 @@ describe("get_config tool", () => {
 		const runtime = await makeRuntime({ defaultModel: "anthropic:claude-sonnet-4-6" });
 		try {
 			const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
-			const result = await source.execute("get_config", {});
+			const result = await asDevUser(() => source.execute("get_config", {}));
 			const config = result.structuredContent as Record<string, unknown>;
 			const resolved = config.resolved as { models: Record<string, string> };
 			expect(resolved.models.default).toBe("anthropic:claude-sonnet-4-6");
@@ -73,7 +76,7 @@ describe("get_config tool", () => {
 		});
 		try {
 			const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
-			const result = await source.execute("get_config", {});
+			const result = await asDevUser(() => source.execute("get_config", {}));
 			const config = result.structuredContent as Record<string, unknown>;
 			expect(config.configuredProviders).toContain("anthropic");
 			expect(config.configuredProviders).toContain("openai");
@@ -87,7 +90,7 @@ describe("get_config tool", () => {
 		const runtime = await makeRuntime();
 		try {
 			const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
-			const result = await source.execute("get_config", {});
+			const result = await asDevUser(() => source.execute("get_config", {}));
 			const config = result.structuredContent as Record<string, unknown>;
 			expect(config.configuredProviders).toContain("anthropic");
 		} finally {
@@ -115,10 +118,10 @@ describe("get_config tool", () => {
 		try {
 			const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
 
-			const setResult = await source.execute("set_model_config", { defaultModel: "openai:gpt-4o" });
+			const setResult = await asDevUser(() => source.execute("set_model_config", { defaultModel: "openai:gpt-4o" }));
 			expect(setResult.isError).toBe(false);
 
-			const getResult = await source.execute("get_config", {});
+			const getResult = await asDevUser(() => source.execute("get_config", {}));
 			const config = getResult.structuredContent as Record<string, unknown>;
 			const resolved = config.resolved as { models: Record<string, string> };
 			expect(resolved.models.default).toBe("openai:gpt-4o");
@@ -144,7 +147,7 @@ describe("get_config tool", () => {
 		});
 		try {
 			const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
-			const result = await source.execute("set_model_config", { defaultModel: "openai:gpt-4o" });
+			const result = await asDevUser(() => source.execute("set_model_config", { defaultModel: "openai:gpt-4o" }));
 			expect(result.isError).toBe(true);
 			expect(extractText(result.content)).toContain("Invalid model");
 		} finally {

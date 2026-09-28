@@ -24,6 +24,7 @@ import { getRequestContext } from "../../src/runtime/request-context.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { defineInProcessApp, type InProcessTool } from "../../src/tools/in-process-app.ts";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
 
 const TEST_USER_ID = "usr_cfg";
 const SHARED_WS_ID = "ws_cfgshared00000";
@@ -76,6 +77,7 @@ it("a chat in a shared workspace uses THAT workspace's model overrides, not the 
   });
 
   runtime = await Runtime.start({
+    identityProvider: devProvider,
     model: { provider: "custom", adapter: model },
     logging: { disabled: true },
     workDir,

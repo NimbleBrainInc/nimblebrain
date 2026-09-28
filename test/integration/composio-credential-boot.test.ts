@@ -29,6 +29,7 @@ import {
   getCredentialProvider,
 } from "../../src/tools/credential-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
 
 let runtime: Runtime;
 let testDir: string;
@@ -42,6 +43,7 @@ beforeAll(async () => {
   _resetCredentialProvidersForTest();
 
   runtime = await Runtime.start({
+    identityProvider: devProvider,
     model: { provider: "custom", adapter: createEchoModel() },
     logging: { disabled: true },
     workDir: testDir,

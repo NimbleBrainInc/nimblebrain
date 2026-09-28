@@ -34,22 +34,30 @@ interface FakeIdentity {
   preferences: { timezone: string; locale: string; theme: string };
 }
 
+/** The dev user, as the `dev` provider verifies every request: org owner. */
+const DEV_USER: FakeIdentity = {
+  id: "usr_default",
+  email: "dev@localhost",
+  displayName: "Developer",
+  orgRole: "owner",
+  preferences: { timezone: "UTC", locale: "en-US", theme: "system" },
+};
+
 class FakeRuntime {
-  identity: FakeIdentity | null = null;
-  hasIdentityProvider = false;
+  identity: FakeIdentity | null = DEV_USER;
   wsId: string | null = null;
   workspaces = new Map<string, Workspace>();
 
-  constructor(private workDir: string) {}
+  constructor(private workDir: string) {
+    // The dev user administers the workspace these tests write to.
+    this.setMember("ws_demo", DEV_USER.id, "admin");
+  }
 
   getInstructionsStore() {
     return new InstructionsStore(this.workDir);
   }
   getCurrentIdentity() {
     return this.identity;
-  }
-  getIdentityProvider() {
-    return this.hasIdentityProvider ? ({} as object) : null;
   }
   requireWorkspaceId(): string {
     if (!this.wsId) throw new Error("no workspace");
@@ -165,7 +173,7 @@ describe("instructions source — resources", () => {
 // ── write_instructions tool — happy path + notifications ──────────────
 
 describe("instructions source — write_instructions", () => {
-  test("dev mode (no identity provider) allows writes and fires notification", async () => {
+  test("the dev user, a workspace admin, writes and fires a notification", async () => {
     const src = await buildSource();
     runtime.wsId = "ws_demo";
 
@@ -273,7 +281,6 @@ describe("instructions source — write_instructions", () => {
 describe("instructions source — role gates", () => {
   test("workspace non-admin member denied for workspace scope", async () => {
     const src = await buildSource();
-    runtime.hasIdentityProvider = true;
     runtime.identity = {
       id: "u1",
       email: "u@ex.com",
@@ -294,7 +301,6 @@ describe("instructions source — role gates", () => {
 
   test("org admin/owner who is NOT a workspace member is denied for workspace scope (STRICT — no org bypass)", async () => {
     const src = await buildSource();
-    runtime.hasIdentityProvider = true;
     runtime.identity = {
       id: "org_admin",
       email: "admin@ex.com",
@@ -321,7 +327,6 @@ describe("instructions source — role gates", () => {
 
   test("org owner who is NOT a workspace member is denied for workspace scope", async () => {
     const src = await buildSource();
-    runtime.hasIdentityProvider = true;
     runtime.identity = {
       id: "org_owner",
       email: "owner@ex.com",
@@ -342,7 +347,6 @@ describe("instructions source — role gates", () => {
 
   test("workspace admin identity allowed for workspace scope", async () => {
     const src = await buildSource();
-    runtime.hasIdentityProvider = true;
     runtime.identity = {
       id: "u1",
       email: "u@ex.com",
@@ -395,10 +399,10 @@ describe("instructions source — unattended runs", () => {
     );
   });
 
-  test("the wall outranks dev mode, which otherwise allows every write", async () => {
-    // `hasIdentityProvider` stays false here — the dev-mode allow-through is
-    // the widest gate in this function, and the wall is checked before it.
-    expect(runtime.hasIdentityProvider).toBe(false);
+  test("the wall outranks a workspace admin's write", async () => {
+    // The caller is the dev user, an admin of the workspace, so every other
+    // gate would allow the write; the wall is checked before them.
+    expect(runtime.identity?.id).toBe(DEV_USER.id);
     expect((await writeUnattended()).isError).toBe(true);
   });
 

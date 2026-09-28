@@ -16,6 +16,7 @@ import { handleResourceProxy } from "../../src/api/handlers.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
 
 const testDir = join(tmpdir(), `nb-identity-resource-host-${Date.now()}`);
 const OTHER_WORKSPACE_ID = "ws_other";
@@ -24,6 +25,7 @@ let runtime: Runtime;
 beforeAll(async () => {
   mkdirSync(testDir, { recursive: true });
   runtime = await Runtime.start({
+    identityProvider: devProvider,
     model: { provider: "custom", adapter: createEchoModel() },
     logging: { disabled: true },
     workDir: testDir,

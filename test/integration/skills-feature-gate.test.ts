@@ -20,6 +20,8 @@ import { Runtime } from "../../src/runtime/runtime.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { makeTestWorkDir } from "../helpers/test-workdir.ts";
 import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
+import { asDevUser } from "../helpers/dev-provider.ts";
 
 /** The mutation surface `skillManagement` exists to switch off. */
 const GATED = [
@@ -40,6 +42,7 @@ async function startRuntime(
   skillManagement: boolean,
 ): Promise<Runtime> {
   const runtime = await Runtime.start({
+    identityProvider: devProvider,
     model: { provider: "custom", adapter: createEchoModel() },
     logging: { disabled: true },
     workDir,
@@ -142,7 +145,9 @@ describe("skillManagement: true (the default)", () => {
       runtime,
     });
 
-    const result = await router.execute({
+    const result = await asDevUser(
+      () =>
+        router.execute({
       id: "t1",
       name: "skills__create",
       input: {
@@ -150,7 +155,9 @@ describe("skillManagement: true (the default)", () => {
         manifest: { name: "allowed-skill", description: "creatable with the flag on" },
         body: "# allowed",
       },
-    });
+        }),
+      TEST_WORKSPACE_ID,
+    );
 
     expect(result.isError).toBe(false);
   });

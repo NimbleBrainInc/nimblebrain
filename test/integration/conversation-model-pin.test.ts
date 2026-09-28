@@ -34,6 +34,7 @@ import type { UserIdentity } from "../../src/identity/provider.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
 
 const MODEL_A = "anthropic:claude-sonnet-5";
 const MODEL_B = "nebius:moonshotai/Kimi-K2.6";
@@ -61,6 +62,7 @@ const workDir = join(tmpdir(), `nimblebrain-model-pin-${Date.now()}`);
 beforeAll(async () => {
   mkdirSync(workDir, { recursive: true });
   runtime = await Runtime.start({
+    identityProvider: devProvider,
     model: { provider: "custom", adapter: createEchoModel() },
     models: { default: MODEL_A, fast: FAST_MODEL, reasoning: MODEL_A },
     logging: { disabled: true },

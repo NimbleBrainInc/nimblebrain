@@ -27,6 +27,7 @@ import {
 	installTestCredentialStore,
 	resetTestCredentialStore,
 } from "../helpers/credential-store.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
 
 // ---------------------------------------------------------------------------
 // Shared helpers
@@ -250,6 +251,7 @@ describe.skip("Remote integration: POST /v1/apps/install with url", () => {
 		writeFileSync(configPath, JSON.stringify({ version: "1" }, null, 2));
 
 		runtime = await Runtime.start({
+			identityProvider: devProvider,
 			workDir: testDir,
 			model: { provider: "custom", adapter: createEchoModel() },
 			logging: { disabled: true },
@@ -375,6 +377,7 @@ describe("Remote integration: registering remote connectors in workspace registr
 
 	it("remote connector can be registered into a workspace registry and provides tools", async () => {
 		const runtime = await Runtime.start({
+			identityProvider: devProvider,
 			workDir: testDir,
 			model: { provider: "custom", adapter: createEchoModel() },
 			logging: { disabled: true },
@@ -400,6 +403,7 @@ describe("Remote integration: registering remote connectors in workspace registr
 
 	it("failed remote connector does not pollute registry while successful one registers", async () => {
 		const runtime = await Runtime.start({
+			identityProvider: devProvider,
 			workDir: testDir,
 			model: { provider: "custom", adapter: createEchoModel() },
 			logging: { disabled: true },

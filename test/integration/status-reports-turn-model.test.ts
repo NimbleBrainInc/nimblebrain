@@ -20,6 +20,7 @@ import type { UserIdentity } from "../../src/identity/provider.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
 
 /** Auto-title generation is async and shares the model queue; wait it out. */
 async function waitForTitle(runtime: Runtime, conversationId: string, timeoutMs = 5000) {
@@ -87,6 +88,7 @@ describe("what nb__status reports about the running model", () => {
     const sink: EventSink = { emit: (e) => events.push(e) };
 
     const runtime = await Runtime.start({
+      identityProvider: devProvider,
       events: [sink],
       model: {
         provider: "custom",
@@ -154,6 +156,7 @@ describe("what nb__status reports about the running model", () => {
     const sink: EventSink = { emit: (e) => events.push(e) };
 
     const runtime = await Runtime.start({
+      identityProvider: devProvider,
       events: [sink],
       model: {
         provider: "custom",
@@ -205,6 +208,7 @@ describe("what nb__status reports about the running model", () => {
     const sink: EventSink = { emit: (e) => events.push(e) };
 
     const runtime = await Runtime.start({
+      identityProvider: devProvider,
       events: [sink],
       model: {
         provider: "custom",

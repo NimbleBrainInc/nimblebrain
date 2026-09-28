@@ -14,6 +14,7 @@ import { createMockModel } from "../helpers/mock-model.ts";
 import { type RemoteMcpFixture, startRemoteMcpServer } from "../helpers/remote-mcp-fixture.ts";
 import { SKILLS_EXTENSION_CAPABILITY, serveSkills } from "../helpers/skills-server.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
 
 const SKILL_NAME = "house-voice";
 const GUIDE_SERVER = "ai-nimblebrain-guide-mcp";
@@ -117,7 +118,7 @@ function promptText(): string {
 async function callTool(name: string, input: Record<string, unknown>) {
   const registry = runtime.getRegistryForWorkspace(TEST_WORKSPACE_ID);
   const result = await runWithRequestContext(
-    { identity: null, workspaceId: TEST_WORKSPACE_ID },
+    { identity: DEV_IDENTITY, workspaceId: TEST_WORKSPACE_ID },
     () => registry.execute({ id: `t-${Math.random()}`, name, input }),
   );
   return { content: extractText(result.content), isError: result.isError ?? false };
@@ -137,6 +138,7 @@ async function muteViaAgent(
 /** Send a turn, returning the conversation id. */
 async function chat(message: string, conversationId?: string): Promise<string> {
   const res = await runtime.chat({
+    identity: DEV_IDENTITY,
     workspaceId: TEST_WORKSPACE_ID,
     message,
     ...(conversationId ? { conversationId } : {}),
@@ -146,6 +148,7 @@ async function chat(message: string, conversationId?: string): Promise<string> {
 
 beforeAll(async () => {
   runtime = await Runtime.start({
+    identityProvider: devProvider,
     model: { provider: "custom", adapter: capturingModel() },
     logging: { disabled: true },
     workDir: testDir,
@@ -343,7 +346,7 @@ describe("muting reaches every channel a skill can compose through", () => {
     const named = async () =>
       (
         await runWithRequestContext(
-          { identity: null, workspaceId: TEST_WORKSPACE_ID, conversationId: conv },
+          { identity: DEV_IDENTITY, workspaceId: TEST_WORKSPACE_ID, conversationId: conv },
           () => runtime.describeRequestSkills(TEST_WORKSPACE_ID),
         )
       ).context.map((sk) => sk.manifest.name);

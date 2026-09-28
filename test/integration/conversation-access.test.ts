@@ -37,6 +37,7 @@ import { Runtime } from "../../src/runtime/runtime.ts";
 import { ConversationNotFoundError } from "../../src/runtime/errors.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -134,6 +135,7 @@ describe("runtime.chat — single-owner ownership check", () => {
     workDir = join(tmpdir(), `nb-conv-access-${Date.now()}`);
     mkdirSync(workDir, { recursive: true });
     runtime = await Runtime.start({
+      identityProvider: devProvider,
       model: { provider: "custom", adapter: createEchoModel() },
       logging: { disabled: true },
       workDir,

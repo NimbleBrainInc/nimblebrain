@@ -16,9 +16,7 @@
  *     `userId`.
  *   - `scope: "org"` — every user's spend, attributed by owner. Gated to org
  *     admin/owner via `ORG_ADMIN_ROLES`, matching the
- *     `instructions__write_instructions` / `manage_users` precedent. Dev mode
- *     (no identity provider) bypasses the gate and the owner filter, so local
- *     development sees everything.
+ *     `instructions__write_instructions` / `manage_users` precedent.
  */
 
 import { textContent } from "../../engine/content-helpers.ts";
@@ -49,23 +47,15 @@ const USAGE_REPORT_DESCRIPTION =
  * gate. Returns either an error result (denied) or the resolved
  * `{ scope, ownerFilter }`.
  *
- * - No identity provider (an in-process runtime with no `instance.json`):
- *   no gate, no filter — see all conversations regardless of requested
- *   scope. Matches the posture in `instructions.ts::checkScopePermission`.
  * - `scope: "org"`: requires `ORG_ADMIN_ROLES`. No owner filter (all users).
  * - `scope: "user"` (default): filter to the caller's own id. An
- *   unauthenticated caller in a non-dev instance is denied (no id to scope
+ *   unauthenticated caller is denied (no id to scope
  *   to — fail closed rather than leak the whole org).
  */
 function resolveScope(
   runtime: Runtime,
   requestedScope: "user" | "org",
 ): { scope: "user" | "org"; ownerFilter?: string } | { error: string } {
-  // Dev mode — no identity provider configured. See everything.
-  if (runtime.getIdentityProvider() === null) {
-    return { scope: requestedScope, ownerFilter: undefined };
-  }
-
   const identity = runtime.getCurrentIdentity();
   if (!identity) {
     return { error: "No authenticated identity." };

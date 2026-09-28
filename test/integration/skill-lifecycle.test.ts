@@ -8,6 +8,8 @@ import type { LanguageModelV4 } from "@ai-sdk/provider";
 import { createMockModel, runtimeContextHead } from "../helpers/mock-model.ts";
 import { extractText } from "../../src/engine/content-helpers.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
+import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 
 const testDir = join(tmpdir(), `nimblebrain-skill-lifecycle-${Date.now()}`);
 
@@ -43,7 +45,7 @@ async function callTool(
 ): Promise<{ content: string; isError: boolean }> {
 	const registry = runtime.getRegistryForWorkspace(TEST_WORKSPACE_ID);
 	const result = await runWithRequestContext(
-		{ identity: null, workspaceId: TEST_WORKSPACE_ID },
+		{ identity: DEV_IDENTITY, workspaceId: TEST_WORKSPACE_ID },
 		() => registry.execute({
 			id: `test-${Date.now()}`,
 			name: toolName,
@@ -62,6 +64,7 @@ describe("skill lifecycle (end-to-end)", () => {
 		const { model, getSystem } = createCapturingModel();
 
 		const runtime = await Runtime.start({
+			identityProvider: devProvider,
 			model: { provider: "custom", adapter: model },
 			workDir,
 			logging: { disabled: true },
@@ -90,7 +93,7 @@ describe("skill lifecycle (end-to-end)", () => {
 		expect(statusResult.content).toContain("test-greeter");
 
 		// 3. Verify the skill matcher matches it when given a message with its trigger
-		const chatResult = await runtime.chat({ workspaceId: TEST_WORKSPACE_ID, message: "greet someone please" });
+		const chatResult = await runtime.chat({ identity: DEV_IDENTITY, workspaceId: TEST_WORKSPACE_ID, message: "greet someone please" });
 		expect(chatResult.skillName).toBe("test-greeter");
 
 		// 4. Verify the skill body appears in composed system prompt
@@ -103,7 +106,7 @@ describe("skill lifecycle (end-to-end)", () => {
 		expect(deleteResult.content).toContain("test-greeter");
 
 		// 6. Verify it no longer matches
-		const chatAfterDelete = await runtime.chat({ workspaceId: TEST_WORKSPACE_ID, message: "greet someone please" });
+		const chatAfterDelete = await runtime.chat({ identity: DEV_IDENTITY, workspaceId: TEST_WORKSPACE_ID, message: "greet someone please" });
 		expect(chatAfterDelete.skillName).not.toBe("test-greeter");
 
 		await runtime.shutdown();
@@ -114,6 +117,7 @@ describe("skill lifecycle (end-to-end)", () => {
 		const { model, getSystem } = createCapturingModel();
 
 		const runtime = await Runtime.start({
+			identityProvider: devProvider,
 			model: { provider: "custom", adapter: model },
 			workDir,
 			logging: { disabled: true },
@@ -135,11 +139,11 @@ describe("skill lifecycle (end-to-end)", () => {
 		expect(createResult.isError).toBe(false);
 
 		// Send a message with NO trigger match — context skill should still appear
-		await runtime.chat({ workspaceId: TEST_WORKSPACE_ID, message: "what is 2 + 2" });
+		await runtime.chat({ identity: DEV_IDENTITY, workspaceId: TEST_WORKSPACE_ID, message: "what is 2 + 2" });
 		expect(getSystem()).toContain("Acme Corp");
 
 		// Send a completely different message — context skill should still be present
-		await runtime.chat({ workspaceId: TEST_WORKSPACE_ID, message: "tell me about the weather" });
+		await runtime.chat({ identity: DEV_IDENTITY, workspaceId: TEST_WORKSPACE_ID, message: "tell me about the weather" });
 		expect(getSystem()).toContain("Acme Corp");
 
 		// Delete and verify removal
@@ -147,7 +151,7 @@ describe("skill lifecycle (end-to-end)", () => {
 		const deleteResult = await callTool(runtime, "skills__delete", { id: skillPath });
 		expect(deleteResult.isError).toBe(false);
 
-		await runtime.chat({ workspaceId: TEST_WORKSPACE_ID, message: "anything at all" });
+		await runtime.chat({ identity: DEV_IDENTITY, workspaceId: TEST_WORKSPACE_ID, message: "anything at all" });
 		expect(getSystem()).not.toContain("Acme Corp");
 
 		await runtime.shutdown();
@@ -164,6 +168,7 @@ describe("skill lifecycle (end-to-end)", () => {
 		const workDir = join(testDir, "garbage-id");
 		const { model } = createCapturingModel();
 		const runtime = await Runtime.start({
+			identityProvider: devProvider,
 			model: { provider: "custom", adapter: model },
 			workDir,
 			logging: { disabled: true },
@@ -194,6 +199,7 @@ describe("skill lifecycle (end-to-end)", () => {
 		const workDir = join(testDir, "list-rows");
 		const { model } = createCapturingModel();
 		const runtime = await Runtime.start({
+			identityProvider: devProvider,
 			model: { provider: "custom", adapter: model },
 			workDir,
 			logging: { disabled: true },
@@ -228,6 +234,7 @@ describe("skill lifecycle (end-to-end)", () => {
 		const { model } = createCapturingModel();
 
 		const runtime = await Runtime.start({
+			identityProvider: devProvider,
 			model: { provider: "custom", adapter: model },
 			workDir,
 			logging: { disabled: true },

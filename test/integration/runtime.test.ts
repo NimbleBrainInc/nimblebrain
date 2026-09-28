@@ -10,6 +10,8 @@ import { createEchoModel } from "../helpers/echo-model.ts";
 import { createMockModel } from "../helpers/mock-model.ts";
 import type { EngineEvent, EventSink, ToolSchema } from "../../src/engine/types.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
+import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 
 const testDir = join(tmpdir(), `nimblebrain-runtime-${Date.now()}`);
 
@@ -59,12 +61,13 @@ describe("filterTools", () => {
 describe("Runtime", () => {
   it("starts with echo model and processes a chat", async () => {
     const runtime = await Runtime.start({
+      identityProvider: devProvider,
       workDir: testDir,
       model: { provider: "custom", adapter: createEchoModel() },
     });
     await provisionTestWorkspace(runtime);
 
-    const result = await runtime.chat({ message: "Hello there", workspaceId: TEST_WORKSPACE_ID });
+    const result = await runtime.chat({ identity: DEV_IDENTITY, message: "Hello there", workspaceId: TEST_WORKSPACE_ID });
 
     expect(result.response).toBe("Hello there");
     expect(result.conversationId).toMatch(/^conv_/);
@@ -81,6 +84,7 @@ describe("Runtime", () => {
     // refactor can't quietly remove the protection.
     await expect(
       Runtime.start({
+        identityProvider: devProvider,
         model: { provider: "custom", adapter: createEchoModel() },
       }),
     ).rejects.toThrow(/workDir/);
@@ -90,13 +94,15 @@ describe("Runtime", () => {
     const workDir = join(testDir, "continuity");
     mkdirSync(workDir, { recursive: true });
     const runtime = await Runtime.start({
+      identityProvider: devProvider,
       model: { provider: "custom", adapter: createEchoModel() },
       workDir,
     });
     await provisionTestWorkspace(runtime);
 
-    const first = await runtime.chat({ message: "First message", workspaceId: TEST_WORKSPACE_ID });
+    const first = await runtime.chat({ identity: DEV_IDENTITY, message: "First message", workspaceId: TEST_WORKSPACE_ID });
     const second = await runtime.chat({
+      identity: DEV_IDENTITY,
       message: "Second message",
       conversationId: first.conversationId,
       workspaceId: TEST_WORKSPACE_ID,
@@ -109,13 +115,14 @@ describe("Runtime", () => {
 
   it("creates new conversation when no id provided", async () => {
     const runtime = await Runtime.start({
+      identityProvider: devProvider,
       workDir: testDir,
       model: { provider: "custom", adapter: createEchoModel() },
     });
     await provisionTestWorkspace(runtime);
 
-    const first = await runtime.chat({ message: "A", workspaceId: TEST_WORKSPACE_ID });
-    const second = await runtime.chat({ message: "B", workspaceId: TEST_WORKSPACE_ID });
+    const first = await runtime.chat({ identity: DEV_IDENTITY, message: "A", workspaceId: TEST_WORKSPACE_ID });
+    const second = await runtime.chat({ identity: DEV_IDENTITY, message: "B", workspaceId: TEST_WORKSPACE_ID });
 
     expect(first.conversationId).not.toBe(second.conversationId);
 
@@ -127,6 +134,7 @@ describe("Runtime", () => {
     mkdirSync(workDir, { recursive: true });
 
     const runtime = await Runtime.start({
+      identityProvider: devProvider,
       model: { provider: "custom", adapter: createEchoModel() },
       workDir,
     });
@@ -162,6 +170,7 @@ describe("Runtime", () => {
     mkdirSync(workDir, { recursive: true });
 
     const runtime = await Runtime.start({
+      identityProvider: devProvider,
       model: { provider: "custom", adapter: createEchoModel() },
       workDir,
     });
@@ -170,7 +179,7 @@ describe("Runtime", () => {
 
     // Dev-mode owner is `usr_default`; the chat is focused on TEST_WORKSPACE_ID,
     // so the conversation is born in that workspace's owner partition.
-    await runtime.chat({ message: "Persistent", workspaceId: TEST_WORKSPACE_ID });
+    await runtime.chat({ identity: DEV_IDENTITY, message: "Persistent", workspaceId: TEST_WORKSPACE_ID });
 
     const ownerDir = workspaceConversationsDir(workDir, TEST_WORKSPACE_ID, "usr_default");
     const workspaceFiles = [...new Bun.Glob("*.jsonl").scanSync(ownerDir)];
@@ -201,13 +210,14 @@ You are a friendly greeter. Always respond with enthusiasm!
     );
 
     const runtime = await Runtime.start({
+      identityProvider: devProvider,
       workDir: testDir,
       model: { provider: "custom", adapter: createEchoModel() },
       skillDirs: [skillDir],
     });
     await provisionTestWorkspace(runtime);
 
-    const result = await runtime.chat({ message: "say hello and greet everyone", workspaceId: TEST_WORKSPACE_ID });
+    const result = await runtime.chat({ identity: DEV_IDENTITY, message: "say hello and greet everyone", workspaceId: TEST_WORKSPACE_ID });
     expect(result.skillName).toBe("greeter");
 
     await runtime.shutdown();
@@ -249,13 +259,14 @@ I am Nira, your AI assistant. You work at Acme Corp.
     });
 
     const runtime = await Runtime.start({
+      identityProvider: devProvider,
       workDir: testDir,
       model: { provider: "custom", adapter: model },
       skillDirs: [skillDir],
     });
     await provisionTestWorkspace(runtime);
 
-    await runtime.chat({ message: "Hello", workspaceId: TEST_WORKSPACE_ID });
+    await runtime.chat({ identity: DEV_IDENTITY, message: "Hello", workspaceId: TEST_WORKSPACE_ID });
 
     expect(capturedSystem).toContain("I am Nira");
     expect(capturedSystem).toContain("Acme Corp");
@@ -273,6 +284,7 @@ I am Nira, your AI assistant. You work at Acme Corp.
     mkdirSync(skillDir, { recursive: true });
 
     const runtime = await Runtime.start({
+      identityProvider: devProvider,
       workDir: isolatedWorkDir,
       model: { provider: "custom", adapter: createEchoModel() },
       skillDirs: [skillDir],
@@ -280,7 +292,7 @@ I am Nira, your AI assistant. You work at Acme Corp.
     await provisionTestWorkspace(runtime);
 
     // No skills initially
-    let result = await runtime.chat({ message: "say hello and greet everyone", workspaceId: TEST_WORKSPACE_ID });
+    let result = await runtime.chat({ identity: DEV_IDENTITY, message: "say hello and greet everyone", workspaceId: TEST_WORKSPACE_ID });
     expect(result.skillName).toBeNull();
 
     // Add a skill
@@ -300,7 +312,7 @@ Greet with enthusiasm!
 
     await runtime.reloadSkills();
 
-    result = await runtime.chat({ message: "say hello and greet everyone", workspaceId: TEST_WORKSPACE_ID });
+    result = await runtime.chat({ identity: DEV_IDENTITY, message: "say hello and greet everyone", workspaceId: TEST_WORKSPACE_ID });
     expect(result.skillName).toBe("greeter");
 
     await runtime.shutdown();
@@ -315,13 +327,14 @@ Greet with enthusiasm!
     };
 
     const runtime = await Runtime.start({
+      identityProvider: devProvider,
       workDir: testDir,
       model: { provider: "custom", adapter: createEchoModel() },
       events: [sink],
     });
     await provisionTestWorkspace(runtime);
 
-    await runtime.chat({ message: "Hello", workspaceId: TEST_WORKSPACE_ID });
+    await runtime.chat({ identity: DEV_IDENTITY, message: "Hello", workspaceId: TEST_WORKSPACE_ID });
 
     expect(events).toContain("run.start");
     expect(events).toContain("run.done");
@@ -331,6 +344,7 @@ Greet with enthusiasm!
 
   it("reports available tools (empty when no connectors)", async () => {
     const runtime = await Runtime.start({
+      identityProvider: devProvider,
       workDir: testDir,
       model: { provider: "custom", adapter: createEchoModel() },
     });

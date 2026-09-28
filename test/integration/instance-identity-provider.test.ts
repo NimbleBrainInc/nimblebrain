@@ -1,7 +1,7 @@
 /**
  * `instance.json` names the identity provider, `dev` included, and nothing
- * else does. A runtime with no `instance.json` has no provider, and the server
- * refuses to start on it rather than admit requests as a default user.
+ * else does. A runtime with no `instance.json` (and none passed in) refuses to
+ * start rather than run with no one to check a request against.
  */
 
 import { afterEach, describe, expect, it } from "bun:test";
@@ -16,6 +16,8 @@ import { makeTestWorkDir } from "../helpers/test-workdir.ts";
 let runtime: Runtime | undefined;
 let handle: ServerHandle | undefined;
 let cleanup: (() => void) | undefined;
+/** The workDir the last `startRuntime` used. */
+let lastWorkDir = "";
 
 afterEach(async () => {
   handle?.stop(true);
@@ -27,8 +29,10 @@ afterEach(async () => {
 });
 
 async function startRuntime(instance: unknown | null): Promise<Runtime> {
+  cleanup?.();
   const dir = makeTestWorkDir("instance-provider");
   cleanup = dir.cleanup;
+  lastWorkDir = dir.workDir;
   if (instance !== null) {
     writeFileSync(join(dir.workDir, "instance.json"), JSON.stringify(instance));
   }
@@ -40,16 +44,12 @@ async function startRuntime(instance: unknown | null): Promise<Runtime> {
 }
 
 describe("instance.json selects the identity provider", () => {
-  it("a missing instance.json refuses server startup, naming what to write", async () => {
-    runtime = await startRuntime(null);
-    expect(runtime.getIdentityProvider()).toBeNull();
-
-    const workDir = runtime.getWorkDir();
-    const rt = runtime;
-    expect(() => startServer({ runtime: rt, port: 0 })).toThrow(
-      `No identity provider: ${join(workDir, "instance.json")} does not exist`,
+  it("a missing instance.json refuses runtime startup, naming what to write", async () => {
+    const started = startRuntime(null);
+    await expect(started).rejects.toThrow(
+      `No identity provider: ${join(lastWorkDir, "instance.json")} does not exist`,
     );
-    expect(() => startServer({ runtime: rt, port: 0 })).toThrow('{"auth":{"adapter":"dev"}}');
+    await expect(startRuntime(null)).rejects.toThrow('{"auth":{"adapter":"dev"}}');
   });
 
   it('`adapter: "dev"` authenticates every request as the dev user', async () => {

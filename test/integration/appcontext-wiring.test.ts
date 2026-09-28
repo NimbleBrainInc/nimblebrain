@@ -6,6 +6,8 @@ import { textContent } from "../../src/engine/content-helpers.ts";
 import { createMockModel, runtimeContextHead } from "../helpers/mock-model.ts";
 import { makeTestWorkDir } from "../helpers/test-workdir.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
+import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 
 /** Minimal model adapter that captures the system prompt for assertions. */
 function createCapturingModel() {
@@ -65,6 +67,7 @@ describe("Runtime.chat() appContext wiring", () => {
 	it("passes focusedApp to composeSystemPrompt when appContext matches a source", async () => {
 		const { adapter, getSystem } = createCapturingModel();
 		const runtime = await Runtime.start({
+			identityProvider: devProvider,
 			workDir: freshWorkDir(),
 			model: { provider: "custom", adapter },
 			logging: { disabled: true },
@@ -80,6 +83,7 @@ describe("Runtime.chat() appContext wiring", () => {
 		runtime.getRegistryForWorkspace(TEST_WORKSPACE_ID).addSource(source);
 
 		await runtime.chat({
+			identity: DEV_IDENTITY,
 			message: "Hello",
 			workspaceId: TEST_WORKSPACE_ID,
 			appContext: { appName: "My App", serverName: "my-server" },
@@ -98,6 +102,7 @@ describe("Runtime.chat() appContext wiring", () => {
 	it("does not inject focusedApp when appContext is absent", async () => {
 		const { adapter, getSystem } = createCapturingModel();
 		const runtime = await Runtime.start({
+			identityProvider: devProvider,
 			workDir: freshWorkDir(),
 			model: { provider: "custom", adapter },
 			logging: { disabled: true },
@@ -105,7 +110,7 @@ describe("Runtime.chat() appContext wiring", () => {
 
 		await provisionTestWorkspace(runtime);
 
-		await runtime.chat({ message: "Hello", workspaceId: TEST_WORKSPACE_ID });
+		await runtime.chat({ identity: DEV_IDENTITY, message: "Hello", workspaceId: TEST_WORKSPACE_ID });
 
 		const system = getSystem();
 		expect(system).not.toContain("Active App:");
@@ -116,6 +121,7 @@ describe("Runtime.chat() appContext wiring", () => {
 	it("skips silently when serverName does not match any source", async () => {
 		const { adapter, getSystem } = createCapturingModel();
 		const runtime = await Runtime.start({
+			identityProvider: devProvider,
 			workDir: freshWorkDir(),
 			model: { provider: "custom", adapter },
 			logging: { disabled: true },
@@ -124,6 +130,7 @@ describe("Runtime.chat() appContext wiring", () => {
 		await provisionTestWorkspace(runtime);
 
 		await runtime.chat({
+			identity: DEV_IDENTITY,
 			message: "Hello",
 			workspaceId: TEST_WORKSPACE_ID,
 			appContext: { appName: "Ghost App", serverName: "nonexistent-server" },

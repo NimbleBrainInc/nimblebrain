@@ -26,6 +26,7 @@ import { Runtime } from "../../src/runtime/runtime.ts";
 import type { ComposeAssembledContextOutput } from "../../src/platform/schemas/compose.ts";
 import { createMockModel } from "../helpers/mock-model.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
 
 const testDir = join(tmpdir(), `nimblebrain-assembled-${Date.now()}`);
 
@@ -94,6 +95,7 @@ async function runtimeWithRecordedRun(
 ): Promise<{ runtime: Runtime; convId: string; runId: string; skillPath: string }> {
   const workDir = join(testDir, subdir);
   const runtime = await Runtime.start({
+    identityProvider: devProvider,
     model: { provider: "custom", adapter: makeModel() },
     workDir,
     logging: { disabled: true },
@@ -111,7 +113,7 @@ async function runtimeWithRecordedRun(
   );
   await runtime.reloadSkills();
 
-  const result = await runtime.chat({ workspaceId: TEST_WORKSPACE_ID, message: "test message" });
+  const result = await runtime.chat({ identity: DEV_IDENTITY, workspaceId: TEST_WORKSPACE_ID, message: "test message" });
   const convId = result.conversationId;
   const runId = await getLatestRunId(runtime, convId);
   if (!runId) throw new Error("no runId recorded");
@@ -188,6 +190,7 @@ describe("compose__assembled_context — access + resolution", () => {
   it("errors for a conversation that does not exist", async () => {
     const workDir = join(testDir, "not-found");
     const runtime = await Runtime.start({
+      identityProvider: devProvider,
       model: { provider: "custom", adapter: makeModel() },
       workDir,
       logging: { disabled: true },
@@ -205,6 +208,7 @@ describe("compose__assembled_context — access + resolution", () => {
   it("errors when no conversation is in scope and none is passed", async () => {
     const workDir = join(testDir, "no-conv");
     const runtime = await Runtime.start({
+      identityProvider: devProvider,
       model: { provider: "custom", adapter: makeModel() },
       workDir,
       logging: { disabled: true },

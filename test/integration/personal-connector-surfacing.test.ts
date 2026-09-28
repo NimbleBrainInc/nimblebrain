@@ -27,6 +27,7 @@ import { Runtime } from "../../src/runtime/runtime.ts";
 import { defineInProcessApp } from "../../src/tools/in-process-app.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { type FakeConnectorServer, startFakeConnectorServer } from "../helpers/fake-connector-server.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
 
 const testDir = join(tmpdir(), `nb-pc-surfacing-${Date.now()}`);
 const SHARED_WS = "ws_helix";
@@ -74,6 +75,7 @@ async function toolNames(wsId: string, identityId?: string): Promise<string[]> {
 beforeAll(async () => {
   mkdirSync(testDir, { recursive: true });
   runtime = await Runtime.start({
+    identityProvider: devProvider,
     model: { provider: "custom", adapter: createEchoModel() },
     logging: { disabled: true },
     workDir: testDir,

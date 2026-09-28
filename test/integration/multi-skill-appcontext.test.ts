@@ -32,6 +32,8 @@ import { createEchoModel } from "../helpers/echo-model.ts";
 import { type RemoteMcpFixture, startRemoteMcpServer } from "../helpers/remote-mcp-fixture.ts";
 import { SKILLS_EXTENSION_CAPABILITY, serveSkills } from "../helpers/skills-server.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
+import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 
 const SERVER_NAME = "ai-nimblebrain-multiskill-mcp";
 
@@ -185,6 +187,7 @@ let neighbour: McpSource;
 beforeAll(async () => {
   mkdirSync(testDir, { recursive: true });
   runtime = await Runtime.start({
+    identityProvider: devProvider,
     model: { provider: "custom", adapter: createCapturingModel() },
     logging: { disabled: true },
     workDir: testDir,
@@ -228,6 +231,7 @@ afterAll(async () => {
 describe("multi-skill server + appContext", () => {
   it("composes all six `always` skills when the app is NOT entered", async () => {
     await runtime.chat({
+      identity: DEV_IDENTITY,
       workspaceId: TEST_WORKSPACE_ID,
       message: "Draft an email to a prospect.",
     });
@@ -239,6 +243,7 @@ describe("multi-skill server + appContext", () => {
 
   it("keeps all six when appContext names the server", async () => {
     await runtime.chat({
+      identity: DEV_IDENTITY,
       workspaceId: TEST_WORKSPACE_ID,
       message: "Draft an email to a prospect.",
       appContext: { appName: "Multi Skill", serverName: SERVER_NAME },
@@ -251,6 +256,7 @@ describe("multi-skill server + appContext", () => {
 
   it("carries the primary exactly once — <app-guide>, not also the context channel", async () => {
     await runtime.chat({
+      identity: DEV_IDENTITY,
       workspaceId: TEST_WORKSPACE_ID,
       message: "Draft an email to a prospect.",
       appContext: { appName: "Multi Skill", serverName: SERVER_NAME },
@@ -263,12 +269,14 @@ describe("multi-skill server + appContext", () => {
 
   it("promotes the entered server's tools to direct in the same turn", async () => {
     await runtime.chat({
+      identity: DEV_IDENTITY,
       workspaceId: TEST_WORKSPACE_ID,
       message: "Draft an email to a prospect.",
     });
     const withoutApp = lastToolCount;
 
     await runtime.chat({
+      identity: DEV_IDENTITY,
       workspaceId: TEST_WORKSPACE_ID,
       message: "Draft an email to a prospect.",
       appContext: { appName: "Multi Skill", serverName: SERVER_NAME },
@@ -285,12 +293,14 @@ describe("same skill path on two servers", () => {
     // uri alone would drop the neighbour's copy the moment the first is entered
     // — the same silent drop this PR closes, one scope out.
     await runtime.chat({
+      identity: DEV_IDENTITY,
       workspaceId: TEST_WORKSPACE_ID,
       message: "Draft an email to a prospect.",
     });
     expect(lastPromptText()).toContain(NEIGHBOUR_PHRASE);
 
     await runtime.chat({
+      identity: DEV_IDENTITY,
       workspaceId: TEST_WORKSPACE_ID,
       message: "Draft an email to a prospect.",
       appContext: { appName: "Multi Skill", serverName: SERVER_NAME },

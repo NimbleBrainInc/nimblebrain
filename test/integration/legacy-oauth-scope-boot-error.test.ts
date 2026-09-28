@@ -14,6 +14,7 @@ import { LegacyOAuthScopeError } from "../../src/connectors/runtime/lifecycle.ts
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { writeJsonAtomic } from "../../src/util/atomic-json.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
 
 const USER_ID = "user_legacy_alpha";
 
@@ -63,6 +64,7 @@ describe("Stage 2 — legacy oauthScope on disk hard-errors at boot", () => {
     let caught: unknown = null;
     try {
       const rt = await Runtime.start({
+        identityProvider: devProvider,
         model: { provider: "custom", adapter: createEchoModel() },
         logging: { disabled: true },
         workDir,

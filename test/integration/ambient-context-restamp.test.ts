@@ -28,6 +28,7 @@ import { defineInProcessApp, type InProcessTool } from "../../src/tools/in-proce
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { getRequestContext } from "../../src/runtime/request-context.ts";
 import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
 
 const TEST_USER_ID = "usr_amb_ctx_test";
 const TEST_USER_DISPLAY = "Ambient Test";
@@ -116,6 +117,7 @@ describe("Stage 2 T008 — ambient RequestContext.workspaceId matches the routed
     });
 
     runtime = await Runtime.start({
+      identityProvider: devProvider,
       model: { provider: "custom", adapter: model },
       logging: { disabled: true },
       workDir,

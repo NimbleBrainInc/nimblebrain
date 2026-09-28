@@ -13,6 +13,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import type { ChatResult } from "../../src/runtime/types.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
 
 // ---------------------------------------------------------------------------
 // Config
@@ -46,6 +47,7 @@ export async function getEvalRuntime(): Promise<Runtime> {
   mkdirSync(_workDir, { recursive: true });
 
   _runtime = await Runtime.start({
+    identityProvider: devProvider,
     model: { provider: "anthropic", apiKey },
     defaultModel: DEFAULT_MODEL,
     workDir: _workDir,

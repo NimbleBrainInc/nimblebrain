@@ -33,6 +33,7 @@ import { brokeredConnectorDir } from "../../src/connectors/runtime/brokered.ts";
 import type { ConnectorRef } from "../../src/connectors/runtime/types.ts";
 import type { Tool, ToolResult, ToolSource } from "../../src/tools/types.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
 
 const ADMIN = { id: "usr_admin", email: "admin@example.test" };
 const WS_ID = "ws_helix";
@@ -168,6 +169,7 @@ beforeEach(async () => {
   process.env.NB_CURATED_CATALOG_DIR = catalogDir;
 
   runtime = await Runtime.start({
+    identityProvider: devProvider,
     model: { provider: "custom", adapter: createEchoModel() },
     logging: { disabled: true },
     workDir,

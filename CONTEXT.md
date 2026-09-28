@@ -73,8 +73,9 @@ ordinary workspace — it can be shared, and nothing marks how it was made
 ### Identity provider
 What authenticates a request and says who made it, named by `auth.adapter` in
 `instance.json`: `dev` (every request is one local developer, an org owner),
-`oidc` or `workos`. It is always a choice: with no `instance.json` the server
-does not start, and no request is admitted as `dev` because the file is absent
+`oidc` or `workos`. It is always a choice: with no `instance.json` (and none
+passed in) the runtime does not start, and no request is admitted as `dev`
+because the file is absent. Every run names its caller and its workspace
 (ADR-0040).
 
 ### Owner

@@ -32,6 +32,8 @@ import { Runtime } from "../../src/runtime/runtime.ts";
 import type { TaskRequest, TaskResult } from "../../src/runtime/types.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { makeTestWorkDir } from "../helpers/test-workdir.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
+import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 
 const WS_ID = "ws_quiesce";
 const AUTOMATION_ID = "daily-digest";
@@ -68,7 +70,7 @@ function armedAutomation(): Automation {
 
 /** Write the automation and hand it to the scheduler, the way the tool does. */
 function arm(): void {
-  runWithRequestContext({ identity: null, workspaceId: WS_ID }, () => {
+  runWithRequestContext({ identity: DEV_IDENTITY, workspaceId: WS_ID }, () => {
     const ctx = runtime.getAutomationsContext();
     const defs = ctx.definitions();
     defs.set(AUTOMATION_ID, armedAutomation());
@@ -86,6 +88,7 @@ beforeEach(async () => {
   dispatched = [];
   ({ workDir, cleanup } = makeTestWorkDir("ws-delete-quiesce"));
   runtime = await Runtime.start({
+    identityProvider: devProvider,
     model: { provider: "custom", adapter: createEchoModel() },
     logging: { disabled: true },
     workDir,

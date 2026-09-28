@@ -24,6 +24,7 @@ import { runWithRequestContext } from "../../src/runtime/request-context.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
 
 const testDir = join(tmpdir(), `nimblebrain-alwayson-cost-${Date.now()}`);
 let runtime: Runtime;
@@ -48,6 +49,7 @@ async function createAlwaysOn(scope: string, name: string, body: string) {
 
 beforeAll(async () => {
   runtime = await Runtime.start({
+    identityProvider: devProvider,
     model: { provider: "custom", adapter: createEchoModel() },
     logging: { disabled: true },
     workDir: testDir,

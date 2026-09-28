@@ -450,9 +450,8 @@ export interface TaskRequest {
   trigger?: Exclude<RunTrigger, "chat">;
   /**
    * Identity the task runs under. Resolution mirrors `ChatRequest.identity`:
-   * if an identity provider is configured, this MUST be set; in dev mode
-   * an unset identity falls back to `DEV_IDENTITY`. The scheduler builds
-   * a minimal identity from the automation's `ownerId` field.
+   * it MUST be set; a task without one is refused. The scheduler builds a
+   * minimal identity from the automation's `ownerId` field.
    */
   identity?: UserIdentity;
   /**

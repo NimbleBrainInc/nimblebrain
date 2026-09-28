@@ -94,11 +94,10 @@ import { readHookIdentity } from "../hooks/token.ts";
 import { FileBackedHostResourcesResolver, TokenBucketRateLimit } from "../host-resources/index.ts";
 import { IdentityContext } from "../identity/context.ts";
 import type { InstanceConfig } from "../identity/instance.ts";
-import { loadInstanceConfig } from "../identity/instance.ts";
-import { resolveRequestOwnerId } from "../identity/owner.ts";
+import { loadInstanceConfig, missingInstanceConfigError } from "../identity/instance.ts";
+import { requireRequestIdentity, resolveRequestOwnerId } from "../identity/owner.ts";
 import type { IdentityProvider, UserIdentity } from "../identity/provider.ts";
 import { createIdentityProvider } from "../identity/provider.ts";
-import { DEV_IDENTITY } from "../identity/providers/dev.ts";
 import { UserStore } from "../identity/user.ts";
 import { InstructionsStore } from "../instructions/index.ts";
 import type { LifecycleNotifyDeps } from "../lifecycle/notify.ts";
@@ -219,7 +218,6 @@ import { clearUsageLedger, recordLlmCall, setUsageLedger } from "../usage/record
 import type { TokenUsage } from "../usage/types.ts";
 import { WorkspaceContext } from "../workspace/context.ts";
 import { retireLegacyPersonalWorkspaces } from "../workspace/legacy-personal.ts";
-import { defaultWorkspaceFor, ensureUserWorkspace } from "../workspace/provisioning.ts";
 import type { Workspace } from "../workspace/types.ts";
 import { WorkspaceStore } from "../workspace/workspace-store.ts";
 import {
@@ -415,7 +413,7 @@ export class Runtime {
   private _permissionStore: PermissionStore | null = null;
   private _credentialStore: CredentialStore | null = null;
   private _managedConnectorRegistry: ManagedConnectorRegistry | null = null;
-  private _identityProvider: IdentityProvider | null;
+  private _identityProvider: IdentityProvider;
   /** Getter for the current request identity — reads from AsyncLocalStorage. */
   _getIdentity: () => UserIdentity | null = () => null;
   /** Getter for the current request workspace ID — reads from AsyncLocalStorage. */
@@ -527,7 +525,7 @@ export class Runtime {
     instanceConfig: InstanceConfig | null,
     userStore: UserStore,
     workspaceStore: WorkspaceStore,
-    identityProvider: IdentityProvider | null,
+    identityProvider: IdentityProvider,
     workspaceRegistries: Map<string, ToolRegistry>,
     systemSource: ToolSource | null,
     currentWorkspaceId: () => string | null,
@@ -655,14 +653,17 @@ export class Runtime {
     const workspaceStore = new WorkspaceStore(workDir);
     await retireLegacyPersonalWorkspaces(workspaceStore, userStore);
     // The runtime is the one owner of the identity provider: the server
-    // authenticates with this one. No `instance.json` (and none passed in)
-    // leaves the runtime without a provider; only an in-process caller can use
-    // such a runtime, because the server refuses to start on it.
-    const identityProvider = config.identityProvider
-      ? config.identityProvider({ workDir, userStore, workspaceStore })
-      : instanceConfig
-        ? createIdentityProvider(instanceConfig, userStore, workDir)
-        : null;
+    // authenticates with this one, and every permission check here judges the
+    // identity it verified. There is no runtime without one: no `instance.json`
+    // (and none passed in) refuses startup, and never selects `dev`.
+    let identityProvider: IdentityProvider;
+    if (config.identityProvider) {
+      identityProvider = config.identityProvider({ workDir, userStore, workspaceStore });
+    } else if (instanceConfig) {
+      identityProvider = createIdentityProvider(instanceConfig, userStore, workDir);
+    } else {
+      throw missingInstanceConfigError(workDir);
+    }
 
     initWorkDir(config);
 
@@ -696,10 +697,7 @@ export class Runtime {
     const hostResourcesResolver = new FileBackedHostResourcesResolver((wsId: string) => {
       // Files are workspace-owned: the resolver passes the connector's request
       // workspace (`ctx.workspaceId`) so a `files://` read resolves there only.
-      const userId = resolveRequestOwnerId(
-        getRequestContext()?.identity,
-        identityProvider !== null,
-      );
+      const userId = resolveRequestOwnerId(getRequestContext()?.identity);
       const cacheKey = `${wsId}:${userId}`;
       const cached = hostResourcesFileStoreCache.get(cacheKey);
       if (cached) return cached;
@@ -769,9 +767,6 @@ export class Runtime {
     const getWorkspaceId = (): string | null => getRequestContext()?.workspaceId ?? null;
 
     // Build management tool contexts using the identity holder + stores from task 001
-    // ManageUsersContext is always created. With no identity provider, the
-    // tool can still list/update/delete users — it just can't create
-    // users with API keys (that requires a provider with credential login).
     const manageUsersCtx = { getIdentity, userStore, provider: identityProvider };
     const noActiveToolPromotionRun = (toolName: string): ToolPromotionResult => ({
       ok: false,
@@ -1074,17 +1069,15 @@ export class Runtime {
    * {@link RunInProgressError} if a turn is already active for the conversation.
    */
   async startTurn(request: ChatRequest): Promise<{ conversationId: string }> {
-    // Same strict production-vs-dev owner rule as `chat()` and the REST
-    // handlers — one shared resolver, no forked copy to drift out of sync.
-    const ownerId = resolveRequestOwnerId(request.identity, this._identityProvider !== null);
+    // Same owner rule as `chat()` and the REST handlers — one shared resolver,
+    // no forked copy to drift out of sync. No identity throws.
+    const requestIdentity = requireRequestIdentity(request.identity);
+    const ownerId = requestIdentity.id;
     // `workspaceId` names the workspace this turn acts from. The HTTP chat door
-    // takes it from the URL (`/v1/workspaces/<wsId>/chat*`); see
-    // `resolveRequestWorkspace` for a caller that omits it. The resolved id is
-    // handed to `chat()` below so both halves of the turn run in one workspace.
-    const wsId = await this.resolveRequestWorkspace(
-      request.identity ?? DEV_IDENTITY,
-      request.workspaceId,
-    );
+    // takes it from the URL (`/v1/workspaces/<wsId>/chat*`); a caller that
+    // omits it is refused (`requireRequestWorkspace`). The id is handed to
+    // `chat()` below so both halves of the turn run in one workspace.
+    const wsId = requireRequestWorkspace(request.workspaceId);
     // Built on demand, not up front: `resolveRequestModelString` refuses a
     // model outside the allowlist, and on a resume its result is discarded in
     // favour of the pin. Evaluating eagerly would refuse a request over a value
@@ -1106,7 +1099,7 @@ export class Runtime {
 
     // This door creates conversations too, so its binding resolves under the
     // same context as the chat door's — see `buildTurnContext`.
-    const turnCtx = await this.buildTurnContext(request.identity ?? DEV_IDENTITY, wsId);
+    const turnCtx = await this.buildTurnContext(requestIdentity, wsId);
 
     // Reserve the run (throws RunInProgressError if one is already active). The
     // returned signal is the RunBus's — NOT the HTTP request's — so a client
@@ -1224,30 +1217,26 @@ export class Runtime {
     // sequence itself (membership, tools, prompt, budget, sinks, engine) lives
     // there and is shared with every other trigger.
     //
-    // Identity resolution rules (strict, no `??` fallbacks anywhere):
-    //   - When an identity provider is configured (production / `instance.json`):
-    //     `request.identity` MUST be set. Throw otherwise — auth middleware
-    //     populates this field; absence means a misconfigured deployment.
-    //   - When no identity provider is configured (dev mode / tests / CLI):
-    //     fall back to `DEV_IDENTITY` (`usr_default`). The fallback is
-    //     gated on `!this._identityProvider` so the same path can't
-    //     silently degrade production into "owned by usr_default."
+    // Identity resolution is strict, with no fallback: `request.identity`
+    // MUST be set, under every identity provider (`dev` included). Auth
+    // middleware populates it on the HTTP doors; an in-process caller passes
+    // it. Absence throws, never "owned by usr_default."
     //
     // The check runs BEFORE any IO so a bad-state call rejects synchronously
     // (acceptance criterion: identity required). The same rule resolves files
     // for the REST upload/serve handlers and the host-resources resolver, so an
     // upload and its rehydration share a store.
-    const ownerId = resolveRequestOwnerId(request.identity, this._identityProvider !== null);
-    const requestIdentity = request.identity ?? DEV_IDENTITY;
+    const requestIdentity = requireRequestIdentity(request.identity);
+    const ownerId = requestIdentity.id;
 
     // The conversation's workspace — the binding, and the ONE workspace this
     // turn resolves against: the workspace the request addresses
-    // (`request.workspaceId`, from the URL on the HTTP chat door; see
-    // `resolveRequestWorkspace` for a caller that omits it). A new chat is born
+    // (`request.workspaceId`, from the URL on the HTTP chat door; a caller
+    // that omits it is refused). A new chat is born
     // there and stays there for its whole life; a resumed one must already be
     // stored there, so the workspace a request names is the one the turn runs
     // in. It is what the run is walled to AND what its prompt narrates.
-    const convWsId = await this.resolveRequestWorkspace(requestIdentity, request.workspaceId);
+    const convWsId = requireRequestWorkspace(request.workspaceId);
     const store = this.resolveChatStore(request.conversationId, convWsId, ownerId);
 
     const turnCtx = await this.buildTurnContext(requestIdentity, convWsId);
@@ -1359,28 +1348,21 @@ export class Runtime {
    *    so the model produces a deliverable rather than a conversational reply.
    *    The runtime owns this framing — connectors cannot spoof it by wrapping the
    *    user message.
-   *  - `workspaceId` is optional: present → that workspace's tool scope +
-   *    briefing; absent → the run is housed in the workspace
-   *    `resolveRequestWorkspace` stands in (dev mode only) and narrates no
-   *    workspace. Either way the run is walled to one workspace.
+   *  - `workspaceId` is required: that workspace's tool scope and briefing,
+   *    and the one workspace the run is walled to. A request naming none is
+   *    refused; the runtime never chooses a workspace for it.
    *  - An abort returns what the run accomplished instead of throwing: nothing
    *    else records this run's events, so silent abandonment would lose them.
    */
   async executeTask(request: TaskRequest, requestSink?: EventSink): Promise<TaskResult> {
-    // Identity resolution mirrors chat(): in production an identity provider
-    // populates this; in dev mode we fall back to DEV_IDENTITY. Scheduler
+    // Identity resolution mirrors chat(): no identity throws. Scheduler
     // callers pass `{ id: automation.ownerId }` as a minimal identity.
-    const ownerId = resolveRequestOwnerId(request.identity, this._identityProvider !== null);
-    const requestIdentity = request.identity ?? DEV_IDENTITY;
+    const requestIdentity = requireRequestIdentity(request.identity);
+    const ownerId = requestIdentity.id;
 
-    // The run's single working workspace: the focused workspace, or — for a
-    // caller that names none — the one `resolveRequestWorkspace` stands in.
-    // Tool scope, skill/connector scope, connector overlays, model slots, and
-    // file provenance all key off this one id. Only a focused run narrates a
-    // workspace; an unfocused one is walled to its workspace without being
-    // about it, so `TASK_IDENTITY` carries the framing.
-    const focusedWsId = request.workspaceId;
-    const runWsId = focusedWsId ?? (await this.resolveRequestWorkspace(requestIdentity, undefined));
+    // The run's single working workspace. Tool scope, skill/connector scope,
+    // connector overlays, model slots, and file provenance all key off it.
+    const runWsId = requireRequestWorkspace(request.workspaceId);
 
     const handle = await this.startRun({
       // An automation fires as `schedule` (a cron tick) or `manual` (Run now);
@@ -1388,7 +1370,7 @@ export class Runtime {
       trigger: request.trigger ?? "api",
       principal: { identity: requestIdentity, ownerId },
       workspaceId: runWsId,
-      ...(focusedWsId ? { briefingWorkspaceId: focusedWsId } : {}),
+      briefingWorkspaceId: runWsId,
       input: {
         content: [{ type: "text", text: request.prompt }],
         userId: requestIdentity.id,
@@ -2120,37 +2102,6 @@ export class Runtime {
   }
 
   // ── chat / task turn helpers (shared setup) ──────────────────────
-
-  /**
-   * The workspace a request runs in. The HTTP doors always name one
-   * (ADR-0037), so `workspaceId` is absent only for a caller driving the
-   * runtime directly. With an identity provider configured that is a caller
-   * bug and throws: the server does not choose a workspace for a request. With
-   * no provider (an in-process runtime with no `instance.json`) the caller's
-   * default workspace stands in,
-   * provisioned if they have none, with its registry ready.
-   */
-  private async resolveRequestWorkspace(
-    identity: UserIdentity,
-    workspaceId: string | undefined,
-  ): Promise<string> {
-    if (workspaceId !== undefined) return workspaceId;
-    if (this._identityProvider !== null) {
-      throw new Error("[runtime] request names no workspace; pass workspaceId");
-    }
-    const memberships = await ensureUserWorkspace(
-      this._workspaceStore,
-      {
-        id: identity.id,
-        ...(identity.displayName ? { displayName: identity.displayName } : {}),
-      },
-      this._userStore,
-    );
-    const user = await this._userStore.get(identity.id);
-    const wsId = defaultWorkspaceFor(memberships, user?.preferences).id;
-    await this.ensureWorkspaceRegistry(wsId);
-    return wsId;
-  }
 
   /**
    * Resolve the request model string: resolve a slot name (bare or `alias:`-
@@ -3337,7 +3288,7 @@ export class Runtime {
    * handlers call this so they resolve the SAME owner `chat()` does.
    */
   resolveRequestUserId(identity: UserIdentity | undefined): string {
-    return resolveRequestOwnerId(identity, this._identityProvider !== null);
+    return resolveRequestOwnerId(identity);
   }
 
   /**
@@ -4060,14 +4011,14 @@ export class Runtime {
     return this._managedConnectorRegistry;
   }
 
-  /** Get the IdentityProvider `instance.json` names (null when the workdir has none). */
-  getIdentityProvider(): IdentityProvider | null {
+  /** The identity provider: the one passed in, or the one `instance.json` names. */
+  getIdentityProvider(): IdentityProvider {
     return this._identityProvider;
   }
 
   /** Invalidate cached identity for a user. Call after modifying user data (preferences, role). */
   invalidateUserCache(userId: string): void {
-    this._identityProvider?.invalidateUser?.(userId);
+    this._identityProvider.invalidateUser?.(userId);
   }
 
   /** Get the current request's authenticated identity, or null. */
@@ -4116,14 +4067,10 @@ export class Runtime {
   /**
    * Resolve the workspace-scoped data directory for the current request.
    * Returns `{workDir}/workspaces/{wsId}` when a workspace is active.
-   * With no identity provider it falls back to the global workDir.
    */
   getWorkspaceScopedDir(wsId?: string | null): string {
     const id = wsId ?? this.getCurrentWorkspaceId();
     if (id) return this.getWorkspaceContext(id).getRoot();
-
-    // No identity provider (an in-process runtime with no `instance.json`).
-    if (!this._identityProvider) return resolveWorkDir(this.config);
 
     throw new Error("No workspace context — cannot resolve scoped directory.");
   }
@@ -5277,6 +5224,19 @@ export class Runtime {
     // keeps it — see `clearUsageLedger`.
     if (this.usageLedger) clearUsageLedger(this.usageLedger);
   }
+}
+
+/**
+ * The workspace a request runs in. Every door names one: the HTTP doors from
+ * the URL (ADR-0037), the scheduler from the automation's own workspace, an
+ * in-process caller explicitly. A request naming none is a caller bug, under
+ * every identity provider; the runtime never chooses a workspace for it.
+ */
+function requireRequestWorkspace(workspaceId: string | undefined): string {
+  if (workspaceId === undefined) {
+    throw new Error("[runtime] request names no workspace; pass workspaceId");
+  }
+  return workspaceId;
 }
 
 // --- Factory helpers (keep Runtime.start() readable) ---

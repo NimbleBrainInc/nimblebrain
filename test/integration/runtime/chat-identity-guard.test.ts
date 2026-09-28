@@ -1,22 +1,11 @@
 /**
- * Tests: `runtime.chat()` identity guards (Stage 2 / T006).
+ * Tests: `runtime.chat()` identity guards.
  *
- * Stage 2 made the chat surface identity-bound, not workspace-bound. The
- * old `ChatRequest.workspaceId` field is gone — tools come from the
- * cross-workspace aggregator and each call routes via the orchestrator.
- * What this file pins is the remaining identity contract:
- *
- *   - When an auth provider is configured (`instance.json` exists),
- *     `runtime.chat()` MUST hard-error if `request.identity` is missing.
- *     A misconfigured production deployment (auth provider wired, auth
- *     middleware missing) would otherwise silently default every
- *     conversation to `usr_default`, bypassing single-owner.
- *   - In dev mode (no auth provider), the same call succeeds with the
- *     `DEV_IDENTITY` fallback (`usr_default`). The fallback is gated on
- *     `!this._identityProvider` so production can't silently degrade.
- *
- * Pre-Stage-2 this file also pinned "workspaceId is required" cases.
- * Those contracts are deleted (T006: "delete don't deprecate").
+ * `runtime.chat()` MUST hard-error if `request.identity` is missing, under
+ * every identity provider, `dev` included. A deployment whose auth
+ * middleware was missing, or an in-process caller that forgot the identity,
+ * would otherwise default every conversation to `usr_default`, bypassing
+ * single-owner. Under `dev`, the caller passes the dev identity like any other.
  */
 
 import { afterAll, describe, expect, it } from "bun:test";
@@ -24,6 +13,8 @@ import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Runtime } from "../../../src/runtime/runtime.ts";
+import { DEV_IDENTITY } from "../../../src/identity/providers/dev.ts";
+import { devProvider, devWorkspace } from "../../helpers/dev-provider.ts";
 import { createEchoModel } from "../../helpers/echo-model.ts";
 
 const testDirs: string[] = [];
@@ -109,21 +100,41 @@ describe("runtime.chat() with auth configured", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Dev mode (no auth) — DEV_IDENTITY fallback
+// The dev identity provider — no fallback to the dev user
 // ---------------------------------------------------------------------------
 
-describe("runtime.chat() in dev mode (no auth)", () => {
-  it("works with no identity (dev mode falls back to DEV_IDENTITY)", async () => {
+describe("runtime.chat() under the dev identity provider", () => {
+  it("rejects chat without identity, as under any provider", async () => {
     const workDir = makeTempDir("dev-no-identity");
-    // No instance.json → dev mode
-
     const runtime = await Runtime.start({
+      identityProvider: devProvider,
       workDir,
       model: { provider: "custom", adapter: createEchoModel() },
     });
 
     try {
-      const result = await runtime.chat({ message: "hello dev" });
+      await expect(
+        runtime.chat({ message: "hello dev", workspaceId: await devWorkspace(runtime) }),
+      ).rejects.toThrow("no identity on request");
+    } finally {
+      await runtime.shutdown();
+    }
+  });
+
+  it("chats as the dev user when the caller passes the dev identity", async () => {
+    const workDir = makeTempDir("dev-identity");
+    const runtime = await Runtime.start({
+      identityProvider: devProvider,
+      workDir,
+      model: { provider: "custom", adapter: createEchoModel() },
+    });
+
+    try {
+      const result = await runtime.chat({
+        identity: DEV_IDENTITY,
+        message: "hello dev",
+        workspaceId: await devWorkspace(runtime),
+      });
       expect(result.response).toBe("hello dev");
       expect(result.conversationId).toMatch(/^conv_/);
     } finally {

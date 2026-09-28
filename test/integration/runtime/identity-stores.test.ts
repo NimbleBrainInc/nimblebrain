@@ -5,6 +5,9 @@ import { join } from "node:path";
 import { Runtime } from "../../../src/runtime/runtime.ts";
 import { createEchoModel } from "../../helpers/echo-model.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../../helpers/test-workspace.ts";
+import { DevIdentityProvider } from "../../../src/identity/providers/dev.ts";
+import { OidcIdentityProvider } from "../../../src/identity/providers/oidc.ts";
+import { devProvider } from "../../helpers/dev-provider.ts";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -28,16 +31,17 @@ afterAll(() => {
 // ---------------------------------------------------------------------------
 
 describe("Runtime identity stores wiring", () => {
-  it("dev mode: no instance.json → getIdentityProvider() returns null, stores exist", async () => {
+  it("a provider passed in, no instance.json → that provider, and the stores exist", async () => {
     const workDir = makeTempDir("dev");
     dirs.push(workDir);
 
     const rt = await Runtime.start({
+      identityProvider: devProvider,
       workDir,
       model: { provider: "custom", adapter: createEchoModel() },
     });
 
-    expect(rt.getIdentityProvider()).toBeNull();
+    expect(rt.getIdentityProvider()).toBeInstanceOf(DevIdentityProvider);
     expect(rt.getInstanceConfig()).toBeNull();
 
     // Verify stores are not just defined but are functional objects with expected methods
@@ -75,7 +79,7 @@ describe("Runtime identity stores wiring", () => {
       model: { provider: "custom", adapter: createEchoModel() },
     });
 
-    expect(rt.getIdentityProvider()).not.toBeNull();
+    expect(rt.getIdentityProvider()).toBeInstanceOf(OidcIdentityProvider);
     expect(rt.getInstanceConfig()).toEqual(instanceConfig);
   });
 
@@ -84,6 +88,7 @@ describe("Runtime identity stores wiring", () => {
     dirs.push(workDir);
 
     const rt = await Runtime.start({
+      identityProvider: devProvider,
       workDir,
       model: { provider: "custom", adapter: createEchoModel() },
     });
@@ -109,6 +114,7 @@ describe("Runtime identity stores wiring", () => {
     dirs.push(workDir);
 
     const rt = await Runtime.start({
+      identityProvider: devProvider,
       workDir,
       model: { provider: "custom", adapter: createEchoModel() },
     });
@@ -132,6 +138,7 @@ describe("Runtime identity stores wiring", () => {
     dirs.push(workDir);
 
     const rt = await Runtime.start({
+      identityProvider: devProvider,
       workDir,
       model: { provider: "custom", adapter: createEchoModel() },
     });

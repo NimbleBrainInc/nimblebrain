@@ -1,11 +1,12 @@
 import { mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { devProvider } from "./dev-provider.ts";
 
 /**
  * Allocate an isolated, ephemeral workDir for an integration test.
  *
- * Why this exists: `Runtime.start({})` defaults `workDir` to `~/.nimblebrain`.
+ * Why this exists: `Runtime.start({ identityProvider: devProvider,})` defaults `workDir` to `~/.nimblebrain`.
  * A test that forgets to pass `workDir` writes echo-model conversations,
  * test workspaces, and connector data straight into the developer's real dev
  * workdir, where they then show up in the conversations tab and lifecycle
@@ -18,7 +19,7 @@ import { join } from "node:path";
  * @example
  *   const { workDir, cleanup } = makeTestWorkDir("chat-stream-concurrent");
  *   afterEach(async () => { await runtime.shutdown(); cleanup(); });
- *   const runtime = await Runtime.start({ workDir, ... });
+ *   const runtime = await Runtime.start({ identityProvider: devProvider, workDir, ... });
  */
 export function makeTestWorkDir(label = "test"): { workDir: string; cleanup: () => void } {
   const workDir = join(

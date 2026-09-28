@@ -5,7 +5,6 @@ import {
   ConnectionRevalidator,
   revalidatorIntervalMsFromEnv,
 } from "../connectors/runtime/connection-revalidator.ts";
-import { missingInstanceConfigError } from "../identity/instance.ts";
 import { canonicalOrigins, webOrigin } from "../oauth/public-origin.ts";
 import { shutdownTracing } from "../observability/index.ts";
 import { log } from "../observability/log.ts";
@@ -72,10 +71,9 @@ export function startServer(options: ServerOptions): ServerHandle {
   const { runtime, port = 27247 } = options;
   // The runtime owns the identity provider; the server authenticates with that
   // one and has none of its own, so the two cannot disagree about who a caller
-  // is. Refuse before anything starts when there is none: `instance.json` names
-  // the provider, `dev` included, and its absence never selects one.
+  // is. A runtime always has one: `Runtime.start` refuses a workdir without
+  // `instance.json`.
   const provider = runtime.getIdentityProvider();
-  if (!provider) throw missingInstanceConfigError(runtime.getWorkDir());
 
   // Effective CORS allowlist = operator-declared extras (ALLOWED_ORIGINS) ∪ the
   // canonical hosts (custom domain + platform subdomain). Folding the canonical

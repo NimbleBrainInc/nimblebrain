@@ -32,6 +32,8 @@ import { createEchoModel } from "../helpers/echo-model.ts";
 import { SKILLS_EXTENSION_CAPABILITY, serveSkills } from "../helpers/skills-server.ts";
 import { type RemoteMcpFixture, startRemoteMcpServer } from "../helpers/remote-mcp-fixture.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
+import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 
 /** The synthesized name for the fixture connector's skill. */
 const CONNECTOR_SKILL_NAME = "connector:ai-nimblebrain-test-mcp:test";
@@ -140,6 +142,7 @@ beforeAll(async () => {
   mkdirSync(testDir, { recursive: true });
 
   runtime = await Runtime.start({
+    identityProvider: devProvider,
     model: { provider: "custom", adapter: createCapturingModel() },
     logging: { disabled: true },
     workDir: testDir,
@@ -172,6 +175,7 @@ describe("connector-skill adapter — end-to-end", () => {
   it("loads connector skill via Layer 3 tool_affined selection when tools are active (no appContext)", async () => {
     // Run a chat WITHOUT appContext, with the slug-prefixed tool visible.
     const chat = await runtime.chat({
+      identity: DEV_IDENTITY,
       workspaceId: TEST_WORKSPACE_ID,
       message: "hello",
       // Critical: NO appContext. This is the failing-prod case.
@@ -209,6 +213,7 @@ describe("connector-skill adapter — end-to-end", () => {
     // the focused-app path. The Layer 3 adapter must skip that source or the
     // same content lands in the prompt twice under two different framings.
     const chat = await runtime.chat({
+      identity: DEV_IDENTITY,
       workspaceId: TEST_WORKSPACE_ID,
       message: "scoped chat",
       appContext: { appName: "test", serverName: "ai-nimblebrain-test-mcp" },
@@ -235,6 +240,7 @@ describe("connector-skill adapter — end-to-end", () => {
     // never from the source slug.
     lastPrompt = undefined;
     await runtime.chat({
+      identity: DEV_IDENTITY,
       workspaceId: TEST_WORKSPACE_ID,
       message: "scoped chat with reference",
       appContext: { appName: "test", serverName: "ai-nimblebrain-test-mcp" },
@@ -251,6 +257,7 @@ describe("connector-skill adapter — end-to-end", () => {
     // No tools allowed → activeTools is empty after surfaceTools filters.
     // Connector skill is `tool_affined` to ai-nimblebrain-test-mcp__* and must NOT load.
     const chat = await runtime.chat({
+      identity: DEV_IDENTITY,
       workspaceId: TEST_WORKSPACE_ID,
       message: "hi without tools",
       allowedTools: [],
@@ -327,6 +334,7 @@ describe("connector-skill adapter — end-to-end", () => {
     );
     try {
       await runtime.chat({
+        identity: DEV_IDENTITY,
         workspaceId: TEST_WORKSPACE_ID,
         message: "one discovery please",
         allowedTools: ["ai-nimblebrain-test-mcp__doit"],
@@ -386,6 +394,7 @@ describe("connector-skill adapter — mid-turn tool promotion", () => {
     });
 
     promoRuntime = await Runtime.start({
+      identityProvider: devProvider,
       model: { provider: "custom", adapter: model },
       logging: { disabled: true },
       workDir: promoDir,
@@ -416,6 +425,7 @@ describe("connector-skill adapter — mid-turn tool promotion", () => {
 
   it("surfaces the connector skill when its tool is promoted mid-turn (not in the turn-start set)", async () => {
     const chat = await promoRuntime.chat({
+      identity: DEV_IDENTITY,
       workspaceId: TEST_WORKSPACE_ID,
       message: "do the thing",
       // Pre-filter the turn-start active set down to system tools only: the
@@ -564,6 +574,7 @@ describe("connector-skill adapter — honors declared loading-strategy", () => {
     };
 
     multiRuntime = await Runtime.start({
+      identityProvider: devProvider,
       model: { provider: "custom", adapter: capturing },
       logging: { disabled: true },
       workDir: multiDir,
@@ -596,6 +607,7 @@ describe("connector-skill adapter — honors declared loading-strategy", () => {
     multiPrompt = undefined;
     // No server tools active — the case turn-start Layer-3 selection can't cover.
     const chat = await multiRuntime.chat({
+      identity: DEV_IDENTITY,
       workspaceId: TEST_WORKSPACE_ID,
       message: "hello",
       allowedTools: [],
@@ -624,6 +636,7 @@ describe("connector-skill adapter — honors declared loading-strategy", () => {
   it("loads the `dynamic` skill via Layer 3 when its tool is active, alongside the always skill in context", async () => {
     multiPrompt = undefined;
     const chat = await multiRuntime.chat({
+      identity: DEV_IDENTITY,
       workspaceId: TEST_WORKSPACE_ID,
       message: "do it",
       allowedTools: ["ai-nimblebrain-multi-mcp__doit"],
@@ -658,6 +671,7 @@ describe("connector-skill adapter — honors declared loading-strategy", () => {
     // no server tools active — the exact case turn-start Layer-3 can't cover.
     multiPrompt = undefined;
     const result = await multiRuntime.executeTask({
+      identity: DEV_IDENTITY,
       prompt: "run the workflow",
       workspaceId: TEST_WORKSPACE_ID,
       allowedTools: [],

@@ -26,6 +26,8 @@ import { ConversationNotFoundError } from "../../../src/runtime/errors.ts";
 import { Runtime } from "../../../src/runtime/runtime.ts";
 import { createEchoModel } from "../../helpers/echo-model.ts";
 import { provisionTestWorkspace } from "../../helpers/test-workspace.ts";
+import { devProvider } from "../../helpers/dev-provider.ts";
+import { devWorkspace } from "../../helpers/dev-provider.ts";
 
 const testDir = join(tmpdir(), `nb-resume-file-tool-${Date.now()}`);
 
@@ -92,6 +94,7 @@ describe("a resume scopes the file TOOL to the workspace it runs in", () => {
     mkdirSync(workDir, { recursive: true });
 
     const runtime = await Runtime.start({
+      identityProvider: devProvider,
       model: { provider: "custom", adapter: createResumeFileToolModel() },
       logging: { disabled: true },
       workDir,
@@ -100,7 +103,7 @@ describe("a resume scopes the file TOOL to the workspace it runs in", () => {
     await provisionTestWorkspace(runtime, WORKSPACE_A);
 
     // 1) Born in workspace A (focused on WORKSPACE_A).
-    const born = await runtime.chat({ message: "hello from workspace A", workspaceId: WORKSPACE_A });
+    const born = await runtime.chat({ identity: DEV_IDENTITY, message: "hello from workspace A", workspaceId: WORKSPACE_A });
     const convId = born.conversationId;
 
     // 2) Attach a file into workspace A's partition (the conversation's workspace).
@@ -136,16 +139,22 @@ describe("a resume scopes the file TOOL to the workspace it runs in", () => {
       return store;
     };
 
-    // 4) A resume UNFOCUSED (no workspaceId → the default workspace) is refused
+    // 4) A resume from the owner's default workspace (HOME) is refused
     //    before the model runs, so no file tool is ever scoped to HOME.
     await expect(
-      runtime.chat({ message: RESUME_MSG, conversationId: convId }),
+      runtime.chat({
+        identity: DEV_IDENTITY,
+        message: RESUME_MSG,
+        conversationId: convId,
+        workspaceId: await devWorkspace(runtime),
+      }),
     ).rejects.toBeInstanceOf(ConversationNotFoundError);
     expect(calls).toEqual([]);
 
     // 5) The resume in A: the model emits a `files__list` tool call; its store
     //    resolves to A.
     const result = await runtime.chat({
+      identity: DEV_IDENTITY,
       message: RESUME_MSG,
       conversationId: convId,
       workspaceId: WORKSPACE_A,

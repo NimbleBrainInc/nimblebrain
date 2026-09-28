@@ -15,6 +15,7 @@ import { join } from "node:path";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { createCredentialSealer } from "../../src/tools/credential-seal.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
 
 const KEY_ENV = "NB_TEST_WRONG_KEY_CREDENTIAL_KEY";
 const KEY_A = Buffer.alloc(32, 0x5a);
@@ -43,6 +44,7 @@ afterAll(() => {
 
 function boot(): Promise<Runtime> {
   return Runtime.start({
+    identityProvider: devProvider,
     model: { provider: "custom", adapter: createEchoModel() },
     logging: { disabled: true },
     workDir: testDir,

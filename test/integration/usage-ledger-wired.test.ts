@@ -28,6 +28,7 @@ import type { UsageLedgerEntry } from "../../src/usage/types.ts";
 import { createMockModel } from "../helpers/mock-model.ts";
 import { TEST_IDENTITY } from "../helpers/test-auth-adapter.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
 
 let runtime: Runtime | undefined;
 let workDir = "";
@@ -43,6 +44,7 @@ async function start(): Promise<Runtime> {
   workDir = mkdtempSync(join(tmpdir(), "nb-ledger-"));
   mkdirSync(workDir, { recursive: true });
   runtime = await Runtime.start({
+    identityProvider: devProvider,
     model: { provider: "custom", adapter: createMockModel(() => ({
       content: [{ type: "text", text: "ok" }],
     })) },

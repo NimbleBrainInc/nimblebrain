@@ -6,6 +6,8 @@ import { Runtime } from "../../src/runtime/runtime.ts";
 import { estimateCost } from "../../src/usage/cost.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
+import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 
 const usageTestDir = join(tmpdir(), `nimblebrain-usage-${Date.now()}`);
 
@@ -19,13 +21,14 @@ describe("ChatResult.usage", () => {
 
 	it("is populated with all TurnUsage fields after Runtime.chat()", async () => {
 		runtime = await Runtime.start({
+			identityProvider: devProvider,
 			workDir: usageTestDir,
 			model: { provider: "custom", adapter: createEchoModel() },
 			logging: { disabled: true },
 		});
 		await provisionTestWorkspace(runtime);
 
-		const result = await runtime.chat({ message: "Hello usage", workspaceId: TEST_WORKSPACE_ID });
+		const result = await runtime.chat({ identity: DEV_IDENTITY, message: "Hello usage", workspaceId: TEST_WORKSPACE_ID });
 
 		// usage object must exist
 		expect(result.usage).toBeDefined();
@@ -67,19 +70,22 @@ describe("per-conversation token accumulation", () => {
 		const workDir = join(usageTestDir, "accum");
 		mkdirSync(workDir, { recursive: true });
 		const runtime = await Runtime.start({
+			identityProvider: devProvider,
 			model: { provider: "custom", adapter: createEchoModel() },
 			logging: { disabled: true },
 			workDir,
 		});
 		await provisionTestWorkspace(runtime);
 
-		const turn1 = await runtime.chat({ message: "First turn", workspaceId: TEST_WORKSPACE_ID });
+		const turn1 = await runtime.chat({ identity: DEV_IDENTITY, message: "First turn", workspaceId: TEST_WORKSPACE_ID });
 		const turn2 = await runtime.chat({
+			identity: DEV_IDENTITY,
 			message: "Second turn",
 			conversationId: turn1.conversationId,
 			workspaceId: TEST_WORKSPACE_ID,
 		});
 		const turn3 = await runtime.chat({
+			identity: DEV_IDENTITY,
 			message: "Third turn",
 			conversationId: turn1.conversationId,
 			workspaceId: TEST_WORKSPACE_ID,
@@ -120,19 +126,21 @@ describe("per-conversation token accumulation", () => {
 		const workDir = join(usageTestDir, "independent");
 		mkdirSync(workDir, { recursive: true });
 		const runtime = await Runtime.start({
+			identityProvider: devProvider,
 			model: { provider: "custom", adapter: createEchoModel() },
 			logging: { disabled: true },
 			workDir,
 		});
 		await provisionTestWorkspace(runtime);
 
-		const a1 = await runtime.chat({ message: "Alpha one", workspaceId: TEST_WORKSPACE_ID });
+		const a1 = await runtime.chat({ identity: DEV_IDENTITY, message: "Alpha one", workspaceId: TEST_WORKSPACE_ID });
 		await runtime.chat({
+			identity: DEV_IDENTITY,
 			message: "Alpha two",
 			conversationId: a1.conversationId,
 			workspaceId: TEST_WORKSPACE_ID,
 		});
-		const b1 = await runtime.chat({ message: "Beta one", workspaceId: TEST_WORKSPACE_ID });
+		const b1 = await runtime.chat({ identity: DEV_IDENTITY, message: "Beta one", workspaceId: TEST_WORKSPACE_ID });
 
 		await new Promise((r) => setTimeout(r, 1500));
 

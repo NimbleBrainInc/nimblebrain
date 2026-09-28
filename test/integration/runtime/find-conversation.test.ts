@@ -42,6 +42,7 @@ describe("Runtime.findConversation", () => {
   test("setup", async () => {
     mkdirSync(workDir, { recursive: true });
     runtime = await Runtime.start({
+      identityProvider: devProvider,
       model: { provider: "custom", adapter: createEchoModel() },
       logging: { disabled: true },
       workDir,

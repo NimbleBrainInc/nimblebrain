@@ -34,6 +34,8 @@ import { createMockModel } from "../helpers/mock-model.ts";
 import { type RemoteMcpFixture, startRemoteMcpServer } from "../helpers/remote-mcp-fixture.ts";
 import { SKILLS_EXTENSION_CAPABILITY, serveSkills } from "../helpers/skills-server.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
+import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 
 /** Reverse-DNS slug, like a fleet connector — never the skills' own names. */
 const SERVER = "ai-nimblebrain-surface-mcp";
@@ -106,6 +108,7 @@ beforeAll(async () => {
   mkdirSync(testDir, { recursive: true });
 
   runtime = await Runtime.start({
+    identityProvider: devProvider,
     model: {
       provider: "custom",
       adapter: createMockModel((options) => {
@@ -158,6 +161,7 @@ describe("published skills and the surface-once channel", () => {
     // The server's tool is direct, so Layer 3 selects BOTH published skills at
     // turn start (one `<server>__*` glob covers the pair).
     await runtime.chat({
+      identity: DEV_IDENTITY,
       workspaceId: TEST_WORKSPACE_ID,
       message: "do the thing",
       allowedTools: [CALLED_TOOL],
@@ -182,6 +186,7 @@ describe("published skills and the surface-once channel", () => {
     // turn start and Layer 3 selects neither skill — the exact case the channel
     // exists for. The model promotes and calls it mid-turn.
     const chat = await runtime.chat({
+      identity: DEV_IDENTITY,
       workspaceId: TEST_WORKSPACE_ID,
       message: "promote and call it",
       allowedTools: ["nb__*"],
@@ -221,6 +226,7 @@ describe("published skills and the surface-once channel", () => {
     prompts = [];
     modelCalls = 0;
     await runtime.executeTask({
+      identity: DEV_IDENTITY,
       workspaceId: TEST_WORKSPACE_ID,
       prompt: "do the thing",
       allowedTools: [CALLED_TOOL],

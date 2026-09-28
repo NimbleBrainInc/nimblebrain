@@ -21,6 +21,8 @@ import { ConversationNotFoundError } from "../../../src/runtime/errors.ts";
 import { Runtime } from "../../../src/runtime/runtime.ts";
 import { createEchoModel } from "../../helpers/echo-model.ts";
 import { provisionTestWorkspace } from "../../helpers/test-workspace.ts";
+import { devProvider } from "../../helpers/dev-provider.ts";
+import { devWorkspace } from "../../helpers/dev-provider.ts";
 
 const testDir = join(tmpdir(), `nb-resume-workspace-context-${Date.now()}`);
 
@@ -119,6 +121,7 @@ describe("a resume runs only in the conversation's own workspace", () => {
     const captured: Captured[] = [];
 
     const runtime = await Runtime.start({
+      identityProvider: devProvider,
       model: { provider: "custom", adapter: createCapturingModel(captured) },
       logging: { disabled: true },
       workDir,
@@ -127,12 +130,16 @@ describe("a resume runs only in the conversation's own workspace", () => {
     await provisionTestWorkspace(runtime, WORKSPACE_A, WORKSPACE_A_NAME);
 
     // Born focused on workspace A → the conversation lives in A.
-    const born = await runtime.chat({ message: "hello from A", workspaceId: WORKSPACE_A });
+    const born = await runtime.chat({ identity: DEV_IDENTITY, message: "hello from A", workspaceId: WORKSPACE_A });
 
-    // UNFOCUSED (no workspaceId): the turn would run in the owner's default
-    // workspace (HOME), where the conversation is not.
+    // From the owner's default workspace (HOME), where the conversation is not.
     await expect(
-      runtime.chat({ message: RESUME_MSG, conversationId: born.conversationId }),
+      runtime.chat({
+        identity: DEV_IDENTITY,
+        message: RESUME_MSG,
+        conversationId: born.conversationId,
+        workspaceId: await devWorkspace(runtime),
+      }),
     ).rejects.toBeInstanceOf(ConversationNotFoundError);
     expect(captured).toEqual([]);
 
@@ -145,6 +152,7 @@ describe("a resume runs only in the conversation's own workspace", () => {
     const captured: Captured[] = [];
 
     const runtime = await Runtime.start({
+      identityProvider: devProvider,
       model: { provider: "custom", adapter: createCapturingModel(captured) },
       logging: { disabled: true },
       workDir,
@@ -152,10 +160,11 @@ describe("a resume runs only in the conversation's own workspace", () => {
     await provisionTestWorkspace(runtime, WORKSPACE_A, WORKSPACE_A_NAME);
     await provisionTestWorkspace(runtime, WORKSPACE_B, WORKSPACE_B_NAME);
 
-    const born = await runtime.chat({ message: "hello from A", workspaceId: WORKSPACE_A });
+    const born = await runtime.chat({ identity: DEV_IDENTITY, message: "hello from A", workspaceId: WORKSPACE_A });
 
     await expect(
       runtime.chat({
+        identity: DEV_IDENTITY,
         message: RESUME_MSG,
         conversationId: born.conversationId,
         workspaceId: WORKSPACE_B,
@@ -164,6 +173,7 @@ describe("a resume runs only in the conversation's own workspace", () => {
     expect(captured).toEqual([]);
 
     await runtime.chat({
+      identity: DEV_IDENTITY,
       message: RESUME_MSG,
       conversationId: born.conversationId,
       workspaceId: WORKSPACE_A,
@@ -190,6 +200,7 @@ describe("a resume runs only in the conversation's own workspace", () => {
     const captured: Captured[] = [];
 
     const runtime = await Runtime.start({
+      identityProvider: devProvider,
       model: { provider: "custom", adapter: createCapturingModel(captured) },
       logging: { disabled: true },
       workDir,
@@ -198,7 +209,7 @@ describe("a resume runs only in the conversation's own workspace", () => {
 
     // Born focused on the default workspace → convWsId === HOME. The
     // capturing model only records the RESUME_MSG turn (see createCapturingModel).
-    await runtime.chat({ message: RESUME_MSG, workspaceId: HOME });
+    await runtime.chat({ identity: DEV_IDENTITY, message: RESUME_MSG, workspaceId: HOME });
 
     expect(captured.length).toBeGreaterThan(0);
     const prompt = captured.at(-1)?.prompt ?? "";

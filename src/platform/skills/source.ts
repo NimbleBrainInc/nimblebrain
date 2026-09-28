@@ -1486,10 +1486,6 @@ type AccessMode = "read" | "write";
  *                   write also requires `admin` role in that workspace.
  *   - user        — read+write: only the owning user.
  *
- * No identity provider (an in-process runtime with no `instance.json`)
- * opens everything, matching the
- * `instructions.ts` precedent.
- *
  * For "create" operations the path doesn't exist yet — pass the
  * destination directory as `path` (e.g. `{workDir}/workspaces/{wsId}/skills`).
  * The wsId/userId derivation works on directory paths the same way.
@@ -1500,7 +1496,6 @@ async function checkPathAccess(
   scope: WritableScope | "provided",
   mode: AccessMode,
 ): Promise<PermissionDecision> {
-  if (runtime.getIdentityProvider() === null) return { allowed: true };
   const identity = runtime.getCurrentIdentity();
   if (!identity) return { allowed: false, reason: "No authenticated identity" };
 

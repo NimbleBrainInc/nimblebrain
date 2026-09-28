@@ -35,6 +35,7 @@ import { runWithRequestContext } from "../../src/runtime/request-context.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { createMockModel } from "../helpers/mock-model.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
 
 const DERIVED_SKILL_NAME = "user-orbital-protocol";
 const DERIVED_BODY = "Follow the orbital docking protocol precisely.";
@@ -80,6 +81,7 @@ beforeAll(async () => {
   const cap = createCapturingModel();
   getSystem = cap.getSystem;
   runtime = await Runtime.start({
+    identityProvider: devProvider,
     model: { provider: "custom", adapter: cap.model },
     logging: { disabled: true },
     workDir: testDir,
@@ -108,7 +110,7 @@ describe("created strategy-less skill is catalog-only (not auto-loaded)", () => 
 
     // No triggers, no tool-affinity → catalog-only (#4): it loads only via the
     // catalog (P3), never auto-injected. The handler does NOT bump it to `always`.
-    await runtime.chat({ workspaceId: TEST_WORKSPACE_ID, message: "what is 2 + 2?" });
+    await runtime.chat({ identity: DEV_IDENTITY, workspaceId: TEST_WORKSPACE_ID, message: "what is 2 + 2?" });
     expect(getSystem()).not.toContain(DERIVED_BODY);
   });
 
@@ -176,7 +178,7 @@ describe("disabled org context rule stops injecting", () => {
     });
     expect(create.isError).toBe(false);
 
-    await runtime.chat({ workspaceId: TEST_WORKSPACE_ID, message: "what is 2 + 2?" });
+    await runtime.chat({ identity: DEV_IDENTITY, workspaceId: TEST_WORKSPACE_ID, message: "what is 2 + 2?" });
     expect(getSystem()).toContain(RULE_BODY);
     // The status reporter agrees: an active rule is listed.
     const status = await callToolAsDev("nb__status", { scope: "skills" });
@@ -191,7 +193,7 @@ describe("disabled org context rule stops injecting", () => {
     const off = await callToolAsDev("skills__set_status", { id: rulePath, status: "disabled" });
     expect(off.isError).toBe(false);
 
-    await runtime.chat({ workspaceId: TEST_WORKSPACE_ID, message: "what is 2 + 2?" });
+    await runtime.chat({ identity: DEV_IDENTITY, workspaceId: TEST_WORKSPACE_ID, message: "what is 2 + 2?" });
     expect(getSystem()).not.toContain(RULE_BODY);
 
     // nb__status must match composition — a rule toggled Off must not still

@@ -20,6 +20,8 @@ import { ConversationNotFoundError } from "../../../src/runtime/errors.ts";
 import { Runtime } from "../../../src/runtime/runtime.ts";
 import { createEchoModel } from "../../helpers/echo-model.ts";
 import { provisionTestWorkspace } from "../../helpers/test-workspace.ts";
+import { devProvider } from "../../helpers/dev-provider.ts";
+import { devWorkspace } from "../../helpers/dev-provider.ts";
 
 const testDir = join(tmpdir(), `nb-resume-file-rehydration-${Date.now()}`);
 
@@ -41,6 +43,7 @@ describe("a resume rehydrates files from the workspace it runs in", () => {
     mkdirSync(workDir, { recursive: true });
 
     const runtime = await Runtime.start({
+      identityProvider: devProvider,
       model: { provider: "custom", adapter: createEchoModel() },
       logging: { disabled: true },
       workDir,
@@ -50,7 +53,7 @@ describe("a resume rehydrates files from the workspace it runs in", () => {
 
     // 1) Born in workspace A (focused on WORKSPACE_A) — the conversation lives
     //    under workspaces/ws_workspace_a/conversations/<owner>/.
-    const born = await runtime.chat({ message: "hello from workspace A", workspaceId: WORKSPACE_A });
+    const born = await runtime.chat({ identity: DEV_IDENTITY, message: "hello from workspace A", workspaceId: WORKSPACE_A });
     const convId = born.conversationId;
 
     // 2) Attach a file into workspace A's partition (the same workspace the
@@ -88,15 +91,20 @@ describe("a resume rehydrates files from the workspace it runs in", () => {
       return store;
     };
 
-    // 4) A resume UNFOCUSED (no workspaceId → the default workspace) is refused
+    // 4) A resume from the owner's default workspace (HOME) is refused
     //    before any partition is opened: the conversation is not there.
     await expect(
-      runtime.chat({ message: "resume from elsewhere", conversationId: convId }),
+      runtime.chat({
+        identity: DEV_IDENTITY,
+        message: "resume from elsewhere",
+        conversationId: convId,
+        workspaceId: await devWorkspace(runtime),
+      }),
     ).rejects.toBeInstanceOf(ConversationNotFoundError);
     expect(calls).toEqual([]);
 
     // 5) The resume in A rehydrates from A.
-    await runtime.chat({ message: "resume in A", conversationId: convId, workspaceId: WORKSPACE_A });
+    await runtime.chat({ identity: DEV_IDENTITY, message: "resume in A", conversationId: convId, workspaceId: WORKSPACE_A });
 
     runtime.getWorkspaceFileStore = origGetFileStore;
 

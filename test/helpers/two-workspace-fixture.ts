@@ -35,6 +35,7 @@ import type { McpSource } from "../../src/tools/mcp-source.ts";
 import {} from "../../src/tools/namespace.ts";
 import type { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
 import { createEchoModel, type EchoModelOptions } from "./echo-model.ts";
+import { devProvider } from "./dev-provider.ts";
 
 // ── Public option / handle shapes ──────────────────────────────────
 
@@ -165,11 +166,10 @@ export interface TwoWorkspaceFixture {
     clear: () => void;
   };
   /**
-   * Build a `ChatRequest` with the fixture's identity pre-populated.
-   *
-   * T006: the chat surface is identity-bound, so no `workspaceId` is
-   * passed — the runtime aggregates tools across every workspace the
-   * identity can see and routes each call via the orchestrator.
+   * Build a `ChatRequest` with the fixture's identity and its personal
+   * workspace pre-populated. The runtime never picks a workspace for a
+   * request, so the fixture names the identity's default one; a test
+   * overrides `workspaceId` to run elsewhere.
    */
   buildChatRequest: (overrides: Partial<ChatRequest> & { message: string }) => ChatRequest;
   /** Tear down: stop runtime, remove workDir. Always call in `afterAll`/`afterEach`. */
@@ -335,6 +335,7 @@ export async function createTwoWorkspaceFixture(
   );
 
   const runtime = await Runtime.start({
+    identityProvider: devProvider,
     model: { provider: "custom", adapter: model },
     logging: { disabled: true },
     workDir,
@@ -409,12 +410,9 @@ export async function createTwoWorkspaceFixture(
     source: personalSource.source,
   };
 
-  // T006: `ChatRequest.workspaceId` is removed. The chat surface is
-  // identity-bound — tools come from every workspace the identity can
-  // see and each call routes by namespace prefix. The fixture's
-  // `buildChatRequest` reflects that by only stamping `identity`.
   const buildChatRequest: TwoWorkspaceFixture["buildChatRequest"] = (overrides) => ({
     identity,
+    workspaceId: personalWorkspaceId,
     ...overrides,
   });
 

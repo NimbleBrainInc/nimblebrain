@@ -232,8 +232,8 @@ function uniqueTmpSuffix(): string {
 
 /**
  * Load instance config from `workDir/instance.json`.
- * Returns null if the file does not exist: the instance then has no identity
- * provider, and the HTTP server refuses to start (`missingInstanceConfigError`).
+ * Returns null if the file does not exist; `Runtime.start` then refuses to
+ * start unless its caller passed a provider (`missingInstanceConfigError`).
  * Throws on malformed JSON or schema validation failure.
  */
 export async function loadInstanceConfig(workDir: string): Promise<InstanceConfig | null> {
@@ -269,7 +269,7 @@ export async function loadInstanceConfig(workDir: string): Promise<InstanceConfi
 export function missingInstanceConfigError(workDir: string): Error {
   const filePath = join(workDir, INSTANCE_FILE);
   return new Error(
-    `No identity provider: ${filePath} does not exist, and the server does not start without one.\n` +
+    `No identity provider: ${filePath} does not exist, and the runtime does not start without one.\n` +
       `  Local development, every request as one developer with no login:\n` +
       `    {"auth":{"adapter":"dev"}}\n` +
       `  A real identity provider:\n` +
