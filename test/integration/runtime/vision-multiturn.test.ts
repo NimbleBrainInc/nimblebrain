@@ -23,6 +23,7 @@ import type {
 import { type ServerHandle, startServer } from "../../../src/api/server.ts";
 import { Runtime } from "../../../src/runtime/runtime.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../../helpers/test-workspace.ts";
+import { devProvider } from "../../helpers/dev-provider.ts";
 
 /**
  * A LanguageModelV4 that records every prompt it receives and returns
@@ -103,25 +104,26 @@ beforeAll(async () => {
   mkdirSync(testDir, { recursive: true });
   // Two scripted turns:
   //  1. Model "calls" a tool — forces the engine to issue a second iteration.
-  //     The system tool `nb__list_apps` exists on every workspace (no connectors
+  //     The system tool `nb__workspace_info` exists on every workspace (no connectors
   //     required), so we don't need to install anything to satisfy the call.
   //  2. Model produces final text.
   const { model, prompts } = createRecordingModel([
     {
       text: "Looking at the image now…",
-      toolCalls: [{ id: "call_1", name: "nb__list_apps", input: "{}" }],
+      toolCalls: [{ id: "call_1", name: "nb__workspace_info", input: "{}" }],
     },
     { text: "Done — that's John Doe, VP Sales at Acme." },
   ]);
   recorded = { prompts };
 
   runtime = await Runtime.start({
+    identityProvider: devProvider,
     model: { provider: "custom", adapter: model },
     logging: { disabled: true },
     workDir: testDir,
   });
   await provisionTestWorkspace(runtime);
-  handle = startServer({ runtime, port: 0 });
+  handle = startServer({ runtime, port: 0});
   baseUrl = `http://localhost:${handle.port}`;
 });
 
@@ -139,9 +141,8 @@ describe("vision survives the multi-turn agent loop", () => {
     const file = new File([new Uint8Array(PNG_BYTES)], "linkedin.png", { type: "image/png" });
     form.append("files", file);
 
-    const res = await fetch(`${baseUrl}/v1/chat/stream`, {
+    const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat/stream`, {
       method: "POST",
-      headers: { "X-Workspace-Id": TEST_WORKSPACE_ID },
       body: form,
     });
     expect(res.status).toBe(200);

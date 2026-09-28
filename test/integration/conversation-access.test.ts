@@ -1,19 +1,18 @@
 /**
- * Integration tests for the Stage 1 single-owner conversation invariant.
+ * Integration tests for the single-owner conversation invariant, and for the
+ * rule that a chat request names the workspace it runs in (ADR-0037).
  *
- * `runtime.chat` enforces that resuming a conversation requires the caller
- * to be its `ownerId`. Today the per-wsId store directory makes the check
- * implicitly workspace-bounded; Task 005 collapses every conversation onto
- * a top-level store, at which point this owner check is the only barrier
- * between users and each other's conversations. These tests pin the
- * load-bearing behavior in place.
+ * A chat under `/v1/workspaces/<wsId>/` resumes only one of the caller's own
+ * conversations stored in `<wsId>`. Another owner's conversation, the caller's
+ * conversation in another workspace, and an id that does not exist all get one
+ * answer — `ConversationNotFoundError`, `404 conversation_not_found` — so the
+ * answer reveals neither that an id exists nor where.
  *
  * Covers:
- *  - runtime.chat: same-owner resume succeeds; foreign-owner throws
- *    ConversationAccessDeniedError; non-existent id creates new; missing
+ *  - runtime.chat: same-owner resume succeeds; a foreign-owner or unknown id
+ *    throws ConversationNotFoundError and creates nothing; missing
  *    request.identity throws when an identity provider is configured.
- *  - HTTP/SSE: ConversationAccessDeniedError → 403 conversation_access_denied
- *    on /v1/chat; → SSE error event on /v1/chat/stream.
+ *  - HTTP: the three chat routes answer each of those cases with the same 404.
  */
 
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
@@ -35,7 +34,7 @@ import type {
 import { FIRST_PARTY_GRANT } from "../../src/identity/provider.ts";
 import type { User } from "../../src/identity/user.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
-import { ConversationAccessDeniedError } from "../../src/runtime/errors.ts";
+import { ConversationNotFoundError } from "../../src/runtime/errors.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
 
@@ -175,7 +174,7 @@ describe("runtime.chat — single-owner ownership check", () => {
     expect(messages.length).toBeGreaterThanOrEqual(2);
   });
 
-  test("foreign-owner resume throws ConversationAccessDeniedError", async () => {
+  test("foreign-owner resume throws ConversationNotFoundError and leaves the conversation alone", async () => {
     const aliceConv = await runtime.chat({
       message: "alice's private convo",
       workspaceId: TEST_WORKSPACE_ID,
@@ -193,34 +192,30 @@ describe("runtime.chat — single-owner ownership check", () => {
     } catch (err) {
       caught = err;
     }
-    expect(caught).toBeInstanceOf(ConversationAccessDeniedError);
-    const err = caught as ConversationAccessDeniedError;
-    expect(err.code).toBe("conversation_access_denied");
+    expect(caught).toBeInstanceOf(ConversationNotFoundError);
+    const err = caught as ConversationNotFoundError;
+    expect(err.code).toBe("conversation_not_found");
     expect(err.conversationId).toBe(aliceConv.conversationId);
-    expect(err.userId).toBe(BOB.id);
 
-    // Crucial: the foreign attempt did NOT silently mint a new conversation
-    // — that would mask a takeover attempt as a normal flow.
+    // The foreign attempt did NOT silently mint a new conversation — that
+    // would mask a takeover attempt as a normal flow.
     const loaded = await runtime.findConversation(aliceConv.conversationId);
     expect(loaded!.ownerId).toBe(ALICE.id);
   });
 
-  test("non-existent conversationId creates a new conversation (no existence leak)", async () => {
+  test("a non-existent conversationId throws ConversationNotFoundError and creates nothing", async () => {
     // Valid format (`conv_` + 16 hex chars) so it passes path validation,
     // but guaranteed not to exist in the store.
     const bogus = "conv_0000000000000000";
-    const result = await runtime.chat({
-      message: "create me a new one",
-      conversationId: bogus,
-      workspaceId: TEST_WORKSPACE_ID,
-      identity: ALICE,
-    });
-    // The runtime treats unknown ids as "create new" — distinguishing this
-    // from foreign-owner is what closes the existence-leak side channel.
-    expect(result.conversationId).not.toBe(bogus);
-    const loaded = await runtime.findConversation(result.conversationId);
-    expect(loaded).not.toBeNull();
-    expect(loaded!.ownerId).toBe(ALICE.id);
+    await expect(
+      runtime.chat({
+        message: "create me a new one",
+        conversationId: bogus,
+        workspaceId: TEST_WORKSPACE_ID,
+        identity: ALICE,
+      }),
+    ).rejects.toBeInstanceOf(ConversationNotFoundError);
+    expect(await runtime.findConversation(bogus)).toBeNull();
   });
 });
 
@@ -283,20 +278,29 @@ describe("runtime.chat — identity-provider gate", () => {
 // HTTP / SSE — ConversationAccessDeniedError mapping at the API boundary
 // ---------------------------------------------------------------------------
 
-describe("HTTP/SSE — ConversationAccessDeniedError mapping", () => {
+describe("HTTP — a conversation that is not the caller's in the path's workspace", () => {
   const ALICE_TOKEN = "alice-token-1234567890";
   const BOB_TOKEN = "bob-token-0987654321";
+  const CHAT_ROUTES = ["/chat", "/chat/stream", "/chat/start"] as const;
 
   let runtime: Runtime;
   let handle: ServerHandle;
   let baseUrl: string;
   let workDir: string;
-  let aliceConvId: string;
+  let wsB: string;
+  /** Alice's conversation in TEST_WORKSPACE_ID (workspace A). */
+  let aliceConvInA: string;
+  /** Alice's conversation in workspace B. */
+  let aliceConvInB: string;
 
   beforeAll(async () => {
     workDir = join(tmpdir(), `nb-conv-access-http-${Date.now()}`);
     mkdirSync(workDir, { recursive: true });
     runtime = await Runtime.start({
+      identityProvider: () => new MultiUserAuthAdapter({
+        [ALICE_TOKEN]: ALICE,
+        [BOB_TOKEN]: BOB,
+      }),
       model: { provider: "custom", adapter: createEchoModel() },
       logging: { disabled: true },
       workDir,
@@ -317,22 +321,21 @@ describe("HTTP/SSE — ConversationAccessDeniedError mapping", () => {
       );
       await wsStore.addMember(TEST_WORKSPACE_ID, u.id, "member");
     }
+    // Alice is a member of B too: the refusal is about the path, not membership.
+    wsB = (await wsStore.create("tenant-a")).id;
+    await wsStore.addMember(wsB, ALICE.id, "member");
+    await runtime.ensureWorkspaceRegistry(wsB);
 
-    // Seed a conversation owned by Alice that Bob will try to access.
-    const seed = await runtime.chat({
-      message: "alice seed",
-      workspaceId: TEST_WORKSPACE_ID,
-      identity: ALICE,
-    });
-    aliceConvId = seed.conversationId;
+    aliceConvInA = (
+      await runtime.chat({ message: "alice seed", workspaceId: TEST_WORKSPACE_ID, identity: ALICE })
+    ).conversationId;
+    aliceConvInB = (
+      await runtime.chat({ message: "alice in B", workspaceId: wsB, identity: ALICE })
+    ).conversationId;
 
     handle = startServer({
       runtime,
       port: 0,
-      provider: new MultiUserAuthAdapter({
-        [ALICE_TOKEN]: ALICE,
-        [BOB_TOKEN]: BOB,
-      }),
     });
     baseUrl = `http://localhost:${handle.port}`;
   });
@@ -343,40 +346,60 @@ describe("HTTP/SSE — ConversationAccessDeniedError mapping", () => {
     rmSync(workDir, { recursive: true, force: true });
   });
 
-  test("POST /v1/chat returns 403 conversation_access_denied when Bob resumes Alice's conversation", async () => {
-    const res = await fetch(`${baseUrl}/v1/chat`, {
+  async function send(route: string, token: string, conversationId: string) {
+    const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}${route}`, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${BOB_TOKEN}`,
-        "X-Workspace-Id": TEST_WORKSPACE_ID,
-      },
-      body: JSON.stringify({ message: "bob steals", conversationId: aliceConvId }),
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ message: "hello", conversationId }),
     });
-    expect(res.status).toBe(403);
-    expect(res.headers.get("Content-Type")).toMatch(/application\/json/);
     const body = await res.json();
-    expect(body.error).toBe("conversation_access_denied");
-    expect(body.details?.conversationId).toBe(aliceConvId);
-  });
+    return { status: res.status, body };
+  }
 
-  test("POST /v1/chat/stream emits SSE error event when Bob resumes Alice's conversation", async () => {
-    const res = await fetch(`${baseUrl}/v1/chat/stream`, {
+  /** The answer with the id factored out, so two refusals can be compared whole. */
+  function shape(body: { details?: { conversationId?: string } }, id: string) {
+    expect(body.details?.conversationId).toBe(id);
+    return { ...body, details: { ...body.details, conversationId: "<id>" } };
+  }
+
+  for (const route of CHAT_ROUTES) {
+    test(`${route}: a conversation in another workspace is refused exactly like an unknown one`, async () => {
+      const unknownId = "conv_0000000000000001";
+      const inB = await send(route, ALICE_TOKEN, aliceConvInB);
+      const unknown = await send(route, ALICE_TOKEN, unknownId);
+
+      expect(inB.status).toBe(404);
+      expect(inB.body.error).toBe("conversation_not_found");
+      expect(unknown.status).toBe(404);
+      expect(shape(inB.body, aliceConvInB)).toEqual(shape(unknown.body, unknownId));
+
+      // Nothing ran in B and nothing was born in A under either id.
+      expect(runtime.isTurnActive(aliceConvInB)).toBe(false);
+      const inBStore = await runtime.resolveConversationStore(aliceConvInB);
+      const conv = await inBStore!.load(aliceConvInB);
+      expect(await inBStore!.history(conv!)).toHaveLength(2);
+      expect(await runtime.findConversation(unknownId)).toBeNull();
+    });
+
+    test(`${route}: another owner's conversation is refused exactly like an unknown one`, async () => {
+      const unknownId = "conv_0000000000000002";
+      const foreign = await send(route, BOB_TOKEN, aliceConvInA);
+      const unknown = await send(route, BOB_TOKEN, unknownId);
+
+      expect(foreign.status).toBe(404);
+      expect(shape(foreign.body, aliceConvInA)).toEqual(shape(unknown.body, unknownId));
+      const loaded = await runtime.findConversation(aliceConvInA);
+      expect(loaded!.ownerId).toBe(ALICE.id);
+    });
+  }
+
+  test("the conversation resumes at its own workspace's path", async () => {
+    const res = await fetch(`${baseUrl}/v1/workspaces/${wsB}/chat`, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${BOB_TOKEN}`,
-        "X-Workspace-Id": TEST_WORKSPACE_ID,
-      },
-      body: JSON.stringify({ message: "bob streams a steal", conversationId: aliceConvId }),
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${ALICE_TOKEN}` },
+      body: JSON.stringify({ message: "back in B", conversationId: aliceConvInB }),
     });
     expect(res.status).toBe(200);
-    expect(res.headers.get("Content-Type")).toMatch(/text\/event-stream/);
-    const text = await res.text();
-    const events = parseSSE(text);
-    const errEvent = events.find((e) => e.event === "error");
-    expect(errEvent).toBeDefined();
-    const payload = JSON.parse(errEvent!.data);
-    expect(payload.error).toBe("conversation_access_denied");
+    expect((await res.json()).conversationId).toBe(aliceConvInB);
   });
 });

@@ -17,13 +17,17 @@ Ships as container images on GHCR (`ghcr.io/nimblebraininc/nimblebrain`, `ghcr.i
 # Prerequisites: Docker
 export ANTHROPIC_API_KEY=sk-ant-...
 
+# The identity provider. `dev` signs every request in as one local developer,
+# with no login: keep it on your own machine.
+echo '{"auth":{"adapter":"dev"}}' > instance.json
+
 docker compose up
 # Pulls ghcr.io/nimblebraininc/nimblebrain + nimblebrain-web
 # Web UI:  http://localhost:27246
 # API:     http://localhost:27246/v1/health
 ```
 
-Open `http://localhost:27246` in your browser. Auth is configured via `instance.json` (see Configuration).
+Open `http://localhost:27246` in your browser. The runtime does not start without `instance.json`; for a real identity provider (`oidc` or `workos`), see [instance.json](https://docs.nimblebrain.ai/config/instance-json/).
 
 To build from source instead of pulling (e.g. when developing against local changes), run `docker compose up --build`.
 
@@ -39,7 +43,7 @@ bun run dev
 # Web on http://localhost:27246 (Vite HMR, proxies /v1/* to :27247)
 ```
 
-One command, one terminal. Output is prefixed `[api]` / `[web]`. Ctrl+C stops both.
+One command, one terminal. Output is prefixed `[api]` / `[web]`. Ctrl+C stops both. The dev launchers write `{"auth":{"adapter":"dev"}}` to the workdir's `instance.json` when it has none.
 
 For API-only development (no web client):
 
@@ -93,16 +97,22 @@ docker compose config    # Validate compose file
 
 All endpoints require authentication (Bearer token or session cookie) unless noted. Auth is configured via `instance.json` — see the identity system docs.
 
+A route that acts on a workspace names it in its path, `/v1/workspaces/:wsId/…`, and admits only a member of it: a malformed, unknown or non-member id gets `404 workspace_error`. Every other route acts on the caller, or on a conversation or file its own id locates, and names no workspace ([ADR-0037](./adr/0037-a-workspace-is-addressed-by-url-on-every-surface.md)). The path is the only way to name a workspace: a `ws_<id>-` qualified server, app or tool name is refused with `400`, and a `conversationId` on a chat or upload must be one of the caller's conversations in the path's workspace, or the request gets `404 conversation_not_found`, the same answer as for an id that does not exist.
+
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
 | GET | /v1/health | No | Health check |
 | GET | /v1/bootstrap | Yes | Bootstrap workspace context (user, workspaces, shell config) |
-| POST | /v1/chat | Yes | Synchronous chat |
-| POST | /v1/chat/stream | Yes | SSE streaming chat |
-| GET | /v1/apps/:name/resources/:path | Yes | Fetch app UI resource |
-| POST | /v1/tools/call | Yes | Direct tool invocation |
-| GET | /v1/shell | Yes | Shell configuration (placements, endpoints) |
-| GET | /v1/files/:fileId | Yes | Serve uploaded file |
+| POST | /v1/workspaces/:wsId/chat | Yes | Synchronous chat |
+| POST | /v1/workspaces/:wsId/chat/stream | Yes | SSE streaming chat |
+| POST | /v1/workspaces/:wsId/chat/start | Yes | Start a turn that runs to completion on the server |
+| POST | /v1/conversations/:id/cancel | Yes | Stop a conversation's in-flight turn |
+| GET | /v1/workspaces/:wsId/apps/:name/resources/:path | Yes | Fetch app UI resource |
+| POST | /v1/workspaces/:wsId/tools/call | Yes | Direct tool invocation |
+| POST | /v1/workspaces/:wsId/resources/read | Yes | Read an MCP resource |
+| POST | /v1/workspaces/:wsId/resources | Yes | Upload files (multipart) |
+| GET | /v1/workspaces/:wsId/shell | Yes | Shell configuration (placements, endpoints) |
+| GET | /v1/files/:fileId | Yes | Serve uploaded file (the id locates its workspace) |
 | GET | /v1/events | Yes | SSE workspace event stream |
 | GET | /v1/auth/authorize | No | OAuth authorization redirect |
 | GET | /v1/auth/callback | No | OAuth callback handler |
@@ -180,7 +190,7 @@ No connectors are installed by default. Platform apps (home, conversations, file
 NimbleBrain splits configuration across two files:
 
 - **`nimblebrain.json`** — instance-level settings (models, HTTP, logging, limits, feature flags). One file per deployment.
-- **`workspace.json`** — per-workspace settings (connectors, skill directories, optional model + identity overrides). One file per workspace under `<workDir>/workspaces/<ws-id>/`.
+- **`workspace.json`** — per-workspace settings (connectors, skill directories, optional model overrides). One file per workspace under `<workDir>/workspaces/<ws-id>/`.
 
 This split is the workspace isolation boundary: two workspaces in the same deployment can install different connectors without touching the instance config. See [Workspace Isolation](#workspace-isolation) below.
 
@@ -217,20 +227,19 @@ A fully specified example:
   "features":  { "catalogSearch": true },
   "maxIterations": 25,
   "maxInputTokens": 500000,
-  "maxOutputTokens": 16384,
   "workDir": "~/.nimblebrain"
 }
 ```
 
 **Model slots.** `models` takes two named slots — `default` (every chat turn) and `fast` (titles, the home briefing, and both history folds). Each is a `provider:model-id` string. `providers` supplies per-provider API keys when you want to mix providers across slots. The older single-`model` / `defaultModel` shape is still accepted for backward compatibility but is deprecated.
 
-**Feature flags.** All default to `true`. Disable a flag to remove the capability entirely — the tool is unregistered, not visible to the LLM, and `POST /v1/tools/call` returns 403. See [Feature Flags](#feature-flags) for the full set.
+**Feature flags.** All default to `true`. Disable a flag to remove the capability entirely — the tool is unregistered, not visible to the LLM, and `POST /v1/workspaces/:wsId/tools/call` returns 403. See [Feature Flags](#feature-flags) for the full set.
 
 **Deprecated fields.** `identity` and `contextFile` are ignored with a warning — use a skill with `type: "context"` instead.
 
 ### `workspace.json` (per-workspace config)
 
-Each workspace has its own config at `<workDir>/workspaces/<ws-id>/workspace.json`. In dev mode (no `instance.json`), the runtime uses a single `_dev` workspace.
+Each workspace has its own config at `<workDir>/workspaces/<ws-id>/workspace.json`.
 
 ```json
 {
@@ -241,12 +250,11 @@ Each workspace has its own config at `<workDir>/workspaces/<ws-id>/workspace.jso
     { "url": "https://mcp.example.com/mcp", "serverName": "example" }
   ],
   "skillDirs": ["./skills"],
-  "models": { "default": "anthropic:claude-opus-4-6" },
-  "identity": { "name": "Acme Copilot" }
+  "models": { "default": "anthropic:claude-opus-4-6" }
 }
 ```
 
-`connectors`, `skillDirs`, and optional `models` / `identity` overrides live here, not in `nimblebrain.json`. `skillDirs`, `home` and `preferences` placed at the top level of `nimblebrain.json` are stripped on load — the runtime treats them as configuration errors rather than falling back to a global scope. A workspace-shaped `connectors` array there is rejected outright, because in that file the name is the provider and gateway block.
+`connectors`, `skillDirs`, and optional `models` overrides live here, not in `nimblebrain.json`. `skillDirs`, `home` and `preferences` placed at the top level of `nimblebrain.json` are stripped on load — the runtime treats them as configuration errors rather than falling back to a global scope. A workspace-shaped `connectors` array there is rejected outright, because in that file the name is the provider and gateway block.
 
 ### Workspace Isolation
 
@@ -312,7 +320,6 @@ The working directory is set via `NB_WORK_DIR` (see Environment Variables).
 | Variable | Purpose |
 |----------|---------|
 | `WORKOS_API_KEY` | WorkOS API key (when `auth.adapter: "workos"` in `instance.json`) |
-| `NB_INTERNAL_TOKEN` | Shared secret for service-to-service calls (never forwarded to connectors) |
 | `POSTHOG_API_KEY` | PostHog key for anonymous product telemetry |
 | `NB_TELEMETRY_DISABLED` | Set to `1` to disable telemetry (also `DO_NOT_TRACK=1`) |
 
@@ -486,11 +493,8 @@ When total tools ≤30, all are surfaced directly. Above 30 with no skill matche
 
 | Tool | What it does |
 |------|-------------|
-| `nb__list_apps` | List installed apps with status and tools |
 | `nb__get_config` | Get runtime configuration (providers, model, limits) |
 | `nb__set_model_config` | Update model selection and runtime limits (admin only) |
-| `nb__manage_identity` | Write or reset workspace agent identity override (admin only) |
-| `nb__version` | Platform version info |
 | `nb__workspace_info` | Workspace metadata, telemetry status |
 | `nb__briefing` | Generate personalized activity briefing (workspace overview) |
 | `nb__manage_users` | Create, update, delete, or list users (admin only) |
@@ -522,11 +526,11 @@ User-uploaded files are persisted in the workspace `FileStore` and referenced fr
 
 Pluggable authentication via `IdentityProvider` interface (`src/identity/provider.ts`). Configured via `instance.json` in the work directory:
 
-- **`dev`** — No auth, default when no `instance.json` exists. All requests get a default identity.
+- **`dev`** — No login: every request is one local developer (`usr_default`, org owner). Chosen only by writing `{"auth":{"adapter":"dev"}}`.
 - **`oidc`** — JWT verification via any OIDC provider. Auto-provisions users on first valid login.
 - **`workos`** — Full OAuth code flow with PKCE, token refresh, managed users via WorkOS. Supports MCP OAuth for external client access via AuthKit.
 
-Each request carries a `UserIdentity` (id, name, email, role) threaded through `AppContext` in Hono middleware.
+With no `instance.json` the server refuses to start; a missing file never selects a provider. Each request carries a `UserIdentity` (id, name, email, role) threaded through `AppContext` in Hono middleware.
 
 ### Workspace System
 
@@ -550,7 +554,7 @@ Connectors can be installed per-workspace (tracked via `ConnectorInstance.wsId`)
 
 **Authentication:** Bearer token via `Authorization` header or HttpOnly session cookie (`nb_session`). Cookie attributes: HttpOnly, SameSite=Lax, Secure in production. Bearer header takes precedence over cookie.
 
-**CORS:** Dynamic. Dev mode: `Access-Control-Allow-Origin: *`. With auth: only `ALLOWED_ORIGINS` env var origins, with credentials support.
+**CORS:** The same under every identity provider: only `ALLOWED_ORIGINS` env var origins, with credentials support; with it unset, same-origin only.
 
 **MCP endpoint (`/mcp/<wsId>`):** Streamable HTTP, one per workspace; bare `/mcp` is refused. The bundled web UI's app bridge uses it, and external MCP clients (Claude, Claude Code, Cursor) connect to a workspace's URL (Workspace settings → MCP). A token from the authorization server is accepted only when its `aud` is exactly that URL, and membership of the workspace is checked on every request. 100 concurrent sessions (env: `MCP_MAX_SESSIONS`, LRU-evicted at the cap rather than 429'd), 8-hour idle TTL (env: `MCP_SESSION_TTL_SECONDS`). When `authkitDomain` is configured, returns `WWW-Authenticate` header on 401 for automatic OAuth discovery by MCP clients. Full setup guide: [MCP Endpoint](https://docs.nimblebrain.ai/api/mcp-endpoint/) and [Connecting External Clients](https://docs.nimblebrain.ai/guide/mcp-connect/) on docs.nimblebrain.ai.
 
@@ -564,7 +568,7 @@ Connectors can be installed per-workspace (tracked via `ConnectorInstance.wsId`)
 
 **Workspace-level** (`GET /v1/events`): Events: `connector.installed`, `connector.uninstalled`, `connection.state_changed`, `server.notification`, `conversation.title`, `config.changed`, `skill.created`, `skill.updated`, `skill.deleted`, `bridge.tool.call`, `bridge.tool.done`, `notification.created`, `notification.delivered`, `notification.delivery_failed`, `heartbeat` (30s).
 
-**Per-conversation** (`GET /v1/conversations/:id/events`): For multi-participant chat. Security: `requireAuth` → `requireWorkspace` → `canAccess()`. Events: `user.message`, `text.delta`, `tool.start`, `tool.done`, `llm.done`, `done`, `heartbeat`. Sender excluded from own broadcast.
+**Per-conversation** (`GET /v1/conversations/:id/events`): For multi-participant chat. Security: `requireAuth` → ownership of the conversation (no workspace). Events: `user.message`, `text.delta`, `tool.start`, `tool.done`, `llm.done`, `done`, `heartbeat`. Sender excluded from own broadcast.
 
 ### Web Client Internals
 
@@ -591,8 +595,8 @@ Placements with a `route` field get React Router routes in `App.tsx`. Routes fro
 
 **Files:**
 - `nimblebrain.json` — instance config. Validated at startup against `src/config/nimblebrain-config.schema.json` (JSON Schema draft-07, AJV). Unknown keys warn; structural errors throw. Workspace-owned fields (`skillDirs`, `preferences`, `home`) are stripped on load. `identity` and `contextFile` are deprecated with a warning.
-- `<workDir>/workspaces/<wsId>/workspace.json` — per-workspace config. Owns `connectors`, `skillDirs`, and optional `models` / `identity` overrides.
-- `<workDir>/instance.json` — auth configuration (OIDC or WorkOS adapter). Absence signals dev mode.
+- `<workDir>/workspaces/<wsId>/workspace.json` — per-workspace config. Owns `connectors`, `skillDirs`, and optional `models` overrides.
+- `<workDir>/instance.json` — the identity provider (`dev`, `oidc`, or `workos` adapter). Required: `serve` refuses to start without it.
 
 **Config resolution** for `nimblebrain.json` (when no `--config` flag):
 1. `--workdir <dir>` → `<dir>/nimblebrain.json`
@@ -626,13 +630,9 @@ All default to `true`. What `false` does depends on the flag: most withhold a to
 | `workspaceManagement` | Workspaces, members, sharing | `nb__manage_workspaces` is not registered |
 | `compaction` | Folding the oldest turns of a long conversation into a summary at run start | Full history replays every turn (event-sourced stores only) |
 
-**Enforcement.** For the flags that withhold a tool, three layers: (1) the tool is not built into its source at startup, so it reaches no tool list and no dispatcher; (2) `POST /v1/tools/call` returns `403 feature_disabled`; (3) MCP `tools/list` filters it and `tools/call` returns an error. `toolDiscovery`, `catalogSearch`, and `fileContext` are enforced inside the handler instead — the tool or endpoint is present and refuses. `compaction` gates no call path at all. Tools outside the table (`nb__status`, the read-only platform surfaces, `nb__search` itself) are never gated.
+**Enforcement.** For the flags that withhold a tool, three layers: (1) the tool is not built into its source at startup, so it reaches no tool list and no dispatcher; (2) `POST /v1/workspaces/:wsId/tools/call` returns `403 feature_disabled`; (3) MCP `tools/list` filters it and `tools/call` returns an error. `toolDiscovery`, `catalogSearch`, and `fileContext` are enforced inside the handler instead — the tool or endpoint is present and refuses. `compaction` gates no call path at all. Tools outside the table (`nb__status`, the read-only platform surfaces, `nb__search` itself) are never gated.
 
 Full reference: [Feature flags](https://docs.nimblebrain.ai/config/features/) on docs.nimblebrain.ai.
-
-#### Connector Env Isolation
-
-Connector processes receive a **filtered** host environment. Default allowlist: `PATH`, `HOME`, `USER`, `SHELL`, `LANG`, `LC_ALL`, `LC_CTYPE`, `TERM`, `TMPDIR`, `TZ`, `XDG_DATA_HOME`, `XDG_CONFIG_HOME`, `NODE_ENV`, `BUN_ENV`, `NB_WORK_DIR`, `UPJACK_ROOT`, `PYTHONPATH`, `VIRTUAL_ENV`, `NODE_PATH`. Hard deny (never passed): `NB_API_KEY`, `NB_INTERNAL_TOKEN`. Opt in via `allowedEnv` in connector config.
 
 #### Remote Connector Security
 
@@ -658,7 +658,7 @@ These are non-negotiable patterns. Violating them causes production bugs:
 - **Iframe DOM isolation** — never put React-managed children in same container as raw DOM iframes
 - **SlotRenderer effect depends only on `placementKey`** — callbacks via refs, not dep array (prevents flickering)
 - **Shell components must not consume `ChatContext`** — use `ChatConfigContext` (stable) to avoid re-renders during streaming
-- **`"primary"` virtual path** — `GET /v1/apps/:name/resources/primary` resolves to `primaryView.resourceUri` from manifest
+- **`"primary"` virtual path** — `GET /v1/workspaces/:wsId/apps/:name/resources/primary` resolves to `primaryView.resourceUri` from manifest
 - **Spec methods only** — use ext-apps spec method names in bridge; NimbleBrain extensions use `synapse/` prefix
 - **`ui/initialize` field names** — `hostInfo` (not `serverInfo`), `hostCapabilities` (not `capabilities`), `hostContext.theme` is string
 
@@ -683,7 +683,7 @@ These are non-negotiable patterns. Violating them causes production bugs:
 | `models.fast` | `anthropic:claude-haiku-4-5-20251001` |
 | Max iterations | 25 (hard cap: 50) |
 | Max input tokens | 500,000 |
-| Max output tokens | 16,384 |
+| Max output tokens | the model's catalog output limit (16,384 for a model the catalog lacks) |
 | Max history messages | 40 |
 | Max tool result size | 1,000,000 chars (0 disables) |
 | Default connectors | none (platform capabilities are built in) |
@@ -701,7 +701,9 @@ These are non-negotiable patterns. Violating them causes production bugs:
 | `@ai-sdk/anthropic` | Anthropic provider (prompt caching, streaming) |
 | `@ai-sdk/openai` | OpenAI provider |
 | `@ai-sdk/google` | Google Gemini provider |
-| `@modelcontextprotocol/sdk` | MCP client and server (Streamable HTTP, SSE, in-memory) |
+| `@modelcontextprotocol/client` | MCP client to connectors: negotiates the 2026-07-28 or a 2025 protocol revision per connection (Streamable HTTP, SSE, in-memory) |
+| `@modelcontextprotocol/server` | MCP servers: platform apps (in-memory) and the 2026-07-28 leg of `/mcp/<wsId>` |
+| `@modelcontextprotocol/sdk` | The 2025-era leg of `/mcp/<wsId>` and the iframe bridge, which carry the 2025-11-25 task vocabulary the v2 packages do not serve |
 | `ajv` + `ajv-formats` | JSON Schema validation for MCPB manifests |
 | `gray-matter` | YAML frontmatter parsing for skill files |
 | `posthog-node` | Anonymous product telemetry (server-side) |
@@ -714,7 +716,7 @@ These are non-negotiable patterns. Violating them causes production bugs:
 - **`WorkspaceLogSink`** — Workspace-level daily rolling JSONL logs. Only persists workspace events (connector lifecycle, data/config changes, skill/file operations).
 - **`ConsoleEventSink`** — Human-readable stderr for development.
 - **`DebugEventSink`** — Verbose JSON dumps (`--debug`).
-- **`CallbackEventSink`** — Bridges run events to the in-process chat handler (`POST /v1/chat`).
+- **`CallbackEventSink`** — Bridges run events to the in-process chat handler (`POST /v1/workspaces/:wsId/chat`).
 - **`PostHogEventSink`** — Anonymous telemetry. No PII. Opt-out: `telemetry.enabled: false`, `NB_TELEMETRY_DISABLED=1`, or `DO_NOT_TRACK=1`.
 
 ## License

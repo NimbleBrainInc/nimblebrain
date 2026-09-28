@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { FetchLike } from "@modelcontextprotocol/sdk/shared/transport.js";
+import type { FetchLike } from "@modelcontextprotocol/server";
 import { createSsrfGuardedFetch } from "../../src/tools/ssrf-guarded-fetch.ts";
 
 /**

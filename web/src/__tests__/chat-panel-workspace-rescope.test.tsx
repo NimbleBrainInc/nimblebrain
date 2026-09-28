@@ -1,7 +1,10 @@
 // ---------------------------------------------------------------------------
 // ChatProvider — workspace re-scope (the panel follows the focused workspace).
 //
-// A conversation lives in exactly one workspace. When the focused workspace
+// A conversation lives in exactly one workspace, and a chat runs in the
+// workspace its URL names. A conversation the user OPENS from another workspace
+// (`openConversation`: a `?chat=` deep link, a list) takes them to that
+// workspace's path. Otherwise, when the focused workspace
 // changes from one workspace to a DIFFERENT one, the open conversation clears
 // and the panel resets to a fresh draft in the newly-focused workspace. It does
 // NOT clear when the focus is unchanged (e.g. navigating within the same
@@ -73,7 +76,7 @@ mock.module("../api/conversation-stream", () => ({
 const React = await import("react");
 const ReactDOMClient = await import("react-dom/client");
 const { act } = await import("react");
-const { MemoryRouter, useNavigate } = await import("react-router-dom");
+const { MemoryRouter, useLocation, useNavigate } = await import("react-router-dom");
 const { ChatProvider, useChatContext } = await import("../context/ChatContext");
 const { WorkspaceProvider, useWorkspaceContext } = await import("../context/WorkspaceContext");
 const { chatStore } = await import("../hooks/chat-store");
@@ -81,7 +84,7 @@ const { chatStore } = await import("../hooks/chat-store");
 import type { WorkspaceInfo } from "../context/WorkspaceContext";
 
 function ws(id: string, name: string): WorkspaceInfo {
-  return { id, name, connectors: [], memberCount: 1, isPersonal: false, userRole: "admin" };
+  return { id, name, connectors: [], memberCount: 1, userRole: "admin" };
 }
 const WS_A = ws("ws_a", "Alpha");
 const WS_B = ws("ws_b", "Bravo");
@@ -89,10 +92,14 @@ const WS_B = ws("ws_b", "Bravo");
 // Probe that publishes the live conversationId (and the send fn) out of the context.
 let observedConversationId: string | null | undefined;
 let capturedSendMessage: ((text: string) => Promise<void>) | null = null;
+let capturedOpenConversation: ((id: string) => Promise<void>) | null = null;
+let observedPathname: string | undefined;
 function Probe(): null {
   const ctx = useChatContext();
   observedConversationId = ctx.conversationId;
   capturedSendMessage = ctx.sendMessage;
+  capturedOpenConversation = ctx.openConversation;
+  observedPathname = useLocation().pathname;
   return null;
 }
 
@@ -152,6 +159,8 @@ beforeEach(() => {
   chatStore.reset();
   observedConversationId = undefined;
   capturedSendMessage = null;
+  capturedOpenConversation = null;
+  observedPathname = undefined;
   setActiveWorkspace = null;
   navigate = null;
   mockConversationWorkspaceId = "ws_a";
@@ -266,6 +275,8 @@ describe("ChatProvider reconciles a foreign-workspace conversation after a refre
       await chatStore.loadConversation("conv_existing");
     });
     expect(observedConversationId).toBeNull();
+    // A restore the user did not choose yields to the URL: they stay on B.
+    expect(observedPathname).toBe("/w/b/overview");
   });
 
   test("null → B async focus resolves after the conversation loads, then re-scopes", async () => {
@@ -335,10 +346,52 @@ describe("ChatProvider reconciles a foreign-workspace conversation after a refre
   });
 });
 
+describe("ChatProvider follows a conversation the user opens to its own workspace", () => {
+  test("a deep-linked conversation from another workspace lands on that workspace's path and stays open", async () => {
+    // On workspace A, the user opens a conversation that lives in B.
+    await mountHarness({ route: "/w/a/overview", activeId: "ws_a", convId: "" });
+    mockConversationWorkspaceId = "ws_b";
+
+    await act(async () => {
+      await capturedOpenConversation?.("conv_in_b");
+    });
+
+    // They are on B's path, with B's conversation still open — the arrival is
+    // not mistaken for a switch away from it.
+    expect(observedPathname).toBe("/w/b");
+    expect(observedConversationId).toBe("conv_in_b");
+
+    // A send resumes it, now from B's path.
+    await act(async () => {
+      await capturedSendMessage?.("follow-up");
+    });
+    expect(startCalls).toEqual([{ conversationId: "conv_in_b" }]);
+  });
+
+  test("a conversation opened in its own workspace keeps the URL", async () => {
+    await mountHarness({ route: "/w/a/overview", activeId: "ws_a", convId: "" });
+    await act(async () => {
+      await capturedOpenConversation?.("conv_in_a");
+    });
+    expect(observedPathname).toBe("/w/a/overview");
+    expect(observedConversationId).toBe("conv_in_a");
+  });
+
+  test("a conversation in a workspace the user does not belong to is dropped, not followed", async () => {
+    await mountHarness({ route: "/w/a/overview", activeId: "ws_a", convId: "" });
+    mockConversationWorkspaceId = "ws_elsewhere";
+    await act(async () => {
+      await capturedOpenConversation?.("conv_elsewhere");
+    });
+    expect(observedPathname).toBe("/w/a/overview");
+    expect(observedConversationId).toBeNull();
+  });
+});
+
 describe("Focus is route-derived, so bootstrap's default is never a phantom switch", () => {
-  // A cold load sends no `X-Workspace-Id` (the ambient id is null until bootstrap
-  // returns), so the server answers with its default focus — the user's personal
-  // workspace — even when the URL is another workspace. `activeWorkspace` therefore
+  // On a cold load the ambient id is null until bootstrap returns, and bootstrap
+  // answers with its default focus — the user's personal workspace — even when
+  // the URL is another workspace. `activeWorkspace` therefore
   // starts on that default and only reconciles to the route a render later. Focus
   // must not follow that intermediate value: it is indistinguishable from a real
   // workspace switch, and clearing on it discards the very conversation the

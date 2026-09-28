@@ -15,14 +15,14 @@ NimbleBrain uses pluggable authentication adapters configured via `instance.json
 
 | Adapter | Use case | Configuration |
 |---------|----------|--------------|
-| **dev** | Local development | No `instance.json` (default) |
+| **dev** | Local development | `adapter: "dev"`: every request is one built-in owner, no login |
 | **oidc** | Enterprise / SSO | Authorization-code flow against any OIDC provider |
 | **workos** | Enterprise / SSO via WorkOS | AuthKit-hosted login (`adapter: "workos"`) |
 
-The adapter is selected by the `auth.adapter` field in `instance.json`. With no `instance.json` present, the platform runs in dev mode.
+The adapter is selected by the `auth.adapter` field in `instance.json`. The server does not start without the file: a missing identity config never selects an adapter.
 
 <Aside type="danger">
-Running without an `instance.json` (dev mode) disables all authentication. The CORS policy falls back to `Access-Control-Allow-Origin: *`. Anyone who can reach the server has full access to the agent, including shell execution via the bash connector.
+The `dev` adapter checks no credential. Anyone who can reach the server is its org owner, with full access to the agent and every connector installed in its workspaces.
 </Aside>
 
 ### How authentication works
@@ -73,25 +73,18 @@ The `Secure` flag is automatically omitted for localhost connections (where `htt
 
 ## CORS
 
-Cross-Origin Resource Sharing controls which domains can make API requests from a browser. NimbleBrain has three CORS modes depending on your configuration. The deciding factor is whether **auth is configured** (an `instance.json` adapter is present), not any single environment variable:
+Cross-Origin Resource Sharing controls which domains can make API requests from a browser. The policy is the same for every auth adapter, `dev` included; `ALLOWED_ORIGINS` decides it:
 
-### Mode 1: No auth configured (development)
+### `ALLOWED_ORIGINS` unset
 
-When no `instance.json` adapter is configured (dev mode):
-- `Access-Control-Allow-Origin: *`
-- No credentials support
-- Any origin can make requests
-
-### Mode 2: Auth configured, no `ALLOWED_ORIGINS`
-
-When an auth adapter is configured but `ALLOWED_ORIGINS` is not:
+When `ALLOWED_ORIGINS` is not set:
 - No `Access-Control-Allow-Origin` header is sent
 - Only same-origin requests work (browser enforces this)
 - Cross-origin requests from any domain are blocked
 
-### Mode 3: Auth configured + `ALLOWED_ORIGINS` (production)
+### `ALLOWED_ORIGINS` set (production)
 
-When both are set:
+When it is set:
 - `Access-Control-Allow-Origin` is set to the requesting origin only if it appears in the allow list
 - `Access-Control-Allow-Credentials: true` enables cookie-based auth
 - `Vary: Origin` ensures caches differentiate by origin
@@ -109,7 +102,7 @@ If you use a custom domain with the web UI, that domain must be in `ALLOWED_ORIG
 These headers are always permitted in CORS requests:
 
 ```
-Content-Type, Authorization, Mcp-Session-Id, Last-Event-ID, Mcp-Protocol-Version, X-Workspace-Id
+Content-Type, Authorization, Mcp-Session-Id, Last-Event-ID, Mcp-Protocol-Version
 ```
 
 These headers are exposed to client JavaScript:
@@ -117,6 +110,10 @@ These headers are exposed to client JavaScript:
 ```
 Mcp-Session-Id, Mcp-Protocol-Version
 ```
+
+### Cross-origin writes to a workspace
+
+CORS stops a script on another origin from reading a response, but a plain form or `text/plain` POST needs no preflight, and `SameSite=Lax` sends the session cookie on it when the other origin is on the same site. So a write to a workspace route (`POST`, `PATCH`, `DELETE` under `/v1/workspaces/`) that the browser marks `Sec-Fetch-Site: same-site` or `cross-site` is refused with `403 cross_site_request`, unless its `Origin` is in `ALLOWED_ORIGINS`. Same-origin requests, and clients that are not browsers, are unaffected.
 
 ## Network architecture
 
@@ -285,6 +282,25 @@ when you set one) gets one
 the tool, the caller's own reason string, and the outcome. Since a dispatch
 leaves no transcript behind, this line is the record.
 
+## Data at rest
+
+Everything a deployment keeps lives in its work directory (`NB_WORK_DIR`, `/data` in the container): conversations, files, workspace records, logs, and the credential store, which holds API keys, OAuth tokens and client secrets. Anyone who can read that directory, or any copy of it, can read all of it. Two layers protect it, and they cover different things.
+
+**Encrypt the volume.** Put the work directory on storage that is encrypted at rest. That protects the disk, its snapshots, and the backups taken from them.
+
+- **Docker:** encrypt the host's disk, or the device backing the volume.
+- **Kubernetes:** use a StorageClass that encrypts. On AWS EBS that is the class parameter `encrypted: "true"`; turning on EBS encryption by default for the account, in each region you use, also covers volumes created any other way.
+
+A snapshot or backup has the encryption of the volume it was taken from. Backups of an unencrypted volume stay unencrypted for as long as they are retained, and encrypting the volume later does not change them.
+
+A volume cannot be encrypted in place. To move an existing one: stop the workload, snapshot the volume, create an encrypted volume from the snapshot, create a PersistentVolume for it, re-create the claim bound to that PersistentVolume (a claim's `volumeName` cannot be changed), and then delete the snapshot, which is an unencrypted copy of the data. Set the PersistentVolume's `reclaimPolicy` to what the old one had. If a CSI driver manages the claim, give the new volume the tags the driver uses to recognize its own volumes, or it cannot delete the volume later.
+
+**Seal the credential store.** Sealing encrypts each stored secret under a key held in the environment, so secrets stay protected where the disk is not, and in every copy of the work directory: a `tar` backup, a copied volume, the archive of a workspace deleted after sealing was on. See [Sealing the files](/config/secrets/#sealing-the-files).
+
+The boot sweep that seals existing secrets does not walk `archived/`, so a workspace deleted before sealing was on keeps its secrets in plaintext. Rotate those credentials at the vendor, then remove the archive with `manage_workspaces purge_archive`.
+
+Neither layer protects against someone who can read the running process's environment or open a shell in its container. That is an access-control boundary, not an encryption one.
+
 ## Production checklist
 
 Use this checklist before exposing NimbleBrain to any network:
@@ -299,3 +315,5 @@ Use this checklist before exposing NimbleBrain to any network:
 | Connector list reviewed | `cat workspaces/<wsId>/workspace.json` — only connectors you trust are installed |
 | Firewall restricts inbound ports | Only 443 (HTTPS) and 22 (SSH) reachable from the internet |
 | Backups configured | Test your volume backup and restore procedure |
+| Work directory on an encrypted volume | Your platform reports the volume encrypted (on AWS: `aws ec2 describe-volumes --volume-ids <id> --query 'Volumes[].Encrypted'`) |
+| Credential store sealed | `secrets.config.seal` is set, and this prints nothing: `find /data -path '*/credentials/secrets/*' -type f ! -name '.*' \| while read -r f; do head -c5 "$f" \| grep -q '^NBS1\.' \|\| echo "$f"; done` |

@@ -16,6 +16,7 @@
  * enableDefaultMetrics(), called once at server start.
  */
 import { Counter, collectDefaultMetrics, Gauge, Histogram, Registry } from "prom-client";
+import { SEAL_FAILURE_REASONS, type SealFailureReason } from "../tools/credential-store.ts";
 import type { ConnectorHealth } from "../tools/health-monitor.ts";
 import type { LlmCallOrigin } from "../usage/types.ts";
 
@@ -37,7 +38,7 @@ export function enableDefaultMetrics(): void {
 /**
  * RED: request count by method, matched route pattern, and status code.
  *
- * `route` is the *matched route pattern* (e.g. `/v1/chat`), never the raw path,
+ * `route` is the *matched route pattern* (e.g. `/v1/workspaces/:wsId/chat`), never the raw path,
  * so path params like conversation ids don't explode label cardinality.
  * `method` is clamped to the standard verb set (else "OTHER") and `route`
  * collapses unmatched paths to "/*", so neither label is client-unbounded.
@@ -153,8 +154,8 @@ export const llmCallsTotal = new Counter({
  * the p99-latency alert. Buckets run long (to 300s): an agentic call with a
  * large context and tool streaming sits far right of an HTTP histogram, so the
  * 0.005–10s bucket set used for `http_request_duration_seconds` would clip the
- * tail the alert cares about. Forked fast-slot calls (compaction / title /
- * briefing) are not observed here — they emit no `llm.done` and record usage at
+ * tail the alert cares about. Forked fast-slot calls (compaction / title)
+ * are not observed here — they emit no `llm.done` and record usage at
  * their own call sites (same boundary as the token counters).
  *
  * Completed-calls SLI: only successful calls (`llm.done`) are sampled. A call
@@ -299,6 +300,23 @@ export const artifactResolutionsTotal = new Counter({
 });
 
 /**
+ * Automation runs recorded, by terminal status: `success`, `degraded`,
+ * `failure`, `timeout`, `cancelled`, or `skipped`. `degraded` is a run that
+ * finished with a failed tool call no later call made good, so part of its
+ * work did not happen; the ratio of `degraded` plus `failure` to the total is
+ * the automation health signal. Counted where the run record is written, so
+ * every run the run list shows is counted once. No automation or workspace
+ * label: both are tenant-unbounded, and one pod per tenant already attributes
+ * it. The run record names the automation.
+ */
+export const automationRunsTotal = new Counter({
+  name: "nb_automation_runs_total",
+  help: "Automation runs recorded, by terminal status.",
+  labelNames: ["status"] as const,
+  registers: [metricsRegistry],
+});
+
+/**
  * App-server notifications relayed to the server's own views, by outcome.
  * `outcome` is a closed set: `forwarded` counts deliveries sent to views;
  * `coalesced` counts notifications that arrived inside an open coalescing
@@ -439,6 +457,61 @@ export function registerConnectorHealthGauge(getStatus: () => ConnectorHealth[])
   healthStatusProvider = getStatus;
 }
 
+// ---------------------------------------------------------------------------
+// Credential store — the states of sealing that must reach an alert rather
+// than sit in a workspace log. `reason` is the only label anywhere here: a key
+// name discloses which vendors a tenant uses, and a workspace or user id is
+// unbounded. The audit line that accompanies every increment carries both, so
+// the metric says THAT something failed and the log says WHERE.
+// ---------------------------------------------------------------------------
+
+/**
+ * Stored secrets that failed to become a usable value, by `reason` — the closed
+ * set `audit.credential_seal_failure` carries. One increment per audit line.
+ *
+ * Every reason starts at 0, so the first failure after boot moves `increase()`
+ * instead of creating a series that is born at 1 and reads as no change.
+ */
+export const credentialSealFailuresTotal = new Counter({
+  name: "nb_credential_seal_failures_total",
+  help: "Stored secrets that could not be opened, re-sealed, or were refused as plaintext, by reason.",
+  labelNames: ["reason"] as const,
+  registers: [metricsRegistry],
+});
+for (const reason of Object.keys(SEAL_FAILURE_REASONS)) {
+  credentialSealFailuresTotal.inc({ reason }, 0);
+}
+
+export function recordCredentialSealFailure(reason: SealFailureReason): void {
+  credentialSealFailuresTotal.inc({ reason });
+}
+
+/**
+ * `1` while a store with a sealing key configured still accepts plaintext — its
+ * boot sweep could not prove every secret sealed, so the control that refuses a
+ * planted plaintext file is off. `0` otherwise, including for a store with no
+ * key, which accepts plaintext by design. Set from the store's boot reconcile
+ * event; nothing else changes strict mode, so it holds until the next boot.
+ */
+export const credentialStorePlaintextAccepted = new Gauge({
+  name: "nb_credential_store_plaintext_accepted",
+  help: "1 when a sealing credential store still accepts plaintext secrets (strict mode off), else 0.",
+  registers: [metricsRegistry],
+});
+
+/**
+ * `1` when the credential store has a sealing key configured, `0` when it keeps
+ * secrets as plaintext files. The plaintext-accepted gauge reads `0` for both a
+ * clean sealed sweep and no key at all; this one tells them apart, so a
+ * deployment that dropped its `seal` block can be alerted on. Set from the same
+ * boot reconcile event.
+ */
+export const credentialStoreSealed = new Gauge({
+  name: "nb_credential_store_sealed",
+  help: "1 when the credential store has a sealing key configured, else 0.",
+  registers: [metricsRegistry],
+});
+
 /** Token usage subset needed for metrics — a structural slice of `TokenUsage`. */
 interface UsageForMetrics {
   inputTokens: number;
@@ -458,13 +531,13 @@ interface UsageForMetrics {
  * metrics is bounded label cardinality, so a typo at a call site is a compile
  * error rather than a silently-minted new series.
  */
-export type LlmUsageSource = "main" | "title" | "compaction" | "briefing";
+export type LlmUsageSource = "main" | "title" | "compaction";
 
 /**
  * Record one LLM call's usage: a call increment plus token counts split into
  * fresh / cache_read / cache_write / output. Called for both the main agentic
  * loop (`source: "main"`) and the forked fast-slot calls (`compaction` /
- * `title` / `briefing`), so fleet token spend is attributable by origin.
+ * `title`), so fleet token spend is attributable by origin.
  */
 export function recordLlmUsage(
   source: LlmUsageSource,

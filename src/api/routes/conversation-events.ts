@@ -3,14 +3,11 @@
  *
  * GET /v1/conversations/:id/events
  *
- * Security: requireAuth → optionalWorkspace → ownership check.
+ * Security: requireAuth → ownership check.
  *
- * Workspace is *optional* (Task 006): conversations are user-owned
- * post-Stage-1, so a conversation read is authorized by ownership, not
- * workspace membership. If `X-Workspace-Id` is sent, we still validate
- * it (malformed → 400, non-member → 403) so a chat-UI client that
- * sends the header on every call doesn't need to special-case this
- * route.
+ * Identity-scoped: a conversation is located by its id, and a read is
+ * authorized by ownership, not workspace membership, so the route names no
+ * workspace.
  *
  * Response shape:
  *  - Conversation doesn't exist → 404 `not_found`.
@@ -21,29 +18,16 @@
  *    the chat path). Content does not leak.
  *  - Conversation exists and the caller is the owner → 200 SSE.
  *
- * Dev-mode: when no identity provider is configured (`bun run
- * dev:worktree`, `Runtime.start` without an `instance.json`), the
- * caller is treated as `DEV_IDENTITY` (`usr_default`) — same fallback
- * `runtime.chat` uses for the analogous case. Production deployments
- * with an identity provider configured but middleware that fails to
- * populate `c.var.identity` get a 401 (don't silently default to
- * usr_default and pool every user's reads).
+ * A request with no identity gets a 401 (never a default to
+ * usr_default that would pool every user's reads).
  */
 
 import { Hono } from "hono";
 import { CONVERSATION_ID_RE } from "../../conversation/types.ts";
-import type { UserIdentity } from "../../identity/provider.ts";
-import { DEV_IDENTITY } from "../../identity/providers/dev.ts";
 import { ConversationCorruptedError } from "../../runtime/errors.ts";
 import { requireAuth } from "../middleware/auth.ts";
 import { errorLog } from "../middleware/error-log.ts";
-import { optionalWorkspace } from "../middleware/workspace.ts";
 import { type AppContext, type AppEnv, apiError } from "../types.ts";
-
-/** Resolve the caller id, falling back to DEV_IDENTITY only when no identity provider is configured. */
-function resolveCallerId(identity: UserIdentity | undefined, ctx: AppContext): string | null {
-  return identity?.id ?? (ctx.runtime.getIdentityProvider() ? null : DEV_IDENTITY.id);
-}
 
 /** Look up a conversation, surfacing a `ConversationCorruptedError` as a value instead of a throw. */
 async function findConversationOrCorrupted(ctx: AppContext, conversationId: string) {
@@ -76,34 +60,26 @@ export function conversationEventRoutes(ctx: AppContext) {
   // Middleware is chained on the route itself, NOT via `.use("*")`. Hono
   // flattens a sub-app's `.use("*")` into a `/*` matcher that runs for
   // EVERY request reaching the parent after this sub-app is mounted —
-  // including sibling routes like `/v1/bootstrap`. That leak made
-  // `optionalWorkspace`'s membership check (403 for a non-member
-  // `X-Workspace-Id`) fire on the *permissive* bootstrap route, locking
-  // out any user whose remembered workspace they'd lost access to.
-  // Per-route middleware scopes enforcement to exactly this path — same
-  // precedent as `mcp-auth.ts` (per-handler, not `.use("*")`).
+  // including sibling routes like `/v1/bootstrap`. Per-route middleware
+  // scopes enforcement to exactly this path — same precedent as
+  // `mcp-auth.ts` (per-handler, not `.use("*")`).
   return new Hono<AppEnv>().get(
     "/v1/conversations/:id/events",
     requireAuth(ctx.authOptions),
-    optionalWorkspace(ctx.workspaceStore),
     errorLog(ctx),
     async (c) => {
       const conversationId = c.req.param("id");
       // Reject a malformed id with 400 before it reaches the store, where
       // `validateConversationId` would throw a plain Error that bubbles to a
-      // 500. Mirrors the `/v1/chat/start` schema guard so a typo or a
+      // 500. Mirrors the `/v1/workspaces/:wsId/chat/start` schema guard so a typo or a
       // path-traversal probe gets a clean bad-request, not a 5xx.
       if (!CONVERSATION_ID_RE.test(conversationId)) {
         return apiError(400, "bad_request", "Invalid conversationId format");
       }
 
-      // Resolve the caller id. Authenticated request → identity.id.
-      // Dev mode (no identity provider configured) → fall back to
-      // DEV_IDENTITY so the same conversations `runtime.chat` minted
-      // under usr_default are readable. Misconfigured production
-      // (provider exists but middleware didn't populate identity) →
-      // 401 instead of pooling reads under a sentinel user.
-      const callerId = resolveCallerId(c.var.identity, ctx);
+      // The caller is the authenticated identity; none → 401 instead of
+      // pooling reads under a sentinel user.
+      const callerId = c.var.identity?.id;
       if (!callerId) {
         return apiError(401, "authentication_required", "Authentication required.");
       }

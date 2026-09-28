@@ -169,7 +169,7 @@
       "minimum": 1
     },
     "maxOutputTokens": {
-      "description": "Max output tokens per LLM call. Default: 16384.",
+      "description": "Max output tokens per LLM call. Unset uses each model's catalog output limit (16384 for a model the catalog lacks); a set value applies to every model, clamped to its limit.",
       "type": "integer",
       "minimum": 1
     },

@@ -1,25 +1,18 @@
 // The briefing output contract lives in the platform schema — the single
-// source of truth, codegen'd to the web shell. Import for local use below and
-// re-export so backend callers keep importing from `../services/home-types.ts`.
-import type {
-  BriefingAction,
-  BriefingOutput,
-  BriefingSection,
-  BriefingState,
-} from "../platform/schemas/home.ts";
+// source of truth, codegen'd to the web shell. Re-exported so backend callers
+// import from `../services/home-types.ts`.
+export type { BriefingItem, BriefingOutput } from "../platform/schemas/home.ts";
 
-export type { BriefingAction, BriefingOutput, BriefingSection, BriefingState };
-
-/** Briefing input — passed to the `nb__briefing` tool. */
-export interface BriefingInput {
-  force_refresh?: boolean;
-}
-
-/** In-memory cache entry for a generated briefing. */
-export interface BriefingCacheEntry {
-  briefing: BriefingOutput;
-  generatedAt: number;
-  invalidated: boolean;
+/**
+ * Action attached to an automation failure in `home__activity` output.
+ * `type` discriminates the payload: `navigate` uses `route`, `startChat` uses
+ * `prompt`; the unused one is null.
+ */
+export interface ActivityAction {
+  type: "navigate" | "startChat";
+  label: string;
+  route: string | null;
+  prompt: string | null;
 }
 
 /** Activity query input — passed to home__activity tool. */
@@ -51,15 +44,21 @@ export interface ActivityOutput {
 export interface AutomationRunSummary {
   total: number;
   succeeded: number;
+  /** Runs that ended in `failure` or `timeout`. */
   failed: number;
+  /** Runs that finished with a failed tool call nobody retried. */
+  degraded: number;
+  /** Every failed and degraded run, each with its status. */
   failures: AutomationFailure[];
 }
 
-/** A failed automation run with details. */
+/** A failed or degraded automation run with details. */
 export interface AutomationFailure {
+  /** The automation's id. */
   name: string;
+  status: "failure" | "timeout" | "degraded";
   error?: string;
-  action: BriefingAction;
+  action: ActivityAction;
 }
 
 /** Conversation summary for activity reporting. */
@@ -98,15 +97,4 @@ export interface ErrorEntry {
   source: "tool" | "engine" | "http";
   message: string;
   context?: string;
-}
-
-/** Home feature configuration from nimblebrain.json. Mirrors the shape
- * returned by `Runtime.getHomeConfig()`. Feature gating (`enabled`) and
- * model selection live elsewhere — the model identity is passed to
- * BriefingGenerator separately, and feature-flag gating happens at
- * tool registration. */
-export interface HomeConfig {
-  userName: string;
-  timezone: string;
-  cacheTtlMinutes: number;
 }

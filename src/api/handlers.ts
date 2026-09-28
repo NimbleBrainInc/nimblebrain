@@ -17,12 +17,12 @@ import {
 } from "../host-resources/artifacts/index.ts";
 import type { IdentityProvider, UserIdentity } from "../identity/provider.ts";
 import { RefreshTokenError } from "../identity/provider.ts";
-import { DEV_IDENTITY } from "../identity/providers/dev.ts";
 import { getAvailableModels } from "../model/catalog.ts";
 import { log } from "../observability/log.ts";
 import {
   ConversationAccessDeniedError,
   ConversationCorruptedError,
+  ConversationNotFoundError,
   ModelNotAllowedError,
   RunInProgressError,
 } from "../runtime/errors.ts";
@@ -37,9 +37,8 @@ import { validateToolInput } from "../tools/validate-input.ts";
 import { estimateCost } from "../usage/cost.ts";
 import { bytesToBase64 } from "../util/base64.ts";
 import { splitInnerToolName } from "../util/tool-name.ts";
-import { PersonalWorkspaceInvariantError } from "../workspace/errors.ts";
+import { defaultWorkspaceFor, ensureUserWorkspace } from "../workspace/provisioning.ts";
 import type { WorkspaceStore } from "../workspace/workspace-store.ts";
-import { personalWorkspaceIdFor } from "../workspace/workspace-store.ts";
 import type { ConversationEventManager } from "./conversation-events.ts";
 import type { SseEventManager } from "./events.ts";
 import { mcpResourceUrl } from "./mcp-resource.ts";
@@ -60,19 +59,19 @@ const pkg = JSON.parse(readFileSync(pkgPath, "utf-8")) as { version: string };
 const VERSION = process.env.NB_VERSION || pkg.version;
 
 /**
- * Interval between SSE comment heartbeats on /v1/chat/stream. Chosen to sit
+ * Interval between SSE comment heartbeats on /v1/workspaces/:wsId/chat/stream. Chosen to sit
  * safely below a typical proxy/load-balancer idle-timeout (60s on AWS ALB
  * by default) while staying quiet enough to be invisible to the user.
  */
 const HEARTBEAT_INTERVAL_MS = 20_000;
 
-/** Handle POST /v1/chat — synchronous chat request. */
+/** Handle POST /v1/workspaces/:wsId/chat — synchronous chat request. */
 export async function handleChat(
   request: Request,
   runtime: Runtime,
   features: ResolvedFeatures,
-  identity?: UserIdentity,
-  workspaceId?: string,
+  identity: UserIdentity | undefined,
+  workspaceId: string,
   conversationEventManager?: ConversationEventManager,
 ): Promise<Response> {
   const parsed = await parseChatBody(request, runtime, features, identity, workspaceId);
@@ -82,7 +81,7 @@ export async function handleChat(
     return runInProgressResponse(parsed.conversationId);
   }
 
-  // Same self-echo-suppression contract as /v1/chat/stream: if the
+  // Same self-echo-suppression contract as /v1/workspaces/:wsId/chat/stream: if the
   // caller has an open conv-events SSE on this conversation, they can
   // pass its server-issued subscriber id so the broadcast skips it.
   const originSubscriberId = request.headers.get("x-origin-subscriber-id") ?? undefined;
@@ -115,7 +114,7 @@ export async function handleChat(
       usage: wireUsage,
     };
 
-    // Same-user cross-tab broadcast — parity with /v1/chat/stream. A
+    // Same-user cross-tab broadcast — parity with /v1/workspaces/:wsId/chat/stream. A
     // peer tab on /v1/conversations/:id/events sees the user.message
     // (so the visible chat updates immediately) and the `done`
     // payload (final response + usage). The synchronous caller still
@@ -158,6 +157,9 @@ function mapChatTurnError(err: unknown): Response | null {
   if (err instanceof RunInProgressError) {
     return runInProgressResponse(err.conversationId);
   }
+  if (err instanceof ConversationNotFoundError) {
+    return conversationNotFoundResponse(err.conversationId);
+  }
   if (err instanceof ConversationAccessDeniedError) {
     return conversationAccessDeniedResponse(err.conversationId);
   }
@@ -189,7 +191,7 @@ function runInProgressResponse(conversationId: string): Response {
 }
 
 /**
- * Handle POST /v1/chat/start — kick off a detached, server-authoritative turn
+ * Handle POST /v1/workspaces/:wsId/chat/start — kick off a detached, server-authoritative turn
  * and return the conversation id immediately. The turn runs to completion on
  * the server regardless of this request's lifecycle (closing the tab does NOT
  * cancel it). Clients watch the turn via GET /v1/conversations/:id/events,
@@ -199,8 +201,8 @@ export async function handleChatStart(
   request: Request,
   runtime: Runtime,
   features: ResolvedFeatures,
-  identity?: UserIdentity,
-  workspaceId?: string,
+  identity: UserIdentity | undefined,
+  workspaceId: string,
 ): Promise<Response> {
   const parsed = await parseChatBody(request, runtime, features, identity, workspaceId);
   if (parsed instanceof Response) return parsed;
@@ -229,11 +231,11 @@ export async function handleChatCancel(
 ): Promise<Response> {
   // Reject a malformed id with 400 before it reaches the store, where
   // `validateConversationId` would throw a plain Error that bubbles to a 500.
-  // Mirrors the `/v1/chat/start` schema guard and the events route.
+  // Mirrors the `chat/start` schema guard and the events route.
   if (!CONVERSATION_ID_RE.test(conversationId)) {
     return apiError(400, "bad_request", "Invalid conversationId format");
   }
-  const callerId = identity?.id ?? (runtime.getIdentityProvider() ? null : DEV_IDENTITY.id);
+  const callerId = identity?.id;
   if (!callerId) {
     return apiError(401, "authentication_required", "Authentication required.");
   }
@@ -264,6 +266,39 @@ export async function handleChatCancel(
   return Response.json({ cancelled });
 }
 
+function conversationNotFoundResponse(conversationId: string): Response {
+  return apiError(404, "conversation_not_found", "Conversation not found", { conversationId });
+}
+
+/**
+ * Refuse a `conversationId` that is not one of the caller's conversations in
+ * the workspace in the URL, or null when absent or found. The runtime refuses
+ * the same ids; asking here first makes the answer an HTTP 404 on every chat
+ * route (the stream route would otherwise carry it as an error frame) and keeps
+ * a refused chat or upload from storing its files.
+ */
+function refuseConversationOutsideWorkspace(
+  runtime: Runtime,
+  conversationId: string | undefined,
+  workspaceId: string,
+  identity: UserIdentity | undefined,
+): Response | null {
+  if (!conversationId) return null;
+  try {
+    runtime.assertConversationInWorkspace(
+      conversationId,
+      workspaceId,
+      runtime.resolveRequestUserId(identity),
+    );
+    return null;
+  } catch (err) {
+    if (err instanceof ConversationNotFoundError) {
+      return conversationNotFoundResponse(err.conversationId);
+    }
+    throw err;
+  }
+}
+
 function conversationAccessDeniedResponse(conversationId: string): Response {
   return apiError(
     403,
@@ -285,51 +320,13 @@ function conversationCorruptedResponse(err: ConversationCorruptedError): Respons
   });
 }
 
-/**
- * Map `PersonalWorkspaceInvariantError` to a structured 422 response.
- * Mirrors `conversationCorruptedResponse` — 422 over 500 because the
- * request is well-formed; the state it would produce isn't. The
- * `reason` field is the structured handle clients use to react (e.g.
- * surface "cannot remove members from a personal workspace" without
- * parsing the human message).
- */
-function personalWorkspaceInvariantResponse(err: PersonalWorkspaceInvariantError): Response {
-  return apiError(422, "personal_workspace_invariant", err.message, {
-    workspaceId: err.workspaceId,
-    reason: err.reason,
-  });
-}
-
-/**
- * Recognize the structuredContent shape that the workspace-mgmt tool
- * handlers emit when they catch `PersonalWorkspaceInvariantError`.
- * `structuredContent` rides through the in-process MCP serialization
- * intact, so we can re-detect the original invariant violation from the
- * tool result on the HTTP side without preserving the typed class
- * across the boundary. See `workspace-mgmt-tools.ts::personalWorkspaceInvariantToolResult`.
- */
-function isPersonalWorkspaceInvariantToolResult(structured: unknown): structured is {
-  error: "personal_workspace_invariant";
-  workspaceId: string;
-  reason: string;
-  message?: string;
-} {
-  if (!structured || typeof structured !== "object") return false;
-  const obj = structured as Record<string, unknown>;
-  return (
-    obj.error === "personal_workspace_invariant" &&
-    typeof obj.workspaceId === "string" &&
-    typeof obj.reason === "string"
-  );
-}
-
-/** Handle POST /v1/chat/stream — SSE streaming chat request. */
+/** Handle POST /v1/workspaces/:wsId/chat/stream — SSE streaming chat request. */
 export async function handleChatStream(
   request: Request,
   runtime: Runtime,
   features: ResolvedFeatures,
-  identity?: UserIdentity,
-  workspaceId?: string,
+  identity: UserIdentity | undefined,
+  workspaceId: string,
   conversationEventManager?: ConversationEventManager,
 ): Promise<Response> {
   const parsed = await parseChatBody(request, runtime, features, identity, workspaceId);
@@ -650,7 +647,7 @@ async function workspaceSourceAvailable(
 
 /**
  * Serve a ui:// resource from an identity app (conversations, …) for GET
- * /v1/apps/:name/resources/:path. Identity apps live OUTSIDE any workspace and
+ * /v1/workspaces/:wsId/apps/:name/resources/:path. Identity apps live OUTSIDE any workspace and
  * read from the kernel identity source; "primary" resolves to the source's
  * first declared placement.
  */
@@ -674,13 +671,12 @@ async function serveIdentityAppResource(
   return json({ contents: [buildResourceEnvelopeEntry(`ui://${resolvedPath}`, resource)] });
 }
 
-/** Handle GET /v1/apps/:name/resources/:path — fetch a ui:// resource. */
+/** Handle GET /v1/workspaces/:wsId/apps/:name/resources/:path — fetch a ui:// resource. */
 export async function handleResourceProxy(
   appName: string,
   resourcePath: string,
   runtime: Runtime,
-  workspaceId?: string,
-  identity?: UserIdentity,
+  workspaceId: string,
 ): Promise<Response> {
   // Dev mode: redirect to local Vite dev server when --app flag is active.
   // Applies to both identity and workspace apps, so it runs first.
@@ -694,26 +690,22 @@ export async function handleResourceProxy(
   // Identity apps (conversations, …) live OUTSIDE any workspace. They are
   // authorized by the authenticated session (requireAuth already ran on this
   // route) and read from the kernel identity source — never a workspace
-  // registry. A stale `X-Workspace-Id` (the last active workspace the shell
-  // sent) is ignored: location is scope, and an identity app has no workspace
-  // location to authorize against.
+  // registry. The workspace in the URL decides nothing here: an identity app
+  // has no workspace location to authorize against.
   const identitySource = runtime.getIdentitySource(appName);
   if (identitySource) {
     return serveIdentityAppResource(runtime, appName, resourcePath, identitySource);
   }
 
-  // Workspace apps — resolve the workspace and authorize membership. Both
-  // platform built-ins and user-installed connectors are MCP servers reachable
-  // through the workspace registry; registry membership is the authoritative
-  // "is this app available to this workspace?" check. A qualified
-  // `ws_<id>-<app>` (a cross-workspace app icon / primary preview surfaced
-  // from another workspace) resolves to its own workspace by name + member-
-  // ship; a bare app name uses the ambient X-Workspace-Id.
-  const resolved = await resolveRestSourceWorkspace(runtime, appName, identity, workspaceId, () =>
-    apiError(400, "workspace_required", `App "${appName}" requires a workspace`, { app: appName }),
-  );
-  if (!resolved.ok) return resolved.response;
-  const { workspaceId: wsId, sourceName } = resolved;
+  // Workspace apps resolve in the workspace in the URL (membership-checked by
+  // `requireWorkspace`). Both platform built-ins and user-installed connectors
+  // are MCP servers reachable through the workspace registry; registry
+  // membership is the authoritative "is this app available to this
+  // workspace?" check.
+  const refused = refuseQualifiedName("app", appName);
+  if (refused) return refused;
+  const wsId = workspaceId;
+  const sourceName = appName;
   const wsRegistry = await runtime.ensureWorkspaceRegistry(wsId);
   if (!(await workspaceSourceAvailable(runtime, wsRegistry, wsId, sourceName))) {
     return apiError(
@@ -742,7 +734,7 @@ export async function handleResourceProxy(
   // Emit a JSON envelope mirroring the MCP `ReadResourceResult` shape so
   // clients see the protocol directly and can consume `_meta` (e.g. ext-apps
   // `_meta.ui.csp`) without a translation layer. Same shape as
-  // `handleReadResource` (POST /v1/resources/read).
+  // `handleReadResource` (POST …/resources/read).
   return json({ contents: [buildResourceEnvelopeEntry(`ui://${resolvedPath}`, resource)] });
 }
 
@@ -799,8 +791,8 @@ function resolveSourcePrimaryResourceUri(source: unknown): string | null {
 
 /**
  * Build a single `contents[]` entry in the MCP `ReadResourceResult`
- * envelope shape. Shared between `handleResourceProxy` (GET /v1/apps/:name/
- * resources/:path) and `handleReadResource` (POST /v1/resources/read) so
+ * envelope shape. Shared between `handleResourceProxy` (GET …/apps/:name/
+ * resources/:path) and `handleReadResource` (POST …/resources/read) so
  * both emit a byte-identical envelope — this is the exact drift that adding
  * `_meta` without a shared helper would create.
  *
@@ -827,106 +819,35 @@ export function buildResourceEnvelopeEntry(
 }
 
 /**
- * Resolve which workspace + bare source a REST resource/tool request targets.
- *
- * The first-party web shell speaks stateless REST and names a source one of
- * two ways:
- *
- *   - **Qualified** `ws_<id>-<source>` — the shell names a source in a
- *     specific workspace directly (e.g. reading back a preview / citation link
- *     minted in another workspace). The NAME is authoritative here: resolve the
- *     owning workspace from it and authorize by MEMBERSHIP. This is the REST
- *     shell's own rule, not one borrowed from the engine — `routeToolCall`
- *     takes the opposite approach and refuses a qualified name outright, since
- *     the agent must never reach a workspace the session is not bound to. This
- *     surface is first-party, membership-gated, and never carries an
- *     agent-authored name, so a qualified reference is safe here and is the
- *     only remaining path where a name selects a workspace. The ambient
- *     `X-Workspace-Id` is irrelevant here — a preview link minted in one
- *     workspace must read back from a conversation focused on another. This is
- *     the same principle that already lets identity sources (`files`,
- *     `conversations`) ignore the header. This is a trusted first-party REST
- *     surface gated to the caller's own workspaces; the agent never dispatches
- *     here (it uses the walled in-process `IdentityToolRouter`).
- *
- *   - **Bare** `<source>` — a focused-workspace tool; its workspace is the
- *     ambient `X-Workspace-Id` (unchanged legacy behavior).
- *
- * Returns the bare source name the workspace registry is keyed on (registry
- * sources keep their bare name; only tool names get the `ws_<id>-` prefix), so
- * callers must use `sourceName` — never the raw qualified `server` — for
- * `hasSource` / `getSources` / `readAppResource`.
- *
- * Identity sources are handled by the caller BEFORE this and never reach here.
+ * Refuse a `ws_<id>-` qualified server, app or tool name, or null for a bare
+ * one. On REST the workspace is the one in the URL path and nothing else
+ * (ADR-0037), so a name that carries a workspace is refused with a 400: never
+ * routed to the workspace it names, and never stripped to its bare remainder.
+ * The message is `/mcp`'s for the same form, naming the bare name to send.
  */
-async function resolveRestSourceWorkspace(
-  runtime: Runtime,
-  server: string,
-  identity: UserIdentity | null | undefined,
-  ambientWorkspaceId: string | undefined,
-  // Each endpoint had its own error for "bare source, no ambient workspace"
-  // before this resolver existed (read: `bad_request`; tool-call / proxy:
-  // `workspace_required` with a server/app detail). Let callers keep their
-  // original contract so this refactor doesn't silently change error codes.
-  missingWorkspaceError?: () => Response,
-): Promise<
-  { ok: true; workspaceId: string; sourceName: string } | { ok: false; response: Response }
-> {
+function refuseQualifiedName(field: "server" | "app" | "tool", name: string): Response | null {
   let qualified: { wsId: string; sourceName: string } | null;
   try {
-    qualified = parseNamespacedSourceName(server);
+    qualified = parseNamespacedSourceName(name);
   } catch {
     // A `ws_`-prefixed but malformed id is a probe/typo, not a bare name.
-    return {
-      ok: false,
-      response: apiError(400, "bad_request", `Invalid server "${server}"`, { server }),
-    };
+    return apiError(400, "bad_request", `Invalid ${field} "${name}"`, { [field]: name });
   }
-
-  if (!qualified) {
-    // Bare source — ambient-workspace behavior.
-    if (!ambientWorkspaceId) {
-      return {
-        ok: false,
-        response:
-          missingWorkspaceError?.() ?? apiError(400, "bad_request", "Workspace ID required"),
-      };
-    }
-    return { ok: true, workspaceId: ambientWorkspaceId, sourceName: server };
-  }
-
-  // Qualified — the name names its workspace; authorize by membership and
-  // ignore the ambient X-Workspace-Id.
-  if (!identity) {
-    return { ok: false, response: apiError(401, "unauthorized", "Authentication required") };
-  }
-  const accessible = await runtime.getWorkspaceStore().getWorkspacesForUser(identity.id);
-  if (!accessible.some((w) => w.id === qualified.wsId)) {
-    return {
-      ok: false,
-      response: apiError(
-        403,
-        "workspace_access_denied",
-        `Server "${server}" is not available in this workspace`,
-        { server },
-      ),
-    };
-  }
-  return { ok: true, workspaceId: qualified.wsId, sourceName: qualified.sourceName };
+  if (!qualified) return null;
+  return apiError(
+    400,
+    "bad_request",
+    `"${name}" uses the retired ws_<id>- ${field}-name form; the workspace is the one in the URL path, so send "${qualified.sourceName}"`,
+    { [field]: name, reason: "legacy_namespaced_form" },
+  );
 }
 
 /**
- * Read an `artifact://` URI as the viewing workspace for POST /v1/resources/read.
+ * Read an `artifact://` URI as the viewing workspace for POST …/resources/read.
  * RLS in the data plane is the enforcement point — a second workspace's read is
  * denied and surfaces as 404 (absent and forbidden are indistinguishable).
  */
-async function readArtifactResource(
-  uri: string,
-  workspaceId: string | undefined,
-): Promise<Response> {
-  if (!workspaceId) {
-    return apiError(400, "bad_request", "artifact:// reads require a workspace context");
-  }
+async function readArtifactResource(uri: string, workspaceId: string): Promise<Response> {
   const resolver = getArtifactResolver();
   try {
     const result = await resolver.read(uri, workspaceId);
@@ -966,22 +887,19 @@ function mapArtifactReadError(err: unknown, uri: string, workspaceId: string): R
 
 /**
  * Read a resource from a kernel identity source (conversations, files,
- * automations) for POST /v1/resources/read. Files are workspace-owned, so a
- * `files://<id>` read resolves in the request's focused workspace (or the
- * caller's personal workspace when unfocused). Every kernel identity source is
- * workspace-owned now, so all three read the same focused workspace.
+ * automations) for POST /v1/workspaces/:wsId/resources/read. Every kernel
+ * identity source's data is workspace-owned, so the read resolves in the
+ * workspace in the URL.
  */
 async function readIdentitySourceResource(
   runtime: Runtime,
   server: string,
   uri: string,
-  options: { workspaceId?: string; identity?: UserIdentity } | undefined,
+  options: { workspaceId: string; identity?: UserIdentity },
 ): Promise<Response> {
-  const identity = options?.identity;
   const reqCtx: RequestContext = {
-    identity: identity ?? null,
-    workspaceId:
-      options?.workspaceId ?? personalWorkspaceIdFor(runtime.resolveRequestUserId(identity)),
+    identity: options.identity ?? null,
+    workspaceId: options.workspaceId,
   };
   const resource = await runWithRequestContext(reqCtx, () =>
     runtime.readIdentityAppResource(server, uri),
@@ -993,7 +911,7 @@ async function readIdentitySourceResource(
 }
 
 /**
- * Handle POST /v1/resources/read — MCP resources/read proxy.
+ * Handle POST /v1/workspaces/:wsId/resources/read — MCP resources/read proxy.
  *
  * Body: { server, uri }
  * Returns: MCP ReadResourceResult — { contents: [{ uri, mimeType?, text?, blob? }] }.
@@ -1002,7 +920,7 @@ async function readIdentitySourceResource(
 export async function handleReadResource(
   request: Request,
   runtime: Runtime,
-  options?: { workspaceId?: string; identity?: UserIdentity },
+  options: { workspaceId: string; identity?: UserIdentity },
 ): Promise<Response> {
   const body = await parseJsonBody(request);
   if (body instanceof Response) return body;
@@ -1021,7 +939,7 @@ export async function handleReadResource(
   // artifact — the read is denied and surfaces as 404 (absent and forbidden are
   // intentionally indistinguishable, so a guessed id can't probe inventory).
   if (isArtifactUri(uri)) {
-    return readArtifactResource(uri, options?.workspaceId);
+    return readArtifactResource(uri, options.workspaceId);
   }
 
   if (!server || typeof server !== "string") {
@@ -1030,28 +948,17 @@ export async function handleReadResource(
 
   // Identity sources (conversations, files, automations) live OUTSIDE any
   // workspace registry — they're reached through the identity door, the same
-  // decision the orchestrator and `handleToolCall` make. But files are
-  // workspace-owned, so a `files://<id>` read resolves in the request's focused
-  // workspace (`options.workspaceId`, or the caller's personal workspace when
-  // unfocused), set via `workspaceId` — which conversations and
-  // automations read too: all three are workspace-owned.
-  const { identity } = options ?? {};
+  // decision the orchestrator and `handleToolCall` make. Their data is
+  // workspace-owned, so the read resolves in the workspace in the URL.
   if (runtime.getIdentitySource(server)) {
     return readIdentitySourceResource(runtime, server, uri, options);
   }
 
-  // Workspace scoping. A qualified `ws_<id>-<source>` server resolves to its
-  // OWN workspace by name + membership (cross-workspace preview links); a bare
-  // source uses the ambient X-Workspace-Id. `sourceName` is the bare name the
-  // registry is keyed on.
-  const resolved = await resolveRestSourceWorkspace(
-    runtime,
-    server,
-    identity,
-    options?.workspaceId,
-  );
-  if (!resolved.ok) return resolved.response;
-  const { workspaceId, sourceName } = resolved;
+  // The source resolves in the workspace in the URL, and nowhere else.
+  const refused = refuseQualifiedName("server", server);
+  if (refused) return refused;
+  const { workspaceId } = options;
+  const sourceName = server;
 
   const wsRegistry = await runtime.ensureWorkspaceRegistry(workspaceId);
   if (!(await workspaceSourceAvailable(runtime, wsRegistry, workspaceId, sourceName))) {
@@ -1086,7 +993,7 @@ export async function handleReadResource(
   return json({ contents: [buildResourceEnvelopeEntry(uri, resource)] });
 }
 
-/** Parse + validate a POST /v1/tools/call envelope, or return an error Response. */
+/** Parse + validate a POST …/tools/call envelope, or return an error Response. */
 function parseToolCallEnvelope(
   body: Record<string, unknown>,
 ): { server: string; tool: string; args?: Record<string, unknown> } | Response {
@@ -1108,59 +1015,32 @@ function parseToolCallEnvelope(
 
 interface ToolCallTarget {
   source: ToolSource | undefined;
-  /** The workspace the call resolves in; `undefined` for an unfocused identity call. */
-  workspaceId: string | undefined;
+  /** The workspace registry a workspace source dispatches through; `undefined` for an identity source. */
   workspaceRegistry: ToolRegistry | undefined;
-  /**
-   * The bare source name the registry is keyed on. For a qualified
-   * `ws_<id>-<source>` server it's the `<source>` portion; for a bare
-   * identity/workspace source it's `server` unchanged.
-   */
-  resolvedSourceName: string;
 }
 
 /**
  * Resolve the source through the two doors — the same decision the orchestrator
  * makes for `/mcp` (`routeToolCall`). Identity sources dispatch with identity
- * scope; everything else resolves through the workspace registry (membership +
- * per-workspace permission gating on execute). Returns an error Response for the
- * bare-source-no-workspace and unknown-source cases.
+ * scope; everything else resolves through the registry of the workspace in the
+ * URL (membership + per-workspace permission gating on execute). Returns an
+ * error Response for an unreachable or unknown source.
  */
 async function resolveToolCallTarget(
   runtime: Runtime,
   server: string,
   tool: string,
   identitySource: ToolSource | undefined,
-  identity: UserIdentity | undefined,
-  workspaceId: string | undefined,
+  workspaceId: string,
 ): Promise<{ ok: true; target: ToolCallTarget } | { ok: false; response: Response }> {
+  // The workspace is the one in the URL, so neither name may carry one.
+  const refused = refuseQualifiedName("server", server) ?? refuseQualifiedName("tool", tool);
+  if (refused) return { ok: false, response: refused };
   if (identitySource) {
-    return {
-      ok: true,
-      target: {
-        source: identitySource,
-        workspaceId: undefined,
-        workspaceRegistry: undefined,
-        resolvedSourceName: server,
-      },
-    };
+    return { ok: true, target: { source: identitySource, workspaceRegistry: undefined } };
   }
-  // A qualified `ws_<id>-<source>` resolves to its own workspace by name +
-  // membership (cross-workspace tool surfaced via nb__search); a bare source
-  // uses the ambient X-Workspace-Id. Same resolution as the resource read.
-  const resolved = await resolveRestSourceWorkspace(runtime, server, identity, workspaceId, () =>
-    apiError(400, "workspace_required", `Tool "${tool}" requires a workspace`, { server, tool }),
-  );
-  if (!resolved.ok) return { ok: false, response: resolved.response };
-  const workspaceRegistry = await runtime.ensureWorkspaceRegistry(resolved.workspaceId);
-  if (
-    !(await workspaceSourceAvailable(
-      runtime,
-      workspaceRegistry,
-      resolved.workspaceId,
-      resolved.sourceName,
-    ))
-  ) {
+  const workspaceRegistry = await runtime.ensureWorkspaceRegistry(workspaceId);
+  if (!(await workspaceSourceAvailable(runtime, workspaceRegistry, workspaceId, server))) {
     return {
       ok: false,
       response: apiError(404, "tool_not_found", `Tool "${tool}" not found on server "${server}"`, {
@@ -1169,29 +1049,16 @@ async function resolveToolCallTarget(
       }),
     };
   }
-  const source = workspaceRegistry.getSources().find((s) => s.name === resolved.sourceName);
-  return {
-    ok: true,
-    target: {
-      source,
-      workspaceId: resolved.workspaceId,
-      workspaceRegistry,
-      resolvedSourceName: resolved.sourceName,
-    },
-  };
+  const source = workspaceRegistry.getSources().find((s) => s.name === server);
+  return { ok: true, target: { source, workspaceRegistry } };
 }
 
 /**
- * Normalize `tool` to the registry's `<bareSource>__<tool>` form. It may arrive
- * bare, source-prefixed, or fully qualified (`ws_<id>-…` from the bridge) — strip
- * a leading qualified-server prefix first, then ensure the bare-source prefix.
+ * Normalize `tool` to the registry's `<source>__<tool>` form. It may arrive
+ * bare or source-prefixed.
  */
-function normalizeRestToolName(tool: string, server: string, resolvedSourceName: string): string {
-  let innerTool = tool;
-  if (innerTool.startsWith(`${server}__`)) innerTool = innerTool.slice(server.length + 2);
-  return innerTool.startsWith(`${resolvedSourceName}__`)
-    ? innerTool
-    : `${resolvedSourceName}__${innerTool}`;
+function normalizeRestToolName(tool: string, server: string): string {
+  return tool.startsWith(`${server}__`) ? tool : `${server}__${tool}`;
 }
 
 /**
@@ -1249,20 +1116,11 @@ async function validateRestToolInput(
 /** Build the per-request AsyncLocalStorage context for a REST tools/call. */
 function buildRestToolCallContext(
   identity: UserIdentity | undefined,
-  targetWorkspaceId: string | undefined,
-  headerWorkspaceId: string | undefined,
-  runtime: Runtime,
+  workspaceId: string,
 ): RequestContext {
-  return {
-    identity: identity ?? null,
-    // Every kernel source is workspace-owned, so the call lands in a workspace:
-    // the resolved target's when it named one (a qualified `ws_<id>-<source>`),
-    // else the validated `X-Workspace-Id`, else the caller's personal workspace.
-    workspaceId:
-      targetWorkspaceId ??
-      headerWorkspaceId ??
-      personalWorkspaceIdFor(runtime.resolveRequestUserId(identity)),
-  };
+  // Every kernel source is workspace-owned, so the call lands in the workspace
+  // in the URL.
+  return { identity: identity ?? null, workspaceId };
 }
 
 /**
@@ -1338,41 +1196,16 @@ function emitBridgeToolDone(
   eventSink?.emit(event);
 }
 
-/**
- * Recognize a PersonalWorkspaceInvariantError encoded in the tool result and map
- * it to a clean 422 (same body as the direct-throw path), or null when the result
- * isn't that shape. The error class doesn't survive the in-process MCP
- * serialization boundary, so workspace-mgmt tool handlers encode it as
- * `structuredContent.error === "personal_workspace_invariant"`.
- */
-function personalWorkspaceInvariantResultResponse(
-  result: Awaited<ReturnType<ToolRegistry["execute"]>>,
-): Response | null {
-  if (!result.isError || !isPersonalWorkspaceInvariantToolResult(result.structuredContent)) {
-    return null;
-  }
-  const sc = result.structuredContent;
-  return apiError(
-    422,
-    "personal_workspace_invariant",
-    typeof sc.message === "string" ? sc.message : "Personal-workspace invariant violated",
-    {
-      workspaceId: sc.workspaceId,
-      reason: sc.reason,
-    },
-  );
-}
-
-/** Handle POST /v1/tools/call — direct tool invocation. */
+/** Handle POST /v1/workspaces/:wsId/tools/call — direct tool invocation. */
 export async function handleToolCall(
   request: Request,
   runtime: Runtime,
   features: ResolvedFeatures,
-  options?: {
+  options: {
     sseManager?: SseEventManager;
     eventSink?: EventSink;
     identity?: UserIdentity;
-    workspaceId?: string;
+    workspaceId: string;
   },
 ): Promise<Response> {
   const body = await parseJsonBody(request);
@@ -1382,15 +1215,13 @@ export async function handleToolCall(
   if (envelope instanceof Response) return envelope;
   const { server, tool, args } = envelope;
 
-  const sseManager = options?.sseManager;
-  const eventSink = options?.eventSink;
-  const identity = options?.identity;
-  const workspaceId = options?.workspaceId;
+  const { sseManager, eventSink, identity, workspaceId } = options;
 
   // Resolve the source through the two doors — the same decision the
   // orchestrator makes for `/mcp` (`routeToolCall`). Identity sources
   // (conversations, …) are owned by the user and live OUTSIDE any workspace:
-  // they dispatch with identity scope, regardless of any (stale) X-Workspace-Id.
+  // they dispatch with identity scope, and their data lands in the workspace in
+  // the URL.
   // Everything else resolves through the workspace registry and keeps its
   // per-workspace permission gating on execute.
   const identitySource = runtime.getIdentitySource(server);
@@ -1399,18 +1230,12 @@ export async function handleToolCall(
     server,
     tool,
     identitySource,
-    identity,
     workspaceId,
   );
   if (!targetResult.ok) return targetResult.response;
-  const {
-    source,
-    workspaceId: targetWsId,
-    workspaceRegistry,
-    resolvedSourceName,
-  } = targetResult.target;
+  const { source, workspaceRegistry } = targetResult.target;
 
-  const toolName = normalizeRestToolName(tool, server, resolvedSourceName);
+  const toolName = normalizeRestToolName(tool, server);
 
   // Coerced args flow through to execute below — validation and execution must
   // see the same shape. Defaults to the raw args; replaced with the
@@ -1438,7 +1263,7 @@ export async function handleToolCall(
   }
 
   // Build per-request context for AsyncLocalStorage (concurrency-safe).
-  const reqCtx = buildRestToolCallContext(identity, targetWsId, workspaceId, runtime);
+  const reqCtx = buildRestToolCallContext(identity, workspaceId);
   const eventWorkspaceId = reqCtx.workspaceId ?? null;
 
   // Audit log
@@ -1474,24 +1299,8 @@ export async function handleToolCall(
       identity,
       eventWorkspaceId,
     );
-    // Typed invariant errors get mapped to clean HTTP status codes
-    // (mirrors how /v1/chat handles ConversationCorruptedError). The
-    // direct-throw path (in-process tool that bubbles up to here without
-    // crossing the MCP serialization boundary) preserves the typed
-    // class. The structuredContent-marker path below handles the case
-    // where the error already became a ToolResult inside an in-process
-    // MCP source.
-    if (err instanceof PersonalWorkspaceInvariantError) {
-      return personalWorkspaceInvariantResponse(err);
-    }
     throw err;
   }
-
-  // Recognize a PersonalWorkspaceInvariantError encoded in the tool result so
-  // callers (web shell, external MCP clients) see a clean 422 with the same
-  // structured body as the direct-throw path above.
-  const invariantResponse = personalWorkspaceInvariantResultResponse(result);
-  if (invariantResponse) return invariantResponse;
 
   const ms = Math.round(performance.now() - t0);
   // Emit bridge.tool.done after execution (ephemeral SSE + durable event sink)
@@ -1519,7 +1328,6 @@ export async function handleToolCall(
 
 /** Handle GET /v1/bootstrap — single startup endpoint replacing multiple calls. */
 export async function handleBootstrap(
-  req: Request,
   runtime: Runtime,
   identity?: UserIdentity,
 ): Promise<Response> {
@@ -1527,78 +1335,25 @@ export async function handleBootstrap(
     return apiError(401, "authentication_required", "Authentication is required");
   }
 
-  // 1. Workspaces the user is a member of
-  const allWorkspaces = await runtime.getWorkspaceStore().list();
-  const userWorkspaces = allWorkspaces.filter((ws) =>
-    ws.members.some((m) => m.userId === identity.id),
+  // 1. Workspaces the user is a member of. A user who belongs to none — new,
+  // or removed from every one — gets one here: bootstrap is where the web shell
+  // starts, and the shell needs a workspace to show.
+  const userWorkspaces = await ensureUserWorkspace(
+    runtime.getWorkspaceStore(),
+    {
+      id: identity.id,
+      ...(identity.displayName ? { displayName: identity.displayName } : {}),
+    },
+    runtime.getUserStore(),
   );
 
-  // Invariant (Phase 1): authenticated users have at least one workspace.
-  // Provisioning runs at the identity boundary (provider.provisionUser →
-  // ensureUserWorkspace). If we hit zero here, something upstream is broken
-  // and we want to know loudly, not silently leak every workspace's apps.
-  if (userWorkspaces.length === 0) {
-    return apiError(
-      500,
-      "workspace_invariant_violation",
-      "Authenticated user has no workspace. Provisioning should have run at login.",
-    );
-  }
-
-  // 2. Identify the user's personal workspace. Stage 1 invariant:
-  //    every user has exactly one personal workspace where
-  //    `isPersonal === true && ownerUserId === identity.id`. If for any
-  //    reason there are multiple (data corruption — shouldn't happen),
-  //    pick the earliest-created and log a warning so operators notice.
-  //    If there are zero (pre-migration deployment) `personalWorkspaceId` stays
-  //    `null` and the active-workspace fallback below uses the first membership
-  //    instead. Local only — clients read `workspaces[].isPersonal`, which
-  //    carries the same fact per entry.
-  const personalCandidates = userWorkspaces.filter(
-    (ws) => ws.isPersonal === true && ws.ownerUserId === identity.id,
-  );
-  let personalWorkspaceId: string | null = null;
-  if (personalCandidates.length === 1) {
-    personalWorkspaceId = personalCandidates[0]!.id;
-  } else if (personalCandidates.length > 1) {
-    // Earliest by createdAt — list() already sorts ascending, but be
-    // explicit so a future change to list ordering doesn't silently
-    // change which workspace counts as "the" personal one.
-    const earliest = personalCandidates
-      .slice()
-      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))[0]!;
-    personalWorkspaceId = earliest.id;
-    log.warn(
-      `[bootstrap] user ${identity.id} has ${personalCandidates.length} personal workspaces; ` +
-        `picking earliest-created ${earliest.id}. This is data corruption — investigate.`,
-    );
-  } else {
-    // Zero personal workspaces. Expected for legacy tenants in the
-    // pre-migration window — `ensureUserWorkspace` creates one on the
-    // next login, or the operator runs `migrate:personal-workspaces`.
-    // Per-login bootstrap is high-volume; `log.info` (dim, greppable)
-    // is enough — `console.warn` would create alarming yellow noise
-    // for an expected pre-migration state.
-    log.info(
-      `[bootstrap] user ${identity.id} has no personal workspace. ` +
-        `Run \`bun run migrate:personal-workspaces\` or trigger a re-login.`,
-    );
-  }
-
-  // 3. Resolve the active (focused) workspace. The single source of truth
-  // for "which workspace am I in" is the client's URL (`/w/:slug`); the
-  // web shell no longer persists or sends a remembered selection. Bootstrap
-  // therefore just provides a sane default focus for workspace-agnostic
-  // routes (home, conversations): the user's personal workspace, falling
-  // back to the first membership pre-migration. `X-Workspace-Id` is still
-  // honored when present and valid (e.g. a deep-link cold-load) but is no
-  // longer required — its absence is the normal case, not an error. On data
-  // endpoints the same header remains authoritative (unknown wsId → 400).
-  const requested = req.headers.get("X-Workspace-Id");
-  const activeWorkspace: string =
-    requested && userWorkspaces.some((ws) => ws.id === requested)
-      ? requested
-      : (personalWorkspaceId ?? userWorkspaces[0]!.id);
+  // 2-3. The default focus. The client's URL (`/w/:slug`) says which workspace
+  // the user is in; bootstrap only supplies one for workspace-agnostic routes
+  // (home, profile): the user's default workspace. This is the one place the
+  // server chooses a workspace, and it reads nothing from the request to do it.
+  // The profile is read fresh, since provisioning may have just set the default.
+  const profile = await runtime.getUserStore().get(identity.id);
+  const activeWorkspace: string = defaultWorkspaceFor(userWorkspaces, profile?.preferences).id;
 
   // 4. Shell placements for the active workspace (ambient + scoped, merged).
   const placements = runtime.getPlacementRegistry().forWorkspace(activeWorkspace);
@@ -1633,9 +1388,10 @@ export async function handleBootstrap(
       role: ws.members.find((m) => m.userId === identity.id)!.role,
       memberCount: ws.members.length,
       connectorCount: ws.connectors.length,
-      // `isPersonal` defaults to `false` on disk for pre-Stage-1 workspaces;
-      // backfilled eagerly by the personal-workspace migration.
-      isPersonal: ws.isPersonal === true,
+      // Deprecated: true for the default workspace (`activeWorkspace`). Kept
+      // only for a companion service that reads it to pick a default; read
+      // `activeWorkspace` instead.
+      isPersonal: ws.id === activeWorkspace,
       // The workspace's MCP endpoint in canonical form (the configured public
       // origin, never the request's host), for the settings page to show.
       mcpUrl: mcpResourceUrl(ws.id),
@@ -1643,7 +1399,7 @@ export async function handleBootstrap(
     activeWorkspace,
     shell: {
       placements,
-      chatEndpoint: "/v1/chat/stream",
+      chatEndpoint: `/v1/workspaces/${activeWorkspace}/chat/stream`,
       eventsEndpoint: "/v1/events",
     },
     config: {
@@ -1665,7 +1421,7 @@ export async function handleBootstrap(
 }
 
 /**
- * Handle GET /v1/shell — placement registry for web client bootstrap.
+ * Handle GET /v1/workspaces/:wsId/shell — placement registry for web client bootstrap.
  *
  * workspaceId comes from requireWorkspace middleware; by the time this
  * handler runs, it's resolved and membership-checked.
@@ -1673,7 +1429,7 @@ export async function handleBootstrap(
 export async function handleShell(runtime: Runtime, workspaceId: string): Promise<Response> {
   return json({
     placements: runtime.getPlacementRegistry().forWorkspace(workspaceId),
-    chatEndpoint: "/v1/chat/stream",
+    chatEndpoint: `/v1/workspaces/${workspaceId}/chat/stream`,
     eventsEndpoint: "/v1/events",
   });
 }
@@ -1964,8 +1720,8 @@ export function sanitizeFilename(name: string): string {
  * (`resolveRequestUserId`), and the store reads from `(wsId, ownerId)`. The owner
  * partition is both the gate and the search scope — there is no client-supplied
  * workspace to forge, and a request can only ever reach the caller's own bytes.
- * The route carries no workspace because a browser `<img>` GET can't send the
- * `X-Workspace-Id` header; the bare id is sufficient. */
+ * The route carries no workspace, so a browser `<img src>` or download link
+ * can load it; the bare id is sufficient. */
 export async function handleFileServe(
   fileId: string,
   runtime: Runtime,
@@ -2024,8 +1780,8 @@ async function parseChatBody(
   request: Request,
   runtime: Runtime,
   features: ResolvedFeatures,
-  identity?: UserIdentity,
-  workspaceId?: string,
+  identity: UserIdentity | undefined,
+  workspaceId: string,
 ): Promise<ChatRequest | Response> {
   const contentType = request.headers.get("content-type") ?? "";
 
@@ -2046,7 +1802,15 @@ async function parseChatBody(
   }
   const parsed = body as ChatRequestBody;
 
-  // The validated `X-Workspace-Id` (focused workspace) threads into
+  const outside = refuseConversationOutsideWorkspace(
+    runtime,
+    parsed.conversationId,
+    workspaceId,
+    identity,
+  );
+  if (outside) return outside;
+
+  // The workspace in the URL (membership-checked by `requireWorkspace`) threads into
   // `ChatRequest.workspaceId`: it drives BOTH the deterministic per-workspace
   // briefing (apps + overlays) AND the walled tool scope (that one workspace +
   // identity tools). See the `ChatRequest.workspaceId` doc comment.
@@ -2058,7 +1822,7 @@ async function parseChatBody(
     ...(parsed.appContext !== undefined ? { appContext: parsed.appContext } : {}),
     ...(parsed.metadata !== undefined ? { metadata: parsed.metadata } : {}),
     ...(parsed.allowedTools !== undefined ? { allowedTools: parsed.allowedTools } : {}),
-    ...(workspaceId !== undefined ? { workspaceId } : {}),
+    workspaceId,
     ...(identity ? { identity } : {}),
   };
 }
@@ -2124,7 +1888,7 @@ function invalidMultipartConversationId(conversationId: unknown): Response | nul
 
 /**
  * Assemble the ChatRequest fields shared by the text-only and file-ingest
- * multipart paths. The focused workspace (`X-Workspace-Id`) threads into
+ * multipart paths. The workspace in the URL threads into
  * `ChatRequest.workspaceId` for prompt scoping — see `parseChatBody`.
  */
 function multipartChatRequestBase(
@@ -2132,7 +1896,7 @@ function multipartChatRequestBase(
   conversationId: unknown,
   model: unknown,
   appContext: { appName: string; serverName: string } | undefined,
-  workspaceId: string | undefined,
+  workspaceId: string,
   identity: UserIdentity | undefined,
 ): ChatRequest {
   return {
@@ -2140,7 +1904,7 @@ function multipartChatRequestBase(
     conversationId: typeof conversationId === "string" ? conversationId : undefined,
     model: typeof model === "string" ? model : undefined,
     appContext,
-    ...(workspaceId !== undefined ? { workspaceId } : {}),
+    workspaceId,
     ...(identity ? { identity } : {}),
   };
 }
@@ -2152,8 +1916,8 @@ function multipartChatRequestBase(
 async function parseMultipartChatBody(
   request: Request,
   runtime: Runtime,
-  identity?: UserIdentity,
-  workspaceId?: string,
+  identity: UserIdentity | undefined,
+  workspaceId: string,
 ): Promise<ChatRequest | Response> {
   let formData: MultipartForm;
   try {
@@ -2169,6 +1933,12 @@ async function parseMultipartChatBody(
   const conversationId = formData.get("conversationId");
   const badConversationId = invalidMultipartConversationId(conversationId);
   if (badConversationId) return badConversationId;
+  // The real conversation id, or undefined when the chat doesn't exist yet
+  // (`runtime.chat()` stamps the id later; `ingestFiles` gets a "pending"
+  // placeholder for the FileEntry until then).
+  const convId = (typeof conversationId === "string" && conversationId) || undefined;
+  const outside = refuseConversationOutsideWorkspace(runtime, convId, workspaceId, identity);
+  if (outside) return outside;
   const model = formData.get("model");
 
   const appContext = parseMultipartAppContext(formData.get("appContext"));
@@ -2193,22 +1963,11 @@ async function parseMultipartChatBody(
     );
   }
 
-  // Ingest files: validate, store, extract text, build content parts.
-  //
-  // Files are workspace-owned: ingest writes to the conversation's AUTHORITATIVE
-  // workspace — the SAME partition `runtime.chat()` reads from when it
-  // rehydrates. The workspace is resolved from the conversation (probe +
-  // locator), not the request header: on a cross-workspace resume the two differ,
-  // and a header-partitioned upload would land in a workspace the read never
-  // looks in (the attachment vanishes). A new conversation (no id yet) is born in
-  // the focused/personal workspace.
+  // Ingest files: validate, store, extract text, build content parts. Files are
+  // workspace-owned and land in the workspace in the URL — the one the turn runs
+  // in, so the partition `runtime.chat()` reads from when it rehydrates.
   const uploadOwner = runtime.resolveRequestUserId(identity);
-  const fallbackWsId = workspaceId ?? personalWorkspaceIdFor(uploadOwner);
-  // The real conversation id, or undefined when the chat doesn't exist yet
-  // (`runtime.chat()` stamps the id later; `ingestFiles` gets a "pending"
-  // placeholder for the FileEntry until then).
-  const convId = (typeof conversationId === "string" && conversationId) || undefined;
-  const wsId = await runtime.resolveConversationWorkspaceId(convId, fallbackWsId, uploadOwner);
+  const wsId = workspaceId;
   const store = runtime.getWorkspaceFileStore(wsId, uploadOwner);
   const filesConfig = runtime.getFilesConfig();
   const ingestResult = await ingestFiles(
@@ -2355,14 +2114,13 @@ async function persistResourceUploads(
 }
 
 /**
- * Handle POST /v1/resources — multipart file upload to the workspace
+ * Handle POST /v1/workspaces/:wsId/resources — multipart file upload to the workspace
  * file store. Stores each uploaded file, registers it, returns the
  * resulting FileEntry list. This is the byte-transport entry point used
  * by the bridge's `ai.nimblebrain/request-file` flow so the iframe never has
  * to base64-encode bytes into a tool-call argument.
  *
- * Workspace isolation comes from `workspaceId` (the validated `X-Workspace-Id`,
- * or the caller's personal workspace when unfocused) flowing into
+ * Workspace isolation comes from `workspaceId` (the workspace in the URL) flowing into
  * `getWorkspaceFileStore` — bytes physically land under that workspace's own
  * `files/<ownerId>/` partition.
  */
@@ -2371,7 +2129,7 @@ export async function handleResourceUpload(
   runtime: Runtime,
   features: ResolvedFeatures,
   identity: UserIdentity | undefined,
-  workspaceId: string | undefined,
+  workspaceId: string,
 ): Promise<Response> {
   if (!features.fileContext) {
     return apiError(404, "not_found", "Not found");
@@ -2414,16 +2172,18 @@ export async function handleResourceUpload(
   const description = optionalStringField(formData.get("description"));
   const conversationId = optionalStringField(formData.get("conversationId"));
 
-  const uploadOwner = runtime.resolveRequestUserId(identity);
-  const fallbackWsId = workspaceId ?? personalWorkspaceIdFor(uploadOwner);
-  // A resource upload attached to a conversation lands in that conversation's
-  // authoritative workspace (the partition the read uses); a standalone app
-  // upload (no conversationId) lands in the focused/personal workspace.
-  const wsId = await runtime.resolveConversationWorkspaceId(
+  // A conversation named here is tagged on the files, so it must be one of the
+  // caller's conversations in this workspace — the same rule the chat door keeps.
+  const outside = refuseConversationOutsideWorkspace(
+    runtime,
     conversationId ?? undefined,
-    fallbackWsId,
-    uploadOwner,
+    workspaceId,
+    identity,
   );
+  if (outside) return outside;
+
+  const uploadOwner = runtime.resolveRequestUserId(identity);
+  const wsId = workspaceId;
   const store = runtime.getWorkspaceFileStore(wsId, uploadOwner);
 
   const { entries, errors } = await persistResourceUploads(uploads, config, store, {

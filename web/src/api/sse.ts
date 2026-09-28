@@ -10,8 +10,8 @@ export interface ConnectEventsOptions {
   /**
    * @deprecated The `/v1/events` route is identity-scoped server-side
    * (see `src/api/routes/events.ts`); the server reads memberships from
-   * `WorkspaceStore` and ignores any client-sent `X-Workspace-Id`. The
-   * option is preserved for callers we haven't migrated, but is a no-op.
+   * `WorkspaceStore` and takes no workspace from the client. The option is
+   * preserved for callers we haven't migrated, but is a no-op.
    */
   workspaceId?: string;
   /** Called when a typed SSE event is received. */
@@ -234,9 +234,8 @@ export function connectEvents(options: ConnectEventsOptions): EventConnection {
     if (token && token !== "__cookie__") {
       hdrs.Authorization = `Bearer ${token}`;
     }
-    // Note: no `X-Workspace-Id`. `/v1/events` is identity-scoped — the
-    // server reads memberships from the workspace store and broadcasts
-    // accordingly.
+    // No workspace: `/v1/events` is identity-scoped — the server reads
+    // memberships from the workspace store and broadcasts accordingly.
 
     try {
       const res = await fetch(`${apiBase}/v1/events`, {

@@ -34,7 +34,6 @@ import {
 import { PermissionStore } from "../../../src/permissions/permission-store.ts";
 import type { Tool, ToolSource } from "../../../src/tools/types.ts";
 import { WorkspaceContext } from "../../../src/workspace/context.ts";
-import { personalWorkspaceIdFor } from "../../../src/workspace/workspace-store.ts";
 
 // ── Stub source ───────────────────────────────────────────────────
 
@@ -133,7 +132,8 @@ function makeStubRuntime(opts: StubRuntimeOpts): StubRuntime {
 const SHARED_WS = "ws_helix";
 const OTHER_WS = "ws_acme";
 const USER_ID = "u1";
-const PERSONAL_WS = personalWorkspaceIdFor(USER_ID); // ws_user_u1
+/** A workspace only the caller belongs to. */
+const PERSONAL_WS = "ws_0000000000000001";
 
 let workDir = "";
 
@@ -303,11 +303,10 @@ describe("routeToolCall — the wall (cross-workspace reach is unexpressible)", 
   });
 });
 
-describe("routeToolCall — personal workspace", () => {
-  // A session bounded to the user's personal workspace routes its tools. The
-  // wsId is derived via `personalWorkspaceIdFor(userId)` to guard against
-  // hand-built `ws_user_<id>` forms.
-  test("a call to the bound personal workspace succeeds", async () => {
+describe("routeToolCall — a workspace only the caller belongs to", () => {
+  // A session bounded to a workspace the caller alone belongs to routes its
+  // tools like any other.
+  test("a call to the bound workspace succeeds", async () => {
     const routed = await routeToolCall({
       identityId: USER_ID,
       namespacedName: "gmail__send",
@@ -487,8 +486,8 @@ describe("routeToolCall — self-heal on a recoverable source miss", () => {
 describe("routeToolCall — personal connectors (identity-door grant gate)", () => {
   // A personal connector is an IDENTITY-owned source, reached as a BARE identity
   // tool and resolved by userId (never through a workspace registry). It is
-  // grant-gated in EVERY workspace — including the caller's own personal one, a
-  // personal workspace being just a workspace (no free-at-home). The workspace
+  // grant-gated in EVERY workspace — including one the caller alone belongs to
+  // (no free-at-home). The workspace
   // wall (`ws_<id>-` calls) is never involved — a personal connector is never a
   // namespaced workspace tool, so a grant can never widen the wall.
 
@@ -502,15 +501,14 @@ describe("routeToolCall — personal connectors (identity-door grant gate)", () 
     });
   }
 
-  test("the caller's own personal workspace is grant-gated too — no grant → denied (no free-at-home)", async () => {
-    // A personal workspace is just a workspace; it gets no special treatment.
-    const store = new PermissionStore(workDir); // nothing granted, not even to the personal ws
+  test("a workspace only the caller belongs to is grant-gated too — no grant → denied (no free-at-home)", async () => {
+    const store = new PermissionStore(workDir); // nothing granted anywhere
     let thrown: unknown = null;
     try {
       await routeToolCall({
         identityId: USER_ID,
         namespacedName: "my_granola__read_notes",
-        workspaceId: PERSONAL_WS, // the caller's own personal workspace
+        workspaceId: PERSONAL_WS,
         runtime: runtimeWithPersonalConnector(store),
       });
     } catch (err) {
@@ -520,7 +518,7 @@ describe("routeToolCall — personal connectors (identity-door grant gate)", () 
     expect((thrown as ConnectorGrantDenied).workspaceId).toBe(PERSONAL_WS);
   });
 
-  test("granted to the personal workspace → reachable there, dispatched as identity", async () => {
+  test("granted to a workspace → reachable there, dispatched as identity", async () => {
     const store = new PermissionStore(workDir);
     await store.grantConnector(USER_ID, "granola", PERSONAL_WS);
     const routed = await routeToolCall({

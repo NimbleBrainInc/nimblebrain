@@ -17,27 +17,23 @@ import {
 import { FileCredentialStore } from "../../src/tools/credential-store.ts";
 import { ToolRegistry } from "../../src/tools/registry.ts";
 import { WorkspaceContext } from "../../src/workspace/context.ts";
-import {
-  personalWorkspaceIdFor,
-  WorkspaceStore,
-} from "../../src/workspace/workspace-store.ts";
+import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
 import { writeFileSync } from "node:fs";
 import { CONNECTOR_FIXTURE_DIR } from "../helpers/connector-fixtures.ts";
 
 /**
  * Integration coverage for T010's `manage_connectors.install` contract:
  *
- *   1. **Persisted shape**: after a successful install into a non-
- *      personal workspace, the on-disk `ConnectorInstance` carries
+ *   1. **Persisted shape**: after a successful install into a shared
+ *      workspace, the on-disk `ConnectorInstance` carries
  *      `wsId: <picked>` and `oauthScope: "workspace"`. The legacy
  *      `oauthScope: "user"` literal is gone (T008) and stays gone —
  *      we read `workspace.json` directly to pin this.
  *
- *   2. **Personal install uses the helper**: installing into the
- *      caller's personal workspace records `wsId ===
- *      personalWorkspaceIdFor(userId)`. The test asserts equality
- *      against the helper's output, not a hand-built template.
- *      `check:personal-workspace-id` lint stays silent.
+ *   2. **Every workspace installs the same way**: installing into a
+ *      workspace the caller alone belongs to records that workspace's
+ *      opaque id and the same `oauthScope: "workspace"` ref shape as a
+ *      shared install — no workspace is a special install target.
  *
  *   3. **Default to the request workspace; hard-error only with none**:
  *      a tool call with no `wsId` argument installs into the request's
@@ -46,7 +42,7 @@ import { CONNECTOR_FIXTURE_DIR } from "../helpers/connector-fixtures.ts";
  *      install and its later connect / list / status can't diverge. When
  *      the context carries NO workspace (neither session header nor
  *      explicit arg) the tool hard-errors and writes nothing: there's
- *      still no default-to-personal that would pool credentials across
+ *      still no default workspace that would pool credentials across
  *      tenants.
  *
  *   4. **Explicit wsId overrides the request workspace**: a caller may
@@ -79,23 +75,21 @@ interface Harness {
 async function buildHarness(opts: { sessionWsId: string | null } = { sessionWsId: null }): Promise<Harness> {
   const workDir = mkdtempSync(join(tmpdir(), "nb-install-t010-"));
   const sharedWsId = "ws_helix";
-  const personalWsId = personalWorkspaceIdFor(ADMIN.id);
-
 
   const credStore = installTestCredentialStore(workDir);
   const workspaceStore = new WorkspaceStore(workDir);
   const lifecycle = new ConnectorLifecycleManager(new NoopEventSink());
   const workspaceRegistry = new ToolRegistry();
 
-  // Two workspaces:
-  //   - shared (admin role) — non-personal
-  //   - personal — owner = ADMIN
+  // Two workspaces, ADMIN admin of both:
+  //   - shared — ADMIN plus (conceptually) others
+  //   - own — ADMIN alone, the kind provisioning gives a new user
   await workspaceStore.create("Helix", "helix");
   await workspaceStore.addMember(sharedWsId, ADMIN.id, "admin");
-  await workspaceStore.create("Personal", `user_${ADMIN.id}`, {
-    isPersonal: true,
-    ownerUserId: ADMIN.id,
+  const ownWs = await workspaceStore.create("Admin's workspace", undefined, {
+    members: [{ userId: ADMIN.id, role: "admin" }],
   });
+  const personalWsId = ownWs.id;
 
   const runtime = {
     getWorkDir: () => workDir,
@@ -183,27 +177,23 @@ describe("manage_connectors.install (T010) — persisted shape + hard-error", ()
     expect(raw).not.toContain('"oauthScope": "user"');
   });
 
-  test("personal install records wsId === personalWorkspaceIdFor(userId) — uses the helper, not a hand-built id", async () => {
-    const personalWsId = personalWorkspaceIdFor(ADMIN.id);
+  test("install into a workspace the caller alone belongs to records its id and the shared ref shape", async () => {
+    const personalWsId = h.personalWsId;
     const result = await h.tool.handler({
       action: "install",
       entry: dcrEntry(),
       wsId: personalWsId,
     });
     expect(result.isError).toBe(false);
+    expect((result.content?.[0] as { text?: string } | undefined)?.text).toContain(
+      "in this workspace",
+    );
     const sc = result.structuredContent as { wsId?: string };
-    // Equality with the helper's output ensures the test stays
-    // coupled to the canonical construction site — a future change
-    // to `personalWorkspaceIdFor` flows into this assertion
-    // automatically. `check:personal-workspace-id` is `src/`-only,
-    // so test-side hand-building wouldn't be flagged, but it would
-    // drift from production silently. Using the helper here keeps
-    // production and test in lockstep.
     expect(sc.wsId).toBe(personalWsId);
 
     // Persisted ref shape — same `oauthScope: "workspace"` shape as
-    // shared installs. The "personal-ness" of the target workspace
-    // is a property of the workspace record, NOT the connector ref.
+    // shared installs. Who belongs to the target workspace does not
+    // change the connector ref.
     const wsDoc = JSON.parse(
       readFileSync(join(h.workDir, "workspaces", personalWsId, "workspace.json"), "utf-8"),
     );
@@ -218,7 +208,7 @@ describe("manage_connectors.install (T010) — persisted shape + hard-error", ()
     // workspace (`getWorkspaceId()` → null) and the call passes no
     // `wsId`. With nothing to install into, the tool hard-errors and
     // writes nothing — install defaults to the *request* workspace, but
-    // there's still no default-to-personal that would pool credentials
+    // there's still no default workspace that would pool credentials
     // across tenants when no workspace is in context at all. Pin hard
     // error + no on-disk writes.
     const result = await h.tool.handler({ action: "install", entry: dcrEntry() });
@@ -263,11 +253,11 @@ describe("manage_connectors.install (T010) — persisted shape + hard-error", ()
     // A caller can still target a workspace other than the session
     // header by passing `wsId` explicitly (direct API / MCP callers).
     // Session header points at sharedWsId; the explicit arg names
-    // personalWsId, so the install lands in personal and sharedWsId
+    // the caller's own workspace, so the install lands there and sharedWsId
     // stays empty. The web shell no longer exercises this (it omits
     // wsId), but the override must keep working.
     h = await buildHarness({ sessionWsId: h.sharedWsId });
-    const personalWsId = personalWorkspaceIdFor(ADMIN.id);
+    const personalWsId = h.personalWsId;
     const result = await h.tool.handler({
       action: "install",
       entry: dcrEntry(),

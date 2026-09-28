@@ -17,7 +17,7 @@ A workspace is an isolated environment within a NimbleBrain instance. It contain
 When you send a chat message, it runs in the context of your focused workspace, and the agent's active tool set is scoped to the apps installed there. **Conversations are partitioned by workspace** — each one is stored under the workspace it ran in and authorized by its owner. See [Conversations](/using/conversations) for how ownership and storage work.
 
 <Aside type="note">
-Workspace IDs are opaque tokens of the form `ws_<16-hex>` (for example `ws_3f9a1c7e0b2d4856`). The ID is assigned once at creation and never derived from the name — renaming a workspace does not change its ID or its URL. Treat the ID as opaque: never parse it for meaning. Your personal workspace is the one exception, with a stable `ws_user_<userId>` form.
+Workspace IDs are opaque tokens, usually of the form `ws_<16-hex>` (for example `ws_3f9a1c7e0b2d4856`); some have the form `ws_user_<id>`. The ID is assigned once at creation and never derived from the name — renaming a workspace does not change its ID or its URL. Treat every ID as opaque, whatever its form: never parse it for meaning.
 </Aside>
 
 ## Roles
@@ -102,13 +102,11 @@ In the web UI, switch workspaces from the workspace navigator at the top of the 
 
 Each workspace has a stable URL of the form `/w/<id>/...`. The agent's active tools follow your focused workspace; the full set of tools across every workspace you belong to is reachable on demand through `nb__search`.
 
-## Personal workspaces
+## Your first workspace
 
-Every user has a personal workspace — a private space where you can experiment with apps and conversations without affecting your team. It shows a lock icon in the workspace navigator and uses a stable `ws_user_<userId>` ID.
+When you first sign in, NimbleBrain creates a workspace for you, named after you (for example, "Mat's workspace"), with you as its admin. It is an ordinary workspace: add members to share it, rename it, or leave it like any other. Sharing a workspace shares the accounts connected in it with its members.
 
-<Aside type="note">
-NimbleBrain guarantees every authenticated user has at least one workspace. The personal workspace is provisioned on first login and re-created on the next login if it is ever deleted.
-</Aside>
+That workspace is your default — the one you land on when no workspace is open. If you ever belong to no workspace, a new one is created for you the next time you open NimbleBrain.
 
 ## Connecting external MCP clients
 

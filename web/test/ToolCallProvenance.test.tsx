@@ -9,8 +9,8 @@
 //   2. Fallback to raw on missing workspace — a tool call for
 //      `ws_removed-foo` where `ws_removed` is no longer in the user's
 //      workspace list renders the raw `ws_removed-foo` string.
-//      Adversarial: a regression that defaulted to the personal
-//      workspace's display name would be a subtle correctness bug.
+//      Adversarial: a regression that defaulted to another of the
+//      user's workspaces' display names would be a subtle correctness bug.
 //   3. Namespace parsing flows through `parseNamespacedToolName` only —
 //      no `.split("/")`. A file-level grep enforces this in the test
 //      below.
@@ -26,7 +26,9 @@ import type { WorkspaceInfo } from "../src/context/WorkspaceContext";
 const React = await import("react");
 const ReactDOMClient = await import("react-dom/client");
 const { act } = await import("react");
-const { ToolCallProvenance } = await import("../src/components/chat/ToolCallProvenance");
+const { ToolCallProvenance, workspaceBadgeVariant } = await import(
+  "../src/components/chat/ToolCallProvenance"
+);
 
 interface Mounted {
   container: HTMLDivElement;
@@ -96,11 +98,9 @@ describe("ToolCallProvenance", () => {
     expect(badge).not.toBeNull();
     expect(badge?.getAttribute("data-workspace-id")).toBe("ws_helix");
     // Badge variant is deterministic per workspace id, but the exact
-    // mapping is an implementation detail — assert non-empty + non-
-    // "secondary" (secondary is reserved for the personal workspace).
+    // mapping is an implementation detail — assert non-empty.
     const variant = badge?.getAttribute("data-workspace-variant");
     expect(variant).toBeTruthy();
-    expect(variant).not.toBe("secondary");
     // Status pill present.
     const status = findByTestId(mounted.container, "status-pill");
     expect(status?.getAttribute("data-status")).toBe("ok");
@@ -127,14 +127,14 @@ describe("ToolCallProvenance", () => {
 
   test("falls back to RAW when workspace is no longer in the user's list (Q2)", async () => {
     // Adversarial: this is the regression the audit pins. A removed
-    // workspace must NOT render with the user's personal workspace
-    // name as a fallback — that would silently misattribute every
-    // historical tool call.
+    // workspace must NOT render with another workspace's name as a
+    // fallback — that would silently misattribute every historical
+    // tool call.
     mounted = await mount(
       <ToolCallProvenance
         toolName="ws_removed-foo"
         workspaces={[
-          ws({ id: "ws_user_u1", name: "Personal", isPersonal: true }),
+          ws({ id: "ws_mine", name: "Mat's workspace" }),
           ws({ id: "ws_helix", name: "Helix" }),
         ]}
       />,
@@ -147,8 +147,8 @@ describe("ToolCallProvenance", () => {
     // No workspace badge in the fallback path — there's no friendly
     // workspace to attribute to.
     expect(findByTestId(mounted.container, "workspace-badge")).toBeNull();
-    // CRITICAL: the personal workspace name must NOT bleed in.
-    expect(text).not.toContain("Personal");
+    // CRITICAL: no other workspace's name may bleed in.
+    expect(text).not.toContain("Mat's workspace");
   });
 
   test("bare/identity input renders the friendly tool name with no workspace badge", async () => {
@@ -192,16 +192,12 @@ describe("ToolCallProvenance", () => {
     expect(pill?.getAttribute("data-status")).toBe("running");
   });
 
-  test("personal workspace gets the dedicated badge variant", async () => {
-    mounted = await mount(
-      <ToolCallProvenance
-        toolName="ws_user_u1-gmail__send"
-        workspaces={[ws({ id: "ws_user_u1", name: "Personal", isPersonal: true })]}
-      />,
-    );
-    const badge = findByTestId(mounted.container, "workspace-badge");
-    // Personal pin — see workspaceBadgeVariant doc comment.
-    expect(badge?.getAttribute("data-workspace-variant")).toBe("secondary");
+  test("the badge variant depends only on the workspace id", () => {
+    // No workspace gets a reserved treatment: two workspaces with the same id
+    // and different names map to the same variant.
+    const a = workspaceBadgeVariant(ws({ id: "ws_mine", name: "Mat's workspace" }));
+    const b = workspaceBadgeVariant(ws({ id: "ws_mine", name: "Renamed" }));
+    expect(a).toBe(b);
   });
 });
 

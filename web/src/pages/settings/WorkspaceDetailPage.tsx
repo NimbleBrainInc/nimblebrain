@@ -210,8 +210,7 @@ export function WorkspaceDetailPage() {
   // Same rule as every other workspace write, reached differently: this page
   // addresses a workspace by id, so it passes that workspace's membership role
   // rather than using the active-workspace hook (which would answer for the
-  // viewer's focused workspace — usually their personal one, where they are
-  // always admin).
+  // viewer's focused workspace, not this one).
   const canManageMembers = canWriteWorkspace(memberRoleFor(members, currentUserId));
 
   // The org-scoped Workspaces list lives at /org/workspaces.

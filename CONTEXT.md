@@ -32,15 +32,28 @@ it belongs in an MCP server, a Synapse app, or upstream MCP — not the runtime.
 ### Workspace
 The authorization boundary (ADR-0001). A session reaches exactly **one**
 workspace plus the caller's identity tools — never a union across workspaces. A
-non-personal workspace has an opaque id `ws_<16-hex>`, members, and roles
-(`admin` | `member`).
+workspace has an opaque id (`ws_<16-hex>`), members, and roles
+(`admin` | `member`). How a workspace came to exist never changes what it is
+(ADR-0039).
 
 An MCP connection is addressed to one workspace by URL: `<publicOrigin>/mcp/<wsId>`
 (ADR-0036). Bare `/mcp` names none and is refused. A token from the MCP
-authorization server is valid only at the URL its `aud` names exactly; a
-first-party login session is bound to no resource. Either way, **membership of
+authorization server is valid only at the URL its `aud` names exactly. A
+first-party credential is bound to no resource: the instance's login session,
+or an authorization-server token issued to a client the operator configures as
+its own (ADR-0038). A credential's audience says where it may be used; the
+client it was issued to says whose app holds it, and only a configured
+first-party client gets first-party standing. Either way, **membership of
 `<wsId>`, checked per request, authorizes** — the audience only prevents replay.
 An MCP session is bound to (identity, workspace).
+
+REST addresses a workspace the same way: `/v1/workspaces/<wsId>/…` (ADR-0037),
+admitted by the same membership check. A route either acts on a workspace and
+names it in its path, or acts on the caller or on a primitive its own id
+locates (bootstrap, the event stream, a conversation, a file) and names none.
+No header, argument, qualified name or default selects a workspace for a request, and a conversation is resumed only at its own workspace's path. Bootstrap
+alone suggests one — the web shell's default focus, the caller's default
+workspace — and the URL the user is on overrides it.
 
 A workspace exists because `create` made it and stops existing because `delete`
 archived it. **No write brings one into being**: a writer may create paths
@@ -49,10 +62,20 @@ So a workspace directory on disk is always one a create produced, which is what
 lets `list()` treat an unparseable `workspace.json` as corruption rather than as
 a tree some writer conjured.
 
-### Personal workspace
-A user's own workspace, `ws_user_<userId>`, sole-owned. It is a workspace like
-any other — "everything is workspace-bound" holds with no "no-workspace" void.
-Home = your personal workspace.
+### Default workspace
+The workspace a user lands in when nothing names one:
+`preferences.defaultWorkspaceId`, while they are a member of it, else their
+earliest membership. A user who belongs to no workspace gets one at bootstrap,
+named for them with them as admin, and it becomes their default. It is an
+ordinary workspace — it can be shared, and nothing marks how it was made
+(ADR-0039).
+
+### Identity provider
+What authenticates a request and says who made it, named by `auth.adapter` in
+`instance.json`: `dev` (every request is one local developer, an org owner),
+`oidc` or `workos`. It is always a choice: with no `instance.json` the server
+does not start, and no request is admitted as `dev` because the file is absent
+(ADR-0040).
 
 ### Owner
 The authenticated principal a primitive belongs to. Stored as an `<ownerId>`
@@ -177,8 +200,10 @@ duplicate the side effect.
 A unit of guidance in the Agent Skills format. The file is the standard,
 unmodified, with the runtime's own configuration nested under
 `metadata.nimblebrain` and validated by one schema (ADR-0009). A skill comes off
-the filesystem, off an MCP server's `skill://…/SKILL.md` resource (a peer, not a
-lesser kind — ADR-0011), or from a curated connector overlay (ADR-0013).
+the filesystem, from an MCP server's `skills/list` under the MCP Skills
+Extension (a peer, not a lesser kind; its body fetched when needed and verified
+against the listed digest — ADR-0011), or from a curated connector overlay
+(ADR-0013).
 
 ### Role / channel
 A skill's declared `loading-strategy`, and the prompt channel that follows from
@@ -214,6 +239,10 @@ The decision log is `adr/`. Foundational (secure RBAC):
 - [0007](adr/0007-offboarding-revokes-active-use.md) — offboarding revokes active use; ownership is necessary, not sufficient
 - [0008](adr/0008-notifications-are-pulled-and-routed-by-the-operator.md) — notifications are pulled into a workspace inbox and routed by the operator
 - [0036](adr/0036-an-mcp-connection-is-addressed-to-one-workspace-by-url.md) — an MCP connection is addressed to one workspace by URL; a token is valid only for its resource; membership authorizes
+- [0037](adr/0037-a-workspace-is-addressed-by-url-on-every-surface.md) — a workspace is addressed by URL on every surface; a route is workspace-scoped or identity-scoped, and its path says which
+- [0038](adr/0038-a-credential-is-first-party-by-the-client-it-was-issued-to.md) — a credential's audience says where it may be used; the client it was issued to says whose app holds it; only a configured first-party client gets first-party standing
+- [0039](adr/0039-the-first-workspace-is-an-ordinary-workspace.md) — the workspace provisioned for a user is an ordinary workspace; the default a user lands in is a preference
+- [0040](adr/0040-the-identity-provider-is-chosen-never-defaulted.md) — `instance.json` names the identity provider, `dev` included; with none, the server does not start
 
 Manage skills:
 

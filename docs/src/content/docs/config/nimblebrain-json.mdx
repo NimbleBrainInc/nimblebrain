@@ -8,7 +8,7 @@ import { Tabs, TabItem, Aside } from '@astrojs/starlight/components';
 NimbleBrain splits configuration into two files:
 
 - **`nimblebrain.json`** — instance-level settings (models, HTTP, logging, limits, feature flags). One file per deployment. **This page.**
-- **`workspace.json`** — per-workspace settings (connectors, skill directories, optional model + identity overrides). See [`workspace.json`](/config/workspace-json).
+- **`workspace.json`** — per-workspace settings (connectors, skill directories, optional model overrides). See [`workspace.json`](/config/workspace-json).
 
 Top-level `skillDirs`, `home`, and `preferences` entries in `nimblebrain.json` are stripped at load — they belong in `workspace.json` now. See [workspace configuration](/config/workspace-json) for where they live. A workspace's `connectors` array belongs there too; in this file the name `connectors` is the [provider and gateway block](#connectors).
 
@@ -50,7 +50,6 @@ A sibling `nimblebrain.overrides.json` next to the resolved config file is **dee
 
   "maxIterations":      25,
   "maxInputTokens":     500000,
-  "maxOutputTokens":    16384,
   "maxToolResultSize":  1000000,
 
   "logging": { "dir": "~/.nimblebrain/logs", "disabled": false, "level": "normal", "retentionDays": 30 },
@@ -107,7 +106,7 @@ A sibling `nimblebrain.overrides.json` next to the resolved config file is **dee
 | `defaultModel` | `string` | — | **Deprecated.** Use `models.default` instead. |
 | `maxIterations` | `integer` | `25` | Max agentic iterations per request. Range: 1--50. |
 | `maxInputTokens` | `integer` | `500000` | Max input tokens per request. Engine stops when this budget is exceeded. |
-| `maxOutputTokens` | `integer` | `16384` | Max output tokens per LLM call. |
+| `maxOutputTokens` | `integer` | the model's catalog output limit | Max output tokens per LLM call. Leave unset to use each model's own limit (`limits.output` in the synced catalog; 16,384 for a model the catalog lacks). A set value applies to every model, clamped to that model's limit, and thinking counts toward it, so a low cap can leave a reasoning model little room for its answer. |
 | `maxToolResultSize` | `integer` | `1000000` | Max characters for a single tool result. `0` disables the cap. |
 | `thinking` | `"off" \| "adaptive" \| "enabled"` | `enabled` on reasoning models | Extended-thinking mode, applied to every provider that supports reasoning. `off`: do not reason — **not enforceable on Anthropic's adaptive-only models** (Opus 4.7/4.8, Sonnet 5, Opus 5), which have no such state: the AI SDK validates `thinking.type=disabled` and then never sends it, so the model applies its own default ([#738](https://github.com/NimbleBrainInc/nimblebrain/issues/738)). `adaptive`: model decides per call, at no stated depth. `enabled`: reason every turn, at `thinkingEffort`. **Applies only to models the catalog carries and flags reasoning-capable** — an override can ask for reasoning but cannot make the parameter exist. A pinned model id, or one served by an OpenAI-compatible proxy under its own name, isn't in the catalog and so gets no reasoning options; the runtime logs a warning naming the model when it drops an override this way. Typically set via the admin `set_model_config` tool, which writes it to `nimblebrain.overrides.json`. |
 | `thinkingEffort` | `"low" \| "medium" \| "high" \| "xhigh" \| "max"` | `medium` | How hard to think when reasoning is on. **The portable control** — see [reasoning depth](#reasoning-depth) for how it reaches each provider. Ignored for `off` and `adaptive`. |
@@ -209,7 +208,7 @@ The `models` object declares two role-based slots. Each value is a `provider:mod
 | Slot | Used for |
 |------|----------|
 | `default` | Chat, general requests, most tool-using turns |
-| `fast` | Conversation titles, the home briefing, and both history folds — end-of-turn compaction and the mid-turn fold. Cheap/fast workloads, but still needs a large context window: see below |
+| `fast` | Conversation titles and both history folds — end-of-turn compaction and the mid-turn fold. Cheap/fast workloads, but still needs a large context window: see below |
 
 A workspace can override individual slots via `workspace.json → models`. When a per-request model specifies a slot name (e.g. `"model": "fast"`), it's resolved against these slots. `"alias:fast"` is the same reference written explicitly; both spellings resolve identically.
 

@@ -30,7 +30,6 @@ import {
   type TokenResult,
 } from "../../../src/identity/provider.ts";
 import { WorkosIdentityProvider } from "../../../src/identity/providers/workos.ts";
-import { WorkspaceStore } from "../../../src/workspace/workspace-store.ts";
 
 // ── Layer 1: WorkOS provider classification ──────────────────────────
 
@@ -44,8 +43,7 @@ const BASE_CONFIG: WorkosAuth = {
 
 /** Build a provider whose underlying WorkOS refresh call throws `thrown`. */
 function providerThatThrows(thrown: unknown): WorkosIdentityProvider {
-  const workspaceStore = new WorkspaceStore(mkdtempSync(join(tmpdir(), "oidc-refresh-")));
-  const provider = new WorkosIdentityProvider(BASE_CONFIG, undefined, workspaceStore);
+  const provider = new WorkosIdentityProvider(BASE_CONFIG, undefined);
   // Cast escape hatch: `workos` is a private field typed as the full WorkOS SDK;
   // we only need to swap the one method under test, so we widen it to a bag of
   // unknowns rather than reconstruct the SDK's type.

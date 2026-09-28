@@ -7,6 +7,7 @@ import type {
   ConversationListResult,
   ListOptions,
 } from "../conversation/types.ts";
+import type { AutomationRun } from "../platform/automations/types.ts";
 import type {
   ActivityConnectorEvent,
   ActivityConversationSummary,
@@ -41,11 +42,19 @@ type ConversationSource =
 
 type ConnectorEventSource = { kind: "sse"; eventManager: SseEventManager } | { kind: "none" };
 
+/**
+ * An ALREADY-SCOPED automation-run reader: every run started at or after
+ * `since` that the caller may see. The caller binds the workspace and owner
+ * when it builds the closure, from the automation store's own read functions,
+ * so the collector never constructs an automation path.
+ */
+type ScopedAutomationRunReader = (since: string) => AutomationRun[];
+
 export interface ActivityCollectorOptions {
   logDir: string;
   conversations: ConversationSource;
   connectorEvents?: ConnectorEventSource;
-  automationRunsDir?: string;
+  automationRuns?: ScopedAutomationRunReader;
   /**
    * Caller's identity context for ownership filtering. REQUIRED for
    * in-process callers post-Stage 1 — the top-level conversation
@@ -70,14 +79,14 @@ export class ActivityCollector {
   private logDir: string;
   private conversations: ConversationSource;
   private connectorEvents: ConnectorEventSource;
-  private automationRunsDir?: string;
+  private automationRuns?: ScopedAutomationRunReader;
   private access?: ConversationAccessContext;
 
   constructor(options: ActivityCollectorOptions) {
     this.logDir = options.logDir;
     this.conversations = options.conversations;
     this.connectorEvents = options.connectorEvents ?? { kind: "none" };
-    this.automationRunsDir = options.automationRunsDir;
+    this.automationRuns = options.automationRuns;
     this.access = options.access;
   }
 
@@ -101,8 +110,8 @@ export class ActivityCollector {
             toolUsage: [] as ToolUsageSummary[],
             errors: [] as ErrorEntry[],
           }),
-      !category && this.automationRunsDir
-        ? this.collectAutomationRuns(since, until)
+      !category && this.automationRuns
+        ? this.collectAutomationRuns(this.automationRuns, since, until)
         : Promise.resolve(null),
     ]);
 
@@ -244,38 +253,24 @@ export class ActivityCollector {
     return connectorEvents;
   }
 
-  private async collectAutomationRuns(
+  private collectAutomationRuns(
+    read: ScopedAutomationRunReader,
     since: string,
     until: string,
-  ): Promise<AutomationRunSummary | null> {
-    const dir = this.automationRunsDir;
-    if (!dir) return null;
-
-    let filenames: string[];
-    try {
-      filenames = await readdir(dir);
-    } catch {
-      return null;
-    }
-
-    const jsonlFiles = filenames.filter((f) => f.endsWith(".jsonl"));
-    if (jsonlFiles.length === 0) return null;
-
-    const sinceMs = new Date(since).getTime();
+  ): AutomationRunSummary | null {
     const untilMs = new Date(until).getTime();
-
-    const totals: AutomationRunTotals = { total: 0, succeeded: 0, failed: 0, failures: [] };
-    for (const filename of jsonlFiles) {
-      await accumulateAutomationRunFile(dir, filename, sinceMs, untilMs, totals);
-    }
-
-    if (totals.total === 0) return null;
-    return {
-      total: totals.total,
-      succeeded: totals.succeeded,
-      failed: totals.failed,
-      failures: totals.failures,
+    const totals: AutomationRunSummary = {
+      total: 0,
+      succeeded: 0,
+      failed: 0,
+      degraded: 0,
+      failures: [],
     };
+    for (const run of read(since)) {
+      if (new Date(run.startedAt).getTime() > untilMs) continue;
+      accumulateAutomationRun(run, totals);
+    }
+    return totals.total === 0 ? null : totals;
   }
 
   private async collectFromLogs(
@@ -497,77 +492,34 @@ function applyRoleTaggedEntry(
 // Automation-run helpers
 // ---------------------------------------------------------------------------
 
-/** Running tallies accumulated while scanning automation-run JSONL files. */
-interface AutomationRunTotals {
-  total: number;
-  succeeded: number;
-  failed: number;
-  failures: AutomationRunSummary["failures"];
-}
-
-/** Fold every run line of one automation JSONL file into the totals; skip the file if unreadable. */
-async function accumulateAutomationRunFile(
-  dir: string,
-  filename: string,
-  sinceMs: number,
-  untilMs: number,
-  totals: AutomationRunTotals,
-): Promise<void> {
-  try {
-    const content = await readFile(join(dir, filename), "utf-8");
-    for (const line of content.split("\n")) {
-      accumulateAutomationRunLine(line, filename, sinceMs, untilMs, totals);
-    }
-  } catch {
-    // Skip unreadable automation run files.
-  }
-}
-
 /**
- * Fold one automation-run line into the totals, counting successes and
- * collecting failures for runs started within [sinceMs, untilMs].
+ * Fold one finished run into the totals. A degraded run finished with a failed
+ * tool call nobody retried, so it is listed beside the failures (with its
+ * status) rather than counted as a success. Running, cancelled, and skipped
+ * runs are not outcomes and are left out.
  */
-function accumulateAutomationRunLine(
-  line: string,
-  filename: string,
-  sinceMs: number,
-  untilMs: number,
-  totals: AutomationRunTotals,
-): void {
-  if (!line.trim()) return;
-
-  let run: Record<string, unknown>;
-  try {
-    run = JSON.parse(line);
-  } catch {
-    return;
-  }
-
-  const startedAt = run.startedAt as string | undefined;
-  if (!startedAt) return;
-
-  const startedMs = new Date(startedAt).getTime();
-  if (startedMs < sinceMs || startedMs > untilMs) return;
-
-  const status = run.status as string | undefined;
-  if (status !== "success" && status !== "failure" && status !== "timeout") return;
-
-  totals.total++;
+function accumulateAutomationRun(run: AutomationRun, totals: AutomationRunSummary): void {
+  const status = run.status;
   if (status === "success") {
+    totals.total++;
     totals.succeeded++;
     return;
   }
+  if (status !== "failure" && status !== "timeout" && status !== "degraded") return;
 
-  totals.failed++;
-  const automationName = filename.replace(/\.jsonl$/, "");
+  totals.total++;
+  if (status === "degraded") totals.degraded++;
+  else totals.failed++;
+  const noun = status === "degraded" ? "degraded" : "failed";
   totals.failures.push({
-    name: automationName,
-    error: (run.error as string) ?? undefined,
+    name: run.automationId,
+    status,
+    error: run.error,
     action: {
-      label: "View failed run",
+      label: `View ${noun} run`,
       type: "startChat",
       route: null,
-      prompt: `Show me the failed ${automationName} automation run`,
+      prompt: `Show me the ${noun} ${run.automationId} automation run`,
     },
   });
 }

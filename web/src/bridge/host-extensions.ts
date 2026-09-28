@@ -21,14 +21,6 @@ import { getThemeTokens, type ThemeTokens } from "./theme";
 export type WorkspaceForHostContext = {
   id: string;
   name: string;
-  /**
-   * Whether the active room is the user's personal room. Apps that scope a
-   * view to the current room read this to fold legacy artifacts with no
-   * stamped room into Personal (absent room === personal, per the
-   * permission-boundaries spec). This is the app's OWN active room — not a
-   * roster of other rooms — so it crosses no wall.
-   */
-  isPersonal?: boolean;
 } | null;
 
 /**
@@ -57,7 +49,6 @@ export function buildHostExtensions(
         workspace: {
           id: workspace.id,
           name: workspace.name,
-          isPersonal: workspace.isPersonal ?? false,
         },
       }
     : {};

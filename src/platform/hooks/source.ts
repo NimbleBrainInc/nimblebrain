@@ -6,9 +6,9 @@
  * system, and replace it when it leaks. Nothing surfaced that; the URLs existed
  * only in the runtime's records and in whatever the vendor was told.
  *
- * **Both tools are INTERNAL.** They are stripped from every LLM listing — chat
+ * **Both tools are app-only** (`ui.visibility: ["app"]`). They are stripped from every LLM listing — chat
  * and `/mcp` alike — while staying callable by name, so the settings UI reaches
- * them and no agent does. That is the whole reason for the annotation here: the
+ * them and no agent does. That is the whole reason for the visibility here: the
  * URL is a capability, and an agent that could read one could put it in a
  * message, a file, or an outbound email, handing a working capability to
  * whoever received it. An admin reading it off their own screen is a different
@@ -20,7 +20,7 @@
  * reading is what discloses the capability; rotating only replaces it.
  */
 
-import { type EventSink, INTERNAL_TOOL_ANNOTATION, type ToolResult } from "../../engine/types.ts";
+import type { EventSink, ToolResult } from "../../engine/types.ts";
 
 import { ensureHooks } from "../../hooks/reconcile.ts";
 import { isPreviousStillValid, listRegistrations } from "../../hooks/registrations.ts";
@@ -145,7 +145,7 @@ export function createHooksSource(runtime: Runtime, eventSink: EventSink): McpSo
         "Every inbound delivery URL this workspace holds, with the address itself, " +
         "which connector and vendor it is for, when it was created and last rotated. " +
         "Workspace admin only. Read-only.",
-      meta: { [INTERNAL_TOOL_ANNOTATION]: true },
+      meta: { ui: { visibility: ["app"] } },
       inputSchema: HooksListInput,
       handler: async (): Promise<ToolResult> => {
         const auth = await adminWorkspace(runtime);
@@ -187,7 +187,7 @@ export function createHooksSource(runtime: Runtime, eventSink: EventSink): McpSo
         "which re-registers it with the vendor. The previous URL keeps working for a " +
         "grace window so deliveries already in flight are not lost, then stops. " +
         "Workspace admin only.",
-      meta: { [INTERNAL_TOOL_ANNOTATION]: true },
+      meta: { ui: { visibility: ["app"] } },
       inputSchema: HooksRotateInput,
       handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
         const auth = await adminWorkspace(runtime);

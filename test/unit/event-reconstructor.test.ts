@@ -1064,6 +1064,128 @@ describe("reconstructMessages structural invariants", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Stopped runs (run.done stopReason "cancelled")
+// ---------------------------------------------------------------------------
+
+const CANCELLED_MARKER = "[This turn was stopped before it finished.]";
+
+function runCancelled(runId: string): RunDoneEvent {
+  return { ts: ts(5), type: "run.done", runId, stopReason: "cancelled", totalMs: 1000 };
+}
+
+/** Every text part across a reconstruction, in order. */
+function allText(messages: StoredMessage[]): string[] {
+  return messages.flatMap((m) =>
+    Array.isArray(m.content)
+      ? m.content.flatMap((p) => ("type" in p && p.type === "text" ? [p.text as string] : []))
+      : [],
+  );
+}
+
+describe("reconstructMessages — cancelled runs", () => {
+  it("tells the model a turn that produced nothing was stopped", () => {
+    const events: ConversationEvent[] = [
+      userMessage("Write a long essay"),
+      runStart("r1"),
+      runCancelled("r1"),
+      userMessage("Actually, just a summary"),
+    ];
+    const messages = reconstructMessages(events);
+
+    expect(messages.map((m) => m.role)).toEqual(["user", "assistant", "user"]);
+    expect(allText([messages[1]!])).toEqual([CANCELLED_MARKER]);
+    const text = allText(messages).join("\n");
+    expect(text).not.toContain("model error");
+    expect(text).not.toContain("without producing any response");
+  });
+
+  it("closes a stopped run after its tool results", () => {
+    const events: ConversationEvent[] = [
+      userMessage("Go"),
+      runStart("r1"),
+      llmToolCall("r1", "tc1", "search"),
+      toolStart("r1", "tc1", "search"),
+      toolDone("r1", "tc1", "search", "found"),
+      runCancelled("r1"),
+      userMessage("Stop there"),
+    ];
+    const messages = reconstructMessages(events);
+
+    assertValidMessageStructure(messages);
+    assertNoAdjacentUserMessages(messages);
+    expect(messages.map((m) => m.role)).toEqual(["user", "assistant", "tool", "assistant", "user"]);
+    expect(allText([messages[3]!])).toEqual([CANCELLED_MARKER]);
+  });
+
+  it("appends the marker to a stopped run's trailing text-only assistant message", () => {
+    const events: ConversationEvent[] = [
+      userMessage("Go"),
+      runStart("r1"),
+      {
+        ts: ts(2),
+        type: "llm.response",
+        runId: "r1",
+        model: "claude-sonnet-4-5-20250929",
+        content: [
+          { type: "text", text: "Reading the file now." },
+          { type: "tool-call", toolCallId: "tc1", toolName: "read", input: {} },
+        ],
+        usage: { inputTokens: 100, outputTokens: 50, cacheReadTokens: 0, cacheWriteTokens: 0 },
+        llmMs: 500,
+      } as LlmResponseEvent,
+      // tc1 was in flight when the user pressed Stop: no tool.done.
+      runCancelled("r1"),
+      userMessage("Never mind"),
+    ];
+    const messages = reconstructMessages(events);
+
+    assertValidMessageStructure(messages);
+    expect(messages.map((m) => m.role)).toEqual(["user", "assistant", "user"]);
+    expect(allText([messages[1]!])).toEqual(["Reading the file now.", CANCELLED_MARKER]);
+  });
+
+  it("leaves a trailing assistant message carrying reasoning unchanged", () => {
+    const reasoning = {
+      type: "reasoning",
+      text: "thinking",
+      providerMetadata: { anthropic: { signature: "sig" } },
+    };
+    const events: ConversationEvent[] = [
+      userMessage("Go"),
+      runStart("r1"),
+      {
+        ts: ts(2),
+        type: "llm.response",
+        runId: "r1",
+        model: "claude-sonnet-4-5-20250929",
+        content: [
+          reasoning,
+          { type: "text", text: "Partial answer" },
+          { type: "tool-call", toolCallId: "tc1", toolName: "read", input: {} },
+        ],
+        usage: { inputTokens: 100, outputTokens: 50, cacheReadTokens: 0, cacheWriteTokens: 0 },
+        llmMs: 500,
+      } as LlmResponseEvent,
+      runCancelled("r1"),
+    ];
+    const messages = reconstructMessages(events);
+
+    expect(messages.map((m) => m.role)).toEqual(["user", "assistant"]);
+    expect(allText(messages)).not.toContain(CANCELLED_MARKER);
+  });
+
+  it("adds no marker to a run that completed", () => {
+    const events: ConversationEvent[] = [
+      userMessage("Hi"),
+      runStart("r1"),
+      llmText("r1", "Hello"),
+      runDone("r1"),
+    ];
+    expect(allText(reconstructMessages(events))).not.toContain(CANCELLED_MARKER);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Tool-result bounding on replay
 // ---------------------------------------------------------------------------
 

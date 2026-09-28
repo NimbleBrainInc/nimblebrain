@@ -144,16 +144,11 @@ type BadgeVariant = (typeof BADGE_VARIANTS)[number];
  * (<20) is acceptable.
  */
 export function workspaceBadgeVariant(workspace: WorkspaceInfo): BadgeVariant {
-  // Personal workspace gets a fixed treatment so it's instantly
-  // recognizable across both sidebar + provenance + composer footer.
-  if (workspace.isPersonal === true) return "secondary";
   let h = 0;
   for (let i = 0; i < workspace.id.length; i++) {
     h = (h * 31 + workspace.id.charCodeAt(i)) >>> 0;
   }
-  // Skip "secondary" so personal stays distinct.
-  const variants = BADGE_VARIANTS.filter((v) => v !== "secondary");
-  return variants[h % variants.length] ?? "default";
+  return BADGE_VARIANTS[h % BADGE_VARIANTS.length] ?? "default";
 }
 
 function WorkspaceBadge({ workspace }: { workspace: WorkspaceInfo }) {

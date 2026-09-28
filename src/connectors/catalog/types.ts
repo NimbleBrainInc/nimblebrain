@@ -169,7 +169,7 @@ export type InstallAction = RemoteOAuthInstall | DirectUrlInstall;
 /**
  * Curated remote OAuth service. The existing connector catalog flow:
  * lifecycle.install adds the URL connector to workspace.json, then
- * /v1/mcp-auth/initiate kicks off the OAuth round-trip.
+ * /v1/workspaces/:wsId/mcp-auth/initiate kicks off the OAuth round-trip.
  */
 export interface RemoteOAuthInstall {
   kind: "remote-oauth";

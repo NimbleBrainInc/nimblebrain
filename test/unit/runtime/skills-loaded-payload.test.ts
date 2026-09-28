@@ -254,10 +254,10 @@ describe("collectLoadedSkills", () => {
     expect(out.map((s) => s.skill.manifest.name)).toEqual(["mpak-guide", "house-style"]);
   });
 
-  test("keeps a non-vendored always-on skill with no sourcePath (workspace persona override)", () => {
+  test("keeps a non-vendored always-on skill with no sourcePath", () => {
     const out = collectLoadedSkills({
       toolAffinity: [],
-      alwaysOn: [makeSkill("identity-override", { sourcePath: "" })],
+      alwaysOn: [makeSkill("example", { sourcePath: "" })],
     });
     expect(out).toHaveLength(1);
     expect(out[0]!.loadedBy).toBe("always");

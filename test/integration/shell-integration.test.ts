@@ -6,10 +6,10 @@ import { Runtime } from "../../src/runtime/runtime.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { startServer } from "../../src/api/server.ts";
 import type { ServerHandle } from "../../src/api/server.ts";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import type { ConnectorRef, PlacementDeclaration } from "../../src/connectors/runtime/types.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
 
 // ---------------------------------------------------------------------------
 // Test setup: Runtime + HTTP server + temp directory for connectors
@@ -26,13 +26,14 @@ beforeAll(async () => {
 	mkdirSync(workDir, { recursive: true });
 
 	runtime = await Runtime.start({
+		identityProvider: devProvider,
 		model: { provider: "custom", adapter: createEchoModel() },
 		workDir,
 		logging: { disabled: true },
 	});
 	await provisionTestWorkspace(runtime);
 
-	handle = startServer({ runtime, port: 0 });
+	handle = startServer({ runtime, port: 0});
 	baseUrl = `http://localhost:${handle.port}`;
 });
 
@@ -81,11 +82,11 @@ async function createMcpClient(): Promise<Client> {
 }
 
 // =============================================================================
-// 1. Install connector → /v1/shell shows placements → uninstall → gone
+// 1. Install connector → /v1/workspaces/:wsId/shell shows placements → uninstall → gone
 // =============================================================================
 
-describe("Install/uninstall → /v1/shell placement updates", () => {
-	it("install connector with placements → GET /v1/shell includes them → uninstall → gone", async () => {
+describe("Install/uninstall → /v1/workspaces/:wsId/shell placement updates", () => {
+	it("install connector with placements → GET /v1/workspaces/:wsId/shell includes them → uninstall → gone", async () => {
 		const devRegistry = runtime.getRegistryForWorkspace(TEST_WORKSPACE_ID);
 		const serverName = await installConnector("tasks", [
 			{ slot: "sidebar.apps", resourceUri: "ui://tasks/nav", priority: 30, label: "Tasks" },
@@ -93,8 +94,8 @@ describe("Install/uninstall → /v1/shell placement updates", () => {
 		]);
 
 		try {
-			// GET /v1/shell should now include the tasks placements
-			const shellRes = await fetch(`${baseUrl}/v1/shell`, { headers: { "X-Workspace-Id": TEST_WORKSPACE_ID } });
+			// GET /v1/workspaces/:wsId/shell should now include the tasks placements
+			const shellRes = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/shell`);
 			expect(shellRes.status).toBe(200);
 			const shell = await shellRes.json();
 
@@ -110,8 +111,8 @@ describe("Install/uninstall → /v1/shell placement updates", () => {
 			// Uninstall
 			await runtime.getLifecycle().uninstall(serverName, devRegistry, TEST_WORKSPACE_ID);
 
-			// GET /v1/shell should no longer have tasks placements
-			const shellRes2 = await fetch(`${baseUrl}/v1/shell`, { headers: { "X-Workspace-Id": TEST_WORKSPACE_ID } });
+			// GET /v1/workspaces/:wsId/shell should no longer have tasks placements
+			const shellRes2 = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/shell`);
 			const shell2 = await shellRes2.json();
 
 			const tasksAfter = shell2.placements.filter(
@@ -129,18 +130,18 @@ describe("Install/uninstall → /v1/shell placement updates", () => {
 });
 
 // =============================================================================
-// 2. Connector with placements → appears in /v1/shell
+// 2. Connector with placements → appears in /v1/workspaces/:wsId/shell
 // =============================================================================
 
-describe("Connector with placements → /v1/shell", () => {
-	it("connector with main placement appears in /v1/shell", async () => {
+describe("Connector with placements → /v1/workspaces/:wsId/shell", () => {
+	it("connector with main placement appears in /v1/workspaces/:wsId/shell", async () => {
 		const devRegistry = runtime.getRegistryForWorkspace(TEST_WORKSPACE_ID);
 		const serverName = await installConnector("placedapp", [
 			{ slot: "main", resourceUri: "ui://placedapp/main", label: "placedapp App", icon: "placedapp-icon", route: "placedapp" },
 		]);
 
 		try {
-			const res = await fetch(`${baseUrl}/v1/shell`, { headers: { "X-Workspace-Id": TEST_WORKSPACE_ID } });
+			const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/shell`);
 			const body = await res.json();
 
 			const entries = body.placements.filter(
@@ -162,7 +163,7 @@ describe("Connector with placements → /v1/shell", () => {
 });
 
 // =============================================================================
-// 3. MCP client → /mcp → lists nb__ tools → calls nb__list_apps
+// 3. MCP client → /mcp → lists nb__ tools → calls nb__workspace_info
 // =============================================================================
 
 describe("MCP client e2e with nb tools", () => {
@@ -176,15 +177,15 @@ describe("MCP client e2e with nb tools", () => {
 			const coreTools = result.tools.filter((t) => t.name.startsWith(NB_PREFIX));
 			expect(coreTools.length).toBeGreaterThanOrEqual(7);
 
-			// A genuinely agent-facing nb__ tool — not an `ai.nimblebrain/internal`
-			// one (e.g. list_apps), which the /mcp listing strips.
+			// A genuinely agent-facing nb__ tool — not an app-only (`ui.visibility: ["app"]`)
+			// one (e.g. workspace_info), which the /mcp listing strips.
 			const names = coreTools.map((t) => t.name).sort();
 			expect(names).toContain(`${NB_PREFIX}search`);
-			// Regression pin: internal tools are absent from the /mcp listing
-			// (list_apps carries ai.nimblebrain/internal). Fails if the filter
+			// Regression pin: app-only tools are absent from the /mcp listing
+			// (workspace_info is one). Fails if the filter
 			// in mcp-server.ts tools/list is dropped, even though the tool stays
 			// callable by name (see the callTool tests below).
-			expect(names).not.toContain(`${NB_PREFIX}list_apps`);
+			expect(names).not.toContain(`${NB_PREFIX}workspace_info`);
 		} finally {
 			await client.close();
 		}
@@ -204,11 +205,11 @@ describe("MCP client e2e with nb tools", () => {
 		}
 	});
 
-	it("callTool nb__list_apps returns structured data", async () => {
+	it("callTool nb__workspace_info returns structured data", async () => {
 		const client = await createMcpClient();
 		try {
 			const result = await client.callTool({
-				name: `${NB_PREFIX}list_apps`,
+				name: `${NB_PREFIX}workspace_info`,
 				arguments: {},
 			});
 			expect(result.isError).toBeFalsy();
@@ -216,7 +217,7 @@ describe("MCP client e2e with nb tools", () => {
 			const textBlocks = result.content as Array<{ type: string; text: string }>;
 			expect(textBlocks[0]!.type).toBe("text");
 			// MCP protocol returns content blocks, not structuredContent.
-			// The text should contain a human-readable app listing.
+			// The text should contain a human-readable workspace summary.
 			expect(textBlocks[0]!.text.length).toBeGreaterThan(0);
 		} finally {
 			await client.close();
@@ -226,15 +227,15 @@ describe("MCP client e2e with nb tools", () => {
 });
 
 // =============================================================================
-// 4. Core tools via Bridge proxy (POST /v1/tools/call server=nb)
+// 4. Core tools via Bridge proxy (POST /v1/workspaces/:wsId/tools/call server=nb)
 // =============================================================================
 
-describe("POST /v1/tools/call — all core tools via Bridge proxy", () => {
-	it("list_apps returns array", async () => {
-		const res = await fetch(`${baseUrl}/v1/tools/call`, {
+describe("POST /v1/workspaces/:wsId/tools/call — all core tools via Bridge proxy", () => {
+	it("workspace_info returns content", async () => {
+		const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/tools/call`, {
 			method: "POST",
-			headers: { "Content-Type": "application/json", "X-Workspace-Id": TEST_WORKSPACE_ID },
-			body: JSON.stringify({ server: "nb", tool: "list_apps", arguments: {} }),
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ server: "nb", tool: "workspace_info", arguments: {} }),
 		});
 		expect(res.status).toBe(200);
 		const body = await res.json();

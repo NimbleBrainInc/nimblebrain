@@ -78,7 +78,7 @@ Open **Conversations** from the sidebar to see your history. Each conversation s
 
 Click any conversation to load it in the chat panel and continue where you left off. The agent has the full context of everything discussed previously.
 
-The list and the search box both show **the workspace you are currently in**, and only that one. Switch workspaces to see another workspace's history. The same holds when you ask the agent — `conversations__list` and `conversations__search` resolve to your current workspace and take no workspace argument, so the agent cannot search across your workspaces in one pass. A conversation opened by a direct link still loads from whichever workspace it lives in.
+The list and the search box both show **the workspace you are currently in**, and only that one. Switch workspaces to see another workspace's history. The same holds when you ask the agent — `conversations__list` and `conversations__search` resolve to your current workspace and take no workspace argument, so the agent cannot search across your workspaces in one pass. A conversation opened by a direct link loads from whichever workspace it lives in, and the web UI takes you to that workspace.
 
 <Aside type="tip">
 You can link directly to a conversation by sharing its URL. When you open the link, the conversation loads automatically in your chat panel.
@@ -88,7 +88,7 @@ You can link directly to a conversation by sharing its URL. When you open the li
 
 Select a conversation from the sidebar list in the web UI. The full message history loads, and new messages continue the conversation. Through the API, pass `conversationId` in the chat request body to continue an existing conversation.
 
-A conversation always resumes **in its own workspace** — the one it was born in — no matter which workspace you are viewing when you send. That workspace is fixed for the conversation's whole life and decides which tools and context the agent reaches. In the web UI, if you switch to a different workspace the chat panel starts a fresh conversation in the workspace you are now viewing rather than continuing one from another workspace (the earlier conversation stays saved in its own workspace's list).
+A conversation resumes **only in its own workspace** — the one it was born in. That workspace is fixed for the conversation's whole life and decides which tools and context the agent reaches. Through the API, send the chat to that workspace's path, `/v1/workspaces/<wsId>/chat`: a `conversationId` that is not one of your conversations in the workspace in the path gets `404 conversation_not_found`, the same answer as an id that does not exist. In the web UI, opening a conversation from another workspace takes you to that workspace, and switching to a different workspace starts a fresh conversation in the workspace you are now viewing (the earlier conversation stays saved in its own workspace's list).
 
 ## Auto-titling
 

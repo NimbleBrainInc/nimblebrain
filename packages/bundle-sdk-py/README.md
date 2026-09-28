@@ -1,8 +1,12 @@
 # nimblebrain-bundle-sdk
 
-Python SDK for NimbleBrain MCP bundles. Provides a typed wrapper around the
-`ai.nimblebrain/host-resources` extension so bundle code can read workspace
-files through the platform without going through the agent.
+Python SDK for NimbleBrain MCP bundles. It does two things:
+
+- wraps the `ai.nimblebrain/host-resources` extension so bundle code can read
+  workspace files through the platform without going through the agent, and
+- serves a bundle's skills through the MCP Skills extension
+  (`io.modelcontextprotocol/skills`, [SEP-2640](https://modelcontextprotocol.io/seps/2640-skills-extension)),
+  which is how the NimbleBrain runtime discovers them. See [Skills](#skills).
 
 ```bash
 uv add nimblebrain-bundle-sdk
@@ -106,6 +110,109 @@ range (`-32000` to `-32099`) for quota/policy responses, distinct from
 
 Bundle authors should match on specific codes to back off intelligently
 rather than treating all errors as server faults.
+
+## Skills
+
+A server publishes skills by declaring `io.modelcontextprotocol/skills`. The
+extension answers `skills/list` and `skills/get` with each skill's entry (its
+`SKILL.md` URI, its frontmatter verbatim, and a `sha256` digest and byte size
+for every file) and serves every file through `resources/read` at
+`skill://<skill-path>/<file-path>`. A host verifies each file it reads against
+the digest, so the bytes served and the bytes listed come from one place: the
+extension. Do not also register `skill://` resources by hand: FastMCP serves
+the last resource registered at a URI, so a FastMCP server that registers one
+over a skill file fails at startup.
+
+A skill is a directory holding a `SKILL.md` (frontmatter with `name` and
+`description`) and any reference files:
+
+```
+skills/tasks/
+├── SKILL.md
+└── references/transitions.md
+```
+
+**FastMCP:**
+
+```python
+from pathlib import Path
+from fastmcp import FastMCP
+from nimblebrain_bundle_sdk import SkillsExtension
+
+mcp = FastMCP("Tasks")
+mcp.add_extension(SkillsExtension([Path(__file__).parent / "skills" / "tasks"]))
+```
+
+**`mcp` SDK `MCPServer`:**
+
+```python
+from mcp.server.mcpserver import MCPServer
+from nimblebrain_bundle_sdk import MCPServerSkillsExtension
+
+server = MCPServer("Tasks", extensions=[MCPServerSkillsExtension([SKILLS / "tasks"])])
+```
+
+**Generated or packaged files.** When a skill's files are not a directory of
+their own (a `SKILL.md` built at startup, or one packaged beside other code),
+pass a `SkillDefinition` with the skill path and the files keyed by their path
+in the skill:
+
+```python
+from nimblebrain_bundle_sdk import SkillDefinition, SkillsExtension
+
+outreach = SkillDefinition(
+    "outreach",  # served at skill://outreach/SKILL.md
+    {
+        "SKILL.md": render_skill_md("outreach"),
+        "references/tone.md": (REFS / "tone.md").read_text(),
+    },
+)
+mcp.add_extension(SkillsExtension([SKILLS / "tasks", outreach]))
+```
+
+The skill path may carry a prefix (`"acme/billing/refunds"`); its last segment
+must equal the frontmatter `name`. A directory's skill path defaults to the
+directory's name (`SkillDefinition.from_directory(dir, path=...)` overrides it).
+Dotfiles and `__pycache__` are skipped.
+
+Everything the spec requires of a skill is checked at construction, so a bad
+skill fails when the server starts rather than on a host's first read: a
+missing `SKILL.md` or frontmatter, a `name` outside the Agent Skills rules, a
+`name` that differs from the last path segment, a file path that escapes the
+skill or that a URI would encode differently, two skills at one URI.
+A skill beyond the SEP-2640 limits (512 files or 16 MiB) warns.
+
+Notes on the wire:
+
+- Frontmatter is parsed with YAML 1.2 semantics for booleans, numbers, and
+  dates (`yes`, `1:30`, and `2026-01-01` stay strings, and `017` is 17),
+  matching the parsers hosts compare with.
+- Text files are served as text resources and anything that is not UTF-8 as a
+  blob; either way the digest covers the raw file bytes.
+- `skills/list` returns every skill in one page. On protocol 2026-07-28 both
+  results carry `ttlMs: 0` and `cacheScope: "private"`.
+- On a 2025-era (`initialize`) connection the `mcp` SDK does not send
+  `capabilities.extensions`, so only 2026-07-28 clients see the declaration.
+  `skills/list` and `skills/get` answer on either.
+
+### Conformance
+
+The upstream suite's SEP-2640 server scenarios run against
+`tests/conformance_server.py`, which serves the fixture skill and a generated
+one. The scenarios are on the suite's `main` branch:
+
+```bash
+uv run python tests/conformance_server.py --port 3001            # or --server mcpserver
+git clone https://github.com/modelcontextprotocol/conformance && cd conformance && npm ci
+for s in enumeration manifest directory; do
+  npm start -- server --url http://127.0.0.1:3001/mcp --scenario sep-2640-skills-$s
+done
+```
+
+Both adapters pass every check. On FastMCP the manifest scenario warns
+(`sep-2640-meta-prefix`) because FastMCP stamps its own `fastmcp` `_meta` key
+on every resource; the `directory` checks skip because `resources/directory/read`
+is not implemented.
 
 ## Releases
 

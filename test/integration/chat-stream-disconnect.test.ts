@@ -28,6 +28,8 @@ import { startServer } from "../../src/api/server.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { createMockModel } from "../helpers/mock-model.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
+import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 
 const SENTINEL = "DETACH_SENTINEL";
 const BACKGROUND_REPLY = "completed in the background after disconnect";
@@ -39,7 +41,7 @@ async function waitFor(predicate: () => boolean, timeoutMs = 5_000): Promise<voi
   }
 }
 
-describe("POST /v1/chat/stream — run survives client disconnect", () => {
+describe("POST /v1/workspaces/:wsId/chat/stream — run survives client disconnect", () => {
   let handle: ServerHandle | null = null;
   let runtime: Runtime | null = null;
 
@@ -89,24 +91,25 @@ describe("POST /v1/chat/stream — run survives client disconnect", () => {
     const workDir = join(tmpdir(), `nb-detach-${Date.now()}`);
     mkdirSync(workDir, { recursive: true });
     runtime = await Runtime.start({
+      identityProvider: devProvider,
       model: { provider: "custom", adapter: gatedModel },
       logging: { disabled: true },
       workDir,
     });
     await provisionTestWorkspace(runtime);
-    handle = startServer({ runtime, port: 0 });
+    handle = startServer({ runtime, port: 0});
     const baseUrl = `http://localhost:${handle.port}`;
 
     // Seed a conversation to get a stable convId to assert against.
-    const seed = await runtime.chat({ message: "seed", workspaceId: TEST_WORKSPACE_ID });
+    const seed = await runtime.chat({ identity: DEV_IDENTITY, message: "seed", workspaceId: TEST_WORKSPACE_ID });
     const convId = seed.conversationId;
 
     // Start the streamed turn. The model gates, so the run is in-flight
     // (and holds the conversation lock) while we yank the connection.
     const ac = new AbortController();
-    const res = await fetch(`${baseUrl}/v1/chat/stream`, {
+    const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat/stream`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", "X-Workspace-Id": TEST_WORKSPACE_ID },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ message: `${SENTINEL} please answer`, conversationId: convId }),
       signal: ac.signal,
     });

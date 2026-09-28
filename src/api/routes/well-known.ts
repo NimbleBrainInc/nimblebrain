@@ -11,15 +11,15 @@
  * - RFC 8414: OAuth 2.0 Authorization Server Metadata
  */
 
-import { Hono } from "hono";
+import { type Handler, Hono } from "hono";
 import type { AuthorizationServer } from "../../identity/provider.ts";
 import {
-  isWorkspaceIdShape,
   MCP_PATH_PREFIX,
   mcpResourceUrl,
   PROTECTED_RESOURCE_METADATA_PATH,
 } from "../mcp-resource.ts";
 import type { AppContext } from "../types.ts";
+import { isWorkspaceIdShape } from "../workspace-address.ts";
 
 export function wellKnownRoutes(ctx: AppContext) {
   const app = new Hono();
@@ -58,16 +58,22 @@ export function wellKnownRoutes(ctx: AppContext) {
    * nothing at the origin accepts a token minted for it: bare `/mcp` is refused
    * and `/v1/*` takes no resource token. Advertising it would send a client to
    * mint a token every route refuses, so it is absent, and says where to look.
+   *
+   * The same holds for every other path under the metadata path, bare `/mcp`
+   * included: only `/mcp/<wsId>` is a resource. They are answered here, where
+   * the request is still unauthenticated, so none falls through to an
+   * authenticated route's middleware and reads as a 401.
    */
-  app.get(PROTECTED_RESOURCE_METADATA_PATH, (c) =>
+  const noResource: Handler = (c) =>
     c.json(
       {
         error: "not_found",
         message: `Each workspace's MCP endpoint is its own resource; its metadata is at ${PROTECTED_RESOURCE_METADATA_PATH}${MCP_PATH_PREFIX}/<workspaceId>.`,
       },
       404,
-    ),
-  );
+    );
+  app.get(PROTECTED_RESOURCE_METADATA_PATH, noResource);
+  app.get(`${PROTECTED_RESOURCE_METADATA_PATH}/*`, noResource);
 
   /**
    * Authorization Server Metadata proxy (RFC 8414).

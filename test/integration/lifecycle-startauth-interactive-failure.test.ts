@@ -138,7 +138,6 @@ describe("lifecycle.startAuth — interactive-flow failure is surfaced, not swal
       version: "remote",
       state: "starting",
       ui: null,
-      briefing: null,
       type: "plain",
       wsId: WS,
       oauthScope: "workspace",
@@ -179,11 +178,10 @@ describe("lifecycle.startAuth — interactive-flow failure is surfaced, not swal
     }
 
     // The fix: surfaced, not swallowed — and with a meaningful diagnostic.
-    // The mock /token returns 400 invalid_grant, so the SDK throws
-    // `InvalidGrantError` (whose `.message` is empty, hence the `.name`
-    // fallback in startAuth's catch).
+    // The mock /token returns 400 invalid_grant, so the SDK throws an
+    // `OAuthError` whose message is the OAuth error code.
     expect(conn()?.state).toBe("dead");
-    expect(conn()?.lastError).toBe("InvalidGrantError");
+    expect(conn()?.lastError).toBe("invalid_grant");
   }, 20_000);
 
   it("a flow that expires before the user signs in → lastError is the user sentence, not the registry's timer", async () => {

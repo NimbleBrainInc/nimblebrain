@@ -1,7 +1,7 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { type Context, Hono } from "hono";
 import { requireAuth } from "../../../api/middleware/auth.ts";
-import { requireWorkspace } from "../../../api/middleware/workspace.ts";
+import { requireWorkspace, WORKSPACE_ROUTE_PREFIX } from "../../../api/middleware/workspace.ts";
 import {
   profileConnectorsUrl,
   workspaceConnectorsUrl,
@@ -34,12 +34,12 @@ import {
  *
  * Three endpoints:
  *
- * - `POST /v1/composio-auth/initiate` (workspace-authed): asks
- *   Composio to begin a connection for this workspace, sets a session-
+ * - `POST /v1/workspaces/:wsId/composio-auth/initiate` (workspace-authed):
+ *   asks Composio to begin a connection for this workspace, sets a session-
  *   bound `nb_composio_state` cookie, and returns the redirect URL the
- *   browser should navigate to. **POST-only** + `X-Workspace-Id` header
- *   forces a CORS preflight, killing simple-form CSRF — same posture
- *   as `/v1/mcp-auth/initiate`.
+ *   browser should navigate to. **POST-only**, and a cross-site write under
+ *   `/v1/workspaces/` is refused — same posture as the workspace
+ *   `mcp-auth/initiate`.
  *
  * - `GET /v1/composio-auth/callback` (unauthenticated): the return
  *   leg from Composio after the user consents at the vendor. Recovers
@@ -105,11 +105,11 @@ export function composioAuthRoutes(ctx: AppContext) {
 
   const app = new Hono<AppEnv>();
 
-  // ── POST /v1/composio-auth/initiate ───────────────────────────────
+  // ── POST /v1/workspaces/:wsId/composio-auth/initiate ──────────────
   app.post(
-    "/v1/composio-auth/initiate",
+    `${WORKSPACE_ROUTE_PREFIX}/composio-auth/initiate`,
     requireAuth(ctx.authOptions),
-    requireWorkspace(ctx.workspaceStore),
+    requireWorkspace(ctx),
     async (c) => {
       const parsed = await parseInitiateRequest(c);
       if (parsed instanceof Response) return parsed;

@@ -14,8 +14,8 @@
  * are ignored.
  *
  * Allowed (console is the right tool there): the logger itself, the
- * console/debug EventSinks (their whole job is to print events), the
- * `sync-models` CLI script, and `briefing-debug`. A genuinely exceptional
+ * console/debug EventSinks (their whole job is to print events), and the
+ * `sync-models` CLI scripts. A genuinely exceptional
  * call elsewhere needs a `// lint-ok:console` marker on the line above.
  *
  * Scope: `src/**\/*.ts`. Scripts and tests are out of scope.
@@ -37,7 +37,6 @@ const ALLOWED_FILES: ReadonlySet<string> = new Set<string>(
     "adapters/debug-events.ts",
     "model/sync-models.ts",
     "model/sync-nebius.ts",
-    "services/briefing-debug.ts",
   ].map((f) => f.split("/").join(sep)),
 );
 

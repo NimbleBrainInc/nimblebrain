@@ -1,11 +1,6 @@
-import { PersonalWorkspaceInvariantError } from "./errors.ts";
+import type { UserPreferences, UserStore } from "../identity/user.ts";
 import type { Workspace } from "./types.ts";
-import {
-  personalWorkspaceIdFor,
-  personalWorkspaceSlugFor,
-  WorkspaceConflictError,
-  type WorkspaceStore,
-} from "./workspace-store.ts";
+import type { WorkspaceStore } from "./workspace-store.ts";
 
 /**
  * Minimal identity surface needed for workspace provisioning.
@@ -16,71 +11,85 @@ export interface ProvisioningIdentity {
   displayName?: string;
 }
 
+/** In-flight provisioning per store, keyed by user id. Entries live only while a call runs. */
+const inflight = new WeakMap<WorkspaceStore, Map<string, Promise<Workspace[]>>>();
+
 /**
- * Ensure the user has a personal workspace. Idempotent.
+ * Ensure the user belongs to at least one workspace, returning their
+ * memberships (never empty).
  *
- * Invariant (Stage 1+): every authenticated user owns exactly one personal
- * workspace at the canonical id `personalWorkspaceIdFor(user.id)`. The user
- * may additionally be a member of any number of shared workspaces; this
- * helper does not touch those.
+ * A user who belongs to none — new, or removed from every one — gets a
+ * workspace named for them (`provisionedWorkspaceName`) with themselves as
+ * admin. It is an ordinary workspace: an opaque id from `WorkspaceStore.create`,
+ * members can be added, and nothing records how it came to exist. It becomes
+ * the user's default workspace (`preferences.defaultWorkspaceId`) when a
+ * `users` store is given.
  *
- * Providers call this on every successful verifyRequest so the invariant is
- * self-healing — any state drift (workspace missing, partial-applied
- * migration) is corrected on next login.
- *
- * Behavior:
- * - Personal workspace exists at the canonical id → return it. The store's
- *   create-time invariant guarantees the owner is the sole admin member;
- *   we don't second-guess that here.
- * - Personal workspace does not exist → create with `isPersonal: true` +
- *   `ownerUserId`, which `WorkspaceStore.create` populates with the
- *   owner-admin member.
- * - Concurrent first-login race → one winner creates, losers detect the
- *   conflict and re-read.
- *
- * Returns the user's personal workspace (always — never a shared one).
- *
- * Pre-Stage-1.1 state (the user exists but their personal workspace's
- * member list isn't the canonical sole-owner-admin) is NOT auto-healed
- * here. The membership invariant is now enforced by the store; bumping
- * it from a login hot-path would silently mutate identity-bound state.
- * Operators recover via `scripts/cleanup-personal-workspace-members.ts`.
+ * Concurrent calls for one user share one in-flight provisioning, so a burst
+ * of first requests creates one workspace, not several. The guard is
+ * per-process, which is enough at `replicas: 1` (see the `replicas > 1`
+ * prerequisites in `src/api/AGENTS.md`).
  */
-export async function ensureUserWorkspace(
+export function ensureUserWorkspace(
   store: WorkspaceStore,
   identity: ProvisioningIdentity,
-): Promise<Workspace> {
-  const wsId = personalWorkspaceIdFor(identity.id);
-  const name = identity.displayName ? `${identity.displayName}'s Workspace` : "Workspace";
-  const slug = personalWorkspaceSlugFor(identity.id);
+  users?: UserStore,
+): Promise<Workspace[]> {
+  let byUser = inflight.get(store);
+  if (!byUser) {
+    byUser = new Map();
+    inflight.set(store, byUser);
+  }
+  const running = byUser.get(identity.id);
+  if (running) return running;
 
-  // Self-healing read-then-create loop. The body covers three race
-  // shapes around the canonical id: (a) another caller already created
-  // it (read wins); (b) we lose a create-conflict and the workspace
-  // exists by the time we re-read (loop returns it); (c) we lose a
-  // create-conflict but the workspace was deleted before re-read (loop
-  // recreates). 3 attempts is plenty — (c) twice in a row would
-  // require pathological concurrent create+delete churn on one user.
-  const MAX_ATTEMPTS = 3;
-  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
-    const existing = await store.get(wsId);
-    if (existing) return existing;
-    try {
-      return await store.create(name, slug, {
-        isPersonal: true,
-        ownerUserId: identity.id,
+  const run = provision(store, identity, users).finally(() => byUser.delete(identity.id));
+  byUser.set(identity.id, run);
+  return run;
+}
+
+async function provision(
+  store: WorkspaceStore,
+  identity: ProvisioningIdentity,
+  users: UserStore | undefined,
+): Promise<Workspace[]> {
+  const memberships = await store.getWorkspacesForUser(identity.id);
+  if (memberships.length > 0) return memberships;
+
+  const workspace = await store.create(provisionedWorkspaceName(identity.displayName), undefined, {
+    members: [{ userId: identity.id, role: "admin" }],
+  });
+  if (users) {
+    const user = await users.get(identity.id);
+    if (user) {
+      await users.update(identity.id, {
+        preferences: { ...user.preferences, defaultWorkspaceId: workspace.id },
       });
-    } catch (err) {
-      if (err instanceof WorkspaceConflictError) continue;
-      // `PersonalWorkspaceInvariantError` here would mean this helper
-      // built a bad-shape personal workspace — a bug, not a race.
-      // Anything else: surface unchanged.
-      if (err instanceof PersonalWorkspaceInvariantError) throw err;
-      throw err;
     }
   }
+  return [workspace];
+}
 
-  throw new Error(
-    `[provisioning] personal workspace ${wsId} couldn't be reconciled after ${MAX_ATTEMPTS} attempts — investigate concurrent create/delete activity`,
-  );
+/**
+ * The name given to a workspace provisioned for a user: "Mat's workspace".
+ * Takes the first word of the display name; a display name that is an email
+ * address contributes its local part. With no usable name, "Workspace".
+ */
+export function provisionedWorkspaceName(displayName: string | undefined): string {
+  const first = displayName?.trim().split(/\s+/)[0]?.split("@")[0];
+  return first ? `${first}'s workspace` : "Workspace";
+}
+
+/**
+ * The workspace a user lands in when nothing names one: their default
+ * (`preferences.defaultWorkspaceId`) while they are still a member of it,
+ * else their earliest membership. `memberships` must be non-empty and in
+ * store order (`WorkspaceStore.list` sorts by `createdAt`).
+ */
+export function defaultWorkspaceFor(
+  memberships: readonly Workspace[],
+  preferences: UserPreferences | undefined,
+): Workspace {
+  const preferred = preferences?.defaultWorkspaceId;
+  return memberships.find((ws) => ws.id === preferred) ?? memberships[0]!;
 }

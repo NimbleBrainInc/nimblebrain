@@ -41,9 +41,8 @@ function makeCtx(opts: { issuer?: string; verify?: () => Promise<null> } = {}): 
   return {
     provider,
     authOptions: {
-      mode: { type: "adapter", provider },
+      provider,
       eventSink: { emit: () => {} },
-      internalToken: "test-internal-token",
     },
     runtime: {
       getFeatures: () => resolveFeatures(),

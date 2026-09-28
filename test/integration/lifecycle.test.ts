@@ -2,12 +2,7 @@ import { describe, expect, it, afterAll, afterEach, beforeEach } from "bun:test"
 import { mkdirSync, writeFileSync, rmSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
-import {
-	ListToolsRequestSchema,
-	CallToolRequestSchema,
-} from "@modelcontextprotocol/sdk/types.js";
+import { Server, WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/server";
 import type { EngineEvent, EventSink } from "../../src/engine/types.ts";
 import { ConnectorLifecycleManager } from "../../src/connectors/runtime/lifecycle.ts";
 import { startConnectorSource } from "../../src/connectors/runtime/startup.ts";
@@ -78,7 +73,7 @@ function startMockRemoteServer(): MockRemoteServer {
 				{ name: "remote-echo", version: "0.1.0" },
 				{ capabilities: { tools: {} } },
 			);
-			mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
+			mcpServer.setRequestHandler('tools/list', async () => ({
 				tools: [
 					{
 						name: "echo",
@@ -90,7 +85,7 @@ function startMockRemoteServer(): MockRemoteServer {
 					},
 				],
 			}));
-			mcpServer.setRequestHandler(CallToolRequestSchema, async (req) => ({
+			mcpServer.setRequestHandler('tools/call', async (req) => ({
 				content: [{ type: "text", text: `Echo: ${req.params.arguments?.message}` }],
 			}));
 			servers.push(mcpServer);
@@ -297,9 +292,6 @@ describe("ConnectorLifecycleManager — instance tracking", () => {
 				manifestName: "ai.nimblebrain/crm",
 				version: "0.1.0",
 				ui: null,
-				briefing: {
-					facets: [{ name: "deals", label: "Deals", type: "delta", tool: "crm__deals" }],
-				},
 			},
 			"ws_eng",
 		);
@@ -307,7 +299,6 @@ describe("ConnectorLifecycleManager — instance tracking", () => {
 		const instance = lifecycle.getInstance("crm", "ws_eng")!;
 		expect(instance.connectorName).toBe("ai.nimblebrain/crm");
 		expect(instance.version).toBe("0.1.0");
-		expect(instance.briefing?.facets).toHaveLength(1);
 		expect(instance.wsId).toBe("ws_eng");
 	});
 

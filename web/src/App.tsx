@@ -20,7 +20,7 @@ import { RouteGuard } from "./components/RouteGuard";
 import { ShellLayout } from "./components/ShellLayout";
 import { WorkspaceRouteGuard } from "./components/WorkspaceRouteGuard";
 import { ArtifactPanelProvider } from "./context/ArtifactPanelContext";
-import { ChatProvider, useChatConfigContext, useChatContext } from "./context/ChatContext";
+import { ChatProvider, useChatConfigContext } from "./context/ChatContext";
 import { ChatPanelProvider, useChatPanelContext } from "./context/ChatPanelContext";
 import { FocusedAppProvider } from "./context/FocusedAppContext";
 import { NotificationsProvider } from "./context/NotificationsProvider";
@@ -297,8 +297,8 @@ function AuthenticatedAppContent({
   const location = useLocation();
   const activeSlug = wsCtx.activeWorkspace ? toSlug(wsCtx.activeWorkspace.id) : null;
 
-  // Recover from a stale/invalid workspace context. A data call that fires
-  // with an X-Workspace-Id the server rejects (deleted workspace, lost
+  // Recover from a stale/invalid workspace context. A data call to a workspace
+  // path the server rejects (deleted workspace, lost
   // membership, or a dynamic /w/:slug deep-link the user can't see) returns
   // `workspace_error`. Bootstrap validates the active workspace on load, so
   // this is the mid-session net: drop the bad selection (excluding the
@@ -311,6 +311,7 @@ function AuthenticatedAppContent({
         wsCtx.activeWorkspace?.id,
         wsCtx.setActiveWorkspace,
         () => navigate("/", { replace: true }),
+        () => window.location.assign("/"),
       );
     });
     return () => setOnWorkspaceError(null);
@@ -410,7 +411,7 @@ function AuthenticatedAppContent({
                 <Route
                   key={p.route}
                   path={identityAppSegment(p.serverName)}
-                  element={<AppWithChat placement={p} onNavigate={handleNavigate} />}
+                  element={<AppWithChat placement={p} />}
                 />
               ))}
               {/* Apps within workspace */}
@@ -418,7 +419,7 @@ function AuthenticatedAppContent({
                 <Route
                   key={p.route}
                   path={`app/${p.route}`}
-                  element={<AppWithChat placement={p} onNavigate={handleNavigate} />}
+                  element={<AppWithChat placement={p} />}
                 />
               ))}
               {/* Full-page context inspector for a conversation — opened from the
@@ -551,7 +552,7 @@ function AuthenticatedAppContent({
 
 /**
  * Non-rendering component that handles iframe action events (nb:action).
- * Isolated here so that consuming ChatContext (streaming) doesn't re-render
+ * Isolated here so that consuming the chat panel context doesn't re-render
  * the shell layout.
  */
 function ActionBridge({
@@ -562,12 +563,9 @@ function ActionBridge({
   resolveAppRoute: (name: string) => string | null;
 }) {
   const chatPanel = useChatPanelContext();
-  const chat = useChatContext();
 
   // Use refs so the event handler doesn't need to re-register on every
-  // streaming tick — only the ref contents update.
-  const chatRef = useRef(chat);
-  chatRef.current = chat;
+  // render — only the ref contents update.
   const chatPanelRef = useRef(chatPanel);
   chatPanelRef.current = chatPanel;
   const navigateRef = useRef(handleNavigate);
@@ -578,24 +576,16 @@ function ActionBridge({
   useEffect(() => {
     // Dispatch table keyed by action name. Each handler reads current state
     // through the refs, so the listener registers once and unknown actions
-    // no-op. Params carry the event detail (id, prompt, name, route).
+    // no-op. Params carry the event detail (`id`, `name`).
     const actions: Record<string, (params: Record<string, unknown>) => void> = {
       openConversation(params) {
         if (params.id) chatPanelRef.current.openPanel(params.id as string);
-      },
-      startChat(params) {
-        chatPanelRef.current.openPanel();
-        const prompt = params.prompt as string | undefined;
-        if (prompt) chatRef.current.sendMessage(prompt);
       },
       openApp(params) {
         const name = params.name as string | undefined;
         if (!name) return;
         const route = resolveRef.current(name);
         if (route) navigateRef.current(route);
-      },
-      navigate(params) {
-        if (params.route) navigateRef.current(params.route as string);
       },
     };
 

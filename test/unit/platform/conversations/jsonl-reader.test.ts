@@ -674,6 +674,38 @@ describe("readConversation (event format)", () => {
 		expect(result!.messages[0]!.stopReason).toBe("max_iterations");
 	});
 
+	test("a stopped run carries stopReason 'cancelled' and keeps its content", async () => {
+		const runId = "run_c";
+		const lines = [
+			JSON.stringify(eventMeta("conv_evt_cancel")),
+			JSON.stringify({ ts: "2025-06-01T00:00:00.000Z", type: "run.start", runId }),
+			JSON.stringify({
+				ts: "2025-06-01T00:00:01.000Z",
+				type: "llm.response",
+				runId,
+				model: "m1",
+				content: [{ type: "text", text: "before the stop" }],
+				usage: { inputTokens: 1, outputTokens: 1, cacheReadTokens: 0 },
+				llmMs: 1,
+			}),
+			JSON.stringify({
+				ts: "2025-06-01T00:00:02.000Z",
+				type: "run.done",
+				runId,
+				stopReason: "cancelled",
+				iterations: 2,
+				totalMs: 2000,
+			}),
+		];
+		const path = writeTmpFile("conv_evt_cancel.jsonl", lines);
+
+		const result = await readConversation(path);
+		const asst = result!.messages[0]!;
+		expect(asst.stopReason).toBe("cancelled");
+		expect(asst.content).toBe("before the stop");
+		expect(asst.pending).toBeUndefined();
+	});
+
 	test("run.error is treated as a stopReason terminator", async () => {
 		const runId = "run_e";
 		const lines = [

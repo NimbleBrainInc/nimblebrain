@@ -15,8 +15,7 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { serverNotificationsRelayedTotal } from "../../src/api/metrics.ts";
 import type { ServerHandle } from "../../src/api/server.ts";
 import { startServer } from "../../src/api/server.ts";
@@ -24,6 +23,7 @@ import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
 
 const LIST_CHANGED = "notifications/resources/list_changed";
 
@@ -109,12 +109,13 @@ async function forwardedCount(): Promise<number> {
 beforeAll(async () => {
   mkdirSync(testDir, { recursive: true });
   runtime = await Runtime.start({
+    identityProvider: devProvider,
     model: { provider: "custom", adapter: createEchoModel() },
     logging: { disabled: true },
     workDir: testDir,
   });
   await provisionTestWorkspace(runtime);
-  handle = startServer({ runtime, port: 0 });
+  handle = startServer({ runtime, port: 0});
   baseUrl = `http://localhost:${handle.port}`;
 });
 
@@ -266,7 +267,7 @@ describe("a person's own apps announce their writes to that person", () => {
     // new conversation only through this announcement.
     const own = await openOwnStream();
     try {
-      await runtime.chat({ message: "Hello", workspaceId: TEST_WORKSPACE_ID });
+      await runtime.chat({ identity: DEV_IDENTITY, message: "Hello", workspaceId: TEST_WORKSPACE_ID });
 
       await eventually(() => notificationsFor(own.frames, "conversations").length > 0);
       expect(notificationsFor(own.frames, "conversations")[0]).toEqual({

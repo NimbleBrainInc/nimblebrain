@@ -1,6 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { ToolPromotionControls } from "../engine/types.ts";
 import type { UserIdentity } from "../identity/provider.ts";
+import { withRootContext } from "../observability/tracing.ts";
 import type { ModelSlots } from "./types.ts";
 
 /**
@@ -15,26 +16,21 @@ export interface RequestContext {
    * may read and write, whose tools it may dispatch, and whose config applies.
    *
    * There is exactly one, because a session reaches exactly one workspace (the
-   * wall). A personal workspace is not special in this model — it is the
-   * workspace created at first login, and it reaches this field the same way
-   * any other does.
+   * wall).
    *
-   * Set on every door: chat (the conversation's own workspace — a chat resumed
-   * in A while the client is focused on B reads A), automation runs
+   * Set on every door: chat (the workspace its request addresses, which a
+   * resume shares with its conversation), automation runs
    * (provenance), `/mcp` (the membership-validated workspace in its URL),
-   * REST (the validated `X-Workspace-Id`), and each
+   * REST (the membership-validated workspace in its URL), and each
    * per-call restamp (the routed workspace, which the wall guarantees is the
    * same one).
    *
    * Absent ⇒ no workspace in scope (a background job), and every consumer
    * denies rather than guessing.
    *
-   * Note this is a property of the CONSUMERS, not a guarantee that absence
-   * survives to them: the REST door substitutes the caller's personal
-   * workspace when `X-Workspace-Id` is absent (`buildRestToolCallContext`), so
-   * a headerless REST call reads the caller's own personal workspace rather
-   * than being refused. `/mcp` has no such fallback: bare `/mcp` is refused. Do not
-   * read this field's optionality as licence to add an unguarded consumer.
+   * No request door leaves it absent: every REST route that reaches a source
+   * names its workspace in the URL, and bare `/mcp` is refused. Do not read
+   * this field's optionality as licence to add an unguarded consumer.
    */
   workspaceId?: string;
   /**
@@ -101,18 +97,6 @@ export interface RequestContext {
    * is not (see that module's trust-boundary note).
    */
   unattended?: boolean;
-  /**
-   * The caller's own short opaque string identifying WHAT made an unattended
-   * dispatch — `"route:rt_…"` for a notification route. Set only by
-   * `dispatchUnattended`; absent in a chat and in a scheduled run, which have
-   * a conversation and a run id to be identified by.
-   *
-   * Two readers, and they are the whole of it: the audit line, and the
-   * outbound `_meta` stamp under `UNATTENDED_META_KEY` so a connector can tell a
-   * configuration-fired call from a chat turn. The host never parses it — a
-   * caller may put anything short in here, and the value decides nothing.
-   */
-  unattendedReason?: string;
 }
 
 const storage = new AsyncLocalStorage<RequestContext>();
@@ -124,6 +108,19 @@ const storage = new AsyncLocalStorage<RequestContext>();
  */
 export function runWithRequestContext<T>(ctx: RequestContext, fn: () => T): T {
   return storage.run(ctx, fn);
+}
+
+/**
+ * Run `fn` with no request context and no active trace.
+ *
+ * For arming work that outlives the caller — a timer, a background loop. A
+ * `setTimeout` captures the async context it is created in, so a timer armed
+ * inside a request fires as that request (its identity, workspace, and trace)
+ * and hands the same context to every timer it re-arms. Arm through this and
+ * each fire starts clean, like boot-time work does.
+ */
+export function runDetached<T>(fn: () => T): T {
+  return storage.exit(() => withRootContext(fn));
 }
 
 /**

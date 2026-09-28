@@ -34,7 +34,7 @@ import {
 
 const OWNER_ID = "usr_test";
 const PEER_ID = "usr_peer";
-/** Must match `personalWorkspaceIdFor(OWNER_ID)` — the personal-workspace derivation. */
+/** A workspace id in the legacy `ws_user_<userId>` form — opaque like any other. */
 const WS_PERSONAL = `ws_user_${OWNER_ID}`;
 const WS_A = "ws_aaaaaaaaaaaaaaaa";
 const WS_B = "ws_bbbbbbbbbbbbbbbb";
@@ -180,7 +180,7 @@ describe("conversations__list — ambient workspace scoping", () => {
   });
 
   test("denies when no workspace is in scope", async () => {
-    // e.g. an external `/mcp` call with no `X-Workspace-Id`. Deny rather than
+    // e.g. a background job with no workspace bound. Deny rather than
     // guess a workspace — the same posture as `files__*`.
     const result = await exec("list", {}, undefined);
     expect(result.isError).toBe(true);

@@ -4,12 +4,13 @@
  *
  * Boots a `Runtime` with two workspaces visible to a single identity:
  *   1. A shared workspace (default id `ws_helix`).
- *   2. The identity's personal workspace at `personalWorkspaceIdFor(userId)`.
+ *   2. A workspace the identity alone belongs to (the `personal` handle),
+ *      created first so it is the identity's default workspace.
  *
  * Each workspace gets its own in-process MCP source with a single counter-
  * incrementing echo tool. Tests can read the per-source counters to verify
  * dispatch topology (e.g. that a `ws_helix/...` tool call did NOT land in
- * the personal workspace's source).
+ * the identity's own workspace's source).
  *
  * Reuse: T011's smoke variant imports this fixture to drive an external MCP
  * client end-to-end. Anything that bakes in test-only assumptions
@@ -32,11 +33,7 @@ import type { ChatRequest } from "../../src/runtime/types.ts";
 import { defineInProcessApp, type InProcessTool } from "../../src/tools/in-process-app.ts";
 import type { McpSource } from "../../src/tools/mcp-source.ts";
 import {} from "../../src/tools/namespace.ts";
-import { ensureUserWorkspace } from "../../src/workspace/provisioning.ts";
-import {
-  personalWorkspaceIdFor,
-  type WorkspaceStore,
-} from "../../src/workspace/workspace-store.ts";
+import type { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
 import { createEchoModel, type EchoModelOptions } from "./echo-model.ts";
 
 // ── Public option / handle shapes ──────────────────────────────────
@@ -44,11 +41,11 @@ import { createEchoModel, type EchoModelOptions } from "./echo-model.ts";
 /**
  * Options for `createTwoWorkspaceFixture`. All fields optional; defaults
  * are designed to mirror the load-bearing Stage 2 chat surface a single
- * user would actually see: one shared workspace + one personal workspace.
+ * user would actually see: one shared workspace + one workspace of their own.
  */
 export interface TwoWorkspaceFixtureOptions {
   /**
-   * Identity that owns the personal workspace and authenticates chat
+   * Identity that belongs to both workspaces and authenticates chat
    * requests. Defaults to a neutral `user_a` placeholder so the fixture
    * is safe to import from OSS test files.
    */
@@ -99,7 +96,7 @@ export interface TwoWorkspaceFixtureOptions {
  *    here.
  */
 export interface WorkspaceHandle {
-  /** Canonical workspace id, e.g. `ws_helix` or `ws_user_<userId>`. */
+  /** Canonical workspace id, e.g. `ws_helix` or an opaque `ws_<16-hex>`. */
   id: string;
   /** Human display name. */
   name: string;
@@ -153,7 +150,7 @@ export interface TwoWorkspaceFixture {
   identity: UserIdentity;
   /** Shared workspace handle. */
   shared: WorkspaceHandle;
-  /** Personal workspace handle (id from `personalWorkspaceIdFor(identity.id)`). */
+  /** Handle for the workspace the identity alone belongs to (its default). */
   personal: WorkspaceHandle;
   /**
    * EventSink that captured every engine event emitted during the
@@ -344,14 +341,17 @@ export async function createTwoWorkspaceFixture(
     events: [sink],
   });
 
-  // Provision both workspaces. The personal workspace goes through the
-  // same `ensureUserWorkspace` helper production uses on first login —
-  // exercises the real `personalWorkspaceIdFor(...)` + invariant path.
+  // Provision both workspaces. The identity's own workspace is created
+  // first, so it is the earliest membership — the workspace a dev-mode
+  // request that names none runs in (`defaultWorkspaceFor`).
   const wsStore = runtime.getWorkspaceStore();
+  const personalWorkspaceName = `${identity.displayName}'s workspace`;
+  const personalWorkspace = await wsStore.create(personalWorkspaceName, undefined, {
+    members: [{ userId: identity.id, role: "admin" }],
+  });
   await provisionSharedWorkspace(wsStore, sharedWorkspaceId, sharedWorkspaceName, identity.id);
-  await ensureUserWorkspace(wsStore, { id: identity.id, displayName: identity.displayName });
 
-  const personalWorkspaceId = personalWorkspaceIdFor(identity.id);
+  const personalWorkspaceId = personalWorkspace.id;
 
   // Ensure per-workspace tool registries exist BEFORE adding sources.
   // `ensureWorkspaceRegistry` is the same JIT path runtime.chat takes
@@ -361,7 +361,7 @@ export async function createTwoWorkspaceFixture(
 
   // Build per-workspace sources. Each closes over its own counter — the
   // topology assertion in the test reads these to verify a `ws_helix/...`
-  // call did NOT land in the personal workspace's source.
+  // call did NOT land in the identity's own workspace's source.
   const sharedSource = buildCounterSource(SHARED_SOURCE_NAME, sharedToolBareName, sink);
   const personalSource = buildCounterSource(PERSONAL_SOURCE_NAME, personalToolBareName, sink);
   await sharedSource.source.start();
@@ -395,7 +395,7 @@ export async function createTwoWorkspaceFixture(
   };
   const personalHandle: WorkspaceHandle = {
     id: personalWorkspaceId,
-    name: `${identity.displayName}'s Workspace`,
+    name: personalWorkspaceName,
     sourceName: PERSONAL_SOURCE_NAME,
     toolName: personalToolBareName,
     qualifiedToolName: namespacedToolName(

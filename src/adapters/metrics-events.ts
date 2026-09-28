@@ -1,14 +1,18 @@
 import {
+  credentialStorePlaintextAccepted,
+  credentialStoreSealed,
   llmErrorsTotal,
   llmInputTokensEstimatedTotal,
   llmRequestDurationSeconds,
   llmTtftSeconds,
   recordConnectorCrash,
+  recordCredentialSealFailure,
   toolCallsTotal,
   toolPromotionsTotal,
 } from "../api/metrics.ts";
 import type { EngineEvent, EngineEventType, EventSink } from "../engine/types.ts";
 import { log } from "../observability/log.ts";
+import { isSealFailureReason } from "../tools/credential-store.ts";
 import { originOf, recordLlmCall } from "../usage/record.ts";
 import type { TokenUsage } from "../usage/types.ts";
 
@@ -31,7 +35,7 @@ export const MAX_TRACKED_RUNS = 1000;
  * Prometheus or k8s required.
  *
  * Covers the main agentic loop. The forked fast-slot calls (compaction
- * summarizer, auto-title, briefing) emit no `llm.done`, so their usage is
+ * summarizer, auto-title) emit no `llm.done`, so their usage is
  * recorded at their own call sites via `recordLlmCall(...)` — which is also
  * where their `origin` is derived, since not all of them run inside a request
  * scope (see `src/usage/record.ts`).
@@ -51,6 +55,8 @@ export class MetricsEventSink implements EventSink {
     "tool.promoted": (data) => this.onToolPromoted(data),
     "run.done": (data) => this.onRunDone(data),
     "run.error": (data) => this.onRunError(data),
+    "audit.credential_seal_failure": (data) => this.onCredentialSealFailure(data),
+    "credential_store.reconciled": (data) => this.onCredentialStoreReconciled(data),
   };
 
   emit(event: EngineEvent): void {
@@ -148,6 +154,20 @@ export class MetricsEventSink implements EventSink {
       recordConnectorCrash(data.source as string | undefined, data.remote === true);
     }
     this.finalizeRun(data.runId as string | undefined);
+  }
+
+  /** Count a secret that failed to open, re-seal, or was refused as plaintext. */
+  private onCredentialSealFailure(data: EventData): void {
+    // The store emits only the closed set; anything else is a new reason that
+    // has not been added to it, and must not mint a series on its own.
+    if (isSealFailureReason(data.reason)) recordCredentialSealFailure(data.reason);
+  }
+
+  /** Record whether the store is sealed, and whether its boot sweep left it accepting plaintext. */
+  private onCredentialStoreReconciled(data: EventData): void {
+    const sealed = data.sealed === true;
+    credentialStoreSealed.set(sealed ? 1 : 0);
+    credentialStorePlaintextAccepted.set(sealed && data.strictPlaintextRefusal !== true ? 1 : 0);
   }
 
   /** Get (or lazily create) the per-run promoted/called tracking state. */

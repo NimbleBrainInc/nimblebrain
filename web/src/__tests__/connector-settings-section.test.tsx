@@ -444,10 +444,10 @@ describe("host context for other placements", () => {
   test("the builders add `connector` only when it is supplied", () => {
     const ws = { id: "ws_team", name: "Team" };
     expect(buildHostExtensions(ws)).toEqual({
-      workspace: { id: "ws_team", name: "Team", isPersonal: false },
+      workspace: { id: "ws_team", name: "Team" },
     });
     expect(buildHostExtensions(ws, { canManage: false })).toEqual({
-      workspace: { id: "ws_team", name: "Team", isPersonal: false },
+      workspace: { id: "ws_team", name: "Team" },
       connector: { canManage: false },
     });
     expect(buildHostContext("light", ws)).not.toHaveProperty("connector");

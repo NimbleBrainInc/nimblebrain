@@ -7,8 +7,8 @@
  * Plus a single write tool, `write_instructions(body)`, gated so that only a
  * workspace admin member may write — an org role grants no bypass.
  *
- * The write tool is INTERNAL (`ai.nimblebrain/internal`): the settings UI
- * invokes it by name over `/v1/tools/call`; the model never sees it. The
+ * The write tool is app-only (`_meta.ui.visibility: ["app"]`): the settings UI
+ * invokes it by name over `/v1/workspaces/:wsId/tools/call`; the model never sees it. The
  * overlay is injected into every conversation's prompt, so its author is the
  * human, on a surface where they see the whole text they are replacing —
  * never the agent overwriting an 8 KiB prose blob to add one line. An agent
@@ -31,7 +31,7 @@
  */
 
 import { textContent } from "../../engine/content-helpers.ts";
-import { type EventSink, INTERNAL_TOOL_ANNOTATION, type ToolResult } from "../../engine/types.ts";
+import type { EventSink, ToolResult } from "../../engine/types.ts";
 import { getRequestContext } from "../../runtime/request-context.ts";
 import type { Runtime } from "../../runtime/runtime.ts";
 import { defineInProcessApp, type InProcessTool } from "../../tools/in-process-app.ts";
@@ -40,7 +40,7 @@ import { canWriteWorkspaceScoped } from "../../workspace/authz.ts";
 import { InstructionsWriteInput } from "../schemas/instructions.ts";
 
 // ── Tool description ─────────────────────────────────────────────────────
-// UI-facing only: the tool is internal, so no model reads this. Kept accurate
+// UI-facing only: the tool is app-only, so no model reads this. Kept accurate
 // for the settings UI and for operators reading the wire.
 
 const WRITE_INSTRUCTIONS_DESCRIPTION =
@@ -97,9 +97,8 @@ async function checkWritePermission(
     return { allowed: false, reason: "Writing instructions requires a workspace context" };
   }
 
-  // Dev mode (no identity provider configured) — allow writes through.
-  // Matches the existing convention for dev-mode tool dispatch (see
-  // `src/runtime/runtime.ts:getCurrentIdentity` — null in dev).
+  // No identity provider (an in-process runtime with no `instance.json`) —
+  // allow writes through.
   if (runtime.getIdentityProvider() === null) {
     return { allowed: true, wsId };
   }
@@ -140,7 +139,7 @@ export function createInstructionsSource(runtime: Runtime, eventSink: EventSink)
     {
       name: "write_instructions",
       description: WRITE_INSTRUCTIONS_DESCRIPTION,
-      meta: { [INTERNAL_TOOL_ANNOTATION]: true },
+      meta: { ui: { visibility: ["app"] } },
       inputSchema: InstructionsWriteInput,
       handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
         // A stale `scope` used to choose the file. The schema no longer declares
@@ -178,7 +177,7 @@ export function createInstructionsSource(runtime: Runtime, eventSink: EventSink)
           const result = await store.write({
             wsId: permission.wsId,
             text: body,
-            // The settings UI is the only caller — the tool is internal, so no
+            // The settings UI is the only caller — the tool is app-only, so no
             // agent reaches it. `UpdatedBy` keeps its `"agent"` arm for reading
             // meta files written before that was true (`readMeta` validates
             // against both).

@@ -40,7 +40,7 @@ export type UserResourceLinkPart = {
 /**
  * What woke the agent. Exactly today's callers, no more:
  *
- *  - `chat`     — a person in a conversation (`/v1/chat*`, `startTurn`).
+ *  - `chat`     — a person in a conversation (`/v1/workspaces/:wsId/chat*`, `startTurn`).
  *  - `schedule` — an automations cron tick (`Scheduler.dispatchRun`).
  *  - `manual`   — an operator pressing Run now (`automations__run`).
  *  - `event`    — a notification a workspace admin routed to an automation.
@@ -146,9 +146,9 @@ export interface RunSpec {
   /**
    * The workspace the prompt NARRATES — installed apps, instruction overlays,
    * the "## Workspace" block, the workspace persona. Equal to `workspaceId` for
-   * a run focused on its workspace; absent for a run merely *housed* in the
-   * owner's personal workspace (an unfocused automation), which is walled to
-   * that workspace without being about it.
+   * a run focused on its workspace; absent for a run merely *housed* in a
+   * workspace (an unfocused task), which is walled to that workspace without
+   * being about it.
    */
   briefingWorkspaceId?: string;
   /** Present when the run belongs to a persisted conversation. */
@@ -186,6 +186,10 @@ export interface RunHandle {
   skillName: string | null;
   toolCalls: ChatResult["toolCalls"];
   stopReason: string;
+  /** The last model call's unified finish reason. See `EngineResult.finishReason`. */
+  finishReason?: string;
+  /** The last model call's provider-native stop reason. See `EngineResult.finishReasonRaw`. */
+  finishReasonRaw?: string;
   usage: TurnUsage;
 }
 

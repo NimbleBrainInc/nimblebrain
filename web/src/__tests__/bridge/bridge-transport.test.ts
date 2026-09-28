@@ -260,11 +260,14 @@ describe("tools/call — MCP transport", () => {
 
     // The wire name is namespaced with the active workspace (Q3
     // auto-prefix) and qualified with the app's own server per
-    // REST-parity. Mock `getActiveWorkspaceId` returns `ws_test`.
+    // REST-parity. Mock `getActiveWorkspaceId` returns `ws_test`. The app's
+    // server is named under `RESOURCE_SOURCE_META_KEY`, which is how `/mcp`
+    // holds the call to the MCP Apps app scope.
     const [callParams] = mcpCallTool.mock.calls[0] ?? [];
     expect(callParams).toEqual({
       name: "synapse-research__search",
       arguments: { q: "mcp" },
+      _meta: { [RESOURCE_SOURCE_META_KEY]: "synapse-research" },
     });
   });
 
@@ -300,7 +303,10 @@ describe("tools/call — MCP transport", () => {
     const [req] = mcpRequest.mock.calls[0] ?? [];
     expect(req).toMatchObject({
       method: "tools/call",
-      params: expect.objectContaining({ task: { ttl: 1000 } }),
+      params: expect.objectContaining({
+        task: { ttl: 1000 },
+        _meta: { [RESOURCE_SOURCE_META_KEY]: "synapse-research" },
+      }),
     });
   });
 
@@ -359,6 +365,23 @@ describe("tools/call — scoped to the app's own server", () => {
     expect(mcpCallTool).toHaveBeenCalledTimes(1);
     const [callParams] = mcpCallTool.mock.calls[0] ?? [];
     expect((callParams as { name: string }).name).toBe("synapse-research__t");
+  });
+
+  test("an app naming another source in _meta still names its own", async () => {
+    const frame = mount("db-query");
+
+    frame.send({
+      jsonrpc: "2.0",
+      id: "a2s",
+      method: "tools/call",
+      params: { name: "t", arguments: {}, _meta: { [RESOURCE_SOURCE_META_KEY]: "files" } },
+    });
+    await frame.waitFor((m) => (m as { id?: string })?.id === "a2s");
+
+    const [callParams] = mcpCallTool.mock.calls[0] ?? [];
+    expect((callParams as { _meta?: unknown })._meta).toEqual({
+      [RESOURCE_SOURCE_META_KEY]: "db-query",
+    });
   });
 
   test("an app naming another server in _meta is locked to its own", async () => {

@@ -2,7 +2,6 @@ import { describe, expect, it, afterAll } from "bun:test";
 import { mkdirSync, writeFileSync, rmSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import type { LanguageModelV4 } from "@ai-sdk/provider";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { runWithRequestContext } from "../../src/runtime/request-context.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
@@ -20,30 +19,37 @@ import {
 	thinkingPatchFor,
 } from "../../web/src/pages/settings/thinking-patch.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
+import type { McpSource } from "../../src/tools/mcp-source.ts";
+import { facetEntry, startFacetsSource } from "../helpers/facets-server.ts";
 
-/** Model adapter that throws on doGenerate, counting invocations. Used
- * to exercise the briefing tool's cache-on-failure rule: when the LLM
- * call fails, the tool should not cache the error result, so a
- * subsequent call regenerates (and the model is called again). */
-function createThrowingModel(err: Error): {
-	model: LanguageModelV4;
-	getCalls: () => number;
-} {
-	let calls = 0;
-	const model: LanguageModelV4 = {
-		specificationVersion: "v4",
-		provider: "mock-throwing",
-		modelId: "mock-throwing-model",
-		supportedUrls: {},
-		async doGenerate() {
-			calls++;
-			throw err;
+/**
+ * Install a running app in the test workspace whose server advertises the
+ * facets extension and lists one facet, served over a real MCP connection.
+ */
+async function seedFacetApp(runtime: Runtime): Promise<McpSource> {
+	const serverName = "facet_app";
+	const url = `https://${serverName}.example.com/mcp`;
+	await runtime.getLifecycle().seedInstance(
+		serverName,
+		url,
+		// A static credential seeds the connection `running`; a bare URL would
+		// seed `not_authenticated`, and the collector skips it.
+		{ url, serverName, transport: { type: "streamable-http", auth: { type: "bearer", token: "t" } } },
+		{
+			version: "1.0.0",
+			ui: {
+				name: "Facet App",
+				placements: [{ slot: "sidebar.apps", resourceUri: "ui://facet_app/main", route: "@acme/facet-app" }],
+			},
 		},
-		async doStream() {
-			throw new Error("Not implemented for this test");
-		},
-	};
-	return { model, getCalls: () => calls };
+		TEST_WORKSPACE_ID,
+	);
+	const { source } = await startFacetsSource(serverName, {
+		resources: () => [facetEntry("overdue", "Follow-ups overdue")],
+		read: () => '{"count": 3}',
+	});
+	runtime.getRegistryForWorkspace(TEST_WORKSPACE_ID).addSource(source);
+	return source;
 }
 
 const testDir = join(tmpdir(), `nimblebrain-core-source-${Date.now()}`);
@@ -63,12 +69,12 @@ async function makeRuntime(): Promise<Runtime> {
 }
 
 describe("Core Source", () => {
-	it("tools() returns 10 tools with nb__ prefix", async () => {
+	it("tools() returns 7 tools with nb__ prefix", async () => {
 		const runtime = await makeRuntime();
 		try {
 			const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
 			const tools = await source.tools();
-			expect(tools).toHaveLength(10);
+			expect(tools).toHaveLength(7);
 			for (const tool of tools) {
 				expect(tool.name).toMatch(/^nb__/);
 			}
@@ -76,13 +82,10 @@ describe("Core Source", () => {
 			expect(names).toEqual([
 				"nb__briefing",
 				"nb__get_config",
-				"nb__list_apps",
 				"nb__list_artifacts",
-				"nb__manage_identity",
 				"nb__read_artifact",
 				"nb__set_model_config",
 				"nb__set_preferences",
-				"nb__version",
 				"nb__workspace_info",
 			]);
 		} finally {
@@ -108,19 +111,18 @@ describe("Core Source", () => {
 		}
 	});
 
-	it("nb__list_apps returns app list", async () => {
+	it("nb__workspace_info returns the platform version", async () => {
 		const runtime = await makeRuntime();
 		try {
 			await provisionTestWorkspace(runtime);
 			const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
 			const result = await runWithRequestContext(
 				{ identity: null, workspaceId: TEST_WORKSPACE_ID },
-				() => source.execute("list_apps", {}),
+				() => source.execute("workspace_info", {}),
 			);
 			expect(result.isError).toBe(false);
 			const data = result.structuredContent as Record<string, unknown>;
-			expect(data.apps).toBeDefined();
-			expect(Array.isArray(data.apps)).toBe(true);
+			expect(typeof data.version).toBe("string");
 		} finally {
 			await runtime.shutdown();
 		}
@@ -1262,179 +1264,45 @@ describe("Core Source", () => {
 		}
 	});
 
-	// ----------------------------------------------------------------------
-	// Cache-on-failure contract
-	// ----------------------------------------------------------------------
-	//
-	// The central rule this PR enforces: when generator.generate() throws,
-	// the tool returns isError AND does not cache the failure. A future
-	// refactor that accidentally moves cache.set above the await (or
-	// inverts the conditional) would silently reintroduce the original
-	// "stuck cached canned string" bug. This test locks that wiring.
-	it("nb__briefing does not cache when the LLM call fails", async () => {
-		const workDir = join(testDir, `work-briefing-cache-${Date.now()}`);
-		mkdirSync(workDir, { recursive: true });
-		const { model, getCalls } = createThrowingModel(new Error("LLM down for test"));
-
-		const runtime = await Runtime.start({
-			model: { provider: "custom", adapter: model },
-			workDir,
-			logging: { disabled: true },
-		});
+	// The briefing is read over the workspace's connection, which carries no
+	// member, so every member of the workspace is served the same items.
+	it("nb__briefing serves byte-identical items to every workspace member", async () => {
+		const runtime = await makeRuntime();
+		let facetSource: McpSource | undefined;
 		try {
 			await provisionTestWorkspace(runtime);
+			facetSource = await seedFacetApp(runtime);
 			const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
-
-			// Stage 1 single-owner: the briefing now requires an
-			// authenticated identity and filters the activity collector
-			// to the caller's conversations. Identity in the request
-			// context must match the seed's ownerId.
-			const ctx = {
-				identity: { id: "user_test", email: "test@example.com" } as never,
+			const ctxFor = (id: string, displayName: string) => ({
+				identity: { id, email: `${id}@example.com`, displayName } as never,
 				workspaceId: TEST_WORKSPACE_ID,
-			};
-
-			// Seed a conversation so activity isn't empty — without this the
-			// generator short-circuits to a "quiet day" briefing and the
-			// model never gets invoked (the cache test would pass vacuously).
-			await runWithRequestContext(ctx, async () => {
-				// Seed in the focused workspace's owner partition so the briefing's
-				// cross-workspace `listConversations({userId: "user_test"})` walk sees it.
-				const store = runtime.workspaceConversationStore(TEST_WORKSPACE_ID, "user_test");
-				await store.create({ ownerId: "user_test" });
 			});
 
-			// First call: model throws, tool returns isError.
-			const first = await runWithRequestContext(ctx, () =>
+			const a = await runWithRequestContext(ctxFor("user_a", "Alice"), () =>
 				source.execute("briefing", {}),
 			);
-			expect(first.isError).toBe(true);
-			expect(getCalls()).toBe(1);
-
-			// Second call: if the first call had been cached, the tool would
-			// short-circuit before invoking the generator and the model
-			// counter would stay at 1. We expect it to climb to 2 — proving
-			// the failure path skipped cache.set.
-			const second = await runWithRequestContext(ctx, () =>
-				source.execute("briefing", {}),
+			const b = await runWithRequestContext(ctxFor("user_b", "Bob"), () =>
+				source.execute("briefing", { force_refresh: true }),
 			);
-			expect(second.isError).toBe(true);
-			expect(getCalls()).toBe(2);
+
+			expect(a.isError).toBe(false);
+			expect(b.isError).toBe(false);
+			const itemsA = JSON.stringify(a.structuredContent?.items);
+			expect(itemsA).toBe(JSON.stringify(b.structuredContent?.items));
+			expect(a.structuredContent?.items).toEqual([
+				{
+					app: "Facet App",
+					facet: "overdue",
+					label: "Follow-ups overdue",
+					count: 3,
+					route: "@acme/facet-app",
+					state: "ok",
+				},
+			]);
+			expect(extractText(a.content)).toBe("3 Follow-ups overdue (Facet App)");
+			expect(JSON.stringify(b)).not.toContain("Alice");
 		} finally {
-			await runtime.shutdown();
-		}
-	});
-
-	// ----------------------------------------------------------------------
-	// manage_identity authorization (STRICT workspace-scoped write gate)
-	// ----------------------------------------------------------------------
-	//
-	// The gate now delegates to `canWriteWorkspaceScoped`: only a workspace
-	// member with role "admin" may write the workspace identity override.
-	// `orgRole` (org admin/owner) grants NO bypass — an org admin who is not
-	// a workspace admin member is denied. Null identity (dev/unauthenticated
-	// mode) is intentionally allowed through, matching prior behavior.
-	function identityCtx(identity: unknown) {
-		return {
-			identity: identity as never,
-			workspaceId: TEST_WORKSPACE_ID,
-		};
-	}
-
-	it("nb__manage_identity denies an org admin/owner who is NOT a workspace member", async () => {
-		const runtime = await makeRuntime();
-		try {
-			await provisionTestWorkspace(runtime);
-			const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
-
-			// Org owner, but not a member of the active workspace.
-			const orgOwner = {
-				id: "usr_orgowner",
-				email: "owner@example.com",
-				displayName: "Org Owner",
-				orgRole: "owner",
-				preferences: {},
-			};
-
-			const result = await runWithRequestContext(identityCtx(orgOwner), () =>
-				source.execute("manage_identity", { body: "should be denied" }),
-			);
-			expect(result.isError).toBe(true);
-			expect(extractText(result.content)).toContain("Not a member");
-		} finally {
-			await runtime.shutdown();
-		}
-	});
-
-	it("nb__manage_identity allows a workspace admin member (no orgRole bypass needed)", async () => {
-		const runtime = await makeRuntime();
-		try {
-			await provisionTestWorkspace(runtime);
-			await runtime.getWorkspaceStore().addMember(TEST_WORKSPACE_ID, "usr_wsadmin", "admin");
-			const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
-
-			// Plain org member, but a workspace admin — allowed.
-			const wsAdmin = {
-				id: "usr_wsadmin",
-				email: "wsadmin@example.com",
-				displayName: "Workspace Admin",
-				orgRole: "member",
-				preferences: {},
-			};
-
-			const result = await runWithRequestContext(identityCtx(wsAdmin), () =>
-				source.execute("manage_identity", { body: "hello identity" }),
-			);
-			expect(result.isError).toBe(false);
-			const data = result.structuredContent as Record<string, unknown>;
-			expect(data.success).toBe(true);
-			const ws = await runtime.getWorkspaceStore().get(TEST_WORKSPACE_ID);
-			expect(ws?.identity).toBe("hello identity");
-		} finally {
-			await runtime.shutdown();
-		}
-	});
-
-	it("nb__manage_identity denies a workspace non-admin member even if they are an org owner", async () => {
-		const runtime = await makeRuntime();
-		try {
-			await provisionTestWorkspace(runtime);
-			await runtime.getWorkspaceStore().addMember(TEST_WORKSPACE_ID, "usr_wsmember", "member");
-			const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
-
-			// Org owner AND a workspace member, but only "member" role — denied.
-			// Proves orgRole grants no bypass for workspace-scoped writes.
-			const wsMember = {
-				id: "usr_wsmember",
-				email: "member@example.com",
-				displayName: "Workspace Member",
-				orgRole: "owner",
-				preferences: {},
-			};
-
-			const result = await runWithRequestContext(identityCtx(wsMember), () =>
-				source.execute("manage_identity", { body: "should be denied" }),
-			);
-			expect(result.isError).toBe(true);
-			expect(extractText(result.content)).toContain("workspace admin");
-		} finally {
-			await runtime.shutdown();
-		}
-	});
-
-	it("nb__manage_identity allows a null identity through (dev/unauthenticated mode preserved)", async () => {
-		const runtime = await makeRuntime();
-		try {
-			await provisionTestWorkspace(runtime);
-			const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
-
-			const result = await runWithRequestContext(identityCtx(null), () =>
-				source.execute("manage_identity", { body: "dev write" }),
-			);
-			expect(result.isError).toBe(false);
-			const ws = await runtime.getWorkspaceStore().get(TEST_WORKSPACE_ID);
-			expect(ws?.identity).toBe("dev write");
-		} finally {
+			await facetSource?.stop();
 			await runtime.shutdown();
 		}
 	});

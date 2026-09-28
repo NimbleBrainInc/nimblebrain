@@ -15,10 +15,6 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import {
-  ResourceListChangedNotificationSchema,
-  ResourceUpdatedNotificationSchema,
-} from "@modelcontextprotocol/sdk/types.js";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { NoopEventSink } from "../../../src/adapters/noop-events.ts";
 import { InstructionsStore } from "../../../src/instructions/index.ts";
@@ -175,7 +171,7 @@ describe("instructions source — write_instructions", () => {
 
     const updates: Array<{ uri: string }> = [];
     const client = src.getClient()!;
-    client.setNotificationHandler(ResourceUpdatedNotificationSchema, (n) => {
+    client.setNotificationHandler('notifications/resources/updated', (n) => {
       updates.push({ uri: n.params.uri as string });
     });
 
@@ -441,12 +437,12 @@ describe("instructions source — tool list", () => {
     // The overlay is injected into every conversation, so its author is the
     // human in the settings UI. The annotation is what keeps the tool out of
     // the model's surface (surfacing filter, search, promotion) while the UI
-    // still calls it by name over /v1/tools/call.
+    // still calls it by name over /v1/workspaces/:wsId/tools/call.
     const src = await buildSource();
     const client = src.getClient()!;
     const tools = await client.listTools();
     const writeTool = tools.tools.find((t) => t.name === "write_instructions");
-    expect((writeTool?._meta as Record<string, unknown>)?.["ai.nimblebrain/internal"]).toBe(true);
+    expect((writeTool?._meta as { ui?: { visibility?: unknown } })?.ui?.visibility).toEqual(["app"]);
     expect(writeTool?.description).toContain("Empty text clears");
   });
 
@@ -467,7 +463,7 @@ describe("instructions source — connector lifecycle", () => {
     const src = await buildSource();
     const client = src.getClient()!;
     const seen: string[] = [];
-    client.setNotificationHandler(ResourceListChangedNotificationSchema, () => {
+    client.setNotificationHandler('notifications/resources/list_changed', () => {
       seen.push("list_changed");
     });
     await new Promise((r) => setTimeout(r, 5));

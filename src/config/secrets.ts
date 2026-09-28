@@ -25,6 +25,11 @@ export interface SecretsConfig {
 /** The backend a deployment gets when its config says nothing. */
 export const DEFAULT_CREDENTIAL_STORE_BACKEND = "file";
 
+/** The backend a `secrets` block selects. The one place the default applies. */
+export function credentialStoreBackendName(secrets: SecretsConfig | undefined): string {
+  return secrets?.backend ?? DEFAULT_CREDENTIAL_STORE_BACKEND;
+}
+
 // ── Schema drift guard ───────────────────────────────────────────────
 //
 // `Record<keyof Required<T>, true>` makes a field added to `SecretsConfig` a

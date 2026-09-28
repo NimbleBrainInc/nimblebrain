@@ -23,7 +23,7 @@ import type { ServerHandle } from "../../src/api/server.ts";
 import { _resetComposioConfigForTest } from "../../src/connectors/providers/composio/config.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
-import { createTestAuthAdapter } from "../helpers/test-auth-adapter.ts";
+import { testAuthAdapter } from "../helpers/test-auth-adapter.ts";
 import { provisionTestWorkspace } from "../helpers/test-workspace.ts";
 
 let runtime: Runtime;
@@ -42,6 +42,7 @@ beforeAll(async () => {
 	process.env.COMPOSIO_API_KEY = "test-composio-key-oauth-callback-public";
 	_resetComposioConfigForTest();
 	runtime = await Runtime.start({
+		identityProvider: testAuthAdapter(API_KEY),
 		model: { provider: "custom", adapter: createEchoModel() },
 		logging: { disabled: true },
 		http: { port: 0, host: "127.0.0.1" },
@@ -51,7 +52,7 @@ beforeAll(async () => {
 
 	// Adapter (auth-enabled) mode — this is the only mode where the leak
 	// manifests; dev mode passes every request through.
-	handle = startServer({ runtime, port: 0, provider: createTestAuthAdapter(API_KEY, runtime) });
+	handle = startServer({ runtime, port: 0});
 	baseUrl = `http://localhost:${handle.port}`;
 });
 
@@ -115,6 +116,16 @@ describe("public/special routes stay reachable without auth (mount-order invaria
 			expect(res.status).not.toBe(401);
 		});
 	}
+});
+
+describe("protected resource metadata for a path that is no resource", () => {
+	// Bare /mcp names no workspace, so it has no metadata document. It must
+	// answer 404 like the root document, not fall through to an authenticated
+	// route's middleware and answer 401.
+	it("GET /.well-known/oauth-protected-resource/mcp without auth returns 404", async () => {
+		const res = await fetch(`${baseUrl}/.well-known/oauth-protected-resource/mcp`);
+		expect(res.status).toBe(404);
+	});
 });
 
 describe("POST /v1/auth/logout is public", () => {

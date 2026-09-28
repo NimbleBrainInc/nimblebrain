@@ -38,12 +38,5 @@
   },
   "files": {
     "includes": ["src/**", "web/src/**", "instrument/**", "scripts/**", "!**/dist/**", "!web/src/_generated/**"]
-  },
-  "overrides": [
-    {
-      "includes": ["src/tools/core-resources/*.iife.js"],
-      "linter": { "enabled": false },
-      "formatter": { "enabled": false }
-    }
-  ]
+  }
 }

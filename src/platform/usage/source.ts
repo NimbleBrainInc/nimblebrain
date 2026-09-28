@@ -49,9 +49,9 @@ const USAGE_REPORT_DESCRIPTION =
  * gate. Returns either an error result (denied) or the resolved
  * `{ scope, ownerFilter }`.
  *
- * - Dev mode (no identity provider): no gate, no filter — see all
- *   conversations regardless of requested scope. Matches the dev-mode
- *   posture in `instructions.ts::checkScopePermission`.
+ * - No identity provider (an in-process runtime with no `instance.json`):
+ *   no gate, no filter — see all conversations regardless of requested
+ *   scope. Matches the posture in `instructions.ts::checkScopePermission`.
  * - `scope: "org"`: requires `ORG_ADMIN_ROLES`. No owner filter (all users).
  * - `scope: "user"` (default): filter to the caller's own id. An
  *   unauthenticated caller in a non-dev instance is denied (no id to scope

@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://schemas.nimblebrain.ai/v1/nimblebrain-host.schema.json",
   "title": "NimbleBrain Host Extension",
-  "description": "Schema for the `ai.nimblebrain/host` MCP `_meta` extension — how an MCP server declares its UI integration (placements, briefing, notifications) in the NimbleBrain host shell. Carried in the server's descriptor `_meta`, which for this host is the connector catalog's ServerDetail entry. The `ui://` app resources themselves are standard MCP Apps; this extension only declares where they are placed.",
+  "description": "Schema for the `ai.nimblebrain/host` MCP `_meta` extension — how an MCP server declares its UI integration (placements, hooks, notifications, lifecycle) in the NimbleBrain host shell. Carried in the server's descriptor `_meta`, which for this host is the connector catalog's ServerDetail entry. The `ui://` app resources themselves are standard MCP Apps; this extension only declares where they are placed.",
   "type": "object",
   "required": ["host_version"],
   "additionalProperties": true,
@@ -21,7 +21,7 @@
     },
     "category": {
       "type": "string",
-      "description": "RESERVED — not currently consumed by the host (grouping/briefing prioritization is not yet wired to it). Free-form string, tolerated for back-compat; do not rely on it. Slated for removal — see nimblebrain#503."
+      "description": "RESERVED — not currently consumed by the host (grouping is not wired to it). Free-form string, tolerated for back-compat; do not rely on it. Slated for removal — see nimblebrain#503."
     },
     "placements": {
       "type": "array",
@@ -41,9 +41,6 @@
         }
       },
       "description": "Primary view resource URI."
-    },
-    "briefing": {
-      "$ref": "#/$defs/BriefingBlock"
     },
     "hooks": {
       "type": "array",
@@ -164,63 +161,6 @@
           "type": "string",
           "enum": ["compact", "full", "auto"],
           "description": "Size hint for the slot renderer."
-        }
-      }
-    },
-    "BriefingBlock": {
-      "type": "object",
-      "description": "Briefing declaration — how this app contributes to the daily briefing.",
-      "additionalProperties": false,
-      "required": ["facets"],
-      "properties": {
-        "priority": {
-          "type": "string",
-          "enum": ["high", "medium", "low"],
-          "description": "Relative priority for ordering this app's facets in the briefing."
-        },
-        "facets": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/BriefingFacet"
-          },
-          "description": "Summary dimensions this app contributes to the briefing."
-        }
-      }
-    },
-    "BriefingFacet": {
-      "type": "object",
-      "description": "One dimension of a server's briefing contribution. Resolved via exactly one of `resource` (an MCP resource read) or `tool` (an MCP tool call) — both answered by the server that declared the facet. The host never reads a server's data itself, so there is no host-side query. A facet declaring neither falls back to `description`.",
-      "required": ["name", "label", "type"],
-      "additionalProperties": false,
-      "properties": {
-        "name": {
-          "type": "string",
-          "description": "Unique facet identifier (kebab-case)."
-        },
-        "label": {
-          "type": "string",
-          "description": "Human-readable label for the briefing section."
-        },
-        "type": {
-          "type": "string",
-          "enum": ["attention", "upcoming", "activity", "delta", "kpi"],
-          "description": "Facet type: attention (needs action), upcoming (coming soon), activity (happened), delta (state change), kpi (headline number)."
-        },
-        "resource": {
-          "type": "string",
-          "description": "URI of an MCP resource on this server that returns the facet's summary."
-        },
-        "tool": {
-          "type": "string",
-          "description": "Name of an MCP tool on this server to call at briefing time."
-        },
-        "tool_input": {
-          "type": "object",
-          "description": "Arguments to pass when calling the tool (e.g., { \"query\": \"AI\", \"page_size\": 5 })."
-        },
-        "description": {
-          "type": "string",
-          "description": "Human-readable fallback description of what this facet shows."
         }
       }
     }

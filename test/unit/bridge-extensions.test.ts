@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
-import { CHAT_CONTEXT_META_KEY } from "../../web/src/bridge/extensions.ts";
 import type { BridgeCallbacks } from "../../web/src/bridge/types.ts";
 
 // ---------------------------------------------------------------------------
@@ -133,7 +132,7 @@ describe("Bridge — ui/message (spec format)", () => {
 
     expect(customEventsFired).toContainEqual({
       type: "nb:chat",
-      detail: { message: "hello from iframe", context: undefined },
+      detail: { message: "hello from iframe" },
     });
 
     handle.destroy();
@@ -160,11 +159,14 @@ describe("Bridge — ui/message (spec format)", () => {
     handle.destroy();
   });
 
-  it("extracts the chat context from a text block's _meta", () => {
+  it("delivers the text of a block that carries _meta, and only the text", () => {
+    // An app on an SDK that attaches NimbleBrain chat context to the text
+    // block still reaches the chat; the host passes the text alone. App state
+    // reaches the agent through `ui/update-model-context`.
     const { iframe } = makeFakeIframe();
-    const received: Array<{ msg: string; ctx: unknown }> = [];
+    const received: unknown[][] = [];
     const handle = createBridge(iframe, "test-app", {
-      onChat: (msg, ctx) => received.push({ msg, ctx }),
+      onChat: (...args: unknown[]) => received.push(args),
     });
 
     simulatePostMessage(iframe, {
@@ -172,12 +174,36 @@ describe("Bridge — ui/message (spec format)", () => {
       method: "ui/message",
       params: {
         role: "user",
-        content: [{ type: "text", text: "with context", _meta: { [CHAT_CONTEXT_META_KEY]: { action: "test" } } }],
+        content: [{ type: "text", text: "with meta", _meta: { "ai.nimblebrain/context": { action: "test" } } }],
       },
     });
 
-    expect(received[0]?.msg).toBe("with context");
-    expect(received[0]?.ctx).toEqual({ action: "test" });
+    expect(received).toEqual([["with meta"]]);
+
+    handle.destroy();
+  });
+});
+
+describe("Bridge — ai.nimblebrain/action", () => {
+  it("hands every action to the shell by name, with no action handled in the bridge", () => {
+    const { iframe } = makeFakeIframe();
+    const handle = createBridge(iframe, "test-app");
+
+    simulatePostMessage(iframe, {
+      jsonrpc: "2.0",
+      method: "ai.nimblebrain/action",
+      params: { action: "openApp", name: "crm" },
+    });
+    simulatePostMessage(iframe, {
+      jsonrpc: "2.0",
+      method: "ai.nimblebrain/action",
+      params: { action: "navigate", route: "/settings" },
+    });
+
+    expect(customEventsFired.filter((e) => e.type === "nb:action")).toEqual([
+      { type: "nb:action", detail: { action: "openApp", name: "crm" } },
+      { type: "nb:action", detail: { action: "navigate", route: "/settings" } },
+    ]);
 
     handle.destroy();
   });

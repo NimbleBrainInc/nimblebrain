@@ -64,9 +64,8 @@ export function resolveScopedRole(
  * workspace context is needed).
  *
  * Reads from `SessionContext` (org role) and `WorkspaceContext` (active
- * workspace + the user's membership role within it, populated by the
- * extended `manage_workspaces.list` response). No async fetches — the
- * inputs are already in memory.
+ * workspace + the user's membership role within it, from bootstrap). No
+ * async fetches — the inputs are already in memory.
  */
 export function useScopedRole(): ScopedRole {
   const session = useSession();
@@ -99,16 +98,11 @@ export function canWriteWorkspace(membershipRole: WorkspaceInfo["userRole"]): bo
  * `/w/:slug`, where `WorkspaceRouteGuard` has made `activeWorkspace` agree with
  * the route. A surface that addresses a workspace **by id** (`/org/workspaces/
  * :slug`) must not use it: `activeWorkspace` there is the viewer's last-focused
- * workspace, which defaults to their personal one — where they are always admin
- * by store invariant — so this would return `true` for everyone. Call
- * `canWriteWorkspace(role)` with that workspace's membership role instead.
+ * workspace, which starts as their default workspace — so this would answer
+ * for the wrong workspace. Call `canWriteWorkspace(role)` with that workspace's membership role instead.
  *
  * Use `useScopedRole` + `roleAtLeast` for reach: navigation, route guards, and
  * org-scoped checks.
- *
- * A personal workspace needs no special case — the store force-locks its
- * members to `[{ userId: ownerUserId, role: "admin" }]`, so its owner always
- * passes here.
  */
 export function useCanWriteActiveWorkspace(): boolean {
   const { activeWorkspace } = useWorkspaceContext();

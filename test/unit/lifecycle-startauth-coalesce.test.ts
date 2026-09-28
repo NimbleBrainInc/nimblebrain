@@ -12,7 +12,7 @@ import type { EngineEvent, EventSink } from "../../src/engine/types.ts";
  * OAuth flow per (serverName, wsId, principalId) at a time. The
  * provider tests pin the inner contract (state / verifier / client_id
  * / URL coherence under concurrent SDK auth() calls); this file pins
- * the outer contract (concurrent inbound /v1/mcp-auth/initiate
+ * the outer contract (concurrent inbound /v1/workspaces/:wsId/mcp-auth/initiate
  * requests coalesce to one flow, and the slot is released exactly on
  * connection-terminal transitions).
  *
@@ -42,7 +42,6 @@ function seedInstance(
     version: "remote",
     state: "starting",
     ui: null,
-    briefing: null,
     type: "plain",
     wsId,
     oauthScope: "workspace",

@@ -337,7 +337,7 @@ describe("bodyLimit middleware", () => {
   // Regression guard: bodyLimit must stay scoped to the route it's attached
   // to. Mounting it via `.use("*")` on a sub-app that is itself mounted at
   // `/` makes it leak across sibling sub-apps — that's how the multipart
-  // limit on /v1/chat/stream was silently shadowed by the 1MB JSON limit
+  // limit on the chat stream route was silently shadowed by the 1MB JSON limit
   // on another sub-app in an earlier iteration of this fix.
   test("per-handler bodyLimit does not leak across sibling sub-apps", async () => {
     const parent = new Hono();

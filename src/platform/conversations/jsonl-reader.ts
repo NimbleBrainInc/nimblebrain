@@ -36,9 +36,8 @@ export interface ConversationMeta {
   ownerId?: string;
   /**
    * The workspace the conversation ran in — the breadcrumb the
-   * runtime stamps on the line-1 header at create time. Absent on legacy
-   * files written before workspace stamping; a consumer treats absent as
-   * the owner's personal workspace.
+   * runtime stamps on the line-1 header at create time. May be absent; the
+   * workspace the file is stored under is authoritative either way.
    */
   workspaceId?: string;
 }
@@ -60,7 +59,11 @@ export interface DisplayMessage {
   /** Aggregate LLM usage for the whole turn; undefined for user messages. */
   usage?: DisplayUsage;
   files?: DisplayFile[];
-  /** Non-"complete" run terminations bubble up here ("max_iterations", "error"). */
+  /**
+   * Non-"complete" run terminations bubble up here: a `run.done` stopReason
+   * verbatim ("max_iterations", "cancelled", …), "error" for a `run.error`,
+   * "interrupted" for a run with no terminal event.
+   */
   stopReason?: string;
   /**
    * True when this assistant turn has no terminal event yet (no run.done /
@@ -222,8 +225,8 @@ interface LlmResponseEvent {
 }
 
 /**
- * Usage for a forked fast-slot model call (compaction summarizer, auto-title,
- * briefing) that runs outside the agentic loop and emits no `llm.response`.
+ * Usage for a forked fast-slot model call (compaction summarizer, auto-title)
+ * that runs outside the agentic loop and emits no `llm.response`.
  * Mirrors the runtime's `AuxUsageEvent`. Carries no content and is never a
  * message — `reconstructFromEvents` skips it — but its usage is summed into
  * the conversation totals so the connector matches the runtime aggregator.
@@ -372,7 +375,7 @@ function accumulateEventMetrics(
     acc.totalOutputTokens += evt.usage?.outputTokens ?? 0;
     acc.lastModel = evt.model;
   } else if (isAuxUsage(evt)) {
-    // Forked fast-slot calls (compaction/title/briefing) emit no
+    // Forked fast-slot calls (compaction/title) emit no
     // llm.response; count their usage so the app's totals match the
     // runtime aggregator (which counts aux.usage too).
     acc.totalInputTokens += evt.usage?.inputTokens ?? 0;

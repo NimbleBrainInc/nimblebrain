@@ -4,10 +4,11 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
-import { createTestAuthAdapter } from "../helpers/test-auth-adapter.ts";
+import { testAuthAdapter } from "../helpers/test-auth-adapter.ts";
 import { startServer } from "../../src/api/server.ts";
 import type { ServerHandle } from "../../src/api/server.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
 
 let runtime: Runtime;
 let handle: ServerHandle;
@@ -17,6 +18,7 @@ const testDir = join(tmpdir(), `nimblebrain-api-test-${Date.now()}`);
 beforeAll(async () => {
 	mkdirSync(testDir, { recursive: true });
 	runtime = await Runtime.start({
+		identityProvider: devProvider,
 		model: { provider: "custom", adapter: createEchoModel() },
 		logging: { disabled: true },
 		workDir: testDir,
@@ -24,7 +26,7 @@ beforeAll(async () => {
 
 	await provisionTestWorkspace(runtime);
 
-	handle = startServer({ runtime, port: 0 }); // port 0 = random available port
+	handle = startServer({ runtime, port: 0}); // port 0 = random available port
 	baseUrl = `http://localhost:${handle.port}`;
 });
 
@@ -34,11 +36,11 @@ afterAll(async () => {
 	rmSync(testDir, { recursive: true, force: true });
 });
 
-describe("POST /v1/chat", () => {
+describe("POST /v1/workspaces/:wsId/chat", () => {
 	it("returns valid ChatResult", async () => {
-		const res = await fetch(`${baseUrl}/v1/chat`, {
+		const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat`, {
 			method: "POST",
-			headers: { "Content-Type": "application/json", "X-Workspace-Id": TEST_WORKSPACE_ID },
+			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({ message: "Hello there", workspaceId: TEST_WORKSPACE_ID }),
 		});
 
@@ -52,9 +54,9 @@ describe("POST /v1/chat", () => {
 	});
 
 	it("returns 400 for invalid JSON body", async () => {
-		const res = await fetch(`${baseUrl}/v1/chat`, {
+		const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat`, {
 			method: "POST",
-			headers: { "Content-Type": "application/json", "X-Workspace-Id": TEST_WORKSPACE_ID },
+			headers: { "Content-Type": "application/json" },
 			body: "not json",
 		});
 
@@ -65,9 +67,9 @@ describe("POST /v1/chat", () => {
 	});
 
 	it("returns 400 when message is missing", async () => {
-		const res = await fetch(`${baseUrl}/v1/chat`, {
+		const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat`, {
 			method: "POST",
-			headers: { "Content-Type": "application/json", "X-Workspace-Id": TEST_WORKSPACE_ID },
+			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({ conversationId: "abc", workspaceId: TEST_WORKSPACE_ID }),
 		});
 
@@ -78,11 +80,11 @@ describe("POST /v1/chat", () => {
 	});
 });
 
-describe("POST /v1/chat/stream", () => {
+describe("POST /v1/workspaces/:wsId/chat/stream", () => {
 	it("delivers SSE events ending with done", async () => {
-		const res = await fetch(`${baseUrl}/v1/chat/stream`, {
+		const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat/stream`, {
 			method: "POST",
-			headers: { "Content-Type": "application/json", "X-Workspace-Id": TEST_WORKSPACE_ID },
+			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({ message: "Stream me", workspaceId: TEST_WORKSPACE_ID }),
 		});
 
@@ -104,9 +106,9 @@ describe("POST /v1/chat/stream", () => {
 	});
 
 	it("includes text.delta events", async () => {
-		const res = await fetch(`${baseUrl}/v1/chat/stream`, {
+		const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat/stream`, {
 			method: "POST",
-			headers: { "Content-Type": "application/json", "X-Workspace-Id": TEST_WORKSPACE_ID },
+			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({ message: "Delta test", workspaceId: TEST_WORKSPACE_ID }),
 		});
 
@@ -119,9 +121,9 @@ describe("POST /v1/chat/stream", () => {
 	});
 
 	it("done event includes usage object with all TurnUsage fields", async () => {
-		const res = await fetch(`${baseUrl}/v1/chat/stream`, {
+		const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat/stream`, {
 			method: "POST",
-			headers: { "Content-Type": "application/json", "X-Workspace-Id": TEST_WORKSPACE_ID },
+			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({ message: "Usage test", workspaceId: TEST_WORKSPACE_ID }),
 		});
 
@@ -153,9 +155,9 @@ describe("POST /v1/chat/stream", () => {
 	});
 
 	it("done event preserves existing fields alongside usage (backward compat)", async () => {
-		const res = await fetch(`${baseUrl}/v1/chat/stream`, {
+		const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat/stream`, {
 			method: "POST",
-			headers: { "Content-Type": "application/json", "X-Workspace-Id": TEST_WORKSPACE_ID },
+			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({ message: "Compat test", workspaceId: TEST_WORKSPACE_ID }),
 		});
 
@@ -188,14 +190,14 @@ describe("GET /v1/health", () => {
 });
 
 describe("concurrent requests", () => {
-	it("10 concurrent POST /v1/chat produce 10 correct independent responses", async () => {
+	it("10 concurrent POST /v1/workspaces/:wsId/chat produce 10 correct independent responses", async () => {
 		const messages = Array.from({ length: 10 }, (_, i) => `Message ${i}`);
 
 		const results = await Promise.all(
 			messages.map((message) =>
-				fetch(`${baseUrl}/v1/chat`, {
+				fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat`, {
 					method: "POST",
-					headers: { "Content-Type": "application/json", "X-Workspace-Id": TEST_WORKSPACE_ID },
+					headers: { "Content-Type": "application/json" },
 					body: JSON.stringify({ message, workspaceId: TEST_WORKSPACE_ID }),
 				}).then((res) => res.json()),
 			),
@@ -215,17 +217,24 @@ describe("concurrent requests", () => {
 
 describe("unknown routes", () => {
 	it("returns 404 for unknown route", async () => {
-		// Supply a valid workspace header so requireWorkspace middleware doesn't
-		// short-circuit with 400 on sub-Honos using "*" — we're testing the
-		// 404 handler, not workspace resolution.
-		const res = await fetch(`${baseUrl}/v1/nonexistent`, {
-			headers: { "X-Workspace-Id": TEST_WORKSPACE_ID },
-		});
+		const res = await fetch(`${baseUrl}/v1/nonexistent`);
 
 		expect(res.status).toBe(404);
 		const body = await res.json();
 		expect(body.error).toBe("not_found");
 		expect(body.message).toBe("Not found");
+	});
+
+	it("workspace-scoped routes exist only under /v1/workspaces/:wsId", async () => {
+		const res = await fetch(`${baseUrl}/v1/chat`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ message: "unaddressed" }),
+		});
+
+		expect(res.status).toBe(404);
+		const body = await res.json();
+		expect(body.error).toBe("not_found");
 	});
 });
 
@@ -239,6 +248,7 @@ describe("Bearer token authentication", () => {
 	beforeAll(async () => {
 		mkdirSync(authDir, { recursive: true });
 		authRuntime = await Runtime.start({
+			identityProvider: testAuthAdapter(TEST_API_KEY),
 			model: { provider: "custom", adapter: createEchoModel() },
 			logging: { disabled: true },
 			workDir: authDir,
@@ -249,7 +259,6 @@ describe("Bearer token authentication", () => {
 		authHandle = startServer({
 			runtime: authRuntime,
 			port: 0,
-			provider: createTestAuthAdapter(TEST_API_KEY, authRuntime),
 		});
 		authUrl = `http://localhost:${authHandle.port}`;
 	});
@@ -262,21 +271,20 @@ describe("Bearer token authentication", () => {
 
 	it("accepts requests in dev mode (no auth adapter)", async () => {
 		// The main server (dev mode) should accept all requests
-		const res = await fetch(`${baseUrl}/v1/chat`, {
+		const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat`, {
 			method: "POST",
-			headers: { "Content-Type": "application/json", "X-Workspace-Id": TEST_WORKSPACE_ID },
+			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({ message: "no auth needed", workspaceId: TEST_WORKSPACE_ID }),
 		});
 		expect(res.status).toBe(200);
 	});
 
 	it("returns 200 with valid Bearer token", async () => {
-		const res = await fetch(`${authUrl}/v1/chat`, {
+		const res = await fetch(`${authUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat`, {
 			method: "POST",
 			headers: {
 				"Content-Type": "application/json",
 				Authorization: `Bearer ${TEST_API_KEY}`,
-				"X-Workspace-Id": TEST_WORKSPACE_ID,
 			},
 			body: JSON.stringify({ message: "authed", workspaceId: TEST_WORKSPACE_ID }),
 		});
@@ -284,9 +292,9 @@ describe("Bearer token authentication", () => {
 	});
 
 	it("returns 401 when Authorization header is missing", async () => {
-		const res = await fetch(`${authUrl}/v1/chat`, {
+		const res = await fetch(`${authUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat`, {
 			method: "POST",
-			headers: { "Content-Type": "application/json", "X-Workspace-Id": TEST_WORKSPACE_ID },
+			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({ message: "no header", workspaceId: TEST_WORKSPACE_ID }),
 		});
 		expect(res.status).toBe(401);
@@ -295,7 +303,7 @@ describe("Bearer token authentication", () => {
 	});
 
 	it("returns 401 with wrong Bearer token", async () => {
-		const res = await fetch(`${authUrl}/v1/chat`, {
+		const res = await fetch(`${authUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat`, {
 			method: "POST",
 			headers: {
 				"Content-Type": "application/json",
@@ -309,7 +317,7 @@ describe("Bearer token authentication", () => {
 	});
 
 	it("returns 401 with malformed header (no Bearer prefix)", async () => {
-		const res = await fetch(`${authUrl}/v1/chat`, {
+		const res = await fetch(`${authUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat`, {
 			method: "POST",
 			headers: {
 				"Content-Type": "application/json",
@@ -331,11 +339,11 @@ describe("Bearer token authentication", () => {
 
 });
 
-describe("POST /v1/tools/call", () => {
+describe("POST /v1/workspaces/:wsId/tools/call", () => {
 	it("returns 400 when server or tool missing", async () => {
-		const res = await fetch(`${baseUrl}/v1/tools/call`, {
+		const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/tools/call`, {
 			method: "POST",
-			headers: { "Content-Type": "application/json", "X-Workspace-Id": TEST_WORKSPACE_ID },
+			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({}),
 		});
 
@@ -345,9 +353,9 @@ describe("POST /v1/tools/call", () => {
 	});
 
 	it("returns 404 for unknown server", async () => {
-		const res = await fetch(`${baseUrl}/v1/tools/call`, {
+		const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/tools/call`, {
 			method: "POST",
-			headers: { "Content-Type": "application/json", "X-Workspace-Id": TEST_WORKSPACE_ID },
+			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({
 				server: "nonexistent",
 				tool: "some_tool",
@@ -380,7 +388,6 @@ describe("GET /v1/events", () => {
 
 		const res = await fetch(`${baseUrl}/v1/events`, {
 			signal: controller.signal,
-			headers: { "X-Workspace-Id": TEST_WORKSPACE_ID },
 		});
 
 		expect(res.status).toBe(200);
@@ -523,6 +530,7 @@ describe("auth enforcement on new endpoints", () => {
 	beforeAll(async () => {
 		mkdirSync(authDir2, { recursive: true });
 		authRuntime2 = await Runtime.start({
+			identityProvider: testAuthAdapter(TEST_KEY),
 			model: { provider: "custom", adapter: createEchoModel() },
 			logging: { disabled: true },
 			workDir: authDir2,
@@ -533,7 +541,6 @@ describe("auth enforcement on new endpoints", () => {
 		authHandle2 = startServer({
 			runtime: authRuntime2,
 			port: 0,
-			provider: createTestAuthAdapter(TEST_KEY, authRuntime2),
 		});
 		authUrl2 = `http://localhost:${authHandle2.port}`;
 	});
@@ -544,10 +551,10 @@ describe("auth enforcement on new endpoints", () => {
 		rmSync(authDir2, { recursive: true, force: true });
 	});
 
-	it("POST /v1/tools/call returns 401 without Bearer token", async () => {
-		const res = await fetch(`${authUrl2}/v1/tools/call`, {
+	it("POST /v1/workspaces/:wsId/tools/call returns 401 without Bearer token", async () => {
+		const res = await fetch(`${authUrl2}/v1/workspaces/${TEST_WORKSPACE_ID}/tools/call`, {
 			method: "POST",
-			headers: { "Content-Type": "application/json", "X-Workspace-Id": TEST_WORKSPACE_ID },
+			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({ server: "test", tool: "tool", arguments: {} }),
 		});
 		expect(res.status).toBe(401);

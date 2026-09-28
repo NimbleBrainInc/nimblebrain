@@ -41,19 +41,20 @@ bun run build:platform-apps      # Rebuild every src/platform/*/ui (vite single-
 - **Before opening a PR, run `bun run verify`.** It mirrors CI by construction: `.github/workflows/ci.yml` invokes only `verify:*` subscripts (plus `test:integration`). To add or change a check, edit the matching subscript in `package.json`. If CI catches something `verify` didn't, fix the subscript, not a checklist.
 - **A fresh checkout/worktree must install `web/` AND every `src/platform/*/ui/` before `bun run verify`**, because `verify:test-unit` runs those separate packages and root `bun install` does not cover them (the symptom is a missing-module error such as `Cannot find package 'dompurify'`).
 - **`test:unit` runs on root deps alone**, and the backend unit suite imports the shared bridge protocol (`web/src/bridge/*`). So a web-only *value* import must never leak into that graph: keep such deps type-only and inject the value at the browser entry (`web/src/sentry.ts` is the pattern). The `Unit Tests (root deps only)` CI job enforces this.
+- **The dev launchers choose the dev identity provider.** `serve` refuses a workdir with no `instance.json` (ADR-0040), so every launcher goes through `scripts/dev.ts`, which writes `{"auth":{"adapter":"dev"}}` there when the file is absent. Never make the runtime or server infer dev from a missing file.
 - **The dev launchers prepare a fresh checkout.** `dev`, `dev:empty`, `dev:minimal`, `dev:docs-demo`, and `dev:worktree` install `web/` dependencies and build any platform app UI missing its `dist/index.html`; `dev:worktree` also installs root dependencies, since `scripts/dev.ts` imports from `src/`. Only what is absent is done.
 - **`bun run dev` does NOT rebuild the platform app UIs.** The API serves each app from its pre-built `src/platform/<name>/ui/dist/index.html`, read on iframe mount, not watched. After editing anything under `src/platform/*/ui/src/`, run `bun run build:platform-apps` and restart the dev server, or the iframe runs stale code.
 
 ### Worktree dev
 
-`bun run dev:worktree` runs the platform from any git worktree against a worktree-local workdir, on alt ports, with no auth gate, so a feature branch can be QA'd without disturbing `~/.nimblebrain` or another worktree.
+`bun run dev:worktree` runs the platform from any git worktree against a worktree-local workdir, on alt ports, with no login, so a feature branch can be QA'd without disturbing `~/.nimblebrain` or another worktree.
 
 | Setting | Value |
 |---|---|
 | Workdir | `<worktree>/.nimblebrain-worktree/` (auto-seeded; gitignored) |
 | Config | `<worktree>/.nimblebrain-worktree/nimblebrain.json` (auto-seeded on first run) |
 | API / Web ports | 27271 / 27270 (override via `NB_API_PORT` / `NB_WEB_PORT`) |
-| Auth | none (dev mode — no `instance.json`) |
+| Auth | the `dev` adapter, written to `<workdir>/instance.json` when it has none |
 | LLM keys | `ANTHROPIC_API_KEY` (and friends) read from your shell environment |
 
 Reset with `rm -rf .nimblebrain-worktree && bun run dev:worktree`. Share state across worktrees with `NB_WORK_DIR=/abs/path bun run dev:worktree`. Suitable for Chrome DevTools-driven E2E tests against `/v1/*` (no login).
@@ -66,7 +67,7 @@ Nested `AGENTS.md` files (each with a `CLAUDE.md` symlink) hold the rules for on
 |---|---|
 | [`src/platform/AGENTS.md`](./src/platform/AGENTS.md) | Authoring platform apps and their tools: MCP-native sources, strict input schemas, named output types, `ui://` MIME type |
 | [`src/platform/automations/AGENTS.md`](./src/platform/automations/AGENTS.md) | Automation storage, per-run membership gate, run results |
-| [`src/workspace/AGENTS.md`](./src/workspace/AGENTS.md) | Workspace roots and `assertWorkspaceRootExists`, write authorization, opaque ids, personal-workspace invariants |
+| [`src/workspace/AGENTS.md`](./src/workspace/AGENTS.md) | Workspace roots and `assertWorkspaceRootExists`, write authorization, opaque ids, provisioning and the default workspace |
 | [`src/orchestrator/AGENTS.md`](./src/orchestrator/AGENTS.md) | The workspace wall: tool-name shape as scope, `routeToolCall`, name parsing, skill walling |
 | [`src/tools/AGENTS.md`](./src/tools/AGENTS.md) | `CredentialStore`, credential refs, OAuth records, credential ownership; long-running (task-augmented) MCP tools |
 | [`src/conversation/AGENTS.md`](./src/conversation/AGENTS.md) | Conversation paths, workspace binding on resume, no cross-workspace listing |
@@ -168,7 +169,7 @@ web/               Vite + React + TypeScript SPA (separate package.json)
 | `models.fast` | `anthropic:claude-haiku-4-5-20251001` |
 | Max iterations | 25 (hard cap: 50) |
 | Max input tokens | 500,000 |
-| Max output tokens | 16,384 |
+| Max output tokens | the model's catalog output limit (16,384 for a model the catalog lacks) |
 | Default connectors | none (platform capabilities are built in) |
 | Work directory | `~/.nimblebrain` |
 | API port | 27247 |

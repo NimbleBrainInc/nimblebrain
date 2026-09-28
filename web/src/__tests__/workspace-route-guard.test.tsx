@@ -2,8 +2,8 @@
 // WorkspaceRouteGuard — single-source-of-truth invariant.
 //
 // The URL slug is authoritative for the active workspace; the wire
-// workspace (`X-Workspace-Id`, from the ambient `activeWorkspaceId`) is a
-// projection of it. The load-bearing contract: a workspace-scoped child
+// workspace (the `/v1/workspaces/<wsId>/…` path REST helpers build from the
+// ambient `activeWorkspaceId`) is a projection of it. The load-bearing contract: a workspace-scoped child
 // must NOT mount until the ambient workspace equals the route — otherwise
 // a descendant's data fetch reads the stale ambient value (the bootstrap
 // personal default, or the previous route's workspace) and shows one
@@ -47,7 +47,7 @@ const { getActiveWorkspaceId } = await import("../api/client");
 
 import type { WorkspaceInfo } from "../context/WorkspaceContext";
 
-const PERSONAL = "ws_user_user_p";
+const DEFAULT_WS = "ws_mine";
 // Multi-underscore semantic id mirrors the real shared workspace that
 // surfaced the bug (`ws_nimblebrain_shared` → slug `nimblebrain_shared`).
 const SHARED = "ws_nimblebrain_shared";
@@ -59,14 +59,13 @@ function ws(overrides: Partial<WorkspaceInfo> & { id: string; name: string }): W
     name: overrides.name,
     connectors: [],
     memberCount: 1,
-    isPersonal: overrides.isPersonal ?? false,
     userRole: overrides.userRole ?? "admin",
     ...overrides,
   };
 }
 
 // Records the ambient workspace id the child sees on every render, so we
-// can assert it never observed the stale (personal) default.
+// can assert it never observed the stale (bootstrap) default.
 let observedByChild: (string | null)[] = [];
 function ProbeChild() {
   observedByChild.push(getActiveWorkspaceId());
@@ -142,26 +141,26 @@ function hasTestId(container: HTMLElement, testid: string): boolean {
 }
 
 describe("WorkspaceRouteGuard — workspace single-source-of-truth", () => {
-  test("child never observes the stale (personal) ambient workspace under a shared-workspace URL", async () => {
-    // Bootstrap defaults the ambient workspace to personal, but the URL
-    // names the shared workspace — the exact post-OAuth-redirect setup.
+  test("child never observes the stale (bootstrap default) ambient workspace under another workspace's URL", async () => {
+    // Bootstrap defaults the ambient workspace to the user's default, but the
+    // URL names another workspace — the exact post-OAuth-redirect setup.
     mounted = await mount({
       workspaces: [
-        ws({ id: PERSONAL, name: "Personal", isPersonal: true }),
+        ws({ id: DEFAULT_WS, name: "Mat's workspace" }),
         ws({ id: SHARED, name: "NimbleBrain Shared" }),
       ],
-      activeId: PERSONAL,
+      activeId: DEFAULT_WS,
       initialPath: `/w/${SHARED_SLUG}/probe`,
     });
 
     // The child mounted (gate eventually opened)…
     expect(hasTestId(mounted.container, "probe")).toBe(true);
     // …and every value it ever observed was the route's workspace — it
-    // NEVER saw the personal default. Pre-fix, the child's first render
-    // observed PERSONAL (the bug: personal connectors under the shared URL).
+    // NEVER saw the bootstrap default. Pre-fix, the child's first render
+    // observed DEFAULT_WS (the bug: one workspace's connectors under another's URL).
     expect(observedByChild.length).toBeGreaterThan(0);
     expect(observedByChild.every((id) => id === SHARED)).toBe(true);
-    expect(observedByChild).not.toContain(PERSONAL);
+    expect(observedByChild).not.toContain(DEFAULT_WS);
     // Ambient is reconciled to the route on the wire.
     expect(getActiveWorkspaceId()).toBe(SHARED);
   });
@@ -169,7 +168,7 @@ describe("WorkspaceRouteGuard — workspace single-source-of-truth", () => {
   test("already-aligned ambient workspace renders the child immediately", async () => {
     mounted = await mount({
       workspaces: [
-        ws({ id: PERSONAL, name: "Personal", isPersonal: true }),
+        ws({ id: DEFAULT_WS, name: "Mat's workspace" }),
         ws({ id: SHARED, name: "NimbleBrain Shared" }),
       ],
       activeId: SHARED,
@@ -181,8 +180,8 @@ describe("WorkspaceRouteGuard — workspace single-source-of-truth", () => {
 
   test("unknown / non-member slug bounces home and never mounts the child", async () => {
     mounted = await mount({
-      workspaces: [ws({ id: PERSONAL, name: "Personal", isPersonal: true })],
-      activeId: PERSONAL,
+      workspaces: [ws({ id: DEFAULT_WS, name: "Mat's workspace" })],
+      activeId: DEFAULT_WS,
       initialPath: "/w/ws_not_a_member/probe",
     });
     expect(hasTestId(mounted.container, "probe")).toBe(false);

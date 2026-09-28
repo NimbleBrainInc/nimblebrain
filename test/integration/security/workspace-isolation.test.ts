@@ -2,10 +2,11 @@
  * Security regression tests for workspace isolation.
  *
  * These tests verify that:
- * 1. Path traversal via X-Workspace-Id is blocked
- * 2. Missing workspace context fails closed (not global fallback)
+ * 1. Path traversal via the workspace id in /v1/workspaces/<wsId>/ is blocked
+ * 2. Malformed, unknown and non-member workspace ids get one indistinguishable
+ *    answer
  * 3. Concurrent requests don't contaminate each other's workspace context
- * 4. Workspace middleware rejects authenticated requests without workspace
+ * 4. Identity-scoped routes need no workspace
  * 5. SSE events are scoped to workspace
  * 6. Connector instances do not leak across workspaces when two workspaces
  *    install the same connector (the briefing/nav leak class)
@@ -16,18 +17,18 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import type {
-  BriefingBlock,
   ConnectorRef,
   ConnectorUiMeta,
 } from "../../../src/connectors/runtime/types.ts";
 import { Runtime } from "../../../src/runtime/runtime.ts";
 import { createEchoModel } from "../../helpers/echo-model.ts";
-import { createTestAuthAdapter } from "../../helpers/test-auth-adapter.ts";
+import { TEST_IDENTITY, TestAuthAdapter } from "../../helpers/test-auth-adapter.ts";
 import { startServer } from "../../../src/api/server.ts";
 import type { ServerHandle } from "../../../src/api/server.ts";
 import { SseEventManager } from "../../../src/api/events.ts";
 import type { ToolResult } from "../../../src/engine/types.ts";
 import type { Tool, ToolSource } from "../../../src/tools/types.ts";
+import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../../helpers/test-workspace.ts";
 
 // ── Test setup: authenticated server ────────────────────────────
 
@@ -41,17 +42,21 @@ beforeAll(async () => {
   workDir = join(tmpdir(), `nb-workspace-isolation-${Date.now()}`);
   mkdirSync(workDir, { recursive: true });
   runtime = await Runtime.start({
+    identityProvider: () => new TestAuthAdapter(TEST_KEY),
     workDir,
     model: { provider: "custom", adapter: createEchoModel() },
     logging: { disabled: true },
   });
 
+  // A real provider, built without the stores, so it provisions nothing: the
+  // caller's memberships are exactly the ones set here.
   handle = startServer({
     runtime,
     port: 0,
-    authAdapter: createTestAuthAdapter(TEST_KEY, runtime),
   });
   baseUrl = `http://localhost:${handle.port}`;
+  await provisionTestWorkspace(runtime);
+  await runtime.getWorkspaceStore().addMember(TEST_WORKSPACE_ID, TEST_IDENTITY.id, "admin");
 });
 
 afterAll(async () => {
@@ -70,57 +75,62 @@ function authHeaders(extra?: Record<string, string>): Record<string, string> {
 
 // ── V1: Path Traversal ──────────────────────────────────────────
 
-describe("V1: Path traversal via X-Workspace-Id", () => {
-  it("rejects directory traversal with ../", async () => {
-    const res = await fetch(`${baseUrl}/v1/chat`, {
-      method: "POST",
-      headers: authHeaders({ "X-Workspace-Id": "../../etc" }),
-      body: JSON.stringify({ message: "test" }),
-    });
-    expect(res.status).toBe(400);
-    const body = await res.json();
-    expect(body.error).toBe("workspace_error");
-    expect(body.message).toContain("Invalid workspace ID");
+/** POST a chat message to the workspace addressed by `wsSegment` (already URL-encoded). */
+function chatAt(wsSegment: string): Promise<Response> {
+  return fetch(`${baseUrl}/v1/workspaces/${wsSegment}/chat`, {
+    method: "POST",
+    headers: authHeaders(),
+    body: JSON.stringify({ message: "test" }),
+  });
+}
+
+const WORKSPACE_NOT_FOUND = { error: "workspace_error", message: "Workspace not found" };
+
+describe("V1: Admission of the workspace id in the path", () => {
+  // A literal `..` segment is resolved by the URL parser before the request is
+  // sent (and `%2e%2e` counts as one), so traversal arrives encoded: the router
+  // matches it as a single `:wsId` segment and the gate sees the decoded id.
+  it("refuses an encoded ../ traversal with the workspace 404", async () => {
+    const res = await chatAt(encodeURIComponent("../../etc"));
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual(WORKSPACE_NOT_FOUND);
   });
 
-  it("rejects slash in workspace ID", async () => {
-    const res = await fetch(`${baseUrl}/v1/chat`, {
-      method: "POST",
-      headers: authHeaders({ "X-Workspace-Id": "ws_valid/../../etc" }),
-      body: JSON.stringify({ message: "test" }),
-    });
-    expect(res.status).toBe(400);
+  it("refuses an encoded slash in the workspace id", async () => {
+    const res = await chatAt(encodeURIComponent("ws_valid/../../etc"));
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual(WORKSPACE_NOT_FOUND);
   });
 
-  it("rejects dots in workspace ID", async () => {
-    const res = await fetch(`${baseUrl}/v1/chat`, {
-      method: "POST",
-      headers: authHeaders({ "X-Workspace-Id": "ws_.." }),
-      body: JSON.stringify({ message: "test" }),
-    });
-    expect(res.status).toBe(400);
+  it("refuses dots in the workspace id", async () => {
+    const res = await chatAt("ws_..");
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual(WORKSPACE_NOT_FOUND);
   });
 
-  it("rejects oversized workspace ID (>64 chars)", async () => {
-    const longId = "ws_" + "a".repeat(65);
-    const res = await fetch(`${baseUrl}/v1/chat`, {
-      method: "POST",
-      headers: authHeaders({ "X-Workspace-Id": longId }),
-      body: JSON.stringify({ message: "test" }),
-    });
-    expect(res.status).toBe(400);
+  it("refuses an oversized workspace id (>64 chars)", async () => {
+    const res = await chatAt(`ws_${"a".repeat(65)}`);
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual(WORKSPACE_NOT_FOUND);
   });
 
-  it("accepts valid workspace ID format", async () => {
-    // Will fail on membership (not a real workspace), but should NOT fail on format
-    const res = await fetch(`${baseUrl}/v1/chat`, {
-      method: "POST",
-      headers: authHeaders({ "X-Workspace-Id": "ws_valid_123" }),
-      body: JSON.stringify({ message: "test" }),
-    });
-    // 400 from "not found" is fine — the point is it's NOT "Invalid workspace ID format"
-    const body = await res.json();
-    expect(body.message).not.toContain("Invalid workspace ID");
+  it("answers a well-formed unknown id exactly as a malformed one", async () => {
+    // Shape is checked before lookup, but the caller cannot tell which check
+    // refused: both answers are the same status and body.
+    const unknown = await chatAt("ws_valid_123");
+    const malformed = await chatAt("ws_..");
+    expect(unknown.status).toBe(404);
+    expect(malformed.status).toBe(unknown.status);
+    expect(await malformed.json()).toEqual(await unknown.json());
+  });
+
+  it("answers a workspace the caller does not belong to exactly as an unknown one", async () => {
+    // The dev user is this workspace's only member, so under the dev provider,
+    // where every request is the dev user, the request would be admitted.
+    const other = await provisionTestWorkspace(runtime, "ws_not_a_member");
+    const nonMember = await chatAt(other);
+    expect(nonMember.status).toBe(404);
+    expect(await nonMember.json()).toEqual(WORKSPACE_NOT_FOUND);
   });
 });
 
@@ -132,7 +142,7 @@ describe("V3: Concurrent request isolation via AsyncLocalStorage", () => {
     // Each should see its own workspace (or fail independently).
     // The key assertion: neither request sees the other's workspace.
     const [res1, res2] = await Promise.all([
-      fetch(`${baseUrl}/v1/tools/call`, {
+      fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/tools/call`, {
         method: "POST",
         headers: authHeaders(),
         body: JSON.stringify({
@@ -141,7 +151,7 @@ describe("V3: Concurrent request isolation via AsyncLocalStorage", () => {
           arguments: {},
         }),
       }),
-      fetch(`${baseUrl}/v1/tools/call`, {
+      fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/tools/call`, {
         method: "POST",
         headers: authHeaders(),
         body: JSON.stringify({
@@ -152,26 +162,17 @@ describe("V3: Concurrent request isolation via AsyncLocalStorage", () => {
       }),
     ]);
 
-    // Both should succeed or both should fail with the same workspace
-    // The key is they don't cross-contaminate
-    expect(res1.status).toBe(res2.status);
-    if (res1.status === 200) {
-      const body1 = await res1.json();
-      const body2 = await res2.json();
-      // Both should reference the same workspace (the test user's default)
-      expect(body1).toEqual(body2);
-    }
+    // Both address the same workspace, so both succeed with the same answer.
+    // The key is they don't cross-contaminate.
+    expect(res1.status).toBe(200);
+    expect(res2.status).toBe(200);
+    expect(await res1.json()).toEqual(await res2.json());
   });
 });
 
-// ── V4: Middleware Fail-Safe ────────────────────────────────────
+// ── V4: Identity-scoped routes ────────────────────────────────────
 
-describe("V4: Workspace middleware rejects without workspace", () => {
-  it("unauthenticated request to workspace-scoped route in dev mode succeeds", async () => {
-    // The main (dev mode) server should allow through without workspace
-    // Dev mode is tested via the non-auth server — we only test auth server here
-  });
-
+describe("V4: Identity-scoped routes need no workspace", () => {
   it("health endpoint works without workspace (unauthenticated route)", async () => {
     const res = await fetch(`${baseUrl}/v1/health`);
     expect(res.status).toBe(200);
@@ -306,7 +307,6 @@ describe("V6: getConnectorInstancesForWorkspace — two workspaces, same connect
       manifestName: `ai.nimblebrain/${serverName}`,
       version: "1.0.0",
       ui: { name: "Leak Check", icon: "bug" } as ConnectorUiMeta,
-      briefing: null as BriefingBlock | null,
     };
 
     const lifecycle = runtime.getLifecycle();
@@ -351,7 +351,6 @@ describe("V6: getConnectorInstancesForWorkspace — two workspaces, same connect
       manifestName: `ai.nimblebrain/${serverName}`,
       version: "1.0.0",
       ui: null,
-      briefing: null as BriefingBlock | null,
     };
     await runtime.getLifecycle().seedInstance(serverName, ref.url, ref, meta, ws.id);
     // Deliberately do NOT add the source to the registry.

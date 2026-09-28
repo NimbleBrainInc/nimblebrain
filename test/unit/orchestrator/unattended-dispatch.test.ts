@@ -19,7 +19,6 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
 import type { EngineEvent, EventSink, ToolResult } from "../../../src/engine/types.ts";
-import { INTERNAL_TOOL_ANNOTATION } from "../../../src/engine/types.ts";
 import { IdentityContext } from "../../../src/identity/context.ts";
 import type { UnattendedDispatchRuntime } from "../../../src/orchestrator/unattended-dispatch.ts";
 import { dispatchUnattended } from "../../../src/orchestrator/unattended-dispatch.ts";
@@ -479,10 +478,10 @@ describe("dispatchUnattended — a call that goes through", () => {
   });
 
   // `unattended` is what bars the authoring surface at the sources themselves,
-  // below anything this door checks by name; `unattendedReason` is what the
-  // outbound `_meta` stamp reads. Both must survive the router's per-call
-  // context rebuild, which is an allowlist — a field not named there vanishes.
-  test("the dispatched tool sees unattended and the reason in its request context", async () => {
+  // below anything this door checks by name. It must survive the router's
+  // per-call context rebuild, which is an allowlist — a field not named there
+  // vanishes.
+  test("the dispatched tool sees unattended in its request context", async () => {
     const crm = makeSpySource("crm");
     const runtime = makeStubRuntime({
       workDir,
@@ -493,7 +492,6 @@ describe("dispatchUnattended — a call that goes through", () => {
     await call(runtime, "crm__search");
 
     expect(crm.calls[0]?.context?.unattended).toBe(true);
-    expect(crm.calls[0]?.context?.unattendedReason).toBe(REASON);
     expect(crm.calls[0]?.context?.workspaceId).toBe(WS);
     expect(crm.calls[0]?.context?.identity?.id).toBe(PRINCIPAL);
   });
@@ -501,7 +499,7 @@ describe("dispatchUnattended — a call that goes through", () => {
   // The annotation hides a tool from every listing; it has never made one
   // uncallable, and this door does not change that. Only the unattended policy
   // decides what may be named.
-  test("an internal-annotated tool is still callable by name", async () => {
+  test("an app-only tool is still callable by name", async () => {
     const hooks = makeSpySource("hooks", {
       tools: [
         {
@@ -509,7 +507,7 @@ describe("dispatchUnattended — a call that goes through", () => {
           description: "",
           inputSchema: { type: "object", properties: {} },
           source: "test",
-          meta: { [INTERNAL_TOOL_ANNOTATION]: true },
+          meta: { ui: { visibility: ["app"] } },
         },
       ],
     });

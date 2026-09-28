@@ -276,3 +276,42 @@ describe("nb__use_skill — already-delivered dedupe", () => {
     expect(resultText(result)).toContain("<activated-skill>");
   });
 });
+
+describe("nb__use_skill — on-demand bodies", () => {
+  const ON_DEMAND: ActivatableSkill = {
+    name: "connector:srv:guide",
+    description: "Server guidance",
+    body: "",
+    scope: "provided",
+  };
+
+  test("fetches a server-published body on activation", async () => {
+    runtime.activatable = [
+      { ...ON_DEMAND, loadBody: async () => ({ ok: true, body: "Fetched guidance." }) },
+    ];
+    const src = await buildSource();
+    const result = await src.execute("use_skill", { name: ON_DEMAND.name });
+    expect(result.isError).toBe(false);
+    expect(resultText(result)).toContain("Fetched guidance.");
+  });
+
+  test("tells an unreachable server apart from content that failed verification", async () => {
+    runtime.activatable = [
+      { ...ON_DEMAND, loadBody: async () => ({ ok: false, reason: "unreachable" }) },
+    ];
+    const src = await buildSource();
+    const unreachable = await src.execute("use_skill", { name: ON_DEMAND.name });
+    expect(unreachable.isError).toBe(true);
+    expect(resultText(unreachable)).toContain("did not answer. Try again");
+
+    runtime.activatable = [
+      { ...ON_DEMAND, loadBody: async () => ({ ok: false, reason: "unverified" }) },
+    ];
+    const unverified = await src.execute("use_skill", { name: ON_DEMAND.name });
+    expect(unverified.isError).toBe(true);
+    const text = resultText(unverified);
+    expect(text).toContain("does not match the skill it listed");
+    expect(text).toContain("Retrying will not help");
+    expect(unverified._meta?.[SKILL_ACTIVATED_META_KEY]).toBeUndefined();
+  });
+});

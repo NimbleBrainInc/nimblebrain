@@ -135,6 +135,17 @@ export default defineConfig({
             ],
           },
           {
+            label: 'MCP',
+            link: '/mcp/overview',
+            icon: 'seti:json',
+            items: [
+              { label: 'NimbleBrain and MCP', slug: 'mcp/overview' },
+              { label: 'Protocol Support', slug: 'mcp/protocol-support' },
+              { label: 'Host Resources', slug: 'mcp/host-resources' },
+              { label: 'Reserved Keys', slug: 'mcp/reserved-keys' },
+            ],
+          },
+          {
             label: 'Connect via MCP',
             link: '/connect/external-clients',
             icon: 'external',
@@ -152,6 +163,7 @@ export default defineConfig({
               { label: 'Manifest Reference', slug: 'apps/manifest' },
               { label: 'Synapse SDK', slug: 'apps/synapse' },
               { label: 'Tool Results & Content Routing', slug: 'apps/tool-results' },
+              { label: 'Facets', slug: 'apps/facets' },
               { label: 'Notifications', slug: 'apps/notifications' },
               { label: 'Lifecycle', slug: 'apps/lifecycle' },
               { label: 'MCP App Bridge', slug: 'apps/bridge' },

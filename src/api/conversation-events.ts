@@ -72,7 +72,7 @@ export class ConversationEventManager {
    * server-generated `subscriberId` for the new subscription. The id
    * is also written into the stream as the first frame
    * (`event: subscribed`) so the consumer can learn it from the SSE
-   * payload alone — clients that originate a `/v1/chat/stream` POST
+   * payload alone — clients that originate a `/v1/workspaces/:wsId/chat/stream` POST
    * for the same conversation pass that id back as the
    * `X-Origin-Subscriber-Id` header. The chat-stream handler forwards
    * the id to `broadcastToConversation`'s `excludeSubscriberId`, which
@@ -166,7 +166,7 @@ export class ConversationEventManager {
    * Conversations are single-owner (Stage 1): every subscriber is the same
    * user on another tab/device. The exclusion key is the **subscriber id**,
    * not `userId` — filtering by `userId` would skip every tab; not filtering
-   * double-delivers to the sender (it receives via both `/v1/chat/stream` and
+   * double-delivers to the sender (it receives via both `/v1/workspaces/:wsId/chat/stream` and
    * its own `/v1/conversations/:id/events` subscription). The sender passes
    * its conv-events subscriber id as `excludeSubscriberId` so its own
    * subscription is skipped while peer tabs still receive. (Stage 4
@@ -174,7 +174,7 @@ export class ConversationEventManager {
    *
    * Seq-less: unlike {@link publishEvent} (the RunBus path), these frames carry
    * no `id:` sequence. A seq-tracking `conversation-stream` viewer applies them
-   * live but can't replay/resume them. Only `/v1/chat` + `/v1/chat/stream` use
+   * live but can't replay/resume them. Only `/v1/workspaces/:wsId/chat` + `/v1/workspaces/:wsId/chat/stream` use
    * this; the web shell is RunBus-only.
    *
    * @param conversationId - Target conversation

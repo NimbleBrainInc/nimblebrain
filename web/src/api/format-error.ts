@@ -25,5 +25,11 @@ export function formatSendError(err: unknown): string {
   if (err instanceof ApiClientError && err.code === "run_in_progress") {
     return "The assistant is still working on your previous message. Wait for it to finish, then try again.";
   }
+  // A resume the workspace in the URL does not hold: a conversation opened from
+  // another workspace whose own workspace has not loaded yet (retry once the
+  // panel has followed it there), or one deleted since this tab restored it.
+  if (err instanceof ApiClientError && err.code === "conversation_not_found") {
+    return "This conversation isn't in the workspace you're viewing. Open it from its own workspace, or start a new chat.";
+  }
   return err instanceof Error ? err.message : "An unexpected error occurred";
 }

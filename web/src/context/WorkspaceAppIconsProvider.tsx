@@ -14,8 +14,8 @@ import { WorkspaceAppIconsContext, type WorkspaceAppIconsValue } from "./Workspa
  * provider only caches the `serverName → iconUrl` projection so the UI
  * never re-implements that resolution or fans out duplicate fetches.
  *
- * Scoped to the active workspace (the connectors list reads the
- * `X-Workspace-Id` header); refetched on workspace switch and on the
+ * Scoped to the active workspace (the connectors list is read through its
+ * workspace path); refetched on workspace switch and on the
  * connector-lifecycle SSE signals (install / uninstall) that change the
  * app set, so icons stay in lockstep with it.
  */

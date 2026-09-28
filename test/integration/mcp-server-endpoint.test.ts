@@ -4,16 +4,16 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
-import { createTestAuthAdapter } from "../helpers/test-auth-adapter.ts";
+import { testAuthAdapter } from "../helpers/test-auth-adapter.ts";
 import { startServer } from "../../src/api/server.ts";
 import type { ServerHandle } from "../../src/api/server.ts";
 import { log } from "../../src/observability/log.ts";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import type { ToolSource, Tool } from "../../src/tools/types.ts";
 import type { ToolResult } from "../../src/engine/types.ts";
 import { textContent } from "../../src/engine/content-helpers.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
 
 // ---------------------------------------------------------------------------
 // Log capture helper
@@ -85,6 +85,7 @@ beforeAll(async () => {
 	mkdirSync(testDir, { recursive: true });
 
 	runtime = await Runtime.start({
+		identityProvider: devProvider,
 		model: { provider: "custom", adapter: createEchoModel() },
 		logging: { disabled: true },
 		workDir: testDir,
@@ -95,7 +96,7 @@ beforeAll(async () => {
 	const wsRegistry = runtime.getRegistryForWorkspace(TEST_WORKSPACE_ID);
 	wsRegistry.addSource(new FakeToolSource());
 
-	handle = startServer({ runtime, port: 0 });
+	handle = startServer({ runtime, port: 0});
 	baseUrl = `http://localhost:${handle.port}`;
 });
 
@@ -288,6 +289,70 @@ describe("MCP Server Endpoint (/mcp)", () => {
 			expect(line).toContain(`workspace=${TEST_WORKSPACE_ID}`);
 		});
 
+		// A session miss has no `clientInfo` to read, so the user agent is what
+		// names the client. It and the left-most forwarded IP are JSON-quoted
+		// because the client controls both.
+		it("names the client by user agent on a session miss", async () => {
+			await fetch(`${baseUrl}/mcp/${TEST_WORKSPACE_ID}`, {
+				method: "POST",
+				headers: {
+					"Content-Type": "application/json",
+					Accept: "application/json, text/event-stream",
+					"User-Agent": 'probe/1.0 " identity=forged',
+					"X-Forwarded-For": "203.0.113.7 workspace=forged, 10.0.0.1",
+				},
+				body: JSON.stringify({ jsonrpc: "2.0", method: "tools/list", id: 1 }),
+			});
+			const line = capture.lines.find((l) =>
+				l.startsWith("warn [mcp] non-init request without session id"),
+			);
+			expect(line).toContain('ua="probe/1.0 \\" identity=forged"');
+			expect(line).toContain('ip="203.0.113.7 workspace=forged"');
+		});
+
+		it("caps a client-supplied log field at 200 characters", async () => {
+			await fetch(`${baseUrl}/mcp/${TEST_WORKSPACE_ID}`, {
+				method: "POST",
+				headers: {
+					"Content-Type": "application/json",
+					Accept: "application/json, text/event-stream",
+					"User-Agent": "u".repeat(500),
+				},
+				body: JSON.stringify({ jsonrpc: "2.0", method: "tools/list", id: 1 }),
+			});
+			const line = capture.lines.find((l) =>
+				l.startsWith("warn [mcp] non-init request without session id"),
+			);
+			expect(line).toContain(`ua="${"u".repeat(200)}"`);
+		});
+
+		it("info-logs the declared clientInfo when a session initializes", async () => {
+			const res = await fetch(`${baseUrl}/mcp/${TEST_WORKSPACE_ID}`, {
+				method: "POST",
+				headers: {
+					"Content-Type": "application/json",
+					Accept: "application/json, text/event-stream",
+					"User-Agent": "probe/1.0",
+				},
+				body: JSON.stringify({
+					jsonrpc: "2.0",
+					method: "initialize",
+					params: {
+						protocolVersion: "2024-11-05",
+						capabilities: {},
+						clientInfo: { name: "probe-client", version: "2.3.4" },
+					},
+					id: 1,
+				}),
+			});
+			expect(res.status).toBe(200);
+			const line = capture.lines.find((l) => l.startsWith("info [mcp] session initialized"));
+			expect(line).toBeDefined();
+			expect(line).toContain('client="probe-client/2.3.4"');
+			expect(line).toContain('ua="probe/1.0"');
+			expect(line).toContain(`workspace=${TEST_WORKSPACE_ID}`);
+		});
+
 		it("returns 404 and info-logs identity context for DELETE with unknown session id", async () => {
 			const res = await fetch(`${baseUrl}/mcp/${TEST_WORKSPACE_ID}`, {
 				method: "DELETE",
@@ -319,6 +384,7 @@ describe("MCP Server Auth", () => {
 		mkdirSync(authTestDir, { recursive: true });
 
 		authRuntime = await Runtime.start({
+			identityProvider: testAuthAdapter(TEST_API_KEY),
 			model: { provider: "custom", adapter: createEchoModel() },
 			logging: { disabled: true },
 			workDir: authTestDir,
@@ -329,7 +395,6 @@ describe("MCP Server Auth", () => {
 		authHandle = startServer({
 			runtime: authRuntime,
 			port: 0,
-			provider: createTestAuthAdapter(TEST_API_KEY, authRuntime),
 		});
 		authUrl = `http://localhost:${authHandle.port}`;
 	});

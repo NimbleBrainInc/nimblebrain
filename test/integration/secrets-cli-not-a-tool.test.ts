@@ -21,7 +21,6 @@ import { join } from "node:path";
 import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { ensureUserWorkspace } from "../../src/workspace/provisioning.ts";
-import { personalWorkspaceIdFor } from "../../src/workspace/workspace-store.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 
 let runtime: Runtime;
@@ -35,11 +34,11 @@ beforeAll(async () => {
     logging: { disabled: true },
     workDir: testDir,
   });
-  await ensureUserWorkspace(runtime.getWorkspaceStore(), {
+  const [ws] = await ensureUserWorkspace(runtime.getWorkspaceStore(), {
     id: DEV_IDENTITY.id,
     displayName: DEV_IDENTITY.displayName,
   });
-  const wsId = personalWorkspaceIdFor(DEV_IDENTITY.id);
+  const wsId = ws!.id;
   toolNames = (await runtime.listToolsForWorkspace(wsId, DEV_IDENTITY.id)).map((t) => t.name);
 });
 

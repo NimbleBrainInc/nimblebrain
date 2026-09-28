@@ -3,8 +3,8 @@
 //
 // Pins the contract the task spec calls out:
 //
-//   1. `ChatRequest` (the shape the chat composer POSTs to /v1/chat/stream)
-//      has NO `workspaceId` field — matches T006's identity-bound session
+//   1. `ChatRequest` (the shape the chat composer POSTs to
+//      /v1/workspaces/<wsId>/chat/stream) has NO `workspaceId` field — matches T006's identity-bound session
 //      contract. A type-level mutual-extends assertion catches future
 //      widening at compile time.
 //   2. `WorkspaceSwitcher` / `WorkspaceSelector` (the header switcher Q1
@@ -72,8 +72,8 @@ describe("ChatRequest wire shape (T006 contract)", () => {
 // ---------------------------------------------------------------------------
 // workspace_error → onWorkspaceError recovery hook
 //
-// A data call that fails with `workspace_error` (stale/invalid
-// X-Workspace-Id: deleted workspace, lost membership, malformed id) fires the
+// A data call that fails with `workspace_error` (a stale or invalid workspace
+// in the request path: deleted workspace, lost membership, malformed id) fires the
 // registered handler so the shell can drop the selection and route home —
 // symmetric to the 401 → onAuthError path. The error is still returned so
 // callers' local handling is unchanged.
@@ -83,10 +83,9 @@ describe("ChatRequest wire shape (T006 contract)", () => {
 // and a pure-function assertion sidesteps the suite's `mock.module(...)` /
 // `globalThis.fetch` fragility that makes a `callTool` round-trip unreliable.
 //
-// Regression guard: production users hit raw
-// `{"error":"workspace_error","message":"Workspace \"ws_..\" not found."}`
-// JSON mid-session when a stale X-Workspace-Id reached a data fetch with no
-// route guard in front of it.
+// Regression guard: without the hook, a data fetch addressed to a stale
+// workspace with no route guard in front of it surfaces the raw
+// `{"error":"workspace_error","message":"Workspace not found"}` JSON mid-session.
 // ---------------------------------------------------------------------------
 
 describe("errorFromResponse → onWorkspaceError recovery hook", () => {
@@ -95,14 +94,14 @@ describe("errorFromResponse → onWorkspaceError recovery hook", () => {
     setOnWorkspaceError(fired);
 
     const err = errorFromResponse(
-      { error: "workspace_error", message: 'Workspace "ws_empty" not found.' },
-      400,
+      { error: "workspace_error", message: "Workspace not found" },
+      404,
     );
 
     expect(fired).toHaveBeenCalledTimes(1);
     expect(err).toBeInstanceOf(ApiClientError);
     expect(err.code).toBe("workspace_error");
-    expect(err.status).toBe(400);
+    expect(err.status).toBe(404);
     setOnWorkspaceError(null);
   });
 
@@ -121,7 +120,7 @@ describe("errorFromResponse → onWorkspaceError recovery hook", () => {
     setOnWorkspaceError(fired);
     setOnWorkspaceError(null);
 
-    errorFromResponse({ error: "workspace_error", message: "stale" }, 400);
+    errorFromResponse({ error: "workspace_error", message: "Workspace not found" }, 404);
 
     expect(fired).toHaveBeenCalledTimes(0);
   });

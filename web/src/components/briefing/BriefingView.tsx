@@ -1,77 +1,22 @@
 // ---------------------------------------------------------------------------
-// BriefingView — presentational render of a workspace activity briefing.
+// BriefingView — presentational render of a workspace's open counts.
 //
 // Pure: it takes a `BriefingOutput` (the `nb__briefing` tool's structured
-// result) plus loading/error/action callbacks and renders. No data fetching,
-// no transport — the workspace dashboard wires it to `useWorkspaceBriefing`,
-// and the future home control panel can reuse it against a cross-workspace
-// source. The briefing is LLM-generated from each installed app's declared
-// facets; this component is the surface the workspace reorg dropped.
+// result) plus error/open callbacks and renders. No data fetching, no
+// transport — the workspace dashboard wires it to `useWorkspaceBriefing`.
+// Each item is a count an app's server reported through the
+// `ai.nimblebrain/facets` extension; label and count are untrusted server data
+// and render as text.
 // ---------------------------------------------------------------------------
 
-import type { ReactNode } from "react";
-import type {
-  BriefingAction,
-  BriefingOutput,
-  BriefingSection,
-} from "../../_generated/platform-schemas/home";
-import { cn } from "../../lib/utils";
+import type { BriefingItem, BriefingOutput } from "../../_generated/platform-schemas/home";
 
 interface BriefingViewProps {
   briefing: BriefingOutput | null;
   error: string | null;
   onRetry: () => void;
-  /** Invoked when a section's action is clicked (navigate / startChat). */
-  onAction?: (action: BriefingAction) => void;
-}
-
-// Render order: anything needing attention first, then what happened, then
-// what's ahead.
-const CATEGORIES: { key: BriefingSection["category"]; label: string }[] = [
-  { key: "attention", label: "Needs attention" },
-  { key: "recent", label: "Recent" },
-  { key: "upcoming", label: "Coming up" },
-];
-
-/** Sentiment → dot color. Positive reads calm, warning reads urgent. */
-function dotClass(type: BriefingSection["type"]): string {
-  if (type === "positive") return "bg-emerald-500";
-  if (type === "warning") return "bg-red-500";
-  return "bg-amber-500";
-}
-
-/**
- * Minimal inline markdown — `**bold**` and `` `code` `` — rendered as React
- * nodes, never injected HTML. Briefing text is platform-generated, but we
- * still render structurally so there's no `dangerouslySetInnerHTML` surface.
- */
-function formatInline(text: string): ReactNode[] {
-  const out: ReactNode[] = [];
-  const re = /(\*\*[^*]+\*\*|`[^`]+`)/g;
-  let last = 0;
-  let key = 0;
-  let m: RegExpExecArray | null;
-  // biome-ignore lint/suspicious/noAssignInExpressions: standard regex-exec loop
-  while ((m = re.exec(text)) !== null) {
-    if (m.index > last) out.push(text.slice(last, m.index));
-    const token = m[0];
-    if (token.startsWith("**")) {
-      out.push(
-        <strong key={key++} className="font-semibold text-foreground">
-          {token.slice(2, -2)}
-        </strong>,
-      );
-    } else {
-      out.push(
-        <code key={key++} className="rounded bg-muted px-1 py-0.5 text-[0.85em] font-mono">
-          {token.slice(1, -1)}
-        </code>,
-      );
-    }
-    last = m.index + token.length;
-  }
-  if (last < text.length) out.push(text.slice(last));
-  return out;
+  /** Invoked with an item's app route when it is clicked. */
+  onOpen?: (route: string) => void;
 }
 
 function Eyebrow() {
@@ -82,57 +27,37 @@ function Eyebrow() {
   );
 }
 
-function SectionGroup({
-  label,
-  items,
-  onAction,
-}: {
-  label: string;
-  items: BriefingSection[];
-  onAction?: (action: BriefingAction) => void;
-}) {
-  if (items.length === 0) return null;
+function ItemRow({ item, onOpen }: { item: BriefingItem; onOpen?: (route: string) => void }) {
+  const unavailable = item.state === "unavailable";
   return (
-    <div className="mt-4 first:mt-3">
-      <div className="text-2xs font-semibold tracking-[0.06em] uppercase text-muted-foreground">
-        {label}
-      </div>
-      <ul className="mt-1.5 space-y-1.5">
-        {items.map((item) => (
-          <li key={item.id} className="flex items-start gap-2.5 text-sm text-foreground/80">
-            <span
-              className={cn("mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full", dotClass(item.type))}
-              aria-hidden
-            />
-            <span className="flex-1 leading-relaxed">{formatInline(item.text)}</span>
-            {/* v1 renders navigate actions (router-routable). `startChat`
-                actions need the chat composer, which a shell page can't reach
-                without subscribing to ChatContext (re-renders the shell every
-                token); they render as text-only until an isolated handler
-                lands. */}
-            {item.action?.type === "navigate" && onAction && (
-              <button
-                type="button"
-                onClick={() => onAction(item.action!)}
-                className="shrink-0 text-xs font-medium text-primary hover:underline"
-              >
-                {item.action.label || "View"} &rarr;
-              </button>
-            )}
-          </li>
-        ))}
-      </ul>
-    </div>
+    <li className="flex items-start gap-2.5 text-sm text-foreground/80">
+      <span className="flex-1 leading-relaxed">
+        {unavailable ? (
+          <span className="text-muted-foreground">{item.label} — unavailable</span>
+        ) : (
+          <>
+            <span className="font-semibold text-foreground">{item.count}</span> {item.label}
+          </>
+        )}
+        <span className="text-muted-foreground"> · {item.app}</span>
+      </span>
+      {item.route && onOpen && (
+        <button
+          type="button"
+          onClick={() => onOpen(item.route!)}
+          className="shrink-0 text-xs font-medium text-primary hover:underline"
+        >
+          Open &rarr;
+        </button>
+      )}
+    </li>
   );
 }
 
-export function BriefingView({ briefing, error, onRetry, onAction }: BriefingViewProps) {
-  const hasSections = (briefing?.sections.length ?? 0) > 0;
+export function BriefingView({ briefing, error, onRetry, onOpen }: BriefingViewProps) {
+  // Nothing is waiting in any app: there is nothing to show.
+  if (!error && (!briefing || briefing.items.length === 0)) return null;
 
-  // While the briefing loads there's no skeleton — the section just shows its
-  // label and fills in when the (per-workspace, slow LLM) summary resolves, so
-  // a workspace switch never flashes a pulsing placeholder. A revisit is
-  // instant (the briefing is cached); only a first visit has the brief gap.
   return (
     <section data-testid="workspace-briefing">
       <Eyebrow />
@@ -153,31 +78,12 @@ export function BriefingView({ briefing, error, onRetry, onAction }: BriefingVie
         </div>
       )}
 
-      {briefing && (
-        <>
-          {briefing.lede && (
-            <p className="mt-1.5 text-sm text-muted-foreground italic leading-relaxed">
-              {briefing.lede}
-            </p>
-          )}
-          {hasSections ? (
-            CATEGORIES.map(({ key, label }) => (
-              <SectionGroup
-                key={key}
-                label={label}
-                items={briefing.sections.filter((s) => s.category === key)}
-                onAction={onAction}
-              />
-            ))
-          ) : (
-            <p
-              className="mt-2 text-sm text-muted-foreground"
-              data-testid="workspace-briefing-empty"
-            >
-              Nothing needs your attention right now.
-            </p>
-          )}
-        </>
+      {briefing && briefing.items.length > 0 && (
+        <ul className="mt-3 space-y-1.5">
+          {briefing.items.map((item) => (
+            <ItemRow key={`${item.app}/${item.facet}`} item={item} onOpen={onOpen} />
+          ))}
+        </ul>
       )}
     </section>
   );

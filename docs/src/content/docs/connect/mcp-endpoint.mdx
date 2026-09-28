@@ -7,7 +7,7 @@ import { Aside, Tabs, TabItem } from '@astrojs/starlight/components';
 
 Each workspace has its own **Streamable HTTP MCP server** at `/mcp/<workspaceId>`. It is NimbleBrain's public programmatic surface: external MCP clients (Claude, Claude Code, Cursor, another NimbleBrain instance, or any MCP-compatible host) connect to one workspace's URL and reach that workspace's tools.
 
-The runtime also serves a `/v1/*` REST API, but that is a trusted same-origin surface for the bundled web client — not a supported external integration point. For programmatic access from outside the platform, use the MCP endpoint.
+The runtime also serves a `/v1/*` REST API, but that is a trusted surface for the bundled web client and for apps the operator runs and lists as [first-party clients](/config/instance-json/#first-party-clients) — not a supported external integration point. For programmatic access from outside the platform, use the MCP endpoint.
 
 This makes NimbleBrain both an MCP **client** (connecting to installed connectors) and an MCP **server** (exposing composed tools to external hosts). The composition layer in between, which handles tool aggregation, feature gating, and role filtering, is what external clients benefit from without needing to know about individual connectors.
 
@@ -19,17 +19,17 @@ For end-user client setup walkthroughs, see [Connecting External Clients](/conne
 |---|---|
 | **URL** | `<origin>/mcp/<workspaceId>` — for example `https://nb.example.com/mcp/ws_0123456789abcdef` |
 | **Methods** | `POST`, `DELETE` (`GET` returns `405`) |
-| **Protocol** | [Streamable HTTP](https://modelcontextprotocol.io/specification/2025-03-26/basic/transports#streamable-http) (MCP transport) |
+| **Protocol** | [Streamable HTTP](https://modelcontextprotocol.io/specification/2026-07-28/basic/transports) (MCP transport), revision `2026-07-28` and the 2025 revisions — see [Protocol versions](#protocol-versions) |
 | **Auth** | OAuth 2.0 bearer token bound to this URL (RFC 8707), discovered via RFC 9728 |
 | **Scope** | One workspace — the one in the URL — plus your identity tools |
 
 Every member sees the workspace's URL under **Workspace settings → MCP**, with a copy button. `<origin>` is the instance's configured public origin (its custom domain, when it has one), not whichever host you happen to reach it on.
 
-The methods correspond to the Streamable HTTP session lifecycle:
+The methods, on each [protocol era](#protocol-versions):
 
-- **POST** — initialize a session or send subsequent JSON-RPC messages.
-- **DELETE** — terminate a session (with a valid `Mcp-Session-Id`).
-- **GET** — returns `405 Method Not Allowed` with `Allow: POST, DELETE`. NimbleBrain does not offer the optional GET-style server-to-client SSE channel; progress and task updates flow over the POST that started them. Spec-compliant clients fall back to POST-only automatically.
+- **POST** — every JSON-RPC message. A 2025-era client opens a session with `initialize` and sends the rest of its messages in it. A `2026-07-28` client sends each request on its own.
+- **DELETE** — terminate a 2025-era session (with a valid `Mcp-Session-Id`). A `2026-07-28` client has no session to end.
+- **GET** — returns `405 Method Not Allowed` with `Allow: POST, DELETE` on either era. NimbleBrain does not offer the optional GET-style server-to-client SSE channel; progress and task updates flow over the POST that started them. Spec-compliant clients fall back to POST-only automatically.
 
 <Aside type="caution" title="Bare /mcp is refused">
 `/mcp` with no workspace is not an endpoint. It answers `404` with a JSON-RPC error naming the URL shape to use, and no workspace is ever chosen for you. A client configured with the bare URL must be reconfigured with its workspace's URL.
@@ -65,7 +65,7 @@ Connections made before the endpoint was per-workspace hold tokens for the origi
 
 Adapter configuration (`dev`, `oidc`, or `workos`) lives in `instance.json`. See [auth adapters](/config/instance-json) for the full setup, including the `workos` adapter and `authkitDomain` required to enable MCP OAuth.
 
-In dev mode (no `instance.json`) every request authenticates as the single local developer, and the workspace in the URL must still exist and have that developer as a member.
+With the `dev` adapter every request authenticates as the single local developer, and the workspace in the URL must still exist and have that developer as a member.
 
 ## OAuth discovery
 
@@ -112,15 +112,26 @@ The root document, `/.well-known/oauth-protected-resource`, returns `404`: the o
 </TabItem>
 </Tabs>
 
-NimbleBrain verifies each access token's signature against the authorization server's JWKS (RS256, issuer validation), then applies the audience rule. When `organizationId` is set on the adapter, only members of that WorkOS organization can authenticate.
+NimbleBrain verifies each access token's signature against the authorization server's JWKS (RS256, issuer validation), then applies the audience rule and any restriction the auth adapter is configured with, such as the `workos` adapter's [`organizationId`](/config/instance-json#workos-adapter-authadapter-workos).
 
 ### Operator requirement: a resource indicator per public host
 
 The authorization server honours a client's `resource` only for URLs it has been configured to accept. For every public host the instance is reached on — its platform host and any custom domain — register a resource indicator covering `<origin>/mcp/*`. Without one, the authorization server ignores `resource`, mints a token whose audience is the client id, and every MCP request is refused with `401`.
 
+## Protocol versions
+
+The endpoint serves both protocol eras on the same URL, and a request's own shape decides which:
+
+| A client that… | Is served |
+|---|---|
+| Negotiates `2026-07-28` (its requests carry the per-request `_meta` envelope; it probes with `server/discover`) | Per request, with no session: each request is authenticated, membership-checked and answered on its own. `server/discover` answers the server's capabilities. |
+| Opens with the 2025 `initialize` handshake (`2025-11-25` or an earlier revision) | In a session, as below. |
+
+The tools, resources, workspace wall and error shapes are the same on both. Neither era advertises `listChanged` or `resources.subscribe`, so a `2026-07-28` client has nothing to open a `subscriptions/listen` stream for. Task-augmented `tools/call` (`params.task`, then `tasks/get`, `tasks/result`, `tasks/cancel`) is served to 2025-era clients only; the 2026-07-28 revision moved tasks out of the core protocol, and this endpoint does not serve the tasks extension.
+
 ## Sessions
 
-Each `initialize` creates a new MCP session tracked server-side and addressed by the `Mcp-Session-Id` response header. Include that header on every subsequent request in the session.
+Sessions are a 2025-era mechanism; a `2026-07-28` client has none. Each `initialize` creates a new MCP session tracked server-side and addressed by the `Mcp-Session-Id` response header. Include that header on every subsequent request in the session.
 
 A session is bound to the identity that opened it **and** the workspace whose URL it was opened at. Presenting its id under another workspace's URL, or as another identity, is answered exactly like an unknown session id — the response does not reveal that the session exists.
 
@@ -164,7 +175,7 @@ Two filters apply to both `tools/list` and `tools/call`:
 
 ## Testing manually
 
-In dev mode (no auth), you can hit the endpoint with curl. Take a workspace id from **Workspace settings → MCP**:
+With the `dev` adapter, you can hit the endpoint with curl. Take a workspace id from **Workspace settings → MCP**:
 
 ```bash
 # Initialize a session

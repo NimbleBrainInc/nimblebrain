@@ -29,14 +29,14 @@ Which services appear under **Add a connector** is set by the platform operator 
 Connecting installs the connector on your identity and runs the sign-in in one step. Nothing runs on the platform host except the connection itself; your tokens are stored against your identity, outside any workspace.
 
 <Aside type="caution" title="Connecting is not the same as usable">
-A freshly connected personal connector is **not yet available to your agent anywhere** — not even in your personal workspace. You have to **grant** it into a workspace first. See below.
+A freshly connected personal connector is **not yet available to your agent anywhere** — not even in a workspace only you belong to. You have to **grant** it into a workspace first. See below.
 </Aside>
 
 ## Grants — the key idea
 
 A personal connector is yours, so **you** decide which of your workspaces may use it. Until you grant it into a workspace, the agent in that workspace has none of its tools. This is deliberate: a grant is explicit, audited, and revocable, so a connection you hold personally never leaks into a shared workspace's agent without your say-so.
 
-The rule has **no exception for your personal workspace** — a personal workspace is just a workspace, so you grant the connector there too before your agent can use it in your own chat. There is no "free at home".
+The rule has **no exception for a workspace only you belong to** — you grant the connector there too before your agent can use it. There is no "free at home".
 
 <Steps>
 1. In **Your connectors**, click a connector's **"Granted to N workspaces"** label to open its access panel.

@@ -10,7 +10,7 @@ import {
 } from "../bridge/host-extensions";
 import type { CreateIframeOptions } from "../bridge/iframe";
 import { createAppIframe } from "../bridge/iframe";
-import type { BridgeCallbacks, UiChatContext } from "../bridge/types";
+import type { BridgeCallbacks } from "../bridge/types";
 import { useTheme } from "../context/ThemeContext";
 import { useWorkspaceContext } from "../context/WorkspaceContext";
 import type { PlacementEntry } from "../types";
@@ -21,8 +21,7 @@ interface SlotRendererProps {
   className?: string;
   /** If set, only show the placement matching this route */
   routeFilter?: string;
-  onChat?: (message: string, context?: UiChatContext) => void;
-  onNavigate?: (route: string) => void;
+  onChat?: (message: string) => void;
   /**
    * Whether the viewer can manage the connector these placements belong to.
    * Set only by the connector settings page; when set, it reaches the app as
@@ -116,7 +115,6 @@ export function SlotRenderer({
   className,
   routeFilter,
   onChat,
-  onNavigate,
   canManage,
   fitContent = false,
 }: SlotRendererProps) {
@@ -143,8 +141,6 @@ export function SlotRenderer({
   // when callback identity changes (e.g. during chat streaming).
   const onChatRef = useRef(onChat);
   onChatRef.current = onChat;
-  const onNavigateRef = useRef(onNavigate);
-  onNavigateRef.current = onNavigate;
 
   const filtered = routeFilter ? placements.filter((p) => p.route === routeFilter) : placements;
 
@@ -163,7 +159,6 @@ export function SlotRenderer({
     // so none of them close over the entry. Built once outside the loop.
     const bridgeCallbacks: BridgeCallbacks = {
       onChat: (...args) => onChatRef.current?.(...args),
-      onNavigate: (...args) => onNavigateRef.current?.(...args),
       getHostExtensions: () => buildHostExtensions(workspaceRef.current, connectorRef.current),
     };
 

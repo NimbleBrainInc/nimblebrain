@@ -122,9 +122,44 @@ describe("loadInstanceConfig", () => {
     );
   });
 
+  test("loads workos auth with firstPartyClientIds, an empty list included", async () => {
+    for (const firstPartyClientIds of [["client_test_channels"], []]) {
+      const config: InstanceConfig = {
+        auth: { adapter: "workos", clientId: "client_123", firstPartyClientIds },
+      };
+      await writeFile(join(workDir, "instance.json"), JSON.stringify(config));
+      expect(await loadInstanceConfig(workDir)).toEqual(config);
+    }
+  });
+
+  test("rejects a firstPartyClientIds that is not an array of strings", async () => {
+    for (const firstPartyClientIds of ["client_test_channels", [7]]) {
+      await writeFile(
+        join(workDir, "instance.json"),
+        JSON.stringify({ auth: { adapter: "workos", clientId: "client_123", firstPartyClientIds } }),
+      );
+      await expect(loadInstanceConfig(workDir)).rejects.toThrow(
+        "'firstPartyClientIds' must be an array of strings",
+      );
+    }
+  });
+
   test("returns null when instance.json is missing", async () => {
     const result = await loadInstanceConfig(workDir);
     expect(result).toBeNull();
+  });
+
+  test("loads the dev adapter", async () => {
+    await writeFile(join(workDir, "instance.json"), JSON.stringify({ auth: { adapter: "dev" } }));
+
+    const config = await loadInstanceConfig(workDir);
+    expect(config).toEqual({ auth: { adapter: "dev" } });
+  });
+
+  test("throws on a non-string auth adapter", async () => {
+    await writeFile(join(workDir, "instance.json"), JSON.stringify({ auth: { adapter: 42 } }));
+
+    await expect(loadInstanceConfig(workDir)).rejects.toThrow('unknown auth adapter "42"');
   });
 
   test("throws on malformed JSON", async () => {

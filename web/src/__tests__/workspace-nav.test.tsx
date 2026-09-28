@@ -2,21 +2,20 @@
 // WorkspaceNav — the workspace tree (load-bearing UI contract).
 //
 // Pins:
-//   1. A single WORKSPACES list. Personal sorts first as "Home · Personal";
-//      the rest are alphabetical. Exactly one node — the focused one — is
+//   1. A single WORKSPACES list, alphabetical by name, each row labelled with
+//      the workspace's own name. Exactly one node — the focused one — is
 //      expanded (single-expand accordion = the one workspace you're walled to).
 //   2. The focused workspace's subtree nests its identity views
 //      (Conversations / Automations / Files) routed to `/w/<slug>/<view>`, its
 //      apps routed to `/w/<slug>/app/<route>`, and a Connectors row to
 //      `/w/<slug>/settings/connectors`.
 //   3. Identity views are workspace-scoped routes now — the slug is the focused
-//      workspace (Personal → `ws_user_u1` → slug `user_u1`).
+//      workspace (`ws_mine` → slug `mine`).
 //   4. The app quick-list caps at MAX_INLINE_APPS with a View-all overflow to
 //      the workspace overview. The Connectors count comes from the shared
 //      app-icons fetch.
 //   5. Selecting a (non-focused) workspace fires setActiveWorkspaceId once and
-//      navigates to its overview `/w/<slug>/` — Personal included (it is just
-//      the workspace labelled "Home · Personal", not a detour through `/`).
+//      navigates to its overview `/w/<slug>/` — never a detour through `/`.
 // ---------------------------------------------------------------------------
 
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
@@ -145,7 +144,6 @@ function ws(overrides: Partial<WorkspaceInfo> & { id: string; name: string }): W
     name: overrides.name,
     connectors: [],
     memberCount: 1,
-    isPersonal: overrides.isPersonal ?? false,
     userRole: overrides.userRole ?? "admin",
     ...overrides,
   };
@@ -199,7 +197,7 @@ function headerById(container: HTMLElement): Record<string, HTMLElement> {
   );
 }
 
-const PERSONAL = ws({ id: "ws_user_u1", name: "Personal", isPersonal: true });
+const MINE = ws({ id: "ws_mine", name: "Mat's workspace" });
 const HELIX = ws({ id: "ws_helix", name: "Helix" });
 const ACME = ws({ id: "ws_acme", name: "Acme" });
 
@@ -208,56 +206,59 @@ const ACME = ws({ id: "ws_acme", name: "Acme" });
 // ---------------------------------------------------------------------------
 
 describe("WorkspaceNav — ordering + single-expand", () => {
-  test("lists Personal first then alphabetical, with only the focused node expanded", async () => {
+  test("lists workspaces alphabetically, with only the focused node expanded", async () => {
     mounted = await mount({
-      workspaces: [HELIX, PERSONAL, ACME],
-      activeId: "ws_user_u1", // focused on Personal
+      workspaces: [MINE, HELIX, ACME],
+      activeId: "ws_mine", // focused on the user's own workspace — still sorted by name
       placements: IDENTITY_PLACEMENTS,
     });
 
     const ids = byTestId(mounted.container, "sidebar-workspace-node").map((n) =>
       n.getAttribute("data-workspace-id"),
     );
-    expect(ids).toEqual(["ws_user_u1", "ws_acme", "ws_helix"]);
+    expect(ids).toEqual(["ws_acme", "ws_helix", "ws_mine"]);
 
     // Every node's contents stay mounted (so collapse can animate), but
-    // exactly one is expanded — the focused (Personal) one.
+    // exactly one is expanded — the focused one.
     const contents = byTestId(mounted.container, "sidebar-workspace-contents");
     expect(contents).toHaveLength(3);
     const expanded = contents.filter((c) => c.getAttribute("data-expanded") === "true");
     expect(expanded).toHaveLength(1);
-    expect(expanded[0]?.getAttribute("data-workspace-id")).toBe("ws_user_u1");
+    expect(expanded[0]?.getAttribute("data-workspace-id")).toBe("ws_mine");
 
     const headers = headerById(mounted.container);
-    expect(headers["ws_user_u1"]?.getAttribute("data-focused")).toBe("true");
-    expect(headers["ws_helix"]?.getAttribute("data-focused")).toBe("false");
-    expect(headers["ws_acme"]?.getAttribute("data-focused")).toBe("false");
+    expect(headers.ws_mine?.getAttribute("data-focused")).toBe("true");
+    expect(headers.ws_helix?.getAttribute("data-focused")).toBe("false");
+    expect(headers.ws_acme?.getAttribute("data-focused")).toBe("false");
   });
 });
 
 // ---------------------------------------------------------------------------
-// (2) Focused on Personal (home)
+// (2) Every row is labelled with the workspace's own name
 // ---------------------------------------------------------------------------
 
-describe("WorkspaceNav — focused on Personal (home)", () => {
-  test("Personal is the home row; its identity views route under /w/user_u1/", async () => {
+describe("WorkspaceNav — row labels", () => {
+  test("each row shows its workspace's name and avatar; identity views route under /w/<slug>/", async () => {
     mounted = await mount({
-      workspaces: [PERSONAL, HELIX],
-      activeId: "ws_user_u1",
+      workspaces: [MINE, HELIX],
+      activeId: "ws_mine",
       placements: IDENTITY_PLACEMENTS,
     });
 
-    const personalHeader = headerById(mounted.container)["ws_user_u1"];
-    expect(personalHeader?.getAttribute("data-is-personal")).toBe("true");
-    expect(personalHeader?.textContent).toContain("Home · Personal");
+    const headers = headerById(mounted.container);
+    expect(headers.ws_mine?.textContent).toContain("Mat's workspace");
+    expect(headers.ws_helix?.textContent).toContain("Helix");
+    // No row is set apart: every one carries the letter avatar.
+    expect(byTestId(mounted.container, "workspace-avatar")).toHaveLength(2);
+    expect(mounted.container.textContent).not.toContain("Personal");
 
-    // Identity views route under the focused workspace's slug (ws_user_u1 →
-    // user_u1), NOT the old top-level /conversations.
+    // Identity views route under the focused workspace's slug (ws_mine →
+    // mine), NOT the old top-level /conversations.
     const hrefs = anchorHrefs(mounted.container);
-    expect(hrefs).toContain("/w/user_u1/conversations");
-    expect(hrefs).toContain("/w/user_u1/automations");
-    expect(hrefs).toContain("/w/user_u1/files");
-    expect(hrefs).toContain("/w/user_u1/settings/connectors");
+    expect(hrefs).toContain("/w/mine/conversations");
+    expect(hrefs).toContain("/w/mine/automations");
+    expect(hrefs).toContain("/w/mine/files");
+    expect(hrefs).toContain("/w/mine/settings/connectors");
   });
 });
 
@@ -268,7 +269,7 @@ describe("WorkspaceNav — focused on Personal (home)", () => {
 describe("WorkspaceNav — focused on a shared workspace", () => {
   test("the focused workspace's apps + connectors nest under it, routed into the workspace", async () => {
     mounted = await mount({
-      workspaces: [PERSONAL, HELIX, ACME],
+      workspaces: [MINE, HELIX, ACME],
       activeId: "ws_helix",
       initialPath: "/w/helix/",
       placements: [...IDENTITY_PLACEMENTS, appPlacement("people"), appPlacement("tasks")],
@@ -368,12 +369,12 @@ describe("WorkspaceNav — app quick-list", () => {
 describe("WorkspaceNav — selection + navigation", () => {
   test("selecting a shared workspace fires the setter once and navigates to /w/<slug>/", async () => {
     mounted = await mount({
-      workspaces: [PERSONAL, HELIX, ACME],
-      activeId: "ws_user_u1",
+      workspaces: [MINE, HELIX, ACME],
+      activeId: "ws_mine",
     });
     setActiveSpy.mockClear();
 
-    const helixHeader = headerById(mounted.container)["ws_helix"] as HTMLButtonElement;
+    const helixHeader = headerById(mounted.container).ws_helix as HTMLButtonElement;
     await act(async () => {
       helixHeader?.click();
     });
@@ -383,33 +384,33 @@ describe("WorkspaceNav — selection + navigation", () => {
     expect(mounted.navigationTarget()).toBe("/w/helix/");
   });
 
-  test("selecting Personal opens its own overview (/w/<slug>/), not the global grid", async () => {
+  test("selecting the user's own workspace opens its overview (/w/<slug>/), not the global grid", async () => {
     mounted = await mount({
-      workspaces: [PERSONAL, HELIX],
+      workspaces: [MINE, HELIX],
       activeId: "ws_helix",
       initialPath: "/w/helix/",
     });
     setActiveSpy.mockClear();
 
-    const personalHeader = headerById(mounted.container)["ws_user_u1"] as HTMLButtonElement;
+    const mineHeader = headerById(mounted.container).ws_mine as HTMLButtonElement;
     await act(async () => {
-      personalHeader?.click();
+      mineHeader?.click();
     });
 
     expect(setActiveSpy).toHaveBeenCalledTimes(1);
-    expect(setActiveSpy.mock.calls[0]?.[0]).toBe("ws_user_u1");
-    expect(mounted.navigationTarget()).toBe("/w/user_u1/");
+    expect(setActiveSpy.mock.calls[0]?.[0]).toBe("ws_mine");
+    expect(mounted.navigationTarget()).toBe("/w/mine/");
   });
 
   test("re-selecting the focused workspace does not fire the setter (T009 equality guard)", async () => {
     mounted = await mount({
-      workspaces: [PERSONAL, HELIX],
+      workspaces: [MINE, HELIX],
       activeId: "ws_helix",
       initialPath: "/w/helix/",
     });
     setActiveSpy.mockClear();
 
-    const helixHeader = headerById(mounted.container)["ws_helix"] as HTMLButtonElement;
+    const helixHeader = headerById(mounted.container).ws_helix as HTMLButtonElement;
     await act(async () => {
       helixHeader?.click();
     });
@@ -426,14 +427,14 @@ describe("WorkspaceNav — selection + navigation", () => {
 
 describe("WorkspaceNav — affordances + collapsed mode", () => {
   test("renders the add-workspace and New workspace affordances", async () => {
-    mounted = await mount({ workspaces: [PERSONAL], activeId: "ws_user_u1" });
+    mounted = await mount({ workspaces: [MINE], activeId: "ws_mine" });
     expect(byTestId(mounted.container, "sidebar-workspace-add")).toHaveLength(1);
     expect(byTestId(mounted.container, "sidebar-workspace-new")).toHaveLength(1);
   });
 
   test("collapsed mode renders avatar buttons only — no expanded subtree, no header", async () => {
     mounted = await mount({
-      workspaces: [PERSONAL, HELIX],
+      workspaces: [MINE, HELIX],
       activeId: "ws_helix",
       placements: [...IDENTITY_PLACEMENTS, appPlacement("people")],
       collapsed: true,
@@ -444,8 +445,8 @@ describe("WorkspaceNav — affordances + collapsed mode", () => {
     ).toBe("true");
     // One avatar button per workspace, the focused one marked.
     const headers = headerById(mounted.container);
-    expect(Object.keys(headers).sort()).toEqual(["ws_helix", "ws_user_u1"]);
-    expect(headers["ws_helix"]?.getAttribute("data-focused")).toBe("true");
+    expect(Object.keys(headers).sort()).toEqual(["ws_helix", "ws_mine"]);
+    expect(headers.ws_helix?.getAttribute("data-focused")).toBe("true");
     // No nested contents / add affordances in icon-only mode.
     expect(byTestId(mounted.container, "sidebar-workspace-contents")).toHaveLength(0);
     expect(byTestId(mounted.container, "sidebar-workspace-add")).toHaveLength(0);

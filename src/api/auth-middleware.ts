@@ -7,35 +7,18 @@ import type {
 } from "../identity/provider.ts";
 import { TransientAuthError } from "../identity/provider.ts";
 import { log } from "../observability/log.ts";
-import type { WorkspaceStore } from "../workspace/workspace-store.ts";
-import { constantTimeEqual, validateInternalToken } from "./auth-utils.ts";
-
-// ── Auth mode detection ───────────────────────────────────────────
-
-export type AuthMode = { type: "adapter"; provider: IdentityProvider } | { type: "dev" };
-
-/**
- * Determine the auth mode from the available configuration.
- * IdentityProvider (from instance.json or DevIdentityProvider) > dev mode (no provider).
- */
-export function resolveAuthMode(provider: IdentityProvider | null): AuthMode {
-  if (provider) return { type: "adapter", provider };
-  return { type: "dev" };
-}
 
 // ── Middleware ─────────────────────────────────────────────────────
 
 export interface AuthMiddlewareOptions {
-  /** Auth mode — adapter or dev. */
-  mode: AuthMode;
-  /** Internal token for connector-to-host calls (scoped to chat endpoints). */
-  internalToken: string;
+  /** The runtime's identity provider; every request is verified by it. */
+  provider: IdentityProvider;
   /** Event sink for audit logging. */
   eventSink: EventSink;
 }
 
-/** Successful auth result — identity is undefined for internal tokens and dev mode. */
-export type AuthSuccess = { identity: UserIdentity | undefined };
+/** Successful auth result: the caller the provider verified. */
+export type AuthSuccess = { identity: UserIdentity };
 
 /** Auth check result: a Response (rejection) or AuthSuccess. */
 export type AuthResult = Response | AuthSuccess;
@@ -46,62 +29,35 @@ export function isAuthError(result: AuthResult): result is Response {
 }
 
 /**
- * Authenticate a request against the configured auth mode.
- *
- * Checks in order:
- * 1. Internal token (scoped to chat endpoints — always checked first for connector-to-host calls)
- * 2. IdentityProvider.verifyRequest() when mode is "adapter", then the
- *    credential's grant against `resource` (see {@link grantAdmits})
- * 3. Pass-through when mode is "dev"
+ * Authenticate a request with the identity provider:
+ * `IdentityProvider.verifyRequest()`, then the credential's grant against
+ * `resource` (see {@link grantAdmits}). The `dev` provider verifies every
+ * request as the local developer, so it passes the same way.
  *
  * `resource` is the canonical URL of the protected resource the request
  * addresses (`/mcp/<wsId>`), or undefined for every other route.
  *
- * Returns { identity } on success, or a Response (401/403) on failure.
+ * Returns { identity } on success, or a Response (401, or 503 when
+ * verification is unavailable) on failure.
  */
 export async function authenticateRequest(
   req: Request,
   options: AuthMiddlewareOptions,
   resource?: string,
 ): Promise<AuthResult> {
-  const { mode, internalToken } = options;
-
-  // Extract bearer token if present
-  const authHeader = req.headers.get("authorization") ?? "";
-  const bearerToken = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
-
-  // 1. Always check internal token first (connector-to-host calls)
-  if (bearerToken && constantTimeEqual(bearerToken, internalToken)) {
-    const url = new URL(req.url);
-    const error = validateInternalToken(bearerToken, internalToken, url.pathname, req.method);
-    if (error) return error;
-    return { identity: undefined };
+  const verified = await verifyWithProvider(req, options.provider);
+  if (verified instanceof Response) return verified;
+  if (verified) {
+    const { grant, ...identity } = verified;
+    if (grantAdmits(grant, resource)) return { identity };
+    // A valid token presented where it is not valid: 401 so a client
+    // re-runs discovery and obtains one for this resource.
+    log.warn("[auth] token audience does not name this resource", {
+      path: new URL(req.url).pathname,
+    });
   }
-
-  // 2. Dev mode — no auth required
-  if (mode.type === "dev") {
-    return { identity: undefined };
-  }
-
-  // 3. IdentityProvider mode
-  if (mode.type === "adapter") {
-    const verified = await verifyWithProvider(req, mode.provider);
-    if (verified instanceof Response) return verified;
-    if (verified) {
-      const { grant, ...identity } = verified;
-      if (grantAdmits(grant, resource)) return { identity };
-      // A valid token presented where it is not valid: 401 so a client
-      // re-runs discovery and obtains one for this resource.
-      log.warn("[auth] token audience does not name this resource", {
-        path: new URL(req.url).pathname,
-      });
-    }
-    // Unauthenticated
-    logAuthFailure(req, options.eventSink);
-    return new Response(null, { status: 401 });
-  }
-
-  // Unreachable, but satisfy TypeScript
+  // Unauthenticated
+  logAuthFailure(req, options.eventSink);
   return new Response(null, { status: 401 });
 }
 
@@ -135,8 +91,10 @@ async function verifyWithProvider(
  * Whether a verified credential is valid for the request's resource. The rule
  * is here, above every provider, so it holds whatever the provider is:
  *
- * - A first-party credential (the web app's login) is not bound to a resource;
- *   it is valid on every route, and membership gates what it reaches.
+ * - A first-party credential (the web app's login, or a token the provider's
+ *   configuration names as issued to one of the operator's own apps) is not
+ *   bound to a resource; it is valid on every route, and membership gates
+ *   what it reaches.
  * - A resource token is valid only at the resource it was minted for: its
  *   audience must contain the canonical URL exactly. No prefix match and no
  *   normalization — the authorization server echoes the client's `resource`
@@ -150,74 +108,6 @@ async function verifyWithProvider(
 export function grantAdmits(grant: TokenGrant, resource: string | undefined): boolean {
   if (grant.kind === "first_party") return true;
   return resource !== undefined && grant.audience.includes(resource);
-}
-
-// ── Workspace context ────────────────────────────────────────────
-
-/** Valid workspace ID: ws_ prefix followed by 1-64 alphanumeric/underscore chars. */
-export const WORKSPACE_ID_RE = /^ws_[a-z0-9_]{1,64}$/i;
-
-/** Error thrown when workspace resolution fails. */
-export class WorkspaceResolutionError extends Error {
-  constructor(
-    message: string,
-    public readonly statusCode: 400 | 403,
-  ) {
-    super(message);
-    this.name = "WorkspaceResolutionError";
-  }
-}
-
-/**
- * Resolve the workspace for a request.
- *
- * Pure selection — does NOT create, default-pick, or auto-provision.
- * Provisioning is an identity-layer concern (see ensureUserWorkspace
- * wired into each provider's verifyRequest). Defaulting to "the user's
- * only workspace" was a footgun: a client that "just worked" one day
- * would 400 the next when the user was added to a second workspace.
- * Honest contract: the caller names the workspace via X-Workspace-Id
- * on every data-path request. Bootstrap is the only place the server
- * is allowed to pick a default, and it does that in its own handler
- * (not through this resolver).
- *
- * Returns the resolved workspace ID.
- * Throws WorkspaceResolutionError (400 or 403) on failure.
- */
-export async function resolveWorkspace(
-  req: Request,
-  identity: UserIdentity,
-  workspaceStore: WorkspaceStore,
-): Promise<string> {
-  const workspaceId = req.headers.get("x-workspace-id");
-  if (!workspaceId) {
-    throw new WorkspaceResolutionError(
-      "Workspace required. Set the X-Workspace-Id header. " +
-        "The workspace ID is available from GET /v1/bootstrap or Workspace settings → General → Workspace ID.",
-      400,
-    );
-  }
-
-  // Validate workspace ID format (prevents path traversal)
-  if (!WORKSPACE_ID_RE.test(workspaceId)) {
-    throw new WorkspaceResolutionError("Invalid workspace ID format.", 400);
-  }
-
-  // Validate membership
-  const workspace = await workspaceStore.get(workspaceId);
-  if (!workspace) {
-    throw new WorkspaceResolutionError(`Workspace "${workspaceId}" not found.`, 400);
-  }
-
-  const isMember = workspace.members.some((m) => m.userId === identity.id);
-  if (!isMember) {
-    throw new WorkspaceResolutionError(
-      `Access denied: not a member of workspace "${workspaceId}".`,
-      403,
-    );
-  }
-
-  return workspaceId;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────

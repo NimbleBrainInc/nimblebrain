@@ -16,6 +16,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { Hono } from "hono";
 import { requireAuth } from "../../../src/api/middleware/auth.ts";
 import type { McpSessionContext } from "../../../src/api/mcp-server.ts";
+import { RequestRateLimiter } from "../../../src/api/rate-limiter.ts";
 import { mcpRoutes } from "../../../src/api/routes/mcp.ts";
 import type { AppContext } from "../../../src/api/types.ts";
 import { resolveFeatures } from "../../../src/config/features.ts";
@@ -31,7 +32,6 @@ const WS_A = "ws_a";
 const WS_B = "ws_b";
 const CANONICAL_A = `${ORIGIN}/mcp/${WS_A}`;
 const CLIENT_ID = "client_test_0001";
-const INTERNAL_TOKEN = "internal-token-for-mcp-path-tests";
 
 function identity(id: string): UserIdentity {
   return { id, email: `${id}@example.com`, displayName: id, orgRole: "member", preferences: {} };
@@ -91,9 +91,8 @@ function makeCtx(): AppContext {
   return {
     provider,
     authOptions: {
-      mode: { type: "adapter", provider },
+      provider,
       eventSink: { emit: () => {} },
-      internalToken: INTERNAL_TOKEN,
     },
     runtime: { getFeatures: () => resolveFeatures() },
     workspaceStore: { get: async (id: string) => WORKSPACES.get(id) ?? null },
@@ -103,8 +102,8 @@ function makeCtx(): AppContext {
         return Response.json({ ok: true });
       },
     },
-    // Bypasses the request rate limiter; nothing else here reads it.
-    isDevMode: true,
+    // Generous enough that no test here meets the limit.
+    mcpLimiter: new RequestRateLimiter(10_000, 60_000),
   } as unknown as AppContext;
 }
 
@@ -113,7 +112,7 @@ function makeApp(): Hono {
   const app = new Hono();
   app.route("/", mcpRoutes(ctx));
   // A REST route behind the same middleware every `/v1/*` group uses.
-  app.post("/v1/tools/call", requireAuth(ctx.authOptions), (c) => c.json({ ok: true }));
+  app.post(`/v1/workspaces/${WS_A}/tools/call`, requireAuth(ctx.authOptions), (c) => c.json({ ok: true }));
   return app;
 }
 
@@ -240,12 +239,6 @@ describe("first-party credentials", () => {
     expect(reached).toEqual([{ identity: ALICE, workspaceId: WS_B }]);
   });
 
-  it("refuses the internal connector-to-host token before anything reaches the host", async () => {
-    const res = await post(makeApp(), `/mcp/${WS_A}`, INTERNAL_TOKEN);
-    expect(res.status).toBe(403);
-    expect(reached).toEqual([]);
-  });
-
   it("answers 401 with the workspace's discovery header when there is no credential", async () => {
     const res = await post(makeApp(), `/mcp/${WS_A}`);
     expect(res.status).toBe(401);
@@ -257,12 +250,12 @@ describe("first-party credentials", () => {
 
 describe("a token is valid only for its resource", () => {
   it("refuses an aud-bound MCP token on a /v1/* REST route", async () => {
-    const res = await post(makeApp(), "/v1/tools/call", "alice-aud-exact");
+    const res = await post(makeApp(), `/v1/workspaces/${WS_A}/tools/call`, "alice-aud-exact");
     expect(res.status).toBe(401);
   });
 
   it("still accepts the first-party token on REST", async () => {
-    const res = await post(makeApp(), "/v1/tools/call", "alice-first-party");
+    const res = await post(makeApp(), `/v1/workspaces/${WS_A}/tools/call`, "alice-first-party");
     expect(res.status).toBe(200);
   });
 });

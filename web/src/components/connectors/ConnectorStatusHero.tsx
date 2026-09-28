@@ -104,7 +104,7 @@ export function ConnectorStatusHero({
    * Kick off the OAuth redirect. Composio-backed connectors route
    * through their own initiate endpoint (Composio holds the tokens; we
    * just persist a connectedAccountId pointer). Native OAuth (dcr +
-   * static) still goes through /v1/mcp-auth/initiate. On failure the
+   * static) still goes through /v1/workspaces/:wsId/mcp-auth/initiate. On failure the
    * button resets so the user can retry.
    */
   const runOAuth = async () => {
@@ -373,8 +373,8 @@ type PrimaryAction =
   // "Ungated otherwise" tracks the server, not a claim that the flow is
   // per-caller. It isn't: the auth CTA binds the *workspace's* shared
   // credential to whoever ran it, via one of two routes — `runOAuth` dispatches
-  // to `/v1/composio-auth/initiate` for a composio entry and
-  // `/v1/mcp-auth/initiate` otherwise (which hardcodes
+  // to the workspace's `composio-auth/initiate` for a composio entry and its
+  // `mcp-auth/initiate` otherwise (which hardcodes
   // `WORKSPACE_PRINCIPAL_ID`). **Both** carry `requireAuth` + `requireWorkspace`
   // only, with no admin check, so gating here would hide a capability the
   // server grants.

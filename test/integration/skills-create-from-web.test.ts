@@ -35,6 +35,7 @@ import type {
 } from "../../src/platform/schemas/skills.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
 
 let runtime: Runtime;
 let handle: ServerHandle;
@@ -44,12 +45,13 @@ const testDir = join(tmpdir(), `skills-create-from-web-${Date.now()}`);
 beforeAll(async () => {
   mkdirSync(testDir, { recursive: true });
   runtime = await Runtime.start({
+    identityProvider: devProvider,
     model: { provider: "custom", adapter: createEchoModel() },
     logging: { disabled: true },
     workDir: testDir,
   });
   await provisionTestWorkspace(runtime);
-  handle = startServer({ runtime, port: 0 });
+  handle = startServer({ runtime, port: 0});
   baseUrl = `http://localhost:${handle.port}`;
 });
 
@@ -68,9 +70,9 @@ interface ToolCallResult {
 }
 
 async function callTool(tool: string, args: Record<string, unknown>): Promise<ToolCallResult> {
-  const res = await fetch(`${baseUrl}/v1/tools/call`, {
+  const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/tools/call`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", "X-Workspace-Id": TEST_WORKSPACE_ID },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ server: "skills", tool, arguments: args }),
   });
   const body = (await res.json()) as Omit<ToolCallResult, "status">;

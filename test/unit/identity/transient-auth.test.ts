@@ -36,8 +36,7 @@ function recordingSink(): { sink: EventSink; events: EngineEvent[] } {
 function optionsWith(verify: () => Promise<VerifiedIdentity | null>, sink: EventSink) {
   const provider = { verifyRequest: verify } as unknown as IdentityProvider;
   return {
-    mode: { type: "adapter", provider },
-    internalToken: "internal-token-not-used-here",
+    provider,
     eventSink: sink,
   } as unknown as AuthMiddlewareOptions;
 }

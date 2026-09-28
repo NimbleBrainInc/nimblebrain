@@ -9,8 +9,7 @@ import { mkdtemp } from "node:fs/promises";
 import { rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { Runtime } from "../../../src/runtime/runtime.ts";
 import { startServer, type ServerHandle } from "../../../src/api/server.ts";
 import { createEchoModel } from "../../helpers/echo-model.ts";
@@ -19,6 +18,7 @@ import { SharedSourceRef } from "../../../src/tools/registry.ts";
 import type { ToolSource, Tool } from "../../../src/tools/types.ts";
 import type { ToolResult } from "../../../src/engine/types.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../../helpers/test-workspace.ts";
+import { devProvider } from "../../helpers/dev-provider.ts";
 
 // ── Fake tool sources ───────────────────────────────────────────────
 
@@ -60,6 +60,7 @@ beforeAll(async () => {
   workDir = await mkdtemp(join(tmpdir(), "nb-mcp-ws-scope-"));
 
   runtime = await Runtime.start({
+    identityProvider: devProvider,
     model: { provider: "custom", adapter: createEchoModel() },
     logging: { disabled: true },
     workDir,
@@ -105,7 +106,7 @@ beforeAll(async () => {
 
   // Denied source is NOT added to workspace registry
 
-  handle = startServer({ runtime, port: 0 });
+  handle = startServer({ runtime, port: 0});
   baseUrl = `http://localhost:${handle.port}`;
 });
 

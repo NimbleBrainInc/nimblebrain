@@ -15,7 +15,6 @@ import { beforeAll, describe, expect, it } from "bun:test";
 import type { WorkosAuth } from "../../../src/identity/instance.ts";
 import { TransientAuthError } from "../../../src/identity/provider.ts";
 import { WorkosIdentityProvider } from "../../../src/identity/providers/workos.ts";
-import { WorkspaceStore } from "../../../src/workspace/workspace-store.ts";
 
 // ── Key generation helpers (shared with workos-authkit.test.ts) ──
 
@@ -98,8 +97,7 @@ function jwksResponseBody() {
 }
 
 function createProvider() {
-  const workspaceStore = new WorkspaceStore(mkdtempSync(join(tmpdir(), "workos-stale-")));
-  const provider = new WorkosIdentityProvider(CONFIG, undefined, workspaceStore);
+  const provider = new WorkosIdentityProvider(CONFIG, undefined);
 
   const workos = (provider as unknown as { workos: Record<string, unknown> }).workos;
   workos.userManagement = {
@@ -134,7 +132,7 @@ function createProvider() {
 }
 
 function makeRequest(token: string): Request {
-  return new Request("http://localhost:27247/v1/chat", {
+  return new Request("http://localhost:27247/v1/workspaces/ws_a/chat", {
     method: "POST",
     headers: { Authorization: `Bearer ${token}` },
   });
@@ -247,6 +245,40 @@ describe("resolveUser stale cache fallback", () => {
     expect(second).not.toBeNull();
     expect(second!.id).toBe("user_resolve_1");
     expect(second!.email).toBe("user_resolve_1@test.com");
+  });
+
+  it("serves the stale identity until the stale limit, then signals unavailable", async () => {
+    const provider = createProvider();
+    const baseTime = Date.now();
+    provider.now = () => baseTime;
+    expect(
+      await provider.verifyRequest(makeRequest(await makeValidToken("user_stale_limit", baseTime))),
+    ).not.toBeNull();
+
+    const workos = (provider as unknown as { workos: Record<string, unknown> }).workos;
+    (workos.userManagement as Record<string, unknown>).getUser = async () => {
+      throw new Error("WorkOS API timeout");
+    };
+
+    // Just inside the limit: the cached identity is still served.
+    const inside = baseTime + 29 * 60 * 1000;
+    provider.now = () => inside;
+    const served = await provider.verifyRequest(
+      makeRequest(await makeValidToken("user_stale_limit", inside)),
+    );
+    expect(served?.id).toBe("user_stale_limit");
+
+    // Past it: no verdict, so 503 rather than the old answer or a 401.
+    const past = baseTime + 31 * 60 * 1000;
+    provider.now = () => past;
+    const err = await provider
+      .verifyRequest(makeRequest(await makeValidToken("user_stale_limit", past)))
+      .then(
+        () => null,
+        (e: unknown) => e,
+      );
+    expect(err).toBeInstanceOf(TransientAuthError);
+    expect((err as TransientAuthError).reason).toBe("user_unresolvable");
   });
 
   it("signals unavailable when WorkOS API fails and no user cache exists", async () => {

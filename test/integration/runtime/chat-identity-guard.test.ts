@@ -80,7 +80,7 @@ describe("runtime.chat() with auth configured", () => {
     }
   });
 
-  it("accepts chat with identity (no workspaceId required — Stage 2 T006)", async () => {
+  it("refuses a chat with identity that names no workspace (the server picks none)", async () => {
     const workDir = makeTempDir("identity-only");
     writeInstanceConfig(workDir);
 
@@ -90,19 +90,18 @@ describe("runtime.chat() with auth configured", () => {
     });
 
     try {
-      const result = await runtime.chat({
-        message: "hello",
-        identity: {
-          id: "usr_test",
-          email: "test@example.com",
-          displayName: "Test",
-          orgRole: "member",
-          preferences: {},
-        },
-      });
-
-      expect(result.response).toBe("hello");
-      expect(result.conversationId).toMatch(/^conv_/);
+      await expect(
+        runtime.chat({
+          message: "hello",
+          identity: {
+            id: "usr_test",
+            email: "test@example.com",
+            displayName: "Test",
+            orgRole: "member",
+            preferences: {},
+          },
+        }),
+      ).rejects.toThrow("request names no workspace");
     } finally {
       await runtime.shutdown();
     }

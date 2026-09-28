@@ -415,7 +415,6 @@ async function finalizeUrlSourceStart(
     meta: {
       version: `remote (${tools.length} tools)`,
       ui: ref.ui ?? null,
-      briefing: null,
     },
     sourceName,
   };
@@ -597,7 +596,6 @@ async function startUrlConnectorSource(
       meta: {
         version: "remote (pending auth)",
         ui: ref.ui ?? null,
-        briefing: null,
       },
       sourceName,
     };

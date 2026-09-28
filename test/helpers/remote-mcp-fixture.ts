@@ -16,9 +16,8 @@
  * `makeInProcessSource` instead: an in-process source is a trust boundary
  * of its own (ADR-0022) and host-owned `_meta` markers survive it.
  */
-
-import type { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
+import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/server";
+import type { Server } from "@modelcontextprotocol/server";
 
 export interface RemoteMcpFixture {
   /** Pass to an `McpSource` as `{ type: "remote", url: new URL(url), allowInsecure: true }`. */

@@ -10,12 +10,7 @@ import {
 import { mkdirSync, writeFileSync, readFileSync, rmSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
-import {
-	ListToolsRequestSchema,
-	CallToolRequestSchema,
-} from "@modelcontextprotocol/sdk/types.js";
+import { Server, WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/server";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { startServer } from "../../src/api/server.ts";
@@ -68,8 +63,8 @@ function createMcpServer(toolCount: number): Server {
 		},
 	}));
 
-	mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({ tools }));
-	mcpServer.setRequestHandler(CallToolRequestSchema, async (req) => ({
+	mcpServer.setRequestHandler('tools/list', async () => ({ tools }));
+	mcpServer.setRequestHandler('tools/call', async (req) => ({
 		content: [{ type: "text", text: `Executed: ${req.params.name}` }],
 	}));
 
@@ -274,7 +269,7 @@ describe.skip("Remote integration: POST /v1/apps/install with url", () => {
 	it("installs a remote connector via API and returns correct response", async () => {
 		const res = await fetch(`${baseUrl}/v1/apps/install`, {
 			method: "POST",
-			headers: { "Content-Type": "application/json", "X-Workspace-Id": TEST_WORKSPACE_ID },
+			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({
 				url: mockServer.url,
 				serverName: "api-remote",
@@ -294,7 +289,7 @@ describe.skip("Remote integration: POST /v1/apps/install with url", () => {
 	it("installs a remote connector with transport config via API", async () => {
 		const res = await fetch(`${baseUrl}/v1/apps/install`, {
 			method: "POST",
-			headers: { "Content-Type": "application/json", "X-Workspace-Id": TEST_WORKSPACE_ID },
+			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({
 				url: mockServer.url,
 				serverName: "api-remote-transport",
@@ -312,7 +307,7 @@ describe.skip("Remote integration: POST /v1/apps/install with url", () => {
 		// Install first
 		const installRes = await fetch(`${baseUrl}/v1/apps/install`, {
 			method: "POST",
-			headers: { "Content-Type": "application/json", "X-Workspace-Id": TEST_WORKSPACE_ID },
+			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({
 				url: mockServer.url,
 				serverName: "api-listed",
@@ -335,7 +330,7 @@ describe.skip("Remote integration: POST /v1/apps/install with url", () => {
 	it("derives serverName from url when not provided", async () => {
 		const res = await fetch(`${baseUrl}/v1/apps/install`, {
 			method: "POST",
-			headers: { "Content-Type": "application/json", "X-Workspace-Id": TEST_WORKSPACE_ID },
+			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({ url: mockServer.url }),
 		});
 
@@ -350,7 +345,7 @@ describe.skip("Remote integration: POST /v1/apps/install with url", () => {
 	it("returns error for unreachable remote URL", async () => {
 		const res = await fetch(`${baseUrl}/v1/apps/install`, {
 			method: "POST",
-			headers: { "Content-Type": "application/json", "X-Workspace-Id": TEST_WORKSPACE_ID },
+			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({
 				url: "http://127.0.0.1:1/mcp",
 				serverName: "unreachable",

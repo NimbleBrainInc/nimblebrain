@@ -20,12 +20,8 @@ import type { IdentityProvider, CreateUserResult } from "../../src/identity/prov
 import type { User } from "../../src/identity/user.ts";
 import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
 import { JsonlConversationStore } from "../../src/conversation/jsonl-store.ts";
-import {
-  resolveWorkspace,
-  WorkspaceResolutionError,
-  authenticateRequest,
-  resolveAuthMode,
-} from "../../src/api/auth-middleware.ts";
+import { authenticateRequest } from "../../src/api/auth-middleware.ts";
+import { isAddressedWorkspaceMember } from "../../src/api/workspace-address.ts";
 import {
   buildProcessInventory,
 } from "../../src/runtime/workspace-runtime.ts";
@@ -313,15 +309,11 @@ describe("Auth flow", () => {
       auth: { adapter: "oidc", issuer: "https://auth.example.com", clientId: "test", allowedDomains: ["example.com"] },
     });
 
-    const mode = resolveAuthMode(mockProvider);
-    expect(mode.type).toBe("adapter");
-
     // Request with no auth header
-    const req = new Request("http://localhost/v1/chat");
+    const req = new Request("http://localhost/v1/bootstrap");
     const { NoopEventSink } = await import("../../src/adapters/noop-events.ts");
     const result = await authenticateRequest(req, {
-      mode,
-      internalToken: "internal-test-token-12345",
+      provider: mockProvider,
       eventSink: new NoopEventSink(),
     });
 
@@ -331,7 +323,7 @@ describe("Auth flow", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Dev mode: no instance.json -> everything works as single user
+// Dev adapter: every request is the single built-in user
 // ---------------------------------------------------------------------------
 
 describe("Dev mode", () => {
@@ -351,10 +343,10 @@ describe("Dev mode", () => {
     const originalWarn = console.warn;
     console.warn = () => {};
 
-    const adapter = new DevIdentityProvider(workDir, userStore, wsStore);
+    const adapter = new DevIdentityProvider(workDir, userStore);
 
     // verifyRequest returns default identity
-    const req = new Request("http://localhost/v1/chat");
+    const req = new Request("http://localhost/v1/bootstrap");
     const identity = await adapter.verifyRequest(req);
 
     console.warn = originalWarn;
@@ -379,42 +371,20 @@ describe("Dev mode", () => {
     const defaultWs = workspaces[0]!;
     expect(defaultWs.members.some((m) => m.userId === "usr_default")).toBe(true);
   });
-
-  test("dev mode auth mode resolves to dev when no adapter and no api key", () => {
-    const mode = resolveAuthMode(null);
-    expect(mode.type).toBe("dev");
-  });
 });
 
 // ---------------------------------------------------------------------------
-// Workspace resolution
+// Workspace addressing: the workspace in a /v1/workspaces/<wsId>/ path
 // ---------------------------------------------------------------------------
 
-describe("Workspace resolution", () => {
+describe("Workspace addressing", () => {
   let workDir: string;
 
   afterEach(() => {
     if (workDir) rmSync(workDir, { recursive: true, force: true });
   });
 
-  test("rejects single-workspace user without X-Workspace-Id header", async () => {
-    // Strict resolver: addressing must be explicit on data-path requests.
-    workDir = makeTmpDir();
-
-    const userStore = new UserStore(workDir);
-    const wsStore = new WorkspaceStore(workDir);
-
-    const user = await userStore.create({ email: "dev@test.io", displayName: "Dev" });
-    const ws = await wsStore.create("Default", "default");
-    await wsStore.addMember(ws.id, user.id, "member");
-
-    const req = new Request("http://localhost/v1/chat");
-    const identity = { id: user.id, email: user.email, displayName: user.displayName, orgRole: user.orgRole };
-
-    expect(resolveWorkspace(req, identity, wsStore)).rejects.toThrow(WorkspaceResolutionError);
-  });
-
-  test("throws when user belongs to multiple workspaces without header", async () => {
+  test("admits a member to each workspace they belong to — the path chooses", async () => {
     workDir = makeTmpDir();
 
     const userStore = new UserStore(workDir);
@@ -426,34 +396,11 @@ describe("Workspace resolution", () => {
     await wsStore.addMember(eng.id, user.id, "member");
     await wsStore.addMember(mkt.id, user.id, "member");
 
-    const req = new Request("http://localhost/v1/chat");
-    const identity = { id: user.id, email: user.email, displayName: user.displayName, orgRole: user.orgRole };
-
-    expect(resolveWorkspace(req, identity, wsStore)).rejects.toThrow(WorkspaceResolutionError);
+    expect(await isAddressedWorkspaceMember(wsStore, mkt.id, user.id)).toBe(true);
+    expect(await isAddressedWorkspaceMember(wsStore, eng.id, user.id)).toBe(true);
   });
 
-  test("X-Workspace-Id header selects workspace explicitly", async () => {
-    workDir = makeTmpDir();
-
-    const userStore = new UserStore(workDir);
-    const wsStore = new WorkspaceStore(workDir);
-
-    const user = await userStore.create({ email: "dev@test.io", displayName: "Dev" });
-    const eng = await wsStore.create("Engineering", "engineering");
-    const mkt = await wsStore.create("Marketing", "marketing");
-    await wsStore.addMember(eng.id, user.id, "member");
-    await wsStore.addMember(mkt.id, user.id, "member");
-
-    const req = new Request("http://localhost/v1/chat", {
-      headers: { "X-Workspace-Id": mkt.id },
-    });
-    const identity = { id: user.id, email: user.email, displayName: user.displayName, orgRole: user.orgRole };
-
-    const wsId = await resolveWorkspace(req, identity, wsStore);
-    expect(wsId).toBe(mkt.id);
-  });
-
-  test("rejects non-member accessing workspace", async () => {
+  test("refuses a non-member of the addressed workspace", async () => {
     workDir = makeTmpDir();
 
     const userStore = new UserStore(workDir);
@@ -463,11 +410,40 @@ describe("Workspace resolution", () => {
     const ws = await wsStore.create("Secret", "secret");
     // Do NOT add user as member
 
-    const req = new Request("http://localhost/v1/chat", {
-      headers: { "X-Workspace-Id": ws.id },
-    });
-    const identity = { id: user.id, email: user.email, displayName: user.displayName, orgRole: user.orgRole };
+    expect(await isAddressedWorkspaceMember(wsStore, ws.id, user.id)).toBe(false);
+  });
 
-    expect(resolveWorkspace(req, identity, wsStore)).rejects.toThrow(WorkspaceResolutionError);
+  test("refuses an unknown, well-formed workspace id", async () => {
+    workDir = makeTmpDir();
+
+    const userStore = new UserStore(workDir);
+    const wsStore = new WorkspaceStore(workDir);
+
+    const user = await userStore.create({ email: "dev@test.io", displayName: "Dev" });
+
+    expect(await isAddressedWorkspaceMember(wsStore, "ws_does_not_exist", user.id)).toBe(false);
+  });
+
+  test("refuses a malformed workspace id without looking it up", async () => {
+    workDir = makeTmpDir();
+
+    const userStore = new UserStore(workDir);
+    const wsStore = new WorkspaceStore(workDir);
+
+    const user = await userStore.create({ email: "dev@test.io", displayName: "Dev" });
+    const ws = await wsStore.create("Default", "default");
+    await wsStore.addMember(ws.id, user.id, "member");
+
+    let lookups = 0;
+    const get = wsStore.get.bind(wsStore);
+    wsStore.get = (id: string) => {
+      lookups++;
+      return get(id);
+    };
+
+    for (const bad of ["../../etc", `${ws.id}/../x`, "ws_..", "", `ws_${"a".repeat(65)}`]) {
+      expect(await isAddressedWorkspaceMember(wsStore, bad, user.id)).toBe(false);
+    }
+    expect(lookups).toBe(0);
   });
 });

@@ -1,11 +1,12 @@
 import { describe, expect, it, beforeEach } from "bun:test";
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { ActivityCollector } from "../../../src/services/activity-collector.ts";
 import type { ConversationStore, ConversationListResult, Conversation, ConversationPatch, ListOptions } from "../../../src/conversation/types.ts";
 import type { SseEventManager, BufferedEvent } from "../../../src/api/events.ts";
 import type { StoredMessage } from "../../../src/conversation/types.ts";
+import type { AutomationRun } from "../../../src/platform/automations/types.ts";
 
 // ---------------------------------------------------------------------------
 // Mocks
@@ -65,24 +66,31 @@ function writeLogFile(
 	writeFileSync(join(logDir, filename), content);
 }
 
-function writeAutomationRunFile(logDir: string): string {
-	const automationRunsDir = join(logDir, "automations", "runs");
-	mkdirSync(automationRunsDir, { recursive: true });
-	writeFileSync(
-		join(automationRunsDir, "daily-check.jsonl"),
-		[
-			JSON.stringify({
-				startedAt: "2025-01-01T10:00:00Z",
-				status: "success",
-			}),
-			JSON.stringify({
-				startedAt: "2025-01-01T11:00:00Z",
-				status: "failure",
-				error: "boom",
-			}),
-		].join("\n"),
-	);
-	return automationRunsDir;
+function automationRuns(): (since: string) => AutomationRun[] {
+	const runs: AutomationRun[] = [
+		{
+			id: "run_a",
+			automationId: "daily-check",
+			startedAt: "2025-01-01T10:00:00Z",
+			status: "success",
+			inputTokens: 0,
+			outputTokens: 0,
+			toolCalls: 0,
+			iterations: 1,
+		},
+		{
+			id: "run_b",
+			automationId: "daily-check",
+			startedAt: "2025-01-01T11:00:00Z",
+			status: "failure",
+			error: "boom",
+			inputTokens: 0,
+			outputTokens: 0,
+			toolCalls: 0,
+			iterations: 1,
+		},
+	];
+	return (since) => runs.filter((r) => r.startedAt >= since);
 }
 
 // ---------------------------------------------------------------------------
@@ -470,7 +478,7 @@ describe("ActivityCollector", () => {
 				event: "http.error",
 				status: 400,
 				method: "POST",
-				path: "/v1/tools/call",
+				path: "/v1/workspaces/ws_a/tools/call",
 				error: "invalid_input",
 				message: "/description: must be string",
 				userId: "usr_1",
@@ -481,7 +489,7 @@ describe("ActivityCollector", () => {
 				event: "http.error",
 				status: 401,
 				method: "POST",
-				path: "/v1/chat/stream",
+				path: "/v1/workspaces/ws_a/chat/stream",
 				error: "unknown",
 				message: "Unauthorized",
 				userId: null,
@@ -499,11 +507,11 @@ describe("ActivityCollector", () => {
 		expect(result.errors).toHaveLength(2);
 		expect(result.errors[0].source).toBe("http");
 		expect(result.errors[0].message).toBe("400 invalid_input: /description: must be string");
-		expect(result.errors[0].context).toBe("POST /v1/tools/call");
+		expect(result.errors[0].context).toBe("POST /v1/workspaces/ws_a/tools/call");
 		expect(result.errors[0].timestamp).toBe("2025-01-01T10:00:00Z");
 		expect(result.errors[1].source).toBe("http");
 		expect(result.errors[1].message).toBe("401 unknown: Unauthorized");
-		expect(result.errors[1].context).toBe("POST /v1/chat/stream");
+		expect(result.errors[1].context).toBe("POST /v1/workspaces/ws_a/chat/stream");
 		expect(result.totals.errors).toBe(2);
 	});
 
@@ -514,7 +522,7 @@ describe("ActivityCollector", () => {
 				event: "http.error",
 				status: 403,
 				method: "POST",
-				path: "/v1/tools/call",
+				path: "/v1/workspaces/ws_a/tools/call",
 				error: "forbidden",
 				message: "Insufficient permissions",
 			},
@@ -553,7 +561,7 @@ describe("ActivityCollector", () => {
 				event: "http.error",
 				status: 400,
 				method: "POST",
-				path: "/v1/tools/call",
+				path: "/v1/workspaces/ws_a/tools/call",
 				error: "invalid_input",
 				message: "bad args",
 			},
@@ -651,12 +659,11 @@ describe("ActivityCollector", () => {
 	});
 
 	it("includes automation run summaries when configured", async () => {
-		const automationRunsDir = writeAutomationRunFile(logDir);
 
 		const collector = new ActivityCollector({
 			logDir,
 			conversations: { kind: "store", list: (() => { const m = makeMockStore(); return (o, a) => m.list(o, a); })() },
-			automationRunsDir,
+			automationRuns: automationRuns(),
 		});
 
 		const result = await collector.collect({
@@ -668,9 +675,11 @@ describe("ActivityCollector", () => {
 			total: 2,
 			succeeded: 1,
 			failed: 1,
+			degraded: 0,
 			failures: [
 				{
 					name: "daily-check",
+					status: "failure",
 					error: "boom",
 					action: {
 						label: "View failed run",
@@ -684,7 +693,6 @@ describe("ActivityCollector", () => {
 	});
 
 	it("omits automation run summaries when category is filtered", async () => {
-		const automationRunsDir = writeAutomationRunFile(logDir);
 		writeLogFile(logDir, "2025-01-01", [
 			{
 				ts: "2025-01-01T10:00:00Z",
@@ -696,7 +704,7 @@ describe("ActivityCollector", () => {
 		const collector = new ActivityCollector({
 			logDir,
 			conversations: { kind: "store", list: (() => { const m = makeMockStore(); return (o, a) => m.list(o, a); })() },
-			automationRunsDir,
+			automationRuns: automationRuns(),
 		});
 
 		const result = await collector.collect({

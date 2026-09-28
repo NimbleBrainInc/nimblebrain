@@ -3,8 +3,8 @@ import { buildResourceEnvelopeEntry } from "../../src/api/handlers.ts";
 
 /**
  * Covers the shared helper that produces the `contents[]` entry for both
- * `handleResourceProxy` (GET /v1/apps/:name/resources/:path) and
- * `handleReadResource` (POST /v1/resources/read). The helper is the
+ * `handleResourceProxy` (GET /v1/workspaces/:wsId/apps/:name/resources/:path) and
+ * `handleReadResource` (POST /v1/workspaces/:wsId/resources/read). The helper is the
  * handler-level seam where `_meta` from the McpSource layer reaches the
  * HTTP response, so this is the right place to assert round-trip.
  */

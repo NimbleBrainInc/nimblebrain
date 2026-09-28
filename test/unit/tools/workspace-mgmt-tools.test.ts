@@ -599,16 +599,18 @@ describe("nb__manage_workspaces", () => {
       expect(persisted?.members.some((m) => m.userId === currentIdentity!.id)).toBe(false);
     });
 
-    test("refuses on a personal workspace", async () => {
-      const ws = await store.create("Personal", "personal_usr_owner0001", {
-        isPersonal: true,
-        ownerUserId: "usr_owner0001",
+    test("recovers a workspace provisioned for one user like any other", async () => {
+      // A user's own workspace whose only member was demoted is stranded like
+      // any other workspace — there is no personal carve-out.
+      const ws = await store.create("Mat's workspace", undefined, {
+        members: [{ userId: "usr_owner0001", role: "member" }],
       });
 
       const result = await tool.handler({ action: "claim_admin", workspaceId: ws.id });
 
-      expect(result.isError).toBe(true);
-      expect(extractText(result)).toContain("Personal workspaces");
+      expect(result.isError).toBe(false);
+      const persisted = await store.get(ws.id);
+      expect(persisted?.members.find((m) => m.userId === currentIdentity!.id)?.role).toBe("admin");
     });
 
     test("non-org-admin cannot claim_admin", async () => {

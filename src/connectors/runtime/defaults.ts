@@ -2,7 +2,6 @@ import type {
   ConnectorRef,
   ConnectorUiMeta,
   HostManifestMeta,
-  LocalConnectorMeta,
   PlacementDeclaration,
 } from "./types.ts";
 
@@ -115,20 +114,4 @@ export function sanitizePlacements(
     out.push(sanitizePlacementFields(p));
   }
   return out;
-}
-
-/**
- * Map a `ServerDetail`-shaped record's `_meta["ai.nimblebrain/host"]` block
- * onto the runtime's `LocalConnectorMeta`.
- */
-export function extractConnectorMeta(detail: Record<string, unknown>): LocalConnectorMeta {
-  const meta = detail._meta as Record<string, unknown> | undefined;
-  const hostMeta = meta?.["ai.nimblebrain/host"] as HostManifestMeta | undefined;
-  return {
-    manifestName: detail.name as string | undefined,
-    version: (detail.version as string) ?? "unknown",
-    description: detail.description as string | undefined,
-    ui: hostMetaToUiMeta(hostMeta),
-    briefing: hostMeta?.briefing ?? null,
-  };
 }

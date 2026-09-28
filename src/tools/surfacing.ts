@@ -1,4 +1,4 @@
-import { isInternalTool, type ToolSchema } from "../engine/types.ts";
+import { isModelVisible, type ToolSchema } from "../engine/types.ts";
 import { DEFAULT_MAX_DIRECT_TOOLS } from "../limits.ts";
 import type { Skill } from "../skills/types.ts";
 import { isIdentitySource } from "./identity-sources.ts";
@@ -23,17 +23,18 @@ import { toolNameMatchesPattern } from "./tool-pattern.ts";
  *      `nb__search` and promoted on demand, so it stays OUT of the default
  *      prefix (Tier 2/3 here). Costs one prefix-bust per promote — worth it for
  *      cold tools, not for hot ones.
- *   3. INTERNAL — the agent NEVER legitimately calls it; it's a UI-driven
- *      affordance the web shell invokes by name over REST (settings/admin ops:
+ *   3. APP-ONLY — the agent NEVER legitimately calls it; it's a UI-driven
+ *      affordance the web shell or a view invokes by name (settings/admin ops:
  *      `manage_*`, `set_model_config`, `briefing`,
- *      `instructions__write_instructions`). Annotate
- *      `ai.nimblebrain/internal` — stripped from EVERY listing that reaches a
+ *      `instructions__write_instructions`). Declare the MCP Apps
+ *      `_meta.ui.visibility: ["app"]` — stripped from EVERY listing that reaches a
  *      model: the chat tool list (`visibleTools` at the top of `surfaceTools`
  *      below), `nb__search`, the `/mcp` `tools/list`, and the invalid-name
  *      recovery hint (`ToolRegistry.searchTools`); the engine also refuses to
- *      promote it. Only the CALL paths stay open — `/v1/tools/call` and `/mcp`
- *      `tools/call` still dispatch by name, which is how the web shell reaches
- *      it. Feature gating (`isToolEnabled`) and role visibility
+ *      promote it. Only the CALL paths stay open — `/v1/workspaces/:wsId/tools/call` and `/mcp`
+ *      `tools/call` still dispatch by name, which is how the web shell and views
+ *      reach it. A connector's tool that declares the same visibility is held to
+ *      the same rule. Feature gating (`isToolEnabled`) and role visibility
  *      (`isToolVisibleToRole`) are independent filters layered on top, not
  *      substitutes for this one.
  *
@@ -41,7 +42,7 @@ import { toolNameMatchesPattern } from "./tool-pattern.ts";
  *   - A new `nb__*`/identity tool DEFAULTS to kernel-direct (it's a kernel tool
  *     by construction). Pick its slot deliberately — that default is how a
  *     surface accretes cost.
- *   - ONE TOOL, ONE AUDIENCE. `internal` is honest only when the WHOLE tool is
+ *   - ONE TOOL, ONE AUDIENCE. App-only visibility is honest only when the WHOLE tool is
  *     UI-driven. A tool that straddles agent + UI use is mis-sized: split it,
  *     don't flag the aggregate.
  */
@@ -122,8 +123,8 @@ export function surfaceTools(
     requestAllowedTools?: string[];
   } = {},
 ): { direct: ToolSchema[]; proxied: ToolSchema[] } {
-  // Filter out internal tools — they stay callable via bridge/API but never appear in the LLM's tool list
-  let visibleTools = allTools.filter((t) => !isInternalTool(t));
+  // Drop tools without "model" in their visibility — they stay callable via bridge/API but never appear in the LLM's tool list
+  let visibleTools = allTools.filter(isModelVisible);
 
   // Pre-filter by request-level allowedTools (if provided)
   if (config.requestAllowedTools) {

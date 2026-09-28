@@ -661,7 +661,7 @@ function CopyButton({ content }: { content: string }) {
 
 function ToolWidgets({ calls }: { calls: ReadonlyArray<ToolCallDisplay> }) {
   // A personal connector mounts no iframe. Its `ui://` read would resolve
-  // through the WORKSPACE registry (`GET /v1/apps/:name/resources/*` tries the
+  // through the WORKSPACE registry (`GET /v1/workspaces/:wsId/apps/:name/resources/*` tries the
   // kernel identity sources, then that registry — a connector is in neither), so
   // a same-named workspace app would answer and its bridge would dispatch on the
   // workspace's credentials. Excluded here rather than left to 404: the marked
@@ -674,7 +674,7 @@ function ToolWidgets({ calls }: { calls: ReadonlyArray<ToolCallDisplay> }) {
       !isPersonalConnectorAppName(tc.appName),
   );
   // Same marker exclusion as `widgets` above. A personal connector has no app
-  // surface to resolve against — `/v1/apps/<name>/resources/*` searches the
+  // surface to resolve against — `/v1/workspaces/:wsId/apps/<name>/resources/*` searches the
   // workspace registry, which a `my_`-marked name can never match — so a link
   // rendered here previews a 404. Fail-closed either way, but a broken tile is
   // worse than no tile.

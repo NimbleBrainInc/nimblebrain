@@ -4,7 +4,12 @@ import { createOpenAI } from "@ai-sdk/openai";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import type { LanguageModelV4, ProviderV4 } from "@ai-sdk/provider";
 import { createXai } from "@ai-sdk/xai";
-import { createProviderRegistry, type Provider } from "ai";
+import {
+  createProviderRegistry,
+  defaultSettingsMiddleware,
+  type Provider,
+  wrapLanguageModel,
+} from "ai";
 import { findProviderForModelId } from "./catalog.ts";
 import { wrapFetchWithLiveness } from "./fetch-liveness.ts";
 
@@ -38,10 +43,29 @@ export function buildRegistry(config: ProvidersConfig): Provider {
     // The cast bridges an unused member: the SDK types `fetch` as the full
     // `typeof fetch` (incl. Bun's static `preconnect`) but only ever invokes the
     // call signature, which the wrapper implements.
-    providers.anthropic = createAnthropic({
+    const anthropic = createAnthropic({
       apiKey,
       fetch: wrapFetchWithLiveness(globalThis.fetch) as typeof fetch,
     });
+    // `toolStreaming: false` keeps Anthropic's fine-grained (eager) tool-input
+    // streaming off. The adapter turns it on for every tool by default, and
+    // with it on the API streams tool arguments without validating them as
+    // JSON, so a malformed argument string reaches the engine as a failed
+    // call. The engine never forwards `tool-input-delta` (src/model/stream.ts),
+    // so eager streaming buys nothing here. Off, the API validates the
+    // arguments before it streams them. A caller can still opt back in per
+    // call; call-level provider options merge over this default.
+    const toolStreamingOff = defaultSettingsMiddleware({
+      settings: { providerOptions: { anthropic: { toolStreaming: false } } },
+    });
+    providers.anthropic = {
+      ...anthropic,
+      languageModel: (modelId: string) =>
+        wrapLanguageModel({
+          model: anthropic.languageModel(modelId),
+          middleware: toolStreamingOff,
+        }),
+    };
   }
 
   if (providersCfg.openai) {
@@ -93,8 +117,7 @@ export function buildRegistry(config: ProvidersConfig): Provider {
     //   ledger tokens, no reasoning tokens.
     // `supportsStructuredOutputs` — without it a schema-bearing
     //   `responseFormat` degrades to `{"type":"json_object"}`, dropping the
-    //   schema and strict decoding. The home briefing sends exactly that shape
-    //   on every generation.
+    //   schema and strict decoding.
     providers.nebius = createOpenAICompatible({
       name: "nebius",
       apiKey: nebiusApiKey,

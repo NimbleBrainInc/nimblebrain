@@ -1,5 +1,5 @@
-import type { WorkspaceStore } from "../workspace/workspace-store.ts";
 import type { InstanceConfig } from "./instance.ts";
+import { DevIdentityProvider } from "./providers/dev.ts";
 import { OidcIdentityProvider } from "./providers/oidc.ts";
 import { WorkosIdentityProvider } from "./providers/workos.ts";
 import type { OrgRole } from "./types.ts";
@@ -24,8 +24,9 @@ export interface UserIdentity {
  * while verifying the signature, reported so a provider-independent layer can
  * decide where the credential is valid (`authenticateRequest`).
  *
- * - `first_party` — issued to this instance's own client: the web app's login
- *   session. Not minted for any one resource; membership gates what it reaches.
+ * - `first_party` — issued to one of the operator's own clients: the web app's
+ *   login session, or an app the provider's configuration names as first-party.
+ *   Not bound to any one resource; membership gates what it reaches.
  * - `resource` — minted by the authorization server external MCP clients use,
  *   for the resources in `audience` (the token's `aud`, normalized to a list).
  *   Valid only at a resource whose canonical URL is exactly one of them.
@@ -221,23 +222,23 @@ export interface IdentityProvider {
 // ── Factory ────────────────────────────────────────────────────────
 
 /**
- * Create the appropriate identity provider based on instance config.
- * Returns null when config is null (dev mode — no auth).
+ * Create the identity provider `instance.json` names. Every adapter, `dev`
+ * included, is chosen by name; there is no provider for an absent config.
  */
 export function createIdentityProvider(
-  config: InstanceConfig | null,
+  config: InstanceConfig,
   userStore: UserStore,
-  workspaceStore: WorkspaceStore,
-): IdentityProvider | null {
-  if (config === null) return null;
-
+  workDir: string,
+): IdentityProvider {
   const adapter = config.auth.adapter;
 
   switch (adapter) {
+    case "dev":
+      return new DevIdentityProvider(workDir, userStore);
     case "oidc":
-      return new OidcIdentityProvider(config.auth, userStore, workspaceStore);
+      return new OidcIdentityProvider(config.auth, userStore);
     case "workos":
-      return new WorkosIdentityProvider(config.auth, userStore, workspaceStore);
+      return new WorkosIdentityProvider(config.auth, userStore);
     default:
       throw new Error(`Unknown identity provider: "${adapter as string}"`);
   }

@@ -96,7 +96,7 @@ import {
   type ManageConnectorsContext,
 } from "../../src/tools/connector-tools.ts";
 import { ToolRegistry } from "../../src/tools/registry.ts";
-import { personalWorkspaceIdFor, WorkspaceStore } from "../../src/workspace/workspace-store.ts";
+import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
 import { _resetComposioConfigForTest } from "../../src/connectors/providers/composio/config.ts";
 import {
   _resetConnectorsConfigForTest,
@@ -597,23 +597,18 @@ describe("manage_connectors.install (composio-auth)", () => {
     expect(ws?.connectors ?? []).toHaveLength(0);
   });
 
-  // ── personal-workspace target ─────────────────────────────────────
+  // ── single-member workspace target ────────────────────────────────
   //
-  // The path this whole change unblocks: composio-auth install into a
-  // personal workspace. A stale guard used to reject it inside the
-  // `auth === "composio"` branch; dcr/static were never gated, so a
-  // dcr fixture would NOT cover this. These two tests pin the composio
-  // path specifically — install succeeds, and disconnect cleanup is
-  // keyed on the personal `wsId` with no `isPersonal` special-casing
-  // (the invariant the removed guard's safety argument rests on).
+  // A workspace the caller alone belongs to takes a composio install like
+  // any other: install succeeds, and disconnect cleanup is keyed on that
+  // `wsId` with nothing special about who belongs to it.
 
-  test("(g) composio install into a personal workspace persists the ref (the path the removed guard blocked)", async () => {
+  test("(g) composio install into a single-member workspace persists the ref", async () => {
     process.env.COMPOSIO_API_KEY = "k_test";
 
-    const personalWsId = personalWorkspaceIdFor(ADMIN.id);
-    await h.workspaceStore.create("Admin Personal", `user_${ADMIN.id}`, {
-      isPersonal: true,
-      ownerUserId: ADMIN.id,
+    const personalWsId = "ws_admin_own";
+    await h.workspaceStore.create("Admin's workspace", personalWsId.slice(3), {
+      members: [{ userId: ADMIN.id, role: "admin" }],
     });
 
     const tool = buildTool(h);
@@ -624,14 +619,13 @@ describe("manage_connectors.install (composio-auth)", () => {
     });
 
     // Eager startConnectorSource fails on the fake session URL (same as
-    // the shared-workspace path), so this returns success-with-warning,
-    // NOT the old "cannot install into a personal workspace" error.
+    // the shared-workspace path), so this returns success-with-warning.
     expect(result.isError).toBe(false);
     const sc = result.structuredContent as { scope?: string; wsId?: string };
     expect(sc.scope).toBe("workspace");
     expect(sc.wsId).toBe(personalWsId);
 
-    // The ref landed in the personal workspace with the composio marker
+    // The ref landed in the workspace with the composio marker
     // and the post-T008 workspace scope.
     const personalWs = await h.workspaceStore.get(personalWsId);
     const installed = personalWs?.connectors.find(
@@ -642,23 +636,22 @@ describe("manage_connectors.install (composio-auth)", () => {
     expect(installed?.oauthScope).toBe("workspace");
   });
 
-  test("(h) disconnect of a personal-workspace composio connector runs cleanup keyed on that wsId (no isPersonal gate)", async () => {
+  test("(h) disconnect of a single-member workspace composio connector runs cleanup keyed on that wsId", async () => {
     process.env.COMPOSIO_API_KEY = "k_test";
 
-    const personalWsId = personalWorkspaceIdFor(ADMIN.id);
-    await h.workspaceStore.create("Admin Personal", `user_${ADMIN.id}`, {
-      isPersonal: true,
-      ownerUserId: ADMIN.id,
+    const personalWsId = "ws_admin_own";
+    await h.workspaceStore.create("Admin's workspace", personalWsId.slice(3), {
+      members: [{ userId: ADMIN.id, role: "admin" }],
     });
 
-    // Install seeds the ConnectorRef + lifecycle instance for the personal
+    // Install seeds the ConnectorRef + lifecycle instance for the
     // workspace (the eager-start failure is caught and logged after).
     const tool = buildTool(h);
     await tool.handler({ action: "install", entry: gmailEntry(), wsId: personalWsId });
 
     // Simulate a completed Composio OAuth: a connection.json under the
-    // personal workspace's credential path. Cleanup must find and remove
-    // THIS file — proving it resolves by wsId, personal included.
+    // workspace's credential path. Cleanup must find and remove THIS
+    // file — proving it resolves by wsId.
     await saveComposioConnection(h.workDir, { type: "workspace", wsId: personalWsId }, GMAIL_ID, {
       connectedAccountId: "ca_personal",
       toolkit: "gmail",
@@ -673,10 +666,7 @@ describe("manage_connectors.install (composio-auth)", () => {
     delete process.env.COMPOSIO_API_KEY;
 
     // Disconnect through the real lifecycle caller (serverName is the
-    // slug of GMAIL_ID; principal is the workspace principal). If a
-    // future change gated this caller on `isPersonal`, the personal
-    // workspace's connection would survive and orphan upstream — this
-    // assertion fails first.
+    // slug of GMAIL_ID; principal is the workspace principal).
     await h.runtime
       .getLifecycle()
       .disconnect("com-google-gmail", personalWsId, "_workspace", { workDir: h.workDir });

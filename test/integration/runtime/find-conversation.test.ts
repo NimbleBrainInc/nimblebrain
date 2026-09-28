@@ -10,8 +10,10 @@
  *  - `findConversation(id)` returns null when the conversation doesn't exist.
  *  - `findConversation(id, access)` returns null for foreign owner
  *    (same shape as not-found — no existence leak).
- *  - Chat lands under the focused workspace's owner partition.
- *  - `/v1/conversations/:id/events` works without `X-Workspace-Id`.
+ *  - Chat lands under the addressed workspace's owner partition.
+ *  - `/v1/conversations/:id/events` is identity-scoped: it takes no workspace.
+ *  - A chat addressed to a malformed, unknown or non-member workspace is
+ *    refused with the workspace gate's single 404.
  */
 
 import { afterAll, describe, expect, test } from "bun:test";
@@ -23,10 +25,12 @@ import { tmpdir } from "node:os";
 import type { ServerHandle } from "../../../src/api/server.ts";
 import { startServer } from "../../../src/api/server.ts";
 import { workspaceConversationsDir } from "../../../src/conversation/paths.ts";
-import { createTestAuthAdapter, TEST_IDENTITY } from "../../helpers/test-auth-adapter.ts";
+import { TEST_IDENTITY, testAuthAdapter } from "../../helpers/test-auth-adapter.ts";
 import { Runtime } from "../../../src/runtime/runtime.ts";
 import { createEchoModel } from "../../helpers/echo-model.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../../helpers/test-workspace.ts";
+import { devProvider } from "../../helpers/dev-provider.ts";
+import { DEV_IDENTITY } from "../../../src/identity/providers/dev.ts";
 
 const ALICE = { id: "usr_alice", email: "alice@example.com" };
 const BOB = { id: "usr_bob", email: "bob@example.com" };
@@ -82,7 +86,7 @@ describe("Runtime.findConversation", () => {
     expect(foundForAlice!.id).toBe(aliceConv.conversationId);
   });
 
-  test("chat writes the conversation file under the focused workspace's owner partition", async () => {
+  test("chat writes the conversation file under the addressed workspace's owner partition", async () => {
     const result = await runtime.chat({
       message: "where does this land",
       workspaceId: TEST_WORKSPACE_ID,
@@ -103,10 +107,10 @@ describe("Runtime.findConversation", () => {
 });
 
 // ---------------------------------------------------------------------------
-// /v1/conversations/:id/events — no X-Workspace-Id needed post-Task-005
+// /v1/conversations/:id/events — identity-scoped, no workspace in the request
 // ---------------------------------------------------------------------------
 
-describe("/v1/conversations/:id/events — workspace-optional", () => {
+describe("/v1/conversations/:id/events — identity-scoped", () => {
   const API_KEY = "find-conv-events-key-1234";
   const workDir = join(tmpdir(), `nb-find-conv-events-${Date.now()}`);
   let runtime: Runtime;
@@ -117,6 +121,7 @@ describe("/v1/conversations/:id/events — workspace-optional", () => {
   test("setup", async () => {
     mkdirSync(workDir, { recursive: true });
     runtime = await Runtime.start({
+      identityProvider: testAuthAdapter(API_KEY),
       model: { provider: "custom", adapter: createEchoModel() },
       logging: { disabled: true },
       workDir,
@@ -125,7 +130,6 @@ describe("/v1/conversations/:id/events — workspace-optional", () => {
     handle = startServer({
       runtime,
       port: 0,
-      provider: createTestAuthAdapter(API_KEY, runtime),
     });
     baseUrl = `http://localhost:${handle.port}`;
 
@@ -146,11 +150,11 @@ describe("/v1/conversations/:id/events — workspace-optional", () => {
   // first chunk arrives on an SSE stream that the server keeps idle —
   // and forcing a chunk would couple this test to broadcast plumbing.
   // The 404 test below + the 200/SSE coverage in
-  // `conversation-access.test.ts` (which uses /v1/chat/stream where the
-  // server emits chunks promptly) together prove the route handles the
-  // workspace-optional case.
+  // `conversation-access.test.ts` (which uses /v1/workspaces/:wsId/chat/stream
+  // where the server emits chunks promptly) together prove the route resolves
+  // the conversation without a workspace in the request.
 
-  test("returns 404 for a non-existent conversation (no workspace header still ok)", async () => {
+  test("returns 404 for a non-existent conversation", async () => {
     const res = await fetch(`${baseUrl}/v1/conversations/conv_0000000000000000/events`, {
       method: "GET",
       headers: { Authorization: `Bearer ${API_KEY}` },
@@ -182,52 +186,43 @@ describe("/v1/conversations/:id/events — workspace-optional", () => {
     expect(body.details?.conversationId).toBe(seed.conversationId);
   });
 
-  test("X-Workspace-Id is honored when sent (valid workspace + member)", async () => {
-    // The chat UI sends `X-Workspace-Id` on every call; the events
-    // route accepts it without requiring it. Validation must still
-    // happen — see the malformed / non-member tests below.
+  test("streams the caller's own conversation with no workspace in the request", async () => {
     const res = await fetch(`${baseUrl}/v1/conversations/${convId}/events`, {
       method: "GET",
-      headers: {
-        Authorization: `Bearer ${API_KEY}`,
-        "X-Workspace-Id": TEST_WORKSPACE_ID,
-      },
+      headers: { Authorization: `Bearer ${API_KEY}` },
     });
     expect(res.status).toBe(200);
     expect(res.headers.get("Content-Type")).toMatch(/text\/event-stream/);
     await res.body?.cancel();
   });
 
-  test("returns 400 when X-Workspace-Id is malformed", async () => {
-    const res = await fetch(`${baseUrl}/v1/conversations/${convId}/events`, {
-      method: "GET",
-      headers: {
-        Authorization: `Bearer ${API_KEY}`,
-        "X-Workspace-Id": "not a valid ws id!!",
-      },
+  /** POST a chat addressed to `wsId`, as the authenticated test user. */
+  function chatIn(wsId: string): Promise<Response> {
+    return fetch(`${baseUrl}/v1/workspaces/${wsId}/chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${API_KEY}` },
+      body: JSON.stringify({ message: "hello" }),
     });
-    expect(res.status).toBe(400);
-    const body = await res.json();
-    expect(body.error).toBe("workspace_error");
+  }
+
+  test("a chat addressed to a malformed workspace id is refused with 404 workspace_error", async () => {
+    const res = await chatIn("not_a_ws_id");
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ error: "workspace_error", message: "Workspace not found" });
   });
 
-  test("returns 403 when X-Workspace-Id names a workspace the caller is not a member of", async () => {
-    // Create a second workspace that the test user isn't a member of.
-    // The middleware should refuse with 403 rather than silently
-    // ignoring the header — silent acceptance would let a malicious
-    // client probe workspace ids by membership.
+  test("a chat addressed to a workspace the caller is not a member of is refused like an unknown one", async () => {
+    // The gate answers a non-member exactly as it answers an unknown
+    // workspace, so a client cannot probe workspace ids by membership.
     const wsStore = runtime.getWorkspaceStore();
     const otherWs = await wsStore.create("Other workspace", "ws_other_test");
-    const res = await fetch(`${baseUrl}/v1/conversations/${convId}/events`, {
-      method: "GET",
-      headers: {
-        Authorization: `Bearer ${API_KEY}`,
-        "X-Workspace-Id": otherWs.id,
-      },
-    });
-    expect(res.status).toBe(403);
-    const body = await res.json();
-    expect(body.error).toBe("workspace_error");
+    const nonMember = await chatIn(otherWs.id);
+    const unknown = await chatIn("ws_does_not_exist");
+    expect(nonMember.status).toBe(404);
+    expect(unknown.status).toBe(404);
+    const expected = { error: "workspace_error", message: "Workspace not found" };
+    expect(await nonMember.json()).toEqual(expected);
+    expect(await unknown.json()).toEqual(expected);
   });
 
   test("teardown", async () => {
@@ -238,16 +233,14 @@ describe("/v1/conversations/:id/events — workspace-optional", () => {
 });
 
 // ---------------------------------------------------------------------------
-// /v1/conversations/:id/events — dev mode (no identity provider configured)
+// /v1/conversations/:id/events — the dev identity provider
 //
-// Regression for round-6 QA C1: the route's handler read `identity.id`
-// unconditionally; in dev mode `c.var.identity` is undefined and the
-// handler threw `TypeError: Cannot read properties of undefined`.
-// `bun run dev:worktree` (or any auth-disabled deployment) would 500
-// the moment the web client opened the SSE.
+// `bun run dev:worktree` runs the dev provider. The web client opens this SSE
+// the moment it loads a conversation, so the dev user's own conversation must
+// stream (200), not 500.
 // ---------------------------------------------------------------------------
 
-describe("/v1/conversations/:id/events — dev mode (no provider)", () => {
+describe("/v1/conversations/:id/events — dev provider", () => {
   const workDir = join(tmpdir(), `nb-find-conv-events-dev-${Date.now()}`);
   let runtime: Runtime;
   let handle: ServerHandle;
@@ -257,21 +250,20 @@ describe("/v1/conversations/:id/events — dev mode (no provider)", () => {
   test("setup", async () => {
     mkdirSync(workDir, { recursive: true });
     runtime = await Runtime.start({
+      identityProvider: devProvider,
       model: { provider: "custom", adapter: createEchoModel() },
       logging: { disabled: true },
       workDir,
     });
     await provisionTestWorkspace(runtime);
-    // No `provider` → dev mode. The auth middleware passes through
-    // without setting c.var.identity.
+    // The dev provider verifies every request as `usr_default`.
     handle = startServer({ runtime, port: 0 });
     baseUrl = `http://localhost:${handle.port}`;
 
-    // Seed a conversation via runtime.chat without an identity. The
-    // runtime's dev-mode fallback mints the conversation under
-    // `usr_default`, which is what `DEV_IDENTITY.id` resolves to and
-    // what the route's dev fallback compares against.
+    // Seed a conversation as the dev user, the identity the dev provider
+    // gives the route's request.
     const seed = await runtime.chat({
+      identity: DEV_IDENTITY,
       message: "seed in dev mode",
       workspaceId: TEST_WORKSPACE_ID,
     });
@@ -304,7 +296,8 @@ describe("/v1/conversations/:id/events — dev mode (no provider)", () => {
 // PATH (it never reads file contents), so an ownerless file resolves to its
 // workspace on both routes, and `store.load` is the one place ownership/validity is
 // checked — it throws the typed `ConversationCorruptedError`. So both the read
-// route (`/v1/conversations/:id/events`) and the chat resume path (`/v1/chat`)
+// route (`/v1/conversations/:id/events`) and the chat resume path
+// (`/v1/workspaces/:wsId/chat`)
 // surface a clean 422 with the migration command, never a 500.
 //
 // The ownerless file is planted at the exact workspace path the resume resolves
@@ -322,6 +315,7 @@ describe("ownerless conversation file — no 500s", () => {
   test("setup", async () => {
     mkdirSync(workDir, { recursive: true });
     runtime = await Runtime.start({
+      identityProvider: testAuthAdapter(API_KEY),
       model: { provider: "custom", adapter: createEchoModel() },
       logging: { disabled: true },
       workDir,
@@ -330,7 +324,6 @@ describe("ownerless conversation file — no 500s", () => {
     handle = startServer({
       runtime,
       port: 0,
-      provider: createTestAuthAdapter(API_KEY, runtime),
     });
     baseUrl = `http://localhost:${handle.port}`;
 
@@ -364,13 +357,12 @@ describe("ownerless conversation file — no 500s", () => {
     expect(body.error).toBe("conversation_corrupted");
   });
 
-  test("POST /v1/chat resuming an ownerless conversation returns 422 (not 500)", async () => {
-    const res = await fetch(`${baseUrl}/v1/chat`, {
+  test("POST /v1/workspaces/:wsId/chat resuming an ownerless conversation returns 422 (not 500)", async () => {
+    const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${API_KEY}`,
-        "X-Workspace-Id": TEST_WORKSPACE_ID,
       },
       body: JSON.stringify({ message: "resume", conversationId: convId }),
     });

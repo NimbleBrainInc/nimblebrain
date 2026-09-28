@@ -96,7 +96,6 @@ describe("home ActivityCollector — conversation summaries", () => {
     const collector = new ActivityCollector({
       logDir,
       conversations: { kind: "jsonl", conversationsDir },
-      automationRunsDir: join(workDir, "automations", "runs"),
     });
     const result = await collector.collect({ limit: 10 });
 
@@ -121,7 +120,6 @@ describe("home ActivityCollector — conversation summaries", () => {
     const collector = new ActivityCollector({
       logDir,
       conversations: { kind: "jsonl", conversationsDir },
-      automationRunsDir: join(workDir, "automations", "runs"),
     });
     const result = await collector.collect({ limit: 10 });
 
@@ -139,7 +137,6 @@ describe("home ActivityCollector — conversation summaries", () => {
     const collector = new ActivityCollector({
       logDir,
       conversations: { kind: "jsonl", conversationsDir },
-      automationRunsDir: join(workDir, "automations", "runs"),
     });
     const result = await collector.collect({ limit: 10 });
 
@@ -171,7 +168,6 @@ describe("home ActivityCollector — preview is capped", () => {
     const collector = new ActivityCollector({
       logDir,
       conversations: { kind: "jsonl", conversationsDir },
-      automationRunsDir: join(workDir, "automations", "runs"),
     });
     const result = await collector.collect({ limit: 10 });
 
@@ -196,7 +192,6 @@ describe("home ActivityCollector — preview is capped", () => {
     const collector = new ActivityCollector({
       logDir,
       conversations: { kind: "jsonl", conversationsDir },
-      automationRunsDir: join(workDir, "automations", "runs"),
     });
     const result = await collector.collect({ limit: 10 });
 
@@ -215,7 +210,6 @@ describe("home ActivityCollector — preview is capped", () => {
     const collector = new ActivityCollector({
       logDir,
       conversations: { kind: "jsonl", conversationsDir },
-      automationRunsDir: join(workDir, "automations", "runs"),
     });
     const result = await collector.collect({ limit: 10 });
 

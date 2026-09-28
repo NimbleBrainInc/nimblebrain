@@ -4,12 +4,13 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
-import { createTestAuthAdapter } from "../helpers/test-auth-adapter.ts";
+import { testAuthAdapter } from "../helpers/test-auth-adapter.ts";
 import { startServer } from "../../src/api/server.ts";
 import type { ServerHandle } from "../../src/api/server.ts";
 import { makeInProcessSource } from "../helpers/in-process-source.ts";
 import { textContent, extractText } from "../../src/engine/content-helpers.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
 
 // --- SSE parsing helper ---
 
@@ -49,7 +50,6 @@ function authHeaders(apiKey: string): Record<string, string> {
 	return {
 		"Content-Type": "application/json",
 		Authorization: `Bearer ${apiKey}`,
-		"X-Workspace-Id": TEST_WORKSPACE_ID,
 	};
 }
 
@@ -63,6 +63,7 @@ describe("integration: full flow with auth", () => {
 	beforeAll(async () => {
 		mkdirSync(workDir, { recursive: true });
 		runtime = await Runtime.start({
+			identityProvider: testAuthAdapter(API_KEY),
 			model: { provider: "custom", adapter: createEchoModel() },
 			logging: { disabled: true },
 			workDir,
@@ -73,7 +74,6 @@ describe("integration: full flow with auth", () => {
 		handle = startServer({
 			runtime,
 			port: 0,
-			provider: createTestAuthAdapter(API_KEY, runtime),
 		});
 		baseUrl = `http://localhost:${handle.port}`;
 	});
@@ -92,15 +92,15 @@ describe("integration: full flow with auth", () => {
 		expect(health.status).toBe("ok");
 
 		// 2. Chat without auth is rejected
-		const noAuthRes = await fetch(`${baseUrl}/v1/chat`, {
+		const noAuthRes = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat`, {
 			method: "POST",
-			headers: { "Content-Type": "application/json", "X-Workspace-Id": TEST_WORKSPACE_ID },
+			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({ message: "should fail" }),
 		});
 		expect(noAuthRes.status).toBe(401);
 
 		// 3. Chat with auth succeeds
-		const chatRes = await fetch(`${baseUrl}/v1/chat`, {
+		const chatRes = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat`, {
 			method: "POST",
 			headers: authHeaders(API_KEY),
 			body: JSON.stringify({ message: "Hello integration" }),
@@ -112,7 +112,7 @@ describe("integration: full flow with auth", () => {
 		const convId = chatBody.conversationId;
 
 		// 4. Second message in same conversation
-		const chat2Res = await fetch(`${baseUrl}/v1/chat`, {
+		const chat2Res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat`, {
 			method: "POST",
 			headers: authHeaders(API_KEY),
 			body: JSON.stringify({
@@ -126,7 +126,7 @@ describe("integration: full flow with auth", () => {
 		expect(chat2Body.conversationId).toBe(convId);
 
 		// 5. Stream with auth succeeds
-		const streamRes = await fetch(`${baseUrl}/v1/chat/stream`, {
+		const streamRes = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat/stream`, {
 			method: "POST",
 			headers: authHeaders(API_KEY),
 			body: JSON.stringify({ message: "Stream integration" }),
@@ -154,6 +154,7 @@ describe("integration: concurrent authenticated load", () => {
 	beforeAll(async () => {
 		mkdirSync(workDir, { recursive: true });
 		runtime = await Runtime.start({
+			identityProvider: testAuthAdapter(API_KEY),
 			model: { provider: "custom", adapter: createEchoModel() },
 			logging: { disabled: true },
 			workDir,
@@ -164,7 +165,6 @@ describe("integration: concurrent authenticated load", () => {
 		handle = startServer({
 			runtime,
 			port: 0,
-			provider: createTestAuthAdapter(API_KEY, runtime),
 		});
 		baseUrl = `http://localhost:${handle.port}`;
 	});
@@ -183,7 +183,7 @@ describe("integration: concurrent authenticated load", () => {
 
 		const results = await Promise.all(
 			messages.map((message) =>
-				fetch(`${baseUrl}/v1/chat`, {
+				fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat`, {
 					method: "POST",
 					headers: authHeaders(API_KEY),
 					body: JSON.stringify({ message }),
@@ -206,7 +206,7 @@ describe("integration: concurrent authenticated load", () => {
 	it("10 concurrent requests with mixed auth: valid succeed, invalid fail", async () => {
 		const requests = Array.from({ length: 10 }, (_, i) => {
 			const valid = i % 2 === 0;
-			return fetch(`${baseUrl}/v1/chat`, {
+			return fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat`, {
 				method: "POST",
 				headers: valid
 					? authHeaders(API_KEY)
@@ -241,6 +241,7 @@ describe("integration: windowing under load", () => {
 		process.env.NB_CHAT_RATE_LIMIT = "200";
 
 		runtime = await Runtime.start({
+			identityProvider: devProvider,
 			model: { provider: "custom", adapter: createEchoModel() },
 			logging: { disabled: true },
 			maxInputTokens: 2000, // Low budget to trigger windowing
@@ -261,9 +262,9 @@ describe("integration: windowing under load", () => {
 
 	it("50+ messages in one conversation does not crash and returns valid responses", async () => {
 		// Send first message and capture conversation ID
-		const firstRes = await fetch(`${baseUrl}/v1/chat`, {
+		const firstRes = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat`, {
 			method: "POST",
-			headers: { "Content-Type": "application/json", "X-Workspace-Id": TEST_WORKSPACE_ID },
+			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({
 				message: "Start of a long conversation with padding text ".repeat(3),
 			}),
@@ -274,9 +275,9 @@ describe("integration: windowing under load", () => {
 
 		// Send 49 more messages in the same conversation sequentially
 		for (let i = 1; i < 50; i++) {
-			const res = await fetch(`${baseUrl}/v1/chat`, {
+			const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat`, {
 				method: "POST",
-				headers: { "Content-Type": "application/json", "X-Workspace-Id": TEST_WORKSPACE_ID },
+				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify({
 					message: `Message ${i} with some padding content to use tokens`,
 					conversationId: convId,
@@ -294,9 +295,9 @@ describe("integration: windowing under load", () => {
 
 	it("concurrent requests on a long conversation are rejected cleanly", async () => {
 		// Create a conversation with some history
-		const firstRes = await fetch(`${baseUrl}/v1/chat`, {
+		const firstRes = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat`, {
 			method: "POST",
-			headers: { "Content-Type": "application/json", "X-Workspace-Id": TEST_WORKSPACE_ID },
+			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({ message: "Seed message for concurrent windowing test" }),
 		});
 		const firstBody = await firstRes.json();
@@ -304,9 +305,9 @@ describe("integration: windowing under load", () => {
 
 		// Add 10 messages sequentially to build up history
 		for (let i = 0; i < 10; i++) {
-			await fetch(`${baseUrl}/v1/chat`, {
+			await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat`, {
 				method: "POST",
-				headers: { "Content-Type": "application/json", "X-Workspace-Id": TEST_WORKSPACE_ID },
+				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify({
 					message: `Building history message ${i} with extra padding text`,
 					conversationId: convId,
@@ -318,9 +319,9 @@ describe("integration: windowing under load", () => {
 		// the rest must fail with 409 run_in_progress rather than corrupting state.
 		const concurrentResults = await Promise.all(
 			Array.from({ length: 5 }, (_, i) =>
-				fetch(`${baseUrl}/v1/chat`, {
+				fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat`, {
 					method: "POST",
-					headers: { "Content-Type": "application/json", "X-Workspace-Id": TEST_WORKSPACE_ID },
+					headers: { "Content-Type": "application/json" },
 					body: JSON.stringify({
 						message: `Concurrent on long conv ${i}`,
 						conversationId: convId,
@@ -353,6 +354,7 @@ describe("integration: auth boundary", () => {
 	beforeAll(async () => {
 		mkdirSync(workDir, { recursive: true });
 		runtime = await Runtime.start({
+			identityProvider: testAuthAdapter(API_KEY),
 			model: { provider: "custom", adapter: createEchoModel() },
 			logging: { disabled: true },
 			workDir,
@@ -363,7 +365,6 @@ describe("integration: auth boundary", () => {
 		handle = startServer({
 			runtime,
 			port: 0,
-			provider: createTestAuthAdapter(API_KEY, runtime),
 		});
 		baseUrl = `http://localhost:${handle.port}`;
 	});
@@ -380,29 +381,29 @@ describe("integration: auth boundary", () => {
 		expect(healthRes.status).toBe(200);
 
 		// Chat requires auth
-		const chatNoAuth = await fetch(`${baseUrl}/v1/chat`, {
+		const chatNoAuth = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat`, {
 			method: "POST",
-			headers: { "Content-Type": "application/json", "X-Workspace-Id": TEST_WORKSPACE_ID },
+			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({ message: "no auth" }),
 		});
 		expect(chatNoAuth.status).toBe(401);
 
 		// Stream requires auth
-		const streamNoAuth = await fetch(`${baseUrl}/v1/chat/stream`, {
+		const streamNoAuth = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat/stream`, {
 			method: "POST",
-			headers: { "Content-Type": "application/json", "X-Workspace-Id": TEST_WORKSPACE_ID },
+			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({ message: "no auth" }),
 		});
 		expect(streamNoAuth.status).toBe(401);
 
 		// All succeed with valid auth
 		const [chatAuth, streamAuth] = await Promise.all([
-			fetch(`${baseUrl}/v1/chat`, {
+			fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat`, {
 				method: "POST",
 				headers: authHeaders(API_KEY),
 				body: JSON.stringify({ message: "authed chat" }),
 			}),
-			fetch(`${baseUrl}/v1/chat/stream`, {
+			fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat/stream`, {
 				method: "POST",
 				headers: authHeaders(API_KEY),
 				body: JSON.stringify({ message: "authed stream" }),
@@ -428,6 +429,7 @@ describe("E2E: install app -> tool call via API", () => {
 		mkdirSync(testDir, { recursive: true });
 
 		runtime = await Runtime.start({
+			identityProvider: devProvider,
 			model: { provider: "custom", adapter: createEchoModel() },
 			logging: { disabled: true },
 			workDir: testDir,
@@ -472,7 +474,7 @@ describe("E2E: install app -> tool call via API", () => {
 			},
 		}, undefined, TEST_WORKSPACE_ID);
 
-		handle = startServer({ runtime, port: 0 });
+		handle = startServer({ runtime, port: 0});
 		baseUrl = `http://localhost:${handle.port}`;
 	});
 
@@ -482,10 +484,10 @@ describe("E2E: install app -> tool call via API", () => {
 		if (existsSync(testDir)) rmSync(testDir, { recursive: true });
 	});
 
-	it("app tools are callable via POST /v1/tools/call and return correct data", async () => {
-		const res = await fetch(`${baseUrl}/v1/tools/call`, {
+	it("app tools are callable via POST /v1/workspaces/:wsId/tools/call and return correct data", async () => {
+		const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/tools/call`, {
 			method: "POST",
-			headers: { "Content-Type": "application/json", "X-Workspace-Id": TEST_WORKSPACE_ID },
+			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({
 				server: "tasks",
 				tool: "create_task",
@@ -517,6 +519,7 @@ describe("E2E: tool call via API", () => {
 		mkdirSync(sseTestDir, { recursive: true });
 
 		runtime = await Runtime.start({
+			identityProvider: devProvider,
 			model: { provider: "custom", adapter: createEchoModel() },
 			logging: { disabled: true },
 			workDir: sseTestDir,
@@ -544,7 +547,7 @@ describe("E2E: tool call via API", () => {
 			name: "@test/notes",
 		}, undefined, TEST_WORKSPACE_ID);
 
-		handle = startServer({ runtime, port: 0 });
+		handle = startServer({ runtime, port: 0});
 		baseUrl = `http://localhost:${handle.port}`;
 	});
 
@@ -554,10 +557,10 @@ describe("E2E: tool call via API", () => {
 		if (existsSync(sseTestDir)) rmSync(sseTestDir, { recursive: true });
 	});
 
-	it("POST /v1/tools/call returns correct result for registered tool", async () => {
-		const toolRes = await fetch(`${baseUrl}/v1/tools/call`, {
+	it("POST /v1/workspaces/:wsId/tools/call returns correct result for registered tool", async () => {
+		const toolRes = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/tools/call`, {
 			method: "POST",
-			headers: { "Content-Type": "application/json", "X-Workspace-Id": TEST_WORKSPACE_ID },
+			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({
 				server: "notes",
 				tool: "save_note",
@@ -585,13 +588,14 @@ describe("E2E: multi-step conversation -> history -> conversations list consiste
 		mkdirSync(multiStepDir, { recursive: true });
 
 		runtime = await Runtime.start({
+			identityProvider: devProvider,
 			model: { provider: "custom", adapter: createEchoModel() },
 			logging: { disabled: true },
 			workDir: multiStepDir,
 		});
 		await provisionTestWorkspace(runtime);
 
-		handle = startServer({ runtime, port: 0 });
+		handle = startServer({ runtime, port: 0});
 		baseUrl = `http://localhost:${handle.port}`;
 	});
 
@@ -610,9 +614,9 @@ describe("E2E: multi-step conversation -> history -> conversations list consiste
 
 		let convId: string | undefined;
 		for (const msg of messages) {
-			const res = await fetch(`${baseUrl}/v1/chat`, {
+			const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat`, {
 				method: "POST",
-				headers: { "Content-Type": "application/json", "X-Workspace-Id": TEST_WORKSPACE_ID },
+				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify({
 					message: msg,
 					...(convId ? { conversationId: convId } : {}),
@@ -628,9 +632,9 @@ describe("E2E: multi-step conversation -> history -> conversations list consiste
 	});
 
 	it("streaming chat produces SSE text.delta and done events with valid schemas", async () => {
-		const res = await fetch(`${baseUrl}/v1/chat/stream`, {
+		const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat/stream`, {
 			method: "POST",
-			headers: { "Content-Type": "application/json", "X-Workspace-Id": TEST_WORKSPACE_ID },
+			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({ message: "Stream schema test" }),
 		});
 

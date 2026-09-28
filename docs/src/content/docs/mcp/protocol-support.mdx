@@ -1,0 +1,142 @@
+---
+title: Protocol Support
+description: The MCP specification revisions, transports, and capabilities NimbleBrain supports as a client, an MCP Apps host, and a server, and the capabilities it deliberately does not advertise.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+This page is the contract a server developer builds against: what the host speaks, what it claims of itself on each protocol era, and what it leaves out on purpose. Where the host does not advertise a capability, that is a decision, and the reason is given next to it.
+
+## Specification revisions
+
+NimbleBrain uses the official TypeScript SDK v2 (`@modelcontextprotocol/client` and `@modelcontextprotocol/server` 2.x) as a client and for the `2026-07-28` side of its MCP endpoint. The endpoint's 2025 side and the [MCP App Bridge](/apps/bridge/) stay on SDK 1.x (`@modelcontextprotocol/sdk`), because SDK v2 cannot yet send a task-shaped `tools/call` result.
+
+The revisions fall into two eras. `2026-07-28` has no `initialize` handshake: a client probes with `server/discover`, and every request carries its protocol version, client info and client capabilities in its own `_meta` envelope. Every earlier revision is negotiated once, by `initialize`, under the specification's [lifecycle rules](https://modelcontextprotocol.io/specification/2025-11-25/basic/lifecycle#version-negotiation).
+
+| Revision | Supported |
+|---|---|
+| `2026-07-28` | Yes. As a client, the host probes for it first. |
+| `2025-11-25` | Yes. The revision the host offers in `initialize`. |
+| `2025-06-18` | Yes |
+| `2025-03-26` | Yes |
+| `2024-11-05` | Yes |
+| `2024-10-07` | Yes |
+
+As a client, the host negotiates each connection on its own. It sends `server/discover` first. A server that answers it with a `2026-07-28` result is spoken to on that revision. Any other answer, such as a method-not-found error, leads to the 2025 `initialize` handshake, which offers `2025-11-25` and accepts any older revision above that the server answers with. A probe that meets an HTTP 5xx is retried once on the 2025 era, because some 2025 servers answer every method they do not know with a 500. Nothing is pinned, so a server that moves to `2026-07-28` is spoken to on it at its next connection. As a server, the host serves whichever era each request arrives on; see [As a server to external clients](#as-a-server-to-external-clients).
+
+MCP Apps (the `ui://` extension) is implemented from `@modelcontextprotocol/ext-apps`. See the [MCP App Bridge](/apps/bridge/) for the exact messages the host serves.
+
+## As a client to your server
+
+### Transports
+
+| Transport | Supported | Notes |
+|---|---|---|
+| Streamable HTTP | Yes | The default. Declare `streamable-http` in the server's catalog entry. |
+| HTTP+SSE | Yes | Only for servers that support nothing newer. Declare `sse`. |
+| stdio | No | The runtime connects to servers over the network. It never downloads or runs a server's code. |
+
+Authorization follows the specification's [authorization flow](https://modelcontextprotocol.io/specification/latest/basic/authorization): dynamic client registration, a pre-registered OAuth client, or a credential the platform supplies. The operator chooses one per server in the [connectors catalog](/config/connectors-catalog/).
+
+### Client capabilities the host advertises
+
+A claim travels differently on each era. On a 2025-era connection the host sends it once, in `initialize`'s `capabilities`. On a `2026-07-28` connection it sends it on every request, `server/discover` included, under `_meta["io.modelcontextprotocol/clientCapabilities"]`. The host claims a capability only on the era where it serves it.
+
+On a 2025-era connection, `initialize` carries exactly these capabilities:
+
+```json
+{
+  "capabilities": {
+    "tasks": {
+      "requests": { "tools": { "call": {} } },
+      "cancel": {}
+    },
+    "extensions": {
+      "io.modelcontextprotocol/skills": {},
+      "ai.nimblebrain/host-resources": {
+        "read": { "enabled": true, "range": false, "maxSize": 10485760 },
+        "list": { "enabled": true },
+        "write": { "enabled": false },
+        "schemes": ["files"]
+      }
+    }
+  }
+}
+```
+
+On a `2026-07-28` connection, every request's envelope carries the same `tasks` block and Skills claim, and no `ai.nimblebrain/host-resources`:
+
+```json
+{
+  "_meta": {
+    "io.modelcontextprotocol/clientCapabilities": {
+      "tasks": {
+        "requests": { "tools": { "call": {} } },
+        "cancel": {}
+      },
+      "extensions": {
+        "io.modelcontextprotocol/skills": {}
+      }
+    }
+  }
+}
+```
+
+**`tasks`**: the host runs long-running tools as tasks and can cancel them. When the run that made a call is cancelled, the host sends `tasks/cancel`. A task-augmented call is never retried after a transport failure, because the task's state lives on the server and a retry would start the work twice. The host does not claim `tasks.list`, because it never lists tasks. How a call becomes a task depends on the era:
+
+| Era | How the host opts a call in |
+|---|---|
+| 2025 | A tool that declares `execution.taskSupport` as `optional` or `required` is called with `params.task`. The host receives a `CreateTaskResult` right away, polls `tasks/get`, and reads the outcome from `tasks/result`. |
+| `2026-07-28` | The tasks extension (`io.modelcontextprotocol/tasks`). When the server advertises it, each `tools/call` names the extension in that request's own client capabilities, and the server decides per call whether to answer outright or with a task. The host polls `tasks/get` and reads the result it inlines. A task that asks for input (`input_required`) is cancelled and reported as an error, since the host has no one to ask. The extension is claimed on those requests only, never on the connection. |
+
+**`io.modelcontextprotocol/skills`**: the MCP [Skills Extension](/using/skills/#skills-published-by-an-mcp-server), claimed on both eras because skill discovery runs on both. On a `2026-07-28` connection the host asks for `skills/list` only when the server advertises the extension. On a 2025-era connection it asks whether or not the server declared it, because some SDKs leave `capabilities.extensions` out of the legacy `initialize` result; a `-32601` (method not found) answer means the server publishes no skills.
+
+**`ai.nimblebrain/*` extensions**: the vendor capabilities described on [NimbleBrain and MCP](/mcp/overview/#extensions), claimed on the 2025 era only. The one extension today, [`ai.nimblebrain/host-resources`](/mcp/host-resources/), is served through server-to-client requests, which `2026-07-28` removed. Read this block before calling an extension method.
+
+### Client capabilities the host does not advertise
+
+| Capability | Why not |
+|---|---|
+| `sampling` | The specification is deprecating it. A server that needs a model should call one itself. |
+| `roots` | The specification is deprecating it. A server reaches workspace files through [host-resources](/mcp/host-resources/) instead. |
+| `elicitation` | Elicitation asks the client to put a question to a person and wait for the answer. An agent here often runs with nobody present, such as a scheduled automation or a webhook-triggered run. Even when someone is present, they are at the far end of an event stream, not waiting behind the tool call. The host cannot honor "block until someone answers", so it does not claim to. A tool that needs input should return that as its result, and the agent will ask. |
+
+### What the host reads from your server
+
+| Server feature | How the host uses it |
+|---|---|
+| `tools` | Offered to the agent, filtered by workspace, feature flags, and the caller's role. `annotations` (`readOnlyHint`, `destructiveHint`, and the rest) and `outputSchema` are forwarded as declared. Annotations are the server's claims about itself, so the host never uses them to relax a check. |
+| `_meta.ui.resourceUri` on a tool | Mounts the tool's MCP Apps view inline with its result. |
+| `_meta.ui.visibility` on a tool | Absent means `["model", "app"]`. A tool without `"model"` is left out of every tool list an agent sees, in chat and at the MCP endpoint. A tool without `"app"` is refused when an app's view calls it, and a view can only call tools on its own server. |
+| `resources` | Read when the host needs them: `ui://` views when they mount, [resources at reserved URIs](/mcp/overview/#resource-conventions), and the server's notification outbox. The host reads on its own schedule. If the server advertises `resources.subscribe`, the host subscribes to the outbox and treats `notifications/resources/updated` as a hint to read it sooner, not as a replacement for reading. On 2025 it subscribes with `resources/subscribe`; on `2026-07-28` it names the URI in a `subscriptions/listen` stream instead. |
+| `listChanged` on `tools` or `resources` | On 2025 the host reacts to the list-changed notifications the server sends. On `2026-07-28`, where a server sends nothing unsolicited, the host opens a `subscriptions/listen` stream for them, and for the resource updates above, and reopens it when it drops. |
+| `instructions` | From the `initialize` result on 2025, from the `server/discover` result on `2026-07-28`. Composed into the agent's prompt for the workspace. See [custom instructions](/apps/custom-instructions/). |
+
+## As an MCP Apps host
+
+The host implements the MCP Apps specification: `ui/initialize`, tool input and result delivery, `ui/message`, `ui/open-link`, `ui/update-model-context`, `ui/download-file`, `ui/request-display-mode`, size changes, and `tools/call` and `resources/read` proxied to the app's own server. The [MCP App Bridge](/apps/bridge/) reference lists every message and its exact behavior, including the three `ai.nimblebrain/*` bridge extensions.
+
+## As a server to external clients
+
+Each workspace is its own MCP server at `/mcp/<workspaceId>`, over Streamable HTTP with OAuth 2.0 protected-resource discovery. It serves both eras on the same URL. A request carrying the `2026-07-28` `_meta` envelope is answered on its own, with no session, and `server/discover` answers the capabilities. Anything else is 2025 traffic, served in a session opened by `initialize`. Both eras list the same tools and resources and return the same errors. It advertises:
+
+| Capability | 2025 | `2026-07-28` | Notes |
+|---|---|---|---|
+| `tools` | Yes | Yes | The workspace's tools and the caller's identity tools, with the same filtering the agent gets |
+| `resources` | Yes | Yes | Resources from the workspace's servers |
+| `tasks` | Yes | No | `tasks/cancel` and task-augmented `tools/call`, so long-running tools stay long-running through the endpoint. The `2026-07-28` side does not serve the tasks extension, so a tool there runs to completion inside the request. |
+
+Neither era advertises `listChanged` or `resources.subscribe`. The endpoint does not serve the optional `GET` server-to-client stream, so progress and task updates arrive on the `POST` that started them. The [MCP endpoint reference](/connect/mcp-endpoint/) covers authentication, sessions, and the audience rule.
+
+<Aside type="tip">
+To check what a host actually advertises, read what it sent on your connection
+(the `initialize` request on 2025, the request's `_meta` envelope on
+`2026-07-28`), not this page. A server that checks capabilities at runtime keeps working as the host
+changes.
+</Aside>
+
+## Related
+
+- [NimbleBrain and MCP](/mcp/overview/): the three roles and every extension
+- [Host resources](/mcp/host-resources/): the `extensions` capability in detail
+- [Connector configuration](/config/connectors/): transport and auth fields

@@ -26,7 +26,7 @@
  *      (`src/tools/unattended-policy.ts`).
  *   3. **The router**, built for `(principalId, workspaceId)` exactly as a
  *      session builds it, so the wall (ADR-0005), `assertToolAllowed`, the
- *      personal-connector grant (ADR-0006) and `INTERNAL_TOOL_ANNOTATION`
+ *      personal-connector grant (ADR-0006) and tool visibility
  *      semantics all apply by being the same code, not by being re-stated.
  *   4. **Bounds** — a wall-clock timeout that actually cancels the in-flight
  *      call, and a cap on how large a result may come back.
@@ -85,8 +85,9 @@ export interface UnattendedDispatchOptions {
   input: Record<string, unknown>;
   /**
    * The caller's own short string saying what fired this (`"route:rt_…"`).
-   * Opaque here: it is echoed into the audit line and stamped on the outbound
-   * call's `_meta`, and nothing parses it. Truncated at
+   * Opaque here: it is echoed into the audit line, and nothing parses it. It
+   * never leaves the host: a server is not told which configuration fired the
+   * call, or that no one is watching it. Truncated at
    * {@link UNATTENDED_REASON_MAX}.
    */
   reason: string;
@@ -259,7 +260,6 @@ export async function dispatchUnattended(
         // Bars the automation-authoring surface at the sources themselves, so
         // the wall holds below anything this door checks by name.
         unattended: true,
-        unattendedReason: reason,
       },
       () =>
         router.execute(

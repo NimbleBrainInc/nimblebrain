@@ -22,7 +22,7 @@ import { realClient } from "../../test/setup";
   }
 }
 
-/** Makes `/v1/chat/start` fail, as a network error on the first send would. */
+/** Makes the workspace's `/chat/start` fail, as a network error on the first send would. */
 let failStart = false;
 
 mock.module("../api/client", () => ({
@@ -67,7 +67,6 @@ const WS_A: WorkspaceInfo = {
   name: "Alpha",
   connectors: [],
   memberCount: 1,
-  isPersonal: false,
   userRole: "admin",
 };
 

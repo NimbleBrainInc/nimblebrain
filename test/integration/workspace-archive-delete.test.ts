@@ -79,8 +79,8 @@ describe("WorkspaceStore.delete — archive-then-cascade", () => {
 
   test("disambiguates a same-id re-archive via a deterministic counter", async () => {
     // Explicit slug → deterministic id, so the re-created workspace reuses
-    // the same id (the real-world case: a personal ws_user_* deleted, the
-    // user returns, a fresh personal workspace is created, then deleted).
+    // the same id (an operator re-creating a workspace at a chosen id after
+    // deleting it).
     const slug = "user_alice";
     const first = await store.create("Alice", slug);
     await store.delete(first.id);
