@@ -1,11 +1,12 @@
 import { describe, expect, it, beforeEach } from "bun:test";
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { ActivityCollector } from "../../../src/services/activity-collector.ts";
 import type { ConversationStore, ConversationListResult, Conversation, ConversationPatch, ListOptions } from "../../../src/conversation/types.ts";
 import type { SseEventManager, BufferedEvent } from "../../../src/api/events.ts";
 import type { StoredMessage } from "../../../src/conversation/types.ts";
+import type { AutomationRun } from "../../../src/platform/automations/types.ts";
 
 // ---------------------------------------------------------------------------
 // Mocks
@@ -65,24 +66,31 @@ function writeLogFile(
 	writeFileSync(join(logDir, filename), content);
 }
 
-function writeAutomationRunFile(logDir: string): string {
-	const automationRunsDir = join(logDir, "automations", "runs");
-	mkdirSync(automationRunsDir, { recursive: true });
-	writeFileSync(
-		join(automationRunsDir, "daily-check.jsonl"),
-		[
-			JSON.stringify({
-				startedAt: "2025-01-01T10:00:00Z",
-				status: "success",
-			}),
-			JSON.stringify({
-				startedAt: "2025-01-01T11:00:00Z",
-				status: "failure",
-				error: "boom",
-			}),
-		].join("\n"),
-	);
-	return automationRunsDir;
+function automationRuns(): (since: string) => AutomationRun[] {
+	const runs: AutomationRun[] = [
+		{
+			id: "run_a",
+			automationId: "daily-check",
+			startedAt: "2025-01-01T10:00:00Z",
+			status: "success",
+			inputTokens: 0,
+			outputTokens: 0,
+			toolCalls: 0,
+			iterations: 1,
+		},
+		{
+			id: "run_b",
+			automationId: "daily-check",
+			startedAt: "2025-01-01T11:00:00Z",
+			status: "failure",
+			error: "boom",
+			inputTokens: 0,
+			outputTokens: 0,
+			toolCalls: 0,
+			iterations: 1,
+		},
+	];
+	return (since) => runs.filter((r) => r.startedAt >= since);
 }
 
 // ---------------------------------------------------------------------------
@@ -651,12 +659,11 @@ describe("ActivityCollector", () => {
 	});
 
 	it("includes automation run summaries when configured", async () => {
-		const automationRunsDir = writeAutomationRunFile(logDir);
 
 		const collector = new ActivityCollector({
 			logDir,
 			conversations: { kind: "store", list: (() => { const m = makeMockStore(); return (o, a) => m.list(o, a); })() },
-			automationRunsDir,
+			automationRuns: automationRuns(),
 		});
 
 		const result = await collector.collect({
@@ -668,9 +675,11 @@ describe("ActivityCollector", () => {
 			total: 2,
 			succeeded: 1,
 			failed: 1,
+			degraded: 0,
 			failures: [
 				{
 					name: "daily-check",
+					status: "failure",
 					error: "boom",
 					action: {
 						label: "View failed run",
@@ -684,7 +693,6 @@ describe("ActivityCollector", () => {
 	});
 
 	it("omits automation run summaries when category is filtered", async () => {
-		const automationRunsDir = writeAutomationRunFile(logDir);
 		writeLogFile(logDir, "2025-01-01", [
 			{
 				ts: "2025-01-01T10:00:00Z",
@@ -696,7 +704,7 @@ describe("ActivityCollector", () => {
 		const collector = new ActivityCollector({
 			logDir,
 			conversations: { kind: "store", list: (() => { const m = makeMockStore(); return (o, a) => m.list(o, a); })() },
-			automationRunsDir,
+			automationRuns: automationRuns(),
 		});
 
 		const result = await collector.collect({

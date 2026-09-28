@@ -5,6 +5,7 @@ import type { Runtime } from "../../runtime/runtime.ts";
 import { ActivityCollector } from "../../services/activity-collector.ts";
 import { defineInProcessApp, type InProcessTool } from "../../tools/in-process-app.ts";
 import type { McpSource } from "../../tools/mcp-source.ts";
+import { readAllRuns } from "../automations/store.ts";
 import { HomeActivityInput } from "../schemas/home.ts";
 
 /**
@@ -38,7 +39,10 @@ export function createHomeSource(runtime: Runtime, eventSink: EventSink): McpSou
           const wsId = runtime.requireWorkspaceId();
           const wsDir = runtime.getWorkspaceScopedDir();
           const logDir = join(wsDir, "logs");
-          const automationRunsDir = join(wsDir, "automations", "runs");
+          // Automations are stored per owner, and `automations__runs` shows a
+          // caller only the runs of the automations they own. Activity matches it.
+          const workDir = runtime.getWorkDir();
+          const ownerId = runtime.resolveRequestUserId(identity);
           const collector = new ActivityCollector({
             logDir,
             conversations: {
@@ -48,7 +52,7 @@ export function createHomeSource(runtime: Runtime, eventSink: EventSink): McpSou
               // rows (which carry per-conversation previews) must be too.
               list: (o, a) => runtime.listConversations(wsId, o, a),
             },
-            automationRunsDir,
+            automationRuns: (since) => readAllRuns(workDir, wsId, ownerId, { since }),
             access: { userId: identity.id },
           });
 

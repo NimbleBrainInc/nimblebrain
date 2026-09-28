@@ -51,13 +51,19 @@ export interface ActivityOutput {
 export interface AutomationRunSummary {
   total: number;
   succeeded: number;
+  /** Runs that ended in `failure` or `timeout`. */
   failed: number;
+  /** Runs that finished with a failed tool call nobody retried. */
+  degraded: number;
+  /** Every failed and degraded run, each with its status. */
   failures: AutomationFailure[];
 }
 
-/** A failed automation run with details. */
+/** A failed or degraded automation run with details. */
 export interface AutomationFailure {
+  /** The automation's id. */
   name: string;
+  status: "failure" | "timeout" | "degraded";
   error?: string;
   action: BriefingAction;
 }
